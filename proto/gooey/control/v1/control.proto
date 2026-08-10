@@ -78,6 +78,35 @@ service ControlService {
   // block as a schema (issue #62): the contract a values payload must
   // satisfy before the document can build.
   rpc GetDeclaredSchema(GetDeclaredSchemaRequest) returns (GetDeclaredSchemaResponse);
+
+  // PatchMarkup replaces ONE named element's subtree, leaving the rest
+  // of the page — and every sibling's component state — untouched (MCP
+  // patch_markup, issue #117). The fragment builds against the live
+  // binding context; its root element must carry the same Name= as the
+  // element it replaces (the name is the address, and the address
+  // survives iteration). Layout attributes the fragment does not
+  // restate (Grid.Row, Width, Margin, ...) are preserved from the old
+  // element, per attribute. Atomic: any failure — bad markup, wrong
+  // root name, a name colliding with a surviving element, a parent
+  // container the server cannot rewrite — is INVALID_ARGUMENT (or
+  // NOT_FOUND for an unknown address) and the running tree, name table
+  // and focus are exactly as they were.
+  rpc PatchMarkup(PatchMarkupRequest) returns (PatchMarkupResponse);
+
+  // ListStyles reports the markup context's style table — the names a
+  // Style="..." attribute can resolve (MCP list_styles, issue #117). An
+  // unknown style silently renders unstyled, so a markup generator must
+  // draw from this list.
+  rpc ListStyles(ListStylesRequest) returns (ListStylesResponse);
+
+  // ValidateMarkup checks a document against the live binding context —
+  // the exact parse-and-bind path SwapMarkup runs, including declared
+  // properties — without attaching anything or composing a frame (MCP
+  // validate_markup, issue #117). INVALID markup is a normal response
+  // carrying the typed load error, NOT a status error: the RPC was
+  // asked whether the markup is valid and it answered, which is what
+  // lets a generation loop retry cheaply without flickering the page.
+  rpc ValidateMarkup(ValidateMarkupRequest) returns (ValidateMarkupResponse);
 }
 
 message SnapshotTreeRequest {
@@ -189,4 +218,39 @@ message GetDeclaredSchemaRequest {
 
 message GetDeclaredSchemaResponse {
   ControlSchema schema = 1;
+}
+
+message PatchMarkupRequest {
+  // The Name= identity of the element to replace.
+  string name = 1;
+  // Markup for the replacement subtree, rooted at <Gooey> with exactly
+  // one child carrying the same Name.
+  string source = 2;
+}
+
+message PatchMarkupResponse {
+  // The Name= identities of the tree after the patch: survivors plus
+  // the fragment's names.
+  repeated string named = 1;
+}
+
+message ListStylesRequest {}
+
+message ListStylesResponse {
+  // Sorted by name.
+  repeated StyleInfo styles = 1;
+}
+
+message ValidateMarkupRequest {
+  // Complete markup source, rooted at <Gooey> with exactly one child.
+  string source = 1;
+}
+
+message ValidateMarkupResponse {
+  bool valid = 1;
+  // The typed load error when valid is false — the same text a failed
+  // SwapMarkup would carry in its status.
+  string error = 2;
+  // The Name= identities the document declares, when valid.
+  repeated string named = 3;
 }

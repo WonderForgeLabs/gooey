@@ -39,6 +39,7 @@ type page struct {
 // longer on screen.
 func (p *page) Build() (gooey.Component, error) {
 	p.ctx.Named = map[string]gooey.Component{}
+	p.ctx.Declared = nil
 	return Load(p.fsys, p.name, p.ctx)
 }
 

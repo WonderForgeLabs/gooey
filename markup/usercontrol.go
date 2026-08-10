@@ -63,6 +63,14 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if err != nil {
 			return nil, err
 		}
+		// The declared-surface registry is page-wide (see Context.Declared):
+		// it is created on the topmost context the moment any control
+		// instantiates, and every child context below shares the same map,
+		// so a control built inside a control still records where the page
+		// can see it.
+		if parent.Declared == nil {
+			parent.Declared = map[gooey.Component]DeclaredSurface{}
+		}
 		if doc.decls.present {
 			if err := doc.decls.checkAttrs(name, e); err != nil {
 				return nil, err
@@ -103,6 +111,9 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Styles == nil {
 			child.Styles = parent.Styles
 		}
+		if child.Declared == nil {
+			child.Declared = parent.Declared
+		}
 		if child.Components == nil {
 			child.Components = parent.Components
 		}
@@ -120,7 +131,18 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// bindings get: the file that names the asset is the file the
 		// path is relative to.
 		child.fsys = fsys
-		return doc.build(child)
+		w, err := doc.build(child)
+		if err != nil {
+			return nil, err
+		}
+		if len(doc.decls.list) > 0 {
+			surface := DeclaredSurface{Control: name, Props: make([]DeclaredProp, 0, len(doc.decls.list))}
+			for _, d := range doc.decls.list {
+				surface.Props = append(surface.Props, DeclaredProp{Declaration: d, Handle: declared[d.Name]})
+			}
+			parent.Declared[w] = surface
+		}
+		return w, nil
 	}
 }
 

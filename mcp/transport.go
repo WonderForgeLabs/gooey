@@ -37,10 +37,12 @@ const endpointPath = "/mcp"
 
 const instructions = "This server drives a running gooey terminal app. " +
 	"tree_snapshot and screen_text show what is on screen; list_values shows the bindable " +
-	"state; invoke_command, set_value, send_keys, send_mouse and focus act on it; " +
-	"swap_markup replaces the whole page. Every call runs on the app's UI goroutine and " +
-	"returns after the next frame has been composed, so a read taken right after a write " +
-	"sees the write."
+	"state and list_styles the registered style names; invoke_command, set_value, " +
+	"send_keys, send_mouse and focus act on it; swap_markup replaces the whole page, " +
+	"patch_markup replaces one named element's subtree, and validate_markup checks markup " +
+	"against the live context without touching the app. Every call runs on the app's UI " +
+	"goroutine and returns after the next frame has been composed, so a read taken right " +
+	"after a write sees the write."
 
 // newSDKServer builds the protocol-side server. Tools are attached to it
 // by register as they are registered on ours.
@@ -91,8 +93,12 @@ func (s *Server) bindTool(t *Tool) {
 	if schema == nil {
 		schema = object(map[string]any{})
 	}
+	sdkTool := &mcpsdk.Tool{Name: t.Name, Description: t.Description, InputSchema: schema}
+	if t.OutputSchema != nil {
+		sdkTool.OutputSchema = t.OutputSchema
+	}
 	s.sdk.AddTool(
-		&mcpsdk.Tool{Name: t.Name, Description: t.Description, InputSchema: schema},
+		sdkTool,
 		func(_ context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			var in args
 			if raw := req.Params.Arguments; len(raw) > 0 && string(raw) != "null" {
@@ -107,7 +113,17 @@ func (s *Server) bindTool(t *Tool) {
 			if err != nil {
 				return textResult(err.Error(), true), nil
 			}
-			return textResult(renderResult(out), false), nil
+			res := textResult(renderResult(out), false)
+			// A tool with a published output schema returns its result
+			// twice, per the spec's guidance: structuredContent for
+			// schema-checked consumption, and the same JSON as text for
+			// clients that only read text. `out` is plain data built on the
+			// UI goroutine; serializing it here is safe because the bridge's
+			// channel established the happens-before edge.
+			if t.OutputSchema != nil {
+				res.StructuredContent = out
+			}
+			return res, nil
 		},
 	)
 }

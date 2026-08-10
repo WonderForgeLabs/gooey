@@ -120,15 +120,15 @@ that arrives from somewhere other than `Content`.
 needs `markup`, `markup` needs `gooey`; a method on `App` would be an
 import cycle.
 
-**Deviations from v1 above.** `patch_markup` is punted — targeted
-subtree replacement needs an addressing scheme and a re-parent path
-that do not exist, and `swap_markup` against a surviving viewmodel
-covers the use case. Results are text content only (no
-`structuredContent`, which wants an `outputSchema` this server does not
-publish). `send_keys` routes through `Composer.Handle`, not the App's
-handler, so the app-level quit key is out of reach of a client. Bad
-markup restores the *previous* `Named` table as well as the tree —
-otherwise a typo in `swap_markup` would silently break every
+**Deviations from v1 above** *(the first two closed by #117 — see the
+extension section at the end)*. ~~`patch_markup` is punted~~ — targeted
+subtree replacement originally needed an addressing scheme and a
+re-parent path that did not exist; both now do. ~~Results are text
+content only~~ — the data tools now publish `outputSchema` and return
+`structuredContent`. `send_keys` routes through `Composer.Handle`, not
+the App's handler, so the app-level quit key is out of reach of a
+client. Bad markup restores the *previous* `Named` table as well as the
+tree — otherwise a typo in `swap_markup` would silently break every
 name-addressed tool.
 
 **Ceiling worth naming.** `tree_snapshot` type-switches the built-in
@@ -236,3 +236,89 @@ JSON-RPC `InvalidParams`. `TestNoStreamAndNoSession` and
 `TestUnknownMethodAndUnknownTool` pin all of this. The tool inventory,
 argument handling, result text and error wording are unchanged, so
 `mcpdemo.gif` still shows what happens.
+
+## Extended 2026-08-10: the v1 gaps (#117)
+
+Filed from hands-on use (a Python Temporal worker driving a live app);
+four gaps closed, one path kept: each new tool has its RPC in
+`gooey.control.v1` and its row in the grpc-contract mapping table, added
+the same day (see that record's #117 amendment).
+
+**`patch_markup(name, source)` — targeted subtree replacement.** The
+machinery the original punt said did not exist now does, and the tool is
+built from it: the fragment builds against the live context into scratch
+Named/Declared tables, the target's slot is found by walking
+`Container.ChildComponents()` for pointer identity, the slot is written,
+and the new `Composer.InvalidateStructure()` (a one-line export of the
+Dynamic containers' `structureChanged` path) makes the next frame
+re-sync paint nodes and the input tree while KEEPING every surviving
+component's node — clean/dirty state, focus, caret and all. That reuse
+is why a patch costs the patched subtree, not the page, and why sibling
+state survives by construction rather than by copying.
+
+Three recorded rules:
+
+- **The name is the address, and the address survives.** The fragment's
+  root element must carry the same `Name=` as the element it replaces —
+  refused otherwise — so an agent iterating on one panel patches the
+  same name every round. Fragment names are merged into the page's
+  table (departed subtree names out, fragment names in); a fragment
+  name colliding with a surviving element is refused before anything
+  moves.
+- **Layout attributes not restated are preserved.** A fragment
+  describes a panel's content; its cell in the parent's grid is the
+  parent's business. Every `applyLayout` attribute (`Grid.Row`,
+  `Width`, `Margin`, …) absent from the fragment root is copied from
+  the old element's `Layout`, per attribute — restating one does not
+  surrender the others. "Restated" is syntactic presence, extracted by
+  a light second scan of the already-validated source.
+- **The parent must be rewritable.** Supported parents are the builtin
+  containers whose child sets are public fields — VStack, HStack, Grid,
+  Canvas, ButtonBar, Border('s Child) — plus the root itself, which
+  degrades to a whole swap. The same deliberate type-switch ceiling
+  `tree_snapshot` has; a third-party container's children cannot be
+  rewritten without reflection.
+
+**`list_styles`** — a separate tool (not a field bolted onto
+`list_values`, so the RPC mapping stays 1:1): the `Context.Styles`
+names, each with only its SET attributes (`fg`/`bg` as `#rrggbb`,
+`bold`/`dim`/`underline`/`reverse` when true). Exists because an
+unknown `Style=` name silently renders unstyled — a generator that
+cannot see the table can only guess.
+
+**`validate_markup(source)`** — `swap_markup`'s exact parse-and-bind
+path with the attach cut off: scratch tables, build, restore, discard.
+Nothing is attached and nothing is Set, so no paint node dirties and no
+frame is composed — the unit test pins the frame counter, the e2e pins
+zero bytes on the pty. An INVALID document is a *normal result*
+(`valid:false` + the typed load error text), not a tool error: the tool
+was asked whether the markup is valid and it answered, which is what a
+write→check→regenerate loop wants to branch on.
+
+**`structuredContent` + `outputSchema`** — published for the tools
+whose results are data (`tree_snapshot`, `list_values`, `list_styles`,
+`validate_markup`), via `Tool.OutputSchema` handed to the SDK and the
+result set as `structuredContent` alongside the same JSON as text, so
+text-only clients keep working. Schemas are hand-written like the input
+schemas (the SDK's explicit `Server.AddTool` path neither derives nor
+validates them — validation is the client's, and the Python SDK does
+validate, so the schemas are permissive about extras and strict only
+about what is always present). `screen_text` stays text — its result IS
+text — and the mutation acks stay text-only for now (additive later).
+Slices in structured results must be non-nil: a nil slice encodes as
+JSON `null` where the schema says array.
+
+**Declared properties in `tree_snapshot`.** New retention machinery in
+markup: `Context.Declared` — a PAGE-WIDE registry (`map[Component]
+DeclaredSurface`, created on demand, inherited by reference through
+control instantiation the way Styles are, where `Named` is deliberately
+per-instance) — records every control instance built with
+`<x:Property>` declarations, keyed by its root component, with the
+declaration list and the instance's resolved handles. The snapshot walk
+looks each component up and emits `control` (the file) and `declared`
+(name, declared type, current value; `any` handles report the `%T` of
+what they hold — the descriptor ceiling). `Page.Build`, `Watch` and the
+MCP swap/patch paths reset/merge the registry the same way they handle
+`Named`, with the same scratch-and-restore atomicity. The ceiling for
+arbitrary Go components is unchanged and deliberate: declared surfaces
+serialize; undeclared Go structs never will.

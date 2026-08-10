@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // Serializing the tree without reflection.
@@ -21,10 +23,15 @@ import (
 // The interesting per-component fields come from a type switch over the
 // built-in components. An unknown component still produces a useful node —
 // its %T, its bounds, its layout, its children — it just has no props.
-// That is the deliberate ceiling: a third-party component's fields cannot be
-// discovered without reflection, and when markup-declared properties
-// (docs/specs/2026-08-10-markup-declared-properties.md) land, x:Property
-// will be the declaration that lets them serialize without one.
+// That is the deliberate ceiling: an arbitrary Go component's fields
+// cannot be discovered without reflection, and stay undiscovered.
+//
+// Markup-built controls are the exception the framework declares its way
+// out of: a control with <x:Property> declarations has a property schema
+// BY declaration, retained in markup.Context.Declared keyed by the
+// instance's root component, so its node carries the declared names,
+// types and current values. Declared surfaces serialize; undeclared Go
+// structs never will.
 //
 // Every Get() below happens outside any computed evaluation, on the UI
 // goroutine, so it reads a value and records NOTHING. That is the
@@ -61,6 +68,12 @@ func (s *Server) walk(w gooey.Component, names map[gooey.Component]string, fm *g
 	}
 	if p := componentProps(w); len(p) > 0 {
 		n["props"] = p
+	}
+	if s.bind != nil {
+		if ds, ok := s.bind.Declared[w]; ok {
+			n["control"] = ds.Control
+			n["declared"] = declaredProps(ds)
+		}
 	}
 
 	if depth > 0 && level >= depth {
@@ -136,6 +149,39 @@ func componentProps(w gooey.Component) map[string]any {
 		return p
 	}
 	return nil
+}
+
+// declaredProps serializes a control instance's declared surface: for
+// each <x:Property>, its name, declared type, and — for the types with a
+// markup literal — the handle's current value. Type="any" handles have
+// no representable value, so they report the %T of what they hold, the
+// same descriptor ceiling list_values applies to off-table handles. The
+// Gets here are outside any evaluation: reads, not subscriptions.
+func declaredProps(ds markup.DeclaredSurface) []map[string]any {
+	out := make([]map[string]any, 0, len(ds.Props))
+	for _, p := range ds.Props {
+		e := map[string]any{"name": p.Name, "type": p.Type}
+		switch h := p.Handle.(type) {
+		case *prop.Property[string]:
+			e["value"] = h.Get()
+		case *prop.Property[int]:
+			e["value"] = h.Get()
+		case *prop.Property[bool]:
+			e["value"] = h.Get()
+		case *prop.Property[float64]:
+			e["value"] = h.Get()
+		case *prop.Property[time.Duration]:
+			e["value"] = h.Get().String()
+		case *prop.Property[render.Color]:
+			e["value"] = hexColor(h.Get())
+		case *prop.Property[any]:
+			e["goType"] = fmt.Sprintf("%T", h.Get())
+		default:
+			e["goType"] = fmt.Sprintf("%T", p.Handle)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // layoutOf reports only the layout fields that were actually set. A node

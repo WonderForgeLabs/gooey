@@ -25,6 +25,16 @@ type Tool struct {
 	Description string
 	Schema      map[string]any
 
+	// OutputSchema, when set, is published to clients as the tool's MCP
+	// outputSchema, and successful results are ALSO returned as
+	// structuredContent (the same value the text content renders as
+	// JSON), so a non-Go client can consume the result schema-checked
+	// instead of parsing rendered text. Text content is always kept —
+	// clients that only read text keep working. Set it on tools whose
+	// results are data; screen_text stays text because its result IS
+	// text.
+	OutputSchema map[string]any
+
 	// Run executes the tool ON THE UI GOROUTINE. The server marshals
 	// every call through the Dispatcher before invoking it, so Run may
 	// read and Set properties, walk the tree and dispatch input freely —
@@ -39,19 +49,22 @@ type Tool struct {
 }
 
 // v1Tools is the tool inventory. Read: tree_snapshot, screen_text,
-// list_values. Act: invoke_command, set_value, send_keys, send_mouse,
-// focus. Mutate structure: swap_markup.
+// list_values, list_styles. Act: invoke_command, set_value, send_keys,
+// send_mouse, focus. Mutate structure: swap_markup, patch_markup.
+// Check: validate_markup.
 func (s *Server) v1Tools() []*Tool {
 	return []*Tool{
 		{
 			Name: "tree_snapshot",
 			Description: "The live component tree: element types, Name= identities, arranged bounds, " +
-				"layout, visibility, focus and hover flags, and the interesting properties of each " +
-				"known component kind. This is the app's structure as it exists right now.",
+				"layout, visibility, focus and hover flags, the interesting properties of each " +
+				"known component kind, and the declared (<x:Property>) surface of markup-built " +
+				"controls. This is the app's structure as it exists right now.",
 			Schema: object(map[string]any{
 				"depth": prop_("integer", "Maximum depth to walk; 0 or absent means the whole tree."),
 			}),
-			Run: s.treeSnapshot,
+			OutputSchema: treeSnapshotSchema(),
+			Run:          s.treeSnapshot,
 		},
 		{
 			Name: "screen_text",
@@ -68,7 +81,16 @@ func (s *Server) v1Tools() []*Tool {
 			Description: "The bindable surface: every name in the app's markup context, its kind " +
 				"(property, command, or literal), its Go type, and its current value where it has one. " +
 				"These are the names set_value and invoke_command take.",
-			Run: s.listValues,
+			OutputSchema: listValuesSchema(),
+			Run:          s.listValues,
+		},
+		{
+			Name: "list_styles",
+			Description: "The registered style names — what a Style=\"...\" attribute in markup can " +
+				"refer to — with each style's set attributes (fg, bg, bold, dim, underline, reverse). " +
+				"An unknown style name in markup silently renders unstyled, so generate only from these.",
+			OutputSchema: listStylesSchema(),
+			Run:          s.listStyles,
 		},
 		{
 			Name:        "invoke_command",
@@ -132,6 +154,33 @@ func (s *Server) v1Tools() []*Tool {
 			}, "source"),
 			Run: s.swapMarkup,
 		},
+		{
+			Name: "patch_markup",
+			Description: "Replace ONE named element's subtree with new markup, leaving the rest of the " +
+				"page — and every sibling's state — untouched. The fragment is built against the app's " +
+				"existing binding context, and its root must carry the same Name= as the element it " +
+				"replaces, so the address survives iteration. Layout attributes the fragment does not " +
+				"restate (Grid.Row, Width, Margin, ...) are preserved from the old element. Atomic: any " +
+				"failure leaves the running tree, the name table and focus exactly as they were.",
+			Schema: object(map[string]any{
+				"name":   prop_("string", "The Name= of the element to replace."),
+				"source": prop_("string", "Markup for the replacement subtree, rooted at <Gooey> with exactly one child carrying the same Name."),
+			}, "name", "source"),
+			Run: s.patchMarkup,
+		},
+		{
+			Name: "validate_markup",
+			Description: "Check markup without touching the app: the exact parse-and-bind path " +
+				"swap_markup runs — against the live binding context, including declared properties — " +
+				"but nothing is attached and no frame is painted. Invalid markup is a normal result " +
+				"carrying the load error text, so a generation loop can retry cheaply without ever " +
+				"flickering the live page.",
+			Schema: object(map[string]any{
+				"source": prop_("string", "Complete markup source, rooted at <Gooey> with exactly one child."),
+			}, "source"),
+			OutputSchema: validateMarkupSchema(),
+			Run:          s.validateMarkup,
+		},
 	}
 }
 
@@ -186,17 +235,56 @@ func (s *Server) listValues(args) (any, error) {
 	if s.bind == nil {
 		return nil, errNoContext
 	}
-	var out []map[string]any
+	// Non-nil even when empty: this result is also structuredContent, and
+	// the published schema says array, which a nil slice would break by
+	// encoding as null.
+	out := make([]map[string]any, 0)
 	collectValues(s.bind.Values, "", &out)
 	sort.Slice(out, func(i, j int) bool {
 		return out[i]["name"].(string) < out[j]["name"].(string)
 	})
-	named := make([]string, 0, len(s.bind.Named))
-	for n := range s.bind.Named {
-		named = append(named, n)
+	return map[string]any{"values": out, "named": namesOf(s.bind.Named)}, nil
+}
+
+// listStyles reports markup.Context.Styles: the names a Style attribute
+// resolves, each with only the attributes the style actually sets — the
+// same "report what was set" convention layoutOf uses. This exists
+// because an unknown style name renders as zero style with no error, so
+// a markup generator that cannot see the table can only guess.
+func (s *Server) listStyles(args) (any, error) {
+	if s.bind == nil {
+		return nil, errNoContext
 	}
-	sort.Strings(named)
-	return map[string]any{"values": out, "named": named}, nil
+	names := make([]string, 0, len(s.bind.Styles))
+	for n := range s.bind.Styles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	styles := make([]map[string]any, 0, len(names))
+	for _, n := range names {
+		st := s.bind.Styles[n]
+		e := map[string]any{"name": n}
+		if st.Fg.Set {
+			e["fg"] = hexColor(st.Fg)
+		}
+		if st.Bg.Set {
+			e["bg"] = hexColor(st.Bg)
+		}
+		if st.Bold {
+			e["bold"] = true
+		}
+		if st.Dim {
+			e["dim"] = true
+		}
+		if st.Underline {
+			e["underline"] = true
+		}
+		if st.Reverse {
+			e["reverse"] = true
+		}
+		styles = append(styles, e)
+	}
+	return map[string]any{"styles": styles}, nil
 }
 
 // collectValues describes the binding context by type switch, the same
@@ -430,29 +518,74 @@ func (s *Server) swapMarkup(a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The name table is rebuilt by the load, so a FAILED load must not be
-	// allowed to leave it half-written: the running tree is still on
-	// screen and `focus` and `tree_snapshot` still name its elements. Build
-	// into a fresh map and commit only on success.
-	previous := s.bind.Named
-	s.bind.Named = map[string]gooey.Component{}
-	root, err := markup.Build([]byte(src), s.bind)
+	// The name table and the declared-surface registry are rebuilt by the
+	// load, so a FAILED load must not be allowed to leave them
+	// half-written: the running tree is still on screen and `focus` and
+	// `tree_snapshot` still name its elements. Build into fresh maps and
+	// commit only on success.
+	root, restore, err := s.scratchBuild(src)
 	if err != nil {
-		s.bind.Named = previous
+		restore()
 		return nil, err
 	}
 	s.host.Swap(root)
-	named := make([]string, 0, len(s.bind.Named))
-	for n := range s.bind.Named {
-		named = append(named, n)
+	return map[string]any{"swapped": true, "named": namesOf(s.bind.Named)}, nil
+}
+
+// validateMarkup is swap_markup's build path with the attach cut off:
+// parse and bind against the live context — declared properties, styles,
+// includes, all of it — then throw the tree away and put the context
+// back exactly as it was. Nothing is attached, nothing is Set, so no
+// paint node dirties and no frame is composed: the check is invisible to
+// the running app.
+//
+// An INVALID document is a normal result, not a tool error: the tool was
+// asked whether the markup is valid and it answered. The error text is
+// the same typed load error swap_markup would have reported.
+func (s *Server) validateMarkup(a args) (any, error) {
+	if s.bind == nil {
+		return nil, errNoContext
 	}
-	sort.Strings(named)
-	return map[string]any{"swapped": true, "named": named}, nil
+	src, err := a.str("source")
+	if err != nil {
+		return nil, err
+	}
+	_, restore, err := s.scratchBuild(src)
+	named := namesOf(s.bind.Named)
+	restore()
+	if err != nil {
+		return map[string]any{"valid": false, "error": err.Error()}, nil
+	}
+	return map[string]any{"valid": true, "named": named}, nil
+}
+
+// scratchBuild builds markup source against the binding context with the
+// Named table and Declared registry swapped for fresh ones. restore puts
+// the previous maps back — call it on failure (or, for a validation, on
+// every path); on success the fresh maps stay committed and restore must
+// not be called.
+func (s *Server) scratchBuild(src string) (root gooey.Component, restore func(), err error) {
+	prevNamed, prevDecl := s.bind.Named, s.bind.Declared
+	s.bind.Named = map[string]gooey.Component{}
+	s.bind.Declared = nil
+	restore = func() { s.bind.Named, s.bind.Declared = prevNamed, prevDecl }
+	root, err = markup.Build([]byte(src), s.bind)
+	return root, restore, err
 }
 
 // ---- helpers ----
 
 var errNoContext = fmt.Errorf("this app was served without a markup context, so it has no named values to address")
+
+// namesOf is the sorted Name= identities of a name table.
+func namesOf(named map[string]gooey.Component) []string {
+	out := make([]string, 0, len(named))
+	for n := range named {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func (s *Server) composer() (*gooey.Composer, error) {
 	c := s.host.Composer()
