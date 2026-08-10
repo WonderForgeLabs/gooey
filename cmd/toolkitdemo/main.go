@@ -1,6 +1,10 @@
-// toolkitdemo: the six components of UI toolkit wave 1 on one page —
-// ProgressBar, Spinner, Toggle, Segmented, StatusBar, ButtonBar, and a
-// Button wearing the pixel chrome.
+// toolkitdemo: the UI toolkit on one page — wave 1 (ProgressBar,
+// Spinner, Toggle, Segmented, StatusBar, ButtonBar, and a Button
+// wearing the pixel chrome) plus wave 2's overlays: a MenuBar over the
+// content and a ToastHost that pops transient notifications. The two
+// overlay elements are declared LAST in the markup, because document
+// order is z-order and an overlay is nothing more than a later sibling
+// painting above what it covers.
 //
 // It is markup-first for the reason every demo here is: a component that
 // cannot be spelled in markup is not finished. Every one of these has a
@@ -24,6 +28,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -99,7 +104,8 @@ func main() {
 		}
 	}
 
-	ctx := &markup.Context{
+	var ctx *markup.Context
+	ctx = &markup.Context{
 		Values: map[string]any{
 			"Pct": pct, "Busy": busy, "Running": running,
 			"StageIndex": stageIdx, "Stage": stage,
@@ -146,6 +152,14 @@ func main() {
 				log.Set("deploying — the pixel button is an ordinary Button with different chrome")
 			}),
 			"Quit": gooey.Command(func() { app.Quit() }),
+			// Notify pops a toast over the page. The host is looked up
+			// per fire rather than captured, so a hot-reload swap — which
+			// rebuilds Named — never leaves this holding a dead layer.
+			"Notify": gooey.Command(func() {
+				if toasts, err := markup.Find[*components.ToastHost](ctx, "Toasts"); err == nil {
+					toasts.Show("job " + status.Get() + " · " + stages[clampIdx(stageIdx.Get())])
+				}
+			}),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},

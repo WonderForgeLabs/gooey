@@ -829,6 +829,22 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			return nil, err
 		}
 		return named(e, ctx, bar, nil)
+	case "MenuBar":
+		bar, err := buildMenuBar(e, ctx)
+		return named(e, ctx, bar, err)
+	case "ToastHost":
+		if len(e.Children) > 0 {
+			return nil, fmt.Errorf("markup: <ToastHost> takes no children; toasts are shown from code (Show), not declared")
+		}
+		h := &components.ToastHost{Style: ctx.Styles[e.Attrs["Style"]]}
+		if raw, ok := e.Attrs["Duration"]; ok {
+			d, err := time.ParseDuration(strings.TrimSpace(raw))
+			if err != nil {
+				return nil, fmt.Errorf("markup: <ToastHost Duration=%q>: %w", raw, err)
+			}
+			h.Duration = d
+		}
+		return named(e, ctx, h, nil)
 	case "KeyBinding":
 		g, err := input.ParseGesture(e.Attrs["Gesture"])
 		if err != nil {
@@ -902,6 +918,58 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		}
 		return nil, fmt.Errorf("markup: unknown element <%s>", e.Name)
 	}
+}
+
+// buildMenuBar consumes its children as DATA rather than as components:
+// <Menu> and <MenuItem> are declarations of the bar's contents, the way
+// Grid track lists are, so they never enter the visual tree and never
+// reach the general builder. Gesture attributes are validated through
+// input.ParseGesture at load time — a hint that cannot parse is a typo
+// you hear about at startup — and stored in the canonical spelling.
+func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
+	style, err := bindStyle(e, ctx)
+	if err != nil {
+		return nil, err
+	}
+	var menus []components.Menu
+	for _, c := range e.Children {
+		if c.Name != "Menu" {
+			return nil, fmt.Errorf("markup: <MenuBar> children must be <Menu> elements, got <%s>", c.Name)
+		}
+		title := strings.TrimSpace(c.Attrs["Title"])
+		if title == "" {
+			return nil, fmt.Errorf("markup: <Menu> needs a Title")
+		}
+		menu := components.Menu{Title: title}
+		for _, ic := range c.Children {
+			if ic.Name != "MenuItem" {
+				return nil, fmt.Errorf("markup: <Menu> children must be <MenuItem> elements, got <%s>", ic.Name)
+			}
+			if ic.Attrs["Separator"] == "true" {
+				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
+				continue
+			}
+			it := components.MenuItem{Text: ic.Attrs["Text"]}
+			if it.Text == "" {
+				return nil, fmt.Errorf("markup: <MenuItem> needs Text (or Separator=\"true\")")
+			}
+			if g := ic.Attrs["Gesture"]; g != "" {
+				ev, err := input.ParseGesture(g)
+				if err != nil {
+					return nil, fmt.Errorf("markup: <MenuItem Gesture=%q>: %w", g, err)
+				}
+				it.Gesture = ev.String()
+			}
+			cmd, err := ctx.Command(ic.Attrs["Command"])
+			if err != nil {
+				return nil, fmt.Errorf("markup: <MenuItem Command=%q>: %w", ic.Attrs["Command"], err)
+			}
+			it.Action = cmd
+			menu.Items = append(menu.Items, it)
+		}
+		menus = append(menus, menu)
+	}
+	return &components.MenuBar{Menus: menus, Style: style}, nil
 }
 
 func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Component, error) {

@@ -45,6 +45,12 @@ import (
 // and a Decorator is never forced from below (it owns no cells to
 // restore). This is what makes container backgrounds, hidden containers,
 // and overlapping Canvas children all repaint correctly.
+//
+// The forward pass has a reverse half, restoreUnder: when a rect LEAVES
+// the screen (a component turned non-visible, departed in a re-sync, or
+// moved), everything that sat beneath it is force-dirtied from the
+// sweeps, before the paint loop — a dismissed overlay's vacated cells
+// repaint from what was underneath in the same frame.
 type Composer struct {
 	root       Component
 	frame      *Frame
@@ -198,6 +204,12 @@ func (c *Composer) walkNodes() {
 	for w, n := range prev {
 		if _, kept := c.nodeOf[w]; !kept {
 			fillRect(c.frame.Cells, n.bounds, c.clearStyle(n))
+			// A departed node may have been an overlay: whatever its rect
+			// was covering has clean paint nodes that will never repaint
+			// on their own, so they are force-dirtied here and the paint
+			// loop lays them down again in z-order (a dismissed toast's
+			// vacated cells repaint from what was beneath).
+			c.restoreUnder(n.bounds)
 			// Its cells will be overwritten by the clear above, but its
 			// pixel placements are on a plane no clear reaches: the flush
 			// has to be told to take them off the screen.
@@ -403,15 +415,20 @@ func (c *Composer) Frame() (*Frame, int) {
 		c.focus.Resync()
 	}
 	for _, n := range c.nodes {
+		old := n.bounds
 		if b, ok := n.w.(Bounded); ok {
 			if nb := b.Bounds(); nb != n.bounds {
 				// Vacated region, cleared to the ancestor background so a
 				// component shrinking inside a colored panel does not
 				// leave a default-colored scar. Outside any evaluation:
-				// the property reads record nothing.
+				// the property reads record nothing. Whatever sat BENEATH
+				// the old rect is force-repainted — an overlay that moved
+				// (a menu switching titles) must not leave a scar where
+				// the content it covered used to show through.
 				fillRect(c.frame.Cells, n.bounds, c.clearStyle(n))
 				n.bounds = nb
 				n.rev.Set(n.rev.Get() + 1) // bounds moved → must repaint
+				c.restoreUnder(old)
 			}
 		}
 		// Visibility is a plain field, not a property, so flipping it
@@ -419,14 +436,29 @@ func (c *Composer) Frame() (*Frame, int) {
 		// check above (it arranges to zero size), but Hidden↔Visible
 		// keeps its bounds and would otherwise leave the old pixels on
 		// screen forever. Catching the delta here is the same trick the
-		// bounds sweep uses: notice the change, force the repaint.
+		// bounds sweep uses: notice the change, act outside any evaluation.
 		//
-		// A hidden LEAF erases itself through its pre-clear; a hidden
-		// CONTAINER clears its whole bounds (see build) and the z-ordered
-		// pass below repaints its still-visible children on top.
+		// BECOMING visible dirties the node: it must paint again. LEAVING
+		// the screen is handled here in the sweep, not by the node's own
+		// paint: its rect is cleared (to the ancestor background) and
+		// everything that sat beneath it is force-repainted — the z-order
+		// pass below can only force nodes ABOVE a painter, so a vanished
+		// overlay's vacated cells have to be restored from this side. The
+		// vanished node itself paints nothing: erasure is a sweep, the
+		// same as a vacated bounds, and costs zero paint nodes.
 		if v := visibilityOf(n.w); v != n.vis {
+			was := n.vis
 			n.vis = v
-			n.rev.Set(n.rev.Get() + 1)
+			if was == Visible && v != Visible {
+				fillRect(c.frame.Cells, old, c.clearStyle(n))
+				// The cell clear cannot reach the pixel plane: dropping
+				// the node's recorded placements is what makes the next
+				// placement diff take its images off the screen.
+				n.places = n.places[:0]
+				c.restoreUnder(old)
+			} else {
+				n.rev.Set(n.rev.Get() + 1)
+			}
 		}
 	}
 	// Paint in z-order (depth-first pre-order), forcing the repaint of
@@ -439,7 +471,11 @@ func (c *Composer) Frame() (*Frame, int) {
 	c.frameSeq++
 	c.over = c.over[:0]
 	for _, n := range c.nodes {
-		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 {
+		// A non-paintable node is never forced from below: it has nothing
+		// on screen to restore, and forcing it would run its pre-clear
+		// over cells the restore pass just repainted (a Hidden overlay
+		// keeps its bounds but owns no pixels).
+		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 && paintable(n.w) {
 			if _, isDecorator := n.w.(Decorator); !isDecorator {
 				for _, p := range c.over {
 					if !intersects(p.bounds, n.bounds) {
@@ -561,6 +597,32 @@ func fillRect(b *render.Buffer, r Rect, s render.Style) {
 	for y := r.Y; y < r.Y+r.H; y++ {
 		for x := r.X; x < r.X+r.W; x++ {
 			b.Set(x, y, ' ', s)
+		}
+	}
+}
+
+// restoreUnder is the reverse half of the z-ordered repaint. The forward
+// pass in Frame restores what sits ABOVE a rect somebody painted; this
+// restores what sat BENEATH a rect that just left the screen — a
+// component turned Hidden/Collapsed, departed in a re-sync, or moved.
+// Every still-visible node whose bounds intersect the vacated rect is
+// force-dirtied, and the ordinary paint loop then lays them down again
+// in z-order, with the forward pass keeping everything above them
+// honest. Decorators are included: the cells they re-style are exactly
+// the ones being restored.
+//
+// Runs outside any evaluation (from the sweeps), so the Sets here are
+// the same legality as the bounds sweep's.
+func (c *Composer) restoreUnder(r Rect) {
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
+	for _, n := range c.nodes {
+		if n.bounds.W <= 0 || n.bounds.H <= 0 || !paintable(n.w) {
+			continue
+		}
+		if intersects(r, n.bounds) {
+			n.rev.Set(n.rev.Get() + 1)
 		}
 	}
 }
