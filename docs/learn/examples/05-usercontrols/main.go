@@ -1,21 +1,20 @@
 // Tutorial 5 — reusable controls: an Include (markup only) and a
 // UserControl (markup plus a typed setup func).
 //
-//	cd examples/05-usercontrols && go run .
+//	cd docs/learn/examples/05-usercontrols && go run .
 //
 // Walkthrough: docs/learn/05-usercontrols.md
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // attr resolves one attribute of a control instance in the PARENT
@@ -59,7 +58,7 @@ func statPanel(e markup.Element, parent *markup.Context) (*markup.Context, error
 }
 
 func main() {
-	running := true
+	var app *gooey.App
 
 	a := prop.NewSource(0)
 	b := prop.NewSource(0)
@@ -72,7 +71,7 @@ func main() {
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"A": a, "B": b, "Total": total,
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -87,62 +86,12 @@ func main() {
 		Includes: fsys,
 	}
 
-	files := []string{"page.gooey", "statpanel.gooey", "card.gooey"}
-
-	load := func() (gooey.Widget, error) { return markup.Load(fsys, "page.gooey", ctx) }
-	tree, err := load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	var comp *gooey.Composer
-	needsFrame := true
-	att := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	att(tree)
-
-	// One rebuild of the page re-instantiates every control, so editing
-	// any of the three files reloads the whole composition.
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.WatchAll(fsys, files, func() {
-		if w, err := load(); err == nil {
-			swaps <- w
-		}
-	})
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			att(w)
-		case ev := <-events:
-			comp.Handle(ev)
-		}
+	// The page instantiates two other files, and editing either of them
+	// must reload the page — one rebuild re-instantiates every control.
+	// markup.Page watches all three; the App does the rebuild on the UI
+	// goroutine and swaps the composition.
+	app = gooey.NewApp(markup.Page(fsys, "page.gooey", ctx, "statpanel.gooey", "card.gooey"))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

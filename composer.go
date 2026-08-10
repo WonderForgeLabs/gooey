@@ -216,6 +216,33 @@ func (c *Composer) Frame() (*Frame, int) {
 	return c.frame, c.painted
 }
 
+// Size reports the cell dimensions this composition lays out into.
+func (c *Composer) Size() (cols, rows int) { return c.cols, c.rows }
+
+// Resize re-targets the composition at a new terminal size: a new buffer
+// of that size and a forced full repaint.
+//
+// Everything else follows from the machinery already here. Layout runs
+// unconditionally every frame, so the tree re-measures against the new
+// bounds by itself; what layout cannot do is repaint clean nodes, and
+// after a resize EVERY node is stale because the buffer it painted into
+// is gone. Dirtying all of them through their rev sources is the same
+// force-repaint the bounds sweep uses, and clearing the remembered
+// bounds keeps that sweep from clearing rectangles in the new buffer
+// that describe the old one.
+func (c *Composer) Resize(cols, rows int) {
+	if cols <= 0 || rows <= 0 || (cols == c.cols && rows == c.rows) {
+		return
+	}
+	c.cols, c.rows = cols, rows
+	c.frame.Cells = render.NewBuffer(cols, rows)
+	c.frame.Caps.Cols, c.frame.Caps.Rows = cols, rows
+	for _, n := range c.nodes {
+		n.bounds = Rect{}
+		n.rev.Set(n.rev.Get() + 1)
+	}
+}
+
 // Flush writes the current buffer to w, encoding color at the depth
 // from SetCaps.
 func (c *Composer) Flush(w io.Writer) error {

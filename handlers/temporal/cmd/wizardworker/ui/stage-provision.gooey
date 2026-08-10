@@ -1,0 +1,28 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:wf="gooey.dev/handlers/temporal/workflow">
+  <Border Title=" provision request — 3 of 4 · provisioning " Style="panel">
+    <Grid Rows="Auto,Auto,1,Auto,Auto,Auto,1,Auto,Auto,Auto,Auto,1,3,Auto,10,*,Auto">
+      <Text Grid.Row="0" Style="accent">no buttons on this screen — the workflow is driving now</Text>
+      <Text Grid.Row="1" Style="dim">{{.Served}}</Text>
+
+      <Text Grid.Row="3">  size:      {{.Tier}}</Text>
+      <Text Grid.Row="4">  region:    {{.Region}}</Text>
+      <Text Grid.Row="5">  ticket:    {{.Ticket}}</Text>
+
+      <Text Grid.Row="7" Style="accent">activities</Text>
+      <!-- one Text per step, so a completed activity repaints one line -->
+      <Text Grid.Row="8"  Margin="2,0">{{.Step1}}</Text>
+      <Text Grid.Row="9"  Margin="2,0">{{.Step2}}</Text>
+      <Text Grid.Row="10" Margin="2,0">{{.Step3}}</Text>
+
+      <Border Grid.Row="12" Title=" workflow says " Style="panel">
+        <Text Margin="1,0">{{.Notice}}</Text>
+      </Border>
+      <Text Grid.Row="13" Style="dim">terminal sent: {{.Echo}}</Text>
+      <Border Grid.Row="14" Title=" activity log " Style="panel">
+        <Text Margin="1,0" Style="dim">{{.Log}}</Text>
+      </Border>
+      <Text Grid.Row="16" Style="dim">each line above changes when an activity completes on the worker · ctrl+c quit</Text>
+    </Grid>
+  </Border>
+</Gooey>

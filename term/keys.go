@@ -15,6 +15,13 @@ const EscTimeout = 40 * time.Millisecond
 // It runs in its own goroutine; the decoding itself lives in the input
 // package (pure, testable), so this function is only I/O and the
 // escape-timeout policy.
+//
+// This is the primitive. Prefer Screen.Events, which starts it and hands
+// the Screen ownership of the goroutine, because ownership is what lets
+// Restore prove it died — and a terminal handed to a child process while
+// one of our readers is still on it is the bug this whole lifecycle
+// exists to prevent. A decoder started here by hand is nobody's, and
+// teardown will not wait for it.
 func DecodeEvents(s *Screen, out chan<- input.Event) {
 	chunks := make(chan []byte, 8)
 	go func() {

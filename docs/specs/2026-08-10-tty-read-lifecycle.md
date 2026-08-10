@@ -37,14 +37,32 @@ never touched by `Fd()`, so it stays pollable and Close reliably
 unblocks it; a `decDone` channel makes decoder death observable and
 the teardown waits on it (with a status-line warning as the tripwire).
 
-## Framework fix (owner: whoever holds term/ next)
+## Framework fix — DONE 2026-08-10
 
-Preferred: perform the MakeRaw/GetSize ioctls through
-`SyscallConn().Control` so the fd is never detached from the poller —
-then Close is a reliable cancellation for every reader, and Detect's
-probe goroutine can be joined instead of abandoned. Alternative:
-give DecodeEvents an explicit stop mechanism and make Screen teardown
-wait for reader exit. Either way: the invariant to establish is
-**no Screen teardown may leave a goroutine reading the terminal**, and
-cmd/browser's second-handle workaround becomes removable once it
-holds.
+Implemented as the preferred option: `Screen.control` performs the
+MakeRaw/GetSize/Restore ioctls through `SyscallConn().Control`, so the
+fd is never detached from the poller. Close is now a reliable
+cancellation for every reader.
+
+On top of that:
+
+- `Screen.Events` starts the decoder and the Screen OWNS it;
+  `Screen.Restore` restores modes, closes the tty, then JOINS the
+  decoder (draining its channel so a reader blocked on send cannot
+  wedge teardown), bounded by `term.DecoderTimeout`.
+  `Screen.DecoderLeaked` is the tripwire.
+- The invariant now holds and is tested:
+  **no Screen teardown leaves a goroutine reading the terminal**
+  (`term/lifecycle_test.go`, including both halves of the A/B above on
+  a real pty).
+- `Detect`'s read deadline actually works now. It had been failing with
+  `ErrNoDeadline` on every run — `Size()` called `Fd()` first — silently
+  degrading the probe to one blocking read.
+- cmd/browser's second-`/dev/tty`-handle workaround and its private copy
+  of the decoder are DELETED (-185 lines); the hand-off is
+  `gooey.App.Suspend`, and the status-line tripwire remains.
+
+ORDERING NOTE for anyone re-running the A/B: `Fd()` must be called
+BEFORE the read starts. A read submitted while the file is still
+pollable is parked in the netpoller and Close wakes it even if `Fd()` is
+called afterwards — which is why the bug looked intermittent.

@@ -1,0 +1,19 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:wf="gooey.dev/handlers/temporal/workflow">
+  <Border Title=" provision request — closed " Style="panel">
+    <Grid Rows="Auto,Auto,1,Auto,Auto,Auto,Auto,1,10,*,Auto">
+      <Text Grid.Row="0" Style="accent">the workflow completed — this screen is replayed from its own history</Text>
+      <Text Grid.Row="1" Style="dim">{{.Served}}</Text>
+
+      <Text Grid.Row="3" Style="ok">{{.Summary}}</Text>
+      <Text Grid.Row="4">  ticket:    {{.Ticket}}</Text>
+      <Text Grid.Row="5">  size:      {{.Tier}}</Text>
+      <Text Grid.Row="6">  region:    {{.Region}}</Text>
+
+      <Border Grid.Row="8" Title=" activity log " Style="panel">
+        <Text Margin="1,0" Style="dim">{{.Log}}</Text>
+      </Border>
+      <Text Grid.Row="10" Style="dim">a closed workflow still answers the ui query · ctrl+c quit</Text>
+    </Grid>
+  </Border>
+</Gooey>

@@ -2,22 +2,23 @@
 
 ## Turn reporting on
 
-Mouse events are opt-in, after `Raw()`:
+`gooey.App` turns it on for you — there is nothing to do. It enables
+three modes at once: button reporting, any-motion tracking (so hover
+works with no button held), and the SGR extended encoding, the only one
+that survives past column 223 and distinguishes press from release.
+Teardown disables reporting unconditionally, so not even a panic leaves
+your terminal emitting escape sequences into a shell.
+
+To decline it — for a program that shells out constantly, or a terminal
+that mangles motion reports:
 
 ```go
-if err := screen.Raw(); err != nil { /* ... */ }
-defer screen.Restore()
-screen.EnableMouse()
+app := gooey.NewApp(content, gooey.WithoutMouse())
 ```
 
-That enables three modes at once: button reporting, any-motion tracking
-(so hover works with no button held), and the SGR extended encoding — the
-only one that survives past column 223 and distinguishes press from
-release. `Restore` disables reporting unconditionally, so a panic cannot
-leave your terminal emitting escape sequences into a shell.
-
-It is opt-in because motion reports are just bytes on the tty: an app
-that treats any byte as a keypress would exit when the pointer moved.
+Reporting is a choice at all because motion reports are just bytes on the
+tty: a program that treats any byte as a keypress would exit when the
+pointer moved.
 
 ## Handle a click
 

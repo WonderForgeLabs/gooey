@@ -1,26 +1,24 @@
 // Tutorial 3 — binding and state: sources, computeds, and the rule that
 // decides whether a Get is a read or a subscription.
 //
-//	cd examples/03-binding-and-state && go run .
+//	cd docs/learn/examples/03-binding-and-state && go run .
 //
 // Walkthrough: docs/learn/03-binding-and-state.md
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
-	running := true
-	painted := 0 // widgets repainted by the last frame — a plain Go var
+	var app *gooey.App
 
 	// --- sources: settable state. Set marks dependents dirty and
 	// computes nothing. ---
@@ -52,7 +50,10 @@ func main() {
 		report.Set(fmt.Sprintf(
 			"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d widget(s)",
 			count.Get(), noisy.Get(), watch.Get(),
-			label.Evals(), watched.Evals(), painted))
+			// PaintedLastFrame is the damage count of the frame just
+			// flushed — an ordinary int on the App, not a property, so
+			// reading it here subscribes to nothing.
+			label.Evals(), watched.Evals(), app.PaintedLastFrame()))
 	}
 
 	ctx := &markup.Context{
@@ -64,7 +65,7 @@ func main() {
 			"Bump":        gooey.Command(func() { noisy.Set(noisy.Get() + 1) }),
 			"ToggleWatch": gooey.Command(func() { watch.Set(!watch.Get()) }),
 			"Measure":     gooey.Command(measure),
-			"Quit":        gooey.Command(func() { running = false }),
+			"Quit":        gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -73,56 +74,13 @@ func main() {
 		},
 	}
 
-	fsys := os.DirFS(".")
-	tree, err := markup.Load(fsys, "app.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	var comp *gooey.Composer
-	needsFrame := true
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			// painted is a plain var, not a property: writing it here
-			// cannot dirty anything, so the frame does not schedule
-			// another frame.
-			_, painted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			comp.Handle(ev)
-		}
+	// The App is the run loop: it owns the terminal, the input decoder,
+	// frame scheduling and the hot-reload swap. markup.Page is its
+	// content — it loads "app.gooey" and rebuilds the tree whenever the
+	// file changes, with these viewmodel properties carrying the state
+	// across the swap.
+	app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

@@ -44,7 +44,7 @@ anything:
   down on, and a `MouseClick` is synthesized when press and release land
   on the same widget.
 
-Mouse reporting is opt-in (`screen.EnableMouse()`), and `Restore`
+Mouse reporting is on unless you decline it (`gooey.WithoutMouse()`), and teardown
 disables it unconditionally.
 
 ## Why focus damage is free

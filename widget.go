@@ -89,9 +89,16 @@ func renderTree(w Widget, f *Frame) {
 	}
 }
 
-// Flush writes the frame: cell plane first, then pixel placements.
+// Flush writes the frame: cell plane first, then pixel placements. The
+// whole sequence is one synchronized update — cells and the images that
+// sit on top of them are a single frame, so the terminal must not
+// present the gap between them.
 func (f *Frame) Flush(w io.Writer) error {
-	if err := render.Flush(w, f.Cells, f.Caps.Color); err != nil {
+	if _, err := io.WriteString(w, render.BeginSync); err != nil {
+		return err
+	}
+	defer io.WriteString(w, render.EndSync)
+	if err := render.FlushCells(w, f.Cells, f.Caps.Color, false); err != nil {
 		return err
 	}
 	for _, p := range f.Placements {

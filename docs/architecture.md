@@ -628,16 +628,17 @@ story:
 // dev, embed.FS in release; the loader cannot tell the difference.
 ```
 
-- **Dev**: `os.DirFS` plus `markup.Watch` (or `WatchAll` for multi-file
-  apps), a 300 ms polling watcher that rebuilds on ModTime change and
-  calls `swap` with the new tree. Parse errors leave the current tree in
-  place, so a bad edit never blanks the running app. Rebuilding the tree
-  means rebuilding the `Composer` (static-tree limit), while viewmodel
-  properties live outside the tree and survive — that is why hot reload
-  keeps your state.
-- **Release**: `embed.FS`. The same `Watch` call is a natural no-op —
-  embed.FS reports constant zero ModTimes — so dev and release run
-  identical code.
+- **Dev**: `os.DirFS` behind `markup.Page`, a 300 ms polling watcher over
+  the page and the files it includes. It reports only THAT something
+  changed; `gooey.App` does the rebuild on the UI goroutine, because
+  resolving bindings touches the property graph. Parse errors leave the
+  current tree in place, so a bad edit never blanks the running app.
+  Rebuilding the tree means rebuilding the `Composer` (static-tree
+  limit), while viewmodel properties live outside the tree and survive —
+  that is why hot reload keeps your state.
+- **Release**: `embed.FS`. The same call is a natural no-op — embed.FS
+  reports constant zero ModTimes — so dev and release run identical
+  code.
 - **Future**: `gooey gen`, compiling markup to Go at build time. This
   tier is designed, not built; it appears as a consequence in the
   [x:Property spec](specs/2026-08-10-markup-declared-properties.md)

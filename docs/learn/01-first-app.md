@@ -2,8 +2,8 @@
 
 In this tutorial you build a complete gooey application from an empty
 directory: a markup file that describes the UI, a Go file that supplies
-the state and the host loop, and a live edit that reloads the running app
-without restarting it.
+the state and starts the app, and a live edit that reloads the running
+app without restarting it.
 
 **Time:** about 15 minutes.
 
@@ -12,7 +12,7 @@ When you finish, you will have this:
 ![The finished first app: a bordered panel with a styled greeting](media/01-first-app.png)
 
 The finished code is in
-[`examples/01-first-app`](../../examples/01-first-app).
+[`docs/learn/examples/01-first-app`](examples/01-first-app).
 
 ## Prerequisites
 
@@ -80,35 +80,33 @@ focus stop (a `Button`, from tutorial 4 on), bindings anywhere on the
 path from that button to the root are reachable. Until then, put
 page-global bindings on the root element.
 
-## Step 3: Supply the state and run the loop
+## Step 3: Supply the state and run the app
 
 Create `main.go`. It has three parts: a viewmodel, a `markup.Context`
-that exposes it to the markup, and the host loop.
+that exposes it to the markup, and the app that runs it.
 
 ```go
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
 	// --- viewmodel: the state and the commands markup binds to ---
-	running := true
+	var app *gooey.App
 	greeting := prop.NewSource("hello, gooey")
 
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Greeting": greeting,
-			"Quit":     gooey.Command(func() { running = false }),
+			"Quit":     gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -117,56 +115,10 @@ func main() {
 		},
 	}
 
-	// --- load the markup ---
-	fsys := os.DirFS(".")
-	tree, err := markup.Load(fsys, "app.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	// --- the host loop ---
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	var comp *gooey.Composer
-	needsFrame := true
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			comp.Handle(ev)
-		}
+	// --- the app ---
+	app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }
 ```
@@ -177,53 +129,65 @@ Run it:
 go run .
 ```
 
-You should see the panel from the top of this page. Press `q` to quit.
+You should see the panel from the top of this page. Press `q` to quit —
+or `ctrl+c`, which the framework maps to quit for you.
 
-> **Troubleshooting.** `no tty:` means the process has no terminal — run
-> it directly rather than through a pipe or an IDE console.
-> `markup: "Greeting" not found in context` means the name in the markup
-> and the key in `Values` disagree; the two are matched by exact string.
+> **Why `var app *gooey.App` before the context?** The `Quit` command
+> needs to call a method on the app, and the app needs the context to
+> build its tree. Declaring the variable first and assigning it later
+> breaks the circle without any indirection: by the time anything can
+> press `q`, `app` is assigned.
 
-## Step 4: Understand the loop you just wrote
+> **Troubleshooting.** `gooey: no terminal:` means the process has no
+> terminal — run it directly rather than through a pipe or an IDE
+> console. `markup: "Greeting" not found in context` means the name in
+> the markup and the key in `Values` disagree; the two are matched by
+> exact string.
 
-Six pieces do all the work. You will write this same loop in every
-tutorial that follows, so it is worth reading once.
+## Step 4: Understand what the App does for you
 
-**`markup.Load(fsys, name, ctx)`** reads the file from any `fs.FS` and
-builds a widget tree. Bindings are resolved **now**, once, into property
-handles — the built widgets hold the handle, not a copy of the value, and
-rendering never looks anything up.
+Four lines start a terminal application. Here is what each one carries.
 
-**`gooey.NewComposer(tree, cols, rows)`** is the retained, damage-tracked
-render path. Building it gives every widget its own node in the property
-graph; whatever a widget reads while painting becomes that widget's
-repaint trigger, automatically.
+**`markup.Page(fsys, name, ctx)`** is the app's *content*: where the
+widget tree comes from. It reads the file from any `fs.FS` and builds
+the tree, and it re-reads it when the file changes. Bindings resolve
+**at build time**, once, into property handles — the built widgets hold
+the handle, not a copy of the value, and rendering never looks anything
+up.
 
-**`comp.OnInvalidate(...)`** is the scheduler, in one line. Any `Set` on
-a property some widget painted from marks that widget dirty and fires
-this hook. You only raise a flag — because dirty flags accumulate and
-evaluation is lazy, twenty `Set`s between frames collapse into one
-repaint.
+**`gooey.NewApp(content)`** creates the application. It touches no
+terminal and starts no goroutine yet, so you can register hooks on it
+first (later tutorials do).
 
-**`screen.Raw()` / `defer screen.Restore()`** enter raw mode plus the
-alternate screen, and undo all of it on the way out — including turning
-mouse reporting off, so a panic never leaves the terminal wedged.
+**`app.Run(ctx)`** owns everything for the duration:
 
-**`term.DecodeEvents(screen, events)`** is the input pump, on its own
-goroutine. It turns tty bytes into `input.Event` values (keys and mouse
-reports on one ordered stream) and resolves escape ambiguity — a lone Esc
-versus the start of an arrow key — with a 40 ms idle timeout.
+| It owns | What that means |
+|---|---|
+| The terminal | Raw mode, alternate screen, mouse reporting on, and all of it undone on the way out — including after a panic, which restores the screen *before* printing its stack |
+| The input decoder | tty bytes become `input.Event` values (keys and mouse on one ordered stream), with escape ambiguity — a lone Esc versus the start of an arrow key — resolved by a 40 ms idle timeout |
+| The Composer | Every widget gets its own node in the property graph; whatever a widget reads while painting becomes that widget's repaint trigger, automatically |
+| Frame scheduling | A `Set` on a property some widget painted from marks that widget dirty and asks for a frame. Dirty flags accumulate and evaluation is lazy, so twenty `Set`s between frames collapse into one repaint |
+| Hot-reload swaps | When the content reports a change, the tree is rebuilt and the composition replaced |
+| Signals | `ctrl+c` quits; `SIGINT`/`SIGTERM` restore the terminal and exit with the conventional code; `SIGWINCH` resizes and repaints; `ctrl+z` suspends and comes back intact |
 
-**The loop body** renders if dirty, then blocks. `comp.Frame()` runs
-layout and repaints only the dirty widgets into a persistent buffer;
-`comp.Flush` writes it; `comp.Handle` routes the event through the tree.
+**`gooey.Exit(err)`** applies the exit-code convention: nothing to say
+for a normal quit, 128+n for a signal, and the message on stderr with
+exit 1 for a real error.
 
-> **If you know XAML:** there is no `Application.Run()` and no built-in
-> dispatcher. You own the loop, which is why the `select` is visible.
-> Everything — commands, property `Set`s, rendering — runs on this one
-> goroutine; properties are unsynchronized by design. Background work
-> hands results back over a channel (see
-> [how-to: work off the UI goroutine](howto/howto-async.md)).
+Two rules are worth knowing now, because they explain later behavior:
+
+- **The tree gets input first.** `ctrl+c` quits only if no widget
+  claimed it, exactly like an unconsumed arrow key moving focus.
+- **Everything runs on one goroutine.** Commands, property `Set`s and
+  rendering all happen on the loop, which is why properties are
+  unsynchronized by design. Background work hands results back through
+  `app.Post` (see
+  [how-to: work off the UI goroutine](howto/howto-async.md)).
+
+> **If you know XAML:** `app.Run(ctx)` is `Application.Run()`, and
+> `app.Post` is `Dispatcher.Invoke`. The differences are that the
+> content — not a `StartupUri` — is what the app is given, and that
+> there is no separate `Window`: the page fills the terminal.
 
 ## Step 5: Edit the running app
 
@@ -232,9 +196,12 @@ the border, add a line, change a style name — and save.
 
 ![The app reloading in place after an edit to app.gooey](media/01-hot-reload.gif)
 
-The UI rebuilds in place. `markup.Watch` polls the file's ModTime every
-300 ms, reloads on change, and hands the new tree to the loop over the
-`swaps` channel because the watcher runs on its own goroutine.
+The UI rebuilds in place. The page polls the file's ModTime every 300 ms
+and, on a change, tells the App — which does the rebuild itself, on the
+UI goroutine. That last part matters: building a tree resolves bindings
+against your properties, and properties may only be touched from the
+loop, so the watcher reports *that* something changed and never hands
+over a tree it built on its own goroutine.
 
 Two things make this safe rather than clever:
 
@@ -245,8 +212,8 @@ Two things make this safe rather than clever:
   is skipped and the running tree stays up. Fix the file, save again.
 
 The Composer is rebuilt rather than patched — it is a static-tree design,
-so structural change means a new Composer, which is exactly what `attach`
-does.
+so structural change means a new Composer, which is exactly what the App
+does on every swap.
 
 ## What you learned
 
@@ -254,18 +221,17 @@ does.
   values, commands, and named styles.
 - Bindings resolve **once at load time** into property handles, so
   rendering does no lookups.
-- The Composer gives each widget its own paint node; `OnInvalidate` is
-  the entire scheduler.
+- `gooey.App` owns the terminal, the input decoder, frame scheduling and
+  the signal story; `markup.Page` is the content it runs.
+- The Composer gives each widget its own paint node, and a property
+  `Set` is the entire scheduler.
 - `KeyBinding` fires only if the focused widget's path to the root passes
   through the element it is attached to — with no focus stops, that means
   the root.
-- Hot reload is `markup.Watch` plus a channel, and it keeps state because
-  state is not in the tree.
+- Hot reload keeps state because state is not in the tree.
 
 ## Current limitations
 
-- The Composer is fixed-size: it takes the terminal size at construction
-  and **does not react to resize** yet.
 - The watcher is 300 ms ModTime polling, not an OS file-watch API.
 - `Style="name"` is a lookup with no cascading, selectors, or overrides.
 

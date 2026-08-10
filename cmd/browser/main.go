@@ -1,10 +1,13 @@
-// browser: the demo launcher. A directory-reader viewmodel data-binds
-// to the repo's cmd/ tree through the fs.FS seam: entries are filtered
-// to the Go cmd convention — directories exactly one level deep that
-// contain a main.go. Picking one runs it via `go run` in a child
-// process that takes over THIS terminal (raw mode and alt screen are
-// fully restored first, the input decoder is torn down so the child
-// owns stdin, and everything is rebuilt when the child exits).
+// browser: the launcher for everything runnable in this repo. A
+// directory-reader viewmodel data-binds to TWO roots through the fs.FS
+// seam — cmd/ (the demos) and docs/learn/examples/ (the finished code
+// for each Learn tutorial) — filtered by the same Go convention:
+// directories exactly one level deep that contain a main.go. They are
+// listed as two labeled groups. Picking one runs it via `go run` in a
+// child process that takes over THIS terminal, which is one call to
+// gooey.App.Suspend: the screen is restored, the input decoder is torn
+// down so nothing of ours is still reading the tty, and everything is
+// rebuilt when the child exits.
 //
 // Recording uses the same handoff: `r` wraps the demo in asciinema, so
 // the terminal the demo drives is the one being captured, and agg turns
@@ -14,11 +17,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
@@ -29,7 +32,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var (
@@ -41,15 +43,44 @@ var (
 const recDir = "recordings"
 
 type demo struct {
-	name   string
+	name   string // display name, unique within its group
+	dir    string // module-relative directory: `go run ./<dir>`
+	group  string // which root it came from
+	rec    string // recording base name, unique across groups
+	ownDir bool   // run it from its own directory rather than the module root
 	doc    string // leading comment block of main.go
 	markup int    // number of .gooey files
 	cast   bool   // a recording already exists
 	gif    bool
 }
 
+// roots are the two places a runnable gooey program lives: the demos,
+// and the finished code for each Learn tutorial. They are listed rather
+// than discovered because the ORDER is the presentation — demos first,
+// examples second — and because a recursive walk of the module would
+// also find things that are not meant to be launched.
+//
+// Recordings are named with the prefix, not the display name: `cmd/demo`
+// and a future `docs/learn/examples/demo` would otherwise write to the
+// same recordings/demo.cast.
+//
+// ownDir is where the two roots genuinely differ. The demos locate their
+// markup relative to the MODULE ROOT (with a fallback beside the
+// executable), so they must run from there. The tutorial examples call
+// os.DirFS(".") and are documented as `cd <dir> && go run .` — that
+// simplicity is the point of the tutorial, so the launcher matches it
+// and runs them from their own directory. Getting this backwards fails
+// the same way in both directions: `open page.gooey: no such file`.
+var roots = []struct {
+	path, group, prefix string
+	ownDir              bool
+}{
+	{path: "cmd", group: "demos"},
+	{path: "docs/learn/examples", group: "learn examples", prefix: "learn-", ownDir: true},
+}
+
 // moduleRoot walks up from cwd to the directory holding go.mod — `go
-// run ./cmd/<name>` must execute there.
+// run ./<dir>` must execute there.
 func moduleRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -67,43 +98,81 @@ func moduleRoot() (string, error) {
 	}
 }
 
-// scan reads the demo inventory through fs.FS — the directory listing
-// is data like any other, so the UI binds to it and refreshes when the
-// tree changes. Paths are joined with path.Join, not filepath.Join:
-// fs.FS is defined on slash-separated names regardless of host OS.
+// scan reads the inventory through fs.FS — the directory listing is data
+// like any other, so the UI binds to it and refreshes when the tree
+// changes. Paths are joined with path.Join, not filepath.Join: fs.FS is
+// defined on slash-separated names regardless of host OS.
+//
+// Both roots use the same convention (a directory one level deep holding
+// a main.go), so one loop covers them; a root that does not exist simply
+// contributes nothing.
 func scan(fsys fs.FS, self string) []demo {
-	entries, err := fs.ReadDir(fsys, "cmd")
-	if err != nil {
-		return nil
-	}
 	var out []demo
-	for _, e := range entries {
-		// The cmd convention: a directory one deep with a main.go.
-		if !e.IsDir() || e.Name() == self {
+	for _, r := range roots {
+		entries, err := fs.ReadDir(fsys, r.path)
+		if err != nil {
 			continue
 		}
-		dir := path.Join("cmd", e.Name())
-		if _, err := fs.Stat(fsys, path.Join(dir, "main.go")); err != nil {
-			continue
-		}
-		d := demo{name: e.Name()}
-		if src, err := fs.ReadFile(fsys, path.Join(dir, "main.go")); err == nil {
-			d.doc = leadingComment(string(src))
-		}
-		if files, err := fs.ReadDir(fsys, dir); err == nil {
-			for _, f := range files {
-				if strings.HasSuffix(f.Name(), ".gooey") {
-					d.markup++
+		for _, e := range entries {
+			if !e.IsDir() || (r.path == "cmd" && e.Name() == self) {
+				continue
+			}
+			dir := path.Join(r.path, e.Name())
+			if _, err := fs.Stat(fsys, path.Join(dir, "main.go")); err != nil {
+				continue
+			}
+			d := demo{name: e.Name(), dir: dir, group: r.group,
+				rec: r.prefix + e.Name(), ownDir: r.ownDir}
+			if src, err := fs.ReadFile(fsys, path.Join(dir, "main.go")); err == nil {
+				d.doc = leadingComment(string(src))
+			}
+			if files, err := fs.ReadDir(fsys, dir); err == nil {
+				for _, f := range files {
+					if strings.HasSuffix(f.Name(), ".gooey") {
+						d.markup++
+					}
 				}
 			}
+			// Existing artifacts are part of the same directory data: the
+			// list shows what has already been recorded.
+			_, err := fs.Stat(fsys, path.Join(recDir, d.rec+".cast"))
+			d.cast = err == nil
+			_, err = fs.Stat(fsys, path.Join(recDir, d.rec+".gif"))
+			d.gif = err == nil
+			out = append(out, d)
 		}
-		// Existing artifacts are part of the same directory data: the
-		// list shows what has already been recorded.
-		_, err := fs.Stat(fsys, path.Join(recDir, e.Name()+".cast"))
-		d.cast = err == nil
-		_, err = fs.Stat(fsys, path.Join(recDir, e.Name()+".gif"))
-		d.gif = err == nil
-		out = append(out, d)
+	}
+	return out
+}
+
+// runIn is the working directory and package argument this entry is
+// launched with — the pair that has to agree with how it finds its own
+// markup. See roots.ownDir.
+func (d demo) runIn(root string) (dir, pkg string) {
+	if d.ownDir {
+		return filepath.Join(root, filepath.FromSlash(d.dir)), "."
+	}
+	return root, "./" + d.dir
+}
+
+// rows is the list as PAINTED: a group header before each run of entries
+// from the same root, then the entries. Selection indexes the demo
+// slice, never these rows, so a header can never be selected — the two
+// coordinate systems meet only here and in the click handler.
+type row struct {
+	header string
+	demo   int // index into the demo slice; -1 for a header
+}
+
+func rowsFor(ds []demo) []row {
+	var out []row
+	group := ""
+	for i, d := range ds {
+		if d.group != group {
+			group = d.group
+			out = append(out, row{header: group, demo: -1})
+		}
+		out = append(out, row{demo: i})
 	}
 	return out
 }
@@ -119,14 +188,6 @@ func leadingComment(src string) string {
 		break
 	}
 	return strings.TrimSpace(sb.String())
-}
-
-// pending is a launch deferred to the top of the main loop. Commands
-// dispatch mid-frame; tearing the screen down there would destroy the
-// composition that is still being walked.
-type pending struct {
-	name   string
-	record bool
 }
 
 func main() {
@@ -154,8 +215,15 @@ func main() {
 	// paints from, so the chrome is bound rather than restated: the
 	// markup names them, it does not spell out what they say.
 	title := prop.NewComputed(func() string {
-		return fmt.Sprintf("%d demos under cmd/ — pick one; it takes over this terminal and hands it back when it exits",
-			len(demos.Get()))
+		ds := demos.Get()
+		var learn int
+		for _, d := range ds {
+			if d.group == roots[1].group {
+				learn++
+			}
+		}
+		return fmt.Sprintf("%d demos + %d learn examples — pick one; it takes over this terminal and hands it back when it exits",
+			len(ds)-learn, learn)
 	})
 	hint := prop.NewComputed(func() string {
 		ds := demos.Get()
@@ -165,8 +233,8 @@ func main() {
 		// The info pane already spells out the go run command, so the
 		// hint stays short enough that `q  quit` survives the clip at
 		// 80 columns — the one affordance that must never scroll off.
-		n := ds[clampIdx(sel.Get(), len(ds))].name
-		return fmt.Sprintf("enter run   r record → %s/%s.cast   j/k ↑/↓ select   q quit", recDir, n)
+		d := ds[clampIdx(sel.Get(), len(ds))]
+		return fmt.Sprintf("enter run   r record → %s/%s.cast   j/k ↑/↓ select   q quit", recDir, d.rec)
 	})
 
 	// asciinema is looked up once: the `r` affordance reports its own
@@ -175,14 +243,19 @@ func main() {
 	recorder, recErr := exec.LookPath("asciinema")
 	gifTool, gifErr := exec.LookPath("agg")
 
-	running := true
-	var pend *pending
+	// launch is filled in once the App exists; the commands below close
+	// over it. A launch is POSTED rather than run inline: a command
+	// dispatches in the middle of routing an event, and the terminal
+	// hand-off belongs at the top of the loop, on its own.
+	var launch func(d demo, record bool)
+	var app *gooey.App
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Title": title, "Hint": hint, "Status": status,
 			"Run": gooey.Command(func() {
 				if ds := demos.Get(); len(ds) > 0 {
-					pend = &pending{name: ds[clampIdx(sel.Get(), len(ds))].name}
+					d := ds[clampIdx(sel.Get(), len(ds))]
+					app.Post(func() { launch(d, false) })
 				}
 			}),
 			"Record": gooey.Command(func() {
@@ -191,10 +264,11 @@ func main() {
 					return
 				}
 				if ds := demos.Get(); len(ds) > 0 {
-					pend = &pending{name: ds[clampIdx(sel.Get(), len(ds))].name, record: true}
+					d := ds[clampIdx(sel.Get(), len(ds))]
+					app.Post(func() { launch(d, true) })
 				}
 			}),
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -216,234 +290,58 @@ func main() {
 		exe, _ := os.Executable()
 		mdir = filepath.Dir(exe)
 	}
-	tree, err := markup.Load(os.DirFS(mdir), "browser.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	app = gooey.NewApp(markup.Page(os.DirFS(mdir), "browser.gooey", ctx))
 
-	// --- screen lifecycle: closeUI/openUI bracket the child handoff ---
-	var (
-		screen     *term.Screen
-		readTTY    *os.File // input handle, owned here — see readEvents
-		comp       *gooey.Composer
-		evs        chan input.Event
-		decDone    chan struct{}
-		needsFrame = true
-		cols, rows int
-	)
-
-	openUI := func() error {
-		s, err := term.Open()
-		if err != nil {
-			return err
-		}
-		screen = s
-		nc, nr := screen.Size()
-		if err := screen.Raw(); err != nil {
-			return err
-		}
-		screen.EnableMouse()
-		// Input comes off a SECOND /dev/tty handle that this program
-		// opens and only ever reads from, decoded by readEvents rather
-		// than term.DecodeEvents. See readEvents for why: a decoder on
-		// the Screen's own tty cannot be stopped, and would outlive the
-		// handoff still eating the child's keystrokes.
-		readTTY, err = os.OpenFile("/dev/tty", os.O_RDONLY, 0)
-		if err != nil {
-			return err
-		}
-		evs = make(chan input.Event, 64)
-		decDone = make(chan struct{})
-		// Passed in rather than captured: these three are rebound on
-		// every openUI, and a goroutine reading them from the enclosing
-		// scope would be reading whichever session happened to be
-		// current when it was first scheduled.
-		go func(f *os.File, out chan<- input.Event, done chan struct{}) {
-			defer close(done)
-			readEvents(f, out)
-		}(readTTY, evs, decDone)
-		// The composition survives a handoff: Flush writes the whole
-		// buffer, so re-entering a blank alt screen repaints correctly
-		// from the retained buffer with nothing dirty. Rebuilding it
-		// per launch would instead strand the previous paint nodes as
-		// dependents of the same viewmodel properties.
-		if comp == nil || nc != cols || nr != rows {
-			cols, rows = nc, nr
-			comp = gooey.NewComposer(tree, cols, rows)
-			// Color depth comes from the environment, not from
-			// Screen.Detect: Detect queries the terminal and, when
-			// nothing answers, abandons a goroutine with a Read still
-			// pending on the tty — a second reader competing with the
-			// decoder for every keystroke.
-			comp.SetCaps(term.Caps{Cols: cols, Rows: rows, Color: term.DetectColorDepth()})
-			comp.OnInvalidate(func() { needsFrame = true })
-		}
-		needsFrame = true
-		return nil
-	}
-
-	// closeUI hands the terminal to a child. It closes the input handle
-	// first and WAITS for the reader to actually die, so no goroutine of
-	// ours is still on the tty when the child starts, then restores the
-	// screen (cooked mode, main screen, mouse off).
+	// The hand-off, in one call. App.Suspend restores the terminal, JOINS
+	// the input decoder so nothing of ours is still reading the tty while
+	// the child runs, shields the interrupt the tty driver sends to the
+	// whole foreground process group, and takes the terminal back after —
+	// picking up a resize that happened while we were away.
 	//
-	// The wait is a real check, not a formality: it is what caught the
-	// term.Screen teardown problem readEvents works around. Draining evs
-	// while waiting does double duty — the reader flushes what it had
-	// buffered on the way out and would block forever on an unread
-	// channel, and those pre-handoff keystrokes are exactly the stale
-	// input that must never be replayed into the resumed UI.
-	closeUI := func() bool {
-		readTTY.Close()
-		ok := false
-		deadline := time.After(2 * time.Second)
-		for wait := true; wait; {
-			select {
-			case <-decDone:
-				ok, wait = true, false
-			case <-evs:
-			case <-deadline:
-				wait = false
+	// This used to be sixty lines here: an openUI/closeUI pair, a second
+	// read-only /dev/tty handle, and a private copy of the event decoder,
+	// all to work around a Screen teardown that could not stop its own
+	// reader (docs/specs/2026-08-10-tty-read-lifecycle.md). The framework
+	// fixed the lifecycle, so the workaround is gone. The tripwire stays.
+	launch = func(d demo, record bool) {
+		var msg string
+		err := app.Suspend(func() error {
+			if record {
+				msg = recordDemo(root, gifTool, gifErr == nil, recorder, d)
+				return nil
 			}
-		}
-		screen.Restore()
-		screen = nil
-		return ok
-	}
-
-	if err := openUI(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer func() {
-		if readTTY != nil {
-			readTTY.Close()
-		}
-		if screen != nil {
-			screen.Restore()
-		}
-	}()
-
-	poll := time.NewTicker(2 * time.Second)
-	defer poll.Stop()
-	var lastMod time.Time
-
-	for running {
-		if pend != nil {
-			p := *pend
-			pend = nil
-			clean := closeUI()
-
-			var msg string
-			if p.record {
-				msg = record(root, gifTool, gifErr == nil, recorder, p.name)
+			compiling(d.name)
+			dir, pkg := d.runIn(root)
+			if err := run(dir, "go", "run", pkg); err != nil {
+				msg = fmt.Sprintf("%s exited: %v", d.name, err)
 			} else {
-				compiling(p.name)
-				if err := run(root, "go", "run", "./cmd/"+p.name); err != nil {
-					msg = fmt.Sprintf("%s exited: %v", p.name, err)
-				} else {
-					msg = fmt.Sprintf("%s exited — welcome back", p.name)
-				}
+				msg = fmt.Sprintf("%s exited — welcome back", d.name)
 			}
-			if !clean {
-				msg += "  [warning: input decoder outlived the handoff]"
-			}
-			if err := openUI(); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-			status.Set(msg)
-			rev.Set(rev.Get() + 1) // a recording may have appeared
-			continue
+			return nil
+		})
+		if err != nil {
+			msg += "  [" + err.Error() + "]"
 		}
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
+		if app.DecoderLeaked() {
+			msg += "  [warning: input decoder outlived the handoff]"
 		}
-		select {
-		case <-poll.C:
-			if st, err := os.Stat(filepath.Join(root, "cmd")); err == nil && st.ModTime() != lastMod {
-				lastMod = st.ModTime()
-				rev.Set(rev.Get() + 1) // directory changed → rebind
-			}
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
+		status.Set(msg)
+		rev.Set(rev.Get() + 1) // a recording may have appeared
 	}
-}
 
-// readEvents is this program's copy of term.DecodeEvents, reading from
-// a tty handle the browser opens itself. The duplication buys one thing
-// the framework version cannot currently give a launcher: a reader that
-// can be stopped.
-//
-// term.Screen.Raw and Screen.Size have to hand an integer fd to
-// golang.org/x/term, which means calling os.File.Fd — and Fd puts the
-// file back into blocking mode and drops it from the runtime poller.
-// A Read pending on such a file is an uninterruptible syscall, so
-// Screen.Restore's Close does NOT unblock a decoder sitting on the
-// Screen's tty. That goroutine survives the handoff still parked on the
-// terminal, and every launch adds another one competing with the child
-// (and with the next decoder) for keystrokes.
-//
-// A handle that is only ever read from never has Fd called on it, stays
-// registered with the poller, and unblocks its reader on Close — which
-// is what makes closeUI's wait terminate. The escape-timeout policy is
-// term.EscTimeout so the two decoders cannot drift apart.
-func readEvents(tty *os.File, out chan<- input.Event) {
-	chunks := make(chan []byte, 8)
-	go func() {
-		defer close(chunks)
-		for {
-			buf := make([]byte, 128)
-			n, err := tty.Read(buf)
-			if n > 0 {
-				chunks <- buf[:n]
-			}
-			if err != nil {
-				return
-			}
+	// The directory is a data source like any other, polled onto the UI
+	// goroutine: a new recording or a new demo shows up without a key
+	// being pressed.
+	var lastMod time.Time
+	app.Every(2*time.Second, func() {
+		if st, err := os.Stat(filepath.Join(root, "cmd")); err == nil && st.ModTime() != lastMod {
+			lastMod = st.ModTime()
+			rev.Set(rev.Get() + 1)
 		}
-	}()
+	})
 
-	var pend []byte
-	drain := func(idle bool) {
-		for len(pend) > 0 {
-			ev, n, ok := input.Decode(pend, idle)
-			if n == 0 && !ok {
-				return // incomplete: wait for more bytes
-			}
-			pend = pend[n:]
-			if ok {
-				out <- ev
-			}
-		}
-	}
-	timer := time.NewTimer(term.EscTimeout)
-	defer timer.Stop()
-	for {
-		drain(false)
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		if len(pend) > 0 {
-			timer.Reset(term.EscTimeout)
-		}
-		select {
-		case c, ok := <-chunks:
-			if !ok {
-				drain(true)
-				return
-			}
-			pend = append(pend, c...)
-		case <-timer.C:
-			drain(true)
-		}
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }
 
@@ -457,16 +355,11 @@ func compiling(name string) {
 	fmt.Printf("── it owns this terminal once it starts — quit it to come back ──\n\n")
 }
 
-// run executes a child that owns the terminal. SIGINT is shielded for
-// the duration: the tty driver signals the whole foreground process
-// group, so a ctrl+c meant for the demo would otherwise kill the
-// browser along with it. The child still receives its own SIGINT — this
-// only stops ours from being fatal.
+// run executes a child that owns the terminal. Shielding the interrupt
+// is no longer this function's job: App.Suspend does it for the whole
+// hand-off, which is where it belongs — the browser is not the only
+// program that will ever launch a child onto its terminal.
 func run(dir, name string, args ...string) error {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
-	defer signal.Stop(sig)
-
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -477,27 +370,28 @@ func run(dir, name string, args ...string) error {
 // so what gets captured is the real session: asciinema owns the
 // terminal, the user drives the demo, and quitting the demo ends the
 // recording. agg then renders a GIF if it is installed.
-func record(root, gifTool string, haveGif bool, recorder, name string) string {
+func recordDemo(root, gifTool string, haveGif bool, recorder string, d demo) string {
 	dir := filepath.Join(root, recDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "cannot create " + recDir + ": " + err.Error()
 	}
-	cast := filepath.Join(dir, name+".cast")
-	fmt.Printf("\n── recording %s → %s/%s.cast — quit the demo to stop the recording ──\n", name, recDir, name)
-	compiling(name)
-	if err := run(root, recorder, "rec", "--overwrite", "-c", "go run ./cmd/"+name, cast); err != nil {
-		return fmt.Sprintf("recording %s failed: %v", name, err)
+	cast := filepath.Join(dir, d.rec+".cast")
+	fmt.Printf("\n── recording %s → %s/%s.cast — quit it to stop the recording ──\n", d.name, recDir, d.rec)
+	compiling(d.name)
+	runDir, pkg := d.runIn(root)
+	if err := run(runDir, recorder, "rec", "--overwrite", "-c", "go run "+pkg, cast); err != nil {
+		return fmt.Sprintf("recording %s failed: %v", d.name, err)
 	}
-	msg := fmt.Sprintf("recorded → %s/%s.cast", recDir, name)
+	msg := fmt.Sprintf("recorded → %s/%s.cast", recDir, d.rec)
 	if !haveGif {
 		return msg + "  (agg not installed — no GIF)"
 	}
-	gif := filepath.Join(dir, name+".gif")
-	fmt.Printf("\n── rendering %s/%s.gif ──\n\n", recDir, name)
+	gif := filepath.Join(dir, d.rec+".gif")
+	fmt.Printf("\n── rendering %s/%s.gif ──\n\n", recDir, d.rec)
 	if err := run(root, gifTool, "--theme", "dracula", "--font-size", "14", cast, gif); err != nil {
 		return msg + fmt.Sprintf("  (agg failed: %v)", err)
 	}
-	return msg + fmt.Sprintf(" + %s/%s.gif", recDir, name)
+	return msg + fmt.Sprintf(" + %s/%s.gif", recDir, d.rec)
 }
 
 func clampIdx(i, n int) int { return max(0, min(i, n-1)) }
@@ -529,9 +423,11 @@ func (w *demoList) HandleKey(ev input.KeyEvent) bool {
 func (w *demoList) HandleMouse(ev input.MouseEvent) bool {
 	switch ev.Kind {
 	case input.MouseClick:
-		row := ev.Y - w.Bounds().Y
-		if row >= 0 && row < len(w.demos.Get()) {
-			w.sel.Set(row)
+		// Painted rows include group headers, so a click maps through the
+		// same row list the paint uses. Clicking a header selects nothing.
+		rows := rowsFor(w.demos.Get())
+		if y := ev.Y - w.Bounds().Y; y >= 0 && y < len(rows) && rows[y].demo >= 0 {
+			w.sel.Set(rows[y].demo)
 		}
 		return true
 	case input.WheelUp:
@@ -547,28 +443,35 @@ func (w *demoList) HandleMouse(ev input.MouseEvent) bool {
 func (w *demoList) Render(f *gooey.Frame) {
 	b := w.Bounds()
 	ds := w.demos.Get()
-	s := clampIdx(w.sel.Get(), len(ds))
-	for i, d := range ds {
-		if i >= b.H {
+	sel := clampIdx(w.sel.Get(), len(ds))
+	for y, r := range rowsFor(ds) {
+		if y >= b.H {
 			break
 		}
+		if r.demo < 0 {
+			f.Cells.SetString(b.X, b.Y+y, clip(r.header, b.W), dim)
+			continue
+		}
+		d := ds[r.demo]
 		st := render.Style{}
-		if i == s {
+		if r.demo == sel {
 			st.Reverse = true
 			for x := 0; x < b.W; x++ {
-				f.Cells.Set(b.X+x, b.Y+i, ' ', st)
+				f.Cells.Set(b.X+x, b.Y+y, ' ', st)
 			}
 		}
-		label := d.name
+		// Indented under its header, so the grouping reads as grouping
+		// rather than as two lists that happen to be adjacent.
+		label := "  " + d.name
 		if d.markup > 0 {
-			label = fmt.Sprintf("%s  ⟨%d .gooey⟩", d.name, d.markup)
+			label = fmt.Sprintf("  %s  ⟨%d .gooey⟩", d.name, d.markup)
 		}
 		if d.gif {
 			label += "  ●"
 		} else if d.cast {
 			label += "  ○"
 		}
-		f.Cells.SetString(b.X, b.Y+i, clip(label, b.W), st)
+		f.Cells.SetString(b.X, b.Y+y, clip(label, b.W), st)
 	}
 }
 
@@ -589,11 +492,15 @@ func (w *demoInfo) Render(f *gooey.Frame) {
 		return
 	}
 	d := ds[clampIdx(w.sel.Get(), len(ds))]
-	f.Cells.SetString(b.X, b.Y, clip("go run ./cmd/"+d.name, b.W), accent)
+	cmdline := "go run ./" + d.dir
+	if d.ownDir {
+		cmdline = "cd " + d.dir + " && go run ."
+	}
+	f.Cells.SetString(b.X, b.Y, clip(cmdline, b.W), accent)
 	if d.cast {
-		art := recDir + "/" + d.name + ".cast"
+		art := recDir + "/" + d.rec + ".cast"
 		if d.gif {
-			art += "  +  " + recDir + "/" + d.name + ".gif"
+			art += "  +  " + recDir + "/" + d.rec + ".gif"
 		}
 		f.Cells.SetString(b.X, b.Y+1, clip("recorded: "+art, b.W), dim)
 	}

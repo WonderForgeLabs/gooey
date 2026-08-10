@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -44,6 +45,12 @@ func (c Caps) Best() string {
 type Screen struct {
 	tty      *os.File
 	oldState *term.State
+
+	// Decoder ownership. A Screen that started a decoder must be able to
+	// prove it died before teardown returns — see Events and Restore.
+	evs       chan input.Event
+	decDone   chan struct{}
+	decLeaked bool
 }
 
 func Open() (*Screen, error) {
@@ -51,26 +58,69 @@ func Open() (*Screen, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Screen{tty: tty}, nil
+	return FromFile(tty), nil
 }
+
+// FromFile wraps an already-open terminal file. It is the seam for hosts
+// that obtained their tty some other way and for tests, which drive a
+// Screen over a pty slave instead of /dev/tty.
+func FromFile(f *os.File) *Screen { return &Screen{tty: f} }
 
 func (s *Screen) File() *os.File { return s.tty }
 
+// control runs fn with the tty's file descriptor WITHOUT detaching the
+// file from the runtime poller.
+//
+// This is the whole fix for the tty read lifecycle. os.File.Fd() puts the
+// file back into blocking mode and unregisters it from the netpoller; a
+// Read pending on such a file becomes an uninterruptible syscall that
+// Close cannot cancel, so every decoder goroutine outlived its Screen and
+// sat on the terminal forever (docs/specs/2026-08-10-tty-read-lifecycle.md).
+// SyscallConn().Control hands the same fd to the ioctl without any of
+// that, which is what makes Close a reliable cancellation and lets
+// Restore JOIN its reader instead of abandoning it.
+//
+// It also restores read deadlines: SetReadDeadline fails with
+// ErrNoDeadline on a detached file, so Detect's timeout silently
+// degraded to a single blocking read the moment anything called Fd().
+func (s *Screen) control(fn func(fd int) error) error {
+	c, err := s.tty.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var inner error
+	if err := c.Control(func(fd uintptr) { inner = fn(int(fd)) }); err != nil {
+		return err
+	}
+	return inner
+}
+
 func (s *Screen) Size() (cols, rows int) {
-	cols, rows, err := term.GetSize(int(s.tty.Fd()))
-	if err != nil || cols <= 0 || rows <= 0 {
+	var c, r int
+	err := s.control(func(fd int) error {
+		var e error
+		c, r, e = term.GetSize(fd)
+		return e
+	})
+	if err != nil || c <= 0 || r <= 0 {
 		return 80, 24
 	}
-	return cols, rows
+	return c, r
 }
 
 // Raw enters raw mode + alternate screen with hidden cursor.
 func (s *Screen) Raw() error {
-	st, err := term.MakeRaw(int(s.tty.Fd()))
+	err := s.control(func(fd int) error {
+		st, e := term.MakeRaw(fd)
+		if e != nil {
+			return e
+		}
+		s.oldState = st
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	s.oldState = st
 	fmt.Fprint(s.tty, "\x1b[?1049h\x1b[?25l") // alt screen, hide cursor
 	return nil
 }
@@ -92,17 +142,91 @@ func (s *Screen) DisableMouse() {
 	fmt.Fprint(s.tty, "\x1b[?1006l\x1b[?1003l\x1b[?1000l")
 }
 
-// Restore leaves the alternate screen and restores the tty state. It
-// disables mouse reporting unconditionally — leaving a terminal in
+// Events starts the input decoder on this Screen's tty and returns the
+// channel it delivers on. The Screen owns the goroutine from here: it is
+// stopped and JOINED by Restore.
+//
+// Calling it twice returns the same channel — a Screen has one decoder,
+// because two readers on one tty split the keystrokes between them.
+func (s *Screen) Events(buf int) <-chan input.Event {
+	if s.evs != nil {
+		return s.evs
+	}
+	s.evs = make(chan input.Event, buf)
+	s.decDone = make(chan struct{})
+	// Passed in rather than captured: Restore nils these out, and a
+	// goroutine reading them from the struct would be reading whichever
+	// session happened to be current.
+	go func(out chan<- input.Event, done chan struct{}) {
+		defer close(done)
+		DecodeEvents(s, out)
+	}(s.evs, s.decDone)
+	return s.evs
+}
+
+// DecoderTimeout bounds how long teardown waits for the decoder to die.
+// Reaching it means the invariant below was violated and something is
+// still on the terminal; the caller is expected to say so out loud.
+const DecoderTimeout = 2 * time.Second
+
+// joinDecoder closes nothing — the caller has already closed the tty,
+// which is what unblocks the read — and waits for the decoder goroutine
+// to actually exit.
+//
+// It drains events while waiting, for two reasons: the decoder flushes
+// whatever it had buffered on the way out and would block forever
+// sending into an unread channel, and those pre-teardown keystrokes are
+// exactly the stale input that must never be replayed into a resumed UI.
+func (s *Screen) joinDecoder() bool {
+	if s.decDone == nil {
+		return true
+	}
+	deadline := time.After(DecoderTimeout)
+	for {
+		select {
+		case <-s.decDone:
+			s.evs, s.decDone = nil, nil
+			return true
+		case <-s.evs:
+		case <-deadline:
+			s.evs, s.decDone = nil, nil
+			return false
+		}
+	}
+}
+
+// Restore leaves the alternate screen, restores the tty state, closes the
+// tty and waits for the decoder to die.
+//
+// It disables mouse reporting unconditionally — leaving a terminal in
 // tracking mode after exit is the one unrecoverable mistake here.
+//
+// The ORDER is the contract. Escapes and termios state have to be put
+// back while the fd is still open; Close comes next and is what cancels
+// the decoder's pending Read; the join is last. That establishes the
+// invariant this package now guarantees:
+//
+//	no Screen teardown leaves a goroutine reading the terminal.
+//
+// It is what makes handing the terminal to a child process (and getting
+// it back) safe: nothing of ours is still on the tty when the child
+// starts. DecoderLeaked reports the failure case for callers that want a
+// tripwire.
 func (s *Screen) Restore() {
 	s.DisableMouse()
 	fmt.Fprint(s.tty, "\x1b[?25h\x1b[?1049l\x1b[0m")
 	if s.oldState != nil {
-		term.Restore(int(s.tty.Fd()), s.oldState)
+		s.control(func(fd int) error { return term.Restore(fd, s.oldState) })
+		s.oldState = nil
 	}
 	s.tty.Close()
+	s.decLeaked = !s.joinDecoder()
 }
+
+// DecoderLeaked reports whether the last Restore timed out waiting for
+// the input decoder to exit. False after a clean teardown, and after a
+// teardown of a Screen that never started one.
+func (s *Screen) DecoderLeaked() bool { return s.decLeaked }
 
 // Detect probes the terminal for graphics capabilities. It must run on a
 // real tty. Strategy: send a Kitty graphics query, a cell-size query
@@ -118,11 +242,16 @@ func (s *Screen) Detect() (Caps, error) {
 		caps.ITerm2 = true
 	}
 
-	st, err := term.MakeRaw(int(s.tty.Fd()))
+	var st *term.State
+	err := s.control(func(fd int) error {
+		var e error
+		st, e = term.MakeRaw(fd)
+		return e
+	})
 	if err != nil {
 		return caps, err
 	}
-	defer term.Restore(int(s.tty.Fd()), st)
+	defer s.control(func(fd int) error { return term.Restore(fd, st) })
 
 	// Kitty query (tiny 1×1 RGB transmit, q=1 → responds if supported),
 	// then cell size, then DA1 terminator.
@@ -178,7 +307,11 @@ func (s *Screen) Detect() (Caps, error) {
 //
 // Deadlines are not guaranteed on every character device, so an
 // ErrNoDeadline falls back to a single bounded read — degraded (it may
-// miss a slow reply) but still incapable of stealing later input.
+// miss a slow reply) but still incapable of stealing later input. That
+// fallback used to be the NORMAL path rather than the exception: the
+// ioctls went through os.File.Fd(), which unregisters the file from the
+// poller, and SetReadDeadline on a detached file always fails. Routing
+// them through control() keeps the deadline working.
 func (s *Screen) readUntilDA1(timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	if err := s.tty.SetReadDeadline(deadline); err != nil {

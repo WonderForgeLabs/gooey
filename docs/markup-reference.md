@@ -317,7 +317,7 @@ Event attributes (`Button Click`, `KeyBinding Command`) resolve in one of three 
   ```go
   Values: map[string]any{
       "Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
-      "Quit":      gooey.Command(func() { running = false }),
+      "Quit":      gooey.Command(func() { app.Quit() }),
   }
   ```
 

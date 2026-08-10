@@ -1,0 +1,29 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:wf="gooey.dev/handlers/temporal/workflow">
+  <Border Title=" provision request — 4 of 4 · done " Style="panel">
+    <Grid Rows="Auto,Auto,1,Auto,Auto,Auto,1,Auto,1,3,Auto,10,*,Auto">
+      <Text Grid.Row="0" Style="ok">provisioned — and the workflow served this screen too</Text>
+      <Text Grid.Row="1" Style="dim">{{.Served}}</Text>
+
+      <Text Grid.Row="3" Style="accent">{{.Summary}}</Text>
+      <Text Grid.Row="4">  ticket:    {{.Ticket}}</Text>
+      <Text Grid.Row="5">  estimate:  {{.Estimate}}</Text>
+
+      <HStack Grid.Row="7" Gap="1">
+        <Button Content="n new request" Click="{{wf:Signal `restart` | into .Echo}}"/>
+        <Button Content="f finish workflow" Style="warn" Click="{{wf:Signal `finish` | into .Echo}}"/>
+      </HStack>
+
+      <Border Grid.Row="9" Title=" workflow says " Style="panel">
+        <Text Margin="1,0">{{.Notice}}</Text>
+      </Border>
+      <Text Grid.Row="10" Style="dim">terminal sent: {{.Echo}}</Text>
+      <Border Grid.Row="11" Title=" activity log " Style="panel">
+        <Text Margin="1,0" Style="dim">{{.Log}}</Text>
+      </Border>
+      <Text Grid.Row="13" Style="dim">n rewinds the wizard to step 1 · f completes the workflow · ctrl+c quit</Text>
+    </Grid>
+    <KeyBinding Gesture="n" Command="{{wf:Signal `restart` | into .Echo}}"/>
+    <KeyBinding Gesture="f" Command="{{wf:Signal `finish` | into .Echo}}"/>
+  </Border>
+</Gooey>

@@ -1,0 +1,587 @@
+package gooey
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/term"
+)
+
+// App is the framework-owned run loop: the terminal's lifetime, the
+// input decoder, the dispatcher, frame scheduling, hot-reload swaps and
+// the console signal story, in one object.
+//
+// It exists because every app had been hand-writing the same sixty lines
+// — open the screen, raw mode, mouse, dispatcher, decoder goroutine,
+// select loop, deferred restore — and each copy had its own subtly
+// different set of bugs. The parts that were merely tedious (setup) and
+// the parts that were genuinely hard (signals, suspend, resize, dying
+// with the terminal intact) are the same parts, so they move together.
+//
+// The loop is deliberately not extensible by adding select cases: an app
+// cannot hand the framework another channel to wait on, because a
+// dynamic select needs reflection. It does not need to. Everything
+// asynchronous — timers, signals, watchers, network handlers — reaches
+// the UI through the Dispatcher, which is the confinement rule anyway
+// (see dispatch.go). Every hook here runs on the UI goroutine, where
+// touching properties is legal.
+//
+// Typical shape:
+//
+//	var app *gooey.App
+//	ctx := &markup.Context{Values: map[string]any{
+//	    "Quit": gooey.Command(func() { app.Quit() }),
+//	}}
+//	app = gooey.NewApp(markup.Page(os.DirFS("."), "page.gooey", ctx))
+//	if err := app.Run(context.Background()); err != nil {
+//	    gooey.Exit(err)
+//	}
+type App struct {
+	content Content
+	opt     options
+
+	screen *term.Screen
+	comp   *Composer
+	disp   *Dispatcher
+	events <-chan input.Event
+
+	cols, rows int
+	needsFrame bool
+	frames     int
+	painted    int
+
+	before   []func()
+	onEvent  []func(input.Event)
+	onSwap   []func(Widget)
+	stops    []func()
+	quit     chan struct{}
+	quitOnce sync.Once
+
+	sig       signalHandle
+	exitSig   os.Signal
+	leaked    bool
+	suspended bool
+}
+
+// Content is where an App's widget tree comes from, and the seam hot
+// reload lives behind. Build is called on the UI goroutine — at startup
+// and again for every reload — so a Build may touch the property graph
+// freely, which is exactly what markup loading does when it resolves
+// bindings to live handles.
+//
+// Watch reports only THAT the source changed, never the new tree: the
+// rebuild has to happen on the UI goroutine, and a watcher runs on its
+// own. (This is a real fix, not a formality — markup.Watch used to build
+// the replacement tree on the polling goroutine, resolving bindings
+// against properties nobody else was allowed to touch from there.)
+type Content interface {
+	Build() (Widget, error)
+	Watch(changed func()) (stop func())
+}
+
+// Tree is the Content for an app whose widget tree is built in Go and
+// never replaced. Nothing about the run loop changes; there is simply
+// nothing to reload.
+func Tree(w Widget) Content { return staticTree{w} }
+
+type staticTree struct{ w Widget }
+
+func (s staticTree) Build() (Widget, error) { return s.w, nil }
+func (s staticTree) Watch(func()) func()    { return func() {} }
+
+type options struct {
+	mouse    bool
+	probe    bool
+	caps     *term.Caps
+	quitKeys []input.KeyEvent
+	shutdown func(context.Context) error
+	shutTO   time.Duration
+	onError  func(error)
+	eventBuf int
+	open     func() (*term.Screen, error)
+}
+
+// Option configures an App. Options are typed funcs over an unexported
+// struct: explicit, no reflection, no string keys.
+type Option func(*options)
+
+// WithoutMouse leaves SGR mouse reporting off. Apps that decode input
+// with this framework want it on (the default) — hover and click are
+// ordinary events — but a program that shells out constantly, or one
+// whose terminal mangles motion reports, can decline.
+func WithoutMouse() Option { return func(o *options) { o.mouse = false } }
+
+// WithCapabilityProbe runs term.Screen.Detect at startup: a real query
+// to the terminal for graphics protocol support and cell pixel size.
+//
+// It is opt-in because it is a round trip that only graphics apps need,
+// and under recording ptys and other half-terminals the answer is a
+// timeout. Without it the app still gets a color depth, read from the
+// environment, which is what every cell-plane app actually uses.
+func WithCapabilityProbe() Option { return func(o *options) { o.probe = true } }
+
+// WithCaps supplies capabilities outright, skipping both the probe and
+// the environment ladder. For hosts that already know.
+func WithCaps(c term.Caps) Option { return func(o *options) { o.caps = &c } }
+
+// WithQuitKeys replaces the default quit key (ctrl+c) with the given
+// set. Pass none to disable the framework quit key entirely and own the
+// whole key surface.
+//
+// Quit keys are checked only AFTER the tree declines the event, like
+// directional focus navigation: a widget that wants ctrl+c gets it.
+func WithQuitKeys(keys ...input.KeyEvent) Option {
+	return func(o *options) { o.quitKeys = keys }
+}
+
+// WithShutdown registers a graceful-shutdown hook run when SIGINT or
+// SIGTERM arrives, bounded by timeout. It runs on the UI goroutine with
+// the terminal still up, so it may touch properties; it must not block
+// forever, and past the timeout the app exits regardless.
+func WithShutdown(fn func(context.Context) error, timeout time.Duration) Option {
+	return func(o *options) { o.shutdown, o.shutTO = fn, timeout }
+}
+
+// WithErrorHandler receives non-fatal errors — a hot reload that failed
+// to parse, a terminal that could not be re-acquired after suspend.
+// Without one they are dropped, which is what every demo did by hand.
+func WithErrorHandler(fn func(error)) Option { return func(o *options) { o.onError = fn } }
+
+// WithEventBuffer sizes the decoded input channel.
+func WithEventBuffer(n int) Option { return func(o *options) { o.eventBuf = n } }
+
+// WithTerminal replaces term.Open as the way this app acquires a
+// terminal. It is called once at startup and again after every Suspend
+// and every ctrl+z, so it must hand back a FRESH Screen each time —
+// teardown closes the one it was given.
+//
+// The framework's own tests drive a real app over a pty this way, which
+// is the point: the run loop, the signal dance and the suspend cycle are
+// testable only if the terminal is a parameter rather than /dev/tty.
+func WithTerminal(open func() (*term.Screen, error)) Option {
+	return func(o *options) { o.open = open }
+}
+
+// NewApp creates an app that runs content. It touches no terminal and
+// starts no goroutine until Run.
+func NewApp(content Content, opts ...Option) *App {
+	a := &App{
+		content: content,
+		opt: options{
+			mouse:    true,
+			quitKeys: []input.KeyEvent{{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}},
+			eventBuf: 64,
+		},
+		disp: NewDispatcher(),
+		quit: make(chan struct{}),
+	}
+	for _, o := range opts {
+		o(&a.opt)
+	}
+	return a
+}
+
+// Dispatcher is the marshaling seam for this app's background work.
+func (a *App) Dispatcher() *Dispatcher { return a.disp }
+
+// Post queues fn to run on the UI goroutine. Safe from any goroutine —
+// the one legal way for another goroutine to reach the property graph.
+func (a *App) Post(fn func()) { a.disp.Post(fn) }
+
+// Composer is the live composition. It is replaced by every hot reload,
+// so read it when you need it rather than holding it.
+func (a *App) Composer() *Composer { return a.comp }
+
+// Screen is the terminal this app currently holds. Nil while suspended.
+func (a *App) Screen() *term.Screen { return a.screen }
+
+// Size reports the terminal size the composition is laid out at.
+func (a *App) Size() (cols, rows int) { return a.cols, a.rows }
+
+// Frames counts frames flushed since Run started.
+func (a *App) Frames() int { return a.frames }
+
+// PaintedLastFrame is the damage count of the most recent frame: how
+// many widgets actually repainted, not how many exist.
+func (a *App) PaintedLastFrame() int { return a.painted }
+
+// Invalidate asks for a frame without any property having changed. Rare
+// — the property graph normally schedules frames by itself — but a
+// resize or a resumed terminal needs one.
+func (a *App) Invalidate() { a.needsFrame = true }
+
+// BeforeFrame registers a hook run immediately before each frame is
+// composed, in registration order.
+//
+// This is where "stats about the previous frame" belong. Setting a
+// property from here folds its repaint into the frame about to happen
+// instead of dirtying the tree again afterwards, which would schedule a
+// second frame and never settle.
+func (a *App) BeforeFrame(fn func()) { a.before = append(a.before, fn) }
+
+// OnEvent registers an OBSERVER of the input stream, run for every
+// decoded event before it is routed. It cannot consume anything — the
+// return value would be a second, invisible input path competing with
+// the tree, and handling belongs in widgets and KeyBindings.
+//
+// It is for the things that are about the stream rather than about any
+// widget: counting events, logging them, driving an idle timer.
+func (a *App) OnEvent(fn func(input.Event)) { a.onEvent = append(a.onEvent, fn) }
+
+// OnSwap registers a hook run after the tree is attached — once at
+// startup and again after every hot reload — with the new root. Anything
+// resolved out of the tree by name has to be re-resolved here: a reload
+// builds new widgets, and the old handles point at a composition that is
+// no longer on screen.
+func (a *App) OnSwap(fn func(Widget)) { a.onSwap = append(a.onSwap, fn) }
+
+// Every runs fn on the UI goroutine on an interval until Run returns.
+// The ticker itself lives on its own goroutine and only ever Posts, so
+// fn is ordinary UI code.
+//
+// For a tick that belongs to the UI, declare a <Timer> in the tree
+// instead — its lifetime is then the composition's, and a hot reload
+// replaces it. Every is for the app's own clock: a data generator, a
+// poll, anything that must outlive the tree on screen.
+func (a *App) Every(d time.Duration, fn func()) (stop func()) {
+	if d <= 0 || fn == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(d)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				a.disp.Post(fn)
+			}
+		}
+	}()
+	var once sync.Once
+	s := func() { once.Do(func() { close(done) }) }
+	a.stops = append(a.stops, s)
+	return s
+}
+
+// Quit ends the run loop. Safe from any goroutine and idempotent, so a
+// Command, a signal handler and a shutdown hook may all call it.
+func (a *App) Quit() { a.quitOnce.Do(func() { close(a.quit) }) }
+
+func (a *App) stopped() bool {
+	select {
+	case <-a.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) fail(err error) {
+	if err != nil && a.opt.onError != nil {
+		a.opt.onError(err)
+	}
+}
+
+// Run owns the terminal for the duration and returns when the app quits,
+// ctx is cancelled, or a signal ends it. An App runs once: Quit is
+// permanent, so a second Run would return immediately.
+//
+// It returns *SignalError when SIGINT or SIGTERM ended the run — the
+// caller decides the exit code from it (gooey.Exit implements the usual
+// 128+n convention). Quit and ctx cancellation return nil.
+//
+// A panic anywhere under Run restores the terminal FIRST and then
+// re-panics with the original value, so the stack trace prints onto a
+// cooked screen instead of scrolling sideways through a raw-mode alt
+// buffer that nobody can scroll back through.
+func (a *App) Run(ctx context.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			a.teardown()
+			panic(r)
+		}
+	}()
+
+	root, err := a.content.Build()
+	if err != nil {
+		return err
+	}
+	if err := a.acquire(); err != nil {
+		return err
+	}
+	defer a.teardown()
+
+	a.attach(root)
+	a.stops = append(a.stops, a.content.Watch(func() { a.disp.Post(a.reload) }))
+	a.startSignals()
+
+	for !a.stopped() {
+		select {
+		case <-ctx.Done():
+			return a.exitErr()
+		default:
+		}
+		if a.needsFrame {
+			a.frame()
+		}
+		select {
+		case <-a.quit:
+		case <-ctx.Done():
+		case <-a.disp.Wake():
+			a.disp.Drain()
+		case ev := <-a.events:
+			a.handle(ev)
+		}
+	}
+	return a.exitErr()
+}
+
+// gracefulExit runs the app's shutdown hook, bounded, and ends the loop.
+// The terminal is still up while the hook runs, so it may set properties
+// and even paint a farewell; what it may not do is outlast its timeout,
+// because whoever sent the signal has already stated their intent.
+//
+// The signal is recorded so Run can report it: a program killed by a
+// signal should not exit 0, and applying the exit code is the caller's
+// job (see SignalError and Exit).
+func (a *App) gracefulExit(sig os.Signal) {
+	a.exitSig = sig
+	if fn := a.opt.shutdown; fn != nil {
+		ctx := context.Background()
+		if a.opt.shutTO > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, a.opt.shutTO)
+			defer cancel()
+		}
+		done := make(chan error, 1)
+		go func() { done <- fn(ctx) }()
+		select {
+		case err := <-done:
+			a.fail(err)
+		case <-ctx.Done():
+			a.fail(ctx.Err())
+		}
+	}
+	a.Quit()
+}
+
+func (a *App) exitErr() error {
+	if a.exitSig != nil {
+		return &SignalError{Signal: a.exitSig}
+	}
+	return nil
+}
+
+// frame is the whole scheduling contract, and the ordering in it is
+// load-bearing: hooks first (so what they set paints in THIS frame),
+// then compose, then flush, then consume the request. Clearing
+// needsFrame last is what makes an invalidation raised during the frame
+// schedule another one instead of being swallowed.
+func (a *App) frame() {
+	a.frames++
+	for _, fn := range a.before {
+		fn()
+	}
+	_, a.painted = a.comp.Frame()
+	if a.screen != nil {
+		a.fail(a.comp.Flush(a.screen.File()))
+	}
+	a.needsFrame = false
+}
+
+// handle routes one event. The tree gets first refusal; the app-level
+// quit key is checked only on what bubbles out, the same rule that makes
+// unconsumed arrows move focus. A widget that binds ctrl+c keeps it.
+func (a *App) handle(ev input.Event) {
+	for _, fn := range a.onEvent {
+		fn(ev)
+	}
+	if a.comp.Handle(ev) || !ev.IsKey() {
+		return
+	}
+	for _, k := range a.opt.quitKeys {
+		if ev.Key == k {
+			a.Quit()
+			return
+		}
+	}
+}
+
+// attach makes w the live composition: a new Composer over the same
+// terminal, sized as we are now, with this app's caps and scheduler
+// hook. The OUTGOING composer is closed first — a replaced tree's timers
+// must not keep ticking against a viewmodel nobody is showing.
+func (a *App) attach(w Widget) {
+	if a.comp != nil {
+		a.comp.Close()
+	}
+	a.comp = NewComposer(w, a.cols, a.rows)
+	a.comp.SetCaps(a.caps())
+	a.comp.OnInvalidate(func() { a.needsFrame = true })
+	a.comp.Start(a.disp)
+	a.needsFrame = true
+	for _, fn := range a.onSwap {
+		fn(w)
+	}
+}
+
+// reload rebuilds the tree from Content on the UI goroutine. A build
+// error leaves the running composition alone — a markup file is broken
+// for the second between two saves, and dropping the UI for it would
+// make hot reload unusable.
+func (a *App) reload() {
+	w, err := a.content.Build()
+	if err != nil {
+		a.fail(err)
+		return
+	}
+	a.attach(w)
+}
+
+func (a *App) caps() term.Caps {
+	if a.opt.caps != nil {
+		c := *a.opt.caps
+		c.Cols, c.Rows = a.cols, a.rows
+		return c
+	}
+	return term.Caps{Cols: a.cols, Rows: a.rows, Color: term.DetectColorDepth()}
+}
+
+// acquire takes the terminal: open, size, raw, mouse, decoder. It is the
+// half of the lifecycle that Suspend and SIGTSTP replay, so it lives in
+// one place and startup is just its first call.
+func (a *App) acquire() error {
+	open := a.opt.open
+	if open == nil {
+		open = term.Open
+	}
+	s, err := open()
+	if err != nil {
+		return fmt.Errorf("gooey: no terminal: %w", err)
+	}
+	cols, rows := s.Size()
+	if a.opt.probe && a.opt.caps == nil {
+		if c, err := s.Detect(); err == nil {
+			a.opt.caps = &c
+			cols, rows = c.Cols, c.Rows
+		}
+	}
+	if err := s.Raw(); err != nil {
+		s.Restore()
+		return err
+	}
+	if a.opt.mouse {
+		s.EnableMouse()
+	}
+	a.screen = s
+	a.events = s.Events(a.opt.eventBuf)
+	a.resized(cols, rows)
+	a.needsFrame = true
+	return nil
+}
+
+// release hands the terminal back: full restore, decoder joined. After
+// it returns, nothing of ours is reading the tty — that is the invariant
+// term.Screen.Restore now guarantees, and the reason a child process can
+// safely be given this terminal.
+func (a *App) release() {
+	if a.screen == nil {
+		return
+	}
+	a.screen.Restore()
+	if a.screen.DecoderLeaked() {
+		a.leaked = true
+	}
+	a.screen, a.events = nil, nil
+}
+
+// resized re-targets the composition at a new size.
+func (a *App) resized(cols, rows int) {
+	if cols == a.cols && rows == a.rows {
+		return
+	}
+	a.cols, a.rows = cols, rows
+	if a.comp != nil {
+		a.comp.Resize(cols, rows)
+		a.comp.SetCaps(a.caps())
+		a.needsFrame = true
+	}
+}
+
+func (a *App) teardown() {
+	a.stopSignals()
+	for _, stop := range a.stops {
+		stop()
+	}
+	a.stops = nil
+	if a.comp != nil {
+		a.comp.Close()
+	}
+	a.release()
+}
+
+// Suspend gives the terminal to fn and takes it back afterwards.
+//
+// This is the terminal hand-off, and it is only correct because teardown
+// joins the input decoder: a reader left parked on the tty would eat the
+// child process's keystrokes, and every suspend would add another one.
+// The composition survives untouched — Flush writes the whole buffer, so
+// re-entering a blank alternate screen repaints correctly from the
+// retained buffer with nothing dirty — and a size change while away is
+// picked up on the way back in.
+//
+// While fn runs, interrupts are SHIELDED: the tty driver signals the
+// whole foreground process group, so the ctrl+c a user aims at the child
+// arrives here too, and acting on it would kill the host along with the
+// thing it launched. The child gets its own SIGINT either way — this
+// only stops ours from being fatal.
+//
+// fn's error is returned as-is. An error re-acquiring the terminal takes
+// precedence, because at that point there is no UI left to report into.
+func (a *App) Suspend(fn func() error) error {
+	a.release()
+	a.suspended = true
+	err := fn()
+	a.suspended = false
+	if aerr := a.acquire(); aerr != nil {
+		return aerr
+	}
+	return err
+}
+
+// DecoderLeaked reports whether any terminal teardown in this app's life
+// timed out waiting for the input decoder to die. It should always be
+// false; it is the tripwire for the bug this lifecycle was built to
+// eliminate.
+func (a *App) DecoderLeaked() bool { return a.leaked }
+
+// SignalError reports that a signal ended the run.
+type SignalError struct{ Signal os.Signal }
+
+func (e *SignalError) Error() string { return "interrupted by " + e.Signal.String() }
+
+// ExitCode is the shell convention for death by signal: 128 plus the
+// signal number, so ctrl+c is 130 and SIGTERM is 143.
+func (e *SignalError) ExitCode() int { return 128 + signalNumber(e.Signal) }
+
+// Exit ends the process for an error returned by Run: it prints real
+// errors to stderr and exits 1, and exits quietly with 128+n for a
+// signal, which is what a shell expects from a program that was
+// interrupted rather than one that failed.
+func Exit(err error) {
+	if err == nil {
+		os.Exit(0)
+	}
+	if se, ok := err.(*SignalError); ok {
+		os.Exit(se.ExitCode())
+	}
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}

@@ -1,0 +1,31 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:wf="gooey.dev/handlers/temporal/workflow">
+  <Border Title=" provision request — 2 of 4 · review " Style="panel">
+    <Grid Rows="Auto,Auto,1,Auto,Auto,Auto,Auto,Auto,1,Auto,1,3,Auto,10,*,Auto">
+      <Text Grid.Row="0" Style="accent">the workflow replaced its own UI — same shell, different markup</Text>
+      <Text Grid.Row="1" Style="dim">{{.Served}}</Text>
+
+      <Text Grid.Row="3" Style="accent">review this request</Text>
+      <Text Grid.Row="4">  size:      {{.Tier}}</Text>
+      <Text Grid.Row="5">  region:    {{.Region}}</Text>
+      <Text Grid.Row="6">  estimate:  {{.Estimate}}</Text>
+      <Text Grid.Row="7">  lead time: {{.Lead}}</Text>
+
+      <HStack Grid.Row="9" Gap="1">
+        <Button Content="a approve" Style="ok" Click="{{wf:Signal `approve` | into .Echo}}"/>
+        <Button Content="r send back" Style="warn" Click="{{wf:Signal `reject` | into .Echo}}"/>
+      </HStack>
+
+      <Border Grid.Row="11" Title=" workflow says " Style="panel">
+        <Text Margin="1,0">{{.Notice}}</Text>
+      </Border>
+      <Text Grid.Row="12" Style="dim">terminal sent: {{.Echo}}</Text>
+      <Border Grid.Row="13" Title=" activity log " Style="panel">
+        <Text Margin="1,0" Style="dim">{{.Log}}</Text>
+      </Border>
+      <Text Grid.Row="15" Style="dim">tab move · enter press · the estimate came back from an activity · ctrl+c quit</Text>
+    </Grid>
+    <KeyBinding Gesture="a" Command="{{wf:Signal `approve` | into .Echo}}"/>
+    <KeyBinding Gesture="r" Command="{{wf:Signal `reject` | into .Echo}}"/>
+  </Border>
+</Gooey>

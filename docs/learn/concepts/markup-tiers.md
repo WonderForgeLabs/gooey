@@ -28,12 +28,12 @@ built-in element, then the `Includes` convention (`<Card/>` →
 
 `markup.Load` reads from any `fs.FS` and cannot tell them apart:
 
-- **Development** — `os.DirFS(".")` plus `markup.Watch`/`WatchAll`, which
-  poll ModTimes and rebuild in place. See
+- **Development** — `os.DirFS(".")` behind `markup.Page`, which polls
+  ModTimes and rebuilds in place. See
   [how-to: hot reload](../howto/howto-hot-reload.md).
 - **Release** — `embed.FS`, which reports constant zero ModTimes, so the
-  same `Watch` call is a natural no-op. The same code ships both ways.
-  See [how-to: embed markup for release](../howto/howto-embed-release.md).
+  same call is a natural no-op. The same code ships both ways. See
+  [how-to: embed markup for release](../howto/howto-embed-release.md).
 
 A compiled tier (`gooey gen`, producing compiled markup and typed
 surfaces) is designed but not implemented.

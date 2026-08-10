@@ -13,7 +13,7 @@ When you finish, you will have this:
 ![Two independent sensor panels above a total card](media/05-usercontrols.png)
 
 The finished code is in
-[`examples/05-usercontrols`](../../examples/05-usercontrols) — four
+[`docs/learn/examples/05-usercontrols`](examples/05-usercontrols) — four
 files: `main.go`, `page.gooey`, `statpanel.gooey`, `card.gooey`.
 
 ## Step 1: Write a markup-only control
@@ -218,20 +218,16 @@ wins, then a built-in element, then the `Includes` convention, then an
 
 ## Step 5: Hot-reload the whole composition
 
-One page rebuild re-instantiates every control, so watch the whole set
-and reload the page on any change:
+One page rebuild re-instantiates every control, so name the other two
+files and an edit to any of them reloads the whole composition:
 
 ```go
-files := []string{"page.gooey", "statpanel.gooey", "card.gooey"}
-
-swaps := make(chan gooey.Widget, 1)
-stopWatch := markup.WatchAll(fsys, files, func() {
-	if w, err := markup.Load(fsys, "page.gooey", ctx); err == nil {
-		swaps <- w
-	}
-})
-defer stopWatch()
+app = gooey.NewApp(markup.Page(fsys, "page.gooey", ctx,
+	"statpanel.gooey", "card.gooey"))
 ```
+
+They have to be named rather than discovered: an `<Include>` is resolved
+during a build, and the build being watched for has not happened yet.
 
 Edit `statpanel.gooey` while the app runs and **both** panels update,
 with their counts intact — the counts live in the page's properties, and
@@ -262,8 +258,8 @@ Reach for a UserControl the moment it needs behavior of its own.
   generic `attr[T]` helper is the idiom.
 - `Styles`/`Widgets`/`Handlers`/`Includes` inherit when left nil; `Named`
   is per instance.
-- `markup.WatchAll` hot-reloads a whole composition through one page
-  rebuild.
+- Naming a page's control files in `markup.Page` hot-reloads the whole
+  composition through one page rebuild.
 
 ## Current limitations
 

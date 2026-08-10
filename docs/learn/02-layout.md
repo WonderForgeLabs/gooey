@@ -12,7 +12,7 @@ When you finish, you will have this:
 ![A three-column grid: a fixed 24-cell column, a 1-star column, and a 2-star column twice its width](media/02-layout.png)
 
 The finished code is in
-[`examples/02-layout`](../../examples/02-layout). Everything in this
+[`docs/learn/examples/02-layout`](examples/02-layout). Everything in this
 tutorial happens in `app.gooey`; the Go file is tutorial 1's, unchanged.
 
 ## Step 1: Declare the grid

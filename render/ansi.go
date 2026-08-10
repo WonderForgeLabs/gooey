@@ -7,15 +7,45 @@ import (
 	"strings"
 )
 
+// Synchronized output (DEC mode 2026): everything between BeginSync and
+// EndSync is presented by the terminal as ONE atomic update instead of
+// being drawn as it arrives.
+//
+// A frame here is a full-buffer repaint of thousands of cells, so a
+// terminal that refreshes mid-write shows a half-old, half-new screen —
+// the tearing seen during hot reload, where the top of the tree was the
+// new tree and the bottom was still the old one. Bracketing the write
+// makes that unobservable.
+//
+// It is emitted UNCONDITIONALLY and needs no capability check: an
+// unrecognized DECSET/DECRST is defined to be ignored, so on a terminal
+// without mode 2026 these are eight bytes that do nothing.
+const (
+	BeginSync = "\x1b[?2026h"
+	EndSync   = "\x1b[?2026l"
+)
+
 // Flush writes the whole buffer to w as ANSI escape sequences, encoding
 // color at the given depth — the buffer itself is always 24-bit, so
-// downsampling happens here and nowhere else.
+// downsampling happens here and nowhere else. The write is bracketed in
+// synchronized output, so the frame lands atomically.
 //
 // POC note: full repaint every frame. The retained tree makes damage-rect
 // diffing (compare against previous buffer, emit only changed spans) a
 // drop-in replacement here — deliberately out of scope for the POC.
 func Flush(w io.Writer, b *Buffer, depth ColorDepth) error {
+	return FlushCells(w, b, depth, true)
+}
+
+// FlushCells is Flush with the synchronization bracket under the
+// caller's control. A host that emits more than the cell plane in one
+// frame — graphics placements after the cells, in Frame.Flush — brackets
+// the whole sequence itself rather than nesting a second one here.
+func FlushCells(w io.Writer, b *Buffer, depth ColorDepth, sync bool) error {
 	var sb strings.Builder
+	if sync {
+		sb.WriteString(BeginSync)
+	}
 	sb.WriteString("\x1b[H") // home
 	var cur Style
 	styleSet := false
@@ -34,6 +64,9 @@ func Flush(w io.Writer, b *Buffer, depth ColorDepth) error {
 		}
 	}
 	sb.WriteString("\x1b[0m")
+	if sync {
+		sb.WriteString(EndSync)
+	}
 	_, err := io.WriteString(w, sb.String())
 	return err
 }

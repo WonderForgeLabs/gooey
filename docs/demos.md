@@ -2,6 +2,12 @@
 
 Each demo under `cmd/` exercises one slice of the framework; most are recorded as a GIF at the repo root. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
+`cmd/browser` launches any of them, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
+
+```sh
+go run ./cmd/browser
+```
+
 ## probe / demo
 
 ![demo](../demo.gif)

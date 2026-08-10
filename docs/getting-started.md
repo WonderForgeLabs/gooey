@@ -1,5 +1,12 @@
 # Getting started with gooey
 
+> **Note.** This walkthrough predates `gooey.App` and writes the run loop
+> out by hand — `term.Open`, a `select`, `defer screen.Restore()`. All of
+> that still works and is worth reading once to see what the framework
+> does for you, but new apps should start from
+> [docs/learn/](learn/index.md), where four lines replace the whole loop
+> and the terminal, signals, resize and panic handling come with it.
+
 A hands-on walkthrough that builds one small app in five steps: a static
 tree, then live state, then markup, then interactivity, then reusable
 controls. Every code block compiles against the current tree — when in

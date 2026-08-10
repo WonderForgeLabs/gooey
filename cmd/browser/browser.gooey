@@ -1,6 +1,6 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
   <Border Title="gooey demo browser" Style="panel">
-    <Grid Rows="Auto,*,Auto,Auto" Cols="30,1*">
+    <Grid Rows="Auto,*,Auto,Auto" Cols="34,1*">
       <!-- Chrome is bound, not restated: Title, Hint and Status are
            computeds over the same directory data the list paints, so
            the markup names what to show and never spells out what it

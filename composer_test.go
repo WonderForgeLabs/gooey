@@ -148,3 +148,38 @@ func TestUnchangedVisibilityDoesNotRepaint(t *testing.T) {
 		t.Errorf("a steady frame painted %d widgets, want 0", painted)
 	}
 }
+
+// Resize is the SIGWINCH path. A resize invalidates EVERYTHING — the
+// buffer every node painted into no longer exists — so the damage
+// contract inverts here: the frame after a resize must repaint the whole
+// tree, and the one after that must repaint nothing.
+func TestResizeRepaintsTheWholeTreeExactlyOnce(t *testing.T) {
+	a := prop.NewSource("aaa")
+	b := prop.NewSource("bbb")
+	root := &VStack{Children: []Widget{&Text{Content: a}, &Text{Content: b}}}
+	c := NewComposer(root, 20, 5)
+	c.Frame()
+
+	c.Resize(40, 12)
+	if cols, rows := c.Size(); cols != 40 || rows != 12 {
+		t.Fatalf("size after Resize = %dx%d, want 40x12", cols, rows)
+	}
+	f, painted := c.Frame()
+	if painted != 3 {
+		t.Errorf("resize repainted %d widgets, want the whole tree (3)", painted)
+	}
+	if f.Cells.W != 40 || f.Cells.H != 12 {
+		t.Errorf("buffer is %dx%d, want 40x12", f.Cells.W, f.Cells.H)
+	}
+	if row(f.Cells, 0) != "aaa" || row(f.Cells, 1) != "bbb" {
+		t.Errorf("content did not survive the resize: %q,%q", row(f.Cells, 0), row(f.Cells, 1))
+	}
+	if _, painted = c.Frame(); painted != 0 {
+		t.Errorf("the frame after a resize painted %d widgets, want 0", painted)
+	}
+	// A resize to the same size is not a resize.
+	c.Resize(40, 12)
+	if _, painted = c.Frame(); painted != 0 {
+		t.Errorf("a no-op resize dirtied %d widgets", painted)
+	}
+}

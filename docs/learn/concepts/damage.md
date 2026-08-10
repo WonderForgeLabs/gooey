@@ -36,3 +36,4 @@ still writes the whole buffer to the terminal each frame. Damage-rect
 diffing is a drop-in replacement at `Flush`, not a redesign.
 
 Depth: [architecture.md — the Composer](../../architecture.md#the-composer).
+re

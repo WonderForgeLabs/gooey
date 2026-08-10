@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -20,11 +21,9 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var sparks = []rune("▁▂▃▄▅▆▇█")
@@ -83,7 +82,7 @@ func main() {
 	errs := newMetric(3, "%.0f")
 	gors := newMetric(86, "%.0f")
 
-	running := true
+	var app *gooey.App
 	ticking := prop.NewSource(true)
 	ctx := &markup.Context{
 		Values: map[string]any{
@@ -98,7 +97,7 @@ func main() {
 				errs.tick(2)
 				gors.tick(12)
 			}),
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel": {Fg: render.RGB(120, 90, 220)},
@@ -119,70 +118,16 @@ func main() {
 	fsys := os.DirFS(dir)
 	ctx.Includes = fsys
 
-	tree, err := markup.Load(fsys, "dashboard.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	// Timers live in the tree, so their lifetime is the composition's.
-	// Closing the outgoing Composer before building the next one is what
-	// keeps a hot reload from leaving the replaced tree's ticker running.
-	disp := gooey.NewDispatcher()
-	needsFrame := true
-	var comp *gooey.Composer
-	attach := func(w gooey.Widget) {
-		if comp != nil {
-			comp.Close()
-		}
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		comp.Start(disp)
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.WatchAll(fsys, []string{"dashboard.gooey", "card.gooey", "badge.gooey"}, func() {
-		if w, err := markup.Load(fsys, "dashboard.gooey", ctx); err == nil {
-			swaps <- w
-		}
-	})
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	evs := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, evs)
-
-	defer func() { comp.Close() }()
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case <-disp.Wake():
-			// Timer ticks (and any other posted work) run here, on the
-			// UI goroutine, where touching properties is legal.
-			disp.Drain()
-		case w := <-swaps:
-			attach(w)
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
+	// One page, three files: the two controls it instantiates are named
+	// here because a rebuild has to be triggered by edits to any of them.
+	// Editing card.gooey restyles every card at once, state intact — the
+	// App rebuilds the tree and the viewmodel properties carry across.
+	//
+	// The <Timer> that advances the metrics lives in the markup, so its
+	// lifetime is the composition's: the App closes the outgoing Composer
+	// on every swap, which is what keeps a replaced tree from ticking on.
+	app = gooey.NewApp(markup.Page(fsys, "dashboard.gooey", ctx, "card.gooey", "badge.gooey"))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

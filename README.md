@@ -62,14 +62,39 @@ survives, because it lives in the properties, not the widgets.
 [docs/getting-started.md](docs/getting-started.md) builds this up in
 five steps from a pure-Go tree to multi-control pages.
 
+The program around it is `gooey.App`, which owns the terminal, the
+input decoder, frame scheduling, hot-reload swaps and the whole console
+signal story:
+
+```go
+var app *gooey.App
+ctx := &markup.Context{Values: map[string]any{
+    "Label": label, "Increment": increment,
+    "Quit": gooey.Command(func() { app.Quit() }),
+}}
+app = gooey.NewApp(markup.Page(os.DirFS("."), "counter.gooey", ctx))
+if err := app.Run(context.Background()); err != nil {
+    gooey.Exit(err)
+}
+```
+
+That is the whole main function. ctrl+c quits (only if no widget
+claimed it); `SIGINT`/`SIGTERM` restore the terminal and exit 128+n
+after a bounded shutdown hook; `SIGWINCH` resizes and repaints; ctrl+z
+restores, stops and comes back intact; a panic restores the terminal
+BEFORE printing its stack, so a crash is readable. `app.Suspend(fn)`
+hands the terminal to a child process and takes it back — the demo
+browser launches every demo that way. The signal story is spelled out
+in [docs/specs/2026-08-10-runtime-signals.md](docs/specs/2026-08-10-runtime-signals.md).
+
 ## Where it stands vs modern XAML
 
 | Capability | Status | Notes |
 |---|---|---|
-| Retained tree + Measure/Arrange | done | Persistent widgets, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; Composer is fixed-size (no resize handling yet) |
+| Retained tree + Measure/Arrange | done | Persistent widgets, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; `SIGWINCH` resizes the composition and repaints |
 | Dependency properties | done | Lazy dirty-tracking graph (Slint lineage), not eager WPF-style notification; UI-goroutine-confined |
 | Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is widget code |
-| Markup + hot reload | done | XML over any `fs.FS`; `Watch`/`WatchAll` poll ModTimes and rebuild, viewmodel state survives |
+| Markup + hot reload | done | XML over any `fs.FS`; `markup.Page` polls ModTimes and the App rebuilds on the UI goroutine, viewmodel state survives |
 | UserControls | done | Context isolation, data crosses only via attribute hand-off; property surface is implicit and unchecked (see x:Property) |
 | Grid / star sizing | done | `Auto`/`Fixed`/`Star` tracks with spans, XAML `GridLength` semantics |
 | Canvas / absolute layout | done | `Canvas.Left`/`Canvas.Top` attached properties; children may overlap, paint order is tree order |
@@ -98,11 +123,19 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `cmd/sysmon` | — | Not yet cataloged |
 
+The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
+are runnable too, and `cmd/browser` lists both groups:
+
+```sh
+go run ./cmd/browser
+```
+
 ## Documentation
 
 - [docs/getting-started.md](docs/getting-started.md) — hands-on tutorial, five steps to a componentized app
 - [docs/architecture.md](docs/architecture.md) — the deep guide: rendering planes, property graph, Composer, input, markup
 - [docs/markup-reference.md](docs/markup-reference.md) — every element, attribute, gesture, and binding rule
+- [docs/learn/](docs/learn/index.md) — the tutorial series, how-to guides, and concepts, with runnable code under [docs/learn/examples/](docs/learn/examples)
 - [docs/demos.md](docs/demos.md) — what each demo exercises, with walkthroughs
 - [docs/specs/](docs/specs/) — decision records: [markup-declared properties](docs/specs/2026-08-10-markup-declared-properties.md), [reader design](docs/specs/2026-08-10-reader-design.md), [remote handlers](docs/specs/2026-08-10-remote-handlers-design.md), [container backgrounds](docs/specs/2026-08-10-container-backgrounds.md)
 
@@ -110,9 +143,10 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 
 Damage tracking stops at the paint level: the flush still writes the
 whole buffer every frame (damage-rect diffing is a drop-in replacement
-at `Flush`). The Composer is static-tree — structural change means
-rebuilding it, which is exactly what hot reload does — and fixed-size,
-with no resize handling. There is no styling system (named style
+at `Flush`), though each frame is now bracketed in synchronized output
+so a full repaint cannot tear. The Composer is static-tree — structural
+change means rebuilding it, which is exactly what hot reload does.
+There is no styling system (named style
 lookup only) and no templates (every list is a hand-rendered custom
 widget). The file watcher is 300 ms ModTime polling. Properties are
 confined to the UI goroutine; background work crosses in over a
@@ -130,4 +164,6 @@ channel.
 - **Both mouse encodings are decoded** — an undecoded legacy X10 report would inject phantom keystrokes, not just drop the event: [one ordered stream](docs/architecture.md#one-ordered-stream)
 - **Bindings are handles, not values** — resolved once at build time, zero lookups at render: [markup](docs/architecture.md#markup)
 - **Registering a handler namespace IS the capability grant** — markup reaches only the URIs its host registered, so an untrusted document is sandboxed by construction, and async results marshal back through a Dispatcher: [markup reference](docs/markup-reference.md#handler-namespaces)
+- **The run loop is the framework's, and nothing extends it with another select case** — a dynamic select needs reflection, and it is not needed: every asynchronous source reaches the UI through the Dispatcher, which is the confinement rule anyway: [the runtime](docs/specs/2026-08-10-runtime-signals.md)
+- **No Screen teardown may leave a goroutine reading the terminal** — the ioctls go through `SyscallConn` so the tty stays pollable and Close really cancels a pending read, which is what makes handing the terminal to a child safe: [tty read lifecycle](docs/specs/2026-08-10-tty-read-lifecycle.md)
 - **The `fs.FS` seam is the deployment story** — `os.DirFS` in dev hot-reloads, `embed.FS` in release is a natural no-op, same code: [loading tiers](docs/architecture.md#three-loading-tiers-one-seam)

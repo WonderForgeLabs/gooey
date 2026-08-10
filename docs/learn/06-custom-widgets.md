@@ -14,7 +14,7 @@ When you finish, you will have this:
 ![A meter bar driven by a focused stepper, with a readout line below](media/06-custom-widgets.png)
 
 The finished code is in
-[`examples/06-custom-widgets`](../../examples/06-custom-widgets).
+[`docs/learn/examples/06-custom-widgets`](examples/06-custom-widgets).
 
 ## Step 1: Know what a widget owes the framework
 

@@ -1,12 +1,13 @@
 // Tutorial 4 — input: commands, focus, and KeyBindings that scope
 // themselves by where they are declared.
 //
-//	cd examples/04-input-commands && go run .
+//	cd docs/learn/examples/04-input-commands && go run .
 //
 // Walkthrough: docs/learn/04-input-commands.md
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // checkbox is a focus stop rendering "[x] label". Tutorial 6 takes this
@@ -64,7 +64,7 @@ func (c *checkbox) HandleMouse(ev input.MouseEvent) bool {
 }
 
 func main() {
-	running := true
+	var app *gooey.App
 
 	last := prop.NewSource("ready — press tab to move focus")
 	loud := prop.NewSource(false)
@@ -92,7 +92,7 @@ func main() {
 			"RightA":      say("right A"),
 			"LeftScoped":  say("s in the LEFT pane"),
 			"RightScoped": say("s in the RIGHT pane"),
-			"Quit":        gooey.Command(func() { running = false }),
+			"Quit":        gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -114,54 +114,13 @@ func main() {
 		},
 	}
 
-	fsys := os.DirFS(".")
-	tree, err := markup.Load(fsys, "app.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	var comp *gooey.Composer
-	needsFrame := true
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse() // clicks and hover
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			comp.Handle(ev)
-		}
+	// The App is the run loop: it owns the terminal, the input decoder,
+	// frame scheduling and the hot-reload swap. markup.Page is its
+	// content — it loads "app.gooey" and rebuilds the tree whenever the
+	// file changes, on the UI goroutine, with your viewmodel properties
+	// carrying the state across.
+	app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

@@ -9,7 +9,7 @@ it is decided by the call site, not by the property.**
 **Prerequisites:** [Tutorials 1](01-first-app.md) and [2](02-layout.md).
 
 The finished code is in
-[`examples/03-binding-and-state`](../../examples/03-binding-and-state).
+[`docs/learn/examples/03-binding-and-state`](examples/03-binding-and-state).
 
 ## Step 1: Create source properties
 

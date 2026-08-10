@@ -1,0 +1,43 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:wf="gooey.dev/handlers/temporal/workflow">
+  <Border Title=" provision request — 1 of 4 · choose " Style="panel">
+    <Grid Rows="Auto,Auto,1,Auto,Auto,1,Auto,Auto,1,Auto,1,3,Auto,10,*,Auto">
+      <Text Grid.Row="0" Style="accent">this screen is served BY the workflow — the terminal compiled none of it</Text>
+      <Text Grid.Row="1" Style="dim">{{.Served}}</Text>
+
+      <Text Grid.Row="3">size:     {{.Tier}}</Text>
+      <HStack Grid.Row="4" Gap="1">
+        <Button Content="1 small"  Click="{{wf:Signal `choose` `tier` `small`  | into .Echo}}"/>
+        <Button Content="2 medium" Click="{{wf:Signal `choose` `tier` `medium` | into .Echo}}"/>
+        <Button Content="3 large"  Click="{{wf:Signal `choose` `tier` `large`  | into .Echo}}"/>
+      </HStack>
+
+      <Text Grid.Row="6">region:   {{.Region}}</Text>
+      <HStack Grid.Row="7" Gap="1">
+        <Button Content="a us-east"  Click="{{wf:Signal `choose` `region` `us-east`  | into .Echo}}"/>
+        <Button Content="s eu-west"  Click="{{wf:Signal `choose` `region` `eu-west`  | into .Echo}}"/>
+        <Button Content="d ap-south" Click="{{wf:Signal `choose` `region` `ap-south` | into .Echo}}"/>
+      </HStack>
+
+      <HStack Grid.Row="9" Gap="1">
+        <Button Content="c continue →" Style="accent" Click="{{wf:Signal `continue` | into .Echo}}"/>
+      </HStack>
+
+      <Border Grid.Row="11" Title=" workflow says " Style="panel">
+        <Text Margin="1,0">{{.Notice}}</Text>
+      </Border>
+      <Text Grid.Row="12" Style="dim">terminal sent: {{.Echo}}</Text>
+      <Border Grid.Row="13" Title=" activity log " Style="panel">
+        <Text Margin="1,0" Style="dim">{{.Log}}</Text>
+      </Border>
+      <Text Grid.Row="15" Style="dim">tab move · enter press · every press is a signal · ctrl+c quit</Text>
+    </Grid>
+    <KeyBinding Gesture="1" Command="{{wf:Signal `choose` `tier` `small`  | into .Echo}}"/>
+    <KeyBinding Gesture="2" Command="{{wf:Signal `choose` `tier` `medium` | into .Echo}}"/>
+    <KeyBinding Gesture="3" Command="{{wf:Signal `choose` `tier` `large`  | into .Echo}}"/>
+    <KeyBinding Gesture="a" Command="{{wf:Signal `choose` `region` `us-east`  | into .Echo}}"/>
+    <KeyBinding Gesture="s" Command="{{wf:Signal `choose` `region` `eu-west`  | into .Echo}}"/>
+    <KeyBinding Gesture="d" Command="{{wf:Signal `choose` `region` `ap-south` | into .Echo}}"/>
+    <KeyBinding Gesture="c" Command="{{wf:Signal `continue` | into .Echo}}"/>
+  </Border>
+</Gooey>

@@ -12,9 +12,10 @@ in about fifteen minutes.
 
 **Coming from XAML?** You will recognize `Grid` with star sizing,
 attached properties, `Measure`/`Arrange`, `UserControl`, and
-`KeyBinding`. The two real differences are that properties are **lazy**
-rather than eager, and that you own the run loop. Each tutorial flags the
-places where your WPF, WinUI, or Avalonia instincts need adjusting.
+`KeyBinding`. `gooey.App` is `Application.Run()` and `app.Post` is
+`Dispatcher.Invoke`. The real difference is that properties are **lazy**
+rather than eager. Each tutorial flags the places where your WPF, WinUI,
+or Avalonia instincts need adjusting.
 
 ## Tutorial series
 
@@ -22,19 +23,25 @@ Work through these in order — each builds on the last.
 
 | # | Tutorial | Time | What you build |
 |---|---|---|---|
-| 1 | [Build your first gooey app](01-first-app.md) | 15 min | A markup file, a viewmodel, and the host loop — then edit the UI while it runs |
+| 1 | [Build your first gooey app](01-first-app.md) | 15 min | A markup file, a viewmodel, and a four-line `gooey.App` — then edit the UI while it runs |
 | 2 | [Lay out a page with Grid](02-layout.md) | 20 min | A three-column page using Fixed, Auto, and Star tracks, margins, alignment, and visibility |
 | 3 | [Bind data and drive state](03-binding-and-state.md) | 25 min | Sources, computeds, and an on-screen proof of the read-versus-subscribe rule |
 | 4 | [Handle input with commands and key bindings](04-input-commands.md) | 25 min | Buttons, commands, focus navigation, and one key that means two things depending on focus |
 | 5 | [Build reusable controls](05-usercontrols.md) | 30 min | An Include with no Go code, and a UserControl with a typed setup function |
 | 6 | [Write a custom widget](06-custom-widgets.md) | 30 min | A meter and a stepper, from `Measure` through focus and input |
 
-Finished code for each is under
-[`examples/`](../../examples) — one directory per tutorial. Run any of
-them from its own directory:
+Finished code for each is under [`examples/`](examples), beside these
+pages — one directory per tutorial. Run any of them from its own
+directory, which is what makes `os.DirFS(".")` find the markup:
 
 ```sh
-cd examples/01-first-app && go run .
+cd docs/learn/examples/01-first-app && go run .
+```
+
+Or launch any of them, and every demo, from the browser:
+
+```sh
+go run ./cmd/browser
 ```
 
 ## How-to guides
@@ -50,6 +57,36 @@ Single tasks, for when you know what you want.
 | [Draw images](howto/howto-images.md) | You have pixel content and need to know which protocol you get |
 | [Work off the UI goroutine](howto/howto-async.md) | You have a fetch, a timer, or any background work to apply |
 | [Test a gooey app](howto/howto-testing.md) | You want assertions on rendered output, damage counts, or the real binary |
+
+## Demo catalog
+
+The tutorials are small enough to read in one sitting. The demos under
+`cmd/` are the same ideas at full size — each one exists to prove a
+specific claim, and each is a working app you can run and read. Full
+walkthroughs are in [demos.md](../demos.md); this table says which
+tutorial each one extends.
+
+| Demo | Proves | Learn it first in |
+|---|---|---|
+| [`cmd/propdemo`](../demos.md#propdemo) | Unwatched sources render zero frames | [Tutorial 3](03-binding-and-state.md) |
+| [`cmd/statedemo`](../demos.md#statedemo) | Markup with no code-behind; reactive serialization | [Tutorial 4](04-input-commands.md) |
+| [`cmd/logview`](../demos.md#logview) | Conditional dependencies: pause drops a firehose out of the graph | [Tutorial 3](03-binding-and-state.md) |
+| [`cmd/markuplog`](../demos.md#markuplog) | The same app in markup, hot-reloaded live | [Tutorial 1](01-first-app.md), [how-to: hot reload](howto/howto-hot-reload.md) |
+| [`cmd/finder`](../demos.md#finder) | Input to derived view, with per-pane damage | [Tutorial 4](04-input-commands.md) + [Tutorial 6](06-custom-widgets.md) |
+| [`cmd/reader`](../demos.md#reader) | Multi-UserControl composition, scoped input, live fetches | [Tutorial 5](05-usercontrols.md), [how-to: async](howto/howto-async.md) |
+| [`cmd/cardsdemo`](../demos.md) | One markup-only control instantiated four times, plus a `<Timer>` | [Tutorial 5](05-usercontrols.md) |
+| [`cmd/colordemo`](../demos.md#colordemo) | Canvas absolute layout and per-terminal color tiers | [how-to: images](howto/howto-images.md) |
+| [`cmd/probe` + `cmd/demo`](../demos.md#probe--demo) | Capability detection and the graphics pipeline | [how-to: images](howto/howto-images.md) |
+| [`cmd/sysmon`](../demos.md) | A live dashboard over real system data | [Tutorial 2](02-layout.md) |
+| [`cmd/browser`](../demos.md) | Launching another program on your terminal and taking it back | [the runtime spec](../specs/2026-08-10-runtime-signals.md) |
+
+`cmd/browser` is the front door to all of it: it lists these demos AND
+the tutorial examples, shows each one's doc comment, and runs (or
+records) the one you pick.
+
+```sh
+go run ./cmd/browser
+```
 
 ## Concepts
 
@@ -81,8 +118,6 @@ Short framings, each linking into the deep guide.
 These tutorials document what runs today. Things you may expect and will
 not find:
 
-- **No resize handling.** The Composer takes the terminal size at
-  construction.
 - **No styling system.** `Style="name"` is a lookup — no cascading,
   selectors, or setters.
 - **No DataTemplates.** Every list is a hand-written rows widget.

@@ -12,7 +12,7 @@ When you finish, you will have this:
 ![Two panes side by side; the status line reports which pane handled the s key](media/04-scoped-right.png)
 
 The finished code is in
-[`examples/04-input-commands`](../../examples/04-input-commands).
+[`docs/learn/examples/04-input-commands`](examples/04-input-commands).
 
 ## Step 1: Bind a button to a command
 
@@ -187,21 +187,20 @@ property, the computed that read it went dirty, and the one widget bound
 to that computed repainted. This is the same mechanism from tutorial 3,
 now driven by input.
 
-## Step 6: Turn on the mouse
+## Step 6: Use the mouse
 
-Pointer events are opt-in, because motion reports are just bytes on the
-tty and an app that treats any byte as a keypress would misbehave:
+Click a button. Hover over one. Both already work: the App turns on
+pointer reporting for you — button events, any-motion tracking so hover
+works with no button held, and the SGR extended encoding, the only one
+that survives past column 223 and distinguishes press from release.
+Teardown disables it unconditionally, so not even a crash leaves your
+terminal in tracking mode.
+
+A program that would rather not receive motion reports declines them:
 
 ```go
-defer screen.Restore()
-screen.EnableMouse() // after Raw()
+app := gooey.NewApp(content, gooey.WithoutMouse())
 ```
-
-That enables button reporting, any-motion tracking so hover works with no
-button held, and the SGR extended encoding — the only one that survives
-past column 223 and distinguishes press from release. `Restore` disables
-mouse reporting unconditionally, so a crash cannot leave your terminal in
-tracking mode.
 
 See [how-to: handle mouse input](howto/howto-mouse.md) for hover,
 implicit capture, and click synthesis.

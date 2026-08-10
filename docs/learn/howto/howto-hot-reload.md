@@ -5,55 +5,37 @@ state intact.
 
 ## Watch one file
 
-```go
-fsys := os.DirFS(".")
-
-// The watcher runs on its own goroutine, so it hands the new tree to
-// the UI goroutine over a channel rather than attaching it directly.
-swaps := make(chan gooey.Widget, 1)
-stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-defer stopWatch()
-
-for running {
-	if needsFrame { /* Frame + Flush */ }
-	select {
-	case w := <-swaps:
-		attach(w)          // build a NEW Composer around the new tree
-	case ev := <-events:
-		comp.Handle(ev)
-	}
-}
-```
-
-`attach` must rebuild the Composer, not patch it:
+Hot reload is not something you add — it is what `markup.Page` does. Give
+it to an App and edits to the file rebuild the tree:
 
 ```go
-attach := func(w gooey.Widget) {
-	comp = gooey.NewComposer(w, cols, rows)
-	comp.OnInvalidate(func() { needsFrame = true })
-	needsFrame = true
-}
+app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))
 ```
 
-The Composer is a static-tree design — every widget's paint node is wired
-at construction — so a structural change means a new Composer. That is
-the whole reason `attach` exists as a function.
+Under that one line: the page polls the file's ModTime, reports a change
+to the App, and the App rebuilds the tree and replaces the composition.
+The rebuild happens **on the UI goroutine**, which is the part that has
+to be right — building a tree resolves bindings against your properties,
+and properties may only be touched from the loop. The watcher reports
+that something changed; it never hands over a tree it built itself.
+
+Replacing the composition (rather than patching it) is forced by the
+design: the Composer wires every widget's paint node at construction, so
+a structural change means a new Composer. The App closes the outgoing one
+first, which is what stops a replaced tree's `<Timer>` from ticking on
+against a viewmodel nobody is showing.
 
 ## Watch a set of files
 
-A page plus its controls reload together. `WatchAll` fires one callback
-on any change; rebuild the page and every control instance is recreated:
+A page plus its controls reload together — one rebuild re-instantiates
+every control instance. Name the other files and any of them triggers it:
 
 ```go
-files := []string{"page.gooey", "statpanel.gooey", "card.gooey"}
-
-stopWatch := markup.WatchAll(fsys, files, func() {
-	if w, err := markup.Load(fsys, "page.gooey", ctx); err == nil {
-		swaps <- w
-	}
-})
-defer stopWatch()
+markup.Page(fsys, "page.gooey", ctx, "statpanel.gooey", "card.gooey")
 ```
+
+They are named rather than discovered because an `<Include>` is resolved
+during a build, and the build being watched for has not happened yet.
 
 ## Re-find named widgets after a reload
 
@@ -61,10 +43,14 @@ defer stopWatch()
 that map. Any handle you cached is stale after a swap:
 
 ```go
-case w := <-swaps:
-	attach(w)
+var stats *gooey.Text
+app.OnSwap(func(gooey.Widget) {
 	stats, _ = markup.Find[*gooey.Text](ctx, "stats") // re-find, every time
+})
 ```
+
+`OnSwap` fires for the initial attach as well as every reload, so this is
+the only place that resolves the handle.
 
 ## Why state survives
 
@@ -75,23 +61,25 @@ value.
 
 Focus does not survive automatically — a new tree focuses its first focus
 stop. To restore it, remember which one had focus and call
-`comp.Focus().SetFocus(w)` after attaching.
+`app.Composer().Focus().SetFocus(w)` from an `OnSwap` hook.
 
 ## Behavior worth knowing
 
 - **Polling, not inotify.** Both watchers poll ModTimes every 300 ms.
 - **A broken edit is harmless.** Parse or build errors skip the reload
   and leave the running tree up. Fix and save again.
-- **The error is not shown.** The watcher swallows it — if a save seems
-  to do nothing, run `markup.Load` once by hand to see the message.
-- **`WatchAll` rebuilds on the first changed file** it notices in a pass,
-  so a multi-file save produces one rebuild, not several.
+- **Ask for the error.** By default a failed reload is silent, which is
+  the worst possible feedback while editing. Pass
+  `gooey.WithErrorHandler(func(err error) { … })` and put the message
+  somewhere on screen — `cmd/markuplog` shows it in its stats line.
+- **One rebuild per pass.** A multi-file save produces one rebuild, not
+  one per file.
 
 ## In release builds
 
 Point the same code at an `embed.FS`. Its ModTimes are constant zero, so
-`Watch` never fires and the call becomes a natural no-op — no build tags,
-no second code path. See
+watching never fires and the call becomes a natural no-op — no build
+tags, no second code path. See
 [how to embed markup for release](howto-embed-release.md).
 
 ## See also

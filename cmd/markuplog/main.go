@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -21,11 +22,9 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 type line struct {
@@ -79,7 +78,7 @@ func main() {
 	// --- commands: the viewmodel side of the declarative key surface.
 	// Each <KeyBinding Command="{{.X}}"/> in logview.gooey resolves to
 	// one of these funcs at load time — a handle, not a name lookup.
-	running := true
+	var app *gooey.App
 	togglePause := gooey.Command(func() {
 		if follow.Get() {
 			frozen.Set(lines.Get())
@@ -105,7 +104,7 @@ func main() {
 			"Header": header, "Visible": visible,
 			"TogglePause": togglePause,
 			"CycleFilter": cycleFilter,
-			"Quit":        gooey.Command(func() { running = false }),
+			"Quit":        gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -131,79 +130,43 @@ func main() {
 		},
 	}
 
+	// lastErr carries the most recent hot-reload failure into the stats
+	// line. A broken markup file used to fail silently — the UI simply
+	// stopped changing — which is the worst possible feedback to get
+	// while editing one.
+	var lastErr string
+
 	// fs.FS is the seam: os.DirFS here for hot reload; an embed.FS
-	// would drop in unchanged (Watch degrades to a no-op there).
-	fsys := os.DirFS(filepath.Dir(path))
-	name := filepath.Base(path)
-	tree, err := markup.Load(fsys, name, ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	// would drop in unchanged (watching degrades to a no-op there).
+	app = gooey.NewApp(markup.Page(os.DirFS(filepath.Dir(path)), filepath.Base(path), ctx),
+		gooey.WithErrorHandler(func(err error) { lastErr = "   reload failed: " + err.Error() }))
 
-	stats, _ := markup.Find[*gooey.Text](ctx, "stats")
+	// A hot reload builds NEW widgets, so anything resolved by name has
+	// to be resolved again — the handle from before the swap points at a
+	// composition that is no longer on screen. This hook fires for the
+	// first attach too, so there is one place that does it.
+	var stats *gooey.Text
+	reloads := -1 // the initial attach is not a reload
+	app.OnSwap(func(gooey.Widget) {
+		reloads++
+		stats, _ = markup.Find[*gooey.Text](ctx, "stats")
+	})
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// The log generator is the app's own clock: it must keep producing
+	// lines across a hot reload, so it belongs to the App rather than to
+	// the tree (a <Timer> would be replaced along with the tree).
+	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), nextLine())) })
 
-	// Hot reload = rebuild the composer over the new tree; the
-	// viewmodel properties carry all state across the swap.
-	needsFrame := true
-	var comp *gooey.Composer
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-
-	reloads := 0
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, name, ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-
-	gen := time.NewTicker(130 * time.Millisecond)
-	defer gen.Stop()
-	frames := 0
-
-	for running {
-		if needsFrame {
-			frames++
-			if stats != nil && stats.Content != nil {
-				stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d   hot reloads=%d", lineCount, frames, reloads))
-			}
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
+	app.BeforeFrame(func() {
+		if stats == nil || stats.Content == nil {
+			return
 		}
-		select {
-		case <-gen.C:
-			lines.Set(append(lines.Get(), nextLine()))
-		case w := <-swaps:
-			reloads++
-			attach(w) // new tree, same viewmodel — state survives
-			stats, _ = markup.Find[*gooey.Text](ctx, "stats")
-		case ev := <-evs:
-			// Every key the app responds to is declared in the markup,
-			// so routing the event is the whole of the handling — and a
-			// hot reload re-resolves those bindings against the same
-			// commands, which is why the keys keep working across swaps.
-			comp.Handle(ev)
-		}
+		stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d   hot reloads=%d%s",
+			lineCount, app.Frames(), reloads, lastErr))
+	})
+
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }
 

@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,11 +19,9 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var messages = []string{"hello, gooey", "state is properties", "the graph is the app", "serialize me"}
@@ -42,9 +41,7 @@ func main() {
 			count.Get(), messages[msgIdx.Get()%len(messages)], serializedAt.Get())
 	})
 
-	running := true
-	frames, lastPainted := 0, 0
-	var comp *gooey.Composer
+	var app *gooey.App
 
 	// snapshot builds the ONE canonical serialization of the app —
 	// both modes call it, so identical state always yields identical
@@ -75,15 +72,15 @@ func main() {
 			// in auto mode they never trigger re-serialization; they
 			// refresh as-of whenever a tracked dependency fires.
 			"framework": map[string]any{
-				"frames":           frames,      // frames flushed since start
-				"paintedLastFrame": lastPainted, // damage: widgets repainted last frame, not the whole tree
+				"frames":           app.Frames(),           // frames flushed since start
+				"paintedLastFrame": app.PaintedLastFrame(), // damage: widgets repainted last frame, not the whole tree
 				// Focus/hover are live Widget references; %T prints
 				// their concrete types ("*gooey.Button", "<nil>") since
 				// widgets have no serializable identity yet — Name=
 				// would be the stable key when that matters.
-				"focused":       fmt.Sprintf("%T", comp.Focus().Focused()),
-				"hovered":       fmt.Sprintf("%T", comp.Focus().Hovered()),
-				"focusOrderLen": len(comp.Focus().Order()), // tab stops discovered in the tree
+				"focused":       fmt.Sprintf("%T", app.Composer().Focus().Focused()),
+				"hovered":       fmt.Sprintf("%T", app.Composer().Focus().Hovered()),
+				"focusOrderLen": len(app.Composer().Focus().Order()), // tab stops discovered in the tree
 			},
 		}
 	}
@@ -131,7 +128,7 @@ func main() {
 			"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
 			"Cycle":     gooey.Command(func() { msgIdx.Set(msgIdx.Get() + 1) }),
 			"Serialize": gooey.Command(serialize),
-			"Quit":      gooey.Command(func() { running = false }),
+			"Quit":      gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -145,56 +142,12 @@ func main() {
 		exe, _ := os.Executable()
 		dir = filepath.Dir(exe)
 	}
-	fsys := os.DirFS(dir)
-	tree, err := markup.Load(fsys, "statedemo.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	needsFrame := true
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "statedemo.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			frames++
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			// Arrows walk the focus stops: the framework moves focus
-			// only when nothing in the tree consumed the arrow, so
-			// arrow-driven widgets keep their own handling.
-			comp.Handle(ev)
-		}
+	// The framework figures the app observes above — frames, damage,
+	// focus — are the App's and the Composer's own counters, so this
+	// demo no longer keeps a private copy of the run loop to derive them.
+	app = gooey.NewApp(markup.Page(os.DirFS(dir), "statedemo.gooey", ctx))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

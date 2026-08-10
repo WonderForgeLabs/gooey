@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 		return fmt.Sprintf("mode              : %s", mode.Get())
 	})
 
-	running := true
+	var app *gooey.App
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"CountLabel": countLabel, "ModeLabel": modeLabel,
@@ -70,7 +70,7 @@ func main() {
 					mode.Set("a")
 				}
 			}),
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -84,70 +84,30 @@ func main() {
 		exe, _ := os.Executable()
 		dir = filepath.Dir(exe)
 	}
-	fsys := os.DirFS(dir)
-	tree, err := markup.Load(fsys, "propdemo.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// The whole runtime: the App owns the terminal, the decoder, the
+	// frame loop and the signal story; the page is content it builds and
+	// rebuilds. Everything below is this demo's own behavior.
+	app = gooey.NewApp(markup.Page(os.DirFS(dir), "propdemo.gooey", ctx))
 
-	// --- damage-tracked composer: each widget's paint is its own
-	// graph node; only widgets whose read properties changed repaint.
-	needsFrame := true
-	var comp *gooey.Composer
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "propdemo.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	events, frames, lastPainted := 0, 0, 0
-
-	for running {
-		if needsFrame {
-			frames++
-			// Stats show the PREVIOUS frame's damage count; setting
-			// them before Frame() folds the stats repaint into this
-			// frame, and clearing needsFrame after consumes it.
-			stats.Set(fmt.Sprintf("events=%d  frames=%d  detail evals=%d  widgets painted last frame=%d",
-				events, frames, detail.Evals(), lastPainted))
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
+	events := 0
+	app.OnEvent(func(ev input.Event) {
+		if ev.IsKey() {
+			events++
 		}
-		select {
-		case <-tick.C:
-			count.Set(count.Get() + 1)
-		case w := <-swaps:
-			attach(w)
-		case ev := <-evs:
-			if ev.IsKey() {
-				events++
-			}
-			comp.Handle(ev)
-		}
+	})
+	// The 1 Hz tick is the app's clock, not the tree's, so it runs
+	// through the dispatcher rather than as a <Timer>: it must keep
+	// ticking across a hot reload.
+	app.Every(time.Second, func() { count.Set(count.Get() + 1) })
+	// Stats describe the PREVIOUS frame, and setting them here folds
+	// their repaint into the frame about to happen.
+	app.BeforeFrame(func() {
+		stats.Set(fmt.Sprintf("events=%d  frames=%d  detail evals=%d  widgets painted last frame=%d",
+			events, app.Frames(), detail.Evals(), app.PaintedLastFrame()))
+	})
+
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

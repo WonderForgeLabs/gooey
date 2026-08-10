@@ -76,8 +76,8 @@ asserting this way:
 ## Drive the real binary under a pty
 
 When you need the actual program — terminal setup, the event decoder,
-your host loop — run it under `script`, which gives it a controlling
-terminal.
+the whole `gooey.App` — run it under `script`, which gives it a
+controlling terminal.
 
 ```sh
 go build -o /tmp/myapp .

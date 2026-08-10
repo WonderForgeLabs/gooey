@@ -1,12 +1,13 @@
 // Tutorial 6 — writing widgets: the Widget interface, Base, painting
 // from bound properties, and joining the focus and input system.
 //
-//	cd examples/06-custom-widgets && go run .
+//	cd docs/learn/examples/06-custom-widgets && go run .
 //
 // Walkthrough: docs/learn/06-custom-widgets.md
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -17,7 +18,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // ---- meter: the smallest useful widget ----
@@ -104,7 +104,7 @@ func (s *stepper) HandleMouse(ev input.MouseEvent) bool {
 }
 
 func main() {
-	running := true
+	var app *gooey.App
 
 	level := prop.NewSource(6)
 	other := prop.NewSource(0)
@@ -128,7 +128,7 @@ func main() {
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Level": level, "Other": other, "Readout": readout,
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -157,54 +157,11 @@ func main() {
 		},
 	}
 
-	fsys := os.DirFS(".")
-	tree, err := markup.Load(fsys, "app.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	var comp *gooey.Composer
-	needsFrame := true
-	attach := func(w gooey.Widget) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			comp.Handle(ev)
-		}
+	// The App is the run loop. Custom widgets need nothing special from
+	// it: they are ordinary tree members, painted through their own
+	// nodes and offered input like any built-in.
+	app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }

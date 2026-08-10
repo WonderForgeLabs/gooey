@@ -37,21 +37,19 @@ Rules the `embed` directive imposes:
 - Files whose names begin with `.` or `_` are skipped unless you use the
   `all:` prefix.
 
-## Leave the watcher in
+## Leave the watching in
 
 You do not need a build tag or a second code path. `embed.FS` reports
-constant zero ModTimes, so `markup.Watch` and `markup.WatchAll` never see
-a change and never fire:
+constant zero ModTimes, so the page never sees a change and never
+rebuilds:
 
 ```go
 // Compiles and runs identically in both tiers. On embed.FS it is inert.
-stopWatch := markup.Watch(fsys, "app.gooey", ctx, func(w gooey.Widget) { swaps <- w })
-defer stopWatch()
+app = gooey.NewApp(markup.Page(fsys, "app.gooey", ctx))
 ```
 
 The watcher goroutine still exists and still ticks every 300 ms; it just
-never finds a newer ModTime. If that idle goroutine matters to you, guard
-the call behind whatever flag already distinguishes your builds.
+never finds a newer ModTime.
 
 ## Pick the filesystem at startup
 
