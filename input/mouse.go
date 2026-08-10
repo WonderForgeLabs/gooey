@@ -24,11 +24,18 @@ const (
 )
 
 // MouseEvent is one pointer report in 0-based cell coordinates.
+//
+// Count is meaningful only on MouseClick, where it is 1 for a single
+// click and 2 for a double click — the dispatcher counts clicks that
+// land on the same component inside its double-click interval. There is
+// no triple click: a third click inside the interval starts a new
+// sequence at 1, so nothing ever reports a count above 2.
 type MouseEvent struct {
 	Kind   MouseKind
 	Button MouseButton
 	X, Y   int
 	Mods   Mods
+	Count  int
 }
 
 // EventKind discriminates the union below.

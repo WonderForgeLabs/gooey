@@ -99,7 +99,7 @@ func TestTextBoxCaretClampsWhenTextShrinksExternally(t *testing.T) {
 func TestTextBoxChangedRunsOnEditsButNotOnCaretMoves(t *testing.T) {
 	tb, _ := textBox(t, "ab")
 	edits := 0
-	tb.Changed = func() { edits++ }
+	tb.Changed = gooey.Command(func() { edits++ })
 
 	tb.HandleKey(input.Rune('c'))
 	tb.HandleKey(input.Named(input.KeyBackspace))

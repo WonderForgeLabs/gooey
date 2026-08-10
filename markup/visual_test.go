@@ -328,7 +328,7 @@ func TestTimerBuildsAsAnAttachment(t *testing.T) {
 		t.Error("Enabled is not a live handle onto the viewmodel property")
 	}
 	// The command resolved to the viewmodel delegate.
-	timer.Tick()
+	timer.Tick.Run()
 	if ticks != 1 {
 		t.Errorf("Tick did not resolve to the bound command (ticks=%d)", ticks)
 	}

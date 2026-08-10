@@ -9,7 +9,7 @@ ctx := &markup.Context{
     Values:   map[string]any{...},           // {{.Name}} roots
     Styles:   map[string]render.Style{...},  // Style="name" lookup
     Components:  map[string]markup.Builder{...},// custom elements
-    Handlers: map[string]gooey.Command{...}, // bare-name event handlers
+    Handlers: map[string]gooey.Action{...},  // bare-name event handlers
     Includes: fsys,                          // convention-based controls
 }
 tree, err := markup.Load(fsys, "app.gooey", ctx)
@@ -132,6 +132,8 @@ The interactive focus stop: renders as `[ label ]` and runs its command on enter
 <Button Content="serialize → json" Click="{{.Serialize}}"/>
 ```
 
+A command with a `CanExecute` condition (`gooey.NewCommand(save).When(dirty)`) needs nothing extra in markup — the binding resolves it like any delegate. The button then asks the condition **while painting**, so it paints dim and refuses enter, space and clicks while the condition is false, and a flip repaints exactly that one button. See [conditional commands](#conditional-commands).
+
 ### KeyBinding
 
 A declared gesture — a non-visual element:
@@ -143,13 +145,28 @@ A declared gesture — a non-visual element:
 | Attribute | Meaning |
 |---|---|
 | `Gesture` | Key gesture, parsed by `input.ParseGesture` (syntax below). |
-| `Command` | Binding or bare handler name, same resolution as `Click`. |
+| `Command` | Binding or bare handler name, same resolution as `Click`. A command whose `When` condition is false does not match: the gesture is not consumed and the key keeps bubbling, so an outer binding can still have it. |
 
 Attachment and scoping semantics: a KeyBinding is never laid out or painted. The builder hangs it off its parent element as an attachment (any element that embeds `gooey.Base` can host one — a Grid, Border, stack, or custom component). Key dispatch starts at the focused component and walks up its ancestor chain to the root; at each level the KeyBindings attached there are matched first, then that component's own key handler. So:
 
 - A binding declared on the page root is effectively global — every focused component's chain passes through the root. The `q`/`esc`/`ctrl+c` bindings in `cmd/reader/reader.gooey` work this way.
 - A binding declared inside a control fires only while focus is inside that control. `cmd/reader/storylist.gooey` attaches `<KeyBinding Gesture="enter" Command="{{.Open}}"/>` to the story pane's Border, so enter opens a story only while that pane has focus.
 - The first consumer stops propagation, and unconsumed `tab`/`shift+tab` move focus — so either can be overridden by binding or handling it.
+
+Before any of that, the event **tunnels**: every ancestor from the root down to the focused component that implements `gooey.PreviewKeyHandler` is offered the event first, and the first to take it ends the dispatch — no target handling, no bubbling, no bindings. `gooey.PreviewMouseHandler` does the same for pointer events. This is the parent-veto mechanism: a modal scrim swallows what is aimed at the layer underneath without any of those components being consulted. The full order is **tunnel down → target and bubble up (bindings then handler at each level) → app fallbacks**.
+
+### Conditional commands
+
+`gooey.Command` is a plain `func()` and always runs. `gooey.NewCommand(run).When(cond)` adds a `CanExecute` condition that is an ordinary `*prop.Property[bool]`:
+
+```go
+canSave := prop.NewComputed(func() bool { return dirty.Get() && name.Get() != "" })
+ctx.Values["Save"] = gooey.NewCommand(vm.Save).When(canSave)
+```
+
+Nothing subscribes to anything and nothing is invalidated by hand — the graph IS `CanExecuteChanged`. A component that asks `CanExecute()` **while painting** has subscribed to the condition, so a flip repaints exactly that component; one that asks while handling an event has only read it. `Run()` is itself a no-op while the condition is false, so a path that forgets to ask still cannot fire a disabled command.
+
+Both forms satisfy `gooey.Action`, which is what every event field is typed as, so markup and existing `gooey.Command` delegates are unaffected.
 
 ### Image
 
@@ -234,7 +251,26 @@ What it shows depends on `Frame.Caps.Color`:
 | `AccentStyle` | Named style for the prompt and caret. |
 | `Changed` | Optional command run after every edit (not after caret moves) — for invalidating something derived. |
 
-Keys: printable runes insert at the caret, `backspace`/`delete` remove either side of it, `←`/`→` move it, `home`/`end` jump. A click places the caret. The field scrolls horizontally to keep the caret visible, and the caret is a source property, so moving it repaints only this component.
+Keys:
+
+| Key | Effect |
+|---|---|
+| printable rune | insert at the caret, replacing the selection if there is one |
+| `backspace` / `delete` | remove the selection, or the character on either side of the caret |
+| `←` / `→` | move the caret one character, or collapse a selection to that edge |
+| `ctrl+←` / `ctrl+→` | move by word — words, punctuation runs and whitespace runs are separate |
+| `home` / `end` | jump to either end |
+| `shift+` any of the above | extend the selection from its anchor instead of moving |
+| `ctrl+x` / `ctrl+c` | cut / copy the selection to the process-local kill buffer |
+| `ctrl+v` | paste the kill buffer at the caret |
+
+`ctrl+c` is only consumed when there IS a selection, so the framework quit key still bubbles out of a focused field with nothing selected.
+
+Mouse: a click places the caret, dragging selects (the drag survives leaving the field, because the press captures the pointer), and a double click selects the word under it.
+
+Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste.
+
+The field scrolls horizontally to keep the caret visible in either direction, and the caret and the selection anchor are source properties, so moving the caret repaints only this component.
 
 ### ItemsView
 
@@ -256,7 +292,7 @@ Keys: printable runes insert at the caret, `backspace`/`delete` remove either si
 |---|---|
 | `Items` | **Required.** Binding to a `*prop.Property[components.ItemSource]` — build one with `components.Items` (below). |
 | `Selected` | Optional binding to a `*prop.Property[int]`, shared with the viewmodel: the view Sets it on navigation and reads it to scroll and highlight. Absent means the list is not selectable. |
-| `Activate` | Command run on enter and on a second click of the selected row, resolved like `Click`. |
+| `Activate` | Command run on enter, on a double click, and on a second click of the already-selected row; resolved like `Click`. |
 
 `<ItemsView.ItemTemplate>` is required and takes exactly one child element. The view is a focus stop with the house list keys — `↑`/`↓`/`j`/`k`, `PgUp`/`PgDn`, `Home`/`End`, `enter` — plus wheel, click to select, and a second click to activate. Keys it does not use bubble, so page-level `<KeyBinding>`s still work while the list has focus.
 
@@ -365,7 +401,7 @@ Event attributes (`Button Click`, `KeyBinding Command`) resolve in one of three 
 
 - Handler-expression form — `Click="{{net:Get .Url | into .Body}}"` names a function in a declared handler namespace, so the behavior itself is declared in markup with no delegate anywhere. See [handler namespaces](#handler-namespaces).
 
-- Binding form — `Click="{{.Save}}"` resolves a value in `Context.Values`, which must be a `gooey.Command` or a `func()`. The delegate lives in the viewmodel, so markup-only controls can wire events with no code-behind at all. This is the form all the `cmd/` demos use:
+- Binding form — `Click="{{.Save}}"` resolves a value in `Context.Values`, which must be a `gooey.Action` (a `gooey.Command`, or a `*gooey.Cmd` from `gooey.NewCommand`) or a plain `func()`. The delegate lives in the viewmodel, so markup-only controls can wire events with no code-behind at all. This is the form all the `cmd/` demos use:
 
   ```go
   Values: map[string]any{

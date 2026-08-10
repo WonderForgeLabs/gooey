@@ -1,6 +1,8 @@
 package gooey
 
 import (
+	"time"
+
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
@@ -15,15 +17,128 @@ import (
 // paint dependency like any other property — moving focus repaints the
 // two components involved, not the screen.
 
-// Command is a bound action. Markup event attributes (Button's Click,
-// KeyBinding's Command) resolve to one of these, either from a func in
-// the binding context — Click="{{.Save}}", the delegate living in the
-// viewmodel — or from the code-behind handler registry by bare name.
+// Action is what an event attribute resolves to: something that can run,
+// and that can say whether running it is legal right now. Component
+// fields that used to be typed Command — Button's Click, KeyBinding's
+// Command, ItemsView's Activate — are Actions, so either form fits.
+//
+// Two things implement it. A plain Command is always executable, which
+// is the overwhelmingly common case and the reason the func type carries
+// the methods itself rather than needing a wrapper. A *Cmd adds a
+// CanExecute condition that is an ordinary bool property.
+//
+// That property IS XAML's CanExecuteChanged, and the improvement over
+// XAML is that there is no event to raise: the call site decides what a
+// CanExecute call means. Called from Render it records a dependency, so
+// the component repaints when the condition flips; called from a key or
+// mouse handler it records nothing and is just a question. Nobody
+// invalidates anything by hand.
+type Action interface {
+	// Run performs the action. Implementations must be no-ops when
+	// CanExecute is false, so a caller that forgets to ask cannot run a
+	// disabled command.
+	Run()
+	// CanExecute reports whether running is legal right now.
+	CanExecute() bool
+}
+
+// CanExecute is the nil-tolerant form of the interface method: it is
+// false for an absent action and for one whose condition says no. Use it
+// wherever an Action arrives from markup or an app, since a field left
+// unset is a nil interface and calling a method on that panics.
+func CanExecute(a Action) bool { return a != nil && a.CanExecute() }
+
+// Command is a bound action with no condition. Markup event attributes
+// (Button's Click, KeyBinding's Command) resolve to one of these, either
+// from a func in the binding context — Click="{{.Save}}", the delegate
+// living in the viewmodel — or from the code-behind handler registry by
+// bare name.
 type Command func()
+
+// Run calls the func. A nil Command runs nothing, which is what lets an
+// unset attribute cross as a typed zero rather than a panic.
+func (c Command) Run() {
+	if c != nil {
+		c()
+	}
+}
+
+// CanExecute is true for any non-nil Command: a plain delegate has no
+// condition to consult, so it is always enabled. Reading it records no
+// dependency, which is correct — nothing about it can change.
+func (c Command) CanExecute() bool { return c != nil }
+
+// Cmd is a command with a condition: run this, but only while that bool
+// property is true.
+//
+//	save := gooey.NewCommand(vm.Save).When(vm.Dirty)
+//
+// A Button bound to it paints itself disabled while Dirty is false and
+// refuses enter, space and clicks; a KeyBinding whose Command is this
+// declines the gesture and lets it keep bubbling. Nothing subscribes to
+// anything: the button read the condition while painting, so the flip
+// dirties that one paint node.
+//
+// The condition may be any bool property, and a computed is the point —
+// When(prop.NewComputed(func() bool { return len(sel.Get()) > 0 })) is a
+// CanExecute derived from the rest of the viewmodel, recomputed lazily
+// and only when something it read actually changed.
+type Cmd struct {
+	run func()
+	can *prop.Property[bool]
+}
+
+// NewCommand builds a conditional command around run. Without a When it
+// behaves exactly like a Command.
+func NewCommand(run func()) *Cmd { return &Cmd{run: run} }
+
+// When sets the command's CanExecute condition and returns the command,
+// so it chains onto NewCommand. A nil property means unconditional.
+func (c *Cmd) When(can *prop.Property[bool]) *Cmd {
+	if c != nil {
+		c.can = can
+	}
+	return c
+}
+
+// CanExecute reads the condition. Called during a paint this is the
+// subscription that repaints the reader when the condition flips.
+func (c *Cmd) CanExecute() bool {
+	if c == nil || c.run == nil {
+		return false
+	}
+	if c.can == nil {
+		return true
+	}
+	return c.can.Get()
+}
+
+// Run performs the action, or does nothing while the condition is false.
+// The guard is here rather than only in callers so that "disabled" is
+// structural: an Action reached by some path that forgot to ask still
+// cannot fire.
+func (c *Cmd) Run() {
+	if !c.CanExecute() {
+		return
+	}
+	c.run()
+}
 
 // KeyHandler is the optional interface for components that consume keys.
 // Returning true stops propagation.
 type KeyHandler interface{ HandleKey(input.KeyEvent) bool }
+
+// PreviewKeyHandler is the tunneling half of key routing: an ancestor
+// that implements it is offered the event on the way DOWN, root first,
+// before the focused component ever sees it. Returning true stops the
+// descent and the event goes no further — no target handling, no
+// bubbling, no bindings.
+//
+// This is the parent-veto mechanism. A modal scrim swallows everything
+// aimed at the layer underneath, a masked input rewrites what its
+// children may receive, and neither has to be consulted by the
+// components it is overriding.
+type PreviewKeyHandler interface{ PreviewKey(input.KeyEvent) bool }
 
 // Focusable marks a component as a focus stop. Embedding FocusState is the
 // easy way to implement it.
@@ -61,10 +176,14 @@ type NonVisual interface{ NonVisual() bool }
 // component's ancestor chain passes through that parent — so a binding
 // declared inside a control fires only while that control has focus,
 // and one declared on the page root is global.
+// A binding whose Command is conditional (see Cmd.When) matches only
+// while the condition holds: a disabled gesture is not consumed, so the
+// key carries on bubbling and an outer binding or the app's own fallback
+// can still have it.
 type KeyBinding struct {
 	Base
 	Gesture input.KeyEvent
-	Command Command
+	Command Action
 }
 
 func (k *KeyBinding) Measure(Size) Size { return Size{} }
@@ -81,18 +200,39 @@ type FocusManager struct {
 	bindings map[Component][]*KeyBinding
 	cur      int
 
-	hover   Component // current hover target, nil when the pointer is nowhere
-	pressed Component // component a button went down on, until it comes up
+	hover Component // current hover target, nil when the pointer is nowhere
+
+	// Pointer capture. captor owns every pointer event while it is set;
+	// held is true when it was taken by CaptureMouse rather than by a
+	// press, which is what decides whether a release gives it back.
+	captor Component
+	held   bool
+
+	// Click counting, keyed to the component a click was synthesized on.
+	lastClick   Component
+	lastClickAt time.Time
+	clicks      int
+
+	// DoubleClickInterval is how close two clicks on the same component
+	// must be to count as a double click. Now is the clock, a field so
+	// tests can drive click counting without sleeping.
+	DoubleClickInterval time.Duration
+	Now                 func() time.Time
 }
+
+// DefaultDoubleClickInterval is the conventional 400ms.
+const DefaultDoubleClickInterval = 400 * time.Millisecond
 
 // NewFocusManager walks root and focuses the first focus stop, so a page
 // always has somewhere for keys to land.
 func NewFocusManager(root Component) *FocusManager {
 	m := &FocusManager{
-		root:     root,
-		parent:   map[Component]Component{},
-		bindings: map[Component][]*KeyBinding{},
-		cur:      -1,
+		root:                root,
+		parent:              map[Component]Component{},
+		bindings:            map[Component][]*KeyBinding{},
+		cur:                 -1,
+		DoubleClickInterval: DefaultDoubleClickInterval,
+		Now:                 time.Now,
 	}
 	m.walk(root, nil)
 	for _, w := range m.order {
@@ -112,12 +252,14 @@ func NewFocusManager(root Component) *FocusManager {
 // rows must be able to route a click to them, and the rows' ancestor
 // chain is what mouse and key bubbling walk.
 //
-// Focus, hover and press targets survive if they are still in the tree.
-// A focused component that vanished hands focus to the first stop — a
-// composition always has somewhere for keys to land, the same invariant
-// NewFocusManager establishes.
+// Focus, hover and the capture target survive if they are still in the
+// tree. A focused component that vanished hands focus to the first stop
+// — a composition always has somewhere for keys to land, the same
+// invariant NewFocusManager establishes — and a captor that vanished
+// mid-drag drops the capture rather than routing to a component nobody
+// can see.
 func (m *FocusManager) Resync() {
-	focused, hover, pressed := m.Focused(), m.hover, m.pressed
+	focused, hover, captor := m.Focused(), m.hover, m.captor
 	m.order = m.order[:0]
 	m.parent = map[Component]Component{}
 	m.bindings = map[Component][]*KeyBinding{}
@@ -144,8 +286,11 @@ func (m *FocusManager) Resync() {
 		}
 		m.hover = nil
 	}
-	if _, live := m.parent[pressed]; !live {
-		m.pressed = nil
+	if _, live := m.parent[captor]; !live {
+		m.captor, m.held = nil, false
+	}
+	if _, live := m.parent[m.lastClick]; !live {
+		m.lastClick, m.clicks = nil, 0
 	}
 }
 
@@ -167,6 +312,44 @@ func (m *FocusManager) walk(w, parent Component) {
 			m.walk(ch, w)
 		}
 	}
+}
+
+// depth is how many ancestors w has; ancestor walks that many links back
+// up. Together they enumerate the root→w chain without building one, and
+// the tunnel phases want exactly that: allocating a path on every motion
+// event would be the one allocation in the routing hot loop, and a
+// shared scratch slice would be clobbered by a handler that dispatches
+// again from inside a Preview. Trees are a dozen levels deep, so the
+// quadratic walk is cheaper than either.
+func (m *FocusManager) depth(w Component) int {
+	d := 0
+	for n := m.parent[w]; n != nil; n = m.parent[n] {
+		d++
+	}
+	return d
+}
+
+// ancestor returns the component up links above w — ancestor(w, 0) is w
+// itself and ancestor(w, depth(w)) is the root.
+func (m *FocusManager) ancestor(w Component, up int) Component {
+	for ; up > 0 && w != nil; up-- {
+		w = m.parent[w]
+	}
+	return w
+}
+
+// within reports whether w is root or lives under it. Capture uses it to
+// ask whether the pointer is still inside the component that captured it.
+func (m *FocusManager) within(root, w Component) bool {
+	if root == nil {
+		return false
+	}
+	for n := w; n != nil; n = m.parent[n] {
+		if n == root {
+			return true
+		}
+	}
+	return false
 }
 
 // Focused returns the component holding focus, or nil.
@@ -233,21 +416,35 @@ func (m *FocusManager) reachable(w Component) bool {
 	return true
 }
 
-// Dispatch routes a key event. It starts at the focused component and walks
-// up its ancestors to the root; at each level the KeyBindings attached
-// there are matched first, then that component's own HandleKey. The first
-// true stops propagation. If nothing consumed the event, tab and
-// shift+tab move focus — which means either can be overridden by binding
-// or handling it.
+// Dispatch routes a key event in three phases.
+//
+// It TUNNELS first: every PreviewKeyHandler from the root down to the
+// focused component is offered the event, and the first that takes it
+// ends the dispatch. Then it BUBBLES: starting at the focused component
+// and walking up its ancestors to the root, the KeyBindings attached at
+// each level are matched first, then that component's own HandleKey. The
+// first true stops propagation. Finally, if nothing consumed the event,
+// tab and shift+tab move focus and an unclaimed arrow navigates — which
+// means either can be overridden by binding or handling it.
+//
+// Bindings stay interleaved with handlers per level rather than running
+// as one pass after the bubble: a binding declared inside a control has
+// always beaten its own container's HandleKey and lost to a deeper
+// component's, and that ordering is what scopes a control's gestures.
 func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
 	start := m.Focused()
 	if start == nil {
 		start = m.root
 	}
+	for d := m.depth(start); d >= 0; d-- {
+		if h, ok := m.ancestor(start, d).(PreviewKeyHandler); ok && h.PreviewKey(ev) {
+			return true
+		}
+	}
 	for n := start; n != nil; n = m.parent[n] {
 		for _, b := range m.bindings[n] {
-			if b.Gesture == ev && b.Command != nil {
-				b.Command()
+			if b.Gesture == ev && CanExecute(b.Command) {
+				b.Command.Run()
 				return true
 			}
 		}

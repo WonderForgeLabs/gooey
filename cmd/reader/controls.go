@@ -123,7 +123,7 @@ type feedRows struct {
 	gooey.FocusState
 	feeds   *prop.Property[[]*Feed]
 	sel     *prop.Property[int]
-	changed gooey.Command
+	changed gooey.Action
 }
 
 func (w *feedRows) Measure(avail gooey.Size) gooey.Size { return avail }
@@ -156,8 +156,8 @@ func (w *feedRows) HandleMouse(ev input.MouseEvent) bool {
 
 func (w *feedRows) selectRow(i int) {
 	w.sel.Set(clampIdx(i, len(w.feeds.Get())))
-	if w.changed != nil {
-		w.changed()
+	if gooey.CanExecute(w.changed) {
+		w.changed.Run()
 	}
 }
 

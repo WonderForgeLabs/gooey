@@ -273,7 +273,7 @@ func TestListKeysMoveTheSelection(t *testing.T) {
 func TestEnterAndSecondClickActivate(t *testing.T) {
 	_, sel, v, c := newList(t, numbered(10), 20, 5)
 	opened := 0
-	v.Activate = func() { opened++ }
+	v.Activate = gooey.Command(func() { opened++ })
 	c.Frame()
 
 	if !v.HandleKey(input.Named(input.KeyEnter)) {

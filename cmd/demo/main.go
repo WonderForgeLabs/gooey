@@ -166,7 +166,7 @@ func (m *model) tree() gooey.Component {
 	// Bindings hang off the ROOT: this page has no focus stop, and
 	// dispatch starts at the focused component or, failing that, here.
 	bind := func(gesture input.KeyEvent, fn func()) {
-		root.Attach(&gooey.KeyBinding{Gesture: gesture, Command: fn})
+		root.Attach(&gooey.KeyBinding{Gesture: gesture, Command: gooey.Command(fn)})
 	}
 	bind(input.KeyEvent{Key: input.KeyRune, Rune: ' '}, func() { m.phase.Set(m.phase.Get() + 1) })
 	bind(input.KeyEvent{Key: input.KeyRune, Rune: '+'}, func() { m.resize(2) })

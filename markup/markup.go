@@ -74,7 +74,7 @@ type Context struct {
 	// Click="OnSave" resolves here, while Click="{{.Save}}" resolves a
 	// func in Values. The binding form works in markup-only controls;
 	// the bare-name form needs a registry, so it needs code-behind.
-	Handlers map[string]gooey.Command
+	Handlers map[string]gooey.Action
 	// Named collects Name="..." components during build — the
 	// code-behind lookup surface (Find[T] reads from this).
 	Named map[string]gooey.Component

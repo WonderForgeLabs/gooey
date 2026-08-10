@@ -89,11 +89,53 @@ Before your handler sees anything:
   descent is what makes clicking a pane's border or title focus the pane,
   since the hit there is the `Border`, whose focusable content is below
   it.
-- **Implicit capture**: a release is delivered to the component the press
-  went down on, even if the pointer wandered off first, so a component can
-  always undo its pressed visuals.
+- **Implicit capture**: the press captures the component it landed on, and
+  until the release *every* pointer event routes there regardless of what
+  the pointer is over. That is what makes a drag work — motion outside the
+  component still arrives, so a selection or a thumb keeps tracking — and
+  it is why a component can always undo its pressed visuals.
 - **Wheel events go to the component under the pointer**, not the focused
-  one.
+  one (or to the captor, while the pointer is captured).
+
+Hover transitions are suppressed for the length of a capture, so dragging
+across the tree does not repaint every component the pointer crosses;
+hover catches up when the capture ends.
+
+## Capture the pointer explicitly
+
+A press captures for exactly one press-release pair. When a gesture has
+to outlive that, take the capture yourself:
+
+```go
+func (w *thumb) HandleMouse(ev input.MouseEvent) bool {
+	if ev.Kind == input.MousePress {
+		w.focus.CaptureMouse(w) // held until ReleaseCapture
+		return true
+	}
+	return false
+}
+```
+
+`FocusManager.Captured()` reports the holder, and `ReleaseCapture` gives
+the pointer back to hit-testing. A capture whose component leaves the tree
+is dropped by `Resync`, so a drag cannot outlive the thing being dragged.
+
+## Handle a double click
+
+`MouseClick` carries a `Count`: 1 for a single click, 2 for a second
+click on the same component within `FocusManager.DoubleClickInterval`
+(400ms by default). There is no triple click — a third click restarts the
+sequence at 1.
+
+```go
+case input.MouseClick:
+	if ev.Count >= 2 {
+		w.open()
+	}
+	return true
+```
+
+`ItemsView` activates on `Count` 2, and `TextBox` selects a word.
 
 ## Move focus from a mouse handler
 
@@ -155,9 +197,9 @@ cannot show it, neither can a user without a pointer.
 
 ## Limitations
 
-- No mouse capture API beyond the implicit press-to-release capture.
-- No double-click or drag-threshold synthesis — build those on
-  `HandleMouseMove` yourself.
+- No drag-threshold synthesis — a drag starts on the first motion after a
+  press, so build any slop tolerance on `HandleMouseMove` yourself.
+- No triple click.
 - Horizontal wheel reports are decoded but unmapped, and dropped.
 - Legacy X10 reports are decoded as well as SGR. This matters: an
   undecoded X10 report would degrade into phantom keystrokes, because its

@@ -186,7 +186,7 @@ func TestClickSynthesis(t *testing.T) {
 
 func TestButtonClickAndVisualStates(t *testing.T) {
 	clicks := 0
-	b := &Button{Content: Str("save"), Click: func() { clicks++ }}
+	b := &Button{Content: Str("save"), Click: gooey.Command(func() { clicks++ })}
 	c := gooey.NewComposer(&VStack{Children: []gooey.Component{b}}, 20, 3)
 	c.Frame()
 

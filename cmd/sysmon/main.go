@@ -99,10 +99,10 @@ func main() {
 	// Attachments must exist before the Composer walks the tree.
 	running := true
 	for _, kb := range []*gooey.KeyBinding{
-		{Gesture: input.Rune('q'), Command: func() { running = false }},
-		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: func() { running = false }},
-		{Gesture: input.Rune('c'), Command: func() { sortKey.Set("cpu") }},
-		{Gesture: input.Rune('m'), Command: func() { sortKey.Set("mem") }},
+		{Gesture: input.Rune('q'), Command: gooey.Command(func() { running = false })},
+		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: gooey.Command(func() { running = false })},
+		{Gesture: input.Rune('c'), Command: gooey.Command(func() { sortKey.Set("cpu") })},
+		{Gesture: input.Rune('m'), Command: gooey.Command(func() { sortKey.Set("mem") })},
 	} {
 		root.Attach(kb)
 	}

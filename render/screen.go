@@ -246,6 +246,8 @@ func (s *Screen) sgr(args []int, body string) {
 			s.cur = Style{}
 		case 1:
 			s.cur.Bold = true
+		case 2:
+			s.cur.Dim = true
 		case 4:
 			s.cur.Underline = true
 		case 7:

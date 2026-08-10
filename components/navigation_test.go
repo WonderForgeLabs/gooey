@@ -131,6 +131,7 @@ func TestReaderShapeClickAndWheelRouting(t *testing.T) {
 
 	mid := b.Bounds()
 	comp.HandleMouse(press(mid.X+2, mid.Y))
+	comp.HandleMouse(release(mid.X+2, mid.Y))
 	if comp.Focus().Focused() != gooey.Component(b) {
 		t.Fatalf("clicking the middle pane's interior focused %p, want %p", comp.Focus().Focused(), b)
 	}
@@ -139,6 +140,7 @@ func TestReaderShapeClickAndWheelRouting(t *testing.T) {
 	// is a descendant, not an ancestor.
 	comp.Focus().SetFocus(a)
 	comp.HandleMouse(press(mid.X+2, mid.Y-1))
+	comp.HandleMouse(release(mid.X+2, mid.Y-1))
 	if comp.Focus().Focused() != gooey.Component(b) {
 		t.Fatalf("clicking the middle pane's title focused %p, want %p", comp.Focus().Focused(), b)
 	}
