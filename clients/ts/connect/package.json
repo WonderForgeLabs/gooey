@@ -1,0 +1,31 @@
+{
+  "name": "@wonderforgelabs/gooey-control-connect",
+  "version": "0.0.0",
+  "description": "Generated Connect-ES client for the gooey.control.v1 control plane (protoc-gen-es v2 descriptors; use with @connectrpc/connect)",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WonderForgeLabs/gooey.git",
+    "directory": "clients/ts/connect"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.2"
+  }
+}

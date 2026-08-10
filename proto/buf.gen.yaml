@@ -1,0 +1,49 @@
+# Codegen pipeline for gooey.control.v1 (issue #110).
+#
+# Run from the REPO ROOT (out paths are cwd-relative):
+#
+#   go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+#
+# All plugins are buf REMOTE plugins, pinned by version: regeneration
+# needs buf and network, nothing else — no protoc, no pip, no npm. The
+# drift gate in CI is exactly the command above plus `git diff
+# --exit-code`. Generated code is committed (decision record
+# docs/specs/2026-08-10-grpc-contract.md); regeneration is an explicit
+# act.
+version: v2
+inputs:
+  - directory: proto
+plugins:
+  # --- Go: grpc/ nested module, package controlv1 ------------------
+  # go_package in the protos pins the import path to
+  # github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1;
+  # paths=source_relative makes the files land there.
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: grpc/gen
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go:v1.6.2
+    out: grpc/gen
+    opt: paths=source_relative
+  # --- Python: clients/python, import package gooey.control.v1 ----
+  - remote: buf.build/protocolbuffers/python:v35.1
+    out: clients/python
+  - remote: buf.build/protocolbuffers/pyi:v35.1
+    out: clients/python
+  - remote: buf.build/grpc/python:v1.83.0
+    out: clients/python
+  # --- TypeScript flavor 1: Connect-ES (clients/ts/connect) -------
+  # protoc-gen-es v2 generates both messages and service descriptors;
+  # Connect-ES v2 consumes the descriptors directly (no separate
+  # connect plugin). Well-known types come from @bufbuild/protobuf/wkt.
+  - remote: buf.build/bufbuild/es:v2.13.0
+    out: clients/ts/connect/src
+    opt: target=ts
+  # --- TypeScript flavor 2: grpc-js via protobuf-ts ---------------
+  # client_grpc1 emits @grpc/grpc-js clients. protobuf-ts resolves
+  # imports (google/protobuf/duration.proto) to generated files, not a
+  # runtime package, so the WKTs must be generated too.
+  - remote: buf.build/community/timostamm-protobuf-ts:v2.11.1
+    out: clients/ts/grpc-js/src
+    opt: client_grpc1
+    include_imports: true
+    include_wkt: true

@@ -1,0 +1,33 @@
+{
+  "name": "@wonderforgelabs/gooey-control-grpc",
+  "version": "0.0.0",
+  "description": "Generated grpc-js client for the gooey.control.v1 control plane (protobuf-ts, client_grpc1)",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WonderForgeLabs/gooey.git",
+    "directory": "clients/ts/grpc-js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@protobuf-ts/runtime": "^2.11.1",
+    "@protobuf-ts/runtime-rpc": "^2.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.2"
+  }
+}
