@@ -9,8 +9,27 @@ result lands in a property. See `cmd/temporaldemo` and the package doc in
 
 **`wf:Signal`** — a workflow-owned application. The workflow serves its
 own screens, mutates them as it advances, and the terminal is a generic
-shell that renders whatever arrived. See `cmd/wizardworker` +
-`cmd/wizardui`, and the rest of this file.
+shell that renders whatever arrived. See `cmd/wizardui` and the
+application it drives in `internal/wizard`, plus the rest of this file.
+
+## Layout
+
+`cmd/` holds the two things you run to *see* something: `wizardui` and
+`temporaldemo`. `workers/` holds the standalone worker binaries, and
+`internal/` holds the applications themselves.
+
+That split is a convention with teeth. `cmd/browser` builds the demo menu
+by scanning each module's `cmd/` one level deep for a `main.go`, so
+anything living there shows up as a demo. A worker is not a demo — it
+paints nothing and there is nothing to look at — and now that the UIs
+start their own, it is an implementation detail of the deployment story.
+Moving it out of `cmd/` is the whole mechanism; the browser has no
+skip-list and needs none.
+
+```sh
+cd handlers/temporal
+go run ./workers/wizardworker    # still an ordinary main package
+```
 
 ![the wizard demo](wizarddemo.gif)
 
@@ -18,11 +37,41 @@ shell that renders whatever arrived. See `cmd/wizardworker` +
 
 ```sh
 temporal server start-dev --headless   # shell 1
-go run ./cmd/wizardworker              # shell 2
-go run ./cmd/wizardui                  # shell 3
+go run ./cmd/wizardui                  # shell 2 — brings its own worker
 
 temporal workflow show --workflow-id gooey-wizard   # what actually ran
 ```
+
+`wizardui` runs the application's worker as a gooey **companion**: it
+starts before the first frame and stops when the app does, so the demo is
+two shells rather than three. With the Temporal CLI installed it is one —
+the dev server can be a companion too, as a child process:
+
+```sh
+go run ./cmd/wizardui --with-dev-server
+```
+
+Neither is how you would deploy this, and both standalone binaries still
+work, because "workers run elsewhere" is the whole point of the
+architecture:
+
+```sh
+temporal server start-dev --headless   # shell 1
+go run ./workers/wizardworker          # shell 2 (or another machine, or five of them)
+go run ./cmd/wizardui --with-worker=false
+```
+
+The UI cannot tell the three apart. Every screen it renders came back
+through the server either way, and `temporal workflow show` produces the
+same history. `cmd/temporaldemo` has the same `--with-worker` flag for
+the same reason.
+
+The application itself lives in `internal/wizard`, imported by both the
+standalone worker and the companion — one registration, two deployments.
+The companion passes `temporalhandlers.NopLogger`; the standalone binary
+keeps the SDK's default, because stderr is its only UI. See
+`docs/specs/2026-08-10-companions.md` for the lifecycle and its failure
+semantics.
 
 `ProvisionWizard` is a four-stage request wizard: choose a size and a
 region, review a priced summary, watch it provision, then start over or
@@ -120,8 +169,12 @@ Three things stay client-side and never come from the workflow:
 1. **The theme.** A workflow serving a screen should not pick colors for
    a terminal it has never seen. Unknown style names degrade to plain
    text rather than failing the load.
-2. **The quit key.** `ctrl+c` is handled by the shell's event loop, above
-   the served tree, so a workflow cannot serve a page you cannot leave.
+2. **The quit key.** `ctrl+c` is handled by an `App.OnEvent` observer,
+   which runs on every decoded event *before* routing and cannot consume
+   it. So the served tree still sees the key, and the app quits anyway —
+   a workflow cannot serve a page you cannot leave. (The framework's own
+   quit key would not do: it fires only on what the tree *declines*,
+   which is the right default everywhere except here.)
 3. **One reserved property, `Echo`.** Handler receipts land there
    (``Click="{{wf:Signal `approve` | into .Echo}}"``), which keeps the
    client's voice ("terminal sent: sent approve") out of the workflow's

@@ -43,6 +43,10 @@ and no widget sees it: it means "stop", and it is honored.
 | while suspended | `SIGINT`/`SIGTERM` are SHIELDED. The tty driver signals the whole foreground process group, so a `ctrl+c` aimed at a child process arrives here too; acting on it would kill the host along with the thing it launched. The child gets its own copy regardless. |
 | panic | `Run` recovers, restores the terminal FIRST, then re-panics with the original value. A crash must print its stack onto a cooked screen. |
 
+Teardown has one more step after all of these, and it comes *after* the
+terminal is handed back: stopping the app's companion services. See
+`docs/specs/2026-08-10-companions.md`.
+
 Every signal is delivered onto the UI goroutine through the Dispatcher
 rather than handled where it lands: the terminal work has to be ordered
 against frames, and a handler goroutine touching the composition would

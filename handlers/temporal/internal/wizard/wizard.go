@@ -1,4 +1,4 @@
-package main
+package wizard
 
 // ProvisionWizard is a workflow that owns an application, screens and
 // all.

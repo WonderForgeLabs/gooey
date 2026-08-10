@@ -65,6 +65,19 @@ type App struct {
 	exitSig   os.Signal
 	leaked    bool
 	suspended bool
+
+	// Companions: services with this app's exact lifetime. See
+	// companion.go — every field here is UI-goroutine-only except the
+	// channel, which is how the supervisors report in.
+	compCtx      context.Context
+	compCancel   context.CancelFunc
+	compStarted  []Companion
+	compExit     chan companionExit
+	compDone     int
+	compErr      error
+	compStopping bool
+	compStopped  bool
+	compLeaked   bool
 }
 
 // Content is where an App's widget tree comes from, and the seam hot
@@ -103,6 +116,10 @@ type options struct {
 	onError  func(error)
 	eventBuf int
 	open     func() (*term.Screen, error)
+
+	companions []Companion
+	compGrace  time.Duration
+	compStopTO time.Duration
 }
 
 // Option configures an App. Options are typed funcs over an unexported
@@ -172,9 +189,11 @@ func NewApp(content Content, opts ...Option) *App {
 	a := &App{
 		content: content,
 		opt: options{
-			mouse:    true,
-			quitKeys: []input.KeyEvent{{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}},
-			eventBuf: 64,
+			mouse:      true,
+			quitKeys:   []input.KeyEvent{{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}},
+			eventBuf:   64,
+			compGrace:  defaultCompanionGrace,
+			compStopTO: defaultCompanionStopTimeout,
 		},
 		disp: NewDispatcher(),
 		quit: make(chan struct{}),
@@ -301,6 +320,13 @@ func (a *App) fail(err error) {
 // re-panics with the original value, so the stack trace prints onto a
 // cooked screen instead of scrolling sideways through a raw-mode alt
 // buffer that nobody can scroll back through.
+//
+// Companions run for exactly this call. They are started first — before
+// the tree is built and before the terminal is touched, so a service
+// that cannot start reports it on a cooked screen and so a Build that
+// talks to one finds it up — and stopped last, after the terminal has
+// been handed back. A companion that dies while the app is running quits
+// the app, and Run returns a *CompanionError saying which one.
 func (a *App) Run(ctx context.Context) error {
 	defer func() {
 		if r := recover(); r != nil {
@@ -308,6 +334,17 @@ func (a *App) Run(ctx context.Context) error {
 			panic(r)
 		}
 	}()
+
+	// The defer order from here down is the teardown order reversed, and
+	// it is load-bearing: stopCompanions is registered BEFORE teardown so
+	// it runs AFTER it. Services are asked to stop once the terminal is
+	// cooked again, never while the UI is frozen mid-frame waiting on
+	// them.
+	if err := a.startCompanions(ctx); err != nil {
+		a.stopCompanions()
+		return err
+	}
+	defer a.stopCompanions()
 
 	root, err := a.content.Build()
 	if err != nil {
@@ -372,7 +409,13 @@ func (a *App) gracefulExit(sig os.Signal) {
 	a.Quit()
 }
 
+// exitErr is why the loop ended. A dead companion outranks a signal:
+// where both happened, the signal is usually the shell reacting to the
+// same failure, and the companion is the fact that explains it.
 func (a *App) exitErr() error {
+	if a.compErr != nil {
+		return a.compErr
+	}
 	if a.exitSig != nil {
 		return &SignalError{Signal: a.exitSig}
 	}
@@ -534,6 +577,9 @@ func (a *App) resized(cols, rows int) {
 	}
 }
 
+// teardown gives back everything the run loop took EXCEPT the
+// companions: Run stops those after this returns, so a service shutting
+// down slowly does it on a restored terminal (see Run's defer order).
 func (a *App) teardown() {
 	a.stopSignals()
 	for _, stop := range a.stops {
@@ -561,6 +607,10 @@ func (a *App) teardown() {
 // arrives here too, and acting on it would kill the host along with the
 // thing it launched. The child gets its own SIGINT either way — this
 // only stops ours from being fatal.
+//
+// Companions keep running throughout. They are background services, not
+// part of the UI: the child fn launches owns the terminal for a while,
+// and a companion never did.
 //
 // fn's error is returned as-is. An error re-acquiring the terminal takes
 // precedence, because at that point there is no UI left to report into.

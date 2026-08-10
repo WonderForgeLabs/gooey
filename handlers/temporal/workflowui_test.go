@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -15,7 +16,15 @@ import (
 )
 
 // fakeSignaler records what served markup asked the workflow to be told.
+//
+// It is locked because a handler runs on its own goroutine by design —
+// that is what the Dispatcher exists to marshal back — so the recording
+// side and the asserting side are genuinely concurrent. Tests that wait
+// on a receipt are synchronized by that receipt; the one that cannot
+// (a signal with no `into` target posts nothing) polls, and polling an
+// unlocked slice is a data race whatever the timing looks like.
 type fakeSignaler struct {
+	mu   sync.Mutex
 	sent []sentSignal
 	err  error
 }
@@ -28,8 +37,23 @@ type sentSignal struct {
 }
 
 func (f *fakeSignaler) SignalWorkflow(ctx context.Context, workflowID, runID, name string, arg any) error {
+	f.mu.Lock()
 	f.sent = append(f.sent, sentSignal{workflowID, runID, name, arg})
-	return f.err
+	err := f.err
+	f.mu.Unlock()
+	return err
+}
+
+func (f *fakeSignaler) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sent)
+}
+
+func (f *fakeSignaler) at(i int) sentSignal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sent[i]
 }
 
 // servedPage stands in for markup that arrived from a query rather than
@@ -93,10 +117,10 @@ func TestSignalCarriesMarkupSuppliedNameAndPayload(t *testing.T) {
 	h := buildServed(t, servedPage, f)
 	h.pressAndSettle()
 
-	if len(f.sent) != 1 {
-		t.Fatalf("sent %d signals, want 1", len(f.sent))
+	if f.count() != 1 {
+		t.Fatalf("sent %d signals, want 1", f.count())
 	}
-	s := f.sent[0]
+	s := f.at(0)
 	if s.name != "approve" {
 		t.Fatalf("signal name = %q, want the backtick literal approve", s.name)
 	}
@@ -122,8 +146,8 @@ func TestSignalPayloadIsReadAtPressTime(t *testing.T) {
 	h.tier.Set("large")
 	h.pressAndSettle()
 
-	first := f.sent[0].arg.([]string)
-	second := f.sent[1].arg.([]string)
+	first := f.at(0).arg.([]string)
+	second := f.at(1).arg.([]string)
 	if first[0] != "small" || second[0] != "large" {
 		t.Fatalf("workflow saw %v then %v", first, second)
 	}
@@ -140,14 +164,14 @@ func TestSignalWithoutPayload(t *testing.T) {
 		t.Fatal("enter did not reach the button")
 	}
 	deadline := time.After(5 * time.Second)
-	for len(f.sent) == 0 {
+	for f.count() == 0 {
 		select {
 		case <-time.After(5 * time.Millisecond):
 		case <-deadline:
 			t.Fatal("no signal was sent")
 		}
 	}
-	if got := f.sent[0].arg.([]string); len(got) != 0 {
+	if got := f.at(0).arg.([]string); len(got) != 0 {
 		t.Fatalf("payload = %#v, want empty", got)
 	}
 }

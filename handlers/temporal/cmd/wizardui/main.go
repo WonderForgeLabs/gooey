@@ -20,25 +20,48 @@
 // is the client's business, and unknown style names degrade to plain
 // text rather than failing.
 //
+// # Shells
+//
+// The application's worker is a gooey COMPANION by default: it starts
+// before the first frame, stops when the app does, and is otherwise the
+// same registration workers/wizardworker serves. So the demo is two shells:
+//
 //	temporal server start-dev --headless   # shell 1
-//	go run ./cmd/wizardworker              # shell 2
-//	go run ./cmd/wizardui                  # shell 3
+//	go run ./cmd/wizardui                  # shell 2
+//
+// or one, if the Temporal CLI is installed — the dev server can be a
+// companion too, as a CHILD PROCESS rather than a goroutine:
+//
+//	go run ./cmd/wizardui --with-dev-server
+//
+// or three, which is what a real deployment looks like and why the
+// standalone binaries still exist — workers belong where the compute is:
+//
+//	temporal server start-dev --headless   # shell 1
+//	go run ./workers/wizardworker          # shell 2
+//	go run ./cmd/wizardui --with-worker=false
+//
+// The UI cannot tell the difference between the three. Every screen it
+// renders came back through the server either way.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	temporalhandlers "github.com/WonderForgeLabs/gooey/handlers/temporal"
+	"github.com/WonderForgeLabs/gooey/handlers/temporal/internal/wizard"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 	"go.temporal.io/sdk/client"
 )
 
@@ -81,148 +104,197 @@ var theme = map[string]render.Style{
 func main() {
 	var (
 		address    = flag.String("address", envOr("TEMPORAL_ADDRESS", client.DefaultHostPort), "Temporal server host:port")
-		taskQueue  = flag.String("queue", envOr("GOOEY_TASK_QUEUE", "gooey-wizard"), "task queue the application's worker serves")
+		taskQueue  = flag.String("queue", envOr("GOOEY_TASK_QUEUE", wizard.DefaultTaskQueue), "task queue the application's worker serves")
 		wfType     = flag.String("workflow", envOr("GOOEY_WORKFLOW", "ProvisionWizard"), "workflow type to start or attach to")
 		wfID       = flag.String("id", envOr("GOOEY_WORKFLOW_ID", "gooey-wizard"), "workflow ID of the session")
 		queryName  = flag.String("query", envOr("GOOEY_UI_QUERY", "ui"), "query that returns the screen")
 		pollEvery  = flag.Duration("poll", 400*time.Millisecond, "how often to ask for the current screen")
 		exitAfter  = flag.Duration("exit-after", 0, "quit on a timer, for scripted captures (0 = never)")
 		frameTrace = flag.String("trace", "", "append one line per screen change to this file")
+		startup    = flag.Duration("startup", 20*time.Second, "how long to wait for the application to serve its first screen")
+
+		withWorker = flag.Bool("with-worker", true, "run the application's worker in-process for this app's lifetime")
+		withDev    = flag.Bool("with-dev-server", false, "run `temporal server start-dev --headless` as a child process for this app's lifetime")
+		devLog     = flag.String("dev-server-log", "", "send the dev server's output to this file (default: discarded)")
 	)
 	flag.Parse()
 
-	// NopLogger: the SDK's default logger writes to stderr, which in
-	// raw mode prints straight over the UI's bottom rows.
-	tc, err := client.Dial(client.Options{HostPort: *address, Logger: temporalhandlers.NopLogger})
-	if err != nil {
-		fatal("cannot reach the Temporal server at %s: %v\n"+
-			"start one with: temporal server start-dev --headless", *address, err)
-	}
-	defer tc.Close()
-
-	// Start the session, or attach to the one already running under this
-	// ID. Attaching is the interesting case: the application's state lives
-	// on the server, so a second terminal — or the same terminal after a
-	// crash — picks up exactly the screen the workflow is on.
-	run, err := tc.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
-		ID:        *wfID,
-		TaskQueue: *taskQueue,
-	}, *wfType)
-	if err != nil {
-		fatal("cannot start or attach to workflow %q: %v\n"+
-			"is the worker running?  go run ./cmd/wizardworker", *wfID, err)
-	}
-
-	// --- the capability grant ---
-	markup.RegisterHandlers(temporalhandlers.WorkflowURI,
-		temporalhandlers.NewWorkflowUI(tc, *wfID))
-
 	ui := &session{
-		client: tc,
-		wfID:   *wfID,
-		query:  *queryName,
-		disp:   gooey.NewDispatcher(),
-		cur:    uiState{Version: -1},
-		echo:   prop.NewSource("(nothing sent yet)"),
+		wfID:    *wfID,
+		wfType:  *wfType,
+		address: *address,
+		queue:   *taskQueue,
+		query:   *queryName,
+		every:   *pollEvery,
+		budget:  *startup,
+		cur:     uiState{Version: -1},
+		echo:    prop.NewSource("(nothing sent yet)"),
 	}
 	if *frameTrace != "" {
 		f, err := os.OpenFile(*frameTrace, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			fatal("cannot open trace file: %v", err)
 		}
-		defer f.Close()
-		ui.trace = f
+		ui.trace = f // closed after Run; this main always ends in os.Exit
 	}
 
-	// The first screen has to arrive before the terminal is worth opening:
-	// a worker that is not up yet is a startup error, not a blank UI.
-	first, err := ui.await(20 * time.Second)
-	if err != nil {
-		fatal("the workflow never served a screen: %v\n"+
-			"is the worker running on task queue %q?", err, *taskQueue)
+	// --- the companions: this app's services, with this app's lifetime ---
+	//
+	// Order is start order, and it matters here: the worker dials the
+	// server the line above it starts. Everything below runs before the
+	// terminal is opened and before the first screen is asked for, which
+	// is why session.Build can simply assume both are up.
+	var companions []gooey.Companion
+	opts := []gooey.Option{}
+	if *withDev {
+		companions = append(companions, devServer(*address, *devLog))
+		// A server that has to bind a socket takes about a second to
+		// discover it cannot. The framework's default grace window is
+		// 100ms, which is right for a goroutine and far too short for
+		// this: without the wider window, "port already in use" arrives
+		// AFTER the screen is taken, and the user sees the wizard flash
+		// up and vanish instead of a sentence explaining itself. The
+		// window costs nothing here — it overlaps the time Build would
+		// have spent retrying the dial anyway.
+		opts = append(opts, gooey.WithCompanionGrace(2*time.Second))
+	}
+	if *withWorker {
+		// The application itself, in this process, for exactly as long as
+		// the UI is on screen. NopLogger because a worker sharing a
+		// terminal with a TUI has no more claim on stderr than the TUI
+		// does; the standalone workers/wizardworker keeps the default logger,
+		// since stderr is its whole UI.
+		companions = append(companions, gooey.CompanionFunc("wizard-worker",
+			func(ctx context.Context) error {
+				c, err := wizard.Dial(ctx, *address, temporalhandlers.NopLogger)
+				if err != nil {
+					return err
+				}
+				defer c.Close()
+				return wizard.Run(ctx, c, *taskQueue)
+			}))
 	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fatal("no tty: %v", err)
-	}
-	ui.cols, ui.rows = screen.Size()
+	app := gooey.NewApp(ui, append(opts, gooey.WithCompanions(companions...))...)
+	ui.app = app
 
-	if err := ui.apply(first); err != nil {
-		fatal("the first served screen did not build: %v", err)
-	}
-
-	if err := screen.Raw(); err != nil {
-		fatal("%v", err)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	events := make(chan input.Event, 64)
-	go term.DecodeEvents(screen, events)
-
-	states := make(chan uiState, 1)
-	stopPoll := make(chan struct{})
-	go ui.poll(*pollEvery, states, stopPoll)
-	defer close(stopPoll)
-
-	var deadline <-chan time.Time
+	// The shell's own chrome — the one gesture that belongs to the
+	// terminal rather than to the served screen. OnEvent is an OBSERVER:
+	// it cannot consume the key, so the tree still sees it, but the app
+	// quits regardless. That is the difference between this and the
+	// framework's ordinary quit key, which fires only on what the tree
+	// declines, and it is what makes "a workflow cannot serve a page you
+	// cannot leave" true rather than merely usual.
+	app.OnEvent(func(ev input.Event) {
+		if ev.IsKey() && ev.Key == (input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}) {
+			app.Quit()
+		}
+	})
 	if *exitAfter > 0 {
-		deadline = time.After(*exitAfter)
+		time.AfterFunc(*exitAfter, app.Quit) // Quit is safe from any goroutine
 	}
 
-	running := true
-	for running {
-		if ui.needsFrame {
-			ui.comp.Frame()
-			ui.comp.Flush(screen.File())
-			ui.needsFrame = false
-		}
-		select {
-		case <-ui.disp.Wake():
-			// Signal receipts, marshaled back onto this goroutine.
-			ui.disp.Drain()
-		case st := <-states:
-			if err := ui.apply(st); err != nil {
-				// A served screen that will not build leaves the last good
-				// one on display. The client has no place to draw its own
-				// error — the screen belongs to the workflow — so it is
-				// reported on the way out.
-				ui.lastErr = err
-			}
-		case ev := <-events:
-			if isQuit(ev) {
-				running = false
-				continue
-			}
-			ui.comp.Handle(ev)
-		case <-deadline:
-			running = false
-		}
-	}
+	err := app.Run(context.Background())
 
-	if ui.comp != nil {
-		ui.comp.Close()
+	// Run has returned, so the terminal is cooked, the companions are
+	// stopped and the poller is joined. Ordinary printing from here.
+	if ui.client != nil {
+		ui.client.Close()
 	}
-	screen.Restore()
-	fmt.Printf("wizardui: %s · polls %d · screens built %d · value updates %d · last stage %q\n",
-		run.GetID(), ui.polls, ui.builds, ui.updates, ui.cur.Stage)
+	if ui.trace != nil {
+		ui.trace.Close()
+	}
+	// Nothing to report about a session that never had a screen; the
+	// error below is the whole story, and a row of zeros above it only
+	// makes it harder to read.
+	if ui.builds > 0 {
+		fmt.Printf("wizardui: %s · polls %d · screens built %d · value updates %d · last stage %q\n",
+			ui.wfID, ui.polls, ui.builds, ui.updates, ui.cur.Stage)
+	}
 	if ui.lastErr != nil {
 		fmt.Fprintf(os.Stderr, "wizardui: last build error: %v\n", ui.lastErr)
 	}
+	// A child process's exit status is a number, and a number is a poor
+	// explanation. The app knows what it asked for, so it is the one that
+	// can say what usually goes wrong with it.
+	var ce *gooey.CompanionError
+	if errors.As(err, &ce) && ce.Name == "temporal-dev" {
+		fmt.Fprintf(os.Stderr, "%v\n"+
+			"the dev server would not run — most often something is already on %s.\n"+
+			"re-run with --dev-server-log FILE to see what it said, or drop --with-dev-server\n"+
+			"and start it yourself: temporal server start-dev --headless\n", err, *address)
+		os.Exit(1)
+	}
+	gooey.Exit(err)
 }
 
-// session is the shell's whole state: a connection, the current screen,
-// and the property sources the current screen is bound to.
-type session struct {
-	client client.Client
-	wfID   string
-	query  string
+// devServer is the flagship CompanionCmd: a whole server, owned by a
+// terminal UI, for the length of one demo.
+//
+// It is opt-in and it is NOT the default, on purpose. A dev server holds
+// state that outlives any one client — you want to `temporal workflow
+// show` after the UI closes — and a program that silently deletes the
+// thing you were about to inspect is a bad neighbor. The worker is the
+// opposite case: it holds nothing, so owning its lifetime costs nothing.
+//
+// LookPath first so the failure reads like a missing tool rather than a
+// failed exec; either way it happens before the screen is taken.
+//
+// It is bound to the same address the client dials, rather than to the
+// CLI's default. A server and a client in one process disagreeing about
+// where the server is would be an absurd way to fail, and --address is
+// the only place either of them gets told.
+func devServer(address, logPath string) gooey.Companion {
+	if _, err := exec.LookPath("temporal"); err != nil {
+		fatal("--with-dev-server needs the Temporal CLI on PATH: %v\n"+
+			"install it from https://docs.temporal.io/cli, or start the server yourself:\n"+
+			"  temporal server start-dev --headless", err)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		fatal("--address %q is not host:port: %v", address, err)
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	cmd := exec.Command("temporal", "server", "start-dev", "--headless", "--ip", host, "--port", port)
+	var opts []gooey.CmdOption
+	if logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fatal("cannot open the dev server log: %v", err)
+		}
+		opts = append(opts, gooey.CompanionOutput(f))
+	}
+	// Without an output option the child's stdout and stderr go to
+	// os.DevNull. A server logging onto a raw-mode alt screen is the
+	// SDK-logger problem one level up, and there is no repairing it from
+	// here: those bytes are not ours to repaint.
+	return gooey.CompanionCmd("temporal-dev", cmd, opts...)
+}
 
-	disp       *gooey.Dispatcher
-	comp       *gooey.Composer
-	cols, rows int
-	needsFrame bool
+// session is the shell's whole state — a connection, the current screen,
+// and the property sources that screen is bound to — and it is also the
+// App's Content.
+//
+// Being Content is what puts the connection in the right place. Build
+// runs on the UI goroutine AFTER the companions are up and BEFORE the
+// terminal is opened, which is exactly the window in which "dial the
+// server, attach to the workflow, wait for a screen" belongs: it may
+// take seconds, it may fail, and either way it should be ordinary text
+// on a cooked terminal rather than something happening behind an alt
+// screen.
+type session struct {
+	app    *gooey.App
+	client client.Client
+
+	address string
+	queue   string
+	wfID    string
+	wfType  string
+	query   string
+	every   time.Duration
+	budget  time.Duration
 
 	cur     uiState
 	sources map[string]*prop.Property[string]
@@ -235,6 +307,75 @@ type session struct {
 	lastErr error
 }
 
+// Build connects if it has not yet, waits for the application to serve a
+// screen, and returns that screen as a widget tree.
+func (s *session) Build() (gooey.Widget, error) {
+	if s.client == nil {
+		if err := s.connect(); err != nil {
+			return nil, err
+		}
+	}
+	st, err := s.await(s.budget)
+	if err != nil {
+		return nil, fmt.Errorf("the workflow never served a screen: %w\n"+
+			"is a worker running on task queue %q?  pass --with-worker, or run ./workers/wizardworker", err, s.queue)
+	}
+	return s.tree(st)
+}
+
+// Watch is where the poller lives. The App calls it once the tree is on
+// screen and calls the returned stop during teardown, which is exactly
+// the poller's useful life — and the cancellation joins it, so nothing
+// is still querying a client main is about to close.
+//
+// It ignores the `changed` callback. That callback means "rebuild from
+// Content", and this content rebuilds itself: a new screen is a Swap
+// with a tree built from the payload that announced it, not a re-read of
+// a source that has no idea what changed.
+func (s *session) Watch(func()) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.poll(ctx)
+	}()
+	return func() { cancel(); <-done }
+}
+
+// connect dials, starts or attaches the session, and grants the one
+// capability served markup gets.
+func (s *session) connect() error {
+	ctx, cancel := context.WithTimeout(context.Background(), s.budget)
+	defer cancel()
+
+	// Retrying rather than failing on the first refusal: with
+	// --with-dev-server the server started milliseconds ago and is not
+	// listening yet, which is not an error, it is a startup.
+	c, err := wizard.Dial(ctx, s.address, temporalhandlers.NopLogger)
+	if err != nil {
+		return fmt.Errorf("cannot reach the Temporal server at %s: %w\n"+
+			"start one with: temporal server start-dev --headless (or pass --with-dev-server)", s.address, err)
+	}
+
+	// Start the session, or attach to the one already running under this
+	// ID. Attaching is the interesting case: the application's state lives
+	// on the server, so a second terminal — or the same terminal after a
+	// crash — picks up exactly the screen the workflow is on.
+	if _, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:        s.wfID,
+		TaskQueue: s.queue,
+	}, s.wfType); err != nil {
+		c.Close()
+		return fmt.Errorf("cannot start or attach to workflow %q: %w", s.wfID, err)
+	}
+	s.client = c
+
+	// --- the capability grant ---
+	markup.RegisterHandlers(temporalhandlers.WorkflowURI,
+		temporalhandlers.NewWorkflowUI(c, s.wfID))
+	return nil
+}
+
 // await retries the first query until a worker answers it WITH a screen.
 // There are two distinct waits here: between ExecuteWorkflow returning
 // and the workflow's first task being picked up the query has nowhere to
@@ -242,10 +383,11 @@ type session struct {
 // has served its first markup. Neither is an error — an application is
 // allowed to take a moment to have a UI.
 func (s *session) await(limit time.Duration) (uiState, error) {
-	deadline := time.Now().Add(limit)
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
 	last := fmt.Errorf("no answer from the %q query", s.query)
-	for time.Now().Before(deadline) {
-		st, err := s.fetch()
+	for {
+		st, err := s.fetch(ctx)
 		switch {
 		case err != nil:
 			last = err
@@ -254,13 +396,16 @@ func (s *session) await(limit time.Duration) (uiState, error) {
 		default:
 			return st, nil
 		}
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return uiState{}, last
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
-	return uiState{}, last
 }
 
-func (s *session) fetch() (uiState, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (s *session) fetch(ctx context.Context) (uiState, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	enc, err := s.client.QueryWorkflow(ctx, s.wfID, "", s.query)
 	if err != nil {
@@ -273,26 +418,34 @@ func (s *session) fetch() (uiState, error) {
 	return st, nil
 }
 
-// poll asks for the current screen on an interval. Failures are silent
-// on purpose: a query that fails during a worker restart should not tear
-// down a UI whose state lives on the server anyway.
-func (s *session) poll(every time.Duration, out chan<- uiState, stop <-chan struct{}) {
-	t := time.NewTicker(every)
+// poll asks for the current screen on an interval and hands each answer
+// to the UI goroutine, which is the only place a screen may be applied:
+// applying one Sets properties, and properties belong to the loop.
+//
+// Failures are silent on purpose: a query that fails during a worker
+// restart should not tear down a UI whose state lives on the server
+// anyway.
+func (s *session) poll(ctx context.Context) {
+	t := time.NewTicker(s.every)
 	defer t.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			return
 		case <-t.C:
-			st, err := s.fetch()
+			st, err := s.fetch(ctx)
 			if err != nil {
 				continue
 			}
-			select {
-			case out <- st:
-			case <-stop:
-				return
-			}
+			s.app.Post(func() {
+				if err := s.apply(st); err != nil {
+					// A served screen that will not build leaves the last
+					// good one on display. The client has no place to draw
+					// its own error — the screen belongs to the workflow —
+					// so it is reported on the way out.
+					s.lastErr = err
+				}
+			})
 		}
 	}
 }
@@ -301,11 +454,12 @@ func (s *session) poll(every time.Duration, out chan<- uiState, stop <-chan stru
 // counters.
 //
 // A new markup VERSION means a different screen: build a fresh widget
-// tree against fresh sources and hand it to a new Composer. A new
-// REVISION on the same markup means the same screen with new numbers:
-// Set the sources that changed and let the property graph repaint
-// exactly the widgets that read them — which, on the provisioning
-// screen, is one line per completed activity rather than a whole page.
+// tree against fresh sources and hand it to the App, which closes the
+// outgoing composition and attaches the new one. A new REVISION on the
+// same markup means the same screen with new numbers: Set the sources
+// that changed and let the property graph repaint exactly the widgets
+// that read them — which, on the provisioning screen, is one line per
+// completed activity rather than a whole page.
 func (s *session) apply(st uiState) error {
 	s.polls++
 	if st.Markup == "" {
@@ -318,7 +472,12 @@ func (s *session) apply(st uiState) error {
 		return nil
 	}
 	if st.Version != s.cur.Version || !s.boundTo(st.Values) {
-		return s.rebuild(st)
+		w, err := s.tree(st)
+		if err != nil {
+			return err
+		}
+		s.app.Swap(w)
+		return nil
 	}
 	if st.Revision == s.cur.Revision {
 		return nil
@@ -353,7 +512,11 @@ func (s *session) boundTo(values map[string]string) bool {
 	return true
 }
 
-func (s *session) rebuild(st uiState) error {
+// tree builds a widget tree from a served screen and adopts its sources
+// as the current ones. It runs on the UI goroutine either way — from
+// Build at startup, from a posted apply afterwards — because resolving
+// bindings touches the property graph.
+func (s *session) tree(st uiState) (gooey.Widget, error) {
 	sources := make(map[string]*prop.Property[string], len(st.Values))
 	values := make(map[string]any, len(st.Values))
 	for k, v := range st.Values {
@@ -368,26 +531,18 @@ func (s *session) rebuild(st uiState) error {
 	ctx := &markup.Context{
 		Values:     values,
 		Styles:     theme,
-		Dispatcher: s.disp,
+		Dispatcher: s.app.Dispatcher(),
 	}
 	// Build, not Load: this markup never touched a filesystem.
 	w, err := markup.Build([]byte(st.Markup), ctx)
 	if err != nil {
-		return fmt.Errorf("stage %q markup v%d: %w", st.Stage, st.Version, err)
-	}
-
-	if s.comp != nil {
-		s.comp.Close() // the outgoing screen's timers stop with it
+		return nil, fmt.Errorf("stage %q markup v%d: %w", st.Stage, st.Version, err)
 	}
 	s.sources = sources
-	s.comp = gooey.NewComposer(w, s.cols, s.rows)
-	s.comp.OnInvalidate(func() { s.needsFrame = true })
-	s.comp.Start(s.disp)
-	s.needsFrame = true
 	s.cur = st
 	s.builds++
 	s.tracef("build v%d r%d stage=%s bytes=%d", st.Version, st.Revision, st.Stage, len(st.Markup))
-	return nil
+	return w, nil
 }
 
 func (s *session) tracef(format string, args ...any) {
@@ -395,13 +550,6 @@ func (s *session) tracef(format string, args ...any) {
 		return
 	}
 	fmt.Fprintf(s.trace, "%s  %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
-}
-
-// isQuit is the shell's own chrome — the one gesture that belongs to the
-// terminal rather than to the served screen, so a workflow can never
-// serve a page you cannot leave.
-func isQuit(ev input.Event) bool {
-	return ev.IsKey() && ev.Key == input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}
 }
 
 func envOr(key, fallback string) string {
