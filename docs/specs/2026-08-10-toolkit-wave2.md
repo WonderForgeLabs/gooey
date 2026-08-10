@@ -214,3 +214,71 @@ toast severity levels beyond Style, wheel interaction in menus. A
 general `Popup`/adorner primitive is deliberately NOT extracted yet:
 two overlays is not enough evidence for the right abstraction, and
 both fit in components as-is.
+
+## Menus round 2 (issues #125, #126) — same day
+
+### The live-click bug (#125)
+
+Elan ran the demo and clicks did nothing. Every test above passed
+because they synthesized events onto the bar's handlers; the real
+pipeline dies earlier, and not in the menu: **hit-testing treats every
+Bounded container as opaque**, and the demo's full-page `ToastHost` —
+the LAST child, spanning the grid, measuring to `avail` — is the first
+thing `hitTest` finds for every cell on screen. Every press landed on
+the toast layer and bubbled past the MenuBar, an earlier sibling that
+is never on the bubble path. The toast layer had been eating every
+click and hover on the page since it shipped; its own doc comment
+("a page that never shows a toast pays nothing for hosting the layer")
+was wrong in exactly this respect.
+
+The fix landed separately: the adornments work (#129) hit the same
+wall and added the `HitTestTransparent` seam in `mouse.go` —
+`ToastHost` and friends opt out of hit-testing; `Toast` leaves stay
+hittable. What this branch adds is the regression the original wave
+owed: `TestMenuClicksThroughLiveDispatchUnderToastLayer`
+(components/menu_live_test.go) drives press/release `input.Event`s
+through `Composer.Handle` against the demo's page shape — toast layer
+on top — and pins click-to-open and click-to-activate from the menu's
+side. Lesson recorded: an input-path test that does not enter through
+`Composer.Handle` is not a live test.
+
+### Mnemonics (#126)
+
+`alt+letter` opens the matching menu from anywhere on the page; while
+open, plain letters activate matching items and `alt+letter` switches
+menus. Decisions:
+
+- **Marker: underscore, XAML's AccessText convention.** `Title="_File"`,
+  `Text="E_xit"`; `__` is a literal underscore; only the first marker
+  counts; an UNMARKED string defaults to its first letter, so every
+  menu has an accelerator without any authoring. Underscore rather
+  than `&` because these strings live in XML attributes, where `&` is
+  an entity. Parsing lives in the component (`splitMnemonic`) — markup
+  passes `Title`/`Text` through untouched.
+- **Underline always**, on bar titles and dropdown items. A terminal
+  cannot see a held ALT (no key-up events), so WPF's show-on-ALT is
+  unimplementable; always-on is honest, and it is static chrome — no
+  property, no damage.
+- **Dispatch: a new page-scoped phase, after bubble, before tab/arrow
+  fallbacks.** `gooey.MnemonicHandler` is collected on the same walk
+  that finds focus stops; `Dispatch` offers it only the keys the whole
+  focused chain declined. This is the mechanism that lets the bar — a
+  sibling of the content, never on the focused chain — see `alt+f` at
+  all, and the ordering is what keeps any `KeyBinding` on the same
+  gesture winning (invariant 6 extended, not reordered: the phase sits
+  exactly where the framework's own tab/arrow fallbacks already were).
+- While open the menu is modal, so letters and `alt+letter` are
+  handled inside `handleOpenKey` and swallowed match or no match. A
+  letter matching a disabled item moves the highlight and refuses,
+  like enter on it.
+- Restore semantics: an accelerator open restores focus on dismiss to
+  whatever held it when the accelerator fired (focus has NOT moved
+  yet, unlike a mouse open where focus-follows-click already ran).
+- Input layer needed nothing: `ESC`+letter already decodes as
+  `alt+letter` (same-read), `ParseGesture("alt+f")` already parses,
+  and the lone-ESC idle timeout only bites when the two bytes split
+  across reads AND the gap exceeds the timeout — the terminal sends
+  them together.
+
+Damage: alt-open repaints 3 (focus loser + bar + dropdown) — pinned in
+`TestMenuAltMnemonicOpensFromAnywhere`; the underlines cost nothing.

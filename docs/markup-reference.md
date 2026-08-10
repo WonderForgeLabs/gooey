@@ -409,8 +409,8 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 
 | Element / attribute | Meaning |
 |---|---|
-| `<Menu Title="…">` | One titled dropdown. A missing `Title` is a load error. |
-| `<MenuItem Text="…">` | One entry. Required unless `Separator="true"`. |
+| `<Menu Title="…">` | One titled dropdown. A missing `Title` is a load error. The title carries the menu's **mnemonic**: an underscore marks the accelerator letter (`Title="_File"`, `Title="E_xit"`), and without a marker the first letter is it. `__` renders a literal underscore. Underscore rather than `&` because these strings live in XML attributes. |
+| `<MenuItem Text="…">` | One entry. Required unless `Separator="true"`. Takes the same mnemonic marker as `Title`; while the menu is open, typing the letter activates the item. |
 | `MenuItem Command` | Resolved like `Click` — a binding or a bare handler name. Absent is inert: activating just closes the menu. A conditional command (`Cmd.When`) paints the item `Dim` and refuses activation while its condition says no; the condition is read while painting, so the flip repaints the open dropdown by itself. |
 | `MenuItem Gesture` | A **display hint** in the gesture syntax, validated by `input.ParseGesture` at load (a typo is a load error) and shown right-aligned in the canonical spelling. It does not bind the key — declare a `KeyBinding` for that. |
 | `MenuItem Separator` | `"true"` draws a rule. |
@@ -418,7 +418,9 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 
 **Declare the `MenuBar` as the LAST child of its container.** Document order is z-order, so being last is what paints the dropdown above the content it drops over; in a `Grid`, `Grid.Row="0"` still places the bar on the top row — element order and layout position are independent, which is exactly what an overlay needs.
 
-The bar is a focus stop. `enter`/`↓`/`space` open the highlighted menu; while open, `←`/`→` switch menus, `↑`/`↓` move the highlight (separators are skipped), `enter` activates, `esc` dismisses, and everything else is swallowed — an open menu is modal, so page gestures cannot fire underneath it. Dismissing **restores focus** to whatever had it when the menu opened: for a mouse-open that is the component focus-follows-click took it from, so clicking a menu while typing in a `TextBox` and pressing `esc` puts the caret back.
+The bar is a focus stop. `enter`/`↓`/`space` open the highlighted menu; while open, `←`/`→` switch menus, `↑`/`↓` move the highlight (separators are skipped), `enter` activates, a plain **letter** activates the item wearing it as its accelerator (a disabled match moves the highlight and refuses), `alt+letter` switches to the matching menu, `esc` dismisses, and everything else is swallowed — an open menu is modal, so page gestures cannot fire underneath it. Dismissing **restores focus** to whatever had it when the menu opened: for a mouse-open that is the component focus-follows-click took it from, so clicking a menu while typing in a `TextBox` and pressing `esc` puts the caret back.
+
+**Mnemonics work page-wide.** `alt+letter` opens the matching menu no matter what holds focus — the bar registers itself through the `gooey.MnemonicHandler` seam, which the dispatcher offers only the keys nothing in the focused chain consumed, so a `KeyBinding` on the same `alt+…` gesture still wins. Accelerator letters render **underlined, always** — on the bar and in the open dropdown. Always rather than "while ALT is held" because a terminal cannot see a held modifier (there are no key-up events); the underline is static chrome and costs no repaints. And dismissing after an accelerator open restores focus to whatever had it when the accelerator fired.
 
 While open the bar holds the pointer capture: clicks on items activate, motion tracks the highlight and slides between titles, and a press anywhere else dismisses the menu **without reaching what is underneath**.
 
