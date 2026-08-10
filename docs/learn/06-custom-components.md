@@ -97,6 +97,12 @@ The corollary is worth stating plainly: **a property you do not read
 while painting cannot repaint you.** If a component stops reacting to a
 value, the first thing to check is whether `Render` actually reads it.
 
+This tutorial keeps to the cell plane. The full painting surface —
+`Frame.Caps` for adapting to the terminal's color depth, `f.Place` for
+pixel content, what is pre-cleared for you, and the `Startable`
+lifecycle for components that animate — is the subject of
+[how to draw anything with a custom Render](howto/howto-custom-draw.md).
+
 ## Step 3: Register it as a markup element
 
 `Context.Components` maps an element name to a `Builder`. The builder gets
@@ -304,6 +310,9 @@ func (p *myPanel) Render(f *gooey.Frame) {} // paint only your OWN chrome
 
 ## Next steps
 
+- How-to: [draw anything with a custom Render](howto/howto-custom-draw.md)
+  — the full painting surface: `Frame.Caps`, the pixel plane, pre-clear
+  behavior, and animating with `Startable`.
 - How-to: [testing your app](howto/howto-testing.md) — verify components
   under a pty.
 - Concept: [damage tracking](concepts/damage.md)

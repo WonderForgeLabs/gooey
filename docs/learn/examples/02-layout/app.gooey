@@ -3,26 +3,26 @@
 
     <Text Grid.Row="0" Grid.ColSpan="3" Style="accent">Grid Rows="Auto,*,Auto" Cols="24,1*,2*"</Text>
 
-    <Border Grid.Row="1" Grid.Col="0" Title="24" Style="panel">
+    <Border Grid.Row="1" Grid.Col="0" Title="24" Style="fixed" Background="#1c2b4a">
       <VStack Gap="1">
-        <Text Style="dim">a Fixed track:</Text>
-        <Text Style="dim">always 24 cells,</Text>
-        <Text Style="dim">whatever the width</Text>
-        <Text Style="dim">(VStack Gap="1")</Text>
+        <Text Style="fixed">a Fixed track:</Text>
+        <Text Style="fixed">always 24 cells,</Text>
+        <Text Style="fixed">whatever the width</Text>
+        <Text Style="fixed">(gaps show the fill)</Text>
       </VStack>
     </Border>
 
-    <Border Grid.Row="1" Grid.Col="1" Title="1*" Style="panel">
+    <Border Grid.Row="1" Grid.Col="1" Title="1*" Style="one" Background="#1d3a2a">
       <VStack Gap="0">
-        <Text Style="dim">one share of</Text>
-        <Text Style="dim">what is left</Text>
-        <Text Style="dim">(VStack Gap="0")</Text>
+        <Text Style="one">one share of</Text>
+        <Text Style="one">what is left</Text>
+        <Text Style="one">(VStack Gap="0")</Text>
       </VStack>
     </Border>
 
-    <Border Grid.Row="1" Grid.Col="2" Title="2*" Style="panel">
+    <Border Grid.Row="1" Grid.Col="2" Title="2*" Style="two">
       <VStack Gap="0">
-        <Text Style="dim">two shares — twice as wide as 1*</Text>
+        <Text Style="two">two shares — twice as wide as 1*</Text>
         <Text Margin="4,0,0,0" Style="accent">Margin="4,0,0,0"</Text>
         <Text HAlign="Center" Style="accent">HAlign="Center"</Text>
         <Text HAlign="End" Style="accent">HAlign="End"</Text>

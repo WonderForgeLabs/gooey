@@ -56,6 +56,7 @@ Single tasks, for when you know what you want.
 | [Declare key bindings](howto/howto-keybindings.md) | You need the gesture syntax, or a key that is scoped to one pane |
 | [Handle mouse input](howto/howto-mouse.md) | You want clicks, hover, wheel, or drag |
 | [Draw images](howto/howto-images.md) | You have pixel content and need to know which protocol you get |
+| [Draw anything with a custom Render](howto/howto-custom-draw.md) | Markup cannot express what you want, and you need to paint cells (or pixels) yourself |
 | [Work off the UI goroutine](howto/howto-async.md) | You have a fetch, a timer, or any background work to apply |
 | [Test a gooey app](howto/howto-testing.md) | You want assertions on rendered output, damage counts, or the real binary |
 

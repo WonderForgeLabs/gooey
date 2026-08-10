@@ -1,19 +1,21 @@
 # Tutorial 2: Lay out a page with Grid
 
 In this tutorial you build a three-column page with a `Grid`, size the
-columns with Fixed, Auto, and Star tracks, and control individual
-elements with the layout attributes every gooey element accepts.
+columns with Fixed, Auto, and Star tracks, control individual elements
+with the layout attributes every gooey element accepts, and give each
+track its own colors so the structure is visible at a glance.
 
 **Time:** about 20 minutes.
 **Prerequisites:** [Tutorial 1](01-first-app.md).
 
 When you finish, you will have this:
 
-![A three-column grid: a fixed 24-cell column, a 1-star column, and a 2-star column twice its width](media/02-layout.png)
+![A three-column grid: a blue-filled fixed 24-cell column, a green-filled 1-star column, and a magenta-framed 2-star column twice its width](media/02-layout.png)
 
 The finished code is in
 [`docs/learn/examples/02-layout`](examples/02-layout). Everything in this
-tutorial happens in `app.gooey`; the Go file is tutorial 1's, unchanged.
+tutorial happens in `app.gooey`; the Go file is tutorial 1's, plus the
+style map entries that step 6 explains.
 
 ## Step 1: Declare the grid
 
@@ -54,27 +56,33 @@ Omitting `Rows` or `Cols` entirely gives you a single star track.
 **child**, exactly as in XAML. Add three panels to the middle row:
 
 ```xml
-<Border Grid.Row="1" Grid.Col="0" Title="24" Style="panel">
+<Border Grid.Row="1" Grid.Col="0" Title="24" Style="fixed" Background="#1c2b4a">
   <VStack Gap="1">
-    <Text Style="dim">a Fixed track:</Text>
-    <Text Style="dim">always 24 cells,</Text>
-    <Text Style="dim">whatever the width</Text>
+    <Text Style="fixed">a Fixed track:</Text>
+    <Text Style="fixed">always 24 cells,</Text>
+    <Text Style="fixed">whatever the width</Text>
   </VStack>
 </Border>
 
-<Border Grid.Row="1" Grid.Col="1" Title="1*" Style="panel">
+<Border Grid.Row="1" Grid.Col="1" Title="1*" Style="one" Background="#1d3a2a">
   <VStack Gap="0">
-    <Text Style="dim">one share of</Text>
-    <Text Style="dim">what is left</Text>
+    <Text Style="one">one share of</Text>
+    <Text Style="one">what is left</Text>
   </VStack>
 </Border>
 
-<Border Grid.Row="1" Grid.Col="2" Title="2*" Style="panel">
+<Border Grid.Row="1" Grid.Col="2" Title="2*" Style="two">
   <VStack Gap="0">
-    <Text Style="dim">two shares — twice as wide as 1*</Text>
+    <Text Style="two">two shares — twice as wide as 1*</Text>
   </VStack>
 </Border>
 ```
+
+Each panel gets a differently colored frame (`Style`), and the first two
+get their own fill (`Background`), so the three tracks read apart
+without counting cells — where the names come from, what else they can
+say, and why the `2*` panel deliberately has no fill is
+[step 6](#step-6-style-what-you-see). Structure first.
 
 Defaults and clamping, so you are not surprised:
 
@@ -210,6 +218,118 @@ down on top in the same frame — visibility is per-element, so hiding a
 container hides its chrome, not its subtree. Use `Collapsed` on the
 container (or `Hidden` on the children) to take the content away.
 
+## Step 6: Style what you see
+
+The panels have been using `Style="fixed"` and `Background="#1c2b4a"`
+since step 2. Time to say what those actually are.
+
+### The style map
+
+`Style="name"` is a lookup. The names live in Go, on the
+`markup.Context` the page is built against:
+
+```go
+ctx := &markup.Context{
+	Values: map[string]any{ /* … */ },
+	Styles: map[string]render.Style{
+		"fixed":  {Fg: render.RGB(110, 170, 255), Bg: render.RGB(0x1c, 0x2b, 0x4a), Bold: true},
+		"one":    {Fg: render.RGB(120, 220, 150), Bg: render.RGB(0x1d, 0x3a, 0x2a), Bold: true},
+		"two":    {Fg: render.RGB(230, 130, 220), Bold: true},
+		"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
+		"dim":    {Fg: render.RGB(150, 150, 165)},
+	},
+}
+```
+
+A `render.Style` is the whole per-cell styling surface:
+
+```go
+type Style struct {
+	Fg, Bg    Color // render.RGB(r, g, b); zero value = terminal default
+	Bold      bool
+	Dim       bool
+	Underline bool
+	Reverse   bool
+}
+```
+
+Any element that draws styled text or chrome accepts `Style` — on a
+`Text` it styles the runes, on a `Border` it colors the frame and title.
+An unknown name is not an error; it resolves to the zero style, which is
+the terminal default. That is worth knowing when a style silently fails
+to appear: check the spelling against the map.
+
+### Background is a container attribute, not a style
+
+The panel fills come from `Background`, which `Border`, `Grid`,
+`VStack`/`HStack`, and `Canvas` accept directly — a `#rgb`/`#rrggbb`
+literal or a binding to a `*prop.Property[render.Color]`:
+
+```xml
+<Border Title="24" Style="fixed" Background="#1c2b4a">
+```
+
+The fill covers the container's **whole** bounds, including cells no
+child owns. That is what the first panel's `VStack Gap="1"` shows: the
+gap rows belong to no child, and they come out blue, not black holes.
+Border chrome drawn with a style whose `Bg` is unset sits on the fill,
+so a colored frame and a colored fill compose.
+
+Text needs one more thing, and it is the reason the panel styles above
+carry a `Bg`: **cells have no alpha.** A `Text` whose style leaves `Bg`
+unset paints terminal-default cells even inside a filled panel — the
+fill shows wherever the text's rectangle is blank, but the glyph cells
+themselves would sit in a default-colored stripe. Text that wants to sit
+flush on a fill says so in its own style, which is why `fixed` and `one`
+set `Bg` to exactly their panel's fill color.
+
+A container with no `Background` — like the `2*` panel — paints only
+its own chrome and is cheaper to repaint: you pay for a fill only where
+you declare one, and its text needs no `Bg` either. That is the whole
+reason the third panel goes without.
+
+### Bind a style to make it live
+
+The second form of `Style` is a binding. Instead of a name, pass a
+`*prop.Property[render.Style]` handle from the viewmodel:
+
+```go
+alert := prop.NewSource(false)
+panelStyle := prop.NewComputed(func() render.Style {
+	if alert.Get() {
+		return render.Style{Fg: render.RGB(255, 90, 90), Bold: true}
+	}
+	return render.Style{Fg: render.RGB(110, 170, 255)}
+})
+ctx.Values["PanelStyle"] = panelStyle
+```
+
+```xml
+<Border Title="status" Style="{{.PanelStyle}}">
+```
+
+Now `alert.Set(true)` recolors the border on the next frame — no
+styling system involved, just the property graph from
+[Tutorial 3](03-binding-and-state.md): the border reads the style while
+painting, so the style is part of its damage set.
+
+### Current limitation: a lookup, not a styling system
+
+`Style="name"` and `Background` are the whole story today. There is no
+cascading, no selectors, no setters, no theme resources — a style
+applies to exactly the element that names it. The styling system —
+setters, scoped resources, state-aware styles — is designed and tracked
+in [the styles epic (#54)](https://github.com/WonderForgeLabs/gooey/issues/54).
+
+### When no style is enough: draw anything
+
+Styles color what the built-in components draw. When you need something
+they cannot draw at all, gooey's floor is always available: implement
+`Render` yourself and paint any cell inside your bounds — the same
+escape hatch every built-in stands on. The how-to
+[Draw anything with a custom Render](howto/howto-custom-draw.md) is the
+complete tour; [Tutorial 6](06-custom-components.md) builds up to it.
+
 ## What you learned
 
 - `Grid` declares tracks with `Rows`/`Cols`; children place themselves
@@ -221,6 +341,9 @@ container (or `Hidden` on the children) to take the content away.
   on every element, in every container.
 - `Hidden` reserves its space including its stack gap; `Collapsed`
   reclaims all of it, gap included.
+- `Style="name"` looks up a `render.Style` in the context's style map;
+  `Style="{{.Handle}}"` binds a live style property; `Background` fills
+  a container's whole bounds, gaps included.
 
 ## Next steps
 
