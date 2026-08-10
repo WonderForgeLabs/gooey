@@ -50,7 +50,9 @@ func (t *Timer) Start(post func(func())) func() {
 		return func() {}
 	}
 	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		tk := time.NewTicker(t.Interval)
 		defer tk.Stop()
 		for {
@@ -64,7 +66,9 @@ func (t *Timer) Start(post func(func())) func() {
 			}
 		}
 	}()
-	return func() { close(done) }
+	// Joining makes stop a barrier: a tick that already won the select
+	// posts before stop returns, so Close ⇒ no further posts, ever.
+	return func() { close(done); <-stopped }
 }
 
 // fire runs on the UI goroutine, having been posted there.
