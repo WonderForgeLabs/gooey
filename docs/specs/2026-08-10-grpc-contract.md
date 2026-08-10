@@ -114,6 +114,9 @@ gesture, `FAILED_PRECONDITION` no context or composition,
 | `SwapMarkup(source, register[])` | page replacement over the surviving viewmodel, optionally growing it first (#89); atomic on failure |
 | `RegisterProperties(registrations)` | grow the viewmodel without swapping (#89); existing name = error, one source of truth |
 | `GetDeclaredSchema(source?)` | an x:Property block as `ControlSchema` (#62); empty source = the running page's document |
+| `PatchMarkup(name, source)` | one named element's subtree replaced in place (#117); fragment root keeps the Name, unstated layout attrs preserved, atomic on failure |
+| `ListStyles()` | the markup context's style table — the names `Style="..."` can resolve (#117) |
+| `ValidateMarkup(source)` | SwapMarkup's parse-and-bind with no attach and no frame (#117); INVALID markup is response data, not a status |
 
 ### SessionService — one bidi stream
 
@@ -168,6 +171,9 @@ Every v1 MCP tool, argument-for-argument:
 | `send_mouse` | `kind`, `x`, `y`, `button` | `ControlService.SendPointer` | enums replace strings; `click` = `POINTER_KIND_CLICK`, still synthesized press+release |
 | `focus` | `name` | `ControlService.SetFocus` | renamed to avoid colliding with the noun |
 | `swap_markup` | `source` | `ControlService.SwapMarkup` | gains optional `register[]` (#89); Named-table restore on failure is now contract behavior |
+| `patch_markup` | `name`, `source` | `ControlService.PatchMarkup` | fragment root must carry the same Name (the address survives iteration); layout attrs not restated are preserved from the old element |
+| `list_styles` | — | `ControlService.ListStyles` | `styles` → `StyleInfo[]`; only set attributes are meaningful (colors carry `Set`) |
+| `validate_markup` | `source` | `ControlService.ValidateMarkup` | invalid markup is `valid=false` + the typed error IN the response — the one RPC where a bad document is not `INVALID_ARGUMENT`, because validity is the answer |
 
 New surface with no MCP predecessor: `GetProperty`,
 `RegisterProperties`, `GetDeclaredSchema`, `SessionService.Attach`.
@@ -240,9 +246,9 @@ Carried over from the MCP server, unchanged in spirit:
   future `gooey.serve.v1`'s) concern; this contract only fixes the
   types such a payload validates against (`ControlSchema`,
   `TypedValue`).
-- **`patch_markup` / targeted subtree replacement** — still punted, as
-  in the MCP record; `SwapMarkup` over a surviving (now growable)
-  viewmodel covers the use case.
+- ~~**`patch_markup` / targeted subtree replacement** — still punted~~
+  Landed 2026-08-10 (#117); see the amendment below. `PatchMarkup` is in
+  the RPC surface and the mapping table above.
 - **Multi-app routing** — one server, one app, like the MCP server; a
   session addresses "the app", not an app id. A future multiplexer adds
   a field, additively.
@@ -257,6 +263,32 @@ enforces the `Service` suffixes, `<Rpc>Request`/`<Rpc>Response` naming,
 enum value prefixes and zero-value `_UNSPECIFIED` conventions visible
 throughout. No generated code exists yet anywhere in the tree; that is
 #110's first commit.
+
+## Amended 2026-08-10 (#117): patch, styles, validation, declared snapshot
+
+All additive, per the v1 evolution rules; `buf lint` still clean and the
+`reserved 12–15` semantic-tree seats in `TreeNode` are untouched.
+
+- **`ControlService` gains `PatchMarkup`, `ListStyles`,
+  `ValidateMarkup`** — the MCP tools shipped first (the tables above
+  carry the rows), and per the one-path rule the contract grew the same
+  day. Behavioral rules are in the RPC comments and mirrored in the MCP
+  record's extension section: the fragment root keeps the target's Name;
+  unstated layout attributes are preserved from the old element;
+  `ValidateMarkup` reports invalidity as data.
+- **`TreeNode` gains `declared = 16` (`repeated DeclaredValue`) and
+  `control = 17`** — the markup-declared (`<x:Property>`) surface of a
+  control instance, with current values. `DeclaredValue` is new in
+  types.proto (declaration name + kind + current `TypedValue`), distinct
+  from `PropertyDeclaration`, which carries the declared *default*. The
+  %T-only ceiling for arbitrary Go components stands: declared surfaces
+  serialize, undeclared Go structs never will.
+- **`StyleInfo` is new in types.proto** — one style-table row, colors
+  carrying `render.Color`'s `Set` flag as everywhere else.
+- On the MCP side the same tools now publish `outputSchema` and return
+  `structuredContent` (tree_snapshot, list_values, list_styles,
+  validate_markup); no contract impact — proto responses were already
+  typed, which is the point of the one model.
 
 ## Open questions for Elan
 

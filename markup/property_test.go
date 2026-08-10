@@ -415,3 +415,67 @@ func assertErrContains(t *testing.T, err error, wants ...string) {
 		}
 	}
 }
+
+// The declared-surface registry: every control instance built with
+// declarations lands in Context.Declared, keyed by its root component,
+// with its resolved handles — including instances nested inside other
+// controls, because the registry is page-wide where Named is per
+// instance. This is the seam an inspection surface (the MCP tree
+// snapshot) reads a control's property schema from.
+func TestDeclaredRegistryRecordsInstances(t *testing.T) {
+	fsys := fstest.MapFS{
+		"card.gooey": {Data: []byte(`<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Title" Type="string" Default="untitled"/>
+  <x:Property Name="Count" Type="int" Default="3"/>
+  <VStack><Text>{{.Title}}</Text><Badge/></VStack>
+</Gooey>`)},
+		"badge.gooey": {Data: []byte(`<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Tag" Type="string" Default="new"/>
+  <Text>{{.Tag}}</Text>
+</Gooey>`)},
+	}
+	ctx := &Context{Values: map[string]any{}, Named: map[string]gooey.Component{}}
+	page := `<Gooey><Card Name="c" Title="hello"/></Gooey>`
+	if _, err := loadPage(t, fsys, page, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(ctx.Declared) != 2 {
+		t.Fatalf("Declared has %d entries, want the Card and its nested Badge", len(ctx.Declared))
+	}
+	card := ctx.Named["c"]
+	ds, ok := ctx.Declared[card]
+	if !ok {
+		t.Fatal("the Card instance is not keyed by its root component")
+	}
+	if ds.Control != "card.gooey" {
+		t.Errorf("Control = %q, want card.gooey", ds.Control)
+	}
+	byName := map[string]DeclaredProp{}
+	for _, p := range ds.Props {
+		byName[p.Name] = p
+	}
+	title, ok := byName["Title"].Handle.(*prop.Property[string])
+	if !ok {
+		t.Fatalf("Title handle is %T", byName["Title"].Handle)
+	}
+	if title.Get() != "hello" {
+		t.Errorf("Title = %q, want the instantiation-site literal", title.Get())
+	}
+	if byName["Count"].Type != "int" {
+		t.Errorf("Count declared Type = %q", byName["Count"].Type)
+	}
+	count, ok := byName["Count"].Handle.(*prop.Property[int])
+	if !ok || count.Get() != 3 {
+		t.Errorf("Count handle = %T, want an int source carrying the default", byName["Count"].Handle)
+	}
+	// The nested Badge is visible from the PAGE context.
+	found := false
+	for _, s := range ctx.Declared {
+		if s.Control == "badge.gooey" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the nested Badge instance did not reach the page-wide registry")
+	}
+}

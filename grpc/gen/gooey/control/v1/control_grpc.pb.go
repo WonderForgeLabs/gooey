@@ -48,6 +48,9 @@ const (
 	ControlService_SwapMarkup_FullMethodName         = "/gooey.control.v1.ControlService/SwapMarkup"
 	ControlService_RegisterProperties_FullMethodName = "/gooey.control.v1.ControlService/RegisterProperties"
 	ControlService_GetDeclaredSchema_FullMethodName  = "/gooey.control.v1.ControlService/GetDeclaredSchema"
+	ControlService_PatchMarkup_FullMethodName        = "/gooey.control.v1.ControlService/PatchMarkup"
+	ControlService_ListStyles_FullMethodName         = "/gooey.control.v1.ControlService/ListStyles"
+	ControlService_ValidateMarkup_FullMethodName     = "/gooey.control.v1.ControlService/ValidateMarkup"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -98,6 +101,32 @@ type ControlServiceClient interface {
 	// block as a schema (issue #62): the contract a values payload must
 	// satisfy before the document can build.
 	GetDeclaredSchema(ctx context.Context, in *GetDeclaredSchemaRequest, opts ...grpc.CallOption) (*GetDeclaredSchemaResponse, error)
+	// PatchMarkup replaces ONE named element's subtree, leaving the rest
+	// of the page — and every sibling's component state — untouched (MCP
+	// patch_markup, issue #117). The fragment builds against the live
+	// binding context; its root element must carry the same Name= as the
+	// element it replaces (the name is the address, and the address
+	// survives iteration). Layout attributes the fragment does not
+	// restate (Grid.Row, Width, Margin, ...) are preserved from the old
+	// element, per attribute. Atomic: any failure — bad markup, wrong
+	// root name, a name colliding with a surviving element, a parent
+	// container the server cannot rewrite — is INVALID_ARGUMENT (or
+	// NOT_FOUND for an unknown address) and the running tree, name table
+	// and focus are exactly as they were.
+	PatchMarkup(ctx context.Context, in *PatchMarkupRequest, opts ...grpc.CallOption) (*PatchMarkupResponse, error)
+	// ListStyles reports the markup context's style table — the names a
+	// Style="..." attribute can resolve (MCP list_styles, issue #117). An
+	// unknown style silently renders unstyled, so a markup generator must
+	// draw from this list.
+	ListStyles(ctx context.Context, in *ListStylesRequest, opts ...grpc.CallOption) (*ListStylesResponse, error)
+	// ValidateMarkup checks a document against the live binding context —
+	// the exact parse-and-bind path SwapMarkup runs, including declared
+	// properties — without attaching anything or composing a frame (MCP
+	// validate_markup, issue #117). INVALID markup is a normal response
+	// carrying the typed load error, NOT a status error: the RPC was
+	// asked whether the markup is valid and it answered, which is what
+	// lets a generation loop retry cheaply without flickering the page.
+	ValidateMarkup(ctx context.Context, in *ValidateMarkupRequest, opts ...grpc.CallOption) (*ValidateMarkupResponse, error)
 }
 
 type controlServiceClient struct {
@@ -228,6 +257,36 @@ func (c *controlServiceClient) GetDeclaredSchema(ctx context.Context, in *GetDec
 	return out, nil
 }
 
+func (c *controlServiceClient) PatchMarkup(ctx context.Context, in *PatchMarkupRequest, opts ...grpc.CallOption) (*PatchMarkupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PatchMarkupResponse)
+	err := c.cc.Invoke(ctx, ControlService_PatchMarkup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ListStyles(ctx context.Context, in *ListStylesRequest, opts ...grpc.CallOption) (*ListStylesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStylesResponse)
+	err := c.cc.Invoke(ctx, ControlService_ListStyles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ValidateMarkup(ctx context.Context, in *ValidateMarkupRequest, opts ...grpc.CallOption) (*ValidateMarkupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateMarkupResponse)
+	err := c.cc.Invoke(ctx, ControlService_ValidateMarkup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -276,6 +335,32 @@ type ControlServiceServer interface {
 	// block as a schema (issue #62): the contract a values payload must
 	// satisfy before the document can build.
 	GetDeclaredSchema(context.Context, *GetDeclaredSchemaRequest) (*GetDeclaredSchemaResponse, error)
+	// PatchMarkup replaces ONE named element's subtree, leaving the rest
+	// of the page — and every sibling's component state — untouched (MCP
+	// patch_markup, issue #117). The fragment builds against the live
+	// binding context; its root element must carry the same Name= as the
+	// element it replaces (the name is the address, and the address
+	// survives iteration). Layout attributes the fragment does not
+	// restate (Grid.Row, Width, Margin, ...) are preserved from the old
+	// element, per attribute. Atomic: any failure — bad markup, wrong
+	// root name, a name colliding with a surviving element, a parent
+	// container the server cannot rewrite — is INVALID_ARGUMENT (or
+	// NOT_FOUND for an unknown address) and the running tree, name table
+	// and focus are exactly as they were.
+	PatchMarkup(context.Context, *PatchMarkupRequest) (*PatchMarkupResponse, error)
+	// ListStyles reports the markup context's style table — the names a
+	// Style="..." attribute can resolve (MCP list_styles, issue #117). An
+	// unknown style silently renders unstyled, so a markup generator must
+	// draw from this list.
+	ListStyles(context.Context, *ListStylesRequest) (*ListStylesResponse, error)
+	// ValidateMarkup checks a document against the live binding context —
+	// the exact parse-and-bind path SwapMarkup runs, including declared
+	// properties — without attaching anything or composing a frame (MCP
+	// validate_markup, issue #117). INVALID markup is a normal response
+	// carrying the typed load error, NOT a status error: the RPC was
+	// asked whether the markup is valid and it answered, which is what
+	// lets a generation loop retry cheaply without flickering the page.
+	ValidateMarkup(context.Context, *ValidateMarkupRequest) (*ValidateMarkupResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -321,6 +406,15 @@ func (UnimplementedControlServiceServer) RegisterProperties(context.Context, *Re
 }
 func (UnimplementedControlServiceServer) GetDeclaredSchema(context.Context, *GetDeclaredSchemaRequest) (*GetDeclaredSchemaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDeclaredSchema not implemented")
+}
+func (UnimplementedControlServiceServer) PatchMarkup(context.Context, *PatchMarkupRequest) (*PatchMarkupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PatchMarkup not implemented")
+}
+func (UnimplementedControlServiceServer) ListStyles(context.Context, *ListStylesRequest) (*ListStylesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStyles not implemented")
+}
+func (UnimplementedControlServiceServer) ValidateMarkup(context.Context, *ValidateMarkupRequest) (*ValidateMarkupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ValidateMarkup not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -559,6 +653,60 @@ func _ControlService_GetDeclaredSchema_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_PatchMarkup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PatchMarkupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).PatchMarkup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_PatchMarkup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).PatchMarkup(ctx, req.(*PatchMarkupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ListStyles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStylesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ListStyles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ListStyles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ListStyles(ctx, req.(*ListStylesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ValidateMarkup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateMarkupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ValidateMarkup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ValidateMarkup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ValidateMarkup(ctx, req.(*ValidateMarkupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -613,6 +761,18 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDeclaredSchema",
 			Handler:    _ControlService_GetDeclaredSchema_Handler,
+		},
+		{
+			MethodName: "PatchMarkup",
+			Handler:    _ControlService_PatchMarkup_Handler,
+		},
+		{
+			MethodName: "ListStyles",
+			Handler:    _ControlService_ListStyles_Handler,
+		},
+		{
+			MethodName: "ValidateMarkup",
+			Handler:    _ControlService_ValidateMarkup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

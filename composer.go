@@ -356,6 +356,17 @@ func (c *Composer) structureChanged() {
 	}
 }
 
+// InvalidateStructure tells the composition that the tree's SHAPE changed
+// under it from outside — a child replaced or inserted by something other
+// than a Dynamic container raising its own hook (the markup patch path is
+// the motivating caller). The next Frame re-syncs paint nodes and the
+// input tree exactly as it does for a Dynamic container: components still
+// present keep their nodes with clean/dirty state intact, departed nodes
+// have their cells cleared and their startables stopped, and new arrivals
+// get nodes, focus-order entries, and a Start if the composition is
+// running. UI goroutine only, like every other structural operation.
+func (c *Composer) InvalidateStructure() { c.structureChanged() }
+
 // Start brings the composition's background elements to life, delivering
 // their work onto the UI goroutine through d. Timers do not run until
 // this is called, which is what makes "started" a property of the

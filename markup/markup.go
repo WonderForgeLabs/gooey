@@ -78,6 +78,20 @@ type Context struct {
 	// Named collects Name="..." components during build — the
 	// code-behind lookup surface (Find[T] reads from this).
 	Named map[string]gooey.Component
+	// Declared collects the resolved <x:Property> surface of every
+	// control instance built through this context, keyed by the
+	// instance's root component. Unlike Named — which is deliberately
+	// scoped per instance — this registry is PAGE-WIDE: child contexts
+	// inherit the same map, so nested control instances are visible from
+	// the context the page was built against. That is what lets an
+	// inspection surface (the MCP tree snapshot) report a control's
+	// declared properties without reflection: the declarations are the
+	// only property schema a markup-built component has.
+	//
+	// Created on demand at the first control instantiation; nil until
+	// then. Rebuilding a page should reset it the way Named is reset —
+	// Page.Build and Watch do — or stale instances accumulate.
+	Declared map[gooey.Component]DeclaredSurface
 	// Includes, when set, resolves unknown elements by convention: an
 	// element <Card/> with no registered builder loads card.gooey from
 	// this FS as a markup-only control (see Include). Zero
@@ -254,6 +268,7 @@ func Watch(fsys fs.FS, name string, ctx *Context, swap func(gooey.Component)) fu
 				}
 				last = st.ModTime()
 				ctx.Named = map[string]gooey.Component{}
+				ctx.Declared = nil
 				w, err := Load(fsys, name, ctx)
 				if err != nil {
 					continue // keep the old tree on bad edits

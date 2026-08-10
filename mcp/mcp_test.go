@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -55,6 +57,12 @@ type testApp struct {
 }
 
 func newTestApp(t *testing.T, src string, values map[string]any) *testApp {
+	return newTestAppWith(t, src, values, nil)
+}
+
+// newTestAppWith lets a test prepare the context — styles, includes —
+// before the page builds against it.
+func newTestAppWith(t *testing.T, src string, values map[string]any, prep func(*markup.Context)) *testApp {
 	t.Helper()
 	a := &testApp{
 		disp: gooey.NewDispatcher(),
@@ -63,6 +71,9 @@ func newTestApp(t *testing.T, src string, values map[string]any) *testApp {
 		done: make(chan struct{}),
 	}
 	a.ctx = &markup.Context{Values: values, Dispatcher: a.disp}
+	if prep != nil {
+		prep(a.ctx)
+	}
 	root, err := markup.Build([]byte(src), a.ctx)
 	if err != nil {
 		t.Fatalf("build markup: %v", err)
@@ -249,6 +260,21 @@ func (c *client) fails(name string, args map[string]any, want string) string {
 		c.t.Fatalf("tools/call %s: error %q does not mention %q", name, text, want)
 	}
 	return text
+}
+
+// resultObject returns the raw tools/call result object, for assertions
+// on fields beyond the first text content — structuredContent above all.
+func (c *client) resultObject(name string, args map[string]any) map[string]any {
+	c.t.Helper()
+	resp := c.rpc("tools/call", map[string]any{"name": name, "arguments": args})
+	if resp.Error != nil {
+		c.t.Fatalf("tools/call %s: rpc error %d: %s", name, resp.Error.Code, resp.Error.Message)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		c.t.Fatalf("tools/call %s: result is %T", name, resp.Result)
+	}
+	return m
 }
 
 func (c *client) json(name string, args map[string]any) map[string]any {
@@ -1094,4 +1120,364 @@ func findType(n map[string]any, typ string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// ---- patch_markup ----
+
+func TestPatchMarkup(t *testing.T) {
+	_, vm, _, c := setup(t)
+	c.ok("invoke_command", map[string]any{"name": "Increment"})
+	c.ok("invoke_command", map[string]any{"name": "Increment"})
+	c.ok("set_value", map[string]any{"name": "Note", "value": "sibling state"})
+	c.ok("focus", map[string]any{"name": "Note"})
+
+	out := c.json("patch_markup", map[string]any{
+		"name": "Head",
+		"source": `<Gooey><VStack Name="Head">
+		  <Text>patched says {{.Count}}</Text>
+		  <Text>second line</Text>
+		</VStack></Gooey>`,
+	})
+	if out["patched"] != "Head" {
+		t.Fatalf("patch_markup: %v", out)
+	}
+
+	screen := c.ok("screen_text", nil)
+	if !strings.Contains(screen, "patched says 2") || !strings.Contains(screen, "second line") {
+		t.Errorf("the patched subtree did not render:\n%s", screen)
+	}
+	if strings.Contains(screen, "count is") {
+		t.Errorf("the replaced subtree is still on screen:\n%s", screen)
+	}
+	// THE point of patch over swap: the siblings were never rebuilt, so
+	// their state — a TextBox's text lives in the viewmodel, but its
+	// caret, focus and identity live in the component — survives.
+	if !strings.Contains(screen, "sibling state") {
+		t.Errorf("the sibling TextBox lost its content:\n%s", screen)
+	}
+	tree := c.json("tree_snapshot", nil)["tree"].(map[string]any)
+	note := findName(tree, "Note")
+	if note == nil || note["focused"] != true {
+		t.Error("focus did not survive on the untouched sibling")
+	}
+	head := findName(tree, "Head")
+	if head == nil || head["type"] != "*components.VStack" {
+		t.Errorf("Head does not address the new subtree: %v", head)
+	}
+	// The new subtree is live, and the untouched siblings still are too.
+	c.ok("invoke_command", map[string]any{"name": "Increment"})
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "patched says 3") {
+		t.Errorf("the patched subtree is not bound to the viewmodel:\n%s", got)
+	}
+	if vm.count.Get() != 3 {
+		t.Errorf("count = %d, want 3", vm.count.Get())
+	}
+	// Patch again by the same address: the name survived the patch.
+	c.ok("patch_markup", map[string]any{
+		"name":   "Head",
+		"source": `<Gooey><Text Name="Head">patched twice: {{.Count}}</Text></Gooey>`,
+	})
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "patched twice: 3") {
+		t.Errorf("the address did not survive iteration:\n%s", got)
+	}
+}
+
+func TestPatchMarkupFailureIsInert(t *testing.T) {
+	_, _, _, c := setup(t)
+	c.ok("focus", map[string]any{"name": "Note"})
+	before := c.ok("screen_text", nil)
+
+	for _, bad := range []struct {
+		name, src, want string
+	}{
+		{"Nope", `<Gooey><Text Name="Nope">x</Text></Gooey>`, "no element named"},
+		{"Head", `<Gooey><Wat Name="Head"/></Gooey>`, "unknown element"},
+		{"Head", `<Gooey><Text>x</Text></Gooey>`, "must carry Name"},
+		{"Head", `<Gooey><Text Name="Other">x</Text></Gooey>`, "the patch address"},
+		{"Head", `<Gooey><VStack Name="Head"><Text Name="Inc">x</Text></VStack></Gooey>`, "already names an element"},
+	} {
+		c.fails("patch_markup", map[string]any{"name": bad.name, "source": bad.src}, bad.want)
+	}
+
+	if after := c.ok("screen_text", nil); after != before {
+		t.Errorf("a failed patch changed the screen:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if named := c.json("list_values", nil)["named"].([]any); len(named) != 4 {
+		t.Errorf("named = %v after failed patches, want the original four", named)
+	}
+	tree := c.json("tree_snapshot", nil)["tree"].(map[string]any)
+	if n := findName(tree, "Note"); n == nil || n["focused"] != true {
+		t.Error("focus did not survive the failed patches")
+	}
+}
+
+func TestPatchMarkupUnsupportedParent(t *testing.T) {
+	vm, values := newVM()
+	_ = vm
+	app := newTestApp(t, `<Gooey>
+	  <StatusBar>
+	    <StatusBar.Left><Text Name="L">left</Text></StatusBar.Left>
+	  </StatusBar>
+	</Gooey>`, values)
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, s)
+	c.fails("patch_markup", map[string]any{
+		"name":   "L",
+		"source": `<Gooey><Text Name="L">new</Text></Gooey>`,
+	}, "cannot rewrite")
+}
+
+// The layout rule: a fragment describes the panel's content; its cell in
+// the parent's grid is preserved unless the fragment restates it — per
+// attribute, so restating one does not surrender the others.
+func TestPatchMarkupPreservesLayout(t *testing.T) {
+	_, values := newVM()
+	app := newTestApp(t, `<Gooey>
+	  <Grid Rows="*,*" Cols="*,*">
+	    <Text Name="A" Grid.Row="0" Grid.Col="0">a</Text>
+	    <Text Name="B" Grid.Row="1" Grid.Col="1" Width="7">b</Text>
+	  </Grid>
+	</Gooey>`, values)
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, s)
+
+	layoutOfB := func() map[string]any {
+		tree := c.json("tree_snapshot", nil)["tree"].(map[string]any)
+		b := findName(tree, "B")
+		if b == nil {
+			t.Fatal("B vanished")
+		}
+		l, _ := b["layout"].(map[string]any)
+		return l
+	}
+
+	c.ok("patch_markup", map[string]any{
+		"name":   "B",
+		"source": `<Gooey><Text Name="B">patched</Text></Gooey>`,
+	})
+	l := layoutOfB()
+	if l["gridRow"] != 1.0 || l["gridCol"] != 1.0 || l["width"] != 7.0 {
+		t.Errorf("unstated layout was not preserved: %v", l)
+	}
+
+	c.ok("patch_markup", map[string]any{
+		"name":   "B",
+		"source": `<Gooey><Text Name="B" Grid.Col="0">moved</Text></Gooey>`,
+	})
+	l = layoutOfB()
+	if _, has := l["gridCol"]; has {
+		t.Errorf("restated Grid.Col=0 did not take over: %v", l)
+	}
+	if l["gridRow"] != 1.0 || l["width"] != 7.0 {
+		t.Errorf("restating one attribute surrendered the others: %v", l)
+	}
+}
+
+// ---- list_styles ----
+
+func TestListStyles(t *testing.T) {
+	_, values := newVM()
+	app := newTestAppWith(t, testMarkup, values, func(ctx *markup.Context) {
+		ctx.Styles = map[string]render.Style{
+			"accent": {Fg: render.RGB(0xff, 0x88, 0x00), Bold: true},
+			"panel":  {Bg: render.RGB(0x10, 0x20, 0x30)},
+		}
+	})
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, s)
+
+	out := c.json("list_styles", nil)
+	styles, _ := out["styles"].([]any)
+	if len(styles) != 2 {
+		t.Fatalf("styles = %v, want the two registered styles", out)
+	}
+	accent := styles[0].(map[string]any)
+	panel := styles[1].(map[string]any)
+	if accent["name"] != "accent" || panel["name"] != "panel" {
+		t.Fatalf("styles are not sorted by name: %v", styles)
+	}
+	if accent["fg"] != "#ff8800" || accent["bold"] != true {
+		t.Errorf("accent = %v, want its set attributes reported", accent)
+	}
+	if _, has := accent["bg"]; has {
+		t.Errorf("accent reports an unset attribute: %v", accent)
+	}
+	if panel["bg"] != "#102030" {
+		t.Errorf("panel = %v", panel)
+	}
+}
+
+// ---- validate_markup ----
+
+func TestValidateMarkup(t *testing.T) {
+	app, _, s, c := setup(t)
+	s.register(&Tool{Name: "frames", Description: "test-only", Run: func(args) (any, error) {
+		return app.frames, nil
+	}})
+	framesNow := func() int {
+		n, err := strconv.Atoi(strings.TrimSpace(c.ok("frames", nil)))
+		if err != nil {
+			t.Fatalf("frames: %v", err)
+		}
+		return n
+	}
+	before := framesNow()
+	namedBefore := c.json("list_values", nil)["named"]
+
+	out := c.json("validate_markup", map[string]any{"source": swappedMarkup})
+	if out["valid"] != true {
+		t.Fatalf("validate_markup rejected valid markup: %v", out)
+	}
+	named, _ := out["named"].([]any)
+	if len(named) != 2 {
+		t.Errorf("named = %v, want the document's two names", out["named"])
+	}
+
+	out = c.json("validate_markup", map[string]any{"source": `<Gooey><Text>{{.Missing}}</Text></Gooey>`})
+	if out["valid"] != false {
+		t.Fatalf("validate_markup accepted invalid markup: %v", out)
+	}
+	if errText, _ := out["error"].(string); !strings.Contains(errText, "not found in context") {
+		t.Errorf("error = %v, want the typed load error", out["error"])
+	}
+
+	// The whole point: checking markup never flickers the live page. No
+	// frame composed, no name table disturbed, the screen untouched.
+	if after := framesNow(); after != before {
+		t.Errorf("validation painted %d frame(s); it must paint none", after-before)
+	}
+	if got := fmt.Sprint(c.json("list_values", nil)["named"]); got != fmt.Sprint(namedBefore) {
+		t.Errorf("validation disturbed the name table: %v", got)
+	}
+	if !strings.Contains(c.ok("screen_text", nil), "count is 0") {
+		t.Error("validation disturbed the screen")
+	}
+}
+
+// ---- structured output ----
+
+func TestStructuredContentAndOutputSchemas(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	// tools/list publishes outputSchema exactly for the data tools.
+	list := c.rpc("tools/list", nil)
+	hasSchema := map[string]bool{}
+	for _, raw := range list.Result.(map[string]any)["tools"].([]any) {
+		m := raw.(map[string]any)
+		_, ok := m["outputSchema"].(map[string]any)
+		hasSchema[m["name"].(string)] = ok
+	}
+	for _, want := range []string{"tree_snapshot", "list_values", "list_styles", "validate_markup"} {
+		if !hasSchema[want] {
+			t.Errorf("%s publishes no outputSchema", want)
+		}
+	}
+	for _, not := range []string{"screen_text", "swap_markup", "patch_markup", "send_keys"} {
+		if hasSchema[not] {
+			t.Errorf("%s publishes an outputSchema it should not", not)
+		}
+	}
+
+	// A data tool's result arrives twice and the two agree: text for
+	// clients that only read text, structuredContent for schema-checked
+	// consumption.
+	res := c.resultObject("list_values", nil)
+	sc, ok := res["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("list_values has no structuredContent: %v", res)
+	}
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	var fromText map[string]any
+	if err := json.Unmarshal([]byte(text), &fromText); err != nil {
+		t.Fatalf("text content is not JSON: %v", err)
+	}
+	if fmt.Sprint(sc["named"]) != fmt.Sprint(fromText["named"]) {
+		t.Errorf("structuredContent and text disagree:\n%v\n%v", sc["named"], fromText["named"])
+	}
+	if vals, ok := sc["values"].([]any); !ok || len(vals) == 0 {
+		t.Errorf("structured values = %v", sc["values"])
+	}
+
+	// screen_text stays text-only.
+	if res := c.resultObject("screen_text", nil); res["structuredContent"] != nil {
+		t.Error("screen_text grew structuredContent; its result is text")
+	}
+
+	// tree_snapshot's structured form carries the tree.
+	res = c.resultObject("tree_snapshot", nil)
+	sc, _ = res["structuredContent"].(map[string]any)
+	if sc == nil {
+		t.Fatal("tree_snapshot has no structuredContent")
+	}
+	if tree, _ := sc["tree"].(map[string]any); tree == nil || tree["type"] == "" {
+		t.Errorf("structured tree = %v", sc["tree"])
+	}
+}
+
+// ---- declared properties in the snapshot ----
+
+func TestTreeSnapshotDeclaredProperties(t *testing.T) {
+	_, values := newVM()
+	includes := fstest.MapFS{
+		"card.gooey": &fstest.MapFile{Data: []byte(`<Gooey xmlns:x="wonderforge.io/gooey/x">
+  <x:Property Name="Title" Type="string" Default="untitled"/>
+  <x:Property Name="Count" Type="int" Default="3"/>
+  <x:Property Name="Tint" Type="color" Default="#ff8800"/>
+  <Text>{{.Title}}</Text>
+</Gooey>`)},
+	}
+	app := newTestAppWith(t, `<Gooey>
+	  <VStack>
+	    <Card Name="C" Title="hello"/>
+	    <Text Name="Plain">count is {{.Count}}</Text>
+	  </VStack>
+	</Gooey>`, values, func(ctx *markup.Context) {
+		ctx.Includes = includes
+	})
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, s)
+
+	tree := c.json("tree_snapshot", nil)["tree"].(map[string]any)
+	card := findName(tree, "C")
+	if card == nil {
+		t.Fatal("the control instance is not in the snapshot")
+	}
+	if card["control"] != "card.gooey" {
+		t.Errorf("control = %v, want card.gooey", card["control"])
+	}
+	decls, _ := card["declared"].([]any)
+	if len(decls) != 3 {
+		t.Fatalf("declared = %v, want the three declarations", card["declared"])
+	}
+	byName := map[string]map[string]any{}
+	for _, d := range decls {
+		m := d.(map[string]any)
+		byName[m["name"].(string)] = m
+	}
+	if got := byName["Title"]; got["type"] != "string" || got["value"] != "hello" {
+		t.Errorf("Title = %v, want the instantiation-site value", got)
+	}
+	if got := byName["Count"]; got["type"] != "int" || got["value"] != 3.0 {
+		t.Errorf("Count = %v, want the declared default", got)
+	}
+	if got := byName["Tint"]; got["type"] != "color" || got["value"] != "#ff8800" {
+		t.Errorf("Tint = %v", got)
+	}
+	// An ordinary component still has no declared surface — the ceiling
+	// stays where it was for anything without declarations.
+	if plain := findName(tree, "Plain"); plain == nil || plain["declared"] != nil {
+		t.Errorf("Plain grew a declared surface: %v", plain)
+	}
 }

@@ -156,6 +156,29 @@ func parseHexColor(s string) (render.Color, error) {
 	return render.RGB(uint8(n>>16), uint8(n>>8), uint8(n)), nil
 }
 
+// DeclaredSurface is one control instance's markup-declared dependency
+// properties, as resolved for that instance: the declarations that make
+// up the control's public surface plus the live handles this instance
+// carries for them. Entries land in Context.Declared as controls build.
+type DeclaredSurface struct {
+	// Control is the markup file the declarations came from, e.g.
+	// "card.gooey" — the contract's identity.
+	Control string
+	Props   []DeclaredProp
+}
+
+// DeclaredProp pairs one <x:Property> declaration with the handle the
+// instance resolved for it — the parent's bound handle, a fresh source
+// wrapping a literal, or a fresh source carrying the default, per the
+// three-way rule above.
+type DeclaredProp struct {
+	Declaration
+	// Handle is the instance's value for the declaration: a
+	// *prop.Property[T] for the table types, or a gooey.Action when a
+	// Type="any" attribute was a handler expression.
+	Handle any
+}
+
 // declarations is a control file's declared surface.
 type declarations struct {
 	list   []Declaration

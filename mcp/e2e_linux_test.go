@@ -52,11 +52,17 @@ func TestEndToEndOverPTY(t *testing.T) {
 	note := prop.NewSource("")
 	text := prop.NewComputed(func() string { return itoa(count.Get()) })
 
-	bind := &markup.Context{Values: map[string]any{
-		"Count":     text,
-		"Note":      note,
-		"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
-	}}
+	bind := &markup.Context{
+		Values: map[string]any{
+			"Count":     text,
+			"Note":      note,
+			"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
+		},
+		Styles: map[string]render.Style{
+			"accent": {Fg: render.RGB(0xff, 0x88, 0x00), Bold: true},
+			"dim":    {Dim: true},
+		},
+	}
 
 	fsys := fstest.MapFS{"page.gooey": &fstest.MapFile{Data: []byte(e2ePage)}}
 	app := gooey.NewApp(markup.Page(fsys, "page.gooey", bind), gooey.WithTerminal(tt.open))
@@ -136,9 +142,61 @@ func TestEndToEndOverPTY(t *testing.T) {
 		t.Fatalf("enter on the focused button did not fire it:\n%s", got)
 	}
 
+	// --- read: the style table an agent generates markup from ---
+	styles := c.json("list_styles", nil)["styles"].([]any)
+	if len(styles) != 2 {
+		t.Fatalf("list_styles = %v, want the two registered styles", styles)
+	}
+	if first := styles[0].(map[string]any); first["name"] != "accent" || first["fg"] != "#ff8800" {
+		t.Errorf("list_styles does not match the registered styles: %v", first)
+	}
+
+	// --- check: validation never flickers the live page ---
+	if !tt.waitFor("count is 2") {
+		t.Fatalf("pty behind before validation:\n%s", tt.text())
+	}
+	bytesBefore := len(tt.text())
+	if out := c.json("validate_markup", map[string]any{"source": e2eSwapped}); out["valid"] != true {
+		t.Fatalf("validate_markup rejected valid markup: %v", out)
+	}
+	vres := c.json("validate_markup", map[string]any{"source": `<Gooey><Nope/></Gooey>`})
+	if vres["valid"] != false || !strings.Contains(vres["error"].(string), "unknown element") {
+		t.Fatalf("validate_markup did not report the typed load error: %v", vres)
+	}
+	time.Sleep(150 * time.Millisecond) // late bytes would arrive by now
+	if got := len(tt.text()); got != bytesBefore {
+		t.Errorf("validation put %d bytes on the terminal; a check must be invisible", got-bytesBefore)
+	}
+
+	// --- mutate structure: patch one subtree, siblings untouched ---
+	c.ok("patch_markup", map[string]any{
+		"name":   "Head",
+		"source": `<Gooey><Text Name="Head">patched live: {{.Count}}</Text></Gooey>`,
+	})
+	if !tt.waitFor("patched live: 2") {
+		t.Fatalf("the patched subtree never reached the pty:\n%s", tt.text())
+	}
+	patched := c.ok("screen_text", nil)
+	if !strings.Contains(patched, "set over MCP!") {
+		t.Fatalf("the sibling TextBox lost its state across the patch:\n%s", patched)
+	}
+	if strings.Contains(patched, "count is") {
+		t.Fatalf("the replaced subtree is still on screen:\n%s", patched)
+	}
+
+	// --- structured output round-trips to a wire client ---
+	lv := c.rpc("tools/call", map[string]any{"name": "list_values", "arguments": map[string]any{}})
+	sc, _ := lv.Result.(map[string]any)["structuredContent"].(map[string]any)
+	if sc == nil {
+		t.Fatal("list_values carries no structuredContent on the wire")
+	}
+	if named, _ := sc["named"].([]any); len(named) != 3 {
+		t.Errorf("structured named = %v, want the page's three names", sc["named"])
+	}
+
 	// --- mutate structure: a bad swap must be inert ---
 	c.fails("swap_markup", map[string]any{"source": `<Gooey><Nope/></Gooey>`}, "unknown element")
-	if got := c.ok("screen_text", nil); !strings.Contains(got, "count is 2") {
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "patched live: 2") {
 		t.Fatalf("a failed swap disturbed the running app:\n%s", got)
 	}
 

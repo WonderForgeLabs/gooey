@@ -1261,8 +1261,17 @@ type TreeNode struct {
 	Children []*TreeNode `protobuf:"bytes,10,rep,name=children,proto3" json:"children,omitempty"`
 	// When a depth limit elided this node's children, how many there were.
 	ChildrenElided int32 `protobuf:"varint,11,opt,name=children_elided,json=childrenElided,proto3" json:"children_elided,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The markup-declared (<x:Property>) property surface of the control
+	// instance rooted at this node, with current values (issue #117).
+	// Present only on control roots that declare; an arbitrary Go
+	// component's ceiling remains the %T in `type` — its fields cannot be
+	// discovered without reflection, and stay undiscovered. Declared
+	// surfaces serialize; undeclared Go structs never will.
+	Declared []*DeclaredValue `protobuf:"bytes,16,rep,name=declared,proto3" json:"declared,omitempty"`
+	// The control file the declarations came from, e.g. "card.gooey".
+	Control       string `protobuf:"bytes,17,opt,name=control,proto3" json:"control,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TreeNode) Reset() {
@@ -1372,6 +1381,194 @@ func (x *TreeNode) GetChildrenElided() int32 {
 	return 0
 }
 
+func (x *TreeNode) GetDeclared() []*DeclaredValue {
+	if x != nil {
+		return x.Declared
+	}
+	return nil
+}
+
+func (x *TreeNode) GetControl() string {
+	if x != nil {
+		return x.Control
+	}
+	return ""
+}
+
+// DeclaredValue is one markup-declared dependency property
+// (<x:Property>) as a tree snapshot reports it: the declaration's name
+// and kind plus the instance's CURRENT value — where PropertyDeclaration
+// carries the declared default, this carries what the running instance
+// holds now.
+type DeclaredValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Type  ValueKind              `protobuf:"varint,2,opt,name=type,proto3,enum=gooey.control.v1.ValueKind" json:"type,omitempty"`
+	// The current value, for kinds TypedValue carries. Absent for
+	// VALUE_KIND_ANY handles, whose ceiling is the descriptor.
+	Value *TypedValue `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	// For off-table handles (VALUE_KIND_ANY): the Go type (%T) of what
+	// the handle holds. Diagnostic only — never parse it.
+	GoType        string `protobuf:"bytes,4,opt,name=go_type,json=goType,proto3" json:"go_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeclaredValue) Reset() {
+	*x = DeclaredValue{}
+	mi := &file_gooey_control_v1_types_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeclaredValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeclaredValue) ProtoMessage() {}
+
+func (x *DeclaredValue) ProtoReflect() protoreflect.Message {
+	mi := &file_gooey_control_v1_types_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeclaredValue.ProtoReflect.Descriptor instead.
+func (*DeclaredValue) Descriptor() ([]byte, []int) {
+	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DeclaredValue) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DeclaredValue) GetType() ValueKind {
+	if x != nil {
+		return x.Type
+	}
+	return ValueKind_VALUE_KIND_UNSPECIFIED
+}
+
+func (x *DeclaredValue) GetValue() *TypedValue {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *DeclaredValue) GetGoType() string {
+	if x != nil {
+		return x.GoType
+	}
+	return ""
+}
+
+// StyleInfo is one named entry in the markup context's style table —
+// what a Style="name" attribute can resolve. An unknown style name in
+// markup silently renders unstyled, so a markup generator needs this
+// table. Mirrors render.Style; colors carry their Set flag, so an unset
+// attribute stays distinguishable from black.
+type StyleInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Fg            *Color                 `protobuf:"bytes,2,opt,name=fg,proto3" json:"fg,omitempty"`
+	Bg            *Color                 `protobuf:"bytes,3,opt,name=bg,proto3" json:"bg,omitempty"`
+	Bold          bool                   `protobuf:"varint,4,opt,name=bold,proto3" json:"bold,omitempty"`
+	Dim           bool                   `protobuf:"varint,5,opt,name=dim,proto3" json:"dim,omitempty"`
+	Underline     bool                   `protobuf:"varint,6,opt,name=underline,proto3" json:"underline,omitempty"`
+	Reverse       bool                   `protobuf:"varint,7,opt,name=reverse,proto3" json:"reverse,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StyleInfo) Reset() {
+	*x = StyleInfo{}
+	mi := &file_gooey_control_v1_types_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StyleInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StyleInfo) ProtoMessage() {}
+
+func (x *StyleInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_gooey_control_v1_types_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StyleInfo.ProtoReflect.Descriptor instead.
+func (*StyleInfo) Descriptor() ([]byte, []int) {
+	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *StyleInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StyleInfo) GetFg() *Color {
+	if x != nil {
+		return x.Fg
+	}
+	return nil
+}
+
+func (x *StyleInfo) GetBg() *Color {
+	if x != nil {
+		return x.Bg
+	}
+	return nil
+}
+
+func (x *StyleInfo) GetBold() bool {
+	if x != nil {
+		return x.Bold
+	}
+	return false
+}
+
+func (x *StyleInfo) GetDim() bool {
+	if x != nil {
+		return x.Dim
+	}
+	return false
+}
+
+func (x *StyleInfo) GetUnderline() bool {
+	if x != nil {
+		return x.Underline
+	}
+	return false
+}
+
+func (x *StyleInfo) GetReverse() bool {
+	if x != nil {
+		return x.Reverse
+	}
+	return false
+}
+
 // PointerEvent is one pointer action at a cell coordinate.
 type PointerEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1385,7 +1582,7 @@ type PointerEvent struct {
 
 func (x *PointerEvent) Reset() {
 	*x = PointerEvent{}
-	mi := &file_gooey_control_v1_types_proto_msgTypes[11]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1397,7 +1594,7 @@ func (x *PointerEvent) String() string {
 func (*PointerEvent) ProtoMessage() {}
 
 func (x *PointerEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_types_proto_msgTypes[11]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1410,7 +1607,7 @@ func (x *PointerEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PointerEvent.ProtoReflect.Descriptor instead.
 func (*PointerEvent) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{11}
+	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PointerEvent) GetKind() PointerKind {
@@ -1453,7 +1650,7 @@ type KeyEvent struct {
 
 func (x *KeyEvent) Reset() {
 	*x = KeyEvent{}
-	mi := &file_gooey_control_v1_types_proto_msgTypes[12]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1465,7 +1662,7 @@ func (x *KeyEvent) String() string {
 func (*KeyEvent) ProtoMessage() {}
 
 func (x *KeyEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_types_proto_msgTypes[12]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1478,7 +1675,7 @@ func (x *KeyEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyEvent.ProtoReflect.Descriptor instead.
 func (*KeyEvent) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{12}
+	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *KeyEvent) GetGesture() string {
@@ -1504,7 +1701,7 @@ type InputEvent struct {
 
 func (x *InputEvent) Reset() {
 	*x = InputEvent{}
-	mi := &file_gooey_control_v1_types_proto_msgTypes[13]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1516,7 +1713,7 @@ func (x *InputEvent) String() string {
 func (*InputEvent) ProtoMessage() {}
 
 func (x *InputEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_types_proto_msgTypes[13]
+	mi := &file_gooey_control_v1_types_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1529,7 +1726,7 @@ func (x *InputEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InputEvent.ProtoReflect.Descriptor instead.
 func (*InputEvent) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{13}
+	return file_gooey_control_v1_types_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *InputEvent) GetEvent() isInputEvent_Event {
@@ -1646,7 +1843,7 @@ const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"\vcanvas_left\x18\v \x01(\x05R\n" +
 	"canvasLeft\x12\x1d\n" +
 	"\n" +
-	"canvas_top\x18\f \x01(\x05R\tcanvasTop\"\x9a\x04\n" +
+	"canvas_top\x18\f \x01(\x05R\tcanvasTop\"\xf1\x04\n" +
 	"\bTreeNode\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12.\n" +
@@ -1659,11 +1856,26 @@ const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"\battached\x18\t \x03(\v2\x1a.gooey.control.v1.TreeNodeR\battached\x126\n" +
 	"\bchildren\x18\n" +
 	" \x03(\v2\x1a.gooey.control.v1.TreeNodeR\bchildren\x12'\n" +
-	"\x0fchildren_elided\x18\v \x01(\x05R\x0echildrenElided\x1aV\n" +
+	"\x0fchildren_elided\x18\v \x01(\x05R\x0echildrenElided\x12;\n" +
+	"\bdeclared\x18\x10 \x03(\v2\x1f.gooey.control.v1.DeclaredValueR\bdeclared\x12\x18\n" +
+	"\acontrol\x18\x11 \x01(\tR\acontrol\x1aV\n" +
 	"\n" +
 	"PropsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x122\n" +
-	"\x05value\x18\x02 \x01(\v2\x1c.gooey.control.v1.TypedValueR\x05value:\x028\x01J\x04\b\f\x10\x10\"\x94\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x1c.gooey.control.v1.TypedValueR\x05value:\x028\x01J\x04\b\f\x10\x10\"\xa1\x01\n" +
+	"\rDeclaredValue\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12/\n" +
+	"\x04type\x18\x02 \x01(\x0e2\x1b.gooey.control.v1.ValueKindR\x04type\x122\n" +
+	"\x05value\x18\x03 \x01(\v2\x1c.gooey.control.v1.TypedValueR\x05value\x12\x17\n" +
+	"\ago_type\x18\x04 \x01(\tR\x06goType\"\xcf\x01\n" +
+	"\tStyleInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12'\n" +
+	"\x02fg\x18\x02 \x01(\v2\x17.gooey.control.v1.ColorR\x02fg\x12'\n" +
+	"\x02bg\x18\x03 \x01(\v2\x17.gooey.control.v1.ColorR\x02bg\x12\x12\n" +
+	"\x04bold\x18\x04 \x01(\bR\x04bold\x12\x10\n" +
+	"\x03dim\x18\x05 \x01(\bR\x03dim\x12\x1c\n" +
+	"\tunderline\x18\x06 \x01(\bR\tunderline\x12\x18\n" +
+	"\areverse\x18\a \x01(\bR\areverse\"\x94\x01\n" +
 	"\fPointerEvent\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.gooey.control.v1.PointerKindR\x04kind\x12\f\n" +
 	"\x01x\x18\x02 \x01(\x05R\x01x\x12\f\n" +
@@ -1729,7 +1941,7 @@ func file_gooey_control_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_gooey_control_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_gooey_control_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_gooey_control_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_gooey_control_v1_types_proto_goTypes = []any{
 	(ValueKind)(0),               // 0: gooey.control.v1.ValueKind
 	(EntryKind)(0),               // 1: gooey.control.v1.EntryKind
@@ -1748,14 +1960,16 @@ var file_gooey_control_v1_types_proto_goTypes = []any{
 	(*Margin)(nil),               // 14: gooey.control.v1.Margin
 	(*Layout)(nil),               // 15: gooey.control.v1.Layout
 	(*TreeNode)(nil),             // 16: gooey.control.v1.TreeNode
-	(*PointerEvent)(nil),         // 17: gooey.control.v1.PointerEvent
-	(*KeyEvent)(nil),             // 18: gooey.control.v1.KeyEvent
-	(*InputEvent)(nil),           // 19: gooey.control.v1.InputEvent
-	nil,                          // 20: gooey.control.v1.TreeNode.PropsEntry
-	(*durationpb.Duration)(nil),  // 21: google.protobuf.Duration
+	(*DeclaredValue)(nil),        // 17: gooey.control.v1.DeclaredValue
+	(*StyleInfo)(nil),            // 18: gooey.control.v1.StyleInfo
+	(*PointerEvent)(nil),         // 19: gooey.control.v1.PointerEvent
+	(*KeyEvent)(nil),             // 20: gooey.control.v1.KeyEvent
+	(*InputEvent)(nil),           // 21: gooey.control.v1.InputEvent
+	nil,                          // 22: gooey.control.v1.TreeNode.PropsEntry
+	(*durationpb.Duration)(nil),  // 23: google.protobuf.Duration
 }
 var file_gooey_control_v1_types_proto_depIdxs = []int32{
-	21, // 0: gooey.control.v1.TypedValue.duration_value:type_name -> google.protobuf.Duration
+	23, // 0: gooey.control.v1.TypedValue.duration_value:type_name -> google.protobuf.Duration
 	7,  // 1: gooey.control.v1.TypedValue.color_value:type_name -> gooey.control.v1.Color
 	0,  // 2: gooey.control.v1.PropertyDeclaration.type:type_name -> gooey.control.v1.ValueKind
 	8,  // 3: gooey.control.v1.ControlSchema.properties:type_name -> gooey.control.v1.PropertyDeclaration
@@ -1771,19 +1985,24 @@ var file_gooey_control_v1_types_proto_depIdxs = []int32{
 	3,  // 13: gooey.control.v1.Layout.visibility:type_name -> gooey.control.v1.Visibility
 	13, // 14: gooey.control.v1.TreeNode.bounds:type_name -> gooey.control.v1.Rect
 	15, // 15: gooey.control.v1.TreeNode.layout:type_name -> gooey.control.v1.Layout
-	20, // 16: gooey.control.v1.TreeNode.props:type_name -> gooey.control.v1.TreeNode.PropsEntry
+	22, // 16: gooey.control.v1.TreeNode.props:type_name -> gooey.control.v1.TreeNode.PropsEntry
 	16, // 17: gooey.control.v1.TreeNode.attached:type_name -> gooey.control.v1.TreeNode
 	16, // 18: gooey.control.v1.TreeNode.children:type_name -> gooey.control.v1.TreeNode
-	4,  // 19: gooey.control.v1.PointerEvent.kind:type_name -> gooey.control.v1.PointerKind
-	5,  // 20: gooey.control.v1.PointerEvent.button:type_name -> gooey.control.v1.MouseButton
-	18, // 21: gooey.control.v1.InputEvent.key:type_name -> gooey.control.v1.KeyEvent
-	17, // 22: gooey.control.v1.InputEvent.pointer:type_name -> gooey.control.v1.PointerEvent
-	6,  // 23: gooey.control.v1.TreeNode.PropsEntry.value:type_name -> gooey.control.v1.TypedValue
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	17, // 19: gooey.control.v1.TreeNode.declared:type_name -> gooey.control.v1.DeclaredValue
+	0,  // 20: gooey.control.v1.DeclaredValue.type:type_name -> gooey.control.v1.ValueKind
+	6,  // 21: gooey.control.v1.DeclaredValue.value:type_name -> gooey.control.v1.TypedValue
+	7,  // 22: gooey.control.v1.StyleInfo.fg:type_name -> gooey.control.v1.Color
+	7,  // 23: gooey.control.v1.StyleInfo.bg:type_name -> gooey.control.v1.Color
+	4,  // 24: gooey.control.v1.PointerEvent.kind:type_name -> gooey.control.v1.PointerKind
+	5,  // 25: gooey.control.v1.PointerEvent.button:type_name -> gooey.control.v1.MouseButton
+	20, // 26: gooey.control.v1.InputEvent.key:type_name -> gooey.control.v1.KeyEvent
+	19, // 27: gooey.control.v1.InputEvent.pointer:type_name -> gooey.control.v1.PointerEvent
+	6,  // 28: gooey.control.v1.TreeNode.PropsEntry.value:type_name -> gooey.control.v1.TypedValue
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_gooey_control_v1_types_proto_init() }
@@ -1800,7 +2019,7 @@ func file_gooey_control_v1_types_proto_init() {
 		(*TypedValue_ColorValue)(nil),
 		(*TypedValue_AnyJson)(nil),
 	}
-	file_gooey_control_v1_types_proto_msgTypes[13].OneofWrappers = []any{
+	file_gooey_control_v1_types_proto_msgTypes[15].OneofWrappers = []any{
 		(*InputEvent_Key)(nil),
 		(*InputEvent_Pointer)(nil),
 	}
@@ -1810,7 +2029,7 @@ func file_gooey_control_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gooey_control_v1_types_proto_rawDesc), len(file_gooey_control_v1_types_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -29,6 +29,7 @@ import { UnknownFieldHandler } from "@protobuf-ts/runtime";
 import type { PartialMessage } from "@protobuf-ts/runtime";
 import { reflectionMergePartial } from "@protobuf-ts/runtime";
 import { MessageType } from "@protobuf-ts/runtime";
+import { StyleInfo } from "./types";
 import { ControlSchema } from "./types";
 import { PropertyRegistration } from "./types";
 import { PointerEvent } from "./types";
@@ -283,6 +284,85 @@ export interface GetDeclaredSchemaResponse {
      * @generated from protobuf field: gooey.control.v1.ControlSchema schema = 1
      */
     schema?: ControlSchema;
+}
+/**
+ * @generated from protobuf message gooey.control.v1.PatchMarkupRequest
+ */
+export interface PatchMarkupRequest {
+    /**
+     * The Name= identity of the element to replace.
+     *
+     * @generated from protobuf field: string name = 1
+     */
+    name: string;
+    /**
+     * Markup for the replacement subtree, rooted at <Gooey> with exactly
+     * one child carrying the same Name.
+     *
+     * @generated from protobuf field: string source = 2
+     */
+    source: string;
+}
+/**
+ * @generated from protobuf message gooey.control.v1.PatchMarkupResponse
+ */
+export interface PatchMarkupResponse {
+    /**
+     * The Name= identities of the tree after the patch: survivors plus
+     * the fragment's names.
+     *
+     * @generated from protobuf field: repeated string named = 1
+     */
+    named: string[];
+}
+/**
+ * @generated from protobuf message gooey.control.v1.ListStylesRequest
+ */
+export interface ListStylesRequest {
+}
+/**
+ * @generated from protobuf message gooey.control.v1.ListStylesResponse
+ */
+export interface ListStylesResponse {
+    /**
+     * Sorted by name.
+     *
+     * @generated from protobuf field: repeated gooey.control.v1.StyleInfo styles = 1
+     */
+    styles: StyleInfo[];
+}
+/**
+ * @generated from protobuf message gooey.control.v1.ValidateMarkupRequest
+ */
+export interface ValidateMarkupRequest {
+    /**
+     * Complete markup source, rooted at <Gooey> with exactly one child.
+     *
+     * @generated from protobuf field: string source = 1
+     */
+    source: string;
+}
+/**
+ * @generated from protobuf message gooey.control.v1.ValidateMarkupResponse
+ */
+export interface ValidateMarkupResponse {
+    /**
+     * @generated from protobuf field: bool valid = 1
+     */
+    valid: boolean;
+    /**
+     * The typed load error when valid is false — the same text a failed
+     * SwapMarkup would carry in its status.
+     *
+     * @generated from protobuf field: string error = 2
+     */
+    error: string;
+    /**
+     * The Name= identities the document declares, when valid.
+     *
+     * @generated from protobuf field: repeated string named = 3
+     */
+    named: string[];
 }
 // @generated message type with reflection information, may provide speed optimized methods
 class SnapshotTreeRequest$Type extends MessageType<SnapshotTreeRequest> {
@@ -1410,6 +1490,303 @@ class GetDeclaredSchemaResponse$Type extends MessageType<GetDeclaredSchemaRespon
  * @generated MessageType for protobuf message gooey.control.v1.GetDeclaredSchemaResponse
  */
 export const GetDeclaredSchemaResponse = new GetDeclaredSchemaResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class PatchMarkupRequest$Type extends MessageType<PatchMarkupRequest> {
+    constructor() {
+        super("gooey.control.v1.PatchMarkupRequest", [
+            { no: 1, name: "name", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 2, name: "source", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<PatchMarkupRequest>): PatchMarkupRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.name = "";
+        message.source = "";
+        if (value !== undefined)
+            reflectionMergePartial<PatchMarkupRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PatchMarkupRequest): PatchMarkupRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string name */ 1:
+                    message.name = reader.string();
+                    break;
+                case /* string source */ 2:
+                    message.source = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: PatchMarkupRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string name = 1; */
+        if (message.name !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.name);
+        /* string source = 2; */
+        if (message.source !== "")
+            writer.tag(2, WireType.LengthDelimited).string(message.source);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.PatchMarkupRequest
+ */
+export const PatchMarkupRequest = new PatchMarkupRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class PatchMarkupResponse$Type extends MessageType<PatchMarkupResponse> {
+    constructor() {
+        super("gooey.control.v1.PatchMarkupResponse", [
+            { no: 1, name: "named", kind: "scalar", repeat: 2 /*RepeatType.UNPACKED*/, T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<PatchMarkupResponse>): PatchMarkupResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.named = [];
+        if (value !== undefined)
+            reflectionMergePartial<PatchMarkupResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PatchMarkupResponse): PatchMarkupResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated string named */ 1:
+                    message.named.push(reader.string());
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: PatchMarkupResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated string named = 1; */
+        for (let i = 0; i < message.named.length; i++)
+            writer.tag(1, WireType.LengthDelimited).string(message.named[i]);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.PatchMarkupResponse
+ */
+export const PatchMarkupResponse = new PatchMarkupResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class ListStylesRequest$Type extends MessageType<ListStylesRequest> {
+    constructor() {
+        super("gooey.control.v1.ListStylesRequest", []);
+    }
+    create(value?: PartialMessage<ListStylesRequest>): ListStylesRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        if (value !== undefined)
+            reflectionMergePartial<ListStylesRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: ListStylesRequest): ListStylesRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: ListStylesRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.ListStylesRequest
+ */
+export const ListStylesRequest = new ListStylesRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class ListStylesResponse$Type extends MessageType<ListStylesResponse> {
+    constructor() {
+        super("gooey.control.v1.ListStylesResponse", [
+            { no: 1, name: "styles", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => StyleInfo }
+        ]);
+    }
+    create(value?: PartialMessage<ListStylesResponse>): ListStylesResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.styles = [];
+        if (value !== undefined)
+            reflectionMergePartial<ListStylesResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: ListStylesResponse): ListStylesResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated gooey.control.v1.StyleInfo styles */ 1:
+                    message.styles.push(StyleInfo.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: ListStylesResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated gooey.control.v1.StyleInfo styles = 1; */
+        for (let i = 0; i < message.styles.length; i++)
+            StyleInfo.internalBinaryWrite(message.styles[i], writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.ListStylesResponse
+ */
+export const ListStylesResponse = new ListStylesResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class ValidateMarkupRequest$Type extends MessageType<ValidateMarkupRequest> {
+    constructor() {
+        super("gooey.control.v1.ValidateMarkupRequest", [
+            { no: 1, name: "source", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<ValidateMarkupRequest>): ValidateMarkupRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.source = "";
+        if (value !== undefined)
+            reflectionMergePartial<ValidateMarkupRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: ValidateMarkupRequest): ValidateMarkupRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string source */ 1:
+                    message.source = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: ValidateMarkupRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string source = 1; */
+        if (message.source !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.source);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.ValidateMarkupRequest
+ */
+export const ValidateMarkupRequest = new ValidateMarkupRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class ValidateMarkupResponse$Type extends MessageType<ValidateMarkupResponse> {
+    constructor() {
+        super("gooey.control.v1.ValidateMarkupResponse", [
+            { no: 1, name: "valid", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 2, name: "error", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 3, name: "named", kind: "scalar", repeat: 2 /*RepeatType.UNPACKED*/, T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<ValidateMarkupResponse>): ValidateMarkupResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.valid = false;
+        message.error = "";
+        message.named = [];
+        if (value !== undefined)
+            reflectionMergePartial<ValidateMarkupResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: ValidateMarkupResponse): ValidateMarkupResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* bool valid */ 1:
+                    message.valid = reader.bool();
+                    break;
+                case /* string error */ 2:
+                    message.error = reader.string();
+                    break;
+                case /* repeated string named */ 3:
+                    message.named.push(reader.string());
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: ValidateMarkupResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* bool valid = 1; */
+        if (message.valid !== false)
+            writer.tag(1, WireType.Varint).bool(message.valid);
+        /* string error = 2; */
+        if (message.error !== "")
+            writer.tag(2, WireType.LengthDelimited).string(message.error);
+        /* repeated string named = 3; */
+        for (let i = 0; i < message.named.length; i++)
+            writer.tag(3, WireType.LengthDelimited).string(message.named[i]);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.ValidateMarkupResponse
+ */
+export const ValidateMarkupResponse = new ValidateMarkupResponse$Type();
 /**
  * @generated ServiceType for protobuf service gooey.control.v1.ControlService
  */
@@ -1425,5 +1802,8 @@ export const ControlService = new ServiceType("gooey.control.v1.ControlService",
     { name: "SetFocus", options: {}, I: SetFocusRequest, O: SetFocusResponse },
     { name: "SwapMarkup", options: {}, I: SwapMarkupRequest, O: SwapMarkupResponse },
     { name: "RegisterProperties", options: {}, I: RegisterPropertiesRequest, O: RegisterPropertiesResponse },
-    { name: "GetDeclaredSchema", options: {}, I: GetDeclaredSchemaRequest, O: GetDeclaredSchemaResponse }
+    { name: "GetDeclaredSchema", options: {}, I: GetDeclaredSchemaRequest, O: GetDeclaredSchemaResponse },
+    { name: "PatchMarkup", options: {}, I: PatchMarkupRequest, O: PatchMarkupResponse },
+    { name: "ListStyles", options: {}, I: ListStylesRequest, O: ListStylesResponse },
+    { name: "ValidateMarkup", options: {}, I: ValidateMarkupRequest, O: ValidateMarkupResponse }
 ]);

@@ -78,6 +78,21 @@ class ControlServiceStub:
                 request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaRequest.SerializeToString,
                 response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaResponse.FromString,
                 _registered_method=True)
+        self.PatchMarkup = channel.unary_unary(
+                '/gooey.control.v1.ControlService/PatchMarkup',
+                request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupRequest.SerializeToString,
+                response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupResponse.FromString,
+                _registered_method=True)
+        self.ListStyles = channel.unary_unary(
+                '/gooey.control.v1.ControlService/ListStyles',
+                request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.ListStylesRequest.SerializeToString,
+                response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.ListStylesResponse.FromString,
+                _registered_method=True)
+        self.ValidateMarkup = channel.unary_unary(
+                '/gooey.control.v1.ControlService/ValidateMarkup',
+                request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupRequest.SerializeToString,
+                response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupResponse.FromString,
+                _registered_method=True)
 
 
 class ControlServiceServicer:
@@ -186,6 +201,47 @@ class ControlServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PatchMarkup(self, request, context):
+        """PatchMarkup replaces ONE named element's subtree, leaving the rest
+        of the page — and every sibling's component state — untouched (MCP
+        patch_markup, issue #117). The fragment builds against the live
+        binding context; its root element must carry the same Name= as the
+        element it replaces (the name is the address, and the address
+        survives iteration). Layout attributes the fragment does not
+        restate (Grid.Row, Width, Margin, ...) are preserved from the old
+        element, per attribute. Atomic: any failure — bad markup, wrong
+        root name, a name colliding with a surviving element, a parent
+        container the server cannot rewrite — is INVALID_ARGUMENT (or
+        NOT_FOUND for an unknown address) and the running tree, name table
+        and focus are exactly as they were.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListStyles(self, request, context):
+        """ListStyles reports the markup context's style table — the names a
+        Style="..." attribute can resolve (MCP list_styles, issue #117). An
+        unknown style silently renders unstyled, so a markup generator must
+        draw from this list.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ValidateMarkup(self, request, context):
+        """ValidateMarkup checks a document against the live binding context —
+        the exact parse-and-bind path SwapMarkup runs, including declared
+        properties — without attaching anything or composing a frame (MCP
+        validate_markup, issue #117). INVALID markup is a normal response
+        carrying the typed load error, NOT a status error: the RPC was
+        asked whether the markup is valid and it answered, which is what
+        lets a generation loop retry cheaply without flickering the page.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ControlServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -248,6 +304,21 @@ def add_ControlServiceServicer_to_server(servicer, server):
                     servicer.GetDeclaredSchema,
                     request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaRequest.FromString,
                     response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaResponse.SerializeToString,
+            ),
+            'PatchMarkup': grpc.unary_unary_rpc_method_handler(
+                    servicer.PatchMarkup,
+                    request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupRequest.FromString,
+                    response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupResponse.SerializeToString,
+            ),
+            'ListStyles': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListStyles,
+                    request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.ListStylesRequest.FromString,
+                    response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.ListStylesResponse.SerializeToString,
+            ),
+            'ValidateMarkup': grpc.unary_unary_rpc_method_handler(
+                    servicer.ValidateMarkup,
+                    request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupRequest.FromString,
+                    response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -578,6 +649,87 @@ class ControlService:
             '/gooey.control.v1.ControlService/GetDeclaredSchema',
             gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaRequest.SerializeToString,
             gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PatchMarkup(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/gooey.control.v1.ControlService/PatchMarkup',
+            gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupRequest.SerializeToString,
+            gooey_dot_control_dot_v1_dot_control__pb2.PatchMarkupResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListStyles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/gooey.control.v1.ControlService/ListStyles',
+            gooey_dot_control_dot_v1_dot_control__pb2.ListStylesRequest.SerializeToString,
+            gooey_dot_control_dot_v1_dot_control__pb2.ListStylesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidateMarkup(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/gooey.control.v1.ControlService/ValidateMarkup',
+            gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupRequest.SerializeToString,
+            gooey_dot_control_dot_v1_dot_control__pb2.ValidateMarkupResponse.FromString,
             options,
             channel_credentials,
             insecure,

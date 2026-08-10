@@ -215,6 +215,46 @@ message TreeNode {
   // name, states. Deliberately reserved — un-reserving them is the
   // visible act of landing #101, and nothing can squat them meanwhile.
   reserved 12 to 15;
+  // The markup-declared (<x:Property>) property surface of the control
+  // instance rooted at this node, with current values (issue #117).
+  // Present only on control roots that declare; an arbitrary Go
+  // component's ceiling remains the %T in `type` — its fields cannot be
+  // discovered without reflection, and stay undiscovered. Declared
+  // surfaces serialize; undeclared Go structs never will.
+  repeated DeclaredValue declared = 16;
+  // The control file the declarations came from, e.g. "card.gooey".
+  string control = 17;
+}
+
+// DeclaredValue is one markup-declared dependency property
+// (<x:Property>) as a tree snapshot reports it: the declaration's name
+// and kind plus the instance's CURRENT value — where PropertyDeclaration
+// carries the declared default, this carries what the running instance
+// holds now.
+message DeclaredValue {
+  string name = 1;
+  ValueKind type = 2;
+  // The current value, for kinds TypedValue carries. Absent for
+  // VALUE_KIND_ANY handles, whose ceiling is the descriptor.
+  TypedValue value = 3;
+  // For off-table handles (VALUE_KIND_ANY): the Go type (%T) of what
+  // the handle holds. Diagnostic only — never parse it.
+  string go_type = 4;
+}
+
+// StyleInfo is one named entry in the markup context's style table —
+// what a Style="name" attribute can resolve. An unknown style name in
+// markup silently renders unstyled, so a markup generator needs this
+// table. Mirrors render.Style; colors carry their Set flag, so an unset
+// attribute stays distinguishable from black.
+message StyleInfo {
+  string name = 1;
+  Color fg = 2;
+  Color bg = 3;
+  bool bold = 4;
+  bool dim = 5;
+  bool underline = 6;
+  bool reverse = 7;
 }
 
 // PointerKind mirrors the MCP send_mouse kinds. CLICK is synthesized

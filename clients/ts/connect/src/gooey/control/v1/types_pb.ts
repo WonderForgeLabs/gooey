@@ -26,7 +26,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file gooey/control/v1/types.proto.
  */
 export const file_gooey_control_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("Chxnb29leS9jb250cm9sL3YxL3R5cGVzLnByb3RvEhBnb29leS5jb250cm9sLnYxIucBCgpUeXBlZFZhbHVlEhYKDHN0cmluZ192YWx1ZRgBIAEoCUgAEhMKCWludF92YWx1ZRgCIAEoEkgAEhQKCmJvb2xfdmFsdWUYAyABKAhIABIVCgtmbG9hdF92YWx1ZRgEIAEoAUgAEjMKDmR1cmF0aW9uX3ZhbHVlGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uSAASLgoLY29sb3JfdmFsdWUYBiABKAsyFy5nb29leS5jb250cm9sLnYxLkNvbG9ySAASEgoIYW55X2pzb24YByABKAxIAEIGCgRraW5kIj4KBUNvbG9yEgsKA3NldBgBIAEoCBILCgNyZWQYAiABKA0SDQoFZ3JlZW4YAyABKA0SDAoEYmx1ZRgEIAEoDSJ5ChNQcm9wZXJ0eURlY2xhcmF0aW9uEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVLaW5kEhcKD2RlZmF1bHRfbGl0ZXJhbBgDIAEoCRIQCghyZXF1aXJlZBgEIAEoCCJbCg1Db250cm9sU2NoZW1hEg8KB2NvbnRyb2wYASABKAkSOQoKcHJvcGVydGllcxgCIAMoCzIlLmdvb2V5LmNvbnRyb2wudjEuUHJvcGVydHlEZWNsYXJhdGlvbiJ+ChRQcm9wZXJ0eVJlZ2lzdHJhdGlvbhIMCgRuYW1lGAEgASgJEikKBGtpbmQYAiABKA4yGy5nb29leS5jb250cm9sLnYxLlZhbHVlS2luZBItCgdpbml0aWFsGAMgASgLMhwuZ29vZXkuY29udHJvbC52MS5UeXBlZFZhbHVlIq0BCglWYWx1ZUluZm8SDAoEbmFtZRgBIAEoCRIpCgRraW5kGAIgASgOMhsuZ29vZXkuY29udHJvbC52MS5FbnRyeUtpbmQSKQoEdHlwZRgDIAEoDjIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVLaW5kEisKBXZhbHVlGAQgASgLMhwuZ29vZXkuY29udHJvbC52MS5UeXBlZFZhbHVlEg8KB2dvX3R5cGUYBSABKAkiSwoOUHJvcGVydHlDaGFuZ2USDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSI7CgRSZWN0EgkKAXgYASABKAUSCQoBeRgCIAEoBRINCgV3aWR0aBgDIAEoBRIOCgZoZWlnaHQYBCABKAUiQgoGTWFyZ2luEgwKBGxlZnQYASABKAUSCwoDdG9wGAIgASgFEg0KBXJpZ2h0GAMgASgFEg4KBmJvdHRvbRgEIAEoBSLSAgoGTGF5b3V0Eg0KBXdpZHRoGAEgASgFEg4KBmhlaWdodBgCIAEoBRIoCgZtYXJnaW4YAyABKAsyGC5nb29leS5jb250cm9sLnYxLk1hcmdpbhIoCgdoX2FsaWduGAQgASgOMhcuZ29vZXkuY29udHJvbC52MS5BbGlnbhIoCgd2X2FsaWduGAUgASgOMhcuZ29vZXkuY29udHJvbC52MS5BbGlnbhIwCgp2aXNpYmlsaXR5GAYgASgOMhwuZ29vZXkuY29udHJvbC52MS5WaXNpYmlsaXR5EhAKCGdyaWRfcm93GAcgASgFEhAKCGdyaWRfY29sGAggASgFEhUKDWdyaWRfcm93X3NwYW4YCSABKAUSFQoNZ3JpZF9jb2xfc3BhbhgKIAEoBRITCgtjYW52YXNfbGVmdBgLIAEoBRISCgpjYW52YXNfdG9wGAwgASgFIqoDCghUcmVlTm9kZRIMCgR0eXBlGAEgASgJEgwKBG5hbWUYAiABKAkSJgoGYm91bmRzGAMgASgLMhYuZ29vZXkuY29udHJvbC52MS5SZWN0EigKBmxheW91dBgEIAEoCzIYLmdvb2V5LmNvbnRyb2wudjEuTGF5b3V0EhEKCWZvY3VzYWJsZRgFIAEoCBIPCgdmb2N1c2VkGAYgASgIEg8KB2hvdmVyZWQYByABKAgSNAoFcHJvcHMYCCADKAsyJS5nb29leS5jb250cm9sLnYxLlRyZWVOb2RlLlByb3BzRW50cnkSLAoIYXR0YWNoZWQYCSADKAsyGi5nb29leS5jb250cm9sLnYxLlRyZWVOb2RlEiwKCGNoaWxkcmVuGAogAygLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZRIXCg9jaGlsZHJlbl9lbGlkZWQYCyABKAUaSgoKUHJvcHNFbnRyeRILCgNrZXkYASABKAkSKwoFdmFsdWUYAiABKAsyHC5nb29leS5jb250cm9sLnYxLlR5cGVkVmFsdWU6AjgBSgQIDBAQIoABCgxQb2ludGVyRXZlbnQSKwoEa2luZBgBIAEoDjIdLmdvb2V5LmNvbnRyb2wudjEuUG9pbnRlcktpbmQSCQoBeBgCIAEoBRIJCgF5GAMgASgFEi0KBmJ1dHRvbhgEIAEoDjIdLmdvb2V5LmNvbnRyb2wudjEuTW91c2VCdXR0b24iGwoIS2V5RXZlbnQSDwoHZ2VzdHVyZRgBIAEoCSJzCgpJbnB1dEV2ZW50EikKA2tleRgBIAEoCzIaLmdvb2V5LmNvbnRyb2wudjEuS2V5RXZlbnRIABIxCgdwb2ludGVyGAIgASgLMh4uZ29vZXkuY29udHJvbC52MS5Qb2ludGVyRXZlbnRIAEIHCgVldmVudCrAAQoJVmFsdWVLaW5kEhoKFlZBTFVFX0tJTkRfVU5TUEVDSUZJRUQQABIVChFWQUxVRV9LSU5EX1NUUklORxABEhIKDlZBTFVFX0tJTkRfSU5UEAISEwoPVkFMVUVfS0lORF9CT09MEAMSFAoQVkFMVUVfS0lORF9GTE9BVBAEEhcKE1ZBTFVFX0tJTkRfRFVSQVRJT04QBRIUChBWQUxVRV9LSU5EX0NPTE9SEAYSEgoOVkFMVUVfS0lORF9BTlkQByqGAQoJRW50cnlLaW5kEhoKFkVOVFJZX0tJTkRfVU5TUEVDSUZJRUQQABIXChNFTlRSWV9LSU5EX1BST1BFUlRZEAESFgoSRU5UUllfS0lORF9DT01NQU5EEAISFgoSRU5UUllfS0lORF9MSVRFUkFMEAMSFAoQRU5UUllfS0lORF9PVEhFUhAEKlAKBUFsaWduEhUKEUFMSUdOX1VOU1BFQ0lGSUVEEAASDwoLQUxJR05fU1RBUlQQARIQCgxBTElHTl9DRU5URVIQAhINCglBTElHTl9FTkQQAypZCgpWaXNpYmlsaXR5EhoKFlZJU0lCSUxJVFlfVU5TUEVDSUZJRUQQABIVChFWSVNJQklMSVRZX0hJRERFThABEhgKFFZJU0lCSUxJVFlfQ09MTEFQU0VEEAIqxAEKC1BvaW50ZXJLaW5kEhwKGFBPSU5URVJfS0lORF9VTlNQRUNJRklFRBAAEhYKElBPSU5URVJfS0lORF9DTElDSxABEhYKElBPSU5URVJfS0lORF9QUkVTUxACEhgKFFBPSU5URVJfS0lORF9SRUxFQVNFEAMSFQoRUE9JTlRFUl9LSU5EX01PVkUQBBIZChVQT0lOVEVSX0tJTkRfV0hFRUxfVVAQBRIbChdQT0lOVEVSX0tJTkRfV0hFRUxfRE9XThAGKooBCgtNb3VzZUJ1dHRvbhIcChhNT1VTRV9CVVRUT05fVU5TUEVDSUZJRUQQABIVChFNT1VTRV9CVVRUT05fTEVGVBABEhcKE01PVVNFX0JVVFRPTl9NSURETEUQAhIWChJNT1VTRV9CVVRUT05fUklHSFQQAxIVChFNT1VTRV9CVVRUT05fTk9ORRAEQkZaRGdpdGh1Yi5jb20vV29uZGVyRm9yZ2VMYWJzL2dvb2V5L2dycGMvZ2VuL2dvb2V5L2NvbnRyb2wvdjE7Y29udHJvbHYxYgZwcm90bzM", [file_google_protobuf_duration]);
+  fileDesc("Chxnb29leS9jb250cm9sL3YxL3R5cGVzLnByb3RvEhBnb29leS5jb250cm9sLnYxIucBCgpUeXBlZFZhbHVlEhYKDHN0cmluZ192YWx1ZRgBIAEoCUgAEhMKCWludF92YWx1ZRgCIAEoEkgAEhQKCmJvb2xfdmFsdWUYAyABKAhIABIVCgtmbG9hdF92YWx1ZRgEIAEoAUgAEjMKDmR1cmF0aW9uX3ZhbHVlGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uSAASLgoLY29sb3JfdmFsdWUYBiABKAsyFy5nb29leS5jb250cm9sLnYxLkNvbG9ySAASEgoIYW55X2pzb24YByABKAxIAEIGCgRraW5kIj4KBUNvbG9yEgsKA3NldBgBIAEoCBILCgNyZWQYAiABKA0SDQoFZ3JlZW4YAyABKA0SDAoEYmx1ZRgEIAEoDSJ5ChNQcm9wZXJ0eURlY2xhcmF0aW9uEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVLaW5kEhcKD2RlZmF1bHRfbGl0ZXJhbBgDIAEoCRIQCghyZXF1aXJlZBgEIAEoCCJbCg1Db250cm9sU2NoZW1hEg8KB2NvbnRyb2wYASABKAkSOQoKcHJvcGVydGllcxgCIAMoCzIlLmdvb2V5LmNvbnRyb2wudjEuUHJvcGVydHlEZWNsYXJhdGlvbiJ+ChRQcm9wZXJ0eVJlZ2lzdHJhdGlvbhIMCgRuYW1lGAEgASgJEikKBGtpbmQYAiABKA4yGy5nb29leS5jb250cm9sLnYxLlZhbHVlS2luZBItCgdpbml0aWFsGAMgASgLMhwuZ29vZXkuY29udHJvbC52MS5UeXBlZFZhbHVlIq0BCglWYWx1ZUluZm8SDAoEbmFtZRgBIAEoCRIpCgRraW5kGAIgASgOMhsuZ29vZXkuY29udHJvbC52MS5FbnRyeUtpbmQSKQoEdHlwZRgDIAEoDjIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVLaW5kEisKBXZhbHVlGAQgASgLMhwuZ29vZXkuY29udHJvbC52MS5UeXBlZFZhbHVlEg8KB2dvX3R5cGUYBSABKAkiSwoOUHJvcGVydHlDaGFuZ2USDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSI7CgRSZWN0EgkKAXgYASABKAUSCQoBeRgCIAEoBRINCgV3aWR0aBgDIAEoBRIOCgZoZWlnaHQYBCABKAUiQgoGTWFyZ2luEgwKBGxlZnQYASABKAUSCwoDdG9wGAIgASgFEg0KBXJpZ2h0GAMgASgFEg4KBmJvdHRvbRgEIAEoBSLSAgoGTGF5b3V0Eg0KBXdpZHRoGAEgASgFEg4KBmhlaWdodBgCIAEoBRIoCgZtYXJnaW4YAyABKAsyGC5nb29leS5jb250cm9sLnYxLk1hcmdpbhIoCgdoX2FsaWduGAQgASgOMhcuZ29vZXkuY29udHJvbC52MS5BbGlnbhIoCgd2X2FsaWduGAUgASgOMhcuZ29vZXkuY29udHJvbC52MS5BbGlnbhIwCgp2aXNpYmlsaXR5GAYgASgOMhwuZ29vZXkuY29udHJvbC52MS5WaXNpYmlsaXR5EhAKCGdyaWRfcm93GAcgASgFEhAKCGdyaWRfY29sGAggASgFEhUKDWdyaWRfcm93X3NwYW4YCSABKAUSFQoNZ3JpZF9jb2xfc3BhbhgKIAEoBRITCgtjYW52YXNfbGVmdBgLIAEoBRISCgpjYW52YXNfdG9wGAwgASgFIu4DCghUcmVlTm9kZRIMCgR0eXBlGAEgASgJEgwKBG5hbWUYAiABKAkSJgoGYm91bmRzGAMgASgLMhYuZ29vZXkuY29udHJvbC52MS5SZWN0EigKBmxheW91dBgEIAEoCzIYLmdvb2V5LmNvbnRyb2wudjEuTGF5b3V0EhEKCWZvY3VzYWJsZRgFIAEoCBIPCgdmb2N1c2VkGAYgASgIEg8KB2hvdmVyZWQYByABKAgSNAoFcHJvcHMYCCADKAsyJS5nb29leS5jb250cm9sLnYxLlRyZWVOb2RlLlByb3BzRW50cnkSLAoIYXR0YWNoZWQYCSADKAsyGi5nb29leS5jb250cm9sLnYxLlRyZWVOb2RlEiwKCGNoaWxkcmVuGAogAygLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZRIXCg9jaGlsZHJlbl9lbGlkZWQYCyABKAUSMQoIZGVjbGFyZWQYECADKAsyHy5nb29leS5jb250cm9sLnYxLkRlY2xhcmVkVmFsdWUSDwoHY29udHJvbBgRIAEoCRpKCgpQcm9wc0VudHJ5EgsKA2tleRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZToCOAFKBAgMEBAihgEKDURlY2xhcmVkVmFsdWUSDAoEbmFtZRgBIAEoCRIpCgR0eXBlGAIgASgOMhsuZ29vZXkuY29udHJvbC52MS5WYWx1ZUtpbmQSKwoFdmFsdWUYAyABKAsyHC5nb29leS5jb250cm9sLnYxLlR5cGVkVmFsdWUSDwoHZ29fdHlwZRgEIAEoCSKiAQoJU3R5bGVJbmZvEgwKBG5hbWUYASABKAkSIwoCZmcYAiABKAsyFy5nb29leS5jb250cm9sLnYxLkNvbG9yEiMKAmJnGAMgASgLMhcuZ29vZXkuY29udHJvbC52MS5Db2xvchIMCgRib2xkGAQgASgIEgsKA2RpbRgFIAEoCBIRCgl1bmRlcmxpbmUYBiABKAgSDwoHcmV2ZXJzZRgHIAEoCCKAAQoMUG9pbnRlckV2ZW50EisKBGtpbmQYASABKA4yHS5nb29leS5jb250cm9sLnYxLlBvaW50ZXJLaW5kEgkKAXgYAiABKAUSCQoBeRgDIAEoBRItCgZidXR0b24YBCABKA4yHS5nb29leS5jb250cm9sLnYxLk1vdXNlQnV0dG9uIhsKCEtleUV2ZW50Eg8KB2dlc3R1cmUYASABKAkicwoKSW5wdXRFdmVudBIpCgNrZXkYASABKAsyGi5nb29leS5jb250cm9sLnYxLktleUV2ZW50SAASMQoHcG9pbnRlchgCIAEoCzIeLmdvb2V5LmNvbnRyb2wudjEuUG9pbnRlckV2ZW50SABCBwoFZXZlbnQqwAEKCVZhbHVlS2luZBIaChZWQUxVRV9LSU5EX1VOU1BFQ0lGSUVEEAASFQoRVkFMVUVfS0lORF9TVFJJTkcQARISCg5WQUxVRV9LSU5EX0lOVBACEhMKD1ZBTFVFX0tJTkRfQk9PTBADEhQKEFZBTFVFX0tJTkRfRkxPQVQQBBIXChNWQUxVRV9LSU5EX0RVUkFUSU9OEAUSFAoQVkFMVUVfS0lORF9DT0xPUhAGEhIKDlZBTFVFX0tJTkRfQU5ZEAcqhgEKCUVudHJ5S2luZBIaChZFTlRSWV9LSU5EX1VOU1BFQ0lGSUVEEAASFwoTRU5UUllfS0lORF9QUk9QRVJUWRABEhYKEkVOVFJZX0tJTkRfQ09NTUFORBACEhYKEkVOVFJZX0tJTkRfTElURVJBTBADEhQKEEVOVFJZX0tJTkRfT1RIRVIQBCpQCgVBbGlnbhIVChFBTElHTl9VTlNQRUNJRklFRBAAEg8KC0FMSUdOX1NUQVJUEAESEAoMQUxJR05fQ0VOVEVSEAISDQoJQUxJR05fRU5EEAMqWQoKVmlzaWJpbGl0eRIaChZWSVNJQklMSVRZX1VOU1BFQ0lGSUVEEAASFQoRVklTSUJJTElUWV9ISURERU4QARIYChRWSVNJQklMSVRZX0NPTExBUFNFRBACKsQBCgtQb2ludGVyS2luZBIcChhQT0lOVEVSX0tJTkRfVU5TUEVDSUZJRUQQABIWChJQT0lOVEVSX0tJTkRfQ0xJQ0sQARIWChJQT0lOVEVSX0tJTkRfUFJFU1MQAhIYChRQT0lOVEVSX0tJTkRfUkVMRUFTRRADEhUKEVBPSU5URVJfS0lORF9NT1ZFEAQSGQoVUE9JTlRFUl9LSU5EX1dIRUVMX1VQEAUSGwoXUE9JTlRFUl9LSU5EX1dIRUVMX0RPV04QBiqKAQoLTW91c2VCdXR0b24SHAoYTU9VU0VfQlVUVE9OX1VOU1BFQ0lGSUVEEAASFQoRTU9VU0VfQlVUVE9OX0xFRlQQARIXChNNT1VTRV9CVVRUT05fTUlERExFEAISFgoSTU9VU0VfQlVUVE9OX1JJR0hUEAMSFQoRTU9VU0VfQlVUVE9OX05PTkUQBEJGWkRnaXRodWIuY29tL1dvbmRlckZvcmdlTGFicy9nb29leS9ncnBjL2dlbi9nb29leS9jb250cm9sL3YxO2NvbnRyb2x2MWIGcHJvdG8z", [file_google_protobuf_duration]);
 
 /**
  * TypedValue carries one value of a propKinds type. The oneof is the
@@ -527,6 +527,25 @@ export type TreeNode = Message<"gooey.control.v1.TreeNode"> & {
    * @generated from field: int32 children_elided = 11;
    */
   childrenElided: number;
+
+  /**
+   * The markup-declared (<x:Property>) property surface of the control
+   * instance rooted at this node, with current values (issue #117).
+   * Present only on control roots that declare; an arbitrary Go
+   * component's ceiling remains the %T in `type` — its fields cannot be
+   * discovered without reflection, and stay undiscovered. Declared
+   * surfaces serialize; undeclared Go structs never will.
+   *
+   * @generated from field: repeated gooey.control.v1.DeclaredValue declared = 16;
+   */
+  declared: DeclaredValue[];
+
+  /**
+   * The control file the declarations came from, e.g. "card.gooey".
+   *
+   * @generated from field: string control = 17;
+   */
+  control: string;
 };
 
 /**
@@ -535,6 +554,103 @@ export type TreeNode = Message<"gooey.control.v1.TreeNode"> & {
  */
 export const TreeNodeSchema: GenMessage<TreeNode> = /*@__PURE__*/
   messageDesc(file_gooey_control_v1_types, 10);
+
+/**
+ * DeclaredValue is one markup-declared dependency property
+ * (<x:Property>) as a tree snapshot reports it: the declaration's name
+ * and kind plus the instance's CURRENT value — where PropertyDeclaration
+ * carries the declared default, this carries what the running instance
+ * holds now.
+ *
+ * @generated from message gooey.control.v1.DeclaredValue
+ */
+export type DeclaredValue = Message<"gooey.control.v1.DeclaredValue"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: gooey.control.v1.ValueKind type = 2;
+   */
+  type: ValueKind;
+
+  /**
+   * The current value, for kinds TypedValue carries. Absent for
+   * VALUE_KIND_ANY handles, whose ceiling is the descriptor.
+   *
+   * @generated from field: gooey.control.v1.TypedValue value = 3;
+   */
+  value?: TypedValue | undefined;
+
+  /**
+   * For off-table handles (VALUE_KIND_ANY): the Go type (%T) of what
+   * the handle holds. Diagnostic only — never parse it.
+   *
+   * @generated from field: string go_type = 4;
+   */
+  goType: string;
+};
+
+/**
+ * Describes the message gooey.control.v1.DeclaredValue.
+ * Use `create(DeclaredValueSchema)` to create a new message.
+ */
+export const DeclaredValueSchema: GenMessage<DeclaredValue> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_types, 11);
+
+/**
+ * StyleInfo is one named entry in the markup context's style table —
+ * what a Style="name" attribute can resolve. An unknown style name in
+ * markup silently renders unstyled, so a markup generator needs this
+ * table. Mirrors render.Style; colors carry their Set flag, so an unset
+ * attribute stays distinguishable from black.
+ *
+ * @generated from message gooey.control.v1.StyleInfo
+ */
+export type StyleInfo = Message<"gooey.control.v1.StyleInfo"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: gooey.control.v1.Color fg = 2;
+   */
+  fg?: Color | undefined;
+
+  /**
+   * @generated from field: gooey.control.v1.Color bg = 3;
+   */
+  bg?: Color | undefined;
+
+  /**
+   * @generated from field: bool bold = 4;
+   */
+  bold: boolean;
+
+  /**
+   * @generated from field: bool dim = 5;
+   */
+  dim: boolean;
+
+  /**
+   * @generated from field: bool underline = 6;
+   */
+  underline: boolean;
+
+  /**
+   * @generated from field: bool reverse = 7;
+   */
+  reverse: boolean;
+};
+
+/**
+ * Describes the message gooey.control.v1.StyleInfo.
+ * Use `create(StyleInfoSchema)` to create a new message.
+ */
+export const StyleInfoSchema: GenMessage<StyleInfo> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_types, 12);
 
 /**
  * PointerEvent is one pointer action at a cell coordinate.
@@ -568,7 +684,7 @@ export type PointerEvent = Message<"gooey.control.v1.PointerEvent"> & {
  * Use `create(PointerEventSchema)` to create a new message.
  */
 export const PointerEventSchema: GenMessage<PointerEvent> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_types, 11);
+  messageDesc(file_gooey_control_v1_types, 13);
 
 /**
  * KeyEvent is one key gesture in markup's gesture syntax — "ctrl+s",
@@ -589,7 +705,7 @@ export type KeyEvent = Message<"gooey.control.v1.KeyEvent"> & {
  * Use `create(KeyEventSchema)` to create a new message.
  */
 export const KeyEventSchema: GenMessage<KeyEvent> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_types, 12);
+  messageDesc(file_gooey_control_v1_types, 14);
 
 /**
  * InputEvent is one event on the app's single ordered input stream —
@@ -622,7 +738,7 @@ export type InputEvent = Message<"gooey.control.v1.InputEvent"> & {
  * Use `create(InputEventSchema)` to create a new message.
  */
 export const InputEventSchema: GenMessage<InputEvent> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_types, 13);
+  messageDesc(file_gooey_control_v1_types, 15);
 
 /**
  * ValueKind names one row of markup's propKinds table. It is used
