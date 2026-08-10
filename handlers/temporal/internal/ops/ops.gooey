@@ -1,0 +1,52 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:temporal="gooey.dev/handlers/temporal">
+  <Grid Rows="1, 1, *, 10, 1">
+    <KeyBinding Gesture="ctrl+r" Command="{{.Refresh}}"/>
+    <KeyBinding Gesture="ctrl+n" Command="{{.NextPage}}"/>
+    <KeyBinding Gesture="ctrl+p" Command="{{.PrevPage}}"/>
+
+    <HStack Grid.Row="0">
+      <TextBox Text="{{.Query}}" Prompt="query> " AccentStyle="accent"/>
+      <KeyBinding Gesture="enter" Command="{{.RunQuery}}"/>
+    </HStack>
+
+    <ButtonBar Grid.Row="1" Gap="1">
+      <Button Content="run" Click="{{.RunQuery}}"/>
+      <Button Name="FetchBtn" Content="refresh ^r"
+              Click="{{temporal:Activity `visibility.Query` .Query .PageSize .PageToken | into .RowsJSON}}"/>
+      <Button Name="CountBtn" Content="count"
+              Click="{{temporal:Activity `visibility.Count` .Query | into .CountJSON}}"/>
+      <Button Content="next ^n" Click="{{.NextPage}}"/>
+      <Button Content="prev ^p" Click="{{.PrevPage}}"/>
+    </ButtonBar>
+
+    <Border Grid.Row="2" Title="executions" Style="panel">
+      <Grid Rows="1, *">
+        <HStack Grid.Row="0" Gap="1">
+          <Text Width="28" Style="dim">WORKFLOW ID</Text>
+          <Text Width="20" Style="dim">TYPE</Text>
+          <Text Width="10" Style="dim">STATUS</Text>
+          <Text Style="dim">START</Text>
+        </HStack>
+        <ItemsView Name="Executions" Grid.Row="1" Items="{{.Items}}" Selected="{{.Selected}}"
+                   SelectionChanged="{{temporal:Activity `visibility.Describe` .SelectedWorkflowID .SelectedRunID | into .DescribeJSON}}"
+                   Activate="{{temporal:Activity `visibility.Describe` .SelectedWorkflowID .SelectedRunID | into .DescribeJSON}}">
+          <ItemsView.ItemTemplate>
+            <HStack Gap="1">
+              <Text Width="28">{{.WorkflowId}}</Text>
+              <Text Width="20">{{.Type}}</Text>
+              <Text Width="10">{{.Status}}</Text>
+              <Text Style="dim">{{.Start}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="3" Title="describe" Style="panel">
+      <Text>{{.DescribeText}}</Text>
+    </Border>
+
+    <StatusBar Grid.Row="4" Left="{{.Status}}" Right="{{.PageInfo}}"/>
+  </Grid>
+</Gooey>

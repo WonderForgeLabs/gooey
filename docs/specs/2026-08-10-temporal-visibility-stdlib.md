@@ -260,3 +260,98 @@ Landed as designed. The record of fact:
 - READMEs: the pack's own (import path, names, proto promise, Python
   interop snippet, no-gooey guarantee); `handlers/temporal/README.md`
   links to it.
+
+---
+
+## Executed, phase 2 (2026-08-10): the ops dashboard and the scalar convenience layer
+
+The dashboard is `handlers/temporal/cmd/temporalops` (viewmodel in
+`internal/ops`, markup embedded as `ops.gooey`); the query-bar design
+gap flagged above is resolved **pack-side**, as three convenience
+activities beside the proto-true core.
+
+### The args decision
+
+`packs/temporal-visibility/convenience.go` adds `visibility.Query
+(query, pageSize, pageToken string)`, `visibility.Count(query string)`,
+and `visibility.Describe(workflowID, runID string)` — scalar strings
+in, **protojson text out**, each wrapping exactly one core activity
+(namespace defaulting inherited, tokens crossing as the base64 text
+protojson makes of the bytes, so `nextPageToken` from a result passes
+straight back as an argument). Bad scalars are non-retryable
+ApplicationErrors. The core proto activities remain the contract;
+`AllNames`/`Register` now carry ten names.
+
+Both halves of the scalar shape turned out to be load-bearing, and the
+second was discovered here:
+
+1. **Input** (the flagged gap): a markup argument crosses as one string
+   per `Arg` — `ExecuteActivity(…, typeName, args...)` with each arg a
+   Go string. A JSON string payload cannot deserialize into a proto
+   request, so proto-taking activities are unreachable from markup with
+   real arguments.
+2. **Output** (new finding): the provider decodes results into `any`,
+   and the SDK's `ProtoJSONPayloadConverter.FromPayload` **refuses
+   interface-typed targets** (`ErrValuePtrMustConcreteType`). A
+   proto-returning activity invoked via `{{temporal:Activity …}}`
+   against a real server therefore cannot deliver its result AT ALL —
+   the zero-arg phase-1 page reached the wire but its result path only
+   worked in the fake harness, whose starter modeled the edge as
+   protojson→map. The conveniences' string results cross as ordinary
+   json/plain payloads and arrive verbatim. (The proto path stays fully
+   usable from workflow callers in any SDK, per the Python snippet —
+   the ceiling is the v1 provider's `any` decode, not the pack.)
+
+No provider changes: the v1 grammar (`.Path`/literal args, `| into
+.Target`) carries the whole dashboard.
+
+### The dashboard
+
+The property boundary is as prescribed: protojson lands in
+`Property[string]` targets (`RowsJSON`, `CountJSON`, `DescribeJSON`);
+computeds `json.Unmarshal` and project rows via
+`components.ItemsOf` — parsing inside the computed is what subscribes
+the ItemsView to the fetch. Markup carries every Temporal call:
+
+- the query bar's enter and the run button fetch via `visibility.Query`
+  (`.Query .PageSize .PageToken`), plus `visibility.Count` for the
+  status bar;
+- `SelectionChanged`/`Activate` describe the selected execution —
+  `.SelectedWorkflowID`/`.SelectedRunID` are computeds read at invoke
+  time, so the command sees the row selection just landed on;
+- pagination: `NextPage`/`PrevPage` intents keep a client-side token
+  history (the server's tokens are opaque and forward-only — "previous"
+  is a client memory, as in every Temporal UI) and then invoke the SAME
+  markup-built command the refresh button carries, found via its
+  `Name` — code-behind orchestrates, markup declares.
+
+The worker runs as a `CompanionFunc` (the registration `RunWorker`
+shares with `workers/visibilityworker`, per the phase-1 plan);
+`--with-worker=false` opts out, `--with-dev-server` adds the
+`CompanionCmd` dev server for a true one-shell demo (wizardui's
+arrangement).
+
+### Verification
+
+- `internal/ops/ops_test.go` extends the visibility_binding_test.go
+  harness: fake starter running the REAL pack conveniences against a
+  fake WorkflowService; pins the requests the page causes (query text,
+  page size, worker-defaulted namespace), row projection to the screen,
+  selection→describe wiring, the token round trip (next carries the
+  server's bytes back, prev replays the remembered token, run resets,
+  both no-op at the edges), the root-scoped ctrl+r, and the damage pin:
+  a selection move repaints exactly 3 nodes (view + two row
+  highlights).
+- Convenience unit tests in the pack pin scalar parsing, request
+  building, canonical-JSON results (including protojson's string-typed
+  int64 count), non-retryable rejections, and the register/AllNames
+  contract.
+- Live smoke against a real `temporal server start-dev` with 30 seeded
+  executions and the in-process worker: the full path — markup args →
+  provider → server → worker → payload conversion → protojson result →
+  screen — verified under a pty, including both pagination directions.
+  This is the run that validates finding (2): the same page with
+  proto-returning activities would have shown `ERROR:` on delivery.
+- `temporalops.gif` (repo root) recorded from that server; demos.md
+  entry added; browser lists the demo via the `handlers/temporal/cmd`
+  root.
