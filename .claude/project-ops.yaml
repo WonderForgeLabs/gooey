@@ -5,8 +5,22 @@ project_id: PVT_kwDODZK67M4Bf59T
 fields:
   Priority:
     id: PVTSSF_lADODZK67M4Bf59TzhaJbT8
+    options:
+      - name: "P0 - Critical Path"
+        id: 20e57b21
+      - name: "P1 - High"
+        id: 7a5f18f7
+      - name: "P2 - Medium"
+        id: ca38a3ab
+      - name: "P3 - Low"
+        id: 46c5a49d
+      - name: "P4 - Future"
+        id: 3c28b9d8
   Critical Path:
     id: PVTSSF_lADODZK67M4Bf59TzhaJblI
+    options:
+      - name: "None"
+        id: 64b0ed20
   Sprint:
     id: PVTIF_lADODZK67M4Bf59TzhaJblM
   Start Date:
@@ -17,3 +31,10 @@ fields:
     id: PVTF_lADODZK67M4Bf59TzhaJblY
   Status:
     id: PVTSSF_lADODZK67M4Bf59TzhaJbTA
+    options:
+      - name: "Todo"
+        id: f75ad846
+      - name: "In Progress"
+        id: 47fc9ee4
+      - name: "Done"
+        id: 98236657
