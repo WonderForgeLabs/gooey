@@ -39,7 +39,7 @@ type Attacher interface {
 // Str and Sty wrap literals as source properties — every visual
 // property in the component model is a *prop.Property[T], whether it
 // came from a literal, a viewmodel source, or a computed binding.
-func Str(s string) *prop.Property[string]           { return prop.NewSource(s) }
+func Str(s string) *prop.Property[string]             { return prop.NewSource(s) }
 func Sty(s render.Style) *prop.Property[render.Style] { return prop.NewSource(s) }
 
 func getStr(p *prop.Property[string]) string {

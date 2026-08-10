@@ -1,10 +1,17 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Grid Rows="*,*,Auto" Cols="1*,1*">
+  <Grid Rows="*,*,Auto,Auto" Cols="1*,1*">
     <Card Grid.Row="0" Grid.Col="0" Title="requests"  Value="{{.Reqs}}" Trend="{{.ReqsTrend}}" Caption="per second"/>
     <Card Grid.Row="0" Grid.Col="1" Title="latency"   Value="{{.Lat}}"  Trend="{{.LatTrend}}"  Caption="p99 ms"/>
     <Card Grid.Row="1" Grid.Col="0" Title="errors"    Value="{{.Errs}}" Trend="{{.ErrsTrend}}" Caption="last minute"/>
     <Card Grid.Row="1" Grid.Col="1" Title="goroutines" Value="{{.Gors}}" Trend="{{.GorsTrend}}" Caption="live"/>
-    <Text Grid.Row="2" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, four instances, zero code-behind   (q: quit)</Text>
+    <Checkbox Grid.Row="2" Grid.ColSpan="2" Checked="{{.Ticking}}" Label="ticking — the Timer's Enabled binds to this property (space/click toggles)"/>
+    <Text Grid.Row="3" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, four instances, zero code-behind   (q: quit)</Text>
+    <!-- The data stream is declared, not hand-rolled: the Composer
+         starts this timer, its goroutine posts to the Dispatcher, and
+         the tick runs on the UI loop like any other command. Enabled is
+         read at fire time, so unchecking the box pauses the stream
+         through the property graph — no start/stop calls anywhere. -->
+    <Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Ticking}}"/>
     <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
     <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>

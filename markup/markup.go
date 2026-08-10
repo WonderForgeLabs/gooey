@@ -481,6 +481,35 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			}
 		}
 		return named(e, ctx, s, nil)
+	case "TextBox":
+		text, err := boundProp[string](e, ctx, "Text")
+		if err != nil {
+			return nil, err
+		}
+		changed, err := ctx.Command(e.Attrs["Changed"])
+		if err != nil {
+			return nil, fmt.Errorf("markup: <TextBox Changed=%q>: %w", e.Attrs["Changed"], err)
+		}
+		tb := &gooey.TextBox{Text: text, Changed: changed}
+		if p, ok := e.Attrs["Prompt"]; ok {
+			prompt, err := bindText(p, ctx)
+			if err != nil {
+				return nil, err
+			}
+			if prompt == nil {
+				prompt = gooey.Str(p)
+			}
+			tb.Prompt = prompt
+		}
+		if _, ok := e.Attrs["Style"]; ok {
+			if tb.Style, err = bindStyle(e, ctx); err != nil {
+				return nil, err
+			}
+		}
+		if a, ok := e.Attrs["AccentStyle"]; ok {
+			tb.AccentStyle = gooey.Sty(ctx.Styles[a])
+		}
+		return named(e, ctx, tb, nil)
 	case "ColorPicker":
 		color, err := boundProp[render.Color](e, ctx, "Value")
 		if err != nil {
@@ -518,6 +547,33 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			return nil, fmt.Errorf("markup: <KeyBinding Gesture=%q>: %w", e.Attrs["Gesture"], err)
 		}
 		return named(e, ctx, &gooey.KeyBinding{Gesture: g, Command: cmd}, nil)
+	case "Timer":
+		// Non-visual like KeyBinding: buildChildren routes it to the
+		// parent as an attachment, and the Composer starts it.
+		raw := strings.TrimSpace(e.Attrs["Interval"])
+		if raw == "" {
+			return nil, fmt.Errorf("markup: <Timer> needs an Interval (e.g. Interval=\"600ms\")")
+		}
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("markup: <Timer Interval=%q>: %w", raw, err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("markup: <Timer Interval=%q>: must be positive", raw)
+		}
+		tick, err := ctx.Command(e.Attrs["Tick"])
+		if err != nil {
+			return nil, fmt.Errorf("markup: <Timer Tick=%q>: %w", e.Attrs["Tick"], err)
+		}
+		t := &gooey.Timer{Interval: d, Tick: tick}
+		// Enabled is optional; absent means always enabled. When present
+		// it is a live bool handle, so the graph can pause the timer.
+		if _, ok := e.Attrs["Enabled"]; ok {
+			if t.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, t, nil)
 	case "Text":
 		style, err := bindStyle(e, ctx)
 		if err != nil {

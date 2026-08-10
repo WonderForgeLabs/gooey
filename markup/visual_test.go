@@ -3,6 +3,7 @@ package markup
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -280,5 +281,90 @@ func TestCanvasAttachedPropertiesAreNotPassedIntoIncludes(t *testing.T) {
 		if layoutAttr(k) {
 			t.Errorf("layoutAttr(%q) = true; ordinary attributes must pass through", k)
 		}
+	}
+}
+
+func TestTimerBuildsAsAnAttachment(t *testing.T) {
+	ticks := 0
+	running := prop.NewSource(true)
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <VStack Name="root">
+	    <Text>x</Text>
+	    <Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Running}}" Name="t"/>
+	  </VStack>
+	</Gooey>`
+	ctx := &Context{Values: map[string]any{
+		"Advance": gooey.Command(func() { ticks++ }),
+		"Running": running,
+	}}
+	w := buildOne(t, src, ctx)
+
+	// It must NOT be a laid-out child — non-visual elements are hung off
+	// the parent instead.
+	stack := w.(*gooey.VStack)
+	if len(stack.Children) != 1 {
+		t.Fatalf("stack has %d visual children, want 1 (the Timer must be an attachment)", len(stack.Children))
+	}
+	att := stack.Attachments()
+	if len(att) != 1 {
+		t.Fatalf("stack has %d attachments, want 1", len(att))
+	}
+	timer, ok := att[0].(*gooey.Timer)
+	if !ok {
+		t.Fatalf("attachment is %T, want *gooey.Timer", att[0])
+	}
+	if got, want := timer.Interval, 600*time.Millisecond; got != want {
+		t.Errorf("Interval = %v, want %v", got, want)
+	}
+	if timer.Enabled == nil {
+		t.Fatal("Enabled binding was dropped")
+	}
+	if !timer.Enabled.Get() {
+		t.Error("Enabled should follow the bound property (true)")
+	}
+	running.Set(false)
+	if timer.Enabled.Get() {
+		t.Error("Enabled is not a live handle onto the viewmodel property")
+	}
+	// The command resolved to the viewmodel delegate.
+	timer.Tick()
+	if ticks != 1 {
+		t.Errorf("Tick did not resolve to the bound command (ticks=%d)", ticks)
+	}
+}
+
+func TestTimerIntervalIsRequiredAndValidatedAtLoad(t *testing.T) {
+	cases := []struct{ name, attrs, want string }{
+		{"missing", `Tick="{{.Go}}"`, "needs an Interval"},
+		{"unparseable", `Interval="soon" Tick="{{.Go}}"`, "Interval"},
+		{"zero", `Interval="0s" Tick="{{.Go}}"`, "positive"},
+		{"negative", `Interval="-1s" Tick="{{.Go}}"`, "positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `<Gooey xmlns="wonderforge.io/gooey/2026"><VStack><Timer ` + tc.attrs + `/></VStack></Gooey>`
+			_, err := Build([]byte(src), &Context{Values: map[string]any{"Go": gooey.Command(func() {})}})
+			if err == nil {
+				t.Fatal("expected a load-time error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTimerEnabledIsOptional(t *testing.T) {
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <VStack><Timer Interval="1s" Tick="{{.Go}}" Name="t"/></VStack>
+	</Gooey>`
+	ctx := &Context{Values: map[string]any{"Go": gooey.Command(func() {})}}
+	buildOne(t, src, ctx)
+	timer, err := Find[*gooey.Timer](ctx, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timer.Enabled != nil {
+		t.Error("absent Enabled must stay nil, meaning always enabled")
 	}
 }

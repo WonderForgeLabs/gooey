@@ -106,3 +106,50 @@ occluded child repainting alone paints over its occluder. That is pinned
 by `TestCanvasOverlapRepaintLeavesOccluderDamaged` and documented in the
 `Canvas` doc comment. Both are the same missing capability — the composer
 has no notion of z-order — seen from two directions.
+
+---
+
+## Addendum: runtime visibility (2026-08-10)
+
+Two related gaps were found while writing the tutorials, and they split
+the same way as everything above.
+
+**Fixed now.** `Visibility` is a plain field on `Layout`, so flipping it
+at runtime dirtied nothing and a widget turned `Hidden` stayed on screen
+indefinitely. `Collapsed` was already safe by accident — it arranges to
+zero size, so the Composer's existing bounds-change sweep caught it. The
+Composer now also compares each node's visibility against the previous
+frame and force-dirties on a delta, which makes `Hidden`↔`Visible`
+correct for **leaves**: a leaf pre-clears its own rect, so hiding it
+erases it. Pinned by `TestHidingALeafAtRuntimeErasesIt`, and
+`TestUnchangedVisibilityDoesNotRepaint` guards against the sweep dirtying
+unconditionally.
+
+A **container's** own chrome still persists when it is hidden, because
+containers must not clear their bounds — that would wipe children whose
+paint nodes are clean. This is the same missing z-order notion as the
+background problem, seen from a third direction, and it should be fixed
+by the same work.
+
+**Roadmap, not done: bindable `Visibility`.** `Visibility="{{.ShowDetail}}"`
+does not work, and making it work is not a layout change at all — it is a
+*binding system* change. Every attribute binding today resolves to either
+a `*prop.Property[string]` (via `bindText`) or a typed handle asserted at
+a known call site (`boundProp[T]`). A bound `Visibility` needs the widget
+to hold `*prop.Property[Visibility]` and read it during layout — but
+layout deliberately runs OUTSIDE any evaluation context, so that read
+would record no dependency and the change would not repaint. So it needs
+either:
+
+1. layout reads to become graph reads (a large, deliberate change to
+   "layout runs outside the evaluation context", one of the load-bearing
+   invariants), or
+2. a visibility property read during *paint* with the layout pass
+   consulting the last-evaluated value — cheaper, but it makes visibility
+   lag layout by a frame.
+
+Neither is a small change, and the honest workaround costs a line: bind a
+computed and assign it in a command, or keep using the Composer's delta
+detection, which now makes the plain-field mutation safe for leaves.
+This belongs with `<x:Property>` and typed non-string attribute
+bindings.

@@ -97,15 +97,12 @@ func main() {
 	// them. Hot reload re-runs the builders and hands back these same
 	// instances: the tree is disposable, the state is not.
 	var comp *gooey.Composer
-	in := &inputBox{query: query, sel: sel}
 	res := &resultsPane{rows: matches, sel: sel}
 	// A click selects a row and hands typing straight back to the query
 	// line — the query is always live, fzf-style. Framework
 	// focus-follows-click has already moved focus to the results pane by
 	// the time this runs, so this is a deliberate override, not a
 	// workaround.
-	res.focusQuery = func() { comp.Focus().SetFocus(in) }
-
 	// --- commands: the page's gestures resolve to these at load time.
 	running, chosen := true, ""
 	selectBy := func(d int) gooey.Command {
@@ -113,9 +110,14 @@ func main() {
 	}
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"Status":     status,
-			"SelectPrev": selectBy(-1),
-			"SelectNext": selectBy(+1),
+			"Status": status,
+			"Query":  query,
+			// An edit invalidates the ranking, so the selection returns
+			// to the top — the TextBox says WHAT changed, the demo says
+			// what that means.
+			"ResetSelection": gooey.Command(func() { sel.Set(0) }),
+			"SelectPrev":     selectBy(-1),
+			"SelectNext":     selectBy(+1),
 			"Accept": gooey.Command(func() {
 				if ms := matches.Get(); len(ms) > 0 {
 					chosen = ms[clampSel(sel.Get(), len(ms))].path
@@ -128,14 +130,22 @@ func main() {
 			"panel":  {Fg: render.RGB(120, 90, 220)},
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
+			"input":  {Bold: true},
 		},
 		Widgets: map[string]markup.Builder{
-			"Input":   func(markup.Element, *markup.Context) (gooey.Widget, error) { return in, nil },
 			"Results": func(markup.Element, *markup.Context) (gooey.Widget, error) { return res, nil },
 			"Preview": func(markup.Element, *markup.Context) (gooey.Widget, error) {
 				return &previewPane{lines: preview}, nil
 			},
 		},
+	}
+
+	// The query line is <TextBox> in the markup; look it up by name to
+	// hand focus back to it after a click in the results.
+	res.focusQuery = func() {
+		if in, err := markup.Find[*gooey.TextBox](ctx, "query"); err == nil {
+			comp.Focus().SetFocus(in)
+		}
 	}
 
 	mkDir := "cmd/finder"
@@ -203,49 +213,10 @@ func clampSel(i, n int) int {
 
 // ---- widgets ----
 
-// inputBox is the query line: a focus stop that owns printable runes
-// and backspace. Nothing else in the page consumes runes, so typing
-// only ever edits the query — and every other gesture falls through to
-// the page bindings.
-type inputBox struct {
-	gooey.Base
-	gooey.FocusState
-	query *prop.Property[string]
-	sel   *prop.Property[int] // reset to the top whenever the query changes
-}
-
-func (w *inputBox) Measure(avail gooey.Size) gooey.Size { return gooey.Size{W: avail.W, H: 1} }
-
-func (w *inputBox) HandleKey(ev input.KeyEvent) bool {
-	switch {
-	case ev == input.Named(input.KeyBackspace):
-		q := []rune(w.query.Get())
-		if len(q) == 0 {
-			return true
-		}
-		w.query.Set(string(q[:len(q)-1]))
-	case ev.Key == input.KeyRune && ev.Mods == 0:
-		w.query.Set(w.query.Get() + string(ev.Rune))
-	default:
-		return false
-	}
-	w.sel.Set(0)
-	return true
-}
-
-func (w *inputBox) Render(f *gooey.Frame) {
-	b := w.Bounds()
-	accent := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
-	q := w.query.Get()
-	f.Cells.SetString(b.X, b.Y, "> ", accent)
-	f.Cells.SetString(b.X+2, b.Y, q, render.Style{Bold: true})
-	if w.IsFocused() {
-		// Reading IsFocused here is what makes the cursor a paint
-		// dependency: tabbing away repaints this widget and the one
-		// gaining focus, nothing else.
-		f.Cells.Set(b.X+2+len([]rune(q)), b.Y, '█', accent)
-	}
-}
+// The query line used to be a demo-local widget here. It is
+// gooey.TextBox now — the framework version does its own editing,
+// carries a real caret, and scrolls horizontally, none of which this
+// demo had to grow itself.
 
 // resultsPane is the second focus stop. It owns ↑/↓ while focused, and
 // takes clicks and the wheel by hit-test whether focused or not.

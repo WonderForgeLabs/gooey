@@ -255,10 +255,14 @@ func main() {
 		}
 		evs = make(chan input.Event, 64)
 		decDone = make(chan struct{})
-		go func() {
-			defer close(decDone)
-			readEvents(readTTY, evs)
-		}()
+		// Passed in rather than captured: these three are rebound on
+		// every openUI, and a goroutine reading them from the enclosing
+		// scope would be reading whichever session happened to be
+		// current when it was first scheduled.
+		go func(f *os.File, out chan<- input.Event, done chan struct{}) {
+			defer close(done)
+			readEvents(f, out)
+		}(readTTY, evs, decDone)
 		// The composition survives a handoff: Flush writes the whole
 		// buffer, so re-entering a blank alt screen repaints correctly
 		// from the retained buffer with nothing dirty. Rebuilding it
@@ -313,6 +317,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
+		if readTTY != nil {
+			readTTY.Close()
+		}
 		if screen != nil {
 			screen.Restore()
 		}

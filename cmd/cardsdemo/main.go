@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -85,12 +84,20 @@ func main() {
 	gors := newMetric(86, "%.0f")
 
 	running := true
+	ticking := prop.NewSource(true)
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"Reqs": reqs.label(), "ReqsTrend": reqs.trend(),
+			"Ticking": ticking,
+			"Reqs":    reqs.label(), "ReqsTrend": reqs.trend(),
 			"Lat": lat.label(), "LatTrend": lat.trend(),
 			"Errs": errs.label(), "ErrsTrend": errs.trend(),
 			"Gors": gors.label(), "GorsTrend": gors.trend(),
+			"Advance": gooey.Command(func() {
+				reqs.tick(180)
+				lat.tick(9)
+				errs.tick(2)
+				gors.tick(12)
+			}),
 			"Quit": gooey.Command(func() { running = false }),
 		},
 		Styles: map[string]render.Style{
@@ -125,11 +132,19 @@ func main() {
 	}
 	cols, rows := screen.Size()
 
+	// Timers live in the tree, so their lifetime is the composition's.
+	// Closing the outgoing Composer before building the next one is what
+	// keeps a hot reload from leaving the replaced tree's ticker running.
+	disp := gooey.NewDispatcher()
 	needsFrame := true
 	var comp *gooey.Composer
 	attach := func(w gooey.Widget) {
+		if comp != nil {
+			comp.Close()
+		}
 		comp = gooey.NewComposer(w, cols, rows)
 		comp.OnInvalidate(func() { needsFrame = true })
+		comp.Start(disp)
 		needsFrame = true
 	}
 	attach(tree)
@@ -151,8 +166,7 @@ func main() {
 	evs := make(chan input.Event, 16)
 	go term.DecodeEvents(screen, evs)
 
-	tickC := time.NewTicker(600 * time.Millisecond)
-	defer tickC.Stop()
+	defer func() { comp.Close() }()
 
 	for running {
 		if needsFrame {
@@ -161,11 +175,10 @@ func main() {
 			needsFrame = false
 		}
 		select {
-		case <-tickC.C:
-			reqs.tick(180)
-			lat.tick(9)
-			errs.tick(2)
-			gors.tick(12)
+		case <-disp.Wake():
+			// Timer ticks (and any other posted work) run here, on the
+			// UI goroutine, where touching properties is legal.
+			disp.Drain()
 		case w := <-swaps:
 			attach(w)
 		case ev := <-evs:

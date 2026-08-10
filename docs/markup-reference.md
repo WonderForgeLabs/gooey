@@ -220,6 +220,62 @@ What it shows depends on `Frame.Caps.Color`:
 | 256 | the same gradients, banded by quantization at the flush | `#FFAA3C → xterm 215` |
 | 16 | a plain fill meter — a gradient across 16 buckets would be a lie | `#FFAA3C ≈ yellow` |
 
+### TextBox
+
+`gooey.TextBox` — a single-line editor and a focus stop. It owns printable runes and the editing keys while focused; everything else bubbles, so page gestures still work from inside the field.
+
+| Attribute | Meaning |
+|---|---|
+| `Text` | **Required binding** to a `*prop.Property[string]`, shared with the viewmodel. |
+| `Prompt` | Optional prefix drawn before the text, e.g. `Prompt="&gt; "`. Bindable or literal. |
+| `Style` | Style of the edited text. Named or bound. |
+| `AccentStyle` | Named style for the prompt and caret. |
+| `Changed` | Optional command run after every edit (not after caret moves) — for invalidating something derived. |
+
+Keys: printable runes insert at the caret, `backspace`/`delete` remove either side of it, `←`/`→` move it, `home`/`end` jump. A click places the caret. The field scrolls horizontally to keep the caret visible, and the caret is a source property, so moving it repaints only this widget.
+
+### Timer
+
+`gooey.Timer` — a non-visual element that runs a command on an interval. Like `KeyBinding` it is hosted as an attachment on its parent, never laid out or painted.
+
+```xml
+<Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Running}}"/>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Interval` | **Required.** Any `time.ParseDuration` string (`"600ms"`, `"2s"`). Missing, unparseable, or non-positive is a load error. |
+| `Tick` | The command, resolved like `Click` — a binding or a bare handler name. |
+| `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always enabled. |
+
+Two things make it safe. The ticker goroutine never touches the property graph: it **posts** the tick to the `Dispatcher` and the app's loop runs it, so by the time `Tick` executes it is ordinary UI-goroutine code. And `Enabled` is read at fire time, on the loop, for the same reason — which is what lets the graph pause a timer, since binding it to the property a checkbox toggles stops the timer without tearing anything down.
+
+Lifetime belongs to the `Composer`, not the widget. Timers do not run until `Composer.Start(dispatcher)`, and `Composer.Close()` stops them. Hot reload builds a new composition, so the outgoing one must be closed or its ticker keeps running against a viewmodel nobody is showing:
+
+```go
+disp := gooey.NewDispatcher()
+attach := func(w gooey.Widget) {
+    if comp != nil {
+        comp.Close()
+    }
+    comp = gooey.NewComposer(w, cols, rows)
+    comp.Start(disp)
+}
+```
+
+and the loop drains it:
+
+```go
+select {
+case <-disp.Wake():
+    disp.Drain()
+case ev := <-events:
+    comp.Handle(ev)
+}
+```
+
+`cmd/cardsdemo` drives its whole data stream this way.
+
 ## Universal layout attributes
 
 Every element whose widget embeds `gooey.Base` (all built-ins and any well-behaved custom widget) accepts the FrameworkElement attributes. They map onto the widget's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container.

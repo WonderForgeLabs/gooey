@@ -105,3 +105,46 @@ func TestComposerInvalidateHookFires(t *testing.T) {
 		t.Fatal("OnInvalidate did not fire on property change")
 	}
 }
+
+// Visibility is a plain field, so nothing dirties when it flips. The
+// Composer's per-frame sweep catches the delta — otherwise a widget
+// turned Hidden at runtime stays on screen forever.
+func TestHidingALeafAtRuntimeErasesIt(t *testing.T) {
+	target := &Text{Content: Str("SECRET")}
+	root := &VStack{Children: []Widget{&Text{Content: Str("keep")}, target}}
+	c := NewComposer(root, 10, 2)
+	c.Frame()
+
+	if got := row(c.frame.Cells, 1); got != "SECRET" {
+		t.Fatalf("first frame row 1 = %q", got)
+	}
+
+	target.LayoutProps().Visibility = Hidden
+	_, painted := c.Frame()
+	if painted != 1 {
+		t.Errorf("hiding one leaf painted %d widgets, want exactly 1", painted)
+	}
+	if got := row(c.frame.Cells, 1); got != "" {
+		t.Errorf("row 1 after hiding = %q, want it erased", got)
+	}
+
+	// And back again.
+	target.LayoutProps().Visibility = Visible
+	if _, painted = c.Frame(); painted != 1 {
+		t.Errorf("showing it again painted %d widgets, want 1", painted)
+	}
+	if got := row(c.frame.Cells, 1); got != "SECRET" {
+		t.Errorf("row 1 after showing = %q, want it back", got)
+	}
+}
+
+// A steady visibility must not cause repaints — the sweep compares, it
+// does not dirty unconditionally.
+func TestUnchangedVisibilityDoesNotRepaint(t *testing.T) {
+	root := &VStack{Children: []Widget{&Text{Content: Str("a")}}}
+	c := NewComposer(root, 10, 2)
+	c.Frame()
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("a steady frame painted %d widgets, want 0", painted)
+	}
+}

@@ -31,6 +31,9 @@ type Composer struct {
 	focus      *FocusManager
 	invalid    func()
 	painted    int
+
+	startable []Startable // discovered during the walk, started by Start
+	stops     []func()    // one per started element, run by Close
 }
 
 type paintNode struct {
@@ -38,6 +41,7 @@ type paintNode struct {
 	node   *prop.Property[int]
 	rev    *prop.Property[int] // bumped when bounds change → forces repaint
 	bounds Rect
+	vis    Visibility
 }
 
 // Bounded is implemented by widgets that expose their arranged bounds
@@ -113,11 +117,59 @@ func (c *Composer) build(w Widget) {
 		}
 	})
 	c.nodes = append(c.nodes, n)
+	// Non-visual attachments (KeyBinding, Timer) never get a paint node,
+	// but a Timer owns a goroutine, so the walk has to notice it. This is
+	// the same walk the FocusManager makes for bindings — collected here
+	// so the Composer, which owns the composition's lifetime, also owns
+	// the lifetime of anything running inside it.
+	if a, ok := w.(Attacher); ok {
+		for _, at := range a.Attachments() {
+			if s, ok := at.(Startable); ok {
+				c.startable = append(c.startable, s)
+			}
+		}
+	}
+	if s, ok := w.(Startable); ok {
+		c.startable = append(c.startable, s)
+	}
 	if ct, ok := w.(Container); ok {
 		for _, ch := range ct.ChildWidgets() {
 			c.build(ch)
 		}
 	}
+}
+
+// Start brings the composition's background elements to life, delivering
+// their work onto the UI goroutine through d. Timers do not run until
+// this is called, which is what makes "started" a property of the
+// composition rather than of the widget: a tree that was built but never
+// composed never ticks.
+//
+// Calling Start twice stops the previous run first, so it is safe in an
+// attach/swap helper.
+func (c *Composer) Start(d *Dispatcher) {
+	c.stopAll()
+	if d == nil {
+		return
+	}
+	for _, s := range c.startable {
+		if stop := s.Start(d.Post); stop != nil {
+			c.stops = append(c.stops, stop)
+		}
+	}
+}
+
+// Close stops everything Start started. Hot reload replaces a whole
+// composition, so the OLD Composer must be closed before the new one
+// takes over — otherwise the dead tree's timers keep ticking against a
+// viewmodel nobody is showing. Close is idempotent.
+func (c *Composer) Close() { c.stopAll() }
+
+func (c *Composer) stopAll() {
+	for _, stop := range c.stops {
+		stop()
+	}
+	c.stops = nil
 }
 
 // OnInvalidate registers the scheduler hook: fired when any widget's
@@ -140,6 +192,23 @@ func (c *Composer) Frame() (*Frame, int) {
 				n.rev.Set(n.rev.Get() + 1) // bounds moved → must repaint
 			}
 		}
+		// Visibility is a plain field, not a property, so flipping it
+		// dirties nothing on its own. Collapsed is covered by the bounds
+		// check above (it arranges to zero size), but Hidden↔Visible
+		// keeps its bounds and would otherwise leave the old pixels on
+		// screen forever. Catching the delta here is the same trick the
+		// bounds sweep uses: notice the change, force the repaint.
+		//
+		// This makes LEAVES correct — a leaf pre-clears its rect, so
+		// turning Hidden erases it. A CONTAINER's own chrome persists
+		// until something else repaints it, because containers must not
+		// clear their bounds (that would wipe children whose nodes are
+		// clean). Same missing z-order notion as everything else in
+		// docs/specs/2026-08-10-container-backgrounds.md.
+		if v := visibilityOf(n.w); v != n.vis {
+			n.vis = v
+			n.rev.Set(n.rev.Get() + 1)
+		}
 	}
 	for _, n := range c.nodes {
 		n.node.Get() // only dirty nodes execute
@@ -159,4 +228,11 @@ func clearRect(b *render.Buffer, r Rect) {
 			b.Set(x, y, ' ', render.Style{})
 		}
 	}
+}
+
+func visibilityOf(w Widget) Visibility {
+	if l := layoutOf(w); l != nil {
+		return l.Visibility
+	}
+	return Visible
 }
