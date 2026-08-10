@@ -42,6 +42,33 @@ python trigger.py GenerateUI "the current state of this conversation"
 The gooey app's page swaps live if one is running; either way `trigger.py` prints the
 generated markup.
 
+### One shell instead of two: examples/kanbandemo -with-worker
+
+Running this worker by hand next to a target app is two shells and, in practice, the
+manually-started process outliving the demo — the same shape
+`docs/specs/2026-08-10-companions.md` describes for the Temporal wizard's dev server.
+`examples/kanbandemo` wires this worker in as a `gooey.CompanionCmd`: the Go app starts
+it before its first frame and kills it (the whole process group, not just the direct
+child) when it quits, so there is nothing left polling after the demo closes.
+
+```sh
+cd examples/kanbandemo
+go run . -mcp 127.0.0.1:7778 -with-worker -worker-python /path/to/.venv/bin/python
+```
+
+`-worker-task-queue` (default `kanbandemo-dynamic-ui`) keeps a companion-launched worker
+here from colliding with one you run by hand against the generic
+`gooey-dynamic-ui-task-queue`. The companion's stdout/stderr are redirected to
+`examples/temporal-worker/kanbandemo-worker.log` — a gooey app owns the terminal, so the
+worker's output never goes to the tty directly (see the "Output goes to `os.DevNull`"
+note in `docs/specs/2026-08-10-companions.md`). Trigger it the same way, pointed at the
+companion's queue:
+
+```sh
+cd examples/temporal-worker
+TEMPORAL_TASK_QUEUE=kanbandemo-dynamic-ui python trigger.py GenerateUI "the kanban board's todo column"
+```
+
 ## Why this shape
 
 - **Dynamic activity, not one function per UI kind.** `generate_ui` in `activities.py` is
