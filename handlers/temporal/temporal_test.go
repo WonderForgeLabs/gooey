@@ -81,7 +81,7 @@ type harness struct {
 	comp *gooey.Composer
 }
 
-func build(t *testing.T, src string, f *fakeStarter) *harness {
+func build(t *testing.T, src string, f activityStarter) *harness {
 	t.Helper()
 	markup.RegisterHandlers(URI, newProvider(f, "gooey-test", WithIDPrefix("test")))
 	t.Cleanup(func() { markup.RegisterHandlers(URI, nil) })
