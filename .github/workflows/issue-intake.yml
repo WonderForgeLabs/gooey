@@ -274,7 +274,7 @@ jobs:
           # literally — and keep these three in sync with the checkout path of
           # the "Check out project-ops helper scripts" step above.
           claude_args: |
-            --allowedTools "Bash(gh:*),Bash(yq:*),Bash(date:*),Bash(./.project-ops/plugins/project-ops/scripts/add-item.sh:*),Bash(./.project-ops/plugins/project-ops/scripts/set-field.sh:*),Bash(./.project-ops/plugins/project-ops/scripts/get-iterations.sh:*),mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue,mcp__github__add_issue_comment,mcp__github__get_issue_comments,mcp__github__create_issue" --model "claude-sonnet-5" --max-turns 100
+            --allowedTools "Bash(gh:*),Bash(yq:*),Bash(date:*),Bash(./.project-ops/plugins/project-ops/bin/project-ops:*),mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue,mcp__github__add_issue_comment,mcp__github__get_issue_comments,mcp__github__create_issue" --model "claude-sonnet-5" --max-turns 100
           prompt: |
             You are an issue intake agent for gooey. Your job is to fully process a new (or re-triaged) GitHub issue: check for duplicates, apply labels, populate the GitHub Projects V2 board, wire up epic/sub-issue relationships, and evaluate blockers.
 
@@ -396,12 +396,14 @@ jobs:
 
             ## Step 5: Add to Project Board and Set Fields
 
-            Helper scripts from the project-ops plugin are checked out at
-            `./.project-ops/plugins/project-ops/scripts/`. All project IDs and
-            field IDs are stored in `.claude/project-ops.yaml` — read that file
-            with `yq` to get IDs. The scripts already read from it automatically.
+            The project-ops plugin is checked out at `./.project-ops/`, and every
+            board helper is reached through ONE entry point — its `bin/project-ops`
+            dispatcher, which takes the helper's name as its first argument
+            (`... /bin/project-ops add-item <id>`). All project IDs and field IDs
+            are stored in `.claude/project-ops.yaml` — read that file with `yq` to
+            get IDs. The helpers already read from it automatically.
 
-            **IMPORTANT — run every shell command below as its own standalone tool call.** Do NOT chain a command through a shell variable in the same invocation (e.g. `ISSUE_NODE_ID=$(gh api ...)`, `FIELD_ID=$(yq ...)`) — this workflow's `--allowedTools` only permits Bash invocations whose command starts literally with `gh`, `yq`, `date`, or one of the three plugin script paths, and a command starting with a variable assignment doesn't match any of those and will be denied. Instead: run one command, read its printed output yourself, and substitute that literal value into the next command you type.
+            **IMPORTANT — run every shell command below as its own standalone tool call.** Do NOT chain a command through a shell variable in the same invocation (e.g. `ISSUE_NODE_ID=$(gh api ...)`, `FIELD_ID=$(yq ...)`) — this workflow's `--allowedTools` only permits Bash invocations whose command starts literally with `gh`, `yq`, `date`, or the `bin/project-ops` dispatcher path, and a command starting with a variable assignment doesn't match any of those and will be denied. Instead: run one command, read its printed output yourself, and substitute that literal value into the next command you type.
 
             ### 5a: Add issue to the project board (idempotent)
 
@@ -413,7 +415,7 @@ jobs:
             ```
             Then, substituting the printed node ID literally:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/add-item.sh <ISSUE_NODE_ID>
+            ./.project-ops/plugins/project-ops/bin/project-ops add-item <ISSUE_NODE_ID>
             ```
 
             This is idempotent — if the issue is already on the board, it returns the existing item ID. Note the printed `<ITEM_ID>` for all field updates below.
@@ -427,7 +429,7 @@ jobs:
             ```
             Then, substituting both literal values:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <STATUS_FIELD_ID> singleSelectOptionId <TODO_OPTION_ID>
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <STATUS_FIELD_ID> singleSelectOptionId <TODO_OPTION_ID>
             ```
 
             ### 5c: Set Priority
@@ -449,7 +451,7 @@ jobs:
             ```
             Then:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <PRIORITY_FIELD_ID> singleSelectOptionId <PRIORITY_OPTION_ID>
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <PRIORITY_FIELD_ID> singleSelectOptionId <PRIORITY_OPTION_ID>
             ```
 
             ### 5d: Set Critical Path
@@ -469,14 +471,14 @@ jobs:
             ```
             Then:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <CP_FIELD_ID> singleSelectOptionId <CP_OPTION_ID>
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <CP_FIELD_ID> singleSelectOptionId <CP_OPTION_ID>
             ```
 
             ### 5e: Set Sprint
 
             **gooey's Sprint field has NO iterations configured.** Query it first:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/get-iterations.sh
+            ./.project-ops/plugins/project-ops/bin/project-ops get-iterations
             ```
             If this prints an empty array (`[]`) or no iterations, **SKIP this
             step entirely and move to 5f** — say so in your summary and do not
@@ -497,7 +499,7 @@ jobs:
             ```
             Then, substituting both the field ID above and the chosen iteration ID:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <SPRINT_FIELD_ID> iterationId <SPRINT_ITERATION_ID>
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <SPRINT_FIELD_ID> iterationId <SPRINT_ITERATION_ID>
             ```
 
             ### 5f: Set Start Date and Target Date (if inferable)
@@ -510,8 +512,8 @@ jobs:
             ```
             Then, one call per field:
             ```bash
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <START_FIELD_ID> date "YYYY-MM-DD"
-            ./.project-ops/plugins/project-ops/scripts/set-field.sh <ITEM_ID> <TARGET_FIELD_ID> date "YYYY-MM-DD"
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <START_FIELD_ID> date "YYYY-MM-DD"
+            ./.project-ops/plugins/project-ops/bin/project-ops set-field <ITEM_ID> <TARGET_FIELD_ID> date "YYYY-MM-DD"
             ```
 
             ## Step 6: Epic & Sub-Issue Wiring
