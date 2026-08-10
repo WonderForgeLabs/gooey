@@ -294,13 +294,13 @@ func (p *myPanel) Render(f *gooey.Frame) {} // paint only your OWN chrome
 
 ## Current limitations
 
-- Component properties are plain Go fields you wire yourself; there is no
-  declarative property system for third-party components yet.
-- `components.Image` exists but has **no built-in markup element** —
-  markup has no way to spell an `image.Image`. Register it as a custom
-  component to use it from markup; see
-  [how-to: draw images](howto/howto-images.md).
-- No DataTemplates, so list-shaped data means writing a rows component.
+- A Go component's properties are `prop.Property` fields you wire
+  yourself; markup-only controls declare theirs with
+  [`<x:Property>`](../markup-reference.md#declared-properties-xproperty)
+  instead.
+- For list-shaped data, reach for
+  [`<ItemsView>` with a DataTemplate](../markup-reference.md#itemsview)
+  before writing a rows component by hand.
 
 ## Next steps
 
