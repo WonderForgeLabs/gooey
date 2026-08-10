@@ -123,7 +123,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
 | `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/mcpdemo` | [mcpdemo.gif](mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `cmd/sysmon` | — | Not yet cataloged |
+| `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
 are runnable too, and `cmd/browser` lists both groups:
