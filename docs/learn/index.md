@@ -124,13 +124,11 @@ not find:
 - **Lists are declarative, but items are projected by hand.** `<ItemsView>`
   with an `<ItemsView.ItemTemplate>` works; without reflection, an item
   reaches its template through a `func(T) map[string]any` you write.
-- **`TextBox` is single-line and end-cursor only** — no mid-string
-  cursor movement or selection yet (see `cmd/finder` for real usage).
-- **No `CanExecute`**, so no automatic disabled command state.
+- **`TextBox` is single-line** — mid-string editing, word-wise caret
+  movement and selection all work (see `cmd/finder`), but there is no
+  multi-line text area yet.
 - **Visibility is not bindable** from markup — though you can flip it
   from Go at runtime.
-- **Damage tracking stops at the paint level.** The flush still writes
-  the whole buffer each frame.
 
 Each tutorial repeats the limits relevant to its topic in a "current
 limitations" section, so you find them where they bite.

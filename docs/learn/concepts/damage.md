@@ -31,9 +31,10 @@ wiping them blanks content whose own (clean) paint nodes will not
 repaint. Only leaf components pre-clear; containers overpaint their chrome
 in place.
 
-**Current limit.** Damage tracking stops at the paint level: the flush
-still writes the whole buffer to the terminal each frame. Damage-rect
-diffing is a drop-in replacement at `Flush`, not a redesign.
+Damage carries all the way to the wire: `Flush` diffs the current
+buffer against the previous one and emits only the changed spans, so a
+settled frame writes zero bytes and a keystroke writes tens, not the
+whole screen.
 
 Depth: [architecture.md — the Composer](../../architecture.md#the-composer).
 re
