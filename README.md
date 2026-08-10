@@ -162,9 +162,7 @@ go run ./cmd/browser
 
 There is no styling system (named style lookup only). The file watcher is
 300 ms ModTime polling. Properties are confined to the UI goroutine;
-background work crosses in over a channel. Overlapping components have no
-z-order, so an occluded component's solo repaint paints over its
-occluder.
+background work crosses in over a channel.
 
 ## Architecture decisions, one line each
 

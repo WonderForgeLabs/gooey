@@ -192,15 +192,12 @@ leaf.LayoutProps().Visibility = gooey.Hidden // repaints on the next frame
 ```
 
 The Composer catches the change in its per-frame sweep and force-repaints
-the component, the same way it handles a bounds change. One caveat:
-**this is correct for leaves, not for a container's own chrome.** A leaf
-pre-clears its rect, so hiding it erases it; a `Border` must never clear
-its own bounds — that would wipe children whose paint nodes are clean —
-so its frame stays on screen until something else repaints that region.
-
-From markup alone, the options are to bind the *content* instead (a
-computed string that is empty when you want nothing shown), or to rebuild
-the tree, which is what hot reload already does.
+the component, the same way it handles a bounds change. This works for
+containers too: a `Border` turned `Hidden` clears its whole bounds, and
+the Composer's z-ordered repaint puts its still-visible children back
+down on top in the same frame — visibility is per-element, so hiding a
+container hides its chrome, not its subtree. Use `Collapsed` on the
+container (or `Hidden` on the children) to take the content away.
 
 ## What you learned
 

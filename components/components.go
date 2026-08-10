@@ -32,11 +32,12 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// Str and Sty wrap literals as source properties — every visual
+// Str, Sty and Col wrap literals as source properties — every visual
 // property in the component model is a *prop.Property[T], whether it
 // came from a literal, a viewmodel source, or a computed binding.
 func Str(s string) *prop.Property[string]             { return prop.NewSource(s) }
 func Sty(s render.Style) *prop.Property[render.Style] { return prop.NewSource(s) }
+func Col(c render.Color) *prop.Property[render.Color] { return prop.NewSource(c) }
 
 func getStr(p *prop.Property[string]) string {
 	if p == nil {
@@ -55,6 +56,13 @@ func getSty(p *prop.Property[render.Style]) render.Style {
 func getInt(p *prop.Property[int]) int {
 	if p == nil {
 		return 0
+	}
+	return p.Get()
+}
+
+func getColor(p *prop.Property[render.Color]) render.Color {
+	if p == nil {
+		return render.Color{}
 	}
 	return p.Get()
 }

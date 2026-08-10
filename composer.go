@@ -32,6 +32,19 @@ import (
 // which sends only the spans where this frame's buffer differs from the
 // one the terminal is showing; pixel placements are stored per paint node
 // and diffed the same way (placements.go).
+//
+// Z-order is document order: c.nodes is the tree in depth-first pre-order,
+// so children paint after (above) their parents and later siblings after
+// earlier ones. The paint loop keeps that order honest under partial
+// repaints: when a node paints, every LATER node whose bounds intersect
+// the painted rect is forced to repaint in the same frame — it was (or may
+// have been) painted over, and it is above, so it must go down again on
+// top. Two exemptions keep the damage counts tight: a chrome-only
+// container never forces its own descendants (its chrome never covers
+// their cells — that contract is why containers may skip pre-clearing),
+// and a Decorator is never forced from below (it owns no cells to
+// restore). This is what makes container backgrounds, hidden containers,
+// and overlapping Canvas children all repaint correctly.
 type Composer struct {
 	root       Component
 	frame      *Frame
@@ -41,6 +54,8 @@ type Composer struct {
 	focus      *FocusManager
 	invalid    func()
 	painted    int
+	frameSeq   int          // stamps which frame a node last painted in
+	over       []*paintNode // nodes painted this frame, in z-order (reused)
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
@@ -62,11 +77,14 @@ type Composer struct {
 }
 
 type paintNode struct {
-	w      Component
-	node   *prop.Property[int]
-	rev    *prop.Property[int] // bumped when bounds change → forces repaint
-	bounds Rect
-	vis    Visibility
+	w       Component
+	node    *prop.Property[int]
+	rev     *prop.Property[int] // bumped when bounds change → forces repaint
+	bounds  Rect
+	vis     Visibility
+	parent  *paintNode // ancestor chain: background lookup and z-order exemptions
+	stamp   int        // frameSeq of the last frame this node painted in
+	covered bool       // last paint overwrote the node's whole rect (pre-clear or fill)
 
 	// The pixel plane, per node: what this component recorded the last
 	// time it painted, and what the terminal is currently showing for it.
@@ -175,11 +193,11 @@ func (c *Composer) walkNodes() {
 	c.nodeOf = make(map[Component]*paintNode, len(prev))
 	c.nodes = c.nodes[:0]
 	c.startable = c.startable[:0]
-	c.build(c.root, prev)
+	c.build(c.root, prev, nil)
 
 	for w, n := range prev {
 		if _, kept := c.nodeOf[w]; !kept {
-			clearRect(c.frame.Cells, n.bounds)
+			fillRect(c.frame.Cells, n.bounds, c.clearStyle(n))
 			// Its cells will be overwritten by the clear above, but its
 			// pixel placements are on a plane no clear reaches: the flush
 			// has to be told to take them off the screen.
@@ -209,24 +227,55 @@ func (c *Composer) walkNodes() {
 	}
 }
 
-func (c *Composer) build(w Component, prev map[Component]*paintNode) {
+func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *paintNode) {
 	if n, ok := prev[w]; ok {
+		n.parent = parent // a re-sync may have moved the subtree
 		c.nodes = append(c.nodes, n)
 		c.nodeOf[w] = n
-		c.collect(w, prev)
+		c.collect(w, prev, n)
 		return
 	}
-	n := &paintNode{w: w, rev: prop.NewSource(0)}
+	n := &paintNode{w: w, rev: prop.NewSource(0), parent: parent}
 	n.node = prop.NewComputed(func() int {
 		n.rev.Get()
-		// Pre-clear only leaves: a container's bounds enclose its
-		// children's cells, and wiping those would blank content whose
-		// own (clean) nodes won't repaint. Containers overpaint their
-		// own chrome in place instead.
-		if _, isContainer := w.(Container); !isContainer {
-			if b, ok := w.(Bounded); ok {
-				clearRect(c.frame.Cells, b.Bounds())
+		n.covered = false
+		if b, ok := w.(Bounded); ok {
+			r := b.Bounds()
+			if _, isContainer := w.(Container); !isContainer {
+				// Leaves pre-clear to the nearest ancestor's background,
+				// not to the terminal default — a Text inside a colored
+				// panel must not punch a default-colored hole when it
+				// repaints alone. The read happens INSIDE this paint
+				// node, so the ancestor's Background property becomes a
+				// dependency: recoloring a panel repaints every leaf
+				// that clears against it, automatically.
+				fillRect(c.frame.Cells, r, c.clearStyle(n))
+				n.covered = true
+			} else if !paintable(w) {
+				// A hidden container's chrome must leave the screen the
+				// same way a hidden leaf's content does. Clearing its
+				// bounds wipes its (still visible) children too — the
+				// z-ordered pass in Frame repaints them above it.
+				fillRect(c.frame.Cells, r, c.clearStyle(n))
+				n.covered = true
+			} else if bp := backgroundProp(w); bp != nil {
+				// A container with a declared background fills its whole
+				// bounds — including the gap cells no child owns — and
+				// the z-ordered pass repaints its subtree on top. An
+				// unset color still fills, with the ancestor's
+				// background, so clearing a background at runtime erases
+				// the old fill rather than stranding it.
+				if col := bp.Get(); col.Set {
+					fillRect(c.frame.Cells, r, render.Style{Bg: col})
+				} else {
+					fillRect(c.frame.Cells, r, c.clearStyle(n))
+				}
+				n.covered = true
 			}
+			// A chrome-only container pre-clears nothing: its bounds
+			// enclose its children's cells, and wiping those would blank
+			// content whose own (clean) nodes won't repaint. It
+			// overpaints its own chrome in place instead.
 		}
 		// A repaint re-records this node's pixel placements from nothing,
 		// which is what makes "painted no images this time" mean the
@@ -241,6 +290,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode) {
 		}
 		c.frame.sink = outer
 		c.painted++
+		n.stamp = c.frameSeq
 		return c.painted
 	})
 	n.node.OnInvalidate(func() {
@@ -253,7 +303,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode) {
 	if d, ok := w.(Dynamic); ok {
 		d.SetStructureHook(c.structureChanged)
 	}
-	c.collect(w, prev)
+	c.collect(w, prev, n)
 }
 
 // collect gathers the lifetime-bearing parts of one component and
@@ -262,7 +312,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode) {
 // is the same walk the FocusManager makes for bindings — collected here
 // so the Composer, which owns the composition's lifetime, also owns the
 // lifetime of anything running inside it.
-func (c *Composer) collect(w Component, prev map[Component]*paintNode) {
+func (c *Composer) collect(w Component, prev map[Component]*paintNode, n *paintNode) {
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
 			if s, ok := at.(Startable); ok {
@@ -275,7 +325,7 @@ func (c *Composer) collect(w Component, prev map[Component]*paintNode) {
 	}
 	if ct, ok := w.(Container); ok {
 		for _, ch := range ct.ChildComponents() {
-			c.build(ch, prev)
+			c.build(ch, prev, n)
 		}
 	}
 }
@@ -355,7 +405,11 @@ func (c *Composer) Frame() (*Frame, int) {
 	for _, n := range c.nodes {
 		if b, ok := n.w.(Bounded); ok {
 			if nb := b.Bounds(); nb != n.bounds {
-				clearRect(c.frame.Cells, n.bounds) // vacated region
+				// Vacated region, cleared to the ancestor background so a
+				// component shrinking inside a colored panel does not
+				// leave a default-colored scar. Outside any evaluation:
+				// the property reads record nothing.
+				fillRect(c.frame.Cells, n.bounds, c.clearStyle(n))
 				n.bounds = nb
 				n.rev.Set(n.rev.Get() + 1) // bounds moved → must repaint
 			}
@@ -367,19 +421,47 @@ func (c *Composer) Frame() (*Frame, int) {
 		// screen forever. Catching the delta here is the same trick the
 		// bounds sweep uses: notice the change, force the repaint.
 		//
-		// This makes LEAVES correct — a leaf pre-clears its rect, so
-		// turning Hidden erases it. A CONTAINER's own chrome persists
-		// until something else repaints it, because containers must not
-		// clear their bounds (that would wipe children whose nodes are
-		// clean). Same missing z-order notion as everything else in
-		// docs/specs/2026-08-10-container-backgrounds.md.
+		// A hidden LEAF erases itself through its pre-clear; a hidden
+		// CONTAINER clears its whole bounds (see build) and the z-ordered
+		// pass below repaints its still-visible children on top.
 		if v := visibilityOf(n.w); v != n.vis {
 			n.vis = v
 			n.rev.Set(n.rev.Get() + 1)
 		}
 	}
+	// Paint in z-order (depth-first pre-order), forcing the repaint of
+	// anything that sits ABOVE a rect somebody below just painted. The
+	// forcing happens here in the loop — a Set between evaluations, never
+	// inside one — so the evaluation-only-reads discipline holds. One
+	// forward pass is enough: paint can only damage nodes later in
+	// z-order, and by the time the loop reaches them every painter below
+	// is already in c.over.
+	c.frameSeq++
+	c.over = c.over[:0]
 	for _, n := range c.nodes {
-		n.node.Get() // only dirty nodes execute
+		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 {
+			if _, isDecorator := n.w.(Decorator); !isDecorator {
+				for _, p := range c.over {
+					if !intersects(p.bounds, n.bounds) {
+						continue
+					}
+					// A chrome-only container's paint never touches its
+					// descendants' cells — that contract is why it may
+					// skip pre-clearing — so it does not force them.
+					// Covered painters (leaves, filled or hidden
+					// containers) force everything above them.
+					if !p.covered && isAncestorOf(p, n) {
+						continue
+					}
+					n.rev.Set(n.rev.Get() + 1)
+					break
+				}
+			}
+		}
+		n.node.Get() // only dirty (or just-forced) nodes execute
+		if n.stamp == c.frameSeq {
+			c.over = append(c.over, n)
+		}
 	}
 	// Republish the pixel plane in paint order, so the Frame handed back
 	// describes the whole composition and not just what repainted. The
@@ -475,12 +557,47 @@ func (c *Composer) Snapshot(w io.Writer) error {
 	return render.Flush(w, c.frame.Cells, c.frame.Caps.Color)
 }
 
-func clearRect(b *render.Buffer, r Rect) {
+func fillRect(b *render.Buffer, r Rect, s render.Style) {
 	for y := r.Y; y < r.Y+r.H; y++ {
 		for x := r.X; x < r.X+r.W; x++ {
-			b.Set(x, y, ' ', render.Style{})
+			b.Set(x, y, ' ', s)
 		}
 	}
+}
+
+// clearStyle is what a node's rect clears TO: blank cells styled with the
+// nearest visible ancestor's set background, or the terminal default when
+// no ancestor declares one. Call site decides what the reads mean, as
+// always: from inside a paint node's evaluation the ancestor Background
+// properties become dependencies of that node; from the sweeps (vacated
+// bounds, departed nodes) they are plain reads.
+func (c *Composer) clearStyle(n *paintNode) render.Style {
+	for p := n.parent; p != nil; p = p.parent {
+		if !paintable(p.w) {
+			continue // a hidden panel's background is not on screen
+		}
+		bp := backgroundProp(p.w)
+		if bp == nil {
+			continue
+		}
+		if col := bp.Get(); col.Set {
+			return render.Style{Bg: col}
+		}
+	}
+	return render.Style{}
+}
+
+func intersects(a, b Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+func isAncestorOf(p, n *paintNode) bool {
+	for a := n.parent; a != nil; a = a.parent {
+		if a == p {
+			return true
+		}
+	}
+	return false
 }
 
 func visibilityOf(w Component) Visibility {

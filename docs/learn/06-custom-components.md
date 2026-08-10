@@ -271,7 +271,10 @@ func (p *myPanel) Render(f *gooey.Frame) {} // paint only your OWN chrome
   enclose its children's cells, and wiping them blanks content whose own
   paint nodes are clean and will not repaint. The framework pre-clears
   leaves only; containers overpaint their chrome in place. `Border` is
-  the model: it draws its box and title and nothing else.
+  the model: it draws its box and title and nothing else. If you want a
+  filled surface, declare it instead — implement `gooey.HasBackground`
+  (return a `*prop.Property[render.Color]`) and the framework paints the
+  fill and z-orders the repaint of everything above it.
 - Do not paint children from your `Render`. The framework walks them.
 
 ## What you learned

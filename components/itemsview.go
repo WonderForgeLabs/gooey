@@ -643,6 +643,13 @@ type rowHighlight struct {
 
 func (h *rowHighlight) ChildComponents() []gooey.Component { return nil }
 
+// DecoratesCells marks the highlight for the Composer's z-ordered
+// repaint: it owns no cells, so a repaint below it has nothing of its to
+// restore, and forcing it would charge every content change in an
+// unselected row an extra paint. A live (selected) overlay re-applies
+// through the dependencies Render records — that is the contract.
+func (h *rowHighlight) DecoratesCells() {}
+
 func (h *rowHighlight) Measure(avail gooey.Size) gooey.Size { return avail }
 
 func (h *rowHighlight) Render(f *gooey.Frame) {

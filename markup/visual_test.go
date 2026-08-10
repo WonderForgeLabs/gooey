@@ -9,6 +9,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func buildOne(t *testing.T, src string, ctx *Context) gooey.Component {
@@ -367,5 +368,58 @@ func TestTimerEnabledIsOptional(t *testing.T) {
 	}
 	if timer.Enabled != nil {
 		t.Error("absent Enabled must stay nil, meaning always enabled")
+	}
+}
+
+// Background on containers speaks the markup color literal (#rgb or
+// #rrggbb) or binds the viewmodel's own *prop.Property[render.Color]
+// handle; an absent attribute stays nil, keeping the container on the
+// chrome-only damage path.
+func TestContainerBackgroundAttribute(t *testing.T) {
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <Border Name="b" Background="#204060">
+	    <VStack Name="v" Background="{{.Panel}}">
+	      <Text>hi</Text>
+	    </VStack>
+	  </Border>
+	</Gooey>`
+	panel := prop.NewSource(render.RGB(1, 2, 3))
+	ctx := &Context{Values: map[string]any{"Panel": panel}}
+	w := buildOne(t, src, ctx)
+
+	b, err := Find[*components.Border](ctx, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := b.Background.Get(), render.RGB(0x20, 0x40, 0x60); got != want {
+		t.Errorf("literal Background = %+v, want %+v", got, want)
+	}
+	v, err := Find[*components.VStack](ctx, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Background != panel {
+		t.Error("bound Background must be the viewmodel's own handle")
+	}
+
+	f := gooey.Compose(w, term.Caps{Cols: 10, Rows: 4}, nil)
+	if got, want := f.Cells.At(4, 1).Style.Bg, render.RGB(1, 2, 3); got != want {
+		t.Errorf("interior cell bg = %+v, want the inner stack's fill %+v", got, want)
+	}
+	if got, want := f.Cells.At(0, 0).Style.Bg, render.RGB(0x20, 0x40, 0x60); got != want {
+		t.Errorf("chrome corner bg = %+v, want the border's fill %+v", got, want)
+	}
+}
+
+func TestContainerBackgroundRejectsBadLiterals(t *testing.T) {
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <VStack Background="teal"><Text>x</Text></VStack>
+	</Gooey>`
+	_, err := Build([]byte(src), &Context{Values: map[string]any{}})
+	if err == nil {
+		t.Fatal("expected a load-time error for a non-hex background")
+	}
+	if !strings.Contains(err.Error(), "#rgb") {
+		t.Errorf("error %q does not mention the literal form", err)
 	}
 }

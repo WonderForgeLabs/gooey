@@ -91,13 +91,12 @@ func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 	}
 }
 
-// The honest limit, pinned so it cannot regress silently: with paint-level
-// damage, an occluded component repainting ALONE overwrites the sibling that
-// was covering it. The occluder is clean, so nothing repaints it.
-//
-// If a future z-ordered repaint fixes this, this test should be inverted
-// deliberately — it documents a known artifact, not a desired one.
-func TestCanvasOverlapRepaintLeavesOccluderDamaged(t *testing.T) {
+// Epic #26 acceptance (c), inverted from the test that used to pin the
+// deficiency: an occluded component repainting ALONE must not end up on
+// top of its occluder. The Composer's z-ordered pass forces the clean
+// occluder — later in tree order, therefore above — to repaint over it
+// in the same frame: exactly 2 components, and tree order still wins.
+func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	text := Str("XXXX")
 	under := &Text{Content: text}
 	over := &Text{Content: Str("ab")}
@@ -114,12 +113,17 @@ func TestCanvasOverlapRepaintLeavesOccluderDamaged(t *testing.T) {
 	// Dirty ONLY the occluded component.
 	text.Set("YYYY")
 	f, painted := comp.Frame()
-	if painted != 1 {
-		t.Fatalf("painted %d components, want exactly 1 (only the occluded text is dirty)", painted)
+	if painted != 2 {
+		t.Fatalf("painted %d components, want exactly 2 (the occluded text + its forced occluder)", painted)
 	}
-	if got, want := dump(f, 6, 1), "YYYY  \n"; got != want {
+	if got, want := dump(f, 6, 1), "YabY  \n"; got != want {
 		t.Errorf("after repainting the occluded component: %q, want %q — "+
-			"the occluder is clean, so it does not repaint over the new content", got, want)
+			"the occluder must repaint above the new content", got, want)
+	}
+
+	// And the frame after is settled: forcing is per-frame, not a leak.
+	if _, painted = comp.Frame(); painted != 0 {
+		t.Errorf("settled frame painted %d components, want 0", painted)
 	}
 }
 

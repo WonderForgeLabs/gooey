@@ -43,6 +43,7 @@ Draws a rounded box around exactly one visual child (KeyBindings do not count ag
 |---|---|
 | `Title` | Text in the top edge. Bindable: `Title="{{.Title}}"` or a literal. |
 | `Style` | Named style from `Context.Styles`, applied to the frame and title. |
+| `Background` | Fill color for the whole box: a `#rgb`/`#rrggbb` literal or a binding to a `*prop.Property[render.Color]`. Chrome drawn with a style whose background is unset sits on the fill. |
 
 ```xml
 <Border Title="{{.Title}}" Style="panel">
@@ -60,6 +61,7 @@ The workhorse layout panel: children go into cells addressed by the attached `Gr
 |---|---|
 | `Rows` | Comma-separated row definitions (see below). |
 | `Cols` | Comma-separated column definitions. |
+| `Background` | Fill color: `#rgb`/`#rrggbb` literal or a color-property binding. |
 
 Each definition is one of:
 
@@ -89,6 +91,7 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 | Attribute | Meaning |
 |---|---|
 | `Gap` | Cells of space between consecutive children. Defaults to 0. |
+| `Background` | Fill color: `#rgb`/`#rrggbb` literal or a color-property binding. The fill covers the gap cells no child owns. |
 
 ```xml
 <HStack Grid.Row="1" Gap="2">
@@ -194,7 +197,7 @@ Both forms satisfy `gooey.Action`, which is what every event field is typed as, 
 
 ### Canvas
 
-`components.Canvas` — absolute positioning. Children go wherever their `Canvas.Left`/`Canvas.Top` attached properties say, at their own desired size. It takes no attributes of its own.
+`components.Canvas` — absolute positioning. Children go wherever their `Canvas.Left`/`Canvas.Top` attached properties say, at their own desired size. Its one attribute of its own is `Background`, a fill color (`#rgb`/`#rrggbb` literal or a color-property binding).
 
 ```xml
 <Canvas>
@@ -205,7 +208,7 @@ Both forms satisfy `gooey.Action`, which is what every event field is typed as, 
 
 A child is measured against the space remaining from its offset, so one placed near the right edge clips its own content rather than overhanging. Children may overlap; paint order is tree order, so a later sibling paints over an earlier one.
 
-One caveat worth knowing before you overlap things deliberately: damage tracking is per component, and a leaf clears its own rect before repainting. If an *occluded* component repaints on its own, it paints over the sibling that was covering it, and that sibling — being clean — does not repaint. Overlapping children are safe when they change together (as in `cmd/colordemo`, where every swatch derives from one property) or when the occluded one is static.
+Overlap is safe under damage tracking: the Composer's z-ordered repaint means that when an *occluded* component repaints on its own, every later (higher) sibling whose bounds intersect it repaints in the same frame, so the stack always ends up back in tree order. The honest cost is that overlapping children repaint together — deliberate overlap trades damage-count minimality for compositing.
 
 ### Checkbox
 

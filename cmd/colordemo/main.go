@@ -75,8 +75,15 @@ func main() {
 	// --- viewmodel: one source property, everything else derived ---
 	accent := prop.NewSource(render.RGB(255, 170, 60))
 
+	// The page is a filled surface, not a frame on the terminal default:
+	// Background="#12121e" on the Border is painted by the framework,
+	// and every leaf that pre-clears against it clears to this color.
+	// Leaves that draw text set the same Bg so their glyph cells sit
+	// flush on the fill (cells have no alpha).
+	panel := render.RGB(0x12, 0x12, 0x1e)
+
 	accentStyle := prop.NewComputed(func() render.Style {
-		return render.Style{Fg: accent.Get(), Bold: true}
+		return render.Style{Fg: accent.Get(), Bold: true, Bg: panel}
 	})
 	// The swatch cascade: the same color at descending brightness. Each
 	// is its own computed, so each is its own paint dependency.
@@ -111,7 +118,7 @@ func main() {
 			"Quit":   gooey.Command(func() { running = false }),
 		},
 		Styles: map[string]render.Style{
-			"dim": {Fg: render.RGB(140, 140, 150)},
+			"dim": {Fg: render.RGB(140, 140, 150), Bg: panel},
 		},
 		Components: map[string]markup.Builder{
 			// Demo-local: it exists to EXPLAIN the tiers, which is a
