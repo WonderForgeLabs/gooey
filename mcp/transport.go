@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -129,13 +131,16 @@ func (s *Server) bindTool(t *Tool) {
 }
 
 // call is the crossing. The tool body never runs here — it is handed to
-// the bridge and executed on the UI goroutine — and the value it produces
-// is picked up afterwards, which is safe because the channel inside
-// bridge.round establishes the happens-before edge between the two
-// goroutines.
+// control.Bridge and executed on the UI goroutine — and the value it
+// produces is picked up afterwards, which is safe because the channel
+// inside the bridge establishes the happens-before edge between the two
+// goroutines. Bridge.Do also waits for the settle barrier: the response
+// goes out only after the frame the call's Sets asked for has been
+// composed, which is what lets screen_text be called immediately after
+// invoke_command and see the new pixels.
 func (s *Server) call(t *Tool, in args) (any, error) {
 	var out any
-	err := s.ui.do(func() error {
+	err := s.ui.Do(func() error {
 		v, err := t.Run(in)
 		if err != nil {
 			return err
@@ -144,10 +149,36 @@ func (s *Server) call(t *Tool, in args) (any, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, toolError(err)
 	}
 	return out, nil
 }
+
+// toolError maps a service failure to the string this tool surface has
+// always reported. The control package names its own operations in its
+// messages (ListValues, SnapshotTree, PatchMarkup, SendKeys); an MCP
+// client can only call TOOLS, so the adapter — which owns the tool-name
+// wording — rewords exactly those references and nothing else. Bridge
+// failures (timeout, panic) and the adapter's own argument errors pass
+// through untouched.
+func toolError(err error) error {
+	var ce *control.Error
+	if !errors.As(err, &ce) {
+		return err
+	}
+	return errors.New(toolWording.Replace(ce.Msg))
+}
+
+// toolWording rewrites full phrases rather than bare names, so a user
+// value that happens to contain a service-method name (a property named
+// ListValues, say) is never rewritten along with it.
+var toolWording = strings.NewReplacer(
+	"; ListValues shows", "; list_values shows",
+	"; SnapshotTree lists the named elements", "; tree_snapshot lists the named elements",
+	"; PatchMarkup replaces", "; patch_markup replaces",
+	"which PatchMarkup cannot rewrite", "which patch_markup cannot rewrite",
+	"SendKeys needs text or gestures", "send_keys needs text or keys",
+)
 
 func textResult(text string, isError bool) *mcpsdk.CallToolResult {
 	return &mcpsdk.CallToolResult{

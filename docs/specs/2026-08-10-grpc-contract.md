@@ -541,3 +541,56 @@ control's, and keep the rendered text/structuredContent byte-identical
 ListValues — so the adapter owns those strings, not the service).
 Nothing in the service layer blocks it; the tone difference in error
 text is the only non-mechanical decision left.
+
+## Executed (#112, 2026-08-10): MCP traverses the same path
+
+One path achieved. Every mcp/ tool body is now parse-args →
+`control.Service` call → render; the private copies are gone — the
+bridge (now `control.Bridge`, `mcp.Host` is a type alias for
+`control.Host`), the snapshot walk, the whole patch_markup machinery
+(patch.go deleted outright), scratchBuild/lookup/composer, and the
+per-type value switches. Net ~540 lines out of mcp/, tests and
+schemas byte-untouched: the full unit suite, the origin-guard table,
+and the e2e pty test all pass UNCHANGED under -race, which is the
+behavioral proof the adapter is invisible.
+
+What mcp/ still owns, by design: the transport (SDK handler, loopback
+bind, origin guard), the hand-written tool schemas, MCP argument
+parsing (including #rrggbb coercion and JSON-integer checks), and the
+rendered wording. The last is the one non-mechanical piece, resolved
+two ways:
+
+- **Result rendering** stays in mcp/ as pure functions over control's
+  plain-data results (`renderNode`, `renderEntry`, `renderLayout`),
+  reproducing the sparse-JSON contract (fields present only when they
+  say something) and the JSON type vocabulary ("boolean"/"integer"/
+  "number", not markup's spellings).
+- **Error wording**: service messages that name service operations are
+  rewritten to tool names by a full-phrase `strings.Replacer` applied
+  only to `*control.Error` ("; ListValues shows" → "; list_values
+  shows", SnapshotTree → tree_snapshot, PatchMarkup → patch_markup,
+  "SendKeys needs text or gestures" → "send_keys needs text or
+  keys"). Full phrases so a user value containing a service name is
+  never rewritten. Bridge timeout/panic text was already identical —
+  the barrier came FROM mcp.
+
+The v1 ceiling is preserved, not widened (that is a product decision,
+not a refactoring side effect): set_value still rejects duration/any/
+off-table handles with the old `%T`-naming error (byte-identical, via
+ValueEntry.GoType); list_values still reports duration/any properties
+and conditional Actions (*gooey.Cmd) as plain `"value"` entries; and
+invoke_command still refuses Actions that are not `gooey.Command` or
+`func()`. **Follow-up**: lift the tool surface to control's full kind
+table (duration, any, Actions) in one deliberate change, ideally with
+output-schema updates.
+
+Known sub-byte divergences, all in paths no test (and likely no
+client) exercises: set_value on a nested scope now reports control's
+"is a nested scope" message instead of the old `%T` default;
+list_values no longer reports a `number[]` property's element count
+as `value` (the descriptor ceiling is uniform now); focus trims
+whitespace around the name before lookup (control's behavior).
+
+Verified: root build/vet/test green; mcp `-race` green with tests
+unchanged; grpc `-race` green; handlers/temporal and imagefmt/svg
+green; gofmt clean.

@@ -1,194 +1,122 @@
 package mcp
 
 import (
-	"fmt"
-	"time"
+	"encoding/json"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/markup"
-	"github.com/WonderForgeLabs/gooey/prop"
-	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/control"
 )
 
-// Serializing the tree without reflection.
+// Rendering the tree snapshot.
 //
-// The structure comes from the framework's own interfaces — the same ones
-// the Composer and the FocusManager walk: Container for children,
-// Attacher for the non-visual attachments, Bounded for the arranged rect,
-// HasLayout for the FrameworkElement properties, Focusable for whether a
-// component is a tab stop. Anything implementing them serializes, including
-// components this package has never heard of.
-//
-// The interesting per-component fields come from a type switch over the
-// built-in components. An unknown component still produces a useful node —
-// its %T, its bounds, its layout, its children — it just has no props.
-// That is the deliberate ceiling: an arbitrary Go component's fields
-// cannot be discovered without reflection, and stay undiscovered.
-//
-// Markup-built controls are the exception the framework declares its way
-// out of: a control with <x:Property> declarations has a property schema
-// BY declaration, retained in markup.Context.Declared keyed by the
-// instance's root component, so its node carries the declared names,
-// types and current values. Declared surfaces serialize; undeclared Go
-// structs never will.
-//
-// Every Get() below happens outside any computed evaluation, on the UI
-// goroutine, so it reads a value and records NOTHING. That is the
-// call-site rule doing its job: the same Get inside a Render would be a
-// subscription, and a snapshot that subscribed would wire the MCP server
-// into the damage graph and repaint the app every time an agent looked
-// at it.
+// The walk itself — interfaces for structure, a type switch for the
+// interesting per-component fields, declared (<x:Property>) surfaces
+// with current values — lives in the shared control package now; what
+// stays here is the shape this tool has always answered with: a nested
+// JSON object where a field is present exactly when it says something
+// (a name only when named, a layout only when something was set, flags
+// only when true). Sparse output is part of the tool's contract — a
+// node carrying every zero-valued field would bury the two that matter
+// in fifteen that do not.
 
-// walk serializes one component and its subtree. depth 0 means unlimited.
-func (s *Server) walk(w gooey.Component, names map[gooey.Component]string, fm *gooey.FocusManager, depth, level int) map[string]any {
-	n := map[string]any{"type": fmt.Sprintf("%T", w)}
-	if name := names[w]; name != "" {
-		n["name"] = name
+// renderNode is one control.Node as tree_snapshot has always spelled it.
+func renderNode(n *control.Node) map[string]any {
+	m := map[string]any{"type": n.Type}
+	if n.Name != "" {
+		m["name"] = n.Name
 	}
-	if b, ok := w.(gooey.Bounded); ok {
-		r := b.Bounds()
-		n["bounds"] = map[string]any{"x": r.X, "y": r.Y, "w": r.W, "h": r.H}
+	if n.Bounds != nil {
+		m["bounds"] = map[string]any{"x": n.Bounds.X, "y": n.Bounds.Y, "w": n.Bounds.W, "h": n.Bounds.H}
 	}
-	if hl, ok := w.(gooey.HasLayout); ok {
-		if l := layoutOf(hl); len(l) > 0 {
-			n["layout"] = l
+	if n.Layout != nil {
+		if l := renderLayout(n.Layout); len(l) > 0 {
+			m["layout"] = l
 		}
 	}
-	if f, ok := w.(gooey.Focusable); ok && f.AcceptsFocus() {
-		n["focusable"] = true
+	if n.Focusable {
+		m["focusable"] = true
 	}
-	if fm != nil {
-		if fm.Focused() == w {
-			n["focused"] = true
-		}
-		if fm.Hovered() == w {
-			n["hovered"] = true
-		}
+	if n.Focused {
+		m["focused"] = true
 	}
-	if p := componentProps(w); len(p) > 0 {
-		n["props"] = p
+	if n.Hovered {
+		m["hovered"] = true
 	}
-	if s.bind != nil {
-		if ds, ok := s.bind.Declared[w]; ok {
-			n["control"] = ds.Control
-			n["declared"] = declaredProps(ds)
+	if len(n.Props) > 0 {
+		props := make(map[string]any, len(n.Props))
+		for k, v := range n.Props {
+			props[k] = valueAny(v)
 		}
+		m["props"] = props
 	}
-
-	if depth > 0 && level >= depth {
-		if c, ok := w.(gooey.Container); ok && len(c.ChildComponents()) > 0 {
-			n["childrenElided"] = len(c.ChildComponents())
-		}
-		return n
+	if n.Declared != nil {
+		m["control"] = n.Control
+		m["declared"] = renderDeclared(n.Declared)
 	}
-	if a, ok := w.(gooey.Attacher); ok {
-		var at []any
-		for _, x := range a.Attachments() {
-			at = append(at, s.walk(x, names, fm, depth, level+1))
-		}
-		if len(at) > 0 {
-			n["attached"] = at
-		}
+	if n.ChildrenElided > 0 {
+		m["childrenElided"] = n.ChildrenElided
 	}
-	if c, ok := w.(gooey.Container); ok {
-		var kids []any
-		for _, ch := range c.ChildComponents() {
-			if ch == nil {
-				continue
-			}
-			kids = append(kids, s.walk(ch, names, fm, depth, level+1))
+	if len(n.Attached) > 0 {
+		at := make([]any, 0, len(n.Attached))
+		for _, x := range n.Attached {
+			at = append(at, renderNode(x))
 		}
-		if len(kids) > 0 {
-			n["children"] = kids
-		}
+		m["attached"] = at
 	}
-	return n
+	if len(n.Children) > 0 {
+		kids := make([]any, 0, len(n.Children))
+		for _, ch := range n.Children {
+			kids = append(kids, renderNode(ch))
+		}
+		m["children"] = kids
+	}
+	return m
 }
 
-// componentProps is the type switch: what is worth knowing about each
-// built-in component beyond its bounds.
-func componentProps(w gooey.Component) map[string]any {
-	switch t := w.(type) {
-	case *components.Text:
-		return map[string]any{"text": str(t.Content)}
-	case *components.Button:
-		return map[string]any{"content": str(t.Content), "hasCommand": t.Click != nil}
-	case *components.Checkbox:
-		return map[string]any{"label": str(t.Label), "checked": t.IsChecked()}
-	case *components.TextBox:
-		return map[string]any{"text": str(t.Text), "prompt": str(t.Prompt), "caret": t.Caret()}
-	case *components.Border:
-		return map[string]any{"title": str(t.Title)}
-	case *components.Gauge:
-		p := map[string]any{"label": str(t.Label)}
-		if t.Value != nil {
-			p["value"] = t.Value.Get()
-		}
-		return p
-	case *components.Sparkline:
-		if t.Values == nil {
-			return nil
-		}
-		return map[string]any{"points": len(t.Values.Get())}
-	case *components.ColorPicker:
-		return map[string]any{"value": hexColor(t.Color()), "channel": t.Channel()}
-	case *components.Grid:
-		return map[string]any{"rows": len(t.Rows), "cols": len(t.Cols)}
-	case *components.VStack:
-		return map[string]any{"gap": t.Gap}
-	case *components.HStack:
-		return map[string]any{"gap": t.Gap}
-	case *gooey.KeyBinding:
-		return map[string]any{"gesture": t.Gesture.String(), "hasCommand": t.Command != nil}
-	case *components.Timer:
-		p := map[string]any{"interval": t.Interval.String(), "hasTick": t.Tick != nil}
-		if t.Enabled != nil {
-			p["enabled"] = t.Enabled.Get()
-		}
-		return p
+// valueAny turns a typed control.Value into the JSON-native form this
+// surface renders: durations as their String() form, colors as #rrggbb,
+// everything else as itself.
+func valueAny(v control.Value) any {
+	switch v.Kind {
+	case control.KindString:
+		return v.Str
+	case control.KindInt:
+		return v.Int
+	case control.KindBool:
+		return v.Bool
+	case control.KindFloat:
+		return v.Float
+	case control.KindDuration:
+		return v.Duration.String()
+	case control.KindColor:
+		return hexColor(v.Color)
+	case control.KindAny:
+		return json.RawMessage(v.JSON)
 	}
 	return nil
 }
 
-// declaredProps serializes a control instance's declared surface: for
+// renderDeclared serializes a control instance's declared surface: for
 // each <x:Property>, its name, declared type, and — for the types with a
-// markup literal — the handle's current value. Type="any" handles have
-// no representable value, so they report the %T of what they hold, the
-// same descriptor ceiling list_values applies to off-table handles. The
-// Gets here are outside any evaluation: reads, not subscriptions.
-func declaredProps(ds markup.DeclaredSurface) []map[string]any {
-	out := make([]map[string]any, 0, len(ds.Props))
-	for _, p := range ds.Props {
-		e := map[string]any{"name": p.Name, "type": p.Type}
-		switch h := p.Handle.(type) {
-		case *prop.Property[string]:
-			e["value"] = h.Get()
-		case *prop.Property[int]:
-			e["value"] = h.Get()
-		case *prop.Property[bool]:
-			e["value"] = h.Get()
-		case *prop.Property[float64]:
-			e["value"] = h.Get()
-		case *prop.Property[time.Duration]:
-			e["value"] = h.Get().String()
-		case *prop.Property[render.Color]:
-			e["value"] = hexColor(h.Get())
-		case *prop.Property[any]:
-			e["goType"] = fmt.Sprintf("%T", h.Get())
-		default:
-			e["goType"] = fmt.Sprintf("%T", p.Handle)
+// markup literal — the current value. Type="any" handles have no
+// representable value, so they report the %T of what they hold, the same
+// descriptor ceiling list_values applies to off-table handles.
+func renderDeclared(ds []control.DeclaredValue) []map[string]any {
+	out := make([]map[string]any, 0, len(ds))
+	for _, d := range ds {
+		e := map[string]any{"name": d.Name, "type": d.Type.String()}
+		if d.Value != nil {
+			e["value"] = valueAny(*d.Value)
+		} else if d.GoType != "" {
+			e["goType"] = d.GoType
 		}
 		out = append(out, e)
 	}
 	return out
 }
 
-// layoutOf reports only the layout fields that were actually set. A node
-// carrying every zero-valued FrameworkElement property would bury the two
-// that matter in fifteen that do not.
-func layoutOf(hl gooey.HasLayout) map[string]any {
-	l := hl.LayoutProps()
+// renderLayout reports only the layout fields that were actually set.
+func renderLayout(l *gooey.Layout) map[string]any {
 	m := map[string]any{}
 	if l.Width != 0 {
 		m["width"] = l.Width
@@ -249,25 +177,4 @@ func visibilityName(v gooey.Visibility) string {
 		return "Collapsed"
 	}
 	return "Visible"
-}
-
-// names inverts the markup context's Named table so the walk can label a
-// component in one map read. Components are pointers, so they are comparable
-// and usable as keys.
-func names(ctx *markup.Context) map[gooey.Component]string {
-	out := map[gooey.Component]string{}
-	if ctx == nil {
-		return out
-	}
-	for n, w := range ctx.Named {
-		out[w] = n
-	}
-	return out
-}
-
-func str(p *prop.Property[string]) string {
-	if p == nil {
-		return ""
-	}
-	return p.Get()
 }
