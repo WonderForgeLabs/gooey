@@ -107,16 +107,19 @@ jobs:
           go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
           git diff --exit-code
 
-      # grpc is the wire module (generated Go now, the server with
-      # issue #111) — a separate module like mcp/, so grpc-go and
-      # protobuf stay out of the root graph.
+      # grpc is the wire module (generated Go plus the issue #111
+      # server) — a separate module like mcp/, so grpc-go and protobuf
+      # stay out of the root graph. -race for the same reason mcp runs
+      # under it: the tests prove no RPC touches the property graph off
+      # the UI goroutine, and that claim is half-made without the
+      # detector.
       - name: Build and test grpc
         run: |
           if [ -f grpc/go.mod ]; then
             cd grpc
             go build ./...
             go vet ./...
-            go test ./...
+            go test -race ./...
           else
             echo "grpc/go.mod not present; skipping"
           fi

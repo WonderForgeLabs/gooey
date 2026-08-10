@@ -1,0 +1,14 @@
+<Gooey>
+  <Border Title="gooey gRPC control plane">
+    <VStack Gap="1" Margin="1">
+      <Text Name="Readout" Style="accent">{{.Readout}}</Text>
+      <HStack Gap="2">
+        <Button Name="Inc"   Content=" +1 "    Click="{{.Increment}}"/>
+        <Button Name="Reset" Content=" reset " Click="{{.Reset}}"/>
+        <Button Name="Quit"  Content=" quit "  Click="{{.Quit}}"/>
+      </HStack>
+      <TextBox Name="Note" Text="{{.Note}}" Prompt="a note an agent can type into"/>
+      <Text Name="Help" Style="dim">{{.Help}}</Text>
+    </VStack>
+  </Border>
+</Gooey>
