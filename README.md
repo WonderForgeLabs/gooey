@@ -102,6 +102,25 @@ privileges you do not. Under both sit `prop` (the property graph),
 `input`, `render`, `graphics`, and `term`; beside them, `markup` and the
 opt-in `handlers/*` and `mcp` modules.
 
+## Distribution: packs
+
+Reusable capability ships from this repo in three shapes, per the
+[pack-distribution doctrine](docs/specs/2026-08-10-pack-distribution.md):
+**handler packs** (`handlers/<name>` — gooey-coupled `HandlerProvider`s
+behind an xmlns URI: `net`, `temporal`), **activity packs**
+(`packs/<runtime>-<domain>` — gooey-free standalone modules anyone in
+that runtime's ecosystem can import: `packs/temporal-visibility`), and
+plain **component/format libraries** (root packages). The module
+boundary follows dependency hygiene: a zero-third-party-dep handler pack
+lives in the root module, any third-party dependency forces a nested
+module, and activity packs are always standalone — so importing gooey
+never drags SDKs, and importing a pack never drags gooey unless the pack
+is gooey-coupled by nature. Every pack is inert until the host registers
+it, and **registration names the capability's scope** (a client, an
+`fs.FS` root, an allowlist, a task queue); each exposes its registered
+names as data (`AllNames()`) and carries its own README. Releases are Go
+nested-module tags (`packs/temporal-visibility/v0.1.0`).
+
 ## Where it stands vs modern XAML
 
 | Capability | Status | Notes |

@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -31,6 +32,14 @@ import (
 
 // URI is the namespace URI markup declares to reach this provider.
 const URI = "gooey.dev/handlers/net"
+
+// NameGet is the one function the namespace provides in v1.
+const NameGet = "Get"
+
+// AllNames lists every function the provider resolves — the pack's
+// invocable inventory as data, per
+// docs/specs/2026-08-10-pack-distribution.md.
+func AllNames() []string { return []string{NameGet} }
 
 // DefaultMaxBody caps what a response can put into a property. A
 // terminal shows a screenful; a runaway body should not become the
@@ -69,10 +78,10 @@ func New(opts ...Option) *Provider {
 // NewCommand resolves one {{net:…}} expression at load time.
 func (p *Provider) NewCommand(c *markup.Call) (gooey.Command, error) {
 	switch c.Fn {
-	case "Get":
+	case NameGet:
 		return p.get(c)
 	}
-	return nil, fmt.Errorf("unknown function %q; net provides: Get", c.Fn)
+	return nil, fmt.Errorf("unknown function %q; net provides: %s", c.Fn, strings.Join(AllNames(), ", "))
 }
 
 func (p *Provider) get(c *markup.Call) (gooey.Command, error) {
