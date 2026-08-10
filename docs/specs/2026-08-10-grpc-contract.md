@@ -170,13 +170,15 @@ Every v1 MCP tool, argument-for-argument:
 | `send_keys` | `text`, `keys[]` | `ControlService.SendKeys` | `keys` → `gestures`, same markup gesture syntax |
 | `send_mouse` | `kind`, `x`, `y`, `button` | `ControlService.SendPointer` | enums replace strings; `click` = `POINTER_KIND_CLICK`, still synthesized press+release |
 | `focus` | `name` | `ControlService.SetFocus` | renamed to avoid colliding with the noun |
-| `swap_markup` | `source` | `ControlService.SwapMarkup` | gains optional `register[]` (#89); Named-table restore on failure is now contract behavior |
+| `swap_markup` | `source`, `register[]` | `ControlService.SwapMarkup` | `register[]` (optional, #89) grows the viewmodel before the build and rolls back with a failed one; Named-table restore on failure is contract behavior |
+| `register_properties` | `properties[]` | `ControlService.RegisterProperties` | grow the viewmodel without swapping (#89); existing name = error, batches all-or-nothing, commands excluded |
 | `patch_markup` | `name`, `source` | `ControlService.PatchMarkup` | fragment root must carry the same Name (the address survives iteration); layout attrs not restated are preserved from the old element |
 | `list_styles` | — | `ControlService.ListStyles` | `styles` → `StyleInfo[]`; only set attributes are meaningful (colors carry `Set`) |
 | `validate_markup` | `source` | `ControlService.ValidateMarkup` | invalid markup is `valid=false` + the typed error IN the response — the one RPC where a bad document is not `INVALID_ARGUMENT`, because validity is the answer |
 
 New surface with no MCP predecessor: `GetProperty`,
-`RegisterProperties`, `GetDeclaredSchema`, `SessionService.Attach`.
+`GetDeclaredSchema`, `SessionService.Attach` (`RegisterProperties`
+gained its MCP face, `register_properties`, with #89's execution).
 When #112 lands, the MCP tools become a thin adapter over the same
 in-process service implementation the gRPC server exposes (not a
 loopback network hop) — one path; MCP is a transport skin, and any new
@@ -594,3 +596,33 @@ whitespace around the name before lookup (control's behavior).
 Verified: root build/vet/test green; mcp `-race` green with tests
 unchanged; grpc `-race` green; handlers/temporal and imagefmt/svg
 green; gofmt clean.
+
+## Executed (#89, 2026-08-10): the MCP registration paths
+
+The last layer of #89 landed: the MCP adapter grew the two registration
+paths the contract and the service already carried. `swap_markup` takes
+the optional `register[]` and passes it to the same
+`Service.SwapMarkup` call it always made; `register_properties` fronts
+`ControlService.RegisterProperties` argument-for-argument (`properties`,
+the proto field name). No proto change, no service change — adapter
+only (`mcp/tools.go` argument parsing + schemas, `mcp/schemas.go`
+output schema, instructions text), which is the one-path model doing
+its job.
+
+The MCP registration surface is the FULL kind table including
+`duration` (a Go duration string, `time.ParseDuration`) and `any` (any
+JSON value, stored as decoded JSON) — a new surface mirroring
+`PropertyRegistration`, not a widening of the preserved v1 ceiling:
+`set_value` and `list_values` are byte-identical to before, and a
+registered duration/any property renders as a plain `"value"` entry
+there, pinned by test. Lifting that ceiling remains the separate
+deliberate change #112 recorded.
+
+Verified: root build/vet/test green; mcp `-race` green (existing tests
+unchanged; new: swap-with-register binding previously unregistered
+names as live sources, failed-build and failed-batch rollback with
+clean re-registration, standalone register then a plain swap binding
+the names, wording table, structured round-trip, tools/list surface,
+and the e2e pty test growing a real app's viewmodel over the wire);
+grpc `-race` green; handlers/temporal and imagefmt/svg green; gofmt
+clean.

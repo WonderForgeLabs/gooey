@@ -6,9 +6,10 @@ package mcp
 // schema here is a CONTRACT: permissive where the shape is open (extra
 // keys allowed everywhere), strict only about what is always present.
 //
-// screen_text has no schema — its result IS text — and the mutation
-// tools' small ack objects stay text-only for now; adding schemas later
-// is additive.
+// screen_text has no schema — its result IS text — and the structural
+// mutation tools' small ack objects stay text-only for now; adding
+// schemas later is additive. register_properties gets one because its
+// result is data an agent acts on: the names now bindable.
 
 // treeSnapshotSchema is the recursive TreeNode shape walk() produces.
 func treeSnapshotSchema() map[string]any {
@@ -95,6 +96,16 @@ func listStylesSchema() map[string]any {
 			}, "name"),
 		},
 	}, "styles")
+}
+
+func registerPropertiesSchema() map[string]any {
+	return object(map[string]any{
+		"registered": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "The names just registered, in request order — what list_values will now show and markup can now bind.",
+		},
+	}, "registered")
 }
 
 func validateMarkupSchema() map[string]any {

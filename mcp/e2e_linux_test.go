@@ -45,6 +45,15 @@ const e2eSwapped = `<Gooey>
   </VStack>
 </Gooey>`
 
+// e2eGrown binds two names the app never registered: Status arrives via
+// register_properties, Pct rides in on the swap's own register argument.
+const e2eGrown = `<Gooey>
+  <VStack Gap="1">
+    <Text Name="Status">{{.Status}}</Text>
+    <ProgressBar Name="Bar" Value="{{.Pct}}" Label="pct"/>
+  </VStack>
+</Gooey>`
+
 func TestEndToEndOverPTY(t *testing.T) {
 	tt := newPTY(t, 60, 12)
 
@@ -216,6 +225,31 @@ func TestEndToEndOverPTY(t *testing.T) {
 	c.ok("invoke_command", map[string]any{"name": "Increment"})
 	if got := c.ok("screen_text", nil); !strings.Contains(got, "survived: 3") {
 		t.Fatalf("the swapped tree is not bound to the viewmodel:\n%s", got)
+	}
+
+	// --- grow the viewmodel live (#89): register, then bind ---
+	c.ok("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Status", "type": "string", "value": "registered live"},
+	}})
+	// A failed swap rolls its own registrations back atomically...
+	c.fails("swap_markup", map[string]any{
+		"source":   `<Gooey><Nope/></Gooey>`,
+		"register": []any{map[string]any{"name": "Ghost", "type": "int"}},
+	}, "unknown element")
+	// ...so Ghost is gone, while Status (registered beforehand) stays.
+	c.fails("set_value", map[string]any{"name": "Ghost", "value": 1}, `no value named "Ghost"`)
+	c.ok("swap_markup", map[string]any{
+		"source":   e2eGrown,
+		"register": []any{map[string]any{"name": "Pct", "type": "int", "value": 40}},
+	})
+	if !tt.waitFor("registered live") {
+		t.Fatalf("the grown page never reached the pty:\n%s", tt.text())
+	}
+	// Both registered properties are live sources on the real app.
+	c.ok("set_value", map[string]any{"name": "Status", "value": "updated over MCP"})
+	c.ok("set_value", map[string]any{"name": "Pct", "value": 80})
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "updated over MCP") {
+		t.Fatalf("registered properties are not live sources:\n%s", got)
 	}
 
 	if app.DecoderLeaked() {
