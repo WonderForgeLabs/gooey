@@ -233,20 +233,11 @@ func (p *tipPopup) Measure(avail gooey.Size) gooey.Size {
 	return gooey.Size{W: min(p.width(), avail.W), H: min(1, avail.H)}
 }
 
-// Place puts the tip adjacent to its anchor: left-aligned under it,
-// clamped into the layer horizontally, flipped ABOVE when the row below
-// falls off the screen — flip-to-fit.
+// Place puts the tip adjacent to its anchor: below, flipped above and
+// clamped by the shared popup placement (PlacePopup) — the policy this
+// primitive was generalized from.
 func (p *tipPopup) Place(anchor, layer gooey.Rect) gooey.Rect {
-	w := min(p.width(), layer.W)
-	x := clamp(anchor.X, layer.X, layer.X+layer.W-w)
-	y := anchor.Y + anchor.H
-	if y >= layer.Y+layer.H {
-		y = anchor.Y - 1
-	}
-	if y < layer.Y {
-		y = layer.Y
-	}
-	return gooey.Rect{X: x, Y: y, W: w, H: 1}
+	return PlacePopup(anchor, gooey.Size{W: p.width(), H: 1}, layer, PopupBelow)
 }
 
 func (p *tipPopup) Render(f *gooey.Frame) {
