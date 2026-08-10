@@ -75,6 +75,66 @@ jobs:
             echo "mcp/go.mod not present; skipping"
           fi
 
+  # The gRPC control plane (issue #110): proto/ is the source of truth,
+  # generated Go/Python/TS is committed. Gates: buf lint, buf breaking
+  # against main, regenerate-and-diff drift check, then each committed
+  # client actually compiles/passes its smoke test.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Proto lint
+        run: go run github.com/bufbuild/buf/cmd/buf@v1.72.0 lint proto
+
+      # Fetch main into a neutral local branch so the comparison works
+      # both on PRs (against the target) and on pushes to main itself
+      # (trivially against HEAD).
+      - name: Proto breaking against main
+        run: |
+          git fetch origin main:refs/heads/ci-buf-breaking-base
+          go run github.com/bufbuild/buf/cmd/buf@v1.72.0 breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
+
+      # Committed generated code must be exactly what the pinned
+      # plugins produce. Remote plugins: needs network, nothing else.
+      - name: Generated code drift
+        run: |
+          go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+          git diff --exit-code
+
+      # grpc is the wire module (generated Go now, the server with
+      # issue #111) — a separate module like mcp/, so grpc-go and
+      # protobuf stay out of the root graph.
+      - name: Build and test grpc
+        run: |
+          if [ -f grpc/go.mod ]; then
+            cd grpc
+            go build ./...
+            go vet ./...
+            go test ./...
+          else
+            echo "grpc/go.mod not present; skipping"
+          fi
+
+      - name: Python client smoke
+        run: |
+          python3 -m pip install ./clients/python
+          python3 -m unittest discover -s clients/python/tests -v
+
+      - name: TypeScript clients typecheck
+        run: |
+          cd clients/ts/connect
+          npm ci
+          npx tsc -p tsconfig.json
+          cd ../grpc-js
+          npm ci
+          npx tsc -p tsconfig.json
+
   image:
     needs: test
     runs-on: ubuntu-latest

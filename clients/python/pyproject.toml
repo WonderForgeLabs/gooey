@@ -1,0 +1,33 @@
+# gooey-control: the generated Python client for gooey.control.v1.
+#
+# The gooey/ tree here is GENERATED (buf, remote plugins pinned in
+# proto/buf.gen.yaml) and committed; do not edit it. Regenerate from
+# the repo root:
+#
+#   go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+#
+# Import package is gooey.control.v1 (protoc emits absolute imports
+# from the proto package path, so the directory layout is fixed).
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gooey-control"
+version = "0.1.0"
+description = "Generated gRPC client for the gooey.control.v1 control plane"
+requires-python = ">=3.9"
+# Floors come from the generators: protobuf gencode 7.35.1 (the
+# protocolbuffers/python v35.1 plugin) validates the runtime at import
+# time; grpcio floor is the grpc/python v1.83.0 plugin's own
+# runtime-library declaration.
+dependencies = [
+    "protobuf>=7.35.1,<8",
+    "grpcio>=1.83.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["gooey*"]
+
+[tool.setuptools.package-data]
+"gooey.control.v1" = ["*.pyi", "py.typed"]

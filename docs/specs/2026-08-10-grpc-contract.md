@@ -271,3 +271,108 @@ throughout. No generated code exists yet anywhere in the tree; that is
 3. **Package naming blessing**: `gooey.control.v1` as recorded, or the
    org-scoped `wonderforge.gooey.control.v1`? The protos ship with the
    former; renaming before #110 generates is free, after is breaking.
+
+## Executed (#110, 2026-08-10)
+
+Elan's answers to the open questions, recorded on #110: (1) TypeScript
+= **both** Connect-ES and grpc-js flavors; (2) **committed clients
+only**, no Buf Schema Registry (follow-up #119 for when gooey is OSS);
+(3) package name **stays `gooey.control.v1`**. A later addition to
+#110's scope: publish the clients to the GitHub Packages family on
+release tags (below).
+
+### Toolchain (all pinned in `proto/buf.gen.yaml`)
+
+One command regenerates everything, from the repo root; all plugins are
+buf **remote** plugins, so regeneration needs buf + network and no
+local protoc/pip/npm:
+
+```
+go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+```
+
+| target | plugin | version |
+|---|---|---|
+| Go messages | `buf.build/protocolbuffers/go` | v1.36.11 |
+| Go gRPC | `buf.build/grpc/go` | v1.6.2 (protoc-gen-go-grpc) |
+| Python messages | `buf.build/protocolbuffers/python` | v35.1 (gencode 7.35.1) |
+| Python stubs (.pyi) | `buf.build/protocolbuffers/pyi` | v35.1 |
+| Python gRPC | `buf.build/grpc/python` | v1.83.0 |
+| TS Connect-ES | `buf.build/bufbuild/es` | v2.13.0 (`target=ts`) |
+| TS grpc-js | `buf.build/community/timostamm-protobuf-ts` | v2.11.1 (`client_grpc1`) |
+
+Python via the buf remote plugins, NOT grpcio-tools — chosen so the CI
+drift gate is exactly the one buf command with no pip in the loop.
+Connect-ES needs only protoc-gen-es v2 (it generates service
+descriptors itself; there is no separate connect plugin anymore).
+protobuf-ts resolves WKT imports to generated files, so that one plugin
+runs with `include_imports`/`include_wkt` (hence the committed
+`clients/ts/grpc-js/src/google/protobuf/duration.ts`). Generation
+verified byte-reproducible (three consecutive runs, identical tree
+hashes).
+
+### Layout as built, and the one deviation
+
+- `grpc/` nested module (`github.com/WonderForgeLabs/gooey/grpc`, go
+  1.25.6, grpc-go v1.82.1 + protobuf v1.36.11) — generated Go at
+  `grpc/gen/gooey/control/v1` (package `controlv1`,
+  `paths=source_relative`), `doc.go`, and `smoke_test.go` (TypedValue
+  round-trip per propKinds row, unset-vs-black Color, service
+  descriptor counts). **No `replace` directive**: the generated code
+  does not import root gooey. #111 adds it when the server does.
+- `clients/python/` — **deviation from the plan's
+  `clients/python/gooey_control/`**: the import package is
+  `gooey.control.v1` and the generated tree sits at
+  `clients/python/gooey/control/v1/`, because protoc emits absolute
+  imports from the proto package path; a `gooey_control` wrapper
+  directory cannot satisfy them. The pip **distribution** is named
+  `gooey-control` (pyproject, setuptools, namespace packages). Runtime
+  floors: `protobuf>=7.35.1,<8` (gencode validates at import),
+  `grpcio>=1.83.0` (the plugin's own runtime declaration). Smoke test
+  is **unittest** (no pytest dependency; pytest runs it too):
+  `PYTHONPATH=clients/python python3 -m unittest discover -s clients/python/tests`.
+- `clients/ts/connect/` and `clients/ts/grpc-js/` — committed TS source
+  under `src/` plus handwritten packaging (package.json, tsconfig for
+  `--noEmit` typecheck, tsconfig.build.json for publish-time `dist/`,
+  `src/index.ts` barrels). Both use `module`/`moduleResolution
+  node16` (generated imports are extensionless, CommonJS-compatible).
+  Deps pinned: `@bufbuild/protobuf ^2.13.0` (connect);
+  `@protobuf-ts/runtime{,-rpc} ^2.11.1` + `@grpc/grpc-js ^1.14.4`
+  (grpc-js); typescript ^5.9 for typecheck/build.
+- Handwritten files inside buf out dirs (pyproject, py.typed, barrels)
+  survive regeneration because the template does not set `clean` —
+  deliberate; do not add `clean: true`.
+
+### CI (`ci.yml` `contract` job) and publishing
+
+New `contract` job beside `test`: `buf lint proto`; `buf breaking
+proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'` (after
+fetching main into that neutral branch, so it works on PRs and is a
+no-op on main pushes); the drift gate (`buf generate` + `git diff
+--exit-code`); grpc module build/vet/test; Python smoke (`pip install
+./clients/python` then unittest discover); TS typecheck per flavor
+(`npm ci && npx tsc -p tsconfig.json`, lockfiles committed). All
+static commands; buf always runs as `go run …buf@v1.72.0`.
+
+Publishing is a **separate workflow**, `publish-clients.yml`, on `v*`
+tag pushes (releasing is not a gate). Version = the git tag. npm: both
+flavors to `npm.pkg.github.com` scope `@wonderforgelabs`
+(`gooey-control-connect`, `gooey-control-grpc`), compiled `dist/` +
+source, `GITHUB_TOKEN` auth. Python: **GitHub Packages has no PyPI
+index**, so the wheel+sdist are pushed to GHCR as an OCI artifact via
+oras (`ghcr.io/wonderforgelabs/gooey-control-python:<tag>`); the
+day-to-day pip path is the git URL with
+`#subdirectory=clients/python`. Go: nothing to publish — the module
+path is the artifact (GOPRIVATE while private). Consumption for all
+three documented in `clients/README.md`.
+
+### Verified locally (2026-08-10)
+
+buf lint clean; buf breaking green against main (851a3a4); generation
+reproducible ×3; grpc module `go build`/`go vet`/`go test` green; the
+Python suite green in a fresh venv (protobuf 7.35.1, grpcio 1.83.0)
+both from PYTHONPATH and after a real `pip install ./clients/python`;
+both TS flavors `tsc --noEmit` clean AND `tsconfig.build.json` emits
+dist (node v24.16.0, typescript 5.9.x); root module untouched and
+green. Not runnable locally, deferred to CI: nothing — every gate ran
+here; the publish workflow itself fires on the first `v*` tag.

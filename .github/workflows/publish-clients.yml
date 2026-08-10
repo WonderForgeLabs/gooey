@@ -1,0 +1,89 @@
+# Publishes the generated gooey.control.v1 clients on v* tag pushes
+# (issue #110). A separate workflow from ci.yml on purpose: publishing
+# is a release act, not a gate; tags are cut from green main.
+#
+# Version strategy (recorded): the git tag is the version. Both npm
+# packages and the Python wheel take `v0.x.y` -> `0.x.y` at publish
+# time; the committed manifests keep placeholder versions (0.0.0 npm,
+# 0.1.0 pyproject) so day-to-day source consumption never depends on a
+# publish having happened.
+#
+# Registries (all the GITHUB_TOKEN / GitHub Packages family, like the
+# image publish in ci.yml):
+#   - TS (both flavors): npm.pkg.github.com, scope @wonderforgelabs
+#   - Python: GitHub Packages has NO PyPI index, so the wheel+sdist go
+#     to GHCR as an OCI artifact via oras
+#     (ghcr.io/wonderforgelabs/gooey-control-python:<tag>); pip's
+#     day-to-day path is the git URL, see clients/README.md
+#   - Go: nothing to publish — the grpc/ module is consumed via its
+#     git module path
+name: Publish clients
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@wonderforgelabs'
+
+      - name: Publish @wonderforgelabs/gooey-control-connect
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/ts/connect
+          npm ci
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          npm run build
+          npm publish
+
+      - name: Publish @wonderforgelabs/gooey-control-grpc
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/ts/grpc-js
+          npm ci
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          npm run build
+          npm publish
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheel and sdist at the tag version
+        run: |
+          sed -i "s/^version = .*/version = \"${GITHUB_REF_NAME#v}\"/" clients/python/pyproject.toml
+          python3 -m pip install build
+          python3 -m build clients/python
+
+      # oras reads docker's credential store, so the same login action
+      # the image publish uses works here too.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oras-project/setup-oras@v1
+
+      - name: Push wheel+sdist to GHCR as an OCI artifact
+        run: |
+          cd clients/python/dist
+          oras push "ghcr.io/wonderforgelabs/gooey-control-python:${GITHUB_REF_NAME}" \
+            --artifact-type application/vnd.wonderforge.gooey-control.python \
+            *.whl *.tar.gz
