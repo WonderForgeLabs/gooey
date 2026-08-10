@@ -2,13 +2,10 @@ package mcp
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/input"
-	"github.com/WonderForgeLabs/gooey/markup"
-	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -36,11 +33,11 @@ type Tool struct {
 	OutputSchema map[string]any
 
 	// Run executes the tool ON THE UI GOROUTINE. The server marshals
-	// every call through the Dispatcher before invoking it, so Run may
-	// read and Set properties, walk the tree and dispatch input freely —
-	// and there is no path by which it runs anywhere else, which is how
-	// this package keeps the confinement rule structural instead of
-	// remembered.
+	// every call through the bridge before invoking it, so Run may call
+	// control.Service methods freely — they carry the same
+	// UI-goroutine-only contract — and there is no path by which it runs
+	// anywhere else, which is how this package keeps the confinement
+	// rule structural instead of remembered.
 	//
 	// What Run returns must be plain data. Handing back a component or a
 	// property handle would let the http goroutine read the graph after
@@ -52,6 +49,14 @@ type Tool struct {
 // list_values, list_styles. Act: invoke_command, set_value, send_keys,
 // send_mouse, focus. Mutate structure: swap_markup, patch_markup.
 // Check: validate_markup.
+//
+// Every body is a thin adapter (issue #112): parse the MCP arguments,
+// call the shared control.Service, render the result exactly as this
+// surface always has. The v1 ceiling is preserved deliberately — where
+// the service can do more than these tools ever did (duration and any
+// properties, conditional Actions), the adapter still answers what v1
+// answered, byte for byte; growing the tool surface is a separate
+// decision, not a refactoring side effect.
 func (s *Server) v1Tools() []*Tool {
 	return []*Tool{
 		{
@@ -187,83 +192,50 @@ func (s *Server) v1Tools() []*Tool {
 // ---- read ----
 
 func (s *Server) treeSnapshot(a args) (any, error) {
-	c, err := s.composer()
+	n, err := s.svc.Tree(a.optInt("depth", 0))
 	if err != nil {
 		return nil, err
 	}
-	depth := a.optInt("depth", 0)
-	root := c.Root()
-	if root == nil {
-		return nil, fmt.Errorf("the composition has no root")
-	}
-	return map[string]any{
-		"tree": s.walk(root, names(s.bind), c.Focus(), depth, 1),
-	}, nil
+	return map[string]any{"tree": renderNode(n)}, nil
 }
 
 func (s *Server) screenText(a args) (any, error) {
-	c, err := s.composer()
+	text, err := s.svc.Screen(a.optBool("styled", false))
 	if err != nil {
 		return nil, err
 	}
-	if a.optBool("styled", false) {
-		var sb strings.Builder
-		// Snapshot, not Flush: Flush sends the difference since the last
-		// frame, and a screenshot wants the screen.
-		if err := c.Snapshot(&sb); err != nil {
-			return nil, err
-		}
-		return sb.String(), nil
-	}
-	buf := c.Cells()
-	lines := make([]string, 0, buf.H)
-	for y := 0; y < buf.H; y++ {
-		row := make([]rune, 0, buf.W)
-		for x := 0; x < buf.W; x++ {
-			r := buf.At(x, y).Rune
-			if r == 0 {
-				r = ' '
-			}
-			row = append(row, r)
-		}
-		lines = append(lines, strings.TrimRight(string(row), " "))
-	}
-	return strings.Join(lines, "\n"), nil
+	return text, nil
 }
 
 func (s *Server) listValues(args) (any, error) {
-	if s.bind == nil {
-		return nil, errNoContext
+	entries, named, err := s.svc.Values()
+	if err != nil {
+		return nil, err
 	}
 	// Non-nil even when empty: this result is also structuredContent, and
 	// the published schema says array, which a nil slice would break by
 	// encoding as null.
-	out := make([]map[string]any, 0)
-	collectValues(s.bind.Values, "", &out)
-	sort.Slice(out, func(i, j int) bool {
-		return out[i]["name"].(string) < out[j]["name"].(string)
-	})
-	return map[string]any{"values": out, "named": namesOf(s.bind.Named)}, nil
+	out := make([]map[string]any, 0, len(entries))
+	for _, ent := range entries {
+		out = append(out, renderEntry(ent))
+	}
+	return map[string]any{"values": out, "named": named}, nil
 }
 
-// listStyles reports markup.Context.Styles: the names a Style attribute
+// listStyles reports the style table: the names a Style attribute
 // resolves, each with only the attributes the style actually sets — the
-// same "report what was set" convention layoutOf uses. This exists
+// same "report what was set" convention renderLayout uses. This exists
 // because an unknown style name renders as zero style with no error, so
 // a markup generator that cannot see the table can only guess.
 func (s *Server) listStyles(args) (any, error) {
-	if s.bind == nil {
-		return nil, errNoContext
+	entries, err := s.svc.Styles()
+	if err != nil {
+		return nil, err
 	}
-	names := make([]string, 0, len(s.bind.Styles))
-	for n := range s.bind.Styles {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	styles := make([]map[string]any, 0, len(names))
-	for _, n := range names {
-		st := s.bind.Styles[n]
-		e := map[string]any{"name": n}
+	styles := make([]map[string]any, 0, len(entries))
+	for _, se := range entries {
+		st := se.Style
+		e := map[string]any{"name": se.Name}
 		if st.Fg.Set {
 			e["fg"] = hexColor(st.Fg)
 		}
@@ -287,46 +259,59 @@ func (s *Server) listStyles(args) (any, error) {
 	return map[string]any{"styles": styles}, nil
 }
 
-// collectValues describes the binding context by type switch, the same
-// way everything else in gooey inspects a value. A path that resolves to
-// a nested map recurses, matching how {{.A.B}} resolves.
-func collectValues(vals map[string]any, prefix string, out *[]map[string]any) {
-	for k, v := range vals {
-		name := k
-		if prefix != "" {
-			name = prefix + "." + k
-		}
-		if m, ok := v.(map[string]any); ok {
-			collectValues(m, name, out)
-			continue
-		}
-		e := map[string]any{"name": name, "goType": fmt.Sprintf("%T", v)}
-		switch h := v.(type) {
-		case *prop.Property[string]:
-			e["kind"], e["type"], e["value"] = "property", "string", h.Get()
-		case *prop.Property[bool]:
-			e["kind"], e["type"], e["value"] = "property", "boolean", h.Get()
-		case *prop.Property[int]:
-			e["kind"], e["type"], e["value"] = "property", "integer", h.Get()
-		case *prop.Property[float64]:
-			e["kind"], e["type"], e["value"] = "property", "number", h.Get()
-		case *prop.Property[render.Color]:
-			e["kind"], e["type"], e["value"] = "property", "color", hexColor(h.Get())
-		case *prop.Property[render.Style]:
-			e["kind"], e["type"] = "property", "style"
-		case *prop.Property[[]float64]:
-			e["kind"], e["type"], e["value"] = "property", "number[]", len(h.Get())
-		case gooey.Command:
-			e["kind"] = "command"
-		case func():
-			e["kind"] = "command"
-		case string:
-			e["kind"], e["type"], e["value"] = "literal", "string", h
+// renderEntry is one binding-context name as list_values has always
+// spelled it. The vocabulary is JSON's ("boolean", "integer", "number"),
+// not markup's, and the ceiling is v1's: duration and any properties —
+// and conditional (*gooey.Cmd) Actions — which the service can address
+// but this tool surface never grew, stay plain "value" entries exactly
+// as they did before the service existed.
+func renderEntry(ent control.ValueEntry) map[string]any {
+	e := map[string]any{"name": ent.Name, "goType": ent.GoType}
+	switch ent.Kind {
+	case control.EntryProperty:
+		switch ent.Type {
+		case control.KindString:
+			e["kind"], e["type"], e["value"] = "property", "string", ent.Value.Str
+		case control.KindBool:
+			e["kind"], e["type"], e["value"] = "property", "boolean", ent.Value.Bool
+		case control.KindInt:
+			e["kind"], e["type"], e["value"] = "property", "integer", ent.Value.Int
+		case control.KindFloat:
+			e["kind"], e["type"], e["value"] = "property", "number", ent.Value.Float
+		case control.KindColor:
+			e["kind"], e["type"], e["value"] = "property", "color", hexColor(ent.Value.Color)
+		case control.KindDuration, control.KindAny:
+			e["kind"] = "value" // the v1 ceiling: never surfaced as properties here
 		default:
-			e["kind"] = "value"
+			// Off the propKinds table: descriptor only, spelled the way
+			// this tool always has.
+			e["kind"] = "property"
+			switch ent.GoType {
+			case "*prop.Property[render.Style]":
+				e["type"] = "style"
+			case "*prop.Property[[]float64]":
+				e["type"] = "number[]"
+			}
 		}
-		*out = append(*out, e)
+	case control.EntryCommand:
+		if plainCommand(ent.GoType) {
+			e["kind"] = "command"
+		} else {
+			e["kind"] = "value" // a conditional Action; v1 listed only plain commands
+		}
+	case control.EntryLiteral:
+		e["kind"], e["type"], e["value"] = "literal", "string", ent.Value.Str
+	default:
+		e["kind"] = "value"
 	}
+	return e
+}
+
+// plainCommand reports whether a command entry is one of the two shapes
+// the v1 tools accepted — gooey.Command and a bare func() — as opposed
+// to the Action interface the service also runs.
+func plainCommand(goType string) bool {
+	return goType == "gooey.Command" || goType == "func()"
 }
 
 // ---- act ----
@@ -336,17 +321,13 @@ func (s *Server) invokeCommand(a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.lookup(name)
-	if err != nil {
-		return nil, err
+	// The v1 ceiling: the service runs any Action, but this tool only
+	// ever ran plain commands, and a refactoring must not widen it.
+	if ent, verr := s.svc.Value(name); verr == nil && ent.Kind == control.EntryCommand && !plainCommand(ent.GoType) {
+		return nil, fmt.Errorf("%q is %s, not a command; list_values shows which names are commands", name, ent.GoType)
 	}
-	switch cmd := v.(type) {
-	case gooey.Command:
-		cmd()
-	case func():
-		cmd()
-	default:
-		return nil, fmt.Errorf("%q is %T, not a command; list_values shows which names are commands", name, v)
+	if err := s.svc.Invoke(name); err != nil {
+		return nil, err
 	}
 	return map[string]any{"invoked": name}, nil
 }
@@ -360,39 +341,44 @@ func (s *Server) setValue(a args) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_value needs a value")
 	}
-	v, err := s.lookup(name)
+	ent, err := s.svc.Value(name)
 	if err != nil {
 		return nil, err
 	}
-	// The type switch IS the type check, exactly as it is for markup
-	// bindings: the handle's T is known at each case, so a mismatch is an
-	// error naming both sides rather than a reflective coercion.
-	switch h := v.(type) {
-	case *prop.Property[string]:
+	// Coercing the JSON argument is this adapter's job — the service
+	// takes a typed control.Value, so the target's kind decides how the
+	// raw value must arrive, and a mismatch is an error naming both
+	// sides, exactly as before.
+	var v control.Value
+	if ent.Kind != control.EntryProperty {
+		return nil, setValueCeiling(name, ent.GoType)
+	}
+	switch ent.Type {
+	case control.KindString:
 		sv, ok := raw.(string)
 		if !ok {
 			return nil, mismatch(name, "string", raw)
 		}
-		h.Set(sv)
-	case *prop.Property[bool]:
+		v = control.StringValue(sv)
+	case control.KindBool:
 		bv, ok := raw.(bool)
 		if !ok {
 			return nil, mismatch(name, "boolean", raw)
 		}
-		h.Set(bv)
-	case *prop.Property[int]:
+		v = control.BoolValue(bv)
+	case control.KindInt:
 		n, ok := jsonInt(raw)
 		if !ok {
 			return nil, mismatch(name, "integer", raw)
 		}
-		h.Set(n)
-	case *prop.Property[float64]:
+		v = control.IntValue(int64(n))
+	case control.KindFloat:
 		f, ok := raw.(float64)
 		if !ok {
 			return nil, mismatch(name, "number", raw)
 		}
-		h.Set(f)
-	case *prop.Property[render.Color]:
+		v = control.FloatValue(f)
+	case control.KindColor:
 		sv, ok := raw.(string)
 		if !ok {
 			return nil, mismatch(name, "color (#rrggbb string)", raw)
@@ -401,47 +387,33 @@ func (s *Server) setValue(a args) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%q: %w", name, err)
 		}
-		h.Set(c)
+		v = control.ColorValue(c)
 	default:
-		return nil, fmt.Errorf("%q is %T; set_value handles string, boolean, integer, number and color properties", name, v)
+		// duration, any, and off-table handles: the v1 ceiling again.
+		return nil, setValueCeiling(name, ent.GoType)
+	}
+	if err := s.svc.Set(name, v); err != nil {
+		return nil, err
 	}
 	return map[string]any{"set": name, "value": raw}, nil
 }
 
+// setValueCeiling is the rejection this tool has always given for a name
+// it cannot write, with the handle's %T (the entry's GoType) so both
+// sides are named.
+func setValueCeiling(name, goType string) error {
+	return fmt.Errorf("%q is %s; set_value handles string, boolean, integer, number and color properties", name, goType)
+}
+
 func (s *Server) sendKeys(a args) (any, error) {
-	c, err := s.composer()
+	consumed, err := s.svc.SendKeys(a.optStr("text", ""), a.strSlice("keys"))
 	if err != nil {
 		return nil, err
 	}
-	var events []input.Event
-	for _, r := range a.optStr("text", "") {
-		events = append(events, input.KeyOf(input.Rune(r)))
-	}
-	for _, g := range a.strSlice("keys") {
-		ev, err := input.ParseGesture(g)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, input.KeyOf(ev))
-	}
-	if len(events) == 0 {
-		return nil, fmt.Errorf("send_keys needs text or keys")
-	}
-	// Composer.Handle, not the App's handler: the app-level quit key is
-	// checked on what the tree declines, and an automation client should
-	// not be able to end the app by typing ctrl+c at it.
-	consumed := make([]bool, len(events))
-	for i, ev := range events {
-		consumed[i] = c.Handle(ev)
-	}
-	return map[string]any{"sent": len(events), "consumed": consumed}, nil
+	return map[string]any{"sent": len(consumed), "consumed": consumed}, nil
 }
 
 func (s *Server) sendMouse(a args) (any, error) {
-	c, err := s.composer()
-	if err != nil {
-		return nil, err
-	}
 	kind, err := a.str("kind")
 	if err != nil {
 		return nil, err
@@ -458,52 +430,42 @@ func (s *Server) sendMouse(a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	ev := input.MouseEvent{X: x, Y: y, Button: button}
+	p := control.Pointer{X: x, Y: y, Button: button}
 	switch strings.ToLower(kind) {
 	case "press":
-		ev.Kind = input.MousePress
+		p.Kind = control.PointerPress
 	case "release":
-		ev.Kind = input.MouseRelease
+		p.Kind = control.PointerRelease
 	case "move":
-		ev.Kind, ev.Button = input.MouseMove, input.ButtonNone
+		p.Kind = control.PointerMove
 	case "wheelup":
-		ev.Kind, ev.Button = input.WheelUp, input.ButtonNone
+		p.Kind = control.PointerWheelUp
 	case "wheeldown":
-		ev.Kind, ev.Button = input.WheelDown, input.ButtonNone
+		p.Kind = control.PointerWheelDown
 	case "click":
-		// A terminal never sends a click: the dispatcher synthesizes one
-		// from a press and a release on the same component. Sending the pair
-		// is therefore what "click" has to mean here, and it also gets the
-		// press-state visual and focus-follows-click for free.
-		press, release := ev, ev
-		press.Kind, release.Kind = input.MousePress, input.MouseRelease
-		h1 := c.HandleMouse(press)
-		h2 := c.HandleMouse(release)
-		return map[string]any{"kind": "click", "consumed": h1 || h2}, nil
+		p.Kind = control.PointerClick
+		consumed, err := s.svc.SendPointer(p)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "click", "consumed": consumed}, nil
 	default:
 		return nil, fmt.Errorf("unknown mouse kind %q; want click, press, release, move, wheelup or wheeldown", kind)
 	}
-	return map[string]any{"kind": kind, "consumed": c.HandleMouse(ev)}, nil
-}
-
-func (s *Server) focus(a args) (any, error) {
-	c, err := s.composer()
+	consumed, err := s.svc.SendPointer(p)
 	if err != nil {
 		return nil, err
 	}
-	if s.bind == nil {
-		return nil, errNoContext
-	}
+	return map[string]any{"kind": kind, "consumed": consumed}, nil
+}
+
+func (s *Server) focus(a args) (any, error) {
 	name, err := a.str("name")
 	if err != nil {
 		return nil, err
 	}
-	w, ok := s.bind.Named[name]
-	if !ok {
-		return nil, fmt.Errorf("no element named %q; tree_snapshot lists the named elements", name)
-	}
-	if !c.Focus().SetFocus(w) {
-		return nil, fmt.Errorf("element %q (%T) is not a focus stop", name, w)
+	if err := s.svc.Focus(name); err != nil {
+		return nil, err
 	}
 	return map[string]any{"focused": name}, nil
 }
@@ -511,109 +473,49 @@ func (s *Server) focus(a args) (any, error) {
 // ---- mutate structure ----
 
 func (s *Server) swapMarkup(a args) (any, error) {
-	if s.bind == nil {
-		return nil, errNoContext
-	}
 	src, err := a.str("source")
 	if err != nil {
 		return nil, err
 	}
-	// The name table and the declared-surface registry are rebuilt by the
-	// load, so a FAILED load must not be allowed to leave them
-	// half-written: the running tree is still on screen and `focus` and
-	// `tree_snapshot` still name its elements. Build into fresh maps and
-	// commit only on success.
-	root, restore, err := s.scratchBuild(src)
+	named, err := s.svc.SwapMarkup(src, nil)
 	if err != nil {
-		restore()
 		return nil, err
 	}
-	s.host.Swap(root)
-	return map[string]any{"swapped": true, "named": namesOf(s.bind.Named)}, nil
+	return map[string]any{"swapped": true, "named": named}, nil
 }
 
-// validateMarkup is swap_markup's build path with the attach cut off:
-// parse and bind against the live context — declared properties, styles,
-// includes, all of it — then throw the tree away and put the context
-// back exactly as it was. Nothing is attached, nothing is Set, so no
-// paint node dirties and no frame is composed: the check is invisible to
-// the running app.
-//
-// An INVALID document is a normal result, not a tool error: the tool was
-// asked whether the markup is valid and it answered. The error text is
-// the same typed load error swap_markup would have reported.
-func (s *Server) validateMarkup(a args) (any, error) {
-	if s.bind == nil {
-		return nil, errNoContext
+func (s *Server) patchMarkup(a args) (any, error) {
+	name, err := a.str("name")
+	if err != nil {
+		return nil, err
 	}
 	src, err := a.str("source")
 	if err != nil {
 		return nil, err
 	}
-	_, restore, err := s.scratchBuild(src)
-	named := namesOf(s.bind.Named)
-	restore()
+	named, err := s.svc.PatchMarkup(name, src)
 	if err != nil {
-		return map[string]any{"valid": false, "error": err.Error()}, nil
+		return nil, err
+	}
+	return map[string]any{"patched": name, "named": named}, nil
+}
+
+func (s *Server) validateMarkup(a args) (any, error) {
+	src, err := a.str("source")
+	if err != nil {
+		return nil, err
+	}
+	valid, loadErr, named, err := s.svc.Validate(src)
+	if err != nil {
+		return nil, err
+	}
+	if !valid {
+		return map[string]any{"valid": false, "error": loadErr}, nil
 	}
 	return map[string]any{"valid": true, "named": named}, nil
 }
 
-// scratchBuild builds markup source against the binding context with the
-// Named table and Declared registry swapped for fresh ones. restore puts
-// the previous maps back — call it on failure (or, for a validation, on
-// every path); on success the fresh maps stay committed and restore must
-// not be called.
-func (s *Server) scratchBuild(src string) (root gooey.Component, restore func(), err error) {
-	prevNamed, prevDecl := s.bind.Named, s.bind.Declared
-	s.bind.Named = map[string]gooey.Component{}
-	s.bind.Declared = nil
-	restore = func() { s.bind.Named, s.bind.Declared = prevNamed, prevDecl }
-	root, err = markup.Build([]byte(src), s.bind)
-	return root, restore, err
-}
-
 // ---- helpers ----
-
-var errNoContext = fmt.Errorf("this app was served without a markup context, so it has no named values to address")
-
-// namesOf is the sorted Name= identities of a name table.
-func namesOf(named map[string]gooey.Component) []string {
-	out := make([]string, 0, len(named))
-	for n := range named {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (s *Server) composer() (*gooey.Composer, error) {
-	c := s.host.Composer()
-	if c == nil {
-		return nil, fmt.Errorf("the app has no live composition yet: it is not running")
-	}
-	return c, nil
-}
-
-// lookup resolves a dotted path in the binding context, the same way a
-// {{.A.B}} binding does.
-func (s *Server) lookup(path string) (any, error) {
-	if s.bind == nil {
-		return nil, errNoContext
-	}
-	var cur any = s.bind.Values
-	for _, seg := range strings.Split(path, ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("cannot resolve %q past %T", path, cur)
-		}
-		cur, ok = m[seg]
-		if !ok {
-			return nil, fmt.Errorf("no value named %q in the app's context; list_values shows what there is", path)
-		}
-	}
-	return cur, nil
-}
 
 func mismatch(name, want string, got any) error {
 	return fmt.Errorf("%q is a %s property; got %T", name, want, got)
