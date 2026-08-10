@@ -217,6 +217,7 @@ type FocusManager struct {
 	parent   map[Component]Component
 	bindings map[Component][]*KeyBinding
 	cur      int
+	prev     Component // what held focus before the last real move
 
 	hover Component // current hover target, nil when the pointer is nowhere
 
@@ -307,6 +308,9 @@ func (m *FocusManager) Resync() {
 	if _, live := m.parent[captor]; !live {
 		m.captor, m.held = nil, false
 	}
+	if _, live := m.parent[m.prev]; !live {
+		m.prev = nil
+	}
 	if _, live := m.parent[m.lastClick]; !live {
 		m.lastClick, m.clicks = nil, 0
 	}
@@ -385,6 +389,22 @@ func (m *FocusManager) Focused() Component {
 // stops. Exposed for tests and for apps that want to restore focus.
 func (m *FocusManager) Order() []Component { return m.order }
 
+// PreviouslyFocused is the component that held focus before the last
+// real focus move, or nil when there has been none (or it left the
+// tree). It exists for overlays: a menu opened by a click has already
+// had focus handed to it by focus-follows-click, so "what should get
+// focus back on dismiss" is exactly this — the component the gesture
+// took it from.
+func (m *FocusManager) PreviouslyFocused() Component {
+	if m.prev == nil {
+		return nil
+	}
+	if _, live := m.parent[m.prev]; !live {
+		return nil
+	}
+	return m.prev
+}
+
 // SetFocus moves focus to w if it is a focus stop.
 func (m *FocusManager) SetFocus(w Component) bool {
 	for i, o := range m.order {
@@ -400,8 +420,11 @@ func (m *FocusManager) focusIndex(i int) {
 	if i == m.cur {
 		return
 	}
-	if old, ok := m.Focused().(FocusTarget); ok {
-		old.SetFocused(false)
+	if old := m.Focused(); old != nil {
+		m.prev = old
+		if t, ok := old.(FocusTarget); ok {
+			t.SetFocused(false)
+		}
 	}
 	m.cur = i
 	if now, ok := m.Focused().(FocusTarget); ok {

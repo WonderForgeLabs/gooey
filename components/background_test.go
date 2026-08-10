@@ -147,9 +147,14 @@ func TestHidingAContainerAtRuntimeErasesItsChrome(t *testing.T) {
 	}
 
 	root.LayoutProps().Visibility = gooey.Hidden
+	// Erasure is a sweep, not a paint: the vanished container's clear
+	// happens outside any paint node (toolkit wave 2 moved it there so
+	// the restore pass can repaint what an overlay was covering), so the
+	// only component that PAINTS is the still-visible child the clear
+	// forced back down.
 	f, painted := c.Frame()
-	if painted != 2 {
-		t.Fatalf("hiding the container painted %d components, want 2 (container clear + forced child)", painted)
+	if painted != 1 {
+		t.Fatalf("hiding the container painted %d components, want 1 (the forced child; the clear itself is a sweep)", painted)
 	}
 	if got := f.Cells.At(0, 0).Rune; got != ' ' {
 		t.Errorf("corner after hiding = %q, want it erased", got)

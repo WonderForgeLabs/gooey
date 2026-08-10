@@ -371,6 +371,66 @@ And the bar is a focus **scope**: `←`/`→` move between its members and wrap 
 
 Members that do not fit are **collapsed**, not clipped, and an indicator (`›`) is drawn in the last column. Collapsing is what keeps the keyboard honest: focus traversal skips a collapsed member, so `tab` never lands on a button nobody can see. Widening the bar brings them back.
 
+### MenuBar
+
+`components.MenuBar` — the top menu row: titles across one line, and a dropdown overlay below the open title.
+
+```xml
+<MenuBar Grid.Row="0" Style="accent">
+  <Menu Title="Job">
+    <MenuItem Text="Start" Gesture="ctrl+s" Command="{{.Start}}"/>
+    <MenuItem Text="Abort" Gesture="ctrl+x" Command="{{.Abort}}"/>
+    <MenuItem Separator="true"/>
+    <MenuItem Text="Quit" Gesture="q" Command="{{.Quit}}"/>
+  </Menu>
+  <Menu Title="Notify">
+    <MenuItem Text="Toast the status" Command="{{.Notify}}"/>
+  </Menu>
+</MenuBar>
+```
+
+`<Menu>` and `<MenuItem>` are **data, not components** — like Grid track lists, they declare the bar's contents and never enter the visual tree.
+
+| Element / attribute | Meaning |
+|---|---|
+| `<Menu Title="…">` | One titled dropdown. A missing `Title` is a load error. |
+| `<MenuItem Text="…">` | One entry. Required unless `Separator="true"`. |
+| `MenuItem Command` | Resolved like `Click` — a binding or a bare handler name. Absent is inert: activating just closes the menu. A conditional command (`Cmd.When`) paints the item `Dim` and refuses activation while its condition says no; the condition is read while painting, so the flip repaints the open dropdown by itself. |
+| `MenuItem Gesture` | A **display hint** in the gesture syntax, validated by `input.ParseGesture` at load (a typo is a load error) and shown right-aligned in the canonical spelling. It does not bind the key — declare a `KeyBinding` for that. |
+| `MenuItem Separator` | `"true"` draws a rule. |
+| `Style` | Bar and dropdown style. Named or bound. |
+
+**Declare the `MenuBar` as the LAST child of its container.** Document order is z-order, so being last is what paints the dropdown above the content it drops over; in a `Grid`, `Grid.Row="0"` still places the bar on the top row — element order and layout position are independent, which is exactly what an overlay needs.
+
+The bar is a focus stop. `enter`/`↓`/`space` open the highlighted menu; while open, `←`/`→` switch menus, `↑`/`↓` move the highlight (separators are skipped), `enter` activates, `esc` dismisses, and everything else is swallowed — an open menu is modal, so page gestures cannot fire underneath it. Dismissing **restores focus** to whatever had it when the menu opened: for a mouse-open that is the component focus-follows-click took it from, so clicking a menu while typing in a `TextBox` and pressing `esc` puts the caret back.
+
+While open the bar holds the pointer capture: clicks on items activate, motion tracks the highlight and slides between titles, and a press anywhere else dismisses the menu **without reaching what is underneath**.
+
+### ToastHost
+
+`components.ToastHost` — the notification layer: transient messages stacked in the top-right corner, auto-dismissed by a timer, painted above everything.
+
+```xml
+<ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="12" Duration="2500ms"/>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s, negative means sticky. |
+| `Style` | Named style applied to the toasts; absent paints reverse-video. |
+
+The host takes no children — toasts are shown from code, through the named element:
+
+```go
+toasts, _ := markup.Find[*components.ToastHost](ctx, "Toasts")
+toasts.Show("job deployed")          // up for the host's Duration
+toasts.ShowFor("stuck?", -1)         // sticky until Dismiss
+```
+
+Place it as the **last child of the root**, spanning the page (in a `Grid`, `Grid.RowSpan` across every row) — last in document order is what puts the toasts on top of the z-order. The host itself paints nothing and costs nothing while no toast is up; each toast is an ordinary leaf realized through the same structural re-sync a list uses, so showing one paints one component and dismissing one repaints exactly what it was covering.
+
+Auto-dismiss follows the Timer discipline: the goroutine posts the dismissal to the `Dispatcher` and the UI loop runs it, and `Composer.Close` stops-and-joins so no dismissal can arrive after teardown. A host composed without a dispatcher still shows toasts; they just do not expire on their own.
+
 ### ColorPicker
 
 `components.ColorPicker` — an interactive RGB editor, and the worked example of a component that adapts to the terminal it landed on.
