@@ -745,10 +745,13 @@ Nothing in the provider knows which components display the result. The `Set` dir
 | `gooey.dev/handlers/fs` | `handlers/fs` | `Read .Path` — file contents (capped, 1 MiB default); `List .Dir` / `Stat .Path` — JSON entries; `Glob .Pattern` — JSON array of paths |
 | `gooey.dev/handlers/fs` (writable grant) | `handlers/fs` | `Write .Path .Content` / `Append .Path .Content` — the target is a status slot, `""` on success |
 | `gooey.dev/handlers/temporal` | `handlers/temporal` (separate module) | ` Activity `Name` .Arg` — a Temporal standalone activity |
+| `gooey.dev/handlers/exec` | `handlers/exec` (separate module) | `` Run `name` [options] [args…] `` — an allowlisted local command; conventional prefix `sys:` |
 
 All of them deliver failures into the same target as an `"ERROR: …"` string in v1, so a page can show what went wrong without a second binding.
 
 The fs registration names a **root**: `fshandlers.New(fsys)` grants exactly the `fs.FS` it is handed, and every path a page names resolves inside it — absolute paths and `..` are rejected per `fs.ValidPath` (a literal path fails at load; a bound one delivers an ERROR). Read-only is the default posture; writes exist only through the separate constructor `fshandlers.NewWritable(dir)`, backed by `os.Root`, so a symlink inside the granted directory cannot lead out of it either. `Write` and `Append` on a read-only grant are load errors naming the missing writable grant.
+
+The exec provider's registration is an **allowlist**: markup names a registered `Command` (a backtick literal, checked at load), never a binary, and nothing is ever shell-interpreted. Option literals between the name and the arguments select the capture stream (`` `capture=stdout|stderr|combined|both|exit-code` ``) and a gojq extraction (`` `jq=.items[].name` ``), both validated at load time; `` `--` `` ends option parsing. See `handlers/exec/README.md` and `docs/specs/2026-08-10-exec-pack.md`.
 
 A provider is a typed factory — `NewCommand(*markup.Call) (gooey.Command, error)` — with no reflection: arguments arrive as resolved handles, and a provider needing a type other than string type-switches on `Arg.Raw`.
 
