@@ -2,9 +2,11 @@ package components
 
 import (
 	"image"
+	"io/fs"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/graphics"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
@@ -30,6 +32,19 @@ type Image struct {
 // Img wraps an image as a source property, the way Str and Sty wrap a
 // string and a style.
 func Img(i image.Image) *prop.Property[image.Image] { return prop.NewSource(i) }
+
+// LoadImg loads an image file through the imaging registry (png, jpeg,
+// gif, bmp, ico in core; more via nested format modules) and wraps it
+// as a source property — Img for pictures that live in files. The
+// fs.FS is the same seam markup pages load through: os.DirFS in dev,
+// embed.FS in release.
+func LoadImg(fsys fs.FS, path string) (*prop.Property[image.Image], error) {
+	img, err := imaging.Load(fsys, path)
+	if err != nil {
+		return nil, err
+	}
+	return Img(img), nil
+}
 
 // Cells wraps a cell count as a source property — Image's size, and
 // anything else measured in cells.

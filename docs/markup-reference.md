@@ -193,7 +193,23 @@ Both forms satisfy `gooey.Action`, which is what every event field is typed as, 
 
 ### Image
 
-`components.Image` (a cell-region image drawn on the pixel plane, with halfblock fallback) exists as a component but has no built-in markup element — markup has no way to spell an `image.Image`. Its `Src`, `Cols` and `Rows` are ordinary properties, so it damages and repaints like anything else; to use it from markup, register it as a custom component and supply the picture from Go. See [how to draw images](learn/howto/howto-images.md).
+`components.Image` — a cell-region image drawn on the pixel plane, with halfblock fallback. `Src`, `Cols` and `Rows` are ordinary properties, so it damages and repaints like anything else (setting `Src` repaints exactly the Image — pinned by test).
+
+```xml
+<Image Src="assets/logo.png" Cols="20" Rows="10"/>
+<Image Src="{{.Chart}}" Cols="{{.ChartCols}}" Rows="12"/>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Src` | Required. A literal is a **file path resolved in the same `fs.FS` the page was loaded from** (`markup.Load`'s FS; inside a UserControl or markup-only control, the control's own FS) and decoded at build time — a missing or undecodable file is a load error naming the path and format, wrapping `*imaging.Error`. A binding shares the viewmodel's `*prop.Property[image.Image]` handle. |
+| `Cols`, `Rows` | Required size in cells: a positive int literal, or a binding to an int property. |
+
+Literal `Src` decodes through the `imaging` registry: **png, jpeg, gif, bmp, ico** in core (GIF shows its first frame — animation is a player's job, see the browser demo's gifplay; ICO decodes its largest entry). **SVG** needs the nested module — blank-import `github.com/WonderForgeLabs/gooey/imagefmt/svg` and `.svg` paths rasterize at their intrinsic size (capped at 1024 px). Formats are sniffed by content, not extension.
+
+Because the decode happens in the builder, hot reload re-reads the file: editing the page (or the control file naming the image) rebuilds and re-decodes. The watcher stats markup files only, so swapping the image bytes alone does not trigger a rebuild — touch the page.
+
+From Go, `components.LoadImg(fsys, path)` is the same load returning a ready `*prop.Property[image.Image]`. See [how to draw images](learn/howto/howto-images.md).
 
 ### Canvas
 

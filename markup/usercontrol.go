@@ -115,6 +115,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
 		}
+		// A control's literal asset paths (Image Src) resolve against
+		// the FS its OWN markup came from, the same isolation its
+		// bindings get: the file that names the asset is the file the
+		// path is relative to.
+		child.fsys = fsys
 		return doc.build(child)
 	}
 }
