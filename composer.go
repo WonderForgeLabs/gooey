@@ -92,6 +92,14 @@ type paintNode struct {
 	stamp   int        // frameSeq of the last frame this node painted in
 	covered bool       // last paint overwrote the node's whole rect (pre-clear or fill)
 
+	// visObs exists only for a component whose Layout binds Visibility:
+	// a computed whose evaluation reads the bound source (recording the
+	// dependency) and syncs the plain Layout field. It is not a paint
+	// node — it never renders and never counts as damage. Its whole job
+	// is to make a Set on the source schedule a frame; the per-frame
+	// visibility sweep below then does what it always did.
+	visObs *prop.Property[int]
+
 	// The pixel plane, per node: what this component recorded the last
 	// time it painted, and what the terminal is currently showing for it.
 	places []graphics.Placement
@@ -244,6 +252,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		n.parent = parent // a re-sync may have moved the subtree
 		c.nodes = append(c.nodes, n)
 		c.nodeOf[w] = n
+		c.armVisibility(n)
 		c.collect(w, prev, n)
 		return
 	}
@@ -312,10 +321,46 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 	})
 	c.nodes = append(c.nodes, n)
 	c.nodeOf[w] = n
+	c.armVisibility(n)
 	if d, ok := w.(Dynamic); ok {
 		d.SetStructureHook(c.structureChanged)
 	}
 	c.collect(w, prev, n)
+}
+
+// armVisibility gives a component with bound Visibility its observer —
+// the composition-side half of Layout.BindVisibility. The observer's
+// evaluation is where the source read becomes a SUBSCRIPTION (the
+// call-site rule, applied deliberately): a Set on the source dirties the
+// observer, whose OnInvalidate schedules a frame, and Frame's sweep —
+// which only ever needed to be woken — sees the synced field and runs
+// the same erase/restore/relayout a literal flip takes. The observer is
+// not a paint node: painted counts and damage rectangles are identical
+// to the literal path's.
+//
+// Called from build (new and reused nodes both, so a Dynamic re-sync
+// arms arrivals) and from Frame's re-arm pass, which also catches a
+// binding made after the composition was built.
+func (c *Composer) armVisibility(n *paintNode) {
+	if n.visObs != nil {
+		return
+	}
+	l := LayoutOf(n.w)
+	if l == nil || l.visSrc == nil {
+		return
+	}
+	n.visObs = prop.NewComputed(func() int {
+		if src := l.visSrc; src != nil {
+			l.Visibility = src()
+		}
+		return 0
+	})
+	n.visObs.OnInvalidate(func() {
+		if c.invalid != nil {
+			c.invalid()
+		}
+	})
+	n.visObs.Get() // arm: record the dependency and sync the field
 }
 
 // collect gathers the lifetime-bearing parts of one component and
@@ -411,6 +456,19 @@ func (c *Composer) OnInvalidate(fn func()) { c.invalid = fn }
 // components painted.
 func (c *Composer) Frame() (*Frame, int) {
 	c.painted = 0
+	// Bound visibility first: re-evaluate each dirty observer (syncing
+	// the Layout field and re-recording its subscription) so the layout
+	// pass and the sweeps below see the bound value. These Gets happen
+	// outside any evaluation — plain re-arms, not reads that subscribe
+	// this frame to anything. The nil check doubles as late arming for a
+	// binding made after the composition was built.
+	for _, n := range c.nodes {
+		if n.visObs != nil {
+			n.visObs.Get()
+		} else {
+			c.armVisibility(n)
+		}
+	}
 	// Unconditional layout, outside any eval context: reads here are
 	// not recorded as dependencies.
 	c.root.Measure(Size{c.cols, c.rows})
@@ -442,8 +500,10 @@ func (c *Composer) Frame() (*Frame, int) {
 				c.restoreUnder(old)
 			}
 		}
-		// Visibility is a plain field, not a property, so flipping it
-		// dirties nothing on its own. Collapsed is covered by the bounds
+		// The Visibility FIELD is plain, so flipping it from code dirties
+		// nothing on its own (a bound Visibility reaches this same sweep
+		// through its observer: the Set schedules the frame, the observer
+		// pass above synced the field). Collapsed is covered by the bounds
 		// check above (it arranges to zero size), but Hidden↔Visible
 		// keeps its bounds and would otherwise leave the old pixels on
 		// screen forever. Catching the delta here is the same trick the

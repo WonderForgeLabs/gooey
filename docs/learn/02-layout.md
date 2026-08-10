@@ -174,17 +174,28 @@ The `Gap="0"` above is for legibility, not necessity — it keeps the
 three-line result easy to count. The same markup with `Gap="1"` behaves
 the same way, just with blank rows between the entries.
 
-### Current limitation: visibility is not bindable
+### Binding visibility
 
-`Visibility` is a plain layout field, not a property, so
-`Visibility="{{.ShowPanel}}"` will not work — the attribute parser
-expects one of the three literal names. This is a deliberate deferral,
-not an oversight: it needs typed non-string attribute bindings, and it
-sits awkwardly against the rule that layout runs outside the evaluation
-context. The reasoning is written up in the addendum to
-[specs/2026-08-10-container-backgrounds.md](../specs/2026-08-10-container-backgrounds.md).
+`Visibility` binds like any other attribute — two handle types are
+accepted:
 
-From Go you *can* flip it at runtime, and the Composer notices:
+```xml
+<Border Visibility="{{.PanelState}}">…</Border>   <!-- *prop.Property[gooey.Visibility] -->
+<Text   Visibility="{{.ShowDetails}}">…</Text>    <!-- *prop.Property[bool] -->
+```
+
+A `bool` maps true→`Visible`, false→`Collapsed` — show/hide state in a
+viewmodel is almost always a bool, so the common case needs no
+conversion (this is XAML's `BooleanToVisibilityConverter`, built in).
+Bind a `*prop.Property[gooey.Visibility]` when you need `Hidden` — the
+reserve-the-space state. A `Set` on the bound property repaints exactly
+what a literal flip repaints: hiding erases the element, collapsing
+relayouts its siblings, and nothing else redraws. The design is written
+up in
+[specs/2026-08-10-bindable-visibility.md](../specs/2026-08-10-bindable-visibility.md).
+
+From Go you can also flip the plain field at runtime, and the Composer
+notices:
 
 ```go
 leaf, _ := markup.Find[*components.Text](ctx, "detail")

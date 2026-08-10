@@ -5,7 +5,7 @@
       <HStack Grid.Row="1" Gap="2">
         <Button Content="count +1" Click="{{.Increment}}"/>
         <Button Content="cycle message" Click="{{.Cycle}}"/>
-        <Button Content="serialize → json" Click="{{.Serialize}}"/>
+        <Button Content="serialize → json" Click="{{.Serialize}}" Visibility="{{.Manual}}"/>
       </HStack>
       <Checkbox Grid.Row="2" Style="accent" Checked="{{.Auto}}" Label="auto-serialize (JSON becomes a computed over the state)"/>
       <Text Grid.Row="3" Style="dim">{{.Live}}</Text>

@@ -131,7 +131,9 @@ paint nodes are clean. This is the same missing z-order notion as the
 background problem, seen from a third direction, and it should be fixed
 by the same work.
 
-**Roadmap, not done: bindable `Visibility`.** `Visibility="{{.ShowDetail}}"`
+**Roadmap, not done: bindable `Visibility`.** *(Since executed — the
+chosen design and the fate of the two options below are recorded in
+`2026-08-10-bindable-visibility.md`.)* `Visibility="{{.ShowDetail}}"`
 does not work, and making it work is not a layout change at all — it is a
 *binding system* change. Every attribute binding today resolves to either
 a `*prop.Property[string]` (via `bindText`) or a typed handle asserted at

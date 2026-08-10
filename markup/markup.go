@@ -408,7 +408,7 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := applyLayout(e, w); err != nil {
+	if err := applyLayout(e, w, ctx); err != nil {
 		return nil, err
 	}
 	if err := applyTooltipShorthand(e, w, ctx); err != nil {
@@ -440,8 +440,12 @@ func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
 }
 
 // applyLayout maps the FrameworkElement attributes — and the Grid.*
-// attached-property syntax — onto the component's Layout.
-func applyLayout(e Element, w gooey.Component) error {
+// attached-property syntax — onto the component's Layout. Visibility is
+// the one layout attribute that binds (ctx is here for it): the three
+// literal names keep parsing exactly as before, and a {{...}} expression
+// resolves to a live handle at build time, lvalue semantics like every
+// other binding.
+func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 	hl, ok := w.(gooey.HasLayout)
 	if !ok {
 		return nil
@@ -461,6 +465,14 @@ func applyLayout(e Element, w gooey.Component) error {
 		case "VAlign":
 			l.VAlign, err = parseAlign(v)
 		case "Visibility":
+			if bindRe.MatchString(v) {
+				// The bind error carries its own element context; the
+				// generic attribute wrap below would only repeat it.
+				if err := bindVisibility(e, ctx, l, v); err != nil {
+					return err
+				}
+				continue
+			}
 			l.Visibility, err = parseVisibility(v)
 		case "Grid.Row":
 			l.Row, err = strconv.Atoi(v)
@@ -515,6 +527,30 @@ func parseAlign(s string) (gooey.Align, error) {
 		return gooey.AlignEnd, nil
 	}
 	return 0, fmt.Errorf("unknown alignment")
+}
+
+// bindVisibility resolves Visibility="{{...}}" to a live handle. Two
+// handle types are accepted: *prop.Property[gooey.Visibility] for the
+// full three-state surface, and *prop.Property[bool] mapped true→Visible
+// / false→Collapsed — the XAML BooleanToVisibilityConverter default,
+// built in because show/hide state is almost always a bool and gooey has
+// no converter layer. The type switch is the whole type check, same as
+// boundProp: a mismatched handle is a load-time error naming both
+// acceptable types.
+func bindVisibility(e Element, ctx *Context, l *gooey.Layout, raw string) error {
+	v, err := ctx.BindingValue(raw)
+	if err != nil {
+		return fmt.Errorf("markup: <%s Visibility=%q>: %w", e.Name, raw, err)
+	}
+	switch h := v.(type) {
+	case *prop.Property[gooey.Visibility]:
+		l.BindVisibility(h)
+	case *prop.Property[bool]:
+		l.BindVisibilityBool(h)
+	default:
+		return fmt.Errorf("markup: <%s Visibility=%q> is %T; need *prop.Property[gooey.Visibility] or *prop.Property[bool] (true=Visible, false=Collapsed)", e.Name, raw, v)
+	}
+	return nil
 }
 
 func parseVisibility(s string) (gooey.Visibility, error) {

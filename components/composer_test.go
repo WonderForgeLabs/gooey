@@ -139,6 +139,132 @@ func TestHidingALeafAtRuntimeErasesIt(t *testing.T) {
 	}
 }
 
+// Bound visibility must cost exactly what a literal flip costs: the Set
+// schedules the frame (that is ALL it adds — the observer is not a paint
+// node), and the same per-frame sweep erases and restores. Mirror of
+// TestHidingALeafAtRuntimeErasesIt with a *prop.Property[Visibility].
+func TestBoundVisibilityHiddenFlipMatchesLiteralDamage(t *testing.T) {
+	vis := prop.NewSource(gooey.Visible)
+	target := &Text{Content: Str("SECRET")}
+	target.LayoutProps().BindVisibility(vis)
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("keep")}, target}}
+	c := gooey.NewComposer(root, 10, 2)
+	fired := 0
+	c.OnInvalidate(func() { fired++ })
+	c.Frame()
+
+	if got := row(c.Cells(), 1); got != "SECRET" {
+		t.Fatalf("first frame row 1 = %q", got)
+	}
+
+	// The literal field flip dirties nothing — the bound Set MUST: that
+	// is the entire reason the binding exists.
+	vis.Set(gooey.Hidden)
+	if fired == 0 {
+		t.Fatal("Set on a bound Visibility did not schedule a frame")
+	}
+	_, painted := c.Frame()
+	if painted != 1 {
+		t.Errorf("hiding via binding painted %d components, want exactly 1 (same as the literal flip)", painted)
+	}
+	if got := row(c.Cells(), 1); got != "" {
+		t.Errorf("row 1 after bound hide = %q, want it erased", got)
+	}
+
+	vis.Set(gooey.Visible)
+	if _, painted = c.Frame(); painted != 1 {
+		t.Errorf("showing via binding painted %d components, want 1", painted)
+	}
+	if got := row(c.Cells(), 1); got != "SECRET" {
+		t.Errorf("row 1 after bound show = %q, want it back", got)
+	}
+}
+
+// A bound Collapsed flip is a LAYOUT change — the collapsed element
+// measures to zero and its siblings move. Run the identical tree twice,
+// flipping one by field and one by binding, and require identical paint
+// counts and identical cells frame by frame: "same damage as the literal
+// sweep" as an executable statement.
+func TestBoundVisibilityCollapseMatchesLiteralDamage(t *testing.T) {
+	build := func() (*gooey.Composer, *Text) {
+		target := &Text{Content: Str("first")}
+		root := &VStack{Children: []gooey.Component{target, &Text{Content: Str("second")}}}
+		return gooey.NewComposer(root, 12, 3), target
+	}
+
+	lit, litTarget := build()
+	bnd, bndTarget := build()
+	vis := prop.NewSource(gooey.Visible)
+	bndTarget.LayoutProps().BindVisibility(vis)
+	lit.Frame()
+	bnd.Frame()
+
+	steps := []gooey.Visibility{gooey.Collapsed, gooey.Visible, gooey.Hidden, gooey.Visible}
+	for _, v := range steps {
+		litTarget.LayoutProps().Visibility = v
+		vis.Set(v)
+		_, litPainted := lit.Frame()
+		_, bndPainted := bnd.Frame()
+		if litPainted != bndPainted {
+			t.Errorf("flip to %v: literal painted %d, bound painted %d — damage counts must match", v, litPainted, bndPainted)
+		}
+		for y := 0; y < 3; y++ {
+			if lr, br := row(lit.Cells(), y), row(bnd.Cells(), y); lr != br {
+				t.Errorf("flip to %v: row %d literal %q, bound %q", v, y, lr, br)
+			}
+		}
+	}
+	if got := row(bnd.Cells(), 0); got != "first" {
+		t.Fatalf("row 0 after the round trip = %q, want %q", got, "first")
+	}
+}
+
+// Visibility="{{.Show}}" with a bool viewmodel property: true is
+// Visible, false is Collapsed (the space is reclaimed, not reserved).
+func TestBoundVisibilityBoolMapsToCollapsed(t *testing.T) {
+	show := prop.NewSource(true)
+	target := &Text{Content: Str("detail")}
+	target.LayoutProps().BindVisibilityBool(show)
+	root := &VStack{Children: []gooey.Component{target, &Text{Content: Str("footer")}}}
+	c := gooey.NewComposer(root, 12, 3)
+	c.Frame()
+	if row(c.Cells(), 0) != "detail" || row(c.Cells(), 1) != "footer" {
+		t.Fatalf("first frame rows = %q,%q", row(c.Cells(), 0), row(c.Cells(), 1))
+	}
+
+	show.Set(false)
+	c.Frame()
+	if got := row(c.Cells(), 0); got != "footer" {
+		t.Errorf("row 0 after false = %q, want %q (collapsed reclaims the row)", got, "footer")
+	}
+	if got := row(c.Cells(), 1); got != "" {
+		t.Errorf("row 1 after false = %q, want empty", got)
+	}
+
+	show.Set(true)
+	c.Frame()
+	if row(c.Cells(), 0) != "detail" || row(c.Cells(), 1) != "footer" {
+		t.Errorf("rows after true = %q,%q", row(c.Cells(), 0), row(c.Cells(), 1))
+	}
+}
+
+// A redundant Set on a bound Visibility schedules a frame (Set never
+// compares — that is the property system's contract), but the sweep
+// still sees no delta, so the frame paints NOTHING.
+func TestBoundVisibilityRedundantSetPaintsNothing(t *testing.T) {
+	vis := prop.NewSource(gooey.Visible)
+	target := &Text{Content: Str("x")}
+	target.LayoutProps().BindVisibility(vis)
+	root := &VStack{Children: []gooey.Component{target}}
+	c := gooey.NewComposer(root, 10, 2)
+	c.Frame()
+
+	vis.Set(gooey.Visible)
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("redundant bound Set painted %d components, want 0", painted)
+	}
+}
+
 // A steady visibility must not cause repaints — the sweep compares, it
 // does not dirty unconditionally.
 func TestUnchangedVisibilityDoesNotRepaint(t *testing.T) {

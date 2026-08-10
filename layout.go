@@ -7,6 +7,8 @@ package gooey
 // measure/arrange sandwich: subtract margin, honor explicit size,
 // cache DesiredSize, then align the child inside its slot.
 
+import "github.com/WonderForgeLabs/gooey/prop"
+
 // Thickness is margin in cells: left, top, right, bottom.
 type Thickness struct{ L, T, R, B int }
 
@@ -49,7 +51,61 @@ type Layout struct {
 	Left, Top int
 
 	desired Size // cached by MeasureChild, margin included
+
+	// visSrc, when non-nil, is the bound source of Visibility: the plain
+	// field above becomes a per-frame cache of visSrc(). Layout and the
+	// Composer's sweeps keep reading the field (plain reads, outside any
+	// evaluation — exactly as before); the framework syncs it from the
+	// source at defined points (MeasureChild, and the Composer's
+	// visibility observers before layout). See BindVisibility.
+	visSrc func() Visibility
 }
+
+// BindVisibility makes p the source of this element's Visibility —
+// markup's Visibility="{{.ShowDetails}}" lands here, and code-behind may
+// call it directly with a source or a computed. A Set on p (or on any
+// dependency of a computed p) schedules a frame through the Composer's
+// visibility observer, and the existing per-frame sweep then erases,
+// restores, and relayouts exactly as a literal flip does; while bound,
+// direct writes to the Visibility field are overwritten each frame.
+//
+// Bind before the tree is composed (markup does). Rebinding a composed
+// element is not supported: the observer subscribed to the first source.
+func (l *Layout) BindVisibility(p *prop.Property[Visibility]) {
+	l.BindVisibilityFunc(p.Get)
+}
+
+// BindVisibilityBool binds Visibility to a bool property: true is
+// Visible, false is Collapsed — the XAML BooleanToVisibilityConverter
+// default, chosen because show/hide state in a viewmodel is almost
+// always a bool. An element that should reserve its space when hidden
+// binds a *prop.Property[Visibility] instead.
+func (l *Layout) BindVisibilityBool(p *prop.Property[bool]) {
+	l.BindVisibilityFunc(func() Visibility {
+		if p.Get() {
+			return Visible
+		}
+		return Collapsed
+	})
+}
+
+// BindVisibilityFunc is the general form behind both Bind variants: get
+// becomes the source of Visibility. Whether a call to get subscribes is
+// decided by the CALL SITE, like every property read — the Composer's
+// observer evaluates it (subscription), layout calls it plain (read).
+// The field is synced immediately so a tree inspected before its first
+// frame is already right.
+func (l *Layout) BindVisibilityFunc(get func() Visibility) {
+	l.visSrc = get
+	if get != nil {
+		l.Visibility = get()
+	}
+}
+
+// VisibilitySource reports the bound source of Visibility, nil when the
+// plain field is the whole story. The markup patch path uses it to carry
+// a binding onto a rebuilt element that did not restate the attribute.
+func (l *Layout) VisibilitySource() func() Visibility { return l.visSrc }
 
 // HasLayout is implemented by anything embedding Base.
 type HasLayout interface{ LayoutProps() *Layout }
@@ -83,6 +139,14 @@ func MeasureChild(w Component, avail Size) Size {
 	l := LayoutOf(w)
 	if l == nil {
 		return w.Measure(avail)
+	}
+	if l.visSrc != nil {
+		// Sync the field from the bound source. Layout runs outside any
+		// evaluation context, so this records no dependency — change
+		// notification is the Composer's visibility observer's job; this
+		// keeps the one-shot Compose path and every direct field reader
+		// (panels, focus, hit-testing) correct without touching them.
+		l.Visibility = l.visSrc()
 	}
 	if l.Visibility == Collapsed {
 		l.desired = Size{}
