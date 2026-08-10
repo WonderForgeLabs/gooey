@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -47,8 +49,9 @@ type Tool struct {
 
 // v1Tools is the tool inventory. Read: tree_snapshot, screen_text,
 // list_values, list_styles. Act: invoke_command, set_value, send_keys,
-// send_mouse, focus. Mutate structure: swap_markup, patch_markup.
-// Check: validate_markup.
+// send_mouse, focus. Grow the viewmodel: register_properties (#89).
+// Mutate structure: swap_markup (optionally registering first),
+// patch_markup. Check: validate_markup.
 //
 // Every body is a thin adapter (issue #112): parse the MCP arguments,
 // call the shared control.Service, render the result exactly as this
@@ -150,12 +153,29 @@ func (s *Server) v1Tools() []*Tool {
 			Run: s.focus,
 		},
 		{
+			Name: "register_properties",
+			Description: "Grow the viewmodel without swapping: register new typed source properties " +
+				"into the app's binding context, so later markup (swap_markup, patch_markup) can bind " +
+				"names the app never pre-registered. Types are markup's propKinds rows. A name that " +
+				"already exists is refused — the context is the one source of truth — and a batch is " +
+				"all-or-nothing. Commands cannot be registered; behavior needs code, not storage.",
+			Schema: object(map[string]any{
+				"properties": registrationsArg("The properties to register."),
+			}, "properties"),
+			OutputSchema: registerPropertiesSchema(),
+			Run:          s.registerProperties,
+		},
+		{
 			Name: "swap_markup",
 			Description: "Replace the whole page with new gooey markup, built against the app's existing " +
 				"binding context — so the viewmodel, and therefore the app's state, survives the swap. " +
-				"Markup that fails to parse or bind is reported and the running tree is left untouched.",
+				"register, when given, grows the viewmodel FIRST with new typed source properties, so " +
+				"the new page may bind names the app never pre-registered. Atomic: markup that fails to " +
+				"parse or bind is reported, the running tree is left untouched, and the registrations " +
+				"are rolled back with it.",
 			Schema: object(map[string]any{
-				"source": prop_("string", "Complete markup source, rooted at <Gooey> with exactly one child."),
+				"source":   prop_("string", "Complete markup source, rooted at <Gooey> with exactly one child."),
+				"register": registrationsArg("New typed source properties to add to the binding context before the build. Rolled back if the build fails."),
 			}, "source"),
 			Run: s.swapMarkup,
 		},
@@ -470,6 +490,38 @@ func (s *Server) focus(a args) (any, error) {
 	return map[string]any{"focused": name}, nil
 }
 
+// ---- grow the viewmodel (#89) ----
+
+// registerProperties is the standalone registration path — the MCP face
+// of ControlService.RegisterProperties — for the iterate-on-a-live-page
+// loop: register once, then bind the names from as many swaps and
+// patches as it takes. The service refuses existing names and applies a
+// batch all-or-nothing; both arrive here as ordinary tool errors.
+func (s *Server) registerProperties(a args) (any, error) {
+	if _, ok := a["properties"]; !ok {
+		return nil, fmt.Errorf("missing required argument %q", "properties")
+	}
+	regs, err := a.registrations("properties")
+	if err != nil {
+		return nil, err
+	}
+	if len(regs) == 0 {
+		return nil, fmt.Errorf("register_properties needs at least one property")
+	}
+	if err := s.svc.Register(regs); err != nil {
+		return nil, err
+	}
+	return map[string]any{"registered": registeredNames(regs)}, nil
+}
+
+func registeredNames(regs []control.Registration) []string {
+	out := make([]string, 0, len(regs))
+	for _, r := range regs {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
 // ---- mutate structure ----
 
 func (s *Server) swapMarkup(a args) (any, error) {
@@ -477,11 +529,19 @@ func (s *Server) swapMarkup(a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	named, err := s.svc.SwapMarkup(src, nil)
+	regs, err := a.registrations("register")
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"swapped": true, "named": named}, nil
+	named, err := s.svc.SwapMarkup(src, regs)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"swapped": true, "named": named}
+	if len(regs) > 0 {
+		out["registered"] = registeredNames(regs)
+	}
+	return out, nil
 }
 
 func (s *Server) patchMarkup(a args) (any, error) {
@@ -647,6 +707,117 @@ func (a args) strSlice(k string) []string {
 	return out
 }
 
+// registrations decodes an array of {name, type, value} objects into
+// []control.Registration — the MCP form of the contract's
+// PropertyRegistration. An absent key is nil; whether that is allowed
+// is the caller's call (swap_markup's register is optional,
+// register_properties' properties is required).
+func (a args) registrations(k string) ([]control.Registration, error) {
+	raw, ok := a[k]
+	if !ok {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("argument %q must be an array of {name, type, value} objects, got %T", k, raw)
+	}
+	out := make([]control.Registration, 0, len(list))
+	for _, el := range list {
+		m, ok := el.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("argument %q must be an array of {name, type, value} objects; got a %T element", k, el)
+		}
+		name, _ := m["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("a property registration needs a name")
+		}
+		typ, ok := m["type"].(string)
+		if !ok {
+			return nil, fmt.Errorf("registration %q needs a type: string, int, bool, float, duration, color or any", name)
+		}
+		kind := control.KindOf(typ)
+		if kind == control.KindUnspecified {
+			return nil, fmt.Errorf("registration %q: unknown type %q; want string, int, bool, float, duration, color or any", name, typ)
+		}
+		reg := control.Registration{Name: name, Kind: kind}
+		if rv, ok := m["value"]; ok && rv != nil {
+			v, err := registrationInitial(name, kind, rv)
+			if err != nil {
+				return nil, err
+			}
+			reg.Initial = &v
+		}
+		out = append(out, reg)
+	}
+	return out, nil
+}
+
+// registrationInitial coerces a registration's JSON initial value into
+// the typed control.Value its declared kind calls for — the same
+// adapter job set_value's coercion does, plus the two kinds this NEW
+// surface exposes beyond set_value's kept ceiling: duration arrives as
+// a Go duration string ("750ms"), and any takes any JSON value, stored
+// as decoded JSON.
+func registrationInitial(name string, kind control.Kind, raw any) (control.Value, error) {
+	switch kind {
+	case control.KindString:
+		s, ok := raw.(string)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "a string", raw)
+		}
+		return control.StringValue(s), nil
+	case control.KindInt:
+		n, ok := jsonInt(raw)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "an integer", raw)
+		}
+		return control.IntValue(int64(n)), nil
+	case control.KindBool:
+		b, ok := raw.(bool)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "a boolean", raw)
+		}
+		return control.BoolValue(b), nil
+	case control.KindFloat:
+		f, ok := raw.(float64)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "a number", raw)
+		}
+		return control.FloatValue(f), nil
+	case control.KindDuration:
+		s, ok := raw.(string)
+		if !ok {
+			return control.Value{}, initialMismatch(name, `a duration string (e.g. "750ms")`, raw)
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(s))
+		if err != nil {
+			return control.Value{}, fmt.Errorf("registration %q: %q is not a duration; want Go syntax such as 750ms or 1.5s", name, s)
+		}
+		return control.DurationValue(d), nil
+	case control.KindColor:
+		s, ok := raw.(string)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "a color (#rrggbb string)", raw)
+		}
+		c, err := parseHexColor(s)
+		if err != nil {
+			return control.Value{}, fmt.Errorf("registration %q: %w", name, err)
+		}
+		return control.ColorValue(c), nil
+	case control.KindAny:
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return control.Value{}, fmt.Errorf("registration %q: %v", name, err)
+		}
+		return control.JSONValue(b), nil
+	}
+	return control.Value{}, fmt.Errorf("registration %q: unknown kind", name)
+}
+
+func initialMismatch(name, want string, got any) error {
+	return fmt.Errorf("registration %q: the initial value must be %s, got %T", name, want, got)
+}
+
 func jsonInt(v any) (int, bool) {
 	f, ok := v.(float64)
 	if !ok {
@@ -674,6 +845,23 @@ func object(props map[string]any, required ...string) map[string]any {
 
 func prop_(typ, desc string) map[string]any {
 	return map[string]any{"type": typ, "description": desc}
+}
+
+// registrationsArg is the {name, type, value} array shape shared by
+// swap_markup's register argument and register_properties' properties
+// argument — one schema, so the two registration paths can never drift.
+func registrationsArg(desc string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": desc,
+		"items": object(map[string]any{
+			"name": prop_("string", "The dotted name to create. Nested scopes (A.B) materialize as needed; a name that already exists is refused."),
+			"type": enum_("The property's markup type — a propKinds row.", "string", "int", "bool", "float", "duration", "color", "any"),
+			"value": map[string]any{"description": "Initial value; absent means the type's zero value. " +
+				"string/int/bool/float take the matching JSON value, color a #rrggbb string, " +
+				"duration a Go duration string such as \"750ms\", and any takes any JSON value, stored as decoded JSON."},
+		}, "name", "type"),
+	}
 }
 
 func enum_(desc string, values ...string) map[string]any {

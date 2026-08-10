@@ -923,6 +923,253 @@ func TestSwapMarkupFailureKeepsOldTree(t *testing.T) {
 	}
 }
 
+// ---- runtime property registration (#89) ----
+
+// valuesByName indexes list_values output for assertions on individual
+// entries.
+func valuesByName(t *testing.T, c *client) map[string]map[string]any {
+	t.Helper()
+	byName := map[string]map[string]any{}
+	for _, raw := range c.json("list_values", nil)["values"].([]any) {
+		v := raw.(map[string]any)
+		byName[v["name"].(string)] = v
+	}
+	return byName
+}
+
+const grownMarkup = `<Gooey>
+  <VStack Gap="1">
+    <Text Name="Status">{{.Status}}</Text>
+    <ProgressBar Name="Bar" Value="{{.Pct}}" Label="progress"/>
+  </VStack>
+</Gooey>`
+
+func TestSwapMarkupWithRegistrations(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	// The page binds two names the app never registered — the exact gap
+	// #89 reports. Without register, this swap can only fail.
+	c.fails("swap_markup", map[string]any{"source": grownMarkup}, "not found in context")
+
+	out := c.json("swap_markup", map[string]any{
+		"source": grownMarkup,
+		"register": []any{
+			map[string]any{"name": "Status", "type": "string", "value": "grown live"},
+			map[string]any{"name": "Pct", "type": "int", "value": 40},
+		},
+	})
+	if out["swapped"] != true {
+		t.Fatalf("swap_markup: %v", out)
+	}
+	if fmt.Sprint(out["registered"]) != "[Status Pct]" {
+		t.Errorf("registered = %v", out["registered"])
+	}
+	if screen := c.ok("screen_text", nil); !strings.Contains(screen, "grown live") {
+		t.Errorf("the registered string is not on screen:\n%s", screen)
+	}
+
+	// The new properties are live sources, not snapshot decoration:
+	// set_value writes them and the page repaints.
+	c.ok("set_value", map[string]any{"name": "Status", "value": "updated"})
+	c.ok("set_value", map[string]any{"name": "Pct", "value": 80})
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "updated") {
+		t.Errorf("a registered property is not a live source:\n%s", got)
+	}
+
+	// And list_values reports them like any pre-registered property.
+	byName := valuesByName(t, c)
+	if v := byName["Status"]; v == nil || v["kind"] != "property" || v["type"] != "string" || v["value"] != "updated" {
+		t.Errorf("Status = %v", v)
+	}
+	if v := byName["Pct"]; v == nil || v["type"] != "integer" || v["value"] != 80.0 {
+		t.Errorf("Pct = %v", v)
+	}
+}
+
+func TestSwapMarkupFailedBuildRollsBackRegistrations(t *testing.T) {
+	_, _, _, c := setup(t)
+	before := c.ok("screen_text", nil)
+
+	// The registrations are fine; the markup is not. The failed build
+	// must take the registrations down with it.
+	c.fails("swap_markup", map[string]any{
+		"source": `<Gooey><Nope/></Gooey>`,
+		"register": []any{
+			map[string]any{"name": "Ghost", "type": "string", "value": "boo"},
+			map[string]any{"name": "Deep.Pct", "type": "int"},
+		},
+	}, "unknown element")
+
+	byName := valuesByName(t, c)
+	if _, ok := byName["Ghost"]; ok {
+		t.Error("Ghost survived a failed swap; registrations must roll back")
+	}
+	if _, ok := byName["Deep.Pct"]; ok {
+		t.Error("Deep.Pct survived a failed swap; registrations must roll back")
+	}
+	if after := c.ok("screen_text", nil); after != before {
+		t.Errorf("a failed swap changed the screen:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	// A bad registration in the batch is all-or-nothing: Fresh must not
+	// stick around when Note (an existing name) is refused.
+	c.fails("swap_markup", map[string]any{
+		"source": swappedMarkup,
+		"register": []any{
+			map[string]any{"name": "Fresh", "type": "string"},
+			map[string]any{"name": "Note", "type": "string"},
+		},
+	}, "already exists")
+	if _, ok := valuesByName(t, c)["Fresh"]; ok {
+		t.Error("Fresh survived an all-or-nothing batch failure")
+	}
+
+	// The rollback was clean: the same names register successfully once
+	// the markup is fixed.
+	out := c.json("swap_markup", map[string]any{
+		"source":   swappedMarkup,
+		"register": []any{map[string]any{"name": "Ghost", "type": "string"}},
+	})
+	if out["swapped"] != true {
+		t.Fatalf("swap after rollback: %v", out)
+	}
+}
+
+func TestRegisterProperties(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	out := c.json("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Score", "type": "int", "value": 7},
+		map[string]any{"name": "Deep.Flag", "type": "bool", "value": true},
+		map[string]any{"name": "Accent", "type": "color", "value": "#ff8800"},
+		map[string]any{"name": "Delay", "type": "duration", "value": "750ms"},
+		map[string]any{"name": "Payload", "type": "any", "value": map[string]any{"a": 1}},
+	}})
+	if fmt.Sprint(out["registered"]) != "[Score Deep.Flag Accent Delay Payload]" {
+		t.Fatalf("registered = %v", out["registered"])
+	}
+
+	byName := valuesByName(t, c)
+	if v := byName["Score"]; v == nil || v["kind"] != "property" || v["type"] != "integer" || v["value"] != 7.0 {
+		t.Errorf("Score = %v", v)
+	}
+	if v := byName["Deep.Flag"]; v == nil || v["type"] != "boolean" || v["value"] != true {
+		t.Errorf("Deep.Flag = %v", v)
+	}
+	if v := byName["Accent"]; v == nil || v["type"] != "color" || v["value"] != "#ff8800" {
+		t.Errorf("Accent = %v", v)
+	}
+	// duration and any REGISTER fine — the registration surface is the
+	// full kind table — but list_values still reports them as plain
+	// values: the kept set_value/list_values ceiling (#112's recorded
+	// follow-up), deliberately not widened here.
+	if v := byName["Delay"]; v == nil || v["kind"] != "value" {
+		t.Errorf("Delay = %v, want the v1 ceiling's plain value entry", v)
+	}
+	if v := byName["Payload"]; v == nil || v["kind"] != "value" {
+		t.Errorf("Payload = %v, want the v1 ceiling's plain value entry", v)
+	}
+
+	// A later swap — with no register of its own — binds the names,
+	// which is the iterate-on-a-live-page loop registration exists for.
+	c.ok("swap_markup", map[string]any{"source": `<Gooey>
+  <VStack>
+    <Text Name="Head">count is {{.Count}}</Text>
+    <ProgressBar Name="Bar" Value="{{.Score}}"/>
+    <Checkbox Name="Box" Checked="{{.Deep.Flag}}" Label="deep"/>
+  </VStack>
+</Gooey>`})
+	if got := c.ok("screen_text", nil); !strings.Contains(got, "[x] deep") {
+		t.Errorf("the registered bool did not bind checked:\n%s", got)
+	}
+
+	// structuredContent round-trips and agrees with the text content.
+	res := c.resultObject("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Another", "type": "float", "value": 0.5},
+	}})
+	sc, _ := res["structuredContent"].(map[string]any)
+	if sc == nil || fmt.Sprint(sc["registered"]) != "[Another]" {
+		t.Fatalf("structuredContent = %v", res["structuredContent"])
+	}
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	var fromText map[string]any
+	if err := json.Unmarshal([]byte(text), &fromText); err != nil {
+		t.Fatalf("text content is not JSON: %v", err)
+	}
+	if fmt.Sprint(fromText["registered"]) != "[Another]" {
+		t.Errorf("text and structuredContent disagree: %v", fromText)
+	}
+}
+
+func TestRegisterPropertiesErrors(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	c.fails("register_properties", nil, `missing required argument "properties"`)
+	c.fails("register_properties", map[string]any{"properties": []any{}}, "needs at least one property")
+	c.fails("register_properties", map[string]any{"properties": "Score"}, "must be an array")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"type": "string"},
+	}}, "needs a name")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "X"},
+	}}, "needs a type")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "X", "type": "banana"},
+	}}, `unknown type "banana"`)
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Note", "type": "string"},
+	}}, "already exists")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "X", "type": "int", "value": "seven"},
+	}}, "must be an integer")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "X", "type": "duration", "value": "fast"},
+	}}, "not a duration")
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "X", "type": "color", "value": "orange"},
+	}}, "not a #rrggbb color")
+	// A dotted path through an existing PROPERTY is not a scope.
+	c.fails("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Note.Deep", "type": "string"},
+	}}, "not a scope")
+
+	// None of the failures left anything behind.
+	if _, ok := valuesByName(t, c)["X"]; ok {
+		t.Error("a failed registration left X behind")
+	}
+}
+
+// TestRegistrationToolSurface pins the published surface: the new tool
+// carries an outputSchema, and swap_markup's input schema declares the
+// register argument with source still the only required one.
+func TestRegistrationToolSurface(t *testing.T) {
+	_, _, _, c := setup(t)
+	list := c.rpc("tools/list", nil)
+	var reg, swap map[string]any
+	for _, raw := range list.Result.(map[string]any)["tools"].([]any) {
+		m := raw.(map[string]any)
+		switch m["name"] {
+		case "register_properties":
+			reg = m
+		case "swap_markup":
+			swap = m
+		}
+	}
+	if reg == nil {
+		t.Fatal("register_properties is not in tools/list")
+	}
+	if _, ok := reg["outputSchema"].(map[string]any); !ok {
+		t.Error("register_properties publishes no outputSchema")
+	}
+	schema := swap["inputSchema"].(map[string]any)
+	if _, ok := schema["properties"].(map[string]any)["register"]; !ok {
+		t.Error("swap_markup's schema does not declare register")
+	}
+	if req := fmt.Sprint(schema["required"]); req != "[source]" {
+		t.Errorf("swap_markup required = %v; register must stay optional", req)
+	}
+}
+
 // ---- the concurrency contract ----
 
 // TestToolsRunOnTheUIGoroutine is the direct proof. The run loop sets a

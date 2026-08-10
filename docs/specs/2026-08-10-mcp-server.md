@@ -322,3 +322,60 @@ MCP swap/patch paths reset/merge the registry the same way they handle
 `Named`, with the same scratch-and-restore atomicity. The ceiling for
 arbitrary Go components is unchanged and deliberate: declared surfaces
 serialize; undeclared Go structs never will.
+
+## Extended 2026-08-10: runtime viewmodel growth (#89)
+
+Found by a peer session driving `cmd/mcpdemo`: `swap_markup` rebuilds
+against the app's EXISTING context, so a page could never introduce a
+bound property the app didn't pre-register — `ProgressBar
+Value="{{.Pct}}"` was unreachable on any app without an int property.
+The service layer (#111) and the contract already carried the fix
+(`control.Registration`, `Service.Register`, `SwapMarkup(source,
+regs)`, the gRPC `RegisterProperties` RPC and `SwapMarkupRequest.
+register`); this extension is the MCP adapter catching up — the only
+layer where work remained.
+
+**`swap_markup` gains an optional `register` argument** — an array of
+`{name, type, value?}` — parsed to `[]control.Registration` and handed
+to the same `SwapMarkup` call the adapter always made (it passed nil
+before). Registrations apply BEFORE the build, so the new page may bind
+the new names; a failed build rolls them back along with the tree and
+the Named table (control's existing atomicity — the adapter adds no
+wording of its own, the rollback is stated in the tool description and
+the load error passes through the usual `toolError` mapping). On
+success the ack gains `registered: [names]`.
+
+**`register_properties` is the standalone path** — the MCP face of
+`ControlService.RegisterProperties`, argument-for-argument (`properties`,
+matching the proto field) — for the iterate-on-a-live-page loop:
+register once, then bind the names from as many swaps and patches as it
+takes. Existing name = refused (the context is the one source of
+truth); batches are all-or-nothing; commands cannot be registered —
+behavior needs code, not storage (#89's recorded boundary). Its result
+is data an agent acts on, so it publishes an `outputSchema` and returns
+`structuredContent` (`registered: string[]`), unlike the structural
+mutation acks which stay text-only.
+
+**The registration surface is control's FULL kind table** — string,
+int, bool, float, duration, color, and `any` — deliberately wider than
+`set_value`'s kept ceiling, because this is a NEW surface mirroring the
+contract's `PropertyRegistration`, not a widening of a preserved one.
+Initial-value semantics at the JSON boundary: string/int/bool/float
+take the matching JSON value, color a `#rrggbb` string, duration a Go
+duration string (`"750ms"` — `time.ParseDuration`, the same syntax
+markup's duration literals use), and `any` takes any JSON value, stored
+as decoded JSON (control re-parses the payload; a swapped page can bind
+the handle wherever a `Property[any]` binds). The asymmetry is
+deliberate and pinned by test: a registered duration/any property still
+shows as a plain `"value"` entry in `list_values` and still refuses
+`set_value` — the #112 ceiling-lift follow-up remains its own deliberate
+change, untouched here.
+
+One schema (`registrationsArg`) serves both tools' argument, so the two
+registration paths cannot drift; the server instructions text now names
+both. Verified: unit tests (swap-with-register binds previously
+unregistered names and the sources are live; failed build and failed
+batch both roll back atomically and the names re-register cleanly;
+standalone register then a plain later swap binds; duplicate/bad-type/
+bad-value wordings; structured round-trip; tools/list surface) plus the
+e2e pty test growing the live app's viewmodel over the wire.
