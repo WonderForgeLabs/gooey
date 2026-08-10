@@ -105,16 +105,22 @@ Exercises the "no code-behind" contract — pure markup with built-in widgets an
 
 ![temporaldemo](../temporaldemo.gif)
 
-Two buttons with no delegates: one is an HTTP GET, the other is a Temporal activity executed by a worker in a different process.
+Two buttons with no delegates: one is an HTTP GET, the other is a Temporal activity executed by a worker on a task queue — in-process by default, on another machine if you start one there.
 
 The walkthrough: pressing `[ net:Get ]` fills the first box from the demo's own loopback server; pressing `[ temporal:Activity Slugify ]` sends `.Input` to a worker on the `gooey-demo` task queue and the returned JSON — including the worker's hostname and pid — lands in the second box; cycling the input and pressing again slugifies the new phrase, because the argument is a handle read at invoke time rather than a value captured at load.
 
-- Run: needs a Temporal dev server and the worker, all three from `handlers/temporal/`:
+- Run: needs a Temporal dev server; the demo brings its own worker, both from `handlers/temporal/`:
 
   ```sh
   temporal server start-dev --headless          # shell 1
-  go run ./cmd/temporalworker                   # shell 2
-  go run ./cmd/temporaldemo                     # shell 3
+  go run ./cmd/temporaldemo                     # shell 2
+  ```
+
+  The worker runs in-process as a gooey companion, started before the first frame and stopped with the app. To run it out of process instead — the deployment this models — start it yourself and tell the demo not to:
+
+  ```sh
+  go run ./workers/temporalworker                # shell 2 (or another machine)
+  go run ./cmd/temporaldemo --with-worker=false  # shell 3
   ```
 
   `TEMPORAL_ADDRESS` and `GOOEY_TASK_QUEUE` override the defaults for both binaries.
