@@ -220,6 +220,26 @@ func TestLoadErrors(t *testing.T) {
 	}
 }
 
+// AllNames is the pack's invocable inventory as data (the
+// pack-distribution record). Pinning the set means a new function
+// cannot ship without appearing in it — and via the unknown-function
+// error message, which derives from it.
+func TestAllNamesPinsTheInventory(t *testing.T) {
+	got := nethandlers.AllNames()
+	want := []string{nethandlers.NameGet}
+	if len(got) != len(want) {
+		t.Fatalf("AllNames()=%v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AllNames()=%v, want %v", got, want)
+		}
+	}
+	if nethandlers.NameGet != "Get" {
+		t.Fatalf("NameGet=%q, want %q", nethandlers.NameGet, "Get")
+	}
+}
+
 // A document using handler namespaces without a Dispatcher cannot
 // deliver anything safely, so it fails at load rather than at click.
 func TestMissingDispatcherIsALoadError(t *testing.T) {
