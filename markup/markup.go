@@ -928,6 +928,11 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 	case "StatusBar":
 		bar, err := buildStatusBar(e, ctx)
 		return named(e, ctx, bar, err)
+	case "Tabs":
+		tb, err := buildTabs(e, ctx)
+		return named(e, ctx, tb, err)
+	case "Tab":
+		return nil, fmt.Errorf("markup: <Tab> is only valid directly inside <Tabs>")
 	case "ButtonBar":
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {

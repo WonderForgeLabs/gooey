@@ -2,7 +2,7 @@
 // (Text, Button, Checkbox, TextBox, Gauge, Sparkline, ProgressBar,
 // Spinner, Toggle, Segmented, ColorPicker, Image), the non-visual
 // Timer, and the containers (VStack, HStack, Grid, Border, Canvas,
-// ItemsView, StatusBar, ButtonBar).
+// ItemsView, StatusBar, ButtonBar, Tabs).
 //
 // It imports the root package and the root never imports it. That
 // direction is the point: these components are ordinary

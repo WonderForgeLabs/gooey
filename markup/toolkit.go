@@ -118,6 +118,68 @@ func buildStatusBar(e Element, ctx *Context) (gooey.Component, error) {
 	return bar, nil
 }
 
+// buildTabs assembles <Tabs Selected="{{.Tab}}"><Tab Header="mcp">…
+// </Tab></Tabs>. Selected is optional — absent, the control keeps its
+// own selection starting at 0. Each <Tab> takes a Header (literal or
+// bound) and exactly one content child. The content's Visibility is
+// OWNED by the Tabs (that binding is the whole switching mechanism), so
+// a Visibility attribute on a page root is a load error rather than a
+// binding that would be silently replaced.
+func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
+	t := &components.Tabs{}
+	var err error
+	if raw, ok := e.Attrs["Selected"]; ok && strings.TrimSpace(raw) != "" {
+		if t.Selected, err = boundProp[int](e, ctx, "Selected"); err != nil {
+			return nil, err
+		}
+	}
+	if t.Changed, err = ctx.Command(e.Attrs["Changed"]); err != nil {
+		return nil, fmt.Errorf("markup: <Tabs Changed=%q>: %w", e.Attrs["Changed"], err)
+	}
+	if t.Style, err = bindStyle(e, ctx); err != nil {
+		return nil, err
+	}
+	var attach []gooey.Component
+	for _, c := range e.Children {
+		if c.Name != "Tab" {
+			w, err := build(c, ctx)
+			if err != nil {
+				return nil, err
+			}
+			if nv, ok := w.(gooey.NonVisual); ok && nv.NonVisual() {
+				attach = append(attach, w)
+				continue
+			}
+			return nil, fmt.Errorf("markup: <Tabs> children must be <Tab> elements; got <%s>", c.Name)
+		}
+		if _, ok := c.Attrs["Header"]; !ok {
+			return nil, fmt.Errorf(`markup: <Tab> needs a Header (e.g. Header="log")`)
+		}
+		header, err := literalOrBound(c.Attrs["Header"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(c.Children) != 1 {
+			return nil, fmt.Errorf("markup: <Tab Header=%q> needs exactly one content child, got %d", c.Attrs["Header"], len(c.Children))
+		}
+		if _, has := c.Children[0].Attrs["Visibility"]; has {
+			return nil, fmt.Errorf("markup: <Tab Header=%q>: a tab page cannot bind its own Visibility — the Tabs owns it", c.Attrs["Header"])
+		}
+		content, err := build(c.Children[0], ctx)
+		if err != nil {
+			return nil, err
+		}
+		t.Items = append(t.Items, components.TabItem{Header: header, Content: content})
+	}
+	if len(t.Items) == 0 {
+		return nil, fmt.Errorf("markup: <Tabs> needs at least one <Tab>")
+	}
+	if err := attachAll(e, t, attach); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // slotChild builds the single component inside a property element.
 func slotChild(e Element, ctx *Context) (gooey.Component, error) {
 	if len(e.Children) != 1 {
