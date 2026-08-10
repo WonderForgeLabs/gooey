@@ -1,0 +1,42 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,*,Auto" Cols="24,1*,2*">
+
+    <Text Grid.Row="0" Grid.ColSpan="3" Style="accent">Grid Rows="Auto,*,Auto" Cols="24,1*,2*"</Text>
+
+    <Border Grid.Row="1" Grid.Col="0" Title="24" Style="panel">
+      <VStack Gap="1">
+        <Text Style="dim">a Fixed track:</Text>
+        <Text Style="dim">always 24 cells,</Text>
+        <Text Style="dim">whatever the width</Text>
+        <Text Style="dim">(VStack Gap="1")</Text>
+      </VStack>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Col="1" Title="1*" Style="panel">
+      <VStack Gap="0">
+        <Text Style="dim">one share of</Text>
+        <Text Style="dim">what is left</Text>
+        <Text Style="dim">(VStack Gap="0")</Text>
+      </VStack>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Col="2" Title="2*" Style="panel">
+      <VStack Gap="0">
+        <Text Style="dim">two shares — twice as wide as 1*</Text>
+        <Text Margin="4,0,0,0" Style="accent">Margin="4,0,0,0"</Text>
+        <Text HAlign="Center" Style="accent">HAlign="Center"</Text>
+        <Text HAlign="End" Style="accent">HAlign="End"</Text>
+        <Text Style="dim">--- Visibility ---</Text>
+        <Text>1 Visible</Text>
+        <Text Visibility="Hidden">2 Hidden — line stays, blank</Text>
+        <Text Visibility="Collapsed">3 Collapsed — no line at all</Text>
+        <Text>4 sits right under the blank</Text>
+      </VStack>
+    </Border>
+
+    <Text Grid.Row="2" Grid.ColSpan="3" Style="dim">press q to quit</Text>
+
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

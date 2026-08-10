@@ -78,7 +78,17 @@ func Build(src []byte, ctx *Context) (gooey.Widget, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The namespace table belongs to THIS document for the duration of
+	// THIS build, and is then restored. Nested Loads (a UserControl
+	// instantiated mid-build) would otherwise leave the child's table
+	// installed on a shared context, and the page's later siblings would
+	// resolve prefixes — that is, capabilities — against the wrong
+	// document. Save/restore makes that impossible however a setup func
+	// chooses to build its context.
+	prev := ctx.ns
 	ctx.ns = ns
+	defer func() { ctx.ns = prev }()
+
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Widget{}
 	}

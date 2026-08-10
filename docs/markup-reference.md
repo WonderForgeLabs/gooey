@@ -29,7 +29,7 @@ Every file has exactly one `<Gooey>` root with exactly one child:
 </Gooey>
 ```
 
-Both rules are enforced at build time. The `xmlns` attribute is decorative versioning today — the parser ignores it. Prefixed handler namespaces are designed but not implemented (see the final section).
+Both rules are enforced at build time. The default `xmlns` attribute is decorative versioning — the parser ignores its value. **Prefixed** namespaces are not decorative: they declare handler namespaces, and are captured per document into a prefix → URI table (see [handler namespaces](#handler-namespaces)).
 
 ## Built-in elements
 
@@ -184,7 +184,9 @@ Resolution happens once, at build time, to property handles — not values. This
 
 ### Event bindings
 
-Event attributes (`Button Click`, `KeyBinding Command`) resolve in one of two ways — the event-binding split:
+Event attributes (`Button Click`, `KeyBinding Command`) resolve in one of three ways — the event-binding split:
+
+- Handler-expression form — `Click="{{net:Get .Url | into .Body}}"` names a function in a declared handler namespace, so the behavior itself is declared in markup with no delegate anywhere. See [handler namespaces](#handler-namespaces).
 
 - Binding form — `Click="{{.Save}}"` resolves a value in `Context.Values`, which must be a `gooey.Command` or a `func()`. The delegate lives in the viewmodel, so markup-only controls can wire events with no code-behind at all. This is the form all the `cmd/` demos use:
 
@@ -202,6 +204,75 @@ An empty event attribute is not an error — the element simply has no command.
 ### Attribute bindings on custom elements
 
 On custom widgets, UserControls, and Includes, an attribute like `Stories="{{.Stories}}"` is resolved via `Context.BindingValue`, which returns the raw context value — typically a typed `*prop.Property[T]` handle of any `T`, not just string. The receiving code type-asserts it. This is how non-string data crosses element boundaries.
+
+## Handler namespaces
+
+A prefixed namespace binds events to *framework-provided* handlers, so behavior can be declared in the markup itself:
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:net="gooey.dev/handlers/net"
+       xmlns:temporal="gooey.dev/handlers/temporal">
+  <Button Content="fetch"   Click="{{net:Get .Url | into .Body}}"/>
+  <Button Content="slugify" Click="{{temporal:Activity `Slugify` .Input | into .Output}}"/>
+</Gooey>
+```
+
+Neither button has a delegate. What the app supplies is the *capability*:
+
+```go
+markup.RegisterHandlers(nethandlers.URI, nethandlers.New())
+markup.RegisterHandlers(temporalhandlers.URI, temporalhandlers.New(client, "gooey-demo"))
+```
+
+**Registration is the capability grant.** Markup can only invoke namespaces the host app registered; drop a registration and the same document stops loading, naming the URI it wanted. That is what makes markup loaded from an untrusted `fs.FS` safe to run: it reaches exactly the capabilities its host chose to hand it, and nothing else.
+
+### Grammar
+
+```
+{{prefix:Func arg… | into .Target}}
+```
+
+- `prefix` resolves through the document's own xmlns table. Namespaces are **per document** — an Include or UserControl declares its own and cannot inherit the page's, so a control's capabilities never depend on who included it.
+- Arguments are the DSL's usual atoms: `` `backtick literal` `` (a constant string) and `.Path` (a property handle). Bound arguments are read **at invoke time**, not at load — the same lvalue semantics as every other binding, so re-pointing `.Url` changes what the next press fetches.
+- `| into .Target` names the `*prop.Property[string]` the result is written to. It is the only pipeline stage in v1.
+
+The expression produces a `gooey.Command`, so it works anywhere a command does — including `<KeyBinding Command="…">`. A handler expression on an Include's attribute is resolved in the *parent* (the document that declared the prefix) and crosses the boundary as an ordinary command value.
+
+Everything resolvable is resolved when the document loads: unknown prefix, unregistered URI, unknown function, wrong arity, missing target, unbindable argument, and provider-specific complaints are all load errors, never surprises on click.
+
+### Async results and the Dispatcher
+
+Handlers run off the UI goroutine, and properties are UI-goroutine-confined. A document using handler namespaces therefore needs a dispatcher, and says so at load time if it is missing:
+
+```go
+disp := gooey.NewDispatcher()
+ctx := &markup.Context{ /* … */ Dispatcher: disp }
+```
+
+The app's loop drains it, which is where the result properties are actually `Set`:
+
+```go
+select {
+case <-disp.Wake():
+    disp.Drain()
+case ev := <-events:
+    comp.Handle(ev)
+}
+```
+
+Nothing in the provider knows which widgets display the result. The `Set` dirties whatever read the property, and the next frame repaints exactly those.
+
+### Providers
+
+| Namespace URI | Package | Functions |
+|---|---|---|
+| `gooey.dev/handlers/net` | `handlers/net` | `Get .Url` — HTTP GET, body as a string |
+| `gooey.dev/handlers/temporal` | `handlers/temporal` (separate module) | ` Activity `Name` .Arg` — a Temporal standalone activity |
+
+Both deliver failures into the same target as an `"ERROR: …"` string in v1, so a page can show what went wrong without a second binding.
+
+A provider is a typed factory — `NewCommand(*markup.Call) (gooey.Command, error)` — with no reflection: arguments arrive as resolved handles, and a provider needing a type other than string type-switches on `Arg.Raw`.
 
 ## Styles
 
@@ -327,10 +398,9 @@ Two normalizations reflect what the terminal actually sends: `shift` on a printa
 
 ## Designed, not yet implemented
 
-Three markup features have settled designs but no implementation yet — see [specs/](specs/) for the decision records:
+Two markup features have settled designs but no implementation yet — see [specs/](specs/) for the decision records:
 
 - `x:Property` declarations — a `.gooey` file declaring its own typed, defaulted, bindable property surface, making declared markup properties ordinary dependency properties; [specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
-- xmlns handler namespaces — prefixed namespaces (`xmlns:net`, `xmlns:temporal`) binding events to framework-provided generic handlers declared in markup, behavior without app code; [specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md).
 - DataTemplates — declaring item visuals in markup for list-shaped data; today every list is a hand-rendered custom rows widget behind a UserControl, the pattern established in [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md).
 
 For the project overview and demo GIFs, see [../README.md](../README.md).

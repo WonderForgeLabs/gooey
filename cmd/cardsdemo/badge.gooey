@@ -1,0 +1,3 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Text Style="badge">◈ {{.Text}}</Text>
+</Gooey>

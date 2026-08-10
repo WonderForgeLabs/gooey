@@ -92,3 +92,24 @@ The walkthrough: a manual serialize goes stale as clicks mutate state; checking 
 - Keys: click or `tab`+`enter`/`space`, `s` serialize, `q` quit
 
 Exercises the "no code-behind" contract — pure markup with built-in widgets and all delegates in the viewmodel — and viewmodel-side state serialization, where typed property handles are snapshotted into a plain struct for `encoding/json`.
+
+## temporaldemo
+
+![temporaldemo](../temporaldemo.gif)
+
+Two buttons with no delegates: one is an HTTP GET, the other is a Temporal activity executed by a worker in a different process.
+
+The walkthrough: pressing `[ net:Get ]` fills the first box from the demo's own loopback server; pressing `[ temporal:Activity Slugify ]` sends `.Input` to a worker on the `gooey-demo` task queue and the returned JSON — including the worker's hostname and pid — lands in the second box; cycling the input and pressing again slugifies the new phrase, because the argument is a handle read at invoke time rather than a value captured at load.
+
+- Run: needs a Temporal dev server and the worker, all three from `handlers/temporal/`:
+
+  ```sh
+  temporal server start-dev --headless          # shell 1
+  go run ./cmd/temporalworker                   # shell 2
+  go run ./cmd/temporaldemo                     # shell 3
+  ```
+
+  `TEMPORAL_ADDRESS` and `GOOEY_TASK_QUEUE` override the defaults for both binaries.
+- Keys: `tab` move, `enter`/`space` press, `n` net, `t` temporal, `c` cycle input, `q` quit
+
+Exercises handler namespaces end to end: xmlns prefix capture, the `{{ns:Func … | into .Target}}` grammar, registration-as-capability-grant, and the Dispatcher marshaling async completions back onto the UI goroutine. The demo and its worker live in the `handlers/temporal` module rather than `cmd/`, because that is where the Temporal SDK dependency is quarantined — core gooey builds without it.

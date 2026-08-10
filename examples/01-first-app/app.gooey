@@ -1,0 +1,11 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="first app" Style="panel">
+    <VStack Gap="1">
+      <Text Style="accent">{{.Greeting}}</Text>
+      <Text Style="dim">edit app.gooey and save — this reloads in place</Text>
+      <Text Style="dim">press q to quit</Text>
+    </VStack>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

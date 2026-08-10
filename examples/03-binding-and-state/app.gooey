@@ -1,0 +1,25 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="binding and state" Style="panel">
+    <VStack Gap="1">
+      <Text Style="accent">{{.Label}}</Text>
+      <Text>{{.Watched}}</Text>
+      <Text Style="dim">{{.Report}}</Text>
+
+      <HStack Gap="2">
+        <Button Content="count +1" Click="{{.Increment}}"/>
+        <Button Content="noisy +1" Click="{{.Bump}}"/>
+        <Button Content="toggle watch" Click="{{.ToggleWatch}}"/>
+        <Button Content="measure" Click="{{.Measure}}"/>
+      </HStack>
+
+      <Text Style="dim">tab: move focus   enter/space: press   c/n/w/m: the four actions   q: quit</Text>
+    </VStack>
+
+    <KeyBinding Gesture="c" Command="{{.Increment}}"/>
+    <KeyBinding Gesture="n" Command="{{.Bump}}"/>
+    <KeyBinding Gesture="w" Command="{{.ToggleWatch}}"/>
+    <KeyBinding Gesture="m" Command="{{.Measure}}"/>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

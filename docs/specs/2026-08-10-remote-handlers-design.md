@@ -94,3 +94,62 @@ wiring — ships as data.
 3. net provider + tests (httptest).
 4. temporal provider behind a build tag or submodule (adds SDK dep);
    demo app with a local worker + standalone activity.
+
+---
+
+## Implementation record (2026-08-10)
+
+Landed: dispatcher, xmlns capture, the `{{ns:Func … | into .Target}}`
+grammar, the provider registry, the net provider, the Temporal provider,
+and `handlers/temporal/cmd/temporaldemo` (verified against a live
+`temporal server start-dev`, recorded in `temporaldemo.gif`).
+
+Where the implementation deviates from the design above, and why:
+
+- **Provider shape is an interface, not a bare func.** The design said
+  `func(fn string, args []Arg, ctx *Context) (gooey.Command, error)`.
+  Providers turned out to need construction state (the Temporal client
+  and task queue), so the registry takes a `HandlerProvider` interface
+  with `NewCommand(*Call) (gooey.Command, error)`, plus a `HandlerFunc`
+  adapter for stateless ones. `Call` carries the same information as the
+  proposed parameters and leaves room to add fields without breaking
+  providers.
+
+- **`| err .Prop` was not added.** v1 delivers failures into the same
+  `into` target as an `"ERROR: …"` string. A separate error channel is a
+  change to the *pipeline grammar* (which wants to grow `progress` and
+  multiple targets at the same time), so it should be designed once,
+  with those, rather than bolted on per provider.
+
+- **The Temporal provider is a separate Go module**, not a build tag.
+  The SDK pulls in gRPC and protobuf; a build tag would still put them
+  in the core module's `go.sum` and dependency graph. A nested module at
+  `handlers/temporal/` is excluded from the parent, so `go build ./...`
+  at the root not only omits the SDK but *cannot* pick it up — the
+  isolation is mechanical rather than a convention to remember. The demo
+  and its worker live inside that module for the same reason, which is
+  why they are not at `cmd/temporaldemo`.
+
+- **A Dispatcher is required at load time**, not lazily. A document
+  using handler namespaces with no `Context.Dispatcher` fails to load
+  rather than failing on first click, matching the rule that everything
+  resolvable resolves at build time.
+
+### An invariant this work established
+
+**A document's namespace table is scoped to that document's build, and
+restored afterwards.** Namespaces are per document, and a UserControl
+whose `setup` returns the *parent* context is legal — so a nested build
+would otherwise leave the child's (possibly empty) table installed on
+the shared context, and the page's later siblings would resolve prefixes
+against the wrong document. Since a prefix names a *capability*, that is
+a security-shaped bug, not only a correctness one: an element could
+silently resolve to a different provider than the one its author
+declared, or lose a grant entirely. `Build` therefore saves and restores
+`ctx.ns` around the build. Regression test:
+`markup.TestNestedBuildRestoresTheParentNamespaceTable`.
+
+### Still open (deliberately out of scope this pass)
+
+Heartbeat/progress piping (`| progress .Pct`), multiple result targets,
+a retry-policy surface in markup, and `<x:Property>` declarations.

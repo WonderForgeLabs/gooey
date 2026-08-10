@@ -57,27 +57,32 @@ func TestXmlnsTableIsCapturedPerDocument(t *testing.T) {
 	       xmlns:other="gooey.dev/handlers/other">
 	  <Text Name="body">hi</Text>
 	</Gooey>`
-	_, ctx, _ := loadWith(t, src, map[string]any{})
-
-	if got := ctx.ns["t"]; got != testURI {
-		t.Fatalf("ns[t]=%q, want %q", got, testURI)
-	}
-	if got := ctx.ns["other"]; got != "gooey.dev/handlers/other" {
-		t.Fatalf("ns[other]=%q", got)
-	}
-	if _, ok := ctx.ns["xmlns"]; ok {
-		t.Fatal("the default namespace leaked into the prefix table")
-	}
-
-	// Declarations configure the document; they are not properties, so
-	// they must not show up as attributes on the root element.
 	root, ns, err := parse([]byte(src))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := ns["t"]; got != testURI {
+		t.Fatalf("ns[t]=%q, want %q", got, testURI)
+	}
+	if got := ns["other"]; got != "gooey.dev/handlers/other" {
+		t.Fatalf("ns[other]=%q", got)
+	}
+	if _, ok := ns["xmlns"]; ok {
+		t.Fatal("the default namespace leaked into the prefix table")
+	}
 	if len(ns) != 2 {
 		t.Fatalf("captured %d prefixes, want 2", len(ns))
 	}
+
+	// The table is scoped to the build and restored afterwards, so a
+	// context outlives no document's namespaces.
+	_, ctx, _ := loadWith(t, src, map[string]any{})
+	if len(ctx.ns) != 0 {
+		t.Fatalf("ctx.ns=%v after Load, want it restored", ctx.ns)
+	}
+
+	// Declarations configure the document; they are not properties, so
+	// they must not show up as attributes on the root element.
 	for _, bad := range []string{"xmlns", "t", "other"} {
 		if v, ok := root.Attrs[bad]; ok {
 			t.Errorf("Attrs[%q]=%q — xmlns declarations should not become attributes", bad, v)
@@ -299,6 +304,51 @@ func TestIncludeAttributeCarriesAHandlerCommand(t *testing.T) {
 	ctx.Dispatcher.Drain()
 	if got := out.Get(); got != "Run:fromparent" {
 		t.Fatalf("out=%q, want the parent-resolved handler to have run", got)
+	}
+}
+
+// A UserControl whose setup hands back the PARENT context (legal — the
+// control just wants the page's bindings) must not leave its own
+// document's namespace table installed. If it did, the page's later
+// elements would resolve prefixes against the control's document, which
+// silently changes which capability a name reaches.
+func TestNestedBuildRestoresTheParentNamespaceTable(t *testing.T) {
+	r := &recorder{}
+	RegisterHandlers(testURI, r)
+	defer RegisterHandlers(testURI, nil)
+
+	fsys := fstest.MapFS{
+		"page.gooey": {Data: []byte(`<Gooey xmlns:t="gooey.dev/handlers/test">
+	  <VStack>
+	    <Inner/>
+	    <Button Content="after" Click="{{t:Run ` + "`sibling`" + ` | into .Out}}"/>
+	  </VStack>
+	</Gooey>`)},
+		// The control declares no namespaces at all, so building it
+		// installs an empty table on the shared context.
+		"inner.gooey": {Data: []byte(`<Gooey><Text>inner</Text></Gooey>`)},
+	}
+	out := prop.NewSource("")
+	ctx := &Context{
+		Values:     map[string]any{"Out": out},
+		Dispatcher: gooey.NewDispatcher(),
+	}
+	ctx.Widgets = map[string]Builder{
+		"Inner": UserControl(fsys, "inner.gooey", func(e Element, parent *Context) (*Context, error) {
+			return parent, nil // deliberately shares the page's context
+		}),
+	}
+
+	w, err := Load(fsys, "page.gooey", ctx)
+	if err != nil {
+		t.Fatalf("the sibling after a nested build lost the page's namespace: %v", err)
+	}
+	comp := gooey.NewComposer(w, 30, 4)
+	comp.Focus().SetFocus(comp.Focus().Order()[len(comp.Focus().Order())-1])
+	comp.HandleKey(input.Named(input.KeyEnter))
+	ctx.Dispatcher.Drain()
+	if got := out.Get(); got != "Run:sibling" {
+		t.Fatalf("out=%q, want the sibling's handler to have run", got)
 	}
 }
 

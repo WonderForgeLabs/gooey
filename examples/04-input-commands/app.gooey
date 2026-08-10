@@ -1,0 +1,32 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,*,Auto,Auto">
+
+    <Text Grid.Row="0" Style="accent">{{.Status}}</Text>
+
+    <Grid Grid.Row="1" Cols="1*,1*">
+      <Border Grid.Col="0" Title="left pane" Style="panel">
+        <VStack Gap="1">
+          <Button Content="left A" Click="{{.LeftA}}"/>
+          <Button Content="left B" Click="{{.LeftB}}"/>
+          <Text Style="dim">s is bound here</Text>
+        </VStack>
+        <KeyBinding Gesture="s" Command="{{.LeftScoped}}"/>
+      </Border>
+
+      <Border Grid.Col="1" Title="right pane" Style="panel">
+        <VStack Gap="1">
+          <Button Content="right A" Click="{{.RightA}}"/>
+          <Checkbox Checked="{{.Loud}}" Label="loud mode"/>
+          <Text Style="dim">s is bound here too</Text>
+        </VStack>
+        <KeyBinding Gesture="s" Command="{{.RightScoped}}"/>
+      </Border>
+    </Grid>
+
+    <Text Grid.Row="2" Style="dim">tab / shift+tab: cycle focus    arrows: spatial focus    enter or space: activate</Text>
+    <Text Grid.Row="3" Style="dim">s: the pane-scoped action — same gesture, different command per pane    q: quit</Text>
+
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

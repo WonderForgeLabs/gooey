@@ -3,6 +3,7 @@
 //
 //	space   pause / follow
 //	f       cycle level filter: all → ERROR → WARN → all
+//	j/k ↑/↓ scroll the pane (pageup/pagedown by a screen, end re-follows)
 //	q       quit
 //
 // The property graph does the work a hand-rolled TUI does manually:
@@ -13,6 +14,11 @@
 // while the UI stays fully interactive (change the filter mid-pause and
 // it re-renders from the frozen snapshot). Resume re-records the live
 // dependency and the view catches up in one frame.
+//
+// This is the Go-COMPOSITION flavor: the tree, its Grid tracks, and the
+// KeyBinding attachments are all built as Go literals here. cmd/markuplog
+// is the same viewmodel with the tree authored in XML markup instead —
+// the contrast between the two files is the point, so keep them in sync.
 package main
 
 import (
@@ -23,6 +29,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
@@ -38,6 +45,7 @@ func main() {
 	frozen := prop.NewSource([]line{}) // snapshot taken on pause
 	follow := prop.NewSource(true)
 	filter := prop.NewSource("") // "", "ERROR", "WARN"
+	scroll := prop.NewSource(0)  // lines back from the tail; 0 = tailing
 
 	visible := prop.NewComputed(func() []line {
 		var src []line
@@ -70,16 +78,63 @@ func main() {
 		return fmt.Sprintf("%s   filter: %-5s   showing %d lines", state, f, len(visible.Get()))
 	})
 
-	// --- retained tree ---
+	// --- commands: the same func() values a markup Click= or
+	// <KeyBinding Command=…> would resolve to, bound here by hand.
+	running := true
+	togglePause := gooey.Command(func() {
+		if follow.Get() {
+			frozen.Set(lines.Get()) // snapshot, then switch branch
+			follow.Set(false)
+		} else {
+			follow.Set(true)
+		}
+	})
+	cycleFilter := gooey.Command(func() {
+		switch filter.Get() {
+		case "":
+			filter.Set("ERROR")
+		case "ERROR":
+			filter.Set("WARN")
+		default:
+			filter.Set("")
+		}
+	})
+	quit := gooey.Command(func() { running = false })
+
+	// --- retained tree, composed in Go ---
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
 	statsP := prop.NewSource("")
-	pane := &logPane{src: visible}
-	root := &gooey.Border{Title: gooey.Str("logview"), Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}), Child: &gooey.VStack{Children: []gooey.Widget{
-		&gooey.Text{Content: header, Style: gooey.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true})},
-		&gooey.Text{Content: gooey.Str("space: pause/follow   f: filter   q: quit"), Style: gooey.Sty(dim)},
-		&gooey.Text{Content: statsP, Style: gooey.Sty(dim)},
-		pane, // greedy (fills remaining height) — must come last in this VStack
-	}}}
+	pane := &logPane{src: visible, scroll: scroll}
+	root := &gooey.Border{
+		Title: paneTitle("logview", pane),
+		Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
+		// A star row is what makes the pane greedy — it takes whatever
+		// the three Auto rows above it leave. Ordering inside a VStack
+		// used to stand in for this, which meant the stats line could be
+		// pushed off screen by a taller header.
+		Child: &gooey.Grid{
+			Rows: []gooey.GridLen{gooey.Auto(), gooey.Auto(), gooey.Auto(), gooey.Star(1)},
+			Children: []gooey.Widget{
+				gooey.L(&gooey.Text{Content: header, Style: gooey.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true})}, gooey.Layout{Row: 0}),
+				gooey.L(&gooey.Text{Content: gooey.Str("space: pause/follow   f: filter   j/k: scroll   q: quit"), Style: gooey.Sty(dim)}, gooey.Layout{Row: 1}),
+				gooey.L(&gooey.Text{Content: statsP, Style: gooey.Sty(dim)}, gooey.Layout{Row: 2}),
+				gooey.L(pane, gooey.Layout{Row: 3}),
+			},
+		},
+	}
+	// KeyBindings are non-visual attachments — the Go spelling of the
+	// <KeyBinding> elements in markuplog's logview.gooey. Hung on the
+	// root, they are global: dispatch reaches them after the focused
+	// pane has declined the key.
+	for _, kb := range []*gooey.KeyBinding{
+		{Gesture: input.Rune(' '), Command: togglePause},
+		{Gesture: input.Rune('f'), Command: cycleFilter},
+		{Gesture: input.Rune('q'), Command: quit},
+		{Gesture: input.Named(input.KeyEsc), Command: quit},
+		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: quit},
+	} {
+		root.Attach(kb)
+	}
 
 	screen, err := term.Open()
 	if err != nil {
@@ -97,24 +152,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer screen.Restore()
+	screen.EnableMouse()
 
-	keys := make(chan byte, 8)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			if n, err := screen.File().Read(buf); err != nil {
-				return
-			} else if n > 0 {
-				keys <- buf[0]
-			}
-		}
-	}()
+	evs := make(chan input.Event, 32)
+	go term.DecodeEvents(screen, evs)
 
 	gen := time.NewTicker(130 * time.Millisecond)
 	defer gen.Stop()
 	frames, lastPainted := 0, 0
 
-	for {
+	for running {
 		if needsFrame {
 			frames++
 			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   widgets painted last frame=%d",
@@ -126,40 +173,76 @@ func main() {
 		select {
 		case <-gen.C:
 			lines.Set(append(lines.Get(), nextLine()))
-		case k := <-keys:
-			switch k {
-			case 'q', 3:
-				return
-			case ' ':
-				if follow.Get() {
-					frozen.Set(lines.Get()) // snapshot, then switch branch
-					follow.Set(false)
-				} else {
-					follow.Set(true)
-				}
-			case 'f':
-				switch filter.Get() {
-				case "":
-					filter.Set("ERROR")
-				case "ERROR":
-					filter.Set("WARN")
-				default:
-					filter.Set("")
-				}
-			}
+		case ev := <-evs:
+			comp.Handle(ev)
 		}
 	}
 }
 
+// paneTitle decorates the pane's name with ● while it holds focus.
+// Focus is a source property, so this computed makes focus changes
+// ordinary damage.
+func paneTitle(name string, w interface{ IsFocused() bool }) *prop.Property[string] {
+	return prop.NewComputed(func() string {
+		if w.IsFocused() {
+			return "● " + name
+		}
+		return name
+	})
+}
+
 // logPane is a third-party widget: it lives outside the gooey package
 // and only implements the Widget interface. Reading src during Render
-// is what wires it into the dependency graph.
+// is what wires it into the dependency graph. Embedding FocusState
+// makes it a focus stop, which is what lets it own the scroll keys —
+// they are handled here, not by a page-wide binding, and the arrows it
+// consumes never reach the framework's focus navigation.
 type logPane struct {
 	gooey.Base
-	src *prop.Property[[]line]
+	gooey.FocusState
+	src    *prop.Property[[]line]
+	scroll *prop.Property[int]
 }
 
 func (p *logPane) Measure(avail gooey.Size) gooey.Size { return avail }
+
+// scrollBy runs from a key handler, outside any evaluation — so these
+// Gets read values and record no dependencies. The same Get inside
+// Render is a subscription. Call site decides.
+func (p *logPane) scrollBy(d int) {
+	maxOff := max(0, len(p.src.Get())-p.Bounds().H)
+	p.scroll.Set(max(0, min(p.scroll.Get()+d, maxOff)))
+}
+
+func (p *logPane) HandleKey(ev input.KeyEvent) bool {
+	switch ev {
+	case input.Rune('k'), input.Named(input.KeyUp):
+		p.scrollBy(+1)
+	case input.Rune('j'), input.Named(input.KeyDown):
+		p.scrollBy(-1)
+	case input.Named(input.KeyPageUp):
+		p.scrollBy(p.Bounds().H)
+	case input.Named(input.KeyPageDown):
+		p.scrollBy(-p.Bounds().H)
+	case input.Named(input.KeyEnd):
+		p.scroll.Set(0)
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *logPane) HandleMouse(ev input.MouseEvent) bool {
+	switch ev.Kind {
+	case input.WheelUp:
+		p.scrollBy(+3)
+	case input.WheelDown:
+		p.scrollBy(-3)
+	default:
+		return false
+	}
+	return true
+}
 
 func (p *logPane) Render(f *gooey.Frame) {
 	styles := map[string]render.Style{
@@ -170,8 +253,14 @@ func (p *logPane) Render(f *gooey.Frame) {
 	}
 	b := p.Bounds()
 	ls := p.src.Get()
-	if len(ls) > b.H {
-		ls = ls[len(ls)-b.H:] // tail
+	// The window ends `scroll` lines back from the tail. Clamping here
+	// is read-only: writing the property during a paint evaluation would
+	// dirty this node from inside its own evaluation.
+	end := len(ls) - min(p.scroll.Get(), max(0, len(ls)-b.H))
+	if start := max(0, end-b.H); start < end {
+		ls = ls[start:end]
+	} else {
+		ls = nil
 	}
 	for i, l := range ls {
 		s := fmt.Sprintf("%-5s %s", l.level, l.text)

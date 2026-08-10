@@ -29,6 +29,13 @@ reactive JSON serialization through the property graph.
 An fzf-style fuzzy finder as a dependency graph: typing re-scores the
 index live and damage tracking repaints only the affected panes.
 
+![temporaldemo](temporaldemo.gif)
+
+Behavior declared in markup: one button is an HTTP GET, the other is a
+Temporal activity run by a worker in another process — the terminal
+names *what* runs, the app grants the capability, and the result lands
+in a property.
+
 ## Quick start
 
 ```sh
@@ -69,7 +76,7 @@ five steps from a pure-Go tree to multi-control pages.
 | Focus + mouse | done | Framework-owned focus (`FocusState`), spatial arrow navigation (XYFocus), hit-testing, hover, implicit capture, click synthesis, SGR and legacy X10 decoding; focus/hover damage is just property damage |
 | Styles / templates | partial | `Style="name"` is a named lookup only — no cascading, selectors, or overrides; DataTemplates do not exist (lists are hand-rendered widgets) |
 | x:Property (markup-declared properties) | designed | [Spec](docs/specs/2026-08-10-markup-declared-properties.md); not implemented |
-| Remote handlers (xmlns namespaces, Temporal) | designed | [Spec](docs/specs/2026-08-10-remote-handlers-design.md); not implemented |
+| Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
 
 ## Demos
 
@@ -84,6 +91,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `cmd/finder` | [finder.gif](finder.gif) | Input-to-derived-view pipeline with per-pane damage |
 | `cmd/reader` | [reader.gif](reader.gif) | Multi-UserControl composition, scoped input, live fetches |
 | `cmd/statedemo` | [statedemo.gif](statedemo.gif) | No-code-behind markup and reactive serialization |
+| `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
 | `cmd/sysmon` | — | Not yet cataloged |
 
 ## Documentation
@@ -117,4 +125,5 @@ channel.
 - **KeyBindings scope by attachment position, and navigation runs in the unconsumed tail** — a binding fires only while its subtree has focus; arrows are spatial (XYFocus) with a tree-order fallback: [routed dispatch](docs/architecture.md#routed-dispatch)
 - **Both mouse encodings are decoded** — an undecoded legacy X10 report would inject phantom keystrokes, not just drop the event: [one ordered stream](docs/architecture.md#one-ordered-stream)
 - **Bindings are handles, not values** — resolved once at build time, zero lookups at render: [markup](docs/architecture.md#markup)
+- **Registering a handler namespace IS the capability grant** — markup reaches only the URIs its host registered, so an untrusted document is sandboxed by construction, and async results marshal back through a Dispatcher: [markup reference](docs/markup-reference.md#handler-namespaces)
 - **The `fs.FS` seam is the deployment story** — `os.DirFS` in dev hot-reloads, `embed.FS` in release is a natural no-op, same code: [loading tiers](docs/architecture.md#three-loading-tiers-one-seam)

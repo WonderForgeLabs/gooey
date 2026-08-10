@@ -1,0 +1,23 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="gooey props" Style="panel">
+    <VStack Gap="1">
+      <Text Style="accent">lazy dependency-tracked properties</Text>
+      <Text>{{.CountLabel}}</Text>
+      <Text>{{.ModeLabel}}</Text>
+      <Text Bold="true">{{.Detail}}</Text>
+      <Text Style="dim">{{.Stats}}</Text>
+      <Text Style="dim">a/b: bump sources   m: toggle watched   q: quit
+bump the unwatched source: no frame until next tick</Text>
+    </VStack>
+    <!-- Declared on the page root, so they are global. This page has no
+         focus stop, and dispatch starts at the focused widget or, when
+         there is none, at the root — so root is where bindings must hang
+         for a display-only page. -->
+    <KeyBinding Gesture="a"      Command="{{.BumpA}}"/>
+    <KeyBinding Gesture="b"      Command="{{.BumpB}}"/>
+    <KeyBinding Gesture="m"      Command="{{.ToggleMode}}"/>
+    <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+    <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

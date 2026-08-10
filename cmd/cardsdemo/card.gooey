@@ -1,0 +1,9 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="{{.Title}}" Style="panel">
+    <VStack Margin="1,0">
+      <Text Style="big">{{.Value}}</Text>
+      <Text Style="trend">{{.Trend}}</Text>
+      <Badge Text="{{.Caption}}"/>
+    </VStack>
+  </Border>
+</Gooey>
