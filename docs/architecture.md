@@ -25,7 +25,7 @@ builds the same tree from XML, binding attributes to property handles.
 | Package | Holds |
 |---|---|
 | `gooey` (root) | The contracts and the runtime: `Component`, `Container`, `Base`, `Layout` and the measure/arrange sandwich, `Frame`, `Compose`, `Composer`, `Dispatcher`, `App` and its signal/companion machinery, focus and mouse routing, `Command`, `KeyBinding`, `Startable` |
-| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ColorPicker`, `Image`, `Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas` — plus the `Str`/`Sty` literal wrappers |
+| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`, `StatusBar`, `ButtonBar` — plus the `Str`/`Sty`/`Strs` literal wrappers |
 | `prop`, `input`, `render`, `graphics`, `term` | The layers underneath: property graph, decoded event stream, cell buffer and ANSI, pixel protocols, terminal capabilities |
 | `markup` | XML → tree, bindings, `UserControl` and `Include` |
 | `handlers/*`, `mcp` | Opt-in namespaces and the automation surface, each its own module |

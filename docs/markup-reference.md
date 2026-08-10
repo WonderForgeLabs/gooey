@@ -127,12 +127,32 @@ The interactive focus stop: renders as `[ label ]` and runs its command on enter
 | `Content` | The label. Bindable or literal. |
 | `Click` | The command — a binding (`Click="{{.Save}}"`) or a bare handler name (`Click="OnSave"`); see event bindings below. Empty means no command. |
 | `Style` | Named style from `Context.Styles`. |
+| `Chrome` | `"cell"` (default) or `"pixel"`. Anything else is a load error. See [pixel chrome](#pixel-chrome) below. |
 
 ```xml
 <Button Content="serialize → json" Click="{{.Serialize}}"/>
 ```
 
 A command with a `CanExecute` condition (`gooey.NewCommand(save).When(dirty)`) needs nothing extra in markup — the binding resolves it like any delegate. The button then asks the condition **while painting**, so it paints dim and refuses enter, space and clicks while the condition is false, and a flip repaints exactly that one button. See [conditional commands](#conditional-commands).
+
+#### Pixel chrome
+
+`Chrome="pixel"` makes the button a three-row rounded pill instead of a one-row `[ label ]`. Everything else about it is unchanged: same `Click`, same conditional-command rule, same focus, hover and press states, same keys.
+
+```xml
+<Button Content="Deploy" Chrome="pixel" Click="{{.Deploy}}"/>
+```
+
+What draws the pill depends on the terminal, the way `ColorPicker`'s bars do — and, as there, the tiers are not a quality ladder with a "real" version and a degraded one:
+
+- **With a graphics protocol and a known cell size** (kitty, sixel, iTerm2 — so, under `WithCapabilityProbe`, `WithCaps`, or `WithGraphics`), the pill is generated in code at the terminal's exact pixel-per-cell resolution: a rounded rectangle with a vertical gradient, an outline, and a brighter ring while focused. No image files are involved.
+- **Everywhere else** — no protocol, or a probe that never answered and so left the cell size at zero — the same pill is drawn in box-drawing runes.
+
+The **footprint is identical on both**, which is the point: a page does not re-flow because the probe happened to find a protocol.
+
+The label always stays on the cell plane. Pixel placements composite *over* the cells, so an image spanning the button would bury its own text; instead the generated pill is sliced into the four rectangles that are not the label — the top edge, the bottom edge, and the two end caps of the middle row — and the label is painted in the window between the caps over a background matching the pill's interior.
+
+Damage works out of the existing rules and needs nothing new. The placements are recorded from `Render`, so the composition files them under this button's paint node: a hover replaces exactly those four images, a neighbour repainting sends none of them, and a button that turns `Hidden` has its images deleted by id (kitty) or the cells it vacated repainted (sixel, iTerm2, which cannot address a placement).
 
 ### KeyBinding
 
@@ -220,6 +240,133 @@ One caveat worth knowing before you overlap things deliberately: damage tracking
 | `Style` | Overrides the threshold ramp. |
 
 The series is tail-cropped to the arranged width, so a narrower window shows recent history rather than compressing all of it.
+
+### ProgressBar
+
+`components.ProgressBar` — how far along a task is: a 0-100 meter when that is known, a marching band when it is not.
+
+| Attribute | Meaning |
+|---|---|
+| `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
+| `Indeterminate` | Optional binding to a `*prop.Property[bool]`. While true the bar animates a band instead of showing a number. Absent means the bar can never be indeterminate — and then it starts no goroutine at all. |
+| `Label` | Text before the bar. Bindable or literal. |
+| `BarWidth` | Preferred width in cells; absent = 34. |
+| `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Unparseable or non-positive is a load error. |
+| `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. |
+| `Style` | Overrides the coloring entirely when present. |
+
+```xml
+<ProgressBar Value="{{.Pct}}" Indeterminate="{{.Busy}}" Label="build " BarWidth="34"/>
+```
+
+`Thresholds` is off by default, which is the one place this differs from `Gauge`. A gauge shows utilization, where a high number is a warning and the ramp *is* the meaning; progress is the opposite, and painting a 96%-finished job crit-red says the reverse of what happened. Turn it on for the bars where the value really is a fill approaching a limit — a disk, a quota.
+
+The animation follows the [`Timer`](#timer) discipline exactly: the ticker goroutine never touches the graph, it posts a step onto the UI goroutine, and the step reads `Indeterminate` there. So a bar that is currently determinate advances nothing and repaints nothing while its ticker runs. Lifetime belongs to the `Composer`, which starts every animated component it walks and stops them on `Close`.
+
+### Spinner
+
+`components.Spinner` — an activity indicator: one glyph from a cycling set, plus an optional label.
+
+| Attribute | Meaning |
+|---|---|
+| `Frames` | Frame set by name: `braille` (default), `line`, `arc`, `dot`. An unknown name is a load error. |
+| `Interval` | Frame interval, any `time.ParseDuration` string; absent = 100ms. |
+| `Label` | Text after the glyph. Bindable or literal. |
+| `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always spinning. |
+| `Style` | Named style or a bound style. |
+
+```xml
+<Spinner Frames="braille" Interval="90ms" Label="{{.Stage}}" Enabled="{{.Running}}" Style="accent"/>
+```
+
+`Enabled` is read **while painting** as well as at fire time, which is the one place `Spinner` differs from `Timer`: a paused spinner should look paused, so it parks at its first frame, and that read is what makes the flip repaint it. Pausing then costs nothing per tick — the posted step returns without setting anything.
+
+From Go, `Frames` is an ordinary `[]string`, so an app can hand over any cycle it likes; `components.SpinnerBraille`, `SpinnerLine`, `SpinnerArc` and `SpinnerDot` are the built-in sets.
+
+### Toggle
+
+`components.Toggle` — a rocker switch. `Checkbox`'s sibling with switch rendering, bound the same way: `Render` reads the handle and the switch `Set`s it.
+
+| Attribute | Meaning |
+|---|---|
+| `Checked` | **Required binding** to a `*prop.Property[bool]`. |
+| `Label` | Text after the track. Bindable or literal. |
+| `Changed` | Optional command, resolved like `Click`. Runs after the position changes. |
+| `Style` | Named style or a bound style. |
+
+```xml
+<Toggle Checked="{{.Running}}" Label="job running"/>
+```
+
+Space, enter and a click on the label flip it. What makes it a *rocker* rather than a checkbox is the arrows: `←` means off and `→` means on, and an arrow that would not change anything **is not consumed**, so it keeps bubbling and moves focus instead — the same rule the framework applies to unclaimed arrows, one level down. A click on the track picks the side it landed on.
+
+`Changed` may carry a `CanExecute` condition, and then it is also the disable switch: a `Toggle` whose condition says no paints dim and refuses every gesture, exactly like a `Button`. A `Toggle` with no `Changed` at all is inert, not disabled — it toggles freely.
+
+### Segmented
+
+`components.Segmented` — the rocker past two positions: a row of mutually exclusive options with one selected.
+
+| Attribute | Meaning |
+|---|---|
+| `Options` | **Required.** Either a literal pipe-separated list (`Options="Day \| Week \| Month"`, whitespace trimmed) or a binding to a `*prop.Property[[]string]`. |
+| `Selected` | **Required binding** to a `*prop.Property[int]`, clamped into range on read. |
+| `Changed` | Optional command, run after the selection moves. |
+| `Style` | Named style or a bound style. |
+
+```xml
+<Segmented Options="Idle | Fetch | Build | Deploy" Selected="{{.StageIndex}}" Changed="{{.StageChanged}}"/>
+```
+
+`←`/`→` step the selection and, as with `Toggle`, are consumed only while there is somewhere to move — so an arrow at either end leaves the control instead of dead-ending in it. `home`/`end` jump to the ends, space and enter cycle (wrapping), and a click selects the segment under the pointer. The same conditional-`Changed` disable rule applies.
+
+### StatusBar
+
+`components.StatusBar` — the bottom row every demo used to hand-roll as a dim `Text` with the spaces counted by hand: three sections, one against each edge and one in the middle.
+
+Each section takes either form, and giving one section both is a load error:
+
+| Form | Meaning |
+|---|---|
+| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal. |
+| `<StatusBar.Left>` / `.Center` / `.Right` | A property element holding exactly one component — anything at all. |
+
+```xml
+<StatusBar Left="{{.Status}}" Center="{{.Clock}}">
+  <StatusBar.Right>
+    <Text Style="dim">tab: focus   ←/→: move   q: quit</Text>
+  </StatusBar.Right>
+</StatusBar>
+```
+
+The sections being components is the whole promotion: a bar whose right section is a `Spinner` while something loads, or whose centre is a `ProgressBar`, is the same component as one showing three pieces of text. Each section keeps its own paint node, so a clock ticking on the right repaints the right section and leaves the key hints alone.
+
+Layout gives the edges priority — `Left` takes what it asked for, `Right` takes what is left of what it asked for, and `Center` gets the gap between them — so a long status message shortens the middle rather than pushing a key hint off the screen.
+
+It paints nothing of its own, and has no `Background`. A container's bounds enclose its children's cells, so filling the row would wipe sections whose nodes are clean and will not repaint; a bar that should look like a bar gets there by styling its sections. See [container backgrounds](specs/2026-08-10-container-backgrounds.md).
+
+### ButtonBar
+
+`components.ButtonBar` — a toolbar: buttons left to right, optionally all one width, optionally separated by a rule, clipped with an indicator when the bar is narrower than its members.
+
+| Attribute | Meaning |
+|---|---|
+| `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. |
+| `Uniform` | `"true"` gives every member the width of the widest one. |
+| `Separator` | The rune drawn between members; absent draws none. |
+
+```xml
+<ButtonBar Gap="3" Uniform="true" Separator="│">
+  <Button Content="start" Click="{{.Start}}"/>
+  <Button Content="abort" Click="{{.Abort}}"/>
+  <Button Content="reset all" Click="{{.Reset}}"/>
+</ButtonBar>
+```
+
+Two things make it more than an `HStack`. Uniform sizing is a measure-pass decision rather than a styling one — the bar measures every member, takes the widest, and hands that width to all of them.
+
+And the bar is a focus **scope**: `←`/`→` move between its members and wrap at the ends instead of walking out into the rest of the page. It reaches focus through `gooey.FocusHost`, an opt-in interface the `FocusManager` hands itself to while walking; arrows arrive by bubbling, because a `Button` does not consume them, so a member that wants an arrow for itself simply takes it first. `↑`/`↓` are left alone and still leave the bar by the ordinary spatial route, and `tab` walks straight through — a focus scope is not a focus trap.
+
+Members that do not fit are **collapsed**, not clipped, and an indicator (`›`) is drawn in the last column. Collapsing is what keeps the keyboard honest: focus traversal skips a collapsed member, so `tab` never lands on a button nobody can see. Widening the bar brings them back.
 
 ### ColorPicker
 
