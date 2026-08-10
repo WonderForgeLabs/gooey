@@ -64,6 +64,7 @@ type demo struct {
 	group   string // which root it came from
 	rec     string // recording base name, unique across groups
 	ownDir  bool   // run it from its own directory rather than the module root
+	modDir  string // nested-module root to run from, "" for the repo module
 	doc     string // leading comment block of main.go
 	readme  string // README.md, when the directory has one — preferred over doc
 	markup  int    // number of .gooey files
@@ -93,8 +94,20 @@ type demo struct {
 var roots = []struct {
 	path, group, prefix string
 	ownDir              bool
+	// modDir is a nested Go module's root, relative to the repo root.
+	// Entries under it cannot be `go run` from the repo root — the
+	// nested module is excluded from the parent — so the launcher runs
+	// them from modDir with a package path relative to it. That is why
+	// the temporal demos were invisible here: right convention, wrong
+	// module.
+	modDir string
 }{
 	{path: "cmd", group: "demos"},
+	// The temporal demos are demos like any other — they just live in
+	// the nested module, so they carry a modDir. Listing them under the
+	// same group keeps the list smooth; the info pane's command line is
+	// what tells the full story (cd handlers/temporal && go run …).
+	{path: "handlers/temporal/cmd", group: "demos", prefix: "temporal-", modDir: "handlers/temporal"},
 	{path: "docs/learn/examples", group: "learn examples", prefix: "learn-", ownDir: true},
 }
 
@@ -141,7 +154,7 @@ func scan(fsys fs.FS, self string) []demo {
 				continue
 			}
 			d := demo{name: e.Name(), dir: dir, group: r.group,
-				rec: r.prefix + e.Name(), ownDir: r.ownDir}
+				rec: r.prefix + e.Name(), ownDir: r.ownDir, modDir: r.modDir}
 			if src, err := fs.ReadFile(fsys, path.Join(dir, "main.go")); err == nil {
 				d.doc = leadingComment(string(src))
 			}
@@ -178,6 +191,12 @@ func scan(fsys fs.FS, self string) []demo {
 func (d demo) runIn(root string) (dir, pkg string) {
 	if d.ownDir {
 		return filepath.Join(root, filepath.FromSlash(d.dir)), "."
+	}
+	if d.modDir != "" {
+		// Nested module: run from ITS root with the package path
+		// relative to it (handlers/temporal + ./cmd/temporaldemo).
+		return filepath.Join(root, filepath.FromSlash(d.modDir)),
+			"./" + strings.TrimPrefix(d.dir, d.modDir+"/")
 	}
 	return root, "./" + d.dir
 }
@@ -245,7 +264,7 @@ func main() {
 		ds := demos.Get()
 		var learn int
 		for _, d := range ds {
-			if d.group == roots[1].group {
+			if d.group == roots[len(roots)-1].group {
 				learn++
 			}
 		}
@@ -594,8 +613,11 @@ func (w *demoInfo) Render(f *gooey.Frame) {
 		y++
 	}
 	cmdline := "go run ./" + d.dir
-	if d.ownDir {
+	switch {
+	case d.ownDir:
 		cmdline = "cd " + d.dir + " && go run ."
+	case d.modDir != "":
+		cmdline = "cd " + d.modDir + " && go run ./" + strings.TrimPrefix(d.dir, d.modDir+"/")
 	}
 	line(cmdline, accent)
 	// The hint no longer has room for the artifact paths, so they live
