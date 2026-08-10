@@ -86,7 +86,8 @@ not find:
 - **No styling system.** `Style="name"` is a lookup — no cascading,
   selectors, or setters.
 - **No DataTemplates.** Every list is a hand-written rows widget.
-- **No editable text widget.** `cmd/finder` builds one by hand.
+- **`TextBox` is single-line and end-cursor only** — no mid-string
+  cursor movement or selection yet (see `cmd/finder` for real usage).
 - **No `CanExecute`**, so no automatic disabled command state.
 - **Visibility is not bindable** from markup — though you can flip it
   from Go at runtime.

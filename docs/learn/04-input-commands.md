@@ -224,8 +224,10 @@ implicit capture, and click synthesis.
 - No `CanExecute`, so no automatic disabled/greyed command state.
 - No tunneling (preview) phase — dispatch bubbles only.
 - No mouse capture API beyond the implicit press-to-release capture.
-- There is no editable text input widget. `cmd/finder` builds one by
-  hand; there is no built-in `TextBox`.
+- There IS a built-in `TextBox` (single-line: focused rune/backspace
+  editing, a `Prompt`, and a `Changed` command) — `cmd/finder` consumes
+  it as `<TextBox Text="{{.Query}}" Changed="{{.ResetSelection}}"/>`.
+  Mid-string cursor movement is not implemented yet.
 
 ## Next steps
 
