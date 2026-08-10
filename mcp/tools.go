@@ -159,7 +159,9 @@ func (s *Server) screenText(a args) (any, error) {
 	}
 	if a.optBool("styled", false) {
 		var sb strings.Builder
-		if err := c.Flush(&sb); err != nil {
+		// Snapshot, not Flush: Flush sends the difference since the last
+		// frame, and a screenshot wants the screen.
+		if err := c.Snapshot(&sb); err != nil {
 			return nil, err
 		}
 		return sb.String(), nil

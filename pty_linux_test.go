@@ -9,6 +9,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -22,6 +23,7 @@ type testTTY struct {
 
 	mu    sync.Mutex
 	buf   strings.Builder
+	scr   *render.Screen
 	opens int
 }
 
@@ -41,7 +43,7 @@ func newTestTTY(t *testing.T) *testTTY {
 		m.Close()
 		t.Skipf("TIOCGPTN: %v", err)
 	}
-	tt := &testTTY{master: m, name: "/dev/pts/" + itoa(int(n))}
+	tt := &testTTY{master: m, name: "/dev/pts/" + itoa(int(n)), scr: render.NewScreen(40, 10)}
 	tt.setSize(t, 40, 10)
 	// A slave handle held open for the whole test, opened and closed by
 	// nobody. Linux gives the master EIO once the LAST slave fd closes,
@@ -63,6 +65,7 @@ func newTestTTY(t *testing.T) *testTTY {
 			if k > 0 {
 				tt.mu.Lock()
 				tt.buf.Write(b[:k])
+				tt.scr.Write(b[:k])
 				tt.mu.Unlock()
 			}
 			if err != nil {
@@ -96,6 +99,13 @@ func (tt *testTTY) text() string {
 	return tt.buf.String()
 }
 
+// screen is what a terminal fed these bytes would be showing.
+func (tt *testTTY) screen() string {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	return tt.scr.Text()
+}
+
 func (tt *testTTY) reset() {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
@@ -108,14 +118,31 @@ func (tt *testTTY) openCount() int {
 	return tt.opens
 }
 
-// waitFor polls for a substring of what the terminal received. Frames
-// are asynchronous by construction — the loop decides when to paint —
-// so tests wait for the screen to say something rather than for a tick.
+// waitFor polls for text on the modelled SCREEN. Frames are asynchronous
+// by construction — the loop decides when to paint — so tests wait for
+// the screen to say something rather than for a tick.
+//
+// It models the terminal instead of grepping the byte stream because the
+// flush is incremental: changing "n=2" to "n=3" puts a single 3 on the
+// wire, so the phrase a test is looking for exists only once the bytes
+// have been applied to what was there before.
 func (tt *testTTY) waitFor(t *testing.T, want string) bool {
 	t.Helper()
+	return tt.poll(func() bool { return strings.Contains(tt.screen(), want) })
+}
+
+// waitForBytes polls the raw stream. For assertions that ARE about the
+// escape sequences — leaving the alternate screen, disabling mouse
+// reporting — which by definition leave no mark on the screen.
+func (tt *testTTY) waitForBytes(t *testing.T, want string) bool {
+	t.Helper()
+	return tt.poll(func() bool { return strings.Contains(tt.text(), want) })
+}
+
+func (tt *testTTY) poll(ok func() bool) bool {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(tt.text(), want) {
+		if ok() {
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -124,10 +151,10 @@ func (tt *testTTY) waitFor(t *testing.T, want string) bool {
 }
 
 // waitForFrame waits for the app to paint anything at all: the cursor
-// home that starts every flush.
+// home that starts every full flush, and the first flush is always full.
 func (tt *testTTY) waitForFrame(t *testing.T) {
 	t.Helper()
-	if !tt.waitFor(t, "\x1b[H") {
+	if !tt.waitForBytes(t, "\x1b[H") {
 		t.Fatal("the app never painted a frame")
 	}
 }

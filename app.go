@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -110,6 +111,8 @@ type options struct {
 	mouse    bool
 	probe    bool
 	caps     *term.Caps
+	gfx      graphics.Encoder
+	gfxSet   bool
 	quitKeys []input.KeyEvent
 	shutdown func(context.Context) error
 	shutTO   time.Duration
@@ -144,6 +147,20 @@ func WithCapabilityProbe() Option { return func(o *options) { o.probe = true } }
 // WithCaps supplies capabilities outright, skipping both the probe and
 // the environment ladder. For hosts that already know.
 func WithCaps(c term.Caps) Option { return func(o *options) { o.caps = &c } }
+
+// WithGraphics pins the pixel protocol instead of letting capabilities
+// choose it. A nil encoder forces the halfblock fallback, where pixel
+// content draws itself into the cell plane.
+//
+// Without it, an app gets a protocol only when capabilities say so —
+// which means only under WithCapabilityProbe or WithCaps, since the
+// environment ladder can report color depth but never graphics support.
+// That default is deliberate: emitting an image protocol at a terminal
+// that does not speak it puts garbage on the user's screen, and a probe
+// is the only thing that can tell.
+func WithGraphics(enc graphics.Encoder) Option {
+	return func(o *options) { o.gfx, o.gfxSet = enc, true }
+}
 
 // WithQuitKeys replaces the default quit key (ctrl+c) with the given
 // set. Pass none to disable the framework quit key entirely and own the
@@ -227,6 +244,16 @@ func (a *App) Frames() int { return a.frames }
 // PaintedLastFrame is the damage count of the most recent frame: how
 // many components actually repainted, not how many exist.
 func (a *App) PaintedLastFrame() int { return a.painted }
+
+// FlushBytes is what the most recent frame cost on the wire. It is the
+// other half of the damage number: PaintedLastFrame says how little was
+// recomposed, this says how little was sent.
+func (a *App) FlushBytes() int {
+	if a.comp == nil {
+		return 0
+	}
+	return a.comp.FlushBytes()
+}
 
 // Invalidate asks for a frame without any property having changed. Rare
 // — the property graph normally schedules frames by itself — but a
@@ -467,6 +494,9 @@ func (a *App) attach(w Component) {
 	}
 	a.comp = NewComposer(w, a.cols, a.rows)
 	a.comp.SetCaps(a.caps())
+	if a.opt.gfxSet {
+		a.comp.SetGraphics(a.opt.gfx)
+	}
 	a.comp.OnInvalidate(func() { a.needsFrame = true })
 	a.comp.Start(a.disp)
 	a.needsFrame = true
@@ -545,6 +575,15 @@ func (a *App) acquire() error {
 	a.screen = s
 	a.events = s.Events(a.opt.eventBuf)
 	a.resized(cols, rows)
+	// The screen we just took is not the screen we last flushed to. Raw
+	// enters the alternate screen, which comes back BLANK — after a
+	// suspend, after ctrl+z, after a child process had the terminal. The
+	// retained buffer is still right and no component needs to repaint;
+	// what is wrong is the flush's belief about what the terminal shows,
+	// and that is exactly what Invalidate corrects.
+	if a.comp != nil {
+		a.comp.Invalidate()
+	}
 	a.needsFrame = true
 	return nil
 }

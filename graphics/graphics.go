@@ -27,6 +27,35 @@ type Encoder interface {
 	Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error
 }
 
+// IDEncoder is an Encoder whose images have IDENTITY: one transmitted
+// image can later be re-placed, replaced, or removed by referring to it,
+// without the pixels going down the wire again. Only the Kitty protocol
+// has this; sixel and iTerm2 write pixels into the cell grid and then
+// forget them, which is the difference the incremental flush is built
+// around.
+//
+// A host that has one can move an image for the price of a control
+// sequence and delete one outright. A host that does not must repaint the
+// CELLS under a vanished image to erase it, and must re-send an image
+// whose cells were repainted for any other reason.
+//
+// It is a second interface rather than more methods on Encoder so that
+// "can this protocol address a placement?" stays a type assertion — the
+// same no-reflection shape as every other capability question here.
+type IDEncoder interface {
+	Encoder
+	// Transmit sends the image under id and displays it at the cursor.
+	// Re-transmitting a live id replaces its pixels.
+	Transmit(out *[]byte, id int, img image.Image, cols, rows, cellW, cellH int) error
+	// Place displays an already-transmitted image at the cursor again,
+	// sending no pixels. This is what makes a moved image cheap.
+	Place(out *[]byte, id, cols, rows int)
+	// Delete removes id's placements from the screen. With data, the
+	// stored pixels are freed too — right when the image itself is going
+	// away, wrong when it is only moving.
+	Delete(out *[]byte, id int, data bool)
+}
+
 // Placement is a deferred image draw: the component tree records placements
 // during the render pass; the frame flush emits them after the cell
 // plane, so pixel content composites over the already-painted cells.
@@ -34,6 +63,24 @@ type Placement struct {
 	Img        image.Image
 	Col, Row   int // top-left, in cells
 	Cols, Rows int // size, in cells
+}
+
+// SameSpot reports whether two placements occupy the same cells at the
+// same size — everything about a placement except which image it shows.
+func (p Placement) SameSpot(q Placement) bool {
+	return p.Col == q.Col && p.Row == q.Row && p.Cols == q.Cols && p.Rows == q.Rows
+}
+
+// SameImage reports whether two placements show the same image value.
+//
+// Identity is interface equality: images are pointers in every practical
+// case (image.NewRGBA, the stdlib decoders, graphics.Scale), so this is a
+// pointer comparison. A non-comparable image would make == panic, and the
+// recover turns that into "cannot tell" — which costs a retransmission
+// and nothing else, since every caller uses the answer only to skip work.
+func (p Placement) SameImage(q Placement) (same bool) {
+	defer func() { recover() }() //nolint:errcheck // a panic here means "not comparable"
+	return p.Img == q.Img
 }
 
 // Scale returns img resized to w×h pixels, nearest-neighbor.

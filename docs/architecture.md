@@ -70,18 +70,50 @@ the buffer and emits ANSI: a cursor-home, then rows of runes with an SGR
 sequence emitted only when the style changes between cells. This path is
 universal — every terminal that can run a TUI can run it.
 
-An honest POC note, straight from `render/ansi.go`:
+### Damage reaches the wire: `render.Flusher`
 
-```go
-// POC note: full repaint every frame. The retained tree makes damage-rect
-// diffing (compare against previous buffer, emit only changed spans) a
-// drop-in replacement here — deliberately out of scope for the POC.
-```
+`render.Flush` writes every cell, every time. That is right for a
+screenshot and wrong for an interactive app, so the run loop uses
+`render.Flusher` instead: it remembers the buffer the terminal is
+currently showing and emits only the spans where the next buffer differs.
 
-Damage tracking exists today at the *paint* level (the Composer repaints
-only dirty components into the persistent buffer — see below), but the
-*flush* still writes the whole buffer. The two optimizations are
-independent, and the second is a local change to `Flush`.
+Per row it finds runs of changed cells, extends a run across gaps of up
+to four unchanged cells (jumping the cursor costs six to nine bytes;
+crossing a cell costs one), emits a cursor-position escape and the run,
+and carries SGR state across the whole flush — style survives a cursor
+move, so a diff that jumps around the screen pays for a style change only
+when the style actually changes. A frame where nothing changed emits
+**nothing at all**, not even the synchronized-output bracket.
+
+The diff is *cell-level truth*, not a replay of the paint-node damage.
+Components overpaint each other, containers deliberately do not clear
+their bounds, and a leaf's pre-clear touches cells no damage counter
+knows about — comparing buffers catches all of it. Correctness therefore
+never depends on the damage count; the count only has to be right for the
+byte total to be small.
+
+Three things force a full frame, because in each the terminal is showing
+something the Flusher did not put there: the first frame, a resize (the
+previous buffer describes a screen that no longer exists), and an
+explicit `Invalidate` — which `App` calls after re-acquiring the terminal,
+since the alternate screen comes back blank.
+
+What it buys, on an 80×24 screen (`Composer.FlushBytes`):
+
+| frame | components repainted | bytes written | full repaint would be |
+|---|---|---|---|
+| first | 19 | 2784 | 2784 |
+| idle | 0 | **0** | 2784 |
+| a gauge ticks | 1 | 49 | 2784 |
+| a keystroke in a text box | 1 | 34 | 2784 |
+| focus moves | 2 | 53 | 2792 |
+
+Because the wire now holds *differences*, it no longer holds the screen:
+changing `n=2` to `n=3` puts a single `3` on it. Anything that used to
+grep the byte stream for what the app is showing has to reconstruct the
+screen first, which is what `render.Screen` is for — a terminal model you
+can hand to `Flush` or feed from a pty, and the audit that replaying the
+emitted bytes reproduces the buffer.
 
 ### The pixel plane
 
@@ -108,7 +140,10 @@ type Encoder interface {
 - `graphics.ITerm2` — OSC 1337 inline images (iTerm2, WezTerm, mintty).
 
 Each encoder is roughly fifty lines; adding a future protocol means
-adding one more.
+adding one more. Kitty additionally implements `graphics.IDEncoder`,
+which is how the incremental flush asks "can this protocol address a
+placement after the fact?" — a type assertion, like every other
+capability question here.
 
 The fourth mode, halfblock, is deliberately *not* an `Encoder`. It is
 the universal fallback that degrades pixel content back into the cell
@@ -122,36 +157,62 @@ becomes cells. This asymmetry is why `Frame.Graphics == nil` means
 ### How the planes meet: the Frame
 
 The component tree never knows which protocol is active. `gooey.Frame`
-holds both planes:
+holds both planes, and a component records pixel content the same way it
+writes runes — during `Render`:
 
 ```go
-type Frame struct {
-    Cells        *render.Buffer
-    Graphics     graphics.Encoder
-    Placements   []graphics.Placement
-    CellW, CellH int
-}
-```
-
-During the render walk, `Image.Render` does one of two things:
-
-```go
-func (im *Image) Render(f *Frame) {
-    r := im.bounds
+func (im *Image) Render(f *gooey.Frame) {
+    r := im.Bounds()
     if f.Graphics != nil {
-        f.Placements = append(f.Placements, graphics.Placement{
-            Img: im.Src, Col: r.X, Row: r.Y, Cols: r.W, Rows: r.H,
-        })
+        f.Place(graphics.Placement{Img: src, Col: r.X, Row: r.Y, Cols: r.W, Rows: r.H})
         return
     }
-    graphics.DrawHalfblock(f.Cells, im.Src, r.X, r.Y, r.W, r.H)
+    graphics.DrawHalfblock(f.Cells, src, r.X, r.Y, r.W, r.H)
 }
 ```
 
-A `Placement` is a deferred draw — image, cell position, cell size.
-`Frame.Flush` emits the cell plane first, then positions the cursor at
-each placement and runs it through the active encoder, so pixel content
-composites over the already-painted cells.
+`Place` is a method rather than an appendable field because a placement
+has an **owner**. Under the Composer only dirty components re-render, so
+a list rebuilt from scratch each frame would lose the images of every
+component that did not repaint. The Composer installs a sink around each
+paint node, so each placement is filed under the component that recorded
+it — and the pixel plane gets the same per-component damage rule as the
+cell plane.
+
+### Damage on the pixel plane
+
+Cells have it easy: the buffer is retained, so the flush compares what is
+against what was. Placements have no such buffer, so the Composer *is*
+the retained store for them, keyed by paint node. Everything else is a
+diff between two lists per node:
+
+| what changed | the frame does |
+|---|---|
+| same image, same rectangle | nothing goes on the wire |
+| same image, new rectangle | a **move** |
+| different image, or a new slot | a **transmission** |
+| the slot is gone — turned `Hidden`, painted fewer images, or left the tree in a `Dynamic` re-sync | a **removal** |
+
+Removal is where the protocols stop agreeing, and the split is the
+`graphics.IDEncoder` interface:
+
+- **Kitty** has placement identity. An image transmitted with `i=ID`
+  stays in the terminal's store, so a move costs one control sequence
+  (`a=d,d=i` then `a=p`) instead of a PNG, and a removal is `a=d,d=I`.
+  The two delete forms are a case distinction, not a spelling: lowercase
+  `d=i` drops the placements and keeps the pixels (right for a move),
+  uppercase `d=I` frees the data too (right for something that vanished,
+  or the terminal accumulates every picture the session ever showed).
+- **Sixel and iTerm2** write pixels into the cell grid and then forget
+  them. There is no delete, so a vanished image is erased by repainting
+  the cells it covered — `render.Flusher.Damage` forces exactly those
+  cells back onto the wire from the retained buffer, which has held the
+  correct content all along. The rule runs the other way too: any cell
+  the flush re-sends erases part of an image sitting on it, so a
+  surviving placement intersecting the flush's touched spans is re-sent.
+
+A full frame re-sends every placement for every protocol: after a resize
+or a terminal hand-off, nothing on screen survived, images included.
 
 ### Capability detection is a handshake, not config
 
@@ -299,9 +360,8 @@ Every visual property on the built-in components is a `*prop.Property[T]`:
 `Button.Content`. There is no second kind of property for literals —
 `components.Str("hello")` and `components.Sty(style)` wrap literals as source
 properties, so a component field is the same thing whether it came from a
-literal, a viewmodel source, or a markup binding. (The one confessed
-exception: `Image.Src` and `Image.Cols/Rows` are plain fields — the
-pixel pipeline predates the property model.)
+literal, a viewmodel source, or a markup binding — `Image.Src` and
+`Image.Cols/Rows` included, since the pixel plane became damage-tracked.
 
 ### The measure-arrange sandwich
 

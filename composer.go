@@ -3,6 +3,7 @@ package gooey
 import (
 	"io"
 
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -25,7 +26,12 @@ import (
 // replaced (hot reload). A container that changes its own child set
 // implements Dynamic (dynamic.go) and the composition re-syncs its paint
 // nodes and input tree in place, keeping the nodes of everything that
-// stayed. POC limit: cell-plane components only (no graphics placements).
+// stayed.
+//
+// Both planes are damage-tracked. Cells go out through a render.Flusher,
+// which sends only the spans where this frame's buffer differs from the
+// one the terminal is showing; pixel placements are stored per paint node
+// and diffed the same way (placements.go).
 type Composer struct {
 	root       Component
 	frame      *Frame
@@ -35,6 +41,14 @@ type Composer struct {
 	focus      *FocusManager
 	invalid    func()
 	painted    int
+
+	// The wire. flusher owns the previous cell buffer; the placement
+	// fields own what the terminal is showing on the pixel plane.
+	flusher        *render.Flusher
+	gonePlacements []shownPlacement // owed removals, from nodes that left the tree
+	nextPlaceID    int
+	lastBytes      int
+	gfxForced      bool
 
 	// Structural change (see dynamic.go): a Dynamic container raises this
 	// flag through the hook it was given, and Frame re-syncs after layout
@@ -53,6 +67,11 @@ type paintNode struct {
 	rev    *prop.Property[int] // bumped when bounds change → forces repaint
 	bounds Rect
 	vis    Visibility
+
+	// The pixel plane, per node: what this component recorded the last
+	// time it painted, and what the terminal is currently showing for it.
+	places []graphics.Placement
+	shown  []shownPlacement
 }
 
 // Bounded is implemented by components that expose their arranged bounds
@@ -62,16 +81,18 @@ type Bounded interface{ Bounds() Rect }
 
 func NewComposer(root Component, cols, rows int) *Composer {
 	c := &Composer{root: root, cols: cols, rows: rows,
-		frame: &Frame{Cells: render.NewBuffer(cols, rows)},
-		stops: map[Startable]func(){}}
+		frame:   &Frame{Cells: render.NewBuffer(cols, rows)},
+		flusher: render.NewFlusher(),
+		stops:   map[Startable]func(){}}
 	c.walkNodes()
 	c.focus = NewFocusManager(root)
 	return c
 }
 
 // SetCaps hands the composition the terminal's capabilities, which land
-// on the Frame for components to read at Render and set the color depth
-// Flush encodes at. It is a setter rather than a constructor parameter
+// on the Frame for components to read at Render, set the color depth
+// Flush encodes at, and select the graphics protocol pixel content is
+// emitted with. It is a setter rather than a constructor parameter
 // because capabilities arrive from a probe that not every host runs —
 // a composition without them keeps the truecolor, no-graphics defaults.
 //
@@ -81,10 +102,26 @@ func NewComposer(root Component, cols, rows int) *Composer {
 func (c *Composer) SetCaps(caps term.Caps) {
 	c.frame.Caps = caps
 	c.frame.CellW, c.frame.CellH = caps.CellW, caps.CellH
+	if !c.gfxForced {
+		c.frame.Graphics = EncoderFor(caps)
+	}
+}
+
+// SetGraphics pins the pixel protocol, overriding what SetCaps would pick
+// from capabilities — a nil encoder forces the halfblock fallback, where
+// pixel content degrades into cells. For a host that knows better than
+// the probe, and for the demos that show the protocols side by side.
+func (c *Composer) SetGraphics(enc graphics.Encoder) {
+	c.frame.Graphics = enc
+	c.gfxForced = true
 }
 
 // Caps reports the capabilities this composition was given.
 func (c *Composer) Caps() term.Caps { return c.frame.Caps }
+
+// Graphics is the pixel protocol this composition emits with, or nil when
+// pixel content degrades into cells.
+func (c *Composer) Graphics() graphics.Encoder { return c.frame.Graphics }
 
 // Focus is the input tree built from this composition: focus order,
 // ancestor links, and declared key bindings.
@@ -143,6 +180,10 @@ func (c *Composer) walkNodes() {
 	for w, n := range prev {
 		if _, kept := c.nodeOf[w]; !kept {
 			clearRect(c.frame.Cells, n.bounds)
+			// Its cells will be overwritten by the clear above, but its
+			// pixel placements are on a plane no clear reaches: the flush
+			// has to be told to take them off the screen.
+			c.gonePlacements = append(c.gonePlacements, n.shown...)
 		}
 	}
 	if c.disp == nil {
@@ -187,9 +228,18 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode) {
 				clearRect(c.frame.Cells, b.Bounds())
 			}
 		}
+		// A repaint re-records this node's pixel placements from nothing,
+		// which is what makes "painted no images this time" mean the
+		// images are gone. The sink is saved and restored rather than
+		// cleared: a Render that evaluates another node would otherwise
+		// hand its placements to the wrong owner.
+		outer := c.frame.sink
+		n.places = n.places[:0]
+		c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
 		if paintable(w) {
 			w.Render(c.frame)
 		}
+		c.frame.sink = outer
 		c.painted++
 		return c.painted
 	})
@@ -331,6 +381,14 @@ func (c *Composer) Frame() (*Frame, int) {
 	for _, n := range c.nodes {
 		n.node.Get() // only dirty nodes execute
 	}
+	// Republish the pixel plane in paint order, so the Frame handed back
+	// describes the whole composition and not just what repainted. The
+	// incremental emission works off the per-node lists; this is for
+	// anyone holding the Frame — Frame.Flush, a test, a screenshot.
+	c.frame.placements = c.frame.placements[:0]
+	for _, n := range c.nodes {
+		c.frame.placements = append(c.frame.placements, n.places...)
+	}
 	return c.frame, c.painted
 }
 
@@ -361,9 +419,59 @@ func (c *Composer) Resize(cols, rows int) {
 	}
 }
 
-// Flush writes the current buffer to w, encoding color at the depth
-// from SetCaps.
+// Flush sends this frame to w: the cell spans that changed since the last
+// flush, then the pixel placements that changed, all inside one
+// synchronized-output bracket so the terminal presents cells and the
+// images over them as a single update.
+//
+// A frame where nothing changed on either plane writes NOTHING — not even
+// the bracket. That is the point of the whole path: an idle app costs
+// zero bytes, and a keystroke costs a row.
+//
+// Color is encoded at the depth from SetCaps.
 func (c *Composer) Flush(w io.Writer) error {
+	ops, kept := c.placementOps() // before the cell flush: removals damage cells
+	cells := c.flusher.Encode(nil, c.frame.Cells, c.frame.Caps.Color)
+	pix, err := c.encodePlacements(c.refresh(ops, kept))
+
+	c.lastBytes = 0
+	if len(cells) == 0 && len(pix) == 0 {
+		return err
+	}
+	out := make([]byte, 0, len(render.BeginSync)+len(cells)+len(pix)+len(render.EndSync))
+	out = append(out, render.BeginSync...)
+	out = append(out, cells...)
+	out = append(out, pix...)
+	out = append(out, render.EndSync...)
+	c.lastBytes = len(out)
+	if _, werr := w.Write(out); werr != nil {
+		return werr
+	}
+	return err
+}
+
+// FlushBytes is how many bytes the last Flush wrote. It is the damage
+// guarantee made countable on the wire, the way PaintedLastFrame makes it
+// countable in components, and the number the byte-budget tests assert.
+func (c *Composer) FlushBytes() int { return c.lastBytes }
+
+// Invalidate forces the next Flush to repaint the whole screen and
+// re-emit every placement.
+//
+// Call it whenever something other than this Composer may have written to
+// the terminal: the alternate screen comes back blank after a child
+// process has had it, so the retained buffer is right and the screen is
+// wrong, and only the flush needs redoing — no component repaints.
+func (c *Composer) Invalidate() { c.flusher.Invalidate() }
+
+// Snapshot writes the ENTIRE retained buffer to w — every cell, in one
+// synchronized update — without touching the incremental flush state.
+//
+// Flush sends differences, which is right for a terminal and useless for
+// anyone asking "what does the screen look like": an automation client
+// taking a styled screenshot wants the picture, not the delta since the
+// last one. Pixel placements are not included; they are not cells.
+func (c *Composer) Snapshot(w io.Writer) error {
 	return render.Flush(w, c.frame.Cells, c.frame.Caps.Color)
 }
 

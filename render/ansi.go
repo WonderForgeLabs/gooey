@@ -25,14 +25,15 @@ const (
 	EndSync   = "\x1b[?2026l"
 )
 
-// Flush writes the whole buffer to w as ANSI escape sequences, encoding
+// Flush writes the WHOLE buffer to w as ANSI escape sequences, encoding
 // color at the given depth — the buffer itself is always 24-bit, so
 // downsampling happens here and nowhere else. The write is bracketed in
 // synchronized output, so the frame lands atomically.
 //
-// POC note: full repaint every frame. The retained tree makes damage-rect
-// diffing (compare against previous buffer, emit only changed spans) a
-// drop-in replacement here — deliberately out of scope for the POC.
+// This is the one-shot path: every cell, every time, no memory of what
+// the terminal was showing. It is what a screenshot wants and what
+// gooey.Compose does. An interactive host wants Flusher instead, which
+// remembers the previous buffer and sends only the difference.
 func Flush(w io.Writer, b *Buffer, depth ColorDepth) error {
 	return FlushCells(w, b, depth, true)
 }
@@ -42,32 +43,23 @@ func Flush(w io.Writer, b *Buffer, depth ColorDepth) error {
 // frame — graphics placements after the cells, in Frame.Flush — brackets
 // the whole sequence itself rather than nesting a second one here.
 func FlushCells(w io.Writer, b *Buffer, depth ColorDepth, sync bool) error {
-	var sb strings.Builder
+	var out []byte
 	if sync {
-		sb.WriteString(BeginSync)
+		out = append(out, BeginSync...)
 	}
-	sb.WriteString("\x1b[H") // home
-	var cur Style
-	styleSet := false
+	out = append(out, "\x1b[H"...) // home
+	var e emitter
 	for y := 0; y < b.H; y++ {
 		if y > 0 {
-			sb.WriteString("\r\n")
+			out = append(out, "\r\n"...)
 		}
-		for x := 0; x < b.W; x++ {
-			c := b.Cells[y*b.W+x]
-			if !styleSet || c.Style != cur {
-				sb.WriteString(sgr(c.Style, depth))
-				cur = c.Style
-				styleSet = true
-			}
-			sb.WriteRune(c.Rune)
-		}
+		out = e.run(out, b, 0, b.W, y, depth)
 	}
-	sb.WriteString("\x1b[0m")
+	out = append(out, "\x1b[0m"...)
 	if sync {
-		sb.WriteString(EndSync)
+		out = append(out, EndSync...)
 	}
-	_, err := io.WriteString(w, sb.String())
+	_, err := w.Write(out)
 	return err
 }
 

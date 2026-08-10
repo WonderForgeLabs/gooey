@@ -91,7 +91,7 @@ func TestCtrlCQuitsAndRestoresTheTerminal(t *testing.T) {
 	// are written, but the test's pty reader is a goroutine and may not
 	// have picked them up yet.
 	for _, want := range []string{"\x1b[?1049l", "\x1b[?25h", "\x1b[?1006l"} {
-		if !tty.waitFor(t, want) {
+		if !tty.waitForBytes(t, want) {
 			t.Errorf("teardown never emitted %q", want)
 		}
 	}
@@ -243,10 +243,10 @@ func TestPanicRestoresTheTerminalBeforeRepanicking(t *testing.T) {
 	if !releasedBeforePanic {
 		t.Error("the terminal was still held when the panic propagated")
 	}
-	if !tty.waitFor(t, "\x1b[?1049l") {
+	if !tty.waitForBytes(t, "\x1b[?1049l") {
 		t.Error("the panicking app never left the alternate screen")
 	}
-	if !tty.waitFor(t, "\x1b[?1006l") {
+	if !tty.waitForBytes(t, "\x1b[?1006l") {
 		t.Error("the panicking app left mouse tracking on")
 	}
 }
