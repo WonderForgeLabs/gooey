@@ -273,6 +273,176 @@ func TestMenuClosedBarArrowsMoveTheHighlight(t *testing.T) {
 	}
 }
 
+// splitMnemonic: the underscore marker names the accelerator, "__" is a
+// literal underscore, and an unmarked string defaults to its first
+// letter.
+func TestMenuMnemonicParsing(t *testing.T) {
+	for _, tc := range []struct {
+		in, text string
+		accel    rune
+		pos      int
+	}{
+		{"_File", "File", 'f', 0},
+		{"E_xit", "Exit", 'x', 1},
+		{"Save", "Save", 's', 0},
+		{"_a_b", "a_b", 'a', 0}, // first marker wins, later underscores are literal
+		{"__x", "_x", 'x', 1},   // escaped underscore, implicit accel skips it
+		{"...", "...", 0, -1},   // nothing to accelerate with
+		{"", "", 0, -1},
+	} {
+		text, accel, pos := splitMnemonic(tc.in)
+		if text != tc.text || accel != tc.accel || pos != tc.pos {
+			t.Errorf("splitMnemonic(%q) = (%q, %q, %d), want (%q, %q, %d)",
+				tc.in, text, string(accel), pos, tc.text, string(tc.accel), tc.pos)
+		}
+	}
+}
+
+// alt+letter opens the matching menu from ANYWHERE on the page: the
+// button holds focus, the bar is a sibling, and the accelerator still
+// lands — the gooey.MnemonicHandler phase, not the focused chain.
+// Dismissing restores focus to what had it when the accelerator fired.
+func TestMenuAltMnemonicOpensFromAnywhere(t *testing.T) {
+	bar, btn, page := menuPage(new(int), nil)
+	c := gooey.NewComposer(page, 40, 8)
+	c.Focus().SetFocus(btn)
+	c.Frame()
+
+	if !c.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'f', Mods: input.ModAlt}) {
+		t.Fatal("alt+f was not consumed")
+	}
+	if !bar.IsOpen() || bar.curIdx() != 0 {
+		t.Fatalf("alt+f: open=%v cur=%d, want the File menu open", bar.IsOpen(), bar.curIdx())
+	}
+	if c.Focus().Focused() != gooey.Component(bar) {
+		t.Fatal("the accelerator-opened menu does not hold focus")
+	}
+	// The usual pins, plus the component that lost focus: 3 repaints.
+	if _, painted := c.Frame(); painted != 3 {
+		t.Fatalf("alt-open painted %d components, want 3 (focus loser + bar + dropdown)", painted)
+	}
+
+	c.HandleKey(input.Named(input.KeyEsc))
+	c.Frame()
+	if got := c.Focus().Focused(); got != gooey.Component(btn) {
+		t.Fatalf("focus after dismiss is %T, want the button that had it when alt+f fired", got)
+	}
+}
+
+// While open, a plain letter activates the item wearing it as its
+// accelerator, and alt+letter switches menus.
+func TestMenuOpenLettersJumpAndActivate(t *testing.T) {
+	saved := 0
+	bar, _, page := menuPage(&saved, nil)
+	c := gooey.NewComposer(page, 40, 8)
+	c.Focus().SetFocus(bar)
+	c.Frame()
+	c.HandleKey(input.Named(input.KeyEnter)) // open File
+	c.Frame()
+
+	if !c.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'e', Mods: input.ModAlt}) {
+		t.Fatal("alt+e on the open menu was not consumed")
+	}
+	if bar.curIdx() != 1 || !bar.IsOpen() {
+		t.Fatalf("alt+e: cur=%d open=%v, want the Edit menu open", bar.curIdx(), bar.IsOpen())
+	}
+	c.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'f', Mods: input.ModAlt}) // back to File
+	c.Frame()
+
+	if !c.HandleKey(input.Rune('s')) {
+		t.Fatal("the item letter was not consumed")
+	}
+	if saved != 1 {
+		t.Fatalf("Save ran %d times, want 1", saved)
+	}
+	if bar.IsOpen() {
+		t.Fatal("letter activation did not close the menu")
+	}
+}
+
+// A letter that matches a DISABLED item moves the highlight and
+// refuses, exactly like enter on it; a letter matching nothing is
+// swallowed — the menu is modal either way.
+func TestMenuOpenLetterOnDisabledItemRefuses(t *testing.T) {
+	saved := 0
+	can := prop.NewSource(false)
+	bar, _, page := menuPage(&saved, can)
+	c := gooey.NewComposer(page, 40, 8)
+	c.Focus().SetFocus(bar)
+	c.Frame()
+	c.HandleKey(input.Named(input.KeyEnter))
+	c.Frame()
+
+	if !c.HandleKey(input.Rune('s')) || saved != 0 || !bar.IsOpen() {
+		t.Fatalf("disabled item letter: saved=%d open=%v, want refused and still open", saved, bar.IsOpen())
+	}
+	if !c.HandleKey(input.Rune('z')) {
+		t.Fatal("an unmatched letter leaked out of the modal menu")
+	}
+}
+
+// A KeyBinding on the same alt gesture beats the mnemonic: bindings run
+// in the bubble phase, accelerators only on what the whole chain
+// declined.
+func TestMenuMnemonicLosesToKeyBinding(t *testing.T) {
+	fired := 0
+	bar, btn, page := menuPage(new(int), nil)
+	page.(*Canvas).Attach(&gooey.KeyBinding{
+		Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'f', Mods: input.ModAlt},
+		Command: gooey.Command(func() { fired++ }),
+	})
+	c := gooey.NewComposer(page, 40, 8)
+	c.Focus().SetFocus(btn)
+	c.Frame()
+
+	if !c.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'f', Mods: input.ModAlt}) {
+		t.Fatal("alt+f was not consumed")
+	}
+	if fired != 1 {
+		t.Fatalf("the root KeyBinding fired %d times, want 1", fired)
+	}
+	if bar.IsOpen() {
+		t.Fatal("the mnemonic opened the menu past a KeyBinding on the same gesture")
+	}
+}
+
+// Accelerator letters render underlined — always, marked or implicit —
+// on the bar and in the open dropdown. Static chrome: no extra damage.
+func TestMenuMnemonicUnderlines(t *testing.T) {
+	bar := &MenuBar{Menus: []Menu{
+		{Title: "_File", Items: []MenuItem{{Text: "_Save", Action: gooey.Command(func() {})}}},
+		{Title: "E_xit", Items: []MenuItem{{Text: "x"}}},
+	}}
+	page := &Canvas{Children: []gooey.Component{bar}}
+	c := gooey.NewComposer(page, 40, 8)
+	c.Frame()
+
+	// " File  Exit " — F at x=1, x at x=8 (second span starts at 6).
+	if got := row(c.Cells(), 0); !strings.HasPrefix(got, " File  Exit") {
+		t.Fatalf("bar row = %q — the markers leaked into the display text", got)
+	}
+	if !c.Cells().At(1, 0).Style.Underline {
+		t.Fatal("the File accelerator is not underlined")
+	}
+	if c.Cells().At(2, 0).Style.Underline {
+		t.Fatal("a non-accelerator cell is underlined")
+	}
+	if !c.Cells().At(8, 0).Style.Underline {
+		t.Fatal("the marked Exit accelerator is not underlined")
+	}
+
+	c.Focus().SetFocus(bar)
+	c.Frame()
+	c.HandleKey(input.Named(input.KeyEnter))
+	c.Frame()
+	if got := row(c.Cells(), 2); !strings.Contains(got, "Save") {
+		t.Fatalf("dropdown row = %q, want the Save item", got)
+	}
+	if !c.Cells().At(2, 2).Style.Underline {
+		t.Fatal("the item accelerator in the open dropdown is not underlined")
+	}
+}
+
 // The pin for the composer half of this wave, from the Canvas side: a
 // later sibling (the overlay) turning Hidden must repaint what it was
 // covering — the inverse of TestCanvasOverlapRepaintRepaintsTheOccluderAbove.

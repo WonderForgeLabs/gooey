@@ -1,6 +1,8 @@
 package components
 
 import (
+	"unicode"
+
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -14,6 +16,14 @@ import (
 // syntax ("ctrl+s"); showing it does not bind the key — declare a
 // KeyBinding for that, the way the rest of the framework already
 // spells it.
+//
+// Text may carry a MNEMONIC marker: an underscore before a letter
+// ("E_xit") names the item's accelerator, XAML's AccessText convention —
+// underscore rather than ampersand because these strings live in XML
+// attributes, where "&" is an entity and "_" is just a character.
+// Without a marker the first letter is the implicit accelerator. "__"
+// renders a literal underscore; only the first marker counts. While the
+// menu is open, typing an item's accelerator activates it.
 type MenuItem struct {
 	Text      string
 	Gesture   string
@@ -21,10 +31,50 @@ type MenuItem struct {
 	Separator bool
 }
 
-// Menu is one titled dropdown on a MenuBar.
+// Menu is one titled dropdown on a MenuBar. Title takes the same
+// mnemonic marker as MenuItem.Text ("_File"): alt+letter opens this
+// menu from anywhere on the page, marker or first letter.
 type Menu struct {
 	Title string
 	Items []MenuItem
+}
+
+// splitMnemonic parses the accelerator out of a title or item text:
+// "_File" → ("File", 'f', 0), "E_xit" → ("Exit", 'x', 1), "__" is a
+// literal underscore, and only the first marker counts. Without a
+// marker the first letter or digit is the implicit accelerator. pos is
+// the rune index of the accelerator in the returned display text, -1
+// when the string has no letter to accelerate with.
+func splitMnemonic(s string) (text string, accel rune, pos int) {
+	in := []rune(s)
+	out := make([]rune, 0, len(in))
+	pos = -1
+	for i := 0; i < len(in); i++ {
+		if in[i] == '_' && i+1 < len(in) {
+			if in[i+1] == '_' {
+				out = append(out, '_')
+				i++
+				continue
+			}
+			if pos < 0 {
+				pos = len(out)
+				accel = unicode.ToLower(in[i+1])
+				out = append(out, in[i+1])
+				i++
+				continue
+			}
+		}
+		out = append(out, in[i])
+	}
+	if pos < 0 {
+		for i, r := range out {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				accel, pos = unicode.ToLower(r), i
+				break
+			}
+		}
+	}
+	return string(out), accel, pos
 }
 
 // MenuBar is the top menu row: titles across one line, and a dropdown
@@ -51,9 +101,17 @@ type Menu struct {
 // outside the bar's bounds, where hit-testing cannot see it.
 //
 // KEYS while open are modal: arrows navigate, enter activates, esc
-// dismisses and restores focus, tab dismisses and moves on, and
-// everything else is swallowed so page gestures cannot fire under an
-// open menu.
+// dismisses and restores focus, tab dismisses and moves on, a plain
+// letter activates the item wearing it as its accelerator, alt+letter
+// switches menus, and everything else is swallowed so page gestures
+// cannot fire under an open menu.
+//
+// MNEMONICS: every title and item has an accelerator — marked with an
+// underscore in the string ("_File", "E_xit") or defaulting to the
+// first letter — rendered underlined, always. While the bar is closed,
+// alt+letter opens the matching menu from anywhere on the page (the
+// gooey.MnemonicHandler seam; any KeyBinding on the same gesture
+// outranks it, per dispatch order).
 type MenuBar struct {
 	gooey.Base
 	gooey.FocusState
@@ -122,12 +180,16 @@ func (m *MenuBar) curIdx() int {
 
 // titleSpan is the cell range of title i on the bar row: each title is
 // " Title " and they sit flush against each other from the left edge.
+// Widths are of the DISPLAY text — the mnemonic marker is syntax, not
+// cells.
 func (m *MenuBar) titleSpan(i int) (x, w int) {
 	x = m.Bounds().X
 	for j := 0; j < i; j++ {
-		x += len([]rune(m.Menus[j].Title)) + 2
+		t, _, _ := splitMnemonic(m.Menus[j].Title)
+		x += len([]rune(t)) + 2
 	}
-	return x, len([]rune(m.Menus[i].Title)) + 2
+	t, _, _ := splitMnemonic(m.Menus[i].Title)
+	return x, len([]rune(t)) + 2
 }
 
 func (m *MenuBar) titleAt(x, y int) (int, bool) {
@@ -155,7 +217,8 @@ func (m *MenuBar) popupRect() gooey.Rect {
 	tx, _ := m.titleSpan(i)
 	w := 4 // border + padding
 	for _, it := range menu.Items {
-		iw := len([]rune(it.Text)) + 4
+		text, _, _ := splitMnemonic(it.Text)
+		iw := len([]rune(text)) + 4
 		if it.Gesture != "" {
 			iw += len([]rune(it.Gesture)) + 2
 		}
@@ -214,8 +277,18 @@ func (m *MenuBar) Render(f *gooey.Frame) {
 				ts.Bold = true
 			}
 		}
-		f.Cells.SetString(x, b.Y, clipRunes(" "+menu.Title+" ", b.X+b.W-x), ts)
-		x += len([]rune(menu.Title)) + 2
+		text, _, pos := splitMnemonic(menu.Title)
+		f.Cells.SetString(x, b.Y, clipRunes(" "+text+" ", b.X+b.W-x), ts)
+		// The accelerator letter is ALWAYS underlined — a terminal cannot
+		// see a held ALT (no key-up events), so "show while ALT is down"
+		// is not implementable, and always-on is the honest convention.
+		// Static per title: no property, no extra damage.
+		if ax := x + 1 + pos; pos >= 0 && ax < b.X+b.W {
+			as := ts
+			as.Underline = true
+			f.Cells.Set(ax, b.Y, []rune(text)[pos], as)
+		}
+		x += len([]rune(text)) + 2
 		if x >= b.X+b.W {
 			break
 		}
@@ -311,6 +384,66 @@ func (m *MenuBar) activate(i int) {
 	}
 }
 
+// titleWithAccel finds the menu whose accelerator is r. First match
+// wins — two titles sharing a letter is an authoring mistake the
+// framework resolves deterministically rather than reports.
+func (m *MenuBar) titleWithAccel(r rune) (int, bool) {
+	r = unicode.ToLower(r)
+	for i := range m.Menus {
+		if _, a, pos := splitMnemonic(m.Menus[i].Title); pos >= 0 && a == r {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// itemWithAccel finds the open menu's item whose accelerator is r.
+func (m *MenuBar) itemWithAccel(r rune) (int, bool) {
+	r = unicode.ToLower(r)
+	for i, it := range m.Menus[m.curIdx()].Items {
+		if it.Separator {
+			continue
+		}
+		if _, a, pos := splitMnemonic(it.Text); pos >= 0 && a == r {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// HandleMnemonic is the bar's page-scoped accelerator (see
+// gooey.MnemonicHandler): alt+letter opens the matching menu from
+// anywhere on the page, no matter what holds focus. The dispatcher only
+// offers keys the focused chain declined, so any KeyBinding on the same
+// alt gesture wins.
+//
+// Focus has NOT moved when an accelerator fires — unlike a mouse open,
+// where focus-follows-click has already run — so the component to
+// restore on dismiss is simply whatever is focused right now.
+func (m *MenuBar) HandleMnemonic(ev input.KeyEvent) bool {
+	if ev.Key != input.KeyRune || ev.Mods != input.ModAlt || len(m.Menus) == 0 {
+		return false
+	}
+	i, ok := m.titleWithAccel(ev.Rune)
+	if !ok {
+		return false
+	}
+	if m.IsOpen() {
+		// Reachable only when focus left the bar while a menu was open;
+		// the modal path below handles the focused-bar case.
+		m.switchMenu(i - m.curIdx())
+		return true
+	}
+	var restore gooey.Component
+	if m.mgr != nil {
+		if f := m.mgr.Focused(); f != nil && f != gooey.Component(m) {
+			restore = f
+		}
+	}
+	m.Open(i, restore)
+	return true
+}
+
 // pressRestore is what should get focus back after a mouse-opened menu:
 // focus-follows-click has already moved focus to the bar by the time
 // the press bubbles here, so the component to give it back to is the
@@ -392,6 +525,24 @@ func (m *MenuBar) handleOpenKey(ev input.KeyEvent) bool {
 		return true
 	case input.Named(input.KeyEnter), input.Rune(' '):
 		m.activate(m.sel().Get())
+		return true
+	}
+	// Accelerators inside the modal: alt+letter switches to the matching
+	// menu, a plain letter jumps to and activates the matching item — a
+	// disabled match moves the highlight and refuses, exactly like enter
+	// on it. Both are consumed whether or not they matched, because the
+	// menu is modal either way.
+	if ev.Key == input.KeyRune && ev.Mods == input.ModAlt {
+		if i, ok := m.titleWithAccel(ev.Rune); ok {
+			m.switchMenu(i - m.curIdx())
+		}
+		return true
+	}
+	if ev.Key == input.KeyRune && ev.Mods == 0 {
+		if i, ok := m.itemWithAccel(ev.Rune); ok {
+			m.sel().Set(i)
+			m.activate(i)
+		}
 		return true
 	}
 	// Modal: an open menu swallows what it does not understand, so page
@@ -529,7 +680,8 @@ func (p *menuPopup) Render(f *gooey.Frame) {
 		if i == sel {
 			is.Reverse = true
 		}
-		line := " " + it.Text
+		text, _, pos := splitMnemonic(it.Text)
+		line := " " + text
 		if it.Gesture != "" {
 			pad := inner - len([]rune(line)) - len([]rune(it.Gesture)) - 1
 			if pad < 1 {
@@ -541,6 +693,13 @@ func (p *menuPopup) Render(f *gooey.Frame) {
 			line += spaces(n)
 		}
 		f.Cells.SetString(b.X+1, y, clipRunes(line, inner), is)
+		// Same convention as the bar: the accelerator letter is always
+		// underlined. Typing it activates the item while the menu is open.
+		if pos >= 0 && 1+pos < inner {
+			as := is
+			as.Underline = true
+			f.Cells.Set(b.X+2+pos, y, []rune(text)[pos], as)
+		}
 	}
 }
 

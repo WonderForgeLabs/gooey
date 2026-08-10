@@ -183,6 +183,21 @@ func (f *FocusState) state() *prop.Property[bool] {
 // navigation, which is how up and down leave a horizontal bar.
 type FocusHost interface{ SetFocusManager(*FocusManager) }
 
+// MnemonicHandler is the opt-in seam for PAGE-scoped accelerators — a
+// menu bar's alt+letter. Key routing normally never leaves the focused
+// component's ancestor chain, and a menu bar is a sibling of the content
+// it overlays, so without this seam alt+f could only open a menu while
+// the bar itself held focus.
+//
+// The dispatcher collects implementers on the same walk that finds focus
+// stops and offers them the keys NOTHING else consumed: every
+// PreviewKey, KeyBinding and HandleKey in the focused chain outranks a
+// mnemonic — a KeyBinding on an alt gesture keeps winning, per dispatch
+// order — and a mnemonic outranks the framework's own tab/arrow
+// fallbacks. Implementers are offered every unconsumed key and must
+// return false for the ones they do not own.
+type MnemonicHandler interface{ HandleMnemonic(input.KeyEvent) bool }
+
 // NonVisual marks elements that live in the tree for behavior only.
 // The framework attaches them to their parent component instead of laying
 // them out or painting them (see Base.Attach).
@@ -251,13 +266,14 @@ func (k *KeyBinding) NonVisual() bool   { return true }
 // KeyBindings attached along the way. It is built by the same walk the
 // Composer does and owned by it (Composer.Focus).
 type FocusManager struct {
-	root     Component
-	order    []Component
-	parent   map[Component]Component
-	bindings map[Component][]*KeyBinding
-	watchers []*hoverWatch
-	cur      int
-	prev     Component // what held focus before the last real move
+	root      Component
+	order     []Component
+	parent    map[Component]Component
+	bindings  map[Component][]*KeyBinding
+	watchers  []*hoverWatch
+	mnemonics []Component // MnemonicHandlers in tree order
+	cur       int
+	prev      Component // what held focus before the last real move
 
 	hover Component // current hover target, nil when the pointer is nowhere
 
@@ -331,6 +347,7 @@ func (m *FocusManager) Resync() {
 	m.parent = map[Component]Component{}
 	m.bindings = map[Component][]*KeyBinding{}
 	m.watchers = m.watchers[:0]
+	m.mnemonics = m.mnemonics[:0]
 	m.walk(m.root, nil)
 	for _, hw := range m.watchers {
 		hw.over = wasOver[hw.w]
@@ -375,6 +392,9 @@ func (m *FocusManager) walk(w, parent Component) {
 	}
 	if h, ok := w.(FocusHost); ok {
 		h.SetFocusManager(m)
+	}
+	if _, ok := w.(MnemonicHandler); ok {
+		m.mnemonics = append(m.mnemonics, w)
 	}
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
@@ -539,7 +559,11 @@ func (m *FocusManager) reachable(w Component) bool {
 // ends the dispatch. Then it BUBBLES: starting at the focused component
 // and walking up its ancestors to the root, the KeyBindings attached at
 // each level are matched first, then that component's own HandleKey. The
-// first true stops propagation. Finally, if nothing consumed the event,
+// first true stops propagation. Then the MNEMONICS get their turn: every
+// MnemonicHandler in the tree, in tree order, is offered what the
+// focused chain declined — accelerators are page-scoped, so they run
+// outside the chain, but after it, which is what keeps a KeyBinding on
+// the same gesture winning. Finally, if nothing consumed the event,
 // tab and shift+tab move focus and an unclaimed arrow navigates — which
 // means either can be overridden by binding or handling it.
 //
@@ -566,6 +590,11 @@ func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
 			}
 		}
 		if h, ok := n.(KeyHandler); ok && h.HandleKey(ev) {
+			return true
+		}
+	}
+	for _, w := range m.mnemonics {
+		if h, ok := w.(MnemonicHandler); ok && m.reachable(w) && h.HandleMnemonic(ev) {
 			return true
 		}
 	}
