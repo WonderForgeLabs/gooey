@@ -75,6 +75,21 @@ type Context struct {
 	// func in Values. The binding form works in markup-only controls;
 	// the bare-name form needs a registry, so it needs code-behind.
 	Handlers map[string]gooey.Action
+	// Rules extends the <Validate> vocabulary: an attribute that is not
+	// a built-in rule resolves here, the constructor receives the
+	// attribute's literal and may reject it at load. Registration is the
+	// grant, like Components and Handlers — rule bodies stay code, pages
+	// keep the whole validation story in markup. An app that registers
+	//
+	//	ctx.Rules = map[string]markup.RuleFunc{
+	//	    "Email": func(string) (validate.Rule[string], error) {
+	//	        return validate.Pattern(`^[^@\s]+@[^@\s]+$`, "not an email"), nil
+	//	    },
+	//	}
+	//
+	// writes <Validate Email="true"/>. Built-in names win over
+	// registered ones.
+	Rules map[string]RuleFunc
 	// Named collects Name="..." components during build — the
 	// code-behind lookup surface (Find[T] reads from this).
 	Named map[string]gooey.Component
@@ -390,6 +405,12 @@ func checkProps(e Element, ctx *Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		// <X.Behaviors> is universal: every element may carry the
+		// attachment slot (buildChildren consumes it), the same way every
+		// element may carry bare non-visual children.
+		if name == "Behaviors" {
+			continue
+		}
 		if !allowed[name] {
 			return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>", e.Name, e.Name, name)
 		}
@@ -568,6 +589,11 @@ func parseVisibility(s string) (gooey.Visibility, error) {
 // buildChildren builds an element's children, splitting them into the
 // visual ones the parent lays out and the non-visual ones (KeyBindings)
 // the framework hangs off the parent as attachments.
+//
+// The <X.Behaviors> property element is MAUI's explicit spelling of the
+// same slot: its children are attachments only, appended to the very
+// list the bare form feeds — two spellings, one downstream path. Bare
+// non-visual children stay as the terse shorthand.
 func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
 	for _, c := range e.Children {
 		w, err := build(c, ctx)
@@ -580,10 +606,31 @@ func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err
 			kids = append(kids, w)
 		}
 	}
+	if b, ok := e.Props["Behaviors"]; ok {
+		for _, c := range b.Children {
+			w, err := build(c, ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			nv, ok := w.(gooey.NonVisual)
+			if !ok || !nv.NonVisual() {
+				return nil, nil, fmt.Errorf("markup: <%s.Behaviors> holds non-visual attachments only; <%s> is a visual child and belongs in <%s> itself", e.Name, c.Name, e.Name)
+			}
+			attach = append(attach, w)
+		}
+	}
 	return kids, attach, nil
 }
 
 func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
+	for _, x := range attach {
+		// A Validate nobody wired means the host's builder does not speak
+		// validation — attaching it silently would be a rule that never
+		// runs.
+		if v, ok := x.(*Validate); ok && v.Error == nil {
+			return fmt.Errorf("markup: <%s> does not support <Validate>; it belongs on an input element with a bound text source", e.Name)
+		}
+	}
 	if len(attach) == 0 {
 		return nil
 	}
@@ -754,6 +801,16 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		}
 		return named(e, ctx, s, nil)
 	case "TextBox":
+		// Like Button, a TextBox takes no visual children — but the
+		// non-visual attachments (<ValidationMarker>, <Tooltip>,
+		// <KeyBinding>) hang off it the way they hang off any element.
+		kids, attach, err := buildChildren(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(kids) > 0 {
+			return nil, fmt.Errorf("markup: <TextBox> takes no visual children; only attachments like <ValidationMarker> and <Tooltip> may nest here")
+		}
 		text, err := boundProp[string](e, ctx, "Text")
 		if err != nil {
 			return nil, err
@@ -780,6 +837,40 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		}
 		if a, ok := e.Attrs["AccentStyle"]; ok {
 			tb.AccentStyle = components.Sty(ctx.Styles[a])
+		}
+		// Error is the validation handle: a typed binding to the field's
+		// error property (empty = valid), never literal text.
+		if _, ok := e.Attrs["Error"]; ok {
+			if tb.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
+				return nil, err
+			}
+		}
+		if a, ok := e.Attrs["InvalidStyle"]; ok {
+			tb.InvalidStyle = components.Sty(ctx.Styles[a])
+		}
+		// A <Validate> behavior (bare or in <TextBox.Behaviors>) wires
+		// against the bound Text source and takes over the Error slot.
+		var vb *Validate
+		for _, a := range attach {
+			v, ok := a.(*Validate)
+			if !ok {
+				continue
+			}
+			if vb != nil {
+				return nil, fmt.Errorf("markup: <TextBox> takes one <Validate>")
+			}
+			vb = v
+		}
+		if vb != nil {
+			if tb.Error != nil {
+				return nil, fmt.Errorf("markup: <TextBox> declares both Error=%q and a <Validate>; the behavior owns the error property, drop one", e.Attrs["Error"])
+			}
+			if tb.Error, err = wireValidate(vb, "TextBox", tb.Text, bindingPath(e.Attrs["Text"]), ctx); err != nil {
+				return nil, err
+			}
+		}
+		if err := attachAll(e, tb, attach); err != nil {
+			return nil, err
 		}
 		return named(e, ctx, tb, nil)
 	case "ColorPicker":
@@ -989,6 +1080,31 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			t.Gesture = ev.String()
 		}
 		return named(e, ctx, t, nil)
+	case "Validate":
+		// Non-visual like KeyBinding; the HOST's builder wires it to its
+		// bound text source (wireValidate) — building it here only parses
+		// the rule attributes.
+		if len(e.Children) > 0 {
+			return nil, fmt.Errorf("markup: <Validate> takes no children")
+		}
+		v, err := buildValidate(e, ctx)
+		return named(e, ctx, v, err)
+	case "ValidationMarker":
+		// Non-visual like Tooltip: buildChildren routes it to the parent
+		// as an attachment; its floating message shows in the page's
+		// AdornmentLayer. An omitted Error adopts the host TextBox's own
+		// handle, so the common form is just <ValidationMarker/>.
+		if len(e.Children) > 0 {
+			return nil, fmt.Errorf("markup: <ValidationMarker> takes no children")
+		}
+		m := &components.ValidationMarker{Style: ctx.Styles[e.Attrs["Style"]]}
+		if _, ok := e.Attrs["Error"]; ok {
+			var err error
+			if m.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, m, nil)
 	case "KeyBinding":
 		g, err := input.ParseGesture(e.Attrs["Gesture"])
 		if err != nil {

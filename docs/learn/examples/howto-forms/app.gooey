@@ -1,0 +1,41 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
+
+    <Text Grid.Row="0" Style="accent">{{.Status}}</Text>
+
+    <!-- The primary form: rules declared as a <Validate> behavior, the
+         message shown by an ordinary inline Text. The behavior wires
+         the TextBox's invalid visual and publishes the error property
+         (derived here: Text="{{.Name}}" publishes NameErr). -->
+    <TextBox Grid.Row="1" Prompt="name:  " Text="{{.Name}}">
+      <TextBox.Behaviors>
+        <Validate Required="true" MinLen="3"/>
+      </TextBox.Behaviors>
+    </TextBox>
+    <Text Grid.Row="2" Style="err">{{.NameErr}}</Text>
+
+    <TextBox Grid.Row="3" Prompt="email: " Text="{{.Email}}">
+      <TextBox.Behaviors>
+        <Validate Required="true" Pattern="^[^@\s]+@[^@\s]+\.[^@\s]+$"/>
+      </TextBox.Behaviors>
+    </TextBox>
+    <Text Grid.Row="4" Style="err">{{.EmailErr}}</Text>
+
+    <!-- The floating variant, for layouts with no room for an error
+         row: a ValidationMarker shows the message in the layer. -->
+    <TextBox Grid.Row="5" Prompt="tag:   " Text="{{.Tag}}">
+      <TextBox.Behaviors>
+        <Validate MaxLen="8"/>
+      </TextBox.Behaviors>
+      <ValidationMarker/>
+    </TextBox>
+
+    <HStack Grid.Row="6" Gap="4">
+      <Button Content="submit" Click="{{.Submit}}"/>
+      <Text Style="dim">tab: next field    ctrl+c: quit</Text>
+    </HStack>
+
+    <AdornmentLayer Grid.Row="0" Grid.RowSpan="8"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

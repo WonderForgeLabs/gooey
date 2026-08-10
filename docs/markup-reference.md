@@ -542,6 +542,8 @@ What it shows depends on `Frame.Caps.Color`:
 | `Style` | Style of the edited text. Named or bound. |
 | `AccentStyle` | Named style for the prompt and caret. |
 | `Changed` | Optional command run after every edit (not after caret moves) — for invalidating something derived. |
+| `Error` | Optional **binding** to a `*prop.Property[string]` — the field's validation state, empty meaning valid. Non-empty flips the text into the invalid visual. Owned by a `<Validate>` behavior when one is attached (declaring both is a load error). |
+| `InvalidStyle` | Named style replacing the default invalid visual (red + underline). |
 
 Keys:
 
@@ -563,6 +565,63 @@ Mouse: a click places the caret, dragging selects (the drag survives leaving the
 Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste.
 
 The field scrolls horizontally to keep the caret visible in either direction, and the caret and the selection anchor are source properties, so moving the caret repaints only this component.
+
+### Validate
+
+`markup.Validate` — the validation behavior: a non-visual attachment (MAUI's `ValidationBehavior` in the slot `KeyBinding` and `Tooltip` already occupy) that watches its host's bound `Text` source and materializes the same `validate.Field` computed the Go API builds.
+
+```xml
+<TextBox Prompt="name: " Text="{{.Name}}">
+  <TextBox.Behaviors>
+    <Validate Required="true" MinLen="3" Into=".NameErr"/>
+  </TextBox.Behaviors>
+</TextBox>
+<Text Style="err">{{.NameErr}}</Text>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Required` | Bool. `true` fails empty (or whitespace-only) input. |
+| `MinLen` / `MaxLen` | Ints. Length bounds in runes; empty input passes (leave "must not be empty" to `Required`). |
+| `Pattern` | Regular expression the input must match, compiled once **at load** — a bad expression is a load error. Empty input passes. |
+| `Into` | Context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild). |
+
+Rules run in a fixed order regardless of attribute order — `Required`, then `MinLen`/`MaxLen`, then `Pattern`, then registered rules in name order — and the first failure is the message shown, so fundamentals are revealed before specifics.
+
+The behavior wires the host's `Error` handle automatically (the invalid visual comes for free); one `<Validate>` per element, and a host whose builder does not speak validation (anything but a `TextBox` today) refuses it at load.
+
+**Extending the vocabulary** is a registration, exactly like `Components` and `Handlers` — rule bodies stay in code, pages keep the validation story in markup:
+
+```go
+ctx.Rules = map[string]markup.RuleFunc{
+    "Email": func(arg string) (validate.Rule[string], error) {
+        return validate.Pattern(`^[^@\s]+@[^@\s]+$`, "not an email"), nil
+    },
+}
+```
+
+```xml
+<Validate Required="true" Email="true"/>
+```
+
+The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets.
+
+### ValidationMarker
+
+`components.ValidationMarker` — the **floating** error display, for layouts with no room for an inline error row (the primary pattern is an ordinary bound `<Text>` under the field). A non-visual attachment whose message shows in the page's `AdornmentLayer`, anchored below its host, flipping above when the screen runs out.
+
+```xml
+<TextBox Text="{{.Tag}}" Error="{{.TagErr}}">
+  <ValidationMarker/>
+</TextBox>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Error` | Optional binding to the error property. Omitted, the marker adopts its host `TextBox`'s own `Error` handle — the property is named once. |
+| `Style` | Named style for the message. Default is white on the error red. |
+
+The marker is persistent: it lives in the layer for as long as it is attached, shows only while the error is non-empty, hides (rather than dropping) when its host goes invisible, and never intercepts the pointer. A page without an `<AdornmentLayer/>` degrades to inline-only display.
 
 ### ItemsView
 
@@ -805,6 +864,21 @@ The rules are load-time errors, all of them:
 - a property element takes no attributes of its own, and may be given only once.
 
 A registered custom component is exempt from the second rule: its builder receives the raw `Element`, `Props` and all, and decides for itself — the same latitude it has with attributes.
+
+### The Behaviors slot
+
+`<X.Behaviors>` is the one property element **every** element accepts: MAUI's explicit spelling of the attachment slot. Its children must be non-visual attachments — `<Validate>`, `<Tooltip>`, `<KeyBinding>`, `<Timer>` — and they land in exactly the list bare non-visual children feed, so the two spellings are equivalent and may be mixed:
+
+```xml
+<TextBox Text="{{.Name}}">
+  <TextBox.Behaviors>
+    <Validate Required="true"/>
+    <KeyBinding Gesture="ctrl+k" Command="{{.Clear}}"/>
+  </TextBox.Behaviors>
+</TextBox>
+```
+
+A visual child inside the slot is a load error naming it; an element that cannot host attachments rejects the slot's contents the way it rejects bare ones.
 
 ## Styles
 

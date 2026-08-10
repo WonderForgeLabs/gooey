@@ -29,6 +29,25 @@ type Adornment interface {
 // know its popup is gone or it would refuse to ever show again).
 type orphanable interface{ orphaned() }
 
+// PersistentAdornment is an optional refinement of Adornment, added for
+// the layer's second customer. The drop-on-invisible policy was written
+// for TRANSIENT adornments — a tooltip's owner re-raises it on the next
+// hover, so dropping on a hidden anchor is free. A PERSISTENT adornment
+// (a validation marker up for as long as its field is invalid) has no
+// re-raising gesture: dropping it on a collapsed pane would lose it
+// until the next structural walk, and re-adding it eagerly would fight
+// the layer's own sweep, one add and one drop per frame, forever.
+//
+// So a persisting adornment whose anchor is merely INVISIBLE — still in
+// the tree, but Hidden/Collapsed or arranged to nothing — is kept and
+// arranged to a zero rect: present, subscribed, occupying nothing, back
+// the moment its anchor is. Only an anchor that truly LEFT the tree
+// still drops it (with the orphaned notification, as ever).
+type PersistentAdornment interface {
+	Adornment
+	AdornmentPersists() bool
+}
+
 // AdornmentLayer hosts adornments above the whole page: the app declares
 // it as the LAST child of its root — document order is z-order, the same
 // hosting shape as ToastHost — and adorners are added and removed at
@@ -125,6 +144,16 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		anchor := a.Anchor()
 		ab, ok := anchorBounds(anchor)
 		if !ok || (root != nil && !visiblyReachable(root, anchor)) {
+			// An invisible-but-present anchor HIDES a persistent
+			// adornment instead of dropping it (see PersistentAdornment);
+			// the zero rect vacates its cells through the bounds sweep
+			// like any move.
+			if p, can := a.(PersistentAdornment); can && p.AdornmentPersists() &&
+				root != nil && inTree(root, anchor) {
+				live = append(live, a)
+				gooey.ArrangeChild(a, gooey.Rect{X: ab.X, Y: ab.Y})
+				continue
+			}
 			if o, can := a.(orphanable); can {
 				o.orphaned()
 			}
@@ -144,6 +173,16 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 // owns its cells.
 func (l *AdornmentLayer) Render(*gooey.Frame) {}
 
+// DecoratesCells exempts the layer from the z-ordered force-from-below:
+// its Render owns no cells, so "repaint what sits above this painter"
+// has nothing to restore here — the adornments themselves are separate
+// nodes and are forced normally. Without this, the full-page layer was
+// force-repainted (a counted no-op with a full-page damage rect) every
+// time any covered leaf under it painted — every keystroke into a
+// TextBox, on any page hosting the layer. Found by the validation
+// marker's damage pins, the layer's second customer.
+func (l *AdornmentLayer) DecoratesCells() {}
+
 // HitTestTransparent: the layer spans the whole page invisibly; the
 // pointer must pass through it to the content beneath, or hosting the
 // layer would starve every click and hover on the page.
@@ -162,6 +201,26 @@ func anchorBounds(w gooey.Component) (gooey.Rect, bool) {
 	}
 	r := b.Bounds()
 	return r, r.W > 0 && r.H > 0
+}
+
+// inTree reports whether target is reachable from root at all,
+// visibility ignored — the "still exists" half of the persistent
+// adornment's keep-or-drop decision.
+func inTree(root, target gooey.Component) bool {
+	if root == nil || target == nil {
+		return false
+	}
+	if root == target {
+		return true
+	}
+	if c, ok := root.(gooey.Container); ok {
+		for _, ch := range c.ChildComponents() {
+			if inTree(ch, target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // visiblyReachable reports whether target is reachable from root through
