@@ -32,16 +32,19 @@
 //
 // # Tabs and the MCP traffic log
 //
-// The bottom panel is a hand-rolled tab switcher local to this demo (not
-// a new framework component): a "mcp" tab with the endpoint + tool-usage
-// text this file always had, and a "log" tab showing every raw MCP
-// request/response this server has handled, live. ctrl+t (or clicking
-// the [ MCP ]/[ Log ] header buttons) flips ActiveTab, and each panel's
-// own Visibility="{{...}}" binding — a *prop.Property[bool] through
-// layout.go's BindVisibilityBool — is the whole switching mechanism; no
-// structural rebuild. The log tab's ItemsView is Go-composed (like
-// cmd/logview) and registered as the "LogPanel" markup element because
-// its Scroll (tail-anchored) field has no markup attribute yet.
+// The bottom panel is a components.Tabs — this demo's switcher was the
+// hand-rolled pressure that produced the framework component, and now
+// uses it: a "mcp" tab with the endpoint + tool-usage text this file
+// always had, and a "log" tab showing every raw MCP request/response
+// this server has handled, live. ActiveTab is the bound int selection
+// (0=mcp, 1=log); ctrl+t still toggles it from code, and the strip
+// itself takes clicks, the wheel, left/right while focused, and
+// ctrl+pgup/pgdn from anywhere in its subtree. Under the hood the
+// switch is still the bindable-Visibility machinery — Tabs binds each
+// page's Visibility to "selected == me" — so nothing structural ever
+// rebuilds. The log tab's ItemsView is Go-composed (like cmd/logview)
+// and registered as the "LogPanel" markup element because its Scroll
+// (tail-anchored) field has no markup attribute yet.
 //
 // Traffic capture is pure HTTP-layer instrumentation: mcpTrafficLogger
 // wraps mcp.New's Handler() (kanbandemo switched from the mcp.Serve
@@ -540,17 +543,12 @@ func main() {
 		newTitle.Set("")
 	})
 
-	// --- tab state: which of the bottom panel's two tabs is showing. A
-	// hand-rolled switcher local to this demo (see the package doc) — no
-	// new framework component, no structural rebuild. Each panel's own
-	// Visibility="{{...}}" binds to a *prop.Property[bool]
-	// (layout.go's BindVisibilityBool, the XAML
-	// BooleanToVisibilityConverter default: true is Visible, false is
-	// Collapsed), so the switch IS the mechanism.
-	activeTab := prop.NewSource("mcp") // "mcp" | "log"
-	mcpTabVisible := prop.NewComputed(func() bool { return activeTab.Get() == "mcp" })
-	logTabVisible := prop.NewComputed(func() bool { return activeTab.Get() == "log" })
-	showMcpTab := gooey.Command(func() { activeTab.Set("mcp") })
+	// --- tab state: which of the bottom panel's two tabs is showing.
+	// The int handle bound to <Tabs Selected="{{.ActiveTab}}"> — the
+	// component owns the strip, the gestures, and each page's
+	// Visibility; this viewmodel owns nothing but the selection itself.
+	activeTab := prop.NewSource(0) // 0 = mcp, 1 = log
+	toggleTab := gooey.Command(func() { activeTab.Set(1 - activeTab.Get()) })
 
 	// --- log tab: every MCP request/response, captured by
 	// mcpTrafficLogger (below) through appendLogEntry, flattened into
@@ -564,17 +562,11 @@ func main() {
 	// you stay on the tab (new traffic arriving should not yank it back),
 	// but returning to the tab later starts from the left margin again
 	// rather than silently hiding whatever is now at that stale offset.
-	showLogTab := gooey.Command(func() {
-		activeTab.Set("log")
-		if logHScroll.Get() != 0 {
+	// It hangs off the Tabs' Changed action, so every entry path — header
+	// click, ctrl+pgup/pgdn, ctrl+t's Set, an MCP set_value — resets it.
+	tabChanged := gooey.Command(func() {
+		if activeTab.Get() == 1 && logHScroll.Get() != 0 {
 			logHScroll.Set(0)
-		}
-	})
-	toggleTab := gooey.Command(func() {
-		if activeTab.Get() == "log" {
-			activeTab.Set("mcp")
-		} else {
-			showLogTab.Run()
 		}
 	})
 
@@ -621,18 +613,9 @@ func main() {
 
 	help := prop.NewSource("")
 
-	mcpTabStyle := prop.NewComputed(func() render.Style {
-		if activeTab.Get() == "mcp" {
-			return accentStyle
-		}
-		return dimStyle
-	})
-	logTabStyle := prop.NewComputed(func() render.Style {
-		if activeTab.Get() == "log" {
-			return accentStyle
-		}
-		return dimStyle
-	})
+	panelStyle := render.Style{Fg: render.RGB(120, 90, 220)}
+	accentStyle := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
+	dimStyle := render.Style{Fg: render.RGB(140, 140, 150)}
 
 	var app *gooey.App
 
@@ -663,14 +646,9 @@ func main() {
 			"Help": help,
 			"Quit": gooey.Command(func() { app.Quit() }),
 
-			"ActiveTab":     activeTab,
-			"ShowMcpTab":    showMcpTab,
-			"ShowLogTab":    showLogTab,
-			"ToggleTab":     toggleTab,
-			"McpTabVisible": mcpTabVisible,
-			"LogTabVisible": logTabVisible,
-			"McpTabStyle":   mcpTabStyle,
-			"LogTabStyle":   logTabStyle,
+			"ActiveTab":  activeTab,
+			"ToggleTab":  toggleTab,
+			"TabChanged": tabChanged,
 
 			// LogPanel is Go-composed (below), so nothing in
 			// kanbandemo.gooey binds these with {{...}} — they are here
@@ -802,16 +780,16 @@ func main() {
 		defer httpSrv.Close()
 		helpText := "MCP endpoint: " + mcpURL + "\n\n" +
 			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string),\n" +
-			"                               ActiveTab (string, \"mcp\"/\"log\")\n" +
+			"                               ActiveTab (int, 0=mcp 1=log)\n" +
 			"tools/call invoke_command   — {\"name\": \"AddTask\"} (after set_value NewTitle), or TodoMoveRight/DoingMoveLeft/\n" +
-			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove/ShowMcpTab/ShowLogTab/ToggleTab/\n" +
+			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove/ToggleTab/\n" +
 			"                               ScrollLogLeft/ScrollLogRight (moves LogHScroll, the log panel's horizontal window)\n" +
-			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"ActiveTab\", \"value\": \"log\"}\n" +
+			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"ActiveTab\", \"value\": 1}\n" +
 			"tools/call focus/send_keys  — {\"name\": \"NewTitle\"} then {\"text\": \"buy milk\"}; or focus a list, then keys: [\"down\"]\n" +
-			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, McpTabBtn, LogTabBtn,\n" +
+			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, PanelTabs,\n" +
 			"                               LogPanel, and each column's buttons\n\n" +
-			"tab: ctrl+t (or click [ MCP ] / [ Log ]) switches this panel between this help text and a live log of every raw\n" +
-			"MCP request/response this server has handled — including the very call that is reading this."
+			"tab: ctrl+t (or click the mcp / log headers; ctrl+pgup/pgdn while this panel has focus) switches between this help\n" +
+			"text and a live log of every raw MCP request/response this server has handled — including the call reading this."
 
 		if *withWorker {
 			// examples/temporal-worker relative to kanbandemo's own source

@@ -387,6 +387,37 @@ And the bar is a focus **scope**: `←`/`→` move between its members and wrap 
 
 Members that do not fit are **collapsed**, not clipped, and an indicator (`›`) is drawn in the last column. Collapsing is what keeps the keyboard honest: focus traversal skips a collapsed member, so `tab` never lands on a button nobody can see. Widening the bar brings them back.
 
+### Tabs
+
+`components.Tabs` — a header strip over exactly one visible page. The strip is `Segmented` grown a body: same segment geometry, same rocker-rule arrows, same click targets, with the selection deciding which page's content is on screen.
+
+| Attribute | Meaning |
+|---|---|
+| `Selected` | Optional binding to a `*prop.Property[int]`, clamped into range on read. Absent, the control keeps its own selection starting at 0. |
+| `Changed` | Optional command, run after the selection moves (the property is already `Set`). |
+| `Style` | Named style or a bound style for the strip. |
+
+Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child:
+
+```xml
+<Tabs Selected="{{.Tab}}">
+  <Tab Header="mcp">
+    <Border Title="mcp" Style="panel"><Text>{{.Help}}</Text></Border>
+  </Tab>
+  <Tab Header="log">
+    <LogPanel Height="12"/>
+  </Tab>
+</Tabs>
+```
+
+Switching is the bindable-Visibility machinery, not a structural rebuild: every page is a permanent child whose `Visibility` the Tabs binds to "selected == me", so a `Set` on `Selected` erases the outgoing page through the composer's sweep, repaints the incoming page and the strip, and touches nothing else. Because the Tabs owns that binding, a `Visibility` attribute on a page root is a load error. Hidden pages are `Collapsed`: out of layout, out of focus order, out of hit-testing.
+
+`Selected` is an **int**, not a header key — the `Segmented`/`ItemsView` precedent, and headers are themselves bindable, so a header string is not a stable identity to key on.
+
+Keyboard: the strip is one focus stop. `←`/`→` move the selection while it is focused and follow the rocker rule (consumed only when the selection moves); `home`/`end` jump. `ctrl+pgup`/`ctrl+pgdn` cycle with wrap from **anywhere inside the Tabs subtree** — they arrive by bubbling, which scopes them like a `KeyBinding` declared on the container. Clicking a header selects it, and the wheel over the strip steps without wrapping. Switching away from a page whose descendant holds focus moves focus to the strip, so the keyboard is never left on something collapsed. The conditional-`Changed` disable rule applies: a false `CanExecute` paints the strip dim and refuses every gesture.
+
+A Tabs sizes to its **active** page (plus one strip row). Pages of different heights make the control grow and shrink on switch; give the pages equal explicit `Height`s when the strip should stay put.
+
 ### MenuBar
 
 `components.MenuBar` — the top menu row: titles across one line, and a dropdown overlay below the open title.

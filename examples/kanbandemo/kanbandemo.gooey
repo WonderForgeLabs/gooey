@@ -1,5 +1,5 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Grid Rows="Auto,*,Auto,Auto,Auto">
+  <Grid Rows="Auto,*,Auto,Auto">
     <HStack Grid.Row="0" Gap="1">
       <Text Style="dim">new task:</Text>
       <TextBox Name="NewTitle" Text="{{.NewTitle}}" Prompt="&gt; " AccentStyle="accent"/>
@@ -52,18 +52,20 @@
       </Border>
     </Grid>
 
-    <HStack Grid.Row="2" Gap="1">
-      <Button Name="McpTabBtn" Content="MCP" Click="{{.ShowMcpTab}}" Style="{{.McpTabStyle}}"/>
-      <Button Name="LogTabBtn" Content="Log" Click="{{.ShowLogTab}}" Style="{{.LogTabStyle}}"/>
-    </HStack>
+    <Tabs Grid.Row="2" Name="PanelTabs" Selected="{{.ActiveTab}}" Changed="{{.TabChanged}}">
+      <Tab Header="mcp">
+        <!-- Height matches LogPanel's: a Tabs sizes to its ACTIVE page,
+             so equal page heights keep the strip from moving on switch. -->
+        <Border Title="mcp" Style="panel" Height="12">
+          <Text Name="Help" Margin="1,0" Style="dim">{{.Help}}</Text>
+        </Border>
+      </Tab>
+      <Tab Header="log">
+        <LogPanel Name="LogPanel" Height="12"/>
+      </Tab>
+    </Tabs>
 
-    <Border Grid.Row="3" Title="mcp" Style="panel" Visibility="{{.McpTabVisible}}">
-      <Text Name="Help" Margin="1,0" Style="dim">{{.Help}}</Text>
-    </Border>
-
-    <LogPanel Grid.Row="3" Name="LogPanel" Height="12" Visibility="{{.LogTabVisible}}"/>
-
-    <Text Grid.Row="4" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   ctrl+t: switch mcp/log tab   q: quit</Text>
+    <Text Grid.Row="3" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   ctrl+t: switch mcp/log tab   q: quit</Text>
 
     <KeyBinding Gesture="q" Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
