@@ -1,6 +1,6 @@
 package gooey
 
-// The FrameworkElement layer: every widget that embeds Base carries
+// The FrameworkElement layer: every component that embeds Base carries
 // Layout — margin, explicit size, alignment, visibility, and grid
 // attachments. Parents never call child.Measure/Arrange directly; they
 // go through MeasureChild/ArrangeChild, which implement the XAML
@@ -54,18 +54,22 @@ type Layout struct {
 // HasLayout is implemented by anything embedding Base.
 type HasLayout interface{ LayoutProps() *Layout }
 
-func layoutOf(w Widget) *Layout {
+// LayoutOf returns w's Layout, or nil if it does not carry one (only
+// components embedding Base do). Container authors outside this package
+// need it to read a child's Visibility and attached properties, which is
+// why it is exported: a panel in gooey/components has no other way to ask.
+func LayoutOf(w Component) *Layout {
 	if hl, ok := w.(HasLayout); ok {
 		return hl.LayoutProps()
 	}
 	return nil
 }
 
-// L applies layout to a widget in-place and returns it — the literal-
+// L applies layout to a component in-place and returns it — the literal-
 // friendly way to set layout in Go composition:
 //
 //	gooey.L(&Text{...}, gooey.Layout{Margin: gooey.M(1), HAlign: gooey.AlignCenter})
-func L(w Widget, l Layout) Widget {
+func L(w Component, l Layout) Component {
 	if hl, ok := w.(HasLayout); ok {
 		*hl.LayoutProps() = l
 	}
@@ -75,8 +79,8 @@ func L(w Widget, l Layout) Widget {
 // MeasureChild measures w within avail, applying margin, explicit
 // size, and visibility, and caches the resulting desired size
 // (margin included) — the XAML Measure pass.
-func MeasureChild(w Widget, avail Size) Size {
-	l := layoutOf(w)
+func MeasureChild(w Component, avail Size) Size {
+	l := LayoutOf(w)
 	if l == nil {
 		return w.Measure(avail)
 	}
@@ -111,8 +115,8 @@ func MeasureChild(w Widget, avail Size) Size {
 // ArrangeChild places w inside slot, applying margin and alignment —
 // the XAML Arrange pass. Stretch fills the slot; other alignments use
 // the measured desired size.
-func ArrangeChild(w Widget, slot Rect) {
-	l := layoutOf(w)
+func ArrangeChild(w Component, slot Rect) {
+	l := LayoutOf(w)
 	if l == nil {
 		w.Arrange(slot)
 		return
@@ -153,7 +157,7 @@ func ArrangeChild(w Widget, slot Rect) {
 
 // paintable reports whether w should render (Visible) — Hidden and
 // Collapsed elements keep their state but produce no cells.
-func paintable(w Widget) bool {
-	l := layoutOf(w)
+func paintable(w Component) bool {
+	l := LayoutOf(w)
 	return l == nil || l.Visibility == Visible
 }

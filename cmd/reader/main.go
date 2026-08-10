@@ -99,7 +99,7 @@ func main() {
 
 	// --- commands: the delegates markup events bind to ---
 	var comp *gooey.Composer
-	var readerBody gooey.Widget
+	var readerBody gooey.Component
 	quit := false
 	commands := map[string]any{
 		"Quit":       gooey.Command(func() { quit = true }),
@@ -145,10 +145,10 @@ func main() {
 				"panel": {Fg: render.RGB(120, 90, 220)},
 				"dim":   dim,
 			},
-			Widgets: map[string]markup.Builder{
+			Components: map[string]markup.Builder{
 				"FeedList":   feedListControl(fsys),
 				"StoryList":  storyListControl(fsys),
-				"ReaderPane": readerPaneControl(fsys, func(w gooey.Widget) { readerBody = w }),
+				"ReaderPane": readerPaneControl(fsys, func(w gooey.Component) { readerBody = w }),
 			},
 		}
 	}
@@ -166,8 +166,8 @@ func main() {
 	cols, rows := screen.Size()
 
 	needsFrame := true
-	attach := func(w gooey.Widget) {
-		// A reload rebuilds the widgets, so focus is restored by position
+	attach := func(w gooey.Component) {
+		// A reload rebuilds the components, so focus is restored by position
 		// in the traversal rather than by identity.
 		at := 0
 		if comp != nil {
@@ -186,7 +186,7 @@ func main() {
 	}
 	attach(tree)
 
-	swaps := make(chan gooey.Widget, 1)
+	swaps := make(chan gooey.Component, 1)
 	stopWatch := markup.WatchAll(fsys,
 		[]string{"reader.gooey", "feedlist.gooey", "storylist.gooey", "readerpane.gooey"},
 		func() {

@@ -34,11 +34,11 @@ type page struct {
 }
 
 // Build loads the page. Named elements are cleared first: a rebuild
-// produces new widgets, and leaving the old ones in the map would let
-// markup.Find hand out a widget belonging to a composition that is no
+// produces new components, and leaving the old ones in the map would let
+// markup.Find hand out a component belonging to a composition that is no
 // longer on screen.
-func (p *page) Build() (gooey.Widget, error) {
-	p.ctx.Named = map[string]gooey.Widget{}
+func (p *page) Build() (gooey.Component, error) {
+	p.ctx.Named = map[string]gooey.Component{}
 	return Load(p.fsys, p.name, p.ctx)
 }
 

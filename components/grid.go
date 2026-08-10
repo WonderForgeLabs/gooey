@@ -1,9 +1,11 @@
-package gooey
+package components
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/WonderForgeLabs/gooey"
 )
 
 // GridLen is one row/column definition: Fixed cells, Auto (size to
@@ -15,9 +17,9 @@ type GridLen struct {
 	Auto  bool
 }
 
-func Auto() GridLen        { return GridLen{Auto: true} }
+func Auto() GridLen          { return GridLen{Auto: true} }
 func Star(w float64) GridLen { return GridLen{Star: w} }
-func Fixed(n int) GridLen  { return GridLen{Fixed: n} }
+func Fixed(n int) GridLen    { return GridLen{Fixed: n} }
 
 // ParseGridLens parses "Auto,2*,10,*" — the markup form.
 func ParseGridLens(s string) ([]GridLen, error) {
@@ -53,14 +55,14 @@ func ParseGridLens(s string) ([]GridLen, error) {
 // by the Layout attached properties Row/Col/RowSpan/ColSpan.
 // Missing definitions default to a single star track.
 type Grid struct {
-	Base
+	gooey.Base
 	Rows, Cols []GridLen
-	Children   []Widget
+	Children   []gooey.Component
 
 	rowSz, colSz []int
 }
 
-func (g *Grid) ChildWidgets() []Widget { return g.Children }
+func (g *Grid) ChildComponents() []gooey.Component { return g.Children }
 
 func (g *Grid) rows() []GridLen {
 	if len(g.Rows) == 0 {
@@ -76,8 +78,8 @@ func (g *Grid) cols() []GridLen {
 	return g.Cols
 }
 
-func cellOf(w Widget, nRows, nCols int) (r, c, rs, cs int) {
-	l := layoutOf(w)
+func cellOf(w gooey.Component, nRows, nCols int) (r, c, rs, cs int) {
+	l := gooey.LayoutOf(w)
 	if l == nil {
 		return 0, 0, 1, 1
 	}
@@ -93,11 +95,11 @@ func cellOf(w Widget, nRows, nCols int) (r, c, rs, cs int) {
 // max desired of their span-1 children. Fixed+auto sum is the desired
 // size; any starred grid asks for everything it's offered. Star track
 // sizes stay zero here and resolve against the final extent in Arrange.
-func (g *Grid) Measure(avail Size) Size {
+func (g *Grid) Measure(avail gooey.Size) gooey.Size {
 	rows, cols := g.rows(), g.cols()
-	desired := make([]Size, len(g.Children))
+	desired := make([]gooey.Size, len(g.Children))
 	for i, ch := range g.Children {
-		desired[i] = MeasureChild(ch, avail)
+		desired[i] = gooey.MeasureChild(ch, avail)
 	}
 	track := func(defs []GridLen, dim func(i int) int, inTrack func(i, t int) bool) []int {
 		out := make([]int, len(defs))
@@ -145,10 +147,10 @@ func (g *Grid) Measure(avail Size) Size {
 	if starH {
 		dh = avail.H
 	}
-	return Size{min(dw, avail.W), min(dh, avail.H)}
+	return gooey.Size{W: min(dw, avail.W), H: min(dh, avail.H)}
 }
 
-func (g *Grid) Arrange(b Rect) {
+func (g *Grid) Arrange(b gooey.Rect) {
 	g.Base.Arrange(b)
 	rows, cols := g.rows(), g.cols()
 	rowSz := distributeStars(rows, g.rowSz, b.H)
@@ -158,12 +160,12 @@ func (g *Grid) Arrange(b Rect) {
 	colOff := offsets(colSz, b.X)
 	for _, ch := range g.Children {
 		r, c, rs, cs := cellOf(ch, len(rows), len(cols))
-		slot := Rect{
+		slot := gooey.Rect{
 			X: colOff[c], Y: rowOff[r],
 			W: colOff[c+cs] - colOff[c],
 			H: rowOff[r+rs] - rowOff[r],
 		}
-		ArrangeChild(ch, slot)
+		gooey.ArrangeChild(ch, slot)
 	}
 }
 
@@ -207,4 +209,4 @@ func offsets(sizes []int, start int) []int {
 	return out
 }
 
-func (g *Grid) Render(f *Frame) {}
+func (g *Grid) Render(f *gooey.Frame) {}

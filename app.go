@@ -56,7 +56,7 @@ type App struct {
 
 	before   []func()
 	onEvent  []func(input.Event)
-	onSwap   []func(Widget)
+	onSwap   []func(Component)
 	stops    []func()
 	quit     chan struct{}
 	quitOnce sync.Once
@@ -80,7 +80,7 @@ type App struct {
 	compLeaked   bool
 }
 
-// Content is where an App's widget tree comes from, and the seam hot
+// Content is where an App's component tree comes from, and the seam hot
 // reload lives behind. Build is called on the UI goroutine — at startup
 // and again for every reload — so a Build may touch the property graph
 // freely, which is exactly what markup loading does when it resolves
@@ -92,19 +92,19 @@ type App struct {
 // the replacement tree on the polling goroutine, resolving bindings
 // against properties nobody else was allowed to touch from there.)
 type Content interface {
-	Build() (Widget, error)
+	Build() (Component, error)
 	Watch(changed func()) (stop func())
 }
 
-// Tree is the Content for an app whose widget tree is built in Go and
+// Tree is the Content for an app whose component tree is built in Go and
 // never replaced. Nothing about the run loop changes; there is simply
 // nothing to reload.
-func Tree(w Widget) Content { return staticTree{w} }
+func Tree(w Component) Content { return staticTree{w} }
 
-type staticTree struct{ w Widget }
+type staticTree struct{ w Component }
 
-func (s staticTree) Build() (Widget, error) { return s.w, nil }
-func (s staticTree) Watch(func()) func()    { return func() {} }
+func (s staticTree) Build() (Component, error) { return s.w, nil }
+func (s staticTree) Watch(func()) func()       { return func() {} }
 
 type options struct {
 	mouse    bool
@@ -150,7 +150,7 @@ func WithCaps(c term.Caps) Option { return func(o *options) { o.caps = &c } }
 // whole key surface.
 //
 // Quit keys are checked only AFTER the tree declines the event, like
-// directional focus navigation: a widget that wants ctrl+c gets it.
+// directional focus navigation: a component that wants ctrl+c gets it.
 func WithQuitKeys(keys ...input.KeyEvent) Option {
 	return func(o *options) { o.quitKeys = keys }
 }
@@ -225,7 +225,7 @@ func (a *App) Size() (cols, rows int) { return a.cols, a.rows }
 func (a *App) Frames() int { return a.frames }
 
 // PaintedLastFrame is the damage count of the most recent frame: how
-// many widgets actually repainted, not how many exist.
+// many components actually repainted, not how many exist.
 func (a *App) PaintedLastFrame() int { return a.painted }
 
 // Invalidate asks for a frame without any property having changed. Rare
@@ -245,18 +245,18 @@ func (a *App) BeforeFrame(fn func()) { a.before = append(a.before, fn) }
 // OnEvent registers an OBSERVER of the input stream, run for every
 // decoded event before it is routed. It cannot consume anything — the
 // return value would be a second, invisible input path competing with
-// the tree, and handling belongs in widgets and KeyBindings.
+// the tree, and handling belongs in components and KeyBindings.
 //
 // It is for the things that are about the stream rather than about any
-// widget: counting events, logging them, driving an idle timer.
+// component: counting events, logging them, driving an idle timer.
 func (a *App) OnEvent(fn func(input.Event)) { a.onEvent = append(a.onEvent, fn) }
 
 // OnSwap registers a hook run after the tree is attached — once at
 // startup and again after every hot reload — with the new root. Anything
 // resolved out of the tree by name has to be re-resolved here: a reload
-// builds new widgets, and the old handles point at a composition that is
+// builds new components, and the old handles point at a composition that is
 // no longer on screen.
-func (a *App) OnSwap(fn func(Widget)) { a.onSwap = append(a.onSwap, fn) }
+func (a *App) OnSwap(fn func(Component)) { a.onSwap = append(a.onSwap, fn) }
 
 // Every runs fn on the UI goroutine on an interval until Run returns.
 // The ticker itself lives on its own goroutine and only ever Posts, so
@@ -441,7 +441,7 @@ func (a *App) frame() {
 
 // handle routes one event. The tree gets first refusal; the app-level
 // quit key is checked only on what bubbles out, the same rule that makes
-// unconsumed arrows move focus. A widget that binds ctrl+c keeps it.
+// unconsumed arrows move focus. A component that binds ctrl+c keeps it.
 func (a *App) handle(ev input.Event) {
 	for _, fn := range a.onEvent {
 		fn(ev)
@@ -461,7 +461,7 @@ func (a *App) handle(ev input.Event) {
 // terminal, sized as we are now, with this app's caps and scheduler
 // hook. The OUTGOING composer is closed first — a replaced tree's timers
 // must not keep ticking against a viewmodel nobody is showing.
-func (a *App) attach(w Widget) {
+func (a *App) attach(w Component) {
 	if a.comp != nil {
 		a.comp.Close()
 	}
@@ -487,7 +487,7 @@ func (a *App) attach(w Widget) {
 //
 // Content is not replaced, so the next reload still rebuilds from the
 // original source and discards what was swapped in.
-func (a *App) Swap(root Widget) {
+func (a *App) Swap(root Component) {
 	if root == nil {
 		return
 	}

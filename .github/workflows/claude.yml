@@ -61,7 +61,7 @@ jobs:
       # headings, in this block.
       extra_system_prompt: |
         **About This Repository**
-        gooey is an XAML-like TUI framework for Go: widgets are persistent
+        gooey is an XAML-like TUI framework for Go: components are persistent
         objects in a retained tree, every visual property is a lazy
         dirty-tracking `*prop.Property[T]`, and markup builds that same tree
         from XML.
@@ -79,15 +79,15 @@ jobs:
           demo lives at `mcp/cmd/mcpdemo`.
         - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
           `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
-          control, `input/` routed event stream, `markup/` XML to widget tree,
+          control, `input/` routed event stream, `markup/` XML to component tree,
           `cmd/` demo apps, `docs/` architecture and learn tutorials.
 
         **Architectural Invariants**
         - One cell renderer and N graphics protocols — the cell plane and the
           pixel plane are separate planes, not alternative backends. Do not
           reintroduce a "rendering mode" abstraction.
-        - Property reads during paint are what register a widget's dependency
-          on that property; a change dirties exactly the widgets that read it.
+        - Property reads during paint are what register a component's dependency
+          on that property; a change dirties exactly the components that read it.
           Don't bypass the property graph with direct field access on paint paths.
         - Core gooey takes no new third-party dependencies without an explicit
           decision — check with a human before adding one to the root go.mod.

@@ -103,7 +103,7 @@ func main() {
 	// Stats describe the PREVIOUS frame, and setting them here folds
 	// their repaint into the frame about to happen.
 	app.BeforeFrame(func() {
-		stats.Set(fmt.Sprintf("events=%d  frames=%d  detail evals=%d  widgets painted last frame=%d",
+		stats.Set(fmt.Sprintf("events=%d  frames=%d  detail evals=%d  components painted last frame=%d",
 			events, app.Frames(), detail.Evals(), app.PaintedLastFrame()))
 	})
 

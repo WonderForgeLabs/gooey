@@ -308,8 +308,8 @@ type session struct {
 }
 
 // Build connects if it has not yet, waits for the application to serve a
-// screen, and returns that screen as a widget tree.
-func (s *session) Build() (gooey.Widget, error) {
+// screen, and returns that screen as a component tree.
+func (s *session) Build() (gooey.Component, error) {
 	if s.client == nil {
 		if err := s.connect(); err != nil {
 			return nil, err
@@ -453,11 +453,11 @@ func (s *session) poll(ctx context.Context) {
 // apply is the swap rule, and the reason the contract carries two
 // counters.
 //
-// A new markup VERSION means a different screen: build a fresh widget
+// A new markup VERSION means a different screen: build a fresh component
 // tree against fresh sources and hand it to the App, which closes the
 // outgoing composition and attaches the new one. A new REVISION on the
 // same markup means the same screen with new numbers: Set the sources
-// that changed and let the property graph repaint exactly the widgets
+// that changed and let the property graph repaint exactly the components
 // that read them — which, on the provisioning screen, is one line per
 // completed activity rather than a whole page.
 func (s *session) apply(st uiState) error {
@@ -512,11 +512,11 @@ func (s *session) boundTo(values map[string]string) bool {
 	return true
 }
 
-// tree builds a widget tree from a served screen and adopts its sources
+// tree builds a component tree from a served screen and adopts its sources
 // as the current ones. It runs on the UI goroutine either way — from
 // Build at startup, from a posted apply afterwards — because resolving
 // bindings touches the property graph.
-func (s *session) tree(st uiState) (gooey.Widget, error) {
+func (s *session) tree(st uiState) (gooey.Component, error) {
 	sources := make(map[string]*prop.Property[string], len(st.Values))
 	values := make(map[string]any, len(st.Values))
 	for k, v := range st.Values {

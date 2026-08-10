@@ -6,6 +6,7 @@ import (
 	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 )
 
@@ -32,7 +33,7 @@ func TestButtonAndKeyBindingFromMarkup(t *testing.T) {
 	}
 
 	// The KeyBinding is an attachment, not a laid-out child.
-	if kids := w.(*gooey.VStack).ChildWidgets(); len(kids) != 2 {
+	if kids := w.(*components.VStack).ChildComponents(); len(kids) != 2 {
 		t.Fatalf("VStack has %d visual children, want 2", len(kids))
 	}
 

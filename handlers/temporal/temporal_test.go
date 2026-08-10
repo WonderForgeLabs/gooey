@@ -207,16 +207,16 @@ func TestFailuresLandInTheTarget(t *testing.T) {
 	})
 }
 
-// The result reaches the screen through the ordinary graph — one widget
+// The result reaches the screen through the ordinary graph — one component
 // repaints, the one that read the property.
-func TestResultRepaintsOnlyTheBoundWidget(t *testing.T) {
+func TestResultRepaintsOnlyTheBoundComponent(t *testing.T) {
 	h := build(t, page, &fakeStarter{result: "slugged"})
 	h.comp.Frame()
 	h.clickAndSettle()
 
 	frame, painted := h.comp.Frame()
 	if painted != 1 {
-		t.Fatalf("repainted %d widgets, want exactly the bound Text", painted)
+		t.Fatalf("repainted %d components, want exactly the bound Text", painted)
 	}
 	var sb strings.Builder
 	for y := 0; y < 6; y++ {

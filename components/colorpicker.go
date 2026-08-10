@@ -1,15 +1,16 @@
-package gooey
+package components
 
 import (
 	"fmt"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // ColorPicker edits an RGB color through three channel bars, and is the
-// framework's worked example of a widget whose EXPERIENCE adapts to the
+// framework's worked example of a component whose EXPERIENCE adapts to the
 // terminal it landed on.
 //
 // The adaptation is not a fallback ladder where lesser terminals get a
@@ -31,12 +32,12 @@ import (
 //
 // It reads the tier from Frame.Caps at Render (capabilities are a plain
 // field on the frame, not a property — they cannot change mid-session),
-// so the same widget instance is correct on any terminal without the
+// so the same component instance is correct on any terminal without the
 // app configuring anything.
 type ColorPicker struct {
-	Base
-	FocusState
-	HoverState
+	gooey.Base
+	gooey.FocusState
+	gooey.HoverState
 	Value *prop.Property[render.Color]
 
 	channel *prop.Property[int] // 0=R, 1=G, 2=B — a source, so moving between bars is damage
@@ -49,7 +50,7 @@ const (
 	channelB = 2
 )
 
-// Geometry. The widget is three bar rows, a blank, and the readout row.
+// Geometry. The component is three bar rows, a blank, and the readout row.
 const (
 	pickerLabelW   = 2 // "R "
 	pickerReadoutW = 4 // " 255"
@@ -128,17 +129,17 @@ func (p *ColorPicker) Adjust(delta int) {
 
 func (p *ColorPicker) selectChannel(ch int) { p.chanProp().Set(clamp(ch, 0, 2)) }
 
-func (p *ColorPicker) Measure(avail Size) Size {
-	return Size{min(pickerPrefW, avail.W), min(pickerRows, avail.H)}
+func (p *ColorPicker) Measure(avail gooey.Size) gooey.Size {
+	return gooey.Size{W: min(pickerPrefW, avail.W), H: min(pickerRows, avail.H)}
 }
 
 // barWidth is the cell span of the gradient/meter part of a row.
 func (p *ColorPicker) barWidth() int {
-	return max(0, p.bounds.W-pickerLabelW-pickerReadoutW)
+	return max(0, p.Bounds().W-pickerLabelW-pickerReadoutW)
 }
 
-func (p *ColorPicker) Render(f *Frame) {
-	b := p.bounds
+func (p *ColorPicker) Render(f *gooey.Frame) {
+	b := p.Bounds()
 	depth := f.Depth()
 	cur := p.Color()
 	sel := p.Channel()
@@ -173,7 +174,7 @@ func (p *ColorPicker) Render(f *Frame) {
 // renderBar paints one channel row. The tier decides what a bar MEANS:
 // a swept gradient where the terminal can show one, a fill meter where
 // it cannot.
-func (p *ColorPicker) renderBar(f *Frame, x, y, w int, cur render.Color, ch, v int, depth render.ColorDepth) {
+func (p *ColorPicker) renderBar(f *gooey.Frame, x, y, w int, cur render.Color, ch, v int, depth render.ColorDepth) {
 	if w <= 0 {
 		return
 	}
@@ -212,7 +213,7 @@ func (p *ColorPicker) renderBar(f *Frame, x, y, w int, cur render.Color, ch, v i
 
 // renderReadout is the swatch and the truth about what the terminal will
 // actually display.
-func (p *ColorPicker) renderReadout(f *Frame, x, y, w int, cur render.Color, depth render.ColorDepth) {
+func (p *ColorPicker) renderReadout(f *gooey.Frame, x, y, w int, cur render.Color, depth render.ColorDepth) {
 	if w <= 0 {
 		return
 	}
@@ -286,14 +287,14 @@ func (p *ColorPicker) HandleKey(ev input.KeyEvent) bool {
 // and the wheel over a bar nudges it. Both select the row they land on,
 // so the pointer and the keyboard agree about which channel is current.
 func (p *ColorPicker) HandleMouse(ev input.MouseEvent) bool {
-	ch := ev.Y - p.bounds.Y
+	ch := ev.Y - p.Bounds().Y
 	if ch < 0 || ch > 2 {
 		return false
 	}
 	switch ev.Kind {
 	case input.MousePress, input.MouseClick:
 		w := p.barWidth()
-		i := ev.X - (p.bounds.X + pickerLabelW)
+		i := ev.X - (p.Bounds().X + pickerLabelW)
 		if w <= 0 || i < 0 || i >= w {
 			return false
 		}

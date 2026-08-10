@@ -48,7 +48,7 @@ func main() {
 	// decided purely by the call site.
 	measure := func() {
 		report.Set(fmt.Sprintf(
-			"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d widget(s)",
+			"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d component(s)",
 			count.Get(), noisy.Get(), watch.Get(),
 			// PaintedLastFrame is the damage count of the frame just
 			// flushed — an ordinary int on the App, not a property, so

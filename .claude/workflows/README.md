@@ -13,7 +13,7 @@ the source, the getting-started program compiles, `go build ./...` and
 `go test ./...` are green.
 
 Run it after a change that alters what the demos look like or what the
-docs claim: an input-system change, a new widget, a renamed API.
+docs claim: an input-system change, a new component, a renamed API.
 
 Prepare the scratch directory first — the recording agents assume it,
 and they use the prebuilt binaries deliberately, so that a tree being

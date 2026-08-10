@@ -2,7 +2,7 @@
 //
 // The finding: there is ONE cell renderer (the render package) and N
 // *graphics protocols* for pixel content. Text, borders, styling — the
-// entire widget tree — always renders to the cell plane. Only pixel
+// entire component tree — always renders to the cell plane. Only pixel
 // content (Image, future Canvas) needs a protocol, chosen at startup by
 // capability detection:
 //
@@ -27,7 +27,7 @@ type Encoder interface {
 	Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error
 }
 
-// Placement is a deferred image draw: the widget tree records placements
+// Placement is a deferred image draw: the component tree records placements
 // during the render pass; the frame flush emits them after the cell
 // plane, so pixel content composites over the already-painted cells.
 type Placement struct {

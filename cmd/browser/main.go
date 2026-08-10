@@ -306,9 +306,9 @@ func main() {
 	var app *gooey.App
 
 	// The player outlives any single composition — a markup reload
-	// rebuilds the preview widget, and playback should not stop because
+	// rebuilds the preview component, and playback should not stop because
 	// browser.gooey was saved. What it may NOT outlive is the composition
-	// being live: the widget hands it to the Composer as a Startable, so
+	// being live: the component hands it to the Composer as a Startable, so
 	// Composer.Close stops the ticker (see demoInfo.Start).
 	play := newPlayer(status)
 
@@ -344,11 +344,11 @@ func main() {
 			"accent": accent,
 			"dim":    dim,
 		},
-		Widgets: map[string]markup.Builder{
-			"DemoList": func(markup.Element, *markup.Context) (gooey.Widget, error) {
+		Components: map[string]markup.Builder{
+			"DemoList": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &demoList{demos: demos, sel: sel}, nil
 			},
-			"DemoInfo": func(markup.Element, *markup.Context) (gooey.Widget, error) {
+			"DemoInfo": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &demoInfo{demos: demos, sel: sel, play: play}, nil
 			},
 		},
@@ -585,7 +585,7 @@ func (w *demoList) Render(f *gooey.Frame) {
 // comment when it has no README, or its recorded GIF while `p` is
 // playing.
 //
-// It is a Startable as well as a Widget. The Composer collects Startables
+// It is a Startable as well as a Component. The Composer collects Startables
 // on the same walk that finds key bindings, so the animation clock's
 // lifetime is the composition's: a hot reload or a teardown stops it
 // without anything here having to notice.
@@ -641,7 +641,7 @@ func (w *demoInfo) Render(f *gooey.Frame) {
 
 	// Reading the player inside Render is what makes the animation cheap:
 	// the frame index becomes a dependency of THIS paint node and of
-	// nothing else, so a tick repaints one widget. The read is
+	// nothing else, so a tick repaints one component. The read is
 	// unconditional for the same reason it comes first inside Current —
 	// a dependency is recorded by the Get that actually happens, and a
 	// pane too short to draw into still has to hear about playback.

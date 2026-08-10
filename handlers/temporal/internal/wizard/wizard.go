@@ -12,7 +12,7 @@ package wizard
 //
 // "Modifying itself" is literal. Each stage transition swaps the markup
 // the ui query returns; the client notices the version change and
-// rebuilds its widget tree from the new source. No client release, no
+// rebuilds its component tree from the new source. No client release, no
 // hot-reloaded file on the client's disk — the screen changed because a
 // workflow moved on.
 //
@@ -68,9 +68,9 @@ const (
 // UIState is the whole client contract: one screen, ready to render.
 //
 // Version identifies the MARKUP. Revision identifies the state. A client
-// that sees a new Version must rebuild its widget tree; a client that
+// that sees a new Version must rebuild its component tree; a client that
 // sees only a new Revision sets the changed values and lets the property
-// graph repaint the widgets that read them. Splitting the two is what
+// graph repaint the components that read them. Splitting the two is what
 // keeps a progress screen from being rebuilt eight times while it counts.
 type UIState struct {
 	Version  int               `json:"version"`

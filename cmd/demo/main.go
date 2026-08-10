@@ -1,4 +1,4 @@
-// demo renders a retained widget tree with an image through the best
+// demo renders a retained component tree with an image through the best
 // (or forced) graphics mode.
 //
 //	demo                 auto-detect protocol, draw, wait for a key
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
@@ -83,30 +84,30 @@ func main() {
 	screen.Restore()
 }
 
-func buildTree(mode string, caps term.Caps) gooey.Widget {
+func buildTree(mode string, caps term.Caps) gooey.Component {
 	accent := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
 
-	info := &gooey.VStack{Children: []gooey.Widget{
-		&gooey.Text{Content: gooey.Str("gooey — retained visual tree POC"), Style: gooey.Sty(accent)},
-		&gooey.Text{},
-		&gooey.Text{Content: gooey.Str(fmt.Sprintf("graphics mode : %s", mode)), Style: gooey.Sty(render.Style{Bold: true})},
-		&gooey.Text{Content: gooey.Str(fmt.Sprintf("kitty=%v sixel=%v iterm2=%v", caps.Kitty, caps.Sixel, caps.ITerm2)), Style: gooey.Sty(dim)},
-		&gooey.Text{Content: gooey.Str(fmt.Sprintf("cell size     : %d×%d px", caps.CellW, caps.CellH)), Style: gooey.Sty(dim)},
-		&gooey.Text{Content: gooey.Str(fmt.Sprintf("color depth   : %s", caps.Color)), Style: gooey.Sty(dim)},
-		&gooey.Text{},
-		&gooey.Text{Content: gooey.Str("tree: Border > VStack > [HStack >\n[Image, VStack > Text×N], Text]"), Style: gooey.Sty(dim)},
+	info := &components.VStack{Children: []gooey.Component{
+		&components.Text{Content: components.Str("gooey — retained visual tree POC"), Style: components.Sty(accent)},
+		&components.Text{},
+		&components.Text{Content: components.Str(fmt.Sprintf("graphics mode : %s", mode)), Style: components.Sty(render.Style{Bold: true})},
+		&components.Text{Content: components.Str(fmt.Sprintf("kitty=%v sixel=%v iterm2=%v", caps.Kitty, caps.Sixel, caps.ITerm2)), Style: components.Sty(dim)},
+		&components.Text{Content: components.Str(fmt.Sprintf("cell size     : %d×%d px", caps.CellW, caps.CellH)), Style: components.Sty(dim)},
+		&components.Text{Content: components.Str(fmt.Sprintf("color depth   : %s", caps.Color)), Style: components.Sty(dim)},
+		&components.Text{},
+		&components.Text{Content: components.Str("tree: Border > VStack > [HStack >\n[Image, VStack > Text×N], Text]"), Style: components.Sty(dim)},
 	}}
 
-	body := &gooey.VStack{Gap: 1, Children: []gooey.Widget{
-		&gooey.HStack{Gap: 2, Children: []gooey.Widget{
-			&gooey.Image{Src: logo(), Cols: 24, Rows: 12},
+	body := &components.VStack{Gap: 1, Children: []gooey.Component{
+		&components.HStack{Gap: 2, Children: []gooey.Component{
+			&components.Image{Src: logo(), Cols: 24, Rows: 12},
 			info,
 		}},
-		&gooey.Text{Content: gooey.Str("press any key to exit"), Style: gooey.Sty(dim)},
+		&components.Text{Content: components.Str("press any key to exit"), Style: components.Sty(dim)},
 	}}
 
-	return &gooey.Border{Child: body, Title: gooey.Str("gooey"), Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)})}
+	return &components.Border{Child: body, Title: components.Str("gooey"), Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)})}
 }
 
 // logo renders a plasma-ish gradient with a ring — enough color variety

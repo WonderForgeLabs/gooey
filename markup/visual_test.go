@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-func buildOne(t *testing.T, src string, ctx *Context) gooey.Widget {
+func buildOne(t *testing.T, src string, ctx *Context) gooey.Component {
 	t.Helper()
 	if ctx.Styles == nil {
 		ctx.Styles = map[string]render.Style{}
@@ -32,21 +33,21 @@ func TestCanvasAttachedPropertiesParse(t *testing.T) {
 	ctx := &Context{Values: map[string]any{}}
 	w := buildOne(t, src, ctx)
 
-	c, ok := w.(*gooey.Canvas)
+	c, ok := w.(*components.Canvas)
 	if !ok {
-		t.Fatalf("root is %T, want *gooey.Canvas", w)
+		t.Fatalf("root is %T, want *components.Canvas", w)
 	}
 	if len(c.Children) != 2 {
 		t.Fatalf("canvas has %d children, want 2", len(c.Children))
 	}
-	a, err := Find[*gooey.Text](ctx, "a")
+	a, err := Find[*components.Text](ctx, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if l := a.LayoutProps(); l.Left != 5 || l.Top != 2 {
 		t.Errorf("Canvas.Left/Top parsed as %d,%d; want 5,2", l.Left, l.Top)
 	}
-	b, _ := Find[*gooey.Text](ctx, "b")
+	b, _ := Find[*components.Text](ctx, "b")
 	if l := b.LayoutProps(); l.Left != 0 || l.Top != 0 {
 		t.Errorf("child without attached properties got %d,%d; want 0,0", l.Left, l.Top)
 	}
@@ -77,19 +78,19 @@ func TestCheckboxBindsCheckedTwoWay(t *testing.T) {
 	ctx := &Context{Values: map[string]any{"Auto": auto}}
 	buildOne(t, src, ctx)
 
-	cb, err := Find[*gooey.Checkbox](ctx, "cb")
+	cb, err := Find[*components.Checkbox](ctx, "cb")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cb.IsChecked() {
 		t.Error("checkbox started checked")
 	}
-	// Widget → viewmodel.
+	// Component → viewmodel.
 	cb.Toggle()
 	if !auto.Get() {
 		t.Error("toggling the checkbox did not reach the bound property")
 	}
-	// Viewmodel → widget: the same handle, not a copy.
+	// Viewmodel → component: the same handle, not a copy.
 	auto.Set(false)
 	if cb.IsChecked() {
 		t.Error("checkbox did not follow the property back")
@@ -125,11 +126,11 @@ func TestGaugeAndSparklineBind(t *testing.T) {
 	ctx := &Context{Values: map[string]any{"CPU": cpu, "Hist": hist}}
 	w := buildOne(t, src, ctx)
 
-	g, err := Find[*gooey.Gauge](ctx, "g")
+	g, err := Find[*components.Gauge](ctx, "g")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := Find[*gooey.Sparkline](ctx, "s")
+	s, err := Find[*components.Sparkline](ctx, "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestColorPickerBindsATypedColorProperty(t *testing.T) {
 	ctx := &Context{Values: map[string]any{"Accent": accent}}
 	buildOne(t, src, ctx)
 
-	p, err := Find[*gooey.ColorPicker](ctx, "p")
+	p, err := Find[*components.ColorPicker](ctx, "p")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +216,7 @@ func TestTypedBindingsFailAtLoadWithBothTypes(t *testing.T) {
 }
 
 // A bound Style is a live handle, so a computed style over an accent
-// color restyles its widgets through the ordinary property graph — the
+// color restyles its components through the ordinary property graph — the
 // closest thing gooey has to theming, with no styling system involved.
 func TestStyleAttributeAcceptsABinding(t *testing.T) {
 	accent := prop.NewSource(render.RGB(255, 170, 60))
@@ -230,21 +231,21 @@ func TestStyleAttributeAcceptsABinding(t *testing.T) {
 	ctx := &Context{Values: map[string]any{"Accent": styled}}
 	buildOne(t, src, ctx)
 
-	b, err := Find[*gooey.Border](ctx, "b")
+	b, err := Find[*components.Border](ctx, "b")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := b.Style.Get().Fg, render.RGB(255, 170, 60); got != want {
 		t.Errorf("border style Fg = %v, want %v", got, want)
 	}
-	// The handle is live: changing the source changes what the widget
+	// The handle is live: changing the source changes what the component
 	// reads, with no rebuild.
 	accent.Set(render.RGB(0, 128, 255))
 	if got, want := b.Style.Get().Fg, render.RGB(0, 128, 255); got != want {
 		t.Errorf("bound style did not follow the source: %v, want %v", got, want)
 	}
 	// Bold="true" composes over a bound style instead of replacing it.
-	txt, _ := Find[*gooey.Text](ctx, "t")
+	txt, _ := Find[*components.Text](ctx, "t")
 	st := txt.Style.Get()
 	if !st.Bold {
 		t.Error("Bold=true was lost on a bound style")
@@ -263,7 +264,7 @@ func TestStyleAttributeStillDoesNamedLookup(t *testing.T) {
 		Styles: map[string]render.Style{"accent": {Fg: render.RGB(1, 2, 3)}},
 	}
 	buildOne(t, src, ctx)
-	txt, _ := Find[*gooey.Text](ctx, "t")
+	txt, _ := Find[*components.Text](ctx, "t")
 	if got, want := txt.Style.Get().Fg, render.RGB(1, 2, 3); got != want {
 		t.Errorf("named style lookup = %v, want %v", got, want)
 	}
@@ -301,7 +302,7 @@ func TestTimerBuildsAsAnAttachment(t *testing.T) {
 
 	// It must NOT be a laid-out child — non-visual elements are hung off
 	// the parent instead.
-	stack := w.(*gooey.VStack)
+	stack := w.(*components.VStack)
 	if len(stack.Children) != 1 {
 		t.Fatalf("stack has %d visual children, want 1 (the Timer must be an attachment)", len(stack.Children))
 	}
@@ -309,9 +310,9 @@ func TestTimerBuildsAsAnAttachment(t *testing.T) {
 	if len(att) != 1 {
 		t.Fatalf("stack has %d attachments, want 1", len(att))
 	}
-	timer, ok := att[0].(*gooey.Timer)
+	timer, ok := att[0].(*components.Timer)
 	if !ok {
-		t.Fatalf("attachment is %T, want *gooey.Timer", att[0])
+		t.Fatalf("attachment is %T, want *components.Timer", att[0])
 	}
 	if got, want := timer.Interval, 600*time.Millisecond; got != want {
 		t.Errorf("Interval = %v, want %v", got, want)
@@ -360,7 +361,7 @@ func TestTimerEnabledIsOptional(t *testing.T) {
 	</Gooey>`
 	ctx := &Context{Values: map[string]any{"Go": gooey.Command(func() {})}}
 	buildOne(t, src, ctx)
-	timer, err := Find[*gooey.Timer](ctx, "t")
+	timer, err := Find[*components.Timer](ctx, "t")
 	if err != nil {
 		t.Fatal(err)
 	}

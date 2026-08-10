@@ -76,7 +76,7 @@ func newTestApp(t *testing.T, src string, values map[string]any) *testApp {
 	return a
 }
 
-func (a *testApp) attach(root gooey.Widget) {
+func (a *testApp) attach(root gooey.Component) {
 	if a.comp != nil {
 		a.comp.Close()
 	}
@@ -110,7 +110,7 @@ func (a *testApp) run() {
 // server calls from an http goroutine.
 func (a *testApp) Post(fn func())            { a.disp.Post(fn) }
 func (a *testApp) Composer() *gooey.Composer { return a.comp }
-func (a *testApp) Swap(root gooey.Widget)    { a.attach(root) }
+func (a *testApp) Swap(root gooey.Component) { a.attach(root) }
 
 // ---- a viewmodel the tests share ----
 
@@ -562,7 +562,7 @@ func TestTreeSnapshot(t *testing.T) {
 	out := c.json("tree_snapshot", nil)
 
 	root := out["tree"].(map[string]any)
-	if root["type"] != "*gooey.VStack" {
+	if root["type"] != "*components.VStack" {
 		t.Errorf("root type = %v", root["type"])
 	}
 	byName := map[string]map[string]any{}
@@ -821,7 +821,7 @@ func TestFocus(t *testing.T) {
 		t.Error("focus did not move to Note")
 	}
 	if findName(snap, "Inc")["focused"] == true {
-		t.Error("the previously focused widget still claims focus")
+		t.Error("the previously focused component still claims focus")
 	}
 	c.fails("focus", map[string]any{"name": "Head"}, "not a focus stop")
 	c.fails("focus", map[string]any{"name": "Ghost"}, `no element named "Ghost"`)

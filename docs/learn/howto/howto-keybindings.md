@@ -32,8 +32,8 @@ An unparseable gesture is a load-time error naming the offending token.
 
 ## Scope a binding by where you declare it
 
-Dispatch starts at the focused widget and walks up to the root, matching
-attached bindings at each level before that widget's own key handler. So
+Dispatch starts at the focused component and walks up to the root, matching
+attached bindings at each level before that component's own key handler. So
 placement *is* scoping:
 
 ```xml
@@ -52,7 +52,7 @@ placement *is* scoping:
 ```
 
 Any element embedding `gooey.Base` can host a binding — a `Grid`,
-`Border`, stack, or custom widget.
+`Border`, stack, or custom component.
 
 > **A page with no focus stops** starts dispatch at the root, so only
 > root-attached bindings can ever fire. Add a `Button`, or put the
@@ -68,8 +68,8 @@ nothing in the tree consumed the event. So both are overridable:
 <KeyBinding Gesture="tab" Command="{{.NextPane}}"/>
 ```
 
-A widget's `HandleKey` returning true does the same thing for that
-widget's subtree — which is how a list keeps its own up/down arrows while
+A component's `HandleKey` returning true does the same thing for that
+component's subtree — which is how a list keeps its own up/down arrows while
 the rest of the page still navigates with them.
 
 ## Bind the command
@@ -88,7 +88,7 @@ load-time error; an empty attribute is not — it just means no command.
 ## Declare bindings from Go
 
 A tree built in Go composition has no markup to declare bindings in, so
-attach them directly. A `KeyBinding` is a non-visual widget; any element
+attach them directly. A `KeyBinding` is a non-visual component; any element
 embedding `gooey.Base` can host one:
 
 ```go
@@ -114,7 +114,7 @@ built both ways, and are worth diffing if you are choosing between them.
 ## Gotchas
 
 - **First match wins and stops the walk.** Two bindings for the same
-  gesture on the same path: the one nearest the focused widget fires.
+  gesture on the same path: the one nearest the focused component fires.
 - **`esc` needs a moment.** The decoder waits 40 ms to tell a lone Esc
   from the start of an arrow sequence. That delay is inherent to
   terminals, not a gooey choice.

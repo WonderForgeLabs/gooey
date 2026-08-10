@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -105,19 +106,19 @@ func main() {
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
 	statsP := prop.NewSource("")
 	pane := &logPane{src: visible, scroll: scroll}
-	root := &gooey.Border{
+	root := &components.Border{
 		Title: paneTitle("logview", pane),
-		Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
+		Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
 		// A star row is what makes the pane greedy — it takes whatever
 		// the three Auto rows above it leave. Ordering inside a VStack
 		// used to stand in for this, which meant the stats line could be
 		// pushed off screen by a taller header.
-		Child: &gooey.Grid{
-			Rows: []gooey.GridLen{gooey.Auto(), gooey.Auto(), gooey.Auto(), gooey.Star(1)},
-			Children: []gooey.Widget{
-				gooey.L(&gooey.Text{Content: header, Style: gooey.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true})}, gooey.Layout{Row: 0}),
-				gooey.L(&gooey.Text{Content: gooey.Str("space: pause/follow   f: filter   j/k: scroll   q: quit"), Style: gooey.Sty(dim)}, gooey.Layout{Row: 1}),
-				gooey.L(&gooey.Text{Content: statsP, Style: gooey.Sty(dim)}, gooey.Layout{Row: 2}),
+		Child: &components.Grid{
+			Rows: []components.GridLen{components.Auto(), components.Auto(), components.Auto(), components.Star(1)},
+			Children: []gooey.Component{
+				gooey.L(&components.Text{Content: header, Style: components.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true})}, gooey.Layout{Row: 0}),
+				gooey.L(&components.Text{Content: components.Str("space: pause/follow   f: filter   j/k: scroll   q: quit"), Style: components.Sty(dim)}, gooey.Layout{Row: 1}),
+				gooey.L(&components.Text{Content: statsP, Style: components.Sty(dim)}, gooey.Layout{Row: 2}),
 				gooey.L(pane, gooey.Layout{Row: 3}),
 			},
 		},
@@ -164,7 +165,7 @@ func main() {
 	for running {
 		if needsFrame {
 			frames++
-			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   widgets painted last frame=%d",
+			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
 				lineCount, frames, visible.Evals(), lastPainted))
 			_, lastPainted = comp.Frame()
 			comp.Flush(screen.File())
@@ -191,8 +192,8 @@ func paneTitle(name string, w interface{ IsFocused() bool }) *prop.Property[stri
 	})
 }
 
-// logPane is a third-party widget: it lives outside the gooey package
-// and only implements the Widget interface. Reading src during Render
+// logPane is a third-party component: it lives outside the gooey package
+// and only implements the Component interface. Reading src during Render
 // is what wires it into the dependency graph. Embedding FocusState
 // makes it a focus stop, which is what lets it own the scroll keys —
 // they are handled here, not by a page-wide binding, and the arrows it

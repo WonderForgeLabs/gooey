@@ -1,5 +1,5 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Border Title="custom widgets" Style="panel">
+  <Border Title="custom components" Style="panel">
     <VStack Gap="1">
       <Text Style="dim">Meter — no focus, no input: it only paints what it reads</Text>
       <Meter Value="{{.Level}}" Max="20" Width="44"/>

@@ -103,10 +103,10 @@ dependency edges).
 **Do all your `Set`s in one place.** Everything drained or received in
 the loop runs on the UI goroutine, so `Set` freely there. The `Set`s mark
 dependents dirty, the scheduler hook asks for a frame, and the next
-`Frame()` repaints exactly the widgets that read them.
+`Frame()` repaints exactly the components that read them.
 
-**Do not `Set` on every frame.** A `Set` on a property some widget
-painted from dirties that widget, which schedules another frame. If you
+**Do not `Set` on every frame.** A `Set` on a property some component
+painted from dirties that component, which schedules another frame. If you
 want per-frame counters on screen, set them from `app.BeforeFrame` — that
 hook runs immediately before the frame is composed, so what it sets
 paints in the frame it precedes instead of dirtying the tree afterwards

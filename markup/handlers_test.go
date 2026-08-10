@@ -38,7 +38,7 @@ func (r *recorder) NewCommand(c *Call) (gooey.Command, error) {
 
 var errBoom = errors.New("provider said no")
 
-func loadWith(t *testing.T, src string, vals map[string]any) (gooey.Widget, *Context, *recorder) {
+func loadWith(t *testing.T, src string, vals map[string]any) (gooey.Component, *Context, *recorder) {
 	t.Helper()
 	r := &recorder{}
 	RegisterHandlers(testURI, r)
@@ -333,7 +333,7 @@ func TestNestedBuildRestoresTheParentNamespaceTable(t *testing.T) {
 		Values:     map[string]any{"Out": out},
 		Dispatcher: gooey.NewDispatcher(),
 	}
-	ctx.Widgets = map[string]Builder{
+	ctx.Components = map[string]Builder{
 		"Inner": UserControl(fsys, "inner.gooey", func(e Element, parent *Context) (*Context, error) {
 			return parent, nil // deliberately shares the page's context
 		}),

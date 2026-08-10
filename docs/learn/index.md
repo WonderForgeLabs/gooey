@@ -28,7 +28,7 @@ Work through these in order — each builds on the last.
 | 3 | [Bind data and drive state](03-binding-and-state.md) | 25 min | Sources, computeds, and an on-screen proof of the read-versus-subscribe rule |
 | 4 | [Handle input with commands and key bindings](04-input-commands.md) | 25 min | Buttons, commands, focus navigation, and one key that means two things depending on focus |
 | 5 | [Build reusable controls](05-usercontrols.md) | 30 min | An Include with no Go code, and a UserControl with a typed setup function |
-| 6 | [Write a custom widget](06-custom-widgets.md) | 30 min | A meter and a stepper, from `Measure` through focus and input |
+| 6 | [Write a custom component](06-custom-components.md) | 30 min | A meter and a stepper, from `Measure` through focus and input |
 
 Finished code for each is under [`examples/`](examples), beside these
 pages — one directory per tutorial. Run any of them from its own
@@ -72,7 +72,7 @@ tutorial each one extends.
 | [`cmd/statedemo`](../demos.md#statedemo) | Markup with no code-behind; reactive serialization | [Tutorial 4](04-input-commands.md) |
 | [`cmd/logview`](../demos.md#logview) | Conditional dependencies: pause drops a firehose out of the graph | [Tutorial 3](03-binding-and-state.md) |
 | [`cmd/markuplog`](../demos.md#markuplog) | The same app in markup, hot-reloaded live | [Tutorial 1](01-first-app.md), [how-to: hot reload](howto/howto-hot-reload.md) |
-| [`cmd/finder`](../demos.md#finder) | Input to derived view, with per-pane damage | [Tutorial 4](04-input-commands.md) + [Tutorial 6](06-custom-widgets.md) |
+| [`cmd/finder`](../demos.md#finder) | Input to derived view, with per-pane damage | [Tutorial 4](04-input-commands.md) + [Tutorial 6](06-custom-components.md) |
 | [`cmd/reader`](../demos.md#reader) | Multi-UserControl composition, scoped input, live fetches | [Tutorial 5](05-usercontrols.md), [how-to: async](howto/howto-async.md) |
 | [`cmd/cardsdemo`](../demos.md) | One markup-only control instantiated four times, plus a `<Timer>` | [Tutorial 5](05-usercontrols.md) |
 | [`cmd/colordemo`](../demos.md#colordemo) | Canvas absolute layout and per-terminal color tiers | [how-to: images](howto/howto-images.md) |
@@ -94,10 +94,10 @@ Short framings, each linking into the deep guide.
 
 - [The property graph](concepts/property-graph.md) — lazy sources and
   computeds, and why the call site decides what a read means.
-- [Damage tracking](concepts/damage.md) — every widget's paint is a graph
+- [Damage tracking](concepts/damage.md) — every component's paint is a graph
   node, so reading a property *is* declaring a repaint trigger.
 - [Markup tiers and the loading seam](concepts/markup-tiers.md) —
-  Include, UserControl, custom widget; `os.DirFS` versus `embed.FS`.
+  Include, UserControl, custom component; `os.DirFS` versus `embed.FS`.
 - [Input routing](concepts/input-routing.md) — focus-to-root dispatch,
   hit-testing, and why focus movement is cheap.
 
@@ -120,7 +120,7 @@ not find:
 
 - **No styling system.** `Style="name"` is a lookup — no cascading,
   selectors, or setters.
-- **No DataTemplates.** Every list is a hand-written rows widget.
+- **No DataTemplates.** Every list is a hand-written rows component.
 - **`TextBox` is single-line and end-cursor only** — no mid-string
   cursor movement or selection yet (see `cmd/finder` for real usage).
 - **No `CanExecute`**, so no automatic disabled command state.

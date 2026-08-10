@@ -1,9 +1,9 @@
-// Tutorial 6 — writing widgets: the Widget interface, Base, painting
+// Tutorial 6 — writing components: the Component interface, Base, painting
 // from bound properties, and joining the focus and input system.
 //
-//	cd docs/learn/examples/06-custom-widgets && go run .
+//	cd docs/learn/examples/06-custom-components && go run .
 //
-// Walkthrough: docs/learn/06-custom-widgets.md
+// Walkthrough: docs/learn/06-custom-components.md
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// ---- meter: the smallest useful widget ----
+// ---- meter: the smallest useful component ----
 //
 // Embedding Base supplies Arrange, Bounds, and the universal layout
 // attributes (Width, Margin, Grid.Row, …), so a meter only has to say
@@ -35,9 +35,9 @@ func (m *meter) Measure(avail gooey.Size) gooey.Size {
 	return gooey.Size{W: avail.W, H: min(1, avail.H)}
 }
 
-// Render paints THIS widget only, into the bounds Arrange assigned.
+// Render paints THIS component only, into the bounds Arrange assigned.
 // value.Get() here is what makes the property a paint dependency: the
-// Composer runs Render inside the widget's paint node, so any Set on
+// Composer runs Render inside the component's paint node, so any Set on
 // value repaints this meter and nothing else. Nobody declares
 // "AffectsRender" — reading it is the declaration.
 func (m *meter) Render(f *gooey.Frame) {
@@ -51,11 +51,11 @@ func (m *meter) Render(f *gooey.Frame) {
 	f.Cells.SetString(b.X, b.Y, bar, render.Style{Fg: render.RGB(120, 200, 140)})
 }
 
-// ---- stepper: a widget that joins the input system ----
+// ---- stepper: a component that joins the input system ----
 //
 // FocusState makes it a tab stop and keeps the focused flag in a source
 // property, so reading IsFocused() during Render makes focus ordinary
-// paint damage — moving focus repaints exactly the two widgets involved.
+// paint damage — moving focus repaints exactly the two components involved.
 type stepper struct {
 	gooey.Base
 	gooey.FocusState
@@ -77,7 +77,7 @@ func (s *stepper) Render(f *gooey.Frame) {
 	f.Cells.SetString(b.X, b.Y, text, st)
 }
 
-// HandleKey receives keys while this widget has focus. Returning true
+// HandleKey receives keys while this component has focus. Returning true
 // consumes the event: it stops bubbling to ancestors, which is why these
 // arrows never reach the framework's spatial focus navigation.
 func (s *stepper) HandleKey(ev input.KeyEvent) bool {
@@ -135,8 +135,8 @@ func main() {
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
-		Widgets: map[string]markup.Builder{
-			"Meter": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+		Components: map[string]markup.Builder{
+			"Meter": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 				v, err := intAttr(c, e, "Value")
 				if err != nil {
 					return nil, err
@@ -147,7 +147,7 @@ func main() {
 				}
 				return &meter{value: v, max: m}, nil
 			},
-			"Stepper": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+			"Stepper": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 				v, err := intAttr(c, e, "Value")
 				if err != nil {
 					return nil, err
@@ -157,7 +157,7 @@ func main() {
 		},
 	}
 
-	// The App is the run loop. Custom widgets need nothing special from
+	// The App is the run loop. Custom components need nothing special from
 	// it: they are ordinary tree members, painted through their own
 	// nodes and offered input like any built-in.
 	app = gooey.NewApp(markup.Page(os.DirFS("."), "app.gooey", ctx))

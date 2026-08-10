@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -111,12 +112,12 @@ func main() {
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
-		Widgets: map[string]markup.Builder{
-			// Lines="{{.Visible}}" crosses into the widget as a typed
+		Components: map[string]markup.Builder{
+			// Lines="{{.Visible}}" crosses into the component as a typed
 			// property handle, the same hand-off a UserControl attribute
 			// makes — so the markup names the dependency instead of the
 			// builder closing over it silently.
-			"LogPane": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+			"LogPane": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 				v, err := c.BindingValue(e.Attrs["Lines"])
 				if err != nil {
 					return nil, fmt.Errorf("LogPane Lines: %w", err)
@@ -141,15 +142,15 @@ func main() {
 	app = gooey.NewApp(markup.Page(os.DirFS(filepath.Dir(path)), filepath.Base(path), ctx),
 		gooey.WithErrorHandler(func(err error) { lastErr = "   reload failed: " + err.Error() }))
 
-	// A hot reload builds NEW widgets, so anything resolved by name has
+	// A hot reload builds NEW components, so anything resolved by name has
 	// to be resolved again — the handle from before the swap points at a
 	// composition that is no longer on screen. This hook fires for the
 	// first attach too, so there is one place that does it.
-	var stats *gooey.Text
+	var stats *components.Text
 	reloads := -1 // the initial attach is not a reload
-	app.OnSwap(func(gooey.Widget) {
+	app.OnSwap(func(gooey.Component) {
 		reloads++
-		stats, _ = markup.Find[*gooey.Text](ctx, "stats")
+		stats, _ = markup.Find[*components.Text](ctx, "stats")
 	})
 
 	// The log generator is the app's own clock: it must keep producing

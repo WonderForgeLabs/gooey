@@ -10,18 +10,18 @@ import (
 )
 
 // UserControl wraps a markup file + code-behind setup as a Builder, so
-// a control registers like any custom widget and instantiates as an
+// a control registers like any custom component and instantiates as an
 // element: <StoryList Stories="{{.Stories}}"/>.
 //
 // Context isolation is the contract: setup returns the instance's OWN
 // Context — bindings inside the control's markup resolve against it,
 // never against the page. Data crosses the boundary through element
 // attributes, resolved in the PARENT context (see Context.BindingValue)
-// to property handles the setup wires into its context or widgets.
-// Styles and Widgets inherit from the parent when the child leaves
+// to property handles the setup wires into its context or components.
+// Styles and Components inherit from the parent when the child leaves
 // them nil; Named is scoped per instance (like x:Name in templates).
 func UserControl(fsys fs.FS, name string, setup func(e Element, parent *Context) (*Context, error)) Builder {
-	return func(e Element, parent *Context) (gooey.Widget, error) {
+	return func(e Element, parent *Context) (gooey.Component, error) {
 		child, err := setup(e, parent)
 		if err != nil {
 			return nil, fmt.Errorf("markup: control %s: %w", name, err)
@@ -29,8 +29,8 @@ func UserControl(fsys fs.FS, name string, setup func(e Element, parent *Context)
 		if child.Styles == nil {
 			child.Styles = parent.Styles
 		}
-		if child.Widgets == nil {
-			child.Widgets = parent.Widgets
+		if child.Components == nil {
+			child.Components = parent.Components
 		}
 		if child.Handlers == nil {
 			child.Handlers = parent.Handlers

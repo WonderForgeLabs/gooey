@@ -9,7 +9,7 @@
     <!-- The whole key surface of the app, declared. Commands resolve to
          funcs in the viewmodel, so there is no code-behind and no key
          switch in main.go. They hang on the page root because this page
-         has no focus stop: dispatch starts at the focused widget, or at
+         has no focus stop: dispatch starts at the focused component, or at
          the root when nothing is focused. -->
     <KeyBinding Gesture="space"  Command="{{.TogglePause}}"/>
     <KeyBinding Gesture="f"      Command="{{.CycleFilter}}"/>

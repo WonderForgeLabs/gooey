@@ -15,7 +15,7 @@ through the cell renderer; only images need a protocol.
 | `iterm2` | OSC 1337 inline images | iTerm2, WezTerm, mintty |
 | `halfblock` | none — pixels become cells | everywhere |
 
-The first three are `graphics.Encoder`s: a widget records a
+The first three are `graphics.Encoder`s: a component records a
 `graphics.Placement` during painting and the flush emits the protocol
 bytes after the cell plane, so pixels land over the already-painted
 cells. **Halfblock is not an encoder** — it renders the image *into* the
@@ -63,10 +63,10 @@ go run ./cmd/demo --dump            # one frame to stdout, no raw mode
 
 ## Put an image in a tree
 
-`gooey.Image` takes a Go `image.Image` and a size in cells:
+`components.Image` takes a Go `image.Image` and a size in cells:
 
 ```go
-&gooey.Image{Src: myImage, Cols: 24, Rows: 12}
+&components.Image{Src: myImage, Cols: 24, Rows: 12}
 ```
 
 `graphics.Scale(img, w, h)` resizes to a pixel size with
@@ -76,11 +76,11 @@ nearest-neighbour sampling if you need to prepare the source.
 
 The pixel pipeline predates the property model, so `Image`'s fields are
 plain Go values rather than properties, and no built-in element builds
-one. Register it as a custom widget:
+one. Register it as a custom component:
 
 ```go
-Widgets: map[string]markup.Builder{
-	"Logo": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+Components: map[string]markup.Builder{
+	"Logo": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 		cols, err := strconv.Atoi(e.Attrs["Cols"])
 		if err != nil {
 			return nil, fmt.Errorf("<Logo Cols=%q>: %w", e.Attrs["Cols"], err)
@@ -89,7 +89,7 @@ Widgets: map[string]markup.Builder{
 		if err != nil {
 			return nil, fmt.Errorf("<Logo Rows=%q>: %w", e.Attrs["Rows"], err)
 		}
-		return &gooey.Image{Src: logo(), Cols: cols, Rows: rows}, nil
+		return &components.Image{Src: logo(), Cols: cols, Rows: rows}, nil
 	},
 }
 ```
@@ -100,8 +100,8 @@ Widgets: map[string]markup.Builder{
 
 Because the source is a plain field and not a property, **changing it
 will not repaint anything**. An image that has to change needs a wrapper
-widget that reads a property during `Render` — the pattern from
-[tutorial 6](../06-custom-widgets.md).
+component that reads a property during `Render` — the pattern from
+[tutorial 6](../06-custom-components.md).
 
 ## Know which render path you are on
 
@@ -111,7 +111,7 @@ This is the one that surprises people:
   the cell plane only. It carries no encoder, so an `Image` in a
   Composer-driven app always takes the **halfblock** branch and draws
   itself into cells. Which is fine — it works everywhere, and it damages
-  and repaints like any other widget.
+  and repaints like any other component.
 - **The one-shot path** (`gooey.Compose` + `frame.Flush`) carries the
   encoder and emits placements, so it is where the kitty, sixel, and
   iTerm2 protocols actually run. `cmd/demo` is that path; read
@@ -134,6 +134,6 @@ catalogs what each demo exercises.
 
 ## See also
 
-- [Tutorial 6: Write a custom widget](../06-custom-widgets.md)
+- [Tutorial 6: Write a custom component](../06-custom-components.md)
 - [How to test a gooey app](howto-testing.md)
 - Depth: [architecture.md — the two rendering planes](../../architecture.md#the-two-rendering-planes)

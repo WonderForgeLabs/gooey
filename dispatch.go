@@ -27,7 +27,7 @@ import "sync"
 //
 // Drained funcs run on the loop goroutine, so they may Set freely; the
 // Sets mark dependents dirty, the scheduler hook asks for a frame, and
-// the next Frame() repaints exactly the widgets that read them. No
+// the next Frame() repaints exactly the components that read them. No
 // framework-owned run loop yet — the app still owns its select.
 
 // Dispatcher queues work to run on the UI goroutine. Post is safe from

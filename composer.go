@@ -9,22 +9,22 @@ import (
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
-// Composer is the retained, damage-tracked render path. Each widget's
-// paint is its own graph node: evaluating it runs Widget.Render, so the
-// properties a widget reads while painting become its dependencies
+// Composer is the retained, damage-tracked render path. Each component's
+// paint is its own graph node: evaluating it runs Component.Render, so the
+// properties a component reads while painting become its dependencies
 // automatically — "AffectsRender" metadata is discovered, not declared.
-// A property change dirties exactly the widgets that read it; Frame()
+// A property change dirties exactly the components that read it; Frame()
 // re-paints only those into the persistent buffer.
 //
 // Layout (Measure/Arrange) runs unconditionally every frame — cheap at
 // terminal scale, and it runs outside any evaluation context so layout
-// reads record nothing. A widget whose bounds changed is force-dirtied
+// reads record nothing. A component whose bounds changed is force-dirtied
 // via its rev source and its old region cleared.
 //
 // POC limits: static tree (rebuild the Composer on structural change)
-// and cell-plane widgets only (no graphics placements).
+// and cell-plane components only (no graphics placements).
 type Composer struct {
-	root       Widget
+	root       Component
 	frame      *Frame
 	cols, rows int
 	nodes      []*paintNode
@@ -37,19 +37,19 @@ type Composer struct {
 }
 
 type paintNode struct {
-	w      Widget
+	w      Component
 	node   *prop.Property[int]
 	rev    *prop.Property[int] // bumped when bounds change → forces repaint
 	bounds Rect
 	vis    Visibility
 }
 
-// Bounded is implemented by widgets that expose their arranged bounds
+// Bounded is implemented by components that expose their arranged bounds
 // (embedding element provides it); the Composer uses it for damage
 // clearing and bounds-change detection.
 type Bounded interface{ Bounds() Rect }
 
-func NewComposer(root Widget, cols, rows int) *Composer {
+func NewComposer(root Component, cols, rows int) *Composer {
 	c := &Composer{root: root, cols: cols, rows: rows,
 		frame: &Frame{Cells: render.NewBuffer(cols, rows)}}
 	c.build(root)
@@ -58,12 +58,12 @@ func NewComposer(root Widget, cols, rows int) *Composer {
 }
 
 // SetCaps hands the composition the terminal's capabilities, which land
-// on the Frame for widgets to read at Render and set the color depth
+// on the Frame for components to read at Render and set the color depth
 // Flush encodes at. It is a setter rather than a constructor parameter
 // because capabilities arrive from a probe that not every host runs —
 // a composition without them keeps the truecolor, no-graphics defaults.
 //
-// Call it before the first Frame: widgets that adapt to capabilities
+// Call it before the first Frame: components that adapt to capabilities
 // read them while painting, so changing caps after a frame would leave
 // already-clean paint nodes showing the old tier.
 func (c *Composer) SetCaps(caps term.Caps) {
@@ -78,12 +78,12 @@ func (c *Composer) Caps() term.Caps { return c.frame.Caps }
 // ancestor links, and declared key bindings.
 func (c *Composer) Focus() *FocusManager { return c.focus }
 
-// Root is the widget this composition was built over — the entry point
+// Root is the component this composition was built over — the entry point
 // for anything that needs to walk the live tree (serialization,
 // inspection, an automation surface). Call it on the UI goroutine: the
-// widgets it leads to hold properties, and properties are confined
+// components it leads to hold properties, and properties are confined
 // there.
-func (c *Composer) Root() Widget { return c.root }
+func (c *Composer) Root() Component { return c.root }
 
 // Cells is the retained cell plane as of the LAST Frame — the buffer
 // Flush writes, not a fresh composition. Reading it is how a caller
@@ -110,7 +110,7 @@ func (c *Composer) HandleKey(ev input.KeyEvent) bool { return c.focus.Dispatch(e
 // HandleMouse routes a pointer event. See FocusManager.DispatchMouse.
 func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.DispatchMouse(ev) }
 
-func (c *Composer) build(w Widget) {
+func (c *Composer) build(w Component) {
 	n := &paintNode{w: w, rev: prop.NewSource(0)}
 	n.node = prop.NewComputed(func() int {
 		n.rev.Get()
@@ -151,7 +151,7 @@ func (c *Composer) build(w Widget) {
 		c.startable = append(c.startable, s)
 	}
 	if ct, ok := w.(Container); ok {
-		for _, ch := range ct.ChildWidgets() {
+		for _, ch := range ct.ChildComponents() {
 			c.build(ch)
 		}
 	}
@@ -160,7 +160,7 @@ func (c *Composer) build(w Widget) {
 // Start brings the composition's background elements to life, delivering
 // their work onto the UI goroutine through d. Timers do not run until
 // this is called, which is what makes "started" a property of the
-// composition rather than of the widget: a tree that was built but never
+// composition rather than of the component: a tree that was built but never
 // composed never ticks.
 //
 // Calling Start twice stops the previous run first, so it is safe in an
@@ -190,12 +190,12 @@ func (c *Composer) stopAll() {
 	c.stops = nil
 }
 
-// OnInvalidate registers the scheduler hook: fired when any widget's
+// OnInvalidate registers the scheduler hook: fired when any component's
 // paint node goes dirty.
 func (c *Composer) OnInvalidate(fn func()) { c.invalid = fn }
 
-// Frame lays out, repaints dirty widgets only, and reports how many
-// widgets painted.
+// Frame lays out, repaints dirty components only, and reports how many
+// components painted.
 func (c *Composer) Frame() (*Frame, int) {
 	c.painted = 0
 	// Unconditional layout, outside any eval context: reads here are
@@ -275,8 +275,8 @@ func clearRect(b *render.Buffer, r Rect) {
 	}
 }
 
-func visibilityOf(w Widget) Visibility {
-	if l := layoutOf(w); l != nil {
+func visibilityOf(w Component) Visibility {
+	if l := LayoutOf(w); l != nil {
 		return l.Visibility
 	}
 	return Visible

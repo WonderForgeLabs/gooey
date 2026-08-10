@@ -10,10 +10,10 @@ import (
 // Commands are plain funcs bound from the viewmodel, so an event stays
 // declarative in markup and needs no code-behind. Focus is framework-
 // owned: the FocusManager walks the same tree the Composer does, holds
-// the focused widget, and moves with tab/shift+tab. A widget learns it
+// the focused component, and moves with tab/shift+tab. A component learns it
 // is focused by reading IsFocused() while painting, which makes focus a
 // paint dependency like any other property — moving focus repaints the
-// two widgets involved, not the screen.
+// two components involved, not the screen.
 
 // Command is a bound action. Markup event attributes (Button's Click,
 // KeyBinding's Command) resolve to one of these, either from a func in
@@ -21,21 +21,21 @@ import (
 // viewmodel — or from the code-behind handler registry by bare name.
 type Command func()
 
-// KeyHandler is the optional interface for widgets that consume keys.
+// KeyHandler is the optional interface for components that consume keys.
 // Returning true stops propagation.
 type KeyHandler interface{ HandleKey(input.KeyEvent) bool }
 
-// Focusable marks a widget as a focus stop. Embedding FocusState is the
+// Focusable marks a component as a focus stop. Embedding FocusState is the
 // easy way to implement it.
 type Focusable interface{ AcceptsFocus() bool }
 
-// FocusTarget is how the framework tells a widget it gained or lost
+// FocusTarget is how the framework tells a component it gained or lost
 // focus. Implementations must make the flag observable to Render.
 type FocusTarget interface{ SetFocused(bool) }
 
-// FocusState is the mixin that makes a widget focusable. It keeps the
+// FocusState is the mixin that makes a component focusable. It keeps the
 // framework-set flag in a source property, so a Render that reads
-// IsFocused() picks up focus changes as damage — exactly the widget
+// IsFocused() picks up focus changes as damage — exactly the component
 // losing focus and the one gaining it repaint.
 type FocusState struct{ focused *prop.Property[bool] }
 
@@ -51,14 +51,14 @@ func (f *FocusState) state() *prop.Property[bool] {
 }
 
 // NonVisual marks elements that live in the tree for behavior only.
-// The framework attaches them to their parent widget instead of laying
+// The framework attaches them to their parent component instead of laying
 // them out or painting them (see Base.Attach).
 type NonVisual interface{ NonVisual() bool }
 
 // KeyBinding is a declared gesture: <KeyBinding Gesture="ctrl+s"
-// Command="{{.Save}}"/>. It hangs off its parent widget as an
+// Command="{{.Save}}"/>. It hangs off its parent component as an
 // attachment, and the dispatcher only reaches it while the focused
-// widget's ancestor chain passes through that parent — so a binding
+// component's ancestor chain passes through that parent — so a binding
 // declared inside a control fires only while that control has focus,
 // and one declared on the page root is global.
 type KeyBinding struct {
@@ -75,29 +75,29 @@ func (k *KeyBinding) NonVisual() bool   { return true }
 // KeyBindings attached along the way. It is built by the same walk the
 // Composer does and owned by it (Composer.Focus).
 type FocusManager struct {
-	root     Widget
-	order    []Widget
-	parent   map[Widget]Widget
-	bindings map[Widget][]*KeyBinding
+	root     Component
+	order    []Component
+	parent   map[Component]Component
+	bindings map[Component][]*KeyBinding
 	cur      int
 
-	hover   Widget // current hover target, nil when the pointer is nowhere
-	pressed Widget // widget a button went down on, until it comes up
+	hover   Component // current hover target, nil when the pointer is nowhere
+	pressed Component // component a button went down on, until it comes up
 }
 
 // NewFocusManager walks root and focuses the first focus stop, so a page
 // always has somewhere for keys to land.
-func NewFocusManager(root Widget) *FocusManager {
+func NewFocusManager(root Component) *FocusManager {
 	m := &FocusManager{
 		root:     root,
-		parent:   map[Widget]Widget{},
-		bindings: map[Widget][]*KeyBinding{},
+		parent:   map[Component]Component{},
+		bindings: map[Component][]*KeyBinding{},
 		cur:      -1,
 	}
 	m.walk(root, nil)
 	for _, w := range m.order {
 		if t, ok := w.(FocusTarget); ok {
-			t.SetFocused(false) // widgets outlive tree rebuilds
+			t.SetFocused(false) // components outlive tree rebuilds
 		}
 	}
 	if len(m.order) > 0 {
@@ -106,7 +106,7 @@ func NewFocusManager(root Widget) *FocusManager {
 	return m
 }
 
-func (m *FocusManager) walk(w, parent Widget) {
+func (m *FocusManager) walk(w, parent Component) {
 	m.parent[w] = parent
 	if f, ok := w.(Focusable); ok && f.AcceptsFocus() {
 		m.order = append(m.order, w)
@@ -120,14 +120,14 @@ func (m *FocusManager) walk(w, parent Widget) {
 		}
 	}
 	if c, ok := w.(Container); ok {
-		for _, ch := range c.ChildWidgets() {
+		for _, ch := range c.ChildComponents() {
 			m.walk(ch, w)
 		}
 	}
 }
 
-// Focused returns the widget holding focus, or nil.
-func (m *FocusManager) Focused() Widget {
+// Focused returns the component holding focus, or nil.
+func (m *FocusManager) Focused() Component {
 	if m.cur < 0 || m.cur >= len(m.order) {
 		return nil
 	}
@@ -136,10 +136,10 @@ func (m *FocusManager) Focused() Widget {
 
 // Order is the focus traversal order — tree order, filtered to focus
 // stops. Exposed for tests and for apps that want to restore focus.
-func (m *FocusManager) Order() []Widget { return m.order }
+func (m *FocusManager) Order() []Component { return m.order }
 
 // SetFocus moves focus to w if it is a focus stop.
-func (m *FocusManager) SetFocus(w Widget) bool {
+func (m *FocusManager) SetFocus(w Component) bool {
 	for i, o := range m.order {
 		if o == w {
 			m.focusIndex(i)
@@ -181,18 +181,18 @@ func (m *FocusManager) move(d int) {
 	}
 }
 
-func (m *FocusManager) reachable(w Widget) bool {
+func (m *FocusManager) reachable(w Component) bool {
 	for n := w; n != nil; n = m.parent[n] {
-		if l := layoutOf(n); l != nil && l.Visibility == Collapsed {
+		if l := LayoutOf(n); l != nil && l.Visibility == Collapsed {
 			return false
 		}
 	}
 	return true
 }
 
-// Dispatch routes a key event. It starts at the focused widget and walks
+// Dispatch routes a key event. It starts at the focused component and walks
 // up its ancestors to the root; at each level the KeyBindings attached
-// there are matched first, then that widget's own HandleKey. The first
+// there are matched first, then that component's own HandleKey. The first
 // true stops propagation. If nothing consumed the event, tab and
 // shift+tab move focus — which means either can be overridden by binding
 // or handling it.
@@ -251,7 +251,7 @@ func arrowDir(ev input.KeyEvent) (Direction, bool) {
 }
 
 // FocusDir moves focus spatially — the nearest focus stop whose center
-// lies in the given direction from the focused widget, preferring ones
+// lies in the given direction from the focused component, preferring ones
 // roughly in line with it (XAML's XYFocus). It falls back to tree order
 // when nothing lies that way, so a direction is never a dead end.
 //
@@ -312,7 +312,7 @@ func (m *FocusManager) moveInDir(d Direction) {
 	m.FocusPrev()
 }
 
-func focusBounds(w Widget) (Rect, bool) {
+func focusBounds(w Component) (Rect, bool) {
 	b, ok := w.(Bounded)
 	if !ok {
 		return Rect{}, false

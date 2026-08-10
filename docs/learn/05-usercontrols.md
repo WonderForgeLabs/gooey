@@ -54,7 +54,7 @@ That is the whole registration. With `Includes` set, an unknown element
 instead:
 
 ```go
-Widgets: map[string]markup.Builder{
+Components: map[string]markup.Builder{
 	"Card": markup.Include(fsys, "card.gooey"),
 }
 ```
@@ -131,10 +131,10 @@ func statPanel(e markup.Element, parent *markup.Context) (*markup.Context, error
 }
 ```
 
-Register it as a widget builder:
+Register it as a component builder:
 
 ```go
-Widgets: map[string]markup.Builder{
+Components: map[string]markup.Builder{
 	"StatPanel": markup.UserControl(fsys, "statpanel.gooey", statPanel),
 }
 ```
@@ -207,12 +207,12 @@ accidentally reach a page value that happens to share a name, and two
 instances of the same file cannot see each other.
 
 **What is inherited.** When a setup function leaves them nil, `Styles`,
-`Widgets`, `Handlers`, and `Includes` fall back to the parent context —
+`Components`, `Handlers`, and `Includes` fall back to the parent context —
 which is why `Style="panel"` works inside `statpanel.gooey` without being
 re-registered. `Named` is per instance, so `Name="..."` inside a control
 is invisible to the page (like `x:Name` inside a template).
 
-**Element resolution order,** in full: a registered `Widgets` builder
+**Element resolution order,** in full: a registered `Components` builder
 wins, then a built-in element, then the `Includes` convention, then an
 `unknown element` error.
 
@@ -256,7 +256,7 @@ Reach for a UserControl the moment it needs behavior of its own.
   attributes, as live handles.
 - `BindingValue` plus a type assertion carries non-string data; a small
   generic `attr[T]` helper is the idiom.
-- `Styles`/`Widgets`/`Handlers`/`Includes` inherit when left nil; `Named`
+- `Styles`/`Components`/`Handlers`/`Includes` inherit when left nil; `Named`
   is per instance.
 - Naming a page's control files in `markup.Page` hot-reloads the whole
   composition through one page rebuild.
@@ -267,13 +267,13 @@ Reach for a UserControl the moment it needs behavior of its own.
   declared names, types, or defaults (see the `x:Property`
   [spec](../specs/2026-08-10-markup-declared-properties.md)).
 - No DataTemplates: list-shaped data is rendered by a hand-written rows
-  widget behind a UserControl, the pattern `cmd/reader` establishes.
+  component behind a UserControl, the pattern `cmd/reader` establishes.
 - No styles with setters, so a control cannot be restyled from outside
   beyond passing a style name in.
 
 ## Next steps
 
-- **[Tutorial 6: Write a custom widget](06-custom-widgets.md)** — the
-  rows-widget layer under controls like these.
+- **[Tutorial 6: Write a custom component](06-custom-components.md)** — the
+  rows-component layer under controls like these.
 - Concept: [markup tiers](concepts/markup-tiers.md)
 - Depth: [architecture.md — UserControl](../architecture.md#usercontrol-context-isolation-and-the-attribute-hand-off).

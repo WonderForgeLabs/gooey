@@ -14,7 +14,7 @@ go run ./cmd/browser
 
 Retained visual tree + graphics protocol detection (sixel/kitty/iterm2/halfblock).
 
-`probe` reports the terminal's capabilities — size, cell pixel dimensions, and which graphics protocols it supports. `demo` then renders a retained widget tree containing an image through the best available protocol, falling back to halfblock rendering.
+`probe` reports the terminal's capabilities — size, cell pixel dimensions, and which graphics protocols it supports. `demo` then renders a retained component tree containing an image through the best available protocol, falling back to halfblock rendering.
 
 - Run: `go run ./cmd/probe && go run ./cmd/demo`
 - Keys: any key exits; `--mode` forces a protocol; `--dump` prints one frame
@@ -25,9 +25,9 @@ Exercises the terminal capability-detection layer (`term`) and the retained-tree
 
 ![propdemo](../propdemo.gif)
 
-Dependency-tracked properties only repaint what actually changed: hammering an unwatched source produces zero frames, watched bumps render instantly, and each frame repaints only 2 of 8 widgets.
+Dependency-tracked properties only repaint what actually changed: hammering an unwatched source produces zero frames, watched bumps render instantly, and each frame repaints only 2 of 8 components.
 
-The walkthrough: for the first ~2 seconds only the 1 Hz tick renders (frames 1-3, events=0). Then 'b' is pressed five times while the detail computed watches source a — no new frames appear until the next tick, when the events counter jumps from 0 to 5 in one hop (frames=4, "watching a = 0 (b is invisible to me)"). Pressing 'a' bumps the watched source and a frame renders instantly. 'm' toggles the watched source to b ("watching b", "a is invisible to me"), after which two 'b' presses render instantly — detail evals climb to 5 and only 2 of 8 widgets repaint per frame. 'q' quits.
+The walkthrough: for the first ~3 seconds only the 1 Hz tick renders (frames 1-4, events=0). Then 'b' is pressed five times while the detail computed watches source a — no new frames appear until the next tick, when the events counter jumps from 0 to 5 in one hop (frames=5, "watching a = 0 (b is invisible to me)"). Pressing 'a' bumps the watched source and a frame renders instantly. 'm' toggles the watched source to b ("watching b", "a is invisible to me"), after which two 'b' presses render instantly — detail evals climb to 5 and only 2 of 8 components repaint per frame. 'q' quits.
 
 - Run: `go run ./cmd/propdemo`
 - Keys: `a`/`b` bump sources, `m` toggle watched, `q` quit
@@ -40,7 +40,7 @@ Exercises the dependency-property graph (`prop`) driving the retained tree: the 
 
 Pausing flips the live buffer out of the dependency graph: 69 lines arrived during the pause while the ten frames that rendered were every one of them caused by a keystroke, not by the firehose — and the scroll and filter UI stayed fully interactive against the frozen snapshot.
 
-The walkthrough: ~3 seconds of FOLLOW mode with the log firehose streaming and rendering live — the stats line tracks lines arrived, frames rendered, view evals, and widgets painted last frame. Space flips the header to PAUSED with `showing 24 lines`, and that count never moves again until the resume: the view is frozen on a snapshot while the stats line shows lines still arriving (24 to 93) and frames rendered creeping only from 26 to 36, one per key pressed. Six presses of 'k' scroll back through the frozen snapshot and End returns to its tail — the pane is a focus stop that owns its own scroll keys, so this works while paused. Pressing 'f' sets `filter: ERROR` and the UI re-renders from the snapshot showing only the 5 ERROR lines; 'f' again cycles to WARN (5 lines), then back to all. Space resumes and a single frame takes the view from 24 lines to 103, the whole backlog at once. 'q' quits.
+The walkthrough: ~3 seconds of FOLLOW mode with the log firehose streaming and rendering live — the stats line tracks lines arrived, frames rendered, view evals, and components painted last frame. Space flips the header to PAUSED with `showing 24 lines`, and that count never moves again until the resume: the view is frozen on a snapshot while the stats line shows lines still arriving (24 to 93) and frames rendered creeping only from 26 to 36, one per key pressed. Six presses of 'k' scroll back through the frozen snapshot and End returns to its tail — the pane is a focus stop that owns its own scroll keys, so this works while paused. Pressing 'f' sets `filter: ERROR` and the UI re-renders from the snapshot showing only the 5 ERROR lines; 'f' again cycles to WARN (5 lines), then back to all. Space resumes and a single frame takes the view from 24 lines to 103, the whole backlog at once. 'q' quits.
 
 Note when spot-checking the GIF: a paused UI emits almost no frames, so the PAUSED beat is only 6 of the 53 frames — but 10.2 of the 19.9 seconds. Sampling by frame index will walk straight past it; sample by cumulative delay instead.
 
@@ -53,7 +53,7 @@ Exercises conditional dependency recording: pausing flips a branch so the live b
 
 ![markuplog](../markuplog.gif)
 
-The markuplog UI is defined in a `.gooey` XML file that hot-reloads on edit: two live sed edits (a title change, then a new Grid row) rebuild the widget tree in place while the log buffer, frame counter, and stream all survive untouched.
+The markuplog UI is defined in a `.gooey` XML file that hot-reloads on edit: two live sed edits (a title change, then a new Grid row) rebuild the component tree in place while the log buffer, frame counter, and stream all survive untouched.
 
 The walkthrough: the log viewer loads its Grid UI from `live.gooey` and streams colored log lines (title: logview, hot reloads=0). About 4 seconds in, an off-screen editor seds the file so the Border title becomes "logview ✦ LIVE EDITED" — the status line ticks to hot reloads=1 while lines arrived keeps climbing (52 and counting). ~3.5 seconds later a second sed extends the Grid Rows spec and inserts a new accent Text row ("★ this line was just added in the editor — no restart, buffer intact") above the LogPane — hot reloads=2, lines arrived=84, never reset. 'q' quits cleanly.
 
@@ -99,7 +99,7 @@ The walkthrough: a manual serialize goes stale as clicks mutate state; checking 
 - Run: `go run ./cmd/statedemo`
 - Keys: click or `tab`+`enter`/`space`, `s` serialize, `q` quit
 
-Exercises the "no code-behind" contract — pure markup with built-in widgets and all delegates in the viewmodel — and viewmodel-side state serialization, where typed property handles are snapshotted into a plain struct for `encoding/json`.
+Exercises the "no code-behind" contract — pure markup with built-in components and all delegates in the viewmodel — and viewmodel-side state serialization, where typed property handles are snapshotted into a plain struct for `encoding/json`.
 
 ## temporaldemo
 
@@ -132,7 +132,7 @@ Exercises handler namespaces end to end: xmlns prefix capture, the `{{ns:Func �
 
 ![colordemo](../colordemo.gif)
 
-Absolute layout, capability-adaptive color, and a widget whose experience changes with the terminal.
+Absolute layout, capability-adaptive color, and a component whose experience changes with the terminal.
 
 The walkthrough: the `ColorPicker` edits one `Accent` property; the border, title, and swatch cascade are all styled by a computed `render.Style` over it, so moving a channel restyles the page through the property graph. Everything inside the frame is placed by a `Canvas` — the picker, the tier strip, and a cascade of swatches at absolute coordinates that deliberately overlap, later siblings painting over earlier ones. The tier strip draws one gradient three times, pre-approximated to each color depth with the same function the flush uses, so a single terminal shows what all three classes of terminal would do.
 
@@ -141,7 +141,7 @@ The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven 
 - Run: `go run ./cmd/colordemo`, or `--depth=truecolor|256|16` to force a tier
 - Keys: `↑`/`↓` channel, `←`/`→` adjust (shift = ×16), `home`/`end` saturate, click or scroll a bar, `q` quit
 
-Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching widgets through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
+Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching components through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
 
 ## browser
 
@@ -176,10 +176,10 @@ in the listing.
 Exercises the `fs.FS` seam as a live data source, `gooey.App.Suspend` for
 the terminal hand-off (the tty read-lifecycle invariant is what makes the
 child's stdin safe), the Startable/dispatcher lifecycle for the GIF
-animation (the preview widget owns a ticker that posts frames through the
+animation (the preview component owns a ticker that posts frames through the
 dispatcher and is joined on stop — the same discipline as `<Timer>`, not
 the element itself),
-and the damage system — an animation tick repaints exactly one widget.
+and the damage system — an animation tick repaints exactly one component.
 
 ## sysmon
 
@@ -188,8 +188,8 @@ memory gauge, a total-CPU sparkline, and a process table sortable by CPU
 or memory.
 
 It is the demo where the extracted visual components earn their keep:
-the gauges and the sparkline are the framework's own `gooey.Gauge` and
-`gooey.Sparkline` (they were written here first, then promoted), with
+the gauges and the sparkline are the framework's own `components.Gauge` and
+`components.Sparkline` (they were written here first, then promoted), with
 threshold coloring driven by the sampled values. Every displayed number
 flows through a dependency property, and the sampler only `Set`s values
 that actually changed — so on an idle system a 700ms tick repaints

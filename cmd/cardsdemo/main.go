@@ -3,7 +3,7 @@
 // convention (ctx.Includes), never registered, with no code-behind —
 // and card.gooey itself instantiates badge.gooey, proving markup-only
 // controls nest. The page context here has Values and Styles only:
-// there is no Widgets map and no setup func anywhere in this app.
+// there is no Components map and no setup func anywhere in this app.
 //
 // Attributes are the entire control contract: literals (Title, Caption)
 // pass as strings, bindings (Value, Trend) pass as live property

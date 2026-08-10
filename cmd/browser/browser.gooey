@@ -14,7 +14,7 @@
 
       <!-- Bindings live on the Grid, so they are in the focused list's
            ancestor chain and fire globally; j/k reach the list first
-           because Dispatch tries the focused widget before bubbling. -->
+           because Dispatch tries the focused component before bubbling. -->
       <KeyBinding Gesture="enter"  Command="{{.Run}}"/>
       <KeyBinding Gesture="r"      Command="{{.Record}}"/>
       <KeyBinding Gesture="p"      Command="{{.Play}}"/>

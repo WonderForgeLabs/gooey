@@ -1,12 +1,12 @@
 // colordemo is the visual chapter: absolute layout, capability-adaptive
-// color, and a widget whose experience changes with the terminal.
+// color, and a component whose experience changes with the terminal.
 //
 // Three things are on screen at once:
 //
 //   - A ColorPicker bound to one Accent property. Its channel bars are
 //     smooth gradients on a truecolor terminal, banded on a 256-color
 //     one, and a plain fill meter with an ANSI color NAME on a 16-color
-//     one — the widget asks the Frame what it is painting onto.
+//     one — the component asks the Frame what it is painting onto.
 //   - A tier strip that simulates all three at once by pre-approximating
 //     a gradient with the same function the flush uses, so the cost of
 //     each tier is visible side by side on one terminal.
@@ -113,10 +113,10 @@ func main() {
 		Styles: map[string]render.Style{
 			"dim": {Fg: render.RGB(140, 140, 150)},
 		},
-		Widgets: map[string]markup.Builder{
+		Components: map[string]markup.Builder{
 			// Demo-local: it exists to EXPLAIN the tiers, which is a
 			// teaching job, not a general-purpose control.
-			"TierStrip": func(markup.Element, *markup.Context) (gooey.Widget, error) {
+			"TierStrip": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &tierStrip{accent: accent}, nil
 			},
 		},
@@ -136,16 +136,16 @@ func main() {
 
 	needsFrame := true
 	var comp *gooey.Composer
-	attach := func(w gooey.Widget) {
+	attach := func(w gooey.Component) {
 		comp = gooey.NewComposer(w, cols, rows)
-		// The capabilities reach every widget's Render through the Frame.
+		// The capabilities reach every component's Render through the Frame.
 		comp.SetCaps(caps)
 		comp.OnInvalidate(func() { needsFrame = true })
 		needsFrame = true
 	}
 	attach(tree)
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "colordemo.gooey", ctx, func(w gooey.Widget) { swaps <- w })
+	swaps := make(chan gooey.Component, 1)
+	stopWatch := markup.Watch(fsys, "colordemo.gooey", ctx, func(w gooey.Component) { swaps <- w })
 	defer stopWatch()
 
 	if err := screen.Raw(); err != nil {
@@ -198,7 +198,7 @@ func scaleColor(c render.Color, f float64) render.Color {
 // tierStrip draws one gradient three times: once exactly, once through
 // the 256-color quantizer, and once through the 16-color one. All three
 // rows are painted with truecolor values — the quantization is applied
-// in the WIDGET rather than at the wire — so a single terminal can show
+// in the COMPONENT rather than at the wire — so a single terminal can show
 // what the other two classes of terminal would do with the same colors.
 //
 // It is a simulation and says so: on a terminal that really is 256-color,

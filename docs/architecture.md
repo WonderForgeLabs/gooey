@@ -10,15 +10,33 @@ plainly where the POC stops. For a first walkthrough, start with
 see [markup-reference.md](markup-reference.md); for what the demo apps
 prove, see [demos.md](demos.md).
 
-The one-paragraph shape: widgets are persistent objects in a retained
+The one-paragraph shape: components are persistent objects in a retained
 tree. Every visual property on them is a `*prop.Property[T]` in a lazy
-dirty-tracking graph. The `Composer` gives each widget its own paint
+dirty-tracking graph. The `Composer` gives each component its own paint
 node in that same graph, so a property change dirties exactly the
-widgets that read it during their last paint. A frame is layout
+components that read it during their last paint. A frame is layout
 (unconditional, cheap) plus repaint (dirty nodes only) into a persistent
 cell buffer, flushed as ANSI. Input is a single ordered event stream
 routed through the tree by focus (keys) or hit-testing (mouse). Markup
 builds the same tree from XML, binding attributes to property handles.
+
+## Where the code lives
+
+| Package | Holds |
+|---|---|
+| `gooey` (root) | The contracts and the runtime: `Component`, `Container`, `Base`, `Layout` and the measure/arrange sandwich, `Frame`, `Compose`, `Composer`, `Dispatcher`, `App` and its signal/companion machinery, focus and mouse routing, `Command`, `KeyBinding`, `Startable` |
+| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ColorPicker`, `Image`, `Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas` — plus the `Str`/`Sty` literal wrappers |
+| `prop`, `input`, `render`, `graphics`, `term` | The layers underneath: property graph, decoded event stream, cell buffer and ANSI, pixel protocols, terminal capabilities |
+| `markup` | XML → tree, bindings, `UserControl` and `Include` |
+| `handlers/*`, `mcp` | Opt-in namespaces and the automation surface, each its own module |
+
+The dependency runs one way: **`components` imports the root, and the
+root never imports `components`.** That is what makes the component set
+replaceable — an app can write its own `Component` implementations
+against the same contracts and owe nothing to the built-ins. The root
+package's own tests use throwaway fakes for exactly this reason; the
+tests that need real components (damage counts, layout, input routing)
+live in `components/` and exercise the root machinery through them.
 
 ## The two rendering planes
 
@@ -29,7 +47,7 @@ are different planes, not alternative backends.
 
 ### The cell plane
 
-Everything a widget tree normally is — text, borders, stacks, styling —
+Everything a component tree normally is — text, borders, stacks, styling —
 renders into the cell plane: `render.Buffer`, a W×H grid of styled
 character cells.
 
@@ -61,13 +79,13 @@ An honest POC note, straight from `render/ansi.go`:
 ```
 
 Damage tracking exists today at the *paint* level (the Composer repaints
-only dirty widgets into the persistent buffer — see below), but the
+only dirty components into the persistent buffer — see below), but the
 *flush* still writes the whole buffer. The two optimizations are
 independent, and the second is a local change to `Flush`.
 
 ### The pixel plane
 
-Pixel content — the `Image` widget, a future canvas or chart — is the
+Pixel content — the `Image` component, a future canvas or chart — is the
 only thing that varies by terminal, and it does not go through the cell
 buffer at all. It rides a second plane that the terminal itself
 composites over the cells, spoken through one of three protocols, each a
@@ -103,7 +121,7 @@ becomes cells. This asymmetry is why `Frame.Graphics == nil` means
 
 ### How the planes meet: the Frame
 
-The widget tree never knows which protocol is active. `gooey.Frame`
+The component tree never knows which protocol is active. `gooey.Frame`
 holds both planes:
 
 ```go
@@ -244,28 +262,28 @@ before it may `Set`.
 
 ## The component model
 
-### Widget, Container, Base
+### Component, Container, Base
 
-The tree is retained: widgets are persistent objects that survive from
+The tree is retained: components are persistent objects that survive from
 frame to frame, so invalidation can be per-node instead of
 rebuild-the-world. The core contract is three methods:
 
 ```go
-type Widget interface {
+type Component interface {
     Measure(avail Size) Size   // desired size within avail (bottom-up)
     Arrange(bounds Rect)       // final bounds (top-down)
-    Render(f *Frame)           // paint THIS widget only
+    Render(f *Frame)           // paint THIS component only
 }
 
-type Container interface{ ChildWidgets() []Widget }
+type Container interface{ ChildComponents() []Component }
 ```
 
 Two details matter more than they look:
 
-- `Render` paints *this widget only*. Children are walked by the
-  framework, not the widget — `Container` exists so `renderTree` (and,
+- `Render` paints *this component only*. Children are walked by the
+  framework, not the component — `Container` exists so `renderTree` (and,
   critically, the Composer) can enumerate them. This is what lets the
-  Composer give every widget its own independent paint node.
+  Composer give every component its own independent paint node.
 - Containers paint nothing themselves unless they have chrome.
   `VStack.Render`, `HStack.Render`, and `Grid.Render` are empty;
   `Border.Render` draws only its box and title.
@@ -274,13 +292,13 @@ Two details matter more than they look:
 arranged bounds (`Bounds() Rect`), the `Layout` properties
 (`LayoutProps() *Layout`), and the attachment list (`Attach`/
 `Attachments`, used by `KeyBinding` — see the input section).
-Third-party widgets embed `Base` and get all of it.
+Third-party components embed `Base` and get all of it.
 
-Every visual property on the built-in widgets is a `*prop.Property[T]`:
+Every visual property on the built-in components is a `*prop.Property[T]`:
 `Text.Content`, `Text.Style`, `Border.Title`, `Border.Style`,
 `Button.Content`. There is no second kind of property for literals —
-`gooey.Str("hello")` and `gooey.Sty(style)` wrap literals as source
-properties, so a widget field is the same thing whether it came from a
+`components.Str("hello")` and `components.Sty(style)` wrap literals as source
+properties, so a component field is the same thing whether it came from a
 literal, a viewmodel source, or a markup binding. (The one confessed
 exception: `Image.Src` and `Image.Cols/Rows` are plain fields — the
 pixel pipeline predates the property model.)
@@ -356,14 +374,14 @@ per-element bag).
 
 ## The Composer
 
-`Compose` in `widget.go` is the one-shot path: fresh buffer, full
+`Compose` in `component.go` is the one-shot path: fresh buffer, full
 layout, full render walk. The interesting path is `Composer` in
 `composer.go` — the retained, damage-tracked renderer, and the place
 where the property graph and the component model fuse.
 
-### Every widget's paint is a graph node
+### Every component's paint is a graph node
 
-`NewComposer` walks the tree once and builds a `paintNode` per widget:
+`NewComposer` walks the tree once and builds a `paintNode` per component:
 
 ```go
 n.node = prop.NewComputed(func() int {
@@ -381,10 +399,10 @@ n.node = prop.NewComputed(func() int {
 })
 ```
 
-Evaluating the computed *is* painting the widget. Because `Render` runs
-inside an evaluation context, every property the widget reads while
+Evaluating the computed *is* painting the component. Because `Render` runs
+inside an evaluation context, every property the component reads while
 painting — `Content`, `Style`, `IsFocused()`, `IsHovered()`, a bound
-viewmodel computed — is recorded as a dependency of that widget's paint
+viewmodel computed — is recorded as a dependency of that component's paint
 node, automatically. This is the payoff line from the package comment:
 **"AffectsRender" metadata is discovered, not declared.** WPF makes you
 annotate each dependency property with `FrameworkPropertyMetadata
@@ -392,16 +410,16 @@ annotate each dependency property with `FrameworkPropertyMetadata
 because computeds re-record on every evaluation, the metadata is always
 exactly current — even through conditional reads.
 
-The consequence is minimal damage with zero bookkeeping in widgets: a
+The consequence is minimal damage with zero bookkeeping in components: a
 `Set` on any property dirties precisely the paint nodes that read it,
 and `Composer.Frame` re-evaluates only dirty nodes into the persistent
-buffer. `composer_test.go` pins this down (change one of three texts,
+buffer. `components/composer_test.go` pins this down (change one of three texts,
 exactly one node repaints), and `cmd/propdemo` shows it live (a tick
-repainting 2 of 8 widgets).
+repainting 2 of 8 components).
 
 ### Damage semantics: pre-clear leaves, never containers
 
-Before a dirty widget repaints, its bounds are cleared — but only if it
+Before a dirty component repaints, its bounds are cleared — but only if it
 is *not* a container:
 
 ```go
@@ -439,17 +457,17 @@ happened to be evaluating. The read-vs-subscription distinction in
 `prop` is exactly what makes this a one-line non-event.
 
 Bounds changes are reconciled after layout: each `paintNode` remembers
-its widget's last bounds, and if arrange moved the widget, the vacated
+its component's last bounds, and if arrange moved the component, the vacated
 region is cleared and the node's `rev` source is bumped — `rev.Get()` is
 the first line of every paint closure, so bumping it force-dirties the
-paint node. That is how a moved-but-content-unchanged widget still
+paint node. That is how a moved-but-content-unchanged component still
 repaints at its new position.
 
 ### Stated POC limits
 
 From the type comment, verbatim: static tree (rebuild the Composer on
 structural change — this is what markup hot reload does via `swap`), and
-cell-plane widgets only (the Composer path does not yet carry graphics
+cell-plane components only (the Composer path does not yet carry graphics
 placements; `Compose` does).
 
 ## The input system
@@ -465,7 +483,7 @@ reorder: `input.Event` is a tagged union of `KeyEvent` and `MouseEvent`
 The `input` package is the terminal-independent vocabulary, and it
 exists for an import-graph reason spelled out in its doc comment: `term`
 reads bytes and produces `input.Event`; `gooey` routes `input.Event`
-through the widget tree; `input` is the one package both import, so the
+through the component tree; `input` is the one package both import, so the
 graph stays a line rather than a cycle.
 
 `input.Decode` is a pure function over raw bytes — CSI and SS3
@@ -498,7 +516,7 @@ one unrecoverable mistake.
 
 ### Focus is framework-owned, and focus damage is just property damage
 
-A widget becomes a focus stop by embedding `FocusState`, which
+A component becomes a focus stop by embedding `FocusState`, which
 implements `Focusable` and `FocusTarget` and keeps the framework-set
 flag in a source property:
 
@@ -512,15 +530,15 @@ func (f *FocusState) IsFocused() bool    { return f.state().Get() }
 This is the pattern to internalize, because it recurs: **framework state
 stored in a source property becomes paint damage for free.** A `Render`
 that reads `IsFocused()` picks focus up as an ordinary paint dependency,
-so moving focus repaints exactly the widget that lost it and the one
-that gained it — `input_test.go` asserts 2-of-4. No focus-changed
-event, no invalidate call, no widget code beyond reading the flag while
+so moving focus repaints exactly the component that lost it and the one
+that gained it — `components/input_test.go` asserts 2-of-4. No focus-changed
+event, no invalidate call, no component code beyond reading the flag while
 painting.
 
 The `FocusManager` (built by `NewFocusManager` from the same tree walk
 the Composer does, owned via `Composer.Focus()`) holds the focus order
 (tree order, filtered to focus stops), the parent map, and the
-`KeyBinding` lists per widget. `FocusNext`/`FocusPrev` move in tree
+`KeyBinding` lists per component. `FocusNext`/`FocusPrev` move in tree
 order with wrapping, skipping anything inside a `Collapsed` subtree.
 
 ### Routed dispatch
@@ -541,9 +559,9 @@ for n := start; n != nil; n = m.parent[n] {
 }
 ```
 
-The event starts at the focused widget and walks up the ancestor chain;
+The event starts at the focused component and walks up the ancestor chain;
 at each level, `KeyBinding`s attached there match first, then the
-widget's own `HandleKey`. The first `true` stops propagation. Tab,
+component's own `HandleKey`. The first `true` stops propagation. Tab,
 shift-tab, and the arrow keys navigate focus only in the *unconsumed
 tail* of that walk — which means any of them is overridable by simply
 handling it, and is what lets a list pane keep its own arrow handling
@@ -557,7 +575,7 @@ end.
 hangs off its parent as an *attachment* (`Base.Attach`), walked for
 input but never measured, arranged, or painted. Attachment position is
 what scopes it: because dispatch only visits bindings on the focused
-widget's ancestor chain, a binding declared inside a control fires only
+component's ancestor chain, a binding declared inside a control fires only
 while that control's subtree has focus, and one on the page root is
 global. `cmd/reader` uses this: its Enter binding lives in
 `storylist.gooey`, so Enter opens a story only when the story list has
@@ -573,17 +591,17 @@ func living in the viewmodel) or a code-behind handler by bare name
 
 Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
-`FocusManager.HitTest` returns the deepest widget whose arranged
+`FocusManager.HitTest` returns the deepest component whose arranged
 `Bounds()` contain the cell, children before ancestors and later
 siblings before earlier ones (they paint on top); `Collapsed` subtrees
-and zero-size widgets are not hit. The walk allocates nothing, because
+and zero-size components are not hit. The walk allocates nothing, because
 it runs on every motion report.
 
 `DispatchMouse` runs two framework behaviors before the app sees
 anything:
 
 - **Focus-follows-click**: a press moves focus to the nearest focusable
-  widget at or above the hit — or, when there is none, the first
+  component at or above the hit — or, when there is none, the first
   focusable *below* it, so clicking a pane's border or title focuses
   the pane rather than doing nothing.
 - **Hover tracking**: `setHover` moves the hover flag to the nearest
@@ -591,21 +609,21 @@ anything:
   `Border` can highlight while the pointer is over the `Text` inside it.
   `HoverState` is the exact twin of `FocusState`: the flag is a source
   property, `IsHovered()` read during `Render` is a paint dependency,
-  and crossing between widgets repaints the one entered and the one
+  and crossing between components repaints the one entered and the one
   left, nothing else.
 
-Raw motion is deliberately not delivered to widgets — any-motion
-tracking is high-frequency — except to widgets that opt in via
+Raw motion is deliberately not delivered to components — any-motion
+tracking is high-frequency — except to components that opt in via
 `MouseMoveHandler` (drag, resize). Everyone else sees enter/leave
 through hover.
 
 Press and release are delivered as they arrive, with **implicit
-capture**: the release is routed to the widget the press went down on
+capture**: the release is routed to the component the press went down on
 (`m.pressed`), even if the pointer wandered off, so pressed-state
 visuals can always be undone. When press and release land on the same
-widget, the dispatcher synthesizes a `MouseClick` — `MouseClick` is not
+component, the dispatcher synthesizes a `MouseClick` — `MouseClick` is not
 a terminal report; it exists only as this synthesis. Wheel events go to
-the widget under the pointer, not the focused one, per terminal
+the component under the pointer, not the focused one, per terminal
 convention. `Button` exercises all of it: focused, hovered, and pressed
 are three property reads in its `Render`, so each state change repaints
 just the button.
@@ -613,7 +631,7 @@ just the button.
 ## Markup
 
 The `markup` package is the XAML-analog authoring surface: XML elements
-map to widgets, attributes to properties, `{{...}}` expressions
+map to components, attributes to properties, `{{...}}` expressions
 (Go-template spelling, but not Go templates) to bindings resolved
 against a property registry. No reflection anywhere — resolution is
 maps and type switches.
@@ -648,8 +666,8 @@ story:
 ### The binding DSL and lvalue semantics
 
 `Context` is the binding environment: `Values` (what `{{.Name}}` roots
-resolve against), `Styles`, `Widgets` (custom builders), `Handlers`
-(code-behind commands), `Named` (widgets collected by `Name="..."`, read
+resolve against), `Styles`, `Components` (custom builders), `Handlers`
+(code-behind commands), `Named` (components collected by `Name="..."`, read
 back via the generic `markup.Find[T]`), and `Includes` (see below).
 
 `bindText` turns mixed content like `count: {{.Count}}` into a
@@ -678,7 +696,7 @@ resolves through `Handlers` (requires code-behind).
 
 `markup.UserControl(fsys, "storylist.gooey", setup)` wraps a markup file
 plus a code-behind setup as a `Builder`, registered like any custom
-widget and instantiated as an element: `<StoryList
+component and instantiated as an element: `<StoryList
 Stories="{{.Stories}}"/>`.
 
 The contract is **context isolation**: `setup` returns the instance's
@@ -687,9 +705,9 @@ against it — never against the page. Data crosses the boundary through
 element attributes, resolved in the *parent* context via
 `Context.BindingValue`, which returns the raw context value — typically
 a `*prop.Property[T]` handle — that setup wires into its own context or
-widgets. This is XAML's DataContext-plus-dependency-property hand-off,
+components. This is XAML's DataContext-plus-dependency-property hand-off,
 done with explicit handles instead of an ambient inherited value.
-`Styles`, `Widgets`, `Handlers`, and `Includes` inherit from the parent
+`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent
 when the child leaves them nil; `Named` is scoped per instance, like
 `x:Name` inside a template.
 
