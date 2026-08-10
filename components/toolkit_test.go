@@ -98,6 +98,10 @@ func TestProgressBarTickerPostsAndJoins(t *testing.T) {
 		t.Fatal("draining the dispatcher did not advance the animation")
 	}
 	stop()
+	// The ticker may have posted again between the Drain and the stop;
+	// stop is a barrier, so one more Drain leaves the dispatcher empty
+	// and the determinate-bar assertion below measures only itself.
+	d.Drain()
 
 	plain := &ProgressBar{Value: prop.NewSource(1)}
 	if stop := plain.Start(d.Post); stop == nil {
