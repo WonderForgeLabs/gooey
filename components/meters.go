@@ -15,6 +15,11 @@ var (
 	styleWarn = render.Style{Fg: render.RGB(230, 190, 80)}
 	styleCrit = render.Style{Fg: render.RGB(240, 90, 90), Bold: true}
 	styleDim  = render.Style{Fg: render.RGB(140, 140, 150)}
+	// styleAccent marks a control's own structure — the edges of a
+	// focused Segmented, a ButtonBar's overflow indicator. It is not part
+	// of the value ramp above; it says "this is chrome", not "this is
+	// how bad the number is".
+	styleAccent = render.Style{Fg: render.RGB(120, 170, 250)}
 )
 
 // thresholdStyle is the good/warn/crit ramp shared by Gauge and

@@ -92,9 +92,10 @@ in [docs/specs/2026-08-10-runtime-signals.md](docs/specs/2026-08-10-runtime-sign
 The root package `gooey` is the framework: the `Component` contract,
 `Base`, the layout sandwich, `Frame`, `Composer`, `Dispatcher`, `App`,
 and input routing. The built-in components — `Text`, `Button`,
-`Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ColorPicker`, `Image`,
-`Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`,
-`Canvas` — live in `gooey/components`, which imports the root and is
+`Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`,
+`Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, and
+the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`,
+`StatusBar`, `ButtonBar` — live in `gooey/components`, which imports the root and is
 never imported by it. Writing your own component means embedding
 `gooey.Base` and implementing `gooey.Component`; the built-ins have no
 privileges you do not. Under both sit `prop` (the property graph),
@@ -138,6 +139,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
 | `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/mcpdemo` | [mcpdemo.gif](mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
+| `cmd/toolkitdemo` | [toolkitdemo.gif](toolkitdemo.gif) | The wave-1 UI toolkit — ProgressBar, Spinner, Toggle, Segmented, StatusBar, ButtonBar, and a Button whose chrome is pixel content |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)

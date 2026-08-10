@@ -20,6 +20,11 @@ import (
 // no CanExecuteChanged event exists anywhere. A disabled button paints
 // dim and declines every activation — including the press visual, so it
 // does not even look pressable.
+// Chrome selects the button's shape. It is a plain field, not a
+// property: which chrome a button wears is an author's declaration and
+// changes its LAYOUT, so making it bindable would mean a measure pass
+// that depends on a property — the one thing the layout pass, which runs
+// outside any evaluation context, cannot see. See buttonchrome.go.
 type Button struct {
 	gooey.Base
 	gooey.FocusState
@@ -27,8 +32,10 @@ type Button struct {
 	Content *prop.Property[string]
 	Style   *prop.Property[render.Style]
 	Click   gooey.Action
+	Chrome  ButtonChrome
 
-	down *prop.Property[bool]
+	down  *prop.Property[bool]
+	pills map[pillKey]pill
 }
 
 // disabled is true only for a command that exists and says no. A button
@@ -40,30 +47,49 @@ func (b *Button) disabled() bool { return b.Click != nil && !b.Click.CanExecute(
 func (b *Button) label() string { return "[ " + getStr(b.Content) + " ]" }
 
 func (b *Button) Measure(avail gooey.Size) gooey.Size {
+	if b.Chrome == ChromePixel {
+		// Two columns of end cap and two of padding around the label,
+		// three rows of pill — the same footprint on every terminal, so
+		// a page does not re-flow because the probe found a protocol.
+		return gooey.Size{
+			W: min(len([]rune(getStr(b.Content)))+4, avail.W),
+			H: min(pillRows, avail.H),
+		}
+	}
 	return gooey.Size{W: min(len([]rune(b.label())), avail.W), H: min(1, avail.H)}
 }
 
 func (b *Button) Render(f *gooey.Frame) {
+	v := b.visual()
+	if b.Chrome == ChromePixel {
+		b.renderPixel(f, v)
+		return
+	}
+	b.renderLabel(f, v)
+}
+
+// renderLabel is the cell chrome: "[ label ]" on one row.
+func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 	st := getSty(b.Style)
-	// Asked here, CanExecute is a subscription. A disabled button still
-	// shows focus — it is a focus stop either way, and losing the focus
-	// ring would strand a keyboard user on an invisible element — but it
-	// shows nothing else.
-	if b.disabled() {
+	// The state was read in visual(), where CanExecute became a
+	// subscription. A disabled button still shows focus — it is a focus
+	// stop either way, and losing the focus ring would strand a keyboard
+	// user on an invisible element — but it shows nothing else.
+	if v.disabled {
 		st.Dim = true
-		if b.IsFocused() {
+		if v.focused {
 			st.Reverse = true
 		}
 		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
 		return
 	}
-	if b.IsHovered() {
+	if v.hovered {
 		st.Underline = true
 	}
-	if b.IsFocused() {
+	if v.focused {
 		st.Reverse = true
 	}
-	if b.pressed().Get() {
+	if v.pressed {
 		st.Reverse, st.Bold = true, true
 	}
 	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)

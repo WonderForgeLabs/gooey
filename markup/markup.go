@@ -333,6 +333,7 @@ func attachProp(parent, e *Element) error {
 // child that silently disappeared.
 var propElements = map[string]map[string]bool{
 	"ItemsView": {"ItemTemplate": true},
+	"StatusBar": {"Left": true, "Center": true, "Right": true},
 }
 
 // checkProps rejects property elements the element cannot accept. A
@@ -689,11 +690,128 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		if err != nil {
 			return nil, err
 		}
+		chrome, ok := components.ParseButtonChrome(e.Attrs["Chrome"])
+		if !ok {
+			return nil, fmt.Errorf("markup: <Button Chrome=%q>: unknown chrome; want one of %s",
+				e.Attrs["Chrome"], strings.Join(components.ButtonChromeNames, ", "))
+		}
 		return named(e, ctx, &components.Button{
 			Content: content,
 			Style:   style,
 			Click:   click,
+			Chrome:  chrome,
 		}, nil)
+	case "ProgressBar":
+		value, err := boundProp[int](e, ctx, "Value")
+		if err != nil {
+			return nil, err
+		}
+		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		p := &components.ProgressBar{Value: value, Label: label}
+		p.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		p.Thresholds = e.Attrs["Thresholds"] == "true"
+		// Indeterminate is optional, and its absence is load-bearing: a
+		// bar that can never be indeterminate starts no goroutine.
+		if _, ok := e.Attrs["Indeterminate"]; ok {
+			if p.Indeterminate, err = boundProp[bool](e, ctx, "Indeterminate"); err != nil {
+				return nil, err
+			}
+		}
+		if p.Tick, err = optDuration(e, "Tick"); err != nil {
+			return nil, err
+		}
+		if _, ok := e.Attrs["Style"]; ok {
+			if p.Style, err = bindStyle(e, ctx); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, p, nil)
+	case "Spinner":
+		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		s := &components.Spinner{Label: label}
+		if raw, ok := e.Attrs["Frames"]; ok {
+			frames, known := components.SpinnerFrames(raw)
+			if !known {
+				return nil, fmt.Errorf("markup: <Spinner Frames=%q>: unknown frame set; want one of %s",
+					raw, strings.Join(components.SpinnerNames, ", "))
+			}
+			s.Frames = frames
+		}
+		if s.Interval, err = optDuration(e, "Interval"); err != nil {
+			return nil, err
+		}
+		if _, ok := e.Attrs["Enabled"]; ok {
+			if s.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
+				return nil, err
+			}
+		}
+		if _, ok := e.Attrs["Style"]; ok {
+			if s.Style, err = bindStyle(e, ctx); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, s, nil)
+	case "Toggle":
+		checked, err := boundProp[bool](e, ctx, "Checked")
+		if err != nil {
+			return nil, err
+		}
+		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		changed, err := ctx.Command(e.Attrs["Changed"])
+		if err != nil {
+			return nil, fmt.Errorf("markup: <Toggle Changed=%q>: %w", e.Attrs["Changed"], err)
+		}
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		return named(e, ctx, &components.Toggle{
+			Checked: checked, Label: label, Changed: changed, Style: style,
+		}, nil)
+	case "Segmented":
+		selected, err := boundProp[int](e, ctx, "Selected")
+		if err != nil {
+			return nil, err
+		}
+		options, err := optionList(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		changed, err := ctx.Command(e.Attrs["Changed"])
+		if err != nil {
+			return nil, fmt.Errorf("markup: <Segmented Changed=%q>: %w", e.Attrs["Changed"], err)
+		}
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		return named(e, ctx, &components.Segmented{
+			Options: options, Selected: selected, Changed: changed, Style: style,
+		}, nil)
+	case "StatusBar":
+		bar, err := buildStatusBar(e, ctx)
+		return named(e, ctx, bar, err)
+	case "ButtonBar":
+		kids, attach, err := buildChildren(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		bar := &components.ButtonBar{Children: kids, Separator: e.Attrs["Separator"]}
+		bar.Gap, _ = strconv.Atoi(e.Attrs["Gap"])
+		bar.Uniform = e.Attrs["Uniform"] == "true"
+		if err := attachAll(e, bar, attach); err != nil {
+			return nil, err
+		}
+		return named(e, ctx, bar, nil)
 	case "KeyBinding":
 		g, err := input.ParseGesture(e.Attrs["Gesture"])
 		if err != nil {

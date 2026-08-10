@@ -1,0 +1,45 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="toolkit — wave 1" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto">
+      <Text Grid.Row="0" Style="accent">six components, one page, all of it markup</Text>
+
+      <Text Grid.Row="1" Style="dim">ProgressBar — determinate, and indeterminate when the rocker below stops the job</Text>
+      <HStack Grid.Row="2" Gap="3">
+        <ProgressBar Value="{{.Pct}}" Indeterminate="{{.Busy}}" Label="build " BarWidth="34"/>
+        <Spinner Frames="braille" Interval="90ms" Label="{{.Stage}}" Enabled="{{.Running}}" Style="accent"/>
+      </HStack>
+
+      <Text Grid.Row="3" Style="dim">Toggle — a rocker: space flips it, ← is off, → is on. Segmented — ←/→ pick a mode.</Text>
+      <HStack Grid.Row="4" Gap="4">
+        <Toggle Checked="{{.Running}}" Label="job running"/>
+        <Segmented Options="Idle | Fetch | Build | Deploy" Selected="{{.StageIndex}}" Changed="{{.StageChanged}}"/>
+      </HStack>
+
+      <Text Grid.Row="5" Style="dim">ButtonBar — ←/→ walk along the bar and wrap; "abort" is disabled until the job runs</Text>
+      <ButtonBar Grid.Row="6" Gap="3" Uniform="true" Separator="│">
+        <Button Content="start" Click="{{.Start}}"/>
+        <Button Content="abort" Click="{{.Abort}}"/>
+        <Button Content="reset all" Click="{{.Reset}}"/>
+      </ButtonBar>
+
+      <Text Grid.Row="7" Style="dim">Button Chrome="pixel" — a three-row pill, drawn in pixels where the terminal has a protocol</Text>
+      <HStack Grid.Row="8" Gap="3">
+        <Button Content="Deploy" Chrome="pixel" Click="{{.Deploy}}"/>
+        <Text Style="dim" VAlign="Center">{{.Tier}}</Text>
+      </HStack>
+
+      <Text Grid.Row="9" Style="dim">{{.Log}}</Text>
+
+      <StatusBar Grid.Row="10" Left="{{.Status}}" Center="{{.Clock}}">
+        <StatusBar.Right>
+          <Text Style="dim">tab: focus   ←/→: move   space: toggle   q: quit</Text>
+        </StatusBar.Right>
+      </StatusBar>
+
+      <Timer Interval="120ms" Tick="{{.Advance}}"/>
+      <Timer Interval="1s" Tick="{{.TickClock}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

@@ -165,6 +165,24 @@ func (f *FocusState) state() *prop.Property[bool] {
 	return f.focused
 }
 
+// FocusHost is implemented by a component that moves focus among its own
+// children — a toolbar whose arrows walk along it, a menu, a grid that
+// wraps at a row end. The FocusManager hands itself to every FocusHost
+// it walks past, on the first walk and on every Resync, so a host is
+// always holding the manager for the tree it is actually in.
+//
+// It is a narrow, opt-in seam rather than a general "reach the
+// framework" hook: nothing is handed to a component that did not ask,
+// and the only thing a host can usefully do with it — SetFocus — checks
+// that its argument is a live focus stop, so a stale pointer from a
+// replaced tree fails safely instead of focusing something off screen.
+//
+// A focus host is NOT a focus trap. Tab still walks straight through it
+// in tree order; the host only sees the keys its children declined, and
+// declining an arrow itself hands the key back to the ordinary spatial
+// navigation, which is how up and down leave a horizontal bar.
+type FocusHost interface{ SetFocusManager(*FocusManager) }
+
 // NonVisual marks elements that live in the tree for behavior only.
 // The framework attaches them to their parent component instead of laying
 // them out or painting them (see Base.Attach).
@@ -298,6 +316,9 @@ func (m *FocusManager) walk(w, parent Component) {
 	m.parent[w] = parent
 	if f, ok := w.(Focusable); ok && f.AcceptsFocus() {
 		m.order = append(m.order, w)
+	}
+	if h, ok := w.(FocusHost); ok {
+		h.SetFocusManager(m)
 	}
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {

@@ -143,6 +143,21 @@ The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven 
 
 Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching components through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
 
+## toolkitdemo
+
+![toolkitdemo](../toolkitdemo.gif)
+
+The six components of UI toolkit wave 1 on one page, spelled entirely in markup.
+
+The walkthrough: the job opens in its fetch stage, which has no measurable progress — so the `ProgressBar` marches a band instead of claiming a number, and the `Spinner` turns beside it. When the fetch finishes the bar becomes a real meter and fills. Tab reaches the `ButtonBar`, where `→` walks along the members and wraps at the end rather than escaping into the page; `enter` on `abort` stops the job, and because `Abort` is a `NewCommand(...).When(Running)` the member goes dim and refuses the moment it stops — no event raised anywhere, the bar read the condition while painting. Tab again reaches the pixel-chrome `Button`, whose caption reports which tier it is drawing in. `space` on the rocker restarts the job, and stepping the `Segmented` control back to Fetch puts the bar into its indeterminate mode again. The `StatusBar` along the bottom is bound the whole time: status on the left, a clock in the middle, key hints on the right, each its own paint node.
+
+- Run: `go run ./cmd/toolkitdemo`, or `--mode=kitty|sixel|iterm2|cells` to force the pixel button's chrome, `--hold=15s` to exit unattended
+- Keys: `tab` move focus, `←`/`→` traverse the bar and the segmented control, `space` toggle, `enter` activate, `q` quit
+
+Exercises the wave-1 toolkit end to end: the Startable animation discipline shared by `ProgressBar` and `Spinner` (post, never touch the graph from the ticker), rocker arrow semantics that consume a key only when it moves something, `StatusBar` sections as components rather than strings, `ButtonBar` uniform sizing and its `gooey.FocusHost` focus scope, and the first component whose *chrome* is pixel content — placed per paint node, so hover and press re-transmit exactly four images and a neighbour's repaint sends none.
+
+The GIF is recorded under a pty, which reports no graphics protocol, so the pixel button is showing its universal tier: the same three-row pill drawn in box-drawing runes. That is the honest result of recording, not a fallback the component reaches for by accident — the pixel tiers are verified separately, by driving the demo with `--mode` and checking the protocol bytes in the captured log.
+
 ## browser
 
 The front door: a launcher that lists every demo under `cmd/` and every
