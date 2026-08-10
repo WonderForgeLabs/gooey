@@ -136,3 +136,37 @@ The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven 
 - Keys: `↑`/`↓` channel, `←`/`→` adjust (shift = ×16), `home`/`end` saturate, click or scroll a bar, `q` quit
 
 Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching widgets through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
+
+## browser
+
+The front door: a launcher that lists every demo under `cmd/` and every
+tutorial example under `docs/learn/examples/` as two labeled groups, shows a
+preview of the selected entry, and hands the terminal to whichever one you
+run — taking it back when the program exits.
+
+The preview pane is itself a small showcase: if the selected entry's
+directory has a `README.md` it renders **as markdown** (styled headings,
+bold, inline code, fenced blocks, bullets, underlined links — see
+`cmd/reader/README.md`); otherwise the entry's `main.go` doc comment is
+shown. If a recording exists (`recordings/<name>.gif` or a repo-root GIF),
+`p` plays it in the pane — decoded with `image/gif`, frames coalesced, and
+animated as halfblock cells at the GIF's own frame delays; the animation
+stops on selection change and before every hand-off. The whole listing is
+live: the browser watches `cmd/`, the example directories, and
+`recordings/`, so a new demo, an edited README, or a recording created
+while it runs appears without a restart (recordings are marked ● gif / ○
+cast and feed the info pane).
+
+`r` records the selected entry: the run is wrapped in `asciinema rec`
+(the demo drives the recorded terminal) and converted to a GIF with `agg`
+when available — artifacts land in `recordings/` and immediately show up
+in the listing.
+
+- Run: `go run ./cmd/browser` (from anywhere in the repo)
+- Keys: `j`/`k` or arrows select (click/wheel too), `enter` run, `r`
+  record, `p` play/stop a recording, `q`/`esc` quit
+
+Exercises the `fs.FS` seam as a live data source, `gooey.App.Suspend` for
+the terminal hand-off (the tty read-lifecycle invariant is what makes the
+child's stdin safe), the Timer/dispatcher lifecycle for the GIF animation,
+and the damage system — an animation tick repaints exactly one widget.

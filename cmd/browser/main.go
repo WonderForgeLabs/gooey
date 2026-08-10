@@ -13,7 +13,18 @@
 // the terminal the demo drives is the one being captured, and agg turns
 // the cast into a GIF afterwards.
 //
-//	j/k ↑/↓  select    enter  run    r  record    q/esc  quit
+// The preview pane shows what the directory itself says: a README.md
+// when the demo has one, rendered as markdown (markdown.go), and the
+// main.go doc comment otherwise. `p` plays the demo's recorded GIF in
+// that same pane, decoded and coalesced into whole frames and animated
+// by a clock the Composer owns (gifplay.go).
+//
+// None of it needs a restart. A poll fingerprints every directory the UI
+// reads from (watch.go), so a recording finished in another terminal, a
+// new demo, an added .gooey file or an edited doc comment all reach the
+// list and the visible preview on their own.
+//
+//	j/k ↑/↓  select    enter  run    r  record    p  play GIF    q/esc  quit
 package main
 
 import (
@@ -25,9 +36,9 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -42,16 +53,24 @@ var (
 // recDir is where casts and GIFs land, relative to the module root.
 const recDir = "recordings"
 
+// maxREADME bounds what the preview will take from a directory. A README
+// is read on every rescan; something enormous parked in a demo directory
+// is not worth stalling the poll for.
+const maxREADME = 64 << 10
+
 type demo struct {
-	name   string // display name, unique within its group
-	dir    string // module-relative directory: `go run ./<dir>`
-	group  string // which root it came from
-	rec    string // recording base name, unique across groups
-	ownDir bool   // run it from its own directory rather than the module root
-	doc    string // leading comment block of main.go
-	markup int    // number of .gooey files
-	cast   bool   // a recording already exists
-	gif    bool
+	name    string // display name, unique within its group
+	dir     string // module-relative directory: `go run ./<dir>`
+	group   string // which root it came from
+	rec     string // recording base name, unique across groups
+	ownDir  bool   // run it from its own directory rather than the module root
+	doc     string // leading comment block of main.go
+	readme  string // README.md, when the directory has one — preferred over doc
+	markup  int    // number of .gooey files
+	cast    bool   // a recording already exists
+	gif     bool
+	gifPath string  // module-relative GIF `p` would play, "" when none
+	gifKey  fileKey // its identity, so a re-recording invalidates the decode
 }
 
 // roots are the two places a runnable gooey program lives: the demos,
@@ -126,6 +145,13 @@ func scan(fsys fs.FS, self string) []demo {
 			if src, err := fs.ReadFile(fsys, path.Join(dir, "main.go")); err == nil {
 				d.doc = leadingComment(string(src))
 			}
+			// A README is the directory speaking for itself, so it wins
+			// over the doc comment. It is read here, with everything else,
+			// so an edit to it re-reaches the pane through the same rescan
+			// that notices a new .gooey file.
+			if md, err := fs.ReadFile(fsys, path.Join(dir, "README.md")); err == nil && len(md) <= maxREADME {
+				d.readme = string(md)
+			}
 			if files, err := fs.ReadDir(fsys, dir); err == nil {
 				for _, f := range files {
 					if strings.HasSuffix(f.Name(), ".gooey") {
@@ -139,6 +165,7 @@ func scan(fsys fs.FS, self string) []demo {
 			d.cast = err == nil
 			_, err = fs.Stat(fsys, path.Join(recDir, d.rec+".gif"))
 			d.gif = err == nil
+			d.gifPath, d.gifKey, _ = gifFor(fsys, d.rec, d.name)
 			out = append(out, d)
 		}
 	}
@@ -203,7 +230,7 @@ func main() {
 	fsys := os.DirFS(root)
 
 	// --- viewmodel: the directory IS the data source ---
-	rev := prop.NewSource(0) // bumped when cmd/ or recordings/ changes → rescan
+	rev := prop.NewSource(0) // bumped when anything the UI reads changes → rescan
 	demos := prop.NewComputed(func() []demo {
 		rev.Get()
 		return scan(fsys, "browser")
@@ -230,11 +257,16 @@ func main() {
 		if len(ds) == 0 {
 			return "j/k ↑/↓ select   enter run   r record   q quit"
 		}
-		// The info pane already spells out the go run command, so the
-		// hint stays short enough that `q  quit` survives the clip at
+		// The hint stays short enough that `q quit` survives the clip at
 		// 80 columns — the one affordance that must never scroll off.
-		d := ds[clampIdx(sel.Get(), len(ds))]
-		return fmt.Sprintf("enter run   r record → %s/%s.cast   j/k ↑/↓ select   q quit", recDir, d.rec)
+		// The artifact PATHS moved into the info pane, which wraps and is
+		// wide: `learn-03-binding-and-state.cast` spelled out here pushed
+		// the quit key off the end of an 80-column terminal.
+		play := ""
+		if ds[clampIdx(sel.Get(), len(ds))].gifPath != "" {
+			play = "   p play"
+		}
+		return "enter run   r record" + play + "   j/k ↑/↓ select   q quit"
 	})
 
 	// asciinema is looked up once: the `r` affordance reports its own
@@ -249,6 +281,14 @@ func main() {
 	// hand-off belongs at the top of the loop, on its own.
 	var launch func(d demo, record bool)
 	var app *gooey.App
+
+	// The player outlives any single composition — a markup reload
+	// rebuilds the preview widget, and playback should not stop because
+	// browser.gooey was saved. What it may NOT outlive is the composition
+	// being live: the widget hands it to the Composer as a Startable, so
+	// Composer.Close stops the ticker (see demoInfo.Start).
+	play := newPlayer(status)
+
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Title": title, "Hint": hint, "Status": status,
@@ -268,6 +308,12 @@ func main() {
 					app.Post(func() { launch(d, true) })
 				}
 			}),
+			"Play": gooey.Command(func() {
+				if ds := demos.Get(); len(ds) > 0 {
+					d := ds[clampIdx(sel.Get(), len(ds))]
+					play.Toggle(root, d.gifPath, d.gifKey)
+				}
+			}),
 			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
@@ -280,7 +326,7 @@ func main() {
 				return &demoList{demos: demos, sel: sel}, nil
 			},
 			"DemoInfo": func(markup.Element, *markup.Context) (gooey.Widget, error) {
-				return &demoInfo{demos: demos, sel: sel}, nil
+				return &demoInfo{demos: demos, sel: sel, play: play}, nil
 			},
 		},
 	}
@@ -304,6 +350,12 @@ func main() {
 	// reader (docs/specs/2026-08-10-tty-read-lifecycle.md). The framework
 	// fixed the lifecycle, so the workaround is gone. The tripwire stays.
 	launch = func(d demo, record bool) {
+		// Playback stops BEFORE the hand-off, not after. Suspend does not
+		// close the composition — it only gives the terminal away — so a
+		// ticker left running would spend the child's whole lifetime
+		// queueing frame advances onto a dispatcher nobody is draining,
+		// and deliver them in one burst on the way back.
+		play.Stop()
 		var msg string
 		err := app.Suspend(func() error {
 			if record {
@@ -330,13 +382,35 @@ func main() {
 	}
 
 	// The directory is a data source like any other, polled onto the UI
-	// goroutine: a new recording or a new demo shows up without a key
-	// being pressed.
-	var lastMod time.Time
-	app.Every(2*time.Second, func() {
-		if st, err := os.Stat(filepath.Join(root, "cmd")); err == nil && st.ModTime() != lastMod {
-			lastMod = st.ModTime()
+	// goroutine: a new recording, a new demo, an added .gooey file or an
+	// edited doc comment shows up without a key being pressed. One bump
+	// re-derives the list AND the pane currently on screen, because both
+	// are bound to the same computed.
+	fingerprint := watchKey(root)
+	app.Every(watchInterval, func() {
+		if k := watchKey(root); k != fingerprint {
+			fingerprint = k
 			rev.Set(rev.Get() + 1)
+		}
+	})
+
+	// Playback belongs to the entry that was selected when it started.
+	// Moving the selection, or a rescan that re-resolved (or re-recorded)
+	// the GIF, ends it — checked here rather than in a setter because the
+	// selection has several writers (keys, clicks, the wheel) and the
+	// rescan has none. Stopping from BeforeFrame folds the resulting
+	// repaint into the frame that is about to happen.
+	app.BeforeFrame(func() {
+		if !play.Playing() && play.Source() == "" {
+			return
+		}
+		ds := demos.Get()
+		if len(ds) == 0 {
+			play.Stop()
+			return
+		}
+		if d := ds[clampIdx(sel.Get(), len(ds))]; play.Stale(d.gifPath, d.gifKey) {
+			play.Stop()
 		}
 	})
 
@@ -466,23 +540,42 @@ func (w *demoList) Render(f *gooey.Frame) {
 		if d.markup > 0 {
 			label = fmt.Sprintf("  %s  ⟨%d .gooey⟩", d.name, d.markup)
 		}
-		if d.gif {
+		// ● recorded with a GIF, ○ recorded as a cast only. ▶ is the
+		// separate question `p` asks: is there a GIF to play at all —
+		// which for most demos is the one checked in at the repo root
+		// rather than anything in recordings/.
+		switch {
+		case d.gif:
 			label += "  ●"
-		} else if d.cast {
+		case d.cast:
 			label += "  ○"
+		}
+		if d.gifPath != "" && !d.gif {
+			label += "  ▶"
 		}
 		f.Cells.SetString(b.X, b.Y+y, clip(label, b.W), st)
 	}
 }
 
-// demoInfo shows the selected demo's doc comment — data-bound preview.
+// demoInfo is the preview pane: a header of what the selection would DO,
+// and a body of what it SAYS — its README rendered as markdown, its doc
+// comment when it has no README, or its recorded GIF while `p` is
+// playing.
+//
+// It is a Startable as well as a Widget. The Composer collects Startables
+// on the same walk that finds key bindings, so the animation clock's
+// lifetime is the composition's: a hot reload or a teardown stops it
+// without anything here having to notice.
 type demoInfo struct {
 	gooey.Base
 	demos *prop.Property[[]demo]
 	sel   *prop.Property[int]
+	play  *player
 }
 
 func (w *demoInfo) Measure(avail gooey.Size) gooey.Size { return avail }
+
+func (w *demoInfo) Start(post func(func())) func() { return w.play.Start(post) }
 
 func (w *demoInfo) Render(f *gooey.Frame) {
 	b := w.Bounds()
@@ -492,19 +585,59 @@ func (w *demoInfo) Render(f *gooey.Frame) {
 		return
 	}
 	d := ds[clampIdx(w.sel.Get(), len(ds))]
+
+	y := b.Y
+	line := func(s string, st render.Style) {
+		if y < b.Y+b.H {
+			f.Cells.SetString(b.X, y, clip(s, b.W), st)
+		}
+		y++
+	}
 	cmdline := "go run ./" + d.dir
 	if d.ownDir {
 		cmdline = "cd " + d.dir + " && go run ."
 	}
-	f.Cells.SetString(b.X, b.Y, clip(cmdline, b.W), accent)
+	line(cmdline, accent)
+	// The hint no longer has room for the artifact paths, so they live
+	// here, where `r` and `p` each say exactly which file they mean.
+	line("r record → "+recDir+"/"+d.rec+".cast", dim)
 	if d.cast {
 		art := recDir + "/" + d.rec + ".cast"
 		if d.gif {
 			art += "  +  " + recDir + "/" + d.rec + ".gif"
 		}
-		f.Cells.SetString(b.X, b.Y+1, clip("recorded: "+art, b.W), dim)
+		line("recorded: "+art, dim)
 	}
-	y := b.Y + 3
+	if d.gifPath != "" {
+		line("p play → "+d.gifPath, dim)
+	}
+	y++
+
+	// Reading the player inside Render is what makes the animation cheap:
+	// the frame index becomes a dependency of THIS paint node and of
+	// nothing else, so a tick repaints one widget. The read is
+	// unconditional for the same reason it comes first inside Current —
+	// a dependency is recorded by the Get that actually happens, and a
+	// pane too short to draw into still has to hear about playback.
+	img := w.play.Current()
+
+	h := b.Y + b.H - y
+	if h <= 0 {
+		return
+	}
+	if img != nil {
+		if cols, rows := fitCells(img.Bounds().Dx(), img.Bounds().Dy(), b.W, h); cols > 0 && rows > 0 {
+			graphics.DrawHalfblock(f.Cells, img, b.X+(b.W-cols)/2, y+(h-rows)/2, cols, rows)
+		}
+		return
+	}
+	if d.readme != "" {
+		drawLines(f, b.X, y, b.W, h, renderMarkdown(d.readme, b.W, markdownStyles()))
+		return
+	}
+	// No README: the doc comment, as plain wrapped text. A Go comment is
+	// not markdown and pretending otherwise would style its `//` prose
+	// with rules its author never opted into.
 	for _, para := range strings.Split(d.doc, "\n") {
 		for _, ln := range wrapLine(para, b.W) {
 			if y >= b.Y+b.H {

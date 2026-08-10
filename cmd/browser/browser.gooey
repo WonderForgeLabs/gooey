@@ -17,6 +17,7 @@
            because Dispatch tries the focused widget before bubbling. -->
       <KeyBinding Gesture="enter"  Command="{{.Run}}"/>
       <KeyBinding Gesture="r"      Command="{{.Record}}"/>
+      <KeyBinding Gesture="p"      Command="{{.Play}}"/>
       <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
       <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
       <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
