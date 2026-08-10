@@ -35,6 +35,12 @@ func main() {
 	// auto is bound to the checkbox: manual (command-driven snapshots)
 	// vs auto (the JSON is a computed and re-serializes reactively).
 	auto := prop.NewSource(false)
+	// manual drives the serialize button's Visibility: in auto mode the
+	// button is meaningless, so it collapses. Visibility="{{.Manual}}"
+	// binds a bool (true→Visible, false→Collapsed); a computed works
+	// because binding is by handle, and toggling the checkbox reflows
+	// the button row with no code watching anything.
+	manual := prop.NewComputed(func() bool { return !auto.Get() })
 
 	live := prop.NewComputed(func() string {
 		return fmt.Sprintf("live state:  count=%d  message=%q%s",
@@ -124,7 +130,7 @@ func main() {
 
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"Live": live, "Json": display, "Auto": auto,
+			"Live": live, "Json": display, "Auto": auto, "Manual": manual,
 			"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
 			"Cycle":     gooey.Command(func() { msgIdx.Set(msgIdx.Get() + 1) }),
 			"Serialize": gooey.Command(serialize),

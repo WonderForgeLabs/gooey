@@ -127,8 +127,6 @@ not find:
 - **`TextBox` is single-line** — mid-string editing, word-wise caret
   movement and selection all work (see `cmd/finder`), but there is no
   multi-line text area yet.
-- **Visibility is not bindable** from markup — though you can flip it
-  from Go at runtime.
 
 Each tutorial repeats the limits relevant to its topic in a "current
 limitations" section, so you find them where they bite.

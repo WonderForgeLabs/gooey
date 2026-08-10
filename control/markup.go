@@ -366,7 +366,14 @@ func preserveLayout(old, fresh gooey.Component, restated map[string]bool) {
 		nl.VAlign = ol.VAlign
 	}
 	if !restated["Visibility"] {
-		nl.Visibility = ol.Visibility
+		// A bound Visibility survives the patch the way the value does:
+		// the fresh element adopts the old element's source (which also
+		// syncs the field); the Composer's re-sync arms its observer.
+		if src := ol.VisibilitySource(); src != nil {
+			nl.BindVisibilityFunc(src)
+		} else {
+			nl.Visibility = ol.Visibility
+		}
 	}
 	if !restated["Grid.Row"] {
 		nl.Row = ol.Row

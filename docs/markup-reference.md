@@ -635,7 +635,7 @@ Every element whose component embeds `gooey.Base` (all built-ins and any well-be
 | `Width`, `Height` | integer cells | Explicit size; 0/absent = auto. |
 | `Margin` | 1, 2, or 4 comma-separated integers | `"1"` = all four sides; `"2,0"` = horizontal, vertical; `"2,0,0,0"` = left, top, right, bottom. |
 | `HAlign`, `VAlign` | `Stretch` (default), `Start`, `Center`, `End` | Alignment inside the layout slot. Stretch fills the slot; the others use the measured desired size. |
-| `Visibility` | `Visible` (default), `Hidden`, `Collapsed` | Hidden occupies space but does not paint; Collapsed occupies nothing (and its subtree is skipped by focus traversal). |
+| `Visibility` | `Visible` (default), `Hidden`, `Collapsed`, or a `{{...}}` binding | Hidden occupies space but does not paint; Collapsed occupies nothing (and its subtree is skipped by focus traversal). The bound form accepts a `*prop.Property[gooey.Visibility]` or a `*prop.Property[bool]` (true→Visible, false→Collapsed); a `Set` repaints exactly what the literal flip repaints. |
 | `Grid.Row`, `Grid.Col` | integer | Cell address when the parent is a Grid — the attached-property syntax. |
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
