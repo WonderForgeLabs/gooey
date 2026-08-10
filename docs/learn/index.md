@@ -88,7 +88,8 @@ not find:
 - **No DataTemplates.** Every list is a hand-written rows widget.
 - **No editable text widget.** `cmd/finder` builds one by hand.
 - **No `CanExecute`**, so no automatic disabled command state.
-- **Visibility is not bindable** — it is set when markup is built.
+- **Visibility is not bindable** from markup — though you can flip it
+  from Go at runtime.
 - **Damage tracking stops at the paint level.** The flush still writes
   the whole buffer each frame.
 

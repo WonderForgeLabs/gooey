@@ -41,27 +41,6 @@ func (c Caps) Best() string {
 	}
 }
 
-// DetectColorDepth reads the color depth out of the environment.
-//
-// Unlike the graphics protocols there is no handshake worth running
-// here. COLORTERM is what terminal emulators themselves converged on to
-// advertise 24-bit, and TERM's "256color" suffix is what terminfo has
-// meant for decades. XTGETTCAP could refine it by asking whether the
-// terminal has the RGB capability, but in practice every terminal that
-// answers that query also sets COLORTERM, so the env sniff carries the
-// whole signal at none of the cost — and it works with no tty at all,
-// which is why it is a package function rather than a Screen method.
-func DetectColorDepth() render.ColorDepth {
-	switch strings.ToLower(os.Getenv("COLORTERM")) {
-	case "truecolor", "24bit":
-		return render.TrueColor
-	}
-	if strings.Contains(os.Getenv("TERM"), "256color") {
-		return render.Color256
-	}
-	return render.Color16
-}
-
 type Screen struct {
 	tty      *os.File
 	oldState *term.State
@@ -132,7 +111,6 @@ func (s *Screen) Restore() {
 func (s *Screen) Detect() (Caps, error) {
 	caps := Caps{}
 	caps.Cols, caps.Rows = s.Size()
-	caps.Color = DetectColorDepth()
 
 	// Env-only signals (no query protocol exists for iTerm2 images).
 	tp := os.Getenv("TERM_PROGRAM")
@@ -150,9 +128,15 @@ func (s *Screen) Detect() (Caps, error) {
 	// then cell size, then DA1 terminator.
 	fmt.Fprint(s.tty, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\")
 	fmt.Fprint(s.tty, "\x1b[16t")
+	fmt.Fprint(s.tty, xtgettcapQuery)
 	fmt.Fprint(s.tty, "\x1b[c")
 
 	resp := s.readUntilDA1(500 * time.Millisecond)
+
+	// The color ladder, now with the terminal's own answer available.
+	// Terminals that ignore XTGETTCAP simply leave it unknown and the
+	// environment rungs decide.
+	caps.Color = colorDepthFrom(osEnv, parseXTGETTCAP(resp))
 
 	if strings.Contains(resp, "\x1b_G") && strings.Contains(resp, "i=31") {
 		caps.Kitty = true
@@ -182,42 +166,55 @@ func (s *Screen) Detect() (Caps, error) {
 }
 
 // readUntilDA1 collects responses until the DA1 reply or timeout.
-// File deadlines don't work on every tty (ErrNoDeadline on some
-// character devices / ptys), so reads run in a goroutine and the
-// timeout is enforced with a select. If the terminal never answers
-// (e.g. recording under a headless pty), the goroutine's pending read
-// is abandoned — acceptable for a probe that runs once at startup.
+//
+// It reads SYNCHRONOUSLY under a read deadline. The obvious alternative —
+// a reader goroutine plus a select on a timer — leaks: when the timeout
+// fires (or DA1 arrives and the probe returns) that goroutine is still
+// blocked in Read, and it stays there for the life of the process,
+// swallowing the bytes the app's own input decoder was waiting for. The
+// symptom is a keyboard-driven app quietly losing its first keystrokes
+// after startup, which is exactly what it looked like: a probe that
+// worked, followed by input that did not.
+//
+// Deadlines are not guaranteed on every character device, so an
+// ErrNoDeadline falls back to a single bounded read — degraded (it may
+// miss a slow reply) but still incapable of stealing later input.
 func (s *Screen) readUntilDA1(timeout time.Duration) string {
-	ch := make(chan []byte, 8)
-	go func() {
-		for {
-			buf := make([]byte, 256)
-			n, err := s.tty.Read(buf)
-			if n > 0 {
-				ch <- buf[:n]
-			}
-			if err != nil {
-				close(ch)
-				return
-			}
-		}
-	}()
+	deadline := time.Now().Add(timeout)
+	if err := s.tty.SetReadDeadline(deadline); err != nil {
+		return s.readOnceBounded()
+	}
+	// Always clear the deadline: the same fd carries the app's input for
+	// the rest of the session.
+	defer s.tty.SetReadDeadline(time.Time{})
+
 	var sb strings.Builder
-	deadline := time.After(timeout)
-	for {
-		select {
-		case b, ok := <-ch:
-			if !ok {
-				return sb.String()
-			}
-			sb.Write(b)
+	buf := make([]byte, 256)
+	for time.Now().Before(deadline) {
+		n, err := s.tty.Read(buf)
+		if n > 0 {
+			sb.Write(buf[:n])
 			// DA1 response ends with 'c' following CSI ?.
 			if i := strings.LastIndex(sb.String(), "\x1b[?"); i >= 0 &&
 				strings.IndexByte(sb.String()[i:], 'c') >= 0 {
 				return sb.String()
 			}
-		case <-deadline:
-			return sb.String()
+		}
+		if err != nil {
+			break // timeout or read error: take what arrived
 		}
 	}
+	return sb.String()
+}
+
+// readOnceBounded is the fallback for ttys without deadline support: one
+// read, which blocks until the terminal says something. Terminals answer
+// DA1 unconditionally, so in practice this returns.
+func (s *Screen) readOnceBounded() string {
+	buf := make([]byte, 256)
+	n, err := s.tty.Read(buf)
+	if n <= 0 || err != nil {
+		return ""
+	}
+	return string(buf[:n])
 }
