@@ -234,6 +234,57 @@ What it shows depends on `Frame.Caps.Color`:
 
 Keys: printable runes insert at the caret, `backspace`/`delete` remove either side of it, `←`/`→` move it, `home`/`end` jump. A click places the caret. The field scrolls horizontally to keep the caret visible, and the caret is a source property, so moving it repaints only this component.
 
+### ItemsView
+
+`components.ItemsView` — the data-driven list: an item source, a template, and one realized row per item that fits.
+
+```xml
+<ItemsView Items="{{.Rows}}" Selected="{{.Sel}}" Activate="{{.Open}}">
+  <ItemsView.ItemTemplate>
+    <Grid Rows="1" Cols="1,*,12">
+      <Text Grid.Col="0" Style="{{.MarkStyle}}">{{.Mark}}</Text>
+      <Text Grid.Col="1">{{.Title}}</Text>
+      <Text Grid.Col="2" Style="dim">{{.Published}}</Text>
+    </Grid>
+  </ItemsView.ItemTemplate>
+</ItemsView>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Items` | **Required.** Binding to a `*prop.Property[components.ItemSource]` — build one with `components.Items` (below). |
+| `Selected` | Optional binding to a `*prop.Property[int]`, shared with the viewmodel: the view Sets it on navigation and reads it to scroll and highlight. Absent means the list is not selectable. |
+| `Activate` | Command run on enter and on a second click of the selected row, resolved like `Click`. |
+
+`<ItemsView.ItemTemplate>` is required and takes exactly one child element. The view is a focus stop with the house list keys — `↑`/`↓`/`j`/`k`, `PgUp`/`PgDn`, `Home`/`End`, `enter` — plus wheel, click to select, and a second click to activate. Keys it does not use bubble, so page-level `<KeyBinding>`s still work while the list has focus.
+
+**The template is a factory, not a tree.** Its element subtree is captured at load and instantiated once per item, against a context whose values are *that item's* — dot is the ITEM. Page values are deliberately out of reach inside a template, the same isolation a UserControl gets; anything a row needs must come through the projection. Everything else the document carries — styles, registered components, handlers, includes, the `xmlns` table — is inherited, so a template may place a registered custom component exactly like any other markup.
+
+**Items come from a projection.** Without reflection, gooey cannot walk a struct's fields, so the app says what a row is made of:
+
+```go
+"Rows": components.Items(stories, func(s Story) map[string]any {
+    return map[string]any{"Title": s.Title, "Published": s.Published}
+}),
+```
+
+The map's keys are what the template's bindings resolve against; its values become property handles the view Sets as the item changes. `string`, `bool`, `int`, `float64`, `render.Style` and `render.Color` become live handles; anything else crosses as a fixed literal for the life of the row (useful for a `gooey.Command`, not for anything that changes).
+
+Use `components.ItemsOf` instead when the projection reads more than the item — a lookup table, a filter, a formatting mode. A projection runs during layout, where reads record nothing, so those reads have to happen in your own computed to become dependencies:
+
+```go
+rows := prop.NewComputed(func() components.ItemSource {
+    marks := read.Get() // recorded: this source depends on it
+    return components.ItemsOf(stories.Get(), func(s Story) map[string]any {
+        return map[string]any{"Title": s.Title, "Seen": marks[s.Link]}
+    })
+})
+```
+
+**Selection visual.** The selected row's cells are re-styled `Reverse` by the view. A template that mentions the reserved value `_selected` takes that over and gets no house highlight. Two reserved row values are always in the context: `_selected` and `_hovered`, both `*prop.Property[bool]`.
+
+**Rows are windowed and reused.** Only the rows that fit are built, keyed by item index; a change re-projects the window and Sets only the values that differ, so changing one item repaints that row and nothing else. Row height is discovered by measuring the template against the view's full height — a template rooted in something that stretches (a `Grid` with default star rows) will ask for the whole view and give you a one-row list. Say what the row wants: `<Grid Rows="1">`, or `Height="1"`.
+
 ### Timer
 
 `components.Timer` — a non-visual element that runs a command on an interval. Like `KeyBinding` it is hosted as an attachment on its parent, never laid out or painted.
@@ -398,6 +449,26 @@ Both deliver failures into the same target as an `"ERROR: …"` string in v1, so
 
 A provider is a typed factory — `NewCommand(*markup.Call) (gooey.Command, error)` — with no reflection: arguments arrive as resolved handles, and a provider needing a type other than string type-switches on `Arg.Raw`.
 
+## Property elements
+
+Most attributes are strings. Some are markup — a template, and later a declared property. Those use XAML's property-element syntax: a child whose name is `<Parent.Name>`, filed on the parent as a named structured attribute rather than built as a tree child.
+
+```xml
+<ItemsView Items="{{.Rows}}">
+  <ItemsView.ItemTemplate>
+    <Text>{{.Title}}</Text>
+  </ItemsView.ItemTemplate>
+</ItemsView>
+```
+
+The rules are load-time errors, all of them:
+
+- the prefix must name the element it sits inside — `<Grid.ItemTemplate>` inside an `<ItemsView>` is a typo, not a child;
+- the element must accept that property — `<VStack.ItemTemplate>` is rejected, so a misspelling cannot silently vanish;
+- a property element takes no attributes of its own, and may be given only once.
+
+A registered custom component is exempt from the second rule: its builder receives the raw `Element`, `Props` and all, and decides for itself — the same latitude it has with attributes.
+
 ## Styles
 
 `Style="name"` looks the name up in `Context.Styles` (`map[string]render.Style` — fg/bg color, bold, and so on), registered by the app:
@@ -539,9 +610,8 @@ Two normalizations reflect what the terminal actually sends: `shift` on a printa
 
 ## Designed, not yet implemented
 
-Two markup features have settled designs but no implementation yet — see [specs/](specs/) for the decision records:
+One markup feature has a settled design but no implementation yet — see [specs/](specs/) for the decision record:
 
 - `x:Property` declarations — a `.gooey` file declaring its own typed, defaulted, bindable property surface, making declared markup properties ordinary dependency properties; [specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
-- DataTemplates — declaring item visuals in markup for list-shaped data; today every list is a hand-rendered custom rows component behind a UserControl, the pattern established in [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md).
 
 For the project overview and demo GIFs, see [../README.md](../README.md).

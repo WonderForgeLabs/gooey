@@ -21,19 +21,30 @@ import (
 // reads record nothing. A component whose bounds changed is force-dirtied
 // via its rev source and its old region cleared.
 //
-// POC limits: static tree (rebuild the Composer on structural change)
-// and cell-plane components only (no graphics placements).
+// The tree is mostly static: a Composer is rebuilt when the whole tree is
+// replaced (hot reload). A container that changes its own child set
+// implements Dynamic (dynamic.go) and the composition re-syncs its paint
+// nodes and input tree in place, keeping the nodes of everything that
+// stayed. POC limit: cell-plane components only (no graphics placements).
 type Composer struct {
 	root       Component
 	frame      *Frame
 	cols, rows int
 	nodes      []*paintNode
+	nodeOf     map[Component]*paintNode
 	focus      *FocusManager
 	invalid    func()
 	painted    int
 
-	startable []Startable // discovered during the walk, started by Start
-	stops     []func()    // one per started element, run by Close
+	// Structural change (see dynamic.go): a Dynamic container raises this
+	// flag through the hook it was given, and Frame re-syncs after layout
+	// and before painting — layout being exactly when a list decides which
+	// rows exist.
+	structDirty bool
+
+	startable []Startable          // discovered during the walk, started by Start
+	disp      *Dispatcher          // remembered by Start, so a re-sync can start new arrivals
+	stops     map[Startable]func() // one per started element, run by Close
 }
 
 type paintNode struct {
@@ -51,8 +62,9 @@ type Bounded interface{ Bounds() Rect }
 
 func NewComposer(root Component, cols, rows int) *Composer {
 	c := &Composer{root: root, cols: cols, rows: rows,
-		frame: &Frame{Cells: render.NewBuffer(cols, rows)}}
-	c.build(root)
+		frame: &Frame{Cells: render.NewBuffer(cols, rows)},
+		stops: map[Startable]func(){}}
+	c.walkNodes()
 	c.focus = NewFocusManager(root)
 	return c
 }
@@ -110,7 +122,59 @@ func (c *Composer) HandleKey(ev input.KeyEvent) bool { return c.focus.Dispatch(e
 // HandleMouse routes a pointer event. See FocusManager.DispatchMouse.
 func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.DispatchMouse(ev) }
 
-func (c *Composer) build(w Component) {
+// walkNodes rebuilds the paint-node list from the current tree, REUSING
+// the node of every component that was already there. Reuse is the whole
+// point: a node carries the component's recorded dependencies and its
+// clean/dirty flag, so a component that did not change does not repaint
+// merely because something else in the tree appeared or vanished.
+//
+// Components that are gone have their last known rectangle cleared —
+// nothing else will ever paint over those cells — and anything Startable
+// among them is stopped. New arrivals are started if this composition was
+// already started, so a row realized on frame 40 gets the same treatment
+// as one that existed at frame 0.
+func (c *Composer) walkNodes() {
+	prev := c.nodeOf
+	c.nodeOf = make(map[Component]*paintNode, len(prev))
+	c.nodes = c.nodes[:0]
+	c.startable = c.startable[:0]
+	c.build(c.root, prev)
+
+	for w, n := range prev {
+		if _, kept := c.nodeOf[w]; !kept {
+			clearRect(c.frame.Cells, n.bounds)
+		}
+	}
+	if c.disp == nil {
+		return
+	}
+	live := make(map[Startable]bool, len(c.startable))
+	for _, s := range c.startable {
+		live[s] = true
+		if _, running := c.stops[s]; running {
+			continue
+		}
+		if stop := s.Start(c.disp.Post); stop != nil {
+			c.stops[s] = stop
+		} else {
+			c.stops[s] = func() {}
+		}
+	}
+	for s, stop := range c.stops {
+		if !live[s] {
+			stop()
+			delete(c.stops, s)
+		}
+	}
+}
+
+func (c *Composer) build(w Component, prev map[Component]*paintNode) {
+	if n, ok := prev[w]; ok {
+		c.nodes = append(c.nodes, n)
+		c.nodeOf[w] = n
+		c.collect(w, prev)
+		return
+	}
 	n := &paintNode{w: w, rev: prop.NewSource(0)}
 	n.node = prop.NewComputed(func() int {
 		n.rev.Get()
@@ -135,11 +199,20 @@ func (c *Composer) build(w Component) {
 		}
 	})
 	c.nodes = append(c.nodes, n)
-	// Non-visual attachments (KeyBinding, Timer) never get a paint node,
-	// but a Timer owns a goroutine, so the walk has to notice it. This is
-	// the same walk the FocusManager makes for bindings — collected here
-	// so the Composer, which owns the composition's lifetime, also owns
-	// the lifetime of anything running inside it.
+	c.nodeOf[w] = n
+	if d, ok := w.(Dynamic); ok {
+		d.SetStructureHook(c.structureChanged)
+	}
+	c.collect(w, prev)
+}
+
+// collect gathers the lifetime-bearing parts of one component and
+// recurses. Non-visual attachments (KeyBinding, Timer) never get a paint
+// node, but a Timer owns a goroutine, so the walk has to notice it. This
+// is the same walk the FocusManager makes for bindings — collected here
+// so the Composer, which owns the composition's lifetime, also owns the
+// lifetime of anything running inside it.
+func (c *Composer) collect(w Component, prev map[Component]*paintNode) {
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
 			if s, ok := at.(Startable); ok {
@@ -152,8 +225,22 @@ func (c *Composer) build(w Component) {
 	}
 	if ct, ok := w.(Container); ok {
 		for _, ch := range ct.ChildComponents() {
-			c.build(ch)
+			c.build(ch, prev)
 		}
+	}
+}
+
+// structureChanged is the hook handed to every Dynamic container. It only
+// raises a flag: the sync itself has to happen at a defined point in the
+// frame (after layout, before painting), and the caller is typically in
+// the middle of arranging its children when it notices.
+func (c *Composer) structureChanged() {
+	if c.structDirty {
+		return
+	}
+	c.structDirty = true
+	if c.invalid != nil {
+		c.invalid()
 	}
 }
 
@@ -167,12 +254,15 @@ func (c *Composer) build(w Component) {
 // attach/swap helper.
 func (c *Composer) Start(d *Dispatcher) {
 	c.stopAll()
+	c.disp = d
 	if d == nil {
 		return
 	}
 	for _, s := range c.startable {
 		if stop := s.Start(d.Post); stop != nil {
-			c.stops = append(c.stops, stop)
+			c.stops[s] = stop
+		} else {
+			c.stops[s] = func() {}
 		}
 	}
 }
@@ -187,7 +277,7 @@ func (c *Composer) stopAll() {
 	for _, stop := range c.stops {
 		stop()
 	}
-	c.stops = nil
+	c.stops = map[Startable]func(){}
 }
 
 // OnInvalidate registers the scheduler hook: fired when any component's
@@ -202,6 +292,16 @@ func (c *Composer) Frame() (*Frame, int) {
 	// not recorded as dependencies.
 	c.root.Measure(Size{c.cols, c.rows})
 	c.root.Arrange(Rect{0, 0, c.cols, c.rows})
+	// A Dynamic container decides which children exist while it is being
+	// arranged, so the sync lands here: after layout, before the bounds
+	// sweep (which then gives new nodes their first remembered bounds) and
+	// before painting (so a row realized this frame is painted this
+	// frame, not next).
+	if c.structDirty {
+		c.structDirty = false
+		c.walkNodes()
+		c.focus.Resync()
+	}
 	for _, n := range c.nodes {
 		if b, ok := n.w.(Bounded); ok {
 			if nb := b.Bounds(); nb != n.bounds {

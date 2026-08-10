@@ -13,7 +13,8 @@ go run ./cmd/reader
 ## Keys
 
 - `tab` — cycle focus between the three panes
-- `j` / `k` — move within the focused pane
+- `j` / `k` (or the arrows) — move within the focused pane
+- `PgUp` / `PgDn`, `Home` / `End` — move by page or to the ends, in the story list
 - `enter` — open the selected story
 - `a` — add a feed, then type a URL and press enter
 - `q` — quit
@@ -26,6 +27,11 @@ go run ./cmd/reader
 - **Focus as a source property.** Only the focused pane shows the filled-dot
   indicator in its title, and only it receives `j` / `k` — moving focus repaints
   exactly the two panes involved.
+- **A DataTemplate driving the story list.** `storylist.gooey` declares an
+  `<ItemsView>` with an `<ItemsView.ItemTemplate>`; what used to be a Render
+  loop is now a projection func handing each story's mark, styles, title and
+  date to the template. Rows are windowed, so a 400-story feed builds only the
+  rows on screen and changing one story repaints one row.
 - **`<KeyBinding>` bound to viewmodel commands**, declared in markup rather than
   wired up in Go.
 - **Async work marshalled back to the UI goroutine.** Feeds fetch over the

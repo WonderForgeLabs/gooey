@@ -52,6 +52,7 @@ Single tasks, for when you know what you want.
 |---|---|
 | [Hot-reload markup](howto/howto-hot-reload.md) | You want edits to a `.gooey` file to appear in the running app |
 | [Embed markup for release](howto/howto-embed-release.md) | You want one self-contained binary, with the same code |
+| [Show a list with a template](howto/howto-lists.md) | You have a collection to render and want the row declared in markup |
 | [Declare key bindings](howto/howto-keybindings.md) | You need the gesture syntax, or a key that is scoped to one pane |
 | [Handle mouse input](howto/howto-mouse.md) | You want clicks, hover, wheel, or drag |
 | [Draw images](howto/howto-images.md) | You have pixel content and need to know which protocol you get |
@@ -120,7 +121,9 @@ not find:
 
 - **No styling system.** `Style="name"` is a lookup — no cascading,
   selectors, or setters.
-- **No DataTemplates.** Every list is a hand-written rows component.
+- **Lists are declarative, but items are projected by hand.** `<ItemsView>`
+  with an `<ItemsView.ItemTemplate>` works; without reflection, an item
+  reaches its template through a `func(T) map[string]any` you write.
 - **`TextBox` is single-line and end-cursor only** — no mid-string
   cursor movement or selection yet (see `cmd/finder` for real usage).
 - **No `CanExecute`**, so no automatic disabled command state.

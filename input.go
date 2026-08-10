@@ -106,6 +106,49 @@ func NewFocusManager(root Component) *FocusManager {
 	return m
 }
 
+// Resync rebuilds the input tree after a structural change (see
+// dynamic.go), keeping focus where it was. It is the FocusManager's half
+// of what the Composer does to paint nodes: a list that realized three
+// rows must be able to route a click to them, and the rows' ancestor
+// chain is what mouse and key bubbling walk.
+//
+// Focus, hover and press targets survive if they are still in the tree.
+// A focused component that vanished hands focus to the first stop — a
+// composition always has somewhere for keys to land, the same invariant
+// NewFocusManager establishes.
+func (m *FocusManager) Resync() {
+	focused, hover, pressed := m.Focused(), m.hover, m.pressed
+	m.order = m.order[:0]
+	m.parent = map[Component]Component{}
+	m.bindings = map[Component][]*KeyBinding{}
+	m.walk(m.root, nil)
+
+	m.cur = -1
+	for i, w := range m.order {
+		if w == focused {
+			m.cur = i
+			break
+		}
+	}
+	if m.cur < 0 {
+		if t, ok := focused.(FocusTarget); ok {
+			t.SetFocused(false)
+		}
+		if len(m.order) > 0 {
+			m.focusIndex(0)
+		}
+	}
+	if _, live := m.parent[hover]; !live {
+		if h, ok := hover.(HoverTarget); ok {
+			h.SetHovered(false)
+		}
+		m.hover = nil
+	}
+	if _, live := m.parent[pressed]; !live {
+		m.pressed = nil
+	}
+}
+
 func (m *FocusManager) walk(w, parent Component) {
 	m.parent[w] = parent
 	if f, ok := w.(Focusable); ok && f.AcceptsFocus() {

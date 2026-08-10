@@ -1,6 +1,13 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
   <Border Title="{{.Title}}" Style="panel">
-    <StoryRows/>
-    <KeyBinding Gesture="enter" Command="{{.Open}}"/>
+    <ItemsView Name="Stories" Items="{{.Rows}}" Selected="{{.Selected}}" Activate="{{.Open}}">
+      <ItemsView.ItemTemplate>
+        <Grid Rows="1" Cols="1,1,*,2,12">
+          <Text Grid.Col="0" Style="{{.MarkStyle}}">{{.Mark}}</Text>
+          <Text Grid.Col="2" Style="{{.TitleStyle}}">{{.Title}}</Text>
+          <Text Grid.Col="4" Style="dim">{{.Published}}</Text>
+        </Grid>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
   </Border>
 </Gooey>
