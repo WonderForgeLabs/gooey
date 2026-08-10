@@ -396,14 +396,24 @@ func TestGifForPrefersRecordings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, recDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A GIF at the module root is the legacy layout; it still resolves.
 	writeGIF(t, filepath.Join(dir, "reader.gif"), []int{10, 10})
 	env := scanEnvFor(dir, dir)
 
 	got, gotDir, _, ok := gifFor(env, "reader", "reader")
 	if !ok || got != "reader.gif" || gotDir != dir {
-		t.Fatalf("root fallback = %q under %q (%v), want reader.gif under %q", got, gotDir, ok, dir)
+		t.Fatalf("legacy root fallback = %q under %q (%v), want reader.gif under %q", got, gotDir, ok, dir)
 	}
-	// A fresh recording supersedes the one checked in at the root.
+	// The checked-in home wins over the legacy root location.
+	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(gifHome)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGIF(t, filepath.Join(dir, filepath.FromSlash(gifHome), "reader.gif"), []int{10, 10})
+	got, gotDir, _, ok = gifFor(env, "reader", "reader")
+	if !ok || got != gifHome+"/reader.gif" || gotDir != dir {
+		t.Fatalf("checked-in home not preferred: %q under %q (%v)", got, gotDir, ok)
+	}
+	// A fresh recording supersedes the checked-in GIF.
 	writeGIF(t, filepath.Join(dir, recDir, "reader.gif"), []int{10, 10})
 	got, gotDir, _, ok = gifFor(env, "reader", "reader")
 	if !ok || got != recDir+"/reader.gif" || gotDir != dir {
@@ -423,12 +433,15 @@ func TestGifForResolvesAcrossRoots(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(launchRoot, recDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeGIF(t, filepath.Join(srcRoot, "reader.gif"), []int{10, 10})
+	if err := os.MkdirAll(filepath.Join(srcRoot, filepath.FromSlash(gifHome)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGIF(t, filepath.Join(srcRoot, filepath.FromSlash(gifHome), "reader.gif"), []int{10, 10})
 	env := scanEnvFor(srcRoot, launchRoot)
 
 	got, gotDir, _, ok := gifFor(env, "reader", "reader")
-	if !ok || got != "reader.gif" || gotDir != srcRoot {
-		t.Fatalf("source fallback = %q under %q (%v), want reader.gif under %q", got, gotDir, ok, srcRoot)
+	if !ok || got != gifHome+"/reader.gif" || gotDir != srcRoot {
+		t.Fatalf("source fallback = %q under %q (%v), want %s/reader.gif under %q", got, gotDir, ok, gifHome, srcRoot)
 	}
 	writeGIF(t, filepath.Join(launchRoot, recDir, "reader.gif"), []int{10, 10})
 	got, gotDir, _, ok = gifFor(env, "reader", "reader")

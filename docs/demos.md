@@ -10,7 +10,7 @@ go run ./cmd/browser
 
 ## probe / demo
 
-![demo](../demo.gif)
+![demo](media/demos/demo.gif)
 
 Retained visual tree + graphics protocol detection (sixel/kitty/iterm2/halfblock).
 
@@ -23,7 +23,7 @@ Exercises the terminal capability-detection layer (`term`) and the retained-tree
 
 ## propdemo
 
-![propdemo](../propdemo.gif)
+![propdemo](media/demos/propdemo.gif)
 
 Dependency-tracked properties only repaint what actually changed: hammering an unwatched source produces zero frames, watched bumps render instantly, and each frame repaints only 2 of 8 components.
 
@@ -36,7 +36,7 @@ Exercises the dependency-property graph (`prop`) driving the retained tree: the 
 
 ## logview
 
-![logview](../logview.gif)
+![logview](media/demos/logview.gif)
 
 Pausing flips the live buffer out of the dependency graph: 69 lines arrived during the pause while the ten frames that rendered were every one of them caused by a keystroke, not by the firehose — and the scroll and filter UI stayed fully interactive against the frozen snapshot.
 
@@ -51,7 +51,7 @@ Exercises conditional dependency recording: pausing flips a branch so the live b
 
 ## markuplog
 
-![markuplog](../markuplog.gif)
+![markuplog](media/demos/markuplog.gif)
 
 The markuplog UI is defined in a `.gooey` XML file that hot-reloads on edit: two live sed edits (a title change, then a new Grid row) rebuild the component tree in place while the log buffer, frame counter, and stream all survive untouched.
 
@@ -64,7 +64,7 @@ Exercises the markup loader (`markup`) with hot reload: bindings resolve against
 
 ## finder
 
-![finder](../finder.gif)
+![finder](media/demos/finder.gif)
 
 A four-property, three-computed dependency graph drives an fzf-style fuzzy finder: typing re-scores the file index live (microsecond match times in the status bar), arrows move a selection property, and the preview pane derives from it — damage tracking repaints only the affected panes.
 
@@ -77,7 +77,7 @@ Exercises the full input-to-derived-view pipeline through the dependency graph �
 
 ## reader
 
-![reader](../reader.gif)
+![reader](media/demos/reader.gif)
 
 Three UserControl panes share one input system — tab cycles focus, live network fetches fill each pane, and adding a feed at runtime updates the list and persists to `feeds.opml`.
 
@@ -90,7 +90,7 @@ Exercises multi-UserControl composition: three `.gooey` controls with their own 
 
 ## statedemo
 
-![statedemo](../statedemo.gif)
+![statedemo](media/demos/statedemo.gif)
 
 Buttons + checkbox: manual JSON snapshots vs reactive serialization through the property graph.
 
@@ -103,7 +103,7 @@ Exercises the "no code-behind" contract — pure markup with built-in components
 
 ## temporaldemo
 
-![temporaldemo](../temporaldemo.gif)
+![temporaldemo](media/demos/temporaldemo.gif)
 
 Two buttons with no delegates: one is an HTTP GET, the other is a Temporal activity executed by a worker on a task queue — in-process by default, on another machine if you start one there.
 
@@ -170,7 +170,7 @@ Exercises the whole phase-2 stack: the visibility pack's scalar convenience acti
 
 ## colordemo
 
-![colordemo](../colordemo.gif)
+![colordemo](media/demos/colordemo.gif)
 
 Absolute layout, capability-adaptive color, and a component whose experience changes with the terminal.
 
@@ -185,7 +185,7 @@ Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached propert
 
 ## toolkitdemo
 
-![toolkitdemo](../toolkitdemo.gif)
+![toolkitdemo](media/demos/toolkitdemo.gif)
 
 The toolkit on one page, spelled entirely in markup: the six wave-1 components plus wave 2's overlays — a `MenuBar` over the content, a `ToastHost` popping notifications — and the adornment plane: tooltips on the buttons, shown through an `AdornmentLayer`.
 
@@ -211,7 +211,8 @@ The preview pane is itself a small showcase: if the selected entry's
 directory has a `README.md` it renders **as markdown** (styled headings,
 bold, inline code, fenced blocks, bullets, underlined links — see
 `cmd/reader/README.md`); otherwise the entry's `main.go` doc comment is
-shown. If a recording exists (`recordings/<name>.gif` or a repo-root GIF),
+shown. If a recording exists (`recordings/<name>.gif` or a checked-in
+GIF under `docs/media/demos/`),
 `p` plays it in the pane — decoded with `image/gif`, frames coalesced, and
 animated as halfblock cells at the GIF's own frame delays; the animation
 stops on selection change and before every hand-off. The whole listing is

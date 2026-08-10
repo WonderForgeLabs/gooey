@@ -488,17 +488,28 @@ func minInt(a, b int) int {
 	return b
 }
 
+// gifHome is where the checked-in demo GIFs live, relative to the
+// module root. They used to sit at the root itself; the legacy lookup
+// below is what keeps browsing an older branch working.
+const gifHome = "docs/media/demos"
+
 // gifFor picks the GIF to play for a demo: a recording in the launch
-// tree first, then the one checked in at the SOURCE's root. Preferring
-// recordings/ means a fresh `r` supersedes the committed GIF the moment
-// it lands; taking the fallback from the source means browsing a branch
-// previews that branch's own GIF, not the launch tree's. The returned
-// dir is the host root the path resolves under — what Toggle and Stale
-// need to tell two sources' same-named GIFs apart.
+// tree first, then the one checked in under the SOURCE's
+// docs/media/demos/, then — for sources predating that layout — one at
+// the source's root. Preferring recordings/ means a fresh `r`
+// supersedes the committed GIF the moment it lands; taking the fallback
+// from the source means browsing a branch previews that branch's own
+// GIF, not the launch tree's. The returned dir is the host root the
+// path resolves under — what Toggle and Stale need to tell two sources'
+// same-named GIFs apart.
 func gifFor(env scanEnv, rec, name string) (string, string, fileKey, bool) {
 	recorded := path.Join(recDir, rec+".gif")
 	if key, ok := keyOf(env.rec, recorded); ok {
 		return recorded, env.recRoot, key, true
+	}
+	checked := path.Join(gifHome, name+".gif")
+	if key, ok := keyOf(env.src, checked); ok {
+		return checked, env.srcRoot, key, true
 	}
 	if key, ok := keyOf(env.src, name+".gif"); ok {
 		return name + ".gif", env.srcRoot, key, true

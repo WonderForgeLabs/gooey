@@ -183,7 +183,7 @@ holds differences. Replay the whole log through `render.Screen` instead —
 it is an `io.Writer`, so it takes the bytes as they come and `Text()`
 gives you the screen.
 
-The repository's top-level [`demo.gif`](../../../demo.gif) shows the
+The repository's [`demo.gif`](../../media/demos/demo.gif) shows the
 capability detection and the pipeline; [`docs/demos.md`](../../demos.md)
 catalogs what each demo exercises.
 

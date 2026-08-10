@@ -62,6 +62,12 @@ func TestWatchKeyNoticesTheThingsTheUIShows(t *testing.T) {
 		{"a new GIF at the module root", func(root string) {
 			write(t, root, "demo.gif", "gif")
 		}},
+		{"a new checked-in GIF", func(root string) {
+			if err := os.MkdirAll(filepath.Join(root, "docs", "media", "demos"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, filepath.Join("docs", "media", "demos", "demo.gif"), "gif")
+		}},
 		{"a new markup file", func(root string) {
 			write(t, root, filepath.Join("cmd", "demo", "app.gooey"), "<Gooey/>")
 		}},
