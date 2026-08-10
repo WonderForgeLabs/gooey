@@ -155,7 +155,8 @@ stops on selection change and before every hand-off. The whole listing is
 live: the browser watches `cmd/`, the example directories, and
 `recordings/`, so a new demo, an edited README, or a recording created
 while it runs appears without a restart (recordings are marked ● gif / ○
-cast and feed the info pane).
+cast and feed the info pane; ▶ marks an entry playable from a GIF outside
+`recordings/`, which is where most of the checked-in ones live).
 
 `r` records the selected entry: the run is wrapped in `asciinema rec`
 (the demo drives the recorded terminal) and converted to a GIF with `agg`
@@ -168,5 +169,8 @@ in the listing.
 
 Exercises the `fs.FS` seam as a live data source, `gooey.App.Suspend` for
 the terminal hand-off (the tty read-lifecycle invariant is what makes the
-child's stdin safe), the Timer/dispatcher lifecycle for the GIF animation,
+child's stdin safe), the Startable/dispatcher lifecycle for the GIF
+animation (the preview widget owns a ticker that posts frames through the
+dispatcher and is joined on stop — the same discipline as `<Timer>`, not
+the element itself),
 and the damage system — an animation tick repaints exactly one widget.

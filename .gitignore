@@ -2,3 +2,18 @@ bin/
 feeds.opml
 recordings/
 .claude/worktrees/
+# root-built demo binaries (go build ./cmd/x writes ./x)
+/browser
+/cardsdemo
+/reader
+/statedemo
+/sysmon
+/probe
+/demo
+/finder
+/logview
+/markuplog
+/propdemo
+/colordemo
+/mcpdemo
+/temporaldemo
