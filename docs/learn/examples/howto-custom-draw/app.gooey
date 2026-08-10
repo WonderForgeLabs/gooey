@@ -1,0 +1,11 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <VStack Gap="0">
+    <Border Title="custom Render" Style="panel" Background="#141420">
+      <Wave/>
+    </Border>
+    <Text Style="dim">one custom component: ~40 lines of Render, one property, one goroutine — q quits</Text>
+
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </VStack>
+</Gooey>
