@@ -524,6 +524,23 @@ func (c *Composer) Frame() (*Frame, int) {
 // Size reports the cell dimensions this composition lays out into.
 func (c *Composer) Size() (cols, rows int) { return c.cols, c.rows }
 
+// Damage reports the arranged bounds of the components the most recent
+// Frame repainted, in z-order — the damage-discipline number made
+// visible as rectangles, one per repainted component. The slice is a
+// fresh copy each call.
+//
+// UI goroutine only, and read it between frames (an AfterFrame hook is
+// the natural place): the next Frame overwrites it. Reading it composes
+// nothing and dirties nothing — it is plain bookkeeping about the frame
+// that already happened.
+func (c *Composer) Damage() []Rect {
+	out := make([]Rect, 0, len(c.over))
+	for _, n := range c.over {
+		out = append(out, n.bounds)
+	}
+	return out
+}
+
 // Resize re-targets the composition at a new terminal size: a new buffer
 // of that size and a forced full repaint.
 //

@@ -156,6 +156,20 @@ func parseHexColor(s string) (render.Color, error) {
 	return render.RGB(uint8(n>>16), uint8(n>>8), uint8(n)), nil
 }
 
+// Declarations parses src and returns the <x:Property> declarations its
+// root declares, in document order. Nothing is built and no context is
+// touched: this is the read-only half of the declaration block's double
+// life as a wire schema (the control plane's GetDeclaredSchema serves
+// it). A document with no declarations returns an empty slice; a
+// malformed document returns the same load error building it would.
+func Declarations(src []byte) ([]Declaration, error) {
+	doc, err := parseDocument(src)
+	if err != nil {
+		return nil, err
+	}
+	return doc.decls.list, nil
+}
+
 // DeclaredSurface is one control instance's markup-declared dependency
 // properties, as resolved for that instance: the declarations that make
 // up the control's public surface plus the live handles this instance

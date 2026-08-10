@@ -408,3 +408,136 @@ both TS flavors `tsc --noEmit` clean AND `tsconfig.build.json` emits
 dist (node v24.16.0, typescript 5.9.x); root module untouched and
 green. Not runnable locally, deferred to CI: nothing — every gate ran
 here; the publish workflow itself fires on the first `v*` tag.
+
+## Executed (#111, 2026-08-10): the server, and the service layer under it
+
+The server landed in the grpc/ module as planned — and the "one path"
+rule forced one structural decision the plan had left open: where the
+implementation the transports share actually lives.
+
+### The service layer: root package `control/`
+
+The contract says the MCP tools become "a thin adapter over the same
+in-process service implementation the gRPC server exposes (not a
+loopback network hop)". That implementation cannot live in either
+nested module: mcp/ importing grpc/ would pull grpc-go into the MCP
+graph and vice versa. It is plain Go over the framework's own
+interfaces, so it lives in the ROOT module — **`control/`**, zero new
+dependencies (stdlib only), importable by both transports because both
+already import root.
+
+`control/` holds, promoted from mcp/ nearly verbatim:
+
+- **`control.Host`** — Post/Composer/Swap, the same three methods as
+  mcp.Host; `*gooey.App` implements both.
+- **`control.Bridge`** — the double-wait settle barrier, now typed:
+  `*TimeoutError` (→ DEADLINE_EXCEEDED) and `*PanicError` (→ INTERNAL)
+  instead of stringly errors. The barrier semantics are contract text,
+  so the mechanism is shared machinery now, not an MCP idiom.
+- **`control.Service`** — every operation, UI-goroutine-only like
+  Tool.Run, returning plain copied data: Tree/Screen/Values/Value/Set/
+  Invoke/SendKeys/SendPointer/Focus/SwapMarkup/Register/DeclaredSchema/
+  PatchMarkup/Styles/Validate. Failures are `*control.Error` with a
+  kind (NotFound / InvalidArgument / FailedPrecondition) so transports
+  map codes without parsing text.
+- **`control.Value`/`Kind`** — the in-process TypedValue: a struct with
+  one meaningful field selected by Kind, one constructor per propKinds
+  row. The service's type checks are the same type-switches mcp's
+  tools do; the grpc converters are one `switch` per direction with one
+  case per row. It also covers `duration` and `any`
+  (`*prop.Property[time.Duration]`, `*prop.Property[any]` — JSON on the
+  wire), which the MCP set_value surface never grew.
+
+New service surface beyond the MCP inventory, per the contract:
+`Value` (GetProperty), `Register` (#89; dotted names materialize nested
+scopes, batches are all-or-nothing, SwapMarkup's pre-swap registrations
+roll back on a failed build), and `DeclaredSchema` (#62; backed by the
+new **`markup.Declarations(src)`** — the parse-only read of an
+<x:Property> block, no build, no context). "Empty source = the running
+document" works only when the host supplies `Service.Doc`/`Options.Doc`;
+otherwise FAILED_PRECONDITION, since gooey.Content has no source-read
+seam.
+
+### Root seams added (all plain Go, no deps)
+
+- **`App.AfterFrame(fn)`** — runs right after compose+flush; the
+  observation point for "what did this frame change".
+- **`Composer.Damage() []Rect`** — the bounds of the components the
+  last Frame repainted, one rect per component, in z-order.
+- **`App.AfterEvent(fn(ev, consumed))`** — OnEvent's other half:
+  "consumed" does not exist until after dispatch, and InputEcho carries
+  it.
+- **`App.Done() <-chan struct{}`** — closed on quit; the Closing seam.
+
+### FrameDelta collection (the #49 mechanism, as built)
+
+One `broadcaster` per server, hooked once via `AfterFrame`/`OnSwap`/
+`AfterEvent` (registered ON the UI goroutine via Post — App's hook
+lists are lock-free by design). At each frame completion, still on the
+UI goroutine: bump the frame seq, read `Composer.Damage()`, read the
+bindable surface ONCE (plain Gets outside any evaluation — the
+call-site rule makes them reads, not subscriptions; the collector never
+Sets, so it can never schedule a frame or perturb a damage count), diff
+per session against what that session last saw through its name
+filter, and enqueue ONE FrameDelta per session. `repainted` is
+`len(damage)` — the framework's own damage number, and the e2e test
+asserts the focus-move `repainted == 2` guarantee over the wire.
+
+Ordering falls out of the settle barrier: an act's FrameDelta is
+enqueued during the barrier frame, its ActResult after `Bridge.Do`
+returns, so a client always sees the frame its act caused before the
+ack. Session registration captures a value baseline (a new session's
+first delta carries changes, not the world). Resize detection is a
+size comparison in the same hook — a resize always composes a frame —
+so Resized stays ordered against that frame's delta.
+
+Backpressure: pushes never block the UI goroutine. Per-session queue
+of 256; overflow closes the session with RESOURCE_EXHAUSTED — a slow
+client loses its stream, never gets a silent gap in the delta sequence,
+and the app never stalls. Act results, flow-controlled by the client's
+own send rate, use a blocking enqueue from the reader goroutine.
+
+### The server itself
+
+`grpc.Serve(host, Options)` mirrors mcp.Serve: loopback-only default
+bind (`127.0.0.1:0`), non-loopback a HARD error, same posture text. No
+Origin machinery (no browser transport, as recorded). `SessionHost` is
+the optional Host extension (AfterFrame/OnSwap/AfterEvent/Done) the
+streaming channels need; a Host without it still serves every unary
+RPC and act — the push channels just stay silent. Unary handlers are
+uniformly: convert request → `Bridge.Do` → convert result; acts reuse
+the same service methods, applied strictly in stream order by one
+reader goroutine.
+
+### Verified (2026-08-10)
+
+Root `go build`/`go vet`/`go test -count=1` green (new: control/,
+markup.Declarations, App/Composer seam tests incl. damage-count
+assertions on AfterFrame). grpc module `go vet` + `go test -race`
+green: per-RPC unit tests against a hand-run loop over real loopback
+TCP with the generated client (status-code table, atomicity of failed
+swaps/patches/registrations, panic→INTERNAL with the app surviving,
+blocked-loop→DEADLINE_EXCEEDED, loopback hard error), Attach suite
+(delta-before-result ordering, filters, swap/resize/closing lifecycle,
+input echo terminal+remote, second-subscribe rejection), and an
+e2e_linux pty test (real App.Run + generated client: settle barrier on
+the wire, focus-move repainted==2 in a FrameDelta, swap through the
+session reaching the real terminal). mcp module -race green,
+UNCHANGED. handlers/temporal and imagefmt/svg green. gofmt clean. CI's
+grpc step upgraded to `-race` to match mcp's (the confinement claim is
+half-made without the detector). Demo: `grpc/cmd/grpcdemo` serves the
+app and, with `-drive`, is its own generated-client driver
+(SnapshotTree, SetProperty, InvokeCommand, an Attach stream printing
+FrameDeltas) — exercised against a live pty.
+
+### What #112 still needs
+
+mcp/ is deliberately untouched (its tests pass unchanged). The
+remaining work is mechanical per the mapping table: rewrite each tool
+body as `control.Service` call + result-to-JSON rendering, delete
+mcp's private bridge/snapshot/patch/scratchBuild copies in favor of
+control's, and keep the rendered text/structuredContent byte-identical
+(the tool-facing error strings name MCP tool names — list_values, not
+ListValues — so the adapter owns those strings, not the service).
+Nothing in the service layer blocks it; the tone difference in error
+text is the only non-mechanical decision left.

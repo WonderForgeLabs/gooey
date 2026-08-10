@@ -56,7 +56,9 @@ type App struct {
 	painted    int
 
 	before   []func()
+	after    []func()
 	onEvent  []func(input.Event)
+	afterEv  []func(input.Event, bool)
 	onSwap   []func(Component)
 	stops    []func()
 	quit     chan struct{}
@@ -269,6 +271,38 @@ func (a *App) Invalidate() { a.needsFrame = true }
 // second frame and never settle.
 func (a *App) BeforeFrame(fn func()) { a.before = append(a.before, fn) }
 
+// AfterFrame registers a hook run immediately after each frame has been
+// composed and flushed, in registration order. It is the observation
+// point for "what did this frame change": Composer.Damage and
+// PaintedLastFrame describe exactly the frame that just went out — the
+// seam a control-plane session collects its frame deltas from.
+//
+// It runs on the UI goroutine, so it may read properties freely (reads
+// here are outside any evaluation and record nothing). Setting a
+// property from an AfterFrame hook schedules ANOTHER frame — do that
+// unconditionally and the app never settles; stats about a frame belong
+// in BeforeFrame, which folds them into the frame about to happen.
+//
+// Register before Run, or from the UI goroutine (a Post): the hook list
+// is read by the frame path without a lock, like every other App hook.
+func (a *App) AfterFrame(fn func()) { a.after = append(a.after, fn) }
+
+// AfterEvent registers an observer run after an input event has been
+// routed, with whether the tree consumed it. Where OnEvent sees the
+// stream before routing, AfterEvent sees the outcome — the seam an
+// input-echoing session needs, since "consumed" does not exist until
+// dispatch has happened. Like OnEvent it cannot consume anything.
+//
+// Register before Run, or from the UI goroutine (a Post).
+func (a *App) AfterEvent(fn func(ev input.Event, consumed bool)) {
+	a.afterEv = append(a.afterEv, fn)
+}
+
+// Done returns a channel closed when the app has quit — by Quit, a quit
+// key, or a signal. Safe from any goroutine; a control-plane session
+// selects on it to tell its clients the app is closing.
+func (a *App) Done() <-chan struct{} { return a.quit }
+
 // OnEvent registers an OBSERVER of the input stream, run for every
 // decoded event before it is routed. It cannot consume anything — the
 // return value would be a second, invisible input path competing with
@@ -464,6 +498,9 @@ func (a *App) frame() {
 		a.fail(a.comp.Flush(a.screen.File()))
 	}
 	a.needsFrame = false
+	for _, fn := range a.after {
+		fn()
+	}
 }
 
 // handle routes one event. The tree gets first refusal; the app-level
@@ -473,14 +510,17 @@ func (a *App) handle(ev input.Event) {
 	for _, fn := range a.onEvent {
 		fn(ev)
 	}
-	if a.comp.Handle(ev) || !ev.IsKey() {
-		return
-	}
-	for _, k := range a.opt.quitKeys {
-		if ev.Key == k {
-			a.Quit()
-			return
+	consumed := a.comp.Handle(ev)
+	if !consumed && ev.IsKey() {
+		for _, k := range a.opt.quitKeys {
+			if ev.Key == k {
+				a.Quit()
+				break
+			}
 		}
+	}
+	for _, fn := range a.afterEv {
+		fn(ev, consumed)
 	}
 }
 
