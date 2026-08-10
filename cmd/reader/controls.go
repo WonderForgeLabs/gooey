@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -37,13 +38,29 @@ func attr[T any](e markup.Element, parent *markup.Context, name string) (*prop.P
 // paneTitle decorates a pane's name with ● while it holds focus. Focus
 // is a property like any other, so this computed makes the two panes
 // that swap focus the only ones that repaint.
-func paneTitle(name string, w interface{ IsFocused() bool }) *prop.Property[string] {
+//
+// focused is a func rather than the component because a pane's focus
+// stop is not always something the setup built: StoryList's is an
+// <ItemsView> declared in markup, and the title has to be in the context
+// before the markup that creates it is loaded. Asking at paint time
+// instead of at setup time costs nothing and works either way.
+func paneTitle(name string, focused func() bool) *prop.Property[string] {
 	return prop.NewComputed(func() string {
-		if w.IsFocused() {
+		if focused() {
 			return "● " + name
 		}
 		return name
 	})
+}
+
+// namedFocus resolves a focus stop by markup name, late. Load fills the
+// Named map the control hands it, so a computed that looks the component
+// up when it runs — rather than when it was created — sees it.
+func namedFocus(named map[string]gooey.Component, name string) func() bool {
+	return func() bool {
+		w, ok := named[name].(interface{ IsFocused() bool })
+		return ok && w.IsFocused()
+	}
 }
 
 // moveKey maps the shared list gestures to a direction. j/k and the
@@ -93,7 +110,7 @@ func feedListControl(fsys fs.FS) markup.Builder {
 		}
 		rows := &feedRows{feeds: feeds, sel: sel, changed: reset}
 		return &markup.Context{
-			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows)},
+			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows.IsFocused)},
 			Components: map[string]markup.Builder{
 				"FeedRows": func(markup.Element, *markup.Context) (gooey.Component, error) { return rows, nil },
 			},
@@ -176,6 +193,18 @@ func (w *feedRows) Render(f *gooey.Frame) {
 
 // ---- StoryList ----
 
+// storyListControl is the migrated pane: there is no rows component here
+// any more. storylist.gooey declares an <ItemsView> with an
+// <ItemsView.ItemTemplate>, and this setup's whole job is to hand it the
+// three things markup cannot produce — an item source, the shared
+// selection handle, and the open command.
+//
+// What used to be a Render loop is now a PROJECTION. Every visual
+// decision the loop made (which mark, which style, the date) is a value
+// in the item's map, and the template places them. The selected row's
+// reverse bar, which the loop drew by hand, is the view's house
+// highlight. What is left in Go is the part that was never about
+// painting: which stories have been read.
 func storyListControl(fsys fs.FS) markup.Builder {
 	return markup.UserControl(fsys, "storylist.gooey", func(e markup.Element, parent *markup.Context) (*markup.Context, error) {
 		stories, err := attr[[]Story](e, parent, "Stories")
@@ -191,107 +220,52 @@ func storyListControl(fsys fs.FS) markup.Builder {
 			return nil, err
 		}
 		// The Open command crosses the control boundary like any other
-		// bound value; storylist.gooey attaches it to a <KeyBinding>, so
-		// enter opens a story only while this pane has focus.
+		// bound value, and lands on the view's Activate — so enter (and a
+		// second click) opens a story only while this pane has focus.
 		open, err := parent.Command(e.Attrs["Open"])
 		if err != nil {
 			return nil, err
 		}
-		rows := &storyRows{stories: stories, sel: sel, read: read, open: open}
+		named := map[string]gooey.Component{}
 		return &markup.Context{
-			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows), "Open": open},
-			Components: map[string]markup.Builder{
-				"StoryRows": func(markup.Element, *markup.Context) (gooey.Component, error) { return rows, nil },
+			Named: named,
+			Values: map[string]any{
+				"Title":    paneTitle(e.Attrs["Title"], namedFocus(named, "Stories")),
+				"Rows":     storyRows(stories, read),
+				"Selected": sel,
+				"Open":     open,
 			},
 		}, nil
 	})
 }
 
-type storyRows struct {
-	gooey.Base
-	gooey.FocusState
-	stories *prop.Property[[]Story]
-	sel     *prop.Property[int]
-	read    *prop.Property[map[string]bool]
-	open    gooey.Command
-
-	pressedSelected bool // the pressed row was already the selected one
-}
-
-func (w *storyRows) Measure(avail gooey.Size) gooey.Size { return avail }
-
-func (w *storyRows) HandleKey(ev input.KeyEvent) bool {
-	d, ok := moveKey(ev)
-	if !ok {
-		return false
-	}
-	w.sel.Set(clampIdx(w.sel.Get()+d, len(w.stories.Get())))
-	return true
-}
-
-// top is the first visible story — the same scroll arithmetic Render
-// uses, so a click maps back to the row the user actually sees.
-func (w *storyRows) top() int {
-	return max(0, clampIdx(w.sel.Get(), len(w.stories.Get()))-w.Bounds().H+1)
-}
-
-func (w *storyRows) HandleMouse(ev input.MouseEvent) bool {
-	switch ev.Kind {
-	case input.MousePress:
-		row := w.top() + ev.Y - w.Bounds().Y
-		if row < 0 || row >= len(w.stories.Get()) {
-			return false
-		}
-		// Compared before the selection moves, so the first click on a
-		// row selects it and only a second click opens it.
-		w.pressedSelected = row == clampIdx(w.sel.Get(), len(w.stories.Get()))
-		w.sel.Set(row)
-		return true
-	case input.MouseClick:
-		if w.pressedSelected && w.open != nil {
-			w.open()
-		}
-		return true
-	}
-	if d, ok := wheelDelta(ev); ok {
-		w.sel.Set(clampIdx(w.sel.Get()+d, len(w.stories.Get())))
-		return true
-	}
-	return false
-}
-
-func (w *storyRows) Render(f *gooey.Frame) {
-	b := w.Bounds()
-	ss := w.stories.Get()
-	sel := clampIdx(w.sel.Get(), len(ss))
-	read := w.read.Get()
-	top := max(0, sel-b.H+1)
-	for row := 0; row < b.H && top+row < len(ss); row++ {
-		s := ss[top+row]
-		st := render.Style{}
-		mark := "●"
-		if read[s.Link] {
-			mark = " "
-			st = dim
-		}
-		if top+row == sel {
-			st.Reverse = true
-			for x := 0; x < b.W; x++ {
-				f.Cells.Set(b.X+x, b.Y+row, ' ', st)
+// storyRows is the item source. It is built inside a computed BECAUSE
+// the projection reads the read-marks map: a projection runs during
+// layout, where reads record nothing, so anything beyond the item itself
+// has to be read here to become a dependency. Marking a story read then
+// repaints the list.
+func storyRows(stories *prop.Property[[]Story], read *prop.Property[map[string]bool]) *prop.Property[components.ItemSource] {
+	return prop.NewComputed(func() components.ItemSource {
+		marks := read.Get()
+		return components.ItemsOf(stories.Get(), func(s Story) map[string]any {
+			mark, markStyle, titleStyle := "●", accent, render.Style{}
+			if marks[s.Link] {
+				mark, markStyle, titleStyle = " ", dim, dim
 			}
-		}
-		markSt := accent
-		markSt.Reverse = st.Reverse
-		if read[s.Link] {
-			markSt = st
-		}
-		f.Cells.SetString(b.X, b.Y+row, mark, markSt)
-		f.Cells.SetString(b.X+2, b.Y+row, clipTo(s.Title, b.W-16), st)
-		dateSt := dim
-		dateSt.Reverse = st.Reverse
-		f.Cells.SetString(b.X+b.W-12, b.Y+row, s.Published, dateSt)
-	}
+			return map[string]any{
+				"Mark":       mark,
+				"MarkStyle":  markStyle,
+				"Title":      oneLine(s.Title),
+				"TitleStyle": titleStyle,
+				"Published":  oneLine(s.Published),
+			}
+		})
+	})
 }
+
+// oneLine flattens a feed's newlines. A Text measures one row per line,
+// and a template's root is what decides a list's row height.
+func oneLine(s string) string { return strings.ReplaceAll(s, "\n", " ") }
 
 // ---- ReaderPane ----
 
@@ -307,7 +281,7 @@ func readerPaneControl(fsys fs.FS, built func(gooey.Component)) markup.Builder {
 		body := &articleBody{story: story}
 		built(body)
 		return &markup.Context{
-			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], body)},
+			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], body.IsFocused)},
 			Components: map[string]markup.Builder{
 				"ArticleBody": func(markup.Element, *markup.Context) (gooey.Component, error) { return body, nil },
 			},

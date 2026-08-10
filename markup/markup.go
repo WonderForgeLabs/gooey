@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,16 @@ type Element struct {
 	Attrs    map[string]string
 	Children []Element
 	Text     string
+	// Props holds this element's PROPERTY ELEMENTS, keyed by the part
+	// after the dot: <ItemsView.ItemTemplate> lands under "ItemTemplate"
+	// on the ItemsView. They are structured attributes — an attribute
+	// whose value is markup rather than a string — so they are handed to
+	// the parent's builder and never built as tree children.
+	//
+	// This is XAML's property-element syntax, and it is the general
+	// mechanism, not an ItemTemplate special case: <x:Property> lands
+	// here next.
+	Props map[string]Element
 }
 
 // Builder constructs a component from an element. Custom components receive
@@ -199,6 +210,12 @@ func parse(src []byte) (Element, map[string]string, error) {
 				root = e
 			} else {
 				p := stack[len(stack)-1]
+				if strings.Contains(e.Name, ".") {
+					if err := attachProp(p, e); err != nil {
+						return Element{}, nil, err
+					}
+					continue
+				}
 				p.Children = append(p.Children, *e)
 			}
 		case xml.CharData:
@@ -213,7 +230,69 @@ func parse(src []byte) (Element, map[string]string, error) {
 	return *root, ns, nil
 }
 
+// attachProp files a dotted element as a property of its parent. The
+// prefix must name the parent — <ItemsView.ItemTemplate> is only legal
+// inside an <ItemsView> — which is what keeps the syntax readable: the
+// dot says "this is not a child, it is a slot on the element around it",
+// and naming the wrong owner is a typo the load must catch.
+func attachProp(parent, e *Element) error {
+	owner, name, _ := strings.Cut(e.Name, ".")
+	if owner != parent.Name {
+		return fmt.Errorf("markup: <%s> is a property of <%s>, not of <%s>", e.Name, owner, parent.Name)
+	}
+	if name == "" || strings.Contains(name, ".") {
+		return fmt.Errorf("markup: <%s> is not a property name", e.Name)
+	}
+	if len(e.Attrs) > 0 {
+		return fmt.Errorf("markup: <%s> takes no attributes; it is a slot, not an element", e.Name)
+	}
+	if _, dup := parent.Props[name]; dup {
+		return fmt.Errorf("markup: <%s> given twice", e.Name)
+	}
+	if parent.Props == nil {
+		parent.Props = map[string]Element{}
+	}
+	parent.Props[name] = *e
+	return nil
+}
+
+// propElements declares which property elements each builtin accepts.
+// The declaration is the point: an unknown one is a LOAD error, so
+// <Grid.ItemTemplate> is a typo you hear about at startup rather than a
+// child that silently disappeared.
+var propElements = map[string]map[string]bool{
+	"ItemsView": {"ItemTemplate": true},
+}
+
+// checkProps rejects property elements the element cannot accept. A
+// registered custom component is exempt — its builder receives the raw
+// Element and decides for itself, the same latitude it has with
+// attributes.
+func checkProps(e Element, ctx *Context) error {
+	if len(e.Props) == 0 {
+		return nil
+	}
+	if _, custom := ctx.Components[e.Name]; custom {
+		return nil
+	}
+	allowed := propElements[e.Name]
+	names := make([]string, 0, len(e.Props))
+	for name := range e.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !allowed[name] {
+			return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>", e.Name, e.Name, name)
+		}
+	}
+	return nil
+}
+
 func build(e Element, ctx *Context) (gooey.Component, error) {
+	if err := checkProps(e, ctx); err != nil {
+		return nil, err
+	}
 	w, err := buildComponent(e, ctx)
 	if err != nil {
 		return nil, err
@@ -425,6 +504,9 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			return nil, err
 		}
 		return named(e, ctx, c, nil)
+	case "ItemsView":
+		v, err := buildItemsView(e, ctx)
+		return named(e, ctx, v, err)
 	case "Checkbox":
 		checked, err := boundProp[bool](e, ctx, "Checked")
 		if err != nil {
