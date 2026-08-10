@@ -65,7 +65,7 @@ A four-property, three-computed dependency graph drives an fzf-style fuzzy finde
 The walkthrough: finder opens on the repo index (133 files) with a query input, results pane, and preview pane. "compos" is typed character by character and the results narrow live to `composer.go`/`composer_test.go` with orange match highlighting and "2 matched in 54µs" in the status bar. Down-arrow moves the selection and the preview pane follows, switching from `composer.go` to `composer_test.go`. Six backspaces clear the query and all 133 files return. "gooey" is typed — 21 matches ranked by fuzzy score with subsequence highlighting, `cmd/finder/finder.gooey` on top with its own markup in the preview. A down-arrow selects `cmd/reader/reader.gooey`, and enter exits, printing `cmd/reader/reader.gooey` to the shell.
 
 - Run: `go run ./cmd/finder`
-- Keys: type to filter, `up`/`down` (or `ctrl-p`/`ctrl-n`) select, `enter` print selection and exit, `esc`/`ctrl-c` quit
+- Keys: type to filter, `up`/`down` (or `ctrl-p`/`ctrl-n`) select, click a result row to select it (wheel scrolls the selection), `enter` print selection and exit, `esc`/`ctrl-c` quit
 
 Exercises the full input-to-derived-view pipeline through the dependency graph — query, index, and selection properties feeding scoring and preview computeds — plus damage tracking that repaints only the results and preview panes, all inside a hot-reloading markup shell (`finder.gooey`).
 
