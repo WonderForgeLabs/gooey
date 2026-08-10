@@ -88,6 +88,14 @@ type Context struct {
 	// ({{net:Get …}}) and unused by everything else.
 	Dispatcher *gooey.Dispatcher
 
+	// fsys is the file system the current document was LOADED from,
+	// installed by Load (and by control instantiation) for the duration
+	// of the build — the same document-scoped save/restore the xmlns
+	// table uses. It is what a literal <Image Src="logo.png"> resolves
+	// against: assets ship beside the markup that names them, in
+	// whichever FS that markup came from. A tree built from bytes
+	// (markup.Build) has none, and falls back to Includes.
+	fsys fs.FS
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix
@@ -205,7 +213,20 @@ func Load(fsys fs.FS, name string, ctx *Context) (gooey.Component, error) {
 	if err != nil {
 		return nil, err
 	}
+	prev := ctx.fsys
+	ctx.fsys = fsys
+	defer func() { ctx.fsys = prev }()
 	return doc.build(ctx)
+}
+
+// assets is the FS literal asset paths (Image Src) resolve against: the
+// FS the document was loaded from, else the Includes FS — a tree built
+// from raw bytes still has a natural place for its pictures to live.
+func (ctx *Context) assets() fs.FS {
+	if ctx.fsys != nil {
+		return ctx.fsys
+	}
+	return ctx.Includes
 }
 
 // Watch polls name's ModTime in fsys and rebuilds on change, calling
@@ -882,6 +903,9 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			}
 		}
 		return named(e, ctx, t, nil)
+	case "Image":
+		im, err := buildImage(e, ctx)
+		return named(e, ctx, im, err)
 	case "Text":
 		style, err := bindStyle(e, ctx)
 		if err != nil {

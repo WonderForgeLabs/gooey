@@ -45,6 +45,20 @@ jobs:
             echo "handlers/temporal/go.mod not present; skipping"
           fi
 
+      # imagefmt/svg is a separate module for the same reason — the SVG
+      # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
+      # opt in with a blank import.
+      - name: Build and test imagefmt/svg
+        run: |
+          if [ -f imagefmt/svg/go.mod ]; then
+            cd imagefmt/svg
+            go build ./...
+            go vet ./...
+            go test ./...
+          else
+            echo "imagefmt/svg/go.mod not present; skipping"
+          fi
+
       # mcp is a separate module for the same reason (the MCP SDK's graph),
       # so the root ./... patterns skip it too. It runs under -race
       # deliberately: what its tests prove is that no tool body ever touches

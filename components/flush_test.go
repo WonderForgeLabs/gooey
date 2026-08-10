@@ -408,3 +408,19 @@ func TestHalfblockFallbackIsUnchanged(t *testing.T) {
 		t.Fatalf("cell 0,0 is %q, want the halfblock rune", got)
 	}
 }
+
+// The damage contract for images, pinned: a new Src repaints the Image
+// and only the Image. This is the number the whole property conversion
+// of Image (docs/specs/2026-08-10-rendering-2.md, deviation 2) exists
+// to make true, and it is what makes file-loaded images (markup Src)
+// exactly as cheap as any other property change.
+func TestSettingSrcRepaintsExactlyTheImage(t *testing.T) {
+	c, _, _, src := pixelTree(graphics.Kitty{})
+	flush(t, c)
+
+	src.Set(swatch(90))
+	_, painted := c.Frame()
+	if painted != 1 {
+		t.Fatalf("a Src change repainted %d components, want exactly the Image", painted)
+	}
+}

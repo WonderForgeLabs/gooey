@@ -86,35 +86,50 @@ src := prop.NewComputed(func() image.Image { return render(phase.Get()) })
 im := &components.Image{Src: src, Cols: components.Cells(24), Rows: components.Cells(12)}
 ```
 
-### There is no `<Image>` markup element
+## Load an image from a file
 
-No built-in element builds one, because markup has no way to spell an
-`image.Image`. Register it as a custom component and supply the picture
-from Go:
+The `imaging` package decodes **png, jpeg, gif, bmp, and ico** through
+a content-sniffing registry, loading through the same `fs.FS` seam
+markup uses — `os.DirFS` in dev, `embed.FS` in release:
 
 ```go
-Components: map[string]markup.Builder{
-	"Logo": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
-		cols, err := strconv.Atoi(e.Attrs["Cols"])
-		if err != nil {
-			return nil, fmt.Errorf("<Logo Cols=%q>: %w", e.Attrs["Cols"], err)
-		}
-		rows, err := strconv.Atoi(e.Attrs["Rows"])
-		if err != nil {
-			return nil, fmt.Errorf("<Logo Rows=%q>: %w", e.Attrs["Rows"], err)
-		}
-		return &components.Image{
-			Src:  components.Img(logo()),
-			Cols: components.Cells(cols),
-			Rows: components.Cells(rows),
-		}, nil
-	},
-}
+img, err := imaging.Load(assets, "logo.png")          // an image.Image
+src, err := components.LoadImg(assets, "logo.png")    // …wrapped as a property
 ```
 
-```xml
-<Logo Cols="24" Rows="12"/>
+GIF decodes to its **first frame** — animation is a player's job (the
+browser demo's gifplay pattern). ICO picks its largest entry, PNG or
+DIB. A file that is missing or will not decode returns an
+`*imaging.Error` naming the path and the sniffed format.
+
+**SVG** costs a real rasterizer, so it lives in a nested module and a
+blank import is the opt-in:
+
+```go
+import _ "github.com/WonderForgeLabs/gooey/imagefmt/svg"
 ```
+
+After that, `.svg` files decode like any other format, rasterized at
+their intrinsic size (viewBox or width/height, capped at 1024 px on the
+long side — the pixel pipeline rescales to cells anyway).
+
+### The `<Image>` markup element
+
+```xml
+<Image Src="assets/logo.png" Cols="24" Rows="12"/>
+<Image Src="{{.Chart}}" Cols="{{.ChartCols}}" Rows="12"/>
+```
+
+A literal `Src` is a path **in the FS the page was loaded from**,
+decoded at page load — a bad path or corrupt file fails the load with
+an error naming both. A binding shares the viewmodel's
+`*prop.Property[image.Image]` handle, exactly like every other bound
+attribute. `Cols` and `Rows` are required (literal or bound): an image
+with no size would measure 0×0 and silently vanish.
+
+Hot reload re-decodes a literal `Src` naturally — a page rebuild
+re-runs the builder. The watcher stats markup files, not image files,
+so to see new pixels under an unchanged path, touch the page.
 
 ## Turn the protocol on
 
