@@ -5,7 +5,7 @@
     <Card Grid.Row="1" Grid.Col="0" Title="errors"    Value="{{.Errs}}" Trend="{{.ErrsTrend}}" Caption="last minute"/>
     <Card Grid.Row="1" Grid.Col="1" Title="goroutines" Value="{{.Gors}}" Trend="{{.GorsTrend}}" Caption="live"/>
     <Checkbox Grid.Row="2" Grid.ColSpan="2" Checked="{{.Ticking}}" Label="ticking — the Timer's Enabled binds to this property (space/click toggles)"/>
-    <Text Grid.Row="3" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, four instances, zero code-behind   (q: quit)</Text>
+    <Text Grid.Row="3" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, four instances, zero code-behind; its four properties are declared with &lt;x:Property&gt;, so these attributes are type-checked   (q: quit)</Text>
     <!-- The data stream is declared, not hand-rolled: the Composer
          starts this timer, its goroutine posts to the Dispatcher, and
          the tick runs on the UI loop like any other command. Enabled is

@@ -20,12 +20,86 @@ import (
 // to property handles the setup wires into its context or components.
 // Styles and Components inherit from the parent when the child leaves
 // them nil; Named is scoped per instance (like x:Name in templates).
+//
+// If the control's markup declares dependency properties with
+// <x:Property>, they are resolved BEFORE setup runs and installed into
+// the context setup returns; setup reads them through
+// Context.DeclaredProperties and extends the surface with private
+// members. A control that declares nothing behaves exactly as it always
+// has: setup owns the whole context.
 func UserControl(fsys fs.FS, name string, setup func(e Element, parent *Context) (*Context, error)) Builder {
+	return control(fsys, name, setup, false)
+}
+
+// Include returns a Builder for a markup-only control — no code-behind.
+//
+// Without declarations the instance's attributes BECOME the control's
+// context: each attribute resolves in the parent context (binding →
+// property handle, literal → string) and is exposed under its attribute
+// name. So <Card Title="{{.Header}}" Sub="details"/> gives card.gooey a
+// context where {{.Title}} is the parent's Header handle and {{.Sub}}
+// is a literal. Layout attributes (Width, Margin, Grid.Row, …) still
+// apply to the instance and are not passed through.
+//
+// With <x:Property> declarations the surface is the declarations
+// instead: attributes are type-checked against them, absent ones
+// materialize their declared defaults, and an undeclared attribute is a
+// load error. Same control tier, now with a checked contract.
+func Include(fsys fs.FS, name string) Builder {
+	return control(fsys, name, nil, true)
+}
+
+// control is the shared instantiation path for both control tiers.
+//
+// Order is the contract (see docs/specs/2026-08-10-markup-declared-
+// properties.md): declarations resolve the instance's attributes into a
+// pre-populated context first, then setup runs and EXTENDS it. A setup
+// that defines a value under a declared name is a load error — one
+// source of truth for the public surface, the same reason a property
+// system rejects double registration.
+func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*Context, error), passThrough bool) Builder {
 	return func(e Element, parent *Context) (gooey.Component, error) {
-		child, err := setup(e, parent)
+		doc, err := loadDocument(fsys, name)
 		if err != nil {
-			return nil, fmt.Errorf("markup: control %s: %w", name, err)
+			return nil, err
 		}
+		if doc.decls.present {
+			if err := doc.decls.checkAttrs(name, e); err != nil {
+				return nil, err
+			}
+		}
+		declared, err := doc.decls.instantiate(name, e, parent)
+		if err != nil {
+			return nil, err
+		}
+
+		var child *Context
+		if setup != nil {
+			child, err = runSetup(setup, e, parent, declared)
+			if err != nil {
+				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+			}
+		}
+		if child == nil {
+			child = &Context{}
+		}
+		if child.Values == nil {
+			child.Values = map[string]any{}
+		}
+		// A control that declares nothing keeps the implicit surface:
+		// every attribute passes through, unchecked, as it always has.
+		if passThrough && !doc.decls.present {
+			if err := passAttrs(e, parent, child.Values); err != nil {
+				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+			}
+		}
+		for _, d := range doc.decls.list {
+			if _, dup := child.Values[d.Name]; dup {
+				return nil, fmt.Errorf("markup: %s: dependency property %q — the code-behind setup also defines %q; declarations own the control's public surface, so a setup may extend it but not redefine it", name, d.Name, d.Name)
+			}
+			child.Values[d.Name] = declared[d.Name]
+		}
+
 		if child.Styles == nil {
 			child.Styles = parent.Styles
 		}
@@ -41,49 +115,66 @@ func UserControl(fsys fs.FS, name string, setup func(e Element, parent *Context)
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
 		}
-		return Load(fsys, name, child)
+		return doc.build(child)
 	}
 }
 
-// Include returns a Builder for a markup-only control — no code-behind.
-// The instance's attributes BECOME the control's context: each
-// attribute resolves in the parent context (binding → property handle,
-// literal → string) and is exposed under its attribute name. So
-// <Card Title="{{.Header}}" Sub="details"/> gives card.gooey a context
-// where {{.Title}} is the parent's Header handle and {{.Sub}} is a
-// literal. Layout attributes (Width, Margin, Grid.Row, …) still apply
-// to the instance and are not passed through.
-func Include(fsys fs.FS, name string) Builder {
-	return UserControl(fsys, name, func(e Element, parent *Context) (*Context, error) {
-		vals := map[string]any{}
-		for k, v := range e.Attrs {
-			if layoutAttr(k) || k == "Name" {
-				continue
-			}
-			if isHandlerExpr(v) {
-				// A handler expression is resolved in the PARENT — that
-				// is the document whose xmlns table declares the prefix —
-				// and the resulting Command crosses the boundary as an
-				// ordinary value, so the child binds it with {{.Attr}}
-				// like any other delegate.
-				cmd, err := parent.Command(v)
-				if err != nil {
-					return nil, fmt.Errorf("attribute %s: %w", k, err)
-				}
-				vals[k] = cmd
-			} else if bindRe.MatchString(v) {
-				h, err := parent.BindingValue(v)
-				if err != nil {
-					return nil, fmt.Errorf("attribute %s: %w", k, err)
-				}
-				vals[k] = h
-			} else {
-				vals[k] = v
-			}
-		}
-		return &Context{Values: vals}, nil
-	})
+// runSetup calls a code-behind setup with the declared handles visible
+// on the parent context for exactly the duration of the call — the same
+// document-scoped save/restore the xmlns table uses, so a setup that
+// itself instantiates a control cannot see the wrong declarations.
+func runSetup(setup func(e Element, parent *Context) (*Context, error), e Element, parent *Context, declared map[string]any) (*Context, error) {
+	prev := parent.declared
+	parent.declared = declared
+	defer func() { parent.declared = prev }()
+	return setup(e, parent)
 }
+
+// passAttrs is the undeclared (implicit) surface: attributes resolved in
+// the parent and exposed under their own names.
+func passAttrs(e Element, parent *Context, vals map[string]any) error {
+	for k, v := range e.Attrs {
+		if layoutAttr(k) || k == "Name" {
+			continue
+		}
+		if isHandlerExpr(v) {
+			// A handler expression is resolved in the PARENT — that is
+			// the document whose xmlns table declares the prefix — and
+			// the resulting Command crosses the boundary as an ordinary
+			// value, so the child binds it with {{.Attr}} like any other
+			// delegate.
+			cmd, err := parent.Command(v)
+			if err != nil {
+				return fmt.Errorf("attribute %s: %w", k, err)
+			}
+			vals[k] = cmd
+		} else if bindRe.MatchString(v) {
+			h, err := parent.BindingValue(v)
+			if err != nil {
+				return fmt.Errorf("attribute %s: %w", k, err)
+			}
+			vals[k] = h
+		} else {
+			vals[k] = v
+		}
+	}
+	return nil
+}
+
+// DeclaredProperties returns the dependency properties declared by the
+// control currently being instantiated, already resolved against the
+// instance's attributes into typed *prop.Property handles.
+//
+// It is valid only inside a UserControl setup func, called on the
+// PARENT context handed to that func — the same document-scoped
+// hand-off the xmlns table uses. A control with no declarations sees an
+// empty map, and outside a setup call it is nil.
+//
+// Setup reads these to build private computeds over the control's
+// public surface. The framework installs them into the control's
+// context afterwards, so setup must not copy them into its own Values:
+// that is the collision a declared surface rejects.
+func (ctx *Context) DeclaredProperties() map[string]any { return ctx.declared }
 
 func layoutAttr(k string) bool {
 	switch k {

@@ -3,6 +3,11 @@
 // expressions (Go-template syntax) to bindings resolved against a
 // property registry — no reflection.
 //
+// A control file may also DECLARE its property surface with
+// <x:Property> (see property.go): declared markup properties are
+// ordinary dependency properties, registered from markup rather than
+// from Go — one property system throughout.
+//
 // POC scope: builtin builders for Border/Grid/VStack/HStack/Text/Button,
 // custom component registration, `{{.Path}}` bindings in text content
 // (resolved to *prop.Property[string] handles, becoming computed
@@ -30,7 +35,13 @@ import (
 
 // Element is a parsed markup node.
 type Element struct {
-	Name     string
+	Name string
+	// Space is the element name's resolved namespace URI. It is empty
+	// for a document with no default xmlns, the default URI for ordinary
+	// elements, and the language-services URI for <x:Property> — which
+	// is how declarations are told apart from components without
+	// reserving any element name.
+	Space    string
 	Attrs    map[string]string
 	Children []Element
 	Text     string
@@ -82,14 +93,71 @@ type Context struct {
 	// its own namespaces, so an included file cannot borrow a prefix
 	// the page happened to declare.
 	ns map[string]string
+	// declared is the dependency properties of the control currently
+	// being instantiated, installed for the duration of a setup call.
+	// See Context.DeclaredProperties.
+	declared map[string]any
 }
 
-// Build parses markup and constructs the component tree.
-func Build(src []byte, ctx *Context) (gooey.Component, error) {
+// document is one parsed markup file: its namespace table, the
+// dependency properties its root declares, and the single visual child
+// that is the control's content. Parsing is separated from building
+// because an instantiation site needs the DECLARATIONS before it can
+// resolve the attributes that build the context the content is built
+// against.
+type document struct {
+	ns      map[string]string
+	decls   declarations
+	content Element
+}
+
+func parseDocument(src []byte) (*document, error) {
 	root, ns, err := parse(src)
 	if err != nil {
 		return nil, err
 	}
+	if root.Name != "Gooey" {
+		return nil, fmt.Errorf("markup: root element must be <Gooey>, got <%s>", root.Name)
+	}
+	decls, kids, err := splitDeclarations(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(kids) != 1 {
+		return nil, fmt.Errorf("markup: <Gooey> must have exactly one child")
+	}
+	return &document{ns: ns, decls: decls, content: kids[0]}, nil
+}
+
+func loadDocument(fsys fs.FS, name string) (*document, error) {
+	src, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := parseDocument(src)
+	if err != nil {
+		return nil, &fileError{name: name, err: err}
+	}
+	return doc, nil
+}
+
+// fileError names the file a parse failure came from without producing a
+// second "markup: " in the middle of the message. Every error in this
+// package leads with that prefix, and a control's failures should read
+// the same whether they came from parsing the file or from instantiating
+// it: "markup: card.gooey: …".
+type fileError struct {
+	name string
+	err  error
+}
+
+func (e *fileError) Error() string {
+	return "markup: " + e.name + ": " + strings.TrimPrefix(e.err.Error(), "markup: ")
+}
+
+func (e *fileError) Unwrap() error { return e.err }
+
+func (d *document) build(ctx *Context) (gooey.Component, error) {
 	// The namespace table belongs to THIS document for the duration of
 	// THIS build, and is then restored. Nested Loads (a UserControl
 	// instantiated mid-build) would otherwise leave the child's table
@@ -98,19 +166,22 @@ func Build(src []byte, ctx *Context) (gooey.Component, error) {
 	// document. Save/restore makes that impossible however a setup func
 	// chooses to build its context.
 	prev := ctx.ns
-	ctx.ns = ns
+	ctx.ns = d.ns
 	defer func() { ctx.ns = prev }()
 
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Component{}
 	}
-	if root.Name != "Gooey" {
-		return nil, fmt.Errorf("markup: root element must be <Gooey>, got <%s>", root.Name)
+	return build(d.content, ctx)
+}
+
+// Build parses markup and constructs the component tree.
+func Build(src []byte, ctx *Context) (gooey.Component, error) {
+	doc, err := parseDocument(src)
+	if err != nil {
+		return nil, err
 	}
-	if len(root.Children) != 1 {
-		return nil, fmt.Errorf("markup: <Gooey> must have exactly one child")
-	}
-	return build(root.Children[0], ctx)
+	return doc.build(ctx)
 }
 
 // Find retrieves a named component with its concrete type.
@@ -130,11 +201,11 @@ func Find[T gooey.Component](ctx *Context, name string) (T, error) {
 // Load reads and builds a markup file from any fs.FS — os.DirFS in
 // dev, embed.FS in release; the loader cannot tell the difference.
 func Load(fsys fs.FS, name string, ctx *Context) (gooey.Component, error) {
-	src, err := fs.ReadFile(fsys, name)
+	doc, err := loadDocument(fsys, name)
 	if err != nil {
 		return nil, err
 	}
-	return Build(src, ctx)
+	return doc.build(ctx)
 }
 
 // Watch polls name's ModTime in fsys and rebuilds on change, calling
@@ -191,7 +262,7 @@ func parse(src []byte) (Element, map[string]string, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			e := Element{Name: t.Name.Local, Attrs: map[string]string{}}
+			e := Element{Name: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
 				if a.Name.Space == "xmlns" {
 					ns[a.Name.Local] = a.Value
@@ -290,6 +361,9 @@ func checkProps(e Element, ctx *Context) error {
 }
 
 func build(e Element, ctx *Context) (gooey.Component, error) {
+	if e.Space == XNamespace {
+		return nil, fmt.Errorf("markup: <x:%s> must be a direct child of the root <Gooey>: declarations define the control's type, so they belong on the type, not inside its content", e.Name)
+	}
 	if err := checkProps(e, ctx); err != nil {
 		return nil, err
 	}

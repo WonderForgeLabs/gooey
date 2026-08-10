@@ -80,3 +80,47 @@ declarations + code-behind (checked surface + private behavior).
 Known wrinkle: declared defaults materialize per-instance sources
 inside the control, so hot reload resets them until Name-keyed state
 adoption exists — that design item now has a concrete customer.
+
+## Executed (2026-08-10)
+
+Shipped as specified. `markup/property.go` holds the declaration
+machinery; `markup/usercontrol.go`'s `control` is the shared
+instantiation path for both control tiers; `cmd/cardsdemo`'s
+`card.gooey` and `badge.gooey` are the proof — a markup-only demo that
+gained a checked, defaulted, typed contract with zero Go changes.
+Reference: [markup-reference.md](../markup-reference.md#declared-properties-xproperty).
+
+What the implementation added on top of the record:
+
+- **The type table is `markup.propKinds`**, one row per type, each row
+  built by a generic `kindOf[T]` whose closures carry T. Adding a type
+  is adding a row. `color` gained the one literal it needed
+  (`#rgb`/`#rrggbb`); there is no other color syntax in markup.
+- **`Element.Space`** — the parser now keeps the element name's resolved
+  namespace URI, which is how `<x:Property>` is told apart from a
+  component without reserving the name `Property`. This is the piece the
+  handler-namespace work built the prefix table for, now load-bearing
+  for element dispatch too.
+- **`Required` and `Default` are exclusive**, and a `Default` is coerced
+  when the CONTROL loads rather than at whichever instantiation site
+  omits the attribute — a bad default is a defect in the control.
+- **`Type="any"` takes no `Default`** (no literal syntax to coerce) and
+  is the only type a handler expression may cross into, since a Command
+  has no declared type of its own.
+- **`DeclaredProperties()` on `Context`** is how a code-behind setup
+  reads its own declared handles: installed on the parent context for
+  the duration of the setup call, the same document-scoped save/restore
+  the xmlns table uses. The `UserControl` signature is unchanged, so
+  every existing control compiles and loads untouched.
+- **Strict mode excludes `Name` and the layout attributes**, because
+  those are the element's, not the control's.
+
+Hot reload confirms the wrinkle above: `TestDeclaredDefaultResetsOnRebuild`
+pins the behavior rather than fixing it. `Name`-keyed state adoption is
+the fix and now has its customer.
+
+Wire-schema consequence (noted, not built): a declarations block is a
+complete per-control schema — name, type, required, default — so the
+remote-behavior layer can serialize a control's surface without a Go
+type, and `gooey gen` can emit a typed constructor from the same source.
+Nothing reads it that way yet.

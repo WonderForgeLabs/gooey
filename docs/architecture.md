@@ -728,8 +728,58 @@ attribute name:
 
 Layout attributes (`Width`, `Margin`, `Grid.Row`, ...) still apply to
 the instance itself and are not passed through. The result is a
-component with a real property surface — implicit and unchecked in the
-POC, which is precisely the gap the x:Property spec closes.
+component with a real property surface — implicit unless the control
+declares it (below).
+
+### Markup-declared dependency properties
+
+A `.gooey` file declares its property surface with `<x:Property>` as
+direct children of the root, under gooey's language-services namespace
+(`xmlns:x="wonderforge.io/gooey/x"` — XAML 2009's `x:Property`, which
+WPF specified and never shipped):
+
+```xml
+<x:Property Name="Title"   Type="string" Required="true"/>
+<x:Property Name="Caption" Type="string" Default="no caption"/>
+```
+
+**Declared markup properties are ordinary dependency properties,
+registered from markup — one property system throughout.** Each
+declaration materializes the same artifact a code-behind wires by hand,
+a `*prop.Property[T]`: a bound attribute passes the parent's handle
+through, now type-checked; an absent one materializes a per-instance
+source carrying the declared default; `Required` makes absence a load
+error. This is the markup tier of registration, exactly as
+`DependencyProperty.Register` is WPF's code tier.
+
+The mechanics that keep it inside the framework's constraints:
+
+- **Types are a type-switch table** (`markup.propKinds`), one row per
+  type, each row's closures carrying their own `T`. `any` is the escape
+  hatch for app types with no markup literal. No reflection, as
+  everywhere.
+- **`Element.Space`** — the parser keeps each element name's resolved
+  namespace URI, which is how a declaration is told apart from a
+  component without reserving the name `Property`. The xmlns table the
+  handler-namespace work introduced now carries element dispatch too.
+- **Declaring anything makes the control strict**: an undeclared
+  attribute at an instantiation site is a load error, so a typo is
+  caught rather than silently doing nothing. No declarations keeps the
+  implicit pass-through, unchanged.
+- **Merge with code-behind**: declarations resolve first into a
+  pre-populated context (readable from setup via
+  `Context.DeclaredProperties`), setup runs second and extends it, and a
+  setup value colliding with a declared name is a load error — one
+  source of truth, the same reason a property system rejects double
+  registration.
+
+Markup-declarable *attached* properties stay out (they would need a
+dynamic per-element bag on `Base`), and a declared default materializes
+a fresh source per instantiation, so hot reload resets it — the concrete
+customer for `Name`-keyed state adoption. Reference:
+[markup-reference.md](markup-reference.md#declared-properties-xproperty);
+decision record:
+[specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
 
 `cmd/reader` is the working proof of the whole markup layer: a
 `Grid Cols="24,1*,2*"` shell in `reader.gooey`, three UserControls with
@@ -740,24 +790,19 @@ and the running app is in [demos.md](demos.md).
 
 ## Designed, not built
 
-Two specs extend this architecture on paper. Neither is implemented;
-both are worth reading because they show where the design pressure
-points are.
+`gooey gen` — compiling markup to Go at build time, with a typed
+per-control surface for compile-checked instantiation. `<x:Property>`
+declarations are its input: a declaration block is both a typed surface
+and, for the remote-behavior layer, a per-control wire schema. Nothing
+reads it that way yet.
 
-**Markup-declared properties** —
-[specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
-A `.gooey` file will declare its property surface with
-`<x:Property Name="Title" Type="string" Default="untitled"/>` under the
-root. Each declaration materializes the same artifact code-behind wires
-today — a `*prop.Property[T]`: a bound attribute passes the parent's
-handle through (today's Include behavior, now type-checked), an absent
-one materializes a per-instance source with the declared default, and
-`Required` makes absence a load error. One property system throughout —
-the markup tier of registration, exactly as `DependencyProperty
-.Register` is WPF's code tier. The spec deliberately excludes
-markup-declarable *attached* properties and records the merge semantics
-with code-behind (declarations first, setup extends, collision is a
-load error).
+`Name`-keyed state adoption across hot reloads, so a declared default's
+per-instance source survives a rebuild.
+
+Styles with setters, so a control can be restyled from outside beyond
+passing a style name in.
+
+The spec that grew this layer, for the pressure points it records:
 
 **Remote handlers and Temporal** —
 [specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md).
@@ -773,7 +818,7 @@ standalone activities, which is the striking consequence: combined with
 fs.FS-served markup, an entire app — layout, bindings, and behavior
 wiring — ships as data, with workers anywhere doing the compute.
 
-Neither spec changes the foundations above; both lean on them. The
+Neither of these changed the foundations above; both lean on them. The
 declared-properties design works *because* every property is already a
 graph node ("the graph is the callback system"); the remote-handler
 design works *because* bindings are already handles, not values. That is
