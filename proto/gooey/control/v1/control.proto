@@ -1,0 +1,192 @@
+// ControlService — the unary control plane.
+//
+// Every RPC here is one request, one settled answer: the server
+// marshals the call onto the app's UI goroutine, waits for the settle
+// barrier (the frame the call's Sets asked for has been composed), and
+// only then answers. Reading the screen immediately after invoking a
+// command therefore sees the new pixels — the same guarantee the MCP
+// bridge gives today, promoted to the contract.
+//
+// Errors are gRPC status codes, not payload fields:
+//   NOT_FOUND            — no such name in the binding context / tree
+//   INVALID_ARGUMENT     — type mismatch (message names both types),
+//                          bad markup, bad gesture, bad registration
+//   FAILED_PRECONDITION  — no markup context, no live composition
+//   DEADLINE_EXCEEDED    — the UI goroutine did not answer in time
+//                          (the run loop is blocked or not running)
+
+syntax = "proto3";
+
+package gooey.control.v1;
+
+import "gooey/control/v1/types.proto";
+
+option go_package = "github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1;controlv1";
+
+// ControlService is the request/response surface of a running gooey
+// app. The MCP tools (issue #112) are a thin adapter over exactly
+// these RPCs; nothing an MCP tool can do is absent here, and nothing
+// here needs MCP.
+service ControlService {
+  // SnapshotTree serializes the live component tree — MCP tree_snapshot.
+  rpc SnapshotTree(SnapshotTreeRequest) returns (SnapshotTreeResponse);
+
+  // ScreenText reads the retained cell plane as of the last composed
+  // frame — MCP screen_text. Never composes a frame of its own: doing
+  // so would mark dirty nodes clean and steal the app's damage counts.
+  rpc ScreenText(ScreenTextRequest) returns (ScreenTextResponse);
+
+  // ListValues describes the bindable surface — MCP list_values.
+  rpc ListValues(ListValuesRequest) returns (ListValuesResponse);
+
+  // GetProperty reads one named property. New surface (MCP reads via
+  // list_values); the natural unary read half of SetProperty.
+  rpc GetProperty(GetPropertyRequest) returns (GetPropertyResponse);
+
+  // SetProperty writes one named source property — MCP set_value. The
+  // TypedValue's case must match the handle's type; a mismatch is
+  // INVALID_ARGUMENT naming both sides, and nothing changes.
+  rpc SetProperty(SetPropertyRequest) returns (SetPropertyResponse);
+
+  // InvokeCommand runs a named command — MCP invoke_command.
+  rpc InvokeCommand(InvokeCommandRequest) returns (InvokeCommandResponse);
+
+  // SendKeys injects key events into the app's single ordered input
+  // stream — MCP send_keys. Routed through the composition, not the
+  // app-level handler: a client cannot reach the quit key.
+  rpc SendKeys(SendKeysRequest) returns (SendKeysResponse);
+
+  // SendPointer injects one pointer event — MCP send_mouse.
+  rpc SendPointer(SendPointerRequest) returns (SendPointerResponse);
+
+  // SetFocus moves keyboard focus to a named element — MCP focus.
+  rpc SetFocus(SetFocusRequest) returns (SetFocusResponse);
+
+  // SwapMarkup replaces the page with new markup built against the
+  // app's existing binding context — MCP swap_markup. Optional
+  // registrations grow the viewmodel first (issue #89). Atomic: a
+  // failed build leaves the running tree, the name table AND the
+  // registrations untouched.
+  rpc SwapMarkup(SwapMarkupRequest) returns (SwapMarkupResponse);
+
+  // RegisterProperties materializes new typed source properties in the
+  // binding context without swapping markup (issue #89). A name that
+  // already exists is INVALID_ARGUMENT — one source of truth.
+  rpc RegisterProperties(RegisterPropertiesRequest) returns (RegisterPropertiesResponse);
+
+  // GetDeclaredSchema returns a document's <x:Property> declaration
+  // block as a schema (issue #62): the contract a values payload must
+  // satisfy before the document can build.
+  rpc GetDeclaredSchema(GetDeclaredSchemaRequest) returns (GetDeclaredSchemaResponse);
+}
+
+message SnapshotTreeRequest {
+  // Maximum depth to walk; 0 means the whole tree.
+  int32 depth = 1;
+}
+
+message SnapshotTreeResponse {
+  TreeNode root = 1;
+}
+
+message ScreenTextRequest {
+  // Return the ANSI escape stream the terminal would receive instead
+  // of plain text.
+  bool styled = 1;
+}
+
+message ScreenTextResponse {
+  // One line per terminal row, trailing blanks trimmed (plain), or the
+  // raw escape stream (styled).
+  string text = 1;
+}
+
+message ListValuesRequest {}
+
+message ListValuesResponse {
+  repeated ValueInfo values = 1;
+  // The Name= identities in the current tree — what SetFocus takes.
+  repeated string named = 2;
+}
+
+message GetPropertyRequest {
+  // Dotted path in the binding context, resolved exactly as a
+  // {{.A.B}} binding resolves.
+  string name = 1;
+}
+
+message GetPropertyResponse {
+  ValueInfo value = 1;
+}
+
+message SetPropertyRequest {
+  string name = 1;
+  TypedValue value = 2;
+}
+
+message SetPropertyResponse {}
+
+message InvokeCommandRequest {
+  string name = 1;
+}
+
+message InvokeCommandResponse {}
+
+message SendKeysRequest {
+  // Literal text, one key event per rune, typed before `gestures`.
+  string text = 1;
+  // Gestures in markup syntax: "tab", "enter", "ctrl+s", "shift+tab".
+  repeated string gestures = 2;
+}
+
+message SendKeysResponse {
+  int32 sent = 1;
+  // Per-event: whether the tree consumed it, in send order.
+  repeated bool consumed = 2;
+}
+
+message SendPointerRequest {
+  PointerEvent event = 1;
+}
+
+message SendPointerResponse {
+  bool consumed = 1;
+}
+
+message SetFocusRequest {
+  // The element's Name= identity. The element must be a focus stop.
+  string name = 1;
+}
+
+message SetFocusResponse {}
+
+message SwapMarkupRequest {
+  // Complete markup source, rooted at <Gooey> with exactly one child.
+  string source = 1;
+  // Properties to register into the binding context before the build,
+  // so the new page may bind names the app never pre-registered
+  // (issue #89). Rolled back if the build fails.
+  repeated PropertyRegistration register = 2;
+}
+
+message SwapMarkupResponse {
+  // The Name= identities of the new tree.
+  repeated string named = 1;
+}
+
+message RegisterPropertiesRequest {
+  repeated PropertyRegistration properties = 1;
+}
+
+message RegisterPropertiesResponse {}
+
+message GetDeclaredSchemaRequest {
+  // Markup source to inspect. Empty asks for the declaration block of
+  // the document the running page was built from, when the server
+  // knows it.
+  string source = 1;
+}
+
+message GetDeclaredSchemaResponse {
+  ControlSchema schema = 1;
+}

@@ -1,0 +1,266 @@
+// gooey.control.v1 — the one model.
+//
+// This package is the wire contract for controlling a running gooey app:
+// the surface the MCP server, the server-driven UI layer, and every
+// generated client (Go/Python/TypeScript) share. One path, one model —
+// no parallel data models (issue #108).
+//
+// The type system here MIRRORS markup's propKinds table
+// (markup/property.go). It does not extend it: adding a value kind to
+// the wire means adding a row to propKinds first, then the matching
+// oneof case here. Anything a *prop.Property[T] can hold that is NOT on
+// that table (render.Style, []float64) crosses only as a descriptor
+// (ValueInfo.go_type), never as a TypedValue.
+
+syntax = "proto3";
+
+package gooey.control.v1;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1;controlv1";
+
+// ValueKind names one row of markup's propKinds table. It is used
+// wherever a type is DESCRIBED rather than carried: property schemas
+// (x:Property declarations, issue #62) and runtime registrations
+// (issue #89).
+enum ValueKind {
+  VALUE_KIND_UNSPECIFIED = 0;
+  VALUE_KIND_STRING = 1;
+  VALUE_KIND_INT = 2;
+  VALUE_KIND_BOOL = 3;
+  VALUE_KIND_FLOAT = 4;
+  VALUE_KIND_DURATION = 5;
+  VALUE_KIND_COLOR = 6;
+  // The escape hatch for app types with no markup literal, exactly as
+  // in propKinds. On the wire an `any` value is UTF-8 JSON bytes
+  // (TypedValue.any_json).
+  VALUE_KIND_ANY = 7;
+  // 8–15 are earmarked (not reserved) for future propKinds rows, so
+  // ValueKind and the TypedValue oneof can grow in lockstep.
+}
+
+// TypedValue carries one value of a propKinds type. The oneof is the
+// wire form of the type-switch every boundary in gooey already does:
+// exactly one case per table row, no reflection, no stringly escape
+// except the deliberate `any` row.
+message TypedValue {
+  oneof kind {
+    string string_value = 1;
+    // Go int, carried wide. Servers reject values outside the host's
+    // int range with INVALID_ARGUMENT.
+    sint64 int_value = 2;
+    bool bool_value = 3;
+    double float_value = 4;
+    google.protobuf.Duration duration_value = 5;
+    Color color_value = 6;
+    // UTF-8 JSON document — the wire spelling of propKinds' `any`.
+    bytes any_json = 7;
+  }
+  // Field numbers 8–15 are earmarked for future propKinds rows.
+}
+
+// Color mirrors render.Color, including its Set flag: a terminal color
+// is either an explicit RGB or "unset, use the terminal default", and
+// all-zero RGB (black) must stay distinguishable from unset.
+message Color {
+  bool set = 1;
+  uint32 red = 2;
+  uint32 green = 3;
+  uint32 blue = 4;
+}
+
+// PropertyDeclaration is one <x:Property> — the wire form of
+// markup.Declaration, carried verbatim: the declaration block IS the
+// per-control schema (issue #62).
+message PropertyDeclaration {
+  string name = 1;
+  ValueKind type = 2;
+  // The default as the markup literal it was declared with, coerced by
+  // `type` using the same table the loader uses. Empty means the
+  // type's zero value (and is meaningless when required is true —
+  // Required and Default are exclusive at declaration time).
+  string default_literal = 3;
+  bool required = 4;
+}
+
+// ControlSchema is a control file's declared surface: what a payload
+// must supply before the document can build.
+message ControlSchema {
+  // The control's identity — its markup file name where known,
+  // otherwise empty for an anonymous document.
+  string control = 1;
+  repeated PropertyDeclaration properties = 2;
+}
+
+// PropertyRegistration asks the server to materialize a fresh typed
+// source property in the app's binding context before a markup build
+// (issue #89). Commands cannot be registered — behavior needs code,
+// not storage; that boundary is the app's.
+message PropertyRegistration {
+  string name = 1;
+  ValueKind kind = 2;
+  // Optional initial value; absent means the kind's zero value. Must
+  // match `kind` or the registration is rejected.
+  TypedValue initial = 3;
+}
+
+// EntryKind classifies one name in the binding context, matching the
+// MCP list_values categories.
+enum EntryKind {
+  ENTRY_KIND_UNSPECIFIED = 0;
+  ENTRY_KIND_PROPERTY = 1;
+  ENTRY_KIND_COMMAND = 2;
+  ENTRY_KIND_LITERAL = 3;
+  // A context entry that is none of the above — present and
+  // addressable but not typed by the table.
+  ENTRY_KIND_OTHER = 4;
+}
+
+// ValueInfo describes one dotted name in the binding context.
+message ValueInfo {
+  string name = 1;
+  EntryKind kind = 2;
+  // The propKinds row, when the entry is a property on the table;
+  // VALUE_KIND_UNSPECIFIED for off-table handles (style, float
+  // slices), commands and literals.
+  ValueKind type = 3;
+  // The current value, when it is representable as a TypedValue.
+  TypedValue value = 4;
+  // The Go type (%T), diagnostic only — never parse it.
+  string go_type = 5;
+}
+
+// PropertyChange is one property delta: this name now has this value.
+message PropertyChange {
+  string name = 1;
+  TypedValue value = 2;
+}
+
+// Rect is a cell-space rectangle: terminal columns and rows, 0-based.
+message Rect {
+  int32 x = 1;
+  int32 y = 2;
+  int32 width = 3;
+  int32 height = 4;
+}
+
+// Align mirrors gooey.Align. The zero value means the framework
+// default, Stretch — matching the tree snapshot's convention of
+// reporting only what was explicitly set.
+enum Align {
+  ALIGN_UNSPECIFIED = 0;
+  ALIGN_START = 1;
+  ALIGN_CENTER = 2;
+  ALIGN_END = 3;
+}
+
+// Visibility mirrors gooey.Visibility; the zero value means Visible.
+enum Visibility {
+  VISIBILITY_UNSPECIFIED = 0;
+  VISIBILITY_HIDDEN = 1;
+  VISIBILITY_COLLAPSED = 2;
+}
+
+// Margin is a Thickness: left, top, right, bottom, in cells.
+message Margin {
+  int32 left = 1;
+  int32 top = 2;
+  int32 right = 3;
+  int32 bottom = 4;
+}
+
+// Layout is the FrameworkElement surface of a node — gooey.Layout as
+// arranged. proto3 zero values coincide with the framework defaults,
+// so an omitted field reads exactly like the snapshot's
+// "only what was set" convention.
+message Layout {
+  int32 width = 1;
+  int32 height = 2;
+  Margin margin = 3;
+  Align h_align = 4;
+  Align v_align = 5;
+  Visibility visibility = 6;
+  int32 grid_row = 7;
+  int32 grid_col = 8;
+  int32 grid_row_span = 9;
+  int32 grid_col_span = 10;
+  int32 canvas_left = 11;
+  int32 canvas_top = 12;
+}
+
+// TreeNode is one component in the live tree, as the MCP tree_snapshot
+// serializes it today: identity, geometry, layout, focus state, and
+// the type-switched interesting properties of known component kinds.
+message TreeNode {
+  // The Go type, e.g. "*components.Button". Diagnostic identity; the
+  // durable identity is `name`.
+  string type = 1;
+  // The Name= identity from markup, empty if unnamed.
+  string name = 2;
+  Rect bounds = 3;
+  Layout layout = 4;
+  bool focusable = 5;
+  bool focused = 6;
+  bool hovered = 7;
+  // The type-switched per-component fields (text, checked, caret, …).
+  // Values use the same TypedValue table as everything else.
+  map<string, TypedValue> props = 8;
+  // Non-visual attachments (KeyBindings, Timers).
+  repeated TreeNode attached = 9;
+  repeated TreeNode children = 10;
+  // When a depth limit elided this node's children, how many there were.
+  int32 children_elided = 11;
+  // Seat held for the semantic tree (issue #101): role, accessible
+  // name, states. Deliberately reserved — un-reserving them is the
+  // visible act of landing #101, and nothing can squat them meanwhile.
+  reserved 12 to 15;
+}
+
+// PointerKind mirrors the MCP send_mouse kinds. CLICK is synthesized
+// server-side as press+release on the same cell, exactly as a terminal
+// dispatcher does — a terminal never sends a click.
+enum PointerKind {
+  POINTER_KIND_UNSPECIFIED = 0;
+  POINTER_KIND_CLICK = 1;
+  POINTER_KIND_PRESS = 2;
+  POINTER_KIND_RELEASE = 3;
+  POINTER_KIND_MOVE = 4;
+  POINTER_KIND_WHEEL_UP = 5;
+  POINTER_KIND_WHEEL_DOWN = 6;
+}
+
+// MouseButton mirrors input.MouseButton. UNSPECIFIED means left, the
+// MCP default, so the common case needs no field.
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_MIDDLE = 2;
+  MOUSE_BUTTON_RIGHT = 3;
+  MOUSE_BUTTON_NONE = 4;
+}
+
+// PointerEvent is one pointer action at a cell coordinate.
+message PointerEvent {
+  PointerKind kind = 1;
+  int32 x = 2;
+  int32 y = 3;
+  MouseButton button = 4;
+}
+
+// KeyEvent is one key gesture in markup's gesture syntax — "ctrl+s",
+// "tab", "shift+tab", "j". One spelling everywhere: the same strings
+// input.ParseGesture reads and KeyEvent.String writes.
+message KeyEvent {
+  string gesture = 1;
+}
+
+// InputEvent is one event on the app's single ordered input stream —
+// keys and pointer interleaved, exactly as input.Event interleaves
+// them.
+message InputEvent {
+  oneof event {
+    KeyEvent key = 1;
+    PointerEvent pointer = 2;
+  }
+}
