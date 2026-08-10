@@ -118,32 +118,34 @@ type MenuBar struct {
 	Menus []Menu
 	Style *prop.Property[render.Style]
 
-	mgr     *gooey.FocusManager
-	popup   *menuPopup
-	kids    []gooey.Component
-	restore gooey.Component
+	pop  *Popup
+	kids []gooey.Component
 
-	curP  *prop.Property[int]  // highlighted title
-	openP *prop.Property[bool] // a dropdown is showing
-	selP  *prop.Property[int]  // highlighted item in the open menu
+	curP *prop.Property[int] // highlighted title
+	selP *prop.Property[int] // highlighted item in the open menu
 }
 
-// SetFocusManager receives the input tree (gooey.FocusHost) — the seam
-// the bar restores focus and takes pointer capture through.
-func (m *MenuBar) SetFocusManager(fm *gooey.FocusManager) { m.mgr = fm }
+// SetFocusManager receives the input tree (gooey.FocusHost) — forwarded
+// to the popup, which is the seam the bar restores focus and takes
+// pointer capture through.
+func (m *MenuBar) SetFocusManager(fm *gooey.FocusManager) { m.popup().SetFocusManager(fm) }
 
 func (m *MenuBar) ChildComponents() []gooey.Component {
-	m.ensurePopup()
+	m.popup()
 	return m.kids
 }
 
-func (m *MenuBar) ensurePopup() *menuPopup {
-	if m.popup == nil {
-		m.popup = &menuPopup{bar: m}
-		m.popup.LayoutProps().Visibility = gooey.Collapsed
-		m.kids = []gooey.Component{m.popup}
+// popup is the bar's Popup primitive: lifecycle, focus save/restore,
+// capture, and the modal fall-throughs. The dropdown's cells are the
+// primitive's surface, drawn by drawDropdown; everything menu-shaped
+// (mnemonics, gesture hints, item semantics) stays here.
+func (m *MenuBar) popup() *Popup {
+	if m.pop == nil {
+		m.pop = NewPopup(m, m.drawDropdown)
+		m.pop.Modal = true // an open menu swallows what it does not understand
+		m.kids = []gooey.Component{m.pop.Surface()}
 	}
-	return m.popup
+	return m.pop
 }
 
 func (m *MenuBar) cur() *prop.Property[int] {
@@ -151,13 +153,6 @@ func (m *MenuBar) cur() *prop.Property[int] {
 		m.curP = prop.NewSource(0)
 	}
 	return m.curP
-}
-
-func (m *MenuBar) open() *prop.Property[bool] {
-	if m.openP == nil {
-		m.openP = prop.NewSource(false)
-	}
-	return m.openP
 }
 
 func (m *MenuBar) sel() *prop.Property[int] {
@@ -169,7 +164,7 @@ func (m *MenuBar) sel() *prop.Property[int] {
 
 // IsOpen reports whether a dropdown is showing. Read from a Render it
 // is a paint dependency like any other property.
-func (m *MenuBar) IsOpen() bool { return m.open().Get() }
+func (m *MenuBar) IsOpen() bool { return m.popup().IsOpen() }
 
 func (m *MenuBar) curIdx() int {
 	if len(m.Menus) == 0 {
@@ -235,22 +230,17 @@ func (m *MenuBar) Measure(avail gooey.Size) gooey.Size {
 
 // Arrange places the bar on its row and the dropdown below the open
 // title. The open flag is read here in layout — a plain read, recorded
-// nowhere — and the popup's Visibility is flipped as a plain field; the
-// Composer's per-frame sweep is what turns that into damage, exactly as
-// it does for any runtime visibility change.
+// nowhere — and the surface's appear/vanish transitions are the bounds
+// sweep's job (see Popup.ArrangeSurface).
 func (m *MenuBar) Arrange(r gooey.Rect) {
 	m.Base.Arrange(r)
-	p := m.ensurePopup()
-	l := p.LayoutProps()
-	if m.open().Get() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0 {
-		l.Visibility = gooey.Visible
-		pr := m.popupRect()
-		gooey.MeasureChild(p, gooey.Size{W: pr.W, H: pr.H})
-		gooey.ArrangeChild(p, pr)
-	} else {
-		l.Visibility = gooey.Collapsed
-		gooey.ArrangeChild(p, gooey.Rect{X: r.X, Y: r.Y, W: 0, H: 0})
+	p := m.popup()
+	show := p.IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
+	pr := gooey.Rect{X: r.X, Y: r.Y}
+	if show {
+		pr = m.popupRect()
 	}
+	p.ArrangeSurface(show, pr)
 }
 
 // Render paints the bar row only — the dropdown is the popup child's
@@ -303,32 +293,13 @@ func (m *MenuBar) Open(i int, restore gooey.Component) {
 	}
 	m.cur().Set(clamp(i, 0, len(m.Menus)-1))
 	m.sel().Set(m.firstItem(m.curIdx()))
-	m.open().Set(true)
-	m.restore = restore
-	if m.mgr != nil {
-		m.mgr.SetFocus(m)
-		m.mgr.CaptureMouse(m)
-	}
+	m.popup().Open(restore)
 }
 
 // Dismiss closes the dropdown, releases the pointer, and hands focus
 // back to whatever had it when the menu opened — provided nothing moved
 // it elsewhere in the meantime.
-func (m *MenuBar) Dismiss() {
-	if !m.IsOpen() {
-		return
-	}
-	m.open().Set(false)
-	if m.mgr != nil {
-		if m.mgr.Captured() == gooey.Component(m) {
-			m.mgr.ReleaseCapture()
-		}
-		if m.restore != nil && m.mgr.Focused() == gooey.Component(m) {
-			m.mgr.SetFocus(m.restore)
-		}
-	}
-	m.restore = nil
-}
+func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 
 // firstItem is the first activatable index — separators are furniture.
 func (m *MenuBar) firstItem(menu int) int {
@@ -435,27 +406,13 @@ func (m *MenuBar) HandleMnemonic(ev input.KeyEvent) bool {
 		return true
 	}
 	var restore gooey.Component
-	if m.mgr != nil {
-		if f := m.mgr.Focused(); f != nil && f != gooey.Component(m) {
+	if mgr := m.popup().Manager(); mgr != nil {
+		if f := mgr.Focused(); f != nil && f != gooey.Component(m) {
 			restore = f
 		}
 	}
 	m.Open(i, restore)
 	return true
-}
-
-// pressRestore is what should get focus back after a mouse-opened menu:
-// focus-follows-click has already moved focus to the bar by the time
-// the press bubbles here, so the component to give it back to is the
-// one the manager remembers losing it.
-func (m *MenuBar) pressRestore() gooey.Component {
-	if m.mgr == nil {
-		return nil
-	}
-	if f := m.mgr.Focused(); f != nil && f != gooey.Component(m) {
-		return f
-	}
-	return m.mgr.PreviouslyFocused()
 }
 
 func (m *MenuBar) HandleKey(ev input.KeyEvent) bool {
@@ -491,9 +448,6 @@ func (m *MenuBar) HandleKey(ev input.KeyEvent) bool {
 
 func (m *MenuBar) handleOpenKey(ev input.KeyEvent) bool {
 	switch ev {
-	case input.Named(input.KeyEsc):
-		m.Dismiss()
-		return true
 	case input.Named(input.KeyTab):
 		// Tab leaves menu mode: close, restore, and let the key travel
 		// on so focus moves from wherever it was restored to.
@@ -545,9 +499,10 @@ func (m *MenuBar) handleOpenKey(ev input.KeyEvent) bool {
 		}
 		return true
 	}
-	// Modal: an open menu swallows what it does not understand, so page
-	// gestures cannot fire underneath it.
-	return true
+	// The popup's fall-through: esc dismisses, and Modal swallows the
+	// rest — an open menu is modal, so page gestures cannot fire
+	// underneath it.
+	return m.popup().HandleKey(ev)
 }
 
 // itemAt maps a screen cell into the open dropdown's item list.
@@ -555,7 +510,7 @@ func (m *MenuBar) itemAt(x, y int) (int, bool) {
 	if !m.IsOpen() {
 		return 0, false
 	}
-	pb := m.ensurePopup().Bounds()
+	pb := m.popup().SurfaceBounds()
 	if x < pb.X || x >= pb.X+pb.W || y <= pb.Y || y >= pb.Y+pb.H-1 {
 		return 0, false
 	}
@@ -563,8 +518,7 @@ func (m *MenuBar) itemAt(x, y int) (int, bool) {
 }
 
 func (m *MenuBar) HandleMouse(ev input.MouseEvent) bool {
-	switch ev.Kind {
-	case input.MousePress:
+	if ev.Kind == input.MousePress {
 		if i, ok := m.titleAt(ev.X, ev.Y); ok {
 			if m.IsOpen() && i == m.curIdx() {
 				m.Dismiss()
@@ -574,7 +528,7 @@ func (m *MenuBar) HandleMouse(ev input.MouseEvent) bool {
 				m.switchMenu(i - m.curIdx())
 				return true
 			}
-			m.Open(i, m.pressRestore())
+			m.Open(i, m.popup().MouseOpenRestore())
 			return true
 		}
 		if !m.IsOpen() {
@@ -585,17 +539,12 @@ func (m *MenuBar) HandleMouse(ev input.MouseEvent) bool {
 			m.activate(i)
 			return true
 		}
-		// A press anywhere else dismisses AND is consumed: whatever is
-		// under the pointer must not also receive it — that is what the
-		// capture is for.
-		m.Dismiss()
-		return true
-	case input.MouseRelease, input.MouseClick:
-		// The gestures act on press; the rest of the pair is swallowed
-		// while the menu is (or was just) holding the pointer.
-		return m.IsOpen()
 	}
-	return m.IsOpen()
+	// The popup's fall-through: a press anywhere the bar did not claim
+	// dismisses AND is consumed — whatever is under the pointer must not
+	// also receive it, which is what the capture is for — and the
+	// release/click residue of that gesture is swallowed with it.
+	return m.popup().HandleMouse(ev)
 }
 
 // HandleMouseMove tracks the highlight under the pointer while open —
@@ -617,30 +566,19 @@ func (m *MenuBar) HandleMouseMove(ev input.MouseEvent) bool {
 	return true
 }
 
-// menuPopup is the dropdown: a leaf child of the bar, so its paint node
-// pre-clears and covers its rectangle — the overlay contract — and
-// navigating repaints only it. It is Collapsed while the menu is
-// closed; the Composer's visibility sweep and restore pass handle the
-// appear/vanish transitions.
-type menuPopup struct {
-	gooey.Base
-	bar *MenuBar
-}
-
-func (p *menuPopup) Measure(avail gooey.Size) gooey.Size { return avail }
-
-func (p *menuPopup) Render(f *gooey.Frame) {
-	b := p.Bounds()
-	if b.W <= 0 || b.H <= 0 {
+// drawDropdown paints the open dropdown into the popup surface — the
+// primitive's leaf child of the bar, whose paint node pre-clears and
+// covers its rectangle (the overlay contract), so navigating repaints
+// only it. The selection and CanExecute reads happen inside that node,
+// which is what keeps the damage pins: a highlight move or a condition
+// flip repaints the dropdown alone.
+func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
+	if len(m.Menus) == 0 {
 		return
 	}
-	bar := p.bar
-	if !bar.IsOpen() || len(bar.Menus) == 0 {
-		return
-	}
-	menu := bar.Menus[bar.curIdx()]
-	sel := clamp(bar.sel().Get(), 0, max(0, len(menu.Items)-1))
-	st := getSty(bar.Style)
+	menu := m.Menus[m.curIdx()]
+	sel := clamp(m.sel().Get(), 0, max(0, len(menu.Items)-1))
+	st := getSty(m.Style)
 
 	// The box.
 	for x := b.X + 1; x < b.X+b.W-1; x++ {
