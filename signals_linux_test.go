@@ -68,7 +68,10 @@ func TestSIGINTRestoresRunsShutdownAndReports(t *testing.T) {
 	default:
 		t.Error("the shutdown hook never ran")
 	}
-	if !strings.Contains(tty.text(), "\x1b[?1049l") {
+	// Waited for, not snapshotted: Run has returned so the escape is
+	// written, but the pty is drained by a goroutine that may not have
+	// picked it up yet. Snapshotting here is a flake, and it flaked.
+	if !tty.waitFor(t, "\x1b[?1049l") {
 		t.Error("SIGINT left the terminal on the alternate screen")
 	}
 }
@@ -132,7 +135,8 @@ func TestSIGWINCHResizesTheComposition(t *testing.T) {
 	if !tty.waitFor(t, "resize me") {
 		t.Error("the resized composition did not repaint")
 	}
-	// A frame at the new size: rows-1 line breaks, columns wide.
+	// A frame at the new size: rows-1 line breaks, columns wide. The
+	// repaint was already waited for above, so the bytes are here.
 	frames := strings.Split(tty.text(), "\x1b[?2026h")
 	last := frames[len(frames)-1]
 	if n := strings.Count(last, "\r\n"); n != 19 {
