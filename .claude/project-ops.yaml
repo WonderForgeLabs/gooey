@@ -2,6 +2,14 @@ org: WonderForgeLabs
 repo: gooey
 project_number: 15
 project_id: PVT_kwDODZK67M4Bf59T
+# Single-select `options` and their ids are read by the issue-intake workflow
+# via `yq` (e.g. `.fields.Status.options[] | select(.name == "Todo") | .id`),
+# so a field with no `options` block here cannot be set by intake at all.
+#
+# These ids are PER-BOARD — they are not portable from forge or any other
+# repo's project-ops.yaml. Every id below was read off gooey's live board
+# (project PVT_kwDODZK67M4Bf59T) via the ProjectV2 GraphQL `fields` query, not
+# copied. Re-read them the same way if the board's options are ever edited.
 fields:
   Priority:
     id: PVTSSF_lADODZK67M4Bf59TzhaJbT8
@@ -16,11 +24,17 @@ fields:
         id: 46c5a49d
       - name: "P4 - Future"
         id: 3c28b9d8
+  # Only one option exists on gooey's board today ("None"). Intake reads this
+  # list dynamically rather than hardcoding a choice, so adding real options to
+  # the board + this file is all that's needed to start classifying — no
+  # workflow edit.
   Critical Path:
     id: PVTSSF_lADODZK67M4Bf59TzhaJblI
     options:
       - name: "None"
         id: 64b0ed20
+  # Iteration field. gooey has NO iterations configured on it, so intake's
+  # sprint step is a deliberate no-op until some exist (see issue-intake.yml).
   Sprint:
     id: PVTIF_lADODZK67M4Bf59TzhaJblM
   Start Date:

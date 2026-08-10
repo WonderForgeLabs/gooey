@@ -1,0 +1,385 @@
+name: Issue Reopen Audit
+
+# Ported from WonderForgeLabs/forge's .github/workflows/issue-reopen-audit.yml,
+# alongside issue-intake.yml. It earns its place in gooey specifically because
+# intake CREATES the structure this audit protects: intake wires issues into
+# `Epic: ...` parents as sub-issues, and gooey already runs 11 open epics. With
+# intake but without this, an epic can be closed while its sub-issues are still
+# open and nothing notices.
+#
+# Adaptations for gooey:
+#   - `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` is deliberately NOT set here (see
+#     the note on the agent step below).
+#   - gooey has no `not-planned` label; the suppression checks still list it, as
+#     `contains()` on an absent label is simply false and it costs nothing to
+#     keep the two repos' gates identical.
+#
+# Comment references of the form WonderForgeLabs/forge#NNNN are FORGE issue
+# numbers — fully qualified on purpose, since a bare #NNNN would resolve
+# against gooey and point at an unrelated issue.
+
+on:
+  issues:
+    types: [closed]
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to audit (used by the recheck-membership job below to re-enter after a live permission recheck)'
+        required: true
+        type: string
+
+# Cancel superseded per-issue audits: re-closing an issue (or a recheck-membership
+# re-dispatch) makes an in-flight audit of that same issue obsolete, and only the
+# latest state matters.
+#
+# The scheduled sweep falls through to `github.run_id`, giving it a unique group
+# so one sweep can never cancel another — they are 12h apart and each covers a
+# different window, so cancelling would lose coverage rather than save work.
+concurrency:
+  group: issue-reopen-audit-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Fallback for a private-org-membership gap: GitHub computes the `issues`
+  # webhook's `author_association` without revealing an actor's org
+  # membership if that membership is set to private, so a genuine MEMBER can
+  # be reported as `NONE` and the `audit-closed` job's `closed` gate below
+  # skips them outright (same root cause as WonderForgeLabs/forge#2925 /
+  # issue-intake.yml's `recheck-membership` job). Unlike intake, this workflow
+  # has no label-triggered re-entry path to piggyback on, so re-check live via
+  # the App token's `members:read` permission and, if trusted, re-invoke this
+  # same workflow via `workflow_dispatch` scoped to just this issue number.
+  recheck-membership:
+    if: |
+      github.event_name == 'issues' &&
+      github.event.action == 'closed' &&
+      !contains(fromJSON('["MEMBER", "COLLABORATOR", "OWNER"]'), github.event.issue.author_association) &&
+      !contains(fromJSON('["homelab-runners-default[bot]", "claude[bot]", "copilot[bot]"]'), github.event.sender.login) &&
+      !contains(github.event.issue.labels.*.name, 'wontfix') &&
+      !contains(github.event.issue.labels.*.name, 'not-planned') &&
+      !contains(github.event.issue.labels.*.name, 'duplicate') &&
+      !contains(github.event.issue.labels.*.name, 'invalid')
+    runs-on: forge-runners-small-vsphere
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WF_RUNNERS_APP_ID }}
+          private-key: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
+
+      - name: Re-check permission and re-dispatch audit if trusted
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          # The gate's author_association check (like intake's) reflects the
+          # issue's original author, not necessarily whoever performed the
+          # close — re-check that same actor's live permission.
+          ACTOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -uo pipefail
+
+          api_output="$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" --jq '.permission' 2>&1)"
+          api_exit=$?
+
+          if [ "$api_exit" -eq 0 ]; then
+            permission="$api_output"
+          elif echo "$api_output" | grep -q "HTTP 404"; then
+            # A genuine 404 means the actor really isn't a collaborator — treat as untrusted.
+            permission="none"
+          else
+            # Any other failure (bad/expired App credential, rate limit, transient
+            # 5xx) is inconclusive, not a "not trusted" verdict. Silently falling
+            # back to "none" here would recreate the exact silent-skip bug this
+            # job exists to catch, just one level deeper. Fail loudly instead.
+            echo "::error::Live permission check for ${ACTOR} failed inconclusively (not a 404): ${api_output}"
+            exit 1
+          fi
+
+          echo "Live permission for ${ACTOR}: ${permission}"
+
+          case "$permission" in
+            admin|maintain|write|triage)
+              echo "Actor has real write-ish access despite author_association not reflecting it (likely private org membership) — re-dispatching audit for issue #${ISSUE_NUMBER}."
+              gh workflow run issue-reopen-audit.yml --repo "$REPO" -f issue_number="$ISSUE_NUMBER"
+              ;;
+            *)
+              echo "Actor has no elevated repo permission; leaving issue unaudited (will still be swept by the next scheduled run)."
+              ;;
+          esac
+
+  audit-closed:
+    # On closed trigger: same actor restrictions as intake. workflow_dispatch
+    # is the recheck-membership job's re-entry path above — it already
+    # live-verified the actor, so no additional gate is needed here.
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issues' &&
+        github.event.action == 'closed' &&
+        (
+          github.event.issue.author_association == 'MEMBER' ||
+          github.event.issue.author_association == 'COLLABORATOR' ||
+          github.event.issue.author_association == 'OWNER' ||
+          github.event.sender.login == 'claude[bot]' ||
+          github.event.sender.login == 'copilot[bot]' ||
+          github.event.sender.login == 'homelab-runners-default[bot]'
+        ) &&
+        !contains(github.event.issue.labels.*.name, 'wontfix') &&
+        !contains(github.event.issue.labels.*.name, 'not-planned') &&
+        !contains(github.event.issue.labels.*.name, 'duplicate') &&
+        !contains(github.event.issue.labels.*.name, 'invalid')
+      )
+    # Agent job -> forge-runners-agent-vsphere, the dind-free 3Gi tier between
+    # small (2Gi) and default (4Gi). These pools are ORG-level runners in the
+    # `Default` runner group with `visibility: all`, so they serve gooey too.
+    runs-on: forge-runners-agent-vsphere
+    timeout-minutes: ${{ github.event_name == 'schedule' && 30 || 10 }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # Step 1's scheduled sweep needs a 24h-ago cutoff. Deriving it in the
+      # prompt (YESTERDAY=$(date -u -d '24 hours ago' ...)) cannot work under
+      # --allowedTools "Bash(gh:*)" for two independent reasons: `date` is not
+      # allowlisted, and a command whose first token is a variable assignment
+      # matches no prefix rule at all (WonderForgeLabs/forge#3053). With the
+      # variable unset the follow-up `gh api` call sends `since=` empty, which
+      # the issues endpoint rejects outright — `HTTP 422: Invalid datetime for
+      # since` — so the sweep cannot enumerate its candidate set at all. It has
+      # to receive the timestamp ready-made, the same remedy AUDIT_OWNER /
+      # AUDIT_REPO_NAME below apply to Check 1's GraphQL variables. Computed
+      # here, where the shell is unrestricted.
+      - name: Compute scheduled-sweep cutoff
+        id: cutoff
+        run: |
+          set -euo pipefail
+          echo "since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Issue Reopen Audit with Claude
+        id: audit
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+        env:
+          # NOTE: forge's copy sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+          # here. Deliberately NOT carried over. This is the same one-shot
+          # headless invocation as issue-intake.yml, where agent teams were
+          # proven to silently truncate the run: a delegated sub-agent starts
+          # ASYNCHRONOUSLY and the lead's turn is scored complete the moment it
+          # stops generating, so nothing collects the sub-agent's output and
+          # every later step is skipped while the run still reports green
+          # (WonderForgeLabs/forge#3061/#3062). The `--allowedTools` below grants
+          # no `Task` tool, so the flag buys nothing today and only arms that
+          # failure mode for whoever adds one later.
+          AUDIT_REPO: ${{ github.repository }}
+          # Pre-split for Check 1's GraphQL variables. Deriving these in the
+          # prompt (OWNER=$(echo "$AUDIT_REPO" | cut -d/ -f1)) cannot work under
+          # --allowedTools "Bash(gh:*)": neither `echo` nor `cut` is allowlisted,
+          # and a command whose first token is a variable assignment matches no
+          # prefix rule at all (forge#3053). The query would be denied before it
+          # ever ran, so Check 1 has to receive them ready-made.
+          AUDIT_OWNER: ${{ github.repository_owner }}
+          AUDIT_REPO_NAME: ${{ github.event.repository.name }}
+          AUDIT_EVENT: ${{ github.event_name }}
+          AUDIT_ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number || '' }}
+          # The scheduled sweep's 24h-ago cutoff — see the step above.
+          AUDIT_SINCE: ${{ steps.cutoff.outputs.since }}
+        with:
+          allowed_bots: "claude[bot],copilot[bot],homelab-runners-default[bot]"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "Bash(gh:*),mcp__github__get_issue,mcp__github__update_issue,mcp__github__add_issue_comment,mcp__github__search_issues" --model "claude-sonnet-5" --max-turns 50
+          prompt: |
+            You are an issue reopen audit agent for gooey. Your job is to check if a closed issue should be re-opened because it has unfinished work (open sub-issues or unchecked task list items).
+
+            gooey tracks large work as `Epic: ...` issues (also carrying the
+            `epic` label) with sub-issues attached, so an epic closed while its
+            sub-issues are still open is the exact case this audit exists to
+            catch.
+
+            ## Context
+
+            - REPO: Use the AUDIT_REPO environment variable (`owner/name`)
+            - OWNER / REPO NAME: Use the AUDIT_OWNER and AUDIT_REPO_NAME environment variables — AUDIT_REPO pre-split, for the GraphQL query in Check 1
+            - EVENT: Use the AUDIT_EVENT environment variable
+            - ISSUE_NUMBER: Use the AUDIT_ISSUE_NUMBER environment variable (only set for the `issues` and `workflow_dispatch` triggers)
+            - SINCE: Use the AUDIT_SINCE environment variable — the 24-hours-ago cutoff timestamp, computed for you, for the scheduled sweep in Step 1
+
+            ## Step 1: Determine which issues to audit
+
+            **If this is a `closed` trigger (AUDIT_EVENT == "issues") or a `workflow_dispatch` trigger (AUDIT_EVENT == "workflow_dispatch"):**
+            Audit only the issue identified by AUDIT_ISSUE_NUMBER. (The `workflow_dispatch` case is the `recheck-membership` job's re-entry path — it already live-verified the actor's permission before dispatching, so this single-issue audit runs the same as it would for a directly-trusted `closed` event.)
+
+            **If this is a `schedule` trigger (AUDIT_EVENT == "schedule"):**
+            Search for issues closed in the last 24 hours. Use the AUDIT_SINCE
+            environment variable — the cutoff is already computed for you. Do NOT
+            derive it with `date`, and do NOT assign it to a shell variable
+            (`YESTERDAY=$(date ...)`): only `Bash(gh:*)` is allowlisted, `date` is
+            not, and a command whose first token is a variable assignment matches
+            no prefix rule at all (forge#3053). Either way the command is denied,
+            the cutoff is empty, and this query returns `HTTP 422: Invalid
+            datetime for since` — taking the whole sweep down with it. Every
+            command below must begin with the literal token `gh`:
+            ```bash
+            gh api --paginate "repos/${AUDIT_REPO}/issues?state=closed&since=${AUDIT_SINCE}&per_page=100" \
+              --jq '.[] | select(.closed_at >= env.AUDIT_SINCE) | .number'
+            ```
+            The `since=` bound filters on **updated** time, so the response is a
+            superset — the `--jq` narrows it to issues actually CLOSED inside the
+            window, reading the same cutoff back out of the environment. Keep both
+            halves: dropping `since=` would make `--paginate` walk the repo's
+            entire closed-issue history.
+
+            For each issue found, skip any that have labels: `wontfix`, `not-planned`, `duplicate`, `invalid`.
+
+            ## Step 2: For each issue, run two checks
+
+            ### Check 1: Open sub-issues via GraphQL
+
+            Use the AUDIT_OWNER and AUDIT_REPO_NAME environment variables — they
+            are already split for you. Do NOT try to derive them from AUDIT_REPO
+            with `echo`/`cut`: only `Bash(gh:*)` is allowlisted, so any such
+            command is denied and takes this check down with it. Every command
+            below must begin with the literal token `gh`.
+
+            `subIssues` accepts NO state filter (`filterByStates` is rejected
+            outright with `Field 'subIssues' doesn't accept argument
+            'filterByStates'`), so the query returns ALL sub-issues and the OPEN
+            ones are selected here with `--jq`:
+            ```bash
+            gh api graphql -f query='
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    subIssues(first: 100) {
+                      totalCount
+                      nodes { number title state }
+                    }
+                  }
+                }
+              }' -f owner="$AUDIT_OWNER" -f repo="$AUDIT_REPO_NAME" -F number=ISSUE_NUMBER \
+              --jq '.data.repository.issue.subIssues
+                    | (.nodes[] | select(.state == "OPEN") | "OPEN \(.number): \(.title)"),
+                      (if .totalCount > (.nodes | length)
+                       then "TRUNCATED: \(.totalCount) sub-issues exist, only \(.nodes | length) returned"
+                       else empty end)'
+            ```
+            Run this ONCE per issue. It emits both results in a single call — do
+            not re-run it to get the count separately (a second call can observe a
+            different state than the first):
+
+            - **`OPEN <number>: <title>` lines** — this is the open sub-issue set
+              for every decision below. No such lines means no open sub-issues.
+            - **A `TRUNCATED:` line** — only when the page was cut short.
+
+            **Do NOT read `totalCount` as an open count.** It counts ALL
+            sub-issues, open and closed alike, so a fully-completed epic reports a
+            non-zero `totalCount` and would be re-opened forever. That is why it
+            never reaches your decision — the `--jq` above consumes it solely to
+            decide whether to emit the `TRUNCATED:` marker.
+
+            If a `TRUNCATED:` line appears, the `OPEN` lines are an INCOMPLETE
+            set: report it in your audit output rather than acting as though the
+            listing were whole. Note that a truncated page can legitimately show
+            zero `OPEN` lines while open sub-issues exist beyond the cut, so
+            "no OPEN lines" is only trustworthy without a `TRUNCATED:` line.
+            `first: 100` is the API maximum, so truncation cannot be fixed by
+            raising it; it needs cursor pagination via `pageInfo`/`after`.
+
+            ### Check 2: Unchecked task list items
+
+            Read the issue body and check for `- [ ]` patterns (unchecked checkboxes). You can get the body via:
+            ```bash
+            gh issue view ISSUE_NUMBER --repo "$AUDIT_REPO" --json body --jq '.body'
+            ```
+
+            ## Step 3: Decision logic
+
+            For each audited issue:
+
+            **If open sub-issues exist:**
+            1. Re-open the issue:
+               ```bash
+               gh issue reopen ISSUE_NUMBER --repo "$AUDIT_REPO"
+               ```
+            2. Ensure the `audit:reopened` label exists (create if needed):
+               ```bash
+               gh label create "audit:reopened" --description "Auto-reopened by reopen audit" --color "D93F0B" --repo "$AUDIT_REPO" 2>/dev/null || true
+               ```
+            3. Add the label:
+               ```bash
+               gh issue edit ISSUE_NUMBER --add-label "audit:reopened" --repo "$AUDIT_REPO"
+               ```
+            4. Add a comment listing the open sub-issues:
+               ```
+               🔄 **Auto-reopened**: This issue was closed but still has open sub-issues that need resolution:
+
+               - #X: title
+               - #Y: title
+
+               Please close the sub-issues first, or close this issue again with the `wontfix` label to suppress this check.
+               ```
+
+            **If unchecked task items exist AND no open sub-issues:**
+            1. Ensure the `audit:unchecked-tasks` label exists (create if needed):
+               ```bash
+               gh label create "audit:unchecked-tasks" --description "Closed with unchecked task list items — flagged for grooming/investigation" --color "FBCA04" --repo "$AUDIT_REPO" 2>/dev/null || true
+               ```
+            2. Add the label:
+               ```bash
+               gh issue edit ISSUE_NUMBER --add-label "audit:unchecked-tasks" --repo "$AUDIT_REPO"
+               ```
+            3. Add a warning comment (do NOT re-open):
+               ```
+               ⚠️ **Audit notice**: This issue has unchecked task list items. If these tasks are still needed, consider creating sub-issues for them before closing.
+               ```
+
+            Note: this workflow never removes the `audit:unchecked-tasks` label once applied, even if the issue is
+            later re-closed with all tasks checked off. Label cleanup is intentionally deferred to the downstream
+            `groom-backlog` skill's "audit-close" investigation bucket rather than handled here — this is a
+            conscious scope decision, not an oversight.
+
+            **If neither condition is true:**
+            Do nothing for this issue.
+
+            ## Important Guidelines
+
+            - DO NOT close any issues
+            - DO NOT modify issue content (title, body)
+            - Only re-open issues when open sub-issues are confirmed
+            - Be idempotent: if an issue already has the `audit:reopened` label, check whether it still has open sub-issues before commenting again — `gh issue edit --add-label` is idempotent on its own; skip the comment on a repeat run only when the open sub-issue set is unchanged since the last audit, and comment again if new open sub-issues have appeared
+            - Likewise, if an issue already has the `audit:unchecked-tasks` label, don't re-add it or duplicate the warning comment — `gh issue edit --add-label` is idempotent on its own, but skip the comment on a repeat run
+            - For scheduled runs, process all matching issues but respect rate limits
+
+      # Fail loudly on a half-finished audit and stamp the single-issue
+      # target (closed/workflow_dispatch triggers) with failed:issue-reopen-audit
+      # so it's discoverable via `gh issue list --label failed:issue-reopen-audit`
+      # instead of cross-referencing Actions run history by hand — same
+      # rationale as issue-intake.yml's equivalent step
+      # (WonderForgeLabs/forge#3053). The scheduled sweep has no single target
+      # (AUDIT_ISSUE_NUMBER is empty in that case), so labeling is skipped there,
+      # but an is_error still fails the job.
+      - name: Verify audit completed
+        if: always() && steps.audit.outcome != 'skipped'
+        uses: ./.github/actions/label-on-agent-failure
+        with:
+          execution-file: ${{ steps.audit.outputs.execution_file }}
+          agent-step-outcome: ${{ steps.audit.outcome }}
+          repo: ${{ github.repository }}
+          resource-number: ${{ github.event.issue.number || inputs.issue_number || '' }}
+          label: "failed:issue-reopen-audit"
+          github-token: ${{ github.token }}
