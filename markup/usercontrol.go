@@ -161,7 +161,10 @@ func runSetup(setup func(e Element, parent *Context) (*Context, error), e Elemen
 // the parent and exposed under their own names.
 func passAttrs(e Element, parent *Context, vals map[string]any) error {
 	for k, v := range e.Attrs {
-		if layoutAttr(k) || k == "Name" {
+		if layoutAttr(k) || k == "Name" || k == "Tooltip" {
+			// Like the layout attributes, Tooltip="..." decorates the
+			// INSTANCE (applyTooltipShorthand attaches it) and does not
+			// cross the control boundary as a value.
 			continue
 		}
 		if isHandlerExpr(v) {

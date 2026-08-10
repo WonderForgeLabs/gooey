@@ -411,7 +411,32 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	if err := applyLayout(e, w); err != nil {
 		return nil, err
 	}
+	if err := applyTooltipShorthand(e, w, ctx); err != nil {
+		return nil, err
+	}
 	return w, nil
+}
+
+// applyTooltipShorthand is the Tooltip="..." attribute every element
+// accepts: sugar for a child <Tooltip Text="..."/>, attached the same
+// way. Like the layout attributes it belongs to the ELEMENT, not to the
+// component's own attribute vocabulary, which is why it is applied here
+// beside applyLayout and filtered from control pass-through.
+func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
+	raw, ok := e.Attrs["Tooltip"]
+	if !ok || raw == "" {
+		return nil
+	}
+	text, err := literalOrBound(raw, ctx)
+	if err != nil {
+		return err
+	}
+	a, ok := w.(gooey.Attacher)
+	if !ok {
+		return fmt.Errorf("markup: <%s Tooltip=%q>: <%s> cannot host attachments", e.Name, raw, e.Name)
+	}
+	a.Attach(&components.Tooltip{Text: text})
+	return nil
 }
 
 // applyLayout maps the FrameworkElement attributes — and the Grid.*
@@ -728,6 +753,16 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		}
 		return named(e, ctx, &components.ColorPicker{Value: color}, nil)
 	case "Button":
+		// A Button takes no visual children, but non-visual attachments
+		// — <Tooltip>, <KeyBinding> — hang off it the way they hang off
+		// any container (issue #92's canonical form).
+		kids, attach, err := buildChildren(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(kids) > 0 {
+			return nil, fmt.Errorf("markup: <Button> takes no visual children; only attachments like <Tooltip> and <KeyBinding> may nest here")
+		}
 		content, err := bindText(e.Attrs["Content"], ctx)
 		if err != nil {
 			return nil, err
@@ -748,12 +783,16 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			return nil, fmt.Errorf("markup: <Button Chrome=%q>: unknown chrome; want one of %s",
 				e.Attrs["Chrome"], strings.Join(components.ButtonChromeNames, ", "))
 		}
-		return named(e, ctx, &components.Button{
+		b := &components.Button{
 			Content: content,
 			Style:   style,
 			Click:   click,
 			Chrome:  chrome,
-		}, nil)
+		}
+		if err := attachAll(e, b, attach); err != nil {
+			return nil, err
+		}
+		return named(e, ctx, b, nil)
 	case "ProgressBar":
 		value, err := boundProp[int](e, ctx, "Value")
 		if err != nil {
@@ -881,6 +920,34 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			h.Duration = d
 		}
 		return named(e, ctx, h, nil)
+	case "AdornmentLayer":
+		if len(e.Children) > 0 {
+			return nil, fmt.Errorf("markup: <AdornmentLayer> takes no children; adornments attach themselves at runtime (a Tooltip finds the layer on its own)")
+		}
+		return named(e, ctx, &components.AdornmentLayer{}, nil)
+	case "Tooltip":
+		// Non-visual like KeyBinding: buildChildren routes it to the
+		// parent as an attachment, and the framework's hover routing
+		// (gooey.HoverWatcher) drives it.
+		text, err := literalOrBound(e.Attrs["Text"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		t := &components.Tooltip{Text: text, Style: ctx.Styles[e.Attrs["Style"]]}
+		if t.Delay, err = optDuration(e, "Delay"); err != nil {
+			return nil, err
+		}
+		if g := e.Attrs["Gesture"]; g != "" {
+			// Validated at load, stored in the canonical spelling — the
+			// hint on screen is byte-identical to what a KeyBinding
+			// declares, the MenuItem rule.
+			ev, err := input.ParseGesture(g)
+			if err != nil {
+				return nil, fmt.Errorf("markup: <Tooltip Gesture=%q>: %w", g, err)
+			}
+			t.Gesture = ev.String()
+		}
+		return named(e, ctx, t, nil)
 	case "KeyBinding":
 		g, err := input.ParseGesture(e.Attrs["Gesture"])
 		if err != nil {

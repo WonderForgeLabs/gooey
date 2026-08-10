@@ -51,10 +51,23 @@ func (h *HoverState) hover() *prop.Property[bool] {
 	return h.hovered
 }
 
+// HitTestTransparent marks components the pointer passes THROUGH:
+// hit-testing never returns one, so events land on whatever sits
+// beneath. Its children remain hittable — transparency is about the
+// component's own (often invisible) surface, not its subtree.
+//
+// The overlay hosts need this to exist at all: a ToastHost or an
+// AdornmentLayer spans the whole page as the root's last child, which
+// makes it the FIRST thing hit-testing finds — an invisible layer that
+// ate every click and starved every hover beneath it. Non-interactive
+// adornments (a tooltip's popup) are transparent for the same reason.
+type HitTestTransparent interface{ HitTestTransparent() bool }
+
 // HitTest returns the deepest component whose arranged bounds contain the
 // cell, children before ancestors and later siblings before earlier ones
-// (they paint on top). Collapsed subtrees and zero-size components are not
-// hit. The walk allocates nothing — it runs on every motion event.
+// (they paint on top). Collapsed subtrees, zero-size components, and
+// HitTestTransparent components are not hit. The walk allocates nothing —
+// it runs on every motion event.
 func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y) }
 
 func hitTest(w Component, x, y int) Component {
@@ -76,6 +89,9 @@ func hitTest(w Component, x, y int) Component {
 				return hit
 			}
 		}
+	}
+	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {
+		return nil
 	}
 	return w
 }
@@ -139,6 +155,9 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 
 	switch ev.Kind {
 	case input.MousePress:
+		// A press dismisses transient UI (tooltips) before it routes —
+		// even while captured, and without consuming anything.
+		m.interrupt()
 		// Only a HELD capture survives a new press. An implicit one is
 		// scoped to a single press-release gesture, so a fresh press ends
 		// it and begins another — which is also the recovery path when a
@@ -288,6 +307,10 @@ func (m *FocusManager) Hovered() Component { return m.hover }
 // the hit component, so hover composes: a Border can highlight while the
 // pointer is over the Text inside it.
 func (m *FocusManager) setHover(hit Component) {
+	// HoverWatcher attachments update on the raw hit, before the
+	// HoverTarget dedup below: the hit can cross from one watched host
+	// to another without the nearest HoverTarget changing at all.
+	m.updateWatchers(hit)
 	var target Component
 	for n := hit; n != nil; n = m.parent[n] {
 		if _, ok := n.(HoverTarget); ok {
@@ -304,5 +327,42 @@ func (m *FocusManager) setHover(hit Component) {
 	m.hover = target
 	if h, ok := m.hover.(HoverTarget); ok {
 		h.SetHovered(true)
+	}
+}
+
+// updateWatchers turns per-event containment into enter/leave edges for
+// HoverWatcher attachments. Exclusive like hover: among the watching
+// hosts whose subtree contains the hit, only the INNERMOST is "entered",
+// so nested tooltipped components never show two tips at once. A page
+// with no watchers pays one length check.
+func (m *FocusManager) updateWatchers(hit Component) {
+	if len(m.watchers) == 0 {
+		return
+	}
+	var in Component
+	depth := -1
+	if hit != nil {
+		for _, hw := range m.watchers {
+			if m.within(hw.host, hit) {
+				if d := m.depth(hw.host); d > depth {
+					in, depth = hw.host, d
+				}
+			}
+		}
+	}
+	for _, hw := range m.watchers {
+		over := in != nil && hw.host == in
+		if over != hw.over {
+			hw.over = over
+			hw.w.PointerOver(over)
+		}
+	}
+}
+
+// interrupt notifies every HoverWatcher of input activity — a key or a
+// press. Notification only: nothing is consumed, nothing re-routes.
+func (m *FocusManager) interrupt() {
+	for _, hw := range m.watchers {
+		hw.w.Interrupted()
 	}
 }

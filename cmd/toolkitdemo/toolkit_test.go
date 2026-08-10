@@ -96,6 +96,15 @@ func TestDemoShowsEveryComponentInTheWave(t *testing.T) {
 			found["MenuBar"]++
 		case *components.ToastHost:
 			found["ToastHost"]++
+		case *components.AdornmentLayer:
+			found["AdornmentLayer"]++
+		}
+		if a, ok := w.(gooey.Attacher); ok {
+			for _, at := range a.Attachments() {
+				if _, ok := at.(*components.Tooltip); ok {
+					found["Tooltip"]++
+				}
+			}
 		}
 		if ct, ok := w.(gooey.Container); ok {
 			for _, ch := range ct.ChildComponents() {
@@ -106,7 +115,7 @@ func TestDemoShowsEveryComponentInTheWave(t *testing.T) {
 	walk(root)
 	for _, want := range []string{
 		"ProgressBar", "Spinner", "Toggle", "Segmented", "StatusBar", "ButtonBar", "PixelButton",
-		"MenuBar", "ToastHost",
+		"MenuBar", "ToastHost", "AdornmentLayer", "Tooltip",
 	} {
 		if found[want] == 0 {
 			t.Errorf("the demo page has no %s", want)
@@ -195,6 +204,51 @@ func TestDemoOverlaysDropAndRestore(t *testing.T) {
 	c.Frame()
 	if got := screenOf(c, 22); got != before {
 		t.Fatal("dismissing the toast left a scar on the screen")
+	}
+}
+
+// Tooltips on the shipped page: resting the pointer on the toast button
+// shows its tip — with the ctrl+t hint — through the AdornmentLayer,
+// and moving away restores the exact screen. The composition is not
+// started, so the show is immediate (no dispatcher, no delay timer);
+// the delay discipline itself is pinned in the components package.
+func TestDemoTooltipShowsAndRestores(t *testing.T) {
+	root, err := markup.Load(demoFS(t), "toolkit.gooey", demoCtx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toastBtn *components.Button
+	var walk func(gooey.Component)
+	walk = func(w gooey.Component) {
+		if b, ok := w.(*components.Button); ok && b.Content.Get() == "toast" {
+			toastBtn = b
+		}
+		if ct, ok := w.(gooey.Container); ok {
+			for _, ch := range ct.ChildComponents() {
+				walk(ch)
+			}
+		}
+	}
+	walk(root)
+	if toastBtn == nil {
+		t.Fatal("the demo page has no toast button")
+	}
+	c := gooey.NewComposer(root, 96, 22)
+	c.Frame()
+	before := screenOf(c, 22)
+
+	b := toastBtn.Bounds()
+	c.HandleMouse(input.MouseEvent{Kind: input.MouseMove, X: b.X + 1, Y: b.Y})
+	c.Frame()
+	shown := screenOf(c, 22)
+	if !strings.Contains(shown, " pop the status as a toast ") || !strings.Contains(shown, "ctrl+t") {
+		t.Fatalf("the tooltip (with its gesture hint) is not on screen:\n%s", shown)
+	}
+
+	c.HandleMouse(input.MouseEvent{Kind: input.MouseMove, X: 0, Y: 21})
+	c.Frame()
+	if got := screenOf(c, 22); got != before {
+		t.Fatalf("dismissing the tooltip did not restore the screen.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 }
 

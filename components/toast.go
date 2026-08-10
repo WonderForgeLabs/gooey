@@ -157,6 +157,12 @@ func (h *ToastHost) Arrange(b gooey.Rect) {
 // toasts own their cells.
 func (h *ToastHost) Render(*gooey.Frame) {}
 
+// HitTestTransparent: the host spans the whole page invisibly (the same
+// hosting shape as AdornmentLayer), so the pointer must pass through it
+// — a page with a toast layer would otherwise never receive a click.
+// The toasts themselves stay hittable; they own visible cells.
+func (h *ToastHost) HitTestTransparent() bool { return true }
+
 // Toast is one transient message — an ordinary leaf, so its paint node
 // pre-clears and covers its rectangle, which is exactly what makes it
 // an overlay under the z-ordered pass. Its content is fixed at Show

@@ -1,10 +1,13 @@
 // toolkitdemo: the UI toolkit on one page — wave 1 (ProgressBar,
 // Spinner, Toggle, Segmented, StatusBar, ButtonBar, and a Button
 // wearing the pixel chrome) plus wave 2's overlays: a MenuBar over the
-// content and a ToastHost that pops transient notifications. The two
+// content and a ToastHost that pops transient notifications. The
 // overlay elements are declared LAST in the markup, because document
 // order is z-order and an overlay is nothing more than a later sibling
-// painting above what it covers.
+// painting above what it covers. The adornment layer sits at the very
+// end of the file: the buttons carry Tooltip="..." shorthands (the
+// toast button spells the child form, with a gesture hint), and resting
+// the pointer on one shows its tip through that layer.
 //
 // It is markup-first for the reason every demo here is: a component that
 // cannot be spelled in markup is not finished. Every one of these has a
