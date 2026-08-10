@@ -14,22 +14,22 @@ iTerm2, halfblock fallback) riding a second plane over the cell buffer.
 
 ## Showcase
 
-![reader](reader.gif)
+![reader](docs/media/demos/reader.gif)
 
 Three UserControl panes, one input system: focus-scoped keys, live
 network fetches, and a feed added at runtime persisting to OPML.
 
-![statedemo](statedemo.gif)
+![statedemo](docs/media/demos/statedemo.gif)
 
 Pure markup, no code-behind: buttons and a checkbox drive manual vs
 reactive JSON serialization through the property graph.
 
-![finder](finder.gif)
+![finder](docs/media/demos/finder.gif)
 
 An fzf-style fuzzy finder as a dependency graph: typing re-scores the
 index live and damage tracking repaints only the affected panes.
 
-![temporaldemo](temporaldemo.gif)
+![temporaldemo](docs/media/demos/temporaldemo.gif)
 
 Behavior declared in markup: one button is an HTTP GET, the other is a
 Temporal activity run by a worker in another process — the terminal
@@ -151,17 +151,17 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 
 | Demo | GIF | Proves |
 |---|---|---|
-| `cmd/probe` + `cmd/demo` | [demo.gif](demo.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
-| `cmd/propdemo` | [propdemo.gif](propdemo.gif) | Lazy property graph: unwatched sources render zero frames |
-| `cmd/logview` | [logview.gif](logview.gif) | Conditional dependency recording: pause drops the firehose out of the graph |
-| `cmd/markuplog` | [markuplog.gif](markuplog.gif) | Markup hot reload: live edits rebuild the tree, buffer intact |
-| `cmd/finder` | [finder.gif](finder.gif) | Input-to-derived-view pipeline with per-pane damage |
-| `cmd/reader` | [reader.gif](reader.gif) | Multi-UserControl composition, scoped input, live fetches |
-| `cmd/statedemo` | [statedemo.gif](statedemo.gif) | No-code-behind markup and reactive serialization |
-| `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
-| `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
-| `mcp/cmd/mcpdemo` | [mcpdemo.gif](mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `cmd/toolkitdemo` | [toolkitdemo.gif](toolkitdemo.gif) | The UI toolkit — the wave-1 components, wave 2's MenuBar and ToastHost overlays, and tooltips on the buttons through the AdornmentLayer |
+| `cmd/probe` + `cmd/demo` | [demo.gif](docs/media/demos/demo.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
+| `cmd/propdemo` | [propdemo.gif](docs/media/demos/propdemo.gif) | Lazy property graph: unwatched sources render zero frames |
+| `cmd/logview` | [logview.gif](docs/media/demos/logview.gif) | Conditional dependency recording: pause drops the firehose out of the graph |
+| `cmd/markuplog` | [markuplog.gif](docs/media/demos/markuplog.gif) | Markup hot reload: live edits rebuild the tree, buffer intact |
+| `cmd/finder` | [finder.gif](docs/media/demos/finder.gif) | Input-to-derived-view pipeline with per-pane damage |
+| `cmd/reader` | [reader.gif](docs/media/demos/reader.gif) | Multi-UserControl composition, scoped input, live fetches |
+| `cmd/statedemo` | [statedemo.gif](docs/media/demos/statedemo.gif) | No-code-behind markup and reactive serialization |
+| `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](docs/media/demos/temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
+| `cmd/colordemo` | [colordemo.gif](docs/media/demos/colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
+| `mcp/cmd/mcpdemo` | [mcpdemo.gif](docs/media/demos/mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
+| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The UI toolkit — the wave-1 components, wave 2's MenuBar and ToastHost overlays, and tooltips on the buttons through the AdornmentLayer |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)

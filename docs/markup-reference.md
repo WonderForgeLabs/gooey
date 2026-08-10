@@ -15,7 +15,7 @@ ctx := &markup.Context{
 tree, err := markup.Load(fsys, "app.gooey", ctx)
 ```
 
-`Load` reads from any `fs.FS` — `os.DirFS` in development, `embed.FS` in release; the loader cannot tell the difference. `markup.Watch` (single file) and `markup.WatchAll` (a set of files) poll ModTimes and rebuild on change, which is the hot-reload path: edit the file while the app runs and the tree rebuilds in place, with all state intact because the viewmodel properties are the durable thing and the tree is disposable (see `cmd/markuplog`, [../markuplog.gif](../markuplog.gif)). On an immutable FS this degrades to a natural no-op. Parse or build errors during a reload leave the current tree in place.
+`Load` reads from any `fs.FS` — `os.DirFS` in development, `embed.FS` in release; the loader cannot tell the difference. `markup.Watch` (single file) and `markup.WatchAll` (a set of files) poll ModTimes and rebuild on change, which is the hot-reload path: edit the file while the app runs and the tree rebuilds in place, with all state intact because the viewmodel properties are the durable thing and the tree is disposable (see `cmd/markuplog`, [media/demos/markuplog.gif](media/demos/markuplog.gif)). On an immutable FS this degrades to a natural no-op. Parse or build errors during a reload leave the current tree in place.
 
 ## The root element
 

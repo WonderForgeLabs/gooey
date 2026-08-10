@@ -54,8 +54,11 @@ func watchKey(srcRoot, launchRoot string) uint64 {
 		}
 	}
 	buf = foldDir(h, filepath.Join(launchRoot, recDir), "", buf)
-	// The source root is watched for GIFs only. It also holds build
-	// output, and rebuilding a demo binary is not a reason to rescan.
+	buf = foldDir(h, filepath.Join(srcRoot, filepath.FromSlash(gifHome)), ".gif", buf)
+	// The source root is watched for GIFs only — a legacy location, kept
+	// so browsing an older branch still notices a change there. It also
+	// holds build output, and rebuilding a demo binary is not a reason
+	// to rescan.
 	foldDir(h, srcRoot, ".gif", buf)
 	return h.Sum64()
 }

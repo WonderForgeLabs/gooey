@@ -701,10 +701,10 @@ markup a binding came from.
 ## Where to go next
 
 - **Demos** — [demos.md](demos.md) walks all of them.
-  `cmd/statedemo` ([../statedemo.gif](../statedemo.gif)) is this
+  `cmd/statedemo` ([media/demos/statedemo.gif](media/demos/statedemo.gif)) is this
   tutorial's endpoint taken further: damage tracking made visible, a
   reactive-vs-command serialization toggle, and a custom checkbox with
-  mouse support. `cmd/reader` ([../reader.gif](../reader.gif)) is the
+  mouse support. `cmd/reader` ([media/demos/reader.gif](media/demos/reader.gif)) is the
   first real multi-UserControl app — three panes, focus-scoped keys,
   background fetches applied over a channel. `cmd/propdemo`,
   `cmd/markuplog`, `cmd/logview`, `cmd/finder`, `cmd/sysmon`, and
