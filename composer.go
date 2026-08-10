@@ -78,6 +78,24 @@ func (c *Composer) Caps() term.Caps { return c.frame.Caps }
 // ancestor links, and declared key bindings.
 func (c *Composer) Focus() *FocusManager { return c.focus }
 
+// Root is the widget this composition was built over — the entry point
+// for anything that needs to walk the live tree (serialization,
+// inspection, an automation surface). Call it on the UI goroutine: the
+// widgets it leads to hold properties, and properties are confined
+// there.
+func (c *Composer) Root() Widget { return c.root }
+
+// Cells is the retained cell plane as of the LAST Frame — the buffer
+// Flush writes, not a fresh composition. Reading it is how a caller
+// screenshots the app without disturbing damage state: composing here to
+// "refresh" it would mark every dirty node clean and steal the repaint
+// from the app's own next frame, which is the damage count the framework
+// guarantees.
+//
+// UI goroutine only, and read-only in practice: the Composer paints into
+// this buffer every frame.
+func (c *Composer) Cells() *render.Buffer { return c.frame.Cells }
+
 // Handle routes one input event — key or mouse — through the tree.
 func (c *Composer) Handle(ev input.Event) bool {
 	if ev.IsMouse() {

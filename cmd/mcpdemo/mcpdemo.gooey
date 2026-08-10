@@ -1,0 +1,32 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="mcp → live tree" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,Auto,Auto,*,Auto">
+      <Text Grid.Row="0" Style="accent">this app is an MCP server — an agent can read and drive everything below</Text>
+
+      <HStack Grid.Row="1" Gap="2">
+        <Button Name="Inc" Content="count +1" Click="{{.Increment}}"/>
+        <Button Name="Reset" Content="reset" Click="{{.Reset}}"/>
+        <Button Name="Cycle" Content="cycle message" Click="{{.Cycle}}"/>
+      </HStack>
+
+      <Checkbox Name="AutoBox" Grid.Row="2" Style="accent" Checked="{{.Auto}}" Label="auto (a Timer drives the counter)"/>
+
+      <HStack Grid.Row="3" Gap="1">
+        <Text Style="dim">note:</Text>
+        <TextBox Name="Note" Text="{{.Note}}" Prompt="&gt; " AccentStyle="accent"/>
+      </HStack>
+
+      <Text Name="Readout" Grid.Row="4" Style="accent">{{.Readout}}</Text>
+
+      <Border Grid.Row="5" Title="how to drive it" Style="panel">
+        <Text Name="Help" Margin="1,0" Style="dim">{{.Help}}</Text>
+      </Border>
+
+      <Text Grid.Row="6" Style="dim">tab moves focus   enter/space activates   q: quit</Text>
+
+      <Timer Interval="700ms" Tick="{{.Increment}}" Enabled="{{.Auto}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

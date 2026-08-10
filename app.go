@@ -432,6 +432,25 @@ func (a *App) attach(w Widget) {
 	}
 }
 
+// Swap replaces the live composition with root, exactly as a hot reload
+// does: the outgoing Composer is closed (its timers stop), a new one is
+// built and started, and the OnSwap hooks run with the new tree.
+//
+// It is the seam for a tree that arrives from somewhere other than
+// Content — a control plane pushing markup, an automation client editing
+// the running app. Callers that BUILD the tree (markup.Build resolves
+// bindings, which touches the property graph) must do that on the UI
+// goroutine too, so the whole build-then-swap belongs inside one Post.
+//
+// Content is not replaced, so the next reload still rebuilds from the
+// original source and discards what was swapped in.
+func (a *App) Swap(root Widget) {
+	if root == nil {
+		return
+	}
+	a.attach(root)
+}
+
 // reload rebuilds the tree from Content on the UI goroutine. A build
 // error leaves the running composition alone — a markup file is broken
 // for the second between two saves, and dropping the UI for it would
