@@ -121,7 +121,9 @@ func TestDecodeClipScalesDown(t *testing.T) {
 }
 
 func testClip(path string, n int, d time.Duration) *gifClip {
-	c := &gifClip{w: 2, h: 2, path: path}
+	// id mirrors what decodeClip produces for dir "": hostPath("", path)
+	// is just path, so tests address the cache by the same name.
+	c := &gifClip{w: 2, h: 2, path: path, id: path}
 	for i := 0; i < n; i++ {
 		c.frames = append(c.frames, image.NewRGBA(image.Rect(0, 0, 2, 2)))
 		c.delays = append(c.delays, d)
@@ -284,14 +286,20 @@ func TestStaleTracksSelectionAndRerecording(t *testing.T) {
 	clip.key = key
 	p.begin(clip)
 
-	if p.Stale("a.gif", key) {
+	if p.Stale("", "a.gif", key) {
 		t.Fatal("playing clip reported stale against its own file")
 	}
-	if !p.Stale("b.gif", key) {
+	if !p.Stale("", "b.gif", key) {
 		t.Fatal("selection moved and playback was not stale")
 	}
-	if !p.Stale("a.gif", fileKey{size: 2}) {
+	if !p.Stale("", "a.gif", fileKey{size: 2}) {
 		t.Fatal("file was re-recorded and playback was not stale")
+	}
+	// The SAME relative path under a different source root is a
+	// different file: switching sources mid-playback goes stale even
+	// when the branch has an identically named GIF.
+	if !p.Stale("/elsewhere", "a.gif", key) {
+		t.Fatal("same name under another root was not stale")
 	}
 }
 
@@ -307,7 +315,8 @@ func TestAnimationRepaintsOnlyThePreview(t *testing.T) {
 	play := newPlayer(prop.NewSource(""))
 
 	list := &demoList{demos: demos, sel: sel}
-	info := &demoInfo{demos: demos, sel: sel, play: play}
+	info := &demoInfo{demos: demos, sel: sel, play: play,
+		cur: prop.NewSource(source{Name: "here", Root: "/", Launch: true})}
 	info.LayoutProps().Col = 1
 	grid := &components.Grid{
 		Cols:     []components.GridLen{components.Star(1), components.Star(1)},
@@ -388,19 +397,42 @@ func TestGifForPrefersRecordings(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeGIF(t, filepath.Join(dir, "reader.gif"), []int{10, 10})
-	fsys := os.DirFS(dir)
+	env := scanEnvFor(dir, dir)
 
-	got, _, ok := gifFor(fsys, "reader", "reader")
-	if !ok || got != "reader.gif" {
-		t.Fatalf("root fallback = %q (%v), want reader.gif", got, ok)
+	got, gotDir, _, ok := gifFor(env, "reader", "reader")
+	if !ok || got != "reader.gif" || gotDir != dir {
+		t.Fatalf("root fallback = %q under %q (%v), want reader.gif under %q", got, gotDir, ok, dir)
 	}
 	// A fresh recording supersedes the one checked in at the root.
 	writeGIF(t, filepath.Join(dir, recDir, "reader.gif"), []int{10, 10})
-	got, _, ok = gifFor(fsys, "reader", "reader")
-	if !ok || got != recDir+"/reader.gif" {
-		t.Fatalf("recording not preferred: %q (%v)", got, ok)
+	got, gotDir, _, ok = gifFor(env, "reader", "reader")
+	if !ok || got != recDir+"/reader.gif" || gotDir != dir {
+		t.Fatalf("recording not preferred: %q under %q (%v)", got, gotDir, ok)
 	}
-	if _, _, ok := gifFor(fsys, "nope", "nope"); ok {
+	if _, _, _, ok := gifFor(env, "nope", "nope"); ok {
 		t.Fatal("reported a GIF that does not exist")
+	}
+}
+
+// With split roots — a source being browsed and the launch tree holding
+// recordings — the fallback GIF comes from the SOURCE and a recording
+// still wins from the LAUNCH tree. Each result names the root it
+// resolves under, which is what keeps two same-named GIFs apart.
+func TestGifForResolvesAcrossRoots(t *testing.T) {
+	srcRoot, launchRoot := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(launchRoot, recDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGIF(t, filepath.Join(srcRoot, "reader.gif"), []int{10, 10})
+	env := scanEnvFor(srcRoot, launchRoot)
+
+	got, gotDir, _, ok := gifFor(env, "reader", "reader")
+	if !ok || got != "reader.gif" || gotDir != srcRoot {
+		t.Fatalf("source fallback = %q under %q (%v), want reader.gif under %q", got, gotDir, ok, srcRoot)
+	}
+	writeGIF(t, filepath.Join(launchRoot, recDir, "reader.gif"), []int{10, 10})
+	got, gotDir, _, ok = gifFor(env, "reader", "reader")
+	if !ok || got != recDir+"/reader.gif" || gotDir != launchRoot {
+		t.Fatalf("launch recording not preferred: %q under %q (%v)", got, gotDir, ok)
 	}
 }

@@ -33,12 +33,15 @@ import (
 // stat traffic is invisible.
 const watchInterval = 1500 * time.Millisecond
 
-// watchKey fingerprints every directory the UI reads.
-func watchKey(root string) uint64 {
+// watchKey fingerprints every directory the UI reads: the demo roots and
+// checked-in GIFs under srcRoot (the ACTIVE source), and recordings
+// under launchRoot — where `r` writes no matter what is being browsed.
+// The two are the same tree until a source is switched.
+func watchKey(srcRoot, launchRoot string) uint64 {
 	h := fnv.New64a()
 	buf := make([]byte, 0, 256)
 	for _, r := range roots {
-		dir := filepath.Join(root, filepath.FromSlash(r.path))
+		dir := filepath.Join(srcRoot, filepath.FromSlash(r.path))
 		buf = foldDir(h, dir, "", buf)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -50,10 +53,10 @@ func watchKey(root string) uint64 {
 			}
 		}
 	}
-	buf = foldDir(h, filepath.Join(root, recDir), "", buf)
-	// The module root is watched for GIFs only. It also holds build
+	buf = foldDir(h, filepath.Join(launchRoot, recDir), "", buf)
+	// The source root is watched for GIFs only. It also holds build
 	// output, and rebuilding a demo binary is not a reason to rescan.
-	foldDir(h, root, ".gif", buf)
+	foldDir(h, srcRoot, ".gif", buf)
 	return h.Sum64()
 }
 

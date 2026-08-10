@@ -79,7 +79,8 @@ type gifClip struct {
 	delays []time.Duration
 	w, h   int
 	bytes  int
-	path   string
+	path   string // fs.FS name, what status messages show
+	id     string // host path — the cache key, unambiguous across source roots
 	key    fileKey
 }
 
@@ -129,7 +130,7 @@ func decodeClip(dir, name string, key fileKey) (*gifClip, error) {
 	draw.Draw(canvas, canvas.Bounds(), black, image.Point{}, draw.Src)
 	var saved *image.RGBA
 
-	clip := &gifClip{w: cw, h: ch, path: name, key: key}
+	clip := &gifClip{w: cw, h: ch, path: name, id: hostPath(dir, name), key: key}
 	for i, src := range g.Image {
 		disposal := byte(0)
 		if i < len(g.Disposal) {
@@ -195,7 +196,9 @@ func hostPath(dir, name string) string {
 	return filepath.Join(dir, filepath.FromSlash(name))
 }
 
-// gifCache holds decoded clips keyed by path. It is UI-goroutine state:
+// gifCache holds decoded clips keyed by the clip's host path (id) — two
+// sources can both have a demo.gif, and the same fs.FS name must not
+// hand one branch's recording to another. It is UI-goroutine state:
 // every read and write happens in a posted func or a command.
 type gifCache struct {
 	clips map[string]*gifClip
@@ -205,40 +208,40 @@ type gifCache struct {
 
 func newGifCache() *gifCache { return &gifCache{clips: map[string]*gifClip{}} }
 
-// get returns the cached clip for name only if it still matches the file
+// get returns the cached clip for id only if it still matches the file
 // on disk. A stale entry is dropped rather than returned — that is the
 // whole point of keying on mtime and size.
-func (c *gifCache) get(name string, key fileKey) *gifClip {
-	clip, ok := c.clips[name]
+func (c *gifCache) get(id string, key fileKey) *gifClip {
+	clip, ok := c.clips[id]
 	if !ok {
 		return nil
 	}
 	if clip.key != key {
-		c.drop(name)
+		c.drop(id)
 		return nil
 	}
 	return clip
 }
 
 func (c *gifCache) put(clip *gifClip) {
-	c.drop(clip.path)
-	c.clips[clip.path] = clip
-	c.order = append(c.order, clip.path)
+	c.drop(clip.id)
+	c.clips[clip.id] = clip
+	c.order = append(c.order, clip.id)
 	c.bytes += clip.bytes
 	for c.bytes > gifCacheMax && len(c.order) > 1 {
 		c.drop(c.order[0])
 	}
 }
 
-func (c *gifCache) drop(name string) {
-	clip, ok := c.clips[name]
+func (c *gifCache) drop(id string) {
+	clip, ok := c.clips[id]
 	if !ok {
 		return
 	}
-	delete(c.clips, name)
+	delete(c.clips, id)
 	c.bytes -= clip.bytes
 	for i, n := range c.order {
-		if n == name {
+		if n == id {
 			c.order = append(c.order[:i], c.order[i+1:]...)
 			break
 		}
@@ -264,10 +267,11 @@ type player struct {
 	playing *prop.Property[bool]
 	status  *prop.Property[string]
 
-	clip    *gifClip
-	src     string // gif path this playback belongs to
-	loading string // gif path a worker is currently decoding
-	gen     int    // invalidates posts from a superseded playback
+	clip      *gifClip
+	src       string // gif path this playback belongs to (fs.FS name, for display)
+	loading   string // gif path a worker is currently decoding (display)
+	loadingID string // its host path — identity, like the cache key
+	gen       int    // invalidates posts from a superseded playback
 
 	done   chan struct{}
 	exited chan struct{}
@@ -294,11 +298,12 @@ func (p *player) Start(post func(func())) func() {
 }
 
 // Toggle is the `p` key: stop if anything is running or decoding, start
-// otherwise. dir is the module root, name the module-relative GIF path.
+// otherwise. dir is the host root the GIF resolves under (the source
+// root or the launch root — see gifFor), name the root-relative path.
 func (p *player) Toggle(dir, name string, key fileKey) {
-	if p.playing.Get() || p.loading != "" {
+	if p.playing.Get() || p.loadingID != "" {
 		msg := "playback stopped"
-		if p.loading != "" {
+		if p.loadingID != "" {
 			msg = "decode of " + p.loading + " cancelled"
 		}
 		p.Stop()
@@ -309,24 +314,25 @@ func (p *player) Toggle(dir, name string, key fileKey) {
 		p.status.Set("no GIF for this entry — press r to record one")
 		return
 	}
-	if clip := p.cache.get(name, key); clip != nil {
+	id := hostPath(dir, name)
+	if clip := p.cache.get(id, key); clip != nil {
 		p.begin(clip)
 		return
 	}
 	if p.post == nil {
 		return // not composed; nothing may be scheduled
 	}
-	p.loading = name
+	p.loading, p.loadingID = name, id
 	p.gen++
 	p.status.Set("decoding " + name + "…")
 	gen, post := p.gen, p.post
 	go func() {
 		clip, err := decodeClip(dir, name, key)
 		post(func() {
-			if gen != p.gen || p.loading != name {
+			if gen != p.gen || p.loadingID != id {
 				return // superseded while we were decoding
 			}
-			p.loading = ""
+			p.loading, p.loadingID = "", ""
 			if err != nil {
 				p.status.Set("cannot play " + name + ": " + err.Error())
 				return
@@ -387,7 +393,7 @@ func (p *player) advance(gen int) {
 // the decoder-leak tripwire exists to catch, and the reason this is
 // synchronous.
 func (p *player) Stop() {
-	p.loading = ""
+	p.loading, p.loadingID = "", ""
 	p.gen++
 	p.stopTicker()
 	p.clip, p.src = nil, ""
@@ -445,15 +451,17 @@ func (p *player) Source() string {
 }
 
 // Stale reports whether what is playing no longer matches what the pane
-// is showing — a different entry, or the same path re-recorded under it.
-func (p *player) Stale(name string, key fileKey) bool {
-	if p.loading != "" {
-		return p.loading != name
+// is showing — a different entry, the same path under a different source
+// root, or the same file re-recorded in place.
+func (p *player) Stale(dir, name string, key fileKey) bool {
+	id := hostPath(dir, name)
+	if p.loadingID != "" {
+		return p.loadingID != id
 	}
 	if p.clip == nil {
 		return false
 	}
-	return p.clip.path != name || p.clip.key != key
+	return p.clip.id != id || p.clip.key != key
 }
 
 // fitCells sizes an image into a cols×rows rect, letterboxed. Halfblock
@@ -480,14 +488,20 @@ func minInt(a, b int) int {
 	return b
 }
 
-// gifFor picks the GIF to play for a demo: a recording first, then the
-// checked-in one at the repo root. Preferring recordings/ means a fresh
-// `r` supersedes the committed GIF the moment it lands.
-func gifFor(fsys fs.FS, rec, name string) (string, fileKey, bool) {
-	for _, candidate := range []string{path.Join(recDir, rec+".gif"), name + ".gif"} {
-		if key, ok := keyOf(fsys, candidate); ok {
-			return candidate, key, true
-		}
+// gifFor picks the GIF to play for a demo: a recording in the launch
+// tree first, then the one checked in at the SOURCE's root. Preferring
+// recordings/ means a fresh `r` supersedes the committed GIF the moment
+// it lands; taking the fallback from the source means browsing a branch
+// previews that branch's own GIF, not the launch tree's. The returned
+// dir is the host root the path resolves under — what Toggle and Stale
+// need to tell two sources' same-named GIFs apart.
+func gifFor(env scanEnv, rec, name string) (string, string, fileKey, bool) {
+	recorded := path.Join(recDir, rec+".gif")
+	if key, ok := keyOf(env.rec, recorded); ok {
+		return recorded, env.recRoot, key, true
 	}
-	return "", fileKey{}, false
+	if key, ok := keyOf(env.src, name+".gif"); ok {
+		return name + ".gif", env.srcRoot, key, true
+	}
+	return "", "", fileKey{}, false
 }

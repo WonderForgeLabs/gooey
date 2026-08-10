@@ -34,7 +34,7 @@ func write(t *testing.T, root, rel, body string) {
 
 func TestWatchKeyIsStableWhenNothingChanges(t *testing.T) {
 	root := tree(t)
-	if a, b := watchKey(root), watchKey(root); a != b {
+	if a, b := watchKey(root, root), watchKey(root, root); a != b {
 		t.Fatalf("fingerprint is not stable: %d then %d", a, b)
 	}
 }
@@ -44,9 +44,9 @@ func TestWatchKeyIsStableWhenNothingChanges(t *testing.T) {
 // invisible until restart. This is the case that drove the rewrite.
 func TestWatchKeyNoticesAnEditedDocComment(t *testing.T) {
 	root := tree(t)
-	before := watchKey(root)
+	before := watchKey(root, root)
 	write(t, root, filepath.Join("cmd", "demo", "main.go"), "// demo, now explained at length\npackage main\n")
-	if after := watchKey(root); after == before {
+	if after := watchKey(root, root); after == before {
 		t.Fatal("editing a demo's main.go did not change the fingerprint")
 	}
 }
@@ -86,9 +86,9 @@ func TestWatchKeyNoticesTheThingsTheUIShows(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := tree(t)
-			before := watchKey(root)
+			before := watchKey(root, root)
 			tc.mut(root)
-			if after := watchKey(root); after == before {
+			if after := watchKey(root, root); after == before {
 				t.Fatalf("%s did not change the fingerprint", tc.name)
 			}
 		})
@@ -99,10 +99,10 @@ func TestWatchKeyNoticesTheThingsTheUIShows(t *testing.T) {
 // reason to rescan, so the root is watched for GIFs only.
 func TestWatchKeyIgnoresBuildOutputAtTheRoot(t *testing.T) {
 	root := tree(t)
-	before := watchKey(root)
+	before := watchKey(root, root)
 	write(t, root, "demo", "ELF...")
 	write(t, root, "go.mod", "module x\n")
-	if after := watchKey(root); after != before {
+	if after := watchKey(root, root); after != before {
 		t.Fatal("build output at the module root triggered a rescan")
 	}
 }
@@ -126,7 +126,7 @@ func BenchmarkWatchKey(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		watchKey(root)
+		watchKey(root, root)
 	}
 }
 
@@ -134,11 +134,11 @@ func TestWatchKeyToleratesAMissingTree(t *testing.T) {
 	// A module with no recordings/ yet, and no docs/, must fingerprint
 	// rather than fail — and creating recordings/ must register.
 	root := t.TempDir()
-	before := watchKey(root)
+	before := watchKey(root, root)
 	if err := os.MkdirAll(filepath.Join(root, recDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if after := watchKey(root); after == before {
+	if after := watchKey(root, root); after == before {
 		t.Fatal("creating recordings/ did not change the fingerprint")
 	}
 }

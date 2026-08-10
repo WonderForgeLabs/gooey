@@ -186,9 +186,28 @@ cast and feed the info pane; ▶ marks an entry playable from a GIF outside
 when available — artifacts land in `recordings/` and immediately show up
 in the listing.
 
+The tree being browsed doesn't have to be the tree the browser was
+launched from. `b` opens a **source picker**: every worktree of the
+repository (name, tip subject, `*` when it has tracked modifications) and
+every local branch that has no worktree. Picking a worktree switches to
+it; picking a bare branch materializes a throwaway **detached** worktree
+under the system temp dir and browses that — so you can flip between a
+demo on `main` and the same demo on a feature branch without touching
+either checkout. The demo list, README/GIF previews, the watcher, `enter`
+and `r` all resolve against the selected source (nested-module demos keep
+working — `go run` happens in the source's own root, so its `go.mod`
+graph applies); demos that don't exist on an older branch simply don't
+appear. Two things deliberately stay anchored to the launch tree: the
+browser's own UI, and `recordings/` — a recording is an artifact you
+keep, and the ephemeral worktree it was made from is deleted on
+switch-away and on exit (`git worktree remove` + `prune`; ctrl+c included,
+since cleanup runs before the exit signal is re-raised). Real worktrees
+are only ever read — never checked out, never written.
+
 - Run: `go run ./cmd/browser` (from anywhere in the repo)
 - Keys: `j`/`k` or arrows select (click/wheel too), `enter` run, `r`
-  record, `p` play/stop a recording, `q`/`esc` quit
+  record, `p` play/stop a recording, `b` sources (then `j`/`k` select,
+  `enter` switch, `esc` close), `q`/`esc` quit
 
 Exercises the `fs.FS` seam as a live data source, `gooey.App.Suspend` for
 the terminal hand-off (the tty read-lifecycle invariant is what makes the
@@ -196,7 +215,14 @@ child's stdin safe), the Startable/dispatcher lifecycle for the GIF
 animation (the preview component owns a ticker that posts frames through the
 dispatcher and is joined on stop — the same discipline as `<Timer>`, not
 the element itself),
-and the damage system — an animation tick repaints exactly one component.
+the damage system — an animation tick repaints exactly one component, and
+the picker's damage is pinned too (open paints the overlay, navigation
+repaints the popup alone, dismissal restores exactly what was covered) —
+and the MenuBar overlay recipe reused in an app: last-in-document-order
+z-order, modal focus with key swallowing, pointer capture while open,
+focus restored on dismiss. All git work (enumeration, `worktree add`
+/ `remove`) runs on one worker goroutine and marshals back through the
+dispatcher, per the UI-confinement rule.
 
 ## sysmon
 
