@@ -1,0 +1,19 @@
+org: WonderForgeLabs
+repo: gooey
+project_number: 15
+project_id: PVT_kwDODZK67M4Bf59T
+fields:
+  Priority:
+    id: PVTSSF_lADODZK67M4Bf59TzhaJbT8
+  Critical Path:
+    id: PVTSSF_lADODZK67M4Bf59TzhaJblI
+  Sprint:
+    id: PVTIF_lADODZK67M4Bf59TzhaJblM
+  Start Date:
+    id: PVTF_lADODZK67M4Bf59TzhaJblQ
+  Target Date:
+    id: PVTF_lADODZK67M4Bf59TzhaJblU
+  Design Doc:
+    id: PVTF_lADODZK67M4Bf59TzhaJblY
+  Status:
+    id: PVTSSF_lADODZK67M4Bf59TzhaJbTA
