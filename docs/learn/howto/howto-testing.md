@@ -101,20 +101,46 @@ Three details make this work:
 
 ### Extract the final frame
 
-The log holds every frame ever flushed. The last one starts at the last
-cursor-home sequence:
+**Do not look for the last cursor-home in the log.** The flush is
+incremental: only a full frame starts with `\x1b[H`, and after the first
+one the log holds *differences* — a keystroke that turns `n=2` into `n=3`
+puts a single `3` on the wire. Searching the bytes for what the app is
+showing finds the first frame, or nothing.
 
-```sh
-python3 - /tmp/session.log <<'PY'
-import sys, re
-data = open(sys.argv[1], 'rb').read().decode('utf-8', 'replace')
-i = data.rfind('\x1b[H')
-frame = data[i:] if i >= 0 else data
-print(re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', frame).replace('\r', '').rstrip())
-PY
+Replay the whole log through `render.Screen` instead. It is an
+`io.Writer` that models a terminal, so you feed it the bytes and ask what
+is on screen:
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/WonderForgeLabs/gooey/render"
+)
+
+func main() {
+	log, _ := os.ReadFile(os.Args[1])
+	s := render.NewScreen(80, 24)
+	s.Write(log)
+	fmt.Println(s.Text())
+}
 ```
 
-Drop the `re.sub` when you want to assert on styling rather than text.
+`s.Contains("saved")` asks whether any single row says something;
+`s.Buf` is the cell grid if you want to assert on styling rather than
+text.
+
+Cut the log at the last `\x1b[?1049l` first if the app exited cleanly:
+leaving the alternate screen blanks it, and `script` appends its own
+trailer afterwards.
+
+This is also how the framework's own pty tests work — `testTTY.waitFor`
+polls the modelled screen, and `waitForBytes` is the separate helper for
+assertions that really are about escape sequences (leaving the alternate
+screen, disabling mouse reporting) and leave no mark on the screen.
 
 ## Record a GIF or a screenshot
 

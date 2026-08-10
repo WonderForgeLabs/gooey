@@ -210,7 +210,7 @@ func TestCompanionExitingMidRunQuitsTheApp(t *testing.T) {
 		t.Fatal("a dead companion did not end the run loop")
 	}
 	// Whatever else happened, the terminal came back.
-	if !tty.waitFor(t, "\x1b[?1049l") {
+	if !tty.waitForBytes(t, "\x1b[?1049l") {
 		t.Error("the terminal was not restored after a companion died")
 	}
 }

@@ -153,7 +153,7 @@ Attachment and scoping semantics: a KeyBinding is never laid out or painted. The
 
 ### Image
 
-`components.Image` (a cell-region image drawn via the graphics planes, with halfblock fallback) exists as a component but has no built-in markup element yet — the pixel pipeline predates the property model, so its fields are plain Go values. To use it from markup today, register it as a custom component.
+`components.Image` (a cell-region image drawn on the pixel plane, with halfblock fallback) exists as a component but has no built-in markup element — markup has no way to spell an `image.Image`. Its `Src`, `Cols` and `Rows` are ordinary properties, so it damages and repaints like anything else; to use it from markup, register it as a custom component and supply the picture from Go. See [how to draw images](learn/howto/howto-images.md).
 
 ### Canvas
 

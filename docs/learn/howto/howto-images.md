@@ -54,29 +54,43 @@ iterm2:   false
 selected: halfblock
 ```
 
-Force a protocol to compare them:
-
-```sh
-go run ./cmd/demo --mode=sixel      # kitty | sixel | iterm2 | halfblock
-go run ./cmd/demo --dump            # one frame to stdout, no raw mode
-```
-
 ## Put an image in a tree
 
-`components.Image` takes a Go `image.Image` and a size in cells:
+`components.Image` takes an `image.Image` and a size in cells, all three
+as properties — so setting any of them repaints the image and nothing
+else:
 
 ```go
-&components.Image{Src: myImage, Cols: 24, Rows: 12}
+&components.Image{
+	Src:  components.Img(myImage),
+	Cols: components.Cells(24),
+	Rows: components.Cells(12),
+}
 ```
 
 `graphics.Scale(img, w, h)` resizes to a pixel size with
 nearest-neighbour sampling if you need to prepare the source.
 
+An image asks for a cell rectangle and means it, so give it an alignment
+if its parent would otherwise stretch it:
+
+```go
+im.LayoutProps().HAlign = gooey.AlignStart
+```
+
+To make it change, bind `Src` to a computed:
+
+```go
+phase := prop.NewSource(0)
+src := prop.NewComputed(func() image.Image { return render(phase.Get()) })
+im := &components.Image{Src: src, Cols: components.Cells(24), Rows: components.Cells(12)}
+```
+
 ### There is no `<Image>` markup element
 
-The pixel pipeline predates the property model, so `Image`'s fields are
-plain Go values rather than properties, and no built-in element builds
-one. Register it as a custom component:
+No built-in element builds one, because markup has no way to spell an
+`image.Image`. Register it as a custom component and supply the picture
+from Go:
 
 ```go
 Components: map[string]markup.Builder{
@@ -89,7 +103,11 @@ Components: map[string]markup.Builder{
 		if err != nil {
 			return nil, fmt.Errorf("<Logo Rows=%q>: %w", e.Attrs["Rows"], err)
 		}
-		return &components.Image{Src: logo(), Cols: cols, Rows: rows}, nil
+		return &components.Image{
+			Src:  components.Img(logo()),
+			Cols: components.Cells(cols),
+			Rows: components.Cells(rows),
+		}, nil
 	},
 }
 ```
@@ -98,27 +116,37 @@ Components: map[string]markup.Builder{
 <Logo Cols="24" Rows="12"/>
 ```
 
-Because the source is a plain field and not a property, **changing it
-will not repaint anything**. An image that has to change needs a wrapper
-component that reads a property during `Render` — the pattern from
-[tutorial 6](../06-custom-components.md).
+## Turn the protocol on
 
-## Know which render path you are on
+An app gets a pixel protocol only when its capabilities say so, and the
+environment can report color depth but never graphics support. So either
+probe, or say outright:
 
-This is the one that surprises people:
+```go
+app := gooey.NewApp(content, gooey.WithCapabilityProbe())        // ask the terminal
+app := gooey.NewApp(content, gooey.WithGraphics(graphics.Kitty{})) // or pin it
+```
 
-- **The damage-tracked path** (`gooey.NewComposer` + `comp.Flush`) writes
-  the cell plane only. It carries no encoder, so an `Image` in a
-  Composer-driven app always takes the **halfblock** branch and draws
-  itself into cells. Which is fine — it works everywhere, and it damages
-  and repaints like any other component.
-- **The one-shot path** (`gooey.Compose` + `frame.Flush`) carries the
-  encoder and emits placements, so it is where the kitty, sixel, and
-  iTerm2 protocols actually run. `cmd/demo` is that path; read
-  `cmd/demo/main.go` for the current wiring.
+`WithGraphics(nil)` forces halfblock. The default — no probe, no pinned
+encoder — is halfblock too, deliberately: emitting an image protocol at a
+terminal that does not speak it puts garbage on a user's screen, and only
+a probe can tell.
 
-So: interactive apps get halfblock today; protocol-quality images mean
-the one-shot path.
+Pixel content is damage-tracked like everything else. Change nothing and
+no image bytes are written; move an image and a kitty terminal re-places
+the picture it already has instead of receiving it again; hide the
+component and the placement is deleted (kitty) or erased by repainting
+the cells under it (sixel, iTerm2).
+
+`cmd/demo` is the worked example — an image in an ordinary `gooey.App`,
+with keys for each of those transitions and a footer counting the bytes
+each one cost:
+
+```sh
+go run ./cmd/demo                 # detect, run interactively
+go run ./cmd/demo --mode=sixel    # force a protocol
+go run ./cmd/demo --dump          # one full frame to stdout, no tty
+```
 
 ## Capturing images
 
@@ -127,6 +155,18 @@ show halfblock output faithfully and show nothing at all for sixel,
 kitty, or iTerm2 — those need a real terminal in front of a real person.
 The screenshot at the top of this page is halfblock for exactly that
 reason.
+
+What a headless capture *can* verify is that the right protocol bytes
+went out: run the app under a pty and count the signatures in the log —
+`\x1b_Ga=T` and `\x1b_Ga=p` for kitty transmissions and re-placements,
+`\x1bP0;0;0q` for sixel, `\x1b]1337;File=` for iTerm2.
+
+One thing changed here with the incremental flush: **you can no longer
+find the final frame by looking for the last `\x1b[H` in a log.** Only
+full frames start with a cursor-home, and after the first one the log
+holds differences. Replay the whole log through `render.Screen` instead —
+it is an `io.Writer`, so it takes the bytes as they come and `Text()`
+gives you the screen.
 
 The repository's top-level [`demo.gif`](../../../demo.gif) shows the
 capability detection and the pipeline; [`docs/demos.md`](../../demos.md)

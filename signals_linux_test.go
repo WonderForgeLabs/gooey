@@ -71,7 +71,7 @@ func TestSIGINTRestoresRunsShutdownAndReports(t *testing.T) {
 	// Waited for, not snapshotted: Run has returned so the escape is
 	// written, but the pty is drained by a goroutine that may not have
 	// picked it up yet. Snapshotting here is a flake, and it flaked.
-	if !tty.waitFor(t, "\x1b[?1049l") {
+	if !tty.waitForBytes(t, "\x1b[?1049l") {
 		t.Error("SIGINT left the terminal on the alternate screen")
 	}
 }

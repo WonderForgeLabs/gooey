@@ -158,16 +158,11 @@ go run ./cmd/browser
 
 ## POC limits, honestly
 
-Damage tracking stops at the paint level: the flush still writes the
-whole buffer every frame (damage-rect diffing is a drop-in replacement
-at `Flush`), though each frame is now bracketed in synchronized output
-so a full repaint cannot tear. The Composer is static-tree — structural
-change means rebuilding it, which is exactly what hot reload does.
-There is no styling system (named style
-lookup only) and no templates (every list is a hand-rendered custom
-component). The file watcher is 300 ms ModTime polling. Properties are
-confined to the UI goroutine; background work crosses in over a
-channel.
+There is no styling system (named style lookup only). The file watcher is
+300 ms ModTime polling. Properties are confined to the UI goroutine;
+background work crosses in over a channel. Overlapping components have no
+z-order, so an occluded component's solo repaint paints over its
+occluder.
 
 ## Architecture decisions, one line each
 
@@ -175,6 +170,8 @@ channel.
 - **Capability detection is a handshake, not config** — Kitty query + XTWINOPS + DA1, preference kitty > sixel > iterm2 > halfblock: [detection](docs/architecture.md#capability-detection-is-a-handshake-not-config)
 - **Properties are lazy, not eager** — a set marks dirty and computes nothing; evaluation records its own dependencies, so conditional reads watch only the taken branch: [the property system](docs/architecture.md#the-property-system)
 - **"AffectsRender" is discovered, not declared** — each component's paint is a computed node, so whatever it reads is its damage set: [the Composer](docs/architecture.md#the-composer)
+- **The flush diffs cells, not paint nodes** — components overpaint each other and containers never clear their bounds, so only a buffer comparison is trustworthy; damage counts decide the byte total, never the correctness. An idle frame writes zero bytes, a keystroke writes about thirty: [damage reaches the wire](docs/architecture.md#damage-reaches-the-wire-renderflusher)
+- **Pixel placements are owned by the paint node that recorded them** — only dirty components re-render, so a rebuilt-from-scratch placement list would lose every image that did not repaint; and protocols without placement identity erase a vanished image by repainting the cells under it: [damage on the pixel plane](docs/architecture.md#damage-on-the-pixel-plane)
 - **Layout runs outside the evaluation context** — reads during Measure subscribe to nothing, keeping layout out of the graph by construction: [layout vs the graph](docs/architecture.md#layout-runs-outside-the-evaluation-context)
 - **Framework state in source properties makes focus and hover damage free** — moving focus repaints exactly two components: [the input system](docs/architecture.md#the-input-system)
 - **KeyBindings scope by attachment position, and navigation runs in the unconsumed tail** — a binding fires only while its subtree has focus; arrows are spatial (XYFocus) with a tree-order fallback: [routed dispatch](docs/architecture.md#routed-dispatch)

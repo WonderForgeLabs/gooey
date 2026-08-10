@@ -51,6 +51,13 @@ func getSty(p *prop.Property[render.Style]) render.Style {
 	return p.Get()
 }
 
+func getInt(p *prop.Property[int]) int {
+	if p == nil {
+		return 0
+	}
+	return p.Get()
+}
+
 // gapBefore reports whether a gap should be charged before this child.
 // A Collapsed child occupies NOTHING — so it must not drag its gap along
 // either, and it must not leave a gap behind it. Keying off "is this

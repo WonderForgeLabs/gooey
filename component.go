@@ -51,13 +51,41 @@ type Container interface{ ChildComponents() []Component }
 type Frame struct {
 	Cells        *render.Buffer
 	Graphics     graphics.Encoder
-	Placements   []graphics.Placement
 	CellW, CellH int
 	Caps         term.Caps
+
+	placements []graphics.Placement
+	// sink is installed by the Composer around each paint node, so a
+	// placement recorded during Render is filed under the component that
+	// recorded it. See Place.
+	sink func(graphics.Placement)
 }
 
 // Depth is the color depth this frame will be flushed at.
 func (f *Frame) Depth() render.ColorDepth { return f.Caps.Color }
+
+// Place records pixel content to be composited over the cells. It is the
+// pixel-plane counterpart of writing to f.Cells, and a component with an
+// image calls it from Render exactly where a text component would write
+// runes.
+//
+// It is a method rather than an appendable field because a placement has
+// an OWNER. Under the Composer only dirty components re-render, so a
+// placement list rebuilt from scratch each frame would lose the images of
+// every component that did not repaint. Routing through here files each
+// placement under the paint node that was executing, which is what lets
+// the flush say "this component's images changed" and leave the rest
+// alone — the same per-component damage rule the cell plane follows.
+func (f *Frame) Place(p graphics.Placement) {
+	if f.sink != nil {
+		f.sink(p)
+		return
+	}
+	f.placements = append(f.placements, p)
+}
+
+// Placements is this frame's pixel plane in paint order.
+func (f *Frame) Placements() []graphics.Placement { return f.placements }
 
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
@@ -101,7 +129,7 @@ func (f *Frame) Flush(w io.Writer) error {
 	if err := render.FlushCells(w, f.Cells, f.Caps.Color, false); err != nil {
 		return err
 	}
-	for _, p := range f.Placements {
+	for _, p := range f.placements {
 		// Position cursor at the placement cell (1-based), emit protocol bytes.
 		var out []byte
 		out = append(out, []byte(cursorTo(p.Col, p.Row))...)

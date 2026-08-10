@@ -14,6 +14,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -175,6 +176,7 @@ type ptyPair struct {
 
 	mu  sync.Mutex
 	buf strings.Builder
+	scr *render.Screen
 }
 
 func newPTY(t *testing.T, cols, rows int) *ptyPair {
@@ -193,7 +195,7 @@ func newPTY(t *testing.T, cols, rows int) *ptyPair {
 		m.Close()
 		t.Skipf("TIOCGPTN: %v", err)
 	}
-	p := &ptyPair{master: m, name: "/dev/pts/" + itoa(int(n))}
+	p := &ptyPair{master: m, name: "/dev/pts/" + itoa(int(n)), scr: render.NewScreen(cols, rows)}
 
 	ws := struct{ rows, cols, xpix, ypix uint16 }{rows: uint16(rows), cols: uint16(cols)}
 	if err := ptyIoctl(m, syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
@@ -208,6 +210,7 @@ func newPTY(t *testing.T, cols, rows int) *ptyPair {
 			if k > 0 {
 				p.mu.Lock()
 				p.buf.Write(b[:k])
+				p.scr.Write(b[:k])
 				p.mu.Unlock()
 			}
 			if err != nil {
@@ -233,13 +236,22 @@ func (p *ptyPair) text() string {
 	return p.buf.String()
 }
 
-// waitFor polls the bytes the terminal received. Frames are asynchronous
-// by construction — the run loop decides when to paint — so the test
-// waits for the screen to say something rather than for a duration.
+// screen is what a terminal fed these bytes would be showing. The flush
+// is incremental, so the wire holds differences and only the model holds
+// the screen.
+func (p *ptyPair) screen() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.scr.Text()
+}
+
+// waitFor polls the modelled screen. Frames are asynchronous by
+// construction — the run loop decides when to paint — so the test waits
+// for the screen to say something rather than for a duration.
 func (p *ptyPair) waitFor(want string) bool {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(p.text(), want) {
+		if strings.Contains(p.screen(), want) {
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
