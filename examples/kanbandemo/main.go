@@ -12,12 +12,31 @@
 // It lives in its own module for the same reason mcp/cmd/mcpdemo does:
 // importing gooey/mcp pulls in the MCP SDK's dependency graph, and core
 // gooey's `go build ./...` / `go test ./...` should never see it.
+//
+// # The worker companion
+//
+// examples/temporal-worker is a Python Temporal worker that pushes
+// generated markup into a running gooey app's swap_markup — a second
+// shell, hand-started and hand-killed, the same operational annoyance
+// docs/specs/2026-08-10-companions.md describes for the Temporal wizard
+// demo. -with-worker collapses it into this one, the same way
+// cmd/wizardui --with-dev-server does for its own sidecar: the worker
+// becomes a gooey.CompanionCmd, started before the first frame and
+// killed (process group, not just the direct child) when this app quits.
+// It is opt-in — the worker needs a Python venv with the deps in
+// examples/temporal-worker/requirements.txt and a reachable Temporal
+// server, neither of which the base demo should require:
+//
+//	cd examples/kanbandemo && go run . -mcp 127.0.0.1:7778 -with-worker \
+//	    -worker-python /path/to/.venv/bin/python
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -42,6 +61,9 @@ func cardFields(c Card) map[string]any {
 
 func main() {
 	addr := flag.String("mcp", "127.0.0.1:7778", "loopback address for the MCP server; empty disables it")
+	withWorker := flag.Bool("with-worker", false, "launch the Python Temporal dynamic-UI worker (examples/temporal-worker) as a companion, sharing this app's process lifetime")
+	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks examples/temporal-worker/requirements.txt")
+	workerTaskQueue := flag.String("worker-task-queue", "kanbandemo-dynamic-ui", "Temporal task queue the worker companion polls")
 	flag.Parse()
 
 	// --- board state: three plain slices, nothing fancier. Moving a card
@@ -170,6 +192,10 @@ func main() {
 
 	app = gooey.NewApp(markup.Page(os.DirFS(dir), "kanbandemo.gooey", ctx))
 
+	if *withWorker && *addr == "" {
+		gooey.Exit(fmt.Errorf("kanbandemo: -with-worker needs the MCP endpoint it pushes markup into; do not pass -mcp \"\""))
+	}
+
 	if *addr != "" {
 		srv, err := mcp.Serve(app, mcp.Options{
 			Addr:    *addr,
@@ -180,13 +206,49 @@ func main() {
 			gooey.Exit(err)
 		}
 		defer srv.Close()
-		help.Set("MCP endpoint: " + srv.URL() + "\n\n" +
+		helpText := "MCP endpoint: " + srv.URL() + "\n\n" +
 			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string)\n" +
 			"tools/call invoke_command   — {\"name\": \"AddTask\"} (after set_value NewTitle), or TodoMoveRight/DoingMoveLeft/\n" +
 			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove\n" +
 			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"TodoSel\", \"value\": 1}\n" +
 			"tools/call focus/send_keys  — {\"name\": \"NewTitle\"} then {\"text\": \"buy milk\"}; or focus a list, then keys: [\"down\"]\n" +
-			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, and each column's buttons")
+			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, and each column's buttons"
+
+		if *withWorker {
+			// examples/temporal-worker relative to kanbandemo's own source
+			// directory, not whatever cwd this binary happened to launch
+			// from — dir already resolved that split above (`.` under
+			// `go run`, the executable's directory otherwise).
+			workerDir := filepath.Join(dir, "..", "temporal-worker")
+			logPath := filepath.Join(workerDir, "kanbandemo-worker.log")
+			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+			if err != nil {
+				gooey.Exit(fmt.Errorf("kanbandemo: cannot open worker log %s: %w", logPath, err))
+			}
+			// Held open for the app's lifetime, not per-write: app.Run
+			// returns only after teardown has stopped and waited for every
+			// companion (docs/specs/2026-08-10-companions.md, "Teardown"),
+			// so the worker is done writing by the time this defer fires.
+			defer logFile.Close()
+
+			cmd := exec.Command(*workerPython, "worker.py")
+			cmd.Dir = workerDir
+			// Forward the parent's full environment — any ANTHROPIC_API_KEY /
+			// CLAUDE_CODE_OAUTH_TOKEN / TEMPORAL_ADDRESS already exported in
+			// this shell reaches the worker — plus the two overrides that
+			// point it at this app's MCP endpoint and a task queue distinct
+			// from the generic one other demos default to.
+			cmd.Env = append(os.Environ(),
+				"GOOEY_MCP_URL="+srv.URL(),
+				"TEMPORAL_TASK_QUEUE="+*workerTaskQueue,
+			)
+			app.AddCompanion(gooey.CompanionCmd("temporal-worker", cmd, gooey.CompanionOutput(logFile)))
+
+			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + logPath + "\n" +
+				"trigger it from examples/temporal-worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
+				" python trigger.py GenerateUI \"some topic\""
+		}
+		help.Set(helpText)
 	} else {
 		help.Set("started with -mcp \"\": no server is listening")
 	}
