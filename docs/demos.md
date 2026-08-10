@@ -130,7 +130,7 @@ Exercises handler namespaces end to end: xmlns prefix capture, the `{{ns:Func â€
 
 ## temporalops
 
-![temporalops](../temporalops.gif)
+![temporalops](media/demos/temporalops.gif)
 
 The Temporal ops dashboard: live visibility data in a TUI, with every Temporal call declared in markup. A query bar speaks Temporal's visibility query language, the execution list is an `ItemsView` over real `temporal.api.*` responses, the status bar counts every match, and the describe pane follows the selection:
 
