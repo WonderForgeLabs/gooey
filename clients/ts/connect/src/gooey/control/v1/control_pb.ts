@@ -21,7 +21,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { ControlSchema, PointerEvent, PropertyRegistration, TreeNode, TypedValue, ValueInfo } from "./types_pb";
+import type { ControlSchema, PointerEvent, PropertyRegistration, StyleInfo, TreeNode, TypedValue, ValueInfo } from "./types_pb";
 import { file_gooey_control_v1_types } from "./types_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -29,7 +29,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file gooey/control/v1/control.proto.
  */
 export const file_gooey_control_v1_control: GenFile = /*@__PURE__*/
-  fileDesc("Ch5nb29leS9jb250cm9sL3YxL2NvbnRyb2wucHJvdG8SEGdvb2V5LmNvbnRyb2wudjEiJAoTU25hcHNob3RUcmVlUmVxdWVzdBINCgVkZXB0aBgBIAEoBSJAChRTbmFwc2hvdFRyZWVSZXNwb25zZRIoCgRyb290GAEgASgLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZSIjChFTY3JlZW5UZXh0UmVxdWVzdBIOCgZzdHlsZWQYASABKAgiIgoSU2NyZWVuVGV4dFJlc3BvbnNlEgwKBHRleHQYASABKAkiEwoRTGlzdFZhbHVlc1JlcXVlc3QiUAoSTGlzdFZhbHVlc1Jlc3BvbnNlEisKBnZhbHVlcxgBIAMoCzIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVJbmZvEg0KBW5hbWVkGAIgAygJIiIKEkdldFByb3BlcnR5UmVxdWVzdBIMCgRuYW1lGAEgASgJIkEKE0dldFByb3BlcnR5UmVzcG9uc2USKgoFdmFsdWUYASABKAsyGy5nb29leS5jb250cm9sLnYxLlZhbHVlSW5mbyJPChJTZXRQcm9wZXJ0eVJlcXVlc3QSDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSIVChNTZXRQcm9wZXJ0eVJlc3BvbnNlIiQKFEludm9rZUNvbW1hbmRSZXF1ZXN0EgwKBG5hbWUYASABKAkiFwoVSW52b2tlQ29tbWFuZFJlc3BvbnNlIjEKD1NlbmRLZXlzUmVxdWVzdBIMCgR0ZXh0GAEgASgJEhAKCGdlc3R1cmVzGAIgAygJIjIKEFNlbmRLZXlzUmVzcG9uc2USDAoEc2VudBgBIAEoBRIQCghjb25zdW1lZBgCIAMoCCJDChJTZW5kUG9pbnRlclJlcXVlc3QSLQoFZXZlbnQYASABKAsyHi5nb29leS5jb250cm9sLnYxLlBvaW50ZXJFdmVudCInChNTZW5kUG9pbnRlclJlc3BvbnNlEhAKCGNvbnN1bWVkGAEgASgIIh8KD1NldEZvY3VzUmVxdWVzdBIMCgRuYW1lGAEgASgJIhIKEFNldEZvY3VzUmVzcG9uc2UiXQoRU3dhcE1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJEjgKCHJlZ2lzdGVyGAIgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIjChJTd2FwTWFya3VwUmVzcG9uc2USDQoFbmFtZWQYASADKAkiVwoZUmVnaXN0ZXJQcm9wZXJ0aWVzUmVxdWVzdBI6Cgpwcm9wZXJ0aWVzGAEgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIcChpSZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZSIqChhHZXREZWNsYXJlZFNjaGVtYVJlcXVlc3QSDgoGc291cmNlGAEgASgJIkwKGUdldERlY2xhcmVkU2NoZW1hUmVzcG9uc2USLwoGc2NoZW1hGAEgASgLMh8uZ29vZXkuY29udHJvbC52MS5Db250cm9sU2NoZW1hMvUICg5Db250cm9sU2VydmljZRJdCgxTbmFwc2hvdFRyZWUSJS5nb29leS5jb250cm9sLnYxLlNuYXBzaG90VHJlZVJlcXVlc3QaJi5nb29leS5jb250cm9sLnYxLlNuYXBzaG90VHJlZVJlc3BvbnNlElcKClNjcmVlblRleHQSIy5nb29leS5jb250cm9sLnYxLlNjcmVlblRleHRSZXF1ZXN0GiQuZ29vZXkuY29udHJvbC52MS5TY3JlZW5UZXh0UmVzcG9uc2USVwoKTGlzdFZhbHVlcxIjLmdvb2V5LmNvbnRyb2wudjEuTGlzdFZhbHVlc1JlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLkxpc3RWYWx1ZXNSZXNwb25zZRJaCgtHZXRQcm9wZXJ0eRIkLmdvb2V5LmNvbnRyb2wudjEuR2V0UHJvcGVydHlSZXF1ZXN0GiUuZ29vZXkuY29udHJvbC52MS5HZXRQcm9wZXJ0eVJlc3BvbnNlEloKC1NldFByb3BlcnR5EiQuZ29vZXkuY29udHJvbC52MS5TZXRQcm9wZXJ0eVJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLlNldFByb3BlcnR5UmVzcG9uc2USYAoNSW52b2tlQ29tbWFuZBImLmdvb2V5LmNvbnRyb2wudjEuSW52b2tlQ29tbWFuZFJlcXVlc3QaJy5nb29leS5jb250cm9sLnYxLkludm9rZUNvbW1hbmRSZXNwb25zZRJRCghTZW5kS2V5cxIhLmdvb2V5LmNvbnRyb2wudjEuU2VuZEtleXNSZXF1ZXN0GiIuZ29vZXkuY29udHJvbC52MS5TZW5kS2V5c1Jlc3BvbnNlEloKC1NlbmRQb2ludGVyEiQuZ29vZXkuY29udHJvbC52MS5TZW5kUG9pbnRlclJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLlNlbmRQb2ludGVyUmVzcG9uc2USUQoIU2V0Rm9jdXMSIS5nb29leS5jb250cm9sLnYxLlNldEZvY3VzUmVxdWVzdBoiLmdvb2V5LmNvbnRyb2wudjEuU2V0Rm9jdXNSZXNwb25zZRJXCgpTd2FwTWFya3VwEiMuZ29vZXkuY29udHJvbC52MS5Td2FwTWFya3VwUmVxdWVzdBokLmdvb2V5LmNvbnRyb2wudjEuU3dhcE1hcmt1cFJlc3BvbnNlEm8KElJlZ2lzdGVyUHJvcGVydGllcxIrLmdvb2V5LmNvbnRyb2wudjEuUmVnaXN0ZXJQcm9wZXJ0aWVzUmVxdWVzdBosLmdvb2V5LmNvbnRyb2wudjEuUmVnaXN0ZXJQcm9wZXJ0aWVzUmVzcG9uc2USbAoRR2V0RGVjbGFyZWRTY2hlbWESKi5nb29leS5jb250cm9sLnYxLkdldERlY2xhcmVkU2NoZW1hUmVxdWVzdBorLmdvb2V5LmNvbnRyb2wudjEuR2V0RGVjbGFyZWRTY2hlbWFSZXNwb25zZUJGWkRnaXRodWIuY29tL1dvbmRlckZvcmdlTGFicy9nb29leS9ncnBjL2dlbi9nb29leS9jb250cm9sL3YxO2NvbnRyb2x2MWIGcHJvdG8z", [file_gooey_control_v1_types]);
+  fileDesc("Ch5nb29leS9jb250cm9sL3YxL2NvbnRyb2wucHJvdG8SEGdvb2V5LmNvbnRyb2wudjEiJAoTU25hcHNob3RUcmVlUmVxdWVzdBINCgVkZXB0aBgBIAEoBSJAChRTbmFwc2hvdFRyZWVSZXNwb25zZRIoCgRyb290GAEgASgLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZSIjChFTY3JlZW5UZXh0UmVxdWVzdBIOCgZzdHlsZWQYASABKAgiIgoSU2NyZWVuVGV4dFJlc3BvbnNlEgwKBHRleHQYASABKAkiEwoRTGlzdFZhbHVlc1JlcXVlc3QiUAoSTGlzdFZhbHVlc1Jlc3BvbnNlEisKBnZhbHVlcxgBIAMoCzIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVJbmZvEg0KBW5hbWVkGAIgAygJIiIKEkdldFByb3BlcnR5UmVxdWVzdBIMCgRuYW1lGAEgASgJIkEKE0dldFByb3BlcnR5UmVzcG9uc2USKgoFdmFsdWUYASABKAsyGy5nb29leS5jb250cm9sLnYxLlZhbHVlSW5mbyJPChJTZXRQcm9wZXJ0eVJlcXVlc3QSDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSIVChNTZXRQcm9wZXJ0eVJlc3BvbnNlIiQKFEludm9rZUNvbW1hbmRSZXF1ZXN0EgwKBG5hbWUYASABKAkiFwoVSW52b2tlQ29tbWFuZFJlc3BvbnNlIjEKD1NlbmRLZXlzUmVxdWVzdBIMCgR0ZXh0GAEgASgJEhAKCGdlc3R1cmVzGAIgAygJIjIKEFNlbmRLZXlzUmVzcG9uc2USDAoEc2VudBgBIAEoBRIQCghjb25zdW1lZBgCIAMoCCJDChJTZW5kUG9pbnRlclJlcXVlc3QSLQoFZXZlbnQYASABKAsyHi5nb29leS5jb250cm9sLnYxLlBvaW50ZXJFdmVudCInChNTZW5kUG9pbnRlclJlc3BvbnNlEhAKCGNvbnN1bWVkGAEgASgIIh8KD1NldEZvY3VzUmVxdWVzdBIMCgRuYW1lGAEgASgJIhIKEFNldEZvY3VzUmVzcG9uc2UiXQoRU3dhcE1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJEjgKCHJlZ2lzdGVyGAIgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIjChJTd2FwTWFya3VwUmVzcG9uc2USDQoFbmFtZWQYASADKAkiVwoZUmVnaXN0ZXJQcm9wZXJ0aWVzUmVxdWVzdBI6Cgpwcm9wZXJ0aWVzGAEgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIcChpSZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZSIqChhHZXREZWNsYXJlZFNjaGVtYVJlcXVlc3QSDgoGc291cmNlGAEgASgJIkwKGUdldERlY2xhcmVkU2NoZW1hUmVzcG9uc2USLwoGc2NoZW1hGAEgASgLMh8uZ29vZXkuY29udHJvbC52MS5Db250cm9sU2NoZW1hIjIKElBhdGNoTWFya3VwUmVxdWVzdBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCSIkChNQYXRjaE1hcmt1cFJlc3BvbnNlEg0KBW5hbWVkGAEgAygJIhMKEUxpc3RTdHlsZXNSZXF1ZXN0IkEKEkxpc3RTdHlsZXNSZXNwb25zZRIrCgZzdHlsZXMYASADKAsyGy5nb29leS5jb250cm9sLnYxLlN0eWxlSW5mbyInChVWYWxpZGF0ZU1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJIkUKFlZhbGlkYXRlTWFya3VwUmVzcG9uc2USDQoFdmFsaWQYASABKAgSDQoFZXJyb3IYAiABKAkSDQoFbmFtZWQYAyADKAkyjwsKDkNvbnRyb2xTZXJ2aWNlEl0KDFNuYXBzaG90VHJlZRIlLmdvb2V5LmNvbnRyb2wudjEuU25hcHNob3RUcmVlUmVxdWVzdBomLmdvb2V5LmNvbnRyb2wudjEuU25hcHNob3RUcmVlUmVzcG9uc2USVwoKU2NyZWVuVGV4dBIjLmdvb2V5LmNvbnRyb2wudjEuU2NyZWVuVGV4dFJlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLlNjcmVlblRleHRSZXNwb25zZRJXCgpMaXN0VmFsdWVzEiMuZ29vZXkuY29udHJvbC52MS5MaXN0VmFsdWVzUmVxdWVzdBokLmdvb2V5LmNvbnRyb2wudjEuTGlzdFZhbHVlc1Jlc3BvbnNlEloKC0dldFByb3BlcnR5EiQuZ29vZXkuY29udHJvbC52MS5HZXRQcm9wZXJ0eVJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLkdldFByb3BlcnR5UmVzcG9uc2USWgoLU2V0UHJvcGVydHkSJC5nb29leS5jb250cm9sLnYxLlNldFByb3BlcnR5UmVxdWVzdBolLmdvb2V5LmNvbnRyb2wudjEuU2V0UHJvcGVydHlSZXNwb25zZRJgCg1JbnZva2VDb21tYW5kEiYuZ29vZXkuY29udHJvbC52MS5JbnZva2VDb21tYW5kUmVxdWVzdBonLmdvb2V5LmNvbnRyb2wudjEuSW52b2tlQ29tbWFuZFJlc3BvbnNlElEKCFNlbmRLZXlzEiEuZ29vZXkuY29udHJvbC52MS5TZW5kS2V5c1JlcXVlc3QaIi5nb29leS5jb250cm9sLnYxLlNlbmRLZXlzUmVzcG9uc2USWgoLU2VuZFBvaW50ZXISJC5nb29leS5jb250cm9sLnYxLlNlbmRQb2ludGVyUmVxdWVzdBolLmdvb2V5LmNvbnRyb2wudjEuU2VuZFBvaW50ZXJSZXNwb25zZRJRCghTZXRGb2N1cxIhLmdvb2V5LmNvbnRyb2wudjEuU2V0Rm9jdXNSZXF1ZXN0GiIuZ29vZXkuY29udHJvbC52MS5TZXRGb2N1c1Jlc3BvbnNlElcKClN3YXBNYXJrdXASIy5nb29leS5jb250cm9sLnYxLlN3YXBNYXJrdXBSZXF1ZXN0GiQuZ29vZXkuY29udHJvbC52MS5Td2FwTWFya3VwUmVzcG9uc2USbwoSUmVnaXN0ZXJQcm9wZXJ0aWVzEisuZ29vZXkuY29udHJvbC52MS5SZWdpc3RlclByb3BlcnRpZXNSZXF1ZXN0GiwuZ29vZXkuY29udHJvbC52MS5SZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZRJsChFHZXREZWNsYXJlZFNjaGVtYRIqLmdvb2V5LmNvbnRyb2wudjEuR2V0RGVjbGFyZWRTY2hlbWFSZXF1ZXN0GisuZ29vZXkuY29udHJvbC52MS5HZXREZWNsYXJlZFNjaGVtYVJlc3BvbnNlEloKC1BhdGNoTWFya3VwEiQuZ29vZXkuY29udHJvbC52MS5QYXRjaE1hcmt1cFJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLlBhdGNoTWFya3VwUmVzcG9uc2USVwoKTGlzdFN0eWxlcxIjLmdvb2V5LmNvbnRyb2wudjEuTGlzdFN0eWxlc1JlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLkxpc3RTdHlsZXNSZXNwb25zZRJjCg5WYWxpZGF0ZU1hcmt1cBInLmdvb2V5LmNvbnRyb2wudjEuVmFsaWRhdGVNYXJrdXBSZXF1ZXN0GiguZ29vZXkuY29udHJvbC52MS5WYWxpZGF0ZU1hcmt1cFJlc3BvbnNlQkZaRGdpdGh1Yi5jb20vV29uZGVyRm9yZ2VMYWJzL2dvb2V5L2dycGMvZ2VuL2dvb2V5L2NvbnRyb2wvdjE7Y29udHJvbHYxYgZwcm90bzM", [file_gooey_control_v1_types]);
 
 /**
  * @generated from message gooey.control.v1.SnapshotTreeRequest
@@ -478,6 +478,136 @@ export const GetDeclaredSchemaResponseSchema: GenMessage<GetDeclaredSchemaRespon
   messageDesc(file_gooey_control_v1_control, 23);
 
 /**
+ * @generated from message gooey.control.v1.PatchMarkupRequest
+ */
+export type PatchMarkupRequest = Message<"gooey.control.v1.PatchMarkupRequest"> & {
+  /**
+   * The Name= identity of the element to replace.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * Markup for the replacement subtree, rooted at <Gooey> with exactly
+   * one child carrying the same Name.
+   *
+   * @generated from field: string source = 2;
+   */
+  source: string;
+};
+
+/**
+ * Describes the message gooey.control.v1.PatchMarkupRequest.
+ * Use `create(PatchMarkupRequestSchema)` to create a new message.
+ */
+export const PatchMarkupRequestSchema: GenMessage<PatchMarkupRequest> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 24);
+
+/**
+ * @generated from message gooey.control.v1.PatchMarkupResponse
+ */
+export type PatchMarkupResponse = Message<"gooey.control.v1.PatchMarkupResponse"> & {
+  /**
+   * The Name= identities of the tree after the patch: survivors plus
+   * the fragment's names.
+   *
+   * @generated from field: repeated string named = 1;
+   */
+  named: string[];
+};
+
+/**
+ * Describes the message gooey.control.v1.PatchMarkupResponse.
+ * Use `create(PatchMarkupResponseSchema)` to create a new message.
+ */
+export const PatchMarkupResponseSchema: GenMessage<PatchMarkupResponse> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 25);
+
+/**
+ * @generated from message gooey.control.v1.ListStylesRequest
+ */
+export type ListStylesRequest = Message<"gooey.control.v1.ListStylesRequest"> & {
+};
+
+/**
+ * Describes the message gooey.control.v1.ListStylesRequest.
+ * Use `create(ListStylesRequestSchema)` to create a new message.
+ */
+export const ListStylesRequestSchema: GenMessage<ListStylesRequest> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 26);
+
+/**
+ * @generated from message gooey.control.v1.ListStylesResponse
+ */
+export type ListStylesResponse = Message<"gooey.control.v1.ListStylesResponse"> & {
+  /**
+   * Sorted by name.
+   *
+   * @generated from field: repeated gooey.control.v1.StyleInfo styles = 1;
+   */
+  styles: StyleInfo[];
+};
+
+/**
+ * Describes the message gooey.control.v1.ListStylesResponse.
+ * Use `create(ListStylesResponseSchema)` to create a new message.
+ */
+export const ListStylesResponseSchema: GenMessage<ListStylesResponse> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 27);
+
+/**
+ * @generated from message gooey.control.v1.ValidateMarkupRequest
+ */
+export type ValidateMarkupRequest = Message<"gooey.control.v1.ValidateMarkupRequest"> & {
+  /**
+   * Complete markup source, rooted at <Gooey> with exactly one child.
+   *
+   * @generated from field: string source = 1;
+   */
+  source: string;
+};
+
+/**
+ * Describes the message gooey.control.v1.ValidateMarkupRequest.
+ * Use `create(ValidateMarkupRequestSchema)` to create a new message.
+ */
+export const ValidateMarkupRequestSchema: GenMessage<ValidateMarkupRequest> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 28);
+
+/**
+ * @generated from message gooey.control.v1.ValidateMarkupResponse
+ */
+export type ValidateMarkupResponse = Message<"gooey.control.v1.ValidateMarkupResponse"> & {
+  /**
+   * @generated from field: bool valid = 1;
+   */
+  valid: boolean;
+
+  /**
+   * The typed load error when valid is false — the same text a failed
+   * SwapMarkup would carry in its status.
+   *
+   * @generated from field: string error = 2;
+   */
+  error: string;
+
+  /**
+   * The Name= identities the document declares, when valid.
+   *
+   * @generated from field: repeated string named = 3;
+   */
+  named: string[];
+};
+
+/**
+ * Describes the message gooey.control.v1.ValidateMarkupResponse.
+ * Use `create(ValidateMarkupResponseSchema)` to create a new message.
+ */
+export const ValidateMarkupResponseSchema: GenMessage<ValidateMarkupResponse> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 29);
+
+/**
  * ControlService is the request/response surface of a running gooey
  * app. The MCP tools (issue #112) are a thin adapter over exactly
  * these RPCs; nothing an MCP tool can do is absent here, and nothing
@@ -620,6 +750,56 @@ export const ControlService: GenService<{
     methodKind: "unary";
     input: typeof GetDeclaredSchemaRequestSchema;
     output: typeof GetDeclaredSchemaResponseSchema;
+  },
+  /**
+   * PatchMarkup replaces ONE named element's subtree, leaving the rest
+   * of the page — and every sibling's component state — untouched (MCP
+   * patch_markup, issue #117). The fragment builds against the live
+   * binding context; its root element must carry the same Name= as the
+   * element it replaces (the name is the address, and the address
+   * survives iteration). Layout attributes the fragment does not
+   * restate (Grid.Row, Width, Margin, ...) are preserved from the old
+   * element, per attribute. Atomic: any failure — bad markup, wrong
+   * root name, a name colliding with a surviving element, a parent
+   * container the server cannot rewrite — is INVALID_ARGUMENT (or
+   * NOT_FOUND for an unknown address) and the running tree, name table
+   * and focus are exactly as they were.
+   *
+   * @generated from rpc gooey.control.v1.ControlService.PatchMarkup
+   */
+  patchMarkup: {
+    methodKind: "unary";
+    input: typeof PatchMarkupRequestSchema;
+    output: typeof PatchMarkupResponseSchema;
+  },
+  /**
+   * ListStyles reports the markup context's style table — the names a
+   * Style="..." attribute can resolve (MCP list_styles, issue #117). An
+   * unknown style silently renders unstyled, so a markup generator must
+   * draw from this list.
+   *
+   * @generated from rpc gooey.control.v1.ControlService.ListStyles
+   */
+  listStyles: {
+    methodKind: "unary";
+    input: typeof ListStylesRequestSchema;
+    output: typeof ListStylesResponseSchema;
+  },
+  /**
+   * ValidateMarkup checks a document against the live binding context —
+   * the exact parse-and-bind path SwapMarkup runs, including declared
+   * properties — without attaching anything or composing a frame (MCP
+   * validate_markup, issue #117). INVALID markup is a normal response
+   * carrying the typed load error, NOT a status error: the RPC was
+   * asked whether the markup is valid and it answered, which is what
+   * lets a generation loop retry cheaply without flickering the page.
+   *
+   * @generated from rpc gooey.control.v1.ControlService.ValidateMarkup
+   */
+  validateMarkup: {
+    methodKind: "unary";
+    input: typeof ValidateMarkupRequestSchema;
+    output: typeof ValidateMarkupResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_gooey_control_v1_control, 0);

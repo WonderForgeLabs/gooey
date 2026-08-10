@@ -150,3 +150,43 @@ class GetDeclaredSchemaResponse(_message.Message):
     SCHEMA_FIELD_NUMBER: _ClassVar[int]
     schema: _types_pb2.ControlSchema
     def __init__(self, schema: _Optional[_Union[_types_pb2.ControlSchema, _Mapping]] = ...) -> None: ...
+
+class PatchMarkupRequest(_message.Message):
+    __slots__ = ("name", "source")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    source: str
+    def __init__(self, name: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
+
+class PatchMarkupResponse(_message.Message):
+    __slots__ = ("named",)
+    NAMED_FIELD_NUMBER: _ClassVar[int]
+    named: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, named: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ListStylesRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ListStylesResponse(_message.Message):
+    __slots__ = ("styles",)
+    STYLES_FIELD_NUMBER: _ClassVar[int]
+    styles: _containers.RepeatedCompositeFieldContainer[_types_pb2.StyleInfo]
+    def __init__(self, styles: _Optional[_Iterable[_Union[_types_pb2.StyleInfo, _Mapping]]] = ...) -> None: ...
+
+class ValidateMarkupRequest(_message.Message):
+    __slots__ = ("source",)
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    source: str
+    def __init__(self, source: _Optional[str] = ...) -> None: ...
+
+class ValidateMarkupResponse(_message.Message):
+    __slots__ = ("valid", "error", "named")
+    VALID_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    NAMED_FIELD_NUMBER: _ClassVar[int]
+    valid: bool
+    error: str
+    named: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, valid: _Optional[bool] = ..., error: _Optional[str] = ..., named: _Optional[_Iterable[str]] = ...) -> None: ...

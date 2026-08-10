@@ -22,6 +22,12 @@
 import { ControlService } from "./control";
 import type { BinaryWriteOptions } from "@protobuf-ts/runtime";
 import type { BinaryReadOptions } from "@protobuf-ts/runtime";
+import type { ValidateMarkupResponse } from "./control";
+import type { ValidateMarkupRequest } from "./control";
+import type { ListStylesResponse } from "./control";
+import type { ListStylesRequest } from "./control";
+import type { PatchMarkupResponse } from "./control";
+import type { PatchMarkupRequest } from "./control";
 import type { GetDeclaredSchemaResponse } from "./control";
 import type { GetDeclaredSchemaRequest } from "./control";
 import type { RegisterPropertiesResponse } from "./control";
@@ -179,6 +185,53 @@ export interface IControlServiceClient {
     getDeclaredSchema(input: GetDeclaredSchemaRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void): grpc.ClientUnaryCall;
     getDeclaredSchema(input: GetDeclaredSchemaRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void): grpc.ClientUnaryCall;
     getDeclaredSchema(input: GetDeclaredSchemaRequest, callback: (err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void): grpc.ClientUnaryCall;
+    /**
+     * PatchMarkup replaces ONE named element's subtree, leaving the rest
+     * of the page — and every sibling's component state — untouched (MCP
+     * patch_markup, issue #117). The fragment builds against the live
+     * binding context; its root element must carry the same Name= as the
+     * element it replaces (the name is the address, and the address
+     * survives iteration). Layout attributes the fragment does not
+     * restate (Grid.Row, Width, Margin, ...) are preserved from the old
+     * element, per attribute. Atomic: any failure — bad markup, wrong
+     * root name, a name colliding with a surviving element, a parent
+     * container the server cannot rewrite — is INVALID_ARGUMENT (or
+     * NOT_FOUND for an unknown address) and the running tree, name table
+     * and focus are exactly as they were.
+     *
+     * @generated from protobuf rpc: PatchMarkup
+     */
+    patchMarkup(input: PatchMarkupRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void): grpc.ClientUnaryCall;
+    patchMarkup(input: PatchMarkupRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void): grpc.ClientUnaryCall;
+    patchMarkup(input: PatchMarkupRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void): grpc.ClientUnaryCall;
+    patchMarkup(input: PatchMarkupRequest, callback: (err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void): grpc.ClientUnaryCall;
+    /**
+     * ListStyles reports the markup context's style table — the names a
+     * Style="..." attribute can resolve (MCP list_styles, issue #117). An
+     * unknown style silently renders unstyled, so a markup generator must
+     * draw from this list.
+     *
+     * @generated from protobuf rpc: ListStyles
+     */
+    listStyles(input: ListStylesRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: ListStylesResponse) => void): grpc.ClientUnaryCall;
+    listStyles(input: ListStylesRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: ListStylesResponse) => void): grpc.ClientUnaryCall;
+    listStyles(input: ListStylesRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: ListStylesResponse) => void): grpc.ClientUnaryCall;
+    listStyles(input: ListStylesRequest, callback: (err: grpc.ServiceError | null, value?: ListStylesResponse) => void): grpc.ClientUnaryCall;
+    /**
+     * ValidateMarkup checks a document against the live binding context —
+     * the exact parse-and-bind path SwapMarkup runs, including declared
+     * properties — without attaching anything or composing a frame (MCP
+     * validate_markup, issue #117). INVALID markup is a normal response
+     * carrying the typed load error, NOT a status error: the RPC was
+     * asked whether the markup is valid and it answered, which is what
+     * lets a generation loop retry cheaply without flickering the page.
+     *
+     * @generated from protobuf rpc: ValidateMarkup
+     */
+    validateMarkup(input: ValidateMarkupRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void): grpc.ClientUnaryCall;
+    validateMarkup(input: ValidateMarkupRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void): grpc.ClientUnaryCall;
+    validateMarkup(input: ValidateMarkupRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void): grpc.ClientUnaryCall;
+    validateMarkup(input: ValidateMarkupRequest, callback: (err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void): grpc.ClientUnaryCall;
 }
 /**
  * ControlService is the request/response surface of a running gooey
@@ -316,5 +369,52 @@ export class ControlServiceClient extends grpc.Client implements IControlService
     getDeclaredSchema(input: GetDeclaredSchemaRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void)): grpc.ClientUnaryCall {
         const method = ControlService.methods[11];
         return this.makeUnaryRequest<GetDeclaredSchemaRequest, GetDeclaredSchemaResponse>(`/${ControlService.typeName}/${method.name}`, (value: GetDeclaredSchemaRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): GetDeclaredSchemaResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
+    }
+    /**
+     * PatchMarkup replaces ONE named element's subtree, leaving the rest
+     * of the page — and every sibling's component state — untouched (MCP
+     * patch_markup, issue #117). The fragment builds against the live
+     * binding context; its root element must carry the same Name= as the
+     * element it replaces (the name is the address, and the address
+     * survives iteration). Layout attributes the fragment does not
+     * restate (Grid.Row, Width, Margin, ...) are preserved from the old
+     * element, per attribute. Atomic: any failure — bad markup, wrong
+     * root name, a name colliding with a surviving element, a parent
+     * container the server cannot rewrite — is INVALID_ARGUMENT (or
+     * NOT_FOUND for an unknown address) and the running tree, name table
+     * and focus are exactly as they were.
+     *
+     * @generated from protobuf rpc: PatchMarkup
+     */
+    patchMarkup(input: PatchMarkupRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void)): grpc.ClientUnaryCall {
+        const method = ControlService.methods[12];
+        return this.makeUnaryRequest<PatchMarkupRequest, PatchMarkupResponse>(`/${ControlService.typeName}/${method.name}`, (value: PatchMarkupRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): PatchMarkupResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
+    }
+    /**
+     * ListStyles reports the markup context's style table — the names a
+     * Style="..." attribute can resolve (MCP list_styles, issue #117). An
+     * unknown style silently renders unstyled, so a markup generator must
+     * draw from this list.
+     *
+     * @generated from protobuf rpc: ListStyles
+     */
+    listStyles(input: ListStylesRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void)): grpc.ClientUnaryCall {
+        const method = ControlService.methods[13];
+        return this.makeUnaryRequest<ListStylesRequest, ListStylesResponse>(`/${ControlService.typeName}/${method.name}`, (value: ListStylesRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): ListStylesResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
+    }
+    /**
+     * ValidateMarkup checks a document against the live binding context —
+     * the exact parse-and-bind path SwapMarkup runs, including declared
+     * properties — without attaching anything or composing a frame (MCP
+     * validate_markup, issue #117). INVALID markup is a normal response
+     * carrying the typed load error, NOT a status error: the RPC was
+     * asked whether the markup is valid and it answered, which is what
+     * lets a generation loop retry cheaply without flickering the page.
+     *
+     * @generated from protobuf rpc: ValidateMarkup
+     */
+    validateMarkup(input: ValidateMarkupRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void)): grpc.ClientUnaryCall {
+        const method = ControlService.methods[14];
+        return this.makeUnaryRequest<ValidateMarkupRequest, ValidateMarkupResponse>(`/${ControlService.typeName}/${method.name}`, (value: ValidateMarkupRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): ValidateMarkupResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
 }

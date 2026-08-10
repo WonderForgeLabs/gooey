@@ -227,7 +227,7 @@ class Layout(_message.Message):
     def __init__(self, width: _Optional[int] = ..., height: _Optional[int] = ..., margin: _Optional[_Union[Margin, _Mapping]] = ..., h_align: _Optional[_Union[Align, str]] = ..., v_align: _Optional[_Union[Align, str]] = ..., visibility: _Optional[_Union[Visibility, str]] = ..., grid_row: _Optional[int] = ..., grid_col: _Optional[int] = ..., grid_row_span: _Optional[int] = ..., grid_col_span: _Optional[int] = ..., canvas_left: _Optional[int] = ..., canvas_top: _Optional[int] = ...) -> None: ...
 
 class TreeNode(_message.Message):
-    __slots__ = ("type", "name", "bounds", "layout", "focusable", "focused", "hovered", "props", "attached", "children", "children_elided")
+    __slots__ = ("type", "name", "bounds", "layout", "focusable", "focused", "hovered", "props", "attached", "children", "children_elided", "declared", "control")
     class PropsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -246,6 +246,8 @@ class TreeNode(_message.Message):
     ATTACHED_FIELD_NUMBER: _ClassVar[int]
     CHILDREN_FIELD_NUMBER: _ClassVar[int]
     CHILDREN_ELIDED_FIELD_NUMBER: _ClassVar[int]
+    DECLARED_FIELD_NUMBER: _ClassVar[int]
+    CONTROL_FIELD_NUMBER: _ClassVar[int]
     type: str
     name: str
     bounds: Rect
@@ -257,7 +259,39 @@ class TreeNode(_message.Message):
     attached: _containers.RepeatedCompositeFieldContainer[TreeNode]
     children: _containers.RepeatedCompositeFieldContainer[TreeNode]
     children_elided: int
-    def __init__(self, type: _Optional[str] = ..., name: _Optional[str] = ..., bounds: _Optional[_Union[Rect, _Mapping]] = ..., layout: _Optional[_Union[Layout, _Mapping]] = ..., focusable: _Optional[bool] = ..., focused: _Optional[bool] = ..., hovered: _Optional[bool] = ..., props: _Optional[_Mapping[str, TypedValue]] = ..., attached: _Optional[_Iterable[_Union[TreeNode, _Mapping]]] = ..., children: _Optional[_Iterable[_Union[TreeNode, _Mapping]]] = ..., children_elided: _Optional[int] = ...) -> None: ...
+    declared: _containers.RepeatedCompositeFieldContainer[DeclaredValue]
+    control: str
+    def __init__(self, type: _Optional[str] = ..., name: _Optional[str] = ..., bounds: _Optional[_Union[Rect, _Mapping]] = ..., layout: _Optional[_Union[Layout, _Mapping]] = ..., focusable: _Optional[bool] = ..., focused: _Optional[bool] = ..., hovered: _Optional[bool] = ..., props: _Optional[_Mapping[str, TypedValue]] = ..., attached: _Optional[_Iterable[_Union[TreeNode, _Mapping]]] = ..., children: _Optional[_Iterable[_Union[TreeNode, _Mapping]]] = ..., children_elided: _Optional[int] = ..., declared: _Optional[_Iterable[_Union[DeclaredValue, _Mapping]]] = ..., control: _Optional[str] = ...) -> None: ...
+
+class DeclaredValue(_message.Message):
+    __slots__ = ("name", "type", "value", "go_type")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    GO_TYPE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    type: ValueKind
+    value: TypedValue
+    go_type: str
+    def __init__(self, name: _Optional[str] = ..., type: _Optional[_Union[ValueKind, str]] = ..., value: _Optional[_Union[TypedValue, _Mapping]] = ..., go_type: _Optional[str] = ...) -> None: ...
+
+class StyleInfo(_message.Message):
+    __slots__ = ("name", "fg", "bg", "bold", "dim", "underline", "reverse")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    FG_FIELD_NUMBER: _ClassVar[int]
+    BG_FIELD_NUMBER: _ClassVar[int]
+    BOLD_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    UNDERLINE_FIELD_NUMBER: _ClassVar[int]
+    REVERSE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    fg: Color
+    bg: Color
+    bold: bool
+    dim: bool
+    underline: bool
+    reverse: bool
+    def __init__(self, name: _Optional[str] = ..., fg: _Optional[_Union[Color, _Mapping]] = ..., bg: _Optional[_Union[Color, _Mapping]] = ..., bold: _Optional[bool] = ..., dim: _Optional[bool] = ..., underline: _Optional[bool] = ..., reverse: _Optional[bool] = ...) -> None: ...
 
 class PointerEvent(_message.Message):
     __slots__ = ("kind", "x", "y", "button")

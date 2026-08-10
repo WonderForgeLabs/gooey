@@ -408,6 +408,95 @@ export interface TreeNode {
      * @generated from protobuf field: int32 children_elided = 11
      */
     childrenElided: number;
+    /**
+     * The markup-declared (<x:Property>) property surface of the control
+     * instance rooted at this node, with current values (issue #117).
+     * Present only on control roots that declare; an arbitrary Go
+     * component's ceiling remains the %T in `type` — its fields cannot be
+     * discovered without reflection, and stay undiscovered. Declared
+     * surfaces serialize; undeclared Go structs never will.
+     *
+     * @generated from protobuf field: repeated gooey.control.v1.DeclaredValue declared = 16
+     */
+    declared: DeclaredValue[];
+    /**
+     * The control file the declarations came from, e.g. "card.gooey".
+     *
+     * @generated from protobuf field: string control = 17
+     */
+    control: string;
+}
+/**
+ * DeclaredValue is one markup-declared dependency property
+ * (<x:Property>) as a tree snapshot reports it: the declaration's name
+ * and kind plus the instance's CURRENT value — where PropertyDeclaration
+ * carries the declared default, this carries what the running instance
+ * holds now.
+ *
+ * @generated from protobuf message gooey.control.v1.DeclaredValue
+ */
+export interface DeclaredValue {
+    /**
+     * @generated from protobuf field: string name = 1
+     */
+    name: string;
+    /**
+     * @generated from protobuf field: gooey.control.v1.ValueKind type = 2
+     */
+    type: ValueKind;
+    /**
+     * The current value, for kinds TypedValue carries. Absent for
+     * VALUE_KIND_ANY handles, whose ceiling is the descriptor.
+     *
+     * @generated from protobuf field: gooey.control.v1.TypedValue value = 3
+     */
+    value?: TypedValue;
+    /**
+     * For off-table handles (VALUE_KIND_ANY): the Go type (%T) of what
+     * the handle holds. Diagnostic only — never parse it.
+     *
+     * @generated from protobuf field: string go_type = 4
+     */
+    goType: string;
+}
+/**
+ * StyleInfo is one named entry in the markup context's style table —
+ * what a Style="name" attribute can resolve. An unknown style name in
+ * markup silently renders unstyled, so a markup generator needs this
+ * table. Mirrors render.Style; colors carry their Set flag, so an unset
+ * attribute stays distinguishable from black.
+ *
+ * @generated from protobuf message gooey.control.v1.StyleInfo
+ */
+export interface StyleInfo {
+    /**
+     * @generated from protobuf field: string name = 1
+     */
+    name: string;
+    /**
+     * @generated from protobuf field: gooey.control.v1.Color fg = 2
+     */
+    fg?: Color;
+    /**
+     * @generated from protobuf field: gooey.control.v1.Color bg = 3
+     */
+    bg?: Color;
+    /**
+     * @generated from protobuf field: bool bold = 4
+     */
+    bold: boolean;
+    /**
+     * @generated from protobuf field: bool dim = 5
+     */
+    dim: boolean;
+    /**
+     * @generated from protobuf field: bool underline = 6
+     */
+    underline: boolean;
+    /**
+     * @generated from protobuf field: bool reverse = 7
+     */
+    reverse: boolean;
 }
 /**
  * PointerEvent is one pointer action at a cell coordinate.
@@ -1452,7 +1541,9 @@ class TreeNode$Type extends MessageType<TreeNode> {
             { no: 8, name: "props", kind: "map", K: 9 /*ScalarType.STRING*/, V: { kind: "message", T: () => TypedValue } },
             { no: 9, name: "attached", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => TreeNode },
             { no: 10, name: "children", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => TreeNode },
-            { no: 11, name: "children_elided", kind: "scalar", T: 5 /*ScalarType.INT32*/ }
+            { no: 11, name: "children_elided", kind: "scalar", T: 5 /*ScalarType.INT32*/ },
+            { no: 16, name: "declared", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => DeclaredValue },
+            { no: 17, name: "control", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
         ]);
     }
     create(value?: PartialMessage<TreeNode>): TreeNode {
@@ -1466,6 +1557,8 @@ class TreeNode$Type extends MessageType<TreeNode> {
         message.attached = [];
         message.children = [];
         message.childrenElided = 0;
+        message.declared = [];
+        message.control = "";
         if (value !== undefined)
             reflectionMergePartial<TreeNode>(this, message, value);
         return message;
@@ -1507,6 +1600,12 @@ class TreeNode$Type extends MessageType<TreeNode> {
                     break;
                 case /* int32 children_elided */ 11:
                     message.childrenElided = reader.int32();
+                    break;
+                case /* repeated gooey.control.v1.DeclaredValue declared */ 16:
+                    message.declared.push(DeclaredValue.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                case /* string control */ 17:
+                    message.control = reader.string();
                     break;
                 default:
                     let u = options.readUnknownField;
@@ -1573,6 +1672,12 @@ class TreeNode$Type extends MessageType<TreeNode> {
         /* int32 children_elided = 11; */
         if (message.childrenElided !== 0)
             writer.tag(11, WireType.Varint).int32(message.childrenElided);
+        /* repeated gooey.control.v1.DeclaredValue declared = 16; */
+        for (let i = 0; i < message.declared.length; i++)
+            DeclaredValue.internalBinaryWrite(message.declared[i], writer.tag(16, WireType.LengthDelimited).fork(), options).join();
+        /* string control = 17; */
+        if (message.control !== "")
+            writer.tag(17, WireType.LengthDelimited).string(message.control);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
@@ -1583,6 +1688,169 @@ class TreeNode$Type extends MessageType<TreeNode> {
  * @generated MessageType for protobuf message gooey.control.v1.TreeNode
  */
 export const TreeNode = new TreeNode$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class DeclaredValue$Type extends MessageType<DeclaredValue> {
+    constructor() {
+        super("gooey.control.v1.DeclaredValue", [
+            { no: 1, name: "name", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 2, name: "type", kind: "enum", T: () => ["gooey.control.v1.ValueKind", ValueKind, "VALUE_KIND_"] },
+            { no: 3, name: "value", kind: "message", T: () => TypedValue },
+            { no: 4, name: "go_type", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<DeclaredValue>): DeclaredValue {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.name = "";
+        message.type = 0;
+        message.goType = "";
+        if (value !== undefined)
+            reflectionMergePartial<DeclaredValue>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: DeclaredValue): DeclaredValue {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string name */ 1:
+                    message.name = reader.string();
+                    break;
+                case /* gooey.control.v1.ValueKind type */ 2:
+                    message.type = reader.int32();
+                    break;
+                case /* gooey.control.v1.TypedValue value */ 3:
+                    message.value = TypedValue.internalBinaryRead(reader, reader.uint32(), options, message.value);
+                    break;
+                case /* string go_type */ 4:
+                    message.goType = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: DeclaredValue, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string name = 1; */
+        if (message.name !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.name);
+        /* gooey.control.v1.ValueKind type = 2; */
+        if (message.type !== 0)
+            writer.tag(2, WireType.Varint).int32(message.type);
+        /* gooey.control.v1.TypedValue value = 3; */
+        if (message.value)
+            TypedValue.internalBinaryWrite(message.value, writer.tag(3, WireType.LengthDelimited).fork(), options).join();
+        /* string go_type = 4; */
+        if (message.goType !== "")
+            writer.tag(4, WireType.LengthDelimited).string(message.goType);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.DeclaredValue
+ */
+export const DeclaredValue = new DeclaredValue$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class StyleInfo$Type extends MessageType<StyleInfo> {
+    constructor() {
+        super("gooey.control.v1.StyleInfo", [
+            { no: 1, name: "name", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 2, name: "fg", kind: "message", T: () => Color },
+            { no: 3, name: "bg", kind: "message", T: () => Color },
+            { no: 4, name: "bold", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 5, name: "dim", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 6, name: "underline", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 7, name: "reverse", kind: "scalar", T: 8 /*ScalarType.BOOL*/ }
+        ]);
+    }
+    create(value?: PartialMessage<StyleInfo>): StyleInfo {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.name = "";
+        message.bold = false;
+        message.dim = false;
+        message.underline = false;
+        message.reverse = false;
+        if (value !== undefined)
+            reflectionMergePartial<StyleInfo>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: StyleInfo): StyleInfo {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string name */ 1:
+                    message.name = reader.string();
+                    break;
+                case /* gooey.control.v1.Color fg */ 2:
+                    message.fg = Color.internalBinaryRead(reader, reader.uint32(), options, message.fg);
+                    break;
+                case /* gooey.control.v1.Color bg */ 3:
+                    message.bg = Color.internalBinaryRead(reader, reader.uint32(), options, message.bg);
+                    break;
+                case /* bool bold */ 4:
+                    message.bold = reader.bool();
+                    break;
+                case /* bool dim */ 5:
+                    message.dim = reader.bool();
+                    break;
+                case /* bool underline */ 6:
+                    message.underline = reader.bool();
+                    break;
+                case /* bool reverse */ 7:
+                    message.reverse = reader.bool();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: StyleInfo, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string name = 1; */
+        if (message.name !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.name);
+        /* gooey.control.v1.Color fg = 2; */
+        if (message.fg)
+            Color.internalBinaryWrite(message.fg, writer.tag(2, WireType.LengthDelimited).fork(), options).join();
+        /* gooey.control.v1.Color bg = 3; */
+        if (message.bg)
+            Color.internalBinaryWrite(message.bg, writer.tag(3, WireType.LengthDelimited).fork(), options).join();
+        /* bool bold = 4; */
+        if (message.bold !== false)
+            writer.tag(4, WireType.Varint).bool(message.bold);
+        /* bool dim = 5; */
+        if (message.dim !== false)
+            writer.tag(5, WireType.Varint).bool(message.dim);
+        /* bool underline = 6; */
+        if (message.underline !== false)
+            writer.tag(6, WireType.Varint).bool(message.underline);
+        /* bool reverse = 7; */
+        if (message.reverse !== false)
+            writer.tag(7, WireType.Varint).bool(message.reverse);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.StyleInfo
+ */
+export const StyleInfo = new StyleInfo$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class PointerEvent$Type extends MessageType<PointerEvent> {
     constructor() {
