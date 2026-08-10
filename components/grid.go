@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // GridLen is one row/column definition: Fixed cells, Auto (size to
@@ -53,16 +55,20 @@ func ParseGridLens(s string) ([]GridLen, error) {
 
 // Grid is the workhorse layout panel: children go into cells addressed
 // by the Layout attached properties Row/Col/RowSpan/ColSpan.
-// Missing definitions default to a single star track.
+// Missing definitions default to a single star track. Background, when
+// set, is filled by the framework (gooey.HasBackground).
 type Grid struct {
 	gooey.Base
 	Rows, Cols []GridLen
 	Children   []gooey.Component
+	Background *prop.Property[render.Color]
 
 	rowSz, colSz []int
 }
 
 func (g *Grid) ChildComponents() []gooey.Component { return g.Children }
+
+func (g *Grid) BackgroundProperty() *prop.Property[render.Color] { return g.Background }
 
 func (g *Grid) rows() []GridLen {
 	if len(g.Rows) == 0 {

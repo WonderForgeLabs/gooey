@@ -1,6 +1,10 @@
 package components
 
-import "github.com/WonderForgeLabs/gooey"
+import (
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
+)
 
 // Canvas is the absolute-positioning panel: every child sits at the
 // offset its Canvas.Left/Canvas.Top attached properties name, at its own
@@ -22,25 +26,26 @@ import "github.com/WonderForgeLabs/gooey"
 //
 //   - Children may OVERLAP, and paint order is tree order — a later
 //     sibling paints over an earlier one.
-//   - Overlap and damage tracking interact. Each component's paint is its
-//     own node covering its own rect, and a leaf pre-clears that rect
-//     before repainting (composer.go). So when an OCCLUDED component
-//     repaints alone, it clears its rect and paints itself — over the
-//     part of the sibling that was covering it, and that sibling is
-//     clean, so nothing restores it until something else dirties it.
-//     Overlapping Canvas children are therefore only safe when the
-//     occluded one is static. This is a real limit of paint-level
-//     damage, not a Canvas bug; the fix is a z-ordered repaint of
-//     intersecting nodes, which the POC does not do.
-//     TestCanvasOverlapRepaintLeavesOccluderDamaged pins the behavior.
+//   - Overlap and damage tracking interact through the Composer's
+//     z-ordered repaint (composer.go): when an OCCLUDED component
+//     repaints alone, every later sibling whose bounds intersect it is
+//     forced to repaint in the same frame, so the occluder lands back on
+//     top. The cost is honest — overlapping children repaint together —
+//     and the pixels are always in tree order.
+//     TestCanvasOverlapRepaintRepaintsTheOccluderAbove pins the behavior.
+//
+// Background, when set, is filled by the framework (gooey.HasBackground).
 type Canvas struct {
 	gooey.Base
-	Children []gooey.Component
+	Children   []gooey.Component
+	Background *prop.Property[render.Color]
 
 	sizes []gooey.Size
 }
 
 func (c *Canvas) ChildComponents() []gooey.Component { return c.Children }
+
+func (c *Canvas) BackgroundProperty() *prop.Property[render.Color] { return c.Background }
 
 // Measure returns everything it is offered: a Canvas is a positioning
 // surface, so it fills its slot rather than shrinking to its content

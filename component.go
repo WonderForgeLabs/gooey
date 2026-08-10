@@ -12,6 +12,7 @@ import (
 	"io"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -35,6 +36,41 @@ type Component interface {
 // not the component — walks them, so the Composer can give every component
 // its own paint node.
 type Container interface{ ChildComponents() []Component }
+
+// HasBackground is implemented by containers that declare a background
+// fill. The fill itself is the framework's job — the Composer (and the
+// one-shot Compose) paints the container's bounds with the color before
+// the container's chrome and its children go down — so a container
+// declares the surface and still paints only its own chrome.
+//
+// A nil handle means the container has no background and stays on the
+// cheap chrome-only damage path. A non-nil handle whose color is unset
+// still fills — with the nearest ancestor's background — so clearing a
+// background at runtime erases the old fill instead of leaving it
+// stranded. Either way, a container with a background handle overpaints
+// its subtree when it repaints, and the Composer's z-ordered pass
+// repaints the subtree above it in the same frame.
+type HasBackground interface {
+	BackgroundProperty() *prop.Property[render.Color]
+}
+
+// Decorator is implemented by components whose Render owns no cells of
+// its own: it re-styles cells that earlier siblings painted (ItemsView's
+// row highlight). The Composer's z-ordered repaint pass does not force
+// one when a component below it repaints — with no cells of its own on
+// screen it has nothing to restore, and a live decorator re-applies
+// through its own dependencies, which is the contract that makes it a
+// decorator in the first place.
+type Decorator interface{ DecoratesCells() }
+
+// backgroundProp returns w's declared background handle, or nil when w
+// declares none.
+func backgroundProp(w Component) *prop.Property[render.Color] {
+	if hb, ok := w.(HasBackground); ok {
+		return hb.BackgroundProperty()
+	}
+	return nil
+}
 
 // Frame is one composed frame: the cell plane plus deferred pixel
 // placements. Graphics is nil when the terminal has no pixel protocol —
@@ -108,6 +144,13 @@ func renderTree(w Component, f *Frame) {
 		return // collapsed subtrees paint nothing at all
 	}
 	if paintable(w) {
+		if bp := backgroundProp(w); bp != nil {
+			if col := bp.Get(); col.Set {
+				if b, ok := w.(Bounded); ok {
+					fillRect(f.Cells, b.Bounds(), render.Style{Bg: col})
+				}
+			}
+		}
 		w.Render(f)
 	}
 	if c, ok := w.(Container); ok {

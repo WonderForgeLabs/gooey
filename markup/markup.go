@@ -526,10 +526,15 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		if err != nil {
 			return nil, err
 		}
+		background, err := bindColor(e, ctx, "Background")
+		if err != nil {
+			return nil, err
+		}
 		b := &components.Border{
-			Child: child,
-			Title: title,
-			Style: style,
+			Child:      child,
+			Title:      title,
+			Style:      style,
+			Background: background,
 		}
 		if err := attachAll(e, b, attach); err != nil {
 			return nil, err
@@ -548,7 +553,11 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		if err != nil {
 			return nil, err
 		}
-		g := &components.Grid{Rows: rows, Cols: cols, Children: kids}
+		background, err := bindColor(e, ctx, "Background")
+		if err != nil {
+			return nil, err
+		}
+		g := &components.Grid{Rows: rows, Cols: cols, Children: kids, Background: background}
 		if err := attachAll(e, g, attach); err != nil {
 			return nil, err
 		}
@@ -559,9 +568,13 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		if err != nil {
 			return nil, err
 		}
-		var w gooey.Component = &components.HStack{Children: kids, Gap: gap}
+		background, err := bindColor(e, ctx, "Background")
+		if err != nil {
+			return nil, err
+		}
+		var w gooey.Component = &components.HStack{Children: kids, Gap: gap, Background: background}
 		if e.Name == "VStack" {
-			w = &components.VStack{Children: kids, Gap: gap}
+			w = &components.VStack{Children: kids, Gap: gap, Background: background}
 		}
 		if err := attachAll(e, w, attach); err != nil {
 			return nil, err
@@ -574,7 +587,11 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		if err != nil {
 			return nil, err
 		}
-		c := &components.Canvas{Children: kids}
+		background, err := bindColor(e, ctx, "Background")
+		if err != nil {
+			return nil, err
+		}
+		c := &components.Canvas{Children: kids, Background: background}
 		if err := attachAll(e, c, attach); err != nil {
 			return nil, err
 		}
@@ -961,6 +978,26 @@ func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
 		return boundProp[render.Style](e, ctx, "Style")
 	}
 	return components.Sty(ctx.Styles[raw]), nil
+}
+
+// bindColor resolves a color attribute: the #rgb/#rrggbb literal markup
+// already speaks (propKinds "color"), or a binding to the viewmodel's own
+// *prop.Property[render.Color] handle. An absent attribute yields nil —
+// for Background that keeps the container on the chrome-only damage
+// path, so only pages that declare a fill pay for one.
+func bindColor(e Element, ctx *Context, attr string) (*prop.Property[render.Color], error) {
+	raw, ok := e.Attrs[attr]
+	if !ok || raw == "" {
+		return nil, nil
+	}
+	if bindRe.MatchString(raw) {
+		return boundProp[render.Color](e, ctx, attr)
+	}
+	col, err := parseHexColor(raw)
+	if err != nil {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
+	}
+	return components.Col(col), nil
 }
 
 // boundProp resolves an attribute that must be a typed property HANDLE

@@ -153,3 +153,93 @@ computed and assign it in a command, or keep using the Composer's delta
 detection, which now makes the plain-field mutation safe for leaves.
 This belongs with `<x:Property>` and typed non-string attribute
 bindings.
+
+---
+
+## Executed (2026-08-10)
+
+Both problems, solved together as this record asked, plus the addendum's
+hidden-container chrome — epic #26.
+
+**The surface.** `Background *prop.Property[render.Color]` on `Border`,
+`VStack`, `HStack`, `Grid`, and `Canvas`, declared to the framework
+through `gooey.HasBackground` (`BackgroundProperty()` returning the
+handle — a method name, because `Background` is the field). A color, not
+a `Style`: a fill is blank cells with a background; anything more is the
+leaf's own styling. Markup: `Background="#rrggbb"` (the existing color
+literal) or a binding to the viewmodel's `*prop.Property[render.Color]`
+handle, via `bindColor`, on all five container elements. The fill itself
+is the FRAMEWORK's paint, not the component's: the Composer (and the
+one-shot `Compose`) fills the container's bounds before its chrome and
+children go down, so "containers paint only their own chrome" survives
+verbatim — `Border.Render`'s only change is that chrome drawn with an
+unset style background sits ON the fill instead of punching through it.
+
+**Problem 1** landed as analyzed: the leaf pre-clear goes to
+`Composer.clearStyle` — walk the paint-node parent chain (a `parent`
+pointer added to `paintNode`, maintained through `Dynamic` re-syncs),
+first visible ancestor with a set background wins. The read happens
+inside the leaf's paint node, so the dependency registration fell out of
+the graph exactly as the record predicted: recoloring a panel repaints
+the panel and every leaf that clears against it, with no new
+invalidation machinery. The out-of-evaluation clears (vacated bounds,
+departed nodes) use the same walk as plain reads.
+
+**Problem 2** landed as the record's item 2 sketched — repaint targets
+collected during the frame, drained outside any `compute()` — but
+simpler than a queue: one forward pass over `c.nodes`, which is already
+depth-first pre-order, i.e. z-order. As the loop paints, it remembers
+what painted (`frameSeq` stamps); before evaluating each node it checks
+whether anything already painted this frame intersects its bounds, and
+if so bumps the node's `rev` — a `Set` between evaluations, never inside
+one, the same legality as the bounds sweep. One pass suffices because
+paint can only damage nodes LATER in z-order, and the forcing cascades
+forward transitively. The record's fear — "mutating the graph during an
+evaluation" — never materializes.
+
+**Deviations and discoveries.**
+
+1. Two exemptions were needed to keep damage counts at their old
+   minima, and both are contracts, not heuristics. A chrome-only
+   container never forces its own DESCENDANTS (its chrome never covers
+   their cells — the same contract that lets containers skip
+   pre-clearing), so a `Border` title change still paints exactly 1; it
+   still forces overlapping non-descendants (a Canvas sibling occluding
+   its ring). And `gooey.Decorator` (new, marker) exempts components
+   that own no cells from being forced from below: ItemsView's
+   `rowHighlight` re-styles cells it does not own, and without the
+   exemption every content change in an unselected row would have paid
+   an extra paint —
+   `TestOneItemChangeRepaintsOneRow` is the pin that caught it.
+2. A container whose `Background` handle is non-nil but whose color is
+   UNSET still fills — with the ancestor's background — so clearing a
+   background at runtime erases the old fill instead of stranding it.
+   Only a nil handle keeps the container on the chrome-only path; the
+   feature costs nothing where it is not used.
+3. The addendum's hidden-container chrome came along for free: a
+   container turning `Hidden` now clears its bounds (to the ancestor
+   background) and the z-pass repaints its still-visible children above
+   it. Visibility stays per-element — hiding a `Border` hides its
+   chrome, not its subtree — which is what `paintable` always meant.
+4. Glyph cells are not blended: a `Text` with an unset style background
+   renders terminal-default cells ON a filled panel (cells have no
+   alpha). The fill shows wherever the leaf's rect is blank; a leaf that
+   wants to sit flush sets its own style background. Border chrome gets
+   the merge because the border and the fill are the same component's
+   declaration.
+
+**Tests.** The three acceptance tests from this record, verbatim in
+intent: `TestChildRepaintAloneLeavesNoHoleInBackground` (1 component, no
+hole), `TestContainerRepaintOverBackgroundRepaintsSubtreeAndWipesNothing`
+(border + forced child, nothing wiped, settles to 0),
+`TestCanvasOverlapRepaintRepaintsTheOccluderAbove` (the inverted pin —
+formerly `TestCanvasOverlapRepaintLeavesOccluderDamaged`, which
+documented the artifact). Plus
+`TestBackgroundChangeRepaintsTheLeavesThatClearAgainstIt` (the automatic
+dependency), `TestStackBackgroundFillsTheGapCells` (the gap cells that
+ruled out "let the leaves do it"),
+`TestChromeOnlyContainerRepaintStaysOneComponent` and the untouched
+`TestContainerRepaintPreservesChildCells` (the old minima hold), and
+`TestHidingAContainerAtRuntimeErasesItsChrome` (the addendum). Markup:
+`TestContainerBackgroundAttribute`,
+`TestContainerBackgroundRejectsBadLiterals`.

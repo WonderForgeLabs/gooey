@@ -1,17 +1,25 @@
 package components
 
-import "github.com/WonderForgeLabs/gooey"
+import (
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
+)
 
 // HStack is VStack's horizontal twin: children left to right, each
 // measured against the width left over, Gap columns between them.
+// Background, when set, is filled by the framework (gooey.HasBackground).
 type HStack struct {
 	gooey.Base
-	Children []gooey.Component
-	Gap      int
-	sizes    []gooey.Size
+	Children   []gooey.Component
+	Gap        int
+	Background *prop.Property[render.Color]
+	sizes      []gooey.Size
 }
 
 func (h *HStack) ChildComponents() []gooey.Component { return h.Children }
+
+func (h *HStack) BackgroundProperty() *prop.Property[render.Color] { return h.Background }
 
 func (h *HStack) Measure(avail gooey.Size) gooey.Size {
 	h.sizes = h.sizes[:0]

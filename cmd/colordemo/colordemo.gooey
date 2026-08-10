@@ -4,7 +4,10 @@
        a channel in the picker restyles the border, the title, and the
        cascade below through the property graph — no theme system, no
        "apply style" call anywhere. -->
-  <Border Title="gooey — color" Style="{{.AccentStyle}}">
+  <!-- Background makes the page a filled surface: the framework paints
+       the fill, leaves pre-clear against it, and a Border repaint
+       z-orders its subtree back on top. -->
+  <Border Title="gooey — color" Style="{{.AccentStyle}}" Background="#12121e">
     <Grid Rows="Auto,*,Auto">
       <Text Grid.Row="0" Style="{{.AccentStyle}}">
         arrows: ←/→ adjust  ↑/↓ channel  shift: ×16  home/end: 0/255  •  click or scroll a bar  •  q: quit

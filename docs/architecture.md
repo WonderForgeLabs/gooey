@@ -477,24 +477,33 @@ buffer. `components/composer_test.go` pins this down (change one of three texts,
 exactly one node repaints), and `cmd/propdemo` shows it live (a tick
 repainting 2 of 8 components).
 
-### Damage semantics: pre-clear leaves, never containers
+### Damage semantics: pre-clear leaves, fill backgrounds, repaint in z-order
 
-Before a dirty component repaints, its bounds are cleared — but only if it
-is *not* a container:
+Before a dirty leaf repaints, its rect is cleared — to the nearest
+ancestor's `Background`, not to the terminal default, so a `Text` inside
+a colored panel repaints without punching a default-colored hole. The
+read happens inside the leaf's paint node, so the panel's `Background`
+property becomes a dependency of every leaf that clears against it:
+recolor the panel and they all repaint, automatically.
 
-```go
-// Pre-clear only leaves: a container's bounds enclose its
-// children's cells, and wiping those would blank content whose
-// own (clean) nodes won't repaint. Containers overpaint their
-// own chrome in place instead.
-```
-
-This is the subtle center of the damage model. A `Border`'s bounds
-enclose its child. If a title change cleared the whole border rect, the
+A chrome-only container still clears nothing. A `Border`'s bounds
+enclose its child; if a title change cleared the whole border rect, the
 child's cells would be blanked — and the child's paint node, being
 clean, would never repaint them. So containers overpaint their chrome
-(box characters, title) in place, and only leaves get the clear-then-
-paint treatment.
+(box characters, title) in place, and a title change costs exactly one
+component.
+
+A container *with* a `Background` is different by declaration: its fill
+covers its children, so the Composer's z-ordered repaint puts them back.
+Z-order is document order (children above parents, later siblings above
+earlier), and the paint loop forces a repaint of every node above a rect
+somebody below just painted — the forcing is a `Set` between
+evaluations, never inside one, so the evaluation-only-reads discipline
+holds. The same pass makes overlapping `Canvas` children and
+runtime-hidden containers correct, and two exemptions keep the counts
+tight: a chrome-only container never forces its own descendants, and a
+`Decorator` (a component that owns no cells, like the ItemsView row
+highlight) is never forced from below.
 
 ### Layout runs outside the evaluation context
 

@@ -11,14 +11,24 @@ import (
 // here with chrome of its own — and it paints only that chrome, never
 // clearing its interior, because the child's cells belong to the
 // child's paint node.
+//
+// Background declares a fill for the whole box. The fill itself is the
+// framework's job (gooey.HasBackground): the Composer paints the bounds
+// with the color before the chrome and the child go down, and its
+// z-ordered pass repaints the subtree whenever the Border repaints over
+// it. Chrome drawn with a Style whose Bg is unset sits ON the fill
+// rather than punching through it.
 type Border struct {
 	gooey.Base
-	Child gooey.Component
-	Title *prop.Property[string]
-	Style *prop.Property[render.Style]
+	Child      gooey.Component
+	Title      *prop.Property[string]
+	Style      *prop.Property[render.Style]
+	Background *prop.Property[render.Color]
 }
 
 func (b *Border) ChildComponents() []gooey.Component { return []gooey.Component{b.Child} }
+
+func (b *Border) BackgroundProperty() *prop.Property[render.Color] { return b.Background }
 
 func (b *Border) Measure(avail gooey.Size) gooey.Size {
 	inner := gooey.MeasureChild(b.Child, gooey.Size{W: avail.W - 2, H: avail.H - 2})
@@ -33,6 +43,11 @@ func (b *Border) Arrange(r gooey.Rect) {
 func (b *Border) Render(f *gooey.Frame) {
 	r := b.Bounds()
 	style := getSty(b.Style)
+	if !style.Bg.Set {
+		if col := getColor(b.Background); col.Set {
+			style.Bg = col
+		}
+	}
 	for x := r.X + 1; x < r.X+r.W-1; x++ {
 		f.Cells.Set(x, r.Y, '─', style)
 		f.Cells.Set(x, r.Y+r.H-1, '─', style)

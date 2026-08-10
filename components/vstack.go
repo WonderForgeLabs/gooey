@@ -1,18 +1,26 @@
 package components
 
-import "github.com/WonderForgeLabs/gooey"
+import (
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
+)
 
 // VStack stacks its children top to bottom, each one measured against
 // the height left over, with Gap blank rows between them. It paints
-// nothing itself.
+// nothing itself. Background, when set, is filled by the framework
+// (gooey.HasBackground) — it covers the gap rows no child owns.
 type VStack struct {
 	gooey.Base
-	Children []gooey.Component
-	Gap      int
-	sizes    []gooey.Size
+	Children   []gooey.Component
+	Gap        int
+	Background *prop.Property[render.Color]
+	sizes      []gooey.Size
 }
 
 func (v *VStack) ChildComponents() []gooey.Component { return v.Children }
+
+func (v *VStack) BackgroundProperty() *prop.Property[render.Color] { return v.Background }
 
 func (v *VStack) Measure(avail gooey.Size) gooey.Size {
 	v.sizes = v.sizes[:0]
