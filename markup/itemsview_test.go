@@ -191,6 +191,52 @@ func TestActivateAndSelectedBind(t *testing.T) {
 	}
 }
 
+func TestSelectionChangedBindsAndFiresOnAViewMove(t *testing.T) {
+	p := postSource(post{"a", "1"}, post{"b", "2"})
+	changed := 0
+	ctx := listCtx(p, map[string]any{"Reset": gooey.Command(func() { changed++ })})
+	src := `<Gooey>
+  <ItemsView Items="{{.Posts}}" Selected="{{.Sel}}" SelectionChanged="{{.Reset}}">
+    <ItemsView.ItemTemplate><Text>{{.Title}}</Text></ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	w, err := Build([]byte(src), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := gooey.NewComposer(w, 20, 2)
+	c.Frame()
+	c.HandleKey(inputDown())
+	if changed != 1 {
+		t.Fatalf("SelectionChanged ran %d times after ↓, want 1", changed)
+	}
+}
+
+func TestFocusableFalseTakesTheViewOutOfTheTabOrder(t *testing.T) {
+	p := postSource(post{"a", "1"})
+	src := `<Gooey>
+  <ItemsView Items="{{.Posts}}" Selected="{{.Sel}}" Focusable="false">
+    <ItemsView.ItemTemplate><Text>{{.Title}}</Text></ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	w, err := Build([]byte(src), listCtx(p, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.(*components.ItemsView).AcceptsFocus() {
+		t.Fatal(`Focusable="false" left the view in the tab order`)
+	}
+
+	bad := `<Gooey>
+  <ItemsView Items="{{.Posts}}" Focusable="nope">
+    <ItemsView.ItemTemplate><Text>{{.Title}}</Text></ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	if _, err := Build([]byte(bad), listCtx(p, nil)); err == nil || !strings.Contains(err.Error(), "Focusable") {
+		t.Fatalf("err = %v, want a load error naming Focusable", err)
+	}
+}
+
 // A template that names the reserved value takes the selection visual
 // over; otherwise the view draws the house highlight.
 func TestTemplateMentioningSelectedSuppressesTheHouseHighlight(t *testing.T) {

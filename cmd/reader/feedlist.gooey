@@ -1,5 +1,9 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
   <Border Title="{{.Title}}" Style="panel">
-    <FeedRows/>
+    <ItemsView Name="Feeds" Items="{{.Rows}}" Selected="{{.Selected}}" SelectionChanged="{{.Changed}}">
+      <ItemsView.ItemTemplate>
+        <Text Style="{{.Style}}">{{.Label}}</Text>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
   </Border>
 </Gooey>

@@ -10,11 +10,12 @@
 //	enter     print selection and exit      esc/ctrl-c  quit
 //
 // The shell is markup (finder.gooey) and hot-reloads like markuplog.
-// Input is routed rather than switched on: the query line and the
-// results pane are focus stops that consume their own keys, page-level
-// gestures are <KeyBinding> declarations bound to viewmodel commands,
-// and the wheel and clicks arrive by hit-testing — so main's event loop
-// is one call to Composer.Handle.
+// Input is routed rather than switched on: the query line is the only
+// focus stop (fzf-style — typing is always live), the results are an
+// <ItemsView Focusable="false"> whose clicks and wheel arrive by
+// hit-testing, page-level gestures are <KeyBinding> declarations bound
+// to viewmodel commands — so main's event loop is one call to
+// Composer.Handle.
 package main
 
 import (
@@ -94,31 +95,44 @@ func main() {
 			len(files), n, lastMatchDur.Round(time.Microsecond))
 	})
 
-	// --- components, built up front so the commands below can address
-	// them. Hot reload re-runs the builders and hands back these same
-	// instances: the tree is disposable, the state is not.
-	var comp *gooey.Composer
-	res := &resultsPane{rows: matches, sel: sel}
-	// A click selects a row and hands typing straight back to the query
-	// line — the query is always live, fzf-style. Framework
-	// focus-follows-click has already moved focus to the results pane by
-	// the time this runs, so this is a deliberate override, not a
-	// workaround.
+	// The results feed the <ItemsView> as an item source: one row is the
+	// path and its matched positions, both live handles the template's
+	// <MatchLine> binds. The projection reads nothing beyond the item, so
+	// the plain Items adapter is enough.
+	resultRows := components.Items(matches, func(m match) map[string]any {
+		return map[string]any{"Path": m.path, "Hits": m.idxs}
+	})
+
 	// --- commands: the page's gestures resolve to these at load time.
+	var comp *gooey.Composer
+	var ctx *markup.Context
 	running, chosen := true, ""
-	selectBy := func(d int) gooey.Command {
-		return gooey.Command(func() { sel.Set(clampSel(sel.Get()+d, len(matches.Get()))) })
+	selectBy := func(d func() int) gooey.Command {
+		return gooey.Command(func() { sel.Set(clampSel(sel.Get()+d(), len(matches.Get()))) })
 	}
-	ctx := &markup.Context{
+	one := func(n int) func() int { return func() int { return n } }
+	// A page is the results view's height. The view is looked up lazily —
+	// commands resolve at load time, before the tree exists.
+	page := func() int {
+		if v, err := markup.Find[*components.ItemsView](ctx, "results"); err == nil {
+			return max(1, v.Bounds().H)
+		}
+		return 10
+	}
+	ctx = &markup.Context{
 		Values: map[string]any{
-			"Status": status,
-			"Query":  query,
+			"Status":    status,
+			"Query":     query,
+			"Rows":      resultRows,
+			"Selection": sel,
 			// An edit invalidates the ranking, so the selection returns
 			// to the top — the TextBox says WHAT changed, the demo says
 			// what that means.
 			"ResetSelection": gooey.Command(func() { sel.Set(0) }),
-			"SelectPrev":     selectBy(-1),
-			"SelectNext":     selectBy(+1),
+			"SelectPrev":     selectBy(one(-1)),
+			"SelectNext":     selectBy(one(+1)),
+			"SelectPageUp":   selectBy(func() int { return -page() }),
+			"SelectPageDown": selectBy(page),
 			"Accept": gooey.Command(func() {
 				if ms := matches.Get(); len(ms) > 0 {
 					chosen = ms[clampSel(sel.Get(), len(ms))].path
@@ -134,19 +148,11 @@ func main() {
 			"input":  {Bold: true},
 		},
 		Components: map[string]markup.Builder{
-			"Results": func(markup.Element, *markup.Context) (gooey.Component, error) { return res, nil },
+			"MatchLine": buildMatchLine,
 			"Preview": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &previewPane{lines: preview}, nil
 			},
 		},
-	}
-
-	// The query line is <TextBox> in the markup; look it up by name to
-	// hand focus back to it after a click in the results.
-	res.focusQuery = func() {
-		if in, err := markup.Find[*components.TextBox](ctx, "query"); err == nil {
-			comp.Focus().SetFocus(in)
-		}
 	}
 
 	mkDir := "cmd/finder"
@@ -217,101 +223,60 @@ func clampSel(i, n int) int {
 // The query line used to be a demo-local component here. It is
 // components.TextBox now — the framework version does its own editing,
 // carries a real caret, and scrolls horizontally, none of which this
-// demo had to grow itself.
+// demo had to grow itself. The results pane followed: selection,
+// windowing, clicks and the wheel are components.ItemsView. What is left
+// is the one cell no builtin draws — a path with its matched runes lit —
+// and the template places it.
 
-// resultsPane is the second focus stop. It owns ↑/↓ while focused, and
-// takes clicks and the wheel by hit-test whether focused or not.
-type resultsPane struct {
+// buildMatchLine is the markup builder for <MatchLine Path="{{.Path}}"
+// Hits="{{.Hits}}"/>: both attributes resolve to the ROW's live handles,
+// so a re-projection reaches a reused row without rebuilding it.
+func buildMatchLine(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+	pv, err := ctx.BindingValue(e.Attrs["Path"])
+	if err != nil {
+		return nil, fmt.Errorf("markup: <MatchLine Path=%q>: %w", e.Attrs["Path"], err)
+	}
+	path, ok := pv.(*prop.Property[string])
+	if !ok {
+		return nil, fmt.Errorf("markup: <MatchLine Path=%q> is %T; need *prop.Property[string]", e.Attrs["Path"], pv)
+	}
+	hv, err := ctx.BindingValue(e.Attrs["Hits"])
+	if err != nil {
+		return nil, fmt.Errorf("markup: <MatchLine Hits=%q>: %w", e.Attrs["Hits"], err)
+	}
+	hits, ok := hv.(*prop.Property[[]int])
+	if !ok {
+		return nil, fmt.Errorf("markup: <MatchLine Hits=%q> is %T; need *prop.Property[[]int]", e.Attrs["Hits"], hv)
+	}
+	return &matchLine{path: path, hits: hits}, nil
+}
+
+// matchLine paints one result row: the path, with the fuzzy match's rune
+// positions in the accent style. Selection is not its business — the
+// view's house highlight re-styles whatever this painted.
+type matchLine struct {
 	gooey.Base
-	gooey.FocusState
-	rows       *prop.Property[[]match]
-	sel        *prop.Property[int]
-	focusQuery func()
+	path *prop.Property[string]
+	hits *prop.Property[[]int]
 }
 
-func (w *resultsPane) Measure(avail gooey.Size) gooey.Size { return avail }
+func (w *matchLine) Measure(avail gooey.Size) gooey.Size { return gooey.Size{W: avail.W, H: 1} }
 
-func (w *resultsPane) move(d int) {
-	w.sel.Set(clampSel(w.sel.Get()+d, len(w.rows.Get())))
-}
-
-func (w *resultsPane) HandleKey(ev input.KeyEvent) bool {
-	switch ev {
-	case input.Named(input.KeyUp):
-		w.move(-1)
-	case input.Named(input.KeyDown):
-		w.move(+1)
-	case input.Named(input.KeyPageUp):
-		w.move(-w.Bounds().H)
-	case input.Named(input.KeyPageDown):
-		w.move(+w.Bounds().H)
-	default:
-		return false
-	}
-	return true
-}
-
-func (w *resultsPane) HandleMouse(ev input.MouseEvent) bool {
-	switch ev.Kind {
-	case input.MousePress:
-		row := w.top() + ev.Y - w.Bounds().Y
-		if row < 0 || row >= len(w.rows.Get()) {
-			return false
-		}
-		w.sel.Set(row)
-		if w.focusQuery != nil {
-			w.focusQuery()
-		}
-		return true
-	case input.WheelUp:
-		w.move(-wheelStep)
-	case input.WheelDown:
-		w.move(+wheelStep)
-	default:
-		return false
-	}
-	return true
-}
-
-// wheelStep is the conventional three lines per notch; one line per
-// notch reads as broken in a long list.
-const wheelStep = 3
-
-// top is the first visible row — the same scroll arithmetic Render
-// uses, so a click maps back to the row the user actually sees.
-func (w *resultsPane) top() int {
-	return max(0, clampSel(w.sel.Get(), len(w.rows.Get()))-w.Bounds().H+1)
-}
-
-func (w *resultsPane) Render(f *gooey.Frame) {
+func (w *matchLine) Render(f *gooey.Frame) {
 	b := w.Bounds()
-	ms := w.rows.Get()
-	selected := clampSel(w.sel.Get(), len(ms))
-	// Keep the selection in view.
-	top := max(0, selected-b.H+1)
 	hit := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
-	for row := 0; row < b.H && top+row < len(ms); row++ {
-		m := ms[top+row]
-		base := render.Style{}
-		if top+row == selected {
-			base.Reverse = true
-			for x := 0; x < b.W; x++ {
-				f.Cells.Set(b.X+x, b.Y+row, ' ', base)
-			}
+	idxs := w.hits.Get()
+	k := 0
+	for i, r := range w.path.Get() {
+		if i >= b.W-1 {
+			break
 		}
-		idx := 0
-		for i, r := range m.path {
-			if i >= b.W-1 {
-				break
-			}
-			st := base
-			if idx < len(m.idxs) && m.idxs[idx] == i {
-				st = hit
-				st.Reverse = base.Reverse
-				idx++
-			}
-			f.Cells.Set(b.X+i, b.Y+row, r, st)
+		st := render.Style{}
+		if k < len(idxs) && idxs[k] == i {
+			st = hit
+			k++
 		}
+		f.Cells.Set(b.X+i, b.Y, r, st)
 	}
 }
 

@@ -5,20 +5,32 @@
                Text="{{.Query}}" Prompt="&gt; " Style="input"
                AccentStyle="accent" Changed="{{.ResetSelection}}"/>
       <Text    Grid.Row="1" Grid.ColSpan="2" Style="dim">{{.Status}}</Text>
-      <Results Grid.Row="2" Grid.Col="0"/>
+
+      <!-- The results are an ItemsView with Focusable="false": fzf-style,
+           the query line is the ONLY focus stop, so a click selects a row
+           (hit-testing needs no focus) and typing never goes dead. The
+           match-highlight cell is this demo's own component, placed BY
+           the template. -->
+      <ItemsView Grid.Row="2" Grid.Col="0" Name="results"
+                 Items="{{.Rows}}" Selected="{{.Selection}}" Focusable="false">
+        <ItemsView.ItemTemplate>
+          <MatchLine Path="{{.Path}}" Hits="{{.Hits}}"/>
+        </ItemsView.ItemTemplate>
+      </ItemsView>
       <Preview Grid.Row="2" Grid.Col="1" Margin="2,0,0,0"/>
 
-      <!-- Page-level gestures. They sit above both focus stops, so
-           dispatch reaches them only after the focused component declined
-           the key: ↑/↓ land here while the query line has focus, and are
-           consumed by the results pane while it does. -->
-      <KeyBinding Gesture="enter"  Command="{{.Accept}}"/>
-      <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
-      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
-      <KeyBinding Gesture="up"     Command="{{.SelectPrev}}"/>
-      <KeyBinding Gesture="down"   Command="{{.SelectNext}}"/>
-      <KeyBinding Gesture="ctrl+p" Command="{{.SelectPrev}}"/>
-      <KeyBinding Gesture="ctrl+n" Command="{{.SelectNext}}"/>
+      <!-- Page-level gestures. With the query line the only focus stop
+           they are effectively global: every list gesture lands here
+           after the TextBox declines it. -->
+      <KeyBinding Gesture="enter"    Command="{{.Accept}}"/>
+      <KeyBinding Gesture="esc"      Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c"   Command="{{.Quit}}"/>
+      <KeyBinding Gesture="up"       Command="{{.SelectPrev}}"/>
+      <KeyBinding Gesture="down"     Command="{{.SelectNext}}"/>
+      <KeyBinding Gesture="ctrl+p"   Command="{{.SelectPrev}}"/>
+      <KeyBinding Gesture="ctrl+n"   Command="{{.SelectNext}}"/>
+      <KeyBinding Gesture="pageup"   Command="{{.SelectPageUp}}"/>
+      <KeyBinding Gesture="pagedown" Command="{{.SelectPageDown}}"/>
     </Grid>
   </Border>
 </Gooey>

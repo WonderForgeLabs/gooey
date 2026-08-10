@@ -403,6 +403,269 @@ func TestUnselectableListStillRenders(t *testing.T) {
 	}
 }
 
+// ---- scroll mode: the log-pane shape ----
+
+func newScrollList(t *testing.T, items []story, rows int) (*prop.Property[[]story], *prop.Property[int], *ItemsView, *gooey.Composer) {
+	t.Helper()
+	src := prop.NewSource(items)
+	scroll := prop.NewSource(0)
+	v := &ItemsView{Items: Items(src, projectStory), Scroll: scroll, Template: titleTemplate}
+	return src, scroll, v, gooey.NewComposer(v, 20, rows)
+}
+
+func TestScrollListAnchorsToTheTailAndFollowsAppends(t *testing.T) {
+	src, _, v, c := newScrollList(t, numbered(10), 4)
+	f, _ := c.Frame()
+	want := []string{"item6", "item7", "item8", "item9"}
+	if got := rowsOf(f.Cells, 4); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("rows = %v, want the tail %v", got, want)
+	}
+
+	next := append(numbered(10), story{Title: "item10"})
+	src.Set(next)
+	f, _ = c.Frame()
+	if got := row(f.Cells, 3); got != "item10" {
+		t.Fatalf("bottom row = %q after an append at offset 0, want item10", got)
+	}
+	if v.top != 7 {
+		t.Fatalf("top = %d, want 7 — the window must follow the tail", v.top)
+	}
+}
+
+func TestScrollOffsetHoldsHistoryStillWhileItemsArrive(t *testing.T) {
+	src, scroll, _, c := newScrollList(t, numbered(10), 4)
+	c.Frame()
+
+	scroll.Set(3) // three rows back from the tail: item3..item6
+	f, _ := c.Frame()
+	if got := row(f.Cells, 0); got != "item3" {
+		t.Fatalf("top row = %q at offset 3, want item3", got)
+	}
+
+	// An append while scrolled back: the offset is from the TAIL, so the
+	// window slides with it — the same lines-back-from-now a pager shows.
+	src.Set(append(numbered(10), story{Title: "item10"}))
+	f, _ = c.Frame()
+	if got := row(f.Cells, 0); got != "item4" {
+		t.Fatalf("top row = %q after an append at offset 3, want item4", got)
+	}
+}
+
+func TestScrollKeysAndWheelMoveTheWindow(t *testing.T) {
+	_, scroll, v, c := newScrollList(t, numbered(20), 4)
+	c.Frame()
+
+	cases := []struct {
+		ev   input.KeyEvent
+		want int
+	}{
+		{input.Rune('k'), 1},
+		{input.Named(input.KeyUp), 2},
+		{input.Rune('j'), 1},
+		{input.Named(input.KeyDown), 0},
+		{input.Named(input.KeyPageUp), 4},
+		{input.Named(input.KeyHome), 16}, // 20 items - 4 visible
+		{input.Named(input.KeyPageDown), 12},
+		{input.Named(input.KeyEnd), 0},
+	}
+	for _, tc := range cases {
+		if !v.HandleKey(tc.ev) {
+			t.Fatalf("%v was not consumed", tc.ev)
+		}
+		if got := scroll.Get(); got != tc.want {
+			t.Fatalf("after %v scroll = %d, want %d", tc.ev, got, tc.want)
+		}
+	}
+	if v.HandleKey(input.Rune(' ')) {
+		t.Fatal("a scroll list consumed a key it does not use — it must bubble")
+	}
+	if v.HandleKey(input.Named(input.KeyEnter)) {
+		t.Fatal("enter must bubble from a scroll list with no Activate")
+	}
+
+	v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 1, Y: 1})
+	if got := scroll.Get(); got != wheelStep {
+		t.Fatalf("wheel up scrolled to %d, want %d", got, wheelStep)
+	}
+	v.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 1, Y: 1})
+	if got := scroll.Get(); got != 0 {
+		t.Fatalf("wheel down scrolled to %d, want 0", got)
+	}
+}
+
+func TestScrollClampIsDamageFree(t *testing.T) {
+	_, scroll, v, c := newScrollList(t, numbered(4), 6)
+	c.Frame()
+
+	// Four items in six rows: there is nowhere to scroll. The gesture is
+	// consumed (it is aimed at the list), but the offset must not move —
+	// an uncompared Set here would repaint the list for every key.
+	if !v.HandleKey(input.Rune('k')) {
+		t.Fatal("k was not consumed")
+	}
+	if scroll.Get() != 0 {
+		t.Fatalf("scroll = %d after scrolling a list that fits, want 0", scroll.Get())
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("a clamped scroll painted %d components, want 0", painted)
+	}
+}
+
+// The logview contract, pinned at the framework level: a source computed
+// that switches branches (live buffer vs. frozen snapshot) must drop the
+// live dependency while paused, so appends cost ZERO renders and zero
+// evaluations — and resuming re-records it in one frame.
+func TestPausedBranchAppendsCostNothing(t *testing.T) {
+	lines := prop.NewSource(numbered(6))
+	frozen := prop.NewSource([]story{})
+	follow := prop.NewSource(true)
+	visible := prop.NewComputed(func() []story {
+		if follow.Get() {
+			return lines.Get()
+		}
+		return frozen.Get()
+	})
+	scroll := prop.NewSource(0)
+	v := &ItemsView{
+		Items: prop.NewComputed(func() ItemSource {
+			return ItemsOf(visible.Get(), projectStory)
+		}),
+		Scroll:   scroll,
+		Template: titleTemplate,
+	}
+	c := gooey.NewComposer(v, 20, 4)
+	invalidated := 0
+	c.OnInvalidate(func() { invalidated++ })
+	c.Frame()
+
+	// Pause: snapshot, switch branch, settle.
+	frozen.Set(lines.Get())
+	follow.Set(false)
+	c.Frame()
+	evals, invals := visible.Evals(), invalidated
+
+	// The firehose keeps appending. Nothing may notice.
+	for i := 0; i < 5; i++ {
+		lines.Set(append(lines.Get(), story{Title: "late"}))
+	}
+	if invalidated != invals {
+		t.Fatalf("appends while paused invalidated the scene %d times, want 0", invalidated-invals)
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("appends while paused painted %d components, want 0", painted)
+	}
+	if visible.Evals() != evals {
+		t.Fatalf("appends while paused evaluated the view %d times, want 0", visible.Evals()-evals)
+	}
+
+	// Resume: the live dependency is re-recorded and the view catches up.
+	follow.Set(true)
+	f, _ := c.Frame()
+	if got := row(f.Cells, 3); got != "late" {
+		t.Fatalf("bottom row = %q after resume, want the appended tail", got)
+	}
+}
+
+func TestSelectionChangedFiresOnlyForViewMoves(t *testing.T) {
+	_, sel, v, c := newList(t, numbered(5), 20, 5)
+	changed := 0
+	v.SelectionChanged = gooey.Command(func() { changed++ })
+	c.Frame()
+
+	v.HandleKey(input.Named(input.KeyDown))
+	if changed != 1 {
+		t.Fatalf("a key move fired SelectionChanged %d times, want 1", changed)
+	}
+	c.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 2, Y: 3})
+	if changed != 2 {
+		t.Fatalf("a click fired SelectionChanged %d times total, want 2", changed)
+	}
+	// A gesture that clamps to the current index reports nothing…
+	v.HandleKey(input.Named(input.KeyEnd))
+	was := changed
+	v.HandleKey(input.Named(input.KeyDown))
+	if changed != was {
+		t.Fatal("a clamped move fired SelectionChanged; it reports change, not intent")
+	}
+	// …and neither does the viewmodel setting its own property.
+	sel.Set(0)
+	if changed != was {
+		t.Fatal("a viewmodel Set fired SelectionChanged; the viewmodel already knows")
+	}
+}
+
+func TestNoFocusTakesTheViewOutOfTheTabOrder(t *testing.T) {
+	sel := prop.NewSource(0)
+	v := &ItemsView{
+		Items:     Items(prop.NewSource(numbered(5)), projectStory),
+		Selected:  sel,
+		Template:  titleTemplate,
+		Highlight: true,
+		NoFocus:   true,
+	}
+	c := gooey.NewComposer(v, 20, 5)
+	c.Frame()
+	if v.AcceptsFocus() {
+		t.Fatal("NoFocus did not take AcceptsFocus false")
+	}
+	if c.Focus().Focused() == gooey.Component(v) {
+		t.Fatal("a NoFocus view was focused anyway")
+	}
+	// A click still selects by hit-test; it just moves no focus.
+	c.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 2, Y: 2})
+	if sel.Get() != 2 {
+		t.Fatalf("click on a NoFocus list selected %d, want 2", sel.Get())
+	}
+	if c.Focus().Focused() == gooey.Component(v) {
+		t.Fatal("clicking a NoFocus list moved focus to it")
+	}
+}
+
+// Slices of positions are live row values: a re-projection with new
+// contents must reach the template's handle, and one with equal contents
+// must stay damage-free.
+func TestIntSliceRowValuesAreLiveAndCompared(t *testing.T) {
+	type hit struct {
+		Name string
+		Idxs []int
+	}
+	src := prop.NewSource([]hit{{Name: "alpha", Idxs: []int{0, 2}}})
+	var handle *prop.Property[[]int]
+	v := &ItemsView{
+		Items: Items(src, func(h hit) map[string]any {
+			return map[string]any{"Name": h.Name, "Idxs": h.Idxs}
+		}),
+		Template: func(values map[string]any) (gooey.Component, error) {
+			p, ok := values["Idxs"].(*prop.Property[[]int])
+			if !ok {
+				return nil, fmt.Errorf("Idxs is %T, want a live []int handle", values["Idxs"])
+			}
+			handle = p
+			return &Text{Content: prop.NewComputed(func() string {
+				return fmt.Sprint(len(p.Get()))
+			})}, nil
+		},
+	}
+	c := gooey.NewComposer(v, 10, 2)
+	c.Frame()
+
+	src.Set([]hit{{Name: "alpha", Idxs: []int{0, 2}}}) // equal contents
+	if _, painted := c.Frame(); painted != 1 {
+		// Only the view's observer node repaints (it reads Items); the row
+		// must not — the slice compares equal.
+		t.Fatalf("an equal re-projection painted %d components, want 1", painted)
+	}
+
+	src.Set([]hit{{Name: "alpha", Idxs: []int{0, 2, 4}}})
+	f, _ := c.Frame()
+	if got := row(f.Cells, 0); got != "3" {
+		t.Fatalf("row shows %q after the positions changed, want 3", got)
+	}
+	if got := handle.Get(); len(got) != 3 {
+		t.Fatalf("the row handle holds %v, want the re-projected slice", got)
+	}
+}
+
 func TestEmptyListRealizesNothing(t *testing.T) {
 	src := prop.NewSource([]story{})
 	v := &ItemsView{Items: Items(src, projectStory), Selected: prop.NewSource(0), Template: titleTemplate}
