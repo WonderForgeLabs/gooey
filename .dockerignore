@@ -1,0 +1,10 @@
+.git
+.gitignore
+.github
+.claude
+docs
+*.gif
+*.md
+Dockerfile
+.dockerignore
+feeds.opml
