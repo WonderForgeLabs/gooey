@@ -65,7 +65,7 @@ markup with Go-template bindings, terminal rendering.
 - `go test ./...` must stay green; damage-count assertions are contract tests, not implementation detail.
 - Interactive verification: build to a scratch dir, then `script -qec "stty cols W rows H; ./bin" log` with scripted stdin via `printf` OCTAL escapes (`\011` tab, `\015` enter, `\033[B` arrow — dash printf has no `\x` hex). Extract the final frame by finding the last `\x1b[H` in the log.
 - GIFs: asciinema + agg (cell plane only — sixel/kitty need a real terminal). Mouse can't be exercised under recording ptys; everything must stay keyboard-operable.
-- The repo is NOT a git repository — never `git init`, never commit.
+- The repo IS a git repository (initialized 2026-08-10). You still never commit, amend, or push — commits are the coordinator's/user's job; your deliverable is a clean working tree plus your report.
 
 ### Roadmap you're building toward
 

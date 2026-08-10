@@ -1,0 +1,28 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:net="gooey.dev/handlers/net"
+       xmlns:temporal="gooey.dev/handlers/temporal">
+  <Border Title="handler namespaces" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,*,Auto,*,Auto">
+      <Text Grid.Row="0" Style="accent">behavior declared in markup — no code-behind wires these two buttons</Text>
+      <Text Grid.Row="1" Style="dim">{{.Status}}</Text>
+      <HStack Grid.Row="2" Gap="2">
+        <Button Content="net:Get" Click="{{net:Get .Url | into .Body}}"/>
+        <Button Content="temporal:Activity Slugify" Click="{{temporal:Activity `Slugify` .Input | into .Output}}"/>
+        <Button Content="cycle input" Click="{{.Cycle}}"/>
+      </HStack>
+      <Border Grid.Row="3" Title="net:Get .Url | into .Body" Style="panel">
+        <Text Margin="1,0">{{.Body}}</Text>
+      </Border>
+      <Text Grid.Row="4" Style="accent">{{.InputLine}}</Text>
+      <Border Grid.Row="5" Title="temporal:Activity `Slugify` .Input | into .Output" Style="panel">
+        <Text Margin="1,0">{{.Output}}</Text>
+      </Border>
+      <Text Grid.Row="6" Style="dim">tab: move   enter/space: press   n: net   t: temporal   c: cycle   q: quit</Text>
+      <KeyBinding Gesture="n" Command="{{net:Get .Url | into .Body}}"/>
+      <KeyBinding Gesture="t" Command="{{temporal:Activity `Slugify` .Input | into .Output}}"/>
+      <KeyBinding Gesture="c" Command="{{.Cycle}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>
