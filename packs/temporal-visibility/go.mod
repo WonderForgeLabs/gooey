@@ -1,23 +1,20 @@
-// The Temporal handler namespace is a SEPARATE MODULE on purpose: the
-// Temporal Go SDK pulls in gRPC, protobuf, and the Temporal API
-// packages, and none of that belongs in a TUI framework's dependency
-// graph. Core gooey stays at golang.org/x/term; an app opts into this
-// module only when it wants remote compute.
+// An ACTIVITY PACK: a standalone module of Temporal activities with no
+// gooey imports at all. Its graph is the Temporal SDK and the Temporal
+// API protos — nothing else — so any Go Temporal worker can register
+// these activities without pulling in a TUI framework. gooey consumes
+// the pack from handlers/temporal; it does not own it.
 //
-// `go build ./...` and `go test ./...` at the repo root skip this
-// directory entirely — nested modules are excluded from the parent —
-// which is the mechanical proof that core builds without the SDK.
-module github.com/WonderForgeLabs/gooey/handlers/temporal
+// Nested-module mechanics are the same as handlers/temporal: the repo
+// root's `go build ./...` skips this directory entirely, and CI builds
+// it with its own step.
+module github.com/WonderForgeLabs/gooey/packs/temporal-visibility
 
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0
-	github.com/WonderForgeLabs/gooey/packs/temporal-visibility v0.0.0
 	go.temporal.io/api v1.63.4
 	go.temporal.io/sdk v1.47.0
 	google.golang.org/grpc v1.82.1
-	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -34,18 +31,13 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
-	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/WonderForgeLabs/gooey => ../..
-
-replace github.com/WonderForgeLabs/gooey/packs/temporal-visibility => ../../packs/temporal-visibility

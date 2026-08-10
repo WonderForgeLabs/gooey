@@ -12,6 +12,37 @@ own screens, mutates them as it advances, and the terminal is a generic
 shell that renders whatever arrived. See `cmd/wizardui` and the
 application it drives in `internal/wizard`, plus the rest of this file.
 
+## The visibility activity pack
+
+This module also *consumes* gooey's first **Temporal activity pack**:
+[`packs/temporal-visibility`](../../packs/temporal-visibility) — the
+full Temporal Visibility API as standalone activities, proto-true
+(inputs and outputs are `temporal.api.*` messages), in a standalone
+module with **no gooey imports**, so any Go Temporal worker can serve it.
+Activity names, the proto contract promise, and a Python-side call are
+documented in the pack's own README; the decisions live in
+`docs/specs/2026-08-10-temporal-visibility-stdlib.md`.
+
+`workers/visibilityworker` is this repo's deployment of the pack:
+
+```sh
+temporal server start-dev --headless    # shell 1
+go run ./workers/visibilityworker       # shell 2 — serves visibility.* on "gooey-visibility"
+```
+
+and markup reaches it like any other activity, no request proto needed
+(the pack defaults an absent request to the worker's namespace):
+
+```xml
+<Button Content="list workflows"
+        Click="{{temporal:Activity `visibility.ListWorkflowExecutions` | into .Executions}}"/>
+```
+
+`visibility_binding_test.go` is the proof: the pack's real activity
+runs against a faked WorkflowService and its proto response crosses
+into a gooey page as protojson — Temporal's canonical field names,
+on screen. The phase-2 ops dashboard (epic #142) builds on this.
+
 ## Layout
 
 `cmd/` holds the two things you run to *see* something: `wizardui` and

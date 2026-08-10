@@ -45,6 +45,21 @@ jobs:
             echo "handlers/temporal/go.mod not present; skipping"
           fi
 
+      # packs/temporal-visibility is an ACTIVITY PACK — its own module
+      # with zero gooey imports (graph: Temporal SDK + API protos only),
+      # so any Go Temporal worker can import it. handlers/temporal
+      # consumes it via a replace directive.
+      - name: Build and test packs/temporal-visibility
+        run: |
+          if [ -f packs/temporal-visibility/go.mod ]; then
+            cd packs/temporal-visibility
+            go build ./...
+            go vet ./...
+            go test ./...
+          else
+            echo "packs/temporal-visibility/go.mod not present; skipping"
+          fi
+
       # imagefmt/svg is a separate module for the same reason — the SVG
       # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
       # opt in with a blank import.
