@@ -53,6 +53,7 @@ func main() {
 	// tier is what makes the difference recordable: a GIF recorder
 	// renders truecolor, so the only way to show what a 256-color
 	// terminal does is to emit what a 256-color terminal would get.
+	//
 	// Color depth only — deliberately NOT the full Screen.Detect()
 	// handshake. Detect abandons a pending tty read when the terminal
 	// does not answer, and that orphaned reader then competes with the
@@ -240,18 +241,4 @@ func (s *tierStrip) Render(f *gooey.Frame) {
 				render.Style{Fg: render.Approximate(swept, row.depth)})
 		}
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

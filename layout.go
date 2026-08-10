@@ -11,8 +11,8 @@ package gooey
 type Thickness struct{ L, T, R, B int }
 
 // M is a uniform thickness; MH/MV set horizontal/vertical pairs.
-func M(all int) Thickness      { return Thickness{all, all, all, all} }
-func MH(h, v int) Thickness    { return Thickness{h, v, h, v} }
+func M(all int) Thickness   { return Thickness{all, all, all, all} }
+func MH(h, v int) Thickness { return Thickness{h, v, h, v} }
 
 type Align uint8
 

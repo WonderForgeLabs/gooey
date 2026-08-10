@@ -72,9 +72,11 @@ five steps from a pure-Go tree to multi-control pages.
 | Markup + hot reload | done | XML over any `fs.FS`; `Watch`/`WatchAll` poll ModTimes and rebuild, viewmodel state survives |
 | UserControls | done | Context isolation, data crosses only via attribute hand-off; property surface is implicit and unchecked (see x:Property) |
 | Grid / star sizing | done | `Auto`/`Fixed`/`Star` tracks with spans, XAML `GridLength` semantics |
+| Canvas / absolute layout | done | `Canvas.Left`/`Canvas.Top` attached properties; children may overlap, paint order is tree order |
 | Commands + KeyBindings | done | `Command` is `func()`; bindings are non-visual attachments scoped by where they are declared; dispatch bubbles, navigation runs in the unconsumed tail |
 | Focus + mouse | done | Framework-owned focus (`FocusState`), spatial arrow navigation (XYFocus), hit-testing, hover, implicit capture, click synthesis, SGR and legacy X10 decoding; focus/hover damage is just property damage |
-| Styles / templates | partial | `Style="name"` is a named lookup only — no cascading, selectors, or overrides; DataTemplates do not exist (lists are hand-rendered widgets) |
+| Styles / templates | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, or overrides; DataTemplates do not exist (lists are hand-rendered widgets) |
+| Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Widgets read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | designed | [Spec](docs/specs/2026-08-10-markup-declared-properties.md); not implemented |
 | Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
 
@@ -92,6 +94,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `cmd/reader` | [reader.gif](reader.gif) | Multi-UserControl composition, scoped input, live fetches |
 | `cmd/statedemo` | [statedemo.gif](statedemo.gif) | No-code-behind markup and reactive serialization |
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
+| `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `cmd/sysmon` | — | Not yet cataloged |
 
 ## Documentation
@@ -100,7 +103,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 - [docs/architecture.md](docs/architecture.md) — the deep guide: rendering planes, property graph, Composer, input, markup
 - [docs/markup-reference.md](docs/markup-reference.md) — every element, attribute, gesture, and binding rule
 - [docs/demos.md](docs/demos.md) — what each demo exercises, with walkthroughs
-- [docs/specs/](docs/specs/) — decision records: [markup-declared properties](docs/specs/2026-08-10-markup-declared-properties.md), [reader design](docs/specs/2026-08-10-reader-design.md), [remote handlers](docs/specs/2026-08-10-remote-handlers-design.md)
+- [docs/specs/](docs/specs/) — decision records: [markup-declared properties](docs/specs/2026-08-10-markup-declared-properties.md), [reader design](docs/specs/2026-08-10-reader-design.md), [remote handlers](docs/specs/2026-08-10-remote-handlers-design.md), [container backgrounds](docs/specs/2026-08-10-container-backgrounds.md)
 
 ## POC limits, honestly
 

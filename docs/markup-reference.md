@@ -153,6 +153,73 @@ Attachment and scoping semantics: a KeyBinding is never laid out or painted. The
 
 `gooey.Image` (a cell-region image drawn via the graphics planes, with halfblock fallback) exists as a widget but has no built-in markup element yet — the pixel pipeline predates the property model, so its fields are plain Go values. To use it from markup today, register it as a custom widget.
 
+### Canvas
+
+`gooey.Canvas` — absolute positioning. Children go wherever their `Canvas.Left`/`Canvas.Top` attached properties say, at their own desired size. It takes no attributes of its own.
+
+```xml
+<Canvas>
+  <ColorPicker Value="{{.Accent}}" Canvas.Left="1" Canvas.Top="1"/>
+  <Text Canvas.Left="46" Canvas.Top="0" Style="dim">a caption, placed exactly</Text>
+</Canvas>
+```
+
+A child is measured against the space remaining from its offset, so one placed near the right edge clips its own content rather than overhanging. Children may overlap; paint order is tree order, so a later sibling paints over an earlier one.
+
+One caveat worth knowing before you overlap things deliberately: damage tracking is per widget, and a leaf clears its own rect before repainting. If an *occluded* widget repaints on its own, it paints over the sibling that was covering it, and that sibling — being clean — does not repaint. Overlapping children are safe when they change together (as in `cmd/colordemo`, where every swatch derives from one property) or when the occluded one is static.
+
+### Checkbox
+
+`gooey.Checkbox` — a focus stop rendering `[x] label`, toggled by space, enter, or a click.
+
+| Attribute | Meaning |
+|---|---|
+| `Checked` | **Required binding** to a `*prop.Property[bool]`. Shared with the viewmodel, not copied: Render reads it, the toggle Sets it. |
+| `Label` | Text after the box. Bindable or literal. |
+| `Style` | Named style or a bound style. |
+
+### Gauge
+
+`gooey.Gauge` — a labelled 0-100 meter, colored by a shared threshold ramp (green below 50, amber at 50, red at 80).
+
+| Attribute | Meaning |
+|---|---|
+| `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
+| `Label` | Text before the bar. Bindable or literal. |
+| `BarWidth` | Preferred width in cells; absent = 34. |
+| `Style` | Overrides the threshold ramp entirely when present. |
+
+### Sparkline
+
+`gooey.Sparkline` — a series of 0-100 values as stacked block rows, most recent on the right, colored per column by the same ramp.
+
+| Attribute | Meaning |
+|---|---|
+| `Values` | **Required binding** to a `*prop.Property[[]float64]`. |
+| `Height` | Rows tall; absent = 1. |
+| `BarWidth` | Preferred width in cells; absent = 40. |
+| `Style` | Overrides the threshold ramp. |
+
+The series is tail-cropped to the arranged width, so a narrower window shows recent history rather than compressing all of it.
+
+### ColorPicker
+
+`gooey.ColorPicker` — an interactive RGB editor, and the worked example of a widget that adapts to the terminal it landed on.
+
+| Attribute | Meaning |
+|---|---|
+| `Value` | **Required binding** to a `*prop.Property[render.Color]`. |
+
+Keys while focused: `↑`/`↓` (or `k`/`j`) pick a channel, `←`/`→` (or `h`/`l`) adjust it, shift makes the step 16, `home`/`end` saturate. Clicking a bar sets that channel from the click position; the wheel over a bar nudges it. Keys it does not use bubble on, so page gestures still work while it has focus.
+
+What it shows depends on `Frame.Caps.Color`:
+
+| Depth | Bars | Readout |
+|---|---|---|
+| truecolor | smooth gradients, each cell the color that position would give | `#FFAA3C`, wide swatch |
+| 256 | the same gradients, banded by quantization at the flush | `#FFAA3C → xterm 215` |
+| 16 | a plain fill meter — a gradient across 16 buckets would be a lie | `#FFAA3C ≈ yellow` |
+
 ## Universal layout attributes
 
 Every element whose widget embeds `gooey.Base` (all built-ins and any well-behaved custom widget) accepts the FrameworkElement attributes. They map onto the widget's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container.
@@ -165,8 +232,9 @@ Every element whose widget embeds `gooey.Base` (all built-ins and any well-behav
 | `Visibility` | `Visible` (default), `Hidden`, `Collapsed` | Hidden occupies space but does not paint; Collapsed occupies nothing (and its subtree is skipped by focus traversal). |
 | `Grid.Row`, `Grid.Col` | integer | Cell address when the parent is a Grid — the attached-property syntax. |
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
+| `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
 
-The `Grid.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it) and are simply inert when the parent is not a Grid.
+The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it) and are simply inert when the parent is not the matching panel. Both are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
 
 ## The binding DSL
 
@@ -287,6 +355,23 @@ Styles: map[string]render.Style{
 ```
 
 Be honest about what this is: a named lookup, not a styling system. There is no cascading, no inheritance, no per-property overrides in markup (except `Text Bold`), no selectors, and an unknown style name silently yields the zero style. It exists so markup files do not embed raw colors.
+
+`Style` also accepts a **binding**, which is a different thing entirely:
+
+```xml
+<Border Style="{{.AccentStyle}}">
+```
+
+That resolves to a `*prop.Property[render.Style]` handle from the viewmodel. Because it is a live handle, a *computed* style is reactive — this makes the whole page follow one color:
+
+```go
+accent      := prop.NewSource(render.RGB(255, 170, 60))
+accentStyle := prop.NewComputed(func() render.Style {
+    return render.Style{Fg: accent.Get(), Bold: true}
+})
+```
+
+Setting `accent` dirties `accentStyle`, which dirties exactly the widgets that read it while painting, and they repaint. No styling system is involved — it is the ordinary property graph, and it is as close to theming as gooey currently gets. `cmd/colordemo` styles its border, title, and swatches this way from the color being edited. `Text Bold="true"` composes over either form.
 
 ## Custom widgets
 

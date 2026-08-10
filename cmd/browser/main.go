@@ -162,9 +162,11 @@ func main() {
 		if len(ds) == 0 {
 			return "j/k ↑/↓ select   enter run   r record   q quit"
 		}
+		// The info pane already spells out the go run command, so the
+		// hint stays short enough that `q  quit` survives the clip at
+		// 80 columns — the one affordance that must never scroll off.
 		n := ds[clampIdx(sel.Get(), len(ds))].name
-		return fmt.Sprintf("enter  go run ./cmd/%s      r  record → %s/%s.cast      j/k ↑/↓  select      q  quit",
-			n, recDir, n)
+		return fmt.Sprintf("enter run   r record → %s/%s.cast   j/k ↑/↓ select   q quit", recDir, n)
 	})
 
 	// asciinema is looked up once: the `r` affordance reports its own
@@ -223,6 +225,7 @@ func main() {
 	// --- screen lifecycle: closeUI/openUI bracket the child handoff ---
 	var (
 		screen     *term.Screen
+		readTTY    *os.File // input handle, owned here — see readEvents
 		comp       *gooey.Composer
 		evs        chan input.Event
 		decDone    chan struct{}
@@ -241,13 +244,20 @@ func main() {
 			return err
 		}
 		screen.EnableMouse()
-		// Fresh decoder + channel per session. decDone makes the
-		// decoder's death observable, which is what closeUI waits on.
+		// Input comes off a SECOND /dev/tty handle that this program
+		// opens and only ever reads from, decoded by readEvents rather
+		// than term.DecodeEvents. See readEvents for why: a decoder on
+		// the Screen's own tty cannot be stopped, and would outlive the
+		// handoff still eating the child's keystrokes.
+		readTTY, err = os.OpenFile("/dev/tty", os.O_RDONLY, 0)
+		if err != nil {
+			return err
+		}
 		evs = make(chan input.Event, 64)
 		decDone = make(chan struct{})
 		go func() {
 			defer close(decDone)
-			term.DecodeEvents(screen, evs)
+			readEvents(readTTY, evs)
 		}()
 		// The composition survives a handoff: Flush writes the whole
 		// buffer, so re-entering a blank alt screen repaints correctly
@@ -269,27 +279,33 @@ func main() {
 		return nil
 	}
 
-	// closeUI hands the terminal to a child: full restore (cooked mode,
-	// main screen, mouse off, tty closed), then it WAITS for the decoder
-	// goroutine to die. Closing the tty unblocks its pending Read with
-	// os.ErrClosed, but waiting turns that from an assumption into a
-	// guarantee — a decoder still running would race the child for
-	// stdin and eat half its keystrokes. Draining evs while waiting is
-	// part of the same job: DecodeEvents flushes what it had buffered on
-	// the way out, and an unread channel would block it forever.
+	// closeUI hands the terminal to a child. It closes the input handle
+	// first and WAITS for the reader to actually die, so no goroutine of
+	// ours is still on the tty when the child starts, then restores the
+	// screen (cooked mode, main screen, mouse off).
+	//
+	// The wait is a real check, not a formality: it is what caught the
+	// term.Screen teardown problem readEvents works around. Draining evs
+	// while waiting does double duty — the reader flushes what it had
+	// buffered on the way out and would block forever on an unread
+	// channel, and those pre-handoff keystrokes are exactly the stale
+	// input that must never be replayed into the resumed UI.
 	closeUI := func() bool {
-		screen.Restore()
-		screen = nil
+		readTTY.Close()
+		ok := false
 		deadline := time.After(2 * time.Second)
-		for {
+		for wait := true; wait; {
 			select {
 			case <-decDone:
-				return true
-			case <-evs: // pre-handoff keystrokes: discarded, never replayed
+				ok, wait = true, false
+			case <-evs:
 			case <-deadline:
-				return false
+				wait = false
 			}
 		}
+		screen.Restore()
+		screen = nil
+		return ok
 	}
 
 	if err := openUI(); err != nil {
@@ -347,6 +363,79 @@ func main() {
 			}
 		case ev := <-evs:
 			comp.Handle(ev)
+		}
+	}
+}
+
+// readEvents is this program's copy of term.DecodeEvents, reading from
+// a tty handle the browser opens itself. The duplication buys one thing
+// the framework version cannot currently give a launcher: a reader that
+// can be stopped.
+//
+// term.Screen.Raw and Screen.Size have to hand an integer fd to
+// golang.org/x/term, which means calling os.File.Fd — and Fd puts the
+// file back into blocking mode and drops it from the runtime poller.
+// A Read pending on such a file is an uninterruptible syscall, so
+// Screen.Restore's Close does NOT unblock a decoder sitting on the
+// Screen's tty. That goroutine survives the handoff still parked on the
+// terminal, and every launch adds another one competing with the child
+// (and with the next decoder) for keystrokes.
+//
+// A handle that is only ever read from never has Fd called on it, stays
+// registered with the poller, and unblocks its reader on Close — which
+// is what makes closeUI's wait terminate. The escape-timeout policy is
+// term.EscTimeout so the two decoders cannot drift apart.
+func readEvents(tty *os.File, out chan<- input.Event) {
+	chunks := make(chan []byte, 8)
+	go func() {
+		defer close(chunks)
+		for {
+			buf := make([]byte, 128)
+			n, err := tty.Read(buf)
+			if n > 0 {
+				chunks <- buf[:n]
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	var pend []byte
+	drain := func(idle bool) {
+		for len(pend) > 0 {
+			ev, n, ok := input.Decode(pend, idle)
+			if n == 0 && !ok {
+				return // incomplete: wait for more bytes
+			}
+			pend = pend[n:]
+			if ok {
+				out <- ev
+			}
+		}
+	}
+	timer := time.NewTimer(term.EscTimeout)
+	defer timer.Stop()
+	for {
+		drain(false)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		if len(pend) > 0 {
+			timer.Reset(term.EscTimeout)
+		}
+		select {
+		case c, ok := <-chunks:
+			if !ok {
+				drain(true)
+				return
+			}
+			pend = append(pend, c...)
+		case <-timer.C:
+			drain(true)
 		}
 	}
 }

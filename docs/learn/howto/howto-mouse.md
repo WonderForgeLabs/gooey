@@ -94,6 +94,35 @@ Before your handler sees anything:
 - **Wheel events go to the widget under the pointer**, not the focused
   one.
 
+## Move focus from a mouse handler
+
+A press already focuses what it hit, but a widget sometimes wants focus
+to end up somewhere else — a list where clicking a row should select it
+while typing stays live in a query box above. Call `SetFocus` on the
+focus manager from your handler:
+
+```go
+case input.MousePress:
+	row := w.top() + ev.Y - w.Bounds().Y
+	if row < 0 || row >= len(w.rows.Get()) {
+		return false
+	}
+	w.sel.Set(row)
+	if w.focusQuery != nil { // injected: comp.Focus().SetFocus(queryBox)
+		w.focusQuery()
+	}
+	return true
+```
+
+Note the coordinate arithmetic: `ev.Y` is an absolute cell row, so
+subtract `w.Bounds().Y` to get a row within the widget, then add whatever
+scroll offset the widget keeps. `cmd/finder` does exactly this for
+click-to-select.
+
+Because the widget needs the focus manager, which the Composer owns and
+which does not exist until the tree is built, inject a small closure
+after construction rather than reaching for a global.
+
 ## Take raw motion
 
 Motion is high-frequency, so it is delivered only to widgets that ask for

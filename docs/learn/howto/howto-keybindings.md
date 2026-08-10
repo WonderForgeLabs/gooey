@@ -85,6 +85,32 @@ The binding form needs no code-behind at all, which is what lets
 markup-only controls wire their own keys. An unregistered bare name is a
 load-time error; an empty attribute is not — it just means no command.
 
+## Declare bindings from Go
+
+A tree built in Go composition has no markup to declare bindings in, so
+attach them directly. A `KeyBinding` is a non-visual widget; any element
+embedding `gooey.Base` can host one:
+
+```go
+for _, kb := range []*gooey.KeyBinding{
+	{Gesture: input.Rune(' '), Command: togglePause},
+	{Gesture: input.Rune('f'), Command: cycleFilter},
+	{Gesture: input.Named(input.KeyEsc), Command: quit},
+	{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: quit},
+} {
+	root.Attach(kb)
+}
+```
+
+This is exactly what `<KeyBinding Gesture="space" Command="{{.TogglePause}}"/>`
+builds — same attachment, same scoping, same dispatch. `input.Rune`,
+`input.Named`, and a literal `input.KeyEvent` are the Go spellings of the
+gesture syntax; `input.ParseGesture("ctrl+c")` accepts the string form if
+you would rather write it that way.
+
+`cmd/logview` and `cmd/markuplog` in this repository are the same app
+built both ways, and are worth diffing if you are choosing between them.
+
 ## Gotchas
 
 - **First match wins and stops the walk.** Two bindings for the same

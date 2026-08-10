@@ -32,12 +32,14 @@ Exercises the dependency-property graph (`prop`) driving the retained tree: the 
 
 ![logview](../logview.gif)
 
-Pausing flips the live buffer out of the dependency graph: 62 lines arrived during the pause while only ~4 frames rendered, yet the filter UI stayed fully interactive against the frozen snapshot.
+Pausing flips the live buffer out of the dependency graph: 69 lines arrived during the pause while the ten frames that rendered were every one of them caused by a keystroke, not by the firehose — and the scroll and filter UI stayed fully interactive against the frozen snapshot.
 
-The walkthrough: ~3 seconds of FOLLOW mode with the log firehose streaming and rendering live — the stats line tracks lines arrived, frames rendered, view evals, and widgets painted last frame. Space flips the header to PAUSED: the view freezes on a snapshot while the stats line shows lines still arriving (24 to 86) with frames barely moving (26 to 30). Pressing 'f' while paused sets `filter: ERROR` and the UI re-renders from the frozen snapshot showing only ERROR lines; 'f' again cycles to WARN, then back to all — still paused, still interactive. Space resumes and the view catches up to 87 lines in a single frame. 'q' quits.
+The walkthrough: ~3 seconds of FOLLOW mode with the log firehose streaming and rendering live — the stats line tracks lines arrived, frames rendered, view evals, and widgets painted last frame. Space flips the header to PAUSED with `showing 24 lines`, and that count never moves again until the resume: the view is frozen on a snapshot while the stats line shows lines still arriving (24 to 93) and frames rendered creeping only from 26 to 36, one per key pressed. Six presses of 'k' scroll back through the frozen snapshot and End returns to its tail — the pane is a focus stop that owns its own scroll keys, so this works while paused. Pressing 'f' sets `filter: ERROR` and the UI re-renders from the snapshot showing only the 5 ERROR lines; 'f' again cycles to WARN (5 lines), then back to all. Space resumes and a single frame takes the view from 24 lines to 103, the whole backlog at once. 'q' quits.
+
+Note when spot-checking the GIF: a paused UI emits almost no frames, so the PAUSED beat is only 6 of the 53 frames — but 10.2 of the 19.9 seconds. Sampling by frame index will walk straight past it; sample by cumulative delay instead.
 
 - Run: `go run ./cmd/logview`
-- Keys: `space` pause/follow, `f` cycle filter (all/ERROR/WARN), `q` quit
+- Keys: `space` pause/follow, `f` cycle filter (all/ERROR/WARN), `j`/`k` and the arrows scroll (`pageup`/`pagedown` by a screen, `end` re-tails), `q` quit
 
 Exercises conditional dependency recording: pausing flips a branch so the live buffer silently drops out of the graph — the firehose keeps appending with zero renders — and resuming re-records the dependency so the view catches up in one frame.
 
@@ -60,7 +62,7 @@ Exercises the markup loader (`markup`) with hot reload: bindings resolve against
 
 A four-property, three-computed dependency graph drives an fzf-style fuzzy finder: typing re-scores the file index live (microsecond match times in the status bar), arrows move a selection property, and the preview pane derives from it — damage tracking repaints only the affected panes.
 
-The walkthrough: finder opens on the repo index (67 files) with a query input, results pane, and preview pane. "compos" is typed character by character and the results narrow live to `composer.go`/`composer_test.go` with orange match highlighting and "2 matched in 33µs" in the status bar. Down-arrow moves the selection and the preview pane follows, switching from `composer.go` to `composer_test.go`. Six backspaces clear the query and all 67 files return. "gooey" is typed — 7 matches ranked by fuzzy score with subsequence highlighting (scattered hits on `cmd/markuplog/logview.gooey`). One down selects `cmd/reader/reader.gooey` (preview shows its markup), and enter exits, printing `cmd/reader/reader.gooey` to the shell.
+The walkthrough: finder opens on the repo index (133 files) with a query input, results pane, and preview pane. "compos" is typed character by character and the results narrow live to `composer.go`/`composer_test.go` with orange match highlighting and "2 matched in 54µs" in the status bar. Down-arrow moves the selection and the preview pane follows, switching from `composer.go` to `composer_test.go`. Six backspaces clear the query and all 133 files return. "gooey" is typed — 21 matches ranked by fuzzy score with subsequence highlighting, `cmd/finder/finder.gooey` on top with its own markup in the preview. A down-arrow selects `cmd/reader/reader.gooey`, and enter exits, printing `cmd/reader/reader.gooey` to the shell.
 
 - Run: `go run ./cmd/finder`
 - Keys: type to filter, `up`/`down` (or `ctrl-p`/`ctrl-n`) select, `enter` print selection and exit, `esc`/`ctrl-c` quit
@@ -113,3 +115,18 @@ The walkthrough: pressing `[ net:Get ]` fills the first box from the demo's own 
 - Keys: `tab` move, `enter`/`space` press, `n` net, `t` temporal, `c` cycle input, `q` quit
 
 Exercises handler namespaces end to end: xmlns prefix capture, the `{{ns:Func … | into .Target}}` grammar, registration-as-capability-grant, and the Dispatcher marshaling async completions back onto the UI goroutine. The demo and its worker live in the `handlers/temporal` module rather than `cmd/`, because that is where the Temporal SDK dependency is quarantined — core gooey builds without it.
+
+## colordemo
+
+![colordemo](../colordemo.gif)
+
+Absolute layout, capability-adaptive color, and a widget whose experience changes with the terminal.
+
+The walkthrough: the `ColorPicker` edits one `Accent` property; the border, title, and swatch cascade are all styled by a computed `render.Style` over it, so moving a channel restyles the page through the property graph. Everything inside the frame is placed by a `Canvas` — the picker, the tier strip, and a cascade of swatches at absolute coordinates that deliberately overlap, later siblings painting over earlier ones. The tier strip draws one gradient three times, pre-approximated to each color depth with the same function the flush uses, so a single terminal shows what all three classes of terminal would do.
+
+The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven by identical keystrokes so the two tiers can be compared at the same color: the truecolor pass shows smooth bars, a wide swatch, and a bare `#FFAA3C`; the 256 pass shows banded bars, a narrow swatch, and `#FFAA3C → xterm 215`. On a 16-color terminal the bars stop pretending to be gradients at all and become a fill meter with `≈ yellow`.
+
+- Run: `go run ./cmd/colordemo`, or `--depth=truecolor|256|16` to force a tier
+- Keys: `↑`/`↓` channel, `←`/`→` adjust (shift = ×16), `home`/`end` saturate, click or scroll a bar, `q` quit
+
+Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching widgets through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.

@@ -91,3 +91,62 @@ func TestGridStarWeights(t *testing.T) {
 		t.Fatalf("a=%+v b=%+v, want 10/30 split", ab, bb)
 	}
 }
+
+// A Collapsed child occupies nothing — including the gap it would
+// otherwise have brought with it. Charging the gap made "Collapsed takes
+// no space" false in any gapped stack, which is the whole point of
+// Collapsed as distinct from Hidden.
+func TestCollapsedChildCostsNoGap(t *testing.T) {
+	mk := func(collapse bool) *VStack {
+		mid := &Text{Content: Str("b")}
+		if collapse {
+			L(mid, Layout{Visibility: Collapsed})
+		}
+		return &VStack{Gap: 1, Children: []Widget{
+			&Text{Content: Str("a")},
+			mid,
+			&Text{Content: Str("c")},
+		}}
+	}
+	if got, want := mk(false).Measure(Size{10, 10}).H, 5; got != want {
+		t.Errorf("three visible children with Gap=1: H = %d, want %d", got, want)
+	}
+	// Three rows minus the collapsed row minus its gap: 2 texts + 1 gap.
+	if got, want := mk(true).Measure(Size{10, 10}).H, 3; got != want {
+		t.Errorf("middle child Collapsed: H = %d, want %d (no row AND no gap)", got, want)
+	}
+}
+
+// The same for the horizontal stack, and for a collapsed child in the
+// leading position — where the bug would leave a gap before the first
+// thing actually drawn.
+func TestCollapsedChildCostsNoGapHorizontally(t *testing.T) {
+	first := &Text{Content: Str("xx")}
+	L(first, Layout{Visibility: Collapsed})
+	h := &HStack{Gap: 2, Children: []Widget{
+		first,
+		&Text{Content: Str("yy")},
+	}}
+	if got, want := h.Measure(Size{20, 4}).W, 2; got != want {
+		t.Errorf("leading Collapsed child with Gap=2: W = %d, want %d", got, want)
+	}
+	h.Arrange(Rect{0, 0, 20, 4})
+	if got, want := h.Children[1].(*Text).Bounds().X, 0; got != want {
+		t.Errorf("child after a leading Collapsed sibling arranged at x=%d, want %d", got, want)
+	}
+}
+
+// Hidden is the other half of the contract: it still occupies its space,
+// gap included, and only declines to paint.
+func TestHiddenChildStillCostsItsGap(t *testing.T) {
+	mid := &Text{Content: Str("b")}
+	L(mid, Layout{Visibility: Hidden})
+	v := &VStack{Gap: 1, Children: []Widget{
+		&Text{Content: Str("a")},
+		mid,
+		&Text{Content: Str("c")},
+	}}
+	if got, want := v.Measure(Size{10, 10}).H, 5; got != want {
+		t.Errorf("Hidden child: H = %d, want %d (Hidden still occupies space)", got, want)
+	}
+}

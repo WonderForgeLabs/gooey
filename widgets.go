@@ -96,16 +96,33 @@ type VStack struct {
 
 func (v *VStack) ChildWidgets() []Widget { return v.Children }
 
+// gapBefore reports whether a gap should be charged before this child.
+// A Collapsed child occupies NOTHING — so it must not drag its gap along
+// either, and it must not leave a gap behind it. Keying off "is this
+// index > 0" charges both; keying off "has a child actually taken space
+// yet" is what makes Collapsed mean what it says.
+func gapBefore(w Widget, placedAny bool) bool {
+	if !placedAny {
+		return false
+	}
+	l := layoutOf(w)
+	return l == nil || l.Visibility != Collapsed
+}
+
 func (v *VStack) Measure(avail Size) Size {
 	v.sizes = v.sizes[:0]
 	w, h := 0, 0
-	for i, c := range v.Children {
-		if i > 0 {
+	placed := false
+	for _, c := range v.Children {
+		if gapBefore(c, placed) {
 			h += v.Gap
 		}
 		s := MeasureChild(c, Size{avail.W, avail.H - h})
 		v.sizes = append(v.sizes, s)
 		h += s.H
+		if !collapsed(c) {
+			placed = true
+		}
 		if s.W > w {
 			w = s.W
 		}
@@ -116,13 +133,25 @@ func (v *VStack) Measure(avail Size) Size {
 func (v *VStack) Arrange(b Rect) {
 	v.Base.Arrange(b)
 	y := b.Y
+	placed := false
 	for i, c := range v.Children {
 		s := v.sizes[i]
+		if gapBefore(c, placed) {
+			y += v.Gap
+		}
 		// The slot spans the stack's full width; alignment inside it
 		// is the child's business (ArrangeChild).
 		ArrangeChild(c, Rect{b.X, y, b.W, s.H})
-		y += s.H + v.Gap
+		y += s.H
+		if !collapsed(c) {
+			placed = true
+		}
 	}
+}
+
+func collapsed(w Widget) bool {
+	l := layoutOf(w)
+	return l != nil && l.Visibility == Collapsed
 }
 
 func (v *VStack) Render(f *Frame) {} // containers paint nothing themselves
@@ -141,13 +170,17 @@ func (h *HStack) ChildWidgets() []Widget { return h.Children }
 func (h *HStack) Measure(avail Size) Size {
 	h.sizes = h.sizes[:0]
 	w, hh := 0, 0
-	for i, c := range h.Children {
-		if i > 0 {
+	placed := false
+	for _, c := range h.Children {
+		if gapBefore(c, placed) {
 			w += h.Gap
 		}
 		s := MeasureChild(c, Size{avail.W - w, avail.H})
 		h.sizes = append(h.sizes, s)
 		w += s.W
+		if !collapsed(c) {
+			placed = true
+		}
 		if s.H > hh {
 			hh = s.H
 		}
@@ -158,10 +191,17 @@ func (h *HStack) Measure(avail Size) Size {
 func (h *HStack) Arrange(b Rect) {
 	h.Base.Arrange(b)
 	x := b.X
+	placed := false
 	for i, c := range h.Children {
 		s := h.sizes[i]
+		if gapBefore(c, placed) {
+			x += h.Gap
+		}
 		ArrangeChild(c, Rect{x, b.Y, s.W, b.H})
-		x += s.W + h.Gap
+		x += s.W
+		if !collapsed(c) {
+			placed = true
+		}
 	}
 }
 

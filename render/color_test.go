@@ -14,10 +14,10 @@ func TestQuantize256Cube(t *testing.T) {
 	}{
 		// Cube corners are exact: index = 16 + 36r + 6g + b.
 		{"black", RGB(0, 0, 0), 16},
-		{"pure red", RGB(255, 0, 0), 196},   // 16 + 36*5
-		{"pure green", RGB(0, 255, 0), 46},  // 16 + 6*5
-		{"pure blue", RGB(0, 0, 255), 21},   // 16 + 5
-		{"white", RGB(255, 255, 255), 231}, // 16 + 36*5 + 6*5 + 5
+		{"pure red", RGB(255, 0, 0), 196},     // 16 + 36*5
+		{"pure green", RGB(0, 255, 0), 46},    // 16 + 6*5
+		{"pure blue", RGB(0, 0, 255), 21},     // 16 + 5
+		{"white", RGB(255, 255, 255), 231},    // 16 + 36*5 + 6*5 + 5
 		{"cube level", RGB(95, 175, 215), 74}, // 16 + 36*1 + 6*3 + 4
 		// The accent orange the demos use: 255→5, 170→3 (175 is nearer
 		// than 135), 60→1 (95 is nearer than 0).
@@ -40,7 +40,7 @@ func TestQuantize256PrefersGrayscaleRamp(t *testing.T) {
 		c    Color
 		want int
 	}{
-		{RGB(8, 8, 8), 232},     // first ramp step, exact
+		{RGB(8, 8, 8), 232},       // first ramp step, exact
 		{RGB(128, 128, 128), 244}, // 8+10*12 = 128, exact
 		{RGB(238, 238, 238), 255}, // last ramp step, exact
 	}
