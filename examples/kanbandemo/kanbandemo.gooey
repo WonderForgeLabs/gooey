@@ -1,0 +1,64 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,*,Auto,Auto">
+    <HStack Grid.Row="0" Gap="1">
+      <Text Style="dim">new task:</Text>
+      <TextBox Name="NewTitle" Text="{{.NewTitle}}" Prompt="&gt; " AccentStyle="accent"/>
+      <Button Name="AddBtn" Content="Add" Click="{{.AddTask}}"/>
+      <KeyBinding Gesture="enter" Command="{{.AddTask}}"/>
+    </HStack>
+
+    <Grid Grid.Row="1" Cols="*,*,*">
+      <Border Grid.Col="0" Title="Todo" Style="panel">
+        <Grid Rows="*,Auto">
+          <ItemsView Name="TodoList" Grid.Row="0" Items="{{.TodoItems}}" Selected="{{.TodoSel}}">
+            <ItemsView.ItemTemplate>
+              <Text>{{.Title}}</Text>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
+          <HStack Grid.Row="1" Gap="1">
+            <Button Name="TodoMoveRightBtn" Content="Move →" Click="{{.TodoMoveRight}}"/>
+            <Button Name="TodoRemoveBtn" Content="Remove" Click="{{.TodoRemove}}"/>
+          </HStack>
+        </Grid>
+      </Border>
+
+      <Border Grid.Col="1" Title="Doing" Style="panel">
+        <Grid Rows="*,Auto">
+          <ItemsView Name="DoingList" Grid.Row="0" Items="{{.DoingItems}}" Selected="{{.DoingSel}}">
+            <ItemsView.ItemTemplate>
+              <Text>{{.Title}}</Text>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
+          <HStack Grid.Row="1" Gap="1">
+            <Button Name="DoingMoveLeftBtn" Content="← Move" Click="{{.DoingMoveLeft}}"/>
+            <Button Name="DoingMoveRightBtn" Content="Move →" Click="{{.DoingMoveRight}}"/>
+            <Button Name="DoingRemoveBtn" Content="Remove" Click="{{.DoingRemove}}"/>
+          </HStack>
+        </Grid>
+      </Border>
+
+      <Border Grid.Col="2" Title="Done" Style="panel">
+        <Grid Rows="*,Auto">
+          <ItemsView Name="DoneList" Grid.Row="0" Items="{{.DoneItems}}" Selected="{{.DoneSel}}">
+            <ItemsView.ItemTemplate>
+              <Text>{{.Title}}</Text>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
+          <HStack Grid.Row="1" Gap="1">
+            <Button Name="DoneMoveLeftBtn" Content="← Move" Click="{{.DoneMoveLeft}}"/>
+            <Button Name="DoneRemoveBtn" Content="Remove" Click="{{.DoneRemove}}"/>
+          </HStack>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Title="mcp" Style="panel">
+      <Text Name="Help" Margin="1,0" Style="dim">{{.Help}}</Text>
+    </Border>
+
+    <Text Grid.Row="3" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   q: quit</Text>
+
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

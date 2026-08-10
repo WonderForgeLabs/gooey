@@ -1,0 +1,6 @@
+# Standalone-activity execution (client.execute_activity / client.start_activity) and
+# dynamic activities (@activity.defn(dynamic=True)) are both recent additions to the
+# Python SDK — install the latest of each with `pip install -U -r requirements.txt`.
+temporalio
+claude-agent-sdk
+mcp
