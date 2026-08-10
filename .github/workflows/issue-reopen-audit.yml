@@ -142,6 +142,21 @@ jobs:
     # `Default` runner group with `visibility: all`, so they serve gooey too.
     runs-on: forge-runners-agent-vsphere
     timeout-minutes: ${{ github.event_name == 'schedule' && 30 || 10 }}
+    # Unlike issue-intake.yml's `intake` job — which was narrowed to
+    # `contents: read` because it hands the agent an App token — this job
+    # genuinely needs these, so do not "tidy" them to match:
+    # - `contents: read` — actions/checkout below passes no `token:`.
+    # - `id-token: write` — the agent step deliberately passes NO
+    #   `github_token`, so claude-code-action's `setupGitHubToken()` falls
+    #   through to the OIDC exchange. Removing this breaks authentication
+    #   outright, with the action's own "Did you remember to add
+    #   `id-token: write`" error.
+    # - `issues: write` — the label-on-agent-failure step below runs on
+    #   `github.token`, not on an App token.
+    # `actions: read` is not consumed today (the `github_ci` MCP server that
+    # would use it is gated on `context.isPR`, false for both `issues` and
+    # `schedule` events) but is left in place rather than trimmed alongside an
+    # unrelated change.
     permissions:
       contents: read
       issues: write

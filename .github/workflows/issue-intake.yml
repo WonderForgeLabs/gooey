@@ -139,12 +139,41 @@ jobs:
     # killed by the timeout mid-Step-5, never reaching Critical Path/Sprint/
     # dates/epic wiring/blockers.
     timeout-minutes: 30
+    # This block scopes the DEFAULT GITHUB_TOKEN, and almost nothing in this
+    # job uses it: every GitHub API call here — the run-link comment, the
+    # failure labeller, and everything the agent itself does — runs on the App
+    # token minted above (passed to the agent as `github_token:` below).
+    # `contents: read` is the one scope actually consumed, by the
+    # `actions/checkout` step, which passes no `token:` and so uses the default.
+    #
+    # The rest were dropped after checking claude-code-action @ be7b93b's
+    # source rather than assuming, since an under-grant here would 403 a step
+    # silently rather than fail loudly:
+    #
+    # - `id-token: write` — both OIDC paths are provably inactive.
+    #   `setupGitHubToken()` (src/github/token.ts) returns
+    #   OVERRIDE_GITHUB_TOKEN, which action.yml wires to the `github_token`
+    #   input, before it can reach `getIDToken()`. Independently,
+    #   `setupWorkloadIdentity()` (base-action/src/workload-identity.ts)
+    #   returns undefined unless BOTH anthropic_federation_rule_id and
+    #   anthropic_organization_id are set — neither is — and bails a second
+    #   time because claude_code_oauth_token takes precedence over federation.
+    # - `actions: read` — its only consumer is the `github_ci` MCP server
+    #   (src/mcp/install-mcp-server.ts), the sole place the action uses the
+    #   default workflow token. It is gated on `context.isPR`, false for an
+    #   `issues` event, and in agent mode additionally on an `mcp__github_ci__*`
+    #   entry in --allowedTools, which the allowlist below does not have.
+    # - `issues: write` / `repository-projects: write` — the agent's own
+    #   GITHUB_TOKEN is the App token, not this one, so these grant nothing it
+    #   uses. (The Projects V2 note in the prompt below refers to that App
+    #   token's org-level `Projects: write`, which is an App installation
+    #   permission and is unaffected by this block.)
+    #
+    # Do NOT copy this narrowing into issue-reopen-audit.yml: its agent step
+    # passes no `github_token` at all, so the OIDC exchange IS how it
+    # authenticates, and its failure labeller runs on `github.token`.
     permissions:
       contents: read
-      issues: write
-      id-token: write
-      actions: read
-      repository-projects: write
 
     steps:
       # Mint a token from the WF Runners GitHub App. It carries organization
