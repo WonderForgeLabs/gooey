@@ -1,0 +1,95 @@
+name: Claude Code
+
+# ADR-048 shim: delegates all @claude bot logic to forge's workflow of record,
+# claude-bot.reusable.yml. Only the `on:` triggers, the @claude `if:` gate, and
+# job `permissions` stay in this repo; per-repo customizations (allowed tools,
+# standing instructions) are passed as `with:` overrides.
+#
+# Tracks forge's main branch directly, matching the other consumer repos in the
+# org (project-ops, claude-plugins), so gooey always runs the current reusable
+# workflow logic without a manual pin bump. A repo-qualified ref — never a
+# local `./` path — is load-bearing per the ADR's trust model: a PR that edits
+# only this shim is caught by claude-code-action's server-side
+# workflow-validation guard instead of changing what runs on its own event.
+# See https://github.com/WonderForgeLabs/forge/blob/main/docs/ADR/048-org-wide-claude-bot-workflow-of-record.md
+#
+# The reusable workflow runs on the org's self-hosted vSphere runner pool
+# (runner group "Default", visibility=all, so gooey can schedule on it) and
+# mints a WF Runners App token from the org-level App secrets, which grants
+# @claude workflows:write.
+#
+# Model is deliberately not overridden — gooey inherits the reusable
+# workflow's default, which forge's update-claude-models.yml keeps current.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    permissions:
+      contents: write # Enable creating commits and pushing changes
+      pull-requests: write # Enable creating and modifying PRs
+      issues: write # Enable creating and modifying issues
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    uses: WonderForgeLabs/forge/.github/workflows/claude-bot.reusable.yml@main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      WF_RUNNERS_APP_ID: ${{ secrets.WF_RUNNERS_APP_ID }}
+      WF_RUNNERS_APP_PRIVATE_KEY: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
+    with:
+      # Go toolchain instead of forge's dotnet/bun/npm/k8s spread. The
+      # reusable workflow's .NET setup step self-gates on Directory.Packages.props,
+      # which gooey doesn't have, so it no-ops here.
+      allowed_tools: 'Edit,MultiEdit,Write,Read,Glob,Grep,LS,mcp__github__issue_write,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(curl:*)'
+      allowed_bots: 'claude[bot]'
+      # CAUTION (from the reusable workflow's input docs): the action's
+      # claude_args parser strips any line whose first non-whitespace character
+      # is '#', even inside quotes — use **bold** pseudo-headings, not Markdown
+      # headings, in this block.
+      extra_system_prompt: |
+        **About This Repository**
+        gooey is an XAML-like TUI framework for Go: widgets are persistent
+        objects in a retained tree, every visual property is a lazy
+        dirty-tracking `*prop.Property[T]`, and markup builds that same tree
+        from XML.
+
+        **Module Layout**
+        - Root module `github.com/WonderForgeLabs/gooey` (Go 1.25)
+        - `handlers/temporal/` is a SEPARATE Go module on purpose — the
+          Temporal SDK's gRPC/protobuf dependency graph must never enter the
+          core framework's. Core gooey depends only on `golang.org/x/term`.
+          It is excluded from the root `./...` patterns, so build and test it
+          with a separate `cd handlers/temporal && go build ./... && go test ./...`.
+        - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
+          `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
+          control, `input/` routed event stream, `markup/` XML to widget tree,
+          `cmd/` demo apps, `docs/` architecture and learn tutorials.
+
+        **Architectural Invariants**
+        - One cell renderer and N graphics protocols — the cell plane and the
+          pixel plane are separate planes, not alternative backends. Do not
+          reintroduce a "rendering mode" abstraction.
+        - Property reads during paint are what register a widget's dependency
+          on that property; a change dirties exactly the widgets that read it.
+          Don't bypass the property graph with direct field access on paint paths.
+        - Core gooey takes no new third-party dependencies without an explicit
+          decision — check with a human before adding one to the root go.mod.
+
+        **Verification**
+        Before claiming work is done, run `go build ./...`, `go vet ./...`, and
+        `go test ./...` from the repo root, plus the `handlers/temporal` pair
+        above when that module is touched. Report real output — never assert a
+        command passed without running it.

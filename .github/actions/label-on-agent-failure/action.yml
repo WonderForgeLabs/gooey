@@ -1,0 +1,124 @@
+name: 'Label on Claude agent failure'
+description: >
+  Reads a claude-code-action execution_file, fails the calling step when the
+  agent terminated abnormally or hit a tool permission denial, and — if a
+  resource number is given — stamps that issue/PR with a single
+  failed:<workflow-name> label so affected resources are discoverable with
+  `gh issue list --label failed:<workflow-name>` instead of cross-referencing
+  Actions run history by hand (see WonderForgeLabs/forge#3053, where that
+  manual cross-reference is how a silently-failing workflow was found).
+
+  Copied from WonderForgeLabs/forge's .github/actions/label-on-agent-failure —
+  a composite action can't be consumed cross-repo the way a reusable workflow
+  can, so each repo carries its own copy. Keep it in sync by hand.
+
+inputs:
+  execution-file:
+    description: 'Path to the claude-code-action execution_file output. Empty/missing is treated as "nothing to check".'
+    required: false
+    default: ''
+  repo:
+    description: 'owner/repo'
+    required: true
+  resource-number:
+    description: 'Issue or PR number to label on failure. Leave empty to skip labeling (e.g. a scheduled sweep with no single target) while still failing the job on is_error.'
+    required: false
+    default: ''
+  label:
+    description: 'Label to apply on failure, e.g. failed:issue-intake'
+    required: true
+  github-token:
+    description: 'Token with issues:write (repo-level label create/apply) permission'
+    required: true
+  agent-step-outcome:
+    description: >
+      Optional: pass the calling workflow's agent step's outcome value (its
+      "steps context" outcome field, looked up by that step's id). A
+      job-timeout kill leaves the agent step with no execution_file at all
+      (the action never gets to write it), which the execution-file check
+      alone reads as "can't verify, assume fine" — a cancelled/timed-out run
+      then silently reports success. Any value here other than 'success'
+      (e.g. 'cancelled', 'failure') is treated as a confirmed failure
+      regardless of what the execution file shows. Leave empty to skip this
+      check (falls back to execution-file-only detection).
+    required: false
+    default: ''
+
+outputs:
+  is_error:
+    description: 'true if the agent terminated abnormally'
+    value: ${{ steps.check.outputs.is_error }}
+  denials:
+    description: 'permission denial count'
+    value: ${{ steps.check.outputs.denials }}
+  failed:
+    description: 'true if a failure was detected (is_error or denials > 0)'
+    value: ${{ steps.check.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repo }}
+        RESOURCE_NUMBER: ${{ inputs.resource-number }}
+        LABEL: ${{ inputs.label }}
+        EXECUTION_FILE: ${{ inputs.execution-file }}
+        AGENT_STEP_OUTCOME: ${{ inputs.agent-step-outcome }}
+      run: |
+        set -uo pipefail
+
+        is_error=false
+        denials=0
+
+        if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+          # The execution file is a JSON array of SDK messages; the final
+          # type=result element carries the run's status.
+          result="$(jq -c '.[] | select(.type == "result")' "$EXECUTION_FILE" | tail -n1)"
+          if [ -n "$result" ]; then
+            is_error="$(echo "$result" | jq -r '.is_error // false')"
+            denials="$(echo "$result" | jq -r '(.permission_denials | length) // 0')"
+          else
+            echo "::warning::No result record found in the execution file; cannot verify completion."
+          fi
+        else
+          echo "::warning::No execution file produced by the agent step; cannot verify completion from its output."
+          if [ -n "${AGENT_STEP_OUTCOME:-}" ] && [ "$AGENT_STEP_OUTCOME" != "success" ]; then
+            echo "::error::Agent step outcome was '${AGENT_STEP_OUTCOME}' (not success) and produced no execution file — treating as failed rather than silently passing."
+            is_error=true
+          fi
+        fi
+
+        echo "Agent result: is_error=$is_error, permission_denials=$denials"
+        echo "is_error=$is_error" >> "$GITHUB_OUTPUT"
+        echo "denials=$denials" >> "$GITHUB_OUTPUT"
+
+        failed=false
+        if [ "$is_error" = "true" ] || [ "$denials" != "0" ]; then
+          failed=true
+        fi
+        echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+        if [ "$failed" = "true" ] && [ -n "${RESOURCE_NUMBER:-}" ]; then
+          # Idempotent — 422s if the label already exists, which is fine and
+          # expected on every run after the first.
+          gh label create "$LABEL" --repo "$REPO" --color "b60205" \
+            --description "$LABEL: the workflow errored or hit a tool permission denial while processing this issue/PR" >/dev/null 2>&1 || true
+
+          # The unified issues/labels endpoint works for both issues and PRs
+          # (a PR is an issue under the hood) — unlike `gh issue edit`, which
+          # can reject a PR number.
+          gh api "repos/${REPO}/issues/${RESOURCE_NUMBER}/labels" -f "labels[]=${LABEL}" >/dev/null \
+            || echo "::warning::Failed to apply ${LABEL} to #${RESOURCE_NUMBER}"
+        fi
+
+        if [ "$denials" != "0" ]; then
+          echo "::warning::Hit $denials permission denial(s) — a tool is likely missing from --allowedTools."
+        fi
+
+        if [ "$is_error" = "true" ]; then
+          echo "::error::Agent terminated abnormally (is_error=true) with $denials permission denial(s)."
+          exit 1
+        fi

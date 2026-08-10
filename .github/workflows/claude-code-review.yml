@@ -1,0 +1,146 @@
+name: PR Review with Progress Tracking
+
+# ADR-048 shim: delegates the PR review + merge-gate logic to forge's workflow
+# of record, claude-code-review.reusable.yml. Only the `on:` triggers,
+# `concurrency`, the calling job's `permissions` ceiling, and the
+# `review-with-tracking` mirror job stay here — the mirror job exists because a
+# workflow_call's own jobs get two-segment check names, so the literal
+# required-status-check string has to live in the shim, not the reusable
+# workflow. Repo-specific review focus and tooling are passed as `with:`.
+#
+# Tracks forge's main branch directly, matching the other consumer repos in the
+# org. A repo-qualified ref (never a local `./` path) is load-bearing per the
+# ADR's trust model: a PR editing only this shim is caught by
+# claude-code-action's server-side workflow-validation guard, while a PR that
+# doesn't touch this file always gets forge main's current review logic.
+# See https://github.com/WonderForgeLabs/forge/blob/main/docs/ADR/048-org-wide-claude-bot-workflow-of-record.md
+#
+# This workflow is additive — it does not touch gooey's existing CI (ci.yml),
+# and nothing here is a required status check unless a branch ruleset is added
+# separately.
+#
+# Review/gate models are deliberately not overridden: gooey inherits the
+# reusable workflow's defaults, which forge keeps current.
+
+on:
+  pull_request:
+    # unlabeled (alongside labeled) so a `do not merge` / `do-not-merge` label
+    # being removed re-evaluates the gate too, not just added.
+    types: [opened, synchronize, ready_for_review, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to re-evaluate the merge gate for'
+        required: true
+        type: number
+      force_pass:
+        description: 'Force the merge gate to pass without running Claude classification'
+        required: false
+        type: boolean
+        default: false
+      reason:
+        description: 'Justification for force-passing (single line; included in the audit comment)'
+        required: false
+        type: string
+
+# One group per PR: a new push, reopen, or manual gate dispatch supersedes the
+# in-flight run instead of letting a stale evaluation finish against an
+# outdated head. Never runs on main (pull_request + dispatch only).
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Ceiling for every permission the reusable workflow's jobs use — a
+    # workflow_call job can only narrow, never widen, the caller's grant.
+    # Under-granting silently 403s the affected step rather than failing loudly.
+    permissions:
+      contents: read
+      pull-requests: write # remove-label needs write; pr-review/merge-gate only read
+      id-token: write
+      issues: write
+      actions: read
+    uses: WonderForgeLabs/forge/.github/workflows/claude-code-review.reusable.yml@main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      WF_RUNNERS_APP_ID: ${{ secrets.WF_RUNNERS_APP_ID }}
+      WF_RUNNERS_APP_PRIVATE_KEY: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
+    with:
+      allowed_tools: 'Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)'
+      allowed_bots: 'claude[bot],copilot[bot]'
+      review_focus: |
+        1. **Framework Invariants**
+           - The cell plane (`render`) and pixel plane (`graphics`) stay separate
+             planes, not alternative rendering backends — flag any reintroduced
+             "rendering mode" abstraction
+           - Paint paths read state through `*prop.Property[T]` handles; direct
+             field access on a paint path silently breaks dirty tracking
+           - Layout stays unconditional and cheap; repaint stays dirty-only
+
+        2. **Module Boundaries**
+           - Core gooey depends only on `golang.org/x/term` — flag any new
+             third-party dependency added to the root `go.mod`
+           - `handlers/temporal` is a separate module on purpose; its gRPC and
+             protobuf dependency graph must not leak into the root module
+
+        3. **Go Correctness**
+           - Error handling and edge cases, especially around terminal state
+             restoration (raw mode, alternate screen, cursor visibility) on
+             every exit path including panics
+           - Goroutine lifecycle and data races in the input event stream
+           - Slice bounds and index arithmetic in buffer/cell code
+
+        4. **Testing**
+           - Adequate coverage for new widgets, properties, and markup elements
+           - Tests that exercise the dirty-tracking behavior, not just output
+           - Remember `handlers/temporal` needs its own `go test ./...` run
+
+        5. **Documentation**
+           - `docs/architecture.md` quotes real code — flag quotes that drift
+             from the source they claim to show
+           - New widgets or markup attributes reflected in
+             `docs/markup-reference.md`; new demos in `docs/demos.md`
+      pr_number: ${{ inputs.pr_number || 0 }}
+      force_pass: ${{ inputs.force_pass || false }}
+      reason: ${{ inputs.reason || '' }}
+      # auto_graduate_on_pass left at its default (false): gooey does not
+      # auto-mark-ready or auto-merge PRs on a passing gate.
+
+  # This job's name mirrors forge's required-status-check convention. gooey has
+  # no branch-protection rule requiring it today, but keeping the name stable
+  # means one can be added later without a rename.
+  review-with-tracking:
+    needs: [review]
+    # `!cancelled()` (not `always()`): still reflects a failed or skipped
+    # `review` call, but doesn't red the check in a run that
+    # cancel-in-progress superseded.
+    if: ${{ !cancelled() }}
+    # Trivially cheap mirror step — no reason to occupy a self-hosted runner.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reflect reusable workflow result
+        env:
+          RESULT: ${{ needs.review.result }}
+        run: |
+          echo "Reusable review workflow result: $RESULT"
+          if [ "$RESULT" != "success" ] && [ "$RESULT" != "skipped" ]; then
+            echo "::error::The claude-code-review.reusable.yml call did not succeed (result=$RESULT)."
+            exit 1
+          fi
+
+# `skipped` counts as satisfied, and that is load-bearing rather than
+# defensive: every internal job of the reusable workflow has its own `if:` that
+# legitimately skips on events this workflow shouldn't act on (e.g. an
+# unrelated label add/remove, which this shim forwards broadly so the
+# do-not-merge labels reach the gate). When every internal job skips, the
+# `review` call job's own result is `skipped`, not `success` — treating that as
+# a failure would fail the check on every unrelated label change.
+
+# When track_progress is enabled (in the reusable workflow):
+# - Creates a tracking comment with progress checkboxes
+# - Includes all PR context (comments, attachments, images)
+# - Updates progress as the review proceeds
+# - Marks as completed when done
