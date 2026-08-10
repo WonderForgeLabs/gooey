@@ -1,6 +1,6 @@
-# Tutorial 6: Write a custom widget
+# Tutorial 6: Write a custom component
 
-In this tutorial you implement two widgets from scratch: a **meter** that
+In this tutorial you implement two components from scratch: a **meter** that
 only paints, and a **stepper** that takes focus and handles keys and
 clicks. Along the way you see why reading a property inside `Render` is
 the only thing that makes it a repaint trigger.
@@ -11,17 +11,17 @@ helps but is not required.
 
 When you finish, you will have this:
 
-![A meter bar driven by a focused stepper, with a readout line below](media/06-custom-widgets.png)
+![A meter bar driven by a focused stepper, with a readout line below](media/06-custom-components.png)
 
 The finished code is in
-[`docs/learn/examples/06-custom-widgets`](examples/06-custom-widgets).
+[`docs/learn/examples/06-custom-components`](examples/06-custom-components).
 
-## Step 1: Know what a widget owes the framework
+## Step 1: Know what a component owes the framework
 
-`gooey.Widget` has three methods:
+`gooey.Component` has three methods:
 
 ```go
-type Widget interface {
+type Component interface {
 	Measure(avail Size) Size  // how big do you want to be, within avail?
 	Arrange(bounds Rect)      // here are your final bounds
 	Render(f *Frame)          // paint YOURSELF into those bounds
@@ -30,14 +30,14 @@ type Widget interface {
 
 Embedding `gooey.Base` supplies `Arrange` and `Bounds()`, plus the
 universal layout attributes (`Width`, `Margin`, `Grid.Row`, …) and the
-ability to host `<KeyBinding>` attachments. So in practice a leaf widget
+ability to host `<KeyBinding>` attachments. So in practice a leaf component
 implements `Measure` and `Render` and inherits the rest.
 
 Two rules that are easy to get wrong:
 
-- **`Render` paints this widget only.** The framework walks children —
-  a widget with children implements `ChildWidgets() []Widget` and lets
-  the framework descend. This is what lets the Composer give every widget
+- **`Render` paints this component only.** The framework walks children —
+  a component with children implements `ChildComponents() []Component` and lets
+  the framework descend. This is what lets the Composer give every component
   its own paint node.
 - **Never call `Measure`/`Arrange` on a child directly.** Go through
   `gooey.MeasureChild` and `gooey.ArrangeChild`, which apply margin,
@@ -50,7 +50,7 @@ Two rules that are easy to get wrong:
 > gooey's `Render` is *not* a full-tree walk — it is a graph node the
 > framework evaluates on demand.
 
-## Step 2: Build a widget that only paints
+## Step 2: Build a component that only paints
 
 ```go
 type meter struct {
@@ -87,24 +87,24 @@ but painting outside your own bounds will collide with siblings that the
 Composer considers clean.
 
 **`m.value.Get()` is the whole damage declaration.** The Composer runs
-`Render` inside this widget's paint node, so every property read during
+`Render` inside this component's paint node, so every property read during
 painting is recorded as a dependency of that node. Any `Set` on `value`
-— from this widget, another widget, or a background result — dirties this
+— from this component, another component, or a background result — dirties this
 meter and only this meter. You never declare `AffectsRender` and never
 call `InvalidateVisual`.
 
 The corollary is worth stating plainly: **a property you do not read
-while painting cannot repaint you.** If a widget stops reacting to a
+while painting cannot repaint you.** If a component stops reacting to a
 value, the first thing to check is whether `Render` actually reads it.
 
 ## Step 3: Register it as a markup element
 
-`Context.Widgets` maps an element name to a `Builder`. The builder gets
+`Context.Components` maps an element name to a `Builder`. The builder gets
 the raw element and interprets attributes however it likes:
 
 ```go
-Widgets: map[string]markup.Builder{
-	"Meter": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+Components: map[string]markup.Builder{
+	"Meter": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 		v, err := intAttr(c, e, "Value")
 		if err != nil {
 			return nil, err
@@ -143,14 +143,14 @@ Now use it:
 
 `Width="44"` is not something your builder handles. The framework applies
 the universal layout attributes **after** the builder returns, so any
-widget embedding `Base` gets them for free.
+component embedding `Base` gets them for free.
 
 A registered builder wins over every other resolution path, so you can
 also shadow a built-in element name if you ever need to.
 
 ## Step 4: Join the focus and input system
 
-Now a widget that participates in input. Embedding `gooey.FocusState`
+Now a component that participates in input. Embedding `gooey.FocusState`
 makes it a focus stop:
 
 ```go
@@ -178,7 +178,7 @@ func (s *stepper) Render(f *gooey.Frame) {
 
 `FocusState` keeps the focused flag in a **source property**. Reading
 `IsFocused()` during `Render` therefore makes focus ordinary paint
-damage, which is why moving focus repaints exactly two widgets. A widget
+damage, which is why moving focus repaints exactly two components. A component
 that embeds `FocusState` but never reads `IsFocused()` will be focusable
 and look identical either way — that is a bug you write yourself, not one
 the framework can catch.
@@ -199,7 +199,7 @@ func (s *stepper) HandleKey(ev input.KeyEvent) bool {
 }
 ```
 
-`HandleKey` is called while this widget has focus, before the event
+`HandleKey` is called while this component has focus, before the event
 bubbles to ancestors. **Returning true consumes the event** — which is
 exactly why these arrows never reach the framework's spatial focus
 navigation. Return false for anything you do not handle, or you will
@@ -218,9 +218,9 @@ func (s *stepper) HandleMouse(ev input.MouseEvent) bool {
 ```
 
 `MouseClick` is synthesized by the framework when a press and its release
-land on the same widget; focus has already moved here by then. If you
+land on the same component; focus has already moved here by then. If you
 want raw motion (for a drag), implement `HandleMouseMove` instead —
-motion is high-frequency and is delivered only to widgets that ask.
+motion is high-frequency and is delivered only to components that ask.
 
 Register and use it:
 
@@ -229,7 +229,7 @@ Register and use it:
 <Stepper Value="{{.Other}}" Label="other  (nothing else reads it)"/>
 ```
 
-## Step 5: Watch two widgets share one property
+## Step 5: Watch two components share one property
 
 Run it and press the right arrow a few times:
 
@@ -237,19 +237,19 @@ Run it and press the right arrow a few times:
 
 The first stepper and the meter are bound to the **same** `Level`
 handle. The stepper `Set`s it; the meter read it while painting, so the
-meter repaints. Neither widget knows the other exists, and no code
+meter repaints. Neither component knows the other exists, and no code
 connects them — the graph does.
 
 Tab to the second stepper and adjust it: the meter does not move, because
 nothing that paints the meter reads `Other`.
 
-## Step 6: If your widget has children
+## Step 6: If your component has children
 
-A container implements `ChildWidgets()` and lets the framework walk them.
+A container implements `ChildComponents()` and lets the framework walk them.
 Three rules keep damage tracking correct:
 
 ```go
-func (p *myPanel) ChildWidgets() []gooey.Widget { return p.Children }
+func (p *myPanel) ChildComponents() []gooey.Component { return p.Children }
 
 func (p *myPanel) Measure(avail gooey.Size) gooey.Size {
 	// go through MeasureChild, and cache what you'll need in Arrange
@@ -276,13 +276,13 @@ func (p *myPanel) Render(f *gooey.Frame) {} // paint only your OWN chrome
 
 ## What you learned
 
-- A widget is `Measure`/`Arrange`/`Render`; `Base` supplies `Arrange`,
+- A component is `Measure`/`Arrange`/`Render`; `Base` supplies `Arrange`,
   bounds, layout attributes, and attachment hosting.
 - Reading a property inside `Render` is what makes it a repaint trigger —
   the entire damage declaration.
 - `Measure` states a want clamped to `avail`; paint only inside
   `Bounds()`.
-- `FocusState` makes a widget a focus stop, and reading `IsFocused()`
+- `FocusState` makes a component a focus stop, and reading `IsFocused()`
   makes focus free damage.
 - `HandleKey` returning true consumes the event and stops navigation;
   `HandleMouse` sees synthesized clicks, `HandleMouseMove` sees motion.
@@ -291,17 +291,17 @@ func (p *myPanel) Render(f *gooey.Frame) {} // paint only your OWN chrome
 
 ## Current limitations
 
-- Widget properties are plain Go fields you wire yourself; there is no
-  declarative property system for third-party widgets yet.
-- `gooey.Image` exists but has **no built-in markup element** — its
+- Component properties are plain Go fields you wire yourself; there is no
+  declarative property system for third-party components yet.
+- `components.Image` exists but has **no built-in markup element** — its
   fields are plain values because the pixel pipeline predates the
-  property model. Register it as a custom widget to use it from markup;
+  property model. Register it as a custom component to use it from markup;
   see [how-to: draw images](howto/howto-images.md).
-- No DataTemplates, so list-shaped data means writing a rows widget.
+- No DataTemplates, so list-shaped data means writing a rows component.
 
 ## Next steps
 
-- How-to: [testing your app](howto/howto-testing.md) — verify widgets
+- How-to: [testing your app](howto/howto-testing.md) — verify components
   under a pty.
 - Concept: [damage tracking](concepts/damage.md)
 - Depth: [architecture.md — the Composer](../architecture.md#the-composer).

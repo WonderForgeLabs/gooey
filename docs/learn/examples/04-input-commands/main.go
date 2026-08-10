@@ -20,7 +20,7 @@ import (
 )
 
 // checkbox is a focus stop rendering "[x] label". Tutorial 6 takes this
-// apart line by line; here it is just a widget that happens to exist.
+// apart line by line; here it is just a component that happens to exist.
 type checkbox struct {
 	gooey.Base
 	gooey.FocusState
@@ -99,8 +99,8 @@ func main() {
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
-		Widgets: map[string]markup.Builder{
-			"Checkbox": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+		Components: map[string]markup.Builder{
+			"Checkbox": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 				v, err := c.BindingValue(e.Attrs["Checked"])
 				if err != nil {
 					return nil, err

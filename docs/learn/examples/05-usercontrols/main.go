@@ -78,7 +78,7 @@ func main() {
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
-		Widgets: map[string]markup.Builder{
+		Components: map[string]markup.Builder{
 			"StatPanel": markup.UserControl(fsys, "statpanel.gooey", statPanel),
 		},
 		// With Includes set, <Card/> resolves to card.gooey by

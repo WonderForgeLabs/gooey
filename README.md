@@ -1,9 +1,9 @@
 # gooey
 
-A proof-of-concept XAML-like TUI framework for Go. Widgets live in a
+A proof-of-concept XAML-like TUI framework for Go. Components live in a
 retained visual tree with two-pass Measure/Arrange layout; every visual
 property is a node in a lazy dependency-property graph, so a change
-repaints exactly the widgets that read it. UIs are authored in XML
+repaints exactly the components that read it. UIs are authored in XML
 markup with Go-template-spelled bindings that resolve to property
 handles at build time, hot-reload on save with state intact, and
 compose into UserControls with isolated contexts. Input is routed:
@@ -42,7 +42,7 @@ in a property.
 go run ./cmd/statedemo
 ```
 
-A UI is a `.gooey` file — elements map to widgets, attributes to
+A UI is a `.gooey` file — elements map to components, attributes to
 properties, `{{.Name}}` to bindings against your viewmodel:
 
 ```xml
@@ -58,7 +58,7 @@ properties, `{{.Name}}` to bindings against your viewmodel:
 ```
 
 Edit the file while the app runs and it reloads in place — state
-survives, because it lives in the properties, not the widgets.
+survives, because it lives in the properties, not the components.
 [docs/getting-started.md](docs/getting-started.md) builds this up in
 five steps from a pure-Go tree to multi-control pages.
 
@@ -78,7 +78,7 @@ if err := app.Run(context.Background()); err != nil {
 }
 ```
 
-That is the whole main function. ctrl+c quits (only if no widget
+That is the whole main function. ctrl+c quits (only if no component
 claimed it); `SIGINT`/`SIGTERM` restore the terminal and exit 128+n
 after a bounded shutdown hook; `SIGWINCH` resizes and repaints; ctrl+z
 restores, stops and comes back intact; a panic restores the terminal
@@ -87,13 +87,27 @@ hands the terminal to a child process and takes it back — the demo
 browser launches every demo that way. The signal story is spelled out
 in [docs/specs/2026-08-10-runtime-signals.md](docs/specs/2026-08-10-runtime-signals.md).
 
+## Packages
+
+The root package `gooey` is the framework: the `Component` contract,
+`Base`, the layout sandwich, `Frame`, `Composer`, `Dispatcher`, `App`,
+and input routing. The built-in components — `Text`, `Button`,
+`Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ColorPicker`, `Image`,
+`Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`,
+`Canvas` — live in `gooey/components`, which imports the root and is
+never imported by it. Writing your own component means embedding
+`gooey.Base` and implementing `gooey.Component`; the built-ins have no
+privileges you do not. Under both sit `prop` (the property graph),
+`input`, `render`, `graphics`, and `term`; beside them, `markup` and the
+opt-in `handlers/*` and `mcp` modules.
+
 ## Where it stands vs modern XAML
 
 | Capability | Status | Notes |
 |---|---|---|
-| Retained tree + Measure/Arrange | done | Persistent widgets, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; `SIGWINCH` resizes the composition and repaints |
+| Retained tree + Measure/Arrange | done | Persistent components, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; `SIGWINCH` resizes the composition and repaints |
 | Dependency properties | done | Lazy dirty-tracking graph (Slint lineage), not eager WPF-style notification; UI-goroutine-confined |
-| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is widget code |
+| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is component code |
 | Markup + hot reload | done | XML over any `fs.FS`; `markup.Page` polls ModTimes and the App rebuilds on the UI goroutine, viewmodel state survives |
 | UserControls | done | Context isolation, data crosses only via attribute hand-off; property surface is implicit and unchecked (see x:Property) |
 | Grid / star sizing | done | `Auto`/`Fixed`/`Star` tracks with spans, XAML `GridLength` semantics |
@@ -101,8 +115,8 @@ in [docs/specs/2026-08-10-runtime-signals.md](docs/specs/2026-08-10-runtime-sign
 | Timers | done | `<Timer Interval="600ms" Tick="{{.Fn}}"/>` — non-visual attachment; the goroutine posts through the Dispatcher and the Composer owns its lifetime, so a hot reload cannot leak one |
 | Commands + KeyBindings | done | `Command` is `func()`; bindings are non-visual attachments scoped by where they are declared; dispatch bubbles, navigation runs in the unconsumed tail |
 | Focus + mouse | done | Framework-owned focus (`FocusState`), spatial arrow navigation (XYFocus), hit-testing, hover, implicit capture, click synthesis, SGR and legacy X10 decoding; focus/hover damage is just property damage |
-| Styles / templates | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, or overrides; DataTemplates do not exist (lists are hand-rendered widgets) |
-| Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Widgets read `Frame.Caps` to adapt |
+| Styles / templates | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, or overrides; DataTemplates do not exist (lists are hand-rendered components) |
+| Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Components read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | designed | [Spec](docs/specs/2026-08-10-markup-declared-properties.md); not implemented |
 | Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
 | MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Protocol is the official `modelcontextprotocol/go-sdk`, isolated in the nested `mcp/` module so core's graph is unchanged. Loopback-only, opt-in, no auth; every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)) |
@@ -150,7 +164,7 @@ so a full repaint cannot tear. The Composer is static-tree — structural
 change means rebuilding it, which is exactly what hot reload does.
 There is no styling system (named style
 lookup only) and no templates (every list is a hand-rendered custom
-widget). The file watcher is 300 ms ModTime polling. Properties are
+component). The file watcher is 300 ms ModTime polling. Properties are
 confined to the UI goroutine; background work crosses in over a
 channel.
 
@@ -159,9 +173,9 @@ channel.
 - **Not N renderers — one cell renderer plus N graphics protocols**, on separate planes the terminal composites; halfblock is the universal cell-plane fallback: [the two rendering planes](docs/architecture.md#the-two-rendering-planes)
 - **Capability detection is a handshake, not config** — Kitty query + XTWINOPS + DA1, preference kitty > sixel > iterm2 > halfblock: [detection](docs/architecture.md#capability-detection-is-a-handshake-not-config)
 - **Properties are lazy, not eager** — a set marks dirty and computes nothing; evaluation records its own dependencies, so conditional reads watch only the taken branch: [the property system](docs/architecture.md#the-property-system)
-- **"AffectsRender" is discovered, not declared** — each widget's paint is a computed node, so whatever it reads is its damage set: [the Composer](docs/architecture.md#the-composer)
+- **"AffectsRender" is discovered, not declared** — each component's paint is a computed node, so whatever it reads is its damage set: [the Composer](docs/architecture.md#the-composer)
 - **Layout runs outside the evaluation context** — reads during Measure subscribe to nothing, keeping layout out of the graph by construction: [layout vs the graph](docs/architecture.md#layout-runs-outside-the-evaluation-context)
-- **Framework state in source properties makes focus and hover damage free** — moving focus repaints exactly two widgets: [the input system](docs/architecture.md#the-input-system)
+- **Framework state in source properties makes focus and hover damage free** — moving focus repaints exactly two components: [the input system](docs/architecture.md#the-input-system)
 - **KeyBindings scope by attachment position, and navigation runs in the unconsumed tail** — a binding fires only while its subtree has focus; arrows are spatial (XYFocus) with a tree-order fallback: [routed dispatch](docs/architecture.md#routed-dispatch)
 - **Both mouse encodings are decoded** — an undecoded legacy X10 report would inject phantom keystrokes, not just drop the event: [one ordered stream](docs/architecture.md#one-ordered-stream)
 - **Bindings are handles, not values** — resolved once at build time, zero lookups at render: [markup](docs/architecture.md#markup)

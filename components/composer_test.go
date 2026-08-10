@@ -1,9 +1,10 @@
-package gooey
+package components
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -16,17 +17,17 @@ func row(b *render.Buffer, y int) string {
 	return strings.TrimRight(sb.String(), " ")
 }
 
-func TestComposerDamageIsPerWidget(t *testing.T) {
+func TestComposerDamageIsPerComponent(t *testing.T) {
 	a := prop.NewSource("aaa")
 	b := prop.NewSource("bbb")
 	ta := &Text{Content: a}
 	tb := &Text{Content: b}
-	root := &VStack{Children: []Widget{ta, tb}}
-	c := NewComposer(root, 20, 5)
+	root := &VStack{Children: []gooey.Component{ta, tb}}
+	c := gooey.NewComposer(root, 20, 5)
 
 	f, painted := c.Frame()
 	if painted != 3 { // vstack + 2 texts
-		t.Fatalf("first frame painted %d widgets, want 3", painted)
+		t.Fatalf("first frame painted %d components, want 3", painted)
 	}
 	if row(f.Cells, 0) != "aaa" || row(f.Cells, 1) != "bbb" {
 		t.Fatalf("buffer rows = %q,%q", row(f.Cells, 0), row(f.Cells, 1))
@@ -36,7 +37,7 @@ func TestComposerDamageIsPerWidget(t *testing.T) {
 	b.Set("BBB")
 	f, painted = c.Frame()
 	if painted != 1 {
-		t.Fatalf("after b change painted %d widgets, want 1", painted)
+		t.Fatalf("after b change painted %d components, want 1", painted)
 	}
 	if row(f.Cells, 0) != "aaa" || row(f.Cells, 1) != "BBB" {
 		t.Fatalf("buffer rows = %q,%q", row(f.Cells, 0), row(f.Cells, 1))
@@ -44,7 +45,7 @@ func TestComposerDamageIsPerWidget(t *testing.T) {
 
 	// Clean frame: nothing repaints.
 	if _, painted = c.Frame(); painted != 0 {
-		t.Fatalf("clean frame painted %d widgets, want 0", painted)
+		t.Fatalf("clean frame painted %d components, want 0", painted)
 	}
 }
 
@@ -53,17 +54,17 @@ func TestComposerBoundsChangeForcesRepaintAndClears(t *testing.T) {
 	b := prop.NewSource("under")
 	ta := &Text{Content: a}
 	tb := &Text{Content: b}
-	root := &VStack{Children: []Widget{ta, tb}}
-	c := NewComposer(root, 30, 5)
+	root := &VStack{Children: []gooey.Component{ta, tb}}
+	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
 
 	// Shrinking ta narrows its bounds; the vacated cells must clear
-	// and the widget must repaint even though width-change also
+	// and the component must repaint even though width-change also
 	// re-arranges siblings.
 	a.Set("thin")
 	f, painted := c.Frame()
 	if painted < 1 {
-		t.Fatalf("painted %d widgets, want >= 1", painted)
+		t.Fatalf("painted %d components, want >= 1", painted)
 	}
 	if got := row(f.Cells, 0); got != "thin" {
 		t.Fatalf("row0 = %q, want %q (stale cells not cleared)", got, "thin")
@@ -77,7 +78,7 @@ func TestContainerRepaintPreservesChildCells(t *testing.T) {
 	title := prop.NewSource("one")
 	child := &Text{Content: prop.NewSource("content")}
 	root := &Border{Title: title, Child: child}
-	c := NewComposer(root, 20, 5)
+	c := gooey.NewComposer(root, 20, 5)
 	c.Frame()
 
 	// Repainting the Border (title change) must not wipe the child's
@@ -86,7 +87,7 @@ func TestContainerRepaintPreservesChildCells(t *testing.T) {
 	title.Set("two")
 	f, painted := c.Frame()
 	if painted != 1 {
-		t.Fatalf("painted %d widgets, want 1 (border only)", painted)
+		t.Fatalf("painted %d components, want 1 (border only)", painted)
 	}
 	if got := row(f.Cells, 1); got != "│content           │" {
 		t.Fatalf("child row = %q — container repaint wiped child cells", got)
@@ -95,8 +96,8 @@ func TestContainerRepaintPreservesChildCells(t *testing.T) {
 
 func TestComposerInvalidateHookFires(t *testing.T) {
 	a := prop.NewSource("x")
-	root := &VStack{Children: []Widget{&Text{Content: a}}}
-	c := NewComposer(root, 10, 2)
+	root := &VStack{Children: []gooey.Component{&Text{Content: a}}}
+	c := gooey.NewComposer(root, 10, 2)
 	fired := 0
 	c.OnInvalidate(func() { fired++ })
 	c.Frame()
@@ -107,33 +108,33 @@ func TestComposerInvalidateHookFires(t *testing.T) {
 }
 
 // Visibility is a plain field, so nothing dirties when it flips. The
-// Composer's per-frame sweep catches the delta — otherwise a widget
+// Composer's per-frame sweep catches the delta — otherwise a component
 // turned Hidden at runtime stays on screen forever.
 func TestHidingALeafAtRuntimeErasesIt(t *testing.T) {
 	target := &Text{Content: Str("SECRET")}
-	root := &VStack{Children: []Widget{&Text{Content: Str("keep")}, target}}
-	c := NewComposer(root, 10, 2)
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("keep")}, target}}
+	c := gooey.NewComposer(root, 10, 2)
 	c.Frame()
 
-	if got := row(c.frame.Cells, 1); got != "SECRET" {
+	if got := row(c.Cells(), 1); got != "SECRET" {
 		t.Fatalf("first frame row 1 = %q", got)
 	}
 
-	target.LayoutProps().Visibility = Hidden
+	target.LayoutProps().Visibility = gooey.Hidden
 	_, painted := c.Frame()
 	if painted != 1 {
-		t.Errorf("hiding one leaf painted %d widgets, want exactly 1", painted)
+		t.Errorf("hiding one leaf painted %d components, want exactly 1", painted)
 	}
-	if got := row(c.frame.Cells, 1); got != "" {
+	if got := row(c.Cells(), 1); got != "" {
 		t.Errorf("row 1 after hiding = %q, want it erased", got)
 	}
 
 	// And back again.
-	target.LayoutProps().Visibility = Visible
+	target.LayoutProps().Visibility = gooey.Visible
 	if _, painted = c.Frame(); painted != 1 {
-		t.Errorf("showing it again painted %d widgets, want 1", painted)
+		t.Errorf("showing it again painted %d components, want 1", painted)
 	}
-	if got := row(c.frame.Cells, 1); got != "SECRET" {
+	if got := row(c.Cells(), 1); got != "SECRET" {
 		t.Errorf("row 1 after showing = %q, want it back", got)
 	}
 }
@@ -141,11 +142,11 @@ func TestHidingALeafAtRuntimeErasesIt(t *testing.T) {
 // A steady visibility must not cause repaints — the sweep compares, it
 // does not dirty unconditionally.
 func TestUnchangedVisibilityDoesNotRepaint(t *testing.T) {
-	root := &VStack{Children: []Widget{&Text{Content: Str("a")}}}
-	c := NewComposer(root, 10, 2)
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("a")}}}
+	c := gooey.NewComposer(root, 10, 2)
 	c.Frame()
 	if _, painted := c.Frame(); painted != 0 {
-		t.Errorf("a steady frame painted %d widgets, want 0", painted)
+		t.Errorf("a steady frame painted %d components, want 0", painted)
 	}
 }
 
@@ -156,8 +157,8 @@ func TestUnchangedVisibilityDoesNotRepaint(t *testing.T) {
 func TestResizeRepaintsTheWholeTreeExactlyOnce(t *testing.T) {
 	a := prop.NewSource("aaa")
 	b := prop.NewSource("bbb")
-	root := &VStack{Children: []Widget{&Text{Content: a}, &Text{Content: b}}}
-	c := NewComposer(root, 20, 5)
+	root := &VStack{Children: []gooey.Component{&Text{Content: a}, &Text{Content: b}}}
+	c := gooey.NewComposer(root, 20, 5)
 	c.Frame()
 
 	c.Resize(40, 12)
@@ -166,7 +167,7 @@ func TestResizeRepaintsTheWholeTreeExactlyOnce(t *testing.T) {
 	}
 	f, painted := c.Frame()
 	if painted != 3 {
-		t.Errorf("resize repainted %d widgets, want the whole tree (3)", painted)
+		t.Errorf("resize repainted %d components, want the whole tree (3)", painted)
 	}
 	if f.Cells.W != 40 || f.Cells.H != 12 {
 		t.Errorf("buffer is %dx%d, want 40x12", f.Cells.W, f.Cells.H)
@@ -175,11 +176,11 @@ func TestResizeRepaintsTheWholeTreeExactlyOnce(t *testing.T) {
 		t.Errorf("content did not survive the resize: %q,%q", row(f.Cells, 0), row(f.Cells, 1))
 	}
 	if _, painted = c.Frame(); painted != 0 {
-		t.Errorf("the frame after a resize painted %d widgets, want 0", painted)
+		t.Errorf("the frame after a resize painted %d components, want 0", painted)
 	}
 	// A resize to the same size is not a resize.
 	c.Resize(40, 12)
 	if _, painted = c.Frame(); painted != 0 {
-		t.Errorf("a no-op resize dirtied %d widgets", painted)
+		t.Errorf("a no-op resize dirtied %d components", painted)
 	}
 }

@@ -32,7 +32,7 @@ type Tool struct {
 	// this package keeps the confinement rule structural instead of
 	// remembered.
 	//
-	// What Run returns must be plain data. Handing back a widget or a
+	// What Run returns must be plain data. Handing back a component or a
 	// property handle would let the http goroutine read the graph after
 	// the response went out.
 	Run func(a args) (any, error)
@@ -47,7 +47,7 @@ func (s *Server) v1Tools() []*Tool {
 			Name: "tree_snapshot",
 			Description: "The live component tree: element types, Name= identities, arranged bounds, " +
 				"layout, visibility, focus and hover flags, and the interesting properties of each " +
-				"known widget kind. This is the app's structure as it exists right now.",
+				"known component kind. This is the app's structure as it exists right now.",
 			Schema: object(map[string]any{
 				"depth": prop_("integer", "Maximum depth to walk; 0 or absent means the whole tree."),
 			}),
@@ -91,7 +91,7 @@ func (s *Server) v1Tools() []*Tool {
 		{
 			Name: "send_keys",
 			Description: "Inject keystrokes into the app's input stream, routed exactly as the terminal's " +
-				"would be: to the focused widget, then up its ancestors, then to focus navigation. " +
+				"would be: to the focused component, then up its ancestors, then to focus navigation. " +
 				"text is typed first, then keys.",
 			Schema: object(map[string]any{
 				"text": prop_("string", "Literal text to type, one key event per character."),
@@ -382,7 +382,7 @@ func (s *Server) sendMouse(a args) (any, error) {
 		ev.Kind, ev.Button = input.WheelDown, input.ButtonNone
 	case "click":
 		// A terminal never sends a click: the dispatcher synthesizes one
-		// from a press and a release on the same widget. Sending the pair
+		// from a press and a release on the same component. Sending the pair
 		// is therefore what "click" has to mean here, and it also gets the
 		// press-state visual and focus-follows-click for free.
 		press, release := ev, ev
@@ -433,7 +433,7 @@ func (s *Server) swapMarkup(a args) (any, error) {
 	// screen and `focus` and `tree_snapshot` still name its elements. Build
 	// into a fresh map and commit only on success.
 	previous := s.bind.Named
-	s.bind.Named = map[string]gooey.Widget{}
+	s.bind.Named = map[string]gooey.Component{}
 	root, err := markup.Build([]byte(src), s.bind)
 	if err != nil {
 		s.bind.Named = previous

@@ -186,15 +186,15 @@ func TestSignalFailureLandsInTheTarget(t *testing.T) {
 	}
 }
 
-// The receipt reaches the screen through the ordinary graph: one widget
+// The receipt reaches the screen through the ordinary graph: one component
 // repaints, the one that read the property.
-func TestReceiptRepaintsOnlyTheBoundWidget(t *testing.T) {
+func TestReceiptRepaintsOnlyTheBoundComponent(t *testing.T) {
 	h := buildServed(t, servedPage, &fakeSignaler{})
 	h.comp.Frame()
 	h.pressAndSettle()
 
 	if _, painted := h.comp.Frame(); painted != 1 {
-		t.Fatalf("repainted %d widgets, want exactly the bound Text", painted)
+		t.Fatalf("repainted %d components, want exactly the bound Text", painted)
 	}
 }
 

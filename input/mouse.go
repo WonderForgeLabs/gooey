@@ -2,7 +2,7 @@ package input
 
 // MouseKind is what the pointer did. Click is not a terminal report:
 // the dispatcher synthesizes it when a press and its release land on the
-// same widget.
+// same component.
 type MouseKind uint8
 
 const (

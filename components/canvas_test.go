@@ -1,23 +1,24 @@
-package gooey
+package components
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
-func at(w Widget, left, top int) Widget {
-	l := layoutOf(w)
+func at(w gooey.Component, left, top int) gooey.Component {
+	l := gooey.LayoutOf(w)
 	l.Left, l.Top = left, top
 	return w
 }
 
-func canvasFrame(root Widget, cols, rows int) *Frame {
-	return Compose(root, term.Caps{Cols: cols, Rows: rows}, nil)
+func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
+	return gooey.Compose(root, term.Caps{Cols: cols, Rows: rows}, nil)
 }
 
-func dump(f *Frame, cols, rows int) string {
+func dump(f *gooey.Frame, cols, rows int) string {
 	var sb strings.Builder
 	for y := 0; y < rows; y++ {
 		for x := 0; x < cols; x++ {
@@ -31,16 +32,16 @@ func dump(f *Frame, cols, rows int) string {
 func TestCanvasArrangesChildrenAtAbsoluteOffsets(t *testing.T) {
 	a := &Text{Content: Str("A")}
 	b := &Text{Content: Str("B")}
-	c := &Canvas{Children: []Widget{
+	c := &Canvas{Children: []gooey.Component{
 		at(a, 0, 0),
 		at(b, 5, 2),
 	}}
 	canvasFrame(c, 10, 4)
 
-	if got, want := a.Bounds(), (Rect{0, 0, 1, 1}); got != want {
+	if got, want := a.Bounds(), (gooey.Rect{X: 0, Y: 0, W: 1, H: 1}); got != want {
 		t.Errorf("child at (0,0): bounds %+v, want %+v", got, want)
 	}
-	if got, want := b.Bounds(), (Rect{5, 2, 1, 1}); got != want {
+	if got, want := b.Bounds(), (gooey.Rect{X: 5, Y: 2, W: 1, H: 1}); got != want {
 		t.Errorf("child at (5,2): bounds %+v, want %+v", got, want)
 	}
 }
@@ -49,12 +50,12 @@ func TestCanvasArrangesChildrenAtAbsoluteOffsets(t *testing.T) {
 // a Canvas could not be nested inside any other layout.
 func TestCanvasOffsetsAreRelativeToTheCanvas(t *testing.T) {
 	inner := &Text{Content: Str("X")}
-	c := &Canvas{Children: []Widget{at(inner, 2, 1)}}
+	c := &Canvas{Children: []gooey.Component{at(inner, 2, 1)}}
 	// A Border puts the canvas at (1,1) with a 1-cell frame all round.
 	root := &Border{Child: c}
 	canvasFrame(root, 12, 6)
 
-	if got, want := inner.Bounds(), (Rect{3, 2, 1, 1}); got != want {
+	if got, want := inner.Bounds(), (gooey.Rect{X: 3, Y: 2, W: 1, H: 1}); got != want {
 		t.Errorf("nested canvas child: bounds %+v, want %+v (canvas origin + offset)", got, want)
 	}
 }
@@ -63,7 +64,7 @@ func TestCanvasOffsetsAreRelativeToTheCanvas(t *testing.T) {
 // that is actually left, so it clips itself instead of overhanging.
 func TestCanvasConstrainsChildrenToRemainingSpace(t *testing.T) {
 	long := &Text{Content: Str("ABCDEFGHIJ")}
-	c := &Canvas{Children: []Widget{at(long, 6, 0)}}
+	c := &Canvas{Children: []gooey.Component{at(long, 6, 0)}}
 	f := canvasFrame(c, 10, 1)
 
 	if got, want := long.Bounds().W, 4; got != want {
@@ -79,7 +80,7 @@ func TestCanvasConstrainsChildrenToRemainingSpace(t *testing.T) {
 func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 	under := &Text{Content: Str("XXXX")}
 	over := &Text{Content: Str("ab")}
-	c := &Canvas{Children: []Widget{
+	c := &Canvas{Children: []gooey.Component{
 		at(under, 0, 0),
 		at(over, 1, 0),
 	}}
@@ -91,7 +92,7 @@ func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 }
 
 // The honest limit, pinned so it cannot regress silently: with paint-level
-// damage, an occluded widget repainting ALONE overwrites the sibling that
+// damage, an occluded component repainting ALONE overwrites the sibling that
 // was covering it. The occluder is clean, so nothing repaints it.
 //
 // If a future z-ordered repaint fixes this, this test should be inverted
@@ -100,24 +101,24 @@ func TestCanvasOverlapRepaintLeavesOccluderDamaged(t *testing.T) {
 	text := Str("XXXX")
 	under := &Text{Content: text}
 	over := &Text{Content: Str("ab")}
-	c := &Canvas{Children: []Widget{
+	c := &Canvas{Children: []gooey.Component{
 		at(under, 0, 0),
 		at(over, 1, 0),
 	}}
-	comp := NewComposer(c, 6, 1)
+	comp := gooey.NewComposer(c, 6, 1)
 	f, _ := comp.Frame()
 	if got, want := dump(f, 6, 1), "XabX  \n"; got != want {
 		t.Fatalf("first frame: %q, want %q", got, want)
 	}
 
-	// Dirty ONLY the occluded widget.
+	// Dirty ONLY the occluded component.
 	text.Set("YYYY")
 	f, painted := comp.Frame()
 	if painted != 1 {
-		t.Fatalf("painted %d widgets, want exactly 1 (only the occluded text is dirty)", painted)
+		t.Fatalf("painted %d components, want exactly 1 (only the occluded text is dirty)", painted)
 	}
 	if got, want := dump(f, 6, 1), "YYYY  \n"; got != want {
-		t.Errorf("after repainting the occluded widget: %q, want %q — "+
+		t.Errorf("after repainting the occluded component: %q, want %q — "+
 			"the occluder is clean, so it does not repaint over the new content", got, want)
 	}
 }
@@ -126,7 +127,7 @@ func TestCanvasOverlapRepaintLeavesOccluderDamaged(t *testing.T) {
 // repaint of the canvas would wipe children whose paint nodes are clean.
 // (This is the bug that once blanked pane interiors.)
 func TestCanvasPaintsNoChromeOfItsOwn(t *testing.T) {
-	c := &Canvas{Children: []Widget{at(&Text{Content: Str("keep")}, 1, 0)}}
+	c := &Canvas{Children: []gooey.Component{at(&Text{Content: Str("keep")}, 1, 0)}}
 	f := canvasFrame(c, 8, 2)
 	before := dump(f, 8, 2)
 
@@ -139,8 +140,8 @@ func TestCanvasPaintsNoChromeOfItsOwn(t *testing.T) {
 // Canvas fills its slot rather than shrinking to a bounding box of
 // absolutely-placed children.
 func TestCanvasFillsItsSlot(t *testing.T) {
-	c := &Canvas{Children: []Widget{at(&Text{Content: Str("x")}, 1, 1)}}
-	if got, want := c.Measure(Size{20, 8}), (Size{20, 8}); got != want {
+	c := &Canvas{Children: []gooey.Component{at(&Text{Content: Str("x")}, 1, 1)}}
+	if got, want := c.Measure(gooey.Size{W: 20, H: 8}), (gooey.Size{W: 20, H: 8}); got != want {
 		t.Errorf("Measure = %+v, want %+v", got, want)
 	}
 }
@@ -150,11 +151,11 @@ func TestCanvasFillsItsSlot(t *testing.T) {
 // absolute offset.
 func TestCanvasChildrenKeepLayoutSemantics(t *testing.T) {
 	hidden := &Text{Content: Str("gone")}
-	L(hidden, Layout{Visibility: Collapsed, Left: 0, Top: 0})
+	gooey.L(hidden, gooey.Layout{Visibility: gooey.Collapsed, Left: 0, Top: 0})
 	margined := &Text{Content: Str("m")}
-	L(margined, Layout{Margin: Thickness{L: 2}, Left: 1, Top: 1})
+	gooey.L(margined, gooey.Layout{Margin: gooey.Thickness{L: 2}, Left: 1, Top: 1})
 
-	c := &Canvas{Children: []Widget{hidden, margined}}
+	c := &Canvas{Children: []gooey.Component{hidden, margined}}
 	f := canvasFrame(c, 8, 3)
 
 	if got := dump(f, 8, 3); strings.Contains(got, "gone") {

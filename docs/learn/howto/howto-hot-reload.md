@@ -20,7 +20,7 @@ and properties may only be touched from the loop. The watcher reports
 that something changed; it never hands over a tree it built itself.
 
 Replacing the composition (rather than patching it) is forced by the
-design: the Composer wires every widget's paint node at construction, so
+design: the Composer wires every component's paint node at construction, so
 a structural change means a new Composer. The App closes the outgoing one
 first, which is what stops a replaced tree's `<Timer>` from ticking on
 against a viewmodel nobody is showing.
@@ -37,15 +37,15 @@ markup.Page(fsys, "page.gooey", ctx, "statpanel.gooey", "card.gooey")
 They are named rather than discovered because an `<Include>` is resolved
 during a build, and the build being watched for has not happened yet.
 
-## Re-find named widgets after a reload
+## Re-find named components after a reload
 
-`Name="..."` registers a widget in `ctx.Named`, and each rebuild resets
+`Name="..."` registers a component in `ctx.Named`, and each rebuild resets
 that map. Any handle you cached is stale after a swap:
 
 ```go
-var stats *gooey.Text
-app.OnSwap(func(gooey.Widget) {
-	stats, _ = markup.Find[*gooey.Text](ctx, "stats") // re-find, every time
+var stats *components.Text
+app.OnSwap(func(gooey.Component) {
+	stats, _ = markup.Find[*components.Text](ctx, "stats") // re-find, every time
 })
 ```
 
@@ -54,7 +54,7 @@ the only place that resolves the handle.
 
 ## Why state survives
 
-State lives in your viewmodel's properties, not in the widgets. The tree
+State lives in your viewmodel's properties, not in the components. The tree
 is disposable; `count`, `label`, and friends are not. A rebuilt `Text`
 binds to the same handle it did before, so it comes back showing the same
 value.

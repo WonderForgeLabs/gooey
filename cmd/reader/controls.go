@@ -94,8 +94,8 @@ func feedListControl(fsys fs.FS) markup.Builder {
 		rows := &feedRows{feeds: feeds, sel: sel, changed: reset}
 		return &markup.Context{
 			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows)},
-			Widgets: map[string]markup.Builder{
-				"FeedRows": func(markup.Element, *markup.Context) (gooey.Widget, error) { return rows, nil },
+			Components: map[string]markup.Builder{
+				"FeedRows": func(markup.Element, *markup.Context) (gooey.Component, error) { return rows, nil },
 			},
 		}, nil
 	})
@@ -200,8 +200,8 @@ func storyListControl(fsys fs.FS) markup.Builder {
 		rows := &storyRows{stories: stories, sel: sel, read: read, open: open}
 		return &markup.Context{
 			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows), "Open": open},
-			Widgets: map[string]markup.Builder{
-				"StoryRows": func(markup.Element, *markup.Context) (gooey.Widget, error) { return rows, nil },
+			Components: map[string]markup.Builder{
+				"StoryRows": func(markup.Element, *markup.Context) (gooey.Component, error) { return rows, nil },
 			},
 		}, nil
 	})
@@ -295,10 +295,10 @@ func (w *storyRows) Render(f *gooey.Frame) {
 
 // ---- ReaderPane ----
 
-// readerPaneControl reports the body widget it built through built, so
+// readerPaneControl reports the body component it built through built, so
 // the page can move focus to it when a story opens — the control owns
 // the instance, the page holds a handle to it.
-func readerPaneControl(fsys fs.FS, built func(gooey.Widget)) markup.Builder {
+func readerPaneControl(fsys fs.FS, built func(gooey.Component)) markup.Builder {
 	return markup.UserControl(fsys, "readerpane.gooey", func(e markup.Element, parent *markup.Context) (*markup.Context, error) {
 		story, err := attr[*Story](e, parent, "Story")
 		if err != nil {
@@ -308,8 +308,8 @@ func readerPaneControl(fsys fs.FS, built func(gooey.Widget)) markup.Builder {
 		built(body)
 		return &markup.Context{
 			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], body)},
-			Widgets: map[string]markup.Builder{
-				"ArticleBody": func(markup.Element, *markup.Context) (gooey.Widget, error) { return body, nil },
+			Components: map[string]markup.Builder{
+				"ArticleBody": func(markup.Element, *markup.Context) (gooey.Component, error) { return body, nil },
 			},
 		}, nil
 	})

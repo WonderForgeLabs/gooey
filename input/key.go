@@ -4,7 +4,7 @@
 //
 // It exists so the import graph stays a line rather than a cycle: term
 // reads bytes and produces input.KeyEvent; gooey routes input.KeyEvent
-// through the widget tree. Neither has to know about the other.
+// through the component tree. Neither has to know about the other.
 package input
 
 import "strings"

@@ -1,8 +1,8 @@
 // sysmon is a live system monitor over real /proc data — the "better
-// than logs" component-model demo. Three custom widgets (Gauge,
+// than logs" component-model demo. Three custom components (Gauge,
 // Sparkline, ProcTable) compose with the builtins; every value flows
 // through dependency properties, so a sample tick repaints only the
-// widgets whose (rounded) values actually changed — watch the
+// components whose (rounded) values actually changed — watch the
 // "painted" counter sit near zero on an idle system and spike under
 // load.
 //
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -68,31 +69,31 @@ func main() {
 
 	// --- tree ---
 	host, _ := os.Hostname()
-	gauges := make([]gooey.Widget, ncores)
+	gauges := make([]gooey.Component, ncores)
 	for i := range gauges {
-		gauges[i] = &gooey.Gauge{Label: gooey.Str(fmt.Sprintf("cpu%-2d", i)), Value: corePct[i]}
+		gauges[i] = &components.Gauge{Label: components.Str(fmt.Sprintf("cpu%-2d", i)), Value: corePct[i]}
 	}
-	left := &gooey.VStack{Children: append(gauges,
-		&gooey.Text{Content: gooey.Str("")},
-		&gooey.Gauge{Label: gooey.Str("mem  "), Value: memPct},
-		&gooey.Text{Content: memLabel, Style: gooey.Sty(dim)},
+	left := &components.VStack{Children: append(gauges,
+		&components.Text{Content: components.Str("")},
+		&components.Gauge{Label: components.Str("mem  "), Value: memPct},
+		&components.Text{Content: memLabel, Style: components.Sty(dim)},
 	)}
-	right := &gooey.VStack{Children: []gooey.Widget{
-		&gooey.Text{Content: gooey.Str("total cpu"), Style: gooey.Sty(dim)},
-		&gooey.Sparkline{Values: hist, Rows: 4},
-		&gooey.Text{Content: gooey.Str("")},
-		&gooey.Text{Content: loadavg, Style: gooey.Sty(dim)},
-		&gooey.Text{Content: statsP, Style: gooey.Sty(dim)},
+	right := &components.VStack{Children: []gooey.Component{
+		&components.Text{Content: components.Str("total cpu"), Style: components.Sty(dim)},
+		&components.Sparkline{Values: hist, Rows: 4},
+		&components.Text{Content: components.Str("")},
+		&components.Text{Content: loadavg, Style: components.Sty(dim)},
+		&components.Text{Content: statsP, Style: components.Sty(dim)},
 	}}
-	root := &gooey.Border{Title: gooey.Str("sysmon — " + host), Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}), Child: &gooey.VStack{Children: []gooey.Widget{
-		&gooey.HStack{Gap: 3, Children: []gooey.Widget{left, right}},
-		&gooey.Text{Content: gooey.Str("")},
-		&gooey.Text{Content: tableTitle, Style: gooey.Sty(accent)},
+	root := &components.Border{Title: components.Str("sysmon — " + host), Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}), Child: &components.VStack{Children: []gooey.Component{
+		&components.HStack{Gap: 3, Children: []gooey.Component{left, right}},
+		&components.Text{Content: components.Str("")},
+		&components.Text{Content: tableTitle, Style: components.Sty(accent)},
 		&procTable{src: sorted},
 	}}}
 
 	// Keys are declared as attachments rather than switched on in the
-	// loop. Dispatch walks up from the focused widget to the root, and
+	// loop. Dispatch walks up from the focused component to the root, and
 	// sysmon has no focus stops at all, so a binding on the root is
 	// reached for every key — the page-global scope, for free.
 	// Attachments must exist before the Composer walks the tree.
@@ -139,7 +140,7 @@ func main() {
 	for running {
 		if needsFrame {
 			frames++
-			statsP.Set(fmt.Sprintf("frames=%d  widgets painted last frame=%d", frames, lastPainted))
+			statsP.Set(fmt.Sprintf("frames=%d  components painted last frame=%d", frames, lastPainted))
 			_, lastPainted = comp.Frame()
 			comp.Flush(screen.File())
 			needsFrame = false
@@ -175,12 +176,12 @@ func main() {
 	}
 }
 
-// ---- custom widgets ----
+// ---- custom components ----
 //
 // The Gauge and Sparkline that used to live here are now framework
-// built-ins (gooey.Gauge, gooey.Sparkline) — they were written here,
+// built-ins (components.Gauge, components.Sparkline) — they were written here,
 // proved here, and promoted once their shape stopped moving. The
-// process table stays local: a general list/table widget is the
+// process table stays local: a general list/table component is the
 // DataTemplates chapter, not a copy of this one.
 
 type procInfo struct {

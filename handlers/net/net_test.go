@@ -91,7 +91,7 @@ func TestGetDeliversBodyIntoTarget(t *testing.T) {
 // The result has to reach the screen through the ordinary graph: the
 // Text bound to {{.Body}} repaints because it read the property the
 // handler Set, with nothing in the provider knowing a Text exists.
-func TestGetResultRepaintsTheBoundWidget(t *testing.T) {
+func TestGetResultRepaintsTheBoundComponent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("PAYLOAD"))
 	}))
@@ -104,7 +104,7 @@ func TestGetResultRepaintsTheBoundWidget(t *testing.T) {
 	h.clickAndSettle()
 	frame, painted := h.comp.Frame()
 	if painted != 1 {
-		t.Fatalf("repainted %d widgets, want exactly the bound Text", painted)
+		t.Fatalf("repainted %d components, want exactly the bound Text", painted)
 	}
 	if out := frameString(frame, 60, 6); !strings.Contains(out, "PAYLOAD") {
 		t.Fatalf("result never reached the screen:\n%s", out)

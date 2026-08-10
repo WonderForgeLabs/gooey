@@ -1,6 +1,6 @@
 // statedemo: click a button, get the app serialized as JSON into a
-// text box. The UI is pure markup — built-in widgets only, no custom
-// widgets, no UserControl setup funcs — so every delegate lives here in
+// text box. The UI is pure markup — built-in components only, no custom
+// components, no UserControl setup funcs — so every delegate lives here in
 // the viewmodel, which is the "no code-behind" contract.
 //
 // Serialization is viewmodel-side and explicit: properties are typed
@@ -73,10 +73,10 @@ func main() {
 			// refresh as-of whenever a tracked dependency fires.
 			"framework": map[string]any{
 				"frames":           app.Frames(),           // frames flushed since start
-				"paintedLastFrame": app.PaintedLastFrame(), // damage: widgets repainted last frame, not the whole tree
-				// Focus/hover are live Widget references; %T prints
-				// their concrete types ("*gooey.Button", "<nil>") since
-				// widgets have no serializable identity yet — Name=
+				"paintedLastFrame": app.PaintedLastFrame(), // damage: components repainted last frame, not the whole tree
+				// Focus/hover are live Component references; %T prints
+				// their concrete types ("*components.Button", "<nil>") since
+				// components have no serializable identity yet — Name=
 				// would be the stable key when that matters.
 				"focused":       fmt.Sprintf("%T", app.Composer().Focus().Focused()),
 				"hovered":       fmt.Sprintf("%T", app.Composer().Focus().Hovered()),

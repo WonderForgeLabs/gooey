@@ -13,7 +13,7 @@ package main
 //
 // And an animation needs a clock, which in this framework is a lifetime
 // question rather than a timing one. The ticker belongs to the
-// composition — the preview widget is a Startable, so the Composer that
+// composition — the preview component is a Startable, so the Composer that
 // starts it also stops it, and a hot reload or a terminal hand-off
 // cannot leave a ticker running against a pane nobody is showing.
 //
@@ -283,7 +283,7 @@ func newPlayer(status *prop.Property[string]) *player {
 }
 
 // Start makes the player live. Implementing Startable on the preview
-// widget is what hands the Composer the lifetime; see composer.go, which
+// component is what hands the Composer the lifetime; see composer.go, which
 // collects Startables during the same walk that finds key bindings.
 func (p *player) Start(post func(func())) func() {
 	p.post = post
@@ -421,7 +421,7 @@ func (p *player) Playing() bool { return p.playing.Get() }
 
 // Current is the frame to paint, read inside Render so the frame
 // property becomes a dependency of the preview pane and nothing else:
-// one widget repaints per animation tick.
+// one component repaints per animation tick.
 //
 // The property is read FIRST, and the order is load-bearing. A
 // dependency is recorded by the Get that happens, so short-circuiting

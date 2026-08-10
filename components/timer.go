@@ -1,23 +1,11 @@
-package gooey
+package components
 
 import (
 	"time"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
-
-// Startable is implemented by non-visual elements that own a background
-// goroutine. The Composer discovers them while walking the tree and
-// starts them when the composition goes live; Composer.Close stops them.
-//
-// The post parameter is the ONLY way a started element may reach the
-// property graph: it queues a func onto the UI goroutine (Dispatcher.Post).
-// A Startable that touches properties from its own goroutine violates
-// UI-goroutine confinement, and nothing in the framework will catch it —
-// the properties are unlocked by design.
-type Startable interface {
-	Start(post func(func())) (stop func())
-}
 
 // Timer is gooey's DispatcherTimer: a non-visual element that runs a
 // Command on an interval. Like KeyBinding it lives in the tree as an
@@ -43,15 +31,15 @@ type Startable interface {
 // timers. That is what keeps a replaced tree from leaving a ticker
 // running against a viewmodel nobody is showing any more.
 type Timer struct {
-	Base
+	gooey.Base
 	Interval time.Duration
-	Tick     Command
+	Tick     gooey.Command
 	Enabled  *prop.Property[bool] // nil = always enabled
 }
 
-func (t *Timer) Measure(Size) Size { return Size{} }
-func (t *Timer) Render(*Frame)     {}
-func (t *Timer) NonVisual() bool   { return true }
+func (t *Timer) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
+func (t *Timer) Render(*gooey.Frame)           {}
+func (t *Timer) NonVisual() bool               { return true }
 
 // Start runs the ticker until the returned stop func is called. An
 // interval of zero or a missing Tick makes it inert rather than an

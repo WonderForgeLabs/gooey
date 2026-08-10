@@ -37,7 +37,7 @@ type eater struct {
 
 func (e *eater) HandleKey(input.KeyEvent) bool { e.got++; return true }
 
-func newTestApp(t *testing.T, root Widget, opts ...Option) (*App, *testTTY) {
+func newTestApp(t *testing.T, root Component, opts ...Option) (*App, *testTTY) {
 	t.Helper()
 	tty := newTestTTY(t)
 	opts = append([]Option{WithTerminal(tty.open)}, opts...)
@@ -100,8 +100,8 @@ func TestCtrlCQuitsAndRestoresTheTerminal(t *testing.T) {
 	}
 }
 
-// The tree gets first refusal on every key. A widget that handles ctrl+c
-// keeps it, exactly like a widget that handles arrows keeps them from
+// The tree gets first refusal on every key. A component that handles ctrl+c
+// keeps it, exactly like a component that handles arrows keeps them from
 // moving focus.
 func TestQuitKeyOnlyFiresWhenTheTreeDeclines(t *testing.T) {
 	root := &eater{label: label{text: prop.NewSource("hi")}}
@@ -113,15 +113,15 @@ func TestQuitKeyOnlyFiresWhenTheTreeDeclines(t *testing.T) {
 	tty.send("\x03")
 	select {
 	case <-done:
-		t.Fatal("ctrl+c quit the app even though the focused widget consumed it")
+		t.Fatal("ctrl+c quit the app even though the focused component consumed it")
 	case <-time.After(300 * time.Millisecond):
 	}
-	// The widget's counter belongs to the UI goroutine like any other
-	// widget state, so it is read from there.
+	// The component's counter belongs to the UI goroutine like any other
+	// component state, so it is read from there.
 	seen := make(chan int, 1)
 	app.Post(func() { seen <- root.got })
 	if <-seen == 0 {
-		t.Error("the widget never saw ctrl+c")
+		t.Error("the component never saw ctrl+c")
 	}
 }
 
@@ -288,7 +288,7 @@ func TestEveryRunsOnTheUIGoroutine(t *testing.T) {
 
 // Content.Watch reports a change; the App rebuilds on the UI goroutine
 // and swaps. The hook fires for the initial attach as well, which is
-// what lets an app resolve named widgets in one place.
+// what lets an app resolve named components in one place.
 func TestReloadRebuildsOnTheUIGoroutineAndSwaps(t *testing.T) {
 	text := prop.NewSource("v1")
 	c := &countingContent{text: text}
@@ -296,7 +296,7 @@ func TestReloadRebuildsOnTheUIGoroutineAndSwaps(t *testing.T) {
 	app := NewApp(c, WithTerminal(tty.open))
 
 	swaps := 0 // written only from the UI goroutine
-	app.OnSwap(func(Widget) { swaps++ })
+	app.OnSwap(func(Component) { swaps++ })
 
 	start(t, app)
 	tty.waitForFrame(t)
@@ -365,7 +365,7 @@ type countingContent struct {
 	builds  int
 }
 
-func (c *countingContent) Build() (Widget, error) {
+func (c *countingContent) Build() (Component, error) {
 	c.builds++
 	if c.fail != nil {
 		return nil, c.fail

@@ -1,9 +1,10 @@
-package gooey
+package components
 
 import (
 	"testing"
 	"time"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
@@ -23,7 +24,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestTimerDeliversTicksThroughTheDispatcher(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
 	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }}
 
@@ -48,7 +49,7 @@ func TestTimerDeliversTicksThroughTheDispatcher(t *testing.T) {
 // timer still posts, but the posted func does nothing. That is what lets
 // the property graph pause a timer without tearing anything down.
 func TestTimerEnabledFalseSuppressesTheTick(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
 	enabled := prop.NewSource(false)
 	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }, Enabled: enabled}
@@ -71,7 +72,7 @@ func TestTimerEnabledFalseSuppressesTheTick(t *testing.T) {
 }
 
 func TestTimerNilEnabledMeansAlwaysOn(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
 	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }}
 	stop := timer.Start(d.Post)
@@ -85,7 +86,7 @@ func TestTimerNilEnabledMeansAlwaysOn(t *testing.T) {
 
 // A timer with nothing to do is legal to declare and simply inert.
 func TestTimerWithoutIntervalOrCommandIsInert(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	for _, timer := range []*Timer{
 		{Interval: 0, Tick: func() {}},
 		{Interval: time.Millisecond},
@@ -106,7 +107,7 @@ func TestTimerIsNonVisual(t *testing.T) {
 	if !timer.NonVisual() {
 		t.Error("Timer must report itself non-visual")
 	}
-	if got := timer.Measure(Size{80, 24}); got != (Size{}) {
+	if got := timer.Measure(gooey.Size{W: 80, H: 24}); got != (gooey.Size{}) {
 		t.Errorf("Timer measured %+v, want zero", got)
 	}
 }
@@ -114,12 +115,12 @@ func TestTimerIsNonVisual(t *testing.T) {
 // The composition owns the timer's lifetime: a tree that was built but
 // never started does not tick.
 func TestComposerStartsAttachedTimers(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
-	root := &VStack{Children: []Widget{&Text{Content: Str("x")}}}
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
 	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
 
-	comp := NewComposer(root, 20, 3)
+	comp := gooey.NewComposer(root, 20, 3)
 	time.Sleep(5 * time.Millisecond)
 	if n := d.Pending(); n != 0 {
 		t.Fatalf("timer ticked before Start (%d posts) — starting is the composition's job", n)
@@ -136,12 +137,12 @@ func TestComposerStartsAttachedTimers(t *testing.T) {
 // The leak this design exists to prevent: hot reload swaps trees, and
 // the replaced composition's ticker must die with it.
 func TestComposerCloseStopsTimersSoSwapsDoNotLeak(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
-	root := &VStack{Children: []Widget{&Text{Content: Str("x")}}}
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
 	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
 
-	comp := NewComposer(root, 20, 3)
+	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)
 	waitFor(t, "the timer to start ticking", func() bool {
 		d.Drain()
@@ -167,12 +168,12 @@ func TestComposerCloseStopsTimersSoSwapsDoNotLeak(t *testing.T) {
 }
 
 func TestComposerCloseIsIdempotentAndStartRestarts(t *testing.T) {
-	d := NewDispatcher()
+	d := gooey.NewDispatcher()
 	ticks := 0
-	root := &VStack{Children: []Widget{&Text{Content: Str("x")}}}
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
 	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
 
-	comp := NewComposer(root, 20, 3)
+	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)
 	comp.Close()
 	comp.Close() // must not panic on a double close
@@ -189,11 +190,11 @@ func TestComposerCloseIsIdempotentAndStartRestarts(t *testing.T) {
 // Starting twice must not leave the first ticker running — otherwise an
 // attach() helper that forgets a Close would silently double the rate.
 func TestComposerStartTwiceStopsTheFirstRun(t *testing.T) {
-	d := NewDispatcher()
-	root := &VStack{Children: []Widget{&Text{Content: Str("x")}}}
+	d := gooey.NewDispatcher()
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
 	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() {}})
 
-	comp := NewComposer(root, 20, 3)
+	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)
 	comp.Start(d)
 	comp.Close()

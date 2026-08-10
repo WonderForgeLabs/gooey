@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
@@ -308,9 +309,9 @@ func TestAnimationRepaintsOnlyThePreview(t *testing.T) {
 	list := &demoList{demos: demos, sel: sel}
 	info := &demoInfo{demos: demos, sel: sel, play: play}
 	info.LayoutProps().Col = 1
-	grid := &gooey.Grid{
-		Cols:     []gooey.GridLen{gooey.Star(1), gooey.Star(1)},
-		Children: []gooey.Widget{list, info},
+	grid := &components.Grid{
+		Cols:     []components.GridLen{components.Star(1), components.Star(1)},
+		Children: []gooey.Component{list, info},
 	}
 
 	c := gooey.NewComposer(grid, 80, 24)
@@ -322,30 +323,30 @@ func TestAnimationRepaintsOnlyThePreview(t *testing.T) {
 	// the ticks here are delivered by hand.
 	play.begin(testClip("a.gif", 4, time.Hour))
 	if _, painted := c.Frame(); painted != 1 {
-		t.Fatalf("starting playback repainted %d widgets, want 1", painted)
+		t.Fatalf("starting playback repainted %d components, want 1", painted)
 	}
 	play.advance(play.gen)
 	if _, painted := c.Frame(); painted != 1 {
-		t.Fatalf("an animation tick repainted %d widgets, want 1", painted)
+		t.Fatalf("an animation tick repainted %d components, want 1", painted)
 	}
 	if _, painted := c.Frame(); painted != 0 {
-		t.Fatalf("a frame with nothing changed repainted %d widgets", painted)
+		t.Fatalf("a frame with nothing changed repainted %d components", painted)
 	}
 	play.Stop()
 	if _, painted := c.Frame(); painted != 1 {
-		t.Fatalf("stopping playback repainted %d widgets, want 1", painted)
+		t.Fatalf("stopping playback repainted %d components, want 1", painted)
 	}
 	// Every launch calls Stop, almost always with nothing playing. That
 	// must be free: prop.Set does not compare values, so an unguarded
 	// Set here would repaint the pane on every `enter`.
 	play.Stop()
 	if _, painted := c.Frame(); painted != 0 {
-		t.Fatalf("stopping an idle player repainted %d widgets, want 0", painted)
+		t.Fatalf("stopping an idle player repainted %d components, want 0", painted)
 	}
 }
 
 // Composer.Close is the hot-reload and teardown path. It must reach the
-// animation clock, which it can only do because the preview widget is a
+// animation clock, which it can only do because the preview component is a
 // Startable — the walk that finds key bindings finds this too.
 func TestComposerCloseStopsPlayback(t *testing.T) {
 	play := newPlayer(prop.NewSource(""))

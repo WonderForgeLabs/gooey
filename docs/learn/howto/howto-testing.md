@@ -6,8 +6,8 @@ need to prove the real binary behaves.
 
 ## Assert against the cell buffer, with no terminal
 
-`gooey.NewComposer` needs a widget tree and a size — not a tty. `Frame()`
-paints into a plain buffer you can read, and returns how many widgets
+`gooey.NewComposer` needs a component tree and a size — not a tty. `Frame()`
+paints into a plain buffer you can read, and returns how many components
 painted. That second value is a contract you can test.
 
 ```go
@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
@@ -34,9 +35,9 @@ func TestRendersAndDamages(t *testing.T) {
 	name := prop.NewSource("world")
 	label := prop.NewComputed(func() string { return "hello, " + name.Get() })
 
-	tree := &gooey.VStack{Children: []gooey.Widget{
-		&gooey.Text{Content: label},
-		&gooey.Text{Content: gooey.Str("static")},
+	tree := &components.VStack{Children: []gooey.Component{
+		&components.Text{Content: label},
+		&components.Text{Content: components.Str("static")},
 	}}
 
 	comp := gooey.NewComposer(tree, 40, 4)
@@ -54,7 +55,7 @@ func TestRendersAndDamages(t *testing.T) {
 		t.Fatalf("after Set, row 0 = %q", got)
 	}
 	if painted != 1 { // only the bound Text
-		t.Fatalf("damage: painted %d widgets, want 1", painted)
+		t.Fatalf("damage: painted %d components, want 1", painted)
 	}
 }
 ```
@@ -157,5 +158,5 @@ answers, and it falls back after its timeout.
 
 ## See also
 
-- [Tutorial 6: Write a custom widget](../06-custom-widgets.md)
+- [Tutorial 6: Write a custom component](../06-custom-components.md)
 - [Concept: damage tracking](../concepts/damage.md)

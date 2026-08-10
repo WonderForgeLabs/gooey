@@ -1,9 +1,9 @@
 // Package gooey — POC of the retained visual tree / component model.
 //
-// The tree is retained: widgets are persistent objects with parents,
+// The tree is retained: components are persistent objects with parents,
 // children, and computed bounds. A frame is produced by the classic
 // two-pass layout (Measure bottom-up, Arrange top-down) followed by a
-// Render walk. Pixel content never enters the cell buffer — widgets
+// Render walk. Pixel content never enters the cell buffer — components
 // record graphics.Placements on the Frame, and the flush composites the
 // two planes (cells first, then pixel placements over them).
 package gooey
@@ -20,34 +20,34 @@ type Size struct{ W, H int }
 
 type Rect struct{ X, Y, W, H int }
 
-// Widget is the component model. Everything in the tree implements it.
-type Widget interface {
-	// Measure returns the size the widget wants within avail.
+// Component is the component model. Everything in the tree implements it.
+type Component interface {
+	// Measure returns the size the component wants within avail.
 	Measure(avail Size) Size
 	// Arrange assigns final bounds (and arranges children).
 	Arrange(bounds Rect)
-	// Render paints THIS widget only into the frame using the bounds
+	// Render paints THIS component only into the frame using the bounds
 	// from Arrange; children are walked by the framework via Container.
 	Render(f *Frame)
 }
 
-// Container is implemented by widgets with children. The framework —
-// not the widget — walks them, so the Composer can give every widget
+// Container is implemented by components with children. The framework —
+// not the component — walks them, so the Composer can give every component
 // its own paint node.
-type Container interface{ ChildWidgets() []Widget }
+type Container interface{ ChildComponents() []Component }
 
 // Frame is one composed frame: the cell plane plus deferred pixel
 // placements. Graphics is nil when the terminal has no pixel protocol —
-// widgets with pixel content must then degrade into cells (halfblock).
+// components with pixel content must then degrade into cells (halfblock).
 //
 // Caps is the terminal's detected capability set, carried on the frame
-// so a widget can adapt AT RENDER TIME: the color depth it will
+// so a component can adapt AT RENDER TIME: the color depth it will
 // actually be shown in, which graphics protocol (if any) is available,
 // and the pixel size of a cell. This is the mechanism behind
-// "a different experience per rendering engine" — the widget asks the
+// "a different experience per rendering engine" — the component asks the
 // frame what it is painting onto. It is a plain field, not a property:
 // capabilities are fixed for the life of a session, so making them
-// observable would buy nothing and cost every widget a dependency edge.
+// observable would buy nothing and cost every component a dependency edge.
 type Frame struct {
 	Cells        *render.Buffer
 	Graphics     graphics.Encoder
@@ -61,7 +61,7 @@ func (f *Frame) Depth() render.ColorDepth { return f.Caps.Color }
 
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
-func Compose(root Widget, caps term.Caps, enc graphics.Encoder) *Frame {
+func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 	f := &Frame{
 		Cells:    render.NewBuffer(caps.Cols, caps.Rows),
 		Graphics: enc,
@@ -75,15 +75,15 @@ func Compose(root Widget, caps term.Caps, enc graphics.Encoder) *Frame {
 	return f
 }
 
-func renderTree(w Widget, f *Frame) {
-	if l := layoutOf(w); l != nil && l.Visibility == Collapsed {
+func renderTree(w Component, f *Frame) {
+	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return // collapsed subtrees paint nothing at all
 	}
 	if paintable(w) {
 		w.Render(f)
 	}
 	if c, ok := w.(Container); ok {
-		for _, ch := range c.ChildWidgets() {
+		for _, ch := range c.ChildComponents() {
 			renderTree(ch, f)
 		}
 	}

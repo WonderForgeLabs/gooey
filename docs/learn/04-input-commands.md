@@ -111,18 +111,18 @@ Same key, different command. Nothing arbitrates between them.
 
 ### How dispatch decides
 
-A key event walks a single path: start at the **focused widget**, then
+A key event walks a single path: start at the **focused component**, then
 each ancestor up to the root. At every level, the KeyBindings attached
-there are matched first, then that widget's own key handler. The first
+there are matched first, then that component's own key handler. The first
 handler to return true stops the walk.
 
-So a binding fires only while the focused widget's path to the root
+So a binding fires only while the focused component's path to the root
 passes through the element it was declared on. That gives you three
 useful tiers for free:
 
 - **Global** — declared on the root element. Every path reaches it.
 - **Pane-scoped** — declared on a pane's `Border`, as above.
-- **Widget-local** — a widget's own `HandleKey`, which sees keys only
+- **Component-local** — a component's own `HandleKey`, which sees keys only
   while it has focus (tutorial 6).
 
 > **Remember from tutorial 1:** if a page has *no* focus stops, dispatch
@@ -140,28 +140,28 @@ unconsumed keys:
   whose center lies in that direction, preferring targets roughly in line
   with the current one. When nothing lies that way it falls back to tree
   order, so a direction is never a dead end.
-- A **mouse press** focuses the nearest focusable widget at or above the
+- A **mouse press** focuses the nearest focusable component at or above the
   hit. Failing that it descends, which is what makes clicking a pane's
   border or title focus the pane.
 
 ![Tab moving focus between the four focus stops, then an arrow key](media/04-focus.gif)
 
-The order in which these are tried is what makes arrow-driven widgets
-possible: navigation runs only in the **unconsumed tail**. A widget that
+The order in which these are tried is what makes arrow-driven components
+possible: navigation runs only in the **unconsumed tail**. A component that
 handles `left`/`right` itself keeps them; the framework never sees them.
 
 ### Focus damage is free
 
-Watch the highlight in the GIF: exactly two widgets change. `FocusState`
-keeps the focused flag in a source property, so a widget that reads
+Watch the highlight in the GIF: exactly two components change. `FocusState`
+keeps the focused flag in a source property, so a component that reads
 `IsFocused()` while painting picks up focus changes as ordinary damage.
-Moving focus repaints the widget losing it and the widget gaining it, and
+Moving focus repaints the component losing it and the component gaining it, and
 nothing else. There is no focus-specific redraw path in the framework.
 
 ## Step 5: Add a checkbox and feel the graph
 
-`Checkbox` is not a built-in — it is a custom widget this example
-registers, and [tutorial 6](06-custom-widgets.md) takes it apart line by
+`Checkbox` is not a built-in — it is a custom component this example
+registers, and [tutorial 6](06-custom-components.md) takes it apart line by
 line. What matters here is that it binds a `bool` property two-way:
 `Render` reads it, toggling `Set`s it.
 
@@ -183,7 +183,7 @@ status := prop.NewComputed(func() string {
 
 Tab to the checkbox and press space. The status line changes case
 immediately, and no command anywhere touched it — the checkbox `Set` a
-property, the computed that read it went dirty, and the one widget bound
+property, the computed that read it went dirty, and the one component bound
 to that computed repainted. This is the same mechanism from tutorial 3,
 now driven by input.
 
@@ -210,12 +210,12 @@ implicit capture, and click synthesis.
 - A command is `func()`; event attributes bind one from the viewmodel
   (`{{.Save}}`) or resolve one by name from a handler registry.
 - `<KeyBinding>` attaches to its enclosing element, and dispatch walks
-  focused-widget-to-root — which is what scopes it.
+  focused-component-to-root — which is what scopes it.
 - Focus is framework-owned: tab cycles in tree order, unconsumed arrows
   navigate spatially, and a press focuses what it hit.
-- Widgets that consume a key stop it from reaching navigation.
+- Components that consume a key stop it from reaching navigation.
 - Focus and hover are source properties, so focus movement repaints
-  exactly two widgets.
+  exactly two components.
 - Mouse support is one call, and it cleans up after itself.
 
 ## Current limitations

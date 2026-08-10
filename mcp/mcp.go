@@ -23,10 +23,10 @@
 //
 // The second half of the rule is that nothing here holds a reference to
 // the tree between requests. Snapshots are plain maps of copied values,
-// never widgets or property handles: a *prop.Property read from an http
+// never components or property handles: a *prop.Property read from an http
 // goroutine after the response went out would be exactly the bug the
 // Dispatcher exists to prevent, and a hot reload would have replaced the
-// widget anyway.
+// component anyway.
 //
 // # A nested module
 //
@@ -76,7 +76,7 @@ type Host interface {
 	// per call, never cache it.
 	Composer() *gooey.Composer
 	// Swap replaces the live composition with a new tree.
-	Swap(root gooey.Widget)
+	Swap(root gooey.Component)
 }
 
 // Options configure a server.
@@ -228,7 +228,7 @@ func (s *Server) register(ts ...*Tool) {
 
 // bridge is the crossing between http goroutines and the UI goroutine,
 // and it is the only one. Every tool in this package goes through do;
-// nothing else in the package touches a widget or a property.
+// nothing else in the package touches a component or a property.
 type bridge struct {
 	post    func(func())
 	timeout time.Duration

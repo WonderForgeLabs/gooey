@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -93,7 +94,7 @@ func main() {
 			len(files), n, lastMatchDur.Round(time.Microsecond))
 	})
 
-	// --- widgets, built up front so the commands below can address
+	// --- components, built up front so the commands below can address
 	// them. Hot reload re-runs the builders and hands back these same
 	// instances: the tree is disposable, the state is not.
 	var comp *gooey.Composer
@@ -132,9 +133,9 @@ func main() {
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 			"input":  {Bold: true},
 		},
-		Widgets: map[string]markup.Builder{
-			"Results": func(markup.Element, *markup.Context) (gooey.Widget, error) { return res, nil },
-			"Preview": func(markup.Element, *markup.Context) (gooey.Widget, error) {
+		Components: map[string]markup.Builder{
+			"Results": func(markup.Element, *markup.Context) (gooey.Component, error) { return res, nil },
+			"Preview": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &previewPane{lines: preview}, nil
 			},
 		},
@@ -143,7 +144,7 @@ func main() {
 	// The query line is <TextBox> in the markup; look it up by name to
 	// hand focus back to it after a click in the results.
 	res.focusQuery = func() {
-		if in, err := markup.Find[*gooey.TextBox](ctx, "query"); err == nil {
+		if in, err := markup.Find[*components.TextBox](ctx, "query"); err == nil {
 			comp.Focus().SetFocus(in)
 		}
 	}
@@ -169,14 +170,14 @@ func main() {
 	cols, rows := screen.Size()
 
 	needsFrame := true
-	attach := func(w gooey.Widget) {
+	attach := func(w gooey.Component) {
 		comp = gooey.NewComposer(w, cols, rows)
 		comp.OnInvalidate(func() { needsFrame = true })
 		needsFrame = true
 	}
 	attach(tree)
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, name, ctx, func(w gooey.Widget) { swaps <- w })
+	swaps := make(chan gooey.Component, 1)
+	stopWatch := markup.Watch(fsys, name, ctx, func(w gooey.Component) { swaps <- w })
 	defer stopWatch()
 
 	if err := screen.Raw(); err != nil {
@@ -211,10 +212,10 @@ func clampSel(i, n int) int {
 	return max(0, min(i, n-1))
 }
 
-// ---- widgets ----
+// ---- components ----
 
-// The query line used to be a demo-local widget here. It is
-// gooey.TextBox now — the framework version does its own editing,
+// The query line used to be a demo-local component here. It is
+// components.TextBox now — the framework version does its own editing,
 // carries a real caret, and scrolls horizontally, none of which this
 // demo had to grow itself.
 

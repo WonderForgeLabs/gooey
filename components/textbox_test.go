@@ -1,9 +1,10 @@
-package gooey
+package components
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -14,7 +15,7 @@ func textBox(t *testing.T, s string) (*TextBox, *prop.Property[string]) {
 	t.Helper()
 	v := prop.NewSource(s)
 	tb := &TextBox{Text: v}
-	Compose(tb, term.Caps{Cols: 20, Rows: 1}, nil)
+	gooey.Compose(tb, term.Caps{Cols: 20, Rows: 1}, nil)
 	tb.setCaret(len([]rune(s)))
 	return tb, v
 }
@@ -78,7 +79,7 @@ func TestTextBoxCaretMovementAndClamping(t *testing.T) {
 	}
 }
 
-// The bound text can change underneath the widget; the caret must not be
+// The bound text can change underneath the component; the caret must not be
 // left pointing past the end.
 func TestTextBoxCaretClampsWhenTextShrinksExternally(t *testing.T) {
 	tb, v := textBox(t, "abcdef")
@@ -139,9 +140,9 @@ func TestTextBoxRendersPromptTextAndCaret(t *testing.T) {
 		AccentStyle: Sty(render.Style{Fg: render.RGB(255, 170, 60)}),
 	}
 	tb.SetFocused(true)
-	f := Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 	tb.setCaret(2)
-	f = Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
 	var sb strings.Builder
 	for x := 0; x < 10; x++ {
@@ -158,7 +159,7 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 	tb := &TextBox{Text: v}
 	tb.SetFocused(true)
 	tb.setCaret(len("abcdefghijklmnop")) // caret at the end, as after typing
-	f := Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
 	var sb strings.Builder
 	for x := 0; x < 6; x++ {
@@ -173,7 +174,7 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 func TestTextBoxClickPlacesTheCaret(t *testing.T) {
 	v := prop.NewSource("abcdef")
 	tb := &TextBox{Text: v, Prompt: Str("> ")}
-	Compose(tb, term.Caps{Cols: 20, Rows: 1}, nil)
+	gooey.Compose(tb, term.Caps{Cols: 20, Rows: 1}, nil)
 
 	if !tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 5, Y: 0}) {
 		t.Fatal("click was not handled")
@@ -188,25 +189,25 @@ func TestTextBoxClickPlacesTheCaret(t *testing.T) {
 func TestTextBoxEditRepaintsOnlyItself(t *testing.T) {
 	v := prop.NewSource("")
 	tb := &TextBox{Text: v}
-	root := &VStack{Children: []Widget{&Text{Content: Str("a")}, tb, &Text{Content: Str("b")}}}
-	comp := NewComposer(root, 20, 4)
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("a")}, tb, &Text{Content: Str("b")}}}
+	comp := gooey.NewComposer(root, 20, 4)
 	if _, painted := comp.Frame(); painted != 4 {
 		t.Fatalf("first frame painted %d, want 4", painted)
 	}
 	tb.HandleKey(input.Rune('x'))
 	if _, painted := comp.Frame(); painted != 1 {
-		t.Errorf("typing painted %d widgets, want exactly 1", painted)
+		t.Errorf("typing painted %d components, want exactly 1", painted)
 	}
 	// A caret move is damage too, and just as local.
 	tb.HandleKey(input.Named(input.KeyHome))
 	if _, painted := comp.Frame(); painted != 1 {
-		t.Errorf("a caret move painted %d widgets, want exactly 1", painted)
+		t.Errorf("a caret move painted %d components, want exactly 1", painted)
 	}
 }
 
 func TestTextBoxWithoutTextIsInert(t *testing.T) {
 	tb := &TextBox{}
-	Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 	if tb.HandleKey(input.Rune('a')) {
 		t.Error("an unbound TextBox consumed a key")
 	}

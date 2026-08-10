@@ -11,7 +11,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
-func renderToString(t *testing.T, w gooey.Widget, cols, rows int) string {
+func renderToString(t *testing.T, w gooey.Component, cols, rows int) string {
 	t.Helper()
 	f := gooey.Compose(w, term.Caps{Cols: cols, Rows: rows, CellW: 10, CellH: 20}, nil)
 	var sb strings.Builder

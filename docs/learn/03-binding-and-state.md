@@ -89,9 +89,9 @@ converters and no format strings in the binding DSL. `label` above *is*
 the converter.
 
 > **Bindings are handles, not values.** Resolution happens once, when the
-> file loads. The built `Text` widget holds the property handle itself,
+> file loads. The built `Text` component holds the property handle itself,
 > so rendering performs zero lookups — and setting the source repaints
-> exactly the widgets that read it, with no "refresh" call anywhere in
+> exactly the components that read it, with no "refresh" call anywhere in
 > your code. This is what the design calls lvalue semantics.
 
 ## Step 4: Watch a computed rewire itself
@@ -117,11 +117,11 @@ not a dependency and setting it reaches nobody at all.
 evaluated. Add a command that samples the graph:
 
 ```go
-painted := 0 // widgets repainted by the last frame — a plain Go var
+painted := 0 // components repainted by the last frame — a plain Go var
 
 measure := func() {
 	report.Set(fmt.Sprintf(
-		"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d widget(s)",
+		"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d component(s)",
 		count.Get(), noisy.Get(), watch.Get(),
 		label.Evals(), watched.Evals(), painted))
 }
@@ -151,8 +151,8 @@ for each subsequent `noisy` change. The same `noisy.Set` call that was
 free a moment ago now costs one re-evaluation and one repaint. Nothing
 about `noisy` changed; what changed is who was reading it.
 
-**And `last frame painted 1 widget(s)`** — on a page holding eleven
-widgets, changing one bound string repainted exactly one. That is the
+**And `last frame painted 1 component(s)`** — on a page holding eleven
+components, changing one bound string repainted exactly one. That is the
 damage model, not an optimization pass.
 
 > **Why press `m` twice?** The first press repaints the report line, so
@@ -178,12 +178,12 @@ serializes the app either on demand (from a command, subscribing to
 nothing) or reactively (from a computed, subscribing to everything it
 touched).
 
-The corollary for widget authors: reading a property inside `Render` is
+The corollary for component authors: reading a property inside `Render` is
 what makes that property a repaint trigger. Tutorial 6 builds on this.
 
-> **The one thing to avoid.** Never `Set` a property that a widget
+> **The one thing to avoid.** Never `Set` a property that a component
 > painted from as part of producing every frame — the `Set` dirties the
-> widget, which schedules another frame, which sets again. That is why
+> component, which schedules another frame, which sets again. That is why
 > `painted` above is a plain `int` and not a property: the loop writes it
 > every frame, and a plain variable cannot dirty anything.
 
@@ -196,13 +196,13 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
   from other types is a computed's job, not the markup's.
 - Bindings resolve to handles once at load time.
 - Whether `Get` subscribes is decided by the call site — that single rule
-  explains commands, computeds, and widget painting all at once.
-- Changing one bound value repaints one widget.
+  explains commands, computeds, and component painting all at once.
+- Changing one bound value repaints one component.
 
 ## Current limitations
 
 - No value converters and no format strings in the binding DSL.
-- No two-way binding syntax in markup. Two-way is widget code: the widget
+- No two-way binding syntax in markup. Two-way is component code: the component
   reads the property in `Render` and calls `Set` when the user acts —
   tutorial 4's checkbox and tutorial 6's stepper both do this.
 - Properties are confined to the UI goroutine and unsynchronized. See

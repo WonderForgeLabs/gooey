@@ -31,7 +31,7 @@ go get github.com/WonderForgeLabs/gooey
 
 ## Step 2: Describe the UI in markup
 
-Create `app.gooey`. A `.gooey` file is XML: elements are widgets,
+Create `app.gooey`. A `.gooey` file is XML: elements are components,
 attributes are properties, and `{{.Name}}` is a binding into the data
 your Go code supplies.
 
@@ -69,9 +69,9 @@ loads:
 
 ### Why the KeyBindings sit on `<Border>` and not on `<VStack>`
 
-Key dispatch starts at the focused widget and walks **up** to the root,
+Key dispatch starts at the focused component and walks **up** to the root,
 firing bindings attached along the way. This page has no focusable
-widgets yet, so dispatch starts at the root element itself and the only
+components yet, so dispatch starts at the root element itself and the only
 bindings it can reach are the ones attached there.
 
 Move those two `<KeyBinding>` elements inside `<VStack>` and `q` stops
@@ -149,9 +149,9 @@ or `ctrl+c`, which the framework maps to quit for you.
 Four lines start a terminal application. Here is what each one carries.
 
 **`markup.Page(fsys, name, ctx)`** is the app's *content*: where the
-widget tree comes from. It reads the file from any `fs.FS` and builds
+component tree comes from. It reads the file from any `fs.FS` and builds
 the tree, and it re-reads it when the file changes. Bindings resolve
-**at build time**, once, into property handles — the built widgets hold
+**at build time**, once, into property handles — the built components hold
 the handle, not a copy of the value, and rendering never looks anything
 up.
 
@@ -165,8 +165,8 @@ first (later tutorials do).
 |---|---|
 | The terminal | Raw mode, alternate screen, mouse reporting on, and all of it undone on the way out — including after a panic, which restores the screen *before* printing its stack |
 | The input decoder | tty bytes become `input.Event` values (keys and mouse on one ordered stream), with escape ambiguity — a lone Esc versus the start of an arrow key — resolved by a 40 ms idle timeout |
-| The Composer | Every widget gets its own node in the property graph; whatever a widget reads while painting becomes that widget's repaint trigger, automatically |
-| Frame scheduling | A `Set` on a property some widget painted from marks that widget dirty and asks for a frame. Dirty flags accumulate and evaluation is lazy, so twenty `Set`s between frames collapse into one repaint |
+| The Composer | Every component gets its own node in the property graph; whatever a component reads while painting becomes that component's repaint trigger, automatically |
+| Frame scheduling | A `Set` on a property some component painted from marks that component dirty and asks for a frame. Dirty flags accumulate and evaluation is lazy, so twenty `Set`s between frames collapse into one repaint |
 | Hot-reload swaps | When the content reports a change, the tree is rebuilt and the composition replaced |
 | Signals | `ctrl+c` quits; `SIGINT`/`SIGTERM` restore the terminal and exit with the conventional code; `SIGWINCH` resizes and repaints; `ctrl+z` suspends and comes back intact |
 
@@ -176,7 +176,7 @@ exit 1 for a real error.
 
 Two rules are worth knowing now, because they explain later behavior:
 
-- **The tree gets input first.** `ctrl+c` quits only if no widget
+- **The tree gets input first.** `ctrl+c` quits only if no component
   claimed it, exactly like an unconsumed arrow key moving focus.
 - **Everything runs on one goroutine.** Commands, property `Set`s and
   rendering all happen on the loop, which is why properties are
@@ -206,7 +206,7 @@ over a tree it built on its own goroutine.
 Two things make this safe rather than clever:
 
 - **State survives** because it lives in the properties in your
-  viewmodel, not in the widgets. The tree is disposable; `greeting` is
+  viewmodel, not in the components. The tree is disposable; `greeting` is
   not.
 - **A broken edit is harmless.** If the file does not parse, the reload
   is skipped and the running tree stays up. Fix the file, save again.
@@ -223,9 +223,9 @@ does on every swap.
   rendering does no lookups.
 - `gooey.App` owns the terminal, the input decoder, frame scheduling and
   the signal story; `markup.Page` is the content it runs.
-- The Composer gives each widget its own paint node, and a property
+- The Composer gives each component its own paint node, and a property
   `Set` is the entire scheduler.
-- `KeyBinding` fires only if the focused widget's path to the root passes
+- `KeyBinding` fires only if the focused component's path to the root passes
   through the element it is attached to — with no focus stops, that means
   the root.
 - Hot reload keeps state because state is not in the tree.

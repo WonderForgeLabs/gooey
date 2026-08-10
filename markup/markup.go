@@ -1,10 +1,10 @@
 // Package markup is the POC of gooey's XAML-analog authoring surface:
-// XML elements map to widgets, attributes to properties, and {{...}}
+// XML elements map to components, attributes to properties, and {{...}}
 // expressions (Go-template syntax) to bindings resolved against a
 // property registry — no reflection.
 //
 // POC scope: builtin builders for Border/Grid/VStack/HStack/Text/Button,
-// custom widget registration, `{{.Path}}` bindings in text content
+// custom component registration, `{{.Path}}` bindings in text content
 // (resolved to *prop.Property[string] handles, becoming computed
 // strings), event bindings resolved to gooey.Commands (Click,
 // <KeyBinding Command=…>), named elements (Name="...") collected for
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -34,9 +35,9 @@ type Element struct {
 	Text     string
 }
 
-// Builder constructs a widget from an element. Custom widgets receive
+// Builder constructs a component from an element. Custom components receive
 // the raw element and can interpret attributes however they like.
-type Builder func(e Element, ctx *Context) (gooey.Widget, error)
+type Builder func(e Element, ctx *Context) (gooey.Component, error)
 
 // Context is the binding environment a markup file is built against.
 type Context struct {
@@ -45,16 +46,16 @@ type Context struct {
 	Values map[string]any
 	// Styles resolves Style="name" attributes.
 	Styles map[string]render.Style
-	// Widgets adds custom element builders (e.g. LogPane).
-	Widgets map[string]Builder
+	// Components adds custom element builders (e.g. LogPane).
+	Components map[string]Builder
 	// Handlers is the code-behind side of the event-binding split:
 	// Click="OnSave" resolves here, while Click="{{.Save}}" resolves a
 	// func in Values. The binding form works in markup-only controls;
 	// the bare-name form needs a registry, so it needs code-behind.
 	Handlers map[string]gooey.Command
-	// Named collects Name="..." widgets during build — the
+	// Named collects Name="..." components during build — the
 	// code-behind lookup surface (Find[T] reads from this).
-	Named map[string]gooey.Widget
+	Named map[string]gooey.Component
 	// Includes, when set, resolves unknown elements by convention: an
 	// element <Card/> with no registered builder loads card.gooey from
 	// this FS as a markup-only control (see Include). Zero
@@ -72,8 +73,8 @@ type Context struct {
 	ns map[string]string
 }
 
-// Build parses markup and constructs the widget tree.
-func Build(src []byte, ctx *Context) (gooey.Widget, error) {
+// Build parses markup and constructs the component tree.
+func Build(src []byte, ctx *Context) (gooey.Component, error) {
 	root, ns, err := parse(src)
 	if err != nil {
 		return nil, err
@@ -90,7 +91,7 @@ func Build(src []byte, ctx *Context) (gooey.Widget, error) {
 	defer func() { ctx.ns = prev }()
 
 	if ctx.Named == nil {
-		ctx.Named = map[string]gooey.Widget{}
+		ctx.Named = map[string]gooey.Component{}
 	}
 	if root.Name != "Gooey" {
 		return nil, fmt.Errorf("markup: root element must be <Gooey>, got <%s>", root.Name)
@@ -101,8 +102,8 @@ func Build(src []byte, ctx *Context) (gooey.Widget, error) {
 	return build(root.Children[0], ctx)
 }
 
-// Find retrieves a named widget with its concrete type.
-func Find[T gooey.Widget](ctx *Context, name string) (T, error) {
+// Find retrieves a named component with its concrete type.
+func Find[T gooey.Component](ctx *Context, name string) (T, error) {
 	var zero T
 	w, ok := ctx.Named[name]
 	if !ok {
@@ -117,7 +118,7 @@ func Find[T gooey.Widget](ctx *Context, name string) (T, error) {
 
 // Load reads and builds a markup file from any fs.FS — os.DirFS in
 // dev, embed.FS in release; the loader cannot tell the difference.
-func Load(fsys fs.FS, name string, ctx *Context) (gooey.Widget, error) {
+func Load(fsys fs.FS, name string, ctx *Context) (gooey.Component, error) {
 	src, err := fs.ReadFile(fsys, name)
 	if err != nil {
 		return nil, err
@@ -130,7 +131,7 @@ func Load(fsys fs.FS, name string, ctx *Context) (gooey.Widget, error) {
 // place. On an immutable FS (embed.FS reports constant zero ModTimes)
 // this is a natural no-op — the same call works in dev and release.
 // Returns a stop function.
-func Watch(fsys fs.FS, name string, ctx *Context, swap func(gooey.Widget)) func() {
+func Watch(fsys fs.FS, name string, ctx *Context, swap func(gooey.Component)) func() {
 	stop := make(chan struct{})
 	go func() {
 		var last time.Time
@@ -149,7 +150,7 @@ func Watch(fsys fs.FS, name string, ctx *Context, swap func(gooey.Widget)) func(
 					continue
 				}
 				last = st.ModTime()
-				ctx.Named = map[string]gooey.Widget{}
+				ctx.Named = map[string]gooey.Component{}
 				w, err := Load(fsys, name, ctx)
 				if err != nil {
 					continue // keep the old tree on bad edits
@@ -212,8 +213,8 @@ func parse(src []byte) (Element, map[string]string, error) {
 	return *root, ns, nil
 }
 
-func build(e Element, ctx *Context) (gooey.Widget, error) {
-	w, err := buildWidget(e, ctx)
+func build(e Element, ctx *Context) (gooey.Component, error) {
+	w, err := buildComponent(e, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +225,8 @@ func build(e Element, ctx *Context) (gooey.Widget, error) {
 }
 
 // applyLayout maps the FrameworkElement attributes — and the Grid.*
-// attached-property syntax — onto the widget's Layout.
-func applyLayout(e Element, w gooey.Widget) error {
+// attached-property syntax — onto the component's Layout.
+func applyLayout(e Element, w gooey.Component) error {
 	hl, ok := w.(gooey.HasLayout)
 	if !ok {
 		return nil
@@ -316,7 +317,7 @@ func parseVisibility(s string) (gooey.Visibility, error) {
 // buildChildren builds an element's children, splitting them into the
 // visual ones the parent lays out and the non-visual ones (KeyBindings)
 // the framework hangs off the parent as attachments.
-func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Widget, err error) {
+func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
 	for _, c := range e.Children {
 		w, err := build(c, ctx)
 		if err != nil {
@@ -331,7 +332,7 @@ func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Widget, err er
 	return kids, attach, nil
 }
 
-func attachAll(e Element, w gooey.Widget, attach []gooey.Widget) error {
+func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
 	if len(attach) == 0 {
 		return nil
 	}
@@ -345,8 +346,8 @@ func attachAll(e Element, w gooey.Widget, attach []gooey.Widget) error {
 	return nil
 }
 
-func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
-	if b, ok := ctx.Widgets[e.Name]; ok {
+func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
+	if b, ok := ctx.Components[e.Name]; ok {
 		w, err := b(e, ctx)
 		return named(e, ctx, w, err)
 	}
@@ -365,13 +366,13 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			return nil, err
 		}
 		if title == nil {
-			title = gooey.Str(e.Attrs["Title"])
+			title = components.Str(e.Attrs["Title"])
 		}
 		style, err := bindStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
-		b := &gooey.Border{
+		b := &components.Border{
 			Child: child,
 			Title: title,
 			Style: style,
@@ -381,11 +382,11 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		}
 		return named(e, ctx, b, nil)
 	case "Grid":
-		rows, err := gooey.ParseGridLens(e.Attrs["Rows"])
+		rows, err := components.ParseGridLens(e.Attrs["Rows"])
 		if err != nil {
 			return nil, err
 		}
-		cols, err := gooey.ParseGridLens(e.Attrs["Cols"])
+		cols, err := components.ParseGridLens(e.Attrs["Cols"])
 		if err != nil {
 			return nil, err
 		}
@@ -393,7 +394,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		g := &gooey.Grid{Rows: rows, Cols: cols, Children: kids}
+		g := &components.Grid{Rows: rows, Cols: cols, Children: kids}
 		if err := attachAll(e, g, attach); err != nil {
 			return nil, err
 		}
@@ -404,9 +405,9 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		var w gooey.Widget = &gooey.HStack{Children: kids, Gap: gap}
+		var w gooey.Component = &components.HStack{Children: kids, Gap: gap}
 		if e.Name == "VStack" {
-			w = &gooey.VStack{Children: kids, Gap: gap}
+			w = &components.VStack{Children: kids, Gap: gap}
 		}
 		if err := attachAll(e, w, attach); err != nil {
 			return nil, err
@@ -419,7 +420,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		c := &gooey.Canvas{Children: kids}
+		c := &components.Canvas{Children: kids}
 		if err := attachAll(e, c, attach); err != nil {
 			return nil, err
 		}
@@ -434,13 +435,13 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			return nil, err
 		}
 		if label == nil {
-			label = gooey.Str(e.Attrs["Label"])
+			label = components.Str(e.Attrs["Label"])
 		}
 		style, err := bindStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
-		return named(e, ctx, &gooey.Checkbox{
+		return named(e, ctx, &components.Checkbox{
 			Checked: checked,
 			Label:   label,
 			Style:   style,
@@ -455,9 +456,9 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			return nil, err
 		}
 		if label == nil {
-			label = gooey.Str(e.Attrs["Label"])
+			label = components.Str(e.Attrs["Label"])
 		}
-		g := &gooey.Gauge{Value: value, Label: label}
+		g := &components.Gauge{Value: value, Label: label}
 		g.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
 		// Style is an override for the threshold ramp, so it is applied
 		// only when the attribute is actually present.
@@ -472,7 +473,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		s := &gooey.Sparkline{Values: series}
+		s := &components.Sparkline{Values: series}
 		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
 		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
 		if _, ok := e.Attrs["Style"]; ok {
@@ -490,14 +491,14 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, fmt.Errorf("markup: <TextBox Changed=%q>: %w", e.Attrs["Changed"], err)
 		}
-		tb := &gooey.TextBox{Text: text, Changed: changed}
+		tb := &components.TextBox{Text: text, Changed: changed}
 		if p, ok := e.Attrs["Prompt"]; ok {
 			prompt, err := bindText(p, ctx)
 			if err != nil {
 				return nil, err
 			}
 			if prompt == nil {
-				prompt = gooey.Str(p)
+				prompt = components.Str(p)
 			}
 			tb.Prompt = prompt
 		}
@@ -507,7 +508,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			}
 		}
 		if a, ok := e.Attrs["AccentStyle"]; ok {
-			tb.AccentStyle = gooey.Sty(ctx.Styles[a])
+			tb.AccentStyle = components.Sty(ctx.Styles[a])
 		}
 		return named(e, ctx, tb, nil)
 	case "ColorPicker":
@@ -515,14 +516,14 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		return named(e, ctx, &gooey.ColorPicker{Value: color}, nil)
+		return named(e, ctx, &components.ColorPicker{Value: color}, nil)
 	case "Button":
 		content, err := bindText(e.Attrs["Content"], ctx)
 		if err != nil {
 			return nil, err
 		}
 		if content == nil {
-			content = gooey.Str(e.Attrs["Content"])
+			content = components.Str(e.Attrs["Content"])
 		}
 		click, err := ctx.Command(e.Attrs["Click"])
 		if err != nil {
@@ -532,7 +533,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, err
 		}
-		return named(e, ctx, &gooey.Button{
+		return named(e, ctx, &components.Button{
 			Content: content,
 			Style:   style,
 			Click:   click,
@@ -565,7 +566,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Timer Tick=%q>: %w", e.Attrs["Tick"], err)
 		}
-		t := &gooey.Timer{Interval: d, Tick: tick}
+		t := &components.Timer{Interval: d, Tick: tick}
 		// Enabled is optional; absent means always enabled. When present
 		// it is a live bool handle, so the graph can pause the timer.
 		if _, ok := e.Attrs["Enabled"]; ok {
@@ -590,14 +591,14 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 				return s
 			})
 		}
-		t := &gooey.Text{Style: style}
+		t := &components.Text{Style: style}
 		content := strings.TrimSpace(e.Text)
 		if src, err := bindText(content, ctx); err != nil {
 			return nil, err
 		} else if src != nil {
 			t.Content = src
 		} else {
-			t.Content = gooey.Str(content)
+			t.Content = components.Str(content)
 		}
 		return named(e, ctx, t, nil)
 	default:
@@ -612,7 +613,7 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 	}
 }
 
-func named(e Element, ctx *Context, w gooey.Widget, err ...error) (gooey.Widget, error) {
+func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Component, error) {
 	if len(err) > 0 && err[0] != nil {
 		return nil, err[0]
 	}
@@ -678,19 +679,19 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 // a bare name is the static lookup in Context.Styles, and a binding
 // expression yields the viewmodel's own *prop.Property[render.Style]
 // handle. The bound form is what makes a style REACTIVE — a computed
-// style over an accent color repaints the widgets that read it, through
+// style over an accent color repaints the components that read it, through
 // the ordinary property graph, with no styling system involved.
 func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
 	raw := e.Attrs["Style"]
 	if bindRe.MatchString(raw) {
 		return boundProp[render.Style](e, ctx, "Style")
 	}
-	return gooey.Sty(ctx.Styles[raw]), nil
+	return components.Sty(ctx.Styles[raw]), nil
 }
 
 // boundProp resolves an attribute that must be a typed property HANDLE
 // rather than text: <Checkbox Checked="{{.Auto}}"/> shares the
-// viewmodel's property with the widget, so the widget's Render reads it
+// viewmodel's property with the component, so the component's Render reads it
 // and its toggle Sets it — the only sense in which gooey has two-way
 // binding, and the reason it needs no converter machinery.
 //

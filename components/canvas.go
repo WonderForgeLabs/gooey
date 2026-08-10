@@ -1,4 +1,6 @@
-package gooey
+package components
+
+import "github.com/WonderForgeLabs/gooey"
 
 // Canvas is the absolute-positioning panel: every child sits at the
 // offset its Canvas.Left/Canvas.Top attached properties name, at its own
@@ -12,7 +14,7 @@ package gooey
 //
 // Measure gives a child the space remaining from its offset — a child at
 // Left=70 on an 80-wide canvas measures against 10 columns. That keeps
-// children inside the canvas without a separate clipping pass: a widget
+// children inside the canvas without a separate clipping pass: a component
 // that would overhang is instead told it has less room, and clips its own
 // content the way it does anywhere else.
 //
@@ -20,9 +22,9 @@ package gooey
 //
 //   - Children may OVERLAP, and paint order is tree order — a later
 //     sibling paints over an earlier one.
-//   - Overlap and damage tracking interact. Each widget's paint is its
+//   - Overlap and damage tracking interact. Each component's paint is its
 //     own node covering its own rect, and a leaf pre-clears that rect
-//     before repainting (composer.go). So when an OCCLUDED widget
+//     before repainting (composer.go). So when an OCCLUDED component
 //     repaints alone, it clears its rect and paints itself — over the
 //     part of the sibling that was covering it, and that sibling is
 //     clean, so nothing restores it until something else dirties it.
@@ -32,26 +34,26 @@ package gooey
 //     intersecting nodes, which the POC does not do.
 //     TestCanvasOverlapRepaintLeavesOccluderDamaged pins the behavior.
 type Canvas struct {
-	Base
-	Children []Widget
+	gooey.Base
+	Children []gooey.Component
 
-	sizes []Size
+	sizes []gooey.Size
 }
 
-func (c *Canvas) ChildWidgets() []Widget { return c.Children }
+func (c *Canvas) ChildComponents() []gooey.Component { return c.Children }
 
 // Measure returns everything it is offered: a Canvas is a positioning
 // surface, so it fills its slot rather than shrinking to its content
 // (which, with absolute offsets, would be a meaningless bounding box).
-func (c *Canvas) Measure(avail Size) Size {
+func (c *Canvas) Measure(avail gooey.Size) gooey.Size {
 	c.sizes = c.sizes[:0]
 	for _, ch := range c.Children {
-		l := layoutOf(ch)
+		l := gooey.LayoutOf(ch)
 		left, top := 0, 0
 		if l != nil {
 			left, top = l.Left, l.Top
 		}
-		c.sizes = append(c.sizes, MeasureChild(ch, Size{
+		c.sizes = append(c.sizes, gooey.MeasureChild(ch, gooey.Size{
 			W: max(0, avail.W-left),
 			H: max(0, avail.H-top),
 		}))
@@ -59,16 +61,16 @@ func (c *Canvas) Measure(avail Size) Size {
 	return avail
 }
 
-func (c *Canvas) Arrange(b Rect) {
+func (c *Canvas) Arrange(b gooey.Rect) {
 	c.Base.Arrange(b)
 	for i, ch := range c.Children {
-		l := layoutOf(ch)
+		l := gooey.LayoutOf(ch)
 		left, top := 0, 0
 		if l != nil {
 			left, top = l.Left, l.Top
 		}
 		s := c.sizes[i]
-		ArrangeChild(ch, Rect{
+		gooey.ArrangeChild(ch, gooey.Rect{
 			X: b.X + left,
 			Y: b.Y + top,
 			W: min(s.W, max(0, b.W-left)),
@@ -77,4 +79,4 @@ func (c *Canvas) Arrange(b Rect) {
 	}
 }
 
-func (c *Canvas) Render(f *Frame) {} // containers paint only their own chrome; a Canvas has none
+func (c *Canvas) Render(f *gooey.Frame) {} // containers paint only their own chrome; a Canvas has none

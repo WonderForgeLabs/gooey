@@ -10,7 +10,7 @@
 bump the unwatched source: no frame until next tick</Text>
     </VStack>
     <!-- Declared on the page root, so they are global. This page has no
-         focus stop, and dispatch starts at the focused widget or, when
+         focus stop, and dispatch starts at the focused component or, when
          there is none, at the root — so root is where bindings must hang
          for a display-only page. -->
     <KeyBinding Gesture="a"      Command="{{.BumpA}}"/>

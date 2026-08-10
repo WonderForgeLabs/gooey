@@ -2,10 +2,10 @@ package render
 
 // Color depth is a property of the WIRE, not of the buffer. A Buffer
 // always holds 24-bit Colors; quantization happens once, in Flush, on
-// the way out. That split is deliberate: a widget that picks
+// the way out. That split is deliberate: a component that picks
 // RGB(255,170,60) writes that value on every terminal, and asking "what
 // will this actually look like?" is a question only the flush — or a
-// widget that deliberately previews the answer, like ColorPicker — has
+// component that deliberately previews the answer, like ColorPicker — has
 // to ask.
 
 // ColorDepth is how many colors the terminal can display.
@@ -136,7 +136,7 @@ func ANSI16Name(i int) string {
 
 // Approximate returns the color the terminal will ACTUALLY display for c
 // at the given depth. It is the round trip quantization implies, and it
-// is what lets a widget show a user the truth about their own terminal
+// is what lets a component show a user the truth about their own terminal
 // instead of the color they asked for.
 func Approximate(c Color, d ColorDepth) Color {
 	if !c.Set {

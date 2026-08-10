@@ -126,11 +126,11 @@ are the entire coupling between the two programs.
 
 The client polls every 400ms and does one of three things:
 
-* **`Version` changed** → build a fresh widget tree from the new markup
+* **`Version` changed** → build a fresh component tree from the new markup
   against fresh property sources, close the old Composer, attach the new
   one. State is on the server, so nothing is lost in the swap.
 * **`Revision` changed** → `Set` the sources whose values differ and let
-  the property graph repaint exactly the widgets that read them. On the
+  the property graph repaint exactly the components that read them. On the
   provisioning screen that is one line per completed activity, not a page.
 * **neither changed** → nothing. A screen nobody is touching costs zero
   frames; a 34-second scripted run polls 80 times and flushes 20 frames.
@@ -193,7 +193,7 @@ Three things stay client-side and never come from the workflow:
   captures use generous pauses for this reason.
 * **Focus resets on every swap.** A rebuilt tree focuses its first focus
   stop. Preserving focus across a swap would need the client to match
-  widgets between trees, which it deliberately cannot do — it has no
+  components between trees, which it deliberately cannot do — it has no
   names, only markup.
 * **The demo loops instead of continuing-as-new.** "New request" rewinds
   the same run, so history grows without bound across many requests. A

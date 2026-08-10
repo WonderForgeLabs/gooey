@@ -22,7 +22,7 @@ pointer moved.
 
 ## Handle a click
 
-Implement `HandleMouse` on your widget. Return true to consume the event
+Implement `HandleMouse` on your component. Return true to consume the event
 and stop it bubbling to ancestors:
 
 ```go
@@ -37,13 +37,13 @@ func (c *checkbox) HandleMouse(ev input.MouseEvent) bool {
 
 `MouseClick` is **synthesized by the framework** — the terminal never
 sends one. It is generated when a press and its release land on the same
-widget, which is the behavior a user expects from a button. The event
+component, which is the behavior a user expects from a button. The event
 kinds you can receive:
 
 | Kind | Source |
 |---|---|
 | `MousePress`, `MouseRelease` | the terminal |
-| `MouseClick` | synthesized: press and release on the same widget |
+| `MouseClick` | synthesized: press and release on the same component |
 | `MouseMove` | motion, with `Button` set during a drag |
 | `WheelUp`, `WheelDown` | wheel notches |
 
@@ -71,12 +71,12 @@ func (b *button) Render(f *gooey.Frame) {
 ```
 
 The hovered flag is a source property, so enter and leave are ordinary
-damage: exactly the widget entered and the widget left repaint. Widgets
+damage: exactly the component entered and the component left repaint. Components
 that do not embed `HoverState` cost nothing — the dispatcher simply finds
 no hover target above them.
 
 Hover composes upward: the flag goes to the nearest hover target at or
-above the widget actually hit, so a `Border` can highlight while the
+above the component actually hit, so a `Border` can highlight while the
 pointer is over the `Text` inside it.
 
 ## Know what the framework does first
@@ -84,20 +84,20 @@ pointer is over the `Text` inside it.
 Before your handler sees anything:
 
 - **Hover** is updated.
-- **A press moves focus** to the nearest focusable widget at or above the
+- **A press moves focus** to the nearest focusable component at or above the
   hit — and failing that, to the first focusable *descendant*. That
   descent is what makes clicking a pane's border or title focus the pane,
   since the hit there is the `Border`, whose focusable content is below
   it.
-- **Implicit capture**: a release is delivered to the widget the press
-  went down on, even if the pointer wandered off first, so a widget can
+- **Implicit capture**: a release is delivered to the component the press
+  went down on, even if the pointer wandered off first, so a component can
   always undo its pressed visuals.
-- **Wheel events go to the widget under the pointer**, not the focused
+- **Wheel events go to the component under the pointer**, not the focused
   one.
 
 ## Move focus from a mouse handler
 
-A press already focuses what it hit, but a widget sometimes wants focus
+A press already focuses what it hit, but a component sometimes wants focus
 to end up somewhere else — a list where clicking a row should select it
 while typing stays live in a query box above. Call `SetFocus` on the
 focus manager from your handler:
@@ -116,17 +116,17 @@ case input.MousePress:
 ```
 
 Note the coordinate arithmetic: `ev.Y` is an absolute cell row, so
-subtract `w.Bounds().Y` to get a row within the widget, then add whatever
-scroll offset the widget keeps. `cmd/finder` does exactly this for
+subtract `w.Bounds().Y` to get a row within the component, then add whatever
+scroll offset the component keeps. `cmd/finder` does exactly this for
 click-to-select.
 
-Because the widget needs the focus manager, which the Composer owns and
+Because the component needs the focus manager, which the Composer owns and
 which does not exist until the tree is built, inject a small closure
 after construction rather than reaching for a global.
 
 ## Take raw motion
 
-Motion is high-frequency, so it is delivered only to widgets that ask for
+Motion is high-frequency, so it is delivered only to components that ask for
 it by implementing a separate interface:
 
 ```go

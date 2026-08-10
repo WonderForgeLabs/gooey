@@ -35,10 +35,10 @@ Each step below is a complete `main.go` you can run with `go run .`.
 
 No markup yet — the tree is Go struct literals. Three things to notice:
 
-- Widgets are plain structs (`Border`, `VStack`, `Text`) that you wire
+- Components are plain structs (`Border`, `VStack`, `Text`) that you wire
   together through `Child`/`Children` fields.
-- Every visual property is a `*prop.Property[T]`. `gooey.Str` and
-  `gooey.Sty` wrap literals as source properties, so `Content` and
+- Every visual property is a `*prop.Property[T]`. `components.Str` and
+  `components.Sty` wrap literals as source properties, so `Content` and
   `Style` have the same shape whether they hold a constant or a binding.
 - The `Composer` owns rendering. You never call `Render` yourself.
 
@@ -50,6 +50,7 @@ import (
 	"os"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
@@ -58,16 +59,16 @@ import (
 var ctrlC = input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}
 
 func main() {
-	tree := &gooey.Border{
-		Title: gooey.Str("hello"),
-		Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
-		Child: &gooey.VStack{
+	tree := &components.Border{
+		Title: components.Str("hello"),
+		Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
+		Child: &components.VStack{
 			Gap: 1,
-			Children: []gooey.Widget{
-				&gooey.Text{Content: gooey.Str("hello, gooey")},
-				&gooey.Text{
-					Content: gooey.Str("press q to quit"),
-					Style:   gooey.Sty(render.Style{Fg: render.RGB(140, 140, 150)}),
+			Children: []gooey.Component{
+				&components.Text{Content: components.Str("hello, gooey")},
+				&components.Text{
+					Content: components.Str("press q to quit"),
+					Style:   components.Sty(render.Style{Fg: render.RGB(140, 140, 150)}),
 				},
 			},
 		},
@@ -140,9 +141,9 @@ comp := gooey.NewComposer(tree, cols, rows)
 ```
 
 The `Composer` is the retained, damage-tracked render path. Building it
-walks the tree once and gives every widget its own paint node in the
-property graph — the properties a widget reads while painting become
-that widget's paint dependencies, automatically. It also builds the
+walks the tree once and gives every component its own paint node in the
+property graph — the properties a component reads while painting become
+that component's paint dependencies, automatically. It also builds the
 `FocusManager` (reachable via `comp.Focus()`): focus order, ancestor
 links, and any attached key bindings.
 
@@ -151,8 +152,8 @@ needsFrame := true
 comp.OnInvalidate(func() { needsFrame = true })
 ```
 
-The scheduler, in two lines. When any property a widget painted from is
-`Set`, the widget's paint node goes dirty and this hook fires. We just
+The scheduler, in two lines. When any property a component painted from is
+`Set`, the component's paint node goes dirty and this hook fires. We just
 flag it; the actual work happens at the top of the loop. Because dirty
 flags accumulate and evaluation is lazy, any number of `Set`s between
 frames collapse into one repaint.
@@ -194,12 +195,12 @@ for {
 
 The loop body: render if dirty, then block on input. `comp.Frame()`
 runs layout (Measure/Arrange — unconditional, cheap at terminal scale)
-and re-paints only the widgets whose paint nodes are dirty into a
-persistent cell buffer; it returns the frame and how many widgets
+and re-paints only the components whose paint nodes are dirty into a
+persistent cell buffer; it returns the frame and how many components
 actually painted, which `cmd/statedemo` uses to show damage tracking on
 screen. `comp.Flush` writes the buffer to the tty. `comp.Handle` routes
 the event: mouse events hit-test the tree, key events start at the
-focused widget and bubble up through attached `KeyBinding`s and
+focused component and bubble up through attached `KeyBinding`s and
 `HandleKey` methods; unconsumed tab/shift+tab move focus.
 
 The `q`/ctrl+C check sits before `Handle` here only because this app has
@@ -232,19 +233,19 @@ label := prop.NewComputed(func() string {
 	return fmt.Sprintf("count = %d  (press + to increment)", count.Get())
 })
 
-tree := &gooey.Border{
-	Title: gooey.Str("live"),
-	Style: gooey.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
-	Child: &gooey.VStack{
+tree := &components.Border{
+	Title: components.Str("live"),
+	Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
+	Child: &components.VStack{
 		Gap: 1,
-		Children: []gooey.Widget{
-			&gooey.Text{
+		Children: []gooey.Component{
+			&components.Text{
 				Content: label, // bound: the computed IS the property
-				Style:   gooey.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true}),
+				Style:   components.Sty(render.Style{Fg: render.RGB(255, 170, 60), Bold: true}),
 			},
-			&gooey.Text{
-				Content: gooey.Str("press q to quit"),
-				Style:   gooey.Sty(render.Style{Fg: render.RGB(140, 140, 150)}),
+			&components.Text{
+				Content: components.Str("press q to quit"),
+				Style:   components.Sty(render.Style{Fg: render.RGB(140, 140, 150)}),
 			},
 		},
 	},
@@ -268,7 +269,7 @@ the paint node of the one `Text` that read it, which fires
 
 ## Step 3: move the UI to markup
 
-The same UI as a `.gooey` file — XML elements map to widgets,
+The same UI as a `.gooey` file — XML elements map to components,
 attributes to properties, and `{{.Name}}` expressions to bindings
 resolved against a `markup.Context`. Save as `hello.gooey` next to
 `main.go`:
@@ -341,15 +342,15 @@ func main() {
 
 	var comp *gooey.Composer
 	needsFrame := true
-	attach := func(w gooey.Widget) {
+	attach := func(w gooey.Component) {
 		comp = gooey.NewComposer(w, cols, rows)
 		comp.OnInvalidate(func() { needsFrame = true })
 		needsFrame = true
 	}
 	attach(tree)
 
-	swaps := make(chan gooey.Widget, 1)
-	stopWatch := markup.Watch(fsys, "hello.gooey", ctx, func(w gooey.Widget) { swaps <- w })
+	swaps := make(chan gooey.Component, 1)
+	stopWatch := markup.Watch(fsys, "hello.gooey", ctx, func(w gooey.Component) { swaps <- w })
 	defer stopWatch()
 
 	if err := screen.Raw(); err != nil {
@@ -401,11 +402,11 @@ What changed relative to the step 1 loop:
 
 Run it, then edit `hello.gooey` — change text, gap, styles — and save.
 The UI reloads in place while the counter's state survives, because
-state lives in the properties, not in the widgets.
+state lives in the properties, not in the components.
 
 ## Step 4: interactivity
 
-Now buttons, key bindings, focus, and a custom widget. The markup —
+Now buttons, key bindings, focus, and a custom component. The markup —
 save as `counter.gooey`:
 
 ```xml
@@ -437,19 +438,19 @@ registry). Buttons run their command on enter, space, or a mouse click.
 
 **KeyBinding.** A non-visual element: it is never measured or painted,
 it hangs off its parent as an attachment. Dispatch walks from the
-focused widget up to the root, matching attached bindings at each level
-before that widget's own `HandleKey` — so a binding declared inside a
+focused component up to the root, matching attached bindings at each level
+before that component's own `HandleKey` — so a binding declared inside a
 control fires only while that control has focus, and these page-root
 bindings are global. The gesture syntax is `input.ParseGesture`'s:
 `"q"`, `"ctrl+s"`, `"shift+tab"`, `"enter"`, `"space"`, `"+"`.
 
 **Focus.** Every `Button` (and our stepper) is a focus stop; the
 `FocusManager` focuses the first one at build time, and unconsumed
-tab/shift+tab cycle through them in tree order. A focused widget knows
+tab/shift+tab cycle through them in tree order. A focused component knows
 it: reading `IsFocused()` during `Render` makes focus a paint
-dependency, so moving focus repaints exactly the two widgets involved.
+dependency, so moving focus repaints exactly the two components involved.
 
-`Stepper` is not a built-in — it is this app's custom widget. A widget
+`Stepper` is not a built-in — it is this app's custom component. A component
 needs `Measure`, `Arrange`, `Render`; embedding `gooey.Base` supplies
 `Arrange` (plus `Bounds()` and layout-attribute support), and embedding
 `gooey.FocusState` makes it a tab stop whose `IsFocused()` is
@@ -458,7 +459,7 @@ true stops propagation (which is also why its left/right never reach
 anyone else's bindings):
 
 ```go
-// stepper is a custom interactive widget: a focus stop that renders
+// stepper is a custom interactive component: a focus stop that renders
 // "< n > label" and adjusts a bound int property with left/right.
 type stepper struct {
 	gooey.Base       // bounds + layout bookkeeping (Arrange, Bounds, LayoutProps)
@@ -494,13 +495,13 @@ func (s *stepper) HandleKey(ev input.KeyEvent) bool {
 ```
 
 Because `Render` reads `s.value.Get()`, the bound property is a paint
-dependency: any `Set` — from this widget's keys or from anywhere else —
+dependency: any `Set` — from this component's keys or from anywhere else —
 repaints the stepper and nothing more. (For mouse support, also
 implement `HandleMouse(input.MouseEvent) bool`; see the checkbox in
 `cmd/statedemo/main.go`.)
 
 The viewmodel gains commands and the custom element registers as a
-`markup.Builder` under `Context.Widgets`. The builder receives the raw
+`markup.Builder` under `Context.Components`. The builder receives the raw
 element, so it resolves its own attributes — `BindingValue` returns the
 raw context value for a `{{...}}` attribute, which you type-assert to
 the handle you need:
@@ -526,8 +527,8 @@ ctx := &markup.Context{
 		"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 		"dim":    {Fg: render.RGB(140, 140, 150)},
 	},
-	Widgets: map[string]markup.Builder{
-		"Stepper": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+	Components: map[string]markup.Builder{
+		"Stepper": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
 			v, err := c.BindingValue(e.Attrs["Value"])
 			if err != nil {
 				return nil, err
@@ -562,7 +563,7 @@ the instance's attributes, resolved in the parent context.
 
 **UserControl: markup + a typed setup func.** `markup.UserControl`
 wraps a `.gooey` file and a setup function as a `Builder`, so the
-control registers under `Context.Widgets` and instantiates as an
+control registers under `Context.Components` and instantiates as an
 element. The setup func is the receiving side of the hand-off: it
 resolves attributes to typed property handles and builds the control's
 own context — including control-local computeds and commands closed
@@ -605,7 +606,7 @@ and its registration:
 	}),
 ```
 
-`Styles`, `Widgets`, `Handlers`, and `Includes` left nil in the child
+`Styles`, `Components`, `Handlers`, and `Includes` left nil in the child
 context inherit from the parent; `Named` is scoped per instance. The
 demos wrap the `BindingValue` + type-assert dance in a small generic
 helper — see `attr[T]` in `cmd/reader/controls.go`.
@@ -669,7 +670,7 @@ ctx := &markup.Context{
 		"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 		"dim":    {Fg: render.RGB(140, 140, 150)},
 	},
-	Widgets: map[string]markup.Builder{
+	Components: map[string]markup.Builder{
 		"CounterPanel": /* as above */
 	},
 	Includes: fsys, // <Card/> resolves to card.gooey by convention
@@ -681,7 +682,7 @@ single rebuild callback on any change — one page reload re-instantiates
 every control:
 
 ```go
-swaps := make(chan gooey.Widget, 1)
+swaps := make(chan gooey.Component, 1)
 stopWatch := markup.WatchAll(fsys,
 	[]string{"page.gooey", "counterpanel.gooey", "card.gooey"},
 	func() {

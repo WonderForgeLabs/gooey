@@ -1,34 +1,34 @@
 # Concept: damage tracking
 
-The `Composer` gives **every widget its own paint node** in the property
-graph. Evaluating that node runs the widget's `Render`, so the properties
-a widget reads while painting automatically become the set of things that
+The `Composer` gives **every component its own paint node** in the property
+graph. Evaluating that node runs the component's `Render`, so the properties
+a component reads while painting automatically become the set of things that
 can dirty it.
 
 That is the whole damage model. There is no `AffectsRender` metadata to
 declare and no `InvalidateVisual()` to call: *reading a property during
-Render is the declaration.* A widget that never reads a property is never
+Render is the declaration.* A component that never reads a property is never
 repainted when it changes.
 
 Two behaviors follow, and both are observable:
 
-- Setting one bound property repaints exactly the widgets that read it.
-  Tutorial 3's `measure` button prints `last frame painted 1 widget(s)`
-  after a state change on a page holding eleven widgets.
+- Setting one bound property repaints exactly the components that read it.
+  Tutorial 3's `measure` button prints `last frame painted 1 component(s)`
+  after a state change on a page holding eleven components.
 - Focus and hover are ordinary source properties (`FocusState`,
-  `HoverState`), so moving focus repaints exactly two widgets — the one
+  `HoverState`), so moving focus repaints exactly two components — the one
   losing focus and the one gaining it. Nothing special-cases focus.
 
 Layout is deliberately *outside* this system. `Measure`/`Arrange` run
 unconditionally every frame and outside any evaluation context, so reads
 made during layout subscribe to nothing and layout can never pollute the
-graph. When a widget's bounds change, the Composer force-dirties it and
+graph. When a component's bounds change, the Composer force-dirties it and
 clears the region it vacated.
 
 One rule constrains container authors: **containers must never pre-clear
 their own bounds.** A container's bounds enclose its children's cells, so
 wiping them blanks content whose own (clean) paint nodes will not
-repaint. Only leaf widgets pre-clear; containers overpaint their chrome
+repaint. Only leaf components pre-clear; containers overpaint their chrome
 in place.
 
 **Current limit.** Damage tracking stops at the paint level: the flush

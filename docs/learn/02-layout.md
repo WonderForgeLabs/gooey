@@ -110,8 +110,8 @@ was offered, so it fills its parent.
 
 ## Step 4: Control single elements with layout attributes
 
-Every element whose widget embeds `gooey.Base` — all built-ins, and any
-well-behaved custom widget — accepts the same layout attributes. They
+Every element whose component embeds `gooey.Base` — all built-ins, and any
+well-behaved custom component — accepts the same layout attributes. They
 work identically inside any container.
 
 | Attribute | Values | Meaning |
@@ -187,12 +187,12 @@ context. The reasoning is written up in the addendum to
 From Go you *can* flip it at runtime, and the Composer notices:
 
 ```go
-leaf, _ := markup.Find[*gooey.Text](ctx, "detail")
+leaf, _ := markup.Find[*components.Text](ctx, "detail")
 leaf.LayoutProps().Visibility = gooey.Hidden // repaints on the next frame
 ```
 
 The Composer catches the change in its per-frame sweep and force-repaints
-the widget, the same way it handles a bounds change. One caveat:
+the component, the same way it handles a bounds change. One caveat:
 **this is correct for leaves, not for a container's own chrome.** A leaf
 pre-clears its rect, so hiding it erases it; a `Border` must never clear
 its own bounds — that would wipe children whose paint nodes are clean —

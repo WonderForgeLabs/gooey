@@ -93,7 +93,7 @@ jobs:
            - Slice bounds and index arithmetic in buffer/cell code
 
         4. **Testing**
-           - Adequate coverage for new widgets, properties, and markup elements
+           - Adequate coverage for new components, properties, and markup elements
            - Tests that exercise the dirty-tracking behavior, not just output
            - Remember `handlers/temporal` and `mcp` need their own
              `go test ./...` runs (`mcp` under `-race`)
@@ -101,7 +101,7 @@ jobs:
         5. **Documentation**
            - `docs/architecture.md` quotes real code — flag quotes that drift
              from the source they claim to show
-           - New widgets or markup attributes reflected in
+           - New components or markup attributes reflected in
              `docs/markup-reference.md`; new demos in `docs/demos.md`
       pr_number: ${{ inputs.pr_number || 0 }}
       force_pass: ${{ inputs.force_pass || false }}

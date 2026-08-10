@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
@@ -14,13 +15,13 @@ import (
 // the Composer and the FocusManager walk: Container for children,
 // Attacher for the non-visual attachments, Bounded for the arranged rect,
 // HasLayout for the FrameworkElement properties, Focusable for whether a
-// widget is a tab stop. Anything implementing them serializes, including
-// widgets this package has never heard of.
+// component is a tab stop. Anything implementing them serializes, including
+// components this package has never heard of.
 //
-// The interesting per-widget fields come from a type switch over the
-// built-in components. An unknown widget still produces a useful node —
+// The interesting per-component fields come from a type switch over the
+// built-in components. An unknown component still produces a useful node —
 // its %T, its bounds, its layout, its children — it just has no props.
-// That is the deliberate ceiling: a third-party widget's fields cannot be
+// That is the deliberate ceiling: a third-party component's fields cannot be
 // discovered without reflection, and when markup-declared properties
 // (docs/specs/2026-08-10-markup-declared-properties.md) land, x:Property
 // will be the declaration that lets them serialize without one.
@@ -32,8 +33,8 @@ import (
 // into the damage graph and repaint the app every time an agent looked
 // at it.
 
-// walk serializes one widget and its subtree. depth 0 means unlimited.
-func (s *Server) walk(w gooey.Widget, names map[gooey.Widget]string, fm *gooey.FocusManager, depth, level int) map[string]any {
+// walk serializes one component and its subtree. depth 0 means unlimited.
+func (s *Server) walk(w gooey.Component, names map[gooey.Component]string, fm *gooey.FocusManager, depth, level int) map[string]any {
 	n := map[string]any{"type": fmt.Sprintf("%T", w)}
 	if name := names[w]; name != "" {
 		n["name"] = name
@@ -58,13 +59,13 @@ func (s *Server) walk(w gooey.Widget, names map[gooey.Widget]string, fm *gooey.F
 			n["hovered"] = true
 		}
 	}
-	if p := widgetProps(w); len(p) > 0 {
+	if p := componentProps(w); len(p) > 0 {
 		n["props"] = p
 	}
 
 	if depth > 0 && level >= depth {
-		if c, ok := w.(gooey.Container); ok && len(c.ChildWidgets()) > 0 {
-			n["childrenElided"] = len(c.ChildWidgets())
+		if c, ok := w.(gooey.Container); ok && len(c.ChildComponents()) > 0 {
+			n["childrenElided"] = len(c.ChildComponents())
 		}
 		return n
 	}
@@ -79,7 +80,7 @@ func (s *Server) walk(w gooey.Widget, names map[gooey.Widget]string, fm *gooey.F
 	}
 	if c, ok := w.(gooey.Container); ok {
 		var kids []any
-		for _, ch := range c.ChildWidgets() {
+		for _, ch := range c.ChildComponents() {
 			if ch == nil {
 				continue
 			}
@@ -92,42 +93,42 @@ func (s *Server) walk(w gooey.Widget, names map[gooey.Widget]string, fm *gooey.F
 	return n
 }
 
-// widgetProps is the type switch: what is worth knowing about each
-// built-in widget beyond its bounds.
-func widgetProps(w gooey.Widget) map[string]any {
+// componentProps is the type switch: what is worth knowing about each
+// built-in component beyond its bounds.
+func componentProps(w gooey.Component) map[string]any {
 	switch t := w.(type) {
-	case *gooey.Text:
+	case *components.Text:
 		return map[string]any{"text": str(t.Content)}
-	case *gooey.Button:
+	case *components.Button:
 		return map[string]any{"content": str(t.Content), "hasCommand": t.Click != nil}
-	case *gooey.Checkbox:
+	case *components.Checkbox:
 		return map[string]any{"label": str(t.Label), "checked": t.IsChecked()}
-	case *gooey.TextBox:
+	case *components.TextBox:
 		return map[string]any{"text": str(t.Text), "prompt": str(t.Prompt), "caret": t.Caret()}
-	case *gooey.Border:
+	case *components.Border:
 		return map[string]any{"title": str(t.Title)}
-	case *gooey.Gauge:
+	case *components.Gauge:
 		p := map[string]any{"label": str(t.Label)}
 		if t.Value != nil {
 			p["value"] = t.Value.Get()
 		}
 		return p
-	case *gooey.Sparkline:
+	case *components.Sparkline:
 		if t.Values == nil {
 			return nil
 		}
 		return map[string]any{"points": len(t.Values.Get())}
-	case *gooey.ColorPicker:
+	case *components.ColorPicker:
 		return map[string]any{"value": hexColor(t.Color()), "channel": t.Channel()}
-	case *gooey.Grid:
+	case *components.Grid:
 		return map[string]any{"rows": len(t.Rows), "cols": len(t.Cols)}
-	case *gooey.VStack:
+	case *components.VStack:
 		return map[string]any{"gap": t.Gap}
-	case *gooey.HStack:
+	case *components.HStack:
 		return map[string]any{"gap": t.Gap}
 	case *gooey.KeyBinding:
 		return map[string]any{"gesture": t.Gesture.String(), "hasCommand": t.Command != nil}
-	case *gooey.Timer:
+	case *components.Timer:
 		p := map[string]any{"interval": t.Interval.String(), "hasTick": t.Tick != nil}
 		if t.Enabled != nil {
 			p["enabled"] = t.Enabled.Get()
@@ -205,10 +206,10 @@ func visibilityName(v gooey.Visibility) string {
 }
 
 // names inverts the markup context's Named table so the walk can label a
-// widget in one map read. Widgets are pointers, so they are comparable
+// component in one map read. Components are pointers, so they are comparable
 // and usable as keys.
-func names(ctx *markup.Context) map[gooey.Widget]string {
-	out := map[gooey.Widget]string{}
+func names(ctx *markup.Context) map[gooey.Component]string {
+	out := map[gooey.Component]string{}
 	if ctx == nil {
 		return out
 	}

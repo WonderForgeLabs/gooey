@@ -90,7 +90,7 @@ func TestQuantize16(t *testing.T) {
 	}
 }
 
-// Approximate is what a widget shows the user as "what your terminal
+// Approximate is what a component shows the user as "what your terminal
 // will really display", so it must be the exact inverse of the
 // quantization the flush performs.
 func TestApproximateRoundTripsQuantization(t *testing.T) {

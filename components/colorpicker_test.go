@@ -1,23 +1,24 @@
-package gooey
+package components
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
-func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Property[render.Color], *Frame) {
+func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Property[render.Color], *gooey.Frame) {
 	v := prop.NewSource(c)
 	p := &ColorPicker{Value: v}
-	f := Compose(p, term.Caps{Cols: 30, Rows: 5, Color: depth}, nil)
+	f := gooey.Compose(p, term.Caps{Cols: 30, Rows: 5, Color: depth}, nil)
 	return p, v, f
 }
 
-func rowText(f *Frame, y, w int) string {
+func rowText(f *gooey.Frame, y, w int) string {
 	var sb strings.Builder
 	for x := 0; x < w; x++ {
 		sb.WriteRune(f.Cells.At(x, y).Rune)
@@ -131,7 +132,7 @@ func TestColorPickerHexAndBoundValue(t *testing.T) {
 // legally omit Value.
 func TestColorPickerWithoutValueIsInert(t *testing.T) {
 	p := &ColorPicker{}
-	f := Compose(p, term.Caps{Cols: 30, Rows: 5}, nil)
+	f := gooey.Compose(p, term.Caps{Cols: 30, Rows: 5}, nil)
 	p.HandleKey(input.Named(input.KeyRight))
 	p.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 5, Y: 0})
 	if got := p.Hex(); got != "#808080" {
@@ -299,25 +300,25 @@ func TestColorPickerWheelAdjustsTheRowUnderThePointer(t *testing.T) {
 func TestColorPickerEditRepaintsOnlyItself(t *testing.T) {
 	v := prop.NewSource(render.RGB(10, 10, 10))
 	p := &ColorPicker{Value: v}
-	root := &VStack{Children: []Widget{
+	root := &VStack{Children: []gooey.Component{
 		&Text{Content: Str("above")},
 		p,
 		&Text{Content: Str("below")},
 	}}
-	comp := NewComposer(root, 30, 8)
+	comp := gooey.NewComposer(root, 30, 8)
 	comp.SetCaps(term.Caps{Cols: 30, Rows: 8, Color: render.TrueColor})
 	if _, painted := comp.Frame(); painted != 4 {
-		t.Fatalf("first frame painted %d widgets, want 4 (stack + 3 children)", painted)
+		t.Fatalf("first frame painted %d components, want 4 (stack + 3 children)", painted)
 	}
 
 	p.HandleKey(input.Named(input.KeyRight))
 	if _, painted := comp.Frame(); painted != 1 {
-		t.Errorf("a color edit painted %d widgets, want exactly 1", painted)
+		t.Errorf("a color edit painted %d components, want exactly 1", painted)
 	}
 
 	// Moving the selected channel is also just property damage.
 	p.HandleKey(input.Named(input.KeyDown))
 	if _, painted := comp.Frame(); painted != 1 {
-		t.Errorf("a channel change painted %d widgets, want exactly 1", painted)
+		t.Errorf("a channel change painted %d components, want exactly 1", painted)
 	}
 }

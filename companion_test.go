@@ -101,11 +101,11 @@ func (p *probe) Wait() error { return <-p.done }
 // that moment against the companions' starts.
 type recordingContent struct {
 	log *eventLog
-	w   Widget
+	w   Component
 }
 
-func (c recordingContent) Build() (Widget, error) { c.log.add("build"); return c.w, nil }
-func (c recordingContent) Watch(func()) func()    { return func() {} }
+func (c recordingContent) Build() (Component, error) { c.log.add("build"); return c.w, nil }
+func (c recordingContent) Watch(func()) func()       { return func() {} }
 
 func companionApp(t *testing.T, log *eventLog, opts ...Option) (*App, *testTTY) {
 	t.Helper()
