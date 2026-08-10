@@ -15,10 +15,11 @@ import (
 // Tool is one MCP tool: what it is called, what it takes, and what it
 // does.
 //
-// Schema is hand-written JSON Schema. Deriving it from a Go argument
-// struct is what every MCP SDK does and it is reflection, so it is not
-// what happens here — these tools take nine arguments between them and
-// writing them out costs less than the dependency would.
+// Schema is hand-written JSON Schema, handed to the SDK verbatim through
+// mcp.Server.AddTool. The SDK's ergonomic path would derive it from a Go
+// argument struct by reflection; these tools take nine arguments between
+// them, so a literal says the same thing more directly and keeps the
+// argument errors this package's own rather than the validator's.
 type Tool struct {
 	Name        string
 	Description string

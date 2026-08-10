@@ -71,27 +71,25 @@ client (raw streamable-HTTP JSON-RPC is fine): snapshot → read screen
 swap_markup and verify the new UI renders. Evidence per house
 conventions.
 
-## As built (2026-08-10)
+## As built (2026-08-10) — see the override below for the transport
 
-Shipped in `mcp/` (root module, `cmd/mcpdemo`, `mcpdemo.gif`).
+Shipped in `mcp/`, with `mcp/cmd/mcpdemo` and `mcpdemo.gif`.
 
-**No SDK, no nested module.** modelcontextprotocol/go-sdk v1.7.0 adds
-eight modules — jsonschema-go, segmentio/{asm,encoding}, uritemplate,
-x/{oauth2,sync,sys,time} — to a framework whose graph is x/term, and
-its ergonomic path (`AddTool` deriving schemas from Go structs via
-jsonschema-go) is reflection. The needed protocol surface is
-`initialize`, `tools/list`, `tools/call`, `ping`, so it is written
-against net/http and encoding/json with hand-written schemas. Zero new
-dependencies means there is nothing to quarantine, so it lives in the
-root module and `go test ./...` covers it — the opposite call from
-`handlers/temporal`, for the opposite reason.
+**Superseded: "no SDK, no nested module."** The first build wrote the
+protocol by hand and lived in the root module, on the argument that
+modelcontextprotocol/go-sdk v1.7.0 adds eight modules — jsonschema-go,
+segmentio/{asm,encoding}, uritemplate, x/{oauth2,sync,time} — to a
+framework whose graph is x/term, and that its ergonomic path (`AddTool`
+deriving schemas from Go structs via jsonschema-go) is reflection.
+Elan overrode that on 2026-08-10 ("no, use the sdk"). The dependency
+weight is handled by the *established* mechanism instead — a nested
+module — rather than by reimplementing a protocol. See "Overridden"
+below; everything else in this section still describes what runs.
 
-**Transport.** POST-only streamable HTTP: one JSON-RPC message or
-batch in, `application/json` out. GET is 405 (nothing here is
-server-initiated, so there is no stream to hold open); DELETE drops a
-session. Sessions are minted at `initialize` and carry no state — one
-app, one tree, every client sees the same one. Protocol versions
-2024-11-05 … 2025-11-25 are echoed; anything else gets 2025-06-18.
+**Transport (superseded).** The hand-written layer was POST-only
+streamable HTTP: one JSON-RPC message or batch in, `application/json`
+out, GET 405, DELETE dropping a stateless session, protocol versions
+2024-11-05 … 2025-11-25 echoed. The SDK's handler now does all of this.
 
 **The marshaling primitive is `bridge.do`, and it waits TWICE.** The
 first wait is the tool body. The second is a bare barrier, and it is
@@ -142,7 +140,8 @@ would lift it.
 
 **Security posture as shipped.** Loopback binds only — a non-loopback
 `Addr` is a hard error, not a warning. No auth: an MCP client can do
-anything the keyboard can.
+anything the keyboard can. (The SDK adds a second, complementary guard;
+see the override section.)
 
 The `Origin` check is the loopback trust boundary and is **default-deny
 for anything claiming to be a browser**. Absent header → allow (Go and
@@ -166,3 +165,74 @@ like a loopback address — exact hostname matching rejects both, prefix
 matching would not. `checkOrigin` is a free function precisely so the
 table test can enumerate all of these without a listener; restoring the
 old logic fails ten of its rows.
+
+## Overridden 2026-08-10: the official SDK, in a nested module
+
+Directive from Elan: **"no, use the sdk."** The dependency-weight
+argument that justified hand-writing the protocol is answered by the
+mechanism this repo already has for exactly that problem — a nested Go
+module — not by reimplementing a spec. The SDK's internal use of
+reflection for its own schema derivation is accepted at this protocol
+boundary; gooey core's no-reflection invariant is untouched, because
+core does not import this module.
+
+**`mcp/` is now a module.** `mcp/go.mod` requires
+`github.com/modelcontextprotocol/go-sdk v1.7.0` with `replace
+github.com/WonderForgeLabs/gooey => ../`, exactly like
+`handlers/temporal`. The root graph is still three nodes — the module
+itself, `x/sys`, `x/term` — and `go build ./...` / `go test ./...` at
+the root skip `mcp/` entirely, which is the mechanical proof. The
+module gains eight: the SDK, `google/jsonschema-go`,
+`segmentio/{asm,encoding}`, `yosida95/uritemplate/v3`, `x/oauth2`,
+`x/sync`, `x/time`. `cmd/mcpdemo` moved to `mcp/cmd/mcpdemo` for the
+same reason the Temporal demos live in their module: a binary that
+imports the SDK must build from inside the quarantine. `cmd/browser`
+lists it through the `modDir` root mechanism.
+
+**What the SDK now owns.** JSON-RPC framing, batching, the `initialize`
+handshake and protocol-version negotiation, `tools/list` (with paging),
+`tools/call` routing, `ping`, capability advertisement, the
+streamable-HTTP rules (Accept/Content-Type validation, body limits), and
+a Host-header DNS-rebinding guard that rejects a loopback-served request
+whose `Host` is not loopback. `jsonrpc.go` — 424 lines — is deleted.
+
+**What stayed custom, and why.** The `bridge` and its double wait; the
+`Tool` type whose `Run` is *defined* as UI-goroutine-only; the
+panic-recovery-to-tool-error; the `swap_markup` `Named`-table restore;
+the hand-written schemas; the loopback bind check; and the `Origin`
+guard. The last two are the load-bearing ones:
+
+- `checkLoopback` is ours because the SDK does not decide where you
+  bind. A non-loopback `Addr` is still a hard error.
+- The `Origin` guard is ours because **the SDK does not check Origin by
+  default.** In v1.7.0 `StreamableHTTPOptions.CrossOriginProtection` is
+  nil unless set, and it is deprecated in favour of "wrap the handler
+  with cross-origin protection middleware" — which is what
+  `Server.originGuard` does. Wrapping rather than adopting also keeps
+  the port pin: `net/http`'s `CrossOriginProtection` is a
+  Sec-Fetch-Site/Origin CSRF check with no notion of *which* loopback
+  port is legitimate, and the port rule is the thing that stops another
+  local service's page from driving this app. All eight enumerated
+  origin cases pass unchanged against the new stack, plus a live check
+  against the running `mcpdemo` binary.
+
+**The settle guarantee survives the port.** `bridge.do` runs inside the
+SDK's tool handler, so the handler does not return — and the SDK does
+not write the response — until the barrier round has come back and the
+frame has been composed. No sleeps were added anywhere.
+
+**Behavioral deltas, all in the transport envelope.** The handler runs
+`Stateless: true` with `JSONResponse: true`, which fits a server with
+exactly one app behind it: each POST is independent, the SDK synthesizes
+initialized state for a request that arrives without a handshake (so a
+bare `tools/call` from curl still works), and responses are
+`application/json`. Consequences: `Mcp-Session-Id` is no longer minted
+at `initialize` (it named nothing), and `DELETE` is 405 rather than 204
+(there is no session to delete). `GET` is still 405. One error shape
+changed: a method the protocol does not define is refused by the SDK's
+transport as HTTP 400 with a plain-text body, where the hand-written
+layer returned a JSON-RPC `MethodNotFound`; an unknown *tool* is still a
+JSON-RPC `InvalidParams`. `TestNoStreamAndNoSession` and
+`TestUnknownMethodAndUnknownTool` pin all of this. The tool inventory,
+argument handling, result text and error wording are unchanged, so
+`mcpdemo.gif` still shows what happens.

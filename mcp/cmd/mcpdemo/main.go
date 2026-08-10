@@ -5,7 +5,11 @@
 // viewmodel, type into the text box, and replace the whole page with new
 // markup — while the app keeps running and a Timer keeps ticking.
 //
-//	go run ./cmd/mcpdemo -mcp 127.0.0.1:7777
+//	cd mcp && go run ./cmd/mcpdemo -mcp 127.0.0.1:7777
+//
+// It lives inside mcp/ because mcp/ is a nested module: the MCP SDK's
+// dependency graph is quarantined there, and a binary that imports it
+// has to be built from there too.
 //
 // The point of the demo is the pairing: the UI here is ordinary markup
 // with named elements and a viewmodel of typed property handles, and the

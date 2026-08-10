@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
 // The harness hand-runs gooey.App's loop instead of using it, because the
@@ -144,6 +146,25 @@ func newVM() (*viewmodel, map[string]any) {
 }
 
 // ---- an MCP client ----
+
+// The client speaks the wire protocol by hand rather than through the
+// SDK's own mcp.Client. That is deliberate: the SDK client and the SDK
+// server would agree with each other whatever they did, so a test built
+// from both proves only that the library is self-consistent. These are
+// literal JSON-RPC bodies over HTTP, which is what an arbitrary MCP
+// client will send.
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
 
 type client struct {
 	t   *testing.T
@@ -296,19 +317,52 @@ func TestInitializeAndToolsList(t *testing.T) {
 }
 
 func TestUnknownMethodAndUnknownTool(t *testing.T) {
-	_, _, _, c := setup(t)
+	_, _, s, c := setup(t)
 
-	resp := c.rpc("resources/list", nil)
-	if resp.Error == nil || resp.Error.Code != codeMethodNotFound {
-		t.Errorf("unknown method should be a JSON-RPC MethodNotFound, got %+v", resp.Error)
+	// A method the protocol does not define is refused by the SDK's
+	// transport before it reaches any handler: HTTP 400 with a plain-text
+	// body, not a JSON-RPC MethodNotFound envelope. (resources/list and
+	// prompts/list would not do as the unknown method — the SDK answers
+	// those with empty lists whether or not this server has any.)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	resp := postRaw(t, srv.URL+endpointPath, `{"jsonrpc":"2.0","id":1,"method":"nonsense/list"}`)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "nonsense/list") {
+		t.Errorf("unknown method answered %d %q, want 400 naming the method", resp.StatusCode, body)
 	}
+
 	// An unknown TOOL is a protocol error too: the client asked for
 	// something that does not exist, which is different from a tool that
-	// ran and failed.
-	resp = c.rpc("tools/call", map[string]any{"name": "no_such_tool"})
-	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
-		t.Errorf("unknown tool should be a JSON-RPC InvalidParams, got %+v", resp.Error)
+	// ran and failed. That one IS a JSON-RPC error, and it stays
+	// InvalidParams.
+	rpc := c.rpc("tools/call", map[string]any{"name": "no_such_tool"})
+	if rpc.Error == nil || rpc.Error.Code != jsonrpc.CodeInvalidParams {
+		t.Errorf("unknown tool should be a JSON-RPC InvalidParams, got %+v", rpc.Error)
 	}
+}
+
+// postRaw sends one body with the headers the streamable-HTTP transport
+// requires, so a test can assert on status codes rather than on a decoded
+// result. Extra headers are added, not set, so a case can send the same
+// header twice.
+func postRaw(t *testing.T, url, body string, header ...[2]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for _, h := range header {
+		req.Header.Add(h[0], h[1])
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }
 
 func TestNotificationGetsNoBody(t *testing.T) {
@@ -316,14 +370,52 @@ func TestNotificationGetsNoBody(t *testing.T) {
 	srv := httptest.NewServer(s.Handler())
 	defer srv.Close()
 
-	body := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
-	resp, err := http.Post(srv.URL+endpointPath, "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := postRaw(t, srv.URL+endpointPath, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Errorf("notification answered %d, want 202 with no body", resp.StatusCode)
+	}
+}
+
+// TestNoStreamAndNoSession pins the two transport shapes this server
+// declines. It runs stateless — one app, one tree, the same one for every
+// client — so there is no session to delete, and nothing here is
+// server-initiated, so there is no stream to hold open. Both are 405
+// rather than 404 or a hang, which is how a client is told to stop
+// asking.
+func TestNoStreamAndNoSession(t *testing.T) {
+	_, _, s, _ := setup(t)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		req, _ := http.NewRequest(method, srv.URL+endpointPath, nil)
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s answered %d, want 405", method, resp.StatusCode)
+		}
+	}
+
+	// A tools/call with no handshake and no session id still works: that
+	// is what stateless buys, and it is what lets a one-shot client (curl,
+	// a shell script) drive the app.
+	resp := postRaw(t, srv.URL+endpointPath,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"screen_text","arguments":{}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("bare tools/call answered %d, want 200", resp.StatusCode)
+	}
+	var out rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Error != nil {
+		t.Fatalf("bare tools/call: %+v", out.Error)
 	}
 }
 
@@ -389,15 +481,11 @@ func TestOriginHeaderHandling(t *testing.T) {
 
 	post := func(origins ...string) int {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+endpointPath,
-			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+		header := make([][2]string, 0, len(origins))
 		for _, o := range origins {
-			req.Header.Add("Origin", o)
+			header = append(header, [2]string{"Origin", o})
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp := postRaw(t, srv.URL+endpointPath, `{"jsonrpc":"2.0","id":1,"method":"ping"}`, header...)
 		defer resp.Body.Close()
 		return resp.StatusCode
 	}

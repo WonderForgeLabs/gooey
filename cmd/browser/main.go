@@ -108,6 +108,10 @@ var roots = []struct {
 	// same group keeps the list smooth; the info pane's command line is
 	// what tells the full story (cd handlers/temporal && go run …).
 	{path: "handlers/temporal/cmd", group: "demos", prefix: "temporal-", modDir: "handlers/temporal"},
+	// mcpdemo moved into mcp/ when that package became a nested module of
+	// its own, for the same reason: the MCP SDK's graph is quarantined
+	// there, and a binary that imports it has to live inside it.
+	{path: "mcp/cmd", group: "demos", prefix: "mcp-", modDir: "mcp"},
 	{path: "docs/learn/examples", group: "learn examples", prefix: "learn-", ownDir: true},
 }
 

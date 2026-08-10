@@ -81,8 +81,9 @@ jobs:
         2. **Module Boundaries**
            - Core gooey depends only on `golang.org/x/term` — flag any new
              third-party dependency added to the root `go.mod`
-           - `handlers/temporal` is a separate module on purpose; its gRPC and
-             protobuf dependency graph must not leak into the root module
+           - `handlers/temporal` and `mcp` are separate modules on purpose;
+             the Temporal SDK's gRPC/protobuf graph and the MCP SDK's graph
+             must not leak into the root module
 
         3. **Go Correctness**
            - Error handling and edge cases, especially around terminal state
@@ -94,7 +95,8 @@ jobs:
         4. **Testing**
            - Adequate coverage for new widgets, properties, and markup elements
            - Tests that exercise the dirty-tracking behavior, not just output
-           - Remember `handlers/temporal` needs its own `go test ./...` run
+           - Remember `handlers/temporal` and `mcp` need their own
+             `go test ./...` runs (`mcp` under `-race`)
 
         5. **Documentation**
            - `docs/architecture.md` quotes real code — flag quotes that drift

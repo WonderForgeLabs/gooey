@@ -45,6 +45,22 @@ jobs:
             echo "handlers/temporal/go.mod not present; skipping"
           fi
 
+      # mcp is a separate module for the same reason (the MCP SDK's graph),
+      # so the root ./... patterns skip it too. It runs under -race
+      # deliberately: what its tests prove is that no tool body ever touches
+      # the property graph from an http goroutine, and without the detector
+      # that assertion is only half made.
+      - name: Build and test mcp
+        run: |
+          if [ -f mcp/go.mod ]; then
+            cd mcp
+            go build ./...
+            go vet ./...
+            go test -race ./...
+          else
+            echo "mcp/go.mod not present; skipping"
+          fi
+
   image:
     needs: test
     runs-on: ubuntu-latest

@@ -73,6 +73,10 @@ jobs:
           core framework's. Core gooey depends only on `golang.org/x/term`.
           It is excluded from the root `./...` patterns, so build and test it
           with a separate `cd handlers/temporal && go build ./... && go test ./...`.
+        - `mcp/` is a SEPARATE Go module for the same reason — the official
+          modelcontextprotocol/go-sdk brings eight modules with it. Build and
+          test it with `cd mcp && go build ./... && go test -race ./...`; its
+          demo lives at `mcp/cmd/mcpdemo`.
         - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
           `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
           control, `input/` routed event stream, `markup/` XML to widget tree,
@@ -90,6 +94,6 @@ jobs:
 
         **Verification**
         Before claiming work is done, run `go build ./...`, `go vet ./...`, and
-        `go test ./...` from the repo root, plus the `handlers/temporal` pair
-        above when that module is touched. Report real output — never assert a
+        `go test ./...` from the repo root, plus the `handlers/temporal` and
+        `mcp` module runs above when either is touched. Report real output — never assert a
         command passed without running it.

@@ -28,19 +28,24 @@
 // Dispatcher exists to prevent, and a hot reload would have replaced the
 // widget anyway.
 //
-// # Why no MCP SDK
+// # A nested module
 //
-// modelcontextprotocol/go-sdk v1.7.0 is a good library and the wrong
-// dependency here. It adds eight modules to a framework whose entire
-// graph today is golang.org/x/term, among them an assembly-optimized
-// JSON codec and an OAuth2 client this server has no use for; and its
-// ergonomic path (AddTool deriving a schema from a Go struct through
-// github.com/google/jsonschema-go) is reflection, which is the one
-// mechanism gooey has refused everywhere else. The protocol surface an
-// app-control server needs is initialize, tools/list and tools/call over
-// HTTP POST, so it is written here against net/http and encoding/json,
-// with hand-written schemas — the same trade the framework makes for
-// bindings, made again.
+// The protocol is the official SDK's, modelcontextprotocol/go-sdk, and
+// that SDK brings eight modules with it — jsonschema-go,
+// segmentio/{asm,encoding}, uritemplate, golang-jwt, x/{oauth2,time} —
+// to a framework whose own graph is golang.org/x/term. So this package
+// is a SEPARATE GO MODULE, exactly like handlers/temporal: `go build
+// ./...` and `go test ./...` at the repo root skip it, which is the
+// mechanical proof that core gooey still builds without any of it. An
+// app opts in by requiring github.com/WonderForgeLabs/gooey/mcp.
+//
+// The SDK derives tool schemas from Go structs by reflection on its
+// ergonomic path. That path is not used here — schemas are written out
+// (see Tool.Schema) and attached through the explicit
+// mcp.Server.AddTool — but the SDK's reflection elsewhere in its own
+// machinery is accepted at this protocol boundary. gooey's own
+// no-reflection rule is about the framework, and the framework does not
+// import this.
 package mcp
 
 import (
@@ -49,11 +54,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/markup"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Host is what this server needs from a running app: a way onto the UI
@@ -96,17 +101,18 @@ type Options struct {
 
 // Server is a gooey app exposed over MCP.
 type Server struct {
-	host    Host
-	bind    *markup.Context
-	ui      *bridge
-	name    string
-	version string
+	host Host
+	bind *markup.Context
+	ui   *bridge
 
-	tools  []*Tool
-	byName map[string]*Tool
+	// sdk is the protocol side: the official SDK's server, which owns
+	// the JSON-RPC framing, the handshake and tools/list. Our tools are
+	// mirrored onto it by register.
+	sdk *mcpsdk.Server
 
-	mu       sync.Mutex
-	sessions map[string]struct{}
+	// tools is our own inventory, kept for Tools() and sorted by name.
+	// Lookup by name is the SDK's job now.
+	tools []*Tool
 
 	ln   net.Listener
 	http *http.Server
@@ -125,13 +131,10 @@ func New(host Host, opts Options) (*Server, error) {
 		to = 5 * time.Second
 	}
 	s := &Server{
-		host:     host,
-		bind:     opts.Context,
-		ui:       &bridge{post: host.Post, timeout: to},
-		name:     firstNonEmpty(opts.Name, "gooey"),
-		version:  firstNonEmpty(opts.Version, "0.1.0"),
-		byName:   map[string]*Tool{},
-		sessions: map[string]struct{}{},
+		host: host,
+		bind: opts.Context,
+		ui:   &bridge{post: host.Post, timeout: to},
+		sdk:  newSDKServer(firstNonEmpty(opts.Name, "gooey"), firstNonEmpty(opts.Version, "0.1.0")),
 	}
 	s.register(s.v1Tools()...)
 	return s, nil
@@ -215,8 +218,8 @@ func (s *Server) Tools() []*Tool { return s.tools }
 
 func (s *Server) register(ts ...*Tool) {
 	for _, t := range ts {
-		s.byName[t.Name] = t
 		s.tools = append(s.tools, t)
+		s.bindTool(t)
 	}
 	sort.Slice(s.tools, func(i, j int) bool { return s.tools[i].Name < s.tools[j].Name })
 }
