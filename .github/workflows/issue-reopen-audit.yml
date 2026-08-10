@@ -63,8 +63,9 @@ jobs:
       !contains(github.event.issue.labels.*.name, 'invalid')
     runs-on: forge-runners-small-vsphere
     timeout-minutes: 5
-    permissions:
-      actions: write
+    # The workflow_dispatch re-invocation below runs on the App token
+    # (GH_TOKEN), not the default token — nothing here uses github.token.
+    permissions: {}
     steps:
       - name: Generate app token
         id: app-token
@@ -77,10 +78,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
-          # The gate's author_association check (like intake's) reflects the
-          # issue's original author, not necessarily whoever performed the
-          # close — re-check that same actor's live permission.
-          ACTOR: ${{ github.event.issue.user.login }}
+          # The actor who matters for a `closed` event is whoever performed
+          # the close — the sender — not the issue's original author. The
+          # fast path's author_association gate can only see the author (the
+          # payload carries no association for the sender), so a maintainer
+          # closing an externally-filed issue lands here; live-check the
+          # SENDER so that close still gets its immediate audit.
+          ACTOR: ${{ github.event.sender.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -uo pipefail

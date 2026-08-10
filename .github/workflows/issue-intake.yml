@@ -49,8 +49,9 @@ jobs:
       !contains(fromJSON('["homelab-runners-default[bot]", "claude[bot]", "copilot[bot]"]'), github.event.issue.user.login)
     runs-on: forge-runners-small-vsphere
     timeout-minutes: 5
-    permissions:
-      issues: write
+    # Every API call below authenticates with the App token (GH_TOKEN),
+    # including the label create/edit — the default token is never used.
+    permissions: {}
     steps:
       - name: Generate app token
         id: app-token
