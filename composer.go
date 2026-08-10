@@ -6,6 +6,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // Composer is the retained, damage-tracked render path. Each widget's
@@ -51,6 +52,23 @@ func NewComposer(root Widget, cols, rows int) *Composer {
 	c.focus = NewFocusManager(root)
 	return c
 }
+
+// SetCaps hands the composition the terminal's capabilities, which land
+// on the Frame for widgets to read at Render and set the color depth
+// Flush encodes at. It is a setter rather than a constructor parameter
+// because capabilities arrive from a probe that not every host runs —
+// a composition without them keeps the truecolor, no-graphics defaults.
+//
+// Call it before the first Frame: widgets that adapt to capabilities
+// read them while painting, so changing caps after a frame would leave
+// already-clean paint nodes showing the old tier.
+func (c *Composer) SetCaps(caps term.Caps) {
+	c.frame.Caps = caps
+	c.frame.CellW, c.frame.CellH = caps.CellW, caps.CellH
+}
+
+// Caps reports the capabilities this composition was given.
+func (c *Composer) Caps() term.Caps { return c.frame.Caps }
 
 // Focus is the input tree built from this composition: focus order,
 // ancestor links, and declared key bindings.
@@ -129,8 +147,11 @@ func (c *Composer) Frame() (*Frame, int) {
 	return c.frame, c.painted
 }
 
-// Flush writes the current buffer to w.
-func (c *Composer) Flush(w io.Writer) error { return render.Flush(w, c.frame.Cells) }
+// Flush writes the current buffer to w, encoding color at the depth
+// from SetCaps.
+func (c *Composer) Flush(w io.Writer) error {
+	return render.Flush(w, c.frame.Cells, c.frame.Caps.Color)
+}
 
 func clearRect(b *render.Buffer, r Rect) {
 	for y := r.Y; y < r.Y+r.H; y++ {

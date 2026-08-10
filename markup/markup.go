@@ -254,6 +254,10 @@ func applyLayout(e Element, w gooey.Widget) error {
 			l.RowSpan, err = strconv.Atoi(v)
 		case "Grid.ColSpan":
 			l.ColSpan, err = strconv.Atoi(v)
+		case "Canvas.Left":
+			l.Left, err = strconv.Atoi(v)
+		case "Canvas.Top":
+			l.Top, err = strconv.Atoi(v)
 		}
 		if err != nil {
 			return fmt.Errorf("markup: attribute %s=%q: %w", k, v, err)
@@ -363,10 +367,14 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if title == nil {
 			title = gooey.Str(e.Attrs["Title"])
 		}
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
+		}
 		b := &gooey.Border{
 			Child: child,
 			Title: title,
-			Style: gooey.Sty(ctx.Styles[e.Attrs["Style"]]),
+			Style: style,
 		}
 		if err := attachAll(e, b, attach); err != nil {
 			return nil, err
@@ -404,6 +412,81 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 			return nil, err
 		}
 		return named(e, ctx, w, nil)
+	case "Canvas":
+		// Children carry their own Canvas.Left/Canvas.Top, parsed into
+		// Layout by applyLayout like any other attached property.
+		kids, attach, err := buildChildren(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		c := &gooey.Canvas{Children: kids}
+		if err := attachAll(e, c, attach); err != nil {
+			return nil, err
+		}
+		return named(e, ctx, c, nil)
+	case "Checkbox":
+		checked, err := boundProp[bool](e, ctx, "Checked")
+		if err != nil {
+			return nil, err
+		}
+		label, err := bindText(e.Attrs["Label"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		if label == nil {
+			label = gooey.Str(e.Attrs["Label"])
+		}
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		return named(e, ctx, &gooey.Checkbox{
+			Checked: checked,
+			Label:   label,
+			Style:   style,
+		}, nil)
+	case "Gauge":
+		value, err := boundProp[int](e, ctx, "Value")
+		if err != nil {
+			return nil, err
+		}
+		label, err := bindText(e.Attrs["Label"], ctx)
+		if err != nil {
+			return nil, err
+		}
+		if label == nil {
+			label = gooey.Str(e.Attrs["Label"])
+		}
+		g := &gooey.Gauge{Value: value, Label: label}
+		g.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		// Style is an override for the threshold ramp, so it is applied
+		// only when the attribute is actually present.
+		if _, ok := e.Attrs["Style"]; ok {
+			if g.Style, err = bindStyle(e, ctx); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, g, nil)
+	case "Sparkline":
+		series, err := boundProp[[]float64](e, ctx, "Values")
+		if err != nil {
+			return nil, err
+		}
+		s := &gooey.Sparkline{Values: series}
+		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
+		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		if _, ok := e.Attrs["Style"]; ok {
+			if s.Style, err = bindStyle(e, ctx); err != nil {
+				return nil, err
+			}
+		}
+		return named(e, ctx, s, nil)
+	case "ColorPicker":
+		color, err := boundProp[render.Color](e, ctx, "Value")
+		if err != nil {
+			return nil, err
+		}
+		return named(e, ctx, &gooey.ColorPicker{Value: color}, nil)
 	case "Button":
 		content, err := bindText(e.Attrs["Content"], ctx)
 		if err != nil {
@@ -416,9 +499,13 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Button Click=%q>: %w", e.Attrs["Click"], err)
 		}
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
+		}
 		return named(e, ctx, &gooey.Button{
 			Content: content,
-			Style:   gooey.Sty(ctx.Styles[e.Attrs["Style"]]),
+			Style:   style,
 			Click:   click,
 		}, nil)
 	case "KeyBinding":
@@ -432,11 +519,22 @@ func buildWidget(e Element, ctx *Context) (gooey.Widget, error) {
 		}
 		return named(e, ctx, &gooey.KeyBinding{Gesture: g, Command: cmd}, nil)
 	case "Text":
-		style := ctx.Styles[e.Attrs["Style"]]
-		if e.Attrs["Bold"] == "true" {
-			style.Bold = true
+		style, err := bindStyle(e, ctx)
+		if err != nil {
+			return nil, err
 		}
-		t := &gooey.Text{Style: gooey.Sty(style)}
+		if e.Attrs["Bold"] == "true" {
+			// Bold composes over either form of Style, so it wraps the
+			// handle rather than mutating a value — a bound style stays
+			// live and still gets its bold.
+			base := style
+			style = prop.NewComputed(func() render.Style {
+				s := base.Get()
+				s.Bold = true
+				return s
+			})
+		}
+		t := &gooey.Text{Style: style}
 		content := strings.TrimSpace(e.Text)
 		if src, err := bindText(content, ctx); err != nil {
 			return nil, err
@@ -518,6 +616,43 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 		}
 		return sb.String()
 	}), nil
+}
+
+// bindStyle resolves the Style attribute, which accepts either form:
+// a bare name is the static lookup in Context.Styles, and a binding
+// expression yields the viewmodel's own *prop.Property[render.Style]
+// handle. The bound form is what makes a style REACTIVE — a computed
+// style over an accent color repaints the widgets that read it, through
+// the ordinary property graph, with no styling system involved.
+func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
+	raw := e.Attrs["Style"]
+	if bindRe.MatchString(raw) {
+		return boundProp[render.Style](e, ctx, "Style")
+	}
+	return gooey.Sty(ctx.Styles[raw]), nil
+}
+
+// boundProp resolves an attribute that must be a typed property HANDLE
+// rather than text: <Checkbox Checked="{{.Auto}}"/> shares the
+// viewmodel's property with the widget, so the widget's Render reads it
+// and its toggle Sets it — the only sense in which gooey has two-way
+// binding, and the reason it needs no converter machinery.
+//
+// The type assertion is the whole type check. There is no reflection
+// here: T is known at the call site, so a mismatched viewmodel property
+// is a load-time error naming both types.
+func boundProp[T any](e Element, ctx *Context, attr string) (*prop.Property[T], error) {
+	raw := e.Attrs[attr]
+	v, err := ctx.BindingValue(raw)
+	if err != nil {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
+	}
+	h, ok := v.(*prop.Property[T])
+	if !ok {
+		var want *prop.Property[T]
+		return nil, fmt.Errorf("markup: <%s %s=%q> is %T; need %T", e.Name, attr, raw, v, want)
+	}
+	return h, nil
 }
 
 func resolve(values map[string]any, path string) (any, error) {

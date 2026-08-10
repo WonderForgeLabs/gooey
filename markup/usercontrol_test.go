@@ -8,11 +8,12 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func renderToString(t *testing.T, w gooey.Widget, cols, rows int) string {
 	t.Helper()
-	f := gooey.Compose(w, cols, rows, nil, 10, 20)
+	f := gooey.Compose(w, term.Caps{Cols: cols, Rows: rows, CellW: 10, CellH: 20}, nil)
 	var sb strings.Builder
 	for y := 0; y < rows; y++ {
 		for x := 0; x < cols; x++ {

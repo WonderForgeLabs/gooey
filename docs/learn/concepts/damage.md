@@ -1,0 +1,38 @@
+# Concept: damage tracking
+
+The `Composer` gives **every widget its own paint node** in the property
+graph. Evaluating that node runs the widget's `Render`, so the properties
+a widget reads while painting automatically become the set of things that
+can dirty it.
+
+That is the whole damage model. There is no `AffectsRender` metadata to
+declare and no `InvalidateVisual()` to call: *reading a property during
+Render is the declaration.* A widget that never reads a property is never
+repainted when it changes.
+
+Two behaviors follow, and both are observable:
+
+- Setting one bound property repaints exactly the widgets that read it.
+  Tutorial 3's `measure` button prints `last frame painted 1 widget(s)`
+  after a state change on a page holding eleven widgets.
+- Focus and hover are ordinary source properties (`FocusState`,
+  `HoverState`), so moving focus repaints exactly two widgets — the one
+  losing focus and the one gaining it. Nothing special-cases focus.
+
+Layout is deliberately *outside* this system. `Measure`/`Arrange` run
+unconditionally every frame and outside any evaluation context, so reads
+made during layout subscribe to nothing and layout can never pollute the
+graph. When a widget's bounds change, the Composer force-dirties it and
+clears the region it vacated.
+
+One rule constrains container authors: **containers must never pre-clear
+their own bounds.** A container's bounds enclose its children's cells, so
+wiping them blanks content whose own (clean) paint nodes will not
+repaint. Only leaf widgets pre-clear; containers overpaint their chrome
+in place.
+
+**Current limit.** Damage tracking stops at the paint level: the flush
+still writes the whole buffer to the terminal each frame. Damage-rect
+diffing is a drop-in replacement at `Flush`, not a redesign.
+
+Depth: [architecture.md — the Composer](../../architecture.md#the-composer).

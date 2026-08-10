@@ -17,8 +17,8 @@
 //
 // This is the Go-COMPOSITION flavor: the tree, its Grid tracks, and the
 // KeyBinding attachments are all built as Go literals here. cmd/markuplog
-// is the same viewmodel with the tree authored in XML markup instead —
-// the contrast between the two files is the point, so keep them in sync.
+// runs the same viewmodel with the tree authored in XML markup instead,
+// and the contrast between the two files is the point of having both.
 package main
 
 import (

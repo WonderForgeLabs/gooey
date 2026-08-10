@@ -13,6 +13,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 type Size struct{ W, H int }
@@ -38,19 +39,38 @@ type Container interface{ ChildWidgets() []Widget }
 // Frame is one composed frame: the cell plane plus deferred pixel
 // placements. Graphics is nil when the terminal has no pixel protocol —
 // widgets with pixel content must then degrade into cells (halfblock).
+//
+// Caps is the terminal's detected capability set, carried on the frame
+// so a widget can adapt AT RENDER TIME: the color depth it will
+// actually be shown in, which graphics protocol (if any) is available,
+// and the pixel size of a cell. This is the mechanism behind
+// "a different experience per rendering engine" — the widget asks the
+// frame what it is painting onto. It is a plain field, not a property:
+// capabilities are fixed for the life of a session, so making them
+// observable would buy nothing and cost every widget a dependency edge.
 type Frame struct {
 	Cells        *render.Buffer
 	Graphics     graphics.Encoder
 	Placements   []graphics.Placement
 	CellW, CellH int
+	Caps         term.Caps
 }
 
-// Compose lays out root into a fresh frame of cols×rows — the one-shot
+// Depth is the color depth this frame will be flushed at.
+func (f *Frame) Depth() render.ColorDepth { return f.Caps.Color }
+
+// Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
-func Compose(root Widget, cols, rows int, enc graphics.Encoder, cellW, cellH int) *Frame {
-	f := &Frame{Cells: render.NewBuffer(cols, rows), Graphics: enc, CellW: cellW, CellH: cellH}
-	root.Measure(Size{cols, rows})
-	root.Arrange(Rect{0, 0, cols, rows})
+func Compose(root Widget, caps term.Caps, enc graphics.Encoder) *Frame {
+	f := &Frame{
+		Cells:    render.NewBuffer(caps.Cols, caps.Rows),
+		Graphics: enc,
+		CellW:    caps.CellW,
+		CellH:    caps.CellH,
+		Caps:     caps,
+	}
+	root.Measure(Size{caps.Cols, caps.Rows})
+	root.Arrange(Rect{0, 0, caps.Cols, caps.Rows})
 	renderTree(root, f)
 	return f
 }
@@ -71,7 +91,7 @@ func renderTree(w Widget, f *Frame) {
 
 // Flush writes the frame: cell plane first, then pixel placements.
 func (f *Frame) Flush(w io.Writer) error {
-	if err := render.Flush(w, f.Cells); err != nil {
+	if err := render.Flush(w, f.Cells, f.Caps.Color); err != nil {
 		return err
 	}
 	for _, p := range f.Placements {

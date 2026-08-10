@@ -90,7 +90,7 @@ func layoutAttr(k string) bool {
 	case "Width", "Height", "Margin", "HAlign", "VAlign", "Visibility":
 		return true
 	}
-	return len(k) > 5 && k[:5] == "Grid."
+	return strings.HasPrefix(k, "Grid.") || strings.HasPrefix(k, "Canvas.")
 }
 
 // Command resolves an event attribute to a gooey.Command — now three

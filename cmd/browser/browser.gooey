@@ -1,0 +1,25 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="gooey demo browser" Style="panel">
+    <Grid Rows="Auto,*,Auto,Auto" Cols="30,1*">
+      <!-- Chrome is bound, not restated: Title, Hint and Status are
+           computeds over the same directory data the list paints, so
+           the markup names what to show and never spells out what it
+           says. Hint is what makes `r` discoverable — it reports the
+           exact artifact path the current selection would record to. -->
+      <Text Grid.Row="0" Grid.ColSpan="2" Style="accent">{{.Title}}</Text>
+      <DemoList Grid.Row="1" Grid.Col="0"/>
+      <DemoInfo Grid.Row="1" Grid.Col="1" Margin="2,0,0,0"/>
+      <Text Grid.Row="2" Grid.ColSpan="2" Style="dim">{{.Hint}}</Text>
+      <Text Grid.Row="3" Grid.ColSpan="2" Style="accent">{{.Status}}</Text>
+
+      <!-- Bindings live on the Grid, so they are in the focused list's
+           ancestor chain and fire globally; j/k reach the list first
+           because Dispatch tries the focused widget before bubbling. -->
+      <KeyBinding Gesture="enter"  Command="{{.Run}}"/>
+      <KeyBinding Gesture="r"      Command="{{.Record}}"/>
+      <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+      <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

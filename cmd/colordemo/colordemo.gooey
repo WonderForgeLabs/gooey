@@ -1,0 +1,45 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- The whole page is styled by ONE property. Style="{{.Accent}}" is a
+       live handle onto a computed that reads the picked color, so moving
+       a channel in the picker restyles the border, the title, and the
+       cascade below through the property graph — no theme system, no
+       "apply style" call anywhere. -->
+  <Border Title="gooey — color" Style="{{.AccentStyle}}">
+    <Grid Rows="Auto,*,Auto">
+      <Text Grid.Row="0" Style="{{.AccentStyle}}">
+        arrows: ←/→ adjust  ↑/↓ channel  shift: ×16  home/end: 0/255  •  click or scroll a bar  •  q: quit
+      </Text>
+
+      <!-- Canvas: absolute positioning. Everything below is placed by
+           Canvas.Left/Canvas.Top rather than by a stack or a grid, which
+           is what lets the swatch cascade overlap on purpose. -->
+      <Canvas Grid.Row="1">
+        <ColorPicker Value="{{.Accent}}" Canvas.Left="1" Canvas.Top="1"/>
+
+        <Text Canvas.Left="1" Canvas.Top="7" Style="dim">tier simulation — what each terminal class shows</Text>
+        <TierStrip Canvas.Left="1" Canvas.Top="8"/>
+
+        <!-- Stacked cards, and a real overlap: each swatch is 10 cells
+             wide and 2 rows tall, stepping 4 right and 1 down, so every
+             card shares 6 cells of its lower row with the next one.
+             Tree order IS z-order — the later sibling paints on top. -->
+        <Text Canvas.Left="46" Canvas.Top="1" Style="{{.Tint0}}">██████████
+██████████</Text>
+        <Text Canvas.Left="50" Canvas.Top="2" Style="{{.Tint1}}">██████████
+██████████</Text>
+        <Text Canvas.Left="54" Canvas.Top="3" Style="{{.Tint2}}">██████████
+██████████</Text>
+        <Text Canvas.Left="58" Canvas.Top="4" Style="{{.Tint3}}">██████████
+██████████</Text>
+        <Text Canvas.Left="62" Canvas.Top="5" Style="{{.Tint4}}">██████████
+██████████</Text>
+        <Text Canvas.Left="46" Canvas.Top="0" Style="dim">overlapping cascade, placed by Canvas.Left/Top</Text>
+      </Canvas>
+
+      <Text Grid.Row="2" Style="dim">{{.Status}}</Text>
+
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

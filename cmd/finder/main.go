@@ -6,10 +6,15 @@
 // three computeds, and damage tracking means arrow keys repaint only
 // the results and preview panes.
 //
-//	type      filter    ↑/↓ (or ctrl-p/n)  select
+//	type      filter    ↑/↓ (or ctrl-p/n)  select   click  select a row
 //	enter     print selection and exit      esc/ctrl-c  quit
 //
 // The shell is markup (finder.gooey) and hot-reloads like markuplog.
+// Input is routed rather than switched on: the query line and the
+// results pane are focus stops that consume their own keys, page-level
+// gestures are <KeyBinding> declarations bound to viewmodel commands,
+// and the wheel and clicks arrive by hit-testing — so main's event loop
+// is one call to Composer.Handle.
 package main
 
 import (
@@ -84,34 +89,62 @@ func main() {
 
 	status := prop.NewComputed(func() string {
 		n := len(matches.Get())
-		return fmt.Sprintf("%d files   %d matched in %s   ↑/↓ select   enter open   esc quit",
+		return fmt.Sprintf("%d files   %d matched in %s   ↑/↓ or click select   enter open   esc quit",
 			len(files), n, lastMatchDur.Round(time.Microsecond))
 	})
 
-	// --- markup context ---
+	// --- widgets, built up front so the commands below can address
+	// them. Hot reload re-runs the builders and hands back these same
+	// instances: the tree is disposable, the state is not.
+	var comp *gooey.Composer
+	in := &inputBox{query: query, sel: sel}
+	res := &resultsPane{rows: matches, sel: sel}
+	// A click selects a row and hands typing straight back to the query
+	// line — the query is always live, fzf-style. Framework
+	// focus-follows-click has already moved focus to the results pane by
+	// the time this runs, so this is a deliberate override, not a
+	// workaround.
+	res.focusQuery = func() { comp.Focus().SetFocus(in) }
+
+	// --- commands: the page's gestures resolve to these at load time.
+	running, chosen := true, ""
+	selectBy := func(d int) gooey.Command {
+		return gooey.Command(func() { sel.Set(clampSel(sel.Get()+d, len(matches.Get()))) })
+	}
 	ctx := &markup.Context{
-		Values: map[string]any{"Status": status},
+		Values: map[string]any{
+			"Status":     status,
+			"SelectPrev": selectBy(-1),
+			"SelectNext": selectBy(+1),
+			"Accept": gooey.Command(func() {
+				if ms := matches.Get(); len(ms) > 0 {
+					chosen = ms[clampSel(sel.Get(), len(ms))].path
+				}
+				running = false
+			}),
+			"Quit": gooey.Command(func() { running = false }),
+		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
 		Widgets: map[string]markup.Builder{
-			"Input": func(markup.Element, *markup.Context) (gooey.Widget, error) { return &inputBox{query: query}, nil },
-			"Results": func(markup.Element, *markup.Context) (gooey.Widget, error) {
-				return &resultsPane{rows: matches, sel: sel}, nil
+			"Input":   func(markup.Element, *markup.Context) (gooey.Widget, error) { return in, nil },
+			"Results": func(markup.Element, *markup.Context) (gooey.Widget, error) { return res, nil },
+			"Preview": func(markup.Element, *markup.Context) (gooey.Widget, error) {
+				return &previewPane{lines: preview}, nil
 			},
-			"Preview": func(markup.Element, *markup.Context) (gooey.Widget, error) { return &previewPane{lines: preview}, nil },
 		},
 	}
 
-	exe, _ := os.Executable()
-	mkPath := filepath.Join(filepath.Dir(exe), "finder.gooey")
-	if _, err := os.Stat(mkPath); err != nil {
-		mkPath = "cmd/finder/finder.gooey"
+	mkDir := "cmd/finder"
+	if _, err := os.Stat(filepath.Join(mkDir, "finder.gooey")); err != nil {
+		exe, _ := os.Executable()
+		mkDir = filepath.Dir(exe)
 	}
-	fsys := os.DirFS(filepath.Dir(mkPath))
-	name := filepath.Base(mkPath)
+	fsys := os.DirFS(mkDir)
+	name := "finder.gooey"
 	tree, err := markup.Load(fsys, name, ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -126,7 +159,6 @@ func main() {
 	cols, rows := screen.Size()
 
 	needsFrame := true
-	var comp *gooey.Composer
 	attach := func(w gooey.Widget) {
 		comp = gooey.NewComposer(w, cols, rows)
 		comp.OnInvalidate(func() { needsFrame = true })
@@ -142,11 +174,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	events := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, events)
+	evs := make(chan input.Event, 32)
+	go term.DecodeEvents(screen, evs)
 	screen.EnableMouse()
 
-	for {
+	for running {
 		if needsFrame {
 			comp.Frame()
 			comp.Flush(screen.File())
@@ -155,49 +187,14 @@ func main() {
 		select {
 		case w := <-swaps:
 			attach(w)
-		case e := <-events:
-			// The finder has no focus tree; the wheel just moves the
-			// selection like the arrows do.
-			if e.IsMouse() {
-				switch e.Mouse.Kind {
-				case input.WheelUp:
-					sel.Set(clampSel(sel.Get()-1, len(matches.Get())))
-				case input.WheelDown:
-					sel.Set(clampSel(sel.Get()+1, len(matches.Get())))
-				}
-				continue
-			}
-			ev := e.Key
-			switch {
-			case ev == input.Named(input.KeyEsc) || ev == ctrl('c'):
-				screen.Restore()
-				return
-			case ev == input.Named(input.KeyEnter):
-				ms := matches.Get()
-				screen.Restore()
-				if len(ms) > 0 {
-					fmt.Println(ms[clampSel(sel.Get(), len(ms))].path)
-				}
-				return
-			case ev == input.Named(input.KeyUp) || ev == ctrl('p'):
-				sel.Set(clampSel(sel.Get()-1, len(matches.Get())))
-			case ev == input.Named(input.KeyDown) || ev == ctrl('n'):
-				sel.Set(clampSel(sel.Get()+1, len(matches.Get())))
-			case ev == input.Named(input.KeyBackspace):
-				if q := query.Get(); q != "" {
-					query.Set(q[:len(q)-1])
-					sel.Set(0)
-				}
-			case ev.Key == input.KeyRune && ev.Mods == 0:
-				query.Set(query.Get() + string(ev.Rune))
-				sel.Set(0)
-			}
+		case ev := <-evs:
+			comp.Handle(ev)
 		}
 	}
-}
-
-func ctrl(r rune) input.KeyEvent {
-	return input.KeyEvent{Key: input.KeyRune, Rune: r, Mods: input.ModCtrl}
+	screen.Restore()
+	if chosen != "" {
+		fmt.Println(chosen)
+	}
 }
 
 func clampSel(i, n int) int {
@@ -206,12 +203,35 @@ func clampSel(i, n int) int {
 
 // ---- widgets ----
 
+// inputBox is the query line: a focus stop that owns printable runes
+// and backspace. Nothing else in the page consumes runes, so typing
+// only ever edits the query — and every other gesture falls through to
+// the page bindings.
 type inputBox struct {
 	gooey.Base
+	gooey.FocusState
 	query *prop.Property[string]
+	sel   *prop.Property[int] // reset to the top whenever the query changes
 }
 
 func (w *inputBox) Measure(avail gooey.Size) gooey.Size { return gooey.Size{W: avail.W, H: 1} }
+
+func (w *inputBox) HandleKey(ev input.KeyEvent) bool {
+	switch {
+	case ev == input.Named(input.KeyBackspace):
+		q := []rune(w.query.Get())
+		if len(q) == 0 {
+			return true
+		}
+		w.query.Set(string(q[:len(q)-1]))
+	case ev.Key == input.KeyRune && ev.Mods == 0:
+		w.query.Set(w.query.Get() + string(ev.Rune))
+	default:
+		return false
+	}
+	w.sel.Set(0)
+	return true
+}
 
 func (w *inputBox) Render(f *gooey.Frame) {
 	b := w.Bounds()
@@ -219,16 +239,77 @@ func (w *inputBox) Render(f *gooey.Frame) {
 	q := w.query.Get()
 	f.Cells.SetString(b.X, b.Y, "> ", accent)
 	f.Cells.SetString(b.X+2, b.Y, q, render.Style{Bold: true})
-	f.Cells.Set(b.X+2+len(q), b.Y, '█', accent) // end-of-line cursor
+	if w.IsFocused() {
+		// Reading IsFocused here is what makes the cursor a paint
+		// dependency: tabbing away repaints this widget and the one
+		// gaining focus, nothing else.
+		f.Cells.Set(b.X+2+len([]rune(q)), b.Y, '█', accent)
+	}
 }
 
+// resultsPane is the second focus stop. It owns ↑/↓ while focused, and
+// takes clicks and the wheel by hit-test whether focused or not.
 type resultsPane struct {
 	gooey.Base
-	rows *prop.Property[[]match]
-	sel  *prop.Property[int]
+	gooey.FocusState
+	rows       *prop.Property[[]match]
+	sel        *prop.Property[int]
+	focusQuery func()
 }
 
 func (w *resultsPane) Measure(avail gooey.Size) gooey.Size { return avail }
+
+func (w *resultsPane) move(d int) {
+	w.sel.Set(clampSel(w.sel.Get()+d, len(w.rows.Get())))
+}
+
+func (w *resultsPane) HandleKey(ev input.KeyEvent) bool {
+	switch ev {
+	case input.Named(input.KeyUp):
+		w.move(-1)
+	case input.Named(input.KeyDown):
+		w.move(+1)
+	case input.Named(input.KeyPageUp):
+		w.move(-w.Bounds().H)
+	case input.Named(input.KeyPageDown):
+		w.move(+w.Bounds().H)
+	default:
+		return false
+	}
+	return true
+}
+
+func (w *resultsPane) HandleMouse(ev input.MouseEvent) bool {
+	switch ev.Kind {
+	case input.MousePress:
+		row := w.top() + ev.Y - w.Bounds().Y
+		if row < 0 || row >= len(w.rows.Get()) {
+			return false
+		}
+		w.sel.Set(row)
+		if w.focusQuery != nil {
+			w.focusQuery()
+		}
+		return true
+	case input.WheelUp:
+		w.move(-wheelStep)
+	case input.WheelDown:
+		w.move(+wheelStep)
+	default:
+		return false
+	}
+	return true
+}
+
+// wheelStep is the conventional three lines per notch; one line per
+// notch reads as broken in a long list.
+const wheelStep = 3
+
+// top is the first visible row — the same scroll arithmetic Render
+// uses, so a click maps back to the row the user actually sees.
+func (w *resultsPane) top() int {
+	return max(0, clampSel(w.sel.Get(), len(w.rows.Get()))-w.Bounds().H+1)
+}
 
 func (w *resultsPane) Render(f *gooey.Frame) {
 	b := w.Bounds()

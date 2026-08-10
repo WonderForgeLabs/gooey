@@ -61,7 +61,7 @@ func main() {
 	}
 
 	root := buildTree(selected, caps)
-	frame := gooey.Compose(root, caps.Cols, caps.Rows, enc, caps.CellW, caps.CellH)
+	frame := gooey.Compose(root, caps, enc)
 
 	if *dump {
 		frame.Flush(os.Stdout)
@@ -93,6 +93,7 @@ func buildTree(mode string, caps term.Caps) gooey.Widget {
 		&gooey.Text{Content: gooey.Str(fmt.Sprintf("graphics mode : %s", mode)), Style: gooey.Sty(render.Style{Bold: true})},
 		&gooey.Text{Content: gooey.Str(fmt.Sprintf("kitty=%v sixel=%v iterm2=%v", caps.Kitty, caps.Sixel, caps.ITerm2)), Style: gooey.Sty(dim)},
 		&gooey.Text{Content: gooey.Str(fmt.Sprintf("cell size     : %d×%d px", caps.CellW, caps.CellH)), Style: gooey.Sty(dim)},
+		&gooey.Text{Content: gooey.Str(fmt.Sprintf("color depth   : %s", caps.Color)), Style: gooey.Sty(dim)},
 		&gooey.Text{},
 		&gooey.Text{Content: gooey.Str("tree: Border > VStack > [HStack >\n[Image, VStack > Text×N], Text]"), Style: gooey.Sty(dim)},
 	}}

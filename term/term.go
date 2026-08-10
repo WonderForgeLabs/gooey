@@ -9,12 +9,19 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 type Caps struct {
 	Kitty  bool
 	Sixel  bool
 	ITerm2 bool
+	// Color is how many colors the cell plane can show. Its zero value
+	// is render.TrueColor, so a zero Caps keeps the pre-detection
+	// behavior rather than silently degrading a terminal that was never
+	// probed.
+	Color render.ColorDepth
 	// Cell size in pixels (for sixel scaling). Zero if unknown.
 	CellW, CellH int
 	Cols, Rows   int
@@ -32,6 +39,27 @@ func (c Caps) Best() string {
 	default:
 		return "halfblock"
 	}
+}
+
+// DetectColorDepth reads the color depth out of the environment.
+//
+// Unlike the graphics protocols there is no handshake worth running
+// here. COLORTERM is what terminal emulators themselves converged on to
+// advertise 24-bit, and TERM's "256color" suffix is what terminfo has
+// meant for decades. XTGETTCAP could refine it by asking whether the
+// terminal has the RGB capability, but in practice every terminal that
+// answers that query also sets COLORTERM, so the env sniff carries the
+// whole signal at none of the cost — and it works with no tty at all,
+// which is why it is a package function rather than a Screen method.
+func DetectColorDepth() render.ColorDepth {
+	switch strings.ToLower(os.Getenv("COLORTERM")) {
+	case "truecolor", "24bit":
+		return render.TrueColor
+	}
+	if strings.Contains(os.Getenv("TERM"), "256color") {
+		return render.Color256
+	}
+	return render.Color16
 }
 
 type Screen struct {
@@ -104,6 +132,7 @@ func (s *Screen) Restore() {
 func (s *Screen) Detect() (Caps, error) {
 	caps := Caps{}
 	caps.Cols, caps.Rows = s.Size()
+	caps.Color = DetectColorDepth()
 
 	// Env-only signals (no query protocol exists for iTerm2 images).
 	tp := os.Getenv("TERM_PROGRAM")

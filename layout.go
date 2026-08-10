@@ -44,6 +44,10 @@ type Layout struct {
 	Row, Col         int
 	RowSpan, ColSpan int // 0 means 1
 
+	// Canvas attached properties: the child's offset from the Canvas's
+	// top-left corner, in cells.
+	Left, Top int
+
 	desired Size // cached by MeasureChild, margin included
 }
 

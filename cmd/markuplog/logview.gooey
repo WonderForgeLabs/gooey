@@ -6,5 +6,15 @@
       <Text Grid.Row="2" Name="stats" Style="dim"></Text>
       <LogPane Grid.Row="3" Lines="{{.Visible}}"/>
     </Grid>
+    <!-- The whole key surface of the app, declared. Commands resolve to
+         funcs in the viewmodel, so there is no code-behind and no key
+         switch in main.go. They hang on the page root because this page
+         has no focus stop: dispatch starts at the focused widget, or at
+         the root when nothing is focused. -->
+    <KeyBinding Gesture="space"  Command="{{.TogglePause}}"/>
+    <KeyBinding Gesture="f"      Command="{{.CycleFilter}}"/>
+    <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+    <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
   </Border>
 </Gooey>

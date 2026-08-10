@@ -4,6 +4,12 @@
 // and the tree rebuilds in place with all state (log buffer, pause,
 // filter) intact, because the viewmodel properties are the durable
 // thing and the tree is disposable.
+//
+// It is the MARKUP flavor of cmd/logview, which composes the same
+// viewmodel as a Go tree. Here even the key surface is declarative:
+// space/f/q are <KeyBinding> elements bound to viewmodel commands, so
+// this file holds no key handling at all — events arrive decoded and
+// Composer.Handle routes them.
 package main
 
 import (
@@ -15,6 +21,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -69,17 +76,57 @@ func main() {
 		return fmt.Sprintf("%s   filter: %-5s   showing %d lines", state, f, len(visible.Get()))
 	})
 
+	// --- commands: the viewmodel side of the declarative key surface.
+	// Each <KeyBinding Command="{{.X}}"/> in logview.gooey resolves to
+	// one of these funcs at load time — a handle, not a name lookup.
+	running := true
+	togglePause := gooey.Command(func() {
+		if follow.Get() {
+			frozen.Set(lines.Get())
+			follow.Set(false)
+		} else {
+			follow.Set(true)
+		}
+	})
+	cycleFilter := gooey.Command(func() {
+		switch filter.Get() {
+		case "":
+			filter.Set("ERROR")
+		case "ERROR":
+			filter.Set("WARN")
+		default:
+			filter.Set("")
+		}
+	})
+
 	// --- markup context: the binding registry ---
 	ctx := &markup.Context{
-		Values: map[string]any{"Header": header},
+		Values: map[string]any{
+			"Header": header, "Visible": visible,
+			"TogglePause": togglePause,
+			"CycleFilter": cycleFilter,
+			"Quit":        gooey.Command(func() { running = false }),
+		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
 		Widgets: map[string]markup.Builder{
-			"LogPane": func(e markup.Element, _ *markup.Context) (gooey.Widget, error) {
-				return &logPane{src: visible}, nil
+			// Lines="{{.Visible}}" crosses into the widget as a typed
+			// property handle, the same hand-off a UserControl attribute
+			// makes — so the markup names the dependency instead of the
+			// builder closing over it silently.
+			"LogPane": func(e markup.Element, c *markup.Context) (gooey.Widget, error) {
+				v, err := c.BindingValue(e.Attrs["Lines"])
+				if err != nil {
+					return nil, fmt.Errorf("LogPane Lines: %w", err)
+				}
+				src, ok := v.(*prop.Property[[]line])
+				if !ok {
+					return nil, fmt.Errorf("LogPane Lines: got %T, want *prop.Property[[]line]", v)
+				}
+				return &logPane{src: src}, nil
 			},
 		},
 	}
@@ -124,24 +171,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer screen.Restore()
+	screen.EnableMouse()
 
-	keys := make(chan byte, 8)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			if n, err := screen.File().Read(buf); err != nil {
-				return
-			} else if n > 0 {
-				keys <- buf[0]
-			}
-		}
-	}()
+	evs := make(chan input.Event, 32)
+	go term.DecodeEvents(screen, evs)
 
 	gen := time.NewTicker(130 * time.Millisecond)
 	defer gen.Stop()
 	frames := 0
 
-	for {
+	for running {
 		if needsFrame {
 			frames++
 			if stats != nil && stats.Content != nil {
@@ -158,27 +197,12 @@ func main() {
 			reloads++
 			attach(w) // new tree, same viewmodel — state survives
 			stats, _ = markup.Find[*gooey.Text](ctx, "stats")
-		case k := <-keys:
-			switch k {
-			case 'q', 3:
-				return
-			case ' ':
-				if follow.Get() {
-					frozen.Set(lines.Get())
-					follow.Set(false)
-				} else {
-					follow.Set(true)
-				}
-			case 'f':
-				switch filter.Get() {
-				case "":
-					filter.Set("ERROR")
-				case "ERROR":
-					filter.Set("WARN")
-				default:
-					filter.Set("")
-				}
-			}
+		case ev := <-evs:
+			// Every key the app responds to is declared in the markup,
+			// so routing the event is the whole of the handling — and a
+			// hot reload re-resolves those bindings against the same
+			// commands, which is why the keys keep working across swaps.
+			comp.Handle(ev)
 		}
 	}
 }

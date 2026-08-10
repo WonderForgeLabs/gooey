@@ -1,0 +1,16 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="*,Auto,Auto">
+
+    <Grid Grid.Row="0" Cols="1*,1*">
+      <StatPanel Grid.Col="0" Title="sensor A" Note="its own isolated context" Value="{{.A}}"/>
+      <StatPanel Grid.Col="1" Title="sensor B" Note="same file, second instance" Value="{{.B}}"/>
+    </Grid>
+
+    <Card Grid.Row="1" Title="total" Body="{{.Total}}" Sub="a Card include — markup only, no code-behind"/>
+
+    <Text Grid.Row="2" Style="dim">tab / shift+tab: focus    enter or space: press    q: quit</Text>
+
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

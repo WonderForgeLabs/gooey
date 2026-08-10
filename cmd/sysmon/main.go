@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
@@ -27,9 +28,9 @@ import (
 var (
 	accent = render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
 	dim    = render.Style{Fg: render.RGB(140, 140, 150)}
-	good   = render.Style{Fg: render.RGB(110, 220, 130)}
-	warn   = render.Style{Fg: render.RGB(230, 190, 80)}
-	crit   = render.Style{Fg: render.RGB(240, 90, 90), Bold: true}
+	// The good/warn/crit ramp moved into the framework with the Gauge
+	// and Sparkline; only the process table still colors its own rows.
+	warn = render.Style{Fg: render.RGB(230, 190, 80)}
 )
 
 func main() {
@@ -69,16 +70,16 @@ func main() {
 	host, _ := os.Hostname()
 	gauges := make([]gooey.Widget, ncores)
 	for i := range gauges {
-		gauges[i] = &gauge{label: fmt.Sprintf("cpu%-2d", i), val: corePct[i]}
+		gauges[i] = &gooey.Gauge{Label: gooey.Str(fmt.Sprintf("cpu%-2d", i)), Value: corePct[i]}
 	}
 	left := &gooey.VStack{Children: append(gauges,
 		&gooey.Text{Content: gooey.Str("")},
-		&gauge{label: "mem  ", val: memPct},
+		&gooey.Gauge{Label: gooey.Str("mem  "), Value: memPct},
 		&gooey.Text{Content: memLabel, Style: gooey.Sty(dim)},
 	)}
 	right := &gooey.VStack{Children: []gooey.Widget{
 		&gooey.Text{Content: gooey.Str("total cpu"), Style: gooey.Sty(dim)},
-		&sparkline{vals: hist, rows: 4},
+		&gooey.Sparkline{Values: hist, Rows: 4},
 		&gooey.Text{Content: gooey.Str("")},
 		&gooey.Text{Content: loadavg, Style: gooey.Sty(dim)},
 		&gooey.Text{Content: statsP, Style: gooey.Sty(dim)},
@@ -90,6 +91,21 @@ func main() {
 		&procTable{src: sorted},
 	}}}
 
+	// Keys are declared as attachments rather than switched on in the
+	// loop. Dispatch walks up from the focused widget to the root, and
+	// sysmon has no focus stops at all, so a binding on the root is
+	// reached for every key — the page-global scope, for free.
+	// Attachments must exist before the Composer walks the tree.
+	running := true
+	for _, kb := range []*gooey.KeyBinding{
+		{Gesture: input.Rune('q'), Command: func() { running = false }},
+		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: func() { running = false }},
+		{Gesture: input.Rune('c'), Command: func() { sortKey.Set("cpu") }},
+		{Gesture: input.Rune('m'), Command: func() { sortKey.Set("mem") }},
+	} {
+		root.Attach(kb)
+	}
+
 	screen, err := term.Open()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "no tty:", err)
@@ -99,6 +115,10 @@ func main() {
 
 	needsFrame := true
 	comp := gooey.NewComposer(root, cols, rows)
+	// No graphics probe here — sysmon is cell-only — but the color
+	// depth is a pure environment read, so the gauges downsample
+	// correctly on a 16-color terminal for the cost of one getenv.
+	comp.SetCaps(term.Caps{Cols: cols, Rows: rows, Color: term.DetectColorDepth()})
 	comp.OnInvalidate(func() { needsFrame = true })
 
 	if err := screen.Raw(); err != nil {
@@ -107,17 +127,8 @@ func main() {
 	}
 	defer screen.Restore()
 
-	keys := make(chan byte, 8)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			if n, err := screen.File().Read(buf); err != nil {
-				return
-			} else if n > 0 {
-				keys <- buf[0]
-			}
-		}
-	}()
+	events := make(chan input.Event, 16)
+	go term.DecodeEvents(screen, events)
 
 	tick := time.NewTicker(700 * time.Millisecond)
 	defer tick.Stop()
@@ -125,7 +136,7 @@ func main() {
 	prevProcs := sampleProcs()
 	frames, lastPainted := 0, 0
 
-	for {
+	for running {
 		if needsFrame {
 			frames++
 			statsP.Set(fmt.Sprintf("frames=%d  widgets painted last frame=%d", frames, lastPainted))
@@ -158,94 +169,19 @@ func main() {
 			curProcs := sampleProcs()
 			procs.Set(diffProcs(prevProcs, curProcs, cur.total.totalJiffies()-prev.total.totalJiffies()))
 			prev, prevProcs = cur, curProcs
-		case k := <-keys:
-			switch k {
-			case 'q', 3:
-				return
-			case 'c':
-				sortKey.Set("cpu")
-			case 'm':
-				sortKey.Set("mem")
-			}
+		case ev := <-events:
+			comp.Handle(ev)
 		}
 	}
 }
 
 // ---- custom widgets ----
-
-type gauge struct {
-	label  string
-	val    *prop.Property[int]
-	bounds gooey.Rect
-}
-
-func (g *gauge) Measure(avail gooey.Size) gooey.Size { return gooey.Size{W: min(34, avail.W), H: 1} }
-func (g *gauge) Arrange(b gooey.Rect)                { g.bounds = b }
-func (g *gauge) Bounds() gooey.Rect                  { return g.bounds }
-
-func (g *gauge) Render(f *gooey.Frame) {
-	v := g.val.Get()
-	style := good
-	if v >= 80 {
-		style = crit
-	} else if v >= 50 {
-		style = warn
-	}
-	w := g.bounds.W - len(g.label) - 6
-	fill := v * w / 100
-	var sb strings.Builder
-	for i := 0; i < w; i++ {
-		if i < fill {
-			sb.WriteRune('█')
-		} else {
-			sb.WriteRune('░')
-		}
-	}
-	f.Cells.SetString(g.bounds.X, g.bounds.Y, g.label, dim)
-	f.Cells.SetString(g.bounds.X+len(g.label), g.bounds.Y, sb.String(), style)
-	f.Cells.SetString(g.bounds.X+len(g.label)+w, g.bounds.Y, fmt.Sprintf(" %3d%%", v), style)
-}
-
-type sparkline struct {
-	vals   *prop.Property[[]float64]
-	rows   int
-	bounds gooey.Rect
-}
-
-var sparks = []rune(" ▁▂▃▄▅▆▇█")
-
-func (s *sparkline) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(40, avail.W), H: s.rows}
-}
-func (s *sparkline) Arrange(b gooey.Rect) { s.bounds = b }
-func (s *sparkline) Bounds() gooey.Rect   { return s.bounds }
-
-func (s *sparkline) Render(f *gooey.Frame) {
-	vs := s.vals.Get()
-	if len(vs) > s.bounds.W {
-		vs = vs[len(vs)-s.bounds.W:]
-	}
-	for i, v := range vs {
-		// v is 0..100; split across rows, bottom-up.
-		level := v / 100 * float64(s.rows) // 0..rows
-		style := good
-		if v >= 80 {
-			style = crit
-		} else if v >= 50 {
-			style = warn
-		}
-		for r := 0; r < s.rows; r++ {
-			frac := level - float64(s.rows-1-r)
-			ch := sparks[0]
-			if frac >= 1 {
-				ch = sparks[8]
-			} else if frac > 0 {
-				ch = sparks[int(frac*8)]
-			}
-			f.Cells.Set(s.bounds.X+i, s.bounds.Y+r, ch, style)
-		}
-	}
-}
+//
+// The Gauge and Sparkline that used to live here are now framework
+// built-ins (gooey.Gauge, gooey.Sparkline) — they were written here,
+// proved here, and promoted once their shape stopped moving. The
+// process table stays local: a general list/table widget is the
+// DataTemplates chapter, not a copy of this one.
 
 type procInfo struct {
 	pid   int

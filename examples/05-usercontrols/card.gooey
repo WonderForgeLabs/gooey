@@ -1,0 +1,8 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="{{.Title}}" Style="panel">
+    <VStack Gap="0">
+      <Text Style="accent">{{.Body}}</Text>
+      <Text Style="dim">{{.Sub}}</Text>
+    </VStack>
+  </Border>
+</Gooey>
