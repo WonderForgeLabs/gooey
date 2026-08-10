@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -81,6 +82,54 @@ func TestToastsStackDownTheCorner(t *testing.T) {
 	}
 	if got := row(c.Cells(), 1); !strings.HasSuffix(got, " second") {
 		t.Fatalf("row 1 = %q, want the newer toast under it", got)
+	}
+}
+
+// The host spans the whole page and sits on top of the z-order, but it
+// paints nothing — so its empty space must be transparent to the
+// pointer. Hit-testing prefers later siblings (they paint on top),
+// which without the opt-out makes a full-page toast layer shadow every
+// component beneath it: no hover, no press, no click, anywhere. That is
+// the bug reported as "the pixel button gives no mouse feedback" — the
+// button never saw the mouse.
+func TestEmptyToastHostDoesNotShadowThePointer(t *testing.T) {
+	clicked := 0
+	b := &Button{Content: Str("Save"), Click: gooey.Command(func() { clicked++ })}
+	host := &ToastHost{}
+	page := &Canvas{Children: []gooey.Component{b, host}}
+	c := gooey.NewComposer(page, 30, 4)
+	c.Frame()
+
+	r := b.Bounds()
+	if hit := c.Focus().HitTest(r.X, r.Y); hit != gooey.Component(b) {
+		t.Fatalf("hit test under the empty host found %T, want the button", hit)
+	}
+	c.HandleMouse(input.MouseEvent{Kind: input.MouseMove, X: r.X, Y: r.Y})
+	if !b.IsHovered() {
+		t.Fatal("hovering through the empty toast layer did not reach the button")
+	}
+	c.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: r.X, Y: r.Y})
+	if !b.IsPressed() {
+		t.Fatal("pressing through the empty toast layer did not reach the button")
+	}
+	c.HandleMouse(input.MouseEvent{Kind: input.MouseRelease, X: r.X, Y: r.Y})
+	if clicked != 1 {
+		t.Fatalf("clicking through the empty toast layer ran the command %d times, want 1", clicked)
+	}
+}
+
+// A toast that IS up still catches the pointer over its own rectangle:
+// the transparency is the host's, not its children's.
+func TestAShownToastStillCatchesThePointer(t *testing.T) {
+	host, page, _ := toastPage(30, 4)
+	c := gooey.NewComposer(page, 30, 4)
+	c.Frame()
+	toast := host.Show("saved")
+	c.Frame()
+
+	r := toast.Bounds()
+	if hit := c.Focus().HitTest(r.X, r.Y); hit != gooey.Component(toast) {
+		t.Fatalf("hit test over the toast found %T, want the toast", hit)
 	}
 }
 

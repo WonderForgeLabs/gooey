@@ -141,6 +141,21 @@ func TestColorPickerPixelBarsUnderSixel(t *testing.T) {
 	}
 }
 
+// A replace-in-place — same rectangles, new pixels — has no placement id
+// to lean on under sixel: the new payloads themselves must go out, or a
+// channel move would be invisible. Same contract the pixel button pins
+// for hover.
+func TestColorPickerPixelChannelMoveRetransmitsUnderSixel(t *testing.T) {
+	c, p, _ := pixelPicker(graphics.Sixel{})
+	flush(t, c) // starts focused: the picker is the only focus stop
+
+	p.HandleKey(input.Named(input.KeyDown))
+	out := flush(t, c)
+	if n := strings.Count(out, "\x1bP0;0;0q"); n != 2 {
+		t.Fatalf("a channel move re-sent %d bars under sixel, want 2:\n%q", n, out)
+	}
+}
+
 // Without a protocol, or without a known cell size, the picker is the
 // cell-tier component it always was: zero placements, so a cell-only
 // terminal's output is untouched by the pixel code.

@@ -91,6 +91,80 @@ func TestPixelButtonHoverRetransmitsItsChrome(t *testing.T) {
 	}
 }
 
+// A hover flip must reach the wire under every protocol, not only the
+// one with placement identity. Kitty replaces by id; sixel and iTerm2
+// have no ids, so the new pixels themselves are the only feedback there
+// is — and a replace at the SAME spot vacates no cells and changes no
+// cells beneath the edges, which is exactly the case a diff keyed off
+// cell damage would lose.
+func TestPixelButtonHoverRetransmitsWithoutIDs(t *testing.T) {
+	for _, tc := range []struct {
+		enc  graphics.Encoder
+		mark string
+	}{
+		{graphics.Sixel{}, "\x1bP0;0;0q"},
+		{graphics.ITerm2{}, "\x1b]1337;File="},
+	} {
+		t.Run(tc.enc.Name(), func(t *testing.T) {
+			c, b, _ := pixelButton(tc.enc)
+			flush(t, c)
+
+			b.SetHovered(true)
+			out := flush(t, c)
+			if n := strings.Count(out, tc.mark); n != 4 {
+				t.Fatalf("hover re-sent %d images under %s, want 4:\n%q", n, tc.enc.Name(), out)
+			}
+
+			b.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: b.Bounds().X, Y: b.Bounds().Y})
+			out = flush(t, c)
+			if n := strings.Count(out, tc.mark); n != 4 {
+				t.Fatalf("press re-sent %d images under %s, want 4:\n%q", n, tc.enc.Name(), out)
+			}
+		})
+	}
+}
+
+// The reported bug, end to end: a pixel button on a page that also
+// hosts a toast layer (the toolkitdemo shape), driven through the
+// DISPATCHER the way a terminal drives it. The empty full-page host
+// used to win the hit test, so no mouse event ever reached the button
+// and no state change ever reached the wire — under sixel there is no
+// other feedback, so the button looked dead.
+func TestPixelButtonMouseFeedbackReachesTheWireUnderAToastLayer(t *testing.T) {
+	for _, tc := range []struct {
+		enc  graphics.Encoder
+		mark string
+	}{
+		{graphics.Sixel{}, "\x1bP0;0;0q"},
+		{graphics.ITerm2{}, "\x1b]1337;File="},
+	} {
+		t.Run(tc.enc.Name(), func(t *testing.T) {
+			b := &Button{Content: Str("Save"), Chrome: ChromePixel, Click: gooey.Command(func() {})}
+			b.LayoutProps().HAlign = gooey.AlignStart
+			page := &Canvas{Children: []gooey.Component{
+				&VStack{Children: []gooey.Component{b}},
+				&ToastHost{},
+			}}
+			c := gooey.NewComposer(page, 30, 8)
+			c.SetCaps(term8x16(30, 8))
+			c.SetGraphics(tc.enc)
+			flush(t, c)
+
+			r := b.Bounds()
+			c.HandleMouse(input.MouseEvent{Kind: input.MouseMove, X: r.X + 1, Y: r.Y + 1})
+			out := flush(t, c)
+			if n := strings.Count(out, tc.mark); n != 4 {
+				t.Fatalf("hover re-sent %d images under %s, want 4:\n%q", n, tc.enc.Name(), out)
+			}
+			c.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: r.X + 1, Y: r.Y + 1})
+			out = flush(t, c)
+			if n := strings.Count(out, tc.mark); n != 4 {
+				t.Fatalf("press re-sent %d images under %s, want 4:\n%q", n, tc.enc.Name(), out)
+			}
+		})
+	}
+}
+
 // Press and release move through the same path, and releasing returns
 // the button to the pixels it had at rest — proving the generated chrome
 // is cached by state rather than regenerated per paint.
