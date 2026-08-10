@@ -1,5 +1,28 @@
 name: CI
 
+# ADR-048 shim: delegates build/test/publish to forge's workflow of record,
+# ci.reusable.yml. Only the `on:` triggers, `concurrency`, the calling job's
+# `permissions` ceiling, the two required-status-check mirror jobs, and
+# gooey-specific `with:` overrides stay here.
+#
+# What this replaces: three nested Go modules hardcoded here, each behind an
+# `if [ -f handlers/temporal/go.mod ]` guard. A module added without also
+# editing this file was never built, and the guard made that look like a pass —
+# which is exactly what happened to `grpc/`, a fifth module on main that the old
+# job list never mentioned, and to the two TS clients under `clients/ts/`. Both
+# are covered now with no YAML naming them.
+#
+# Tracks forge's main branch directly, matching claude-code-review.yml and the
+# other consumer repos in the org. A repo-qualified ref (never a local `./`
+# path) is load-bearing per the ADR's trust model.
+# See https://github.com/WonderForgeLabs/forge/blob/main/.github/workflows/CLAUDE.md
+#
+# Publishing semantics are unchanged from the hand-rolled job: pull requests
+# BUILD the image to catch Dockerfile regressions, and only pushes to main and
+# `v*` tags PUBLISH. The image name is unchanged too —
+# ghcr.io/wonderforgelabs/gooey, which the reusable workflow derives from the
+# root Dockerfile rather than from a hardcoded `IMAGE` env var.
+
 on:
   push:
     branches: [main]
@@ -9,132 +32,15 @@ on:
 permissions:
   contents: read
 
-env:
-  IMAGE: ghcr.io/wonderforgelabs/gooey
+concurrency:
+  # PRs: one group per ref so a new push supersedes the in-flight run.
+  # Pushes: a unique group per run so a rapid second merge can never evict the
+  # first commit's still-pending build (a shared group caps at one running + one
+  # pending and evicts the pending one regardless of cancel-in-progress).
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
-      # handlers/temporal is a separate module, excluded from the root
-      # ./... patterns. The guard keeps CI green both before and after it
-      # lands on main.
-      #
-      # -race for the reason handlers/exec and mcp have it: the provider
-      # runs every activity on its own goroutine, so a page that fires
-      # several at once is exactly the shape the detector exists for.
-      # Without it the module's concurrency is untested, which is how
-      # #182 sat on main unnoticed.
-      - name: Build and test handlers/temporal
-        run: |
-          if [ -f handlers/temporal/go.mod ]; then
-            cd handlers/temporal
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/temporal/go.mod not present; skipping"
-          fi
-
-      # handlers/exec is a separate module too — its jq extraction takes
-      # gojq (pure Go, but a real dependency), and the deps⇒nested rule
-      # of the pack-distribution doctrine keeps it out of the root
-      # graph. -race because its tests drive real child processes and
-      # the timeout/kill path crosses goroutines.
-      - name: Build and test handlers/exec
-        run: |
-          if [ -f handlers/exec/go.mod ]; then
-            cd handlers/exec
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/exec/go.mod not present; skipping"
-          fi
-
-      # Every packs/* directory is an ACTIVITY PACK — its own module with
-      # zero gooey imports (graph: Temporal SDK + API protos only), so
-      # any Go Temporal worker can import it. handlers/temporal consumes
-      # them via replace directives.
-      #
-      # This step DISCOVERS them rather than naming them. Every other
-      # nested module above is a literal name behind an `if [ -f … ]`
-      # guard, and that shape has a failure mode: a module added without
-      # also editing this file is never built, and the guard makes that
-      # look like a pass. packs/ is about to grow to eight modules (epic
-      # #142), so it gets the loop; the rest is left alone because #130
-      # replaces this whole job with forge's auto-discovering CI, which
-      # generalises the same idea. When that lands, this step deletes.
-      #
-      # No `go build ./...`: a pack that ever grows a main package would
-      # write an executable into the tree, and this repo has committed
-      # five that way. `go vet` compiles everything regardless. -race
-      # because these suites run in milliseconds and #130 makes it
-      # universal anyway.
-      - name: Build and test packs/*
-        run: |
-          shopt -s nullglob
-          found=0
-          for mod in packs/*/go.mod; do
-            found=1
-            dir=$(dirname "$mod")
-            echo "::group::$dir"
-            ( cd "$dir" && go vet ./... && go test -race ./... )
-            echo "::endgroup::"
-          done
-          # A zero-match glob is a repo-structure error, not a skip.
-          # packs/ has modules; the only ways to reach this branch are a
-          # rename, a bad path, or a broken checkout — all of which must
-          # be red. A `|| echo` here would have reproduced the exact
-          # failure this step exists to remove.
-          [ "$found" = 1 ] || { echo "::error::no packs/*/go.mod found — packs/ is missing or the glob is wrong"; exit 1; }
-
-      # imagefmt/svg is a separate module for the same reason — the SVG
-      # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
-      # opt in with a blank import.
-      - name: Build and test imagefmt/svg
-        run: |
-          if [ -f imagefmt/svg/go.mod ]; then
-            cd imagefmt/svg
-            go build ./...
-            go vet ./...
-            go test ./...
-          else
-            echo "imagefmt/svg/go.mod not present; skipping"
-          fi
-
-      # mcp is a separate module for the same reason (the MCP SDK's graph),
-      # so the root ./... patterns skip it too. It runs under -race
-      # deliberately: what its tests prove is that no tool body ever touches
-      # the property graph from an http goroutine, and without the detector
-      # that assertion is only half made.
-      - name: Build and test mcp
-        run: |
-          if [ -f mcp/go.mod ]; then
-            cd mcp
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "mcp/go.mod not present; skipping"
-          fi
-
   # The gRPC control plane (issue #110): proto/ is the source of truth,
   # generated Go/Python/TS is committed. Gates: buf lint, buf breaking
   # against main, regenerate-and-diff drift check, then each committed
@@ -198,44 +104,94 @@ jobs:
           npm ci
           npx tsc -p tsconfig.json
 
-  image:
-    needs: test
-    runs-on: ubuntu-latest
+  ci:
+    # Ceiling for every permission the reusable workflow's jobs use — a
+    # workflow_call job can only narrow, never widen, the caller's grant, and
+    # under-granting silently 403s the affected step rather than failing loudly.
+    # `packages: write` is for the image lane's GHCR push.
     permissions:
       contents: read
       packages: write
+    uses: WonderForgeLabs/forge/.github/workflows/ci.reusable.yml@ci/reusable-auto-discovering-ci
+    with:
+      # gooey's two generated TS clients under clients/ts/ define `typecheck`
+      # and `build` — not the default `lint type-check test build`. Naming the
+      # scripts this repo actually has is required: the lane fails rather than
+      # looping over workspaces running nothing.
+      js_tasks: "typecheck build"
+      # Everything else is the reusable workflow's defaults, deliberately:
+      # `go test -race` now covers EVERY discovered module, not just `mcp`.
+      # That was `mcp`'s deliberate assertion (no tool body touches the
+      # property graph from an HTTP goroutine) and generalising it is strictly
+      # stronger.
+      #
+      # No count here, on purpose. This comment said "all five modules" when
+      # the PR was cut and the number was already wrong by the time it was
+      # rebased — the tree has seventeen nested modules, and this branch adds
+      # another (`paint/`). A transcribed count is the exact failure this job
+      # exists to end: the hand-written matrix it replaces enumerated root,
+      # handlers/*, packs/*, imagefmt/svg and mcp, and silently skipped grpc,
+      # every examples/* module, and anything added later. Discovery has no
+      # such list to go stale, so the comment must not keep one either.
+
+  # The two required status checks. Their NAMES are the literal strings a branch
+  # ruleset requires, so they must not be renamed — a `workflow_call` job's own
+  # checks get two-segment names (`ci / go`), which is why the required-check
+  # literals have to live here rather than in the reusable workflow. Same reason
+  # `review-with-tracking` exists in claude-code-review.yml.
+  #
+  # They mirror the two halves SEPARATELY (`tests_result` / `image_result`), so
+  # a broken image build reds `image` and leaves `test` honest.
+  test:
+    needs: [ci]
+    # `!cancelled()` rather than `always()`: still reflects a failed `ci`, but
+    # doesn't red the check in a run that cancel-in-progress superseded.
+    if: ${{ !cancelled() }}
+    # A single echo — no reason to occupy a self-hosted runner, matching
+    # claude-code-review.yml's `review-with-tracking` mirror.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Reflect test lane result
+        env:
+          CALL_RESULT: ${{ needs.ci.result }}
+          VERDICT: ${{ needs.ci.outputs.tests_result }}
+          SUMMARY: ${{ needs.ci.outputs.summary }}
+        run: |
+          set -euo pipefail
+          echo "${SUMMARY:-(no summary)}"
+          # An empty verdict means the reusable workflow's `results` job never
+          # ran, so there is nothing to be green about. Fail closed.
+          if [ -z "$VERDICT" ]; then
+            echo "::error::Reusable CI reported no test verdict (call result: ${CALL_RESULT})."
+            exit 1
+          fi
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::Test lanes: ${VERDICT}"
+            exit 1
+          fi
 
-      - uses: docker/setup-buildx-action@v3
-
-      # Pull requests build the image to catch Dockerfile regressions, but
-      # only pushes to main and v* tags publish it.
-      - name: Log in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+  image:
+    needs: [ci]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reflect image lane result
+        env:
+          CALL_RESULT: ${{ needs.ci.result }}
+          VERDICT: ${{ needs.ci.outputs.image_result }}
+          SUMMARY: ${{ needs.ci.outputs.summary }}
+        run: |
+          set -euo pipefail
+          echo "${SUMMARY:-(no summary)}"
+          if [ -z "$VERDICT" ]; then
+            echo "::error::Reusable CI reported no image verdict (call result: ${CALL_RESULT})."
+            exit 1
+          fi
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::Image lane: ${VERDICT}"
+            exit 1
+          fi
