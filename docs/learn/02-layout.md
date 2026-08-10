@@ -159,29 +159,48 @@ Rendered, that is three lines: `1 Visible`, a blank line where the Hidden
 text would be, then `4 sits right under the blank`. The Collapsed element
 contributes nothing.
 
-- **Hidden** measures and arranges normally but paints nothing.
+- **Hidden** measures and arranges normally but paints nothing. It keeps
+  its full space — including its gap inside a stack.
 - **Collapsed** measures to zero, arranges to zero, paints nothing, and
-  its subtree is skipped by focus traversal — a collapsed panel cannot be
-  tabbed into.
+  costs **no gap either**: it neither brings a gap with it nor leaves one
+  behind, so collapsing the first child does not strand a gap at the top.
+  Its subtree is also skipped by focus traversal, so a collapsed panel
+  cannot be tabbed into.
 
-> **Watch the Gap.** Inside a `VStack` or `HStack` with a non-zero `Gap`,
-> a Collapsed child still contributes its gap, so it costs `Gap` cells
-> rather than nothing. Use `Gap="0"` when you need a Collapsed element to
-> be truly free, or put the collapsible element in its own container.
+That is the whole distinction, and it is the reason to pick one over the
+other: **Hidden reserves the space, Collapsed reclaims all of it.**
+
+The `Gap="0"` above is for legibility, not necessity — it keeps the
+three-line result easy to count. The same markup with `Gap="1"` behaves
+the same way, just with blank rows between the entries.
 
 ### Current limitation: visibility is not bindable
 
-`Visibility` is a plain layout field set when the markup is built — not a
-property, and not bindable. `Visibility="{{.ShowPanel}}"` will not work;
-the attribute parser expects one of the three literal names.
+`Visibility` is a plain layout field, not a property, so
+`Visibility="{{.ShowPanel}}"` will not work — the attribute parser
+expects one of the three literal names. This is a deliberate deferral,
+not an oversight: it needs typed non-string attribute bindings, and it
+sits awkwardly against the rule that layout runs outside the evaluation
+context. The reasoning is written up in the addendum to
+[specs/2026-08-10-container-backgrounds.md](../specs/2026-08-10-container-backgrounds.md).
 
-To show and hide at runtime today, you have two workable options:
+From Go you *can* flip it at runtime, and the Composer notices:
 
-- Bind the *content* instead of the visibility — a computed string that
-  is empty when you want nothing shown.
-- Rebuild the tree, which is what hot reload already does.
+```go
+leaf, _ := markup.Find[*gooey.Text](ctx, "detail")
+leaf.LayoutProps().Visibility = gooey.Hidden // repaints on the next frame
+```
 
-There is no styles-with-setters or trigger system to hang this on yet.
+The Composer catches the change in its per-frame sweep and force-repaints
+the widget, the same way it handles a bounds change. One caveat:
+**this is correct for leaves, not for a container's own chrome.** A leaf
+pre-clears its rect, so hiding it erases it; a `Border` must never clear
+its own bounds — that would wipe children whose paint nodes are clean —
+so its frame stays on screen until something else repaints that region.
+
+From markup alone, the options are to bind the *content* instead (a
+computed string that is empty when you want nothing shown), or to rebuild
+the tree, which is what hot reload already does.
 
 ## What you learned
 
@@ -192,8 +211,8 @@ There is no styles-with-setters or trigger system to hang this on yet.
 - A star track never sizes to content — it takes what it is offered.
 - `Width`, `Height`, `Margin`, `HAlign`, `VAlign`, and `Visibility` work
   on every element, in every container.
-- `Hidden` keeps its space, `Collapsed` does not — but a Collapsed child
-  still costs its stack's `Gap`.
+- `Hidden` reserves its space including its stack gap; `Collapsed`
+  reclaims all of it, gap included.
 
 ## Next steps
 

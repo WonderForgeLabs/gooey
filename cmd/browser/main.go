@@ -339,7 +339,7 @@ func main() {
 			if p.record {
 				msg = record(root, gifTool, gifErr == nil, recorder, p.name)
 			} else {
-				fmt.Printf("\n── running %s — the demo owns this terminal; quit it to come back ──\n\n", p.name)
+				compiling(p.name)
 				if err := run(root, "go", "run", "./cmd/"+p.name); err != nil {
 					msg = fmt.Sprintf("%s exited: %v", p.name, err)
 				} else {
@@ -447,6 +447,16 @@ func readEvents(tty *os.File, out chan<- input.Event) {
 	}
 }
 
+// compiling prints the pre-exec notice. `go run` is silent while it
+// builds, so a cold demo leaves the terminal blank for seconds right
+// after the UI disappears — the exact moment the hand-off looks hung
+// rather than busy. Saying so costs one line and is the difference
+// between "dead" and "working".
+func compiling(name string) {
+	fmt.Printf("\n── %s: compiling… (a cold build takes a few seconds; cached after that)\n", name)
+	fmt.Printf("── it owns this terminal once it starts — quit it to come back ──\n\n")
+}
+
 // run executes a child that owns the terminal. SIGINT is shielded for
 // the duration: the tty driver signals the whole foreground process
 // group, so a ctrl+c meant for the demo would otherwise kill the
@@ -473,7 +483,8 @@ func record(root, gifTool string, haveGif bool, recorder, name string) string {
 		return "cannot create " + recDir + ": " + err.Error()
 	}
 	cast := filepath.Join(dir, name+".cast")
-	fmt.Printf("\n── recording %s → %s/%s.cast — quit the demo to stop ──\n\n", name, recDir, name)
+	fmt.Printf("\n── recording %s → %s/%s.cast — quit the demo to stop the recording ──\n", name, recDir, name)
+	compiling(name)
 	if err := run(root, recorder, "rec", "--overwrite", "-c", "go run ./cmd/"+name, cast); err != nil {
 		return fmt.Sprintf("recording %s failed: %v", name, err)
 	}
