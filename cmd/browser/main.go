@@ -143,6 +143,13 @@ var roots = []struct {
 	// there, and a binary that imports it has to live inside it.
 	{path: "mcp/cmd", group: "demos", prefix: "mcp-", modDir: "mcp"},
 	{path: "docs/learn/examples", group: "learn examples", prefix: "learn-", ownDir: true},
+	// examples/ holds showcase apps; some (kanbandemo) are their own
+	// nested modules because they import gooey/mcp's SDK graph. ownDir
+	// covers both cases: `go run .` from the demo's directory works
+	// whether the demo is its own module or part of the root one.
+	// Non-Go entries (the Python temporal-worker) have no main.go and
+	// fall out of the scan naturally.
+	{path: "examples", group: "examples", prefix: "example-", ownDir: true},
 }
 
 // moduleRoot walks up from cwd to the directory holding go.mod — `go
