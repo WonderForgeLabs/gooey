@@ -24,7 +24,17 @@
 // new demo, an added .gooey file or an edited doc comment all reach the
 // list and the visible preview on their own.
 //
-//	j/k ↑/↓  select    enter  run    r  record    p  play GIF    q/esc  quit
+// The tree being browsed does not have to be the tree the browser was
+// launched from. `b` opens a source picker (picker.go) listing the
+// repository's worktrees and local branches (source.go); picking one
+// re-resolves the demo list, previews, watching, exec and recording
+// against that checkout — a branch with no worktree gets a throwaway
+// detached one under the system temp dir, removed on switch-away and on
+// exit. Recordings are the one thing that stays anchored to the LAUNCH
+// tree: they are artifacts the user keeps, and an artifact written into
+// an ephemeral checkout would be deleted with it.
+//
+//	j/k ↑/↓  select    enter  run    r  record    p  play GIF    b  sources    q/esc  quit
 package main
 
 import (
@@ -60,7 +70,7 @@ const maxREADME = 64 << 10
 
 type demo struct {
 	name    string // display name, unique within its group
-	dir     string // module-relative directory: `go run ./<dir>`
+	dir     string // source-relative directory: `go run ./<dir>`
 	group   string // which root it came from
 	rec     string // recording base name, unique across groups
 	ownDir  bool   // run it from its own directory rather than the module root
@@ -70,8 +80,28 @@ type demo struct {
 	markup  int    // number of .gooey files
 	cast    bool   // a recording already exists
 	gif     bool
-	gifPath string  // module-relative GIF `p` would play, "" when none
+	gifPath string  // root-relative GIF `p` would play, "" when none
+	gifDir  string  // the host root gifPath resolves under (launch or source)
 	gifKey  fileKey // its identity, so a re-recording invalidates the decode
+}
+
+// scanEnv is the pair of roots a scan reads through. Demo content — the
+// directories, doc comments, READMEs, .gooey files and checked-in GIFs —
+// comes from the SELECTED SOURCE; recordings come from the LAUNCH tree,
+// because `r` writes them there no matter which source is active (an
+// artifact recorded into an ephemeral worktree would vanish with it).
+// For the launch source the two halves are the same tree and this
+// collapses to what the browser always did.
+type scanEnv struct {
+	src     fs.FS  // the selected source's checkout
+	srcRoot string // its host root, for running and for playing its GIFs
+	rec     fs.FS  // the launch tree, where recordings live
+	recRoot string
+}
+
+func scanEnvFor(srcRoot, launchRoot string) scanEnv {
+	return scanEnv{src: os.DirFS(srcRoot), srcRoot: srcRoot,
+		rec: os.DirFS(launchRoot), recRoot: launchRoot}
 }
 
 // roots are the two places a runnable gooey program lives: the demos,
@@ -142,10 +172,10 @@ func moduleRoot() (string, error) {
 // Both roots use the same convention (a directory one level deep holding
 // a main.go), so one loop covers them; a root that does not exist simply
 // contributes nothing.
-func scan(fsys fs.FS, self string) []demo {
+func scan(env scanEnv, self string) []demo {
 	var out []demo
 	for _, r := range roots {
-		entries, err := fs.ReadDir(fsys, r.path)
+		entries, err := fs.ReadDir(env.src, r.path)
 		if err != nil {
 			continue
 		}
@@ -154,22 +184,22 @@ func scan(fsys fs.FS, self string) []demo {
 				continue
 			}
 			dir := path.Join(r.path, e.Name())
-			if _, err := fs.Stat(fsys, path.Join(dir, "main.go")); err != nil {
+			if _, err := fs.Stat(env.src, path.Join(dir, "main.go")); err != nil {
 				continue
 			}
 			d := demo{name: e.Name(), dir: dir, group: r.group,
 				rec: r.prefix + e.Name(), ownDir: r.ownDir, modDir: r.modDir}
-			if src, err := fs.ReadFile(fsys, path.Join(dir, "main.go")); err == nil {
+			if src, err := fs.ReadFile(env.src, path.Join(dir, "main.go")); err == nil {
 				d.doc = leadingComment(string(src))
 			}
 			// A README is the directory speaking for itself, so it wins
 			// over the doc comment. It is read here, with everything else,
 			// so an edit to it re-reaches the pane through the same rescan
 			// that notices a new .gooey file.
-			if md, err := fs.ReadFile(fsys, path.Join(dir, "README.md")); err == nil && len(md) <= maxREADME {
+			if md, err := fs.ReadFile(env.src, path.Join(dir, "README.md")); err == nil && len(md) <= maxREADME {
 				d.readme = string(md)
 			}
-			if files, err := fs.ReadDir(fsys, dir); err == nil {
+			if files, err := fs.ReadDir(env.src, dir); err == nil {
 				for _, f := range files {
 					if strings.HasSuffix(f.Name(), ".gooey") {
 						d.markup++
@@ -177,12 +207,13 @@ func scan(fsys fs.FS, self string) []demo {
 				}
 			}
 			// Existing artifacts are part of the same directory data: the
-			// list shows what has already been recorded.
-			_, err := fs.Stat(fsys, path.Join(recDir, d.rec+".cast"))
+			// list shows what has already been recorded — in the LAUNCH
+			// tree, which is where `r` writes regardless of source.
+			_, err := fs.Stat(env.rec, path.Join(recDir, d.rec+".cast"))
 			d.cast = err == nil
-			_, err = fs.Stat(fsys, path.Join(recDir, d.rec+".gif"))
+			_, err = fs.Stat(env.rec, path.Join(recDir, d.rec+".gif"))
 			d.gif = err == nil
-			d.gifPath, d.gifKey, _ = gifFor(fsys, d.rec, d.name)
+			d.gifPath, d.gifDir, d.gifKey, _ = gifFor(env, d.rec, d.name)
 			out = append(out, d)
 		}
 	}
@@ -250,13 +281,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fsys := os.DirFS(root)
+	// --- sources: which checkout the browser resolves against ---
+	// The launch tree is source zero and always exists; everything else
+	// comes from git at `b`-time (source.go). srcMgr owns the worker all
+	// git work runs on and the ephemeral worktrees that must not outlive
+	// this process.
+	srcMgr := newSourceMgr(root)
+	launchSrc := source{Name: filepath.Base(root), Root: root, Launch: true}
+	if b := branchOf(root); b != "" {
+		launchSrc.Name, launchSrc.Branch = b, b
+	}
+	cur := prop.NewSource(launchSrc)
 
 	// --- viewmodel: the directory IS the data source ---
 	rev := prop.NewSource(0) // bumped when anything the UI reads changes → rescan
 	demos := prop.NewComputed(func() []demo {
 		rev.Get()
-		return scan(fsys, "browser")
+		return scan(scanEnvFor(cur.Get().Root, root), "browser")
 	})
 	sel := prop.NewSource(0)
 	status := prop.NewSource("ready")
@@ -275,10 +316,23 @@ func main() {
 		return fmt.Sprintf("%d demos + %d learn examples — pick one; it takes over this terminal and hands it back when it exits",
 			len(ds)-learn, learn)
 	})
+	// The picker exists before the hint because the hint READS it: while
+	// the picker is open the hint shows the picker's keys, and that read
+	// is also what guarantees opening and dismissing schedule a frame —
+	// the popup's own paint node has no dependencies before its first
+	// evaluation, so an always-painted node must carry the subscription.
+	// What to do with a picked source is wired below, once the app and
+	// the launch machinery exist.
+	var switchTo func(source)
+	picker := newSourcePicker(func(s source) { switchTo(s) })
+
 	hint := prop.NewComputed(func() string {
+		if picker.IsOpen() {
+			return "j/k ↑/↓ select   enter switch source   esc close"
+		}
 		ds := demos.Get()
 		if len(ds) == 0 {
-			return "j/k ↑/↓ select   enter run   r record   q quit"
+			return "j/k ↑/↓ select   enter run   r record   b sources   q quit"
 		}
 		// The hint stays short enough that `q quit` survives the clip at
 		// 80 columns — the one affordance that must never scroll off.
@@ -289,7 +343,21 @@ func main() {
 		if ds[clampIdx(sel.Get(), len(ds))].gifPath != "" {
 			play = "   p play"
 		}
-		return "enter run   r record" + play + "   j/k ↑/↓ select   q quit"
+		return "enter run   r record" + play + "   b sources   j/k ↑/↓ select   q quit"
+	})
+
+	// The pane border names the active source, so which tree you are
+	// looking at is chrome, not something to remember.
+	paneTitle := prop.NewComputed(func() string {
+		s := cur.Get()
+		t := "gooey demo browser"
+		if s.Branch != "" || !s.Launch {
+			t += " — ⎇ " + s.Name
+		}
+		if s.Ephemeral {
+			t += " (ephemeral worktree)"
+		}
+		return t
 	})
 
 	// asciinema is looked up once: the `r` affordance reports its own
@@ -314,7 +382,7 @@ func main() {
 
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"Title": title, "Hint": hint, "Status": status,
+			"Title": title, "Hint": hint, "Status": status, "PaneTitle": paneTitle,
 			"Run": gooey.Command(func() {
 				if ds := demos.Get(); len(ds) > 0 {
 					d := ds[clampIdx(sel.Get(), len(ds))]
@@ -334,8 +402,25 @@ func main() {
 			"Play": gooey.Command(func() {
 				if ds := demos.Get(); len(ds) > 0 {
 					d := ds[clampIdx(sel.Get(), len(ds))]
-					play.Toggle(root, d.gifPath, d.gifKey)
+					play.Toggle(d.gifDir, d.gifPath, d.gifKey)
 				}
+			}),
+			// `b`: enumerate on the git worker — status --porcelain per
+			// worktree is subprocess work with no place on the UI
+			// goroutine — and open the picker from a posted closure.
+			"Sources": gooey.Command(func() {
+				if picker.IsOpen() {
+					picker.Dismiss()
+					return
+				}
+				status.Set("reading sources…")
+				srcMgr.do(func() {
+					list := listSources(root, srcMgr.eph)
+					app.Post(func() {
+						status.Set(fmt.Sprintf("%d sources — enter switches, esc closes", len(list)))
+						picker.Open(list, cur.Get().id())
+					})
+				})
 			}),
 			"Quit": gooey.Command(func() { app.Quit() }),
 		},
@@ -349,7 +434,10 @@ func main() {
 				return &demoList{demos: demos, sel: sel}, nil
 			},
 			"DemoInfo": func(markup.Element, *markup.Context) (gooey.Component, error) {
-				return &demoInfo{demos: demos, sel: sel, play: play}, nil
+				return &demoInfo{demos: demos, sel: sel, play: play, cur: cur}, nil
+			},
+			"SourcePicker": func(markup.Element, *markup.Context) (gooey.Component, error) {
+				return picker, nil
 			},
 		},
 	}
@@ -379,14 +467,19 @@ func main() {
 		// queueing frame advances onto a dispatcher nobody is draining,
 		// and deliver them in one burst on the way back.
 		play.Stop()
+		// The demo runs in the ACTIVE source's checkout; runIn resolves
+		// ownDir and nested modules against that root exactly as it does
+		// against the launch tree — a branch's go.mod differences are
+		// handled by running from its own root, nothing more.
+		srcRoot := cur.Get().Root
 		var msg string
 		err := app.Suspend(func() error {
 			if record {
-				msg = recordDemo(root, gifTool, gifErr == nil, recorder, d)
+				msg = recordDemo(root, srcRoot, gifTool, gifErr == nil, recorder, d)
 				return nil
 			}
 			compiling(d.name)
-			dir, pkg := d.runIn(root)
+			dir, pkg := d.runIn(srcRoot)
 			if err := run(dir, "go", "run", pkg); err != nil {
 				msg = fmt.Sprintf("%s exited: %v", d.name, err)
 			} else {
@@ -404,14 +497,69 @@ func main() {
 		rev.Set(rev.Get() + 1) // a recording may have appeared
 	}
 
+	// Switching sources. A source that is already a directory — the
+	// launch tree, a real worktree — adopts immediately; a bare branch
+	// first gets its throwaway detached worktree on the git worker, then
+	// adopts from the posted completion. Adoption releases the PREVIOUS
+	// source's ephemeral worktree (switch-away is one of the two moments
+	// they are removed; exit is the other), resets the selection, and
+	// stops playback — a GIF from one branch has no business animating
+	// over another branch's preview.
+	adopt := func(s source) {
+		prev := cur.Get()
+		if prev.id() == s.id() {
+			return
+		}
+		if prev.Ephemeral {
+			branch := prev.Branch
+			srcMgr.do(func() { srcMgr.release(branch) })
+		}
+		play.Stop()
+		cur.Set(s)
+		sel.Set(0)
+		status.Set("source: " + s.describe())
+	}
+	swGen := 0 // supersedes in-flight materializations, UI-goroutine state
+	switchTo = func(s source) {
+		swGen++
+		if s.id() == cur.Get().id() {
+			status.Set("source: " + s.describe() + " (already active)")
+			return
+		}
+		if s.Root != "" {
+			adopt(s)
+			return
+		}
+		gen := swGen
+		status.Set("⎇ " + s.Name + ": creating a temporary worktree…")
+		srcMgr.do(func() {
+			dir, err := srcMgr.materialize(s.Branch)
+			app.Post(func() {
+				if err != nil {
+					status.Set("cannot check out " + s.Name + ": " + err.Error())
+					return
+				}
+				if gen != swGen {
+					// A later pick superseded this one while git ran. The
+					// worktree stays registered in srcMgr — re-picking the
+					// branch reuses it, exit removes it.
+					return
+				}
+				ns := s
+				ns.Root, ns.Ephemeral = dir, true
+				adopt(ns)
+			})
+		})
+	}
+
 	// The directory is a data source like any other, polled onto the UI
 	// goroutine: a new recording, a new demo, an added .gooey file or an
 	// edited doc comment shows up without a key being pressed. One bump
 	// re-derives the list AND the pane currently on screen, because both
 	// are bound to the same computed.
-	fingerprint := watchKey(root)
+	fingerprint := watchKey(root, root)
 	app.Every(watchInterval, func() {
-		if k := watchKey(root); k != fingerprint {
+		if k := watchKey(cur.Get().Root, root); k != fingerprint {
 			fingerprint = k
 			rev.Set(rev.Get() + 1)
 		}
@@ -432,12 +580,18 @@ func main() {
 			play.Stop()
 			return
 		}
-		if d := ds[clampIdx(sel.Get(), len(ds))]; play.Stale(d.gifPath, d.gifKey) {
+		if d := ds[clampIdx(sel.Get(), len(ds))]; play.Stale(d.gifDir, d.gifPath, d.gifKey) {
 			play.Stop()
 		}
 	})
 
-	if err := app.Run(context.Background()); err != nil {
+	err = app.Run(context.Background())
+	// Ephemeral worktrees are removed BEFORE gooey.Exit, which re-raises
+	// a fatal signal and never returns — a deferred cleanup would be
+	// skipped exactly when the user hit ctrl+c. Close joins the git
+	// worker, so nothing is still adding a worktree while we leave.
+	srcMgr.Close()
+	if err != nil {
 		gooey.Exit(err)
 	}
 }
@@ -467,15 +621,20 @@ func run(dir, name string, args ...string) error {
 // so what gets captured is the real session: asciinema owns the
 // terminal, the user drives the demo, and quitting the demo ends the
 // recording. agg then renders a GIF if it is installed.
-func recordDemo(root, gifTool string, haveGif bool, recorder string, d demo) string {
-	dir := filepath.Join(root, recDir)
+//
+// The demo runs in srcRoot — whatever source is active — but the
+// artifacts land under launchRoot: a recording is something the user
+// keeps, and the source might be a throwaway worktree that is minutes
+// from deletion.
+func recordDemo(launchRoot, srcRoot, gifTool string, haveGif bool, recorder string, d demo) string {
+	dir := filepath.Join(launchRoot, recDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "cannot create " + recDir + ": " + err.Error()
 	}
 	cast := filepath.Join(dir, d.rec+".cast")
 	fmt.Printf("\n── recording %s → %s/%s.cast — quit it to stop the recording ──\n", d.name, recDir, d.rec)
 	compiling(d.name)
-	runDir, pkg := d.runIn(root)
+	runDir, pkg := d.runIn(srcRoot)
 	if err := run(runDir, recorder, "rec", "--overwrite", "-c", "go run "+pkg, cast); err != nil {
 		return fmt.Sprintf("recording %s failed: %v", d.name, err)
 	}
@@ -485,7 +644,7 @@ func recordDemo(root, gifTool string, haveGif bool, recorder string, d demo) str
 	}
 	gif := filepath.Join(dir, d.rec+".gif")
 	fmt.Printf("\n── rendering %s/%s.gif ──\n\n", recDir, d.rec)
-	if err := run(root, gifTool, "--theme", "dracula", "--font-size", "14", cast, gif); err != nil {
+	if err := run(launchRoot, gifTool, "--theme", "dracula", "--font-size", "14", cast, gif); err != nil {
 		return msg + fmt.Sprintf("  (agg failed: %v)", err)
 	}
 	return msg + fmt.Sprintf(" + %s/%s.gif", recDir, d.rec)
@@ -593,6 +752,7 @@ type demoInfo struct {
 	gooey.Base
 	demos *prop.Property[[]demo]
 	sel   *prop.Property[int]
+	cur   *prop.Property[source]
 	play  *player
 }
 
@@ -602,9 +762,14 @@ func (w *demoInfo) Start(post func(func())) func() { return w.play.Start(post) }
 
 func (w *demoInfo) Render(f *gooey.Frame) {
 	b := w.Bounds()
+	// The source is read unconditionally, ABOVE the empty-list return: a
+	// dependency is recorded by the Get that runs, and a pane showing
+	// "no demos" for a sparse old branch still has to repaint when the
+	// source changes back.
+	src := w.cur.Get()
 	ds := w.demos.Get()
 	if len(ds) == 0 {
-		f.Cells.SetString(b.X, b.Y, "no demos found under cmd/", dim)
+		f.Cells.SetString(b.X, b.Y, "no demos in this source", dim)
 		return
 	}
 	d := ds[clampIdx(w.sel.Get(), len(ds))]
@@ -615,6 +780,9 @@ func (w *demoInfo) Render(f *gooey.Frame) {
 			f.Cells.SetString(b.X, y, clip(s, b.W), st)
 		}
 		y++
+	}
+	if !src.Launch {
+		line("source: "+src.describe(), dim)
 	}
 	cmdline := "go run ./" + d.dir
 	switch {
