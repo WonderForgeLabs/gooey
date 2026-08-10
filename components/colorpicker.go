@@ -2,8 +2,11 @@ package components
 
 import (
 	"fmt"
+	"image"
+	"image/color"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -34,6 +37,16 @@ import (
 // field on the frame, not a property — they cannot change mid-session),
 // so the same component instance is correct on any terminal without the
 // app configuring anything.
+//
+// On top of the color tiers there is a PIXEL tier, and like Image's, the
+// choice is the terminal's, not the author's: when the frame carries a
+// graphics protocol and a known cell size, each bar also records a pixel
+// placement — the same swept gradient, generated per-pixel instead of
+// per-cell, with the value marker baked in — composited over the bar's
+// cells. The cells beneath are still painted exactly as on the cell
+// tier, which is what a protocol without placement identity repaints
+// from when an image moves or vanishes, and what every other terminal
+// simply shows. Same bounds, same input, same damage either way.
 type ColorPicker struct {
 	gooey.Base
 	gooey.FocusState
@@ -41,6 +54,7 @@ type ColorPicker struct {
 	Value *prop.Property[render.Color]
 
 	channel *prop.Property[int] // 0=R, 1=G, 2=B — a source, so moving between bars is damage
+	bars    [3]pickerBar        // pixel tier: last generated image per bar row
 }
 
 // Channel constants for the three bars, top to bottom.
@@ -144,6 +158,9 @@ func (p *ColorPicker) Render(f *gooey.Frame) {
 	cur := p.Color()
 	sel := p.Channel()
 	barW := p.barWidth()
+	// The pixel tier needs both a protocol and a real cell size: a bar
+	// generated against an unknown cell size would be zero pixels tall.
+	pixel := f.Graphics != nil && f.CellW > 0 && f.CellH > 0
 
 	for ch := 0; ch < 3; ch++ {
 		y := b.Y + ch
@@ -162,6 +179,9 @@ func (p *ColorPicker) Render(f *gooey.Frame) {
 		f.Cells.SetString(b.X, y, clipRunes("RGB"[ch:ch+1]+" ", b.W), labelSt)
 
 		p.renderBar(f, b.X+pickerLabelW, y, barW, cur, ch, v, depth)
+		if pixel && barW > 0 {
+			p.placeBar(f, b.X+pickerLabelW, y, barW, cur, ch, sel)
+		}
 
 		if x := b.X + pickerLabelW + barW; x < b.X+b.W {
 			f.Cells.SetString(x, y, clipRunes(fmt.Sprintf("%4d", v), b.X+b.W-x), styleDim)
@@ -241,6 +261,89 @@ func (p *ColorPicker) renderReadout(f *gooey.Frame, x, y, w int, cur render.Colo
 	if tx := x + swatchW; tx < x+w {
 		f.Cells.SetString(tx, y, clipRunes(label, x+w-tx), render.Style{Bold: true})
 	}
+}
+
+// ---- the pixel tier ----
+
+// pickerBarKey identifies one generated bar image: the geometry it was
+// drawn at, the color it swept from, and whether it carries the active
+// marker. cur covers the marker position too — the marker sits at this
+// bar's own channel value, which is a field of cur.
+type pickerBarKey struct {
+	w, cellW, cellH int
+	cur             render.Color
+	active          bool
+}
+
+// pickerBar is a one-entry cache per bar row. Placement image identity is
+// pointer equality (graphics.Placement.SameImage), so handing back the
+// SAME image for an unchanged row is what makes its repaint free on the
+// wire — and a changed row becomes a replace under the same placement id.
+type pickerBar struct {
+	key pickerBarKey
+	img image.Image
+}
+
+// placeBar records the pixel tier's version of one channel row: the swept
+// gradient generated at the terminal's pixel resolution, placed over the
+// row's cells. Three placements per Render, in channel order — fixed
+// slots, because the per-node placement diff pairs by index.
+//
+// The marker is BAKED INTO the bar image rather than overlaid as its own
+// small placement. The overlay would make a marker move cheaper (kitty
+// re-places the same image id for ~30 bytes), but overlapping placements
+// have no reliable stacking: kitty draws the most recently placed image
+// on top at equal z, so a bar replaced under the marker would cover it,
+// and under sixel/iTerm2 a moved marker damages its old cell, which
+// re-sends the surviving bar AFTER the marker — burying it again. Baking
+// keeps the plane overlap-free; a marker move is a replace of that bar's
+// placement under its existing id, and the cost is one bar-sized PNG.
+func (p *ColorPicker) placeBar(f *gooey.Frame, x, y, w int, cur render.Color, ch, sel int) {
+	k := pickerBarKey{
+		w: w, cellW: f.CellW, cellH: f.CellH, cur: cur,
+		active: p.IsFocused() && ch == sel,
+	}
+	if p.bars[ch].img == nil || p.bars[ch].key != k {
+		p.bars[ch] = pickerBar{key: k, img: p.drawBar(k, ch)}
+	}
+	f.Place(graphics.Placement{Img: p.bars[ch].img, Col: x, Row: y, Cols: w, Rows: 1})
+}
+
+// drawBar generates one bar: the same sweep renderBar paints per cell,
+// per pixel — every column is the color choosing that position would
+// give — with the value marker drawn in. The marker mirrors the cell
+// tier's vocabulary: a thin white tick on every row, widened on the
+// focused row's selected channel the way ▮ widens │.
+func (p *ColorPicker) drawBar(k pickerBarKey, ch int) *image.RGBA {
+	pxW, pxH := k.w*k.cellW, k.cellH
+	img := image.NewRGBA(image.Rect(0, 0, pxW, pxH))
+	for x := 0; x < pxW; x++ {
+		c := p.withComponent(k.cur, ch, x*255/max(1, pxW-1))
+		col := color.RGBA{R: c.R, G: c.G, B: c.B, A: 255}
+		for y := 0; y < pxH; y++ {
+			img.SetRGBA(x, y, col)
+		}
+	}
+	pos := int(p.component(k.cur, ch)) * (pxW - 1) / 255
+	core := 1
+	if k.active {
+		core = max(3, k.cellW/3)
+	}
+	half := core / 2
+	for dx := -half - 1; dx <= half+1; dx++ {
+		x := pos + dx
+		if x < 0 || x >= pxW {
+			continue
+		}
+		col := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+		if dx < -half || dx > half {
+			col = color.RGBA{R: 16, G: 16, B: 20, A: 255} // outline: reads on any gradient
+		}
+		for y := 0; y < pxH; y++ {
+			img.SetRGBA(x, y, col)
+		}
+	}
+	return img
 }
 
 // HandleKey: up/down pick a channel, left/right adjust it. Shift makes

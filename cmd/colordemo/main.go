@@ -6,7 +6,9 @@
 //   - A ColorPicker bound to one Accent property. Its channel bars are
 //     smooth gradients on a truecolor terminal, banded on a 256-color
 //     one, and a plain fill meter with an ANSI color NAME on a 16-color
-//     one — the component asks the Frame what it is painting onto.
+//     one — the component asks the Frame what it is painting onto. On a
+//     terminal with a graphics protocol the bars are placed as real
+//     pixel gradients over their cells, markers and all.
 //   - A tier strip that simulates all three at once by pre-approximating
 //     a gradient with the same function the flush uses, so the cost of
 //     each tier is visible side by side on one terminal.
@@ -17,9 +19,10 @@
 // markup is a live handle onto a computed over the picked color, so
 // editing a channel restyles the page through the property graph.
 //
-//	colordemo                 detect the terminal's color depth
-//	colordemo --depth=256     force a tier (truecolor|256|16)
-//	colordemo --hold=3s       exit after a while instead of on q
+//	colordemo                    probe the terminal: color depth, graphics, cell size
+//	colordemo --depth=256        force a color tier (truecolor|256|16)
+//	colordemo --graphics=kitty   force the pixel tier (kitty|sixel|iterm2|cells)
+//	colordemo --hold=3s          exit after a while instead of on q
 package main
 
 import (
@@ -30,6 +33,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -39,6 +43,7 @@ import (
 
 func main() {
 	depthFlag := flag.String("depth", "", "force color depth: truecolor|256|16")
+	gfxFlag := flag.String("graphics", "", "force the pixel tier: kitty|sixel|iterm2|cells (default: ask the terminal)")
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
 
@@ -49,19 +54,25 @@ func main() {
 	}
 	cols, rows := screen.Size()
 
-	// Capability detection, and the flag that overrides it. Forcing a
+	// Capability detection, and the flags that override it. Forcing a
 	// tier is what makes the difference recordable: a GIF recorder
-	// renders truecolor, so the only way to show what a 256-color
-	// terminal does is to emit what a 256-color terminal would get.
+	// renders truecolor cells, so the only way to show what a 256-color
+	// terminal — or one without a graphics protocol — does is to emit
+	// what that terminal would get.
 	//
-	// Color depth only — deliberately NOT the full Screen.Detect()
-	// handshake. Detect abandons a pending tty read when the terminal
-	// does not answer, and that orphaned reader then competes with the
-	// input decoder for the next bytes, swallowing the first keystrokes.
-	// A keyboard-driven demo cannot afford that; the graphics handshake
-	// belongs to cmd/demo, which reads one key and exits. Color depth is
-	// a pure environment read, so it costs nothing and steals nothing.
+	// This is the full Screen.Detect handshake, not just the color-depth
+	// environment read: the picker's pixel tier exists only where the
+	// probe finds a graphics protocol AND a cell size to generate the
+	// bars against. This demo once avoided Detect because its probe
+	// abandoned a pending tty read that then stole the first keystrokes;
+	// the probe now reads synchronously under a deadline (see
+	// term.readUntilDA1), so a keyboard-driven demo can afford it. It
+	// still must run HERE — before Raw and before the input decoder
+	// starts — so its replies cannot interleave with input events.
 	caps := term.Caps{Cols: cols, Rows: rows, Color: term.DetectColorDepth()}
+	if det, err := screen.Detect(); err == nil {
+		caps = det
+	}
 	detected, forced := caps.Color, false
 	if *depthFlag != "" {
 		d, ok := render.ParseColorDepth(*depthFlag)
@@ -70,6 +81,38 @@ func main() {
 			os.Exit(2)
 		}
 		caps.Color, forced = d, true
+	}
+
+	// The pixel tier: by default the terminal's answer stands (that is
+	// the component's contract — the choice is the terminal's, not the
+	// author's); the flag exists to force a protocol on, or off with
+	// "cells", for recordings and side-by-side comparison.
+	var gfx graphics.Encoder
+	gfxForced := false
+	switch *gfxFlag {
+	case "":
+	case "cells":
+		gfxForced = true
+	case "kitty":
+		gfx, gfxForced = graphics.Kitty{}, true
+	case "sixel":
+		gfx, gfxForced = graphics.Sixel{}, true
+	case "iterm2":
+		gfx, gfxForced = graphics.ITerm2{}, true
+	default:
+		fmt.Fprintf(os.Stderr, "unknown graphics %q (want kitty, sixel, iterm2, or cells)\n", *gfxFlag)
+		os.Exit(2)
+	}
+	if gfx != nil && caps.CellW == 0 {
+		caps.CellW, caps.CellH = 10, 20 // a forced protocol still needs a cell size
+	}
+	gfxName := "cells"
+	if gfxForced {
+		if gfx != nil {
+			gfxName = gfx.Name()
+		}
+	} else if enc := gooey.EncoderFor(caps); enc != nil {
+		gfxName = enc.Name()
 	}
 
 	// --- viewmodel: one source property, everything else derived ---
@@ -102,8 +145,8 @@ func main() {
 			src = fmt.Sprintf("forced (terminal reports %s)", detected)
 		}
 		shown := render.Approximate(c, caps.Color)
-		return fmt.Sprintf("depth %s [%s]   %d×%d cells   picked #%02X%02X%02X → shown #%02X%02X%02X",
-			caps.Color, src, caps.Cols, caps.Rows,
+		return fmt.Sprintf("depth %s [%s]   gfx %s   picked #%02X%02X%02X → shown #%02X%02X%02X",
+			caps.Color, src, gfxName,
 			c.R, c.G, c.B, shown.R, shown.G, shown.B)
 	})
 
@@ -147,6 +190,9 @@ func main() {
 		comp = gooey.NewComposer(w, cols, rows)
 		// The capabilities reach every component's Render through the Frame.
 		comp.SetCaps(caps)
+		if gfxForced {
+			comp.SetGraphics(gfx) // nil pins the cell tier
+		}
 		comp.OnInvalidate(func() { needsFrame = true })
 		needsFrame = true
 	}
