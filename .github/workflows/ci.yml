@@ -45,6 +45,22 @@ jobs:
             echo "handlers/temporal/go.mod not present; skipping"
           fi
 
+      # handlers/exec is a separate module too — its jq extraction takes
+      # gojq (pure Go, but a real dependency), and the deps⇒nested rule
+      # of the pack-distribution doctrine keeps it out of the root
+      # graph. -race because its tests drive real child processes and
+      # the timeout/kill path crosses goroutines.
+      - name: Build and test handlers/exec
+        run: |
+          if [ -f handlers/exec/go.mod ]; then
+            cd handlers/exec
+            go build ./...
+            go vet ./...
+            go test -race ./...
+          else
+            echo "handlers/exec/go.mod not present; skipping"
+          fi
+
       # packs/temporal-visibility is an ACTIVITY PACK — its own module
       # with zero gooey imports (graph: Temporal SDK + API protos only),
       # so any Go Temporal worker can import it. handlers/temporal

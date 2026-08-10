@@ -73,6 +73,9 @@ jobs:
           core framework's. Core gooey depends only on `golang.org/x/term`.
           It is excluded from the root `./...` patterns, so build and test it
           with a separate `cd handlers/temporal && go build ./... && go test ./...`.
+        - `handlers/exec/` is a SEPARATE Go module for the same reason — its
+          jq extraction depends on gojq. Build and test it with
+          `cd handlers/exec && go build ./... && go test -race ./...`.
         - `mcp/` is a SEPARATE Go module for the same reason — the official
           modelcontextprotocol/go-sdk brings eight modules with it. Build and
           test it with `cd mcp && go build ./... && go test -race ./...`; its
@@ -94,6 +97,6 @@ jobs:
 
         **Verification**
         Before claiming work is done, run `go build ./...`, `go vet ./...`, and
-        `go test ./...` from the repo root, plus the `handlers/temporal` and
-        `mcp` module runs above when either is touched. Report real output — never assert a
+        `go test ./...` from the repo root, plus the `handlers/temporal`,
+        `handlers/exec`, and `mcp` module runs above when any is touched. Report real output — never assert a
         command passed without running it.
