@@ -1,0 +1,141 @@
+package gooey
+
+import (
+	"io"
+
+	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
+)
+
+// Composer is the retained, damage-tracked render path. Each widget's
+// paint is its own graph node: evaluating it runs Widget.Render, so the
+// properties a widget reads while painting become its dependencies
+// automatically — "AffectsRender" metadata is discovered, not declared.
+// A property change dirties exactly the widgets that read it; Frame()
+// re-paints only those into the persistent buffer.
+//
+// Layout (Measure/Arrange) runs unconditionally every frame — cheap at
+// terminal scale, and it runs outside any evaluation context so layout
+// reads record nothing. A widget whose bounds changed is force-dirtied
+// via its rev source and its old region cleared.
+//
+// POC limits: static tree (rebuild the Composer on structural change)
+// and cell-plane widgets only (no graphics placements).
+type Composer struct {
+	root       Widget
+	frame      *Frame
+	cols, rows int
+	nodes      []*paintNode
+	focus      *FocusManager
+	invalid    func()
+	painted    int
+}
+
+type paintNode struct {
+	w      Widget
+	node   *prop.Property[int]
+	rev    *prop.Property[int] // bumped when bounds change → forces repaint
+	bounds Rect
+}
+
+// Bounded is implemented by widgets that expose their arranged bounds
+// (embedding element provides it); the Composer uses it for damage
+// clearing and bounds-change detection.
+type Bounded interface{ Bounds() Rect }
+
+func NewComposer(root Widget, cols, rows int) *Composer {
+	c := &Composer{root: root, cols: cols, rows: rows,
+		frame: &Frame{Cells: render.NewBuffer(cols, rows)}}
+	c.build(root)
+	c.focus = NewFocusManager(root)
+	return c
+}
+
+// Focus is the input tree built from this composition: focus order,
+// ancestor links, and declared key bindings.
+func (c *Composer) Focus() *FocusManager { return c.focus }
+
+// Handle routes one input event — key or mouse — through the tree.
+func (c *Composer) Handle(ev input.Event) bool {
+	if ev.IsMouse() {
+		return c.focus.DispatchMouse(ev.Mouse)
+	}
+	return c.focus.Dispatch(ev.Key)
+}
+
+// HandleKey routes a key event through the tree. See FocusManager.Dispatch.
+func (c *Composer) HandleKey(ev input.KeyEvent) bool { return c.focus.Dispatch(ev) }
+
+// HandleMouse routes a pointer event. See FocusManager.DispatchMouse.
+func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.DispatchMouse(ev) }
+
+func (c *Composer) build(w Widget) {
+	n := &paintNode{w: w, rev: prop.NewSource(0)}
+	n.node = prop.NewComputed(func() int {
+		n.rev.Get()
+		// Pre-clear only leaves: a container's bounds enclose its
+		// children's cells, and wiping those would blank content whose
+		// own (clean) nodes won't repaint. Containers overpaint their
+		// own chrome in place instead.
+		if _, isContainer := w.(Container); !isContainer {
+			if b, ok := w.(Bounded); ok {
+				clearRect(c.frame.Cells, b.Bounds())
+			}
+		}
+		if paintable(w) {
+			w.Render(c.frame)
+		}
+		c.painted++
+		return c.painted
+	})
+	n.node.OnInvalidate(func() {
+		if c.invalid != nil {
+			c.invalid()
+		}
+	})
+	c.nodes = append(c.nodes, n)
+	if ct, ok := w.(Container); ok {
+		for _, ch := range ct.ChildWidgets() {
+			c.build(ch)
+		}
+	}
+}
+
+// OnInvalidate registers the scheduler hook: fired when any widget's
+// paint node goes dirty.
+func (c *Composer) OnInvalidate(fn func()) { c.invalid = fn }
+
+// Frame lays out, repaints dirty widgets only, and reports how many
+// widgets painted.
+func (c *Composer) Frame() (*Frame, int) {
+	c.painted = 0
+	// Unconditional layout, outside any eval context: reads here are
+	// not recorded as dependencies.
+	c.root.Measure(Size{c.cols, c.rows})
+	c.root.Arrange(Rect{0, 0, c.cols, c.rows})
+	for _, n := range c.nodes {
+		if b, ok := n.w.(Bounded); ok {
+			if nb := b.Bounds(); nb != n.bounds {
+				clearRect(c.frame.Cells, n.bounds) // vacated region
+				n.bounds = nb
+				n.rev.Set(n.rev.Get() + 1) // bounds moved → must repaint
+			}
+		}
+	}
+	for _, n := range c.nodes {
+		n.node.Get() // only dirty nodes execute
+	}
+	return c.frame, c.painted
+}
+
+// Flush writes the current buffer to w.
+func (c *Composer) Flush(w io.Writer) error { return render.Flush(w, c.frame.Cells) }
+
+func clearRect(b *render.Buffer, r Rect) {
+	for y := r.Y; y < r.Y+r.H; y++ {
+		for x := r.X; x < r.X+r.W; x++ {
+			b.Set(x, y, ' ', render.Style{})
+		}
+	}
+}

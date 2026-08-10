@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>gooey reader feeds</title></head>
+  <body>
+    <outline text="Hacker News" xmlUrl="https://hnrss.org/frontpage"/>
+    <outline text="Lobsters" xmlUrl="https://lobste.rs/rss"/>
+    <outline text="Go Blog" xmlUrl="https://go.dev/blog/feed.atom"/>
+    <outline text="Cloudflare Blog" xmlUrl="https://blog.cloudflare.com/rss/"/>
+  </body>
+</opml>

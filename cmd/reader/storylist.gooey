@@ -1,0 +1,6 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="{{.Title}}" Style="panel">
+    <StoryRows/>
+    <KeyBinding Gesture="enter" Command="{{.Open}}"/>
+  </Border>
+</Gooey>

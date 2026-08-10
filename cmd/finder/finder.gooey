@@ -1,0 +1,10 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="finder" Style="panel">
+    <Grid Rows="Auto,Auto,*" Cols="3*,2*">
+      <Input   Grid.Row="0" Grid.ColSpan="2"/>
+      <Text    Grid.Row="1" Grid.ColSpan="2" Style="dim">{{.Status}}</Text>
+      <Results Grid.Row="2" Grid.Col="0"/>
+      <Preview Grid.Row="2" Grid.Col="1" Margin="2,0,0,0"/>
+    </Grid>
+  </Border>
+</Gooey>

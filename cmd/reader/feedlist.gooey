@@ -1,0 +1,5 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="{{.Title}}" Style="panel">
+    <FeedRows/>
+  </Border>
+</Gooey>

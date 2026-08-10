@@ -1,0 +1,21 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="state → json" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,Auto,*,Auto">
+      <Text Grid.Row="0" Style="accent">mutate state with the buttons, then serialize the app into the box</Text>
+      <HStack Grid.Row="1" Gap="2">
+        <Button Content="count +1" Click="{{.Increment}}"/>
+        <Button Content="cycle message" Click="{{.Cycle}}"/>
+        <Button Content="serialize → json" Click="{{.Serialize}}"/>
+      </HStack>
+      <Checkbox Grid.Row="2" Checked="{{.Auto}}" Label="auto-serialize (JSON becomes a computed over the state)"/>
+      <Text Grid.Row="3" Style="dim">{{.Live}}</Text>
+      <Border Grid.Row="4" Title="state.json" Style="panel">
+        <Text Margin="1,0">{{.Json}}</Text>
+      </Border>
+      <Text Grid.Row="5" Style="dim">click, or tab + enter/space   s: serialize   q: quit</Text>
+      <KeyBinding Gesture="s" Command="{{.Serialize}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

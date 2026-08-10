@@ -1,0 +1,10 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="logview" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,*">
+      <Text Grid.Row="0" Style="accent">{{.Header}}</Text>
+      <Text Grid.Row="1" Style="dim">space: pause/follow   f: filter   q: quit</Text>
+      <Text Grid.Row="2" Name="stats" Style="dim"></Text>
+      <LogPane Grid.Row="3" Lines="{{.Visible}}"/>
+    </Grid>
+  </Border>
+</Gooey>
