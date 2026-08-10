@@ -99,8 +99,10 @@ the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`,
 never imported by it. Writing your own component means embedding
 `gooey.Base` and implementing `gooey.Component`; the built-ins have no
 privileges you do not. Under both sit `prop` (the property graph),
-`input`, `render`, `graphics`, and `term`; beside them, `markup` and the
-opt-in `handlers/*` and `mcp` modules.
+`input`, `render`, `graphics`, and `term`; beside them, `markup`,
+`format` (computed-property constructors for display strings — byte
+sizes, counts, durations, relative times), and the opt-in `handlers/*`
+and `mcp` modules.
 
 ## Distribution: packs
 
@@ -127,7 +129,7 @@ nested-module tags (`packs/temporal-visibility/v0.1.0`).
 |---|---|---|
 | Retained tree + Measure/Arrange | done | Persistent components, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; `SIGWINCH` resizes the composition and repaints |
 | Dependency properties | done | Lazy dirty-tracking graph (Slint lineage), not eager WPF-style notification; UI-goroutine-confined |
-| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is component code |
+| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is component code, and value formatting is the `format` package's computed-property constructors (`format.Bytes(p)` → `Property[string]`; markup converter stages over the same functions are #99) |
 | Markup + hot reload | done | XML over any `fs.FS`; `markup.Page` polls ModTimes and the App rebuilds on the UI goroutine, viewmodel state survives |
 | UserControls | done | Context isolation, data crosses only via attribute hand-off; the property surface is implicit unless the control declares it with `<x:Property>` |
 | Grid / star sizing | done | `Auto`/`Fixed`/`Star` tracks with spans, XAML `GridLength` semantics |

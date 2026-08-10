@@ -58,6 +58,7 @@ Single tasks, for when you know what you want.
 | [Draw images](howto/howto-images.md) | You have pixel content and need to know which protocol you get |
 | [Draw anything with a custom Render](howto/howto-custom-draw.md) | Markup cannot express what you want, and you need to paint cells (or pixels) yourself |
 | [Work off the UI goroutine](howto/howto-async.md) | You have a fetch, a timer, or any background work to apply |
+| [Format values for display](howto/howto-format.md) | You have byte counts, durations, or timestamps and a `Text` that wants a string |
 | [Test a gooey app](howto/howto-testing.md) | You want assertions on rendered output, damage counts, or the real binary |
 
 ## Demo catalog
