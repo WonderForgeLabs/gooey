@@ -1,3 +1,9 @@
-<Gooey xmlns="wonderforge.io/gooey/2026">
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <!-- Caption arrives here as a handle, not a string: the card's own
+       declared property crosses one more control boundary and is
+       type-checked again on the way in. -->
+  <x:Property Name="Text" Type="string" Required="true"/>
+
   <Text Style="badge">◈ {{.Text}}</Text>
 </Gooey>

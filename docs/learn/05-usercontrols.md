@@ -76,11 +76,11 @@ a silently blank control.
 
 > **If you know XAML:** an Include is close to a `UserControl` whose
 > dependency properties you never had to declare — but that is also its
-> weakness. The property surface is implicit and unchecked: nothing
-> states that a Card needs `Title`, `Body`, and `Sub`. Declaring a typed
-> surface in markup is designed as `x:Property` and
-> [specified](../specs/2026-08-10-markup-declared-properties.md), but is
-> not implemented.
+> weakness. As written, the property surface is implicit and unchecked:
+> nothing states that a Card needs `Title`, `Body`, and `Sub`, so a
+> misspelled attribute silently does nothing. Declare the surface with
+> `<x:Property>` to have it checked; see
+> [the reference](../markup-reference.md#declared-properties-xproperty).
 
 ## Step 2: Write a control with code-behind
 
@@ -263,11 +263,13 @@ Reach for a UserControl the moment it needs behavior of its own.
 
 ## Current limitations
 
-- A control's property surface is **implicit and unchecked** — no
-  declared names, types, or defaults (see the `x:Property`
-  [spec](../specs/2026-08-10-markup-declared-properties.md)).
-- No DataTemplates: list-shaped data is rendered by a hand-written rows
-  component behind a UserControl, the pattern `cmd/reader` establishes.
+- A control's property surface is **implicit and unchecked until it is
+  declared** — add `<x:Property Name="Title" Type="string"/>` to the
+  control's root for names, types, defaults, `Required`, and load errors
+  on undeclared attributes
+  ([reference](../markup-reference.md#declared-properties-xproperty)).
+  A declared default is a fresh per-instance source, so it resets on hot
+  reload; durable state belongs in the app's viewmodel.
 - No styles with setters, so a control cannot be restyled from outside
   beyond passing a style name in.
 

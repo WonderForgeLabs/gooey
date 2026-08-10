@@ -29,7 +29,9 @@ Every file has exactly one `<Gooey>` root with exactly one child:
 </Gooey>
 ```
 
-Both rules are enforced at build time. The default `xmlns` attribute is decorative versioning — the parser ignores its value. **Prefixed** namespaces are not decorative: they declare handler namespaces, and are captured per document into a prefix → URI table (see [handler namespaces](#handler-namespaces)).
+Both rules are enforced at build time. The default `xmlns` attribute is decorative versioning — the parser ignores its value. **Prefixed** namespaces are not decorative: they declare handler namespaces and gooey's language-services namespace, and are captured per document into a prefix → URI table (see [handler namespaces](#handler-namespaces) and [declared properties](#declared-properties-xproperty)).
+
+The "exactly one child" rule counts *visual* children. `<x:Property>` declarations are also direct children of the root, and are not content.
 
 ## Built-in elements
 
@@ -539,6 +541,8 @@ Context isolation is the contract: `setup(e, parent)` returns the instance's own
 
 `Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent context when the child leaves them nil; `Named` is scoped per instance (like `x:Name` in templates). Layout attributes on the instance element apply to the instance and are not passed through.
 
+A control that also [declares properties](#declared-properties-xproperty) gets them resolved *before* setup runs and installed into the context setup returns; setup reads them through `parent.DeclaredProperties()` and extends the context with private members.
+
 `cmd/reader/controls.go` is the canonical example — three controls, each a `.gooey` file wrapping a per-instance rows component, with a generic `attr[T]` helper for the typed hand-off. `markup.WatchAll` covers hot reload for the whole set: one page rebuild re-instantiates every control.
 
 ## Includes: markup-only controls
@@ -567,7 +571,96 @@ The usual way in is `Context.Includes`: when set, an unknown element `<Card/>` r
 
 Inside `card.gooey`, `{{.Title}}` is the parent's `Header` handle (live — setting `Header` repaints the card) and `{{.Sub}}` is a literal. `Width`, `Margin`, `Grid.*`, and `Name` on the instance stay on the instance. An unresolvable attribute binding is a load-time error.
 
+This is the *implicit* surface: whatever the instance writes, the control receives, and an attribute the control never reads simply does nothing. Declare the surface with [`<x:Property>`](#declared-properties-xproperty) to have it checked instead.
+
 Element resolution order, in full: registered `Components` builder, then built-in element, then Includes convention, then error.
+
+## Declared properties: `<x:Property>`
+
+A control file can declare its own property surface. Declarations are direct children of the root, under gooey's language-services namespace — `xmlns:x="wonderforge.io/gooey/x"`, the XAML `x:` analog:
+
+```xml
+<!-- card.gooey -->
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <x:Property Name="Title"   Type="string" Required="true"/>
+  <x:Property Name="Value"   Type="string" Default="—"/>
+  <x:Property Name="Trend"   Type="string" Default="…"/>
+  <x:Property Name="Caption" Type="string" Default="no caption"/>
+
+  <Border Title="{{.Title}}" Style="panel">
+    <VStack Margin="1,0">
+      <Text Style="big">{{.Value}}</Text>
+      <Text Style="trend">{{.Trend}}</Text>
+      <Badge Text="{{.Caption}}"/>
+    </VStack>
+  </Border>
+</Gooey>
+```
+
+(from `cmd/cardsdemo`, the whole demo's Go file has no control code in it at all)
+
+**A declared markup property is an ordinary dependency property, registered from markup.** Each declaration materializes exactly what a code-behind would have wired by hand — a `*prop.Property[T]` node in the same graph, read by the same `Get`, invalidated by the same `Set`. There is one property system; this is its markup tier, the way `DependencyProperty.Register` is its code tier.
+
+### Declaration attributes
+
+| Attribute | Meaning |
+|---|---|
+| `Name` | Required. The attribute callers set, and the path the control's own markup binds (`{{.Title}}`). Cannot be `Name` or a layout attribute — those belong to the element. |
+| `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any`. |
+| `Default` | The literal used when the attribute is absent, coerced by `Type`. A bad default fails the load of the *control*, not of the page. |
+| `Required` | `true` makes an absent attribute a load error. Exclusive with `Default` — a default is what makes an attribute optional. |
+
+Literal syntax per type is the obvious one: `strconv` for `int`/`bool`/`float`, `time.ParseDuration` for `duration` (`600ms`), `#rgb`/`#rrggbb` for `color`. `any` is the escape hatch for app types that have no markup literal; it accepts whatever handle the parent holds, unchecked, and takes no `Default`.
+
+### What happens at the instantiation site
+
+Each declaration resolves one of three ways:
+
+- **Attribute bound** (`Value="{{.Reqs}}"`) — the parent's existing handle passes straight through, type-checked against `Type`. Nothing is copied, so the control and the page share one node.
+- **Attribute literal** (`Title="requests"`) — coerced by `Type` and wrapped as a fresh source.
+- **Attribute absent** — a fresh **per-instance** source carrying the declared `Default`: markup-defined, typed, bindable local state. Two instances of the control do not share it. Absent plus `Required` is a load error.
+
+### Strict mode
+
+Declaring anything at all makes the control strict: an attribute the control did not declare is a load error, because the declarations are now its public surface. Layout attributes and `Name` are the *element's*, never the control's, so they are always allowed.
+
+```
+markup: <Card Captoin="per second">: card.gooey declares no dependency property
+"Captoin" (declared: Caption, Title, Trend, Value)
+```
+
+A file with no declarations keeps the implicit pass-through described above, unchanged. Error messages use the phrase **dependency property** throughout, because that is what these are:
+
+```
+markup: card.gooey: dependency property "Title" — required attribute missing on <Card>
+markup: card.gooey: dependency property "Value" — Value="{{.Reqs}}" is *prop.Property[string]; Type="int" needs *prop.Property[int]
+```
+
+### With a code-behind
+
+Declarations own the public surface; a setup func owns private members and behavior, and runs *second*. Inside setup, `parent.DeclaredProperties()` returns the already-resolved handles, so a control can build private computeds over its own declared properties:
+
+```go
+setup := func(e markup.Element, parent *markup.Context) (*markup.Context, error) {
+    title := parent.DeclaredProperties()["Title"].(*prop.Property[string])
+    return &markup.Context{Values: map[string]any{
+        "Shout": prop.NewComputed(func() string { return strings.ToUpper(title.Get()) }),
+    }}, nil
+}
+```
+
+The framework installs the declared properties into the control's context afterwards, so setup must not copy them in itself: a `Values` entry colliding with a declared name is a load error, for the same reason a property system rejects double registration. Change callbacks need no mechanism — a computed reading a declared handle, or `OnInvalidate` on it, *is* the callback.
+
+This makes three control tiers, each adding exactly one thing: Include (implicit surface, no behavior) → declarations (checked surface, no behavior) → declarations + code-behind (checked surface + private behavior).
+
+### Known wrinkle: hot reload resets declared defaults
+
+A declared default materializes a *fresh* source each time the control is instantiated, and a hot reload re-instantiates every control. So state living in a defaulted property resets on reload, while state living in the app's viewmodel (the usual place) survives as it always has. The fix is `Name`-keyed state adoption across rebuilds, which is designed but not implemented; see the [decision record](specs/2026-08-10-markup-declared-properties.md).
+
+### Explicitly out of scope
+
+Markup-declarable **attached** properties — a markup-only panel defining its own attachment slots — would need a dynamic per-element property bag on `Base`, reintroducing stringly-typed storage. Attached properties stay host-type-defined (`Grid.Row` lives in `Layout`).
 
 ## Named elements and Find
 
@@ -610,8 +703,7 @@ Two normalizations reflect what the terminal actually sends: `shift` on a printa
 
 ## Designed, not yet implemented
 
-One markup feature has a settled design but no implementation yet — see [specs/](specs/) for the decision record:
-
-- `x:Property` declarations — a `.gooey` file declaring its own typed, defaulted, bindable property surface, making declared markup properties ordinary dependency properties; [specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
+- `gooey gen` — compiled markup plus a typed per-control surface for compile-checked instantiation. `<x:Property>` declarations are the input it was waiting for: a declaration block is both a typed surface and, for the remote-behavior layer, a per-control wire schema.
+- `Name`-keyed state adoption across hot reloads, so a declared default's per-instance source survives a rebuild (see [the wrinkle above](#known-wrinkle-hot-reload-resets-declared-defaults)).
 
 For the project overview and demo GIFs, see [../README.md](../README.md).

@@ -5,11 +5,16 @@
 // controls nest. The page context here has Values and Styles only:
 // there is no Components map and no setup func anywhere in this app.
 //
-// Attributes are the entire control contract: literals (Title, Caption)
-// pass as strings, bindings (Value, Trend) pass as live property
-// handles — so four instances of one control show four different
-// ticking data streams. All three .gooey files hot-reload; editing
-// card.gooey restyles every card at once, state intact.
+// Attributes are the entire control contract, and card.gooey DECLARES
+// that contract in markup: four <x:Property> elements give it typed,
+// defaulted, partly-required dependency properties. Literals (Title,
+// Caption) coerce into fresh per-instance sources, bindings (Value,
+// Trend) pass the dashboard's live handles straight through
+// type-checked — so four instances of one control show four different
+// ticking data streams, and a misspelled attribute is now a load error
+// instead of an attribute nothing reads. Still zero Go code for the
+// control. All three .gooey files hot-reload; editing card.gooey
+// restyles every card at once, state intact.
 package main
 
 import (

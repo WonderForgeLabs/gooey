@@ -12,8 +12,13 @@ you:
 | Tier | Go code | What attributes do |
 |---|---|---|
 | **Include** | none | Become the control's context verbatim: a binding hands over the live handle, a literal a string. |
-| **UserControl** | a setup func per control | You resolve and type-assert them, and build the instance's own context. |
+| **Include + `<x:Property>`** | none | Resolve against the control's *declared* surface: type-checked, defaulted, and an undeclared attribute is a load error. |
+| **UserControl** | a setup func per control | You resolve and type-assert them, and build the instance's own context — or declare them and extend the context the framework pre-populates. |
 | **Custom component** | a `Builder` | You interpret them however you like and return any `gooey.Component`. |
+
+A declared markup property is an ordinary dependency property, registered
+from markup rather than from Go — the same `*prop.Property[T]` node in the
+same graph. Declaring nothing keeps the implicit, unchecked surface.
 
 All three give the control its own context, so bindings inside a control
 resolve against the control and never against the page. Data crosses the
@@ -43,8 +48,11 @@ surfaces) is designed but not implemented.
 - `Style="name"` is a named lookup: no cascading, no selectors, no
   per-property overrides in markup (except `Text Bold`), and an unknown
   name silently yields the zero style.
-- No DataTemplates — every list is a hand-written rows component.
-- A control's property surface is implicit and unchecked. See the
+- A declared default materializes a fresh source per instantiation, so it
+  resets on hot reload; state that must survive a reload lives in the
+  app's viewmodel. `Name`-keyed state adoption is designed, not built.
+- Markup cannot declare *attached* properties (`Grid.Row` and friends stay
+  host-type-defined). See the
   [`x:Property` spec](../../specs/2026-08-10-markup-declared-properties.md).
 
 Depth: [architecture.md — markup](../../architecture.md#markup).

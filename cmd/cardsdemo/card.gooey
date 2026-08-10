@@ -1,4 +1,17 @@
-<Gooey xmlns="wonderforge.io/gooey/2026">
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <!-- The card's public surface, declared in markup. Each of these is
+       an ordinary dependency property, registered from this file: a
+       bound attribute passes the dashboard's handle straight through
+       (type-checked), an absent one materializes a fresh source with
+       the default below. Declaring anything makes the control strict,
+       so <Card Titel="…"> on the dashboard is now a load error instead
+       of an attribute that silently did nothing. -->
+  <x:Property Name="Title"   Type="string" Required="true"/>
+  <x:Property Name="Value"   Type="string" Default="—"/>
+  <x:Property Name="Trend"   Type="string" Default="…"/>
+  <x:Property Name="Caption" Type="string" Default="no caption"/>
+
   <Border Title="{{.Title}}" Style="panel">
     <VStack Margin="1,0">
       <Text Style="big">{{.Value}}</Text>
