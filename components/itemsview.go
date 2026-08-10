@@ -1,6 +1,8 @@
 package components
 
 import (
+	"slices"
+
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -42,6 +44,19 @@ type ItemsView struct {
 	// view Sets it on navigation and reads it to scroll and highlight.
 	// Nil means the list is not selectable.
 	Selected *prop.Property[int]
+	// SelectionChanged runs after the VIEW moves the selection — a key, a
+	// click, the wheel. It does not run when the viewmodel Sets Selected
+	// itself (the viewmodel already knows), and not when a gesture clamps
+	// to the index already selected: it reports change, not intent.
+	SelectionChanged gooey.Action
+	// Scroll turns a list with no Selected binding into a scroll view —
+	// the log-pane shape. It is the offset back from the TAIL, in rows:
+	// 0 pins the window to the end so it follows appends, and scrolling
+	// up moves into history that stays put while new items arrive. The
+	// view Sets it on the scroll keys and the wheel and reads it to place
+	// the window; a Selected binding takes precedence, because selection
+	// already decides where the window is.
+	Scroll *prop.Property[int]
 	// Activate runs on enter, on a double click, and on a second click of
 	// the already-selected row. It is an Action, so a command with a When
 	// condition simply does not fire while the condition is false.
@@ -55,6 +70,13 @@ type ItemsView struct {
 	// itself. It is opt-IN from Go — a component built in code is drawing
 	// its own row, so it should say whether it wants this on top.
 	Highlight bool
+	// NoFocus takes the view out of the tab order (markup spells it
+	// Focusable="false"). It is for lists that are display surfaces for a
+	// selection some OTHER component drives — finder's results, whose
+	// query line owns the keyboard fzf-style: a click still selects by
+	// hit-test, but focus-follows-click finds nothing to move to, so
+	// typing never goes dead.
+	NoFocus bool
 
 	top     int
 	rowH    int
@@ -148,6 +170,11 @@ func (s *sliceSource[T]) At(i int) map[string]any {
 	return s.project(s.items[i])
 }
 
+// AcceptsFocus shadows the FocusState mixin so NoFocus can take the view
+// out of the tab order without losing the mixin's focused flag (a view
+// that opted out simply never has it set).
+func (v *ItemsView) AcceptsFocus() bool { return !v.NoFocus }
+
 // SetStructureHook receives the composition's structural-change hook.
 // The view calls it when the realized window changes — see dynamic.go.
 func (v *ItemsView) SetStructureHook(fn func()) { v.structure = fn }
@@ -212,7 +239,9 @@ func (v *ItemsView) Arrange(b gooey.Rect) {
 
 // window is the virtualization: which slice of the collection is worth
 // building. It also carries the scroll rule — keep the selection visible,
-// and never scroll past the end.
+// and never scroll past the end. A scroll-mode list (Scroll set, no
+// Selected) anchors to the tail instead: the window ends Scroll rows
+// back from the end, which is what makes offset 0 follow appends.
 func (v *ItemsView) window(b gooey.Rect, n, sel int) (top, count int) {
 	if v.rowH < 1 {
 		v.rowH = 1
@@ -220,6 +249,10 @@ func (v *ItemsView) window(b gooey.Rect, n, sel int) (top, count int) {
 	v.visible = max(1, b.H/v.rowH)
 	if n == 0 || b.H <= 0 {
 		return 0, 0
+	}
+	if v.scrolls() {
+		top = max(0, n-v.visible-v.offset(n))
+		return top, min(v.visible, n-top)
 	}
 	top = v.top
 	if sel >= 0 {
@@ -358,6 +391,9 @@ func (v *ItemsView) Render(f *gooey.Frame) {
 		n = src.Len()
 	}
 	v.selection(n)
+	if v.scrolls() {
+		v.Scroll.Get() // the scroll offset moves the window: subscribe
+	}
 	if v.err != nil {
 		b := v.Bounds()
 		f.Cells.SetString(b.X, b.Y, clipRunes("template: "+v.err.Error(), b.W),
@@ -390,6 +426,25 @@ func (v *ItemsView) selection(n int) int {
 	return clamp(v.Selected.Get(), 0, n-1)
 }
 
+// scrolls reports scroll mode: a tail-anchored window driven by the
+// Scroll offset rather than by a selection.
+func (v *ItemsView) scrolls() bool { return v.Selected == nil && v.Scroll != nil }
+
+// offset is the clamped scroll offset. Like selection, what a Get here
+// means is decided by the call site.
+func (v *ItemsView) offset(n int) int {
+	return clamp(v.Scroll.Get(), 0, max(0, n-v.visible))
+}
+
+// scrollBy moves the window and reports the gesture consumed. The Set is
+// compared so holding a key at either end stays damage-free.
+func (v *ItemsView) scrollBy(d, n int) bool {
+	if off := clamp(v.offset(n)+d, 0, max(0, n-v.visible)); off != v.Scroll.Get() {
+		v.Scroll.Set(off)
+	}
+	return true
+}
+
 // ---- input ----
 
 // wheelStep is the conventional three lines per notch. One line per notch
@@ -399,6 +454,25 @@ const wheelStep = 3
 func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 	n := v.count()
 	if n == 0 {
+		return false
+	}
+	if v.scrolls() {
+		// The scroll keys read like a pager: up is back into history
+		// (offset grows), down is toward the tail, end re-follows.
+		switch ev {
+		case input.Rune('k'), input.Named(input.KeyUp):
+			return v.scrollBy(+1, n)
+		case input.Rune('j'), input.Named(input.KeyDown):
+			return v.scrollBy(-1, n)
+		case input.Named(input.KeyPageUp):
+			return v.scrollBy(+v.visible, n)
+		case input.Named(input.KeyPageDown):
+			return v.scrollBy(-v.visible, n)
+		case input.Named(input.KeyHome):
+			return v.scrollBy(+n, n)
+		case input.Named(input.KeyEnd):
+			return v.scrollBy(-n, n)
+		}
 		return false
 	}
 	sel := v.selection(n)
@@ -429,6 +503,15 @@ func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 func (v *ItemsView) HandleMouse(ev input.MouseEvent) bool {
 	n := v.count()
 	if n == 0 {
+		return false
+	}
+	if v.scrolls() {
+		switch ev.Kind {
+		case input.WheelUp:
+			return v.scrollBy(+wheelStep, n)
+		case input.WheelDown:
+			return v.scrollBy(-wheelStep, n)
+		}
 		return false
 	}
 	switch ev.Kind {
@@ -477,6 +560,9 @@ func (v *ItemsView) selectIndex(i, n int) bool {
 	i = clamp(i, 0, n-1)
 	if i != v.Selected.Get() {
 		v.Selected.Set(i)
+		if gooey.CanExecute(v.SelectionChanged) {
+			v.SelectionChanged.Run()
+		}
 	}
 	return true
 }
@@ -614,6 +700,17 @@ func rowValue(v any) (handle any, set func(any), touch func()) {
 		return p, func(nv any) {
 			if c, ok := nv.(render.Color); ok && c != p.Get() {
 				p.Set(c)
+			}
+		}, func() { p.Get() }
+	case []int:
+		// Positions into the item — finder's matched-rune indexes. The
+		// compare is by contents, so a re-projection that produces the
+		// same positions stays damage-free; the slice is stored as given,
+		// which is safe because a projection builds its maps fresh.
+		p := prop.NewSource(x)
+		return p, func(nv any) {
+			if s, ok := nv.([]int); ok && !slices.Equal(s, p.Get()) {
+				p.Set(s)
 			}
 		}, func() { p.Get() }
 	}

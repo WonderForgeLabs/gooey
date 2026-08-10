@@ -7,7 +7,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -63,37 +62,14 @@ func namedFocus(named map[string]gooey.Component, name string) func() bool {
 	}
 }
 
-// moveKey maps the shared list gestures to a direction. j/k and the
-// arrows are view-local: they are handled by whichever pane has focus,
-// not by a page-wide binding, so each pane owns its own cursor.
-func moveKey(ev input.KeyEvent) (int, bool) {
-	switch ev {
-	case input.Rune('j'), input.Named(input.KeyDown):
-		return +1, true
-	case input.Rune('k'), input.Named(input.KeyUp):
-		return -1, true
-	}
-	return 0, false
-}
-
-// wheelStep is the conventional three lines per notch. One line per
-// notch is technically responsive and reads as broken: in a tall list
-// the selection creeps and the view does not move at all until the
-// cursor reaches the edge.
-const wheelStep = 3
-
-func wheelDelta(ev input.MouseEvent) (int, bool) {
-	switch ev.Kind {
-	case input.WheelUp:
-		return -wheelStep, true
-	case input.WheelDown:
-		return +wheelStep, true
-	}
-	return 0, false
-}
-
 // ---- FeedList ----
 
+// feedListControl is the same shape as StoryList now: feedlist.gooey
+// declares an <ItemsView> with an <ItemsView.ItemTemplate>, and this
+// setup hands it the item source and the shared selection handle. The
+// SelectionChanged attribute crosses the control boundary onto the
+// view's own SelectionChanged, so moving the feed cursor still resets
+// the story cursor — the event fires on actual change, from any gesture.
 func feedListControl(fsys fs.FS) markup.Builder {
 	return markup.UserControl(fsys, "feedlist.gooey", func(e markup.Element, parent *markup.Context) (*markup.Context, error) {
 		feeds, err := attr[[]*Feed](e, parent, "Feeds")
@@ -108,87 +84,38 @@ func feedListControl(fsys fs.FS) markup.Builder {
 		if err != nil {
 			return nil, err
 		}
-		rows := &feedRows{feeds: feeds, sel: sel, changed: reset}
+		named := map[string]gooey.Component{}
 		return &markup.Context{
-			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], rows.IsFocused)},
-			Components: map[string]markup.Builder{
-				"FeedRows": func(markup.Element, *markup.Context) (gooey.Component, error) { return rows, nil },
+			Named: named,
+			Values: map[string]any{
+				"Title":    paneTitle(e.Attrs["Title"], namedFocus(named, "Feeds")),
+				"Rows":     feedRows(feeds),
+				"Selected": sel,
+				"Changed":  reset,
 			},
 		}, nil
 	})
 }
 
-type feedRows struct {
-	gooey.Base
-	gooey.FocusState
-	feeds   *prop.Property[[]*Feed]
-	sel     *prop.Property[int]
-	changed gooey.Action
-}
-
-func (w *feedRows) Measure(avail gooey.Size) gooey.Size { return avail }
-
-func (w *feedRows) HandleKey(ev input.KeyEvent) bool {
-	d, ok := moveKey(ev)
-	if !ok {
-		return false
-	}
-	w.selectRow(w.sel.Get() + d)
-	return true
-}
-
-func (w *feedRows) HandleMouse(ev input.MouseEvent) bool {
-	switch ev.Kind {
-	case input.MousePress:
-		row := ev.Y - w.Bounds().Y
-		if row < 0 || row >= len(w.feeds.Get()) {
-			return false
-		}
-		w.selectRow(row)
-		return true
-	}
-	if d, ok := wheelDelta(ev); ok {
-		w.selectRow(w.sel.Get() + d)
-		return true
-	}
-	return false
-}
-
-func (w *feedRows) selectRow(i int) {
-	w.sel.Set(clampIdx(i, len(w.feeds.Get())))
-	if gooey.CanExecute(w.changed) {
-		w.changed.Run()
-	}
-}
-
-func (w *feedRows) Render(f *gooey.Frame) {
-	b := w.Bounds()
-	fs := w.feeds.Get()
-	sel := clampIdx(w.sel.Get(), len(fs))
-	for i, fd := range fs {
-		if i >= b.H {
-			break
-		}
-		st := render.Style{}
-		if i == sel {
-			st.Reverse = true
-			for x := 0; x < b.W; x++ {
-				f.Cells.Set(b.X+x, b.Y+i, ' ', st)
-			}
-		}
-		label := fd.Title
+// feedRows is the feed list's projection: the label decorations the old
+// Render loop drew — the loading ellipsis, the error mark, the story
+// count — as row values. The projection reads nothing beyond the item
+// (a *Feed is replaced wholesale when its fetch lands), so the plain
+// Items adapter carries it.
+func feedRows(feeds *prop.Property[[]*Feed]) *prop.Property[components.ItemSource] {
+	return components.Items(feeds, func(fd *Feed) map[string]any {
+		label, style := fd.Title, render.Style{}
 		switch {
 		case fd.Loading:
 			label += " …"
 		case fd.Err != nil:
-			st = errStyle
-			st.Reverse = i == sel
 			label += " ✗"
+			style = errStyle
 		default:
 			label = fmt.Sprintf("%s (%d)", label, len(fd.Stories))
 		}
-		f.Cells.SetString(b.X, b.Y+i, clipTo(label, b.W), st)
-	}
+		return map[string]any{"Label": oneLine(label), "Style": style}
+	})
 }
 
 // ---- StoryList ----

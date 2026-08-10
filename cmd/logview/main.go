@@ -105,7 +105,19 @@ func main() {
 	// --- retained tree, composed in Go ---
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
 	statsP := prop.NewSource("")
-	pane := &logPane{src: visible, scroll: scroll}
+	// The pane is a components.ItemsView in scroll mode: no Selected
+	// binding, a Scroll offset anchored to the tail. What used to be a
+	// hand-rolled Render loop is a projection (one line → one row value
+	// map) and a template (one Text per row); the windowing, the scroll
+	// keys and the wheel are the view's. The conditional dependency that
+	// is this demo's point is untouched: the item source reads `visible`,
+	// so while paused the live buffer is out of the graph and appends
+	// cost zero renders and zero evaluations.
+	pane := &components.ItemsView{
+		Items:    components.Items(visible, projectLine),
+		Scroll:   scroll,
+		Template: lineTemplate,
+	}
 	root := &components.Border{
 		Title: paneTitle("logview", pane),
 		Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}),
@@ -192,84 +204,38 @@ func paneTitle(name string, w interface{ IsFocused() bool }) *prop.Property[stri
 	})
 }
 
-// logPane is a third-party component: it lives outside the gooey package
-// and only implements the Component interface. Reading src during Render
-// is what wires it into the dependency graph. Embedding FocusState
-// makes it a focus stop, which is what lets it own the scroll keys —
-// they are handled here, not by a page-wide binding, and the arrows it
-// consumes never reach the framework's focus navigation.
-type logPane struct {
-	gooey.Base
-	gooey.FocusState
-	src    *prop.Property[[]line]
-	scroll *prop.Property[int]
+// The scrolling pane that used to live here is components.ItemsView in
+// scroll mode. What remains is the part that was never about scrolling:
+// what a LINE is on screen — one projected row and one template.
+
+var levelStyles = map[string]render.Style{
+	"ERROR": {Fg: render.RGB(240, 90, 90), Bold: true},
+	"WARN":  {Fg: render.RGB(230, 190, 80)},
+	"INFO":  {},
+	"DEBUG": {Fg: render.RGB(120, 120, 130)},
 }
 
-func (p *logPane) Measure(avail gooey.Size) gooey.Size { return avail }
-
-// scrollBy runs from a key handler, outside any evaluation — so these
-// Gets read values and record no dependencies. The same Get inside
-// Render is a subscription. Call site decides.
-func (p *logPane) scrollBy(d int) {
-	maxOff := max(0, len(p.src.Get())-p.Bounds().H)
-	p.scroll.Set(max(0, min(p.scroll.Get()+d, maxOff)))
+// projectLine is the projection: the visual decisions the old Render
+// loop made per line, as row values a template binds.
+func projectLine(l line) map[string]any {
+	return map[string]any{
+		"Text":  fmt.Sprintf("%-5s %s", l.level, l.text),
+		"Style": levelStyles[l.level],
+	}
 }
 
-func (p *logPane) HandleKey(ev input.KeyEvent) bool {
-	switch ev {
-	case input.Rune('k'), input.Named(input.KeyUp):
-		p.scrollBy(+1)
-	case input.Rune('j'), input.Named(input.KeyDown):
-		p.scrollBy(-1)
-	case input.Named(input.KeyPageUp):
-		p.scrollBy(p.Bounds().H)
-	case input.Named(input.KeyPageDown):
-		p.scrollBy(-p.Bounds().H)
-	case input.Named(input.KeyEnd):
-		p.scroll.Set(0)
-	default:
-		return false
+// lineTemplate is the Go spelling of an <ItemsView.ItemTemplate>: one
+// row is one Text bound to the row's live handles.
+func lineTemplate(values map[string]any) (gooey.Component, error) {
+	text, ok := values["Text"].(*prop.Property[string])
+	if !ok {
+		return nil, fmt.Errorf("Text is %T", values["Text"])
 	}
-	return true
-}
-
-func (p *logPane) HandleMouse(ev input.MouseEvent) bool {
-	switch ev.Kind {
-	case input.WheelUp:
-		p.scrollBy(+3)
-	case input.WheelDown:
-		p.scrollBy(-3)
-	default:
-		return false
+	style, ok := values["Style"].(*prop.Property[render.Style])
+	if !ok {
+		return nil, fmt.Errorf("Style is %T", values["Style"])
 	}
-	return true
-}
-
-func (p *logPane) Render(f *gooey.Frame) {
-	styles := map[string]render.Style{
-		"ERROR": {Fg: render.RGB(240, 90, 90), Bold: true},
-		"WARN":  {Fg: render.RGB(230, 190, 80)},
-		"INFO":  {},
-		"DEBUG": {Fg: render.RGB(120, 120, 130)},
-	}
-	b := p.Bounds()
-	ls := p.src.Get()
-	// The window ends `scroll` lines back from the tail. Clamping here
-	// is read-only: writing the property during a paint evaluation would
-	// dirty this node from inside its own evaluation.
-	end := len(ls) - min(p.scroll.Get(), max(0, len(ls)-b.H))
-	if start := max(0, end-b.H); start < end {
-		ls = ls[start:end]
-	} else {
-		ls = nil
-	}
-	for i, l := range ls {
-		s := fmt.Sprintf("%-5s %s", l.level, l.text)
-		if len(s) > b.W {
-			s = s[:b.W]
-		}
-		f.Cells.SetString(b.X, b.Y+i, s, styles[l.level])
-	}
+	return &components.Text{Content: text, Style: style}, nil
 }
 
 // --- synthetic but realistic traffic ---

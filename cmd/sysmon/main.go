@@ -66,6 +66,32 @@ func main() {
 	tableTitle := prop.NewComputed(func() string {
 		return fmt.Sprintf("processes by %s", sortKey.Get())
 	})
+	// The table's rows, projected for an ItemsView. Built inside a
+	// computed because a row's LOOK depends on its rank (the top process
+	// is bold), and rank is a property of the sorted slice, not of the
+	// item — the ItemsOf pattern. The payoff over the old hand-rolled
+	// table is damage: a tick that reorders nothing and changes two
+	// numbers repaints two rows, not the whole table.
+	tableRows := prop.NewComputed(func() components.ItemSource {
+		ps := sorted.Get()
+		rows := make([]procRow, len(ps))
+		for i, p := range ps {
+			style := render.Style{}
+			if p.cpu >= 50 {
+				style = warn
+			}
+			if i == 0 {
+				style.Bold = true
+			}
+			rows[i] = procRow{
+				text:  fmt.Sprintf("%7d  %-24s %6.1f %9d", p.pid, clip(p.comm, 24), p.cpu, p.memMB),
+				style: style,
+			}
+		}
+		return components.ItemsOf(rows, func(r procRow) map[string]any {
+			return map[string]any{"Row": r.text, "Style": r.style}
+		})
+	})
 
 	// --- tree ---
 	host, _ := os.Hostname()
@@ -89,7 +115,13 @@ func main() {
 		&components.HStack{Gap: 3, Children: []gooey.Component{left, right}},
 		&components.Text{Content: components.Str("")},
 		&components.Text{Content: tableTitle, Style: components.Sty(accent)},
-		&procTable{src: sorted},
+		&components.Text{
+			Content: components.Str(fmt.Sprintf("%7s  %-24s %6s %9s", "PID", "COMMAND", "CPU%", "MEM MB")),
+			Style:   components.Sty(render.Style{Bold: true, Underline: true}),
+		},
+		// NoFocus keeps this page focus-less on purpose: the KeyBinding
+		// comment below depends on dispatch starting at the root.
+		&components.ItemsView{Items: tableRows, Template: procTemplate, NoFocus: true},
 	}}}
 
 	// Keys are declared as attachments rather than switched on in the
@@ -180,9 +212,11 @@ func main() {
 //
 // The Gauge and Sparkline that used to live here are now framework
 // built-ins (components.Gauge, components.Sparkline) — they were written here,
-// proved here, and promoted once their shape stopped moving. The
-// process table stays local: a general list/table component is the
-// DataTemplates chapter, not a copy of this one.
+// proved here, and promoted once their shape stopped moving. The process
+// table followed: its rows ride components.ItemsView now, and only the
+// projection above — what a process row SAYS — is this demo's own. Full
+// column machinery (sortable headers, per-column widths) is the DataGrid
+// epic, not this table.
 
 type procInfo struct {
 	pid   int
@@ -191,33 +225,24 @@ type procInfo struct {
 	memMB int
 }
 
-type procTable struct {
-	src    *prop.Property[[]procInfo]
-	bounds gooey.Rect
+// procRow is one projected table row: text and rank-aware style.
+type procRow struct {
+	text  string
+	style render.Style
 }
 
-func (t *procTable) Measure(avail gooey.Size) gooey.Size { return avail }
-func (t *procTable) Arrange(b gooey.Rect)                { t.bounds = b }
-func (t *procTable) Bounds() gooey.Rect                  { return t.bounds }
-
-func (t *procTable) Render(f *gooey.Frame) {
-	header := fmt.Sprintf("%7s  %-24s %6s %9s", "PID", "COMMAND", "CPU%", "MEM MB")
-	f.Cells.SetString(t.bounds.X, t.bounds.Y, header, render.Style{Bold: true, Underline: true})
-	ps := t.src.Get()
-	for i, p := range ps {
-		if i+1 >= t.bounds.H {
-			break
-		}
-		style := render.Style{}
-		if p.cpu >= 50 {
-			style = warn
-		}
-		if i == 0 {
-			style.Bold = true
-		}
-		row := fmt.Sprintf("%7d  %-24s %6.1f %9d", p.pid, clip(p.comm, 24), p.cpu, p.memMB)
-		f.Cells.SetString(t.bounds.X, t.bounds.Y+1+i, clip(row, t.bounds.W), style)
+// procTemplate builds one row of the table — the Go spelling of an
+// <ItemsView.ItemTemplate>.
+func procTemplate(values map[string]any) (gooey.Component, error) {
+	text, ok := values["Row"].(*prop.Property[string])
+	if !ok {
+		return nil, fmt.Errorf("Row is %T", values["Row"])
 	}
+	style, ok := values["Style"].(*prop.Property[render.Style])
+	if !ok {
+		return nil, fmt.Errorf("Style is %T", values["Style"])
+	}
+	return &components.Text{Content: text, Style: style}, nil
 }
 
 func clip(s string, w int) string {

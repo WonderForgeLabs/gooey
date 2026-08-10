@@ -135,3 +135,41 @@ against a 40-item feed to exercise the window.
 browser still hand-render their lists. sysmon's DataGrid still waits on
 its own epic. Grouping, headers, horizontal orientation, recycling pools,
 `x:DataType` and multi-select remain out of scope as designed.
+
+## Migrations round 2 (2026-08-10, issue #19)
+
+Finder's results, logview's pane, sysmon's process rows and reader's
+feed list all ride ItemsView now. Migrating them surfaced four gaps,
+each a small addition to the view rather than a new mechanism:
+
+**Scroll mode** (`Scroll *prop.Property[int]`, consulted only when there
+is no Selected binding): the log-pane shape. The offset is rows back
+from the TAIL — 0 pins the window to the end and follows appends, which
+is what makes it the pause/follow demo's view. The house scroll keys and
+the wheel drive it; Render reads it, so moving it is ordinary damage.
+The logview contract — a paused branch-switching source costs ZERO
+renders and zero evaluations per append — is pinned at the framework
+level now (`TestPausedBranchAppendsCostNothing`).
+
+**`SelectionChanged gooey.Action`**: runs when the VIEW moves the
+selection (key, click, wheel), not when the viewmodel Sets it and not on
+a clamped no-op — it reports change, not intent. Reader's feed list uses
+it to reset the story cursor. This deliberately drops the old feedRows
+quirk of firing on selection-preserving gestures.
+
+**`NoFocus` / `Focusable="false"`**: takes the view out of the tab
+order. Finder's results are the case: fzf-style, the query line is the
+only focus stop, a click selects by hit-test (focus-follows-click finds
+nothing to move to) and typing never goes dead. This replaced finder's
+hand-rolled "click, then hand focus back to the query" dance.
+
+**`[]int` joined the row-value type switch**: matched-rune positions are
+a real row datum (finder's highlight cell), and a fixed literal would go
+stale on row reuse. Compared by contents (`slices.Equal`), so an equal
+re-projection stays damage-free.
+
+sysmon remains rows-only on purpose: the columns live in the projection's
+format string. Sortable headers and per-column machinery are the DataGrid
+epic (#80), not this view. Still hand-rolled: markuplog's LogPane (it is
+the custom-component tutorial example; migrating it would need the
+Scroll attribute in markup) and browser's demo list.

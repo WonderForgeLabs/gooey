@@ -90,6 +90,19 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	if v.Activate, err = ctx.Command(e.Attrs["Activate"]); err != nil {
 		return nil, fmt.Errorf("markup: <ItemsView Activate=%q>: %w", e.Attrs["Activate"], err)
 	}
+	if v.SelectionChanged, err = ctx.Command(e.Attrs["SelectionChanged"]); err != nil {
+		return nil, fmt.Errorf("markup: <ItemsView SelectionChanged=%q>: %w", e.Attrs["SelectionChanged"], err)
+	}
+	// Focusable is XAML's spelling; the Go field is the zero-defaulted
+	// inverse. Only the two boolean words are accepted — a typo here
+	// would otherwise silently leave the view in the tab order.
+	switch e.Attrs["Focusable"] {
+	case "", "true":
+	case "false":
+		v.NoFocus = true
+	default:
+		return nil, fmt.Errorf("markup: <ItemsView Focusable=%q>: want \"true\" or \"false\"", e.Attrs["Focusable"])
+	}
 	if err := attachAll(e, v, attach); err != nil {
 		return nil, err
 	}
