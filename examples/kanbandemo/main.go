@@ -29,16 +29,42 @@
 //
 //	cd examples/kanbandemo && go run . -mcp 127.0.0.1:7778 -with-worker \
 //	    -worker-python /path/to/.venv/bin/python
+//
+// # Tabs and the MCP traffic log
+//
+// The bottom panel is a hand-rolled tab switcher local to this demo (not
+// a new framework component): a "mcp" tab with the endpoint + tool-usage
+// text this file always had, and a "log" tab showing every raw MCP
+// request/response this server has handled, live. ctrl+t (or clicking
+// the [ MCP ]/[ Log ] header buttons) flips ActiveTab, and each panel's
+// own Visibility="{{...}}" binding — a *prop.Property[bool] through
+// layout.go's BindVisibilityBool — is the whole switching mechanism; no
+// structural rebuild. The log tab's ItemsView is Go-composed (like
+// cmd/logview) and registered as the "LogPanel" markup element because
+// its Scroll (tail-anchored) field has no markup attribute yet.
+//
+// Traffic capture is pure HTTP-layer instrumentation: mcpTrafficLogger
+// wraps mcp.New's Handler() (kanbandemo switched from the mcp.Serve
+// convenience to mcp.New + its own net.Listener/http.Server so it could
+// wrap the handler at all) and tees the request body and response body
+// into the log. It runs on net/http goroutines, never the UI loop —
+// appendLogEntry marshals the append back through app.Post, same as any
+// other async source per the framework's confinement rule.
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -57,6 +83,125 @@ type Card struct {
 
 func cardFields(c Card) map[string]any {
 	return map[string]any{"Title": c.Title}
+}
+
+// logEntry is one captured MCP request or response — this demo's own
+// local state, in the mold of cmd/logview's `line` struct, not a
+// reusable framework type.
+type logEntry struct {
+	Time time.Time
+	Dir  string // "in" (request) or "out" (response)
+	Text string // the full raw JSON-RPC body, never truncated
+}
+
+// maxLogEntries bounds the captured log; oldest entries drop first.
+const maxLogEntries = 200
+
+// logDisplayTruncate caps how many bytes of a log entry's raw text show
+// in its row — the captured Text itself (logEntry.Text) is kept whole.
+const logDisplayTruncate = 500
+
+var (
+	logInStyle  = render.Style{Fg: render.RGB(120, 200, 140)}
+	logOutStyle = render.Style{Fg: render.RGB(255, 170, 60)}
+)
+
+// projectLogEntry is the ItemsView projection: what a captured message
+// looks like as one row. Mirrors cmd/logview's projectLine.
+func projectLogEntry(e logEntry) map[string]any {
+	text := strings.ReplaceAll(e.Text, "\n", " ")
+	if n := len(text); n > logDisplayTruncate {
+		text = fmt.Sprintf("%s...(%d more bytes)", text[:logDisplayTruncate], n-logDisplayTruncate)
+	}
+	arrow, style := "← out", logOutStyle
+	if e.Dir == "in" {
+		arrow, style = "→ in ", logInStyle
+	}
+	return map[string]any{
+		"Text":  fmt.Sprintf("%s %s %s", e.Time.Format("15:04:05.000"), arrow, text),
+		"Style": style,
+	}
+}
+
+// logEntryTemplate is the Go spelling of an <ItemsView.ItemTemplate>: one
+// row is one Text bound to the row's live handles. Mirrors cmd/logview's
+// lineTemplate.
+func logEntryTemplate(values map[string]any) (gooey.Component, error) {
+	text, ok := values["Text"].(*prop.Property[string])
+	if !ok {
+		return nil, fmt.Errorf("Text is %T", values["Text"])
+	}
+	style, ok := values["Style"].(*prop.Property[render.Style])
+	if !ok {
+		return nil, fmt.Errorf("Style is %T", values["Style"])
+	}
+	return &components.Text{Content: text, Style: style}, nil
+}
+
+// respCapture tees everything written to an http.ResponseWriter into a
+// buffer while still writing it through. gooey/mcp's streamable-HTTP
+// handler runs in JSONResponse mode — one-shot application/json, never a
+// held-open stream — so there is exactly one write to tee, which is what
+// makes this simple tee viable at all.
+type respCapture struct {
+	http.ResponseWriter
+	buf bytes.Buffer
+}
+
+func (r *respCapture) Write(b []byte) (int, error) {
+	r.buf.Write(b)
+	return r.ResponseWriter.Write(b)
+}
+
+// mcpTrafficLogger wraps the MCP endpoint's handler with pure HTTP-layer
+// instrumentation: it buffers the request body and replaces r.Body so the
+// real handler still reads it, then tees the response through
+// respCapture. It has nothing to do with the terminal or the UI-goroutine
+// confinement rule except respecting it — capture runs on whatever
+// net/http goroutine served the request, and posts back through the UI
+// loop rather than touching a property directly.
+func mcpTrafficLogger(next http.Handler, capture func(dir, text string)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody []byte
+		if r.Body != nil {
+			reqBody, _ = io.ReadAll(r.Body)
+			r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(reqBody))
+		}
+		if len(reqBody) > 0 {
+			capture("in", string(reqBody))
+		}
+		rc := &respCapture{ResponseWriter: w}
+		next.ServeHTTP(rc, r)
+		if rc.buf.Len() > 0 {
+			capture("out", rc.buf.String())
+		}
+	})
+}
+
+// checkLoopbackAddr is a light stand-in for gooey/mcp's own unexported
+// checkLoopback. mcp.New's doc says the loopback guarantee becomes the
+// host's problem once it owns the listener itself, which switching to
+// mcp.New (below, so the handler can be wrapped) now makes this app's.
+// Same posture as the package this replaces: v1 MCP has no
+// authentication, so a non-loopback bind is a remote-control handle on
+// this terminal.
+func checkLoopbackAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("kanbandemo: bad -mcp address %q: %w", addr, err)
+	}
+	if host == "" {
+		return fmt.Errorf("kanbandemo: -mcp %q binds every interface; loopback only (use 127.0.0.1:port)", addr)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("kanbandemo: -mcp %q is not a loopback address; this server has no authentication", addr)
+	}
+	return nil
 }
 
 func main() {
@@ -146,7 +291,49 @@ func main() {
 		newTitle.Set("")
 	})
 
+	// --- tab state: which of the bottom panel's two tabs is showing. A
+	// hand-rolled switcher local to this demo (see the package doc) — no
+	// new framework component, no structural rebuild. Each panel's own
+	// Visibility="{{...}}" binds to a *prop.Property[bool]
+	// (layout.go's BindVisibilityBool, the XAML
+	// BooleanToVisibilityConverter default: true is Visible, false is
+	// Collapsed), so the switch IS the mechanism.
+	activeTab := prop.NewSource("mcp") // "mcp" | "log"
+	mcpTabVisible := prop.NewComputed(func() bool { return activeTab.Get() == "mcp" })
+	logTabVisible := prop.NewComputed(func() bool { return activeTab.Get() == "log" })
+	showMcpTab := gooey.Command(func() { activeTab.Set("mcp") })
+	showLogTab := gooey.Command(func() { activeTab.Set("log") })
+	toggleTab := gooey.Command(func() {
+		if activeTab.Get() == "log" {
+			activeTab.Set("mcp")
+		} else {
+			activeTab.Set("log")
+		}
+	})
+
+	// --- log tab: every MCP request/response, captured by
+	// mcpTrafficLogger (below) through appendLogEntry.
+	logEntries := prop.NewSource([]logEntry{})
+	logScroll := prop.NewSource(0)
+
 	help := prop.NewSource("")
+
+	panelStyle := render.Style{Fg: render.RGB(120, 90, 220)}
+	accentStyle := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
+	dimStyle := render.Style{Fg: render.RGB(140, 140, 150)}
+
+	mcpTabStyle := prop.NewComputed(func() render.Style {
+		if activeTab.Get() == "mcp" {
+			return accentStyle
+		}
+		return dimStyle
+	})
+	logTabStyle := prop.NewComputed(func() render.Style {
+		if activeTab.Get() == "log" {
+			return accentStyle
+		}
+		return dimStyle
+	})
 
 	var app *gooey.App
 
@@ -176,11 +363,41 @@ func main() {
 
 			"Help": help,
 			"Quit": gooey.Command(func() { app.Quit() }),
+
+			"ActiveTab":     activeTab,
+			"ShowMcpTab":    showMcpTab,
+			"ShowLogTab":    showLogTab,
+			"ToggleTab":     toggleTab,
+			"McpTabVisible": mcpTabVisible,
+			"LogTabVisible": logTabVisible,
+			"McpTabStyle":   mcpTabStyle,
+			"LogTabStyle":   logTabStyle,
 		},
 		Styles: map[string]render.Style{
-			"panel":  {Fg: render.RGB(120, 90, 220)},
-			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
-			"dim":    {Fg: render.RGB(140, 140, 150)},
+			"panel":  panelStyle,
+			"accent": accentStyle,
+			"dim":    dimStyle,
+		},
+		Components: map[string]markup.Builder{
+			// LogPanel is Go-composed rather than authored in
+			// kanbandemo.gooey because ItemsView.Scroll (the
+			// tail-anchored scroll mode cmd/logview uses) has no markup
+			// attribute yet — markup/itemsview.go only wires Items,
+			// Selected, Activate, SelectionChanged and Focusable. This
+			// mirrors cmd/markuplog's LogPane: a custom element whose
+			// Builder returns a hand-built subtree, registered only in
+			// this app's own ctx.Components.
+			"LogPanel": func(markup.Element, *markup.Context) (gooey.Component, error) {
+				return &components.Border{
+					Title: components.Str("log"),
+					Style: components.Sty(panelStyle),
+					Child: &components.ItemsView{
+						Items:    components.Items(logEntries, projectLogEntry),
+						Scroll:   logScroll,
+						Template: logEntryTemplate,
+					},
+				}, nil
+			},
 		},
 	}
 
@@ -192,27 +409,64 @@ func main() {
 
 	app = gooey.NewApp(markup.Page(os.DirFS(dir), "kanbandemo.gooey", ctx))
 
+	// appendLogEntry is the only thing mcpTrafficLogger calls. It runs on
+	// whatever net/http goroutine served the request, so it may not touch
+	// logEntries directly (properties are UI-goroutine-confined) —
+	// app.Post marshals the append onto the loop, same as any other async
+	// source per the framework's Dispatcher.
+	appendLogEntry := func(direction, text string) {
+		app.Post(func() {
+			cur := logEntries.Get()
+			next := append(append([]logEntry{}, cur...), logEntry{Time: time.Now(), Dir: direction, Text: text})
+			if len(next) > maxLogEntries {
+				next = next[len(next)-maxLogEntries:]
+			}
+			logEntries.Set(next)
+		})
+	}
+
 	if *withWorker && *addr == "" {
 		gooey.Exit(fmt.Errorf("kanbandemo: -with-worker needs the MCP endpoint it pushes markup into; do not pass -mcp \"\""))
 	}
 
 	if *addr != "" {
-		srv, err := mcp.Serve(app, mcp.Options{
-			Addr:    *addr,
+		if err := checkLoopbackAddr(*addr); err != nil {
+			gooey.Exit(err)
+		}
+		// mcp.New builds the server without listening — unlike the
+		// mcp.Serve convenience this demo used before — so this app can
+		// own the net.Listener and http.Server and wrap srv.Handler()
+		// with mcpTrafficLogger before anything is served. That
+		// wrapping is the only reason for the switch.
+		srv, err := mcp.New(app, mcp.Options{
 			Context: ctx,
 			Name:    "gooey-kanbandemo",
 		})
 		if err != nil {
 			gooey.Exit(err)
 		}
-		defer srv.Close()
-		helpText := "MCP endpoint: " + srv.URL() + "\n\n" +
-			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string)\n" +
+		ln, err := net.Listen("tcp", *addr)
+		if err != nil {
+			gooey.Exit(fmt.Errorf("kanbandemo: listen %s: %w", *addr, err))
+		}
+		// srv.URL()/srv.Addr() read a listener mcp.New never sets (only
+		// mcp.Serve does), so the endpoint this app actually bound is
+		// built from ln instead.
+		mcpURL := "http://" + ln.Addr().String() + "/mcp"
+		httpSrv := &http.Server{Handler: mcpTrafficLogger(srv.Handler(), appendLogEntry)}
+		go httpSrv.Serve(ln)
+		defer httpSrv.Close()
+		helpText := "MCP endpoint: " + mcpURL + "\n\n" +
+			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string),\n" +
+			"                               ActiveTab (string, \"mcp\"/\"log\")\n" +
 			"tools/call invoke_command   — {\"name\": \"AddTask\"} (after set_value NewTitle), or TodoMoveRight/DoingMoveLeft/\n" +
-			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove\n" +
-			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"TodoSel\", \"value\": 1}\n" +
+			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove/ShowMcpTab/ShowLogTab/ToggleTab\n" +
+			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"ActiveTab\", \"value\": \"log\"}\n" +
 			"tools/call focus/send_keys  — {\"name\": \"NewTitle\"} then {\"text\": \"buy milk\"}; or focus a list, then keys: [\"down\"]\n" +
-			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, and each column's buttons"
+			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, McpTabBtn, LogTabBtn,\n" +
+			"                               LogPanel, and each column's buttons\n\n" +
+			"tab: ctrl+t (or click [ MCP ] / [ Log ]) switches this panel between this help text and a live log of every raw\n" +
+			"MCP request/response this server has handled — including the very call that is reading this."
 
 		if *withWorker {
 			// examples/temporal-worker relative to kanbandemo's own source
@@ -239,7 +493,7 @@ func main() {
 			// point it at this app's MCP endpoint and a task queue distinct
 			// from the generic one other demos default to.
 			cmd.Env = append(os.Environ(),
-				"GOOEY_MCP_URL="+srv.URL(),
+				"GOOEY_MCP_URL="+mcpURL,
 				"TEMPORAL_TASK_QUEUE="+*workerTaskQueue,
 			)
 			app.AddCompanion(gooey.CompanionCmd("temporal-worker", cmd, gooey.CompanionOutput(logFile)))

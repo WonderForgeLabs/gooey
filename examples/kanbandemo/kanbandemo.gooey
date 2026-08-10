@@ -1,5 +1,5 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Grid Rows="Auto,*,Auto,Auto">
+  <Grid Rows="Auto,*,Auto,Auto,Auto">
     <HStack Grid.Row="0" Gap="1">
       <Text Style="dim">new task:</Text>
       <TextBox Name="NewTitle" Text="{{.NewTitle}}" Prompt="&gt; " AccentStyle="accent"/>
@@ -52,13 +52,21 @@
       </Border>
     </Grid>
 
-    <Border Grid.Row="2" Title="mcp" Style="panel">
+    <HStack Grid.Row="2" Gap="1">
+      <Button Name="McpTabBtn" Content="MCP" Click="{{.ShowMcpTab}}" Style="{{.McpTabStyle}}"/>
+      <Button Name="LogTabBtn" Content="Log" Click="{{.ShowLogTab}}" Style="{{.LogTabStyle}}"/>
+    </HStack>
+
+    <Border Grid.Row="3" Title="mcp" Style="panel" Visibility="{{.McpTabVisible}}">
       <Text Name="Help" Margin="1,0" Style="dim">{{.Help}}</Text>
     </Border>
 
-    <Text Grid.Row="3" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   q: quit</Text>
+    <LogPanel Grid.Row="3" Name="LogPanel" Height="12" Visibility="{{.LogTabVisible}}"/>
+
+    <Text Grid.Row="4" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   ctrl+t: switch mcp/log tab   q: quit</Text>
 
     <KeyBinding Gesture="q" Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+t" Command="{{.ToggleTab}}"/>
   </Grid>
 </Gooey>
