@@ -105,6 +105,7 @@ in [docs/specs/2026-08-10-runtime-signals.md](docs/specs/2026-08-10-runtime-sign
 | Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Widgets read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | designed | [Spec](docs/specs/2026-08-10-markup-declared-properties.md); not implemented |
 | Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
+| MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Loopback-only, opt-in, no auth; every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)) |
 
 ## Demos
 
@@ -121,6 +122,7 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `cmd/statedemo` | [statedemo.gif](statedemo.gif) | No-code-behind markup and reactive serialization |
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
 | `cmd/colordemo` | [colordemo.gif](colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
+| `cmd/mcpdemo` | [mcpdemo.gif](mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
 | `cmd/sysmon` | — | Not yet cataloged |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
@@ -137,7 +139,7 @@ go run ./cmd/browser
 - [docs/markup-reference.md](docs/markup-reference.md) — every element, attribute, gesture, and binding rule
 - [docs/learn/](docs/learn/index.md) — the tutorial series, how-to guides, and concepts, with runnable code under [docs/learn/examples/](docs/learn/examples)
 - [docs/demos.md](docs/demos.md) — what each demo exercises, with walkthroughs
-- [docs/specs/](docs/specs/) — decision records: [markup-declared properties](docs/specs/2026-08-10-markup-declared-properties.md), [reader design](docs/specs/2026-08-10-reader-design.md), [remote handlers](docs/specs/2026-08-10-remote-handlers-design.md), [container backgrounds](docs/specs/2026-08-10-container-backgrounds.md)
+- [docs/specs/](docs/specs/) — decision records: [markup-declared properties](docs/specs/2026-08-10-markup-declared-properties.md), [reader design](docs/specs/2026-08-10-reader-design.md), [remote handlers](docs/specs/2026-08-10-remote-handlers-design.md), [container backgrounds](docs/specs/2026-08-10-container-backgrounds.md), [MCP server](docs/specs/2026-08-10-mcp-server.md)
 
 ## POC limits, honestly
 
