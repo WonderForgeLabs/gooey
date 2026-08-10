@@ -174,3 +174,26 @@ animation (the preview widget owns a ticker that posts frames through the
 dispatcher and is joined on stop — the same discipline as `<Timer>`, not
 the element itself),
 and the damage system — an animation tick repaints exactly one widget.
+
+## sysmon
+
+A live system monitor over real `/proc` data — per-core CPU gauges, a
+memory gauge, a total-CPU sparkline, and a process table sortable by CPU
+or memory.
+
+It is the demo where the extracted visual components earn their keep:
+the gauges and the sparkline are the framework's own `gooey.Gauge` and
+`gooey.Sparkline` (they were written here first, then promoted), with
+threshold coloring driven by the sampled values. Every displayed number
+flows through a dependency property, and the sampler only `Set`s values
+that actually changed — so on an idle system a 700ms tick repaints
+almost nothing, and the damage counter proves it. The process table
+stays demo-local deliberately: generalized lists are the DataTemplates
+epic, and this table is one of its target consumers.
+
+- Run: `go run ./cmd/sysmon`
+- Keys: `c`/`m` sort the process table by CPU / memory, `q` quit
+
+Exercises viewmodel-side dedup against the property graph (Set only on
+change), the promoted Gauge/Sparkline components, threshold styling,
+and a screen-wide composition sampled from a real, noisy data source.
