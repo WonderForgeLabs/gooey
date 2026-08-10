@@ -447,6 +447,39 @@ Place it as the **last child of the root**, spanning the page (in a `Grid`, `Gri
 
 Auto-dismiss follows the Timer discipline: the goroutine posts the dismissal to the `Dispatcher` and the UI loop runs it, and `Composer.Close` stops-and-joins so no dismissal can arrive after teardown. A host composed without a dispatcher still shows toasts; they just do not expire on their own.
 
+### AdornmentLayer
+
+`components.AdornmentLayer` — the adorner plane: components positioned against a **target** component's arranged bounds rather than by their own place in layout, painted above the whole page. Tooltips are the first customer; validation markers, focus rings and badges are the same shape.
+
+```xml
+<AdornmentLayer Grid.Row="0" Grid.RowSpan="12"/>
+```
+
+Declare it as the **last child of the root**, spanning the page — the same hosting rule as `ToastHost` (declare it after the ToastHost and tooltips paint above toasts too). It takes no children and no attributes beyond `Name`: adornments attach themselves at runtime (a `Tooltip` finds the layer on its own), and code adds custom adorners through `Add`/`Remove`. The layer paints nothing, is transparent to the pointer, and re-anchors every adornment each frame, so a moved or resized target drags its adornments along and a target that leaves the tree or turns non-visible takes them down.
+
+### Tooltip
+
+`components.Tooltip` — hover help on any element, from pure markup. Two forms:
+
+```xml
+<Button Content="toast" Click="{{.Notify}}">
+  <Tooltip Text="pop the status as a toast" Gesture="ctrl+t"/>
+</Button>
+
+<Text Tooltip="just a label">plain</Text>
+```
+
+The child form is a **non-visual attachment** like `KeyBinding` — it hangs off the element it describes, never laid out or painted. The `Tooltip="…"` attribute is shorthand for the same thing and works on **any** element (it belongs to the element like the layout attributes, so on a user-control instance it decorates the instance rather than crossing into the control's context). Both need an `AdornmentLayer` on the page to show in.
+
+| Attribute | Meaning |
+|---|---|
+| `Text` | What the tip says. Literal or bound; bound text stays live while the tip is up. |
+| `Delay` | Hover-rest time before showing. Any `time.ParseDuration` string; absent means 600ms. |
+| `Gesture` | A **display hint** in the gesture syntax, validated at load and shown dim in the canonical spelling — the `MenuItem` rule. Absent, the tip renders the host's own `KeyBinding` gesture automatically. Display only; wiring the key stays a `KeyBinding`'s job. |
+| `Style` | Named style; absent paints reverse-video. |
+
+Resting the pointer on the element for `Delay` shows the tip adjacent to it — below, flipping above when the screen runs out — and it dismisses on hover-out, on any key, and on any press (the key and the press still do their normal job). Only one tip is ever up: crossing to another tooltipped element swaps them, and with nested tooltipped elements the innermost wins. The delay follows the Timer discipline (`Composer.Close` stops-and-joins); a composition without a dispatcher shows tips immediately instead.
+
 ### ColorPicker
 
 `components.ColorPicker` — an interactive RGB editor, and the worked example of a component that adapts to the terminal it landed on.

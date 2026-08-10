@@ -249,8 +249,8 @@ func parseDeclaration(e Element) (Declaration, error) {
 	if d.Name == "" {
 		return d, fmt.Errorf("markup: <x:Property> needs a Name")
 	}
-	if d.Name == "Name" || layoutAttr(d.Name) {
-		return d, fmt.Errorf("markup: dependency property %q — the name is reserved: instance attributes named Name and the layout attributes belong to the element, not to the control", d.Name)
+	if d.Name == "Name" || d.Name == "Tooltip" || layoutAttr(d.Name) {
+		return d, fmt.Errorf("markup: dependency property %q — the name is reserved: instance attributes named Name and Tooltip and the layout attributes belong to the element, not to the control", d.Name)
 	}
 	d.Type = strings.TrimSpace(e.Attrs["Type"])
 	if d.Type == "" {
@@ -353,7 +353,7 @@ func (d Declaration) resolve(file string, e Element, parent *Context) (any, erro
 func (ds declarations) checkAttrs(file string, e Element) error {
 	var unknown []string
 	for k := range e.Attrs {
-		if k == "Name" || layoutAttr(k) {
+		if k == "Name" || k == "Tooltip" || layoutAttr(k) {
 			continue
 		}
 		if _, ok := ds.byName[k]; ok {

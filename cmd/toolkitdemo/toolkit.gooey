@@ -17,10 +17,12 @@
 
       <Text Grid.Row="6" Style="dim">ButtonBar — ←/→ walk along the bar and wrap; "toast" pops a notification</Text>
       <ButtonBar Grid.Row="7" Gap="3" Uniform="true" Separator="│">
-        <Button Content="start" Click="{{.Start}}"/>
-        <Button Content="abort" Click="{{.Abort}}"/>
-        <Button Content="reset all" Click="{{.Reset}}"/>
-        <Button Content="toast" Click="{{.Notify}}"/>
+        <Button Content="start" Click="{{.Start}}" Tooltip="run the job from the top"/>
+        <Button Content="abort" Click="{{.Abort}}" Tooltip="stop it mid-flight"/>
+        <Button Content="reset all" Click="{{.Reset}}" Tooltip="back to idle"/>
+        <Button Content="toast" Click="{{.Notify}}">
+          <Tooltip Text="pop the status as a toast" Gesture="ctrl+t"/>
+        </Button>
       </ButtonBar>
 
       <Text Grid.Row="8" Style="dim">Button Chrome="pixel" — a three-row pill, drawn in pixels where the terminal has a protocol</Text>
@@ -63,6 +65,11 @@
         </Menu>
       </MenuBar>
       <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="12" Duration="2500ms"/>
+      <!-- The adornment layer hosts tooltips (and any future adorner):
+           declared very last, so tips paint above even the toasts. The
+           buttons above wear Tooltip="..." shorthands; the toast button
+           declares the child form with a gesture hint. -->
+      <AdornmentLayer Grid.Row="0" Grid.RowSpan="12"/>
     </Grid>
   </Border>
 </Gooey>

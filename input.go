@@ -188,6 +188,45 @@ type FocusHost interface{ SetFocusManager(*FocusManager) }
 // them out or painting them (see Base.Attach).
 type NonVisual interface{ NonVisual() bool }
 
+// Hosted is implemented by non-visual attachments that need to know the
+// component they hang off — the input-tree walk tells them, on the first
+// walk and on every Resync. A Tooltip uses it to anchor its popup to the
+// component it decorates and to read that component's declared
+// KeyBindings for its gesture hint.
+type Hosted interface{ SetHost(Component) }
+
+// HoverWatcher is the attachment seam behind hover-triggered transient
+// UI (Tooltip is the first customer). An attachment implementing it is
+// told when the pointer enters or leaves its HOST's subtree — the
+// component it is attached to, everything under it included — and when
+// any key or button press arrives, the conventional dismissals for a
+// transient surface.
+//
+// Like hover itself, the pointer notification is exclusive: when
+// watching hosts nest, only the innermost host containing the pointer
+// counts as entered, so a tooltip on a button inside a tooltipped panel
+// shows the button's tip, not both.
+type HoverWatcher interface {
+	// PointerOver reports the pointer entering (true) or leaving (false)
+	// the host component's subtree. Called on the UI goroutine, from
+	// event dispatch — property access is legal.
+	PointerOver(over bool)
+	// Interrupted fires on every key dispatch and every pointer press.
+	// It is a notification, not a handler: the event still routes
+	// normally, which is exactly what a tooltip wants — the keystroke
+	// both dismisses the tip and does its job.
+	Interrupted()
+}
+
+// hoverWatch pairs a watcher with the host it was attached to, plus the
+// edge-detection state that turns per-event containment into
+// enter/leave notifications.
+type hoverWatch struct {
+	host Component
+	w    HoverWatcher
+	over bool
+}
+
 // KeyBinding is a declared gesture: <KeyBinding Gesture="ctrl+s"
 // Command="{{.Save}}"/>. It hangs off its parent component as an
 // attachment, and the dispatcher only reaches it while the focused
@@ -216,6 +255,7 @@ type FocusManager struct {
 	order    []Component
 	parent   map[Component]Component
 	bindings map[Component][]*KeyBinding
+	watchers []*hoverWatch
 	cur      int
 	prev     Component // what held focus before the last real move
 
@@ -279,10 +319,22 @@ func NewFocusManager(root Component) *FocusManager {
 // can see.
 func (m *FocusManager) Resync() {
 	focused, hover, captor := m.Focused(), m.hover, m.captor
+	// Watcher enter/leave state survives the rebuild: a re-sync in the
+	// middle of a hover (showing a tooltip IS a re-sync) must not read
+	// as the pointer leaving and re-entering, or every structural change
+	// would restart every delay timer on the page.
+	wasOver := make(map[HoverWatcher]bool, len(m.watchers))
+	for _, hw := range m.watchers {
+		wasOver[hw.w] = hw.over
+	}
 	m.order = m.order[:0]
 	m.parent = map[Component]Component{}
 	m.bindings = map[Component][]*KeyBinding{}
+	m.watchers = m.watchers[:0]
 	m.walk(m.root, nil)
+	for _, hw := range m.watchers {
+		hw.over = wasOver[hw.w]
+	}
 
 	m.cur = -1
 	for i, w := range m.order {
@@ -330,6 +382,20 @@ func (m *FocusManager) walk(w, parent Component) {
 			if kb, ok := at.(*KeyBinding); ok {
 				m.bindings[w] = append(m.bindings[w], kb)
 			}
+			// Attachments get the same seams components do: an
+			// attachment that needs the input tree (a Tooltip reaching
+			// the adornment layer) asks the way a FocusHost does, and
+			// one that needs its host is told — attachments have no
+			// parent pointer, and the walk is the one place that knows.
+			if h, ok := at.(Hosted); ok {
+				h.SetHost(w)
+			}
+			if fh, ok := at.(FocusHost); ok {
+				fh.SetFocusManager(m)
+			}
+			if hw, ok := at.(HoverWatcher); ok {
+				m.watchers = append(m.watchers, &hoverWatch{host: w, w: hw})
+			}
 		}
 	}
 	if c, ok := w.(Container); ok {
@@ -376,6 +442,12 @@ func (m *FocusManager) within(root, w Component) bool {
 	}
 	return false
 }
+
+// Root is the component this input tree was built over. Exposed for the
+// pieces of the framework that hang off the tree without being able to
+// see it — an AdornmentLayer checking that an anchor is still reachable,
+// a Tooltip finding the layer to show itself in.
+func (m *FocusManager) Root() Component { return m.root }
 
 // Focused returns the component holding focus, or nil.
 func (m *FocusManager) Focused() Component {
@@ -476,6 +548,7 @@ func (m *FocusManager) reachable(w Component) bool {
 // always beaten its own container's HandleKey and lost to a deeper
 // component's, and that ordering is what scopes a control's gestures.
 func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
+	m.interrupt() // any key dismisses transient UI; the key still routes
 	start := m.Focused()
 	if start == nil {
 		start = m.root
