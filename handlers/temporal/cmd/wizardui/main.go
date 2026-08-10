@@ -91,7 +91,9 @@ func main() {
 	)
 	flag.Parse()
 
-	tc, err := client.Dial(client.Options{HostPort: *address})
+	// NopLogger: the SDK's default logger writes to stderr, which in
+	// raw mode prints straight over the UI's bottom rows.
+	tc, err := client.Dial(client.Options{HostPort: *address, Logger: temporalhandlers.NopLogger})
 	if err != nil {
 		fatal("cannot reach the Temporal server at %s: %v\n"+
 			"start one with: temporal server start-dev --headless", *address, err)
