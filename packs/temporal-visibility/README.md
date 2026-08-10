@@ -57,6 +57,36 @@ Three behaviors, uniformly:
   invocation's `StartToCloseTimeout`. The activity context flows into
   the RPC, so timeout and cancellation behave as Temporal intends.
 
+## Convenience activities (scalar sugar)
+
+Three more registered names wrap the proto-true core for callers whose
+arguments and results must cross as **scalars** — gooey markup first
+among them, where every argument is a string read from a property and
+the result lands in a string property:
+
+| name | wraps | signature |
+|---|---|---|
+| `visibility.Query` | `visibility.ListWorkflowExecutions` | `(query, pageSize, pageToken string) → protojson string` |
+| `visibility.Count` | `visibility.CountWorkflowExecutions` | `(query string) → protojson string` |
+| `visibility.Describe` | `visibility.DescribeWorkflowExecution` | `(workflowID, runID string) → protojson string` |
+
+The proto activities are the contract; these are sugar, and they add
+nothing of their own: each builds the proto request from its scalars
+(page size parsed, page token base64-decoded — exactly the text
+protojson makes of the bytes, so a result's `nextPageToken` passes
+straight back as an argument), calls the core activity (namespace
+defaulting included), and returns the response as protojson — the same
+canonical JSON every other Temporal tool renders. Bad scalars fail
+non-retryably.
+
+Two boundary facts make this layer necessary rather than merely
+convenient for markup callers: a JSON *string* payload cannot
+deserialize into a proto request message, and the gooey provider decodes
+results into `any`, which the SDK's proto-JSON payload converter
+refuses (`ErrValuePtrMustConcreteType`) — so a proto-returning activity
+cannot deliver a result through `{{temporal:Activity …}}` at all.
+Scalars in, protojson text out is the shape that crosses both ways.
+
 ## Calling from another language
 
 Proto fidelity means zero translation. The same activity, scheduled
@@ -96,12 +126,14 @@ proto messages natively in both directions.
 ## In gooey
 
 gooey consumes the pack from its `handlers/temporal` module: the
-`workers/visibilityworker` binary serves it, and markup reaches it
-through the `temporal:Activity` provider —
+`workers/visibilityworker` binary serves it (and `cmd/temporalops` — the
+ops dashboard demo — serves the same registration as an in-process
+companion), and markup reaches it through the `temporal:Activity`
+provider, via the convenience layer —
 
 ```xml
-<Button Content="list"
-        Click="{{temporal:Activity `visibility.ListWorkflowExecutions` | into .Executions}}"/>
+<Button Content="run"
+        Click="{{temporal:Activity `visibility.Query` .Query .PageSize .PageToken | into .RowsJSON}}"/>
 ```
 
 Design and decisions: `docs/specs/2026-08-10-temporal-visibility-stdlib.md`

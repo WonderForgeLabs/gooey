@@ -128,6 +128,46 @@ The walkthrough: pressing `[ net:Get ]` fills the first box from the demo's own 
 
 Exercises handler namespaces end to end: xmlns prefix capture, the `{{ns:Func … | into .Target}}` grammar, registration-as-capability-grant, and the Dispatcher marshaling async completions back onto the UI goroutine. The demo and its worker live in the `handlers/temporal` module rather than `cmd/`, because that is where the Temporal SDK dependency is quarantined — core gooey builds without it.
 
+## temporalops
+
+![temporalops](../temporalops.gif)
+
+The Temporal ops dashboard: live visibility data in a TUI, with every Temporal call declared in markup. A query bar speaks Temporal's visibility query language, the execution list is an `ItemsView` over real `temporal.api.*` responses, the status bar counts every match, and the describe pane follows the selection:
+
+```xml
+Click="{{temporal:Activity `visibility.Query` .Query .PageSize .PageToken | into .RowsJSON}}"
+SelectionChanged="{{temporal:Activity `visibility.Describe` .SelectedWorkflowID .SelectedRunID | into .DescribeJSON}}"
+```
+
+The activities are the `packs/temporal-visibility` pack's *convenience layer* — scalar arguments in, protojson text out — because that is exactly what can cross the markup boundary: each argument is a string read from a property at invoke time, and the result is delivered into a string property. The viewmodel (`handlers/temporal/internal/ops`) never talks to Temporal; it parses what the activities deliver (rows projected via `ItemsOf`, the selected row's IDs, the count) and keeps the page-token history that `next`/`prev` replay — the token itself round-trips verbatim as the base64 text protojson made of it.
+
+The walkthrough: the opening fetch fills page one (25 of 30 running executions) and the count; moving the selection describes each execution into the lower pane — `executionConfig`, pending activities, the canonical protojson every other Temporal tool shows; `ctrl+n` follows the response's `nextPageToken` to the 5-row page two; `ctrl+p` replays the remembered token back to page one.
+
+- Run: needs a Temporal dev server; the demo brings its own worker (the visibility pack served as a gooey companion), both from `handlers/temporal/`:
+
+  ```sh
+  temporal server start-dev --headless          # shell 1
+  go run ./cmd/temporalops                      # shell 2
+  ```
+
+  or truly one shell — the dev server as a `CompanionCmd` child process:
+
+  ```sh
+  go run ./cmd/temporalops --with-dev-server
+  ```
+
+  or workers where the compute is:
+
+  ```sh
+  go run ./workers/visibilityworker              # shell 2 (or another machine)
+  go run ./cmd/temporalops --with-worker=false   # shell 3
+  ```
+
+  `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` and `GOOEY_TASK_QUEUE` override the defaults for both binaries. Something must be *running* for the list to show — `temporal workflow start --type Anything --task-queue seed-q --workflow-id demo-1` a few times seeds it.
+- Keys: type in the query bar, `enter` run, `tab` move focus, `↑`/`↓` select (describes the selection), `enter` on the list re-describe, `ctrl+n`/`ctrl+p` page, `ctrl+r` refresh, `ctrl+c` quit
+
+Exercises the whole phase-2 stack: the visibility pack's scalar convenience activities (the only shapes that survive both markup boundaries — string args in, string result out of the provider's `any`-typed decode), `ItemsView` + `ItemsOf` over protojson rows with the selection-move damage pinned at three paint nodes, markup-built commands invoked from viewmodel intents through their `Name` (run/next/prev are bookkeeping around the same command the button carries), and the visibility worker as a companion.
+
 ## colordemo
 
 ![colordemo](../colordemo.gif)

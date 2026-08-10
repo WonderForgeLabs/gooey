@@ -1,11 +1,17 @@
 # gooey × Temporal
 
-Two demos live in this module, and they point in opposite directions.
+Three demos live in this module.
 
 **`temporal:Activity`** — a terminal-owned page reaching out for durable
 compute. The markup names an activity, a worker somewhere runs it, the
 result lands in a property. See `cmd/temporaldemo` and the package doc in
 `temporal.go`.
+
+**`cmd/temporalops`** — that same primitive at dashboard scale: the
+Temporal ops dashboard, whose execution list, count, and describe pane
+are all `{{temporal:Activity …}}` expressions over the visibility
+pack's convenience activities. See the demos.md entry and
+`internal/ops`.
 
 **`wf:Signal`** — a workflow-owned application. The workflow serves its
 own screens, mutates them as it advances, and the terminal is a generic
@@ -41,13 +47,22 @@ and markup reaches it like any other activity, no request proto needed
 `visibility_binding_test.go` is the proof: the pack's real activity
 runs against a faked WorkflowService and its proto response crosses
 into a gooey page as protojson — Temporal's canonical field names,
-on screen. The phase-2 ops dashboard (epic #142) builds on this.
+on screen.
+
+The phase-2 ops dashboard, `cmd/temporalops`, builds on this through
+the pack's **convenience layer** (`visibility.Query` / `.Count` /
+`.Describe` — scalar args in, protojson out), which is the shape markup
+arguments and results can actually take; the pack README's
+"Convenience activities" section records why. Its worker is the same
+registration run as a gooey companion (`internal/ops.RunWorker`), with
+`--with-worker=false` and `--with-dev-server` mirroring wizardui's
+deployment triangle.
 
 ## Layout
 
-`cmd/` holds the two things you run to *see* something: `wizardui` and
-`temporaldemo`. `workers/` holds the standalone worker binaries, and
-`internal/` holds the applications themselves.
+`cmd/` holds the things you run to *see* something: `wizardui`,
+`temporaldemo`, and `temporalops`. `workers/` holds the standalone
+worker binaries, and `internal/` holds the applications themselves.
 
 That split is a convention with teeth. `cmd/browser` builds the demo menu
 by scanning each module's `cmd/` one level deep for a `main.go`, so

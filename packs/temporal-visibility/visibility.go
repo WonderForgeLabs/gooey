@@ -71,7 +71,8 @@ const (
 )
 
 // AllNames lists every activity Register registers, in registration
-// order.
+// order: the seven proto-true activities, then the three scalar
+// conveniences (see convenience.go).
 func AllNames() []string {
 	return []string{
 		NameListWorkflowExecutions,
@@ -81,6 +82,9 @@ func AllNames() []string {
 		NameGetSearchAttributes,
 		NameDescribeWorkflowExecution,
 		NameListSearchAttributes,
+		NameQuery,
+		NameCount,
+		NameDescribe,
 	}
 }
 
@@ -130,6 +134,9 @@ func Register(r worker.ActivityRegistry, a *Activities) {
 		{NameGetSearchAttributes, a.GetSearchAttributes},
 		{NameDescribeWorkflowExecution, a.DescribeWorkflowExecution},
 		{NameListSearchAttributes, a.ListSearchAttributes},
+		{NameQuery, a.Query},
+		{NameCount, a.Count},
+		{NameDescribe, a.Describe},
 	} {
 		r.RegisterActivityWithOptions(reg.fn, activity.RegisterOptions{Name: reg.name})
 	}
