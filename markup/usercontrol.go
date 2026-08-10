@@ -184,7 +184,7 @@ func layoutAttr(k string) bool {
 	return strings.HasPrefix(k, "Grid.") || strings.HasPrefix(k, "Canvas.")
 }
 
-// Command resolves an event attribute to a gooey.Command — now three
+// Command resolves an event attribute to a gooey.Action — now three
 // halves of the event-binding split. A handler expression
 // (Click="{{net:Get .Url | into .Body}}") resolves through the
 // document's xmlns table to a registered HandlerProvider, so the
@@ -194,7 +194,13 @@ func layoutAttr(k string) bool {
 // events with no code-behind at all. A bare name (Click="OnSave")
 // resolves against Handlers, the code-behind registry. An empty
 // attribute is not an error — it means the element has no command.
-func (ctx *Context) Command(attr string) (gooey.Command, error) {
+//
+// The binding form accepts anything that implements Action, which is
+// what makes a conditional command transparent to markup: a viewmodel
+// that hands out gooey.NewCommand(save).When(dirty) instead of a bare
+// func changes nothing in the document, and the Button on the other end
+// starts painting itself disabled.
+func (ctx *Context) Command(attr string) (gooey.Action, error) {
 	if strings.TrimSpace(attr) == "" {
 		return nil, nil
 	}
@@ -211,12 +217,12 @@ func (ctx *Context) Command(attr string) (gooey.Command, error) {
 			return nil, err
 		}
 		switch f := v.(type) {
-		case gooey.Command:
+		case gooey.Action: // gooey.Command and *gooey.Cmd both land here
 			return f, nil
 		case func():
 			return gooey.Command(f), nil
 		}
-		return nil, fmt.Errorf("markup: %s is %T; need gooey.Command or func()", attr, v)
+		return nil, fmt.Errorf("markup: %s is %T; need gooey.Command, *gooey.Cmd or func()", attr, v)
 	}
 	if c, ok := ctx.Handlers[attr]; ok {
 		return c, nil

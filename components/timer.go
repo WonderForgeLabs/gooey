@@ -33,7 +33,7 @@ import (
 type Timer struct {
 	gooey.Base
 	Interval time.Duration
-	Tick     gooey.Command
+	Tick     gooey.Action
 	Enabled  *prop.Property[bool] // nil = always enabled
 }
 
@@ -72,7 +72,7 @@ func (t *Timer) fire() {
 	if t.Enabled != nil && !t.Enabled.Get() {
 		return
 	}
-	if t.Tick != nil {
-		t.Tick()
+	if gooey.CanExecute(t.Tick) {
+		t.Tick.Run()
 	}
 }

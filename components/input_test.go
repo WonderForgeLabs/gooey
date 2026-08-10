@@ -8,7 +8,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
-func btn(label string, click gooey.Command) *Button {
+func btn(label string, click gooey.Action) *Button {
 	return &Button{Content: Str(label), Click: click}
 }
 
@@ -72,7 +72,7 @@ func TestFocusMoveDamageIsTwoComponents(t *testing.T) {
 
 func TestButtonActivatesOnEnterAndSpace(t *testing.T) {
 	clicks := 0
-	b := btn("save", func() { clicks++ })
+	b := btn("save", gooey.Command(func() { clicks++ }))
 	c := gooey.NewComposer(&VStack{Children: []gooey.Component{b}}, 20, 3)
 
 	if !c.HandleKey(input.Named(input.KeyEnter)) {
@@ -124,8 +124,8 @@ func TestKeyRoutingFocusedThenBindings(t *testing.T) {
 	pane := &keyPane{}
 	fired := 0
 	root := &VStack{Children: []gooey.Component{pane}}
-	root.Attach(&gooey.KeyBinding{Gesture: input.Rune('j'), Command: func() { fired++ }})
-	root.Attach(&gooey.KeyBinding{Gesture: input.Rune('q'), Command: func() { fired++ }})
+	root.Attach(&gooey.KeyBinding{Gesture: input.Rune('j'), Command: gooey.Command(func() { fired++ })})
+	root.Attach(&gooey.KeyBinding{Gesture: input.Rune('q'), Command: gooey.Command(func() { fired++ })})
 	c := gooey.NewComposer(root, 20, 5)
 
 	// The focused component consumes j, so the page binding never sees it.
@@ -153,7 +153,7 @@ func TestBindingScopeFollowsAncestorChain(t *testing.T) {
 	inner, outer := &keyPane{}, &keyPane{}
 	scoped := &VStack{Children: []gooey.Component{inner}}
 	fired := 0
-	scoped.Attach(&gooey.KeyBinding{Gesture: input.Named(input.KeyEnter), Command: func() { fired++ }})
+	scoped.Attach(&gooey.KeyBinding{Gesture: input.Named(input.KeyEnter), Command: gooey.Command(func() { fired++ })})
 	c := gooey.NewComposer(&VStack{Children: []gooey.Component{scoped, outer}}, 20, 6)
 
 	c.HandleKey(input.Named(input.KeyEnter))

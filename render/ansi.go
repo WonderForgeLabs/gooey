@@ -68,6 +68,9 @@ func sgr(s Style, depth ColorDepth) string {
 	if s.Bold {
 		parts = append(parts, "1")
 	}
+	if s.Dim {
+		parts = append(parts, "2")
+	}
 	if s.Underline {
 		parts = append(parts, "4")
 	}

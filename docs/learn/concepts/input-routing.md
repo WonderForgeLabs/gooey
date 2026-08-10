@@ -40,9 +40,12 @@ anything:
 - **A press focuses** the nearest focusable component at or above the hit,
   and failing that the first focusable descendant — which is what makes
   clicking a pane's border focus the pane.
-- **Implicit capture**: a release belongs to the component the press went
-  down on, and a `MouseClick` is synthesized when press and release land
-  on the same component.
+- **Implicit capture**: the press captures the component it landed on, so
+  every pointer event routes there until the release regardless of what
+  the pointer is over — that is what makes drags work outside a
+  component's own bounds. Hover transitions are suppressed meanwhile. A
+  `MouseClick` is synthesized on release when the pointer is still inside
+  the captor, carrying a click `Count` so a double click is `Count` 2.
 
 Mouse reporting is on unless you decline it (`gooey.WithoutMouse()`), and teardown
 disables it unconditionally.
@@ -54,10 +57,30 @@ Focus and hover are ordinary **source properties** (`FocusState`,
 focus changes as ordinary damage, so moving focus repaints exactly two
 components. There is no focus-specific redraw path.
 
+## Tunnelling comes first
+
+Before the bubble, the event **tunnels**: every ancestor from the root
+down to the target implementing `PreviewKeyHandler` (or
+`PreviewMouseHandler`) is offered it, and the first to take it ends the
+dispatch. That is the parent-veto phase — modal scrims, masked inputs, an
+overlay layer — and it is opt-in, so nothing routes differently until a
+component asks for it. The full order is **tunnel down → target and
+bubble up → framework fallbacks**.
+
+## Commands can say when they are runnable
+
+Event fields are `gooey.Action`: `Run()` plus `CanExecute()`. A plain
+`gooey.Command` (still just `func()`) is always runnable;
+`gooey.NewCommand(run).When(cond)` adds a bool property as the condition.
+Because the graph decides subscriptions by call site, a Button asking
+`CanExecute()` *while painting* has subscribed to the condition — the flip
+repaints that one button — while the same call from a key handler is only
+a question. There is no `CanExecuteChanged` event because the property
+graph already is one.
+
 ## Current limits
 
-No tunneling (preview) phase — dispatch bubbles only. No `CanExecute`, so
-no automatic disabled command state. No mouse capture API beyond the
-implicit press-to-release capture. No built-in editable text component.
+No triple click, no drag threshold, and no system clipboard — `TextBox`
+cut and copy use a process-local kill buffer.
 
 Depth: [architecture.md — the input system](../../architecture.md#the-input-system).

@@ -26,7 +26,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 func TestTimerDeliversTicksThroughTheDispatcher(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
-	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }}
+	timer := &Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ })}
 
 	stop := timer.Start(d.Post)
 	defer stop()
@@ -52,7 +52,7 @@ func TestTimerEnabledFalseSuppressesTheTick(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
 	enabled := prop.NewSource(false)
-	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }, Enabled: enabled}
+	timer := &Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ }), Enabled: enabled}
 
 	stop := timer.Start(d.Post)
 	defer stop()
@@ -74,7 +74,7 @@ func TestTimerEnabledFalseSuppressesTheTick(t *testing.T) {
 func TestTimerNilEnabledMeansAlwaysOn(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
-	timer := &Timer{Interval: time.Millisecond, Tick: func() { ticks++ }}
+	timer := &Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ })}
 	stop := timer.Start(d.Post)
 	defer stop()
 
@@ -88,7 +88,7 @@ func TestTimerNilEnabledMeansAlwaysOn(t *testing.T) {
 func TestTimerWithoutIntervalOrCommandIsInert(t *testing.T) {
 	d := gooey.NewDispatcher()
 	for _, timer := range []*Timer{
-		{Interval: 0, Tick: func() {}},
+		{Interval: 0, Tick: gooey.Command(func() {})},
 		{Interval: time.Millisecond},
 	} {
 		stop := timer.Start(d.Post)
@@ -118,7 +118,7 @@ func TestComposerStartsAttachedTimers(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
 	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
-	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
+	root.Attach(&Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ })})
 
 	comp := gooey.NewComposer(root, 20, 3)
 	time.Sleep(5 * time.Millisecond)
@@ -140,7 +140,7 @@ func TestComposerCloseStopsTimersSoSwapsDoNotLeak(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
 	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
-	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
+	root.Attach(&Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ })})
 
 	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)
@@ -171,7 +171,7 @@ func TestComposerCloseIsIdempotentAndStartRestarts(t *testing.T) {
 	d := gooey.NewDispatcher()
 	ticks := 0
 	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
-	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() { ticks++ }})
+	root.Attach(&Timer{Interval: time.Millisecond, Tick: gooey.Command(func() { ticks++ })})
 
 	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)
@@ -192,7 +192,7 @@ func TestComposerCloseIsIdempotentAndStartRestarts(t *testing.T) {
 func TestComposerStartTwiceStopsTheFirstRun(t *testing.T) {
 	d := gooey.NewDispatcher()
 	root := &VStack{Children: []gooey.Component{&Text{Content: Str("x")}}}
-	root.Attach(&Timer{Interval: time.Millisecond, Tick: func() {}})
+	root.Attach(&Timer{Interval: time.Millisecond, Tick: gooey.Command(func() {})})
 
 	comp := gooey.NewComposer(root, 20, 3)
 	comp.Start(d)

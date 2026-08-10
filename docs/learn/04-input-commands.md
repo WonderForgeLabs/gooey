@@ -37,7 +37,7 @@ Event attributes accept two forms, and the split matters:
 
 | Form | Resolves against | Use when |
 |---|---|---|
-| `Click="{{.Save}}"` | `Context.Values` — must hold a `gooey.Command` or a `func()` | The delegate lives in your viewmodel. Works in markup-only controls with **no code-behind at all**. |
+| `Click="{{.Save}}"` | `Context.Values` — must hold a `gooey.Action` (`gooey.Command`, or a `*gooey.Cmd` from `gooey.NewCommand`) or a `func()` | The delegate lives in your viewmodel. Works in markup-only controls with **no code-behind at all**. |
 | `Click="OnSave"` | `Context.Handlers` — the code-behind registry | You want a named handler registry. An unregistered name is a load-time error. |
 
 An empty event attribute is not an error; the element simply has no
@@ -115,6 +115,14 @@ A key event walks a single path: start at the **focused component**, then
 each ancestor up to the root. At every level, the KeyBindings attached
 there are matched first, then that component's own key handler. The first
 handler to return true stops the walk.
+
+Before that walk there is a **tunnelling** pass in the other direction:
+every ancestor from the root down to the focused component that
+implements `gooey.PreviewKeyHandler` is offered the event, and the first
+to take it ends the dispatch entirely. That is the parent-veto phase —
+a modal scrim swallowing what is aimed at the layer beneath it — and
+nothing uses it unless a component opts in, so it changes nothing about
+the pages above.
 
 So a binding fires only while the focused component's path to the root
 passes through the element it was declared on. That gives you three
@@ -218,15 +226,30 @@ implicit capture, and click synthesis.
   exactly two components.
 - Mouse support is one call, and it cleans up after itself.
 
-## Current limitations
+## Beyond the basics
 
-- No `CanExecute`, so no automatic disabled/greyed command state.
-- No tunneling (preview) phase — dispatch bubbles only.
-- No mouse capture API beyond the implicit press-to-release capture.
-- There IS a built-in `TextBox` (single-line: focused rune/backspace
-  editing, a `Prompt`, and a `Changed` command) — `cmd/finder` consumes
-  it as `<TextBox Text="{{.Query}}" Changed="{{.ResetSelection}}"/>`.
-  Mid-string cursor movement is not implemented yet.
+- **Conditional commands.** `gooey.NewCommand(save).When(dirty)` attaches
+  a `CanExecute` condition that is an ordinary bool property. A Button
+  bound to it paints dim and refuses activation while the condition is
+  false, and a KeyBinding whose command is disabled lets the gesture keep
+  bubbling. Markup is unchanged — the binding resolves the richer command
+  transparently.
+- **Tunnelling.** `PreviewKeyHandler` / `PreviewMouseHandler` see events
+  on the way down, root first, and can veto them.
+- **Mouse capture.** A press captures automatically for the length of the
+  gesture; `FocusManager.CaptureMouse` / `ReleaseCapture` take it
+  explicitly for a drag that must outlive one press.
+- **Editing.** `TextBox` does mid-string editing: word-wise caret
+  movement with ctrl, shift-selection, cut/copy/paste through a
+  process-local kill buffer, drag-to-select and double-click-to-select.
+  See the [markup reference](../markup-reference.md#textbox) for the full
+  key table.
+
+## Still missing
+
+- Triple click, and any selection gesture beyond a word.
+- System-clipboard integration (OSC 52); cut and copy stay inside the
+  process.
 
 ## Next steps
 

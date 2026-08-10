@@ -42,8 +42,10 @@ type ItemsView struct {
 	// view Sets it on navigation and reads it to scroll and highlight.
 	// Nil means the list is not selectable.
 	Selected *prop.Property[int]
-	// Activate runs on enter and on a second click of the selected row.
-	Activate gooey.Command
+	// Activate runs on enter, on a double click, and on a second click of
+	// the already-selected row. It is an Action, so a command with a When
+	// condition simply does not fire while the condition is false.
+	Activate gooey.Action
 	// Template builds one row's subtree from that row's value handles.
 	Template ItemFactory
 	// Highlight adds the house selection visual: the selected row's cells
@@ -415,10 +417,10 @@ func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 	case input.Named(input.KeyEnd):
 		return v.selectIndex(n-1, n)
 	case input.Named(input.KeyEnter):
-		if v.Activate == nil {
+		if !gooey.CanExecute(v.Activate) {
 			return false
 		}
-		v.Activate()
+		v.Activate.Run()
 		return true
 	}
 	return false
@@ -440,8 +442,11 @@ func (v *ItemsView) HandleMouse(ev input.MouseEvent) bool {
 		v.pressedSelected = i == v.selection(n)
 		return v.selectIndex(i, n)
 	case input.MouseClick:
-		if v.pressedSelected && v.Activate != nil {
-			v.Activate()
+		// Two ways to activate with the pointer, and they are not the same
+		// gesture: a real double click, and a deliberate second click on a
+		// row that was already selected (which may be seconds apart).
+		if (ev.Count >= 2 || v.pressedSelected) && gooey.CanExecute(v.Activate) {
+			v.Activate.Run()
 		}
 		return true
 	case input.WheelUp:

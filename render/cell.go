@@ -13,6 +13,7 @@ func RGB(r, g, b uint8) Color { return Color{r, g, b, true} }
 type Style struct {
 	Fg, Bg    Color
 	Bold      bool
+	Dim       bool
 	Underline bool
 	Reverse   bool
 }

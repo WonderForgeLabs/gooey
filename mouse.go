@@ -1,14 +1,18 @@
 package gooey
 
 import (
+	"time"
+
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
 // The pointer half of the input chapter. Mouse events route the way keys
-// do — one target, then its ancestors — but the target is found by
-// hit-testing the retained tree instead of by focus, and two framework
-// behaviors run first: hover tracking and focus-follows-click.
+// do — tunnel down to the target, then bubble back up its ancestors —
+// but the target is found by hit-testing the retained tree instead of by
+// focus, and three framework behaviors wrap the routing: hover tracking,
+// focus-follows-click, and pointer capture, which suspends the first two
+// for the length of a drag.
 
 // MouseHandler is the optional interface for components that consume
 // pointer events. Returning true stops propagation.
@@ -18,6 +22,13 @@ type MouseHandler interface{ HandleMouse(input.MouseEvent) bool }
 // Motion is high-frequency, so it is delivered only to components that ask
 // for it — everything else sees hover enter/leave instead.
 type MouseMoveHandler interface{ HandleMouseMove(input.MouseEvent) bool }
+
+// PreviewMouseHandler is the pointer twin of PreviewKeyHandler: an
+// ancestor of the routing target is offered the event on the way down,
+// root first, and returning true ends the dispatch before the target
+// sees it. It covers every kind, motion included, which is what lets an
+// overlay swallow the pointer for the layer underneath.
+type PreviewMouseHandler interface{ PreviewMouse(input.MouseEvent) bool }
 
 // HoverTarget is how the framework tells a component the pointer entered or
 // left it. HoverState implements it.
@@ -69,51 +80,162 @@ func hitTest(w Component, x, y int) Component {
 	return w
 }
 
-// DispatchMouse routes a pointer event to the component under it, then up
-// that component's ancestors like a key. Two things happen before the app
-// ever sees the event: the hover target is updated, and a press moves
+// CaptureMouse routes every pointer event to w until ReleaseCapture,
+// regardless of what the pointer is actually over. It reports false for a
+// component that is not in the tree.
+//
+// A press already captures implicitly (see DispatchMouse), so this is for
+// the cases a press cannot express: a component that must keep the
+// pointer past the release, or one that takes it without a press at all.
+// Called from inside a press handler it upgrades that press's implicit
+// capture into a held one, which is how a drag survives the button
+// coming up.
+func (m *FocusManager) CaptureMouse(w Component) bool {
+	if w == nil {
+		return false
+	}
+	if _, live := m.parent[w]; !live {
+		return false
+	}
+	m.captor, m.held = w, true
+	return true
+}
+
+// ReleaseCapture gives the pointer back to hit-testing. Hover is left
+// wherever it was frozen; the next motion event re-establishes it.
+func (m *FocusManager) ReleaseCapture() { m.captor, m.held = nil, false }
+
+// Captured returns the component holding the pointer, or nil.
+func (m *FocusManager) Captured() Component { return m.captor }
+
+// DispatchMouse routes a pointer event. The target is the component the
+// pointer is over — or, while the pointer is CAPTURED, the captor
+// regardless of where the pointer is. From there the event tunnels down
+// the target's ancestor chain (PreviewMouseHandler, root first) and then
+// bubbles up from the target like a key.
+//
+// Two framework behaviors run before the app sees anything, and both are
+// skipped while captured: the hover target is updated, and a press moves
 // focus to the nearest focusable component at or above the hit (the
-// focus-follows-click convention). Wheel events go to the component under
-// the pointer, not the focused one — also the convention.
+// focus-follows-click convention). Wheel events follow the same rule as
+// everything else — the captor while captured, the component under the
+// pointer otherwise, never the focused one.
+//
+// A press CAPTURES the component it landed on until the release. That is
+// what makes drags work: motion outside the component still reaches it,
+// so a scrollbar thumb, a splitter or a text selection keeps tracking a
+// pointer that has left its bounds, and the release always comes back to
+// the component that started the gesture. The capture is given up on
+// release unless the captor took it explicitly.
+//
+// A click is synthesized on release when the pointer is still inside the
+// captor — the captor itself or anything under it — which is what makes
+// a button pressed, dragged off and dragged back still fire, and a button
+// released elsewhere not fire. It carries a click count, so a second
+// click on the same component inside DoubleClickInterval arrives as
+// Count 2.
 func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
-	target := m.HitTest(ev.X, ev.Y)
+	hit := m.HitTest(ev.X, ev.Y)
+
 	switch ev.Kind {
+	case input.MousePress:
+		// Only a HELD capture survives a new press. An implicit one is
+		// scoped to a single press-release gesture, so a fresh press ends
+		// it and begins another — which is also the recovery path when a
+		// release never arrives (a terminal that dropped the report, a
+		// suspend mid-drag) rather than the pointer being stuck forever.
+		if !m.held {
+			m.captor = nil
+			m.setHover(hit)
+			if w := m.focusTargetFor(hit); w != nil {
+				m.SetFocus(w)
+			}
+			m.captor = hit
+		}
+		return m.routeMouse(m.target(hit), ev)
+
+	case input.MouseRelease:
+		captor := m.captor
+		handled := m.routeMouse(m.target(hit), ev)
+		if m.within(captor, hit) {
+			click := ev
+			click.Kind, click.Count = input.MouseClick, m.clickCount(captor)
+			if m.routeMouse(captor, click) {
+				handled = true
+			}
+		}
+		// A held capture outlives its release; an implicit one ends here,
+		// and hover — frozen for the length of the gesture — catches up
+		// with where the pointer actually is.
+		if !m.held {
+			m.captor = nil
+			m.setHover(hit)
+		}
+		return handled
+
 	case input.MouseMove:
-		m.setHover(target)
+		if m.captor == nil {
+			m.setHover(hit)
+		}
+		target := m.target(hit)
+		if m.tunnelMouse(target, ev) {
+			return true
+		}
 		for n := target; n != nil; n = m.parent[n] {
 			if h, ok := n.(MouseMoveHandler); ok && h.HandleMouseMove(ev) {
 				return true
 			}
 		}
 		return false
-	case input.MousePress:
-		m.setHover(target)
-		if w := m.focusTargetFor(target); w != nil {
-			m.SetFocus(w)
-		}
-		m.pressed = target
-		return m.bubbleMouse(target, ev)
-	case input.MouseRelease:
-		// Implicit capture: the release belongs to the component the press
-		// went down on, so it can undo pressed-state visuals even if the
-		// pointer wandered off before the button came up.
-		dest := target
-		if m.pressed != nil {
-			dest = m.pressed
-		}
-		handled := m.bubbleMouse(dest, ev)
-		if m.pressed != nil && m.pressed == target {
-			click := ev
-			click.Kind = input.MouseClick
-			if m.bubbleMouse(target, click) {
-				handled = true
-			}
-		}
-		m.pressed = nil
-		return handled
+
 	default:
-		return m.bubbleMouse(target, ev)
+		return m.routeMouse(m.target(hit), ev)
 	}
+}
+
+// target is where an event routes: the captor while the pointer is
+// captured, the hit otherwise.
+func (m *FocusManager) target(hit Component) Component {
+	if m.captor != nil {
+		return m.captor
+	}
+	return hit
+}
+
+// clickCount advances the click sequence for w. A click elsewhere or one
+// that came too late starts over, and so does the third click of a rapid
+// run — there is no triple click this pass, and reporting a 3 that
+// nothing understands would be worse than starting fresh.
+func (m *FocusManager) clickCount(w Component) int {
+	now := m.now()
+	if w == m.lastClick && m.clicks == 1 && now.Sub(m.lastClickAt) <= m.DoubleClickInterval {
+		m.clicks = 2
+	} else {
+		m.clicks = 1
+	}
+	m.lastClick, m.lastClickAt = w, now
+	return m.clicks
+}
+
+func (m *FocusManager) now() time.Time {
+	if m.Now == nil {
+		return time.Now()
+	}
+	return m.Now()
+}
+
+// routeMouse is the tunnel-then-bubble pair every kind but motion uses.
+func (m *FocusManager) routeMouse(target Component, ev input.MouseEvent) bool {
+	return m.tunnelMouse(target, ev) || m.bubbleMouse(target, ev)
+}
+
+func (m *FocusManager) tunnelMouse(target Component, ev input.MouseEvent) bool {
+	for d := m.depth(target); d >= 0; d-- {
+		if h, ok := m.ancestor(target, d).(PreviewMouseHandler); ok && h.PreviewMouse(ev) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *FocusManager) bubbleMouse(target Component, ev input.MouseEvent) bool {

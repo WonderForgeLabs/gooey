@@ -8,20 +8,34 @@ import (
 )
 
 // Button is the first interactive component: a focus stop that runs its
-// Command on enter, space, or a click. Its three states — focused,
-// hovered, pressed — are each a property read during Render, so each one
-// is its own paint dependency and a state change repaints just this
-// button.
+// Click on enter, space, or a click. Its states — focused, hovered,
+// pressed, and now enabled — are each a property read during Render, so
+// each one is its own paint dependency and a state change repaints just
+// this button.
+//
+// Click is an Action, so it may carry a CanExecute condition
+// (gooey.NewCommand(save).When(dirty)). The button asks the command
+// while PAINTING, which is the whole mechanism: the read subscribes this
+// one paint node to the condition, a flip repaints this one button, and
+// no CanExecuteChanged event exists anywhere. A disabled button paints
+// dim and declines every activation — including the press visual, so it
+// does not even look pressable.
 type Button struct {
 	gooey.Base
 	gooey.FocusState
 	gooey.HoverState
 	Content *prop.Property[string]
 	Style   *prop.Property[render.Style]
-	Click   gooey.Command
+	Click   gooey.Action
 
 	down *prop.Property[bool]
 }
+
+// disabled is true only for a command that exists and says no. A button
+// with no command at all is inert, not disabled: it paints normally,
+// which is what a decorative or not-yet-wired button in a demo expects,
+// and it reads nothing so it subscribes to nothing.
+func (b *Button) disabled() bool { return b.Click != nil && !b.Click.CanExecute() }
 
 func (b *Button) label() string { return "[ " + getStr(b.Content) + " ]" }
 
@@ -31,6 +45,18 @@ func (b *Button) Measure(avail gooey.Size) gooey.Size {
 
 func (b *Button) Render(f *gooey.Frame) {
 	st := getSty(b.Style)
+	// Asked here, CanExecute is a subscription. A disabled button still
+	// shows focus — it is a focus stop either way, and losing the focus
+	// ring would strand a keyboard user on an invisible element — but it
+	// shows nothing else.
+	if b.disabled() {
+		st.Dim = true
+		if b.IsFocused() {
+			st.Reverse = true
+		}
+		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+		return
+	}
 	if b.IsHovered() {
 		st.Underline = true
 	}
@@ -43,6 +69,11 @@ func (b *Button) Render(f *gooey.Frame) {
 	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
 }
 
+// IsPressed reports whether the pointer is currently down on this
+// button. Read from a Render it is a paint dependency like the other
+// three states.
+func (b *Button) IsPressed() bool { return b.pressed().Get() }
+
 func (b *Button) pressed() *prop.Property[bool] {
 	if b.down == nil {
 		b.down = prop.NewSource(false)
@@ -50,18 +81,28 @@ func (b *Button) pressed() *prop.Property[bool] {
 	return b.down
 }
 
+// HandleKey activates on enter or space. A disabled button declines,
+// which lets the key keep bubbling: a page that binds enter still gets it
+// while focus sits on a button that cannot run.
 func (b *Button) HandleKey(ev input.KeyEvent) bool {
-	if b.Click == nil {
+	if !gooey.CanExecute(b.Click) {
 		return false
 	}
 	if ev == input.Named(input.KeyEnter) || ev == input.Rune(' ') {
-		b.Click()
+		b.Click.Run()
 		return true
 	}
 	return false
 }
 
+// HandleMouse tracks the press visual and activates on the synthesized
+// click. Press and release are consumed even with no command bound, so a
+// button never leaks a press to whatever is behind it — except while
+// disabled, where the whole gesture bubbles past.
 func (b *Button) HandleMouse(ev input.MouseEvent) bool {
+	if b.disabled() {
+		return false
+	}
 	switch ev.Kind {
 	case input.MousePress:
 		b.pressed().Set(true)
@@ -70,8 +111,8 @@ func (b *Button) HandleMouse(ev input.MouseEvent) bool {
 		b.pressed().Set(false)
 		return true
 	case input.MouseClick:
-		if b.Click != nil {
-			b.Click()
+		if gooey.CanExecute(b.Click) {
+			b.Click.Run()
 			return true
 		}
 	}

@@ -606,10 +606,17 @@ order with wrapping, skipping anything inside a `Collapsed` subtree.
 `FocusManager.Dispatch` is WPF-style bubbling in thirty lines:
 
 ```go
+// tunnel: root -> focused, first consumer ends the dispatch
+for d := m.depth(start); d >= 0; d-- {
+    if h, ok := m.ancestor(start, d).(PreviewKeyHandler); ok && h.PreviewKey(ev) {
+        return true
+    }
+}
+// then bubble: focused -> root, bindings before handler at each level
 for n := start; n != nil; n = m.parent[n] {
     for _, b := range m.bindings[n] {
-        if b.Gesture == ev && b.Command != nil {
-            b.Command()
+        if b.Gesture == ev && CanExecute(b.Command) {
+            b.Command.Run()
             return true
         }
     }
@@ -619,7 +626,16 @@ for n := start; n != nil; n = m.parent[n] {
 }
 ```
 
-The event starts at the focused component and walks up the ancestor chain;
+The event **tunnels** first: every ancestor from the root down to the
+focused component implementing `PreviewKeyHandler` is offered it, and the
+first to take it ends the dispatch — no target handling, no bubbling, no
+bindings. That is the parent-veto mechanism (modal scrims, masked
+inputs, an overlay layer), and it is deliberately a separate interface
+rather than a flag on `HandleKey`, so a component opts into the
+tunnelling phase explicitly. `PreviewMouseHandler` is the same for
+pointer events, motion included.
+
+Then the event bubbles: it starts at the focused component and walks up the ancestor chain;
 at each level, `KeyBinding`s attached there match first, then the
 component's own `HandleKey`. The first `true` stops propagation. Tab,
 shift-tab, and the arrow keys navigate focus only in the *unconsumed
@@ -642,10 +658,26 @@ global. `cmd/reader` uses this: its Enter binding lives in
 focus — the same key does nothing from the reader pane, with no `if`
 anywhere.
 
-`Command` is just `func()`. Markup event attributes resolve to one —
-either a delegate from the binding context (`Click="{{.Save}}"`, the
-func living in the viewmodel) or a code-behind handler by bare name
+Event fields are typed `gooey.Action`: something that can `Run()` and can
+say whether running is legal (`CanExecute()`). `Command` is still just
+`func()` and implements it trivially — always executable — so every
+existing delegate keeps working. Markup event attributes resolve to an
+Action either from the binding context (`Click="{{.Save}}"`, the func
+living in the viewmodel) or from the code-behind registry by bare name
 (`Click="OnSave"`, from `Context.Handlers`).
+
+The second implementation is `gooey.NewCommand(run).When(cond)`, where
+`cond` is an ordinary `*prop.Property[bool]`. **That property is
+CanExecuteChanged**, and there is no event to raise, because the call
+site decides what a `CanExecute()` call means: asked from `Render` it
+records a dependency, so the condition flipping repaints exactly the
+components that asked; asked from a key or mouse handler it records
+nothing and is only a question. `Button` does both — dim while disabled
+(the paint read) and refusing enter, space and clicks (the handler
+reads) — and a `KeyBinding` whose command is disabled does not match at
+all, so the gesture is not consumed and the key keeps bubbling. `Run()`
+is itself a no-op while the condition is false, so "disabled" is
+structural rather than a rule every caller has to remember.
 
 ### The pointer: hit-testing, hover, capture, click synthesis
 
@@ -677,16 +709,36 @@ tracking is high-frequency — except to components that opt in via
 `MouseMoveHandler` (drag, resize). Everyone else sees enter/leave
 through hover.
 
-Press and release are delivered as they arrive, with **implicit
-capture**: the release is routed to the component the press went down on
-(`m.pressed`), even if the pointer wandered off, so pressed-state
-visuals can always be undone. When press and release land on the same
-component, the dispatcher synthesizes a `MouseClick` — `MouseClick` is not
-a terminal report; it exists only as this synthesis. Wheel events go to
-the component under the pointer, not the focused one, per terminal
-convention. `Button` exercises all of it: focused, hovered, and pressed
-are three property reads in its `Render`, so each state change repaints
-just the button.
+Both framework behaviors are skipped while the pointer is **captured**.
+
+A press captures the component it landed on, and until the release every
+pointer event routes to that captor regardless of what the pointer is
+actually over. That is what makes a drag work: motion outside the
+component still arrives, so a scrollbar thumb, a splitter or a text
+selection keeps tracking a pointer that has left its bounds. Hover
+transitions are suppressed for the length of the gesture — otherwise
+dragging across the tree would repaint every component the pointer
+crossed — and catch up with reality when the capture ends.
+`CaptureMouse`/`ReleaseCapture` take it explicitly, for a gesture that
+must outlive one press; `Captured()` reports the holder. An implicit
+capture is scoped to a single press-release pair, and a fresh press ends
+it, which is also the recovery path when a terminal drops a release.
+
+A `MouseClick` is synthesized on release when the pointer is still
+inside the captor — the captor itself or anything under it. `MouseClick`
+is not a terminal report; it exists only as this synthesis. Keying it to
+the captor is what makes a button pressed, dragged off, and dragged back
+still fire, while one released elsewhere does not. The click carries a
+**count**: a second click on the same component within
+`DoubleClickInterval` (400ms) arrives as `Count: 2`, which is what
+`ItemsView` activates on and what `TextBox` selects a word on. There is
+no triple click — a third click restarts the sequence at 1.
+
+Wheel events, like everything else, go to the captor while captured and
+to the component under the pointer otherwise — never to the focused one,
+per terminal convention. `Button` exercises the rest: focused, hovered,
+pressed and enabled are four property reads in its `Render`, so each
+state change repaints just the button.
 
 ## Markup
 

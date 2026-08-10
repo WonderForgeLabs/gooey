@@ -22,7 +22,7 @@ func TestButtonAndKeyBindingFromMarkup(t *testing.T) {
 	saves, quits := 0, 0
 	ctx := &Context{
 		Values:   map[string]any{"Save": gooey.Command(func() { saves++ })},
-		Handlers: map[string]gooey.Command{"OnQuit": func() { quits++ }},
+		Handlers: map[string]gooey.Action{"OnQuit": gooey.Command(func() { quits++ })},
 	}
 	w, err := Load(fsys, "page.gooey", ctx)
 	if err != nil {
