@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2350"/><stop offset="1" stop-color="#1b1735"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffc337"/><stop offset="1" stop-color="#ff8a3c"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a86bff"/><stop offset="1" stop-color="#6f4bd8"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ad1c0"/><stop offset="1" stop-color="#1c9c96"/>
+    </linearGradient>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#cfc9ee"/>
+    </marker>
+  </defs>
+
+  <rect width="1120" height="560" fill="url(#g1)"/>
+  <text x="40" y="52" font-family="Helvetica,Arial" font-size="30" font-weight="bold" fill="#f2eeff">Three ways behavior reaches a page</text>
+  <text x="40" y="82" font-family="Helvetica,Arial" font-size="17" fill="#a79fd0">what exists today, and the one that doesn't</text>
+
+  <!-- 1 compile time -->
+  <g>
+    <rect x="40" y="115" width="330" height="200" rx="14" fill="#241f45" stroke="#4b4180" stroke-width="1.5"/>
+    <rect x="40" y="115" width="330" height="6" rx="3" fill="url(#gold)"/>
+    <circle cx="70" cy="152" r="15" fill="url(#gold)"/>
+    <text x="70" y="158" font-family="Helvetica,Arial" font-size="17" font-weight="bold" fill="#241f45" text-anchor="middle">1</text>
+    <text x="96" y="158" font-family="Helvetica,Arial" font-size="19" font-weight="bold" fill="#f2eeff">Compile time</text>
+    <text x="64" y="196" font-family="monospace" font-size="14" fill="#ffd98a">ctx.Values["Save"] =</text>
+    <text x="64" y="216" font-family="monospace" font-size="14" fill="#ffd98a">  gooey.Command(fn)</text>
+    <text x="64" y="252" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">A Go closure in the binding</text>
+    <text x="64" y="272" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">context. Fixed at build.</text>
+    <text x="64" y="298" font-family="Helvetica,Arial" font-size="14" font-weight="bold" fill="#7ee6a8">EXISTS</text>
+  </g>
+
+  <!-- 2 endpoint -->
+  <g>
+    <rect x="395" y="115" width="330" height="200" rx="14" fill="#241f45" stroke="#8a6bff" stroke-width="2.5"/>
+    <rect x="395" y="115" width="330" height="6" rx="3" fill="url(#violet)"/>
+    <circle cx="425" cy="152" r="15" fill="url(#violet)"/>
+    <text x="425" y="158" font-family="Helvetica,Arial" font-size="17" font-weight="bold" fill="#f2eeff" text-anchor="middle">2</text>
+    <text x="451" y="158" font-family="Helvetica,Arial" font-size="19" font-weight="bold" fill="#f2eeff">Endpoint-backed</text>
+    <text x="419" y="196" font-family="monospace" font-size="14" fill="#d7c2ff">register_commands</text>
+    <text x="419" y="216" font-family="monospace" font-size="14" fill="#d7c2ff">  ["Deploy"]</text>
+    <text x="419" y="252" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">A name claimed at runtime;</text>
+    <text x="419" y="272" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">invoking it calls back.</text>
+    <text x="419" y="298" font-family="Helvetica,Arial" font-size="14" font-weight="bold" fill="#ff8a8a">MISSING — this is the gap</text>
+  </g>
+
+  <!-- 3 code -->
+  <g>
+    <rect x="750" y="115" width="330" height="200" rx="14" fill="#241f45" stroke="#4b4180" stroke-width="1.5"/>
+    <rect x="750" y="115" width="330" height="6" rx="3" fill="url(#teal)"/>
+    <circle cx="780" cy="152" r="15" fill="url(#teal)"/>
+    <text x="780" y="158" font-family="Helvetica,Arial" font-size="17" font-weight="bold" fill="#241f45" text-anchor="middle">3</text>
+    <text x="806" y="158" font-family="Helvetica,Arial" font-size="19" font-weight="bold" fill="#f2eeff">Code to an endpoint</text>
+    <text x="774" y="196" font-family="monospace" font-size="14" fill="#9fe9df">create_activity(</text>
+    <text x="774" y="216" font-family="monospace" font-size="14" fill="#9fe9df">  name, python_src)</text>
+    <text x="774" y="252" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">Eval happens in the WORKER.</text>
+    <text x="774" y="272" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">The app never evals code.</text>
+    <text x="774" y="298" font-family="Helvetica,Arial" font-size="14" font-weight="bold" fill="#7ee6a8">EXISTS (demoed)</text>
+  </g>
+
+  <!-- flow -->
+  <text x="40" y="378" font-family="Helvetica,Arial" font-size="20" font-weight="bold" fill="#f2eeff">What #2 looks like on the wire</text>
+
+  <rect x="40" y="400" width="200" height="60" rx="10" fill="#2f2a5c" stroke="#6f63b8"/>
+  <text x="140" y="428" font-family="Helvetica,Arial" font-size="15" font-weight="bold" fill="#f2eeff" text-anchor="middle">gooey app</text>
+  <text x="140" y="448" font-family="Helvetica,Arial" font-size="12" fill="#a79fd0" text-anchor="middle">UI goroutine</text>
+
+  <rect x="800" y="400" width="200" height="60" rx="10" fill="#2f2a5c" stroke="#6f63b8"/>
+  <text x="900" y="428" font-family="Helvetica,Arial" font-size="15" font-weight="bold" fill="#f2eeff" text-anchor="middle">plugin</text>
+  <text x="900" y="448" font-family="Helvetica,Arial" font-size="12" fill="#a79fd0" text-anchor="middle">holds the stream</text>
+
+  <line x1="800" y1="418" x2="245" y2="418" stroke="#8a6bff" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="520" y="411" font-family="monospace" font-size="13" fill="#d7c2ff" text-anchor="middle">Act.register_commands ["Deploy"]</text>
+
+  <line x1="245" y1="443" x2="795" y2="443" stroke="#ffc337" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="520" y="436" font-family="monospace" font-size="13" fill="#ffd98a" text-anchor="middle">CommandInvoked {name, invocation}</text>
+
+  <line x1="800" y1="480" x2="245" y2="480" stroke="#3ad1c0" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="520" y="473" font-family="monospace" font-size="13" fill="#9fe9df" text-anchor="middle">Act.set_property {Status: "deployed"}</text>
+
+  <text x="40" y="522" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">The plugin dials the app — so no launcher, no handshake, no NAT. Command lifetime = stream lifetime:</text>
+  <text x="40" y="542" font-family="Helvetica,Arial" font-size="14" fill="#bdb5e4">when the session drops, the names go with it. Nothing can outlive its handler.</text>
+</svg>

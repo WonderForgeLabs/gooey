@@ -1,0 +1,53 @@
+<!-- A zoomable image viewer, and a small lesson about layout.
+
+     Cols/Rows on an <Image> are a REQUEST, not a size. The default
+     alignment is Stretch, so an Image in a `*` grid row is arranged to
+     fill the whole slot and its requested size is discarded — the
+     property changes on every zoom and the picture never moves, which
+     looks exactly like a dead button. HAlign/VAlign="Start" is what
+     makes the layout honour the request.
+
+     Zooming is a Set on two int properties, never a re-patch. A patch
+     would rebuild the subtree and take the caret and component state
+     with it (mcp/focuspatch_test.go pins that); a Set touches no
+     structure at all.
+
+     Load it in place of the default page with:
+
+         go run . -page zoom.gooey
+-->
+<Gooey xmlns="wonderforge.io/gooey/2026" Graphics="halfblock">
+  <Grid Name="Board" Rows="Auto,*">
+
+    <Border Grid.Row="0" Title="zoom" Style="panel">
+      <HStack Gap="3" Margin="1,0">
+        <!-- Chrome="pixel" is a rounded face generated at the terminal's
+             own cell pixel size and sliced into the four rectangles that
+             are not the label, so the image never buries its own text.
+             Without a graphics protocol it draws the same shape in
+             box-drawing runes — same three-row footprint either way, so
+             the page does not reflow when the probe finds a protocol. -->
+        <Button Name="ZoomOutBtn" Chrome="pixel" Content="  ZOOM OUT  " Click="{{.ZoomOut}}"/>
+        <Button Name="ZoomInBtn"  Chrome="pixel" Content="  ZOOM IN  "  Click="{{.ZoomIn}}"/>
+        <Text Style="accent">or press + / = / -</Text>
+        <Text Style="dim">the pills and the keys run the same two commands</Text>
+      </HStack>
+    </Border>
+
+    <Image Grid.Row="1" Name="Picture" Src="three-ways.svg"
+           Cols="{{.DiagCols}}" Rows="{{.DiagRows}}"
+           HAlign="Start" VAlign="Start"/>
+
+    <!-- Root scope on purpose: a KeyBinding only fires while the focused
+         chain passes through its host, so one hung on an inner container
+         silently never fires on a page with no focus stop inside it.
+         "plus", "minus" and "pgup" are NOT gesture spellings — they fail
+         at load, which is the good outcome: a mistyped gesture is a load
+         error rather than a binding that quietly never fires. -->
+    <KeyBinding Gesture="+" Command="{{.ZoomIn}}"/>
+    <KeyBinding Gesture="=" Command="{{.ZoomIn}}"/>
+    <KeyBinding Gesture="-" Command="{{.ZoomOut}}"/>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

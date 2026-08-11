@@ -71,6 +71,11 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	// SVG rasterization is opt-in — a separate module so oksvg/rasterx stay
+	// out of core gooey's dependency graph. Blank-importing it registers the
+	// format, which together with ctx.Includes below is what lets an
+	// agent-authored <Image Src="diagram.svg"> resolve here.
+	_ "github.com/WonderForgeLabs/gooey/imagefmt/svg"
 	"github.com/WonderForgeLabs/gooey/components"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -731,6 +736,16 @@ func main() {
 		exe, _ := os.Executable()
 		dir = filepath.Dir(exe)
 	}
+
+	// Includes is what lets AGENT-AUTHORED markup load assets. A page
+	// loaded by markup.Page resolves <Image Src="x.png"> against the FS
+	// it came from, but swap_markup and patch_markup build from BYTES —
+	// that tree has no source FS at all, and falls back to Includes
+	// (markup.Context.assets). Without this line an agent can restructure
+	// this page freely and still cannot put a picture on it, which is a
+	// confusing hole to hit from the outside: the markup is valid and the
+	// error names a file system rather than the image.
+	ctx.Includes = os.DirFS(dir)
 
 	app = gooey.NewApp(markup.Page(os.DirFS(dir), "kanbandemo.gooey", ctx))
 
