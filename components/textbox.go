@@ -45,6 +45,18 @@ type TextBox struct {
 	AccentStyle *prop.Property[render.Style] // prompt and caret
 	Changed     gooey.Action
 
+	// Error is the field's validation state: empty means valid, anything
+	// else flips the text into the invalid visual (InvalidStyle, or red +
+	// underline) — the MAUI ValidationBehavior arrangement, a style flip
+	// on the input itself. Typically a validate.Field computed shared
+	// with the error Text (and optionally a ValidationMarker), but any
+	// string property works. Render reads it, so an error flip is
+	// ordinary paint damage on this one component — and this read is
+	// exactly where a future style system's :invalid pseudo-class would
+	// look (see the styles-and-resources spec).
+	Error        *prop.Property[string]
+	InvalidStyle *prop.Property[render.Style] // replaces the default invalid visual
+
 	caret  *prop.Property[int]
 	anchor *prop.Property[int] // selection anchor; noAnchor when there is none
 
@@ -136,6 +148,10 @@ func (t *TextBox) Measure(avail gooey.Size) gooey.Size {
 }
 
 func (t *TextBox) Render(f *gooey.Frame) {
+	// Read the error before any early return: the read is what
+	// subscribes this paint node, and a Get hidden behind a bounds check
+	// would silently drop the dependency (the Get-order rule).
+	errMsg := getStr(t.Error)
 	b := t.Bounds()
 	if b.W <= 0 || b.H <= 0 {
 		return
@@ -162,6 +178,17 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	t.scroll = scrollFor(t.scroll, caret, len(runes), avail)
 
 	textSty := getSty(t.Style)
+	if errMsg != "" {
+		// The terminal's error convention: red, underlined text. An
+		// InvalidStyle handle replaces it wholesale for apps with their
+		// own palette — the Style/AccentStyle pattern, one more knob.
+		if t.InvalidStyle != nil {
+			textSty = t.InvalidStyle.Get()
+		} else {
+			textSty.Fg = errorRed
+			textSty.Underline = true
+		}
+	}
 	for i := t.scroll; i < len(runes) && x < b.X+b.W; i++ {
 		st := textSty
 		switch {

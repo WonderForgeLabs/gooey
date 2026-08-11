@@ -542,6 +542,8 @@ What it shows depends on `Frame.Caps.Color`:
 | `Style` | Style of the edited text. Named or bound. |
 | `AccentStyle` | Named style for the prompt and caret. |
 | `Changed` | Optional command run after every edit (not after caret moves) — for invalidating something derived. |
+| `Error` | Optional **binding** to a `*prop.Property[string]` — the field's validation state, empty meaning valid. Non-empty flips the text into the invalid visual. Owned by a `<Validate>` behavior when one is attached (declaring both is a load error). |
+| `InvalidStyle` | Named style replacing the default invalid visual (red + underline). |
 
 Keys:
 
@@ -563,6 +565,90 @@ Mouse: a click places the caret, dragging selects (the drag survives leaving the
 Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste.
 
 The field scrolls horizontally to keep the caret visible in either direction, and the caret and the selection anchor are source properties, so moving the caret repaints only this component.
+
+### Validate
+
+`markup.Validate` — the validation behavior: a non-visual attachment (MAUI's `ValidationBehavior` in the slot `KeyBinding` and `Tooltip` already occupy) that watches its host's bound `Text` source and materializes the same `validate.Field` computed the Go API builds.
+
+```xml
+<TextBox Prompt="name: " Text="{{.Name}}">
+  <TextBox.Behaviors>
+    <Validate Required="true" MinLen="3" Into=".NameErr"/>
+  </TextBox.Behaviors>
+</TextBox>
+<Text Style="err">{{.NameErr}}</Text>
+```
+
+The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input except `Required`, so "optional but well-formed when present" is the default reading; every default message is a lowercase fragment meant to sit under a field.
+
+| Attribute | Type | Answers (annotation) | Default message |
+|---|---|---|---|
+| `Required` | bool | `[Required]` | `required` |
+| `MinLen` / `MaxLen` | int | `[StringLength]`, `[MinLength]`, `[MaxLength]` | `at least N characters` / `at most N characters` / `must be N–M characters` |
+| `Pattern` | regex | `[RegularExpression]` | `invalid format` |
+| `EmailAddress` | bool | `[EmailAddress]` | `not a valid email address` |
+| `Url` | bool | `[Url]` | `not a valid URL` |
+| `Phone` | bool | `[Phone]` | `not a valid phone number` |
+| `CreditCard` | bool | `[CreditCard]` | `not a valid card number` |
+| `Digits` | bool | — (numeric-string guard) | `digits only` |
+| `Integer` | bool | — (numeric-string guard) | `must be a whole number` |
+| `MinValue` / `MaxValue` | number | `[Range]` over a text field | `must be at least N` / `must be at most N` / `must be between N and M` |
+| `Compare` | field path | `[Compare]` | `does not match` |
+| `Message` | string | `ErrorMessage` | — (overrides every rule on this behavior) |
+| `Into` | name | — | — |
+
+`Into` is the context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild).
+
+`Compare` names the *other* field — `Compare=".Password"` or `Compare="{{.Password}}"`, both accepted since the attribute names a property rather than carrying a value. The rule reads that property, and the read is what subscribes this field to it: editing the original re-validates the confirmation with no extra wiring.
+
+`Message` is a **field-level** override: every rule on the behavior reports it instead of its own default, which is how a form says "e-mail address, please" once rather than leaking which check tripped. Per-rule wording is a `validate.Field` in Go.
+
+Rules run in a fixed order regardless of attribute order — presence, then length, then shape (`Pattern`, then the annotation formats in the table's order), then value, then agreement, then registered rules in name order — and the first failure is the message shown, so a person fixing the field hears about the most fundamental problem first.
+
+**Where gooey deliberately differs from .NET's implementations.** Its validators are famously permissive; a terminal form gets more from a rule that rejects nonsense than from bug compatibility:
+
+- **`EmailAddress`** requires one `@` *and a dotted domain*. .NET accepts `a@b`; we do not. We are still far looser than RFC 5322 — quoted local parts, comments and address literals are out of scope — and unicode passes, so IDN domains and non-ASCII local parts are accepted rather than silently rejected.
+- **`Url`** accepts `http`, `https`, `ftp` like .NET, and additionally **requires a non-empty host**: `url.Parse` will happily hand back an empty hostname for `http://`, and an allow-anything URL rule is worse than none.
+- **`Phone`** requires **7–15 digits** in the number (E.164's maximum), excluding any extension. .NET has no digit-count rule at all.
+- **`CreditCard`** is Luhn plus a **12–19 digit window**. .NET checks only Luhn, which accepts a bare `0`. Neither is an authorization: no issuer prefixes, no network rules — it is a typo catcher.
+- **`Digits`** is ASCII-only on purpose: a field that accepts Devanagari digits and then hands them to `strconv` is a bug waiting to happen.
+
+Markup spells the regex rule **`Pattern`**, not `RegularExpression`: gooey keeps one canonical spelling per concept (one gesture syntax, one `Style` attribute), and an alias would double the vocabulary a reader must recognize to buy nothing. The table above is how you find it from the annotation's name.
+
+The behavior wires the host's `Error` handle automatically (the invalid visual comes for free); one `<Validate>` per element, and a host whose builder does not speak validation (anything but a `TextBox` today) refuses it at load.
+
+**Extending the vocabulary** is a registration, exactly like `Components` and `Handlers` — rule bodies stay in code, pages keep the validation story in markup:
+
+```go
+ctx.Rules = map[string]markup.RuleFunc{
+    "Email": func(arg string) (validate.Rule[string], error) {
+        return validate.Pattern(`^[^@\s]+@[^@\s]+$`, "not an email"), nil
+    },
+}
+```
+
+```xml
+<Validate Required="true" Email="true"/>
+```
+
+The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets. The built-ins cover the DataAnnotations vocabulary; `ctx.Rules` is for **domain** rules beyond it (an internal account-number format, a reserved-name list, a check against a lookup table).
+
+### ValidationMarker
+
+`components.ValidationMarker` — the **floating** error display, for layouts with no room for an inline error row (the primary pattern is an ordinary bound `<Text>` under the field). A non-visual attachment whose message shows in the page's `AdornmentLayer`, anchored below its host, flipping above when the screen runs out.
+
+```xml
+<TextBox Text="{{.Tag}}" Error="{{.TagErr}}">
+  <ValidationMarker/>
+</TextBox>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Error` | Optional binding to the error property. Omitted, the marker adopts its host `TextBox`'s own `Error` handle — the property is named once. |
+| `Style` | Named style for the message. Default is white on the error red. |
+
+The marker is persistent: it lives in the layer for as long as it is attached, shows only while the error is non-empty, hides (rather than dropping) when its host goes invisible, and never intercepts the pointer. A page without an `<AdornmentLayer/>` degrades to inline-only display.
 
 ### ItemsView
 
@@ -805,6 +891,21 @@ The rules are load-time errors, all of them:
 - a property element takes no attributes of its own, and may be given only once.
 
 A registered custom component is exempt from the second rule: its builder receives the raw `Element`, `Props` and all, and decides for itself — the same latitude it has with attributes.
+
+### The Behaviors slot
+
+`<X.Behaviors>` is the one property element **every** element accepts: MAUI's explicit spelling of the attachment slot. Its children must be non-visual attachments — `<Validate>`, `<Tooltip>`, `<KeyBinding>`, `<Timer>` — and they land in exactly the list bare non-visual children feed, so the two spellings are equivalent and may be mixed:
+
+```xml
+<TextBox Text="{{.Name}}">
+  <TextBox.Behaviors>
+    <Validate Required="true"/>
+    <KeyBinding Gesture="ctrl+k" Command="{{.Clear}}"/>
+  </TextBox.Behaviors>
+</TextBox>
+```
+
+A visual child inside the slot is a load error naming it; an element that cannot host attachments rejects the slot's contents the way it rejects bare ones.
 
 ## Styles
 
