@@ -106,10 +106,23 @@ func (tt *testTTY) screen() string {
 	return tt.scr.Text()
 }
 
+// reset forgets everything the terminal has been shown — the bytes AND
+// the screen they built. Every caller resets in order to wait for what
+// comes next, and a waitFor that can be answered by what came before
+// waits for nothing: that is what made the SIGWINCH test's "resize me"
+// gate vacuous, since the label reads the same on both sides of the
+// resize.
+//
+// Blanking the model does mean it no longer mirrors the real terminal,
+// which still shows the old picture. That is the honest trade: a flush
+// is incremental, so after a reset the model only re-accumulates what
+// the app actually rewrites, and a test must wait for text that the
+// repaint it is testing genuinely paints.
 func (tt *testTTY) reset() {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	tt.buf.Reset()
+	tt.scr.Resize(tt.scr.Buf.W, tt.scr.Buf.H)
 }
 
 // The tail of the pty buffer is not a frame (#183). This pins the two
@@ -262,6 +275,12 @@ func (tt *testTTY) setSize(t *testing.T, cols, rows int) {
 	if err := ttyIoctl(tt.master, syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
 		t.Fatalf("TIOCSWINSZ: %v", err)
 	}
+	// The model is a terminal, so it changes shape with the terminal —
+	// otherwise a 20-row frame is measured against a 10-row grid and the
+	// rows past the tenth are silently dropped.
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	tt.scr.Resize(cols, rows)
 }
 
 // ttyIoctl goes through SyscallConn rather than Fd for the reason the
