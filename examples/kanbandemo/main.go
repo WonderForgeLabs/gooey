@@ -438,6 +438,11 @@ func mcpTrafficLogger(next http.Handler, capture func(dir, text string)) http.Ha
 // Same posture as the package this replaces: v1 MCP has no
 // authentication, so a non-loopback bind is a remote-control handle on
 // this terminal.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func checkLoopbackAddr(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -457,7 +462,13 @@ func checkLoopbackAddr(addr string) error {
 }
 
 func main() {
-	addr := flag.String("mcp", "127.0.0.1:7778", "loopback address for the MCP server; empty disables it")
+	// Port 0 by default: the kernel picks a free one, so several instances
+	// (and several agents) coexist without colliding on a well-known port.
+	// The address is only ever read back from the listener — never from
+	// this flag — so the resolved port reaches the help panel and the
+	// worker companion's GOOEY_MCP_URL alike. Pass -mcp 127.0.0.1:7778 for
+	// a fixed port when a client is registered against one.
+	addr := flag.String("mcp", "127.0.0.1:0", "loopback address for the MCP server; port 0 picks a free port; empty disables it")
 	withWorker := flag.Bool("with-worker", true, "launch the Python Temporal dynamic-UI worker (examples/temporal-worker) as a companion, sharing this app's process lifetime; pass -with-worker=false to disable")
 	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks examples/temporal-worker/requirements.txt")
 	workerTaskQueue := flag.String("worker-task-queue", "kanbandemo-dynamic-ui", "Temporal task queue the worker companion polls")
@@ -808,7 +819,20 @@ func main() {
 			// so the worker is done writing by the time this defer fires.
 			defer logFile.Close()
 
-			cmd := exec.Command(*workerPython, "worker.py")
+			// Prefer the worker's own venv when the flag is left at its
+			// default: examples/temporal-worker/.venv is where its deps
+			// (temporalio, claude-agent-sdk) are installed, and system
+			// python3 almost never has them — a worker that can't import
+			// them exits, and a dead companion tears the app down. An
+			// explicit -worker-python always wins; a missing venv falls
+			// straight back to python3, unchanged.
+			python := *workerPython
+			if python == "python3" {
+				if venv := filepath.Join(workerDir, ".venv", "bin", "python"); fileExists(venv) {
+					python = venv
+				}
+			}
+			cmd := exec.Command(python, "worker.py")
 			cmd.Dir = workerDir
 			// Forward the parent's full environment — any ANTHROPIC_API_KEY /
 			// CLAUDE_CODE_OAUTH_TOKEN / TEMPORAL_ADDRESS already exported in
