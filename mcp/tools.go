@@ -903,7 +903,7 @@ func registrationInitial(name string, kind control.Kind, raw any) (control.Value
 			return control.Value{}, fmt.Errorf("registration %q: those bytes did not decode as an image (%v); this app reads %s",
 				name, err, strings.Join(imaging.Names(), ", "))
 		}
-		return control.ImageValue(img), nil
+		return control.DecodedImageValue(img, data), nil
 	}
 	return control.Value{}, fmt.Errorf("registration %q: unknown kind", name)
 }

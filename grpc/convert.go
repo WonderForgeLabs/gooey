@@ -112,12 +112,12 @@ func valueToProto(v control.Value) *controlv1.TypedValue {
 	case control.KindAny:
 		tv.Kind = &controlv1.TypedValue_AnyJson{AnyJson: v.JSON}
 	case control.KindImage:
-		// Read-back is deliberately not the picture. Re-encoding a decoded
-		// image on every ListValues — and on every frame delta a session
-		// subscribes to — would put an encoder on the read path, and the
-		// bytes a client sent are not recoverable anyway once decoded.
-		// The name, kind and Go type still cross; the pixels do not.
-		tv.Kind = &controlv1.TypedValue_ImageBytes{ImageBytes: nil}
+		// Exactly what arrived, when the picture came from bytes: a
+		// SourceImage kept them, so this is a slice header rather than an
+		// encode. A picture built in-process has no source and reports
+		// none — never a re-encoding, which would be a different file and
+		// would put an encoder on the read path.
+		tv.Kind = &controlv1.TypedValue_ImageBytes{ImageBytes: control.ImageBytesOf(v.Image)}
 	default:
 		return nil
 	}
@@ -154,7 +154,7 @@ func valueFromProto(tv *controlv1.TypedValue) (control.Value, error) {
 				"image bytes did not decode (%v); this host reads %s", err,
 				strings.Join(imaging.Names(), ", "))
 		}
-		return control.ImageValue(img), nil
+		return control.DecodedImageValue(img, k.ImageBytes), nil
 	}
 	return control.Value{}, status.Error(codes.InvalidArgument, "unknown typed value case")
 }
