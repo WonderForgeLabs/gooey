@@ -32,6 +32,22 @@ export const meta = {
 const REPO = (typeof args === 'object' && args?.repo) || '/home/elan/repos/WonderForgeLabs/gooey'
 const IDEA = (typeof args === 'object' && args?.idea) || null
 
+// Every write-set decision in Reconcile is a string comparison between
+// two paths produced by two different agents, and agents type paths in
+// whatever shape reads well: `docs/x.md`, `./docs/x.md`, the absolute
+// path, a trailing slash. An unnormalized `!==` there does not fail
+// loudly — it hands one file to two owners, or excludes nothing. So
+// normalize to repo-relative once, at every boundary where an
+// agent-produced path enters the script.
+const norm = p => {
+  let s = String(p ?? '').trim()
+  if (s === REPO) return '.'
+  if (s.startsWith(REPO + '/')) s = s.slice(REPO.length + 1)
+  while (s.startsWith('./')) s = s.slice(2)
+  s = s.replace(/\/+$/, '')
+  return s || '.'
+}
+
 const GIT_RULES = `
 GIT & FILE DISCIPLINE (hard rules):
 - NEVER run mutating git: no add/commit/push/stash/checkout/restore/reset, and no \`git mv\`/\`git rm\` — plain \`mv\`/\`rm\` only. The coordinator that invoked this workflow owns the index. Read-only git (status/diff/log/ls-files) is fine.
@@ -285,20 +301,24 @@ ${INTERACTION_RULES}${GIT_RULES}`,
 )
 if (!spec) return { aborted: 'spec agent skipped/died', interview, design }
 if (!spec.confirmed) return { aborted: 'user did not confirm the decision record', spec, interview, design }
+// The one path every later phase compares against. Normalized here so
+// the "nobody but Verify touches the new record" exclusion is a real
+// exclusion and not a coin flip on how the spec agent typed it.
+const specPath = norm(spec.specPath)
 
 phase('Epic')
 // The spec becomes tracked work: gooey-epic-decompose has its own user
 // gate before filing anything, so calling it unconditionally is safe.
 const epic = await workflow('gooey-epic-decompose', {
   repo: REPO,
-  doc: spec.specPath,
+  doc: specPath,
   context: `Called from gooey-new-component for the approved "${interview.name}" component. The build/reconcile/verify work happens in this same workflow run — decompose so each child issue maps to a spec section (API, markup contract, damage pins, adoption sites, docs), and note in the epic body that the epic tracks the work of THIS run plus any follow-ups.`,
 })
 if (epic?.aborted) log(`epic decomposition did not file: ${epic.aborted} — continuing; work is untracked`)
 
 phase('Build')
 const build = await agent(
-  `Build the approved "${interview.name}" component for real in ${REPO}. The design is user-approved and the decision record at ${spec.specPath} is the contract — implement THAT, do not redesign.
+  `Build the approved "${interview.name}" component for real in ${REPO}. The design is user-approved and the decision record at ${specPath} is the contract — implement THAT, do not redesign.
 DIRECTION: ${JSON.stringify(interview)}
 APPROVED DESIGN: ${JSON.stringify({ designSummary: design.designSummary, decisions: design.decisions })}
 PROTOTYPE (start from it — it is the approved behavior; harden, don't rewrite): ${harnessNote(design)}
@@ -320,7 +340,7 @@ phase('Reconcile')
 // should adopt it.
 const survey = await parallel([
   () => agent(
-    `Read-only survey in ${REPO}. The new "${interview.name}" component just landed in the working tree (files: ${JSON.stringify(build.files)}; spec ${spec.specPath}). Find every DOC whose claims are now stale — under- OR over-claiming: docs/markup-reference.md (missing element entry), docs/learn/** tutorials/how-tos/concepts (statements like "gooey has no X", lists of components, embedded code samples), README.md (capability matrix rows, status claims), docs/architecture.md, and every docs/specs/*.md whose "## Executed"/"Not here" sections this change touches (a spec that said "no X exists" or deferred X now under-claims). Read the actual claims; kind=doc-stale; \`what\` quotes the stale sentence. Use command grep for sweeps. Do NOT edit anything.${GIT_RULES}`,
+    `Read-only survey in ${REPO}. The new "${interview.name}" component just landed in the working tree (files: ${JSON.stringify(build.files)}; spec ${specPath}). Find every DOC whose claims are now stale — under- OR over-claiming: docs/markup-reference.md (missing element entry), docs/learn/** tutorials/how-tos/concepts (statements like "gooey has no X", lists of components, embedded code samples), README.md (capability matrix rows, status claims), docs/architecture.md, and every docs/specs/*.md whose "## Executed"/"Not here" sections this change touches (a spec that said "no X exists" or deferred X now under-claims). Read the actual claims; kind=doc-stale; \`what\` quotes the stale sentence. Use command grep for sweeps. Do NOT edit anything.${GIT_RULES}`,
     { label: 'survey:stale-docs', phase: 'Reconcile', schema: SURVEY_SCHEMA },
   ),
   () => agent(
@@ -329,10 +349,20 @@ The Tabs precedent is the bar: kanbandemo's hand-rolled switcher was deleted in 
     { label: 'survey:adopters', phase: 'Reconcile', schema: SURVEY_SCHEMA },
   ),
 ])
-const findings = survey.filter(Boolean).flatMap(s => s.findings)
-const staleDocs = findings.filter(f => f.kind === 'doc-stale')
-const adopters = findings.filter(f => f.kind === 'adopt')
-log(`reconcile survey: ${staleDocs.length} stale doc claims, ${adopters.length} adoption sites`)
+const findings = survey.filter(Boolean).flatMap(s => s.findings).map(f => ({ ...f, path: norm(f.path) }))
+// The new record belongs to Verify, which appends its ## Executed — and
+// the stale-docs brief invites a finding on it in so many words ("every
+// docs/specs/*.md whose ## Executed / Not here sections this change
+// touches"). Drop it here, at the source: excluding it only from the
+// specDocs bucket lets it fall straight through into otherDocs, and the
+// misc-docs updater would then write the record from scratch in a tree
+// that does not contain it — a stub the collection step copies over the
+// real decision record.
+const ownRecord = findings.filter(f => f.path === specPath)
+if (ownRecord.length) log(`${ownRecord.length} survey finding(s) on the new record ${specPath} dropped — Verify owns that file`)
+const staleDocs = findings.filter(f => f.kind === 'doc-stale' && f.path !== specPath)
+const adoptFindings = findings.filter(f => f.kind === 'adopt' && f.path !== specPath)
+log(`reconcile survey: ${staleDocs.length} stale doc claims, ${adoptFindings.length} adoption sites`)
 
 // Disjoint write sets — each updater owns an explicit set and may touch
 // nothing else, so they cannot collide. The new spec's own file belongs
@@ -340,8 +370,37 @@ log(`reconcile survey: ${staleDocs.length} stale doc claims, ${adopters.length} 
 const inSet = (f, preds) => preds.some(p => p(f.path))
 const coreDocs = staleDocs.filter(f => inSet(f, [p => p.startsWith('docs/markup-reference'), p => p.startsWith('docs/architecture'), p => p === 'README.md' || p.startsWith('README')]))
 const learnDocs = staleDocs.filter(f => f.path.startsWith('docs/learn/') && !f.path.startsWith('docs/learn/examples/'))
-const specDocs = staleDocs.filter(f => f.path.startsWith('docs/specs/') && f.path !== spec.specPath)
+const specDocs = staleDocs.filter(f => f.path.startsWith('docs/specs/') && f.path !== specPath)
 const otherDocs = staleDocs.filter(f => !coreDocs.includes(f) && !learnDocs.includes(f) && !specDocs.includes(f))
+
+// Disjointness has to hold ACROSS the doc sets and the adoption sets,
+// not only within each. The adopters survey is asked in so many words
+// for "code embedded in docs pages", so an adopt finding on a file a
+// doc bucket already owns is an expected result, not an exotic one —
+// and handing one path to two isolated worktrees is exactly what the
+// collection step STOPs on. So: what each doc updater DECLARES it owns,
+// as a predicate, and the rule that a path has exactly one owner.
+const docAgents = [
+  { assigned: coreDocs, owns: p => p === 'docs/markup-reference.md' || p === 'docs/architecture.md' || p === 'README.md' },
+  { assigned: learnDocs, owns: p => p.startsWith('docs/learn/') && !p.startsWith('docs/learn/examples/') && p.endsWith('.md') },
+  { assigned: specDocs, owns: p => p.startsWith('docs/specs/') && p !== specPath },
+  { assigned: otherDocs, owns: p => otherDocs.some(f => f.path === p) },
+].filter(a => a.assigned.length)
+
+// An adoption site that lands on a doc-owned file goes TO that doc
+// updater rather than to an adoption agent of its own: it keeps the
+// work (the doc agent gets both jobs on that page) without ever giving
+// the file two owners.
+const adopters = []
+for (const site of adoptFindings) {
+  const owner = docAgents.find(a => a.owns(site.path))
+  if (owner) {
+    owner.assigned.push(site)
+    log(`adoption site ${site.path} folded into the doc updater that already owns it — one path, one owner`)
+  } else {
+    adopters.push(site)
+  }
+}
 
 // Reconcile is the only phase with genuinely concurrent writers, so it
 // is the only one that pays for worktree isolation. Each updater gets
@@ -353,15 +412,33 @@ const ISOLATION_RULES = `
 YOU ARE IN YOUR OWN GIT WORKTREE — not the shared checkout:
 - Run \`pwd\` and \`git rev-parse --show-toplevel\` FIRST and work from that root. Paths in your write set are relative to it. Never cd to the shared checkout at ${REPO} to make an edit; reading from it is fine, writing to it defeats the isolation and is how duplicate-file forks happen.
 - Your edits stay uncommitted in your worktree — the coordinator collects them. Do NOT commit, and do NOT create branches. Report changed[] as paths relative to the repo root so they are meaningful after collection.
-- Verify before you report: run \`git status --porcelain -uall\` in YOUR worktree and confirm every changed path is inside your write set and nothing stray came along (\`-uall\` descends into untracked directories; plain porcelain stops at the directory and would hide a file inside it).
+- Verify before you report: run \`git status --porcelain -uall\` in YOUR worktree and confirm every changed path is inside your write set or is one of the seeded paths below, and that nothing stray came along (\`-uall\` descends into untracked directories; plain porcelain stops at the directory and would hide a file inside it). The seeded paths WILL show up dirty there — that is expected, and they still never go in changed[].
 - Never create a directory under .claude/worktrees/ yourself. An unregistered directory there is invisible to BOTH \`git worktree list\` and \`git status\`, and has silently orphaned real work in this repo before.`
 
-const updaterBrief = (owned, assigned, extra) => `Reconciliation updater for ${REPO}. The new "${interview.name}" component landed (spec: ${spec.specPath}; files: ${JSON.stringify(build.files)}; design summary: ${design.designSummary}).
+// A worktree is branched from a COMMIT, and this workflow never commits
+// — so the component the Build phase just wrote is absent from every
+// updater's tree. Reading it from the shared checkout is enough to
+// DESCRIBE it, but not to compile against it: example modules `replace`
+// gooey with `../../`, which resolves to the updater's own worktree
+// root, and docs/learn/examples/** compiles against that same root
+// module. An adopter that cannot resolve the component cannot build,
+// never mind smoke, the site it is adopting. So each updater seeds its
+// own tree with the built files first. Seeded paths belong to nobody's
+// write set and are never collected back — they already exist in the
+// shared checkout, which is where the coordinator will stage them from.
+const SEED_FILES = [...new Set([...build.files.map(norm), specPath])]
+const SEED_RULES = `
+SEED YOUR WORKTREE BEFORE YOU READ A FINDING OR EDIT ANYTHING:
+- The component and its decision record were written into the SHARED checkout and are still uncommitted, so your worktree — branched from a commit — does not have them. Copy them in yourself: for each path P below, \`mkdir -p $(dirname P)\` then \`cp ${REPO}/P P\` relative to YOUR worktree root. Paths: ${JSON.stringify(SEED_FILES)}
+- Re-derive that list, do not trust it blindly: run \`git -C ${REPO} status --porcelain -uall\` and bring across anything else under components/ or markup/ that belongs to this component. A half-seeded tree compiles into confusing errors that look like your own mistake.
+- Seeded files are NOT in your write set: do not edit them, do not delete them, and never list them in changed[]. They are here so your tree resolves the component, nothing more.
+- Prove the seed took before you edit: \`go vet ./components/... ./markup/...\` from your worktree root must resolve the component (\`go build ./...\` at the root stays banned — it drops executables next to tracked ones). If it does not resolve, STOP and report that instead of editing around it: a green report from a tree that cannot see the component is worthless.`
+
+const updaterBrief = (owned, assigned, extra) => `Reconciliation updater for ${REPO}. The new "${interview.name}" component landed (spec: ${specPath}; files: ${JSON.stringify(build.files)}; design summary: ${design.designSummary}).
 YOUR WRITE SET — you may edit ONLY these paths, other agents own everything else, and the survey findings assigned to you are: ${JSON.stringify(assigned)}
 Owned: ${JSON.stringify(owned)}
-NOTE: the component itself and the spec exist in the SHARED checkout, not in your worktree — your worktree was branched before the build. Read them from ${REPO} (read-only) when you need to describe the component accurately, but make every edit in your own tree.
-For each finding: re-read the file NOW (concurrent sessions; the finding's quote may have moved), judge it, and fix stale claims to tell the truth about the component as built — under-claims and over-claims both. ${extra}
-List any assigned finding you judged wrong under skipped, with the reason. changed[] must stay inside your write set.${ISOLATION_RULES}${GIT_RULES}`
+For each finding: re-read the file NOW (concurrent sessions; the finding's quote may have moved), judge it, and fix stale claims to tell the truth about the component as built — under-claims and over-claims both. A finding whose kind is "adopt" means that file also hand-rolls what the component now does: rewrite the code, not just the prose around it, to the same bar an adoption agent is held to (a reader must be able to paste it and have it run). ${extra}
+List any assigned finding you judged wrong under skipped, with the reason. changed[] must stay inside your write set.${SEED_RULES}${ISOLATION_RULES}${GIT_RULES}`
 
 const updaters = []
 if (coreDocs.length) updaters.push(() => agent(
@@ -375,7 +452,7 @@ if (learnDocs.length) updaters.push(() => agent(
   { label: 'update:learn-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
 if (specDocs.length) updaters.push(() => agent(
-  updaterBrief([`docs/specs/*.md except ${spec.specPath}`], specDocs,
+  updaterBrief([`docs/specs/*.md except ${specPath}`], specDocs,
     `Specs are decision records: do NOT rewrite history. Append/adjust their "## Executed" sections (or add a dated follow-up note) so they no longer under- or over-claim; never alter the recorded decisions themselves.`),
   { label: 'update:spec-executed', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
@@ -394,7 +471,14 @@ for (const site of adopters) {
 // compares identical paths, not containment. Shallowest-first ordering
 // guarantees an ancestor is promoted to a root before its descendants
 // are tested against it.
-const contains = (a, b) => a === b || a === '.' || b.startsWith(a + '/')
+//
+// '.' is a PEER bucket, not an ancestor: its write set is the repo-root
+// files only (that is what its brief says it owns). Treating it as an
+// ancestor of everything folded every other adoption directory into it
+// on the first root-level finding, leaving one agent holding findings
+// outside the write set its own brief forbids it to leave — silently
+// dropping every adoption but the root's.
+const contains = (a, b) => a === b || (a !== '.' && b.startsWith(a + '/'))
 const depth = d => (d === '.' ? 0 : d.split('/').length)
 const roots = []
 for (const d of Object.keys(adoptByDir).sort((a, b) => depth(a) - depth(b))) {
@@ -407,9 +491,30 @@ for (const d of Object.keys(adoptByDir).sort((a, b) => depth(a) - depth(b))) {
     roots.push(d)
   }
 }
+// An adoption write set is a whole DIRECTORY, so it can swallow a file
+// a doc updater declared even when no single finding names it twice
+// (docs/learn/examples/07-x/ owning a README.md that misc-docs owns).
+// Carve every declared doc path that falls inside the directory back
+// out of it, by name, in the write set the agent is handed.
+const reserved = [
+  { label: specPath, under: specPath },
+  ...docAgents.flatMap(a => a.assigned.map(f => ({ label: f.path, under: f.path }))),
+  ...(coreDocs.length ? ['docs/markup-reference.md', 'docs/architecture.md', 'README.md'].map(p => ({ label: p, under: p })) : []),
+  ...(learnDocs.length ? [{ label: 'docs/learn/**.md (except docs/learn/examples/)', under: 'docs/learn' }] : []),
+  ...(specDocs.length ? [{ label: 'docs/specs/*.md', under: 'docs/specs' }] : []),
+]
+const carvedFor = dir => {
+  const inside = p => (dir === '.' ? !p.includes('/') : p === dir || p.startsWith(dir + '/'))
+  return [...new Set(reserved.filter(e => inside(e.under)).map(e => e.label))]
+}
 for (const [dir, sites] of Object.entries(adoptByDir)) {
+  const carved = carvedFor(dir)
+  if (carved.length) log(`adoption dir ${dir} carved around doc-owned paths: ${carved.join(', ')}`)
   updaters.push(() => agent(
-    updaterBrief([dir === '.' ? 'the repo root (files directly in it only)' : dir + '/'], sites,
+    updaterBrief([
+      dir === '.' ? 'the repo root (files directly in it only)' : dir + '/',
+      ...(carved.length ? [`EXCEPT these, which another updater (or Verify) owns — read them if you like, never edit them: ${carved.join(', ')}`] : []),
+    ], sites,
       `Adopt the component the way kanbandemo adopted Tabs: the hand-rolled equivalent is DELETED in favor of the component (plain rm for dead files — never git rm), markup/bindings rewritten to the new element, behavior preserved. Build this site's binary to /tmp and smoke it under a pty (script -qec with an explicit stty size) before reporting. If on re-reading you judge this site contract surface that must NOT migrate (the cmd/reader precedent), skip with the reason.`),
     { label: `adopt:${dir}`, phase: 'Reconcile', schema: RECONCILE_SCHEMA, effort: 'high', isolation: 'worktree' },
   ))
@@ -427,18 +532,32 @@ const reconciled = (await parallel(updaters)).filter(Boolean)
 // write sets are disjoint by construction, so this is a copy, not a
 // merge, and any path claimed by two worktrees is a bug worth stopping
 // on rather than silently resolving.
+//
+// TWO checks, not one, and the second is the one that bites: a whole-
+// file copy from a worktree carries that worktree's whole BASE COMMIT
+// with it. The shared checkout is routinely ahead of that base — the
+// coordinator's own feature branch, another session's uncommitted edits
+// — so an unchecked copy silently reverts every line the updater never
+// saw, with no diff, no conflict, and no report. Comparing worktrees to
+// each other cannot catch it; only comparing each file to its
+// destination can.
 let collection = null
 if (reconciled.some(r => r.changed?.length)) {
   collection = await agent(
-    `Collect the reconciliation edits into the shared checkout at ${REPO}. Each updater ran in its own git worktree and left its changes uncommitted there; the write sets were assigned disjoint, so this is a copy with a collision check, not a merge.
+    `Collect the reconciliation edits into the shared checkout at ${REPO}. Each updater ran in its own git worktree and left its changes uncommitted there; the write sets were assigned disjoint, so this is a copy with two guards, not a merge.
 The updaters and what each reports changing: ${JSON.stringify(reconciled.map(r => ({ owned: r.owned, changed: r.changed })))}
+Files the updaters were told to SEED into their worktrees from the shared checkout — these are already in ${REPO} and must NOT be collected back, whatever a worktree's git status says about them: ${JSON.stringify(SEED_FILES)}
 Steps:
-1. Enumerate the worktrees: \`git worktree list\` from ${REPO}. Match each to an updater by the changed paths it reports. Also \`ls -a ${REPO}/.claude/worktrees/\` and compare — a directory on disk that is NOT in \`git worktree list\` is an unregistered orphan (no .git file means git cannot see it at all); report it, do not delete it.
-2. In each worktree run \`git status --porcelain -uall\` yourself — trust it over the agent's self-report — and collect the actual changed/added paths.
-3. Collision check BEFORE copying: if two worktrees changed the same path, STOP and report it as a collision with both versions' diffs. Do not pick a winner — disjoint write sets were the contract, and a violation means the survey mis-assigned ownership.
-4. Copy each changed file from its worktree into ${REPO} at the same relative path (plain \`cp\`; plain \`rm\` for deletions an adopter made). Never \`git mv\`/\`git rm\`, never \`git add\`, never commit.
-5. Verify by diffing: for every collected path, the file in ${REPO} must now match the worktree's version.
-Report: collected paths, any collisions, any unregistered orphan directories, and anything you could not collect.${GIT_RULES}`,
+1. Enumerate the worktrees: \`git worktree list\` from ${REPO}. Match each to an updater by the changed paths it reports. Separately, check each entry under ${REPO}/.claude/worktrees/ for a \`.git\` file or directory: one without it is not a worktree at all and git cannot see it via \`git worktree list\` OR \`git status\`. Report such a directory; do not delete it, and do not expect the directory listing and \`git worktree list\` to match as sets — the list also carries the main checkout and worktrees registered elsewhere.
+2. In each worktree run \`git status --porcelain -uall\` yourself — trust it over the agent's self-report — and collect the actual changed/added/deleted paths, minus the seeded paths above.
+3. Collision check (worktree vs worktree) BEFORE copying: if two worktrees changed the same path, STOP and report it as a collision with both versions' diffs. Do not pick a winner — disjoint write sets were the contract, and a violation means the survey mis-assigned ownership.
+4. Freshness check (worktree vs DESTINATION) BEFORE copying, per file, no exceptions. The updater edited its worktree's base commit; ${REPO} may have moved on since. For each path P from step 2, in that worktree:
+   - P tracked in the worktree: \`git -C <worktree> show HEAD:P | diff - ${REPO}/P\`. Empty diff -> the destination is exactly what the updater started from, safe to copy. NON-EMPTY -> STALE: do NOT copy. Report P with both diffs (destination-vs-base, and the updater's own \`git -C <worktree> diff -- P\`) so a human can merge the two intents.
+   - P new in the worktree (absent from its HEAD): ${REPO}/P must not exist. If it does, same stale case — report, never overwrite.
+   - P deleted by an adopter: \`git -C <worktree> show HEAD:P | diff - ${REPO}/P\` must be empty before you \`rm ${REPO}/P\`. Non-empty -> report, do not delete.
+5. Copy each file that passed BOTH checks from its worktree into ${REPO} at the same relative path (plain \`cp\`; plain \`rm\` for a cleared deletion). Never \`git mv\`/\`git rm\`, never \`git add\`, never commit.
+6. Verify by diffing: for every collected path, the file in ${REPO} must now match the worktree's version.
+Report: collected paths, any collisions, any STALE paths you refused to copy (these need a human — say so plainly, they are not a footnote), any \`.git\`-less directory under .claude/worktrees/, and anything else you could not collect.${GIT_RULES}`,
     { label: 'collect:worktrees', phase: 'Reconcile', effort: 'high' },
   )
 }
@@ -463,27 +582,46 @@ let verify = null
 for (let attempt = 1; attempt <= 3; attempt++) {
   verify = await agent(
     `Verification pass ${attempt} for the "${interview.name}" component work in ${REPO}. ${attempt > 1 ? `Previous problems (fix them in the files this workflow touched, then re-check; report anything needing a human): ${JSON.stringify(verify?.problems)}` : ''}
-Touched so far — component: ${JSON.stringify(build.files)}; spec: ${spec.specPath}; reconciled: ${JSON.stringify(reconciled.map(r => ({ owned: r.owned, changed: r.changed })))}
+Touched so far — component: ${JSON.stringify(build.files)}; spec: ${specPath}; reconciled: ${JSON.stringify(reconciled.map(r => ({ owned: r.owned, changed: r.changed })))}
 Run and report each:
 1. Root module: go vet ./... && go test ./... (NEVER go build ./... at the root — it drops executables next to tracked ones).
 2. Every nested module: cd mcp && go test -race ./...; cd grpc && go test -race ./...; every other dir with its own go.mod (discover: command find ${REPO} -name go.mod -not -path '*/.claude/*') gets go vet + go test — INCLUDING every examples/ and docs/learn/examples/ module: each must vet.
 3. gofmt -l over every touched .go file — must be empty.
 4. Damage pins: run the component's tests verbosely and confirm each count the spec promises.
 5. Markdown: every relative link and image path in every touched doc resolves to a real file; every file a touched doc links to is either tracked (git ls-files --error-unmatch) or present on the staging list you are about to produce — a link into nowhere fails.
-6. Append "## Executed" to ${spec.specPath} in house style (model: the executed specs' sections): what shipped, API surface, the verification evidence you just gathered, divergences from the plan. Also flip its Status line to executed. This is the ONE file Reconcile was told not to touch — it is yours.
-7. Worktree hygiene: the Reconcile updaters ran in isolated worktrees. Confirm \`ls -a ${REPO}/.claude/worktrees/\` matches \`git worktree list\` exactly — a directory present on disk but absent from the list is an unregistered orphan that git cannot see at all (not via \`git worktree list\`, not via \`git status\`), and has silently stranded real work in this repo before. Report any mismatch as a problem; do not delete anything yourself.
+6. Append "## Executed" to ${specPath} in house style (model: the executed specs' sections): what shipped, API surface, the verification evidence you just gathered, divergences from the plan. Also flip its Status line to executed. This is the ONE file Reconcile was told not to touch — it is yours.
+7. Worktree hygiene (a NOTE, never a green gate): the Reconcile updaters ran in isolated worktrees and the runtime leaves behind every one that changed something — so entries under ${REPO}/.claude/worktrees/ are the EXPECTED outcome of the phase you just ran, not a failure. Do NOT compare that directory to \`git worktree list\` as sets: the list also carries the main checkout and any worktree registered outside that directory, other sessions' worktrees appear in both, and \`ls -a\` adds \`.\` and \`..\` — the two can never match. What IS worth catching: a directory there with no \`.git\` file or directory inside it (\`ls -a ${REPO}/.claude/worktrees/*/.git\`). That one is not a worktree at all, git cannot see it via \`git worktree list\` OR \`git status\`, and it has silently stranded real work in this repo before. Report each such directory under checks as a note; do not delete anything yourself, and do not let it change green.
 8. Staging list: run git status --porcelain -uall NOW and derive stagingList (explicit file paths belonging to this work — component, tests, spec, reconciled docs collected from the worktrees, adopters, workflow script if edited${regenResult ? ', regenerated docs/GIFs' : ''}) and stray (untracked junk that must NOT be staged: binaries, .cast files, scratch logs). Every path individually — never a directory. \`-uall\` is load-bearing: it descends into untracked directories, where plain porcelain stops at the directory name and hides the files inside.
-green=true only if ALL of checks 1-5 AND 7 pass — a stranded worktree is a failure, not a note, because Reconcile is the phase that creates them. (6 and 8 are actions, not pass/fail checks.)${INVARIANTS}${GIT_RULES}`,
+green=true only if ALL of checks 1-5 pass. (6 and 8 are actions, 7 is a note — none of the three is a pass/fail check.)${INVARIANTS}${GIT_RULES}`,
     { label: `verify:pass-${attempt}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high' },
   )
   if (!verify) return { aborted: `verify pass ${attempt} skipped/died`, interview, design, spec, epic, build }
   if (verify.green) break
   log(`verify pass ${attempt} found problems: ${verify.problems.join('; ')}`)
 }
+// Red after three passes returns a FAILED shape, the way gooey-new-demo
+// does. The success shape ends with "the coordinator stages the explicit
+// paths above and commits" — handing that to a coordinator alongside a
+// buried `green: false` is how a red build gets committed under live
+// issues that already point at it. No stagingList, no commit note.
+if (!verify.green) {
+  return {
+    failed: 'verification still red after 3 passes — nothing here is safe to stage',
+    problems: verify.problems,
+    checks: verify.checks,
+    component: interview.name,
+    spec: specPath,
+    epic: epic?.epic ? { number: epic.epic, issues: epic.issues } : epic?.aborted || 'not filed',
+    build: { files: build.files, invariantChecklist: build.invariantChecklist },
+    reconciled: reconciled.map(r => ({ changed: r.changed, skipped: r.skipped })),
+    collection: collection || 'no worktree edits to collect',
+    note: 'The working tree holds the component, the spec, and the collected reconciliation edits, all uncommitted and all red. Epic issues (if filed) are already live on GitHub and now point at unfinished work — fix or say so there.',
+  }
+}
 
 return {
   component: interview.name,
-  spec: spec.specPath,
+  spec: specPath,
   epic: epic?.epic ? { number: epic.epic, issues: epic.issues } : epic?.aborted || 'not filed',
   designArtifact: design.artifactUrl,
   build: { files: build.files, invariantChecklist: build.invariantChecklist },
