@@ -13,7 +13,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,8 +37,17 @@ import (
 // ---- the WorkflowService fake: pages keyed by the token that fetches
 // them, plus a recorder for every request the dashboard causes ----
 
+// fakeWFS is shared MUTABLE state under real concurrency, so it is
+// written as such. The provider runs every activity on its own goroutine
+// (handlers/temporal.(*Provider).activity), so a test that presses
+// several keys has several calls in flight against this one fake at
+// once — and the test goroutine reads the recorders between drains,
+// while those calls are still running. Every field below is therefore
+// reached only through the mutex, from either side.
 type fakeWFS struct {
 	workflowservice.WorkflowServiceClient
+
+	mu    sync.Mutex
 	pages map[string]*workflowservice.ListWorkflowExecutionsResponse
 	count int64 // what CountWorkflowExecutions reports; 0 means the default 42
 
@@ -46,6 +57,8 @@ type fakeWFS struct {
 }
 
 func (f *fakeWFS) ListWorkflowExecutions(ctx context.Context, req *workflowservice.ListWorkflowExecutionsRequest, _ ...grpc.CallOption) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listReqs = append(f.listReqs, req)
 	if resp, ok := f.pages[string(req.NextPageToken)]; ok {
 		return resp, nil
@@ -54,6 +67,8 @@ func (f *fakeWFS) ListWorkflowExecutions(ctx context.Context, req *workflowservi
 }
 
 func (f *fakeWFS) CountWorkflowExecutions(ctx context.Context, req *workflowservice.CountWorkflowExecutionsRequest, _ ...grpc.CallOption) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.countReqs = append(f.countReqs, req)
 	n := f.count
 	if n == 0 {
@@ -63,6 +78,8 @@ func (f *fakeWFS) CountWorkflowExecutions(ctx context.Context, req *workflowserv
 }
 
 func (f *fakeWFS) DescribeWorkflowExecution(ctx context.Context, req *workflowservice.DescribeWorkflowExecutionRequest, _ ...grpc.CallOption) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.descReqs = append(f.descReqs, req)
 	return &workflowservice.DescribeWorkflowExecutionResponse{
 		WorkflowExecutionInfo: &workflow.WorkflowExecutionInfo{
@@ -70,6 +87,35 @@ func (f *fakeWFS) DescribeWorkflowExecution(ctx context.Context, req *workflowse
 			Type:      &common.WorkflowType{Name: "Described"},
 		},
 	}, nil
+}
+
+// lists, counts and describes are what the dashboard has asked for as of
+// now. Each returns a copy: the caller is the test goroutine holding no
+// lock, and an activity still in flight may append while it reads.
+func (f *fakeWFS) lists() []*workflowservice.ListWorkflowExecutionsRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.listReqs)
+}
+
+func (f *fakeWFS) counts() []*workflowservice.CountWorkflowExecutionsRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.countReqs)
+}
+
+func (f *fakeWFS) describes() []*workflowservice.DescribeWorkflowExecutionRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.descReqs)
+}
+
+// setCount changes what the server reports mid-test — a write that races
+// every activity in flight unless it goes through the lock.
+func (f *fakeWFS) setCount(n int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.count = n
 }
 
 type actsClient struct {
@@ -266,10 +312,10 @@ func TestEnterRunsTheQueryAndProjectsTheRows(t *testing.T) {
 	h.vm.Query.Set(`ExecutionStatus="Running"`)
 	h.runAndSettle()
 
-	if len(wfs.listReqs) != 1 || len(wfs.countReqs) != 1 {
-		t.Fatalf("list/count requests = %d/%d, want 1/1", len(wfs.listReqs), len(wfs.countReqs))
+	if len(wfs.lists()) != 1 || len(wfs.counts()) != 1 {
+		t.Fatalf("list/count requests = %d/%d, want 1/1", len(wfs.lists()), len(wfs.counts()))
 	}
-	list := wfs.listReqs[0]
+	list := wfs.lists()[0]
 	if list.Query != `ExecutionStatus="Running"` {
 		t.Errorf("list query = %q, want the query bar's text", list.Query)
 	}
@@ -279,8 +325,8 @@ func TestEnterRunsTheQueryAndProjectsTheRows(t *testing.T) {
 	if list.Namespace != "ops-ns" {
 		t.Errorf("namespace = %q, want the worker's", list.Namespace)
 	}
-	if wfs.countReqs[0].Query != `ExecutionStatus="Running"` {
-		t.Errorf("count query = %q, want the query bar's text", wfs.countReqs[0].Query)
+	if wfs.counts()[0].Query != `ExecutionStatus="Running"` {
+		t.Errorf("count query = %q, want the query bar's text", wfs.counts()[0].Query)
 	}
 
 	screen := h.screen()
@@ -320,10 +366,10 @@ func TestSelectionDescribesTheSelectedExecution(t *testing.T) {
 	}
 	h.settle(func() bool { return h.vm.DescribeJSON.Get() != "" })
 
-	if len(wfs.descReqs) != 1 {
-		t.Fatalf("describe requests = %d, want 1", len(wfs.descReqs))
+	if len(wfs.describes()) != 1 {
+		t.Fatalf("describe requests = %d, want 1", len(wfs.describes()))
 	}
-	got := wfs.descReqs[0]
+	got := wfs.describes()[0]
 	if got.Execution.GetWorkflowId() != "billing-3" || got.Execution.GetRunId() != "run-billing-3" {
 		t.Fatalf("described %v, want the newly selected row", got.Execution)
 	}
@@ -358,9 +404,9 @@ func TestPaginationRoundTripsTheToken(t *testing.T) {
 	// next: the fetch must carry the server's token, decoded back to the
 	// exact bytes it sent.
 	h.vm.NextPage()
-	h.settle(func() bool { return len(wfs.listReqs) == 2 })
-	if string(wfs.listReqs[1].NextPageToken) != "tok-2" {
-		t.Fatalf("next fetched with token %q, want the server's bytes", wfs.listReqs[1].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 2 })
+	if string(wfs.lists()[1].NextPageToken) != "tok-2" {
+		t.Fatalf("next fetched with token %q, want the server's bytes", wfs.lists()[1].NextPageToken)
 	}
 	h.settle(func() bool { return strings.Contains(h.vm.RowsJSON.Get(), "page2-a") })
 	if h.vm.PageNum.Get() != 2 {
@@ -373,15 +419,15 @@ func TestPaginationRoundTripsTheToken(t *testing.T) {
 	// The last page has no token: next must not fetch.
 	h.vm.NextPage()
 	h.disp.Drain()
-	if len(wfs.listReqs) != 2 {
-		t.Fatalf("next off the end fetched anyway: %d requests", len(wfs.listReqs))
+	if len(wfs.lists()) != 2 {
+		t.Fatalf("next off the end fetched anyway: %d requests", len(wfs.lists()))
 	}
 
 	// prev: back to the remembered first page.
 	h.vm.PrevPage()
-	h.settle(func() bool { return len(wfs.listReqs) == 3 })
-	if len(wfs.listReqs[2].NextPageToken) != 0 {
-		t.Fatalf("prev fetched with token %q, want the first page's empty token", wfs.listReqs[2].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 3 })
+	if len(wfs.lists()[2].NextPageToken) != 0 {
+		t.Fatalf("prev fetched with token %q, want the first page's empty token", wfs.lists()[2].NextPageToken)
 	}
 	h.settle(func() bool { return strings.Contains(h.vm.RowsJSON.Get(), "page1-a") })
 	if h.vm.PageNum.Get() != 1 {
@@ -390,8 +436,8 @@ func TestPaginationRoundTripsTheToken(t *testing.T) {
 	// And below the floor, nothing.
 	h.vm.PrevPage()
 	h.disp.Drain()
-	if len(wfs.listReqs) != 3 {
-		t.Fatalf("prev off the start fetched anyway: %d requests", len(wfs.listReqs))
+	if len(wfs.lists()) != 3 {
+		t.Fatalf("prev off the start fetched anyway: %d requests", len(wfs.lists()))
 	}
 }
 
@@ -408,19 +454,19 @@ func TestRunResetsPagination(t *testing.T) {
 	h := build(t, wfs)
 	h.runAndSettle()
 	h.vm.NextPage()
-	h.settle(func() bool { return len(wfs.listReqs) == 2 })
+	h.settle(func() bool { return len(wfs.lists()) == 2 })
 
 	h.vm.RunQuery()
-	h.settle(func() bool { return len(wfs.listReqs) == 3 })
-	if len(wfs.listReqs[2].NextPageToken) != 0 {
-		t.Fatalf("run fetched with token %q, want page one", wfs.listReqs[2].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 3 })
+	if len(wfs.lists()[2].NextPageToken) != 0 {
+		t.Fatalf("run fetched with token %q, want page one", wfs.lists()[2].NextPageToken)
 	}
 	if h.vm.PageNum.Get() != 1 {
 		t.Fatalf("page = %d, want 1", h.vm.PageNum.Get())
 	}
 	h.vm.PrevPage()
 	h.disp.Drain()
-	if len(wfs.listReqs) != 3 {
+	if len(wfs.lists()) != 3 {
 		t.Fatal("run left stale page history behind")
 	}
 }
@@ -439,14 +485,14 @@ func TestRefreshKeepsTheCurrentPage(t *testing.T) {
 	h := build(t, wfs)
 	h.runAndSettle()
 	h.vm.NextPage()
-	h.settle(func() bool { return len(wfs.listReqs) == 2 })
+	h.settle(func() bool { return len(wfs.lists()) == 2 })
 
 	if !h.comp.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'r', Mods: input.ModCtrl}) {
 		t.Fatal("ctrl+r was not consumed — the root KeyBinding is not wired")
 	}
-	h.settle(func() bool { return len(wfs.listReqs) == 3 })
-	if string(wfs.listReqs[2].NextPageToken) != "tok-2" {
-		t.Fatalf("refresh fetched with token %q, want the current page's", wfs.listReqs[2].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 3 })
+	if string(wfs.lists()[2].NextPageToken) != "tok-2" {
+		t.Fatalf("refresh fetched with token %q, want the current page's", wfs.lists()[2].NextPageToken)
 	}
 }
 
@@ -488,9 +534,9 @@ func TestAltRMnemonicRefreshesFromTheQueryBar(t *testing.T) {
 	if !h.comp.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'r', Mods: input.ModAlt}) {
 		t.Fatal("alt+r was not consumed — the button mnemonic is not wired")
 	}
-	h.settle(func() bool { return len(wfs.listReqs) == 2 && len(wfs.countReqs) == 2 })
-	if len(wfs.listReqs[1].NextPageToken) != 0 {
-		t.Fatalf("alt+r fetched with token %q, want the current (first) page's", wfs.listReqs[1].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 2 && len(wfs.counts()) == 2 })
+	if len(wfs.lists()[1].NextPageToken) != 0 {
+		t.Fatalf("alt+r fetched with token %q, want the current (first) page's", wfs.lists()[1].NextPageToken)
 	}
 
 	// The marker is stripped on screen and the accelerator underlined.
@@ -542,9 +588,9 @@ func TestAutoRefreshTimerIsDeclaredInMarkup(t *testing.T) {
 	// A tick is the same intent every other refresh path runs: current
 	// page refetched, count refetched.
 	timer.Tick.Run()
-	h.settle(func() bool { return len(wfs.listReqs) == 2 && len(wfs.countReqs) == 2 })
-	if len(wfs.listReqs[1].NextPageToken) != 0 {
-		t.Fatalf("the tick fetched with token %q, want the current page's", wfs.listReqs[1].NextPageToken)
+	h.settle(func() bool { return len(wfs.lists()) == 2 && len(wfs.counts()) == 2 })
+	if len(wfs.lists()[1].NextPageToken) != 0 {
+		t.Fatalf("the tick fetched with token %q, want the current page's", wfs.lists()[1].NextPageToken)
 	}
 }
 
@@ -562,11 +608,11 @@ func TestCountLabelTracksEveryRefresh(t *testing.T) {
 		t.Fatalf("initial count is not on screen:\n%s", screen)
 	}
 
-	wfs.count = 57
+	wfs.setCount(57)
 	if !h.comp.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'r', Mods: input.ModCtrl}) {
 		t.Fatal("ctrl+r was not consumed")
 	}
-	h.settle(func() bool { return len(wfs.countReqs) == 2 && strings.Contains(h.vm.CountJSON.Get(), "57") })
+	h.settle(func() bool { return len(wfs.counts()) == 2 && strings.Contains(h.vm.CountJSON.Get(), "57") })
 
 	screen := h.screen()
 	if !strings.Contains(screen, "57 matching") {
