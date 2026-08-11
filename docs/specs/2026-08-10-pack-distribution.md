@@ -96,7 +96,7 @@ because the root sweep skips it.
 ## Naming
 
 - Activity packs: `packs/<runtime>-<domain>` —
-  `packs/temporal-visibility`, future `packs/temporal-schedules`. The
+  `packs/temporal-visibility`, `packs/temporal-schedule`. The
   Go package name is the domain (`visibility`), so call sites read
   `visibility.Register(w, visibility.New(c))`.
 - Handler packs: `handlers/<name>`, package `<name>handlers`

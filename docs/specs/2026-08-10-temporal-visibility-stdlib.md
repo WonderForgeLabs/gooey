@@ -62,8 +62,8 @@ to its packaging conclusion. The pack is a general-purpose Temporal
 artifact that gooey happens to consume.
 
 - **Naming convention for future packs:** `packs/temporal-<domain>`
-  (this one is `temporal-visibility`; a schedules or task-queue pack
-  would be `packs/temporal-schedules`, `packs/temporal-taskqueues`).
+  (this one is `temporal-visibility`; the schedule and task-queue packs
+  landed as `packs/temporal-schedule`, `packs/temporal-taskqueue`).
   The Go package name is the domain (`visibility`), so call sites read
   `visibility.Register(w, visibility.New(c))`.
 - **gooey-side consumption:** `handlers/temporal` (already the nested
