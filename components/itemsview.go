@@ -2,6 +2,7 @@ package components
 
 import (
 	"slices"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -77,12 +78,23 @@ type ItemsView struct {
 	// hit-test, but focus-follows-click finds nothing to move to, so
 	// typing never goes dead.
 	NoFocus bool
+	// Now is the clock wheel velocity is measured against. Nil means
+	// time.Now; tests inject a fake so event rate is simulated, not
+	// slept — the FocusManager's Now field is the precedent.
+	Now func() time.Time
 
 	top     int
 	rowH    int
 	visible int
 	rows    []*itemRow
 	kids    []gooey.Component
+
+	// Wheel-velocity state: when the last notch arrived, which way it
+	// went, and how many have arrived back-to-back. Plain fields, not
+	// properties — a notch's bookkeeping must not be damage.
+	wheelAt  time.Time
+	wheelDir int
+	wheelRun int
 
 	structure       func()
 	pressedSelected bool
@@ -447,9 +459,51 @@ func (v *ItemsView) scrollBy(d, n int) bool {
 
 // ---- input ----
 
-// wheelStep is the conventional three lines per notch. One line per notch
-// is technically responsive and reads as broken.
-const wheelStep = 3
+// Wheel velocity. One notch is one row — the precision that lets a slow
+// wheel touch every item — until notches arrive fast enough to read as a
+// continuous gesture, at which point the step scales with the LIST, so a
+// flick crosses a big collection in a bounded number of notches instead
+// of the fixed lines-per-notch that made every flick overshoot to the
+// end. The tiers are entered by run length, not by one fast interval, so
+// the first notches of any gesture are always precise.
+const (
+	// wheelFastGap is the longest interval that still sustains a run;
+	// terminals deliver a flick's notches a few ms apart, a deliberate
+	// slow roll hundreds of ms apart.
+	wheelFastGap = 120 * time.Millisecond
+	// wheelFastRun and wheelFlickRun are the run lengths entering the
+	// fast (~5% of the list) and flick (~15%) tiers.
+	wheelFastRun  = 3
+	wheelFlickRun = 9
+)
+
+func (v *ItemsView) now() time.Time {
+	if v.Now != nil {
+		return v.Now()
+	}
+	return time.Now()
+}
+
+// wheelStep is how many rows this notch moves, given the recent event
+// rate. A pause longer than wheelFastGap or a change of direction resets
+// the run to the precise tier. The percentage tiers are floored (2 and 5
+// rows) so they outrun the base tier even on a short list.
+func (v *ItemsView) wheelStep(n, dir int) int {
+	t := v.now()
+	if dir == v.wheelDir && !v.wheelAt.IsZero() && t.Sub(v.wheelAt) <= wheelFastGap {
+		v.wheelRun++
+	} else {
+		v.wheelRun = 0
+	}
+	v.wheelAt, v.wheelDir = t, dir
+	switch {
+	case v.wheelRun >= wheelFlickRun:
+		return max(5, n*15/100)
+	case v.wheelRun >= wheelFastRun:
+		return max(2, n*5/100)
+	}
+	return 1
+}
 
 func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 	n := v.count()
@@ -476,7 +530,9 @@ func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 		return false
 	}
 	sel := v.selection(n)
-	page := max(1, v.visible-1)
+	// A page is the realized window height, the same stride the scroll
+	// mode's PageUp/PageDown use — the two modes must read as one pager.
+	page := max(1, v.visible)
 	switch ev {
 	case input.Rune('j'), input.Named(input.KeyDown):
 		return v.selectIndex(sel+1, n)
@@ -508,9 +564,9 @@ func (v *ItemsView) HandleMouse(ev input.MouseEvent) bool {
 	if v.scrolls() {
 		switch ev.Kind {
 		case input.WheelUp:
-			return v.scrollBy(+wheelStep, n)
+			return v.scrollBy(+v.wheelStep(n, +1), n)
 		case input.WheelDown:
-			return v.scrollBy(-wheelStep, n)
+			return v.scrollBy(-v.wheelStep(n, -1), n)
 		}
 		return false
 	}
@@ -533,9 +589,9 @@ func (v *ItemsView) HandleMouse(ev input.MouseEvent) bool {
 		}
 		return true
 	case input.WheelUp:
-		return v.selectIndex(v.selection(n)-wheelStep, n)
+		return v.selectIndex(v.selection(n)-v.wheelStep(n, +1), n)
 	case input.WheelDown:
-		return v.selectIndex(v.selection(n)+wheelStep, n)
+		return v.selectIndex(v.selection(n)+v.wheelStep(n, -1), n)
 	}
 	return false
 }

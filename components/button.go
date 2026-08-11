@@ -1,6 +1,8 @@
 package components
 
 import (
+	"unicode"
+
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -44,15 +46,32 @@ type Button struct {
 // and it reads nothing so it subscribes to nothing.
 func (b *Button) disabled() bool { return b.Click != nil && !b.Click.CanExecute() }
 
-func (b *Button) label() string { return "[ " + getStr(b.Content) + " ]" }
+// display is the Content with the mnemonic marker stripped — what the
+// button actually shows — plus the accelerator the marker named. pos is
+// -1 without a marker: unlike menus, a Button gets NO implicit
+// first-letter mnemonic (see mnemonic.go for why). The marker is syntax,
+// not text, so Measure and every render tier size against this.
+func (b *Button) display() (text string, accel rune, pos int) {
+	text, accel, pos, ok := splitExplicitMnemonic(getStr(b.Content))
+	if !ok {
+		return text, 0, -1
+	}
+	return text, accel, pos
+}
+
+func (b *Button) label() string {
+	t, _, _ := b.display()
+	return "[ " + t + " ]"
+}
 
 func (b *Button) Measure(avail gooey.Size) gooey.Size {
 	if b.Chrome == ChromePixel {
 		// Two columns of end cap and two of padding around the label,
 		// three rows of pill — the same footprint on every terminal, so
 		// a page does not re-flow because the probe found a protocol.
+		t, _, _ := b.display()
 		return gooey.Size{
-			W: min(len([]rune(getStr(b.Content)))+4, avail.W),
+			W: min(len([]rune(t))+4, avail.W),
 			H: min(pillRows, avail.H),
 		}
 	}
@@ -81,6 +100,7 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 			st.Reverse = true
 		}
 		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+		b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
 		return
 	}
 	if v.hovered {
@@ -93,6 +113,25 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 		st.Reverse, st.Bold = true, true
 	}
 	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+	b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
+}
+
+// underlineAccel re-styles the accelerator cell with the always-on
+// underline — the menu bar's convention, for the menu bar's reason (see
+// mnemonic.go). x0 is where the display text starts on row y; static per
+// content, so it costs no property and no extra damage.
+func (b *Button) underlineAccel(f *gooey.Frame, st render.Style, x0, y int) {
+	text, _, pos := b.display()
+	if pos < 0 {
+		return
+	}
+	x := x0 + pos
+	bd := b.Bounds()
+	if x < bd.X || x >= bd.X+bd.W {
+		return
+	}
+	st.Underline = true
+	f.Cells.Set(x, y, []rune(text)[pos], st)
 }
 
 // IsPressed reports whether the pointer is currently down on this
@@ -119,6 +158,29 @@ func (b *Button) HandleKey(ev input.KeyEvent) bool {
 		return true
 	}
 	return false
+}
+
+// HandleMnemonic is the button's page-scoped accelerator (see
+// gooey.MnemonicHandler): Content="_Refresh" makes alt+r click this
+// button from anywhere on the page, no matter what holds focus. Only an
+// explicit marker registers — see display — and the dispatcher offers
+// mnemonics what the focused chain declined, so a KeyBinding on the same
+// alt gesture wins. CanExecute is asked here, outside any evaluation, so
+// it is a question, not a subscription; a disabled button declines and
+// the key keeps going, exactly like its HandleKey.
+func (b *Button) HandleMnemonic(ev input.KeyEvent) bool {
+	if ev.Key != input.KeyRune || ev.Mods != input.ModAlt {
+		return false
+	}
+	_, accel, pos := b.display()
+	if pos < 0 || unicode.ToLower(ev.Rune) != accel {
+		return false
+	}
+	if !gooey.CanExecute(b.Click) {
+		return false
+	}
+	b.Click.Run()
+	return true
 }
 
 // HandleMouse tracks the press visual and activates on the synthesized

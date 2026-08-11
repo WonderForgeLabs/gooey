@@ -4,6 +4,7 @@
     <KeyBinding Gesture="ctrl+r" Command="{{.Refresh}}"/>
     <KeyBinding Gesture="ctrl+n" Command="{{.NextPage}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevPage}}"/>
+    <Timer Interval="30s" Tick="{{.Refresh}}" Enabled="{{.AutoRefresh}}"/>
 
     <HStack Grid.Row="0">
       <TextBox Text="{{.Query}}" Prompt="query> " AccentStyle="accent"/>
@@ -12,7 +13,8 @@
 
     <ButtonBar Grid.Row="1" Gap="1">
       <Button Content="run" Click="{{.RunQuery}}"/>
-      <Button Name="FetchBtn" Content="refresh ^r"
+      <Button Content="_refresh ^r" Click="{{.Refresh}}"/>
+      <Button Name="FetchBtn" Content="fetch"
               Click="{{temporal:Activity `visibility.Query` .Query .PageSize .PageToken | into .RowsJSON}}"/>
       <Button Name="CountBtn" Content="count"
               Click="{{temporal:Activity `visibility.Count` .Query | into .CountJSON}}"/>
@@ -47,6 +49,9 @@
       <Text>{{.DescribeText}}</Text>
     </Border>
 
-    <StatusBar Grid.Row="4" Left="{{.Status}}" Right="{{.PageInfo}}"/>
+    <Grid Grid.Row="4" Cols="Auto, 2, *">
+      <Checkbox Checked="{{.AutoRefresh}}" Label="auto 30s"/>
+      <StatusBar Grid.Col="2" Left="{{.Status}}" Center="{{.Count}}" Right="{{.PageInfo}}"/>
+    </Grid>
   </Grid>
 </Gooey>

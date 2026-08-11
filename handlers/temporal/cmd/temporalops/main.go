@@ -28,8 +28,10 @@
 //
 // Keys: type in the query bar (Temporal's visibility query language),
 // enter runs it; tab reaches the buttons and the list; up/down selects
-// (describing the selection); ctrl+n / ctrl+p page; ctrl+r refreshes;
-// ctrl+c quits.
+// (describing the selection), pgup/pgdn page the selection, home/end
+// jump; ctrl+n / ctrl+p page; ctrl+r or alt+r refreshes (list and
+// count); ctrl+c quits. The dashboard also refreshes itself every 30s —
+// the "auto 30s" checkbox in the status row pauses that.
 package main
 
 import (
