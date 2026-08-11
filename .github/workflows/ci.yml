@@ -91,7 +91,12 @@ jobs:
             ( cd "$dir" && go vet ./... && go test -race ./... )
             echo "::endgroup::"
           done
-          [ "$found" = 1 ] || echo "no packs/*/go.mod present; skipping"
+          # A zero-match glob is a repo-structure error, not a skip.
+          # packs/ has modules; the only ways to reach this branch are a
+          # rename, a bad path, or a broken checkout — all of which must
+          # be red. A `|| echo` here would have reproduced the exact
+          # failure this step exists to remove.
+          [ "$found" = 1 ] || { echo "::error::no packs/*/go.mod found — packs/ is missing or the glob is wrong"; exit 1; }
 
       # imagefmt/svg is a separate module for the same reason — the SVG
       # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
