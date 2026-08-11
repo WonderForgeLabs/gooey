@@ -112,6 +112,57 @@ func (tt *testTTY) reset() {
 	tt.buf.Reset()
 }
 
+// The tail of the pty buffer is not a frame (#183). This pins the two
+// shapes that made TestSIGWINCHResizesTheComposition flaky: a frame that
+// has started and not finished must never be measured, and there being
+// no complete frame at all must be distinguishable from having one —
+// which is what makes the caller a wait rather than a filter.
+func TestLastCompleteFrameSkipsAWriteInProgress(t *testing.T) {
+	frame := func(cols, rows int) string {
+		var sb strings.Builder
+		if err := render.Flush(&sb, render.NewBuffer(cols, rows), render.TrueColor); err != nil {
+			t.Fatal(err)
+		}
+		return sb.String()
+	}
+	small, big := frame(40, 10), frame(60, 20)
+	// How far a real frame gets before its first line break: this is the
+	// prefix the reader kept seeing, and it is what the old assertion
+	// measured.
+	started := big[:strings.Index(big, "\r\n")]
+
+	for _, tc := range []struct {
+		name   string
+		in     string
+		ok     bool
+		breaks int
+	}{
+		{"nothing written", "", false, 0},
+		{"only the bracket", render.BeginSync, false, 0},
+		{"one frame", big, true, 19},
+		{"a frame and a write in progress", big + started, true, 19},
+		{"a resize: the newest frame wins", small + big, true, 19},
+		{"a resize whose repaint is unfinished", small + started, true, 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := lastCompleteFrame(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("complete = %v, want %v", ok, tc.ok)
+			}
+			if n := strings.Count(got, "\r\n"); ok && n != tc.breaks {
+				t.Errorf("the frame has %d line breaks, want %d", n, tc.breaks)
+			}
+		})
+	}
+	// The premise, stated so a regression to it is visible: splitting the
+	// buffer and taking the tail measures the write in progress, and the
+	// answer it gives is the reported failure.
+	naive := strings.Split(big+started, render.BeginSync)
+	if n := strings.Count(naive[len(naive)-1], "\r\n"); n != 0 {
+		t.Errorf("splitting on the bracket found %d line breaks in a partial tail, want 0", n)
+	}
+}
+
 func (tt *testTTY) openCount() int {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
@@ -137,6 +188,52 @@ func (tt *testTTY) waitFor(t *testing.T, want string) bool {
 func (tt *testTTY) waitForBytes(t *testing.T, want string) bool {
 	t.Helper()
 	return tt.poll(func() bool { return strings.Contains(tt.text(), want) })
+}
+
+// waitForCompleteFrame waits for the byte stream to hold a frame that is
+// fully WRITTEN and returns its body — the bytes between the
+// synchronized-output brackets.
+//
+// A test that wants to measure a frame cannot just split the buffer and
+// take the tail. The app writes a frame in one Write, but a pty hands
+// the reader whatever bytes have been copied so far, so the tail of the
+// buffer is routinely a frame that has emitted its BeginSync and part of
+// its first row and nothing else. Splitting on BeginSync selects exactly
+// that tail, which has no line breaks in it at all (#183).
+//
+// Dropping the partial tail instead of waiting for it is not enough:
+// nothing establishes that a complete frame is in the buffer to begin
+// with, so the buffer can legitimately hold nothing BUT a partial frame
+// and the filter would select "". The filter has to be a wait.
+func (tt *testTTY) waitForCompleteFrame(t *testing.T) string {
+	t.Helper()
+	var frame string
+	if !tt.poll(func() bool {
+		f, ok := lastCompleteFrame(tt.text())
+		frame = f
+		return ok
+	}) {
+		t.Fatal("no complete frame was written")
+	}
+	return frame
+}
+
+// lastCompleteFrame is the body of the newest frame in s that has been
+// terminated, and whether there is one. An unterminated frame at the end
+// is skipped rather than returned: it is a write in progress, not a
+// frame.
+func lastCompleteFrame(s string) (string, bool) {
+	for {
+		i := strings.LastIndex(s, render.BeginSync)
+		if i < 0 {
+			return "", false
+		}
+		body := s[i+len(render.BeginSync):]
+		if j := strings.Index(body, render.EndSync); j >= 0 {
+			return body[:j], true
+		}
+		s = s[:i] // a frame that started and did not finish
+	}
 }
 
 func (tt *testTTY) poll(ok func() bool) bool {

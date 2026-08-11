@@ -135,11 +135,17 @@ func TestSIGWINCHResizesTheComposition(t *testing.T) {
 	if !tty.waitFor(t, "resize me") {
 		t.Error("the resized composition did not repaint")
 	}
-	// A frame at the new size: rows-1 line breaks, columns wide. The
-	// repaint was already waited for above, so the bytes are here.
-	frames := strings.Split(tty.text(), "\x1b[?2026h")
-	last := frames[len(frames)-1]
-	if n := strings.Count(last, "\r\n"); n != 19 {
+	// A frame at the new size: rows-1 line breaks, columns wide.
+	//
+	// Waiting for a COMPLETE frame is the assertion's only real
+	// synchronization, and it has to be. waitFor above polls the
+	// modelled screen, which still holds the pre-resize picture — reset
+	// clears the bytes, not the model — and "resize me" reads the same
+	// before and after, so it is satisfied by stale content and returns
+	// having waited for nothing. See waitForCompleteFrame for why the
+	// tail of the byte buffer is not a frame (#183).
+	frame := tty.waitForCompleteFrame(t)
+	if n := strings.Count(frame, "\r\n"); n != 19 {
 		t.Errorf("the frame has %d line breaks, want 19 for a 20-row terminal", n)
 	}
 }
