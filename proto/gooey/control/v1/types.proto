@@ -36,7 +36,23 @@ enum ValueKind {
   // in propKinds. On the wire an `any` value is UTF-8 JSON bytes
   // (TypedValue.any_json).
   VALUE_KIND_ANY = 7;
-  // 8–15 are earmarked (not reserved) for future propKinds rows, so
+  // An image, carried as ENCODED BYTES (TypedValue.image_bytes) and
+  // decoded through the host's imaging registry.
+  //
+  // This is the one kind with no propKinds row, and deliberately: a
+  // propKinds row is a parser for a markup LITERAL, and there is no way
+  // to write a picture inline. Markup can still BIND one —
+  // <Image Src="{{.Logo}}"> type-checks against
+  // *prop.Property[image.Image] — so the ability to bind and the ability
+  // to spell a literal are genuinely different axes here, and only for
+  // this kind.
+  //
+  // It exists because otherwise no client can put a picture on a page at
+  // all: markup swapped over the control plane is built from bytes and
+  // has no file system, so <Image Src="logo.png"> cannot resolve, and
+  // before this there was no property type to bind Src to instead.
+  VALUE_KIND_IMAGE = 8;
+  // 9–15 are earmarked (not reserved) for future propKinds rows, so
   // ValueKind and the TypedValue oneof can grow in lockstep.
 }
 
@@ -56,8 +72,19 @@ message TypedValue {
     Color color_value = 6;
     // UTF-8 JSON document — the wire spelling of propKinds' `any`.
     bytes any_json = 7;
+    // An ENCODED image: the file's own bytes (PNG, JPEG, GIF, BMP, ICO
+    // in core; SVG and others from whatever format modules the host
+    // blank-imported). Deliberately not raw pixels — the host already
+    // owns a format registry, and a client that had to say width,
+    // height and stride would be reimplementing decoders to talk to a
+    // decoder.
+    //
+    // A reader decodes through that registry, so an unknown format is a
+    // clean INVALID_ARGUMENT naming what the host can read rather than
+    // a silently blank picture.
+    bytes image_bytes = 8;
   }
-  // Field numbers 8–15 are earmarked for future propKinds rows.
+  // Field numbers 9–15 are earmarked for future propKinds rows.
 }
 
 // Color mirrors render.Color, including its Set flag: a terminal color

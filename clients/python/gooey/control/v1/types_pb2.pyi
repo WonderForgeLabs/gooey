@@ -20,6 +20,7 @@ class ValueKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     VALUE_KIND_DURATION: _ClassVar[ValueKind]
     VALUE_KIND_COLOR: _ClassVar[ValueKind]
     VALUE_KIND_ANY: _ClassVar[ValueKind]
+    VALUE_KIND_IMAGE: _ClassVar[ValueKind]
 
 class EntryKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -67,6 +68,7 @@ VALUE_KIND_FLOAT: ValueKind
 VALUE_KIND_DURATION: ValueKind
 VALUE_KIND_COLOR: ValueKind
 VALUE_KIND_ANY: ValueKind
+VALUE_KIND_IMAGE: ValueKind
 ENTRY_KIND_UNSPECIFIED: EntryKind
 ENTRY_KIND_PROPERTY: EntryKind
 ENTRY_KIND_COMMAND: EntryKind
@@ -93,7 +95,7 @@ MOUSE_BUTTON_RIGHT: MouseButton
 MOUSE_BUTTON_NONE: MouseButton
 
 class TypedValue(_message.Message):
-    __slots__ = ("string_value", "int_value", "bool_value", "float_value", "duration_value", "color_value", "any_json")
+    __slots__ = ("string_value", "int_value", "bool_value", "float_value", "duration_value", "color_value", "any_json", "image_bytes")
     STRING_VALUE_FIELD_NUMBER: _ClassVar[int]
     INT_VALUE_FIELD_NUMBER: _ClassVar[int]
     BOOL_VALUE_FIELD_NUMBER: _ClassVar[int]
@@ -101,6 +103,7 @@ class TypedValue(_message.Message):
     DURATION_VALUE_FIELD_NUMBER: _ClassVar[int]
     COLOR_VALUE_FIELD_NUMBER: _ClassVar[int]
     ANY_JSON_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_BYTES_FIELD_NUMBER: _ClassVar[int]
     string_value: str
     int_value: int
     bool_value: bool
@@ -108,7 +111,8 @@ class TypedValue(_message.Message):
     duration_value: _duration_pb2.Duration
     color_value: Color
     any_json: bytes
-    def __init__(self, string_value: _Optional[str] = ..., int_value: _Optional[int] = ..., bool_value: _Optional[bool] = ..., float_value: _Optional[float] = ..., duration_value: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., color_value: _Optional[_Union[Color, _Mapping]] = ..., any_json: _Optional[bytes] = ...) -> None: ...
+    image_bytes: bytes
+    def __init__(self, string_value: _Optional[str] = ..., int_value: _Optional[int] = ..., bool_value: _Optional[bool] = ..., float_value: _Optional[float] = ..., duration_value: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., color_value: _Optional[_Union[Color, _Mapping]] = ..., any_json: _Optional[bytes] = ..., image_bytes: _Optional[bytes] = ...) -> None: ...
 
 class Color(_message.Message):
     __slots__ = ("set", "red", "green", "blue")

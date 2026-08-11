@@ -31,7 +31,7 @@ class Subscription(_message.Message):
     def __init__(self, properties: _Optional[bool] = ..., names: _Optional[_Iterable[str]] = ..., frames: _Optional[bool] = ..., input: _Optional[bool] = ..., lifecycle: _Optional[bool] = ...) -> None: ...
 
 class Act(_message.Message):
-    __slots__ = ("id", "set_property", "invoke_command", "send_keys", "send_pointer", "set_focus", "swap_markup", "register_properties")
+    __slots__ = ("id", "set_property", "invoke_command", "send_keys", "send_pointer", "set_focus", "swap_markup", "register_properties", "unregister_names", "patch_markup")
     ID_FIELD_NUMBER: _ClassVar[int]
     SET_PROPERTY_FIELD_NUMBER: _ClassVar[int]
     INVOKE_COMMAND_FIELD_NUMBER: _ClassVar[int]
@@ -40,6 +40,8 @@ class Act(_message.Message):
     SET_FOCUS_FIELD_NUMBER: _ClassVar[int]
     SWAP_MARKUP_FIELD_NUMBER: _ClassVar[int]
     REGISTER_PROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    UNREGISTER_NAMES_FIELD_NUMBER: _ClassVar[int]
+    PATCH_MARKUP_FIELD_NUMBER: _ClassVar[int]
     id: int
     set_property: _control_pb2.SetPropertyRequest
     invoke_command: _control_pb2.InvokeCommandRequest
@@ -48,7 +50,9 @@ class Act(_message.Message):
     set_focus: _control_pb2.SetFocusRequest
     swap_markup: _control_pb2.SwapMarkupRequest
     register_properties: _control_pb2.RegisterPropertiesRequest
-    def __init__(self, id: _Optional[int] = ..., set_property: _Optional[_Union[_control_pb2.SetPropertyRequest, _Mapping]] = ..., invoke_command: _Optional[_Union[_control_pb2.InvokeCommandRequest, _Mapping]] = ..., send_keys: _Optional[_Union[_control_pb2.SendKeysRequest, _Mapping]] = ..., send_pointer: _Optional[_Union[_control_pb2.SendPointerRequest, _Mapping]] = ..., set_focus: _Optional[_Union[_control_pb2.SetFocusRequest, _Mapping]] = ..., swap_markup: _Optional[_Union[_control_pb2.SwapMarkupRequest, _Mapping]] = ..., register_properties: _Optional[_Union[_control_pb2.RegisterPropertiesRequest, _Mapping]] = ...) -> None: ...
+    unregister_names: _control_pb2.UnregisterNamesRequest
+    patch_markup: _control_pb2.PatchMarkupRequest
+    def __init__(self, id: _Optional[int] = ..., set_property: _Optional[_Union[_control_pb2.SetPropertyRequest, _Mapping]] = ..., invoke_command: _Optional[_Union[_control_pb2.InvokeCommandRequest, _Mapping]] = ..., send_keys: _Optional[_Union[_control_pb2.SendKeysRequest, _Mapping]] = ..., send_pointer: _Optional[_Union[_control_pb2.SendPointerRequest, _Mapping]] = ..., set_focus: _Optional[_Union[_control_pb2.SetFocusRequest, _Mapping]] = ..., swap_markup: _Optional[_Union[_control_pb2.SwapMarkupRequest, _Mapping]] = ..., register_properties: _Optional[_Union[_control_pb2.RegisterPropertiesRequest, _Mapping]] = ..., unregister_names: _Optional[_Union[_control_pb2.UnregisterNamesRequest, _Mapping]] = ..., patch_markup: _Optional[_Union[_control_pb2.PatchMarkupRequest, _Mapping]] = ...) -> None: ...
 
 class AttachResponse(_message.Message):
     __slots__ = ("welcome", "result", "frame", "lifecycle", "input")
@@ -79,7 +83,7 @@ class Welcome(_message.Message):
     def __init__(self, app_name: _Optional[str] = ..., app_version: _Optional[str] = ..., columns: _Optional[int] = ..., rows: _Optional[int] = ..., frame: _Optional[int] = ...) -> None: ...
 
 class ActResult(_message.Message):
-    __slots__ = ("id", "code", "message", "set_property", "invoke_command", "send_keys", "send_pointer", "set_focus", "swap_markup", "register_properties")
+    __slots__ = ("id", "code", "message", "set_property", "invoke_command", "send_keys", "send_pointer", "set_focus", "swap_markup", "register_properties", "unregister_names", "patch_markup")
     ID_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -90,6 +94,8 @@ class ActResult(_message.Message):
     SET_FOCUS_FIELD_NUMBER: _ClassVar[int]
     SWAP_MARKUP_FIELD_NUMBER: _ClassVar[int]
     REGISTER_PROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    UNREGISTER_NAMES_FIELD_NUMBER: _ClassVar[int]
+    PATCH_MARKUP_FIELD_NUMBER: _ClassVar[int]
     id: int
     code: int
     message: str
@@ -100,7 +106,9 @@ class ActResult(_message.Message):
     set_focus: _control_pb2.SetFocusResponse
     swap_markup: _control_pb2.SwapMarkupResponse
     register_properties: _control_pb2.RegisterPropertiesResponse
-    def __init__(self, id: _Optional[int] = ..., code: _Optional[int] = ..., message: _Optional[str] = ..., set_property: _Optional[_Union[_control_pb2.SetPropertyResponse, _Mapping]] = ..., invoke_command: _Optional[_Union[_control_pb2.InvokeCommandResponse, _Mapping]] = ..., send_keys: _Optional[_Union[_control_pb2.SendKeysResponse, _Mapping]] = ..., send_pointer: _Optional[_Union[_control_pb2.SendPointerResponse, _Mapping]] = ..., set_focus: _Optional[_Union[_control_pb2.SetFocusResponse, _Mapping]] = ..., swap_markup: _Optional[_Union[_control_pb2.SwapMarkupResponse, _Mapping]] = ..., register_properties: _Optional[_Union[_control_pb2.RegisterPropertiesResponse, _Mapping]] = ...) -> None: ...
+    unregister_names: _control_pb2.UnregisterNamesResponse
+    patch_markup: _control_pb2.PatchMarkupResponse
+    def __init__(self, id: _Optional[int] = ..., code: _Optional[int] = ..., message: _Optional[str] = ..., set_property: _Optional[_Union[_control_pb2.SetPropertyResponse, _Mapping]] = ..., invoke_command: _Optional[_Union[_control_pb2.InvokeCommandResponse, _Mapping]] = ..., send_keys: _Optional[_Union[_control_pb2.SendKeysResponse, _Mapping]] = ..., send_pointer: _Optional[_Union[_control_pb2.SendPointerResponse, _Mapping]] = ..., set_focus: _Optional[_Union[_control_pb2.SetFocusResponse, _Mapping]] = ..., swap_markup: _Optional[_Union[_control_pb2.SwapMarkupResponse, _Mapping]] = ..., register_properties: _Optional[_Union[_control_pb2.RegisterPropertiesResponse, _Mapping]] = ..., unregister_names: _Optional[_Union[_control_pb2.UnregisterNamesResponse, _Mapping]] = ..., patch_markup: _Optional[_Union[_control_pb2.PatchMarkupResponse, _Mapping]] = ...) -> None: ...
 
 class FrameDelta(_message.Message):
     __slots__ = ("frame", "changes", "damage", "repainted")

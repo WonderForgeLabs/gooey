@@ -222,6 +222,8 @@ type Act struct {
 	//	*Act_SetFocus
 	//	*Act_SwapMarkup
 	//	*Act_RegisterProperties
+	//	*Act_UnregisterNames
+	//	*Act_PatchMarkup
 	Act           isAct_Act `protobuf_oneof:"act"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -334,6 +336,24 @@ func (x *Act) GetRegisterProperties() *RegisterPropertiesRequest {
 	return nil
 }
 
+func (x *Act) GetUnregisterNames() *UnregisterNamesRequest {
+	if x != nil {
+		if x, ok := x.Act.(*Act_UnregisterNames); ok {
+			return x.UnregisterNames
+		}
+	}
+	return nil
+}
+
+func (x *Act) GetPatchMarkup() *PatchMarkupRequest {
+	if x != nil {
+		if x, ok := x.Act.(*Act_PatchMarkup); ok {
+			return x.PatchMarkup
+		}
+	}
+	return nil
+}
+
 type isAct_Act interface {
 	isAct_Act()
 }
@@ -366,6 +386,24 @@ type Act_RegisterProperties struct {
 	RegisterProperties *RegisterPropertiesRequest `protobuf:"bytes,8,opt,name=register_properties,json=registerProperties,proto3,oneof"`
 }
 
+type Act_UnregisterNames struct {
+	UnregisterNames *UnregisterNamesRequest `protobuf:"bytes,9,opt,name=unregister_names,json=unregisterNames,proto3,oneof"`
+}
+
+type Act_PatchMarkup struct {
+	// PatchMarkup is an act because an editing client's characteristic
+	// operation is "set a property, then patch the subtree that reads
+	// it", and those two must not race. On this stream they cannot: acts
+	// are applied in stream order on the UI goroutine. Split across a
+	// unary call and an act they can, because the two arrive on
+	// different goroutines and nothing orders them.
+	//
+	// SwapMarkup is the wrong substitute for it: replacing the page
+	// rebuilds every element, so focus, caret and every Name= die on
+	// each edit — unconditionally, and the whole tree at once.
+	PatchMarkup *PatchMarkupRequest `protobuf:"bytes,10,opt,name=patch_markup,json=patchMarkup,proto3,oneof"`
+}
+
 func (*Act_SetProperty) isAct_Act() {}
 
 func (*Act_InvokeCommand) isAct_Act() {}
@@ -379,6 +417,10 @@ func (*Act_SetFocus) isAct_Act() {}
 func (*Act_SwapMarkup) isAct_Act() {}
 
 func (*Act_RegisterProperties) isAct_Act() {}
+
+func (*Act_UnregisterNames) isAct_Act() {}
+
+func (*Act_PatchMarkup) isAct_Act() {}
 
 type AttachResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -612,6 +654,8 @@ type ActResult struct {
 	//	*ActResult_SetFocus
 	//	*ActResult_SwapMarkup
 	//	*ActResult_RegisterProperties
+	//	*ActResult_UnregisterNames
+	//	*ActResult_PatchMarkup
 	Result        isActResult_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -738,6 +782,24 @@ func (x *ActResult) GetRegisterProperties() *RegisterPropertiesResponse {
 	return nil
 }
 
+func (x *ActResult) GetUnregisterNames() *UnregisterNamesResponse {
+	if x != nil {
+		if x, ok := x.Result.(*ActResult_UnregisterNames); ok {
+			return x.UnregisterNames
+		}
+	}
+	return nil
+}
+
+func (x *ActResult) GetPatchMarkup() *PatchMarkupResponse {
+	if x != nil {
+		if x, ok := x.Result.(*ActResult_PatchMarkup); ok {
+			return x.PatchMarkup
+		}
+	}
+	return nil
+}
+
 type isActResult_Result interface {
 	isActResult_Result()
 }
@@ -770,6 +832,14 @@ type ActResult_RegisterProperties struct {
 	RegisterProperties *RegisterPropertiesResponse `protobuf:"bytes,10,opt,name=register_properties,json=registerProperties,proto3,oneof"`
 }
 
+type ActResult_UnregisterNames struct {
+	UnregisterNames *UnregisterNamesResponse `protobuf:"bytes,11,opt,name=unregister_names,json=unregisterNames,proto3,oneof"`
+}
+
+type ActResult_PatchMarkup struct {
+	PatchMarkup *PatchMarkupResponse `protobuf:"bytes,12,opt,name=patch_markup,json=patchMarkup,proto3,oneof"`
+}
+
 func (*ActResult_SetProperty) isActResult_Result() {}
 
 func (*ActResult_InvokeCommand) isActResult_Result() {}
@@ -783,6 +853,10 @@ func (*ActResult_SetFocus) isActResult_Result() {}
 func (*ActResult_SwapMarkup) isActResult_Result() {}
 
 func (*ActResult_RegisterProperties) isActResult_Result() {}
+
+func (*ActResult_UnregisterNames) isActResult_Result() {}
+
+func (*ActResult_PatchMarkup) isActResult_Result() {}
 
 // FrameDelta is everything one composed frame changed, in one message.
 // Atomic by construction: values and the frame they belong to cannot
@@ -1168,7 +1242,7 @@ const file_gooey_control_v1_session_proto_rawDesc = "" +
 	"\x05names\x18\x02 \x03(\tR\x05names\x12\x16\n" +
 	"\x06frames\x18\x03 \x01(\bR\x06frames\x12\x14\n" +
 	"\x05input\x18\x04 \x01(\bR\x05input\x12\x1c\n" +
-	"\tlifecycle\x18\x05 \x01(\bR\tlifecycle\"\xaf\x04\n" +
+	"\tlifecycle\x18\x05 \x01(\bR\tlifecycle\"\xd1\x05\n" +
 	"\x03Act\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12I\n" +
 	"\fset_property\x18\x02 \x01(\v2$.gooey.control.v1.SetPropertyRequestH\x00R\vsetProperty\x12O\n" +
@@ -1178,7 +1252,10 @@ const file_gooey_control_v1_session_proto_rawDesc = "" +
 	"\tset_focus\x18\x06 \x01(\v2!.gooey.control.v1.SetFocusRequestH\x00R\bsetFocus\x12F\n" +
 	"\vswap_markup\x18\a \x01(\v2#.gooey.control.v1.SwapMarkupRequestH\x00R\n" +
 	"swapMarkup\x12^\n" +
-	"\x13register_properties\x18\b \x01(\v2+.gooey.control.v1.RegisterPropertiesRequestH\x00R\x12registerPropertiesB\x05\n" +
+	"\x13register_properties\x18\b \x01(\v2+.gooey.control.v1.RegisterPropertiesRequestH\x00R\x12registerProperties\x12U\n" +
+	"\x10unregister_names\x18\t \x01(\v2(.gooey.control.v1.UnregisterNamesRequestH\x00R\x0funregisterNames\x12I\n" +
+	"\fpatch_markup\x18\n" +
+	" \x01(\v2$.gooey.control.v1.PatchMarkupRequestH\x00R\vpatchMarkupB\x05\n" +
 	"\x03act\"\xb2\x02\n" +
 	"\x0eAttachResponse\x125\n" +
 	"\awelcome\x18\x01 \x01(\v2\x19.gooey.control.v1.WelcomeH\x00R\awelcome\x125\n" +
@@ -1193,7 +1270,7 @@ const file_gooey_control_v1_session_proto_rawDesc = "" +
 	"appVersion\x12\x18\n" +
 	"\acolumns\x18\x03 \x01(\x05R\acolumns\x12\x12\n" +
 	"\x04rows\x18\x04 \x01(\x05R\x04rows\x12\x14\n" +
-	"\x05frame\x18\x05 \x01(\x04R\x05frame\"\xed\x04\n" +
+	"\x05frame\x18\x05 \x01(\x04R\x05frame\"\x91\x06\n" +
 	"\tActResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\rR\x04code\x12\x18\n" +
@@ -1206,7 +1283,9 @@ const file_gooey_control_v1_session_proto_rawDesc = "" +
 	"\vswap_markup\x18\t \x01(\v2$.gooey.control.v1.SwapMarkupResponseH\x00R\n" +
 	"swapMarkup\x12_\n" +
 	"\x13register_properties\x18\n" +
-	" \x01(\v2,.gooey.control.v1.RegisterPropertiesResponseH\x00R\x12registerPropertiesB\b\n" +
+	" \x01(\v2,.gooey.control.v1.RegisterPropertiesResponseH\x00R\x12registerProperties\x12V\n" +
+	"\x10unregister_names\x18\v \x01(\v2).gooey.control.v1.UnregisterNamesResponseH\x00R\x0funregisterNames\x12J\n" +
+	"\fpatch_markup\x18\f \x01(\v2%.gooey.control.v1.PatchMarkupResponseH\x00R\vpatchMarkupB\b\n" +
 	"\x06result\"\xac\x01\n" +
 	"\n" +
 	"FrameDelta\x12\x14\n" +
@@ -1264,16 +1343,20 @@ var file_gooey_control_v1_session_proto_goTypes = []any{
 	(*SetFocusRequest)(nil),            // 16: gooey.control.v1.SetFocusRequest
 	(*SwapMarkupRequest)(nil),          // 17: gooey.control.v1.SwapMarkupRequest
 	(*RegisterPropertiesRequest)(nil),  // 18: gooey.control.v1.RegisterPropertiesRequest
-	(*SetPropertyResponse)(nil),        // 19: gooey.control.v1.SetPropertyResponse
-	(*InvokeCommandResponse)(nil),      // 20: gooey.control.v1.InvokeCommandResponse
-	(*SendKeysResponse)(nil),           // 21: gooey.control.v1.SendKeysResponse
-	(*SendPointerResponse)(nil),        // 22: gooey.control.v1.SendPointerResponse
-	(*SetFocusResponse)(nil),           // 23: gooey.control.v1.SetFocusResponse
-	(*SwapMarkupResponse)(nil),         // 24: gooey.control.v1.SwapMarkupResponse
-	(*RegisterPropertiesResponse)(nil), // 25: gooey.control.v1.RegisterPropertiesResponse
-	(*PropertyChange)(nil),             // 26: gooey.control.v1.PropertyChange
-	(*Rect)(nil),                       // 27: gooey.control.v1.Rect
-	(*InputEvent)(nil),                 // 28: gooey.control.v1.InputEvent
+	(*UnregisterNamesRequest)(nil),     // 19: gooey.control.v1.UnregisterNamesRequest
+	(*PatchMarkupRequest)(nil),         // 20: gooey.control.v1.PatchMarkupRequest
+	(*SetPropertyResponse)(nil),        // 21: gooey.control.v1.SetPropertyResponse
+	(*InvokeCommandResponse)(nil),      // 22: gooey.control.v1.InvokeCommandResponse
+	(*SendKeysResponse)(nil),           // 23: gooey.control.v1.SendKeysResponse
+	(*SendPointerResponse)(nil),        // 24: gooey.control.v1.SendPointerResponse
+	(*SetFocusResponse)(nil),           // 25: gooey.control.v1.SetFocusResponse
+	(*SwapMarkupResponse)(nil),         // 26: gooey.control.v1.SwapMarkupResponse
+	(*RegisterPropertiesResponse)(nil), // 27: gooey.control.v1.RegisterPropertiesResponse
+	(*UnregisterNamesResponse)(nil),    // 28: gooey.control.v1.UnregisterNamesResponse
+	(*PatchMarkupResponse)(nil),        // 29: gooey.control.v1.PatchMarkupResponse
+	(*PropertyChange)(nil),             // 30: gooey.control.v1.PropertyChange
+	(*Rect)(nil),                       // 31: gooey.control.v1.Rect
+	(*InputEvent)(nil),                 // 32: gooey.control.v1.InputEvent
 }
 var file_gooey_control_v1_session_proto_depIdxs = []int32{
 	1,  // 0: gooey.control.v1.AttachRequest.subscribe:type_name -> gooey.control.v1.Subscription
@@ -1285,31 +1368,35 @@ var file_gooey_control_v1_session_proto_depIdxs = []int32{
 	16, // 6: gooey.control.v1.Act.set_focus:type_name -> gooey.control.v1.SetFocusRequest
 	17, // 7: gooey.control.v1.Act.swap_markup:type_name -> gooey.control.v1.SwapMarkupRequest
 	18, // 8: gooey.control.v1.Act.register_properties:type_name -> gooey.control.v1.RegisterPropertiesRequest
-	4,  // 9: gooey.control.v1.AttachResponse.welcome:type_name -> gooey.control.v1.Welcome
-	5,  // 10: gooey.control.v1.AttachResponse.result:type_name -> gooey.control.v1.ActResult
-	6,  // 11: gooey.control.v1.AttachResponse.frame:type_name -> gooey.control.v1.FrameDelta
-	7,  // 12: gooey.control.v1.AttachResponse.lifecycle:type_name -> gooey.control.v1.LifecycleEvent
-	11, // 13: gooey.control.v1.AttachResponse.input:type_name -> gooey.control.v1.InputEcho
-	19, // 14: gooey.control.v1.ActResult.set_property:type_name -> gooey.control.v1.SetPropertyResponse
-	20, // 15: gooey.control.v1.ActResult.invoke_command:type_name -> gooey.control.v1.InvokeCommandResponse
-	21, // 16: gooey.control.v1.ActResult.send_keys:type_name -> gooey.control.v1.SendKeysResponse
-	22, // 17: gooey.control.v1.ActResult.send_pointer:type_name -> gooey.control.v1.SendPointerResponse
-	23, // 18: gooey.control.v1.ActResult.set_focus:type_name -> gooey.control.v1.SetFocusResponse
-	24, // 19: gooey.control.v1.ActResult.swap_markup:type_name -> gooey.control.v1.SwapMarkupResponse
-	25, // 20: gooey.control.v1.ActResult.register_properties:type_name -> gooey.control.v1.RegisterPropertiesResponse
-	26, // 21: gooey.control.v1.FrameDelta.changes:type_name -> gooey.control.v1.PropertyChange
-	27, // 22: gooey.control.v1.FrameDelta.damage:type_name -> gooey.control.v1.Rect
-	8,  // 23: gooey.control.v1.LifecycleEvent.resized:type_name -> gooey.control.v1.Resized
-	9,  // 24: gooey.control.v1.LifecycleEvent.swapped:type_name -> gooey.control.v1.Swapped
-	10, // 25: gooey.control.v1.LifecycleEvent.closing:type_name -> gooey.control.v1.Closing
-	28, // 26: gooey.control.v1.InputEcho.event:type_name -> gooey.control.v1.InputEvent
-	0,  // 27: gooey.control.v1.SessionService.Attach:input_type -> gooey.control.v1.AttachRequest
-	3,  // 28: gooey.control.v1.SessionService.Attach:output_type -> gooey.control.v1.AttachResponse
-	28, // [28:29] is the sub-list for method output_type
-	27, // [27:28] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	19, // 9: gooey.control.v1.Act.unregister_names:type_name -> gooey.control.v1.UnregisterNamesRequest
+	20, // 10: gooey.control.v1.Act.patch_markup:type_name -> gooey.control.v1.PatchMarkupRequest
+	4,  // 11: gooey.control.v1.AttachResponse.welcome:type_name -> gooey.control.v1.Welcome
+	5,  // 12: gooey.control.v1.AttachResponse.result:type_name -> gooey.control.v1.ActResult
+	6,  // 13: gooey.control.v1.AttachResponse.frame:type_name -> gooey.control.v1.FrameDelta
+	7,  // 14: gooey.control.v1.AttachResponse.lifecycle:type_name -> gooey.control.v1.LifecycleEvent
+	11, // 15: gooey.control.v1.AttachResponse.input:type_name -> gooey.control.v1.InputEcho
+	21, // 16: gooey.control.v1.ActResult.set_property:type_name -> gooey.control.v1.SetPropertyResponse
+	22, // 17: gooey.control.v1.ActResult.invoke_command:type_name -> gooey.control.v1.InvokeCommandResponse
+	23, // 18: gooey.control.v1.ActResult.send_keys:type_name -> gooey.control.v1.SendKeysResponse
+	24, // 19: gooey.control.v1.ActResult.send_pointer:type_name -> gooey.control.v1.SendPointerResponse
+	25, // 20: gooey.control.v1.ActResult.set_focus:type_name -> gooey.control.v1.SetFocusResponse
+	26, // 21: gooey.control.v1.ActResult.swap_markup:type_name -> gooey.control.v1.SwapMarkupResponse
+	27, // 22: gooey.control.v1.ActResult.register_properties:type_name -> gooey.control.v1.RegisterPropertiesResponse
+	28, // 23: gooey.control.v1.ActResult.unregister_names:type_name -> gooey.control.v1.UnregisterNamesResponse
+	29, // 24: gooey.control.v1.ActResult.patch_markup:type_name -> gooey.control.v1.PatchMarkupResponse
+	30, // 25: gooey.control.v1.FrameDelta.changes:type_name -> gooey.control.v1.PropertyChange
+	31, // 26: gooey.control.v1.FrameDelta.damage:type_name -> gooey.control.v1.Rect
+	8,  // 27: gooey.control.v1.LifecycleEvent.resized:type_name -> gooey.control.v1.Resized
+	9,  // 28: gooey.control.v1.LifecycleEvent.swapped:type_name -> gooey.control.v1.Swapped
+	10, // 29: gooey.control.v1.LifecycleEvent.closing:type_name -> gooey.control.v1.Closing
+	32, // 30: gooey.control.v1.InputEcho.event:type_name -> gooey.control.v1.InputEvent
+	0,  // 31: gooey.control.v1.SessionService.Attach:input_type -> gooey.control.v1.AttachRequest
+	3,  // 32: gooey.control.v1.SessionService.Attach:output_type -> gooey.control.v1.AttachResponse
+	32, // [32:33] is the sub-list for method output_type
+	31, // [31:32] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_gooey_control_v1_session_proto_init() }
@@ -1331,6 +1418,8 @@ func file_gooey_control_v1_session_proto_init() {
 		(*Act_SetFocus)(nil),
 		(*Act_SwapMarkup)(nil),
 		(*Act_RegisterProperties)(nil),
+		(*Act_UnregisterNames)(nil),
+		(*Act_PatchMarkup)(nil),
 	}
 	file_gooey_control_v1_session_proto_msgTypes[3].OneofWrappers = []any{
 		(*AttachResponse_Welcome)(nil),
@@ -1347,6 +1436,8 @@ func file_gooey_control_v1_session_proto_init() {
 		(*ActResult_SetFocus)(nil),
 		(*ActResult_SwapMarkup)(nil),
 		(*ActResult_RegisterProperties)(nil),
+		(*ActResult_UnregisterNames)(nil),
+		(*ActResult_PatchMarkup)(nil),
 	}
 	file_gooey_control_v1_session_proto_msgTypes[7].OneofWrappers = []any{
 		(*LifecycleEvent_Resized)(nil),
