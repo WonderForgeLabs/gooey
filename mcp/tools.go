@@ -114,7 +114,20 @@ func (s *Server) v1Tools() []*Tool {
 				"property's type; a mismatch is reported with both types and nothing is changed.",
 			Schema: object(map[string]any{
 				"name":  prop_("string", "The property's name in the markup context."),
-				"value": map[string]any{"description": "The new value: string, boolean, number, or a #rrggbb string for a color property."},
+				// The type union is load-bearing, not decoration. A client
+				// with nothing to validate against serializes every argument
+				// as a string, and the coercion below then correctly refuses
+				// "false" for a bool — so an untyped `value` makes every
+				// int, bool and float property read-only from a
+				// schema-respecting client, while leaving strings working
+				// and the failure looking like a server bug.
+				//
+				// A color still arrives as a #rrggbb string, which "string"
+				// already covers.
+				"value": map[string]any{
+					"type":        []any{"string", "boolean", "number"},
+					"description": "The new value: string, boolean, number, or a #rrggbb string for a color property.",
+				},
 			}, "name", "value"),
 			Run: s.setValue,
 		},
@@ -857,9 +870,21 @@ func registrationsArg(desc string) map[string]any {
 		"items": object(map[string]any{
 			"name": prop_("string", "The dotted name to create. Nested scopes (A.B) materialize as needed; a name that already exists is refused."),
 			"type": enum_("The property's markup type — a propKinds row.", "string", "int", "bool", "float", "duration", "color", "any"),
+			// Same defect as set_value's `value`, same fix — except this one
+			// must NOT be a closed union, because `any` accepts arbitrary
+			// JSON including objects and arrays. Naming the scalar types
+			// only would make a client refuse a legitimate `any` payload,
+			// so this is the one place the absence of a type is correct and
+			// the description carries the contract.
+			//
+			// The scalar kinds are still safe here because every one of
+			// them is reachable through a value the client cannot mangle:
+			// int/float arrive as JSON numbers, bool as a JSON boolean, and
+			// string/color/duration as strings.
 			"value": map[string]any{"description": "Initial value; absent means the type's zero value. " +
-				"string/int/bool/float take the matching JSON value, color a #rrggbb string, " +
-				"duration a Go duration string such as \"750ms\", and any takes any JSON value, stored as decoded JSON."},
+				"string/int/bool/float take the matching JSON value (a real JSON number or boolean, NOT a quoted one), " +
+				"color a #rrggbb string, duration a Go duration string such as \"750ms\", " +
+				"and any takes any JSON value — object or array included — stored as decoded JSON."},
 		}, "name", "type"),
 	}
 }
