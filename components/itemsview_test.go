@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -254,9 +255,11 @@ func TestListKeysMoveTheSelection(t *testing.T) {
 		{input.Rune('j'), 2},
 		{input.Rune('k'), 1},
 		{input.Named(input.KeyUp), 0},
-		{input.Named(input.KeyPageDown), 4},
+		// Paging strides by the realized window height (5 rows here),
+		// matching scroll mode's PageUp/PageDown.
+		{input.Named(input.KeyPageDown), 5},
 		{input.Named(input.KeyEnd), 29},
-		{input.Named(input.KeyPageUp), 25},
+		{input.Named(input.KeyPageUp), 24},
 		{input.Named(input.KeyHome), 0},
 	}
 	for _, tc := range cases {
@@ -305,13 +308,121 @@ func TestWheelMovesTheSelection(t *testing.T) {
 	_, sel, v, c := newList(t, numbered(30), 20, 5)
 	c.Frame()
 
+	// A single notch moves one row: the base tier is the precision that
+	// lets a slow wheel touch every item on the way down.
 	v.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 2, Y: 1})
-	if got := sel.Get(); got != wheelStep {
-		t.Fatalf("wheel down selected %d, want %d", got, wheelStep)
+	if got := sel.Get(); got != 1 {
+		t.Fatalf("wheel down selected %d, want 1", got)
 	}
 	v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 2, Y: 1})
 	if got := sel.Get(); got != 0 {
 		t.Fatalf("wheel up selected %d, want 0", got)
+	}
+}
+
+// The velocity tiers, driven by an injected clock: notches slower than
+// wheelFastGap each move ONE row; a sustained fast stream steps up to
+// ~5% of the list after wheelFastRun notches and ~15% after
+// wheelFlickRun; a pause or a direction change drops straight back to
+// the precise tier. This is the fix for "one flick jumps to the end":
+// the step now scales with rate and list size instead of being a flat
+// three rows for every notch of a hundred-notch flick.
+func TestWheelVelocityTiersInSelectionMode(t *testing.T) {
+	_, sel, v, c := newList(t, numbered(200), 20, 5)
+	c.Frame()
+
+	now := time.Unix(0, 0)
+	v.Now = func() time.Time { return now }
+	notch := func(dt time.Duration) {
+		now = now.Add(dt)
+		v.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 2, Y: 1})
+	}
+
+	// Ten slow notches: every one lands exactly one row further.
+	for i := 1; i <= 10; i++ {
+		notch(200 * time.Millisecond)
+		if got := sel.Get(); got != i {
+			t.Fatalf("slow notch %d selected %d, want %d — a slow wheel must touch every row", i, got, i)
+		}
+	}
+
+	// A fast stream: the first wheelFastRun notches stay at one row, then
+	// the step becomes 5% of the 200-item list (10 rows).
+	start := sel.Get()
+	for i := 0; i < wheelFastRun; i++ {
+		notch(50 * time.Millisecond)
+	}
+	if got := sel.Get(); got != start+wheelFastRun-1+200*5/100 {
+		// runs 1,2 step 1 each; run 3 enters the fast tier.
+		t.Fatalf("after %d fast notches selection = %d, want %d", wheelFastRun, got, start+wheelFastRun-1+200*5/100)
+	}
+
+	// Sustained into a flick: past wheelFlickRun the step is 15% (30 rows).
+	// Re-centre the selection first — the run has covered ground, and the
+	// step must be measured away from the end-of-list clamp.
+	for i := 0; i < wheelFlickRun; i++ {
+		notch(10 * time.Millisecond)
+	}
+	sel.Set(50)
+	before := sel.Get()
+	notch(10 * time.Millisecond)
+	if got := sel.Get(); got != before+200*15/100 {
+		t.Fatalf("flick notch moved %d rows, want %d", got-before, 200*15/100)
+	}
+
+	// A direction change resets to the precise tier immediately.
+	before = sel.Get()
+	now = now.Add(10 * time.Millisecond)
+	v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 2, Y: 1})
+	if got := sel.Get(); got != before-1 {
+		t.Fatalf("direction change moved %d rows, want 1", before-got)
+	}
+
+	// So does a pause, however fast the previous run was.
+	before = sel.Get()
+	now = now.Add(500 * time.Millisecond)
+	v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 2, Y: 1})
+	if got := sel.Get(); got != before-1 {
+		t.Fatalf("post-pause notch moved %d rows, want 1", before-got)
+	}
+}
+
+// The same tiers govern scroll mode — the two modes share wheelStep.
+func TestWheelVelocityTiersInScrollMode(t *testing.T) {
+	_, scroll, v, c := newScrollList(t, numbered(200), 4)
+	c.Frame()
+
+	now := time.Unix(0, 0)
+	v.Now = func() time.Time { return now }
+	notch := func(dt time.Duration) {
+		now = now.Add(dt)
+		v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 1, Y: 1})
+	}
+
+	for i := 1; i <= 3; i++ {
+		notch(200 * time.Millisecond)
+		if got := scroll.Get(); got != i {
+			t.Fatalf("slow notch %d scrolled to %d, want %d", i, got, i)
+		}
+	}
+	for i := 0; i < wheelFastRun; i++ {
+		notch(50 * time.Millisecond)
+	}
+	if got := scroll.Get(); got != 3+wheelFastRun-1+200*5/100 {
+		t.Fatalf("after the fast run scroll = %d, want %d", got, 3+wheelFastRun-1+200*5/100)
+	}
+}
+
+// The damage pin for a wheel selection move matches the key-move pin:
+// the view node and the two row highlights, nothing else. The velocity
+// bookkeeping is plain fields, so a notch costs no extra paint.
+func TestWheelMoveRepaintsExactlyTheRows(t *testing.T) {
+	_, _, _, c := newList(t, numbered(30), 20, 5)
+	c.Frame()
+
+	c.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 2, Y: 1})
+	if _, painted := c.Frame(); painted != 3 {
+		t.Fatalf("wheel selection move repainted %d nodes, want 3 (view + two highlights)", painted)
 	}
 }
 
@@ -483,9 +594,10 @@ func TestScrollKeysAndWheelMoveTheWindow(t *testing.T) {
 		t.Fatal("enter must bubble from a scroll list with no Activate")
 	}
 
+	// A single notch moves one row — the base velocity tier.
 	v.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 1, Y: 1})
-	if got := scroll.Get(); got != wheelStep {
-		t.Fatalf("wheel up scrolled to %d, want %d", got, wheelStep)
+	if got := scroll.Get(); got != 1 {
+		t.Fatalf("wheel up scrolled to %d, want 1", got)
 	}
 	v.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 1, Y: 1})
 	if got := scroll.Get(); got != 0 {

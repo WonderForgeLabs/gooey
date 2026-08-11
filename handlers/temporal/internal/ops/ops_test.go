@@ -38,6 +38,7 @@ import (
 type fakeWFS struct {
 	workflowservice.WorkflowServiceClient
 	pages map[string]*workflowservice.ListWorkflowExecutionsResponse
+	count int64 // what CountWorkflowExecutions reports; 0 means the default 42
 
 	listReqs  []*workflowservice.ListWorkflowExecutionsRequest
 	countReqs []*workflowservice.CountWorkflowExecutionsRequest
@@ -54,7 +55,11 @@ func (f *fakeWFS) ListWorkflowExecutions(ctx context.Context, req *workflowservi
 
 func (f *fakeWFS) CountWorkflowExecutions(ctx context.Context, req *workflowservice.CountWorkflowExecutionsRequest, _ ...grpc.CallOption) (*workflowservice.CountWorkflowExecutionsResponse, error) {
 	f.countReqs = append(f.countReqs, req)
-	return &workflowservice.CountWorkflowExecutionsResponse{Count: 42}, nil
+	n := f.count
+	if n == 0 {
+		n = 42
+	}
+	return &workflowservice.CountWorkflowExecutionsResponse{Count: n}, nil
 }
 
 func (f *fakeWFS) DescribeWorkflowExecution(ctx context.Context, req *workflowservice.DescribeWorkflowExecutionRequest, _ ...grpc.CallOption) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
@@ -156,6 +161,7 @@ type harness struct {
 	ctx  *markup.Context
 	disp *gooey.Dispatcher
 	comp *gooey.Composer
+	root gooey.Component
 }
 
 func execInfo(id, wfType string, start time.Time) *workflow.WorkflowExecutionInfo {
@@ -187,6 +193,7 @@ func build(t *testing.T, wfs *fakeWFS) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.root = w
 	h.comp = gooey.NewComposer(w, cols, rows)
 	return h
 }
@@ -464,4 +471,154 @@ func TestSelectionMoveRepaintsExactlyTheRows(t *testing.T) {
 	if _, painted := h.comp.Frame(); painted != 3 {
 		h.t.Fatalf("selection move repainted %d nodes, want 3 (view + two highlights)", painted)
 	}
+}
+
+// alt+r is the refresh button's mnemonic — Content="_refresh ^r" in the
+// markup, nothing in code-behind — and it works from anywhere: focus is
+// sitting in the query bar, which declines alt+runes, and the dispatch's
+// mnemonic phase finds the button. A refresh is list AND count.
+func TestAltRMnemonicRefreshesFromTheQueryBar(t *testing.T) {
+	start := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	wfs := &fakeWFS{pages: map[string]*workflowservice.ListWorkflowExecutionsResponse{
+		"": {Executions: []*workflow.WorkflowExecutionInfo{execInfo("a", "T", start)}},
+	}}
+	h := build(t, wfs)
+	h.runAndSettle()
+
+	if !h.comp.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'r', Mods: input.ModAlt}) {
+		t.Fatal("alt+r was not consumed — the button mnemonic is not wired")
+	}
+	h.settle(func() bool { return len(wfs.listReqs) == 2 && len(wfs.countReqs) == 2 })
+	if len(wfs.listReqs[1].NextPageToken) != 0 {
+		t.Fatalf("alt+r fetched with token %q, want the current (first) page's", wfs.listReqs[1].NextPageToken)
+	}
+
+	// The marker is stripped on screen and the accelerator underlined.
+	if screen := h.screen(); !strings.Contains(screen, "[ refresh ^r ]") {
+		t.Errorf("the refresh button label lost its display text:\n%s", screen)
+	}
+}
+
+// The auto-refresh loop is declared, not coded: a <Timer> in ops.gooey
+// whose Tick is the Refresh intent and whose Enabled is the AutoRefresh
+// bool the status-row checkbox toggles. This pins all three bindings —
+// interval, tick, gate — through the loaded document.
+func TestAutoRefreshTimerIsDeclaredInMarkup(t *testing.T) {
+	start := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	wfs := &fakeWFS{pages: map[string]*workflowservice.ListWorkflowExecutionsResponse{
+		"": {Executions: []*workflow.WorkflowExecutionInfo{execInfo("a", "T", start)}},
+	}}
+	h := build(t, wfs)
+	h.runAndSettle()
+
+	a, ok := h.root.(gooey.Attacher)
+	if !ok {
+		t.Fatalf("the page root (%T) holds no attachments", h.root)
+	}
+	var timer *components.Timer
+	for _, at := range a.Attachments() {
+		if tm, ok := at.(*components.Timer); ok {
+			timer = tm
+		}
+	}
+	if timer == nil {
+		t.Fatal("no <Timer> attached to the page root")
+	}
+	if timer.Interval != 30*time.Second {
+		t.Fatalf("timer interval = %v, want 30s", timer.Interval)
+	}
+
+	// The gate IS the viewmodel's bool: the checkbox toggle pauses the
+	// timer with no teardown, because fire reads it at tick time.
+	if timer.Enabled == nil || !timer.Enabled.Get() {
+		t.Fatal("the timer's Enabled gate is not bound to AutoRefresh (default on)")
+	}
+	h.vm.AutoRefresh.Set(false)
+	if timer.Enabled.Get() {
+		t.Fatal("unchecking AutoRefresh did not gate the timer")
+	}
+	h.vm.AutoRefresh.Set(true)
+
+	// A tick is the same intent every other refresh path runs: current
+	// page refetched, count refetched.
+	timer.Tick.Run()
+	h.settle(func() bool { return len(wfs.listReqs) == 2 && len(wfs.countReqs) == 2 })
+	if len(wfs.listReqs[1].NextPageToken) != 0 {
+		t.Fatalf("the tick fetched with token %q, want the current page's", wfs.listReqs[1].NextPageToken)
+	}
+}
+
+// The count label is its own {{.Count}} binding riding CountJSON: when a
+// refresh recounts and the server's answer changed, the label changes —
+// no query bar involved.
+func TestCountLabelTracksEveryRefresh(t *testing.T) {
+	start := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	wfs := &fakeWFS{pages: map[string]*workflowservice.ListWorkflowExecutionsResponse{
+		"": {Executions: []*workflow.WorkflowExecutionInfo{execInfo("a", "T", start)}},
+	}}
+	h := build(t, wfs)
+	h.runAndSettle()
+	if screen := h.screen(); !strings.Contains(screen, "42 matching") {
+		t.Fatalf("initial count is not on screen:\n%s", screen)
+	}
+
+	wfs.count = 57
+	if !h.comp.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'r', Mods: input.ModCtrl}) {
+		t.Fatal("ctrl+r was not consumed")
+	}
+	h.settle(func() bool { return len(wfs.countReqs) == 2 && strings.Contains(h.vm.CountJSON.Get(), "57") })
+
+	screen := h.screen()
+	if !strings.Contains(screen, "57 matching") {
+		t.Errorf("the count label did not follow the refresh:\n%s", screen)
+	}
+	if strings.Contains(screen, "42 matching") {
+		t.Errorf("the stale count is still on screen:\n%s", screen)
+	}
+}
+
+// The paging keys land in the dashboard's list for free: pgdn moves the
+// selection by the realized window height, home/end jump. The window
+// height is read off the screen rather than hard-coded, so the test pins
+// the CONTRACT (one page = what you can see) and not the page chrome.
+func TestPagingKeysPageTheDashboardSelection(t *testing.T) {
+	start := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	execs := make([]*workflow.WorkflowExecutionInfo, 40)
+	for i := range execs {
+		execs[i] = execInfo(fmt.Sprintf("wf-%02d", i), "T", start)
+	}
+	wfs := &fakeWFS{pages: map[string]*workflowservice.ListWorkflowExecutionsResponse{
+		"": {Executions: execs},
+	}}
+	h := build(t, wfs)
+	h.runAndSettle()
+	h.comp.Frame()
+
+	visible := strings.Count(h.screen(), "wf-")
+	if visible < 2 || visible >= 40 {
+		t.Fatalf("realized window = %d rows; the fixture no longer exercises paging", visible)
+	}
+
+	view := h.executions()
+	h.comp.Focus().SetFocus(view)
+	steps := []struct {
+		key  input.Key
+		want int
+	}{
+		{input.KeyPageDown, visible},
+		{input.KeyEnd, 39},
+		{input.KeyPageUp, 39 - visible},
+		{input.KeyHome, 0},
+	}
+	for _, s := range steps {
+		if !h.comp.HandleKey(input.Named(s.key)) {
+			t.Fatalf("%v was not consumed by the list", s.key)
+		}
+		if got := h.vm.Selected.Get(); got != s.want {
+			t.Fatalf("after %v selection = %d, want %d", s.key, got, s.want)
+		}
+	}
+	// Every move above described the newly selected execution; let the
+	// async deliveries land before the harness tears down.
+	h.settle(func() bool { return h.vm.DescribeJSON.Get() != "" })
 }

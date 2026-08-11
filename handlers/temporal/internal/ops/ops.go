@@ -96,6 +96,11 @@ type VM struct {
 	Selected *prop.Property[int]
 	// PageNum is 1-based, maintained by the intents below.
 	PageNum *prop.Property[int]
+	// AutoRefresh gates the markup <Timer> that refreshes every 30s. On
+	// by default — a dashboard that opens stale teaches nothing — and
+	// bound to the status-row checkbox, so pausing is one keystroke and
+	// tears nothing down (the Timer reads it at fire time).
+	AutoRefresh *prop.Property[bool]
 
 	rows  *prop.Property[[]Row]
 	items *prop.Property[components.ItemSource]
@@ -118,6 +123,7 @@ func NewVM(where string, quit func()) *VM {
 		DescribeJSON: prop.NewSource(""),
 		Selected:     prop.NewSource(0),
 		PageNum:      prop.NewSource(1),
+		AutoRefresh:  prop.NewSource(true),
 		where:        where,
 		quit:         quit,
 	}
@@ -152,14 +158,16 @@ func (vm *VM) Values() map[string]any {
 		"CountJSON":    vm.CountJSON,
 		"DescribeJSON": vm.DescribeJSON,
 
-		"Items":    vm.items,
-		"Selected": vm.Selected,
+		"Items":       vm.items,
+		"Selected":    vm.Selected,
+		"AutoRefresh": vm.AutoRefresh,
 
 		"SelectedWorkflowID": prop.NewComputed(func() string { return vm.selectedRow().ID }),
 		"SelectedRunID":      prop.NewComputed(func() string { return vm.selectedRow().RunID }),
 
 		"DescribeText": prop.NewComputed(vm.describeText),
 		"Status":       prop.NewComputed(vm.statusLine),
+		"Count":        prop.NewComputed(vm.countText),
 		"PageInfo":     prop.NewComputed(vm.pageInfo),
 
 		"RunQuery": gooey.Command(vm.RunQuery),
@@ -261,14 +269,29 @@ func (vm *VM) statusLine() string {
 	if s := vm.RowsJSON.Get(); strings.HasPrefix(s, "ERROR:") {
 		return clip(s, 120)
 	}
-	count := "?"
+	return fmt.Sprintf("%s · %d shown", vm.where, len(vm.rows.Get()))
+}
+
+// countText is the live count label, its own {{.Count}} binding in the
+// status bar. Parsing INSIDE the computed subscribes the label to
+// CountJSON, so it re-renders the moment any count lands — and counts
+// land on every path that refreshes: run, refresh, ctrl+r, alt+r, and
+// the 30s timer. That is what makes the label track reality instead of
+// the last time somebody pressed run.
+func (vm *VM) countText() string {
 	var c struct {
 		Count string `json:"count"`
 	}
-	if err := json.Unmarshal([]byte(vm.CountJSON.Get()), &c); err == nil && c.Count != "" {
-		count = c.Count
+	s := vm.CountJSON.Get()
+	if err := json.Unmarshal([]byte(s), &c); err != nil {
+		return "? matching" // nothing landed yet, or an ERROR: line
 	}
-	return fmt.Sprintf("%s · %d shown · %s matching", vm.where, len(vm.rows.Get()), count)
+	if c.Count == "" {
+		// A response arrived but protojson omits a zero int64 — that is a
+		// real answer, not an unknown.
+		return "0 matching"
+	}
+	return c.Count + " matching"
 }
 
 func (vm *VM) pageInfo() string {

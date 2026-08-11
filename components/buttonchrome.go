@@ -316,7 +316,6 @@ func (b *Button) renderPixel(f *gooey.Frame, v buttonVisual) {
 // backed with the pill's interior color so the cell plane and the pixel
 // plane read as one object.
 func (b *Button) paintPixelLabel(f *gooey.Frame, v buttonVisual) {
-	r := b.Bounds()
 	st := getSty(b.Style)
 	st.Bg = palette(v).interior
 	st.Fg = render.RGB(255, 255, 255)
@@ -327,9 +326,28 @@ func (b *Button) paintPixelLabel(f *gooey.Frame, v buttonVisual) {
 	if v.pressed {
 		st.Bold = true
 	}
+	b.pillLabel(f, st)
+}
+
+// pillLabel writes the centred display text between the end caps and
+// underlines the accelerator — shared by the pixel tier and the box-rune
+// fallback, so a mnemonic reads the same whichever tier the terminal got.
+func (b *Button) pillLabel(f *gooey.Frame, st render.Style) {
+	r := b.Bounds()
 	inner := r.W - 2
-	label := centerRunes(getStr(b.Content), inner)
-	f.Cells.SetString(r.X+1, r.Y+1, label, st)
+	text, _, pos := b.display()
+	f.Cells.SetString(r.X+1, r.Y+1, centerRunes(text, inner), st)
+	if pos < 0 {
+		return
+	}
+	pad := 0
+	if l := len([]rune(text)); l < inner {
+		pad = (inner - l) / 2
+	}
+	if x := r.X + 1 + pad + pos; x < r.X+1+inner {
+		st.Underline = true
+		f.Cells.Set(x, r.Y+1, []rune(text)[pos], st)
+	}
 }
 
 // renderPillCells is the universal tier: the same three-row pill in box
@@ -363,7 +381,7 @@ func (b *Button) renderPillCells(f *gooey.Frame, v buttonVisual) {
 	}
 	f.Cells.Set(r.X, r.Y+1, '│', st)
 	f.Cells.Set(r.X+r.W-1, r.Y+1, '│', st)
-	f.Cells.SetString(r.X+1, r.Y+1, centerRunes(getStr(b.Content), inner), label)
+	b.pillLabel(f, label)
 }
 
 // centerRunes pads s into exactly w cells, centred, clipping when it
