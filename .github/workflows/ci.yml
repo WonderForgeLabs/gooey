@@ -61,20 +61,37 @@ jobs:
             echo "handlers/exec/go.mod not present; skipping"
           fi
 
-      # packs/temporal-visibility is an ACTIVITY PACK — its own module
-      # with zero gooey imports (graph: Temporal SDK + API protos only),
-      # so any Go Temporal worker can import it. handlers/temporal
-      # consumes it via a replace directive.
-      - name: Build and test packs/temporal-visibility
+      # Every packs/* directory is an ACTIVITY PACK — its own module with
+      # zero gooey imports (graph: Temporal SDK + API protos only), so
+      # any Go Temporal worker can import it. handlers/temporal consumes
+      # them via replace directives.
+      #
+      # This step DISCOVERS them rather than naming them. Every other
+      # nested module above is a literal name behind an `if [ -f … ]`
+      # guard, and that shape has a failure mode: a module added without
+      # also editing this file is never built, and the guard makes that
+      # look like a pass. packs/ is about to grow to eight modules (epic
+      # #142), so it gets the loop; the rest is left alone because #130
+      # replaces this whole job with forge's auto-discovering CI, which
+      # generalises the same idea. When that lands, this step deletes.
+      #
+      # No `go build ./...`: a pack that ever grows a main package would
+      # write an executable into the tree, and this repo has committed
+      # five that way. `go vet` compiles everything regardless. -race
+      # because these suites run in milliseconds and #130 makes it
+      # universal anyway.
+      - name: Build and test packs/*
         run: |
-          if [ -f packs/temporal-visibility/go.mod ]; then
-            cd packs/temporal-visibility
-            go build ./...
-            go vet ./...
-            go test ./...
-          else
-            echo "packs/temporal-visibility/go.mod not present; skipping"
-          fi
+          shopt -s nullglob
+          found=0
+          for mod in packs/*/go.mod; do
+            found=1
+            dir=$(dirname "$mod")
+            echo "::group::$dir"
+            ( cd "$dir" && go vet ./... && go test -race ./... )
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "no packs/*/go.mod present; skipping"
 
       # imagefmt/svg is a separate module for the same reason — the SVG
       # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
