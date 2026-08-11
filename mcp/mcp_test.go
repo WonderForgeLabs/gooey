@@ -1139,18 +1139,82 @@ func TestRegisterPropertiesErrors(t *testing.T) {
 	}
 }
 
+func TestUnregisterProperties(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	c.ok("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Score", "type": "int", "value": 7},
+		map[string]any{"name": "Deep.Flag", "type": "bool", "value": true},
+	}})
+
+	out := c.json("unregister_properties", map[string]any{"names": []any{"Score", "Deep.Flag"}})
+	if fmt.Sprint(out["unregistered"]) != "[Score Deep.Flag]" {
+		t.Fatalf("unregistered = %v", out["unregistered"])
+	}
+	byName := valuesByName(t, c)
+	if _, ok := byName["Score"]; ok {
+		t.Error("Score is still in list_values after unregister_properties")
+	}
+	if _, ok := byName["Deep.Flag"]; ok {
+		t.Error("Deep.Flag is still in list_values after unregister_properties")
+	}
+
+	// The name is free again — the removal really took it out of scope
+	// rather than merely hiding it from list_values.
+	c.ok("register_properties", map[string]any{"properties": []any{
+		map[string]any{"name": "Score", "type": "string", "value": "reused"},
+	}})
+	if v := valuesByName(t, c)["Score"]; v == nil || v["value"] != "reused" {
+		t.Errorf("re-registered Score = %v", v)
+	}
+
+	// structuredContent round-trips and agrees with the text content.
+	res := c.resultObject("unregister_properties", map[string]any{"names": []any{"Score"}})
+	sc, _ := res["structuredContent"].(map[string]any)
+	if sc == nil || fmt.Sprint(sc["unregistered"]) != "[Score]" {
+		t.Fatalf("structuredContent = %v", res["structuredContent"])
+	}
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	var fromText map[string]any
+	if err := json.Unmarshal([]byte(text), &fromText); err != nil {
+		t.Fatalf("text content is not JSON: %v", err)
+	}
+	if fmt.Sprint(fromText["unregistered"]) != "[Score]" {
+		t.Errorf("text and structuredContent disagree: %v", fromText)
+	}
+}
+
+func TestUnregisterPropertiesErrors(t *testing.T) {
+	_, _, _, c := setup(t)
+
+	c.fails("unregister_properties", nil, `missing required argument "names"`)
+	c.fails("unregister_properties", map[string]any{"names": []any{}}, "needs at least one name")
+	c.fails("unregister_properties", map[string]any{"names": "Note"}, "must be an array")
+	c.fails("unregister_properties", map[string]any{"names": []any{7.0}}, "got a float64 element")
+	c.fails("unregister_properties", map[string]any{"names": []any{"  "}}, "a name is required")
+	c.fails("unregister_properties", map[string]any{"names": []any{"Nope"}}, "no such name")
+
+	// A batch naming something absent leaves the resolvable half alone.
+	c.fails("unregister_properties", map[string]any{"names": []any{"Note", "Nope"}}, "no such name")
+	if _, ok := valuesByName(t, c)["Note"]; !ok {
+		t.Error("a failed batch removed Note anyway")
+	}
+}
+
 // TestRegistrationToolSurface pins the published surface: the new tool
 // carries an outputSchema, and swap_markup's input schema declares the
 // register argument with source still the only required one.
 func TestRegistrationToolSurface(t *testing.T) {
 	_, _, _, c := setup(t)
 	list := c.rpc("tools/list", nil)
-	var reg, swap map[string]any
+	var reg, unreg, swap map[string]any
 	for _, raw := range list.Result.(map[string]any)["tools"].([]any) {
 		m := raw.(map[string]any)
 		switch m["name"] {
 		case "register_properties":
 			reg = m
+		case "unregister_properties":
+			unreg = m
 		case "swap_markup":
 			swap = m
 		}
@@ -1160,6 +1224,15 @@ func TestRegistrationToolSurface(t *testing.T) {
 	}
 	if _, ok := reg["outputSchema"].(map[string]any); !ok {
 		t.Error("register_properties publishes no outputSchema")
+	}
+	if unreg == nil {
+		t.Fatal("unregister_properties is not in tools/list")
+	}
+	if _, ok := unreg["outputSchema"].(map[string]any); !ok {
+		t.Error("unregister_properties publishes no outputSchema")
+	}
+	if req := fmt.Sprint(unreg["inputSchema"].(map[string]any)["required"]); req != "[names]" {
+		t.Errorf("unregister_properties required = %v", req)
 	}
 	schema := swap["inputSchema"].(map[string]any)
 	if _, ok := schema["properties"].(map[string]any)["register"]; !ok {
