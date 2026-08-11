@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,22 @@ const (
 	// KindAny is the escape hatch for app types with no markup literal,
 	// exactly as in propKinds. Its value crosses as UTF-8 JSON.
 	KindAny
+	// KindImage is an image.Image, carried as ENCODED bytes and decoded
+	// through the imaging registry.
+	//
+	// It is the one Kind with no propKinds row, and the lockstep rule
+	// above does not apply to it. A propKinds row is a parser for a
+	// markup LITERAL and there is no way to write a picture inline;
+	// markup can still BIND one, since <Image Src="{{.Logo}}">
+	// type-checks against *prop.Property[image.Image]. Bindability and
+	// literal-spellability are the same axis for every other kind and
+	// different for this one.
+	//
+	// Without it no client can put a picture on a page: markup swapped
+	// over the control plane is built from bytes and has no file system,
+	// so <Image Src="logo.png"> cannot resolve, and there was no
+	// property type to bind Src to instead.
+	KindImage
 )
 
 // String spells a Kind the way markup does — the Type= attribute values.
@@ -50,6 +67,8 @@ func (k Kind) String() string {
 		return "color"
 	case KindAny:
 		return "any"
+	case KindImage:
+		return "image"
 	}
 	return "unspecified"
 }
@@ -72,6 +91,8 @@ func KindOf(name string) Kind {
 		return KindColor
 	case "any":
 		return KindAny
+	case "image":
+		return KindImage
 	}
 	return KindUnspecified
 }
@@ -88,6 +109,10 @@ type Value struct {
 	Float    float64
 	Duration time.Duration
 	Color    render.Color
+	// Image is the KindImage payload, already decoded. The wire carries
+	// encoded bytes; decoding happens at the adapter so a bad image is
+	// one clear error at the boundary rather than a blank picture later.
+	Image image.Image
 	// JSON is the KindAny payload: one UTF-8 JSON document.
 	JSON []byte
 }
@@ -114,6 +139,13 @@ func (v Value) Equal(o Value) bool {
 		return v.Color == o.Color
 	case KindAny:
 		return bytes.Equal(v.JSON, o.JSON)
+	case KindImage:
+		// Identity, not pixels. Delta collection asks this once per frame
+		// per session, and comparing two decoded images pixel by pixel
+		// would put an image diff on the frame path. A client that sets
+		// the same picture twice gets one redundant delta; a client that
+		// sets a different one always gets a delta.
+		return v.Image == o.Image
 	}
 	return true
 }
@@ -125,6 +157,7 @@ func FloatValue(v float64) Value          { return Value{Kind: KindFloat, Float:
 func DurationValue(v time.Duration) Value { return Value{Kind: KindDuration, Duration: v} }
 func ColorValue(v render.Color) Value     { return Value{Kind: KindColor, Color: v} }
 func JSONValue(v []byte) Value            { return Value{Kind: KindAny, JSON: v} }
+func ImageValue(v image.Image) Value      { return Value{Kind: KindImage, Image: v} }
 
 // EntryKind classifies one name in the binding context.
 type EntryKind int
@@ -214,6 +247,8 @@ func describe(name string, v any) ValueEntry {
 		set(KindDuration, DurationValue(h.Get()))
 	case *prop.Property[render.Color]:
 		set(KindColor, ColorValue(h.Get()))
+	case *prop.Property[image.Image]:
+		set(KindImage, ImageValue(h.Get()))
 	case *prop.Property[any]:
 		// The escape hatch: the current value crosses as JSON where it
 		// can, and stays a descriptor where it cannot.
@@ -286,6 +321,11 @@ func (s *Service) Set(name string, v Value) error {
 			return setMismatch(name, KindColor, v.Kind)
 		}
 		p.Set(v.Color)
+	case *prop.Property[image.Image]:
+		if v.Kind != KindImage {
+			return setMismatch(name, KindImage, v.Kind)
+		}
+		p.Set(v.Image)
 	case *prop.Property[any]:
 		if v.Kind != KindAny {
 			return setMismatch(name, KindAny, v.Kind)
@@ -409,6 +449,70 @@ func (s *Service) register(regs []Registration) (rollback func(), err error) {
 	return rollback, nil
 }
 
+// Unregister removes names from the binding context — Register's
+// inverse, and the delete half of a CRUD surface over the viewmodel. A
+// client that can grow the context must be able to shrink it again, or
+// every generated name leaks for the life of the process.
+//
+// All-or-nothing, like Register: a name that does not resolve fails the
+// whole batch and puts back anything already taken out.
+//
+// It does not track provenance — a name the app itself installed is
+// removable too, because the context is the one source of truth and
+// nothing in it records who wrote it. What this does NOT do is disturb
+// the running tree: a component bound to a removed name still holds its
+// property handle directly and keeps rendering and updating. Removal
+// only takes the name out of scope for markup built AFTERWARDS, which
+// is exactly what "unbind it from future pages" means.
+func (s *Service) Unregister(names []string) error {
+	if s.bind == nil {
+		return errNoContext
+	}
+	if s.bind.Values == nil {
+		return errNoContext
+	}
+	type removed struct {
+		parent map[string]any
+		key    string
+		val    any
+	}
+	var undo []removed
+	rollback := func() {
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i].parent[undo[i].key] = undo[i].val
+		}
+	}
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			rollback()
+			return invalidf("cannot unregister: a name is required")
+		}
+		segs := strings.Split(name, ".")
+		m := s.bind.Values
+		ok := true
+		for _, seg := range segs[:len(segs)-1] {
+			inner, isScope := m[seg].(map[string]any)
+			if !isScope {
+				ok = false
+				break
+			}
+			m = inner
+		}
+		leaf := segs[len(segs)-1]
+		var val any
+		if ok {
+			val, ok = m[leaf]
+		}
+		if !ok {
+			rollback()
+			return notFoundf("cannot unregister %q: no such name", name)
+		}
+		delete(m, leaf)
+		undo = append(undo, removed{parent: m, key: leaf, val: val})
+	}
+	return nil
+}
+
 // sourceFor builds the fresh *prop.Property[T] a registration asks for —
 // a type switch over Kind, one case per propKinds row.
 func sourceFor(r Registration) (any, error) {
@@ -465,8 +569,17 @@ func sourceFor(r Registration) (any, error) {
 			}
 		}
 		return prop.NewSource(v), nil
+	case KindImage:
+		// nil is a legitimate starting value: a page can bind <Image
+		// Src="{{.Logo}}"> before anything has supplied a picture, and
+		// Image renders nothing for a nil source rather than failing.
+		var v image.Image
+		if init != nil {
+			v = init.Image
+		}
+		return prop.NewSource(v), nil
 	}
-	return nil, invalidf("registration %q: unknown kind; want one of string, int, bool, float, duration, color, any", r.Name)
+	return nil, invalidf("registration %q: unknown kind; want one of string, int, bool, float, duration, color, any, image", r.Name)
 }
 
 // namesOf is the sorted Name= identities of a name table.

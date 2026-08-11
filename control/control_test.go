@@ -145,6 +145,53 @@ func TestRegisterIsAtomicAndRefusesCollisions(t *testing.T) {
 	}
 }
 
+// Unregister is Register's inverse: the delete half of a CRUD surface
+// over the binding context. A client that can grow the viewmodel must be
+// able to shrink it again, or every generated name leaks for the life of
+// the process.
+func TestUnregisterRemovesNamesAtomically(t *testing.T) {
+	svc, bind := testService(map[string]any{"AppOwned": prop.NewSource("x")})
+
+	if err := svc.Register([]Registration{
+		{Name: "A", Kind: KindString},
+		{Name: "Scope.B", Kind: KindInt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A batch naming something absent leaves EVERYTHING behind — the
+	// same all-or-nothing contract Register has.
+	err := svc.Unregister([]string{"A", "NotThere"})
+	if err == nil || !strings.Contains(err.Error(), "NotThere") {
+		t.Fatalf("err = %v, want one naming the missing name", err)
+	}
+	if _, ok := bind.Values["A"]; !ok {
+		t.Error("a failed batch removed an earlier name anyway")
+	}
+
+	// The happy path removes both, including through a dotted scope.
+	if err := svc.Unregister([]string{"A", "Scope.B"}); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	if _, ok := bind.Values["A"]; ok {
+		t.Error("A survived Unregister")
+	}
+	if _, err := svc.Value("Scope.B"); err == nil {
+		t.Error("Scope.B still resolves after Unregister")
+	}
+
+	// Names the app itself installed are removable too — the context is
+	// the one source of truth, and it does not track provenance.
+	if err := svc.Unregister([]string{"AppOwned"}); err != nil {
+		t.Errorf("app-owned name: %v", err)
+	}
+
+	// An empty name is refused rather than silently matching nothing.
+	if err := svc.Unregister([]string{"  "}); err == nil {
+		t.Error("blank name was accepted")
+	}
+}
+
 func TestValueEqual(t *testing.T) {
 	cases := []struct {
 		a, b Value
