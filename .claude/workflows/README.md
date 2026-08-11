@@ -11,6 +11,19 @@ run them only when the user is present. None of them ever commits: each
 returns an explicit staging list of file paths and leaves the git index
 to the coordinator that invoked it.
 
+Two guards keep concurrent agents from clobbering each other, and they
+are not the same guard. Every agent brief bans mutating git outright —
+no `add`/`commit`/`push`, plain `mv`/`rm` only — which protects the
+*index*. Separately, the one phase with genuinely parallel writers (the
+`gooey-new-component` reconciliation fan-out) runs each agent in its own
+git worktree with a disjoint write set, which protects the *working
+tree*: two agents editing one path in one checkout is a silent
+last-writer-wins fork, and no amount of index discipline prevents it.
+A collection step copies those edits back and stops on any collision
+rather than picking a winner. Sequential single-writer phases stay in
+the main checkout, where isolation would add merge-back cost for no
+concurrency benefit.
+
 Which one:
 
 - A new **demo** (something in `cmd/` or `examples/` that shows the
@@ -55,8 +68,8 @@ user approves: a `docs/specs/` decision record BEFORE implementation
 the spec via `gooey-epic-decompose`, the build in `components/` (markup
 builder + load-error cases + damage pins + an explicit invariant
 checklist in the result), and then the reconciliation fan-out that is
-the point: parallel agents with disjoint write sets update every stale
-doc claim (`docs/markup-reference.md`, `docs/learn/**`, README matrix,
+the point: parallel agents, each in **its own git worktree** with a
+disjoint write set, update every stale doc claim (`docs/markup-reference.md`, `docs/learn/**`, README matrix,
 `docs/architecture.md`, other specs' `## Executed`), adopt the component
 wherever shipped code hand-rolls it (the Tabs/kanbandemo model — the
 hand-rolled version is deleted in the same change), audit/update

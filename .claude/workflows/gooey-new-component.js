@@ -9,7 +9,7 @@ export const meta = {
     { title: 'Spec', detail: 'docs/specs decision record before any implementation' },
     { title: 'Epic', detail: 'gooey-epic-decompose files tracked issues from the spec' },
     { title: 'Build', detail: 'components/ + markup builder + load errors + damage pins' },
-    { title: 'Reconcile', detail: 'update stale docs, adopt in shipped code, docs-and-demos' },
+    { title: 'Reconcile', detail: 'worktree-isolated updaters, then collect; docs-and-demos' },
     { title: 'Verify', detail: 'all modules, all examples, links, tracked files, staging list' },
   ],
 }
@@ -343,27 +343,41 @@ const learnDocs = staleDocs.filter(f => f.path.startsWith('docs/learn/') && !f.p
 const specDocs = staleDocs.filter(f => f.path.startsWith('docs/specs/') && f.path !== spec.specPath)
 const otherDocs = staleDocs.filter(f => !coreDocs.includes(f) && !learnDocs.includes(f) && !specDocs.includes(f))
 
-const updaterBrief = (owned, assigned, extra) => `Reconciliation updater in ${REPO}. The new "${interview.name}" component landed (spec: ${spec.specPath}; files: ${JSON.stringify(build.files)}; design summary: ${design.designSummary}).
+// Reconcile is the only phase with genuinely concurrent writers, so it
+// is the only one that pays for worktree isolation. Each updater gets
+// its own worktree (the runtime creates it and auto-removes it if
+// nothing changed); the coordinator collects the diffs afterwards. Two
+// guards, not one: disjoint write sets so no two agents own a path, and
+// separate trees so a stray write cannot land on someone else's file.
+const ISOLATION_RULES = `
+YOU ARE IN YOUR OWN GIT WORKTREE — not the shared checkout:
+- Run \`pwd\` and \`git rev-parse --show-toplevel\` FIRST and work from that root. Paths in your write set are relative to it. Never cd to the shared checkout at ${REPO} to make an edit; reading from it is fine, writing to it defeats the isolation and is how duplicate-file forks happen.
+- Your edits stay uncommitted in your worktree — the coordinator collects them. Do NOT commit, and do NOT create branches. Report changed[] as paths relative to the repo root so they are meaningful after collection.
+- Verify before you report: run \`git status --porcelain -uall\` in YOUR worktree and confirm every changed path is inside your write set and nothing stray came along (\`-uall\` descends into untracked directories; plain porcelain stops at the directory and would hide a file inside it).
+- Never create a directory under .claude/worktrees/ yourself. An unregistered directory there is invisible to BOTH \`git worktree list\` and \`git status\`, and has silently orphaned real work in this repo before.`
+
+const updaterBrief = (owned, assigned, extra) => `Reconciliation updater for ${REPO}. The new "${interview.name}" component landed (spec: ${spec.specPath}; files: ${JSON.stringify(build.files)}; design summary: ${design.designSummary}).
 YOUR WRITE SET — you may edit ONLY these paths, other agents own everything else, and the survey findings assigned to you are: ${JSON.stringify(assigned)}
 Owned: ${JSON.stringify(owned)}
+NOTE: the component itself and the spec exist in the SHARED checkout, not in your worktree — your worktree was branched before the build. Read them from ${REPO} (read-only) when you need to describe the component accurately, but make every edit in your own tree.
 For each finding: re-read the file NOW (concurrent sessions; the finding's quote may have moved), judge it, and fix stale claims to tell the truth about the component as built — under-claims and over-claims both. ${extra}
-List any assigned finding you judged wrong under skipped, with the reason. changed[] must stay inside your write set.${GIT_RULES}`
+List any assigned finding you judged wrong under skipped, with the reason. changed[] must stay inside your write set.${ISOLATION_RULES}${GIT_RULES}`
 
 const updaters = []
 if (coreDocs.length) updaters.push(() => agent(
   updaterBrief(['docs/markup-reference.md', 'docs/architecture.md', 'README.md'], coreDocs,
     `markup-reference gets the component's full element entry (attributes, binding, load errors) matching the existing entries' shape; README's capability matrix/status rows must match what the spec says shipped.`),
-  { label: 'update:core-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA },
+  { label: 'update:core-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
 if (learnDocs.length) updaters.push(() => agent(
   updaterBrief(['docs/learn/**.md (NOT docs/learn/examples/)'], learnDocs,
     `Tutorials teach: where a page hand-rolls what the component now does, update the prose AND its embedded code to the component — unless the page's point is to teach the hand-rolled mechanism, in which case add a pointer to the component instead.`),
-  { label: 'update:learn-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA },
+  { label: 'update:learn-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
 if (specDocs.length) updaters.push(() => agent(
   updaterBrief([`docs/specs/*.md except ${spec.specPath}`], specDocs,
     `Specs are decision records: do NOT rewrite history. Append/adjust their "## Executed" sections (or add a dated follow-up note) so they no longer under- or over-claim; never alter the recorded decisions themselves.`),
-  { label: 'update:spec-executed', phase: 'Reconcile', schema: RECONCILE_SCHEMA },
+  { label: 'update:spec-executed', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
 // One agent per adoption DIRECTORY (multiple findings in one dir go to
 // the same agent — two agents must never own the same write set).
@@ -376,16 +390,37 @@ for (const [dir, sites] of Object.entries(adoptByDir)) {
   updaters.push(() => agent(
     updaterBrief([dir + '/'], sites,
       `Adopt the component the way kanbandemo adopted Tabs: the hand-rolled equivalent is DELETED in favor of the component (plain rm for dead files — never git rm), markup/bindings rewritten to the new element, behavior preserved. Build this site's binary to /tmp and smoke it under a pty (script -qec with an explicit stty size) before reporting. If on re-reading you judge this site contract surface that must NOT migrate (the cmd/reader precedent), skip with the reason.`),
-    { label: `adopt:${dir}`, phase: 'Reconcile', schema: RECONCILE_SCHEMA, effort: 'high' },
+    { label: `adopt:${dir}`, phase: 'Reconcile', schema: RECONCILE_SCHEMA, effort: 'high', isolation: 'worktree' },
   ))
 }
 if (otherDocs.length) updaters.push(() => agent(
   updaterBrief(['exactly the paths in your assigned findings'], otherDocs,
     `These fell outside the named doc sets — fix each in place.`),
-  { label: 'update:misc-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA },
+  { label: 'update:misc-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
 
 const reconciled = (await parallel(updaters)).filter(Boolean)
+
+// Collection: the updaters worked in separate worktrees, so their edits
+// are not in the shared checkout yet. One agent brings them back — the
+// write sets are disjoint by construction, so this is a copy, not a
+// merge, and any path claimed by two worktrees is a bug worth stopping
+// on rather than silently resolving.
+let collection = null
+if (reconciled.some(r => r.changed?.length)) {
+  collection = await agent(
+    `Collect the reconciliation edits into the shared checkout at ${REPO}. Each updater ran in its own git worktree and left its changes uncommitted there; the write sets were assigned disjoint, so this is a copy with a collision check, not a merge.
+The updaters and what each reports changing: ${JSON.stringify(reconciled.map(r => ({ owned: r.owned, changed: r.changed })))}
+Steps:
+1. Enumerate the worktrees: \`git worktree list\` from ${REPO}. Match each to an updater by the changed paths it reports. Also \`ls -a ${REPO}/.claude/worktrees/\` and compare — a directory on disk that is NOT in \`git worktree list\` is an unregistered orphan (no .git file means git cannot see it at all); report it, do not delete it.
+2. In each worktree run \`git status --porcelain -uall\` yourself — trust it over the agent's self-report — and collect the actual changed/added paths.
+3. Collision check BEFORE copying: if two worktrees changed the same path, STOP and report it as a collision with both versions' diffs. Do not pick a winner — disjoint write sets were the contract, and a violation means the survey mis-assigned ownership.
+4. Copy each changed file from its worktree into ${REPO} at the same relative path (plain \`cp\`; plain \`rm\` for deletions an adopter made). Never \`git mv\`/\`git rm\`, never \`git add\`, never commit.
+5. Verify by diffing: for every collected path, the file in ${REPO} must now match the worktree's version.
+Report: collected paths, any collisions, any unregistered orphan directories, and anything you could not collect.${GIT_RULES}`,
+    { label: 'collect:worktrees', phase: 'Reconcile', effort: 'high' },
+  )
+}
 
 // docs-and-demos: audit the regen workflow's assumptions, and let the
 // user decide whether to pay for a full regen now.
@@ -415,7 +450,8 @@ Run and report each:
 4. Damage pins: run the component's tests verbosely and confirm each count the spec promises.
 5. Markdown: every relative link and image path in every touched doc resolves to a real file; every file a touched doc links to is either tracked (git ls-files --error-unmatch) or present on the staging list you are about to produce — a link into nowhere fails.
 6. Append "## Executed" to ${spec.specPath} in house style (model: the executed specs' sections): what shipped, API surface, the verification evidence you just gathered, divergences from the plan. Also flip its Status line to executed. This is the ONE file Reconcile was told not to touch — it is yours.
-7. Staging list: run git status --porcelain -uall NOW and derive stagingList (explicit file paths belonging to this work — component, tests, spec, reconciled docs, adopters, workflow script if edited${regenResult ? ', regenerated docs/GIFs' : ''}) and stray (untracked junk that must NOT be staged: binaries, .cast files, scratch logs). Every path individually — never a directory.
+7. Worktree hygiene: the Reconcile updaters ran in isolated worktrees. Confirm \`ls -a ${REPO}/.claude/worktrees/\` matches \`git worktree list\` exactly — a directory present on disk but absent from the list is an unregistered orphan that git cannot see at all (not via \`git worktree list\`, not via \`git status\`), and has silently stranded real work in this repo before. Report any mismatch as a problem; do not delete anything yourself.
+8. Staging list: run git status --porcelain -uall NOW and derive stagingList (explicit file paths belonging to this work — component, tests, spec, reconciled docs collected from the worktrees, adopters, workflow script if edited${regenResult ? ', regenerated docs/GIFs' : ''}) and stray (untracked junk that must NOT be staged: binaries, .cast files, scratch logs). Every path individually — never a directory. \`-uall\` is load-bearing: it descends into untracked directories, where plain porcelain stops at the directory name and hides the files inside.
 green=true only if ALL of 1-5 pass.${INVARIANTS}${GIT_RULES}`,
     { label: `verify:pass-${attempt}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high' },
   )
@@ -431,6 +467,7 @@ return {
   designArtifact: design.artifactUrl,
   build: { files: build.files, invariantChecklist: build.invariantChecklist },
   reconciled: reconciled.map(r => ({ changed: r.changed, skipped: r.skipped })),
+  collection: collection || 'no worktree edits to collect',
   docsAndDemos: { scriptUpdated: regen?.scriptUpdated ?? false, regenRan: !!regenResult, regen: regenResult || undefined },
   verification: { green: verify.green, checks: verify.checks, problems: verify.problems },
   staging: { files: verify.stagingList, stray: verify.stray },

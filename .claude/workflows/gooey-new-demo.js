@@ -250,7 +250,8 @@ Run and report each:
 2. Every nested module green: cd mcp && go test -race ./...; cd grpc && go test -race ./...; and every other dir with its own go.mod (discover with: command find ${REPO} -name go.mod -not -path '*/.claude/*') gets go vet + go test.
 3. gofmt -l on every file the build reported: ${JSON.stringify(build.files)} — must be empty.
 4. pty smoke: build the demo to /tmp, run it under script -qec with an explicit stty size, drive its key map (printf OCTAL escapes only — \\011 tab, \\015 enter; never \\x hex), quit cleanly, then extract the FINAL frame by feeding the trimmed output log through render.Screen (the last \\x1b[H in the log is the first flush of the final frame, not the whole frame — trim to it and replay). Confirm the money beat from the approved design is on screen: ${design.designSummary}
-5. No stray binaries or junk: git status --porcelain -uall — every untracked path must be an intended demo file; flag executables or logs.
+5. No stray binaries or junk: git status --porcelain -uall — every untracked path must be an intended demo file; flag executables or logs. \`-uall\` is load-bearing: it descends into untracked directories, where plain porcelain stops at the directory name and hides the files inside.
+6. Worktree hygiene: confirm \`ls -a ${REPO}/.claude/worktrees/\` matches \`git worktree list\` exactly — a directory on disk but absent from the list is an unregistered orphan git cannot see at all, and has silently stranded real work in this repo before. Report a mismatch; do not delete anything yourself.
 green=true only if ALL pass.${INVARIANTS}${GIT_RULES}`,
     { label: `verify:pass-${attempt}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high' },
   )
