@@ -201,7 +201,16 @@ func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.Dispat
 // nothing else will ever paint over those cells — and anything Startable
 // among them is stopped. New arrivals are started if this composition was
 // already started, so a row realized on frame 40 gets the same treatment
-// as one that existed at frame 0.
+// as one that existed at frame 0. Departed startables stop BEFORE new
+// ones start, so a replaced element never overlaps its replacement.
+//
+// A caveat worth stating plainly: this runs inside Frame(), so a stop
+// that waits (components.Companion waits for its child, bounded by
+// StopTimeout) blocks the UI goroutine mid-frame — no paint, no input,
+// no signals until it returns. That is the price of "stopped means
+// stopped" and it is paid on a structural re-sync, not only at teardown.
+// A Startable whose stop cannot be made cheap should be removed by
+// swapping the whole composition, where the wait happens between trees.
 func (c *Composer) walkNodes() {
 	prev := c.nodeOf
 	c.nodeOf = make(map[Component]*paintNode, len(prev))
@@ -227,9 +236,29 @@ func (c *Composer) walkNodes() {
 	if c.disp == nil {
 		return
 	}
+	// STOP FIRST, THEN START. The order is load-bearing for anything whose
+	// lifetime touches a resource outside the process: a <Companion>
+	// replaced by another declaring the same service would otherwise have
+	// two children alive at once for the whole outgoing StopTimeout — the
+	// new one failing to bind a port the old one still holds, and
+	// truncating the log the old one is still writing into.
+	//
+	// Nothing depends on the reverse order, and no Startable can be caught
+	// out by it: live is computed from the COMPLETE new list before any
+	// stop runs, and membership is pointer identity, so a component that
+	// is present both before and after is neither stopped nor restarted —
+	// there is no "departs and re-appears in the same pass" to lose.
 	live := make(map[Startable]bool, len(c.startable))
 	for _, s := range c.startable {
 		live[s] = true
+	}
+	for s, stop := range c.stops {
+		if !live[s] {
+			stop()
+			delete(c.stops, s)
+		}
+	}
+	for _, s := range c.startable {
 		if _, running := c.stops[s]; running {
 			continue
 		}
@@ -237,12 +266,6 @@ func (c *Composer) walkNodes() {
 			c.stops[s] = stop
 		} else {
 			c.stops[s] = func() {}
-		}
-	}
-	for s, stop := range c.stops {
-		if !live[s] {
-			stop()
-			delete(c.stops, s)
 		}
 	}
 }

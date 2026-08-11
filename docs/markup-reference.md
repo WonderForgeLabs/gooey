@@ -786,12 +786,12 @@ case ev := <-events:
 | Attribute | Meaning |
 |---|---|
 | `Name` | **Required.** The companion's label in errors, and the element's `Name=` identity for `markup.Find` and tree snapshots. |
-| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory and is made absolute. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
+| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory. Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
 | `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
-| `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** |
+| `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
 | `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. |
 | `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. |
-| `CleanEnv` | `"true"` starts the child from an **empty** environment. Default is inherit-and-override. |
+| `CleanEnv` | Starts the child from an **empty** environment. Any `strconv.ParseBool` spelling works (`true`, `1`, `TRUE`, `T`); anything else is a **load error**, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell. Default is inherit-and-override. |
 | `Error` | Optional binding to a `*prop.Property[string]`. Receives a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden, and `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
 
@@ -812,7 +812,16 @@ ctx.Dir = dir
 
 `fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
 
-**Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic) and every tree replacement (hot reload, `swap_markup`, `patch_markup`): the outgoing page's companion stops, the incoming page's starts. A requested stop does **not** run `Exited`.
+**Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic). A requested stop does **not** run `Exited`.
+
+**A replaced companion never overlaps its replacement, but the two replacement paths pay for it differently.** Both stop the outgoing child before the incoming one starts; where the wait happens is what differs, and it matters because these services are not idempotent — two children of the same service fight over a port, and the second truncates the log the first is still writing.
+
+| Path | What happens | Cost |
+|---|---|---|
+| **Full swap** — hot reload, `swap_markup`, anything going through `App.attach` | The outgoing `Composer` is **closed** before the incoming one is built and started. | The wait happens *between trees*, with no tree on screen to freeze. |
+| **Structural re-sync** — `patch_markup`, a `Dynamic` container dropping the row | The same `Composer` re-walks its tree inside `Frame()`. Departed startables are stopped, **then** arrivals are started. | The wait happens **on the UI goroutine, mid-frame**. Removing a `<Companion>` this way paints nothing, reads no input and handles no signals until the child is gone — up to `StopTimeout` (10s by default). |
+
+That second row is a real freeze, not a theoretical one, and it is the price of "stopped means stopped": a patch cannot both return promptly and guarantee the child is dead. Keep `StopTimeout` short on a companion you expect to be patched in and out of a live page, or move the element out of the patched subtree so it survives the re-sync and is only torn down on a full swap.
 
 That is one tier down from `gooey.WithCompanions` / `App.AddCompanion`, which start *before* the tree is built and stop *after* the terminal is restored. The rule of thumb: **if the tree's construction depends on the service, declare it in Go**; if the running UI merely uses it, declare it here. Both tiers can be used at once and do not interact. `WithCompanionGrace` has no markup spelling (it names a moment a markup declaration is discovered after, and a swapped-in page must not be able to reconfigure the app's startup); `WithCompanionStopTimeout` does, per element, which is the per-companion shape the [companions spec](specs/2026-08-10-companions.md) called the right one.
 

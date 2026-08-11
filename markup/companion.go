@@ -93,9 +93,17 @@ func buildCompanion(e Element, ctx *Context) (gooey.Component, error) {
 	if name == "" {
 		return nil, fmt.Errorf(`markup: <Companion> needs a Name (e.g. Name="worker") — it is what errors call the service`)
 	}
-	c := &components.Companion{Name: name, CleanEnv: e.Attrs["CleanEnv"] == "true"}
+	// CleanEnv goes through the house bool reader rather than a == "true"
+	// comparison, and an unreadable value is a load error. It is a
+	// security switch of the same kind as GOOEY_MARKUP_COMPANIONS:
+	// CleanEnv="1" silently meaning "inherit" would hand a child named by
+	// the document every API key and token in the launching shell.
+	clean, err := optBool(e, "CleanEnv")
+	if err != nil {
+		return nil, err
+	}
+	c := &components.Companion{Name: name, CleanEnv: clean}
 
-	var err error
 	if c.Dir, err = companionDir(e, ctx, name); err != nil {
 		return nil, err
 	}
@@ -165,11 +173,19 @@ func companionPath(e Element, ctx *Context, name string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("markup: <Companion Name=%q Path=%q>: %w", name, raw, err)
 		}
-		return p, nil
+		// LookPath joins the name onto whichever PATH entry matched, so an
+		// empty entry ("PATH=/usr/bin::/bin") or a relative one
+		// ("PATH=…:./tools") yields "./python3" — which exec.Cmd would then
+		// resolve against Dir, the exact hazard the pathful branch below
+		// takes filepath.Abs to avoid. Go's own execerrdot guard usually
+		// turns that into an error first, but it is a GODEBUG anyone can
+		// switch off, and this element's contract is that Path is absolute
+		// by the time the component holds it.
+		return absPath(p, name, raw)
 	}
-	p, err := filepath.Abs(ctx.hostPath(raw))
+	p, err := absPath(ctx.hostPath(raw), name, raw)
 	if err != nil {
-		return "", fmt.Errorf("markup: <Companion Name=%q Path=%q>: %w", name, raw, err)
+		return "", err
 	}
 	st, err := os.Stat(p)
 	if err != nil {
@@ -179,6 +195,18 @@ func companionPath(e Element, ctx *Context, name string) (string, error) {
 		return "", fmt.Errorf("markup: <Companion Name=%q Path=%q>: %s is a directory", name, raw, p)
 	}
 	return p, nil
+}
+
+// absPath makes a resolved executable absolute, naming the element the
+// way every other companion error does. Both branches of companionPath
+// go through it: an absolute Path is the element's invariant, not a
+// property of the branch that happened to produce it.
+func absPath(p, name, raw string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("markup: <Companion Name=%q Path=%q>: %w", name, raw, err)
+	}
+	return abs, nil
 }
 
 // companionDir resolves the working directory against the document's own
@@ -205,7 +233,12 @@ func companionDir(e Element, ctx *Context, name string) (string, error) {
 // file itself is opened (and truncated) when the child starts, not here:
 // a document that fails to load must not have destroyed a log on its way
 // out. Its DIRECTORY is checked now, because "no such directory" is the
-// mistake worth catching early.
+// mistake worth catching early — and so is the path ITSELF already being
+// a directory, which the parent-directory check alone would let through
+// to an EISDIR at child start, behind a screen that is already up.
+//
+// Both checks are stats. Neither creates nor truncates anything, which is
+// what keeps the "a failed load never destroys a log" invariant intact.
 func companionLog(e Element, ctx *Context, name string) (string, error) {
 	raw := strings.TrimSpace(e.Attrs["Log"])
 	if raw == "" {
@@ -219,6 +252,11 @@ func companionLog(e Element, ctx *Context, name string) (string, error) {
 	}
 	if !st.IsDir() {
 		return "", fmt.Errorf("markup: <Companion Name=%q Log=%q>: %s is not a directory", name, raw, dir)
+	}
+	// A missing log is the normal case (it is created at start), so only
+	// an existing path that is a directory is a complaint.
+	if st, err := os.Stat(p); err == nil && st.IsDir() {
+		return "", fmt.Errorf("markup: <Companion Name=%q Log=%q>: %s is a directory", name, raw, p)
 	}
 	return p, nil
 }

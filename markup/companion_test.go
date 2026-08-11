@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -264,9 +265,20 @@ func TestCompanionEnvironmentInheritsUnlessCleaned(t *testing.T) {
 		  </VStack>
 		</Gooey>`
 	}
+	// Every spelling strconv.ParseBool accepts has to mean what it says.
+	// A == "true" comparison made CleanEnv="1" and CleanEnv="TRUE" silently
+	// mean "inherit", which hands a child named by the document every API
+	// key and token in the launching shell — the one place this element
+	// let a typo pick the LESS safe branch. The unreadable spellings are
+	// load errors, pinned in TestCompanionMalformedDeclarationsAreLoadErrors.
 	for _, tc := range []struct{ name, clean, want string }{
 		{"default inherits", "", "[inherited]"},
 		{"CleanEnv scrubs", `CleanEnv="true"`, "[]"},
+		{"CleanEnv=1 scrubs", `CleanEnv="1"`, "[]"},
+		{"CleanEnv=TRUE scrubs", `CleanEnv="TRUE"`, "[]"},
+		{"CleanEnv=T scrubs", `CleanEnv="T"`, "[]"},
+		{"CleanEnv=0 inherits", `CleanEnv="0"`, "[inherited]"},
+		{"CleanEnv=false inherits", `CleanEnv="false"`, "[inherited]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -525,6 +537,248 @@ func TestCompanionPathsResolveAgainstTheDocumentDirectory(t *testing.T) {
 	}
 }
 
+// A bare Path is absolute even when PATH hands back a relative match.
+//
+// exec.LookPath joins the name onto whichever PATH entry matched, so an
+// empty entry ("PATH=/usr/bin::/bin") or a relative one ("PATH=…:tools")
+// resolves to "tools/python3". exec.Cmd resolves a relative Path against
+// Dir, so that plus Dir="../worker" runs a different file — or nothing —
+// at composition start, which is the failure mode this whole function
+// exists to move to load time.
+//
+// Go's execerrdot guard normally turns the relative match into an error
+// first; the test switches it off to reach the case, and skips if the
+// hazard is genuinely unreachable in this configuration rather than
+// pretending to have tested it.
+func TestCompanionBarePathIsAbsoluteEvenFromARelativePATHEntry(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tools")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tool := "gooey-companion-probe"
+	if err := os.WriteFile(filepath.Join(bin, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("GODEBUG", "execerrdot=0")
+	t.Setenv("PATH", "tools")
+
+	switch p, err := exec.LookPath(tool); {
+	case err != nil:
+		t.Skipf("exec.LookPath refuses a relative PATH entry here (%v), so the hazard is unreachable", err)
+	case filepath.IsAbs(p):
+		t.Skipf("exec.LookPath already returned an absolute path (%q)", p)
+	}
+
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026"><VStack>` +
+		`<Companion Name="worker" Path="` + tool + `"/><Text>ui</Text></VStack></Gooey>`
+	ctx := &Context{}
+	if _, err := Build([]byte(src), ctx); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Find[*components.Companion](ctx, "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(bin, tool); c.Path != want {
+		t.Errorf("Path = %q, want the absolutized %q — exec.Cmd would resolve a relative Path against Dir", c.Path, want)
+	}
+}
+
+// A start failure does not outlive the companion that reported it.
+//
+// Err() is documented as "the last failure reported, or nil", and the
+// clearing used to sit behind an `if c.Error == nil` return — so a
+// companion with no Error= binding kept reporting a stale failure after a
+// later start succeeded, and anything driving off Err() (a status line, a
+// health check) called a healthy service dead.
+func TestCompanionSuccessfulStartClearsAPreviousFailureWithoutAnErrorBinding(t *testing.T) {
+	needSh(t)
+	dir := t.TempDir()
+	logs := filepath.Join(dir, "logs")
+	if err := os.Mkdir(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// No Error= attribute: the whole point of the test.
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <VStack>
+	    <Companion Name="worker" Path="sh" KillDelay="200ms" Log="` + filepath.Join(logs, "w.log") + `">
+	      <Companion.Args><Arg>-c</Arg><Arg>sleep 300</Arg></Companion.Args>
+	    </Companion>
+	    <Text>ui</Text>
+	  </VStack>
+	</Gooey>`
+	ctx := &Context{}
+	w, err := Build([]byte(src), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Find[*components.Companion](ctx, "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The log's directory existed at LOAD time and is gone by START time,
+	// which is how a start failure is produced without a load error.
+	if err := os.RemoveAll(logs); err != nil {
+		t.Fatal(err)
+	}
+	comp := gooey.NewComposer(w, 20, 3)
+	d := gooey.NewDispatcher()
+	comp.Start(d)
+	t.Cleanup(comp.Close)
+	d.Drain()
+	if c.Err() == nil {
+		t.Fatal("a companion whose log could not be opened reported no error")
+	}
+
+	// Put the directory back and re-run the composition's lifetime, the
+	// way a Dynamic re-realization or a patch_markup that restores the
+	// subtree would.
+	if err := os.Mkdir(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	comp.Close()
+	comp.Start(d)
+	d.Drain()
+	if c.Err() != nil {
+		t.Errorf("Err() = %v after a successful start; a stale failure survived because nothing bound Error=", c.Err())
+	}
+}
+
+// A stop suppresses a report that is already queued — INCLUDING one queued
+// by a failed start.
+//
+// The start-failure paths used to return a bare func(){}, so the report
+// they had just posted still ran at the next Drain. A page declaring
+// Exited="{{.Quit}}" would then quit the app on behalf of a composition
+// that had already been closed and swapped away.
+func TestCompanionStopSuppressesAQueuedStartFailure(t *testing.T) {
+	needSh(t)
+	build := func(t *testing.T, exited *int) (*gooey.Composer, *gooey.Dispatcher) {
+		t.Helper()
+		dir := t.TempDir()
+		logs := filepath.Join(dir, "logs")
+		if err := os.Mkdir(logs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+		  <VStack>
+		    <Companion Name="worker" Path="sh" Exited="{{.Died}}" Log="` + filepath.Join(logs, "w.log") + `">
+		      <Companion.Args><Arg>-c</Arg><Arg>sleep 300</Arg></Companion.Args>
+		    </Companion>
+		    <Text>ui</Text>
+		  </VStack>
+		</Gooey>`
+		w, err := Build([]byte(src), &Context{Values: map[string]any{
+			"Died": gooey.Command(func() { *exited++ }),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(logs); err != nil {
+			t.Fatal(err)
+		}
+		comp := gooey.NewComposer(w, 20, 3)
+		d := gooey.NewDispatcher()
+		comp.Start(d)
+		if d.Pending() == 0 {
+			t.Fatal("the failed start queued nothing; this test is no longer exercising the race it names")
+		}
+		return comp, d
+	}
+
+	// Control: nobody let go, so the failure is reported normally.
+	t.Run("a live composition still reports it", func(t *testing.T) {
+		exited := 0
+		comp, d := build(t, &exited)
+		t.Cleanup(comp.Close)
+		d.Drain()
+		if exited != 1 {
+			t.Errorf("Exited ran %d times, want 1", exited)
+		}
+	})
+
+	t.Run("a closed composition does not", func(t *testing.T) {
+		exited := 0
+		comp, d := build(t, &exited)
+		comp.Close() // the page is swapped away before the loop drains
+		d.Drain()
+		if exited != 0 {
+			t.Errorf("Exited ran %d times for a composition that was already closed", exited)
+		}
+	})
+}
+
+// Stop is a BARRIER, the discipline Timer.Start states: close AND join.
+//
+// The wait goroutine does close(done) and THEN post(...), so a stop that
+// waits on done alone can return while a post is still in flight —
+// "Close ⇒ no further posts, ever" would be merely likely rather than
+// true, and it is exactly the not-likely case that a swap loses a page to.
+//
+// The post func here BLOCKS inside the exit report, which is what makes
+// the assertion deterministic in both directions rather than a race the
+// scheduler usually wins: with the join, stop cannot return until the
+// post has been let go; without it, stop returns immediately, because
+// done closes before post is ever called.
+//
+// This drives components.Companion directly. The Composer is not in the
+// picture: the barrier is a property of the stop func the Startable hands
+// back, and Dispatcher.Post can never be made to block.
+func TestCompanionStopJoinsTheReportingGoroutine(t *testing.T) {
+	needSh(t)
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	c := &components.Companion{
+		Name:      "worker",
+		Path:      sh,
+		Args:      []*prop.Property[string]{prop.NewSource("-c"), prop.NewSource("echo $$ > " + filepath.Join(dir, "child.pid") + "; sleep 300")},
+		KillDelay: 200 * time.Millisecond,
+	}
+
+	var posts atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	post := func(fn func()) {
+		// Post 1 is the successful start's clear, made on this goroutine
+		// before the wait goroutine exists. Post 2 is the exit report.
+		if posts.Add(1) == 2 {
+			close(entered)
+			<-release
+		}
+	}
+
+	stop := c.Start(post)
+	waitForFile(t, filepath.Join(dir, "child.pid"))
+
+	returned := make(chan struct{})
+	go func() { stop(); close(returned) }()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the exit report was never posted")
+	}
+	select {
+	case <-returned:
+		t.Error("stop returned while the exit report was still being posted; close(done) is not paired with a join, so a post can outlive Close")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop never returned after the post was released")
+	}
+	if c.Leaked() {
+		t.Error("the tripwire fired on a child that stopped when asked")
+	}
+}
+
 // Every mistake in a declaration is a LOAD error. Two thirds of these are
 // the App tier's grace window arriving early: a binary that is not
 // installed and a directory that does not exist are caught before the
@@ -544,6 +798,15 @@ func TestCompanionMalformedDeclarationsAreLoadErrors(t *testing.T) {
 		{"missing dir", page(`<Companion Name="worker" Path="sh" Dir="` + dir + `/nope"/>`), "nope"},
 		{"dir is a file", page(`<Companion Name="worker" Path="sh" Dir="` + dir + `/f"/>`), "not a directory"},
 		{"missing log dir", page(`<Companion Name="worker" Path="sh" Log="` + dir + `/nope/w.log"/>`), "nope"},
+		// The log's PARENT existing is not enough: Log naming a directory
+		// would load fine and then fail EISDIR at child start, behind a
+		// screen that is already up.
+		{"log is a directory", page(`<Companion Name="worker" Path="sh" Log="` + dir + `"/>`), "is a directory"},
+		// A bool a typo silently flips is not a switch — least of all this
+		// one, which decides whether the child inherits every secret in
+		// the launching shell.
+		{"unreadable CleanEnv", page(`<Companion Name="worker" Path="sh" CleanEnv="yes"/>`), "want a bool"},
+		{"CleanEnv typo", page(`<Companion Name="worker" Path="sh" CleanEnv="ture"/>`), "want a bool"},
 		{"bad KillDelay", page(`<Companion Name="worker" Path="sh" KillDelay="soon"/>`), "KillDelay"},
 		{"negative StopTimeout", page(`<Companion Name="worker" Path="sh" StopTimeout="-2s"/>`), "must be positive"},
 		{"direct child", page(`<Companion Name="worker" Path="sh"><Text>x</Text></Companion>`), "takes no children"},

@@ -23,8 +23,12 @@ import (
 // Like Timer and KeyBinding it is non-visual: it lives in the tree as an
 // attachment, is never measured, arranged or painted, and its LIFETIME
 // BELONGS TO THE COMPOSER. Composer.Start launches the child;
-// Composer.Close — reached on every teardown path, and on every tree
-// replacement — stops it and waits.
+// Composer.Close — reached on every teardown path, and on every full
+// tree replacement — stops it and waits. A companion that merely leaves
+// the tree (patch_markup, a Dynamic container) is stopped by the
+// Composer's structural re-sync instead, which stops departures BEFORE
+// starting arrivals so a replaced service never overlaps its
+// replacement.
 //
 // That is the one thing it does differently from an App-level companion,
 // which starts before the tree exists and stops after the terminal is
@@ -72,8 +76,14 @@ type Companion struct {
 	// (0 = CompanionCmd's default).
 	KillDelay time.Duration
 	// StopTimeout bounds how long stopping waits for the child after
-	// cancelling it. It runs on the UI goroutine during teardown, so it
-	// must be bounded; past it Leaked reports that the wait gave up.
+	// cancelling it. It runs on the UI goroutine, so it must be bounded;
+	// past it Leaked reports that the wait gave up.
+	//
+	// "On the UI goroutine" is not only teardown. A structural re-sync
+	// (patch_markup, a Dynamic container dropping the row) stops departed
+	// startables from inside Frame, so removing a companion from a LIVE
+	// page freezes paint, input and signals for as long as this wait
+	// takes. Keep it short on a companion that gets patched in and out.
 	StopTimeout time.Duration
 	// Error, when bound, receives a *gooey.CompanionError's message when
 	// the child fails to start or exits unbidden, and "" on a successful
@@ -124,6 +134,20 @@ func (c *Companion) Start(post func(func())) func() {
 	if c.Path == "" || post == nil {
 		return func() {}
 	}
+	// stopping is written by the stop func and read by every report this
+	// start posts. Both run on the UI goroutine, so the dispatcher orders
+	// them and no lock is involved.
+	//
+	// It is declared BEFORE the first thing that can fail, and every
+	// return path below hands back a stop func that sets it, because a
+	// FAILED start posts a report too. A stop func that suppressed
+	// nothing would let a queued report — which runs Exited — fire for a
+	// composition the app has already closed and replaced: a page with
+	// Exited="{{.Quit}}" would quit the app on behalf of a page that is
+	// no longer on screen.
+	stopping := false
+	suppress := func() { stopping = true }
+
 	argv := make([]string, 0, len(c.Args))
 	for _, a := range c.Args {
 		argv = append(argv, a.Get())
@@ -132,8 +156,8 @@ func (c *Companion) Start(post func(func())) func() {
 
 	out, closeOut, err := c.output()
 	if err != nil {
-		c.fail(post, gooey.PhaseStart, err)
-		return func() {}
+		c.fail(post, &stopping, gooey.PhaseStart, err)
+		return suppress
 	}
 
 	cmd := exec.Command(c.Path, argv...)
@@ -152,17 +176,15 @@ func (c *Companion) Start(post func(func())) func() {
 	if err := svc.Start(ctx); err != nil {
 		cancel()
 		closeOut()
-		c.fail(post, gooey.PhaseStart, err)
-		return func() {}
+		c.fail(post, &stopping, gooey.PhaseStart, err)
+		return suppress
 	}
 	c.clear(post)
 
-	// stopping is written by the stop func and read by the posted exit
-	// report. Both run on the UI goroutine, so the dispatcher orders
-	// them and no lock is involved.
-	stopping := false
-	done := make(chan struct{})
+	done := make(chan struct{})     // svc.Wait has returned
+	reported := make(chan struct{}) // and the exit report has been posted
 	go func() {
+		defer close(reported)
 		err := svc.Wait()
 		close(done)
 		post(func() {
@@ -184,7 +206,20 @@ func (c *Companion) Start(post func(func())) func() {
 		defer t.Stop()
 		select {
 		case <-done:
+			// A Startable's stop CLOSES AND JOINS, the discipline
+			// Timer.Start states: close(done) happens before the post, so
+			// waiting on done alone would let stop return with a post
+			// still in flight. reported closes after the post has landed,
+			// which is what makes "stop returned ⇒ no further posts" true
+			// rather than merely likely. It cannot deadlock the UI
+			// goroutine running us: Dispatcher's queue is unbounded and
+			// Post never blocks.
+			<-reported
 		case <-t.C:
+			// The abandoned child is still inside svc.Wait, so there is no
+			// goroutine to join — this is precisely the case Leaked()
+			// exists to record. The stopping flag above is what keeps its
+			// eventual post harmless.
 			c.leaked = true
 		}
 		closeOut()
@@ -235,8 +270,17 @@ func (c *Companion) output() (*os.File, func(), error) {
 // because Start runs inside the Composer's tree walk, and a Set (or an
 // Exited that quits the app) belongs at a defined point in the loop
 // rather than mid-walk.
-func (c *Companion) fail(post func(func()), phase gooey.CompanionPhase, err error) {
-	post(func() { c.report(phase, err) })
+//
+// stopping is the same flag the run-phase report reads, and for the same
+// reason: between the post and the Drain that runs it, the composition
+// may have been closed, swapped or patched away.
+func (c *Companion) fail(post func(func()), stopping *bool, phase gooey.CompanionPhase, err error) {
+	post(func() {
+		if *stopping {
+			return // the composition let go before this reached the loop
+		}
+		c.report(phase, err)
+	})
 }
 
 func (c *Companion) report(phase gooey.CompanionPhase, err error) {
@@ -250,14 +294,19 @@ func (c *Companion) report(phase gooey.CompanionPhase, err error) {
 	}
 }
 
-// clear resets a bound Error after a successful start, so a page that
-// showed the previous failure stops showing it.
+// clear resets the last failure after a successful start, so a page that
+// showed the previous one stops showing it.
+//
+// The err field is cleared whether or not Error is bound. Gating it on
+// the binding made Err() — documented as "the last failure reported, or
+// nil" — keep returning a stale start failure forever on a companion
+// with no Error= attribute, even after a later start succeeded. A
+// binding is a way to DISPLAY the state, not the thing that maintains it.
 func (c *Companion) clear(post func(func())) {
-	if c.Error == nil {
-		return
-	}
 	post(func() {
 		c.err = nil
-		c.Error.Set("")
+		if c.Error != nil {
+			c.Error.Set("")
+		}
 	})
 }

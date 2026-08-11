@@ -182,6 +182,74 @@ func TestStartablesInRealizedSubtreesStartAndStop(t *testing.T) {
 	}
 }
 
+// A structural re-sync STOPS WHAT LEFT BEFORE IT STARTS WHAT ARRIVED.
+//
+// The order is not cosmetic. A Startable that owns something outside the
+// process — components.Companion owns a child process, a port and a log
+// file it truncates on open — cannot be replaced by another declaring the
+// same service if the two overlap. Starting first meant the incoming
+// child raced the outgoing one for the whole of the outgoing element's
+// stop, which for a Companion is bounded only by StopTimeout (10s).
+//
+// This is the discriminator for that: flip the two loops in walkNodes and
+// the sequence below becomes start-new-then-stop-old.
+func TestDepartedStartablesStopBeforeArrivalsStart(t *testing.T) {
+	var log []string
+	box := &dynBox{}
+	c := NewComposer(box, 20, 4)
+	c.Start(NewDispatcher())
+
+	stayer := &lifecycle{label: *lbl("stay"), log: &log, name: "stayer"}
+	outgoing := &lifecycle{label: *lbl("out"), log: &log, name: "outgoing"}
+	box.set(stayer, outgoing)
+	c.Frame()
+
+	incoming := &lifecycle{label: *lbl("in"), log: &log, name: "incoming"}
+	box.set(stayer, incoming)
+	c.Frame()
+
+	want := []string{"start stayer", "start outgoing", "stop outgoing", "start incoming"}
+	if strings.Join(log, ",") != strings.Join(want, ",") {
+		t.Errorf("lifecycle order was %v, want %v", log, want)
+	}
+}
+
+// A survivor of a re-sync is neither stopped nor restarted, which is what
+// makes the reorder safe: membership is pointer identity and the live set
+// is complete before the first stop runs, so there is no component that
+// both departs and re-appears in one pass.
+func TestSurvivingStartablesAreNotCycledByARemoval(t *testing.T) {
+	var log []string
+	box := &dynBox{}
+	c := NewComposer(box, 20, 4)
+	c.Start(NewDispatcher())
+
+	stayer := &lifecycle{label: *lbl("stay"), log: &log, name: "stayer"}
+	going := &lifecycle{label: *lbl("go"), log: &log, name: "going"}
+	box.set(stayer, going)
+	c.Frame()
+	log = nil
+
+	box.set(stayer)
+	c.Frame()
+	if strings.Join(log, ",") != "stop going" {
+		t.Errorf("removing a sibling produced %v, want only the departed one stopping", log)
+	}
+}
+
+// lifecycle records start/stop against a shared log, so a test can assert
+// the ORDER of a re-sync rather than only its counts.
+type lifecycle struct {
+	label
+	log  *[]string
+	name string
+}
+
+func (l *lifecycle) Start(func(func())) func() {
+	*l.log = append(*l.log, "start "+l.name)
+	return func() { *l.log = append(*l.log, "stop "+l.name) }
+}
+
 type ticker struct {
 	label
 	started, stopped int
