@@ -1,8 +1,12 @@
 package grpc
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/control"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 	"google.golang.org/grpc/codes"
@@ -107,6 +111,13 @@ func valueToProto(v control.Value) *controlv1.TypedValue {
 		tv.Kind = &controlv1.TypedValue_ColorValue{ColorValue: colorToProto(v.Color)}
 	case control.KindAny:
 		tv.Kind = &controlv1.TypedValue_AnyJson{AnyJson: v.JSON}
+	case control.KindImage:
+		// Read-back is deliberately not the picture. Re-encoding a decoded
+		// image on every ListValues — and on every frame delta a session
+		// subscribes to — would put an encoder on the read path, and the
+		// bytes a client sent are not recoverable anyway once decoded.
+		// The name, kind and Go type still cross; the pixels do not.
+		tv.Kind = &controlv1.TypedValue_ImageBytes{ImageBytes: nil}
 	default:
 		return nil
 	}
@@ -132,6 +143,18 @@ func valueFromProto(tv *controlv1.TypedValue) (control.Value, error) {
 		return control.ColorValue(colorFromProto(k.ColorValue)), nil
 	case *controlv1.TypedValue_AnyJson:
 		return control.JSONValue(k.AnyJson), nil
+	case *controlv1.TypedValue_ImageBytes:
+		img, err := imaging.Decode(bytes.NewReader(k.ImageBytes), "image_bytes")
+		if err != nil {
+			// Naming what the host can read matters more than the decode
+			// error: formats are registered by blank import, so "this
+			// build has no SVG" is a host configuration answer, not a
+			// malformed-file answer.
+			return control.Value{}, status.Errorf(codes.InvalidArgument,
+				"image bytes did not decode (%v); this host reads %s", err,
+				strings.Join(imaging.Names(), ", "))
+		}
+		return control.ImageValue(img), nil
 	}
 	return control.Value{}, status.Error(codes.InvalidArgument, "unknown typed value case")
 }
