@@ -250,14 +250,77 @@ func TestAntiAliasedEdgesResolveToOneStateOrTheOther(t *testing.T) {
 	}
 }
 
-// TestAnEmptyTargetIsAnErrorNotAnEmptyImage — a zero cell size is what an
-// unprobed terminal reports, and the old encoder answered it with an
-// 18-byte image that painted nothing while reporting success. That is the
-// black-screen-with-no-error failure this repo has already recorded once.
-func TestAnEmptyTargetIsAnErrorNotAnEmptyImage(t *testing.T) {
-	img := nColors(8, 8, 4)
+// ---------------------------------------------------------------------------
+// The cell-size contract, from #206.
+//
+// These arrived on a different branch than the palette and transparency tests
+// above and both files were called sixel_test.go, so the merge was an add/add.
+// They are UNIONED rather than chosen between: the palette work and the
+// cell-size guard are independent claims about the same encoder.
+//
+// One test was dropped in the union, deliberately.
+// TestAnEmptyTargetIsAnErrorNotAnEmptyImage asserted the same guard from the
+// palette side, but only for {0,0} and only that `err != nil`. The version
+// below supersedes it on every axis: four cases including a negative and both
+// mixed ones, the error's SHAPE rather than its existence, and the assertion
+// that nothing was written before refusing. Keeping both would have been two
+// tests for one behaviour, the weaker one failing later and saying less.
+
+func swatch(w, h int) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{R: 200, G: 40, B: 90, A: 255})
+		}
+	}
+	return img
+}
+
+// A cell size of zero used to produce a perfectly well-formed sixel of
+// zero pixels: eighteen bytes, no error, nothing on screen — and because
+// an encoder was installed, Image had already taken the placement path
+// instead of drawing halfblocks, so the cells stayed dark too. The whole
+// symptom was a black rectangle with no diagnostic anywhere.
+func TestSixelRefusesAnUnknownCellSize(t *testing.T) {
+	for _, tc := range []struct{ cellW, cellH int }{{0, 0}, {0, 20}, {10, 0}, {-1, 20}} {
+		var out []byte
+		err := Sixel{}.Encode(&out, swatch(4, 4), 8, 4, tc.cellW, tc.cellH)
+		if err == nil {
+			t.Fatalf("cell %dx%d encoded anyway (%d bytes)", tc.cellW, tc.cellH, len(out))
+		}
+		if !strings.Contains(err.Error(), "cell size") {
+			t.Errorf("cell %dx%d: unhelpful error %v", tc.cellW, tc.cellH, err)
+		}
+		if len(out) != 0 {
+			t.Errorf("cell %dx%d wrote %d bytes before refusing", tc.cellW, tc.cellH, len(out))
+		}
+	}
+}
+
+// The positive half: with metrics, the raster is sized in PIXELS, which
+// is the whole reason sixel needs them. Kitty and iTerm2 name a cell
+// rectangle and never look at cellW/cellH at all.
+func TestSixelSizesItsRasterInPixels(t *testing.T) {
 	var out []byte
-	if err := (Sixel{}).Encode(&out, img, 4, 4, 0, 0); err == nil {
-		t.Fatal("a zero cell size must be an error; silently emitting an empty image is the black-screen failure")
+	six := Sixel{}
+	if err := six.Encode(&out, swatch(4, 4), 8, 4, 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(out), "\x1bP0;0;0q\"1;1;80;80") {
+		t.Fatalf("raster header is not 8*10 x 4*20 px: %q", string(out[:min(40, len(out))]))
+	}
+
+	cellBlind := []Encoder{Kitty{}, ITerm2{}}
+	for _, enc := range cellBlind {
+		var a, b []byte
+		if err := enc.Encode(&a, swatch(4, 4), 8, 4, 0, 0); err != nil {
+			t.Fatalf("%s with no cell size: %v", enc.Name(), err)
+		}
+		if err := enc.Encode(&b, swatch(4, 4), 8, 4, 10, 20); err != nil {
+			t.Fatal(err)
+		}
+		if string(a) != string(b) {
+			t.Errorf("%s output depends on the cell size; only sixel should", enc.Name())
+		}
 	}
 }
