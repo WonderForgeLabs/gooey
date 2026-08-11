@@ -37,7 +37,7 @@ clients through one settle-barriered door.
 | `control` | The in-process control-plane service every remote transport fronts (see [the control plane](#the-control-plane)) |
 | `format`, `imaging` | Display formatting (plain functions plus computed-property constructors, so a formatted string repaints itself); the image-decode registry (png/jpeg/gif/bmp/ico in core) |
 | `handlers/net`, `handlers/fs` | The in-tree capability packs behind markup's handler namespaces |
-| `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `packs/*` | Nested Go modules — heavy SDKs quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, and activity packs like `packs/temporal-visibility` |
+| `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `packs/*` | Nested Go modules — heavy SDKs quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, and the `packs/temporal-*` activity packs (one module per Temporal API domain) |
 | `proto`, `clients` | The `gooey.control.v1` proto contract and the committed generated clients — Go under `grpc/gen`, Python and TypeScript under `clients/` |
 
 The dependency runs one way: **`components` imports the root, and the
