@@ -335,17 +335,59 @@ func TestListPagesWithTheServersToken(t *testing.T) {
 }
 
 // RPC errors are the activity's errors — Temporal's retry machinery is
-// the layer that deals with them, not the pack.
+// the layer that deals with them, not the pack. Table-driven over every
+// activity for the same reason the namespace guard is: each one returns
+// the RPC's error independently, so a swallowed or wrapped error in one
+// would pass a test that only covers another.
 func TestErrorsPropagate(t *testing.T) {
-	a, wfs := harness()
 	boom := errors.New("batch job not found")
-	wfs.err = boom
 
-	if _, err := a.StartBatchOperation(context.Background(), nil); !errors.Is(err, boom) {
-		t.Fatalf("StartBatchOperation err = %v, want the RPC's", err)
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, *Activities) error
+	}{
+		{
+			"StartBatchOperation",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.StartBatchOperation(ctx, nil)
+				return err
+			},
+		},
+		{
+			"StopBatchOperation",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.StopBatchOperation(ctx, nil)
+				return err
+			},
+		},
+		{
+			"DescribeBatchOperation",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.DescribeBatchOperation(ctx, nil)
+				return err
+			},
+		},
+		{
+			"ListBatchOperations",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.ListBatchOperations(ctx, nil)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, wfs := harness()
+			wfs.err = boom
+			if err := tc.call(context.Background(), a); !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want the RPC's %v", err, boom)
+			}
+		})
 	}
-	if _, err := a.DescribeBatchOperation(context.Background(), nil); !errors.Is(err, boom) {
-		t.Fatalf("DescribeBatchOperation err = %v, want the RPC's", err)
+
+	// The table must cover every activity in the pack — if AllNames
+	// grows, this fails until the table does too.
+	if want := len(AllNames()); want != 4 {
+		t.Fatalf("the pack has %d activities but this table covers 4", want)
 	}
 }
 
