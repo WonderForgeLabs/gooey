@@ -579,14 +579,41 @@ The field scrolls horizontally to keep the caret visible in either direction, an
 <Text Style="err">{{.NameErr}}</Text>
 ```
 
-| Attribute | Meaning |
-|---|---|
-| `Required` | Bool. `true` fails empty (or whitespace-only) input. |
-| `MinLen` / `MaxLen` | Ints. Length bounds in runes; empty input passes (leave "must not be empty" to `Required`). |
-| `Pattern` | Regular expression the input must match, compiled once **at load** — a bad expression is a load error. Empty input passes. |
-| `Into` | Context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild). |
+The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input except `Required`, so "optional but well-formed when present" is the default reading; every default message is a lowercase fragment meant to sit under a field.
 
-Rules run in a fixed order regardless of attribute order — `Required`, then `MinLen`/`MaxLen`, then `Pattern`, then registered rules in name order — and the first failure is the message shown, so fundamentals are revealed before specifics.
+| Attribute | Type | Answers (annotation) | Default message |
+|---|---|---|---|
+| `Required` | bool | `[Required]` | `required` |
+| `MinLen` / `MaxLen` | int | `[StringLength]`, `[MinLength]`, `[MaxLength]` | `at least N characters` / `at most N characters` / `must be N–M characters` |
+| `Pattern` | regex | `[RegularExpression]` | `invalid format` |
+| `EmailAddress` | bool | `[EmailAddress]` | `not a valid email address` |
+| `Url` | bool | `[Url]` | `not a valid URL` |
+| `Phone` | bool | `[Phone]` | `not a valid phone number` |
+| `CreditCard` | bool | `[CreditCard]` | `not a valid card number` |
+| `Digits` | bool | — (numeric-string guard) | `digits only` |
+| `Integer` | bool | — (numeric-string guard) | `must be a whole number` |
+| `MinValue` / `MaxValue` | number | `[Range]` over a text field | `must be at least N` / `must be at most N` / `must be between N and M` |
+| `Compare` | field path | `[Compare]` | `does not match` |
+| `Message` | string | `ErrorMessage` | — (overrides every rule on this behavior) |
+| `Into` | name | — | — |
+
+`Into` is the context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild).
+
+`Compare` names the *other* field — `Compare=".Password"` or `Compare="{{.Password}}"`, both accepted since the attribute names a property rather than carrying a value. The rule reads that property, and the read is what subscribes this field to it: editing the original re-validates the confirmation with no extra wiring.
+
+`Message` is a **field-level** override: every rule on the behavior reports it instead of its own default, which is how a form says "e-mail address, please" once rather than leaking which check tripped. Per-rule wording is a `validate.Field` in Go.
+
+Rules run in a fixed order regardless of attribute order — presence, then length, then shape (`Pattern`, then the annotation formats in the table's order), then value, then agreement, then registered rules in name order — and the first failure is the message shown, so a person fixing the field hears about the most fundamental problem first.
+
+**Where gooey deliberately differs from .NET's implementations.** Its validators are famously permissive; a terminal form gets more from a rule that rejects nonsense than from bug compatibility:
+
+- **`EmailAddress`** requires one `@` *and a dotted domain*. .NET accepts `a@b`; we do not. We are still far looser than RFC 5322 — quoted local parts, comments and address literals are out of scope — and unicode passes, so IDN domains and non-ASCII local parts are accepted rather than silently rejected.
+- **`Url`** accepts `http`, `https`, `ftp` like .NET, and additionally **requires a non-empty host**: `url.Parse` will happily hand back an empty hostname for `http://`, and an allow-anything URL rule is worse than none.
+- **`Phone`** requires **7–15 digits** in the number (E.164's maximum), excluding any extension. .NET has no digit-count rule at all.
+- **`CreditCard`** is Luhn plus a **12–19 digit window**. .NET checks only Luhn, which accepts a bare `0`. Neither is an authorization: no issuer prefixes, no network rules — it is a typo catcher.
+- **`Digits`** is ASCII-only on purpose: a field that accepts Devanagari digits and then hands them to `strconv` is a bug waiting to happen.
+
+Markup spells the regex rule **`Pattern`**, not `RegularExpression`: gooey keeps one canonical spelling per concept (one gesture syntax, one `Style` attribute), and an alias would double the vocabulary a reader must recognize to buy nothing. The table above is how you find it from the annotation's name.
 
 The behavior wires the host's `Error` handle automatically (the invalid visual comes for free); one `<Validate>` per element, and a host whose builder does not speak validation (anything but a `TextBox` today) refuses it at load.
 
@@ -604,7 +631,7 @@ ctx.Rules = map[string]markup.RuleFunc{
 <Validate Required="true" Email="true"/>
 ```
 
-The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets.
+The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets. The built-ins cover the DataAnnotations vocabulary; `ctx.Rules` is for **domain** rules beyond it (an internal account-number format, a reserved-name list, a check against a lookup table).
 
 ### ValidationMarker
 

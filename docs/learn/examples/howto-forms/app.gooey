@@ -14,9 +14,11 @@
     </TextBox>
     <Text Grid.Row="2" Style="err">{{.NameErr}}</Text>
 
+    <!-- The DataAnnotations vocabulary: EmailAddress instead of a
+         hand-rolled Pattern, with one field-level Message. -->
     <TextBox Grid.Row="3" Prompt="email: " Text="{{.Email}}">
       <TextBox.Behaviors>
-        <Validate Required="true" Pattern="^[^@\s]+@[^@\s]+\.[^@\s]+$"/>
+        <Validate Required="true" EmailAddress="true" Message="we need a working email address"/>
       </TextBox.Behaviors>
     </TextBox>
     <Text Grid.Row="4" Style="err">{{.EmailErr}}</Text>

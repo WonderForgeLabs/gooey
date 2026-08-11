@@ -27,7 +27,10 @@ package validate
 import (
 	"cmp"
 	"fmt"
+	"math"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -177,6 +180,12 @@ func Pattern(expr, msg string) Rule[string] {
 	}
 }
 
+// MinLen and MaxLen are the one-sided spellings of Len, named after the
+// annotations they answer (StringLength's MinimumLength / MaximumLength)
+// so a form's rules read like its data contract.
+func MinLen(n int, msg string) Rule[string] { return Len(n, 0, msg) }
+func MaxLen(n int, msg string) Rule[string] { return Len(0, n, msg) }
+
 // Range bounds an ordered value inclusively: min <= v <= max. An empty
 // msg derives one from the bounds.
 func Range[T cmp.Ordered](min, max T, msg string) Rule[T] {
@@ -185,6 +194,232 @@ func Range[T cmp.Ordered](min, max T, msg string) Rule[T] {
 	}
 	return func(v T) string {
 		if v < min || v > max {
+			return msg
+		}
+		return ""
+	}
+}
+
+// ---- DataAnnotations parity ----
+//
+// These are the .NET System.ComponentModel.DataAnnotations vocabulary as
+// rules: same names, same jobs, gooey's semantics stated in each
+// comment. Where we deliberately differ from .NET's implementation the
+// comment says so — .NET's validators are famously permissive, and a
+// terminal form gets more use out of a rule that actually rejects
+// nonsense than out of bug-compatibility with a 2008 regex.
+//
+// Every pattern here is compiled once, at package init: a stock rule
+// costs no compilation even at construction.
+//
+// All of them PASS empty input, like every rule but Required — "optional
+// but well-formed when present" stays the default reading.
+
+var (
+	// One @, something either side, a dot in the domain, no whitespace.
+	// STRICTER than .NET's EmailAddressAttribute, which accepts "a@b"
+	// (no dot at all); LOOSER than RFC 5322, which no regex should
+	// attempt — quoted local parts, comments and address literals are
+	// out of scope on purpose. Unicode passes: only @ and whitespace are
+	// excluded, so IDN domains and non-ASCII local parts are accepted
+	// rather than silently rejected.
+	emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$`)
+	// scheme://host[/rest] with a plausible host. .NET's UrlAttribute
+	// accepts http/https/ftp; so do we, and we additionally REQUIRE a
+	// non-empty host, because url.Parse is happy to return an empty
+	// hostname for junk like "http://" or "file://x" and an
+	// allow-anything URL rule is worse than none.
+	urlRe = regexp.MustCompile(`^(?i)(https?|ftp)://[^\s/?#@]+(\.[^\s/?#@]+)*(/[^\s]*)?$`)
+	// Digits and the separators a person actually types, with an
+	// optional leading + and an optional extension. Digit COUNT is
+	// checked separately (see Phone).
+	phoneRe = regexp.MustCompile(`^\+?[0-9 ().\-]+((x|ext\.?|extension)\s*[0-9]+)?$`)
+	digitRe = regexp.MustCompile(`^[0-9]+$`)
+	intRe   = regexp.MustCompile(`^[+-]?[0-9]+$`)
+)
+
+// EmailAddress requires one @ with a dotted domain — see emailRe for
+// exactly how this differs from .NET's. Default message: "not a valid
+// email address".
+func EmailAddress(msg string) Rule[string] {
+	return matchRule(emailRe, msg, "not a valid email address")
+}
+
+// URL requires an http, https or ftp URL with a host. Markup spells it
+// Url (the annotation's name); Go spells it URL (the language's).
+// Default message: "not a valid URL".
+func URL(msg string) Rule[string] {
+	if msg == "" {
+		msg = "not a valid URL"
+	}
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		if !urlRe.MatchString(s) {
+			return msg
+		}
+		// The regex settles the shape; url.Parse settles that the host
+		// survives parsing (an empty Host is the classic bypass).
+		u, err := url.Parse(s)
+		if err != nil || u.Host == "" {
+			return msg
+		}
+		return ""
+	}
+}
+
+// Phone accepts digits with the usual separators, an optional leading +
+// and an optional extension, and requires 7 to 15 digits in the number
+// itself — E.164's maximum, and enough to reject a stray year or zip
+// code. .NET's PhoneAttribute has no digit-count rule at all; this is a
+// deliberate tightening. Default message: "not a valid phone number".
+func Phone(msg string) Rule[string] {
+	if msg == "" {
+		msg = "not a valid phone number"
+	}
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		if !phoneRe.MatchString(s) {
+			return msg
+		}
+		// Count only the digits of the number, not the extension —
+		// "+1 (555) 010-9999 x42" is a 11-digit number, not a 13-digit one.
+		main := s
+		if i := strings.IndexAny(strings.ToLower(s), "xe"); i >= 0 {
+			main = s[:i]
+		}
+		n := 0
+		for _, r := range main {
+			if r >= '0' && r <= '9' {
+				n++
+			}
+		}
+		if n < 7 || n > 15 {
+			return msg
+		}
+		return ""
+	}
+}
+
+// CreditCard checks the Luhn checksum over 12–19 digits, ignoring spaces
+// and dashes. Like .NET's CreditCardAttribute it is a typo catcher, not
+// an authorization: no issuer prefixes, no network rules. Unlike .NET's
+// it enforces a length window, which rejects the digit strings Luhn
+// happily accepts (a bare "0" passes the checksum). Default message:
+// "not a valid card number".
+func CreditCard(msg string) Rule[string] {
+	if msg == "" {
+		msg = "not a valid card number"
+	}
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		digits := make([]int, 0, len(s))
+		for _, r := range s {
+			switch {
+			case r >= '0' && r <= '9':
+				digits = append(digits, int(r-'0'))
+			case r == ' ' || r == '-':
+			default:
+				return msg
+			}
+		}
+		if len(digits) < 12 || len(digits) > 19 {
+			return msg
+		}
+		// Luhn, right to left: double every second digit, casting out
+		// nines, and the total must be a multiple of ten.
+		sum := 0
+		for i := len(digits) - 1; i >= 0; i-- {
+			d := digits[i]
+			if (len(digits)-i)%2 == 0 {
+				if d *= 2; d > 9 {
+					d -= 9
+				}
+			}
+			sum += d
+		}
+		if sum%10 != 0 {
+			return msg
+		}
+		return ""
+	}
+}
+
+// Compare requires the value to equal another property's — the
+// confirm-password rule, and .NET's CompareAttribute. The read inside
+// the rule is what subscribes the field to the OTHER property, so
+// editing the original re-validates the confirmation with no wiring at
+// all. Default message: "does not match".
+func Compare[T comparable](other *prop.Property[T], msg string) Rule[T] {
+	if msg == "" {
+		msg = "does not match"
+	}
+	return func(v T) string {
+		if v != other.Get() {
+			return msg
+		}
+		return ""
+	}
+}
+
+// Digits requires an unsigned run of ASCII digits — a PIN, a zip, an
+// account number. Note that this is deliberately NOT unicode-digit
+// aware: a field that accepts Devanagari digits and then hands them to
+// strconv is a bug waiting to happen. Default message: "digits only".
+func Digits(msg string) Rule[string] {
+	return matchRule(digitRe, msg, "digits only")
+}
+
+// Integer requires an optionally signed integer. Default message: "must
+// be a whole number".
+func Integer(msg string) Rule[string] {
+	return matchRule(intRe, msg, "must be a whole number")
+}
+
+// NumberRange is Range for a STRING input — the shape a text field
+// binds, and what .NET's RangeAttribute does when it lands on a string
+// property. Unparseable input fails with the same message; use
+// math.Inf(-1)/math.Inf(1) for a one-sided bound. Default message
+// derives from the bounds.
+func NumberRange(min, max float64, msg string) Rule[string] {
+	if msg == "" {
+		switch {
+		case math.IsInf(min, -1):
+			msg = fmt.Sprintf("must be at most %v", max)
+		case math.IsInf(max, 1):
+			msg = fmt.Sprintf("must be at least %v", min)
+		default:
+			msg = fmt.Sprintf("must be between %v and %v", min, max)
+		}
+	}
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil || v < min || v > max {
+			return msg
+		}
+		return ""
+	}
+}
+
+// matchRule is the shared body of the fixed-pattern rules: pass empty,
+// else require a match.
+func matchRule(re *regexp.Regexp, msg, def string) Rule[string] {
+	if msg == "" {
+		msg = def
+	}
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		if !re.MatchString(s) {
 			return msg
 		}
 		return ""

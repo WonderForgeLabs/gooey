@@ -24,6 +24,13 @@ behavior on the input, an inline error `<Text>` under it.
 <Text Style="err">{{.NameErr}}</Text>
 ```
 
+The rule vocabulary is .NET's DataAnnotations set — `Required`,
+`MinLen`/`MaxLen`, `Pattern`, `EmailAddress`, `Url`, `Phone`,
+`CreditCard`, `Digits`, `Integer`, `MinValue`/`MaxValue`, `Compare` —
+each with a default message and a field-level `Message="…"` override.
+The [markup reference](../../markup-reference.md#validate) has the
+parity table and the places gooey is deliberately stricter than .NET.
+
 The behavior builds the validator against the bound `Text` source and
 **publishes** it in the context — here as `NameErr`, derived from
 `Text="{{.Name}}"`; say `Into=".SomethingElse"` to name it yourself.
@@ -49,12 +56,19 @@ nameErr := validate.Field(name,
 )
 ```
 
+The annotation rules are all there too — `validate.EmailAddress("")`,
+`URL`, `Phone`, `CreditCard`, `Digits`, `Integer`, `NumberRange`,
+`Compare` — with `""` asking for the stock message.
+
 Any `func(T) string` is a rule, so the escape hatch is a closure — and
 a rule that reads *another* property subscribes to it, which is all
-cross-field validation is:
+cross-field validation is (`validate.Compare` is this, packaged):
 
 ```go
-confirmErr := validate.Field(confirm, func(s string) string {
+confirmErr := validate.Field(confirm, validate.Compare(password, "passwords differ"))
+
+// or hand-rolled, for anything Compare does not cover:
+confirmErr = validate.Field(confirm, func(s string) string {
     if s != password.Get() {
         return "passwords differ"
     }

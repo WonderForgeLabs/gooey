@@ -300,6 +300,126 @@ func TestValidateRegisteredRules(t *testing.T) {
 	}
 }
 
+// The DataAnnotations vocabulary from markup: every built-in attribute
+// reaches the same rule the Go constructor builds.
+func TestValidateAnnotationAttributes(t *testing.T) {
+	cases := []struct {
+		name, attrs, in, want string
+	}{
+		{"email", `EmailAddress="true"`, "nope", "not a valid email address"},
+		{"email valid", `EmailAddress="true"`, "a@b.co", ""},
+		{"url", `Url="true"`, "example.com", "not a valid URL"},
+		{"url valid", `Url="true"`, "https://example.com", ""},
+		{"phone", `Phone="true"`, "555-CALL", "not a valid phone number"},
+		{"phone valid", `Phone="true"`, "+1 (555) 010-9999", ""},
+		{"card", `CreditCard="true"`, "4111111111111112", "not a valid card number"},
+		{"card valid", `CreditCard="true"`, "4111 1111 1111 1111", ""},
+		{"digits", `Digits="true"`, "12a", "digits only"},
+		{"integer", `Integer="true"`, "4.2", "must be a whole number"},
+		{"min value", `MinValue="18"`, "17", "must be at least 18"},
+		{"max value", `MaxValue="100"`, "101", "must be at most 100"},
+		{"both values", `MinValue="1" MaxValue="10"`, "11", "must be between 1 and 10"},
+		{"both values valid", `MinValue="1" MaxValue="10"`, "10", ""},
+		{"false does not add the rule", `EmailAddress="false"`, "nope", ""},
+		{"field-level Message overrides", `EmailAddress="true" Message="e-mail, please"`, "nope", "e-mail, please"},
+		// Order is fixed regardless of attribute order: presence first.
+		{"required beats shape", `EmailAddress="true" Required="true"`, "", "required"},
+		{"shape once present", `EmailAddress="true" Required="true"`, "x", "not a valid email address"},
+	}
+	for _, c := range cases {
+		src := `<Gooey><TextBox Text="{{.F}}"><Validate ` + c.attrs + ` Into=".E"/></TextBox></Gooey>`
+		f := prop.NewSource(c.in)
+		ctx := &Context{Values: map[string]any{"F": f}}
+		if _, err := Build([]byte(src), ctx); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		got := ctx.Values["E"].(*prop.Property[string]).Get()
+		if got != c.want {
+			t.Errorf("%s: %q → %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// Compare names the other field; the rule's read of it is what makes
+// editing the original re-validate the confirmation.
+func TestValidateCompareAttribute(t *testing.T) {
+	for _, spelling := range []string{`Compare=".Password"`, `Compare="{{.Password}}"`} {
+		src := `<Gooey><VStack>
+  <TextBox Text="{{.Password}}"/>
+  <TextBox Text="{{.Confirm}}"><Validate ` + spelling + ` Message="passwords differ" Into=".ConfirmErr"/></TextBox>
+</VStack></Gooey>`
+		password := prop.NewSource("secret")
+		confirm := prop.NewSource("secret")
+		ctx := &Context{Values: map[string]any{"Password": password, "Confirm": confirm}}
+		if _, err := Build([]byte(src), ctx); err != nil {
+			t.Fatalf("%s: %v", spelling, err)
+		}
+		errP := ctx.Values["ConfirmErr"].(*prop.Property[string])
+		if got := errP.Get(); got != "" {
+			t.Errorf("%s: matching fields report %q", spelling, got)
+		}
+		password.Set("changed")
+		if got := errP.Get(); got != "passwords differ" {
+			t.Errorf("%s: after editing the original, %q — the cross-field read did not subscribe", spelling, got)
+		}
+	}
+}
+
+func TestValidateAnnotationLoadErrors(t *testing.T) {
+	ctx := &Context{Values: map[string]any{
+		"F":   prop.NewSource(""),
+		"N":   prop.NewSource(0),
+		"Nop": gooey.Command(func() {}),
+	}}
+	cases := []struct {
+		name, page, want string
+	}{
+		{
+			"non-bool annotation rule",
+			`<Gooey><TextBox Text="{{.F}}"><Validate EmailAddress="yes"/></TextBox></Gooey>`,
+			"want a bool",
+		},
+		{
+			"non-numeric MinValue",
+			`<Gooey><TextBox Text="{{.F}}"><Validate MinValue="ten"/></TextBox></Gooey>`,
+			"want a number",
+		},
+		{
+			"empty numeric range",
+			`<Gooey><TextBox Text="{{.F}}"><Validate MinValue="10" MaxValue="1"/></TextBox></Gooey>`,
+			"range is empty",
+		},
+		{
+			"Compare naming nothing",
+			`<Gooey><TextBox Text="{{.F}}"><Validate Compare=""/></TextBox></Gooey>`,
+			"name the other field",
+		},
+		{
+			"Compare naming a missing field",
+			`<Gooey><TextBox Text="{{.F}}"><Validate Compare=".Nope"/></TextBox></Gooey>`,
+			"not found",
+		},
+		{
+			"Compare naming a wrongly typed field",
+			`<Gooey><TextBox Text="{{.F}}"><Validate Compare=".N"/></TextBox></Gooey>`,
+			"*prop.Property[string]",
+		},
+		{
+			"RegularExpression is not a spelling we accept",
+			`<Gooey><TextBox Text="{{.F}}"><Validate RegularExpression="^a$"/></TextBox></Gooey>`,
+			"unknown rule",
+		},
+	}
+	for _, c := range cases {
+		if _, err := Build([]byte(c.page), ctx); err == nil {
+			t.Errorf("%s: load succeeded, want an error", c.name)
+		} else if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: error %q does not mention %q", c.name, err, c.want)
+		}
+	}
+}
+
 func TestValidateLoadErrors(t *testing.T) {
 	ctx := &Context{Values: map[string]any{
 		"Name": prop.NewSource(""),

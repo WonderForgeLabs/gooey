@@ -91,6 +91,48 @@ This read is where a future `:invalid` pseudo-class looks (#54): the
 styles design collapses state pseudo-classes to reads inside the style
 computed, and `Error != ""` is precisely such a read. Noted, not built.
 
+### DataAnnotations parity
+
+Elan, on the PR: "let's offer some built in validators to match data
+annotations." The built-in vocabulary is now .NET's, in both surfaces —
+a Go constructor and a `<Validate>` attribute per rule, one engine:
+
+| Annotation | gooey rule | Markup attribute |
+|---|---|---|
+| `[Required]` | `Required(msg)` | `Required="true"` |
+| `[StringLength]` / `[MinLength]` / `[MaxLength]` | `Len(min,max,msg)`, `MinLen(n,msg)`, `MaxLen(n,msg)` | `MinLen` / `MaxLen` |
+| `[RegularExpression]` | `Pattern(expr,msg)` | `Pattern` |
+| `[EmailAddress]` | `EmailAddress(msg)` | `EmailAddress="true"` |
+| `[Url]` | `URL(msg)` | `Url="true"` |
+| `[Phone]` | `Phone(msg)` | `Phone="true"` |
+| `[CreditCard]` | `CreditCard(msg)` | `CreditCard="true"` |
+| `[Range]` (typed) | `Range[T cmp.Ordered](min,max,msg)` | — (needs a typed input; NumberBox) |
+| `[Range]` (over text) | `NumberRange(min,max,msg)` | `MinValue` / `MaxValue` |
+| `[Compare]` | `Compare[T comparable](other,msg)` | `Compare=".Password"` |
+| — (numeric-string guards) | `Digits(msg)`, `Integer(msg)` | `Digits="true"` / `Integer="true"` |
+| `ErrorMessage` | every constructor's `msg` (empty = stock) | `Message="…"` (field-level) |
+
+No third-party dependencies (root dep budget: `cmp`, `fmt`, `math`,
+`net/url`, `regexp`, `strconv`, `strings`). Fixed patterns compile once
+at package init, so even construction is free. Every rule passes empty
+input except `Required`.
+
+**Deliberate divergences from .NET's implementations**, stated in the
+code and the reference: `EmailAddress` requires a dotted domain (.NET
+accepts `a@b`) while staying far looser than RFC 5322 and unicode-open;
+`URL` additionally requires a non-empty host (`url.Parse` yields an
+empty hostname for `http://` — the classic bypass); `Phone` requires
+7–15 digits excluding any extension (.NET has no count rule);
+`CreditCard` adds a 12–19 digit window to Luhn (.NET accepts a bare
+`0`); `Digits` is ASCII-only on purpose. Markup keeps **one spelling**
+— `Pattern`, not an additional `RegularExpression` alias — because
+gooey has one canonical spelling per concept everywhere else; the
+parity table is how a reader finds it from the annotation's name.
+
+`ctx.Rules` is explicitly the layer **beyond** this set: domain rules
+(an internal account-number format, a reserved-name list, a lookup
+check) stay app-registered, the built-ins cover the annotations.
+
 ### `<Validate>` — the markup behavior (`markup/validate.go`)
 
 Built like any non-visual attachment; the **host's builder** wires it
@@ -210,9 +252,12 @@ MinLen message, completing the form enables submit, enter saves.
 
 ## Not in this wave
 
-Numeric `<Validate Min Max>` for a future NumberBox (wireValidate is
-host-generic on purpose; `validate.Range` exists Go-side), per-rule
-`Message` attributes in markup, validate-on-unfocused timing (MAUI's
+Typed `Range` in markup for a future NumberBox (`validate.Range` exists
+Go-side; `wireValidate` is host-generic on purpose, and `MinValue`/
+`MaxValue` cover text fields today), per-rule
+`Message` attributes in markup (field-level `Message` ships;
+per-rule wording is a Go-side `validate.Field`), a `[FileExtensions]`
+equivalent (no file input yet), validate-on-unfocused timing (MAUI's
 option; today validators are live per keystroke — a `ValidateOn`
 attribute could sample on focus-out), publishing the has-error bool
 alongside `Into`, markup-declared rule *expressions* (needs the
