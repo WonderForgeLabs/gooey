@@ -3,6 +3,8 @@ feeds.opml
 *.log
 node_modules/
 __pycache__/
+# the kanbandemo worker's venv (main.go auto-selects it when present)
+examples/temporal-worker/.venv/
 clients/ts/*/dist/
 clients/python/build/
 clients/python/dist/
