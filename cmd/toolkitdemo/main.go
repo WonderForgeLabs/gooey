@@ -364,8 +364,13 @@ func main() {
 	}
 
 	// The submit gate reads the error properties the <Validate>
-	// behaviors PUBLISH at load — so the lookup happens inside the
-	// computed, at evaluation, and a hot reload picks up the fresh ones.
+	// behaviors PUBLISH at load, looked up inside the computed so the
+	// first evaluation (which happens after the page has loaded) finds
+	// them. A rebuild republishes fresh Validate computeds over the same
+	// FormName/FormEmail sources; this gate stays subscribed to the
+	// first load's, which still track those sources — so it keeps
+	// working, but an EDITED rule in the markup will not reach it until
+	// the process restarts.
 	canSubmit := prop.NewComputed(func() bool {
 		for _, k := range []string{"FormNameErr", "FormEmailErr"} {
 			p, ok := ctx.Values[k].(*prop.Property[string])

@@ -112,7 +112,15 @@ func (p *colorPreset) Render(f *gooey.Frame) {
 	if p.IsFocused() || p.pop.IsOpen() {
 		st.Reverse = true
 	}
-	f.Cells.SetString(b.X, b.Y, fmt.Sprintf("[ %-*s ▾ ]", p.width()-4, presets[p.index()].name), st)
+	// Clipped to the bounds: Measure asks for width()+2 but takes what
+	// avail gives, so on a narrow page this row is shorter than the
+	// string it wants to draw — and cells past the far edge are outside
+	// this node's damage rect, where no sweep reaches them.
+	row := fmt.Sprintf("[ %-*s ▾ ]", p.width()-4, presets[p.index()].name)
+	if n := []rune(row); len(n) > b.W {
+		row = string(n[:b.W])
+	}
+	f.Cells.SetString(b.X, b.Y, row, st)
 }
 
 // Wiring line 3: place the surface from Arrange — below the owner while

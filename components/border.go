@@ -71,7 +71,12 @@ func (b *Border) Render(f *gooey.Frame) {
 	f.Cells.Set(r.X+r.W-1, r.Y, '╮', style)
 	f.Cells.Set(r.X, r.Y+r.H-1, '╰', style)
 	f.Cells.Set(r.X+r.W-1, r.Y+r.H-1, '╯', style)
-	if title := getStr(b.Title); title != "" {
+	// Below four columns there is no room even for the title's two pad
+	// spaces: the write starts at r.X+2, so a narrower box puts them
+	// past the far edge — outside this node's damage rect, where the
+	// composer's sweep cannot clean them. Same contract as the
+	// degenerate-rect guard above, one column in.
+	if title := getStr(b.Title); title != "" && r.W >= 4 {
 		f.Cells.SetString(r.X+2, r.Y, " "+clipRunes(title, r.W-6)+" ", style)
 	}
 }

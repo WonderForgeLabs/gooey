@@ -45,6 +45,19 @@ func (v *VStack) Measure(avail gooey.Size) gooey.Size {
 
 func (v *VStack) Arrange(b gooey.Rect) {
 	v.Base.Arrange(b)
+	// No room means no room for anybody — the same contract Grid keeps.
+	// The cross axis comes straight from b, but the MAIN axis comes out
+	// of the measure cache, which an Arrange into nothing does not
+	// refresh: without this a VStack handed a zero-HEIGHT slot gives
+	// every child the height it had last time, at the stack's full
+	// width, so the subtree keeps a rect with real area outside its
+	// parent's bounds and paints there.
+	if b.W <= 0 || b.H <= 0 {
+		for _, c := range v.Children {
+			gooey.ArrangeChild(c, gooey.Rect{X: b.X, Y: b.Y})
+		}
+		return
+	}
 	y := b.Y
 	placed := false
 	for i, c := range v.Children {

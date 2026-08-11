@@ -317,6 +317,79 @@ func TestZeroRectComponentsPaintNothing(t *testing.T) {
 	}
 }
 
+// A stack arranged into a degenerate slot zeroes its children, the same
+// contract Grid keeps. Only ONE axis of a stack's child rect comes from
+// the arrange rect — the other comes from the measure cache, which an
+// Arrange into nothing does not refresh — so a stack squeezed flat on
+// its MAIN axis hands every child a rect with real area: full measured
+// width in a zero-width HStack, full measured height in a zero-height
+// VStack. That rect sits outside the parent's bounds, the child paints
+// into it, and no sweep reaches those cells.
+//
+// A star track that resolves to nothing is the ordinary way in: a Grid
+// with Cols="*,30" at 30 columns gives the star column zero, and an
+// HStack in it used to paint its whole row over the neighbour.
+func TestDegenerateStackZeroesItsChildren(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rect gooey.Rect
+		mk   func(gooey.Component) gooey.Component
+	}{
+		{"HStack zero width", gooey.Rect{X: 2, Y: 1, W: 0, H: 3},
+			func(c gooey.Component) gooey.Component { return &HStack{Children: []gooey.Component{c}} }},
+		{"VStack zero height", gooey.Rect{X: 2, Y: 1, W: 20, H: 0},
+			func(c gooey.Component) gooey.Component { return &VStack{Children: []gooey.Component{c}} }},
+	} {
+		leaf := text("hello world")
+		p := tc.mk(leaf)
+		p.Measure(gooey.Size{W: 30, H: 3})
+		p.Arrange(tc.rect)
+		if b := leaf.Bounds(); b.W > 0 && b.H > 0 {
+			t.Errorf("%s: the child kept %+v, a rect with area outside its parent %+v", tc.name, b, tc.rect)
+		}
+		buf := render.NewBuffer(30, 5)
+		leaf.Render(&gooey.Frame{Cells: buf})
+		for y := 0; y < buf.H; y++ {
+			for x := 0; x < buf.W; x++ {
+				if c := buf.At(x, y); c != (render.Cell{Rune: ' '}) {
+					t.Errorf("%s: the child painted %q at (%d,%d)", tc.name, string(c.Rune), x, y)
+				}
+			}
+		}
+	}
+}
+
+// A Border narrower than its title's padding must not write the padding
+// anyway. The title starts at r.X+2, so below four columns those two
+// spaces land past the far edge — outside the node's own damage rect,
+// where they erase a neighbour's cells for good. Spaces are the whole
+// hazard here: they read as "nothing painted" and scar just the same.
+func TestNarrowBorderKeepsItsTitleInBounds(t *testing.T) {
+	for w := 1; w <= 8; w++ {
+		b := &Border{Title: Str("title"), Style: Sty(render.Style{}), Child: text("x")}
+		r := gooey.Rect{X: 3, Y: 1, W: w, H: 3}
+		b.Arrange(r)
+		buf := render.NewBuffer(20, 5)
+		for y := 0; y < buf.H; y++ {
+			for x := 0; x < buf.W; x++ {
+				buf.Set(x, y, '#', render.Style{}) // anything not '#' was written here
+			}
+		}
+		b.Render(&gooey.Frame{Cells: buf})
+		for y := 0; y < buf.H; y++ {
+			for x := 0; x < buf.W; x++ {
+				if buf.At(x, y).Rune == '#' {
+					continue
+				}
+				if x < r.X || x >= r.X+r.W || y < r.Y || y >= r.Y+r.H {
+					t.Errorf("a %d-wide Border wrote %q at (%d,%d) — outside %+v",
+						w, string(buf.At(x, y).Rune), x, y, r)
+				}
+			}
+		}
+	}
+}
+
 // A Collapsed child occupies nothing — including the gap it would
 // otherwise have brought with it. Charging the gap made "Collapsed takes
 // no space" false in any gapped stack, which is the whole point of
