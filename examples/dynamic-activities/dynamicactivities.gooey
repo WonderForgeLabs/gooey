@@ -1,0 +1,93 @@
+<!-- Graphics states the image protocol this page wants. It belongs here
+     rather than on the command line because it is a property of what the
+     page DRAWS, and because capability detection answers for the terminal
+     that LAUNCHED the process — the wrong one whenever the app was started
+     from a script, a recording pty or a supervisor. The -graphics flag
+     remains as the fallback for a document that states nothing.
+
+     halfblock, not sixel, and for two reasons that are not "sixel is
+     broken" — Graphics="sixel" does emit real sixel here.
+
+     Reach: the two vertical pixels per cell come out of the CELL PLANE in
+     24-bit colour, so the artwork survives anywhere truecolor works,
+     including `screen_text`, asciinema and agg. None of those can see
+     sixel, because a placement is not a cell and never lands in the
+     retained buffer they read.
+
+     Cost: sixel carries actual pixels, and this diagram is drawn at
+     roughly 247x64 cells. At the assumed 10x20 px cell that is 2470x1280
+     px, which Sixel.Encode turns into ~27 KB in about a SECOND — and,
+     having no placement identity, it pays that again every time a repaint
+     touches the picture's rectangle. Halfblock costs one cell run.
+
+     (Sixel drew nothing here at first. That was a missing cell size, not a
+     missing terminal: App.caps now supplies term.DefaultCellW/H whenever a
+     protocol is pinned, and graphics.Sixel refuses a zero cell size rather
+     than emitting a well-formed image of no pixels.) -->
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:temporal="gooey.dev/handlers/temporal"
+       Graphics="halfblock">
+  <!-- The star is a Canvas raster: one background-filled VStack per run of
+       cells, positioned with the ATTACHED properties Canvas.Left/Canvas.Top
+       (bare Left/Top are silently ignored). Every run binds the same two
+       registered color properties, so recoloring the whole star is one
+       set_value — or one SetProperty over the control plane.
+
+       Paint order is tree order and hit-testing is topmost-first, so the
+       Button comes AFTER the runs it sits on; put it first and the star
+       would paint over it and swallow the click. -->
+  <Border Title="dynamic activities" Style="panel">
+    <Grid Rows="Auto,9,Auto,Auto,*,Auto">
+      <Text Grid.Row="0" Style="accent">the star runs whatever Python just invented — {{.SelectedLine}}</Text>
+
+      <Canvas Grid.Row="1" HAlign="Center" Width="21">
+        <VStack Background="{{.StarGlow}}" Width="1"  Height="1" Canvas.Left="10" Canvas.Top="0"/>
+        <VStack Background="{{.StarGlow}}" Width="3"  Height="1" Canvas.Left="9"  Canvas.Top="1"/>
+        <VStack Background="{{.StarColor}}" Width="21" Height="1" Canvas.Left="0"  Canvas.Top="2"/>
+        <VStack Background="{{.StarColor}}" Width="19" Height="1" Canvas.Left="1"  Canvas.Top="3"/>
+        <VStack Background="{{.StarColor}}" Width="15" Height="1" Canvas.Left="3"  Canvas.Top="4"/>
+        <VStack Background="{{.StarColor}}" Width="6"  Height="1" Canvas.Left="4"  Canvas.Top="5"/>
+        <VStack Background="{{.StarColor}}" Width="6"  Height="1" Canvas.Left="11" Canvas.Top="5"/>
+        <VStack Background="{{.StarColor}}" Width="5"  Height="1" Canvas.Left="3"  Canvas.Top="6"/>
+        <VStack Background="{{.StarColor}}" Width="5"  Height="1" Canvas.Left="13" Canvas.Top="6"/>
+        <VStack Background="{{.StarGlow}}" Width="4"  Height="1" Canvas.Left="2"  Canvas.Top="7"/>
+        <VStack Background="{{.StarGlow}}" Width="4"  Height="1" Canvas.Left="15" Canvas.Top="7"/>
+        <VStack Background="{{.StarGlow}}" Width="3"  Height="1" Canvas.Left="2"  Canvas.Top="8"/>
+        <VStack Background="{{.StarGlow}}" Width="3"  Height="1" Canvas.Left="16" Canvas.Top="8"/>
+        <!-- The whole point of the demo: the activity TYPE NAME is a bound
+             path, not a backtick literal, so one button runs whichever
+             activity Python most recently created. Arg.String() reads the
+             handle at click time. -->
+        <Button Name="Star" Content=" ★ run ★ " Canvas.Left="6" Canvas.Top="3"
+                Click="{{temporal:Activity .Selected .Input | into .Output}}"/>
+      </Canvas>
+
+      <Text Grid.Row="2" Style="dim">{{.Note}}</Text>
+
+      <TextBox Grid.Row="3" Name="Input" Text="{{.Input}}" Prompt="activity argument › "
+               AccentStyle="accent"/>
+
+      <Grid Grid.Row="4" Cols="*,*">
+        <Border Grid.Col="0" Title="registered activities" Style="panel">
+          <!-- Patched wholesale by the Python MCP server on every create and
+               delete: one Button + result Text per activity. The fragment
+               binds Activity.<Name>.Result, which only resolves because the
+               same tool registered that name first — registration is
+               load-bearing, not bookkeeping. -->
+          <VStack Name="ActivityList" Gap="0">
+            <Text Style="dim">nothing yet — create one from the Python MCP server</Text>
+          </VStack>
+        </Border>
+        <Border Grid.Col="1" Title="temporal:Activity .Selected .Input | into .Output" Style="panel">
+          <Text Name="Output" Margin="1,0">{{.Output}}</Text>
+        </Border>
+      </Grid>
+
+      <Text Grid.Row="5" Style="dim">{{.Status}}</Text>
+
+      <KeyBinding Gesture="ctrl+n" Command="{{.Cycle}}"/>
+      <KeyBinding Gesture="ctrl+l" Command="{{.Clear}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>
