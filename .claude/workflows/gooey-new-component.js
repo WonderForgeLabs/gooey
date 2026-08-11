@@ -381,14 +381,35 @@ if (specDocs.length) updaters.push(() => agent(
 ))
 // One agent per adoption DIRECTORY (multiple findings in one dir go to
 // the same agent — two agents must never own the same write set).
+const dirOf = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '.')
 const adoptByDir = {}
 for (const site of adopters) {
-  const dir = site.path.replace(/\/[^/]*\.[a-z]+$/, '')
-  ;(adoptByDir[dir] = adoptByDir[dir] || []).push(site)
+  const d = dirOf(site.path)
+  ;(adoptByDir[d] = adoptByDir[d] || []).push(site)
+}
+// Fold a nested directory into its shallowest ancestor. Two write sets
+// where one contains the other are NOT disjoint — examples/kanbandemo
+// and examples/kanbandemo/panel would hand two isolated agents
+// overlapping ownership, and the collection step cannot see that: it
+// compares identical paths, not containment. Shallowest-first ordering
+// guarantees an ancestor is promoted to a root before its descendants
+// are tested against it.
+const contains = (a, b) => a === b || a === '.' || b.startsWith(a + '/')
+const depth = d => (d === '.' ? 0 : d.split('/').length)
+const roots = []
+for (const d of Object.keys(adoptByDir).sort((a, b) => depth(a) - depth(b))) {
+  const owner = roots.find(r => contains(r, d))
+  if (owner) {
+    adoptByDir[owner].push(...adoptByDir[d])
+    delete adoptByDir[d]
+    log(`adoption dir ${d} folded into ${owner} — nested write sets are not disjoint`)
+  } else {
+    roots.push(d)
+  }
 }
 for (const [dir, sites] of Object.entries(adoptByDir)) {
   updaters.push(() => agent(
-    updaterBrief([dir + '/'], sites,
+    updaterBrief([dir === '.' ? 'the repo root (files directly in it only)' : dir + '/'], sites,
       `Adopt the component the way kanbandemo adopted Tabs: the hand-rolled equivalent is DELETED in favor of the component (plain rm for dead files — never git rm), markup/bindings rewritten to the new element, behavior preserved. Build this site's binary to /tmp and smoke it under a pty (script -qec with an explicit stty size) before reporting. If on re-reading you judge this site contract surface that must NOT migrate (the cmd/reader precedent), skip with the reason.`),
     { label: `adopt:${dir}`, phase: 'Reconcile', schema: RECONCILE_SCHEMA, effort: 'high', isolation: 'worktree' },
   ))
@@ -452,7 +473,7 @@ Run and report each:
 6. Append "## Executed" to ${spec.specPath} in house style (model: the executed specs' sections): what shipped, API surface, the verification evidence you just gathered, divergences from the plan. Also flip its Status line to executed. This is the ONE file Reconcile was told not to touch — it is yours.
 7. Worktree hygiene: the Reconcile updaters ran in isolated worktrees. Confirm \`ls -a ${REPO}/.claude/worktrees/\` matches \`git worktree list\` exactly — a directory present on disk but absent from the list is an unregistered orphan that git cannot see at all (not via \`git worktree list\`, not via \`git status\`), and has silently stranded real work in this repo before. Report any mismatch as a problem; do not delete anything yourself.
 8. Staging list: run git status --porcelain -uall NOW and derive stagingList (explicit file paths belonging to this work — component, tests, spec, reconciled docs collected from the worktrees, adopters, workflow script if edited${regenResult ? ', regenerated docs/GIFs' : ''}) and stray (untracked junk that must NOT be staged: binaries, .cast files, scratch logs). Every path individually — never a directory. \`-uall\` is load-bearing: it descends into untracked directories, where plain porcelain stops at the directory name and hides the files inside.
-green=true only if ALL of 1-5 pass.${INVARIANTS}${GIT_RULES}`,
+green=true only if ALL of checks 1-5 AND 7 pass — a stranded worktree is a failure, not a note, because Reconcile is the phase that creates them. (6 and 8 are actions, not pass/fail checks.)${INVARIANTS}${GIT_RULES}`,
     { label: `verify:pass-${attempt}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high' },
   )
   if (!verify) return { aborted: `verify pass ${attempt} skipped/died`, interview, design, spec, epic, build }

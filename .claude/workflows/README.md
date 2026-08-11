@@ -24,6 +24,17 @@ rather than picking a winner. Sequential single-writer phases stay in
 the main checkout, where isolation would add merge-back cost for no
 concurrency benefit.
 
+**Requires** (the three interactive workflows): the `superpowers`
+plugin (`superpowers:brainstorming`), `frontend-design`
+(`frontend-design:frontend-design`), the `artifact-design` and
+`artifact-diagramming` skills, and — for `gooey-epic-decompose`, plus
+`gooey-new-component` which calls it — `project-ops`
+(`project-ops:manage-dependencies`) with a configured
+`.claude/project-ops.yaml` and an authenticated `gh`. Their agents
+invoke these by name through the Skill tool; if a name does not resolve
+in the environment you launch from, the phase fails with an opaque skill
+error rather than a signpost, so check they are installed first.
+
 Which one:
 
 - A new **demo** (something in `cmd/` or `examples/` that shows the
