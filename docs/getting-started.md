@@ -133,8 +133,11 @@ It fails when there is no terminal, which is why every demo prints
 cols, rows := screen.Size()
 ```
 
-The terminal size in cells. The POC composer is fixed-size: it takes
-cols and rows at construction and does not react to resize yet.
+The terminal size in cells. The Composer takes cols and rows at
+construction; it can be resized (`Composer.Resize`), but nothing in this
+hand-rolled loop listens for `SIGWINCH`, so the app stays at launch size
+unless you wire that signal yourself. `gooey.App` does it for you —
+resize, repaint, and the rest of the signal story.
 
 ```go
 comp := gooey.NewComposer(tree, cols, rows)
@@ -399,6 +402,15 @@ What changed relative to the step 1 loop:
   so it sends the new tree over `swaps` and the loop attaches it on the
   UI goroutine. On an `embed.FS`, ModTimes never change and the same
   call is a natural no-op.
+
+The `swaps` channel is this hand-rolled loop's mechanism, not the
+framework's. In a `gooey.App` program the whole arrangement is
+`markup.Page(fsys, "hello.gooey", ctx)` handed to `gooey.NewApp` — the
+watcher only reports changes, and the App rebuilds on the UI goroutine
+itself, so there is no channel, no `attach`, and no way to build a tree
+on the wrong goroutine. That is the hot-reload path to copy;
+[learn/howto/howto-hot-reload.md](learn/howto/howto-hot-reload.md)
+shows it in isolation.
 
 Run it, then edit `hello.gooey` — change text, gap, styles — and save.
 The UI reloads in place while the counter's state survives, because
@@ -717,10 +729,13 @@ markup a binding came from.
   every element, attribute, and layout property
   (`Width`/`Margin`/`HAlign`/`Visibility`/`Grid.*`), gesture syntax,
   and the binding rules.
-- **Design specs** — where the framework is heading:
+- **Decision records** — [specs/](specs/) documents what was built and
+  why; most of it has shipped. Start with
   [specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md)
-  (`x:Property` declarations and `gooey gen`),
-  [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md)
-  (the reader as a design exercise), and
+  (`x:Property` declarations — shipped; `gooey gen` is the part still
+  ahead),
   [specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md)
-  (commands over the wire).
+  (handler namespaces — shipped, see `handlers/temporal/cmd/temporaldemo` and
+  [markup-reference.md](markup-reference.md#handler-namespaces)), and
+  [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md)
+  (the reader as a design exercise).

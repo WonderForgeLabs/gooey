@@ -1,0 +1,61 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto">
+    <Text Grid.Row="1" Style="accent">a download, wearing its chrome</Text>
+
+    <HStack Grid.Row="2" Gap="3">
+      <ProgressBar Value="{{.Pct}}" Label="fetch " BarWidth="30"/>
+      <Spinner Frames="braille" Interval="90ms" Label="{{.Status}}" Enabled="{{.Running}}" Style="accent"/>
+    </HStack>
+
+    <HStack Grid.Row="3" Gap="2">
+      <Text Style="dim">rate</Text>
+      <Sparkline Values="{{.Rates}}" Height="2" BarWidth="36"/>
+    </HStack>
+
+    <HStack Grid.Row="4" Gap="4">
+      <Toggle Checked="{{.Running}}" Label="downloading" Changed="{{.RunChanged}}"/>
+      <Segmented Options="Slow | Normal | Turbo" Selected="{{.Speed}}" Changed="{{.SpeedChanged}}"/>
+    </HStack>
+
+    <ButtonBar Grid.Row="5" Gap="3" Separator="│">
+      <Button Content="restart" Click="{{.Start}}" Tooltip="start again from zero"/>
+      <Button Content="toast" Click="{{.Notify}}">
+        <Tooltip Text="pop the status as a toast" Gesture="ctrl+t"/>
+      </Button>
+    </ButtonBar>
+
+    <Text Grid.Row="6" Style="dim">{{.Log}}</Text>
+
+    <StatusBar Grid.Row="8" Left="{{.Status}}" Center="{{.Clock}}">
+      <StatusBar.Right>
+        <Text Style="dim">alt+j: menu   tab: focus   q: quit</Text>
+      </StatusBar.Right>
+    </StatusBar>
+
+    <Timer Interval="150ms" Tick="{{.Advance}}"/>
+    <Timer Interval="1s" Tick="{{.TickClock}}"/>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+s" Command="{{.Start}}"/>
+    <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
+
+    <!-- Overlays are declared LAST because document order is z-order:
+         a later sibling paints above what it covers. Grid.Row still
+         places the bar on the top row — element order and layout
+         position are independent, which is exactly what an overlay
+         needs. The AdornmentLayer comes after the ToastHost so tips
+         paint above even the toasts. -->
+    <MenuBar Grid.Row="0" Style="accent">
+      <Menu Title="_Job">
+        <MenuItem Text="Re_start" Gesture="ctrl+s" Command="{{.Start}}"/>
+        <MenuItem Separator="true"/>
+        <MenuItem Text="_Quit" Gesture="q" Command="{{.Quit}}"/>
+      </Menu>
+      <Menu Title="_Notify">
+        <MenuItem Text="_Toast the status" Gesture="ctrl+t" Command="{{.Notify}}"/>
+      </Menu>
+    </MenuBar>
+    <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="9" Duration="2500ms"/>
+    <AdornmentLayer Grid.Row="0" Grid.RowSpan="9"/>
+  </Grid>
+</Gooey>

@@ -2,10 +2,13 @@
 
 This is the deep guide to how gooey works: the two rendering planes, the
 lazy property graph, the retained component model, the damage-tracked
-Composer, routed input, and the markup layer. It is grounded in the code
-as it exists today — a proof of concept — so every section names the
-real types and functions, quotes the load-bearing excerpts, and says
-plainly where the POC stops. For a first walkthrough, start with
+Composer, routed input, the `App` runtime, the markup layer, and the
+control plane a running app exposes. It is grounded in the code as it
+exists today, so every section names the real types and functions,
+quotes the load-bearing excerpts, and says plainly where the
+implementation stops. (The root packages still call themselves a POC;
+this page is the measure of how much of the design that POC has since
+grown into.) For a first walkthrough, start with
 [getting-started.md](getting-started.md); for the markup syntax itself,
 see [markup-reference.md](markup-reference.md); for what the demo apps
 prove, see [demos.md](demos.md).
@@ -19,16 +22,23 @@ components that read it during their last paint. A frame is layout
 cell buffer, flushed as ANSI. Input is a single ordered event stream
 routed through the tree by focus (keys) or hit-testing (mouse). Markup
 builds the same tree from XML, binding attributes to property handles.
+`App` owns the run loop — terminal lifetime, signals, dispatcher,
+companions — and `control` exposes the running app to out-of-process
+clients through one settle-barriered door.
 
 ## Where the code lives
 
 | Package | Holds |
 |---|---|
-| `gooey` (root) | The contracts and the runtime: `Component`, `Container`, `Base`, `Layout` and the measure/arrange sandwich, `Frame`, `Compose`, `Composer`, `Dispatcher`, `App` and its signal/companion machinery, focus and mouse routing, `Command`, `KeyBinding`, `Startable` |
-| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`, `StatusBar`, `ButtonBar` — plus the `Str`/`Sty`/`Strs` literal wrappers |
+| `gooey` (root) | The contracts and the runtime: `Component`, `Container`, `Base`, `Layout` and the measure/arrange sandwich, `Frame`, `Compose`, `Composer`, `Dynamic`, `Startable`, `Dispatcher`, `App` and its signal/companion machinery, focus and mouse routing, `Command`, `KeyBinding` |
+| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`; the overlays `MenuBar`, `ToastHost`, `Tooltip`, `AdornmentLayer` and the `Popup` primitive under them; and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`, `StatusBar`, `ButtonBar` — plus the `Str`/`Sty`/`Strs` literal wrappers |
 | `prop`, `input`, `render`, `graphics`, `term` | The layers underneath: property graph, decoded event stream, cell buffer and ANSI, pixel protocols, terminal capabilities |
-| `markup` | XML → tree, bindings, `UserControl` and `Include` |
-| `handlers/*`, `mcp` | Opt-in namespaces and the automation surface, each its own module |
+| `markup` | XML → tree, bindings, `UserControl`, `Include`, `<x:Property>`, handler namespaces |
+| `control` | The in-process control-plane service every remote transport fronts (see [the control plane](#the-control-plane)) |
+| `format`, `imaging` | Display formatting (plain functions plus computed-property constructors, so a formatted string repaints itself); the image-decode registry (png/jpeg/gif/bmp/ico in core) |
+| `handlers/net`, `handlers/fs` | The in-tree capability packs behind markup's handler namespaces |
+| `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `packs/*` | Nested Go modules — heavy SDKs quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, and activity packs like `packs/temporal-visibility` |
+| `proto`, `clients` | The `gooey.control.v1` proto contract and the committed generated clients — Go under `grpc/gen`, Python and TypeScript under `clients/` |
 
 The dependency runs one way: **`components` imports the root, and the
 root never imports `components`.** That is what makes the component set
@@ -525,19 +535,97 @@ a dependency of nothing-in-particular, or worse, of whatever computed
 happened to be evaluating. The read-vs-subscription distinction in
 `prop` is exactly what makes this a one-line non-event.
 
-Bounds changes are reconciled after layout: each `paintNode` remembers
-its component's last bounds, and if arrange moved the component, the vacated
-region is cleared and the node's `rev` source is bumped — `rev.Get()` is
-the first line of every paint closure, so bumping it force-dirties the
-paint node. That is how a moved-but-content-unchanged component still
-repaints at its new position.
+Bounds changes are reconciled after layout in a per-frame sweep: each
+`paintNode` remembers its component's last bounds, and if arrange moved
+the component, the vacated region is cleared (to the ancestor
+background, so a component shrinking inside a colored panel leaves no
+default-colored scar) and the node's `rev` source is bumped —
+`rev.Get()` is the first line of every paint closure, so bumping it
+force-dirties the paint node. That is how a moved-but-content-unchanged
+component still repaints at its new position. The same sweep catches
+`Hidden`↔`Visible` flips: the `Visibility` field is plain, so nothing
+dirties on its own; the sweep notices the delta, clears the vacated
+rect, and drops the node's recorded placements so the pixel plane
+follows the cells off screen. Every `Set` in the sweep happens outside
+any evaluation — the sweep is the legal place to force-dirty, the same
+call-site rule as everywhere else.
 
-### Stated POC limits
+### restoreUnder: the reverse half of the z-order pass
 
-From the type comment, verbatim: static tree (rebuild the Composer on
-structural change — this is what markup hot reload does via `swap`), and
-cell-plane components only (the Composer path does not yet carry graphics
-placements; `Compose` does).
+The forward paint loop restores what sits *above* a rect somebody
+painted. `restoreUnder` is its mirror: when a rect *leaves* the screen —
+a component turned `Hidden` or `Collapsed`, departed in a `Dynamic`
+re-sync, or moved away — every still-visible node whose bounds
+intersect the vacated rect is force-dirtied, and the ordinary paint
+loop lays them down again in z-order, in the same frame. The forward
+pass can only force nodes *above* a painter, so a vanished overlay's
+vacated cells have to be restored from this side. This is what overlays
+required to exist: a dismissed menu dropdown or an expired toast covers
+cells whose owners are clean paint nodes that would never repaint on
+their own. The vanished component itself paints nothing — erasure is a
+sweep, and costs zero paint nodes.
+
+### Dynamic: structural change without a rebuild
+
+The tree is *mostly* static: a Composer is rebuilt when the whole tree
+is replaced, which is what markup hot reload does. A container that
+changes its own child set while the composition is live — `ItemsView`
+realizing the rows that actually fit — implements `Dynamic`
+(`dynamic.go`):
+
+```go
+type Dynamic interface{ SetStructureHook(func()) }
+```
+
+The Composer hands every `Dynamic` a hook at build time; the container
+calls it after changing what `ChildComponents()` returns — legally from
+inside `Measure`/`Arrange`, since layout is exactly when a list learns
+its size. The hook only raises a flag. The next `Frame` re-syncs paint
+nodes and the input tree after layout and before painting, so a row
+realized this frame is painted this frame, and the sync **keeps the
+node of every component that is still there**, clean/dirty state and
+recorded dependencies intact — realizing one new row paints one new
+row, not the tree. Departed components get their last rectangle
+cleared, `restoreUnder` run beneath it, and their pixel placements
+queued for removal. `Composer.InvalidateStructure` triggers the same
+re-sync for a shape change made from outside the tree — the control
+plane's markup patch path is the motivating caller. The node-preserving
+diff is specified in
+[specs/2026-08-10-datatemplates.md](specs/2026-08-10-datatemplates.md).
+
+### Start and Close: the composition owns its goroutines
+
+Some elements own a background goroutine — `Timer` (a non-visual
+attachment), `Spinner` and `ProgressBar` when animating, `Tooltip`'s
+show delay, `ToastHost`'s expiry clock. They implement `Startable`:
+
+```go
+type Startable interface {
+    Start(post func(func())) (stop func())
+}
+```
+
+The Composer discovers them on the same walk that builds paint nodes
+(attachments included), and `Composer.Start(disp)` brings them to
+life; `Composer.Close` stops them. `post` is the *only* way a started
+goroutine may reach the property graph: it queues work onto the UI
+goroutine via `Dispatcher.Post`, per the confinement rule. Nothing runs
+until `Start`, which makes "started" a property of the composition
+rather than of the component — a tree that was built but never composed
+never ticks. A `Dynamic` re-sync gets the same treatment: arrivals are
+started if the composition is running, departures are stopped, so a row
+realized on frame 40 is treated exactly like one that existed at frame
+0.
+
+The stop function must **join**, not just signal. `Timer`'s is the
+model — `close(done); <-stopped` — because a tick that already won its
+`select` still posts before stop returns, so `Close` guarantees no
+further posts, ever. A stop that only closes a channel lets one last
+tick land after teardown, which is precisely the kind of lifetime bug
+that flakes in CI and nowhere else. Hot reload leans on the whole
+contract: `App.attach` closes the outgoing Composer before the new one
+starts, so a replaced tree's timers cannot keep ticking against a
+viewmodel nobody is showing.
 
 ## The input system
 
@@ -656,6 +744,24 @@ whose center lies in that direction, preferring stops in line with the
 current one, falling back to tree order so a direction is never a dead
 end.
 
+Two narrow, opt-in seams extend that routing. `FocusHost` is for a
+component that moves focus among its own children — a toolbar whose
+arrows walk along it, a menu bar: the `FocusManager` hands itself to
+every host it walks past (on the first walk and on every re-sync), and
+the only useful thing a host can do with it, `SetFocus`, checks its
+argument is a live focus stop, so a stale pointer from a replaced tree
+fails safely. A focus host is not a focus trap — tab walks straight
+through it in tree order, and declining an arrow hands the key back to
+spatial navigation, which is how up and down leave a horizontal bar.
+`MnemonicHandler` is the seam for *page-scoped* accelerators — a menu
+bar's alt+letter. Key routing never leaves the focused component's
+ancestor chain, and a menu bar is a sibling of the content it overlays,
+so the dispatcher collects implementers on the same walk that finds
+focus stops and offers them only the keys nothing else consumed: every
+`PreviewKey`, `KeyBinding`, and `HandleKey` in the focused chain
+outranks a mnemonic, and a mnemonic outranks the framework's own
+tab/arrow fallbacks.
+
 `KeyBinding` is non-visual: it implements the `NonVisual` marker and
 hangs off its parent as an *attachment* (`Base.Attach`), walked for
 input but never measured, arranged, or painted. Attachment position is
@@ -694,9 +800,15 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns the deepest component whose arranged
 `Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones (they paint on top); `Collapsed` subtrees
-and zero-size components are not hit. The walk allocates nothing, because
-it runs on every motion report.
+siblings before earlier ones (they paint on top); `Collapsed` subtrees,
+zero-size components, and `HitTestTransparent` components are not hit.
+The transparency marker is what lets a page-spanning overlay host exist
+at all: a `ToastHost` or an `AdornmentLayer` sits above everything as
+the root's last child, which makes it the *first* thing hit-testing
+finds — an invisible layer that would eat every click and starve every
+hover beneath it. Transparency is about the component's own surface,
+not its subtree, so the toasts and adornments inside stay hittable. The
+walk allocates nothing, because it runs on every motion report.
 
 `DispatchMouse` runs two framework behaviors before the app sees
 anything:
@@ -749,6 +861,105 @@ per terminal convention. `Button` exercises the rest: focused, hovered,
 pressed and enabled are four property reads in its `Render`, so each
 state change repaints just the button.
 
+### Overlays are built from these pieces
+
+`Popup` (`components/popup.go`) is the shared Go-side primitive under
+the `MenuBar` dropdown and the `Tooltip` — extracted once the framework
+had grown four hand-rolled copies. An *owner* component stays in the
+tree, keeps focus, and decides what the popup shows; the *surface* is a
+leaf child returned last from `ChildComponents` (document order is
+z-order, so last paints on top) whose pre-clear paints exactly the
+popup rectangle; the `Popup` itself is the lifecycle — an open
+property, focus save/restore per the capture-at-open rules, held
+pointer capture so a press anywhere outside dismisses, and esc as the
+key fall-through. It solves one subscription subtlety once, and it is
+worth knowing because it recurs: a `Collapsed` surface never evaluates
+its `Render`, so a closed popup would have no dependency edge from its
+open property and the first Open would schedule no frame. The surface
+therefore stays `Visible` at a zero rect while closed — its node
+evaluates on the very first frame, reads the open property, and the
+subscription exists before the popup has ever opened. Around it,
+`Tooltip` rides the `HoverWatcher` attachment seam, and `ToastHost` and
+`AdornmentLayer` are the page-spanning hosts that lean on
+`HitTestTransparent` here and on the Composer's `restoreUnder` sweep to
+vacate cleanly. Design record:
+[specs/2026-08-10-popup.md](specs/2026-08-10-popup.md).
+
+## The runtime: gooey.App
+
+`App` (`app.go`) is the framework-owned run loop: the terminal's
+lifetime, the input decoder, the Dispatcher, frame scheduling,
+hot-reload swaps, and the console signal story in one object. It exists
+because every demo had been hand-writing the same sixty lines — open
+the screen, raw mode, mouse, decoder goroutine, `select` loop, deferred
+restore — each copy with its own subtly different bugs. The loop is
+deliberately not extensible by adding select cases: everything
+asynchronous — timers, signals, watchers, network handlers — reaches
+the UI through `App.Post` (the Dispatcher), which is the confinement
+rule anyway, and every hook — `BeforeFrame`, `AfterFrame`, `OnEvent`,
+`AfterEvent`, `OnSwap` — runs on the UI goroutine, where touching
+properties is legal. The tree comes from a `Content` (`Build` +
+`Watch`): `markup.Page` for a markup app, `gooey.Tree` for one built in
+Go, and `App.Swap` is the same replace-the-composition seam for a tree
+that arrives from anywhere else — a control plane pushing markup, most
+notably.
+
+### Signals are UI-loop events
+
+The full story is
+[specs/2026-08-10-runtime-signals.md](specs/2026-08-10-runtime-signals.md);
+the shape of it: every signal is delivered onto the UI goroutine
+through the Dispatcher rather than handled where it lands, because the
+terminal work has to be ordered against frames. ctrl+c and SIGINT are
+*two different events*: in raw mode `ISIG` is off, so ctrl+c arrives as
+byte `0x03`, is decoded into an ordinary key event, and routes through
+the tree — the App's quit key matches it only on what the tree
+declines, so a component that wants ctrl+c keeps it. An external
+SIGINT or SIGTERM is a real signal: it runs the `WithShutdown` hook
+(bounded by its timeout, terminal still up), quits the loop, and `Run`
+returns a `*SignalError` that `gooey.Exit` turns into exit code 128+n.
+SIGWINCH re-queries the size and calls `Composer.Resize` (new buffer,
+whole tree dirtied — layout already runs every frame, so the tree
+re-measures itself). SIGTSTP does the classic restore/reset/re-raise
+dance and declines the stop where POSIX will not honor it (an orphaned
+process group). A panic under `Run` restores the terminal *first* and
+then re-panics, so the stack trace prints onto a cooked screen.
+
+### Suspend, and why re-acquire invalidates the flush
+
+`App.Suspend(fn)` hands the terminal to fn — an editor, a shell — and
+takes it back afterwards. It is only correct because teardown joins the
+input decoder (a reader left parked on the tty would eat the child's
+keystrokes), and interrupts are shielded while fn runs: the tty driver
+signals the whole foreground process group, so the ctrl+c a user aims
+at the child arrives here too. On the way back in, the alternate screen
+comes back *blank* — the retained buffer is right, the screen is wrong,
+and no component needs to repaint. That is exactly what
+`Composer.Invalidate` corrects: it forces the next flush to re-send the
+whole buffer and every placement, without touching a single paint node.
+The same invalidation runs after every acquire, which is why resume
+from ctrl+z and return from Suspend repaint correctly with nothing
+dirty.
+
+### Companions
+
+Companions ([specs/2026-08-10-companions.md](specs/2026-08-10-companions.md),
+`companion.go`) are the app's background services: work that must be
+running for the UI to mean anything and must not outlive it — the
+motivating case was a Temporal worker that is not a separate program in
+any interesting sense. A `Companion` is `Name`/`Start`/`Wait`, with
+`CompanionFunc` for Go code and `CompanionCmd` for a child process, and
+its lifetime is made explicit: started *before* the tree is built and
+before raw mode, so a service that cannot start prints its error onto a
+cooked terminal and a `Build` that talks to it finds it up; supervised
+while the app runs, so a companion that dies quits the app and `Run`
+reports which one; stopped and waited for on every exit path — quit,
+signal, cancellation, panic — *after* the terminal has been handed
+back, so a slow shutdown happens on a cooked screen. Cancelling the
+app's context is the only stop mechanism, because two stop mechanisms
+is one too many. Companions keep running across `Suspend`: they are
+background services, and the child owns only the terminal.
+
 ## Markup
 
 The `markup` package is the XAML-analog authoring surface: XML elements
@@ -772,9 +983,11 @@ story:
   changed; `gooey.App` does the rebuild on the UI goroutine, because
   resolving bindings touches the property graph. Parse errors leave the
   current tree in place, so a bad edit never blanks the running app.
-  Rebuilding the tree means rebuilding the `Composer` (static-tree
-  limit), while viewmodel properties live outside the tree and survive —
-  that is why hot reload keeps your state.
+  A reload rebuilds the tree and the `Composer` with it — the same
+  whole-tree swap seam as `App.Swap`, distinct from the *within*-a-live-
+  composition structural changes `Dynamic` handles — while viewmodel
+  properties live outside the tree and survive; that is why hot reload
+  keeps your state.
 - **Release**: `embed.FS`. The same call is a natural no-op — embed.FS
   reports constant zero ModTimes — so dev and release run identical
   code.
@@ -812,6 +1025,42 @@ Event attributes go through `Context.Command`, the two-halves split
 described in the input section: `{{.Save}}` resolves a func out of
 `Values` (works in markup-only controls, no code-behind), a bare name
 resolves through `Handlers` (requires code-behind).
+
+### Handler namespaces: behavior as a capability grant
+
+The DSL has a third, prefixed form for event attributes — shipped, not
+sketched:
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:net="gooey.dev/handlers/net">
+  <Button Content="fetch" Click="{{net:Get .Url | into .Body}}"/>
+</Gooey>
+```
+
+A prefixed expression produces a `gooey.Command` from a
+*framework-provided* handler instead of a viewmodel func. Four handler
+packs ship — `net` (HTTP GET), `fs` (rooted file access, read-only
+unless the writable grant is registered), `temporal` (standalone
+activities), and `exec` (allowlisted local commands, conventional
+prefix `sys:`) — plus the workflow namespace (conventional prefix
+`wf:`) that signals exactly one Temporal workflow, which is what lets a
+workflow serve its own approval UI. The heavy packs are nested modules,
+so the root module stays dependency-free. The design holds three lines:
+**registration is the capability grant**
+(`markup.RegisterHandlers(URI, provider)` — a document reaches exactly
+the capabilities its host registered and can never widen its own grant,
+which is what makes served, untrusted markup safe to run); arguments
+keep lvalue semantics (`.Url` is a handle read at invoke time, not at
+load); and results return through the optional `| into` stage,
+delivered onto the UI goroutine via the context's `Dispatcher`
+(`markup.Target.Deliver` — delivering to an absent target is a no-op)
+because properties are goroutine-confined. Grammar and provider tables:
+[markup-reference.md](markup-reference.md#handler-namespaces); the pack
+taxonomy and grant doctrine:
+[specs/2026-08-10-pack-distribution.md](specs/2026-08-10-pack-distribution.md);
+the original design record, now history rather than plan:
+[specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md).
 
 ### UserControl: context isolation and the attribute hand-off
 
@@ -909,13 +1158,103 @@ their own contexts, bindable focus-aware pane titles, and
 [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md),
 and the running app is in [demos.md](demos.md).
 
+## The control plane
+
+A running gooey app can expose itself to out-of-process clients — an
+agent over MCP, a test driver or a dashboard over gRPC — and the
+layering rule is stated in `control/control.go`'s package comment:
+**one path, one model**. `control`, in the root module, is the
+in-process control-plane service; the gRPC server (`grpc/`, a nested
+module) is a proto adapter over it and the MCP server (`mcp/`, another
+nested module) is a tool adapter over it. A tool or an RPC does what
+`control.Service` does, or it does not exist. The shared logic lives in
+the root on purpose: the transports' SDKs are heavy, but what they
+share is plain Go over the framework's own interfaces — the
+alternative, one transport calling the other over loopback, would put a
+network hop inside what is semantically a function call.
+
+### Host, Service, and the snapshot ceiling
+
+`Service` reaches the app through the three-method `Host` seam:
+`Post` (onto the UI goroutine), `Composer()` (the live composition —
+read per call, never cached, because every swap replaces it), and
+`Swap`. `*gooey.App` implements it; it is an interface so the service
+can be tested against a hand-run loop, the only honest way to test the
+confinement rule. The methods are the whole remote surface: the tree
+snapshot (`Tree`), screen text from the retained cell plane (`Screen` —
+it never composes a frame, which would steal the app's damage counts),
+the bindable values (`Values`/`Value`/`Set`), commands (`Invoke`),
+input injection (`SendKeys`/`SendPointer` — into the one ordered
+stream, routed via the composition so the app's quit key is out of a
+remote client's reach), focus (`Focus`), and the markup operations
+(`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`, `DeclaredSchema`,
+`Register`). Failures are classified (`KindInvalidArgument`,
+`KindNotFound`, `KindFailedPrecondition`) so a transport maps them
+without parsing text — gRPC into status codes, MCP into tool errors.
+
+The snapshot serializes the tree without reflection, from the same
+interfaces the Composer and the FocusManager already walk —
+`Container`, `Bounded`, `Focusable`, the attachments — plus a type
+switch over the built-ins for per-component props. An unknown Go
+component still yields a useful node (type, bounds, layout, children);
+its fields stay undiscovered, and that is the deliberate ceiling.
+Markup-built controls declare their way past it: an `<x:Property>`
+surface is retained on the context and serializes with current values —
+the declaration block finally read as the per-control wire schema the
+x:Property spec said it was.
+
+### Bridge.Do and the settle barrier
+
+The confinement rule takes its sharpest form here. Requests arrive on
+transport goroutines; the property graph is unlocked and
+UI-goroutine-only; so every `Service` method is UI-goroutine-only, and
+transports marshal each call through `control.Bridge.Do`. `Do` waits
+twice, and the second wait is the point: first fn itself, then a bare
+barrier closure that does nothing but come back. It works because
+`Dispatcher.Drain` snapshots its queue — a closure posted while a
+drain runs lands in the *next* drain, and the run loop composes a
+frame between two drains — so waiting for the barrier waits for the
+repaint fn's Sets asked for. A screen read immediately after a command
+invocation sees the new pixels, and the end-to-end proofs need no
+sleeps. A panic inside fn is recovered into a `*PanicError` (a remote
+client must not be able to kill the app), and a blocked run loop is a
+`*TimeoutError`, reported rather than hung on.
+
+Two more disciplines complete the rule. Results are plain copied data —
+never a component or a property handle, which read later from a
+transport goroutine would be exactly the bug the Dispatcher exists to
+prevent. And every property Get the service performs happens outside
+any computed evaluation, so it reads a value and records nothing — a
+snapshot that subscribed would wire the control plane into the damage
+graph and repaint the app every time a client looked at it. The
+call-site rule from the property section, doing remote duty.
+
+### The wire contract
+
+The proto contract is a decision record,
+[specs/2026-08-10-grpc-contract.md](specs/2026-08-10-grpc-contract.md):
+package `gooey.control.v1`, additive-only evolution, and `TypedValue`
+mirroring markup's `propKinds` table case for case — adding a wire type
+means adding a propKinds row first, so the two type systems grow in
+lockstep or not at all. `ControlService` is the unary surface,
+argument-for-argument the MCP tool inventory, which is what made
+rerouting MCP over `control` mechanical. `SessionService.Attach` is one
+bidi stream: client acts apply in stream order (the remote mirror of
+the one ordered input stream), and `FrameDelta` carries everything one
+composed frame changed — property deltas, damage rects, the repaint
+count — in a single message keyed by frame sequence, so the torn read
+(values arriving without the frame they belong to) is impossible by
+construction. `FrameDelta.repainted` is the same damage number the
+contract tests assert on, put on the wire. The committed generated
+clients live in `grpc/gen` (Go) and `clients/` (Python, TypeScript).
+
 ## Designed, not built
 
 `gooey gen` — compiling markup to Go at build time, with a typed
 per-control surface for compile-checked instantiation. `<x:Property>`
 declarations are its input: a declaration block is both a typed surface
-and, for the remote-behavior layer, a per-control wire schema. Nothing
-reads it that way yet.
+and a per-control wire schema — the control plane now reads it the
+second way; the code-generation reading is the one that remains.
 
 `Name`-keyed state adoption across hot reloads, so a declared default's
 per-instance source survives a rebuild.
@@ -923,27 +1262,15 @@ per-instance source survives a rebuild.
 Styles with setters, so a control can be restyled from outside beyond
 passing a style name in.
 
-The spec that grew this layer, for the pressure points it records:
-
-**Remote handlers and Temporal** —
-[specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md).
-xmlns returns as a capability system: prefixed namespaces map to
-`HandlerProvider`s the host app registers, and the binding DSL grows an
-extension form — `Click="{{net:Get .Url | into .Body}}"`, or
-``Click="{{temporal:Activity `RebuildIndex` .Query | into .Results}}"``
-— that produces a `Command`. Args keep lvalue semantics (`.Path` is a
-handle read at invoke time); `| into` Sets a handle with the result,
-marshaled back to the UI goroutine through a new `Dispatcher`, since
-properties are goroutine-confined. The Temporal provider targets
-standalone activities, which is the striking consequence: combined with
-fs.FS-served markup, an entire app — layout, bindings, and behavior
-wiring — ships as data, with workers anywhere doing the compute.
-
-Neither of these changed the foundations above; both lean on them. The
-declared-properties design works *because* every property is already a
-graph node ("the graph is the callback system"); the remote-handler
-design works *because* bindings are already handles, not values. That is
-the architecture doing its job.
+This list used to be longer. The remote-handler design
+([specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md))
+shipped as the handler namespaces above; the control plane it gestured
+at shipped as `control/` and its two transports — and neither changed
+the foundations. The declared-properties design works *because* every
+property is already a graph node ("the graph is the callback system");
+the handler design works *because* bindings are already handles, not
+values; the settle barrier works *because* a frame already sits between
+two drains. That is the architecture doing its job.
 
 Back to the [README](../README.md) for the short version, or on to
 [demos.md](demos.md) to see all of this moving.

@@ -78,12 +78,36 @@ the rest of the page still navigates with them.
 
 | Form | Resolves against |
 |---|---|
-| `Command="{{.Quit}}"` | `Context.Values` — a `gooey.Command` or `func()` |
+| `Command="{{.Quit}}"` | `Context.Values` — anything implementing `gooey.Action`: a `gooey.Command`, a `*gooey.Cmd` from `gooey.NewCommand`, or a plain `func()` |
 | `Command="OnQuit"` | `Context.Handlers` — the code-behind registry |
 
 The binding form needs no code-behind at all, which is what lets
 markup-only controls wire their own keys. An unregistered bare name is a
 load-time error; an empty attribute is not — it just means no command.
+
+## Disable a binding with a condition
+
+The `Command` field is typed `gooey.Action`, and one implementation
+carries a `CanExecute` condition: `gooey.NewCommand(run).When(cond)`,
+where `cond` is an ordinary `*prop.Property[bool]` — a computed is the
+point:
+
+```go
+save := gooey.NewCommand(vm.Save).When(prop.NewComputed(func() bool {
+	return vm.Dirty.Get()
+}))
+```
+
+A binding whose command is disabled does **not** consume the gesture:
+the key keeps bubbling, so an outer binding for the same gesture — or
+the framework's own tab/arrow handling — can still take it. A `Button`
+bound to the same command paints itself dim and refuses activation.
+Markup is unchanged either way: `Command="{{.Save}}"` resolves the
+richer command transparently.
+
+There is no `CanExecuteChanged` to raise. The condition is a property,
+so a component that read it while painting repaints when it flips — the
+graph is the notification system.
 
 ## Declare bindings from Go
 
@@ -108,6 +132,10 @@ builds — same attachment, same scoping, same dispatch. `input.Rune`,
 gesture syntax; `input.ParseGesture("ctrl+c")` accepts the string form if
 you would rather write it that way.
 
+`Command` is typed `gooey.Action`, so a bare `func(){…}` literal does
+not assign — wrap it: `Command: gooey.Command(func() { … })`. And test
+whether an action is set with `gooey.CanExecute(a)`, not `a != nil`.
+
 `cmd/logview` and `cmd/markuplog` in this repository are the same app
 built both ways, and are worth diffing if you are choosing between them.
 
@@ -119,8 +147,9 @@ built both ways, and are worth diffing if you are choosing between them.
   from the start of an arrow sequence. That delay is inherent to
   terminals, not a gooey choice.
 - **No chords.** One gesture, one key. There is no `ctrl+k ctrl+s`.
-- **No `CanExecute`.** A bound command always runs; there is no
-  disabled state.
+- **Disabled means declined, not consumed.** A binding whose command's
+  `When` condition is false lets the gesture keep bubbling, exactly as
+  if the binding were not there — see the condition section above.
 
 ## See also
 
