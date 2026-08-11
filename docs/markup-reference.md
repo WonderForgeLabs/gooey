@@ -17,6 +17,14 @@ tree, err := markup.Load(fsys, "app.gooey", ctx)
 
 `Load` reads from any `fs.FS` — `os.DirFS` in development, `embed.FS` in release; the loader cannot tell the difference. `markup.Watch` (single file) and `markup.WatchAll` (a set of files) poll ModTimes and rebuild on change, which is the hot-reload path: edit the file while the app runs and the tree rebuilds in place, with all state intact because the viewmodel properties are the durable thing and the tree is disposable (see `cmd/markuplog`, [media/demos/markuplog.gif](media/demos/markuplog.gif)). On an immutable FS this degrades to a natural no-op. Parse or build errors during a reload leave the current tree in place.
 
+Apps built on `gooey.App` do not call `Load` and `Watch` themselves — they hand the whole arrangement to `markup.Page`:
+
+```go
+app := gooey.NewApp(markup.Page(fsys, "dashboard.gooey", ctx, "card.gooey", "badge.gooey"))
+```
+
+`Page` (in `markup/page.go`) packages Load plus WatchAll as a `gooey.Content`: the App builds the tree from it at startup and rebuilds **on the UI goroutine** whenever a named file changes — the watcher only reports; it never builds, so binding resolution never touches the property graph from a foreign goroutine, which is the hazard the raw `Watch` callback leaves to you. The extra names are the control files a rebuild depends on, since watching cannot infer what an `<Include>` will resolve to. The direct `Load`/`Watch` calls remain the right surface for hand-rolled loops and tests.
+
 ## The root element
 
 Every file has exactly one `<Gooey>` root with exactly one child:
@@ -670,9 +678,13 @@ The marker is persistent: it lives in the layer for as long as it is attached, s
 |---|---|
 | `Items` | **Required.** Binding to a `*prop.Property[components.ItemSource]` — build one with `components.Items` (below). |
 | `Selected` | Optional binding to a `*prop.Property[int]`, shared with the viewmodel: the view Sets it on navigation and reads it to scroll and highlight. Absent means the list is not selectable. |
+| `SelectionChanged` | Optional command, resolved like `Click`. Runs after the **view** moves the selection — a key, a click, the wheel — not when the viewmodel Sets `Selected` itself, and not when a gesture clamps to the row already selected: it reports change, not intent. `handlers/temporal/cmd/temporalops` binds it to a describe call so the detail pane follows the selection. |
+| `Focusable` | `"false"` takes the view out of the tab order. For lists that are display surfaces for a selection some *other* component drives — finder's results pane, whose query line owns the keyboard fzf-style. A click still selects by hit-test. Anything other than `"true"`/`"false"` is a load error. |
 | `Activate` | Command run on enter, on a double click, and on a second click of the already-selected row; resolved like `Click`. |
 
 `<ItemsView.ItemTemplate>` is required and takes exactly one child element. The view is a focus stop with the house list keys — `↑`/`↓`/`j`/`k`, `PgUp`/`PgDn`, `Home`/`End`, `enter` — plus wheel, click to select, and a second click to activate. Keys it does not use bubble, so page-level `<KeyBinding>`s still work while the list has focus.
+
+One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no** `Selected` binding into a tail-anchored scroll view — the log-pane shape, where 0 pins the window to the end and scrolling up moves into history that stays put while new items arrive. A Go-composed view sets the field directly; `examples/kanbandemo` registers such a view as a custom element for exactly this reason.
 
 **The template is a factory, not a tree.** Its element subtree is captured at load and instantiated once per item, against a context whose values are *that item's* — dot is the ITEM. Page values are deliberately out of reach inside a template, the same isolation a UserControl gets; anything a row needs must come through the projection. Everything else the document carries — styles, registered components, handlers, includes, the `xmlns` table — is inherited, so a template may place a registered custom component exactly like any other markup.
 
@@ -826,7 +838,7 @@ markup.RegisterHandlers(temporalhandlers.URI, temporalhandlers.New(client, "gooe
 
 - `prefix` resolves through the document's own xmlns table. Namespaces are **per document** — an Include or UserControl declares its own and cannot inherit the page's, so a control's capabilities never depend on who included it.
 - Arguments are the DSL's usual atoms: `` `backtick literal` `` (a constant string) and `.Path` (a property handle). Bound arguments are read **at invoke time**, not at load — the same lvalue semantics as every other binding, so re-pointing `.Url` changes what the next press fetches.
-- `| into .Target` names the `*prop.Property[string]` the result is written to. It is the only pipeline stage in v1.
+- `| into .Target` names the `*prop.Property[string]` the result is written to. It is the only pipeline stage v1 defines, and it is **optional**: a function with no result to deliver is simply written without one — ``{{wf:Signal `approve`}}`` sends the signal and drops the receipt, because delivering to an absent target is a no-op (`markup.Target.Deliver`). Functions that do produce a result still work without the stage; the result is discarded.
 
 The expression produces a `gooey.Command`, so it works anywhere a command does — including `<KeyBinding Command="…">`. A handler expression on an Include's attribute is resolved in the *parent* (the document that declared the prefix) and crosses the boundary as an ordinary command value.
 
@@ -862,6 +874,7 @@ Nothing in the provider knows which components display the result. The `Set` dir
 | `gooey.dev/handlers/fs` | `handlers/fs` | `Read .Path` — file contents (capped, 1 MiB default); `List .Dir` / `Stat .Path` — JSON entries; `Glob .Pattern` — JSON array of paths |
 | `gooey.dev/handlers/fs` (writable grant) | `handlers/fs` | `Write .Path .Content` / `Append .Path .Content` — the target is a status slot, `""` on success |
 | `gooey.dev/handlers/temporal` | `handlers/temporal` (separate module) | ` Activity `Name` .Arg` — a Temporal standalone activity |
+| `gooey.dev/handlers/temporal/workflow` | `handlers/temporal` (separate module) | `` Signal `name` [args…] `` — signal ONE workflow: ``{{wf:Signal `approve` \| into .Notice}}``; conventional prefix `wf:`. The registration names the workflow ID, so served markup can signal that workflow and nothing else; the optional `into` receives a delivery receipt (`"ERROR: …"` on failure). Ground truth: `handlers/temporal/workflowui.go` |
 | `gooey.dev/handlers/exec` | `handlers/exec` (separate module) | `` Run `name` [options] [args…] `` — an allowlisted local command; conventional prefix `sys:` |
 
 All of them deliver failures into the same target as an `"ERROR: …"` string in v1, so a page can show what went wrong without a second binding.

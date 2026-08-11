@@ -1,0 +1,34 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:net="gooey.dev/handlers/net"
+       xmlns:fs="gooey.dev/handlers/fs">
+  <Border Title="handler packs" Style="panel">
+    <Grid Rows="Auto,Auto,1*,Auto,2*,1*,Auto">
+      <Text Grid.Row="0" Style="accent">no delegate wires these buttons — main.go only granted the capabilities</Text>
+      <HStack Grid.Row="1" Gap="2">
+        <Button Content="net:Get" Click="{{net:Get .Url | into .Body}}"/>
+        <Button Content="fs:Read" Click="{{fs:Read .Path | into .Content}}"/>
+        <Button Content="fs:List" Click="{{fs:List `.` | into .Entries}}"/>
+        <Button Content="fs:Glob *.go" Click="{{fs:Glob `*.go` | into .Entries}}"/>
+        <Button Content="cycle path" Click="{{.Cycle}}"/>
+      </HStack>
+      <Border Grid.Row="2" Title="net:Get .Url | into .Body" Style="panel">
+        <Text Margin="1,0">{{.Body}}</Text>
+      </Border>
+      <Text Grid.Row="3" Style="accent">{{.PathLine}}</Text>
+      <Border Grid.Row="4" Title="fs:Read .Path | into .Content" Style="panel">
+        <Text Margin="1,0">{{.Content}}</Text>
+      </Border>
+      <Border Grid.Row="5" Title="fs:List / fs:Glob | into .Entries" Style="panel">
+        <Text Margin="1,0">{{.Entries}}</Text>
+      </Border>
+      <Text Grid.Row="6" Style="dim">tab: move   enter/space: press   g: get   r: read   l: list   c: cycle   q: quit</Text>
+
+      <KeyBinding Gesture="g" Command="{{net:Get .Url | into .Body}}"/>
+      <KeyBinding Gesture="r" Command="{{fs:Read .Path | into .Content}}"/>
+      <KeyBinding Gesture="l" Command="{{fs:List `.` | into .Entries}}"/>
+      <KeyBinding Gesture="c" Command="{{.Cycle}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>

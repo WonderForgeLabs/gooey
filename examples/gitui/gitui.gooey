@@ -1,0 +1,48 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:sys="gooey.dev/handlers/exec">
+  <Grid Rows="*,Auto">
+    <Grid Grid.Row="0" Cols="2*,3*">
+      <Grid Grid.Col="0" Rows="*,*">
+        <Border Grid.Row="0" Title="changes" Style="panel">
+          <ItemsView Name="Files" Items="{{.FileItems}}" Selected="{{.FileSel}}"
+                     SelectionChanged="{{sys:Run `git-diff` .SelectedPath | into .Diff}}">
+            <ItemsView.ItemTemplate>
+              <Grid Rows="1" Cols="3,*">
+                <Text Grid.Col="0" Style="{{.MarkStyle}}">{{.Mark}}</Text>
+                <Text Grid.Col="1">{{.Path}}</Text>
+              </Grid>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
+        </Border>
+        <Border Grid.Row="1" Title="commits" Style="panel">
+          <ItemsView Name="Commits" Items="{{.CommitItems}}" Selected="{{.CommitSel}}">
+            <ItemsView.ItemTemplate>
+              <Grid Rows="1" Cols="9,*,14">
+                <Text Grid.Col="0" Style="accent">{{.Hash}}</Text>
+                <Text Grid.Col="1">{{.Subject}}</Text>
+                <Text Grid.Col="2" Style="dim">{{.Author}}</Text>
+              </Grid>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
+        </Border>
+      </Grid>
+      <Border Grid.Col="1" Title="diff" Style="panel">
+        <Text Margin="1,0">{{.DiffView}}</Text>
+      </Border>
+    </Grid>
+
+    <StatusBar Grid.Row="1" Left="on {{.Branch}}"
+               Center="{{.ChangedCount}} changed · {{.CommitCount}} commits">
+      <StatusBar.Right>
+        <Text Style="dim">tab: focus   ↑/↓ j/k: select   r: refresh   q: quit</Text>
+      </StatusBar.Right>
+    </StatusBar>
+
+    <Refresh Gesture="r"
+             Status="{{sys:Run `git-status` | into .StatusRaw}}"
+             Log="{{sys:Run `git-log` | into .LogRaw}}"
+             Branch="{{sys:Run `git-branch` | into .BranchRaw}}"/>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

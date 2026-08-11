@@ -1,4 +1,15 @@
-<Gooey xmlns="wonderforge.io/gooey/2026">
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <!-- The card's public surface, declared in markup (tutorial step 2).
+       A bound attribute passes the page's handle through, type-checked;
+       an absent one materializes a fresh source with the default below;
+       a missing Required attribute is a load error. Declaring anything
+       makes the control strict, so a misspelled attribute on the page
+       is now a load error instead of silently doing nothing. -->
+  <x:Property Name="Title" Type="string" Required="true"/>
+  <x:Property Name="Body"  Type="string" Required="true"/>
+  <x:Property Name="Sub"   Type="string" Default="no subtitle"/>
+
   <Border Title="{{.Title}}" Style="panel">
     <VStack Gap="0">
       <Text Style="accent">{{.Body}}</Text>

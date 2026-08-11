@@ -44,9 +44,10 @@ An empty event attribute is not an error; the element simply has no
 command.
 
 > **If you know XAML:** `Click="{{.Save}}"` is `Command="{Binding Save}"`
-> without `ICommand`, `RelayCommand`, or a `CommandParameter`. There is
-> no `CanExecute` yet, so there is no automatic disabled state — a
-> command is either bound or not.
+> without `ICommand`, `RelayCommand`, or a `CommandParameter`.
+> `CanExecute` exists too — `gooey.NewCommand(save).When(dirty)` — and
+> the property graph stands in for `CanExecuteChanged`, so nothing is
+> ever invalidated by hand. See [Beyond the basics](#beyond-the-basics).
 
 ## Step 2: Declare gestures in markup
 

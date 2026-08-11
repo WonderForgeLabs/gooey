@@ -2,9 +2,8 @@
 // gooey app: one implementation of the gooey.control.v1 surface
 // (docs/specs/2026-08-10-grpc-contract.md) that every transport fronts.
 // The gRPC server (the nested grpc/ module) is a proto adapter over this
-// package; the MCP server (mcp/) is scheduled to become one (issue
-// #112). One path, one model: a tool or an RPC does what this package
-// does, or it does not exist.
+// package, and the MCP server (mcp/) is another. One path, one model: a
+// tool or an RPC does what this package does, or it does not exist.
 //
 // It lives in the ROOT module on purpose. The transports are nested
 // modules because their SDKs are heavy; the logic they share is plain Go

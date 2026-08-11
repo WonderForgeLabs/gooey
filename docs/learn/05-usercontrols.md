@@ -2,8 +2,10 @@
 
 In this tutorial you package markup for reuse two ways: an **Include**,
 which needs no Go code at all, and a **UserControl**, which pairs a markup
-file with a typed setup function. You then instantiate the same control
-twice on one page and watch the two instances stay independent.
+file with a typed setup function. Along the way you declare a control's
+property surface with `<x:Property>`, so a misspelled attribute fails the
+load instead of silently doing nothing. You then instantiate the same
+control twice on one page and watch the two instances stay independent.
 
 **Time:** about 30 minutes.
 **Prerequisites:** [Tutorial 4](04-input-commands.md).
@@ -78,11 +80,64 @@ a silently blank control.
 > dependency properties you never had to declare — but that is also its
 > weakness. As written, the property surface is implicit and unchecked:
 > nothing states that a Card needs `Title`, `Body`, and `Sub`, so a
-> misspelled attribute silently does nothing. Declare the surface with
-> `<x:Property>` to have it checked; see
-> [the reference](../markup-reference.md#declared-properties-xproperty).
+> misspelled attribute silently does nothing. Step 2 fixes that.
 
-## Step 2: Write a control with code-behind
+## Step 2: Declare the card's contract
+
+Declare the surface with `<x:Property>` — direct children of the root,
+under the `x:` language-services namespace:
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <x:Property Name="Title" Type="string" Required="true"/>
+  <x:Property Name="Body"  Type="string" Required="true"/>
+  <x:Property Name="Sub"   Type="string" Default="no subtitle"/>
+
+  <Border Title="{{.Title}}" Style="panel">
+    ...
+```
+
+Each declaration is an ordinary **dependency property**, registered from
+markup — the markup tier of the same registration mechanism a setup
+function is the code tier of. At every instantiation site a three-way
+rule resolves it:
+
+- **Attribute bound** — the parent's existing handle passes through,
+  now type-checked: `Body="{{.Total}}"` must resolve to a
+  `*prop.Property[string]`, or the load fails naming the type it got.
+- **Attribute absent** — a fresh per-instance source carries the
+  declared `Default`: markup-defined, typed, bindable local state.
+- **Absent and `Required="true"`** — a load-time error:
+  `dependency property "Title" — required attribute missing on <Card>`.
+
+Declaring anything at all makes the control **strict**: an attribute the
+file does not declare is now a load error instead of a typo that
+silently does nothing. Misspell an attribute on the page —
+`<Card Titel="total" …/>` — and the load fails with:
+
+```
+markup: <Card Titel="total">: card.gooey declares no dependency property "Titel" (declared: Body, Sub, Title)
+```
+
+The card is still an Include — zero Go changes, and hot reload already
+watches the file. A few rules worth knowing:
+
+- `Required` and `Default` are exclusive: a default is what makes an
+  attribute optional.
+- The types are a plain table — `string`, `int`, `bool`, `float`,
+  `duration`, `color` — plus `Type="any"`, the escape hatch for app
+  types with no markup literal. `any` is also the only type a handler
+  expression (a command) may cross into, and it takes no `Default`.
+- `Name`, `Tooltip`, and the layout attributes (`Grid.*`, `Width`, …)
+  are never checked: they belong to the element, not the control.
+
+`cmd/cardsdemo` in this repository is the larger worked example — a
+markup-only demo whose `card.gooey` and `badge.gooey` gained a checked,
+defaulted, typed contract with zero Go changes. Full rules:
+[the reference](../markup-reference.md#declared-properties-xproperty).
+
+## Step 3: Write a control with code-behind
 
 Some controls need more than a pass-through: control-local computeds,
 commands closed over the handed-in state, typed non-string data. That is
@@ -148,7 +203,7 @@ and instantiate it twice:
 </Grid>
 ```
 
-## Step 3: Cross the boundary with typed data
+## Step 4: Cross the boundary with typed data
 
 Text bindings only carry strings. Anything else — an `int` property, a
 slice, a command — crosses through `BindingValue`, which returns the raw
@@ -181,7 +236,7 @@ a command from its parent and attach it to its own `<KeyBinding>`.
 > no reflective property walker, so a control states the type it needs
 > and fails loudly at load time if it does not get it.
 
-## Step 4: Confirm the isolation
+## Step 5: Confirm the isolation
 
 Run it, press `+1` on the left panel twice, tab into the right panel and
 press `+1` once:
@@ -216,7 +271,7 @@ is invisible to the page (like `x:Name` inside a template).
 wins, then a built-in element, then the `Includes` convention, then an
 `unknown element` error.
 
-## Step 5: Hot-reload the whole composition
+## Step 6: Hot-reload the whole composition
 
 One page rebuild re-instantiates every control, so name the other two
 files and an edit to any of them reloads the whole composition:
@@ -245,11 +300,21 @@ only the tree was rebuilt.
 
 Reach for an Include when the control is a layout with holes to fill.
 Reach for a UserControl the moment it needs behavior of its own.
+`<x:Property>` declarations sit orthogonally on both: each tier adds
+exactly one thing — Include (implicit surface, no behavior) →
+declarations (checked surface, no behavior) → declarations plus
+code-behind (checked surface, private behavior). With both, the
+declarations resolve first into a pre-populated context, then setup runs
+and *extends* it; a setup that redefines a declared name is a load
+error, because declarations own the public surface.
 
 ## What you learned
 
 - An Include turns instance attributes into the control's context, with
   zero Go code, and resolves by convention from `Context.Includes`.
+- `<x:Property>` declares the control's surface as dependency properties
+  registered from markup — typed, defaulted, `Required`-checked — and
+  makes undeclared attributes a load error.
 - A UserControl adds a per-instance setup function returning the
   instance's own context.
 - Context isolation is the contract: data crosses only through
@@ -263,13 +328,12 @@ Reach for a UserControl the moment it needs behavior of its own.
 
 ## Current limitations
 
-- A control's property surface is **implicit and unchecked until it is
-  declared** — add `<x:Property Name="Title" Type="string"/>` to the
-  control's root for names, types, defaults, `Required`, and load errors
-  on undeclared attributes
-  ([reference](../markup-reference.md#declared-properties-xproperty)).
-  A declared default is a fresh per-instance source, so it resets on hot
-  reload; durable state belongs in the app's viewmodel.
+- A control that declares nothing keeps the implicit, unchecked
+  pass-through surface — misspelled attributes silently do nothing until
+  you add `<x:Property>` declarations (step 2).
+- A declared `Default` materializes a fresh per-instance source, so it
+  **resets on hot reload**; durable state belongs in the app's
+  viewmodel, handed in through a bound attribute.
 - No styles with setters, so a control cannot be restyled from outside
   beyond passing a style name in.
 

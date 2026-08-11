@@ -1,8 +1,8 @@
 # Demo Catalog
 
-Each demo under `cmd/` exercises one slice of the framework; most are recorded as a GIF at the repo root. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
-`cmd/browser` launches any of them, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
+`cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
 ```sh
 go run ./cmd/browser
@@ -101,6 +101,21 @@ The walkthrough: a manual serialize goes stale as clicks mutate state; checking 
 
 Exercises the "no code-behind" contract — pure markup with built-in components and all delegates in the viewmodel — and viewmodel-side state serialization, where typed property handles are snapshotted into a plain struct for `encoding/json`.
 
+## cardsdemo
+
+![cardsdemo](media/demos/cardsdemo.gif)
+
+The "just XAML" UserControl demo: every panel on screen is an instance of `card.gooey` — a markup-only control resolved by convention (`ctx.Includes`), never registered, with no code-behind — and `card.gooey` itself instantiates `badge.gooey`, proving markup-only controls nest. The page context has `Values` and `Styles` only: no `Components` map, no setup func anywhere in the app.
+
+The control's contract is *declared*, not implied: four `<x:Property>` elements give `card.gooey` typed, defaulted, partly-required dependency properties. Literals (`Title`, `Caption`) coerce into fresh per-instance sources; bindings (`Value`, `Trend`) pass the dashboard's live handles straight through, type-checked — so four instances of one control show four different ticking data streams, and a misspelled attribute is a load error instead of an attribute nothing reads. This is the `x:Property` spec's canonical consumer ([spec](specs/2026-08-10-markup-declared-properties.md)).
+
+The data stream is declared too: a `<Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Ticking}}"/>` in the page markup drives the metrics ([timerdemo.gif](media/demos/timerdemo.gif) isolates this element). The checkbox's `Checked` shares the same `Ticking` property the Timer's `Enabled` binds, and `Enabled` is read at fire time on the UI loop — so unchecking the box pauses the stream through the property graph, with no start/stop call anywhere.
+
+- Run: `go run ./cmd/cardsdemo`
+- Keys: `space`/click toggle the ticking checkbox, `q`/`esc`/`ctrl+c` quit
+
+Exercises markup-declared dependency properties end to end (declaration, type-check, per-instance defaults, strict mode), convention-resolved Includes nesting, and the `<Timer>` element's Composer-owned lifecycle. All three `.gooey` files hot-reload; editing `card.gooey` restyles every card at once, state intact.
+
 ## temporaldemo
 
 ![temporaldemo](media/demos/temporaldemo.gif)
@@ -168,6 +183,126 @@ The walkthrough: the opening fetch fills page one (25 of 30 running executions) 
 
 Exercises the whole phase-2 stack: the visibility pack's scalar convenience activities (the only shapes that survive both markup boundaries — string args in, string result out of the provider's `any`-typed decode), `ItemsView` + `ItemsOf` over protojson rows with the selection-move damage pinned at three paint nodes, markup-built commands invoked from viewmodel intents through their `Name` (run/next/prev are bookkeeping around the same command the button carries), and the visibility worker as a companion.
 
+## wizardui
+
+A terminal that has no application in it. `wizardui` knows how to render gooey markup, how to poll a Temporal query, and how to send a signal — and nothing else. It does not know what a wizard is, what stages exist, or what any button does: every screen it draws arrived as the payload of a workflow query a moment earlier, and every press it handles was described by that same payload:
+
+```xml
+<Button Content="approve" Click="{{wf:Signal `approve` | into .Notice}}"/>
+```
+
+The workflow *is* the application — UI structure and behavior live in workflow code, versioned and replayed like any other workflow state, and the terminal is a dumb (but themed) renderer. The one thing the client contributes to behavior is the **capability grant**: it registers the workflow handler namespace (`handlers/temporal/workflowui.go`) against one client and one workflow ID, so served markup can signal that workflow and nothing else — it cannot start activities, fetch a URL, or name a different workflow. Delete the `RegisterHandlers` call and the served markup stops loading, naming the URI it wanted. The version/revision split keeps the poll loop cheap: the query answer carries a revision, and the client re-renders only when it changes.
+
+GIF: docs-and-demos workflow; [`handlers/temporal/wizarddemo.gif`](../handlers/temporal/wizarddemo.gif) shows an earlier cut.
+
+- Run: needs a Temporal dev server; the wizard worker runs as a gooey companion by default, all from `handlers/temporal/`:
+
+  ```sh
+  temporal server start-dev --headless   # shell 1
+  go run ./cmd/wizardui                  # shell 2
+  ```
+
+  or truly one shell, with the dev server as a `gooey.CompanionCmd` child process: `go run ./cmd/wizardui --with-dev-server`. Or three shells, the real-deployment shape: `go run ./workers/wizardworker` where the compute is, and `go run ./cmd/wizardui --with-worker=false`. The UI cannot tell the difference.
+- Keys: whatever the served markup declares — `tab` moves focus, buttons press with `enter`/`space`, `q` quits via the served page's own binding
+
+Exercises workflow-served markup end to end: markup as *data* crossing a query boundary, the `wf:` handler namespace with its optional `| into` receipt, registration-as-capability-grant scoped to a single workflow ID, and companions (`gooey.Companion` goroutines and `gooey.CompanionCmd` child processes, [spec](specs/2026-08-10-companions.md)) collapsing a three-shell deployment into one.
+
+## mcpdemo
+
+![mcpdemo](media/demos/mcpdemo.gif)
+
+A small gooey app that is also an MCP server: an agent (or any MCP
+client) attaches to `http://127.0.0.1:7777/mcp` and reads the live tree,
+screenshots the terminal as text, clicks the buttons by name, sets
+viewmodel values, types into the text box, and replaces the whole page
+with new markup — while the app keeps running and a `Timer` keeps
+ticking. The automation surface, the accessibility surface and the
+live-edit surface are one protocol.
+
+The point is the pairing: the UI is ordinary markup with `Name=`
+attributes and a viewmodel of typed property handles, and the MCP
+surface falls out of that with no extra declaration. Names come from
+`Name=`, the bindable state IS the Context's `Values` map, and the
+commands the buttons already run are the commands an agent invokes.
+Nothing in the demo is written for the agent's benefit except the single
+`mcp.Serve` call — which is also the whole security posture: opt-in,
+loopback-only, no auth, and an MCP client can do anything the keyboard
+can.
+
+The walkthrough (every change in the GIF is a tool call from a script):
+`tree_snapshot` returns the component tree with names, `screen_text` the
+rendered screen, `invoke_command` presses `Increment` and `Cycle`,
+`set_value` writes an agent's note into the bound `Note` property,
+`focus` + `send_keys` type into the text box the long way, and
+`swap_markup` replaces the page out from under the viewmodel — the
+counter's value survives, because state lives in the properties, not the
+tree.
+
+- Run: `cd mcp && go run ./cmd/mcpdemo -mcp 127.0.0.1:7777` (empty
+  `-mcp` disables the server). It lives in `mcp/` because the MCP SDK's
+  dependency graph is quarantined in that nested module.
+- Keys: `tab` move, `enter`/`space` press, `q` quit — but the keyboard
+  is the demo's *second* input device.
+
+Exercises the MCP server end to end: `mcp.Serve` over the root-module
+`control` package, every tool marshaled through the Dispatcher onto the
+UI loop, and hot-swappable markup as a wire payload
+([spec](specs/2026-08-10-mcp-server.md)). [Tutorial 8](learn/08-remote-control.md)
+drives this surface step by step.
+
+## kanbandemo + temporal-worker
+
+A real Kanban board — Todo, Doing, Done — that is also an MCP server,
+and the target `examples/temporal-worker` pushes generated UI into.
+
+GIF: docs-and-demos workflow.
+
+Each column is a `components.ItemsView` over an ordinary Go slice
+(`*prop.Property[[]Card]`); adding, moving and removing cards is
+"mutate the slice, `Set` it back", and the view's windowing and row
+reuse do the rest. The bottom panel is a hand-rolled two-tab switcher —
+an "mcp" tab with the endpoint and tool-usage help, and a "log" tab
+showing every raw MCP request/response this server has handled, live,
+captured by wrapping the MCP handler at the HTTP layer (which is why the
+demo uses `mcp.New` + its own `http.Server` instead of the `mcp.Serve`
+convenience). The log pane's `ItemsView` is Go-composed and registered
+as a custom `LogPanel` element because its tail-anchored `Scroll` field
+has no markup attribute yet.
+
+The worker is the control-plane story run from the other side:
+`examples/temporal-worker` is a Python Temporal worker with one
+**dynamic activity** that answers to any activity type name a caller
+invents, hands the name plus a topic to Claude, and pushes the generated
+markup into the running board over `swap_markup` (generation is
+constrained to bindingless elements, so the page can never reference a
+value the host viewmodel lacks — a bad page would be rejected
+atomically). `-with-worker` runs it as a `gooey.CompanionCmd`: started
+before the first frame, killed (process group and all) when the app
+quits, output redirected to a log file because the app owns the tty
+([companions spec](specs/2026-08-10-companions.md)).
+
+- Run: `cd examples/kanbandemo && go run . -mcp 127.0.0.1:7778` — its
+  own module, for the same dependency-quarantine reason as `mcpdemo`.
+  With the worker companion (needs a Temporal server and a Python venv
+  with `examples/temporal-worker/requirements.txt`):
+
+  ```sh
+  go run . -mcp 127.0.0.1:7778 -with-worker -worker-python /path/to/.venv/bin/python
+  ```
+
+  then trigger it from `examples/temporal-worker`:
+  `TEMPORAL_TASK_QUEUE=kanbandemo-dynamic-ui python trigger.py GenerateUI "some topic"`.
+- Keys: `tab` move focus, type in the input and `enter` adds a card,
+  each column's buttons move/remove the selected card, `ctrl+t` (or the
+  `[ MCP ]`/`[ Log ]` header buttons) flips the bottom tab, `q` quit
+
+Exercises `ItemsView` as a real list surface (three views, shared
+selection properties, `SelectionChanged`-free navigation), `Visibility`
+bindings as a tab mechanism with no structural rebuild, the MCP surface
+under instrumentation, and `gooey.CompanionCmd` collapsing a
+hand-managed sidecar into the app's own lifetime. It is the app
+[Tutorial 8](learn/08-remote-control.md) drives.
+
 ## colordemo
 
 ![colordemo](media/demos/colordemo.gif)
@@ -178,7 +313,25 @@ The walkthrough: the `ColorPicker` edits one `Accent` property; the border, titl
 
 The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven by identical keystrokes so the two tiers can be compared at the same color: the truecolor pass shows smooth bars, a wide swatch, and a bare `#FFAA3C`; the 256 pass shows banded bars, a narrow swatch, and `#FFAA3C → xterm 215`. On a 16-color terminal the bars stop pretending to be gradients at all and become a fill meter with `≈ yellow`.
 
-- Run: `go run ./cmd/colordemo`, or `--depth=truecolor|256|16` to force a tier
+There is a fourth tier the GIF can never show. On a terminal with a
+graphics protocol and a known cell size, each channel bar records **one**
+`Frame.Place` of a gradient image generated at the terminal's exact
+pixels-per-cell — the same sweep `renderBar` paints per cell, drawn per
+pixel instead. The marker is baked into the bar image rather than
+overlaid, because overlapping placements have no reliable stacking on any
+protocol; a channel move is therefore a replace of that one bar under its
+existing id, and a state-identical repaint reuses the cached image and
+costs zero bytes on the wire. The cell tier is byte-identical to what it
+always was — the pixel tier is purely additive, which is what lets the
+cell buffer stay the thing a protocol without placement identity
+repaints from. Recording under a pty always yields the cell tier (agg
+renders the cell plane only), so `--graphics=kitty|sixel|iterm2|cells`
+forces the tier for verification and the status line names the one in
+play. Ground truth: [the ColorPicker pixel-tier
+spec](specs/2026-08-10-colorpicker-pixel.md).
+
+- Run: `go run ./cmd/colordemo`, `--depth=truecolor|256|16` to force a
+  color tier, or `--graphics=kitty|sixel|iterm2|cells` to force the pixel tier
 - Keys: `↑`/`↓` channel, `←`/`→` adjust (shift = ×16), `home`/`end` saturate, click or scroll a bar, `q` quit
 
 Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching components through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
@@ -220,12 +373,18 @@ live: the browser watches `cmd/`, the example directories, and
 `recordings/`, so a new demo, an edited README, or a recording created
 while it runs appears without a restart (recordings are marked ● gif / ○
 cast and feed the info pane; ▶ marks an entry playable from a GIF outside
-`recordings/`, which is where most of the checked-in ones live).
+`recordings/` — the checked-in ones under `docs/media/demos/`).
 
 `r` records the selected entry: the run is wrapped in `asciinema rec`
 (the demo drives the recorded terminal) and converted to a GIF with `agg`
 when available — artifacts land in `recordings/` and immediately show up
 in the listing.
+
+Two groups is all it indexes: `cmd/` and the tutorial examples under
+`docs/learn/examples/`. The nested-module demos — `temporaldemo`,
+`temporalops`, `wizardui`, `mcpdemo`, `kanbandemo` — are absent by
+construction, because each has to be run from inside its own module's
+directory so its `go.mod` graph applies.
 
 The tree being browsed doesn't have to be the tree the browser was
 launched from. `b` opens a **source picker**: every worktree of the
@@ -277,9 +436,10 @@ the gauges and the sparkline are the framework's own `components.Gauge` and
 threshold coloring driven by the sampled values. Every displayed number
 flows through a dependency property, and the sampler only `Set`s values
 that actually changed — so on an idle system a 700ms tick repaints
-almost nothing, and the damage counter proves it. The process table
-stays demo-local deliberately: generalized lists are the DataTemplates
-epic, and this table is one of its target consumers.
+almost nothing, and the damage counter proves it. The process table was
+the DataTemplates epic's target consumer, and it now rides
+`components.ItemsView` with a Go-composed row template — the sort keys
+stay demo-local, the list machinery does not.
 
 - Run: `go run ./cmd/sysmon`
 - Keys: `c`/`m` sort the process table by CPU / memory, `q` quit

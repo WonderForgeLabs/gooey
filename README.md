@@ -93,9 +93,11 @@ The root package `gooey` is the framework: the `Component` contract,
 `Base`, the layout sandwich, `Frame`, `Composer`, `Dispatcher`, `App`,
 and input routing. The built-in components — `Text`, `Button`,
 `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`,
-`Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, and
-the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`,
-`StatusBar`, `ButtonBar` — live in `gooey/components`, which imports the root and is
+`Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, the
+containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`,
+`StatusBar`, `ButtonBar`, and the overlays `MenuBar`, `ToastHost`,
+`Tooltip`, and `AdornmentLayer` (their shared anchored-overlay mechanics
+are the Go-side `Popup` primitive) — live in `gooey/components`, which imports the root and is
 never imported by it. Writing your own component means embedding
 `gooey.Base` and implementing `gooey.Component`; the built-ins have no
 privileges you do not. Under both sit `prop` (the property graph),
@@ -109,7 +111,7 @@ and `mcp` modules.
 Reusable capability ships from this repo in three shapes, per the
 [pack-distribution doctrine](docs/specs/2026-08-10-pack-distribution.md):
 **handler packs** (`handlers/<name>` — gooey-coupled `HandlerProvider`s
-behind an xmlns URI: `net`, `temporal`), **activity packs**
+behind an xmlns URI: `net`, `fs`, `temporal`, `exec`), **activity packs**
 (`packs/<runtime>-<domain>` — gooey-free standalone modules anyone in
 that runtime's ecosystem can import: `packs/temporal-visibility`), and
 plain **component/format libraries** (root packages). The module
@@ -122,6 +124,28 @@ it, and **registration names the capability's scope** (a client, an
 `fs.FS` root, an allowlist, a task queue); each exposes its registered
 names as data (`AllNames()`) and carries its own README. Releases are Go
 nested-module tags (`packs/temporal-visibility/v0.1.0`).
+
+## The control plane
+
+A running gooey app can be a server as well as a screen. The root-module
+`control` package is the one implementation of that surface — read the
+tree and the screen, invoke commands, set values, drive keys and mouse,
+swap the page's markup — and every transport is a thin adapter over it:
+`mcp.Serve(app, …)` exposes it as MCP tools (the nested `mcp/` module),
+and the gRPC server (the nested `grpc/` module,
+[contract](docs/specs/2026-08-10-grpc-contract.md)) fronts the same
+service. The demos run this in both directions. `wizardui` inverts the
+usual arrangement: its markup is *served by* a Temporal workflow — the
+workflow is the application, versioned and replayed like any workflow
+state, and the terminal contributes only the capability grant that lets
+served markup signal that one workflow. `examples/kanbandemo` is driven
+from the outside instead: `examples/temporal-worker`, a Python Temporal
+worker, has Claude generate a page and pushes it into the running board
+through the MCP `swap_markup` tool. The sidecars these arrangements need
+— a worker, a dev server — ride `gooey.Companion` (goroutines) and
+`gooey.CompanionCmd` (child processes), started before the first frame
+and stopped with the app
+([companions spec](docs/specs/2026-08-10-companions.md)).
 
 ## Where it stands vs modern XAML
 
@@ -141,6 +165,7 @@ nested-module tags (`packs/temporal-visibility/v0.1.0`).
 | DataTemplates / ItemsView | done | `<ItemsView.ItemTemplate>` via the XAML property-element syntax; the template is a factory instantiated per item against an isolated context. Items arrive through a projection func (`map[string]any`) — the no-reflection stand-in for `x:DataType`. Rows are windowed and index-keyed, so a one-item change repaints one row. No grouping, headers, horizontal orientation, or multi-select |
 | Adornments + Tooltip | done | WPF's adorner plane: an `AdornmentLayer` (last child of the root) hosts components positioned against a *target's* arranged bounds — re-anchored every frame, dropped when the target vanishes. `Tooltip` is the first customer: `<Tooltip Text="…"/>` as a KeyBinding-style attachment or `Tooltip="…"` on any element, delay timer, flip-to-fit, gesture hints, pure markup ([spec](docs/specs/2026-08-10-adornments.md)) |
 | Validation | done | Validators are computeds — `validate.Field(src, rules…)` yields an error property (empty = valid, first failure wins), `validate.All` a value-stabilized is-valid for submit gating via `.When()`. The built-in vocabulary is .NET's DataAnnotations set (Required, MinLen/MaxLen, Pattern, EmailAddress, Url, Phone, CreditCard, Digits, Integer, MinValue/MaxValue, Compare, Range) with stock messages, no third-party deps, and stricter-than-.NET semantics where it matters. Markup: a `<Validate Required="true" EmailAddress="true"/>` behavior on the input (bare child or `<X.Behaviors>` slot) builds the same computed, publishes it (`Into`) for inline error `<Text>`s, and wires the TextBox's invalid visual; `ctx.Rules` registers domain rules beyond the annotations; `<ValidationMarker/>` floats the message via the AdornmentLayer for dense layouts ([spec](docs/specs/2026-08-10-validation-core.md)) |
+| Menus, toasts, popups | done | `MenuBar` (modal dropdowns, page-wide `alt+letter` mnemonics, focus restored on dismiss) and `ToastHost` (auto-dismissed notifications), both declared as the *last* children of the root because document order is z-order. Their shared lifecycle — anchored surface, focus save/restore, pointer capture, dismissal grammar — is extracted as the Go-side `Popup` primitive ([spec](docs/specs/2026-08-10-popup.md)); there is no markup `<Popup>` element yet |
 | Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Components read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | done | `<x:Property Name="Title" Type="string" Default="untitled"/>` on a control's root — declared markup properties are ordinary dependency properties, registered from markup. Bound attributes pass the parent's handle through type-checked, absent ones materialize a per-instance source with the default, `Required` is a load error. Declaring a surface makes the control strict. Types are a type-switch table (`string`/`int`/`bool`/`float`/`duration`/`color`/`any`), no reflection. No markup-declared *attached* properties; declared defaults reset on hot reload ([spec](docs/specs/2026-08-10-markup-declared-properties.md)) |
 | Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
@@ -148,7 +173,10 @@ nested-module tags (`packs/temporal-visibility/v0.1.0`).
 
 ## Demos
 
-All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
+Each has a walkthrough in [docs/demos.md](docs/demos.md). Most live
+under `cmd/`; demos whose dependencies are quarantined in nested modules
+live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
+`examples/`) and run from that module's directory.
 
 | Demo | GIF | Proves |
 |---|---|---|
@@ -159,9 +187,13 @@ All are cataloged with walkthroughs in [docs/demos.md](docs/demos.md).
 | `cmd/finder` | [finder.gif](docs/media/demos/finder.gif) | Input-to-derived-view pipeline with per-pane damage |
 | `cmd/reader` | [reader.gif](docs/media/demos/reader.gif) | Multi-UserControl composition, scoped input, live fetches |
 | `cmd/statedemo` | [statedemo.gif](docs/media/demos/statedemo.gif) | No-code-behind markup and reactive serialization |
+| `cmd/cardsdemo` | [cardsdemo.gif](docs/media/demos/cardsdemo.gif) | Markup-declared `<x:Property>` surfaces: one markup-only control, four instances over four live data streams ([timerdemo.gif](docs/media/demos/timerdemo.gif) isolates its `<Timer>` element) |
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](docs/media/demos/temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
+| `handlers/temporal/cmd/temporalops` | [temporalops.gif](docs/media/demos/temporalops.gif) | A live Temporal visibility dashboard: every Temporal call declared in markup, an `ItemsView` over real API responses, paging on real page tokens |
+| `handlers/temporal/cmd/wizardui` | [wizarddemo.gif](handlers/temporal/wizarddemo.gif) (earlier cut; final GIF: docs-and-demos workflow) | Workflow-served markup: every screen arrives as a workflow query payload, and the terminal contributes only the capability grant |
 | `cmd/colordemo` | [colordemo.gif](docs/media/demos/colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/mcpdemo` | [mcpdemo.gif](docs/media/demos/mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
+| `examples/kanbandemo` | — | A real Kanban board that is also an MCP server, with a live traffic log; `examples/temporal-worker` pushes generated markup into it over `swap_markup` |
 | `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The UI toolkit — the wave-1 components, wave 2's MenuBar and ToastHost overlays, and tooltips on the buttons through the AdornmentLayer |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
