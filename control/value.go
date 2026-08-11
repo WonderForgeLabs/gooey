@@ -140,11 +140,14 @@ func (v Value) Equal(o Value) bool {
 	case KindAny:
 		return bytes.Equal(v.JSON, o.JSON)
 	case KindImage:
-		// Identity, not pixels. Delta collection asks this once per frame
-		// per session, and comparing two decoded images pixel by pixel
-		// would put an image diff on the frame path. A client that sets
-		// the same picture twice gets one redundant delta; a client that
-		// sets a different one always gets a delta.
+		// Source bytes when both carry them — that is an exact answer and
+		// a cheap one. Otherwise identity: comparing two decoded images
+		// pixel by pixel would put an image diff on the frame path, which
+		// delta collection runs once per frame per session.
+		a, b := ImageBytesOf(v.Image), ImageBytesOf(o.Image)
+		if a != nil && b != nil {
+			return bytes.Equal(a, b)
+		}
 		return v.Image == o.Image
 	}
 	return true
@@ -158,6 +161,42 @@ func DurationValue(v time.Duration) Value { return Value{Kind: KindDuration, Dur
 func ColorValue(v render.Color) Value     { return Value{Kind: KindColor, Color: v} }
 func JSONValue(v []byte) Value            { return Value{Kind: KindAny, JSON: v} }
 func ImageValue(v image.Image) Value      { return Value{Kind: KindImage, Image: v} }
+
+// SourceImage is a decoded image that still carries the bytes it came
+// from. It IS an image.Image, so it binds to <Image Src> like any other
+// and nothing downstream needs to know about it.
+//
+// It exists because decoding is lossy in the direction that matters
+// here: given only an image.Image, a reader cannot answer "what did the
+// client send?" — it can only re-encode, which is a different file, and
+// puts an encoder on the ListValues and frame-delta paths to produce it.
+// Keeping the source bytes beside the pixels makes read-back exact and
+// free, at the cost of holding the encoded form for as long as the
+// property lives.
+//
+// A picture constructed in-process (not decoded from bytes) is an
+// ordinary image.Image with no source, and read-back reports no bytes
+// for it rather than inventing some.
+type SourceImage struct {
+	image.Image
+	Bytes []byte
+}
+
+// ImageBytesOf returns the encoded bytes an image was decoded from, or
+// nil when it did not come from any — a type assertion rather than an
+// interface method, so image.Image stays the currency everywhere else.
+func ImageBytesOf(img image.Image) []byte {
+	if si, ok := img.(SourceImage); ok {
+		return si.Bytes
+	}
+	return nil
+}
+
+// DecodedImageValue is ImageValue for a picture that came from bytes:
+// it keeps the source so a reader can hand back exactly what arrived.
+func DecodedImageValue(img image.Image, src []byte) Value {
+	return Value{Kind: KindImage, Image: SourceImage{Image: img, Bytes: src}}
+}
 
 // EntryKind classifies one name in the binding context.
 type EntryKind int
