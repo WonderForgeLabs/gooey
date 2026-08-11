@@ -35,12 +35,19 @@ jobs:
       # handlers/temporal is a separate module, excluded from the root
       # ./... patterns. The guard keeps CI green both before and after it
       # lands on main.
+      #
+      # -race for the reason handlers/exec and mcp have it: the provider
+      # runs every activity on its own goroutine, so a page that fires
+      # several at once is exactly the shape the detector exists for.
+      # Without it the module's concurrency is untested, which is how
+      # #182 sat on main unnoticed.
       - name: Build and test handlers/temporal
         run: |
           if [ -f handlers/temporal/go.mod ]; then
             cd handlers/temporal
             go build ./...
-            go test ./...
+            go vet ./...
+            go test -race ./...
           else
             echo "handlers/temporal/go.mod not present; skipping"
           fi
