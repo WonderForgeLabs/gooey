@@ -49,7 +49,9 @@ FRAMEWORK INVARIANTS — violating one is a defect, not a style choice:
 - Anything Startable must close-and-join: close(done) alone lets one tick post after Close — pair it with <-stopped or lifetime tests flake.
 - Event/command fields are gooey.Action, not bare func(); test presence with gooey.CanExecute, never != nil.
 - Markup-first: the UI is declared in a .gooey file; Go holds the viewmodel and logic. Markup served for swap needs a key-complete Values map — a key whose value is "" must still exist or the page fails to load.
-- Damage-count tests pin repaint behavior where it is non-trivial (model: components/tabs_test.go — switch paints exactly 3, idle 0, hover 1).
+- UI-goroutine confinement: properties, tree, and composer are Dispatcher-confined. Anything async (timers, network, MCP) marshals back through the Dispatcher; never touch a property from another goroutine, and never Set during an evaluation.
+- Load errors are house-wide policy: anything statically checkable in markup fails at load — "accepted but silently ignored" is a refused failure mode.
+- Damage-count tests pin repaint behavior where it is non-trivial (models: markup/tabs_test.go for pins through built markup — a bound tab switch paints exactly 3 — and components/tabs_test.go; the counter is Composer.Frame's second return, or app.PaintedLastFrame()).
 - docs/specs/2026-08-10-*.md are the contracts for their subsystems — read the ones that touch what you are building before writing code.`
 
 // The live prototyping harness: a throwaway module hosting the
@@ -58,7 +60,7 @@ FRAMEWORK INVARIANTS — violating one is a defect, not a style choice:
 const HARNESS = `
 LIVE PROTOTYPING HARNESS (build once, reuse every round):
 - Scratch module OUTSIDE the repo at /tmp/gooey-proto-<name>/: own go.mod (module scratch/proto) requiring github.com/WonderForgeLabs/gooey and github.com/WonderForgeLabs/gooey/mcp, with replace directives at ${REPO} and ${REPO}/mcp. mcp/ is a nested module — anything importing it needs its own module (see the header comment in ${REPO}/examples/kanbandemo/go.mod).
-- Model main.go on ${REPO}/mcp/cmd/mcpdemo/main.go: markup loaded from a .gooey file with the dev watcher so file edits hot-reload, a viewmodel of prop.NewSource/NewComputed handles, and one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call. Pick a free port (not 7777).
+- Model main.go on ${REPO}/mcp/cmd/mcpdemo/main.go: load the page with markup.Page(os.DirFS(dir), "name.gooey", ctx, also...) — App.Run wires its watcher through the Dispatcher so file edits hot-reload (~300ms polling; the older markup.Watch built trees off the UI goroutine and is not the path). Name any Include/UserControl files in the also... variadic or edits to them will not reload. Viewmodel is prop.NewSource/NewComputed handles; then one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call — pass the markup Context or the name-addressed tools (list_values, set_value, invoke_command) see nothing. Pick a free port (not 7777); an empty Addr means an ephemeral port readable from srv.Addr().
 - A gooey app needs a pty: run it in the background under script -qec "stty cols 110 rows 32; /tmp/gooey-proto-<name>/proto" /dev/null — the stty MUST set a size or the pty is 0x0 and paints nothing.
 - Drive it over MCP streamable HTTP at http://127.0.0.1:<port>/mcp. Plain curl JSON-RPC works: initialize, notifications/initialized (carry the Mcp-Session-Id header), then tools/call — read ${REPO}/mcp/e2e_linux_test.go for the exact wire sequence, and leave a drive.sh wrapper in the scratch dir so later rounds reuse it.
 - The tools: screen_text (your screenshot — quote it in results and in AskUserQuestion previews), tree_snapshot, swap_markup / patch_markup / validate_markup (change the UI without restarting), send_keys, send_mouse, focus, set_value / list_values, invoke_command, list_styles, register_properties.
@@ -230,7 +232,7 @@ Rules:
 - Location: cmd/${interview.name}/ in the root module; examples/${interview.name}/ with its OWN go.mod only if it imports gooey/mcp or other quarantined deps (copy the module-header rationale style from examples/kanbandemo/go.mod).
 - Markup-first: the UI is a .gooey file (start from the harness prototype at ${design.markupFile} — it is the approved design), Go holds the viewmodel/logic. Follow the house host-loop idiom from the closest existing demo.
 - A package-header comment in main.go saying what the demo proves and its key map (the docs agents read these).
-- Damage-count tests where behavior is non-trivial, following components/tabs_test.go's style; skip them only where the demo is a straight composition of already-pinned components.
+- Damage-count tests where behavior is non-trivial, following markup/tabs_test.go's style (build from markup, mutate a bound source, assert the exact painted count); skip them only where the demo is a straight composition of already-pinned components.
 - Build your binary to /tmp to smoke it, never into the repo.
 ${INVARIANTS}
 ${GIT_RULES}`,
