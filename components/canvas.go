@@ -74,7 +74,7 @@ func (c *Canvas) Arrange(b gooey.Rect) {
 		if l != nil {
 			left, top = l.Left, l.Top
 		}
-		s := c.sizes[i]
+		s := measuredAt(c.sizes, i)
 		gooey.ArrangeChild(ch, gooey.Rect{
 			X: b.X + left,
 			Y: b.Y + top,

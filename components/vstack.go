@@ -48,7 +48,7 @@ func (v *VStack) Arrange(b gooey.Rect) {
 	y := b.Y
 	placed := false
 	for i, c := range v.Children {
-		s := v.sizes[i]
+		s := measuredAt(v.sizes, i)
 		if gapBefore(c, placed) {
 			y += v.Gap
 		}

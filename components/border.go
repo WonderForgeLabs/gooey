@@ -42,6 +42,17 @@ func (b *Border) Arrange(r gooey.Rect) {
 
 func (b *Border) Render(f *gooey.Frame) {
 	r := b.Bounds()
+	// A degenerate rect is not a small box: with W or H at zero the
+	// far-edge arithmetic (r.X+r.W-1) walks BACKWARDS, and the corners
+	// land outside the node's own bounds — outside its damage rect, so
+	// the composer never cleans them and the scar is permanent. Zero
+	// size happens routinely: a Visible Border inside a Collapsed
+	// ancestor (a hidden Tabs page) is arranged into nothing while
+	// staying paintable. Painting only inside your own bounds is the
+	// damage contract; this is where a Border keeps it.
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
 	style := getSty(b.Style)
 	if !style.Bg.Set {
 		if col := getColor(b.Background); col.Set {

@@ -45,6 +45,14 @@ func (g *Gauge) Render(f *gooey.Frame) {
 		st = g.Style.Get()
 	}
 	label := getStr(g.Label)
+	// Nothing to paint into: a Visible component inside a Collapsed
+	// ancestor is arranged to nothing, and writing a row at b.Y
+	// anyway puts cells outside this node's damage rect, where the
+	// Composer's sweep will never clean them. The state reads above
+	// stay above the guard — the Get-order rule.
+	if b.W <= 0 || b.H <= 0 {
+		return
+	}
 	// Reserve the label and the trailing " 100%" readout; whatever is
 	// left is bar.
 	const readout = 5

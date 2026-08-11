@@ -1,10 +1,12 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 func text(s string) *Text { return &Text{Content: prop.NewSource(s)} }
@@ -90,6 +92,228 @@ func TestGridStarWeights(t *testing.T) {
 	g.Arrange(gooey.Rect{X: 0, Y: 0, W: 40, H: 3})
 	if ab, bb := a.Bounds(), b.Bounds(); ab.W != 10 || bb.W != 30 || bb.X != 10 {
 		t.Fatalf("a=%+v b=%+v, want 10/30 split", ab, bb)
+	}
+}
+
+// A Grid that is Collapsed on the frame it first appears is ARRANGED
+// without ever having been Measured: ArrangeChild sends a Collapsed
+// child straight to Arrange at a zero rect, while MeasureChild returns
+// without calling Measure at all. The track cache is therefore empty
+// when Arrange reads it, and reading it by index used to panic — so
+// every hidden Tabs page rooted in a Grid, and every
+// Visibility="Collapsed" Grid, crashed on its first frame.
+func TestCollapsedGridArrangesWithoutMeasure(t *testing.T) {
+	body := text("body")
+	g := &Grid{
+		Rows:     []GridLen{Star(1)},
+		Cols:     []GridLen{Auto(), Star(1)},
+		Children: []gooey.Component{gooey.L(body, gooey.Layout{Row: 0, Col: 1})},
+	}
+	gooey.LayoutOf(g).Visibility = gooey.Collapsed
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{g}}, 20, 6)
+	// Panicked here before Arrange grew its zero-rect guard AND
+	// distributeStars grew its track-cache padding. Either alone keeps
+	// this up, so the line pins the pair rather than one of them.
+	c.Frame()
+
+	if b := body.Bounds(); b.W != 0 || b.H != 0 {
+		t.Fatalf("a collapsed grid's child has bounds %+v, want nothing", b)
+	}
+	// And it comes back: made visible, the ordinary measure/arrange
+	// sandwich fills the cache and the child gets its cell.
+	gooey.LayoutOf(g).Visibility = gooey.Visible
+	c.Invalidate()
+	c.Frame()
+	if b := body.Bounds(); b.W == 0 || b.H == 0 {
+		t.Fatalf("after becoming visible the child has bounds %+v, want a real cell", b)
+	}
+}
+
+// Collapsing a laid-out Grid has to take its whole subtree off screen.
+// The Composer erases a component's cells by noticing its BOUNDS
+// changed, so a descendant that keeps the rect it had is never swept
+// and stays painted over whatever replaced it — which is what a hidden
+// Tabs page rooted in a Grid did, leaving the outgoing page's text
+// showing through the incoming one.
+//
+// The Grid is deliberately NOT at the screen origin and its tracks are
+// Auto. Both matter: Auto tracks come out of the MEASURE cache, which an
+// Arrange into nothing does not refresh, and the offset is what makes
+// the stale track offsets hand the child back its exact old ABSOLUTE
+// rect. A Grid at 0,0 with star tracks hides the bug, because stars
+// shrink with the extent and the bounds change anyway.
+//
+// Bounds are the mechanism, so they are asserted — but bounds alone do
+// not prove the subtree stopped painting, which is the actual claim.
+// The damage rectangles are what prove it, and the screen is the
+// user-visible consequence.
+func TestCollapsedGridZeroesItsSubtree(t *testing.T) {
+	body := text("body")
+	inner := &VStack{Children: []gooey.Component{body}}
+	g := &Grid{
+		Rows:     []GridLen{Auto(), Auto()},
+		Cols:     []GridLen{Auto()},
+		Children: []gooey.Component{gooey.L(inner, gooey.Layout{Row: 1})},
+	}
+	root := &VStack{Children: []gooey.Component{text("header"), g}}
+	c := gooey.NewComposer(root, 20, 6)
+	c.Frame()
+	c.Frame() // settle: the next frame's damage is only what the collapse costs
+	live := body.Bounds()
+	if live.W == 0 || live.H == 0 {
+		t.Fatalf("the child starts at %+v, want a real cell", live)
+	}
+
+	gooey.LayoutOf(g).Visibility = gooey.Collapsed
+	c.Invalidate()
+	f, _ := c.Frame()
+
+	// Zero AREA, not zero on both axes: a stack panel arranged into
+	// nothing still hands its children the height its measure cache
+	// remembers, so a leaf legitimately ends at W=0,H=1. Nothing paints
+	// through a zero-width rect, and the bounds still CHANGED, which is
+	// what wakes the sweep.
+	if b := body.Bounds(); b.W > 0 && b.H > 0 {
+		t.Errorf("after collapsing the grid its child still covers cells: %+v", b)
+	}
+	// The damage count that matters is the count of rectangles with AREA
+	// that still sit inside the collapsed subtree's old footprint. The
+	// collapse must repaint the vacated region to nothing, not repaint
+	// the subtree in place: a descendant that kept its rect shows up
+	// here as a live rectangle, and that is exactly the regression.
+	// CONTAINED in the vacated rect, not merely overlapping it: an
+	// ancestor that legitimately spans the screen (the root stack)
+	// overlaps everything and is not what this is about. A rectangle
+	// that fits inside the footprint the subtree just gave up is a node
+	// that kept its slot — the regression, exactly.
+	stale := 0
+	for _, d := range c.Damage() {
+		if d.W > 0 && d.H > 0 &&
+			d.X >= live.X && d.X+d.W <= live.X+live.W &&
+			d.Y >= live.Y && d.Y+d.H <= live.Y+live.H {
+			stale++
+		}
+	}
+	if stale != 0 {
+		t.Errorf("collapsing the grid left %d component(s) still painting inside the vacated rect %+v (damage %+v)",
+			stale, live, c.Damage())
+	}
+	if b := inner.Bounds(); b.W > 0 && b.H > 0 {
+		t.Errorf("the intermediate container kept its cells: %+v", b)
+	}
+	if row := rowText(f, live.Y, 20); strings.TrimSpace(row) != "" {
+		t.Errorf("the collapsed subtree is still on screen: row %d = %q", live.Y, row)
+	}
+
+	// And it settles: with nothing else changing, the frame after the
+	// collapse repaints nothing at all.
+	if _, n := c.Frame(); n != 0 {
+		t.Errorf("the frame after the collapse repainted %d components, want 0", n)
+	}
+}
+
+// A bound Visibility keeps working underneath a Collapsed ancestor.
+//
+// This is the failure that would be silent: the subscription for a bound
+// Visibility lives in the Composer's per-node observer computed, whose
+// EVALUATION is the subscription (the call-site rule). MeasureChild also
+// syncs the field, but as a plain read that records nothing — and a
+// Collapsed ancestor means MeasureChild is never called on the subtree
+// at all, and Grid.Arrange returns early without touching the children's
+// slots. If the subscription rode on either of those, a page hidden once
+// would come back permanently stale, and no test asserting bounds or
+// pixels would notice.
+//
+// It does not ride on either: Frame re-evaluates every node's observer
+// at the TOP of the frame, before Measure and Arrange run, over the node
+// list built from the component tree — which a collapse does not prune.
+func TestBoundVisibilitySurvivesACollapsedAncestor(t *testing.T) {
+	show := prop.NewSource(true)
+	leaf := text("leaf")
+	gooey.LayoutOf(leaf).BindVisibilityBool(show)
+	g := &Grid{
+		Rows:     []GridLen{Auto()},
+		Children: []gooey.Component{&VStack{Children: []gooey.Component{leaf}}},
+	}
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{g}}, 20, 6)
+	c.Frame()
+	if b := leaf.Bounds(); b.W == 0 || b.H == 0 {
+		t.Fatalf("the leaf starts at %+v, want a real cell", b)
+	}
+
+	gooey.LayoutOf(g).Visibility = gooey.Collapsed
+	c.Invalidate()
+	c.Frame()
+
+	// Flip the bound SOURCE while the whole subtree is collapsed — the
+	// window in which a dropped subscription is invisible.
+	show.Set(false)
+	c.Frame()
+	if got := gooey.LayoutOf(leaf).Visibility; got != gooey.Collapsed {
+		t.Fatalf("a Set under a collapsed ancestor did not reach the leaf: Visibility = %v, want Collapsed", got)
+	}
+
+	// Re-showing the ancestor must honour the value set while it was
+	// away, not the one it had when it went away.
+	gooey.LayoutOf(g).Visibility = gooey.Visible
+	c.Invalidate()
+	c.Frame()
+	if b := leaf.Bounds(); b.W > 0 && b.H > 0 {
+		t.Errorf("the leaf came back visible at %+v despite show=false", b)
+	}
+	show.Set(true)
+	c.Frame()
+	if b := leaf.Bounds(); b.W == 0 || b.H == 0 {
+		t.Errorf("the leaf did not come back when show flipped to true: %+v", b)
+	}
+}
+
+// A component paints inside its own bounds and nowhere else. That is
+// the damage contract, not a nicety: the Composer erases a component by
+// filling the rect it remembers, so a cell written outside that rect is
+// a scar no sweep can ever reach.
+//
+// A degenerate rect is where it goes wrong, and a degenerate rect is
+// ordinary — a Visible component inside a Collapsed ancestor (a hidden
+// Tabs page) is arranged into nothing while staying paintable, and a
+// row of a full stack can run out of height with width to spare. A
+// Render that writes its row at bounds.Y without looking writes it into
+// whatever is there. Border is the worst of them: with W or H at zero
+// its far-edge arithmetic (r.X+r.W-1) walks BACKWARDS, so the corners
+// land outside the rect on both axes.
+//
+// Zero-height-with-width is the case the shipped pages do not reach on
+// their own, which is exactly why it is pinned here rather than left to
+// cmd/toolkitdemo's screen-compare tests.
+func TestZeroRectComponentsPaintNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w    gooey.Component
+	}{
+		{"Border", &Border{Title: Str("title"), Style: Sty(render.Style{}), Child: text("inner")}},
+		{"Button", &Button{Content: Str("press me")}},
+		{"PixelButton", &Button{Content: Str("press me"), Chrome: ChromePixel}},
+		{"Checkbox", &Checkbox{Checked: prop.NewSource(true), Label: Str("on")}},
+		{"Gauge", &Gauge{Value: prop.NewSource(70), Label: Str("load ")}},
+	} {
+		for _, r := range []gooey.Rect{
+			{X: 2, Y: 1, W: 0, H: 0},  // collapsed away entirely
+			{X: 2, Y: 1, W: 20, H: 0}, // width to spare, no row to use it on
+			{X: 2, Y: 1, W: 0, H: 1},  // a row, no columns
+		} {
+			buf := render.NewBuffer(30, 5)
+			f := &gooey.Frame{Cells: buf}
+			tc.w.Arrange(r)
+			tc.w.Render(f)
+			for y := 0; y < buf.H; y++ {
+				for x := 0; x < buf.W; x++ {
+					if c := buf.At(x, y); c != (render.Cell{Rune: ' '}) {
+						t.Errorf("%s arranged at %+v painted %q at (%d,%d) — outside its own bounds",
+							tc.name, r, string(c.Rune), x, y)
+					}
+				}
+			}
+		}
 	}
 }
 

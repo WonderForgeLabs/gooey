@@ -39,6 +39,24 @@ func Str(s string) *prop.Property[string]             { return prop.NewSource(s)
 func Sty(s render.Style) *prop.Property[render.Style] { return prop.NewSource(s) }
 func Col(c render.Color) *prop.Property[render.Color] { return prop.NewSource(c) }
 
+// measuredAt reads a container's per-child measure cache from Arrange,
+// tolerating a cache the Measure pass never filled.
+//
+// Arrange CAN be reached without a Measure: gooey.ArrangeChild sends a
+// Collapsed child straight to Arrange at a zero rect so its subtree
+// zeroes its bounds, while gooey.MeasureChild returns for the same
+// child without ever calling Measure. A container that is Collapsed on
+// the frame it first appears — a hidden Tabs page, a
+// Visibility="Collapsed" panel — therefore arranges on an empty cache,
+// and indexing it blindly panicked. Every child is legitimately zero in
+// that state, and the next Measure refills the cache.
+func measuredAt(cache []gooey.Size, i int) gooey.Size {
+	if i < 0 || i >= len(cache) {
+		return gooey.Size{}
+	}
+	return cache[i]
+}
+
 func getStr(p *prop.Property[string]) string {
 	if p == nil {
 		return ""

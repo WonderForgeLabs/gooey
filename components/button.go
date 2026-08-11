@@ -80,6 +80,13 @@ func (b *Button) Measure(avail gooey.Size) gooey.Size {
 
 func (b *Button) Render(f *gooey.Frame) {
 	v := b.visual()
+	// The state was read above, where CanExecute became a
+	// subscription; only now is it safe to bail. A button arranged
+	// into nothing (inside a Collapsed ancestor) that painted its
+	// label anyway would leave cells outside its own damage rect.
+	if r := b.Bounds(); r.W <= 0 || r.H <= 0 {
+		return
+	}
 	if b.Chrome == ChromePixel {
 		b.renderPixel(f, v)
 		return

@@ -158,6 +158,22 @@ func (g *Grid) Measure(avail gooey.Size) gooey.Size {
 
 func (g *Grid) Arrange(b gooey.Rect) {
 	g.Base.Arrange(b)
+	// No room means no room for anybody. Auto and fixed tracks come out
+	// of the MEASURE cache, which an Arrange into nothing does not
+	// refresh — so without this, a Grid arranged at a zero rect hands
+	// its children the slots they had last time and their bounds never
+	// change. That is not a cosmetic slip: the Composer's bounds sweep
+	// is what erases a component's cells, and a child whose bounds did
+	// not change is never swept, so the whole subtree stays on screen
+	// after its ancestor went away. A Collapsed Tabs page rooted in a
+	// Grid is exactly this case (pinned by
+	// TestCollapsedGridZeroesItsSubtree).
+	if b.W <= 0 || b.H <= 0 {
+		for _, ch := range g.Children {
+			gooey.ArrangeChild(ch, gooey.Rect{X: b.X, Y: b.Y})
+		}
+		return
+	}
 	rows, cols := g.rows(), g.cols()
 	rowSz := distributeStars(rows, g.rowSz, b.H)
 	colSz := distributeStars(cols, g.colSz, b.W)
@@ -177,8 +193,29 @@ func (g *Grid) Arrange(b gooey.Rect) {
 
 // distributeStars gives star tracks their weighted share of the space
 // left after fixed and auto tracks.
+//
+// base is the Measure pass's per-track sizes, and it may be SHORTER
+// than defs — even empty — because Arrange can reach a Grid that was
+// never measured: ArrangeChild short-circuits a Collapsed child
+// straight to Arrange at a zero rect, and MeasureChild short-circuits
+// the same child without ever calling Measure. So a Grid that is
+// Collapsed on the frame it first appears (a hidden Tabs page, a
+// Visibility="Collapsed" panel) arranges on an empty cache, and
+// indexing base by track blindly panicked.
+//
+// Arrange's zero-rect guard above happens to catch every case the
+// framework can reach today — unmeasured implies Collapsed implies a
+// zero rect — so this padding is the second line, not the first. It
+// stays because the function should be total for the cache it is
+// handed rather than correct only under one caller's guard order:
+// every track is legitimately zero in that state, and the next Measure
+// refills the cache. TestCollapsedGridArrangesWithoutMeasure pins the
+// pair — remove BOTH and it panics.
 func distributeStars(defs []GridLen, base []int, extent int) []int {
 	out := append([]int(nil), base...)
+	for len(out) < len(defs) {
+		out = append(out, 0)
+	}
 	used, weight := 0, 0.0
 	for i, d := range defs {
 		if d.Star > 0 {

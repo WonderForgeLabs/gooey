@@ -47,7 +47,7 @@ func (h *HStack) Arrange(b gooey.Rect) {
 	x := b.X
 	placed := false
 	for i, c := range h.Children {
-		s := h.sizes[i]
+		s := measuredAt(h.sizes, i)
 		if gapBefore(c, placed) {
 			x += h.Gap
 		}
