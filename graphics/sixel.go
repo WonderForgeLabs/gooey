@@ -49,6 +49,13 @@ import (
 // adaptive palette the banding dithering exists to hide is mostly gone,
 // and the case this encoder is actually asked to draw — chrome — is
 // lossless. If a photo-heavy consumer appears, that is when to pay for it.
+//
+// # It is the one protocol that needs the cell size
+//
+// Kitty and iTerm2 name a cell rectangle and let the terminal scale;
+// sixel carries actual pixels, so it must know how many a cell is
+// worth. Encode refuses a zero cell size rather than emitting a
+// well-formed picture of nothing — see the guard below.
 type Sixel struct{}
 
 func (Sixel) Name() string { return "sixel" }
@@ -63,6 +70,15 @@ const maxRegisters = 256
 const sixelLevels = 101
 
 func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error {
+	// Refuse rather than emit a zero-pixel image. The arithmetic below is
+	// perfectly happy with cellW == 0: every loop runs zero times and the
+	// result is a valid, empty sixel — eighteen bytes that draw nothing,
+	// on cells the placement path stopped anything else from painting. A
+	// black rectangle with no error is the one outcome worth a hard stop.
+	if cellW <= 0 || cellH <= 0 {
+		return fmt.Errorf("graphics: sixel needs a cell size, got %dx%d px "+
+			"(probe capabilities, or pass term.DefaultCellW/H)", cellW, cellH)
+	}
 	pxW, pxH := cols*cellW, rows*cellH
 	if pxW <= 0 || pxH <= 0 {
 		return fmt.Errorf("graphics: sixel: empty target %dx%d (cell size unknown?)", pxW, pxH)
@@ -148,7 +164,7 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 			for x := 0; x < pxW; x++ {
 				var bits byte
 				for dy := 0; dy < 6 && y0+dy < pxH; dy++ {
-					if i := (y0 + dy) * pxW + x; opaque[i] && idx[i] == reg {
+					if i := (y0+dy)*pxW + x; opaque[i] && idx[i] == reg {
 						bits |= 1 << dy
 					}
 				}

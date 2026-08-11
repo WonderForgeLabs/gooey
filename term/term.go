@@ -28,6 +28,16 @@ type Caps struct {
 	Cols, Rows   int
 }
 
+// The cell size assumed when nothing can measure the real one — a probe
+// that timed out, a host that pinned a protocol without capabilities.
+// Only sixel scales by it (kitty and iTerm2 size in cells), and a wrong
+// guess there costs aspect ratio; a ZERO there costs the whole image, so
+// no path that yields a pixel protocol may leave the cell size at zero.
+const (
+	DefaultCellW = 10
+	DefaultCellH = 20
+)
+
 // Best returns the preferred graphics protocol name, most capable first.
 func (c Caps) Best() string {
 	switch {
@@ -289,7 +299,7 @@ func (s *Screen) Detect() (Caps, error) {
 		}
 	}
 	if caps.CellW == 0 {
-		caps.CellW, caps.CellH = 10, 20 // common default; only affects sixel scaling
+		caps.CellW, caps.CellH = DefaultCellW, DefaultCellH
 	}
 	return caps, nil
 }
