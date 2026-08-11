@@ -236,24 +236,34 @@ outright: "Untrusted markup NEVER names a binary. The first argument to
 checked at load time; the registered set IS the API surface." Registration
 in Go is the capability grant, and itemizing it is the grant's content.
 
-`<Companion>` names a binary. The two are not reconcilable by argument,
-so they are reconciled by scope:
+`<Companion>` names a binary. **There is no mechanism reconciling the
+two.** An earlier draft of this document claimed they were "reconciled by
+scope" — `sys:Run` for markup that may be hostile, `<Companion>` for
+markup shipped with the app — and that claim was wrong in a way worth
+recording, because it reads like an enforced boundary and is not one.
+`swap_markup` and `patch_markup` build through the same `markup.Build` as
+a document on disk (`TestCompanionIsHonoredOnTheSwapBuildPath` asserts
+exactly this), and `GOOEY_MARKUP_COMPANIONS` is a single **process-wide**
+switch. There is no per-source trust distinction anywhere in the
+mechanism. Companions are allowed for every document this process loads,
+or for none of them.
 
-- `sys:Run` is for markup that may be **hostile** — the pack exists so
-  that an agent-authored or workflow-served document can run commands
-  without being able to choose them. Its allowlist is the whole feature.
-- `<Companion>` is for markup that is part of **the app** — a page shipped
-  in the same repository, the same `embed.FS`, the same review, as the Go
-  that runs it. Its process is the app's own sidecar, and requiring a Go
-  registration for it would leave the configuration in Go, which is the
-  problem being solved.
+So state the two plainly instead:
 
-An app that wants the `sys:Run` posture for its services already has it:
-don't set `Error`/`Exited`, don't declare `<Companion>`, and register the
-service in Go. An app that hands markup to strangers and also allows
-companions has made a mistake this document cannot prevent — but
-`GOOEY_MARKUP_COMPANIONS=0` can, deployment-wide, without touching the
-app.
+- `sys:Run`'s allowlist is the right shape when **gooey loads gooey** —
+  a document that composes or serves further documents, where the set of
+  runnable commands is a real API surface someone downstream will program
+  against, and itemizing it is the point.
+- `<Companion>` is a declaration in a document this binary already trusts
+  as much as it trusts itself, replacing configuration that was otherwise
+  going to sit in Go. Requiring a Go registration for it would leave the
+  configuration in Go, which is the problem being solved.
+
+Both mechanisms stay. Neither is a boundary the other enforces, and an
+app whose threat model needs one should get it from the perimeter — the
+MCP server's opt-in loopback bind — or from
+`GOOEY_MARKUP_COMPANIONS=0`, which turns the capability off
+deployment-wide without touching the app.
 
 ## Attributes
 
@@ -331,11 +341,10 @@ hand-written kanbandemo companion did on purpose: a worker needs the
 `ANTHROPIC_API_KEY` and `TEMPORAL_ADDRESS` already exported in the shell
 that launched the app.
 
-This is the opposite of `handlers/exec`, which scrubs by default because
-markup there may be hostile. The scope argument from above applies, plus a
-mechanical one: against a document that can already choose the binary, an
-environment scrub buys very little (a child of the same user can read
-`/proc/self/environ` of anything it likes). `CleanEnv="true"` is there for
+This is the opposite of `handlers/exec`, which scrubs by default. The
+mechanical argument is the one that survives: against a document that can
+already choose the binary, an environment scrub buys very little (a child
+of the same user can read `/proc/self/environ` of anything it likes). `CleanEnv="true"` is there for
 the deployment that wants it, and there is deliberately no `PassEnv`
 spelling — under `CleanEnv` the binding context *is* the pass-through, so
 forwarding a variable is something the Go side hands over on purpose.

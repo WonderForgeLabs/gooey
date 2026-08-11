@@ -791,7 +791,9 @@ markup.RegisterHandlers(nethandlers.URI, nethandlers.New())
 markup.RegisterHandlers(temporalhandlers.URI, temporalhandlers.New(client, "gooey-demo"))
 ```
 
-**Registration is the capability grant.** Markup can only invoke namespaces the host app registered; drop a registration and the same document stops loading, naming the URI it wanted. That is what makes markup loaded from an untrusted `fs.FS` safe to run: it reaches exactly the capabilities its host chose to hand it, and nothing else — no markup syntax registers a provider or widens a grant, so a document can never expand its own capabilities. The full doctrine (pack taxonomy, module boundaries, grant scopes) is [docs/specs/2026-08-10-pack-distribution.md](specs/2026-08-10-pack-distribution.md).
+**Registration is the capability grant.** Markup can only invoke namespaces the host app registered; drop a registration and the same document stops loading, naming the URI it wanted. That is what makes markup loaded from an untrusted `fs.FS` safe to run *for handlers*: a handler URI reaches exactly the capabilities its host chose to hand it, and nothing else — no markup syntax registers a provider or widens a handler grant.
+
+> **`<Companion>` is the exception, and it is not covered by this grant.** It names a binary directly rather than a registered namespace, so a document that declares one expands what the process does without any Go-side registration. It is enabled by default; `GOOEY_MARKUP_COMPANIONS=0` is the only thing that takes it away, process-wide. "Untrusted `fs.FS` is safe to run" holds for handlers, not for a build that allows companions — see [Companion](#companion). The full doctrine (pack taxonomy, module boundaries, grant scopes) is [docs/specs/2026-08-10-pack-distribution.md](specs/2026-08-10-pack-distribution.md).
 
 ### Grammar
 

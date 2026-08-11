@@ -148,6 +148,53 @@ func TestCompanionCloseWaitsForTheChild(t *testing.T) {
 	}
 }
 
+// The other half of the tripwire: a child that ignores the polite signal
+// and outlives StopTimeout is ABANDONED, not waited on forever, and
+// Leaked() records that it was. This is components.Companion's mirror of
+// App.CompanionLeaked, and the only evidence anyone gets that a service
+// ignored its cancelled context.
+//
+// StopTimeout is deliberately SHORTER than KillDelay here, which is the
+// inversion of what a real app wants (the spec's default pair is 10s
+// over 5s, so the child is SIGKILLed by its companion rather than
+// abandoned by the app). Inverting it is what makes the give-up path
+// reachable in a test that finishes in milliseconds.
+func TestCompanionLeakedWhenTheChildOutlivesStopTimeout(t *testing.T) {
+	needSh(t)
+	dir := t.TempDir()
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">
+	  <VStack>
+	    <Companion Name="worker" Path="sh" KillDelay="30s" StopTimeout="200ms">
+	      <Companion.Args>
+	        <Arg>-c</Arg>
+	        <Arg>trap "" TERM; echo $$ > ` + dir + `/child.pid; while :; do sleep 1; done</Arg>
+	      </Companion.Args>
+	    </Companion>
+	    <Text>ui</Text>
+	  </VStack>
+	</Gooey>`
+	comp, _, c := companionPage(t, src, &Context{})
+	child := atoi(t, waitForFile(t, filepath.Join(dir, "child.pid")))
+	// The test asks for the abandoned path on purpose, so nothing else
+	// will reap this child — SIGKILL the group once the assertions are in.
+	t.Cleanup(func() { _ = syscall.Kill(-child, syscall.SIGKILL) })
+
+	done := make(chan struct{})
+	go func() { comp.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close hung on a child that ignores SIGTERM; StopTimeout did not bound the wait")
+	}
+
+	if !c.Leaked() {
+		t.Error("the tripwire did not fire for a child that outlived StopTimeout")
+	}
+	if !alive(child) {
+		t.Errorf("the child (pid %d) died, so this exercised the cooperative path, not the leak", child)
+	}
+}
+
 // Arguments, environment and working directory all arrive, and an
 // argument containing a SPACE survives — which is the whole reason
 // <Companion.Args> is a list of elements instead of one space-joined
