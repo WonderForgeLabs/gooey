@@ -159,6 +159,15 @@ func (c *controlServer) RegisterProperties(_ context.Context, req *controlv1.Reg
 	return &controlv1.RegisterPropertiesResponse{}, nil
 }
 
+func (c *controlServer) UnregisterNames(_ context.Context, req *controlv1.UnregisterNamesRequest) (*controlv1.UnregisterNamesResponse, error) {
+	if err := c.do(func() error {
+		return c.s.svc.Unregister(req.GetNames())
+	}); err != nil {
+		return nil, err
+	}
+	return &controlv1.UnregisterNamesResponse{}, nil
+}
+
 func (c *controlServer) GetDeclaredSchema(_ context.Context, req *controlv1.GetDeclaredSchemaRequest) (*controlv1.GetDeclaredSchemaResponse, error) {
 	var schema *control.Schema
 	if err := c.do(func() (err error) {

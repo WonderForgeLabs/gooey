@@ -284,6 +284,26 @@ func (s *sessionServer) apply(act *controlv1.Act) *controlv1.ActResult {
 			return fail(err)
 		}
 		res.Result = &controlv1.ActResult_RegisterProperties{RegisterProperties: &controlv1.RegisterPropertiesResponse{}}
+	case *controlv1.Act_UnregisterNames:
+		if err := ui.Do(func() error { return svc.Unregister(a.UnregisterNames.GetNames()) }); err != nil {
+			return fail(err)
+		}
+		res.Result = &controlv1.ActResult_UnregisterNames{UnregisterNames: &controlv1.UnregisterNamesResponse{}}
+	case *controlv1.Act_PatchMarkup:
+		// The reason this is an act and not only a unary call: an editing
+		// client sets a property and then patches the subtree that reads
+		// it, and on this stream those two cannot race — acts are applied
+		// in stream order on the UI goroutine. Split across transports
+		// they can, because nothing orders a unary call against queued
+		// acts.
+		var named []string
+		if err := ui.Do(func() (err error) {
+			named, err = svc.PatchMarkup(a.PatchMarkup.GetName(), a.PatchMarkup.GetSource())
+			return
+		}); err != nil {
+			return fail(err)
+		}
+		res.Result = &controlv1.ActResult_PatchMarkup{PatchMarkup: &controlv1.PatchMarkupResponse{Named: named}}
 	default:
 		res.Code = uint32(codes.InvalidArgument)
 		res.Message = "the act carries no request"

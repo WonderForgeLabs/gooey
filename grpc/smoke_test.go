@@ -53,8 +53,8 @@ func TestServiceDescriptors(t *testing.T) {
 	if got := controlv1.ControlService_ServiceDesc.ServiceName; got != "gooey.control.v1.ControlService" {
 		t.Errorf("ControlService name = %q", got)
 	}
-	if got := len(controlv1.ControlService_ServiceDesc.Methods); got != 15 {
-		t.Errorf("ControlService has %d unary methods, want 15", got)
+	if got := len(controlv1.ControlService_ServiceDesc.Methods); got != 16 {
+		t.Errorf("ControlService has %d unary methods, want 16", got)
 	}
 	if got := controlv1.SessionService_ServiceDesc.ServiceName; got != "gooey.control.v1.SessionService" {
 		t.Errorf("SessionService name = %q", got)

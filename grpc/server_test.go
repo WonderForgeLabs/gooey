@@ -686,6 +686,40 @@ func TestRegisterProperties(t *testing.T) {
 	wantCode(t, err, codes.InvalidArgument, "")
 }
 
+func TestUnregisterNames(t *testing.T) {
+	h := newHarness(t)
+	_, err := h.ctl.RegisterProperties(context.Background(), &controlv1.RegisterPropertiesRequest{
+		Properties: []*controlv1.PropertyRegistration{
+			{Name: "Fresh.Level", Kind: controlv1.ValueKind_VALUE_KIND_INT},
+			{Name: "Fresh.Label", Kind: controlv1.ValueKind_VALUE_KIND_STRING},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RegisterProperties: %v", err)
+	}
+	// A name that does not resolve is NOT_FOUND and the whole batch is
+	// refused — the survivor proves nothing was taken out first.
+	_, err = h.ctl.UnregisterNames(context.Background(), &controlv1.UnregisterNamesRequest{
+		Names: []string{"Fresh.Level", "Fresh.Missing"},
+	})
+	wantCode(t, err, codes.NotFound, "Fresh.Missing")
+	if _, err := h.ctl.GetProperty(context.Background(), &controlv1.GetPropertyRequest{Name: "Fresh.Level"}); err != nil {
+		t.Fatalf("a failed batch removed a name anyway: %v", err)
+	}
+
+	if _, err := h.ctl.UnregisterNames(context.Background(), &controlv1.UnregisterNamesRequest{
+		Names: []string{"Fresh.Level", "Fresh.Label"},
+	}); err != nil {
+		t.Fatalf("UnregisterNames: %v", err)
+	}
+	_, err = h.ctl.GetProperty(context.Background(), &controlv1.GetPropertyRequest{Name: "Fresh.Level"})
+	wantCode(t, err, codes.NotFound, "")
+
+	// A blank name is INVALID_ARGUMENT rather than a silent no-op.
+	_, err = h.ctl.UnregisterNames(context.Background(), &controlv1.UnregisterNamesRequest{Names: []string{"  "}})
+	wantCode(t, err, codes.InvalidArgument, "")
+}
+
 func TestGetDeclaredSchema(t *testing.T) {
 	h := newHarness(t)
 	src := `<Gooey xmlns:x="wonderforge.io/gooey/x">
