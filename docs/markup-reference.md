@@ -657,6 +657,67 @@ case ev := <-events:
 
 `cmd/cardsdemo` drives its whole data stream this way.
 
+### Companion
+
+`components.Companion` — a **child process** that runs for as long as the tree that declares it. Non-visual like `Timer` and `KeyBinding`: hosted as an attachment on its parent, never laid out or painted. It is the markup tier of `gooey.Companion`; the process machinery underneath is `gooey.CompanionCmd`, unchanged. Design record: [`docs/specs/2026-08-10-markup-companions.md`](specs/2026-08-10-markup-companions.md).
+
+```xml
+<Companion Name="temporal-worker"
+           Path="python3"
+           Dir="../temporal-worker"
+           Log="worker.log"
+           Error="{{.WorkerError}}"
+           Exited="{{.Quit}}">
+  <Companion.Args>
+    <Arg>worker.py</Arg>
+    <Arg>--queue</Arg>
+    <Arg>{{.TaskQueue}}</Arg>
+  </Companion.Args>
+  <Companion.Env>
+    <Var Name="GOOEY_MCP_URL" Value="{{.McpURL}}"/>
+    <Var Name="PYTHONUNBUFFERED" Value="1"/>
+  </Companion.Env>
+</Companion>
+```
+
+> **Security: this element spawns processes, and markup arrives over MCP.**
+> Any MCP client can call `swap_markup` or `patch_markup`, and those build markup through the same path a page on disk takes. Because markup can now name a binary, **an app that serves MCP and allows companions gives its clients arbitrary command execution** — an escalation past the posture recorded in [`docs/specs/2026-08-10-mcp-server.md`](specs/2026-08-10-mcp-server.md), *"an MCP client can do anything the keyboard can"*. The keyboard cannot spawn `rm -rf`.
+>
+> This is deliberate: a capability honored on one build path and refused on another is two languages sharing a syntax. The perimeter is elsewhere — the MCP server is **opt-in and loopback-only**, with a default-deny `Origin` check — and the off switch is the environment variable **`GOOEY_MARKUP_COMPANIONS`**. Unset or empty means enabled; set it to `0`/`false` (or to anything unparseable — it fails closed) and every `<Companion>` becomes a load error naming the switch. Do not hand untrusted markup to an app whose environment allows companions.
+
+| Attribute | Meaning |
+|---|---|
+| `Name` | **Required.** The companion's label in errors, and the element's `Name=` identity for `markup.Find` and tree snapshots. |
+| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory and is made absolute. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
+| `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
+| `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** |
+| `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. |
+| `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. |
+| `CleanEnv` | `"true"` starts the child from an **empty** environment. Default is inherit-and-override. |
+| `Error` | Optional binding to a `*prop.Property[string]`. Receives a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden, and `""` on a successful start. |
+| `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
+
+Unknown attributes are a **load error** (following `<x:Property>`, not the visual elements): a misspelled `Dir=` that silently ran the child somewhere else, or a misspelled `Log=` that silently sent its output to the null device, are both worse than a startup failure. Layout attributes are rejected for the same reason — a non-visual element has no bounds to place.
+
+**Output never reaches the terminal.** A child writing to the inherited stdout paints over the UI's bottom rows in raw mode with bytes the framework cannot repair, so the default is the null device and `Log` takes a *path*. There is no `Log="stdout"` and no way to spell one.
+
+**Args and env are property elements.** `Args="worker.py --queue my-queue"` is lossy the moment an argument contains a space, and XML attributes have already spent both quote characters. One `<Arg>` per argument, document order preserved, no escaping; `<Var>` names are literal and `<Var>` values bind like any other text attribute. Both are consumed as data, so they never enter the visual tree. There is no shell anywhere — `Path` plus the `<Arg>` list is an argv, and nothing re-parses it.
+
+**Bindings in `<Arg>` and `<Var Value>` are snapshots**, read once when the child starts. Changing the property afterwards does not restart the child — an argv is a value a process was launched with, not one it observes. This is what lets a declaration depend on something only Go knows (an MCP endpoint that is not knowable until the listener is bound): the app puts it in a property, the document binds it.
+
+**Paths are document-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at:
+
+```go
+app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))
+ctx.Dir = dir
+```
+
+`fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
+
+**Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic) and every tree replacement (hot reload, `swap_markup`, `patch_markup`): the outgoing page's companion stops, the incoming page's starts. A requested stop does **not** run `Exited`.
+
+That is one tier down from `gooey.WithCompanions` / `App.AddCompanion`, which start *before* the tree is built and stop *after* the terminal is restored. The rule of thumb: **if the tree's construction depends on the service, declare it in Go**; if the running UI merely uses it, declare it here. Both tiers can be used at once and do not interact. `WithCompanionGrace` has no markup spelling (it names a moment a markup declaration is discovered after, and a swapped-in page must not be able to reconfigure the app's startup); `WithCompanionStopTimeout` does, per element, which is the per-companion shape the [companions spec](specs/2026-08-10-companions.md) called the right one.
+
 ## Universal layout attributes
 
 Every element whose component embeds `gooey.Base` (all built-ins and any well-behaved custom component) accepts the FrameworkElement attributes. They map onto the component's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container.
