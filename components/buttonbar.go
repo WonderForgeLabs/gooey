@@ -135,7 +135,7 @@ func (b *ButtonBar) Arrange(r gooey.Rect) {
 		if placed {
 			at += gap
 		}
-		w := b.sizes[i].W
+		w := measuredAt(b.sizes, i).W
 		if at+w > r.X+r.W {
 			b.over = true
 			if l := gooey.LayoutOf(c); l != nil {
@@ -174,7 +174,7 @@ func (b *ButtonBar) Render(f *gooey.Frame) {
 					f.Cells.Set(x, r.Y, sep, styleDim)
 				}
 			}
-			prev = b.slots[i] + b.sizes[i].W
+			prev = b.slots[i] + measuredAt(b.sizes, i).W
 		}
 	}
 	if b.over {

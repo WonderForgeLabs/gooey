@@ -1,45 +1,227 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Border Title="toolkit — waves 1+2" Style="panel">
-    <Grid Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto">
-      <Text Grid.Row="1" Style="accent">eight components, one page, all of it markup</Text>
+  <Border Title="toolkit — every component in the kit" Style="panel">
+    <!-- Rows: the menu bar, the strap line, the Tabs, slack, the status
+         bar. The page chrome (MenuBar, StatusBar, ToastHost,
+         AdornmentLayer) lives OUT here, above the tabs, because it
+         belongs to the app rather than to any one page — and because an
+         overlay declared inside a collapsed tab would be collapsed with
+         it. -->
+    <Grid Rows="Auto,Auto,Auto,*,Auto">
+      <!-- Sized to fit the 94 cells the Border leaves at the width the
+           GIF is recorded (96): a strap line that clips mid-word reads
+           as a bug in the layout rather than as a caption. -->
+      <Text Grid.Row="1" Style="accent">every shipped component, alive at once — click a tab, ←/→ the strip, or ctrl+pgup/pgdn inside</Text>
 
-      <Text Grid.Row="2" Style="dim">ProgressBar — determinate, and indeterminate when the rocker below stops the job</Text>
-      <HStack Grid.Row="3" Gap="3">
-        <ProgressBar Value="{{.Pct}}" Indeterminate="{{.Busy}}" Label="build " BarWidth="34"/>
-        <Spinner Frames="braille" Interval="90ms" Label="{{.Stage}}" Enabled="{{.Running}}" Style="accent"/>
-      </HStack>
+      <!-- Every page is given the same explicit Height: a Tabs sizes to
+           its ACTIVE page, so equal heights are what keep the strip and
+           the status bar from jumping on a switch. -->
+      <Tabs Grid.Row="2" Name="KitTabs" Selected="{{.Tab}}" Changed="{{.TabChanged}}">
 
-      <Text Grid.Row="4" Style="dim">Toggle — a rocker: space flips it, ← is off, → is on. Segmented — ←/→ pick a mode.</Text>
-      <HStack Grid.Row="5" Gap="4">
-        <Toggle Checked="{{.Running}}" Label="job running"/>
-        <Segmented Options="Idle | Fetch | Build | Deploy" Selected="{{.StageIndex}}" Changed="{{.StageChanged}}"/>
-      </HStack>
+        <!-- ============================ job ============================
+             The original page, intact: the wave-1 meters and inputs plus
+             the pixel-chrome button, driven by the two Timers at the
+             bottom of this file. The captions are bound to the Checkbox
+             on the "basics" tab through Visibility — a bool binding maps
+             true→Visible, false→Collapsed, so unticking it takes the
+             rows out of layout rather than blanking them. -->
+        <Tab Header="job">
+          <Grid Height="13" Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
+            <Text Grid.Row="0" Style="dim" Visibility="{{.Hints}}">ProgressBar — determinate, and indeterminate when the rocker below stops the job</Text>
+            <HStack Grid.Row="1" Gap="3">
+              <ProgressBar Value="{{.Pct}}" Indeterminate="{{.Busy}}" Label="build " BarWidth="34"/>
+              <Spinner Frames="braille" Interval="90ms" Label="{{.Stage}}" Enabled="{{.Running}}" Style="accent"/>
+            </HStack>
 
-      <Text Grid.Row="6" Style="dim">ButtonBar — ←/→ walk along the bar and wrap; "toast" pops a notification</Text>
-      <ButtonBar Grid.Row="7" Gap="3" Uniform="true" Separator="│">
-        <Button Content="start" Click="{{.Start}}" Tooltip="run the job from the top"/>
-        <Button Content="abort" Click="{{.Abort}}" Tooltip="stop it mid-flight"/>
-        <Button Content="reset all" Click="{{.Reset}}" Tooltip="back to idle"/>
-        <Button Content="toast" Click="{{.Notify}}">
-          <Tooltip Text="pop the status as a toast" Gesture="ctrl+t"/>
-        </Button>
-      </ButtonBar>
+            <Text Grid.Row="2" Style="dim" Visibility="{{.Hints}}">Toggle — a rocker: space flips it, ← is off, → is on. Segmented — ←/→ pick a mode.</Text>
+            <HStack Grid.Row="3" Gap="4">
+              <Toggle Checked="{{.Running}}" Label="job running"/>
+              <Segmented Options="Idle | Fetch | Build | Deploy" Selected="{{.StageIndex}}" Changed="{{.StageChanged}}"/>
+            </HStack>
 
-      <Text Grid.Row="8" Style="dim">Button Chrome="pixel" — a three-row pill, drawn in pixels where the terminal has a protocol</Text>
-      <HStack Grid.Row="9" Gap="3">
-        <Button Content="Deploy" Chrome="pixel" Click="{{.Deploy}}"/>
-        <Text Style="dim" VAlign="Center">{{.Tier}}</Text>
-      </HStack>
+            <Text Grid.Row="4" Style="dim" Visibility="{{.Hints}}">ButtonBar — ←/→ walk along the bar and wrap; "toast" pops a notification</Text>
+            <ButtonBar Grid.Row="5" Gap="3" Uniform="true" Separator="│">
+              <Button Content="start" Click="{{.Start}}" Tooltip="run the job from the top"/>
+              <Button Content="abort" Click="{{.Abort}}" Tooltip="stop it mid-flight"/>
+              <Button Content="reset all" Click="{{.Reset}}" Tooltip="back to idle"/>
+              <Button Content="toast" Click="{{.Notify}}">
+                <Tooltip Text="pop the status as a toast" Gesture="ctrl+t"/>
+              </Button>
+            </ButtonBar>
 
-      <Text Grid.Row="10" Style="dim">{{.Log}}</Text>
+            <Text Grid.Row="6" Style="dim" Visibility="{{.Hints}}">Button Chrome="pixel" — a three-row pill, drawn in pixels where the terminal has a protocol</Text>
+            <HStack Grid.Row="7" Gap="3">
+              <Button Content="Deploy" Chrome="pixel" Click="{{.Deploy}}"/>
+              <Text Style="dim" VAlign="Center">{{.Tier}}</Text>
+            </HStack>
 
-      <StatusBar Grid.Row="11" Left="{{.Status}}" Center="{{.Clock}}">
-        <StatusBar.Right>
-          <Text Style="dim">tab: focus   enter: open menu   esc: close   q: quit</Text>
-        </StatusBar.Right>
-      </StatusBar>
+            <Text Grid.Row="8" Style="dim">{{.Log}}</Text>
+          </Grid>
+        </Tab>
+
+        <!-- =========================== basics ==========================
+             The layout panels and the plain inputs: a VStack of a Text,
+             a TextBox and a Checkbox on the left, a nested Grid and an
+             HStack on the right, both inside Borders. -->
+        <Tab Header="basics">
+          <Grid Height="13" Rows="*" Cols="48,*">
+            <Border Grid.Col="0" Title="VStack — top to bottom" Style="panel">
+              <VStack Gap="1" Margin="1,0">
+                <Text Style="accent">Text — literal, bound, or a mix of both</Text>
+                <Text>you typed: {{.Greeting}}</Text>
+                <TextBox Prompt="&gt; " Text="{{.Greeting}}" AccentStyle="accent"/>
+                <Checkbox Checked="{{.Hints}}" Label="captions on the job tab"/>
+                <Button Content="clear the field" Click="{{.ClearGreeting}}" Tooltip="sets the bound property to empty"/>
+              </VStack>
+            </Border>
+
+            <Border Grid.Col="1" Title="Grid + HStack" Style="panel" Margin="2,0,0,0">
+              <Grid Rows="Auto,Auto,Auto,Auto,*" Cols="9,*" Margin="1,0">
+                <Text Grid.Row="0" Grid.Col="0" Style="dim">Cols</Text>
+                <Text Grid.Row="0" Grid.Col="1">a fixed 9-cell track + a star</Text>
+                <Text Grid.Row="1" Grid.Col="0" Style="dim">Rows</Text>
+                <Text Grid.Row="1" Grid.Col="1">Auto rows size to their content</Text>
+                <Text Grid.Row="2" Grid.Col="0" Grid.ColSpan="2" Style="dim">ColSpan="2" — this line owns both</Text>
+                <HStack Grid.Row="3" Grid.Col="0" Grid.ColSpan="2" Gap="2">
+                  <Text Style="dim">HStack</Text>
+                  <Text>left</Text>
+                  <Text>to</Text>
+                  <Text>right,</Text>
+                  <Text Style="dim">Gap="2"</Text>
+                </HStack>
+              </Grid>
+            </Border>
+          </Grid>
+        </Tab>
+
+        <!-- ============================ data ===========================
+             Gauge and Sparkline over the same sampled series, and an
+             ItemsView whose DataTemplate renders this very catalogue —
+             the kit describing itself as data. -->
+        <Tab Header="data">
+          <Grid Height="13" Rows="Auto,Auto,Auto,*" Cols="*,30">
+            <HStack Grid.Row="0" Grid.Col="0" Gap="2">
+              <Gauge Value="{{.Load}}" Label="load " BarWidth="28"/>
+              <Text Style="dim" VAlign="Center">the good/warn/crit ramp</Text>
+            </HStack>
+            <HStack Grid.Row="1" Grid.Col="0" Gap="2">
+              <Text Style="dim" VAlign="Center">history</Text>
+              <Sparkline Values="{{.History}}" Height="2" BarWidth="34"/>
+            </HStack>
+            <Text Grid.Row="2" Grid.Col="0" Style="dim">ItemsView — ↑/↓ or j/k select, enter toasts the row</Text>
+            <ItemsView Grid.Row="3" Grid.Col="0" Items="{{.Kit}}" Selected="{{.KitSel}}"
+                       SelectionChanged="{{.KitSelected}}" Activate="{{.KitActivate}}">
+              <ItemsView.ItemTemplate>
+                <Grid Rows="1" Cols="17,10,*">
+                  <Text Grid.Col="0" Style="accent">{{.Name}}</Text>
+                  <Text Grid.Col="1" Style="dim">{{.Where}}</Text>
+                  <Text Grid.Col="2">{{.Note}}</Text>
+                </Grid>
+              </ItemsView.ItemTemplate>
+            </ItemsView>
+
+            <Border Grid.Row="0" Grid.RowSpan="4" Grid.Col="1" Title="selected" Style="panel" Margin="2,0,0,0">
+              <VStack Margin="1,0">
+                <Text Style="accent">{{.KitName}}</Text>
+                <Text Style="dim">{{.KitNote}}</Text>
+              </VStack>
+            </Border>
+          </Grid>
+        </Tab>
+
+        <!-- =========================== visual ==========================
+             A Canvas placing everything absolutely: the ColorPicker, a
+             swatch styled by the picked color, and an Image whose Src is
+             a COMPUTED image — moving a channel regenerates the
+             gradient, because Src is an ordinary live handle. -->
+        <Tab Header="visual">
+          <Canvas Height="13">
+            <Text Canvas.Left="1" Canvas.Top="0" Style="dim">ColorPicker — ↑/↓ channel, ←/→ adjust, shift ×16</Text>
+            <ColorPicker Value="{{.Accent}}" Canvas.Left="1" Canvas.Top="1"/>
+            <Text Canvas.Left="1" Canvas.Top="8" Style="{{.AccentStyle}}">████████  one property, read by all of this</Text>
+            <Text Canvas.Left="1" Canvas.Top="10" Style="dim">Canvas — placed by Canvas.Left/Canvas.Top,</Text>
+            <Text Canvas.Left="1" Canvas.Top="11" Style="dim">and tree order is z-order where they overlap</Text>
+
+            <Text Canvas.Left="56" Canvas.Top="0" Style="dim">Image — Src is a computed</Text>
+            <Image Src="{{.Gradient}}" Cols="24" Rows="10" Canvas.Left="56" Canvas.Top="1"/>
+            <Text Canvas.Left="56" Canvas.Top="11" Style="dim">generated in Go, never a file</Text>
+          </Canvas>
+        </Tab>
+
+        <!-- =========================== forms ===========================
+             Rules declared as <Validate> behaviors, the message shown by
+             an ordinary inline Text — except the last field, which has
+             no room for a row and floats its message through the page's
+             AdornmentLayer with a ValidationMarker. -->
+        <Tab Header="forms">
+          <!-- Row 7 is an empty FIXED row, not an Auto one: it is the
+               lane the ValidationMarker floats into, one line under the
+               tag field, and an Auto row with no children sizes to
+               nothing. Without it the marker lands on the submit row and
+               paints over the button — the adornment plane is above
+               everything, so the layout has to leave it room rather than
+               fight it for cells. -->
+          <Grid Height="13" Rows="Auto,Auto,Auto,Auto,Auto,Auto,Auto,1,Auto,*">
+            <Text Grid.Row="0" Style="dim">Validate — DataAnnotations rules in markup; rules run in a fixed order, first failure wins</Text>
+
+            <TextBox Grid.Row="1" Prompt="name:  " Text="{{.FormName}}" AccentStyle="accent">
+              <TextBox.Behaviors>
+                <Validate Required="true" MinLen="3"/>
+              </TextBox.Behaviors>
+            </TextBox>
+            <Text Grid.Row="2" Style="err">{{.FormNameErr}}</Text>
+
+            <TextBox Grid.Row="3" Prompt="email: " Text="{{.FormEmail}}" AccentStyle="accent">
+              <TextBox.Behaviors>
+                <Validate Required="true" EmailAddress="true" Message="we need a working email address"/>
+              </TextBox.Behaviors>
+            </TextBox>
+            <Text Grid.Row="4" Style="err">{{.FormEmailErr}}</Text>
+
+            <Text Grid.Row="5" Style="dim">ValidationMarker — the floating variant, for a row with no space for an error line</Text>
+            <TextBox Grid.Row="6" Prompt="tag:   " Text="{{.FormTag}}" AccentStyle="accent">
+              <TextBox.Behaviors>
+                <Validate MaxLen="8"/>
+              </TextBox.Behaviors>
+              <ValidationMarker/>
+            </TextBox>
+
+            <HStack Grid.Row="8" Gap="4">
+              <Button Content="submit" Click="{{.Submit}}" Tooltip="gated by a computed over the published error properties"/>
+              <Text Style="dim" VAlign="Center">{{.FormStatus}}</Text>
+            </HStack>
+          </Grid>
+        </Tab>
+
+        <!-- ========================== overlays =========================
+             Popup is a Go-side primitive — there is no <Popup> element —
+             so the preset picker is a demo-local component registered
+             through Context.Components, wired in four lines. The button
+             beside it opens a popup it does not own. -->
+        <Tab Header="overlays">
+          <Grid Height="13" Rows="Auto,Auto,Auto,Auto,Auto,*">
+            <Text Grid.Row="0" Style="dim">ToastHost, MenuBar and AdornmentLayer are page-level: declared last, so they paint above every tab</Text>
+            <ButtonBar Grid.Row="1" Gap="3" Separator="│">
+              <Button Content="sticky toast" Click="{{.Sticky}}" Tooltip="ShowFor with a negative duration never expires"/>
+              <Button Content="clear toasts" Click="{{.ClearToasts}}" Tooltip="takes the sticky one back down"/>
+            </ButtonBar>
+            <Text Grid.Row="2" Style="dim">Tooltip — the child form carries a gesture hint; the Tooltip="…" shorthand works on any element</Text>
+
+            <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a surface that is its last child, and a dismissal grammar: esc or an outside press</Text>
+            <Text Grid.Row="4" Style="dim">picking one sets the same property the ColorPicker on the visual tab edits</Text>
+            <!-- Declared LAST in this page for the reason every overlay
+                 is: document order is z-order, and the dropped list has
+                 to paint above the rows it covers. -->
+            <HStack Grid.Row="5" Gap="3" VAlign="Start">
+              <Text Style="dim" VAlign="Center">accent preset</Text>
+              <ColorPreset Name="Presets" Selected="{{.Preset}}" Changed="{{.PresetChanged}}"/>
+              <Button Content="open it" Click="{{.OpenPresets}}" Tooltip="a Button opening a popup it does not own"/>
+            </HStack>
+          </Grid>
+        </Tab>
+      </Tabs>
 
       <Timer Interval="120ms" Tick="{{.Advance}}"/>
+      <Timer Interval="400ms" Tick="{{.Sample}}"/>
       <Timer Interval="1s" Tick="{{.TickClock}}"/>
       <KeyBinding Gesture="q" Command="{{.Quit}}"/>
       <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
@@ -48,8 +230,20 @@
       <KeyBinding Gesture="ctrl+r" Command="{{.Reset}}"/>
       <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
 
-      <!-- Wave 2: overlays. Document order is z-order, so the MenuBar and
-           the toast layer are declared LAST — the dropdown and the toasts
+      <!-- The three sections share one row on a strict budget: Left and
+           Right are sized to their content and the Center is centred in
+           what is LEFT OVER, so a hint string that grows takes the
+           clock's breathing room first and then collides with the
+           status. At 96 columns the longest status ("tab: overlays", 13)
+           plus this hint (60) leaves 21 cells for an 8-cell clock. -->
+      <StatusBar Grid.Row="4" Left="{{.Status}}" Center="{{.Clock}}">
+        <StatusBar.Right>
+          <Text Style="dim">tab: focus   ctrl+pgdn: next tab   enter/esc: menu   q: quit</Text>
+        </StatusBar.Right>
+      </StatusBar>
+
+      <!-- Overlays. Document order is z-order, so the MenuBar and the
+           toast layer are declared LAST — the dropdown and the toasts
            paint above the rows they cover — while Grid.Row still places
            the bar on the top row. -->
       <MenuBar Grid.Row="0" Style="accent">
@@ -64,12 +258,11 @@
           <MenuItem Text="Toast the status" Gesture="ctrl+t" Command="{{.Notify}}"/>
         </Menu>
       </MenuBar>
-      <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="12" Duration="2500ms"/>
-      <!-- The adornment layer hosts tooltips (and any future adorner):
-           declared very last, so tips paint above even the toasts. The
-           buttons above wear Tooltip="..." shorthands; the toast button
-           declares the child form with a gesture hint. -->
-      <AdornmentLayer Grid.Row="0" Grid.RowSpan="12"/>
+      <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="5" Duration="2500ms"/>
+      <!-- The adornment layer hosts tooltips and the forms tab's
+           ValidationMarker: declared very last, so both paint above even
+           the toasts. -->
+      <AdornmentLayer Grid.Row="0" Grid.RowSpan="5"/>
     </Grid>
   </Border>
 </Gooey>

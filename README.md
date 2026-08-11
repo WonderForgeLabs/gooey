@@ -194,7 +194,7 @@ live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
 | `cmd/colordemo` | [colordemo.gif](docs/media/demos/colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/mcpdemo` | [mcpdemo.gif](docs/media/demos/mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
 | `examples/kanbandemo` | — | A real Kanban board that is also an MCP server, with a live traffic log; `examples/temporal-worker` pushes generated markup into it over `swap_markup` |
-| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The UI toolkit — the wave-1 components, wave 2's MenuBar and ToastHost overlays, and tooltips on the buttons through the AdornmentLayer |
+| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The whole component kit alive at once, organized under a `<Tabs>` into six pages — panels and inputs, meters and an ItemsView template, Canvas/ColorPicker/Image, Validate behaviors, and the overlay plane (MenuBar, ToastHost, AdornmentLayer, Popup) |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)

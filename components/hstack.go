@@ -44,10 +44,23 @@ func (h *HStack) Measure(avail gooey.Size) gooey.Size {
 
 func (h *HStack) Arrange(b gooey.Rect) {
 	h.Base.Arrange(b)
+	// No room means no room for anybody — the same contract Grid keeps.
+	// The cross axis comes straight from b, but the MAIN axis comes out
+	// of the measure cache, which an Arrange into nothing does not
+	// refresh: without this an HStack handed a zero-WIDTH slot gives
+	// every child the width it had last time, at the stack's full
+	// height, so the subtree keeps a rect with real area outside its
+	// parent's bounds and paints there.
+	if b.W <= 0 || b.H <= 0 {
+		for _, c := range h.Children {
+			gooey.ArrangeChild(c, gooey.Rect{X: b.X, Y: b.Y})
+		}
+		return
+	}
 	x := b.X
 	placed := false
 	for i, c := range h.Children {
-		s := h.sizes[i]
+		s := measuredAt(h.sizes, i)
 		if gapBefore(c, placed) {
 			x += h.Gap
 		}

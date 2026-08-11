@@ -42,6 +42,17 @@ func (b *Border) Arrange(r gooey.Rect) {
 
 func (b *Border) Render(f *gooey.Frame) {
 	r := b.Bounds()
+	// A degenerate rect is not a small box: with W or H at zero the
+	// far-edge arithmetic (r.X+r.W-1) walks BACKWARDS, and the corners
+	// land outside the node's own bounds — outside its damage rect, so
+	// the composer never cleans them and the scar is permanent. Zero
+	// size happens routinely: a Visible Border inside a Collapsed
+	// ancestor (a hidden Tabs page) is arranged into nothing while
+	// staying paintable. Painting only inside your own bounds is the
+	// damage contract; this is where a Border keeps it.
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
 	style := getSty(b.Style)
 	if !style.Bg.Set {
 		if col := getColor(b.Background); col.Set {
@@ -60,7 +71,12 @@ func (b *Border) Render(f *gooey.Frame) {
 	f.Cells.Set(r.X+r.W-1, r.Y, '╮', style)
 	f.Cells.Set(r.X, r.Y+r.H-1, '╰', style)
 	f.Cells.Set(r.X+r.W-1, r.Y+r.H-1, '╯', style)
-	if title := getStr(b.Title); title != "" {
+	// Below four columns there is no room even for the title's two pad
+	// spaces: the write starts at r.X+2, so a narrower box puts them
+	// past the far edge — outside this node's damage rect, where the
+	// composer's sweep cannot clean them. Same contract as the
+	// degenerate-rect guard above, one column in.
+	if title := getStr(b.Title); title != "" && r.W >= 4 {
 		f.Cells.SetString(r.X+2, r.Y, " "+clipRunes(title, r.W-6)+" ", style)
 	}
 }

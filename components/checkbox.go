@@ -42,7 +42,16 @@ func (c *Checkbox) Render(f *gooey.Frame) {
 	if c.IsFocused() {
 		st.Reverse = true
 	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(box+c.label(), b.W), st)
+	label := c.label()
+	// Nothing to paint into: a Visible component inside a Collapsed
+	// ancestor is arranged to nothing, and writing a row at b.Y
+	// anyway puts cells outside this node's damage rect, where the
+	// Composer's sweep will never clean them. The state reads above
+	// stay above the guard — the Get-order rule.
+	if b.W <= 0 || b.H <= 0 {
+		return
+	}
+	f.Cells.SetString(b.X, b.Y, clipRunes(box+label, b.W), st)
 }
 
 // IsChecked reads the bound state, tolerating an unbound Checkbox (a
