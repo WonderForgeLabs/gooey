@@ -116,6 +116,22 @@ type Context struct {
 	// required by documents that use handler namespaces
 	// ({{net:Get …}}) and unused by everything else.
 	Dispatcher *gooey.Dispatcher
+	// Dir is the OS directory this document's HOST-SIDE paths resolve
+	// against: a <Companion>'s working directory and its log file. Set it
+	// to the same directory the page's fs.FS was rooted at —
+	//
+	//	app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))
+	//	ctx.Dir = dir
+	//
+	// — because fs.FS cannot answer the question: os.DirFS(dir) offers no
+	// way back to dir, and a child process needs a real path (chdir and
+	// open do not take an fs.FS). Document-relative is the right default
+	// for a configuration file, the way <Image Src=…> resolves against the
+	// FS the document came from.
+	//
+	// Empty means the process's working directory, which is what a tree
+	// built from bytes gets.
+	Dir string
 
 	// fsys is the file system the current document was LOADED from,
 	// installed by Load (and by control instantiation) for the duration
@@ -385,6 +401,7 @@ func attachProp(parent, e *Element) error {
 var propElements = map[string]map[string]bool{
 	"ItemsView": {"ItemTemplate": true},
 	"StatusBar": {"Left": true, "Center": true, "Right": true},
+	"Companion": {"Args": true, "Env": true},
 }
 
 // checkProps rejects property elements the element cannot accept. A
@@ -1142,6 +1159,13 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 			}
 		}
 		return named(e, ctx, t, nil)
+	case "Companion":
+		// Non-visual like KeyBinding and Timer: buildChildren routes it to
+		// the parent as an attachment and the Composer starts it. Unlike
+		// them it is a capability — it names a binary — so read the header
+		// of companion.go before touching it.
+		c, err := buildCompanion(e, ctx)
+		return named(e, ctx, c, err)
 	case "Image":
 		im, err := buildImage(e, ctx)
 		return named(e, ctx, im, err)
