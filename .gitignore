@@ -1,5 +1,6 @@
 bin/
 feeds.opml
+*.log
 node_modules/
 __pycache__/
 clients/ts/*/dist/
