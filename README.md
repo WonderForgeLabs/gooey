@@ -113,7 +113,7 @@ Reusable capability ships from this repo in three shapes, per the
 **handler packs** (`handlers/<name>` — gooey-coupled `HandlerProvider`s
 behind an xmlns URI: `net`, `fs`, `temporal`, `exec`), **activity packs**
 (`packs/<runtime>-<domain>` — gooey-free standalone modules anyone in
-that runtime's ecosystem can import: `packs/temporal-visibility`), and
+that runtime's ecosystem can import: the `packs/temporal-*` family), and
 plain **component/format libraries** (root packages). The module
 boundary follows dependency hygiene: a zero-third-party-dep handler pack
 lives in the root module, any third-party dependency forces a nested

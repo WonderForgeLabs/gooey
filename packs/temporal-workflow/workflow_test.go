@@ -177,15 +177,96 @@ func TestWithNamespaceSetsTheDefault(t *testing.T) {
 	}
 }
 
-// A request that names its namespace is the caller's business.
+// A request that names its namespace is the caller's business — for
+// EVERY activity, not just one. Each activity repeats the same
+// `if req.Namespace == ""` guard independently, so an accidental
+// unconditional overwrite in any one of them would pass both
+// TestNilRequestsGetTheWorkerNamespace (which only exercises the empty
+// case) and TestEachActivityCallsItsOwnRPC (which checks routing, not
+// fidelity). This is the test that catches it.
 func TestExplicitNamespacePassesThrough(t *testing.T) {
-	a, wfs := harness()
-	req := &workflowservice.SignalWorkflowExecutionRequest{Namespace: "elsewhere"}
-	if _, err := a.SignalWorkflowExecution(context.Background(), req); err != nil {
-		t.Fatal(err)
+	const elsewhere = "elsewhere"
+
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, *Activities) error
+		got  func(*fakeWorkflowService) string
+	}{
+		{
+			"StartWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.StartWorkflowExecution(ctx, &workflowservice.StartWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotStart.Namespace },
+		},
+		{
+			"SignalWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.SignalWorkflowExecution(ctx, &workflowservice.SignalWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotSignal.Namespace },
+		},
+		{
+			"SignalWithStartWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.SignalWithStartWorkflowExecution(ctx, &workflowservice.SignalWithStartWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotSignalWithStart.Namespace },
+		},
+		{
+			"QueryWorkflow",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.QueryWorkflow(ctx, &workflowservice.QueryWorkflowRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotQuery.Namespace },
+		},
+		{
+			"RequestCancelWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.RequestCancelWorkflowExecution(ctx, &workflowservice.RequestCancelWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotCancel.Namespace },
+		},
+		{
+			"TerminateWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.TerminateWorkflowExecution(ctx, &workflowservice.TerminateWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotTerminate.Namespace },
+		},
+		{
+			"ResetWorkflowExecution",
+			func(ctx context.Context, a *Activities) error {
+				_, err := a.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{Namespace: elsewhere})
+				return err
+			},
+			func(f *fakeWorkflowService) string { return f.gotReset.Namespace },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, wfs := harness()
+			// The worker's namespace differs from the caller's, so a
+			// test passing on "both happen to be default" is impossible.
+			a.namespace = "the-workers-namespace"
+			if err := tc.call(context.Background(), a); err != nil {
+				t.Fatal(err)
+			}
+			if got := tc.got(wfs); got != elsewhere {
+				t.Fatalf("namespace = %q, want the caller's %q", got, elsewhere)
+			}
+		})
 	}
-	if wfs.gotSignal.Namespace != "elsewhere" {
-		t.Fatalf("namespace = %q, want the caller's %q", wfs.gotSignal.Namespace, "elsewhere")
+
+	// The table must cover every activity in the pack — if AllNames
+	// grows, this fails until the table does too.
+	if want := len(AllNames()); want != 7 {
+		t.Fatalf("the pack has %d activities but this table covers 7", want)
 	}
 }
 
