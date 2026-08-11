@@ -264,6 +264,22 @@ export interface RegisterPropertiesRequest {
 export interface RegisterPropertiesResponse {
 }
 /**
+ * @generated from protobuf message gooey.control.v1.UnregisterNamesRequest
+ */
+export interface UnregisterNamesRequest {
+    /**
+     * Dotted names to remove, e.g. "Result" or "Activity.Sparkle.Out".
+     *
+     * @generated from protobuf field: repeated string names = 1
+     */
+    names: string[];
+}
+/**
+ * @generated from protobuf message gooey.control.v1.UnregisterNamesResponse
+ */
+export interface UnregisterNamesResponse {
+}
+/**
  * @generated from protobuf message gooey.control.v1.GetDeclaredSchemaRequest
  */
 export interface GetDeclaredSchemaRequest {
@@ -1398,6 +1414,91 @@ class RegisterPropertiesResponse$Type extends MessageType<RegisterPropertiesResp
  */
 export const RegisterPropertiesResponse = new RegisterPropertiesResponse$Type();
 // @generated message type with reflection information, may provide speed optimized methods
+class UnregisterNamesRequest$Type extends MessageType<UnregisterNamesRequest> {
+    constructor() {
+        super("gooey.control.v1.UnregisterNamesRequest", [
+            { no: 1, name: "names", kind: "scalar", repeat: 2 /*RepeatType.UNPACKED*/, T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<UnregisterNamesRequest>): UnregisterNamesRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.names = [];
+        if (value !== undefined)
+            reflectionMergePartial<UnregisterNamesRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: UnregisterNamesRequest): UnregisterNamesRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated string names */ 1:
+                    message.names.push(reader.string());
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: UnregisterNamesRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated string names = 1; */
+        for (let i = 0; i < message.names.length; i++)
+            writer.tag(1, WireType.LengthDelimited).string(message.names[i]);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.UnregisterNamesRequest
+ */
+export const UnregisterNamesRequest = new UnregisterNamesRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class UnregisterNamesResponse$Type extends MessageType<UnregisterNamesResponse> {
+    constructor() {
+        super("gooey.control.v1.UnregisterNamesResponse", []);
+    }
+    create(value?: PartialMessage<UnregisterNamesResponse>): UnregisterNamesResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        if (value !== undefined)
+            reflectionMergePartial<UnregisterNamesResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: UnregisterNamesResponse): UnregisterNamesResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: UnregisterNamesResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message gooey.control.v1.UnregisterNamesResponse
+ */
+export const UnregisterNamesResponse = new UnregisterNamesResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
 class GetDeclaredSchemaRequest$Type extends MessageType<GetDeclaredSchemaRequest> {
     constructor() {
         super("gooey.control.v1.GetDeclaredSchemaRequest", [
@@ -1802,6 +1903,7 @@ export const ControlService = new ServiceType("gooey.control.v1.ControlService",
     { name: "SetFocus", options: {}, I: SetFocusRequest, O: SetFocusResponse },
     { name: "SwapMarkup", options: {}, I: SwapMarkupRequest, O: SwapMarkupResponse },
     { name: "RegisterProperties", options: {}, I: RegisterPropertiesRequest, O: RegisterPropertiesResponse },
+    { name: "UnregisterNames", options: {}, I: UnregisterNamesRequest, O: UnregisterNamesResponse },
     { name: "GetDeclaredSchema", options: {}, I: GetDeclaredSchemaRequest, O: GetDeclaredSchemaResponse },
     { name: "PatchMarkup", options: {}, I: PatchMarkupRequest, O: PatchMarkupResponse },
     { name: "ListStyles", options: {}, I: ListStylesRequest, O: ListStylesResponse },

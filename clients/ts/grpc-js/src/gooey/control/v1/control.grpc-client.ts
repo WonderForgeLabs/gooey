@@ -30,6 +30,8 @@ import type { PatchMarkupResponse } from "./control";
 import type { PatchMarkupRequest } from "./control";
 import type { GetDeclaredSchemaResponse } from "./control";
 import type { GetDeclaredSchemaRequest } from "./control";
+import type { UnregisterNamesResponse } from "./control";
+import type { UnregisterNamesRequest } from "./control";
 import type { RegisterPropertiesResponse } from "./control";
 import type { RegisterPropertiesRequest } from "./control";
 import type { SwapMarkupResponse } from "./control";
@@ -174,6 +176,24 @@ export interface IControlServiceClient {
     registerProperties(input: RegisterPropertiesRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: RegisterPropertiesResponse) => void): grpc.ClientUnaryCall;
     registerProperties(input: RegisterPropertiesRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: RegisterPropertiesResponse) => void): grpc.ClientUnaryCall;
     registerProperties(input: RegisterPropertiesRequest, callback: (err: grpc.ServiceError | null, value?: RegisterPropertiesResponse) => void): grpc.ClientUnaryCall;
+    /**
+     * UnregisterNames removes names from the binding context —
+     * RegisterProperties' inverse, and the delete half of a CRUD surface
+     * over the viewmodel. A client that can grow the context must be able
+     * to shrink it again, or every generated name leaks for the life of
+     * the process. A name that does not resolve is NOT_FOUND and the
+     * whole batch is refused, leaving the context untouched.
+     *
+     * Removal does not disturb the RUNNING tree: a component bound to a
+     * removed name still holds its property handle and keeps rendering.
+     * It takes the name out of scope for markup built afterwards.
+     *
+     * @generated from protobuf rpc: UnregisterNames
+     */
+    unregisterNames(input: UnregisterNamesRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void): grpc.ClientUnaryCall;
+    unregisterNames(input: UnregisterNamesRequest, metadata: grpc.Metadata, callback: (err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void): grpc.ClientUnaryCall;
+    unregisterNames(input: UnregisterNamesRequest, options: grpc.CallOptions, callback: (err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void): grpc.ClientUnaryCall;
+    unregisterNames(input: UnregisterNamesRequest, callback: (err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void): grpc.ClientUnaryCall;
     /**
      * GetDeclaredSchema returns a document's <x:Property> declaration
      * block as a schema (issue #62): the contract a values payload must
@@ -360,6 +380,24 @@ export class ControlServiceClient extends grpc.Client implements IControlService
         return this.makeUnaryRequest<RegisterPropertiesRequest, RegisterPropertiesResponse>(`/${ControlService.typeName}/${method.name}`, (value: RegisterPropertiesRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): RegisterPropertiesResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
     /**
+     * UnregisterNames removes names from the binding context —
+     * RegisterProperties' inverse, and the delete half of a CRUD surface
+     * over the viewmodel. A client that can grow the context must be able
+     * to shrink it again, or every generated name leaks for the life of
+     * the process. A name that does not resolve is NOT_FOUND and the
+     * whole batch is refused, leaving the context untouched.
+     *
+     * Removal does not disturb the RUNNING tree: a component bound to a
+     * removed name still holds its property handle and keeps rendering.
+     * It takes the name out of scope for markup built afterwards.
+     *
+     * @generated from protobuf rpc: UnregisterNames
+     */
+    unregisterNames(input: UnregisterNamesRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: UnregisterNamesResponse) => void)): grpc.ClientUnaryCall {
+        const method = ControlService.methods[11];
+        return this.makeUnaryRequest<UnregisterNamesRequest, UnregisterNamesResponse>(`/${ControlService.typeName}/${method.name}`, (value: UnregisterNamesRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): UnregisterNamesResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
+    }
+    /**
      * GetDeclaredSchema returns a document's <x:Property> declaration
      * block as a schema (issue #62): the contract a values payload must
      * satisfy before the document can build.
@@ -367,7 +405,7 @@ export class ControlServiceClient extends grpc.Client implements IControlService
      * @generated from protobuf rpc: GetDeclaredSchema
      */
     getDeclaredSchema(input: GetDeclaredSchemaRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: GetDeclaredSchemaResponse) => void)): grpc.ClientUnaryCall {
-        const method = ControlService.methods[11];
+        const method = ControlService.methods[12];
         return this.makeUnaryRequest<GetDeclaredSchemaRequest, GetDeclaredSchemaResponse>(`/${ControlService.typeName}/${method.name}`, (value: GetDeclaredSchemaRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): GetDeclaredSchemaResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
     /**
@@ -387,7 +425,7 @@ export class ControlServiceClient extends grpc.Client implements IControlService
      * @generated from protobuf rpc: PatchMarkup
      */
     patchMarkup(input: PatchMarkupRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: PatchMarkupResponse) => void)): grpc.ClientUnaryCall {
-        const method = ControlService.methods[12];
+        const method = ControlService.methods[13];
         return this.makeUnaryRequest<PatchMarkupRequest, PatchMarkupResponse>(`/${ControlService.typeName}/${method.name}`, (value: PatchMarkupRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): PatchMarkupResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
     /**
@@ -399,7 +437,7 @@ export class ControlServiceClient extends grpc.Client implements IControlService
      * @generated from protobuf rpc: ListStyles
      */
     listStyles(input: ListStylesRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: ListStylesResponse) => void)): grpc.ClientUnaryCall {
-        const method = ControlService.methods[13];
+        const method = ControlService.methods[14];
         return this.makeUnaryRequest<ListStylesRequest, ListStylesResponse>(`/${ControlService.typeName}/${method.name}`, (value: ListStylesRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): ListStylesResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
     /**
@@ -414,7 +452,7 @@ export class ControlServiceClient extends grpc.Client implements IControlService
      * @generated from protobuf rpc: ValidateMarkup
      */
     validateMarkup(input: ValidateMarkupRequest, metadata: grpc.Metadata | grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void), options?: grpc.CallOptions | ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void), callback?: ((err: grpc.ServiceError | null, value?: ValidateMarkupResponse) => void)): grpc.ClientUnaryCall {
-        const method = ControlService.methods[14];
+        const method = ControlService.methods[15];
         return this.makeUnaryRequest<ValidateMarkupRequest, ValidateMarkupResponse>(`/${ControlService.typeName}/${method.name}`, (value: ValidateMarkupRequest): Buffer => Buffer.from(method.I.toBinary(value, this._binaryOptions)), (value: Buffer): ValidateMarkupResponse => method.O.fromBinary(value, this._binaryOptions), input, (metadata as any), (options as any), (callback as any));
     }
 }

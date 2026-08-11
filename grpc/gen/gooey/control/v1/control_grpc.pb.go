@@ -47,6 +47,7 @@ const (
 	ControlService_SetFocus_FullMethodName           = "/gooey.control.v1.ControlService/SetFocus"
 	ControlService_SwapMarkup_FullMethodName         = "/gooey.control.v1.ControlService/SwapMarkup"
 	ControlService_RegisterProperties_FullMethodName = "/gooey.control.v1.ControlService/RegisterProperties"
+	ControlService_UnregisterNames_FullMethodName    = "/gooey.control.v1.ControlService/UnregisterNames"
 	ControlService_GetDeclaredSchema_FullMethodName  = "/gooey.control.v1.ControlService/GetDeclaredSchema"
 	ControlService_PatchMarkup_FullMethodName        = "/gooey.control.v1.ControlService/PatchMarkup"
 	ControlService_ListStyles_FullMethodName         = "/gooey.control.v1.ControlService/ListStyles"
@@ -97,6 +98,17 @@ type ControlServiceClient interface {
 	// binding context without swapping markup (issue #89). A name that
 	// already exists is INVALID_ARGUMENT — one source of truth.
 	RegisterProperties(ctx context.Context, in *RegisterPropertiesRequest, opts ...grpc.CallOption) (*RegisterPropertiesResponse, error)
+	// UnregisterNames removes names from the binding context —
+	// RegisterProperties' inverse, and the delete half of a CRUD surface
+	// over the viewmodel. A client that can grow the context must be able
+	// to shrink it again, or every generated name leaks for the life of
+	// the process. A name that does not resolve is NOT_FOUND and the
+	// whole batch is refused, leaving the context untouched.
+	//
+	// Removal does not disturb the RUNNING tree: a component bound to a
+	// removed name still holds its property handle and keeps rendering.
+	// It takes the name out of scope for markup built afterwards.
+	UnregisterNames(ctx context.Context, in *UnregisterNamesRequest, opts ...grpc.CallOption) (*UnregisterNamesResponse, error)
 	// GetDeclaredSchema returns a document's <x:Property> declaration
 	// block as a schema (issue #62): the contract a values payload must
 	// satisfy before the document can build.
@@ -247,6 +259,16 @@ func (c *controlServiceClient) RegisterProperties(ctx context.Context, in *Regis
 	return out, nil
 }
 
+func (c *controlServiceClient) UnregisterNames(ctx context.Context, in *UnregisterNamesRequest, opts ...grpc.CallOption) (*UnregisterNamesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnregisterNamesResponse)
+	err := c.cc.Invoke(ctx, ControlService_UnregisterNames_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlServiceClient) GetDeclaredSchema(ctx context.Context, in *GetDeclaredSchemaRequest, opts ...grpc.CallOption) (*GetDeclaredSchemaResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetDeclaredSchemaResponse)
@@ -331,6 +353,17 @@ type ControlServiceServer interface {
 	// binding context without swapping markup (issue #89). A name that
 	// already exists is INVALID_ARGUMENT — one source of truth.
 	RegisterProperties(context.Context, *RegisterPropertiesRequest) (*RegisterPropertiesResponse, error)
+	// UnregisterNames removes names from the binding context —
+	// RegisterProperties' inverse, and the delete half of a CRUD surface
+	// over the viewmodel. A client that can grow the context must be able
+	// to shrink it again, or every generated name leaks for the life of
+	// the process. A name that does not resolve is NOT_FOUND and the
+	// whole batch is refused, leaving the context untouched.
+	//
+	// Removal does not disturb the RUNNING tree: a component bound to a
+	// removed name still holds its property handle and keeps rendering.
+	// It takes the name out of scope for markup built afterwards.
+	UnregisterNames(context.Context, *UnregisterNamesRequest) (*UnregisterNamesResponse, error)
 	// GetDeclaredSchema returns a document's <x:Property> declaration
 	// block as a schema (issue #62): the contract a values payload must
 	// satisfy before the document can build.
@@ -403,6 +436,9 @@ func (UnimplementedControlServiceServer) SwapMarkup(context.Context, *SwapMarkup
 }
 func (UnimplementedControlServiceServer) RegisterProperties(context.Context, *RegisterPropertiesRequest) (*RegisterPropertiesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegisterProperties not implemented")
+}
+func (UnimplementedControlServiceServer) UnregisterNames(context.Context, *UnregisterNamesRequest) (*UnregisterNamesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnregisterNames not implemented")
 }
 func (UnimplementedControlServiceServer) GetDeclaredSchema(context.Context, *GetDeclaredSchemaRequest) (*GetDeclaredSchemaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDeclaredSchema not implemented")
@@ -635,6 +671,24 @@ func _ControlService_RegisterProperties_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_UnregisterNames_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnregisterNamesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).UnregisterNames(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_UnregisterNames_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).UnregisterNames(ctx, req.(*UnregisterNamesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlService_GetDeclaredSchema_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetDeclaredSchemaRequest)
 	if err := dec(in); err != nil {
@@ -757,6 +811,10 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterProperties",
 			Handler:    _ControlService_RegisterProperties_Handler,
+		},
+		{
+			MethodName: "UnregisterNames",
+			Handler:    _ControlService_UnregisterNames_Handler,
 		},
 		{
 			MethodName: "GetDeclaredSchema",

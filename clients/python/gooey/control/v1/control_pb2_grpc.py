@@ -73,6 +73,11 @@ class ControlServiceStub:
                 request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesRequest.SerializeToString,
                 response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesResponse.FromString,
                 _registered_method=True)
+        self.UnregisterNames = channel.unary_unary(
+                '/gooey.control.v1.ControlService/UnregisterNames',
+                request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesRequest.SerializeToString,
+                response_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesResponse.FromString,
+                _registered_method=True)
         self.GetDeclaredSchema = channel.unary_unary(
                 '/gooey.control.v1.ControlService/GetDeclaredSchema',
                 request_serializer=gooey_dot_control_dot_v1_dot_control__pb2.GetDeclaredSchemaRequest.SerializeToString,
@@ -192,6 +197,22 @@ class ControlServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def UnregisterNames(self, request, context):
+        """UnregisterNames removes names from the binding context —
+        RegisterProperties' inverse, and the delete half of a CRUD surface
+        over the viewmodel. A client that can grow the context must be able
+        to shrink it again, or every generated name leaks for the life of
+        the process. A name that does not resolve is NOT_FOUND and the
+        whole batch is refused, leaving the context untouched.
+
+        Removal does not disturb the RUNNING tree: a component bound to a
+        removed name still holds its property handle and keeps rendering.
+        It takes the name out of scope for markup built afterwards.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetDeclaredSchema(self, request, context):
         """GetDeclaredSchema returns a document's <x:Property> declaration
         block as a schema (issue #62): the contract a values payload must
@@ -299,6 +320,11 @@ def add_ControlServiceServicer_to_server(servicer, server):
                     servicer.RegisterProperties,
                     request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesRequest.FromString,
                     response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesResponse.SerializeToString,
+            ),
+            'UnregisterNames': grpc.unary_unary_rpc_method_handler(
+                    servicer.UnregisterNames,
+                    request_deserializer=gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesRequest.FromString,
+                    response_serializer=gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesResponse.SerializeToString,
             ),
             'GetDeclaredSchema': grpc.unary_unary_rpc_method_handler(
                     servicer.GetDeclaredSchema,
@@ -622,6 +648,33 @@ class ControlService:
             '/gooey.control.v1.ControlService/RegisterProperties',
             gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesRequest.SerializeToString,
             gooey_dot_control_dot_v1_dot_control__pb2.RegisterPropertiesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UnregisterNames(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/gooey.control.v1.ControlService/UnregisterNames',
+            gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesRequest.SerializeToString,
+            gooey_dot_control_dot_v1_dot_control__pb2.UnregisterNamesResponse.FromString,
             options,
             channel_credentials,
             insecure,
