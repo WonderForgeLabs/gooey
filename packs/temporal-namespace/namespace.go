@@ -36,7 +36,10 @@
 // request) is filled with the worker's namespace, WithNamespace or
 // Temporal's "default" — applies to DescribeNamespace, the one RPC here
 // that names a namespace. It is the pack's ONLY deviation from verbatim
-// pass-through, and it only ever fills an empty field.
+// pass-through, and it only ever fills an empty field. The default is
+// written into the request in place, which is safe for activity
+// invocations (the request was deserialized fresh for this call) and
+// worth knowing for direct Go calls.
 //
 // ListNamespaces, GetClusterInfo and GetSystemInfo are CLUSTER-scoped:
 // their request messages have no namespace field at all, so there is
