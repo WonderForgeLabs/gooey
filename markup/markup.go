@@ -20,6 +20,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/fs"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -141,6 +142,20 @@ type Context struct {
 	// built from bytes gets.
 	Dir string
 
+	// Variant specializes every document load on the terminal's pixel
+	// protocol: with Variant "sixel", "page.gooey" resolves to
+	// "page.sixel.gooey" when that file exists and to "page.gooey" when it
+	// does not. See VariantOf for why this axis is a FILE rather than a
+	// branch inside a component.
+	//
+	// Set it from the resolved encoder — App.Graphics().Name(), or "cells"
+	// where there is none — AFTER capability detection, since before the
+	// probe the honest answer is "unknown" and the base document is right.
+	//
+	// Empty disables the lookup entirely, which is what every existing app
+	// gets: one document, loaded by the name it was asked for.
+	Variant string
+
 	// fsys is the file system the current document was LOADED from,
 	// installed by Load (and by control instantiation) for the duration
 	// of the build — the same document-scoped save/restore the xmlns
@@ -188,6 +203,62 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, fmt.Errorf("markup: <Gooey> must have exactly one child")
 	}
 	return &document{ns: ns, decls: decls, content: kids[0]}, nil
+}
+
+// Variant is the per-protocol suffix a document may specialize on:
+// "kitty", "sixel", "iterm2", or "cells" where there is no pixel plane.
+//
+// It is Xamarin's platform-specific XAML, applied to the axis that
+// actually varies in a terminal. A component's own tier check is binary —
+// pixels or cells (buttonchrome.go, colorpicker.go, image.go, panel.go all
+// ask `f.Graphics == nil || f.CellW <= 0`) — and that is the right shape
+// for a component, because what changes between protocols is not what the
+// component IS. It is what the terminal can be asked for:
+//
+//   - sixel has NO ALPHA and 256 registers, so a translucent shadow is
+//     simply not expressible; a transparent pixel is one with no register;
+//   - kitty has real alpha AND image identity (graphics.IDEncoder), so a
+//     placement can be moved or deleted without resending pixels;
+//   - cells has neither, and every pixel component falls back to runes.
+//
+// A layout that wants to spend those differently — a denser grid where
+// chrome is cheap, a plainer one where it is not — says so in a FILE
+// rather than in a branch inside a component. That keeps the difference
+// where a designer can see it, which is the whole argument for markup.
+//
+// Empty means no specialization: every document resolves to its base name.
+func VariantOf(protocol string) string { return protocol }
+
+// resolve picks the most specific file that exists: "page.kitty.gooey"
+// before "page.gooey". A missing variant is not an error — it is the
+// ordinary case, and falling back is the point.
+//
+// The suffix goes before the extension rather than after so the files sort
+// together and keep their .gooey type: page.gooey, page.kitty.gooey.
+func resolveVariant(fsys fs.FS, name, variant string) string {
+	if variant == "" {
+		return name
+	}
+	v := variantName(name, variant)
+	if v == name {
+		return name
+	}
+	if _, err := fs.Stat(fsys, v); err != nil {
+		return name
+	}
+	return v
+}
+
+// variantName inserts the variant before the final extension.
+func variantName(name, variant string) string {
+	if variant == "" {
+		return name
+	}
+	ext := path.Ext(name)
+	if ext == "" {
+		return name + "." + variant
+	}
+	return strings.TrimSuffix(name, ext) + "." + variant + ext
 }
 
 func loadDocument(fsys fs.FS, name string) (*document, error) {
@@ -261,7 +332,11 @@ func Find[T gooey.Component](ctx *Context, name string) (T, error) {
 
 // Load reads and builds a markup file from any fs.FS — os.DirFS in
 // dev, embed.FS in release; the loader cannot tell the difference.
+//
+// The name is resolved through Context.Variant first, so a page with a
+// protocol-specific sibling gets it and one without is unaffected.
 func Load(fsys fs.FS, name string, ctx *Context) (gooey.Component, error) {
+	name = resolveVariant(fsys, name, ctx.Variant)
 	doc, err := loadDocument(fsys, name)
 	if err != nil {
 		return nil, err
@@ -547,6 +622,16 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 	}
 	return nil
 }
+
+// ParseThickness reads MAUI's Thickness syntax — "4", "4,2", or
+// "4,2,4,2" for left,top,right,bottom — for a custom component that takes
+// a Padding or an inset of its own.
+//
+// Exported so a component outside this package spells its padding the way
+// Margin is already spelled everywhere else. A second parser would drift:
+// this is the one that decides whether "1,2" means horizontal/vertical or
+// left/top, and the answer has to be the same in every element.
+func ParseThickness(s string) (gooey.Thickness, error) { return parseThickness(s) }
 
 func parseThickness(s string) (gooey.Thickness, error) {
 	parts := strings.Split(s, ",")

@@ -50,5 +50,18 @@ func (p *page) Build() (gooey.Component, error) {
 // goroutine that was never allowed near it.
 func (p *page) Watch(changed func()) func() {
 	names := append([]string{p.name}, p.also...)
+	// EVERY VARIANT IS WATCHED, not just the one currently resolving.
+	// WatchAll polls ModTime and tolerates a name that does not exist, so
+	// listing page.sixel.gooey before it has been written is what makes
+	// CREATING it hot-reload — which is the moment a variant is most
+	// likely to be edited. Watching only the resolved name would mean the
+	// first save of a new variant did nothing at all.
+	if p.ctx != nil && p.ctx.Variant != "" {
+		for _, n := range append([]string{p.name}, p.also...) {
+			if v := variantName(n, p.ctx.Variant); v != n {
+				names = append(names, v)
+			}
+		}
+	}
 	return WatchAll(p.fsys, names, changed)
 }
