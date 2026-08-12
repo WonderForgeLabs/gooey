@@ -375,10 +375,12 @@ log(`reconcile survey: ${staleDocs.length} stale doc claims, ${adoptFindings.len
 // drifted: the bucket filter took any `docs/architecture*` or `README*`
 // while owns() took three exact filenames, and learnDocs bucketed with no
 // extension check while owns() required `.md`. A path caught by the loose
-// half and missed by the strict half — `docs/architecture-notes.md` is a
-// real one — got assigned to the core updater as a finding while being
-// carved OUT of every updater's write set, so it could only be fixed by an
-// agent disobeying its own instructions. That is finding 3 of #180
+// half and missed by the strict half got assigned to an updater as a
+// finding while being carved OUT of every updater's write set, so it could
+// only be fixed by an agent disobeying its own instructions. The learn
+// pair had thirteen live instances of exactly that at the time of writing
+// — `docs/learn/media/*.png`, which `startsWith('docs/learn/')` bucketed
+// and `.endsWith('.md')` then disowned. That is finding 3 of #180
 // reopened one layer down, and it reopens again the moment these are
 // separate expressions. Deriving all three from the same function is what
 // makes the divergence unrepresentable rather than merely fixed.
@@ -460,9 +462,10 @@ List any assigned finding you judged wrong under skipped, with the reason. chang
 const updaters = []
 // The write set is the canonical targets UNION every path actually
 // assigned to this updater. Listing only the canonical three was the other
-// half of the same bug: the bucket predicate can hand this agent
-// `docs/architecture-notes.md`, and an agent told to fix a finding on a
-// file its write set forbids has no legal move. Deduped so the common case
+// half of the same bug: the bucket predicate takes any `docs/architecture*`
+// or `README*`, not those three literals, so it can hand this agent a path
+// the write set forbids — and an agent told to fix a finding on a file it
+// may not edit has no legal move. Deduped so the common case
 // still reads as exactly the three names.
 if (coreDocs.length) updaters.push(() => agent(
   updaterBrief([...new Set(['docs/markup-reference.md', 'docs/architecture.md', 'README.md', ...coreDocs.map(f => f.path)])], coreDocs,
