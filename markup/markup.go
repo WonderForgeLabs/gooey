@@ -55,6 +55,14 @@ type Element struct {
 	// mechanism, not an ItemTemplate special case: <x:Property> lands
 	// here next.
 	Props map[string]Element
+
+	// parent is the enclosing element's name, stamped during parsing.
+	// It exists for attached-property validation: Grid.Row is only
+	// meaningful on a child of a <Grid>, so the check needs to know what
+	// the child is actually inside. Unexported because it is derived
+	// from the document rather than written in it — a caller
+	// constructing an Element by hand has no parent to declare.
+	parent string
 }
 
 // Builder constructs a component from an element. Custom components receive
@@ -354,6 +362,11 @@ func parse(src []byte) (Element, map[string]string, error) {
 					}
 					continue
 				}
+				// The parent's name travels with the child so an
+				// attached property can be checked against the parent
+				// that actually contributes it: Canvas.Left is
+				// meaningful under a <Canvas> and nowhere else.
+				e.parent = p.Name
 				p.Children = append(p.Children, *e)
 			}
 		case xml.CharData:
@@ -440,6 +453,9 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 		return nil, fmt.Errorf("markup: <x:%s> must be a direct child of the root <Gooey>: declarations define the control's type, so they belong on the type, not inside its content", e.Name)
 	}
 	if err := checkProps(e, ctx); err != nil {
+		return nil, err
+	}
+	if err := checkAttrs(e, ctx); err != nil {
 		return nil, err
 	}
 	w, err := buildComponent(e, ctx)
@@ -647,6 +663,16 @@ func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
 		if v, ok := x.(*Validate); ok && v.Error == nil {
 			return fmt.Errorf("markup: <%s> does not support <Validate>; it belongs on an input element with a bound text source", e.Name)
 		}
+		// A TypeAhead searches its host's items, so a host with no items
+		// is a search that would silently never fire. Unlike Validate —
+		// whose wiring is done by the host's own builder before this
+		// point — the host link is made later, by the input-tree walk, so
+		// the check is on the host TYPE rather than on the attachment.
+		if _, ok := x.(*components.TypeAhead); ok {
+			if _, list := w.(*components.ItemsView); !list {
+				return fmt.Errorf("markup: <%s> does not support <TypeAhead>; it belongs on an <ItemsView>", e.Name)
+			}
+		}
 	}
 	if len(attach) == 0 {
 		return nil
@@ -666,545 +692,23 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 		w, err := b(e, ctx)
 		return named(e, ctx, w, err)
 	}
-	switch e.Name {
-	case "Border":
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(kids) != 1 {
-			return nil, fmt.Errorf("markup: <Border> needs exactly one child")
-		}
-		child := kids[0]
-		title, err := bindText(e.Attrs["Title"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		if title == nil {
-			title = components.Str(e.Attrs["Title"])
-		}
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		background, err := bindColor(e, ctx, "Background")
-		if err != nil {
-			return nil, err
-		}
-		b := &components.Border{
-			Child:      child,
-			Title:      title,
-			Style:      style,
-			Background: background,
-		}
-		if err := attachAll(e, b, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, b, nil)
-	case "Grid":
-		rows, err := components.ParseGridLens(e.Attrs["Rows"])
-		if err != nil {
-			return nil, err
-		}
-		cols, err := components.ParseGridLens(e.Attrs["Cols"])
-		if err != nil {
-			return nil, err
-		}
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		background, err := bindColor(e, ctx, "Background")
-		if err != nil {
-			return nil, err
-		}
-		g := &components.Grid{Rows: rows, Cols: cols, Children: kids, Background: background}
-		if err := attachAll(e, g, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, g, nil)
-	case "VStack", "HStack":
-		gap, _ := strconv.Atoi(e.Attrs["Gap"])
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		background, err := bindColor(e, ctx, "Background")
-		if err != nil {
-			return nil, err
-		}
-		var w gooey.Component = &components.HStack{Children: kids, Gap: gap, Background: background}
-		if e.Name == "VStack" {
-			w = &components.VStack{Children: kids, Gap: gap, Background: background}
-		}
-		if err := attachAll(e, w, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, w, nil)
-	case "Canvas":
-		// Children carry their own Canvas.Left/Canvas.Top, parsed into
-		// Layout by applyLayout like any other attached property.
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		background, err := bindColor(e, ctx, "Background")
-		if err != nil {
-			return nil, err
-		}
-		c := &components.Canvas{Children: kids, Background: background}
-		if err := attachAll(e, c, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, c, nil)
-	case "ItemsView":
-		v, err := buildItemsView(e, ctx)
-		return named(e, ctx, v, err)
-	case "Checkbox":
-		checked, err := boundProp[bool](e, ctx, "Checked")
-		if err != nil {
-			return nil, err
-		}
-		label, err := bindText(e.Attrs["Label"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		if label == nil {
-			label = components.Str(e.Attrs["Label"])
-		}
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		return named(e, ctx, &components.Checkbox{
-			Checked: checked,
-			Label:   label,
-			Style:   style,
-		}, nil)
-	case "Gauge":
-		value, err := boundProp[int](e, ctx, "Value")
-		if err != nil {
-			return nil, err
-		}
-		label, err := bindText(e.Attrs["Label"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		if label == nil {
-			label = components.Str(e.Attrs["Label"])
-		}
-		g := &components.Gauge{Value: value, Label: label}
-		g.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
-		// Style is an override for the threshold ramp, so it is applied
-		// only when the attribute is actually present.
-		if _, ok := e.Attrs["Style"]; ok {
-			if g.Style, err = bindStyle(e, ctx); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, g, nil)
-	case "Sparkline":
-		series, err := boundProp[[]float64](e, ctx, "Values")
-		if err != nil {
-			return nil, err
-		}
-		s := &components.Sparkline{Values: series}
-		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
-		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
-		if _, ok := e.Attrs["Style"]; ok {
-			if s.Style, err = bindStyle(e, ctx); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, s, nil)
-	case "TextBox":
-		// Like Button, a TextBox takes no visual children — but the
-		// non-visual attachments (<ValidationMarker>, <Tooltip>,
-		// <KeyBinding>) hang off it the way they hang off any element.
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(kids) > 0 {
-			return nil, fmt.Errorf("markup: <TextBox> takes no visual children; only attachments like <ValidationMarker> and <Tooltip> may nest here")
-		}
-		text, err := boundProp[string](e, ctx, "Text")
-		if err != nil {
-			return nil, err
-		}
-		changed, err := ctx.Command(e.Attrs["Changed"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <TextBox Changed=%q>: %w", e.Attrs["Changed"], err)
-		}
-		tb := &components.TextBox{Text: text, Changed: changed}
-		if p, ok := e.Attrs["Prompt"]; ok {
-			prompt, err := bindText(p, ctx)
-			if err != nil {
-				return nil, err
-			}
-			if prompt == nil {
-				prompt = components.Str(p)
-			}
-			tb.Prompt = prompt
-		}
-		if _, ok := e.Attrs["Style"]; ok {
-			if tb.Style, err = bindStyle(e, ctx); err != nil {
-				return nil, err
-			}
-		}
-		if a, ok := e.Attrs["AccentStyle"]; ok {
-			tb.AccentStyle = components.Sty(ctx.Styles[a])
-		}
-		// Error is the validation handle: a typed binding to the field's
-		// error property (empty = valid), never literal text.
-		if _, ok := e.Attrs["Error"]; ok {
-			if tb.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
-				return nil, err
-			}
-		}
-		if a, ok := e.Attrs["InvalidStyle"]; ok {
-			tb.InvalidStyle = components.Sty(ctx.Styles[a])
-		}
-		// A <Validate> behavior (bare or in <TextBox.Behaviors>) wires
-		// against the bound Text source and takes over the Error slot.
-		var vb *Validate
-		for _, a := range attach {
-			v, ok := a.(*Validate)
-			if !ok {
-				continue
-			}
-			if vb != nil {
-				return nil, fmt.Errorf("markup: <TextBox> takes one <Validate>")
-			}
-			vb = v
-		}
-		if vb != nil {
-			if tb.Error != nil {
-				return nil, fmt.Errorf("markup: <TextBox> declares both Error=%q and a <Validate>; the behavior owns the error property, drop one", e.Attrs["Error"])
-			}
-			if tb.Error, err = wireValidate(vb, "TextBox", tb.Text, bindingPath(e.Attrs["Text"]), ctx); err != nil {
-				return nil, err
-			}
-		}
-		if err := attachAll(e, tb, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, tb, nil)
-	case "ColorPicker":
-		color, err := boundProp[render.Color](e, ctx, "Value")
-		if err != nil {
-			return nil, err
-		}
-		return named(e, ctx, &components.ColorPicker{Value: color}, nil)
-	case "Button":
-		// A Button takes no visual children, but non-visual attachments
-		// — <Tooltip>, <KeyBinding> — hang off it the way they hang off
-		// any container (issue #92's canonical form).
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(kids) > 0 {
-			return nil, fmt.Errorf("markup: <Button> takes no visual children; only attachments like <Tooltip> and <KeyBinding> may nest here")
-		}
-		content, err := bindText(e.Attrs["Content"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		if content == nil {
-			content = components.Str(e.Attrs["Content"])
-		}
-		click, err := ctx.Command(e.Attrs["Click"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <Button Click=%q>: %w", e.Attrs["Click"], err)
-		}
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		chrome, ok := components.ParseButtonChrome(e.Attrs["Chrome"])
-		if !ok {
-			return nil, fmt.Errorf("markup: <Button Chrome=%q>: unknown chrome; want one of %s",
-				e.Attrs["Chrome"], strings.Join(components.ButtonChromeNames, ", "))
-		}
-		b := &components.Button{
-			Content: content,
-			Style:   style,
-			Click:   click,
-			Chrome:  chrome,
-		}
-		if err := attachAll(e, b, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, b, nil)
-	case "ProgressBar":
-		value, err := boundProp[int](e, ctx, "Value")
-		if err != nil {
-			return nil, err
-		}
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		p := &components.ProgressBar{Value: value, Label: label}
-		p.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
-		p.Thresholds = e.Attrs["Thresholds"] == "true"
-		// Indeterminate is optional, and its absence is load-bearing: a
-		// bar that can never be indeterminate starts no goroutine.
-		if _, ok := e.Attrs["Indeterminate"]; ok {
-			if p.Indeterminate, err = boundProp[bool](e, ctx, "Indeterminate"); err != nil {
-				return nil, err
-			}
-		}
-		if p.Tick, err = optDuration(e, "Tick"); err != nil {
-			return nil, err
-		}
-		if _, ok := e.Attrs["Style"]; ok {
-			if p.Style, err = bindStyle(e, ctx); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, p, nil)
-	case "Spinner":
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		s := &components.Spinner{Label: label}
-		if raw, ok := e.Attrs["Frames"]; ok {
-			frames, known := components.SpinnerFrames(raw)
-			if !known {
-				return nil, fmt.Errorf("markup: <Spinner Frames=%q>: unknown frame set; want one of %s",
-					raw, strings.Join(components.SpinnerNames, ", "))
-			}
-			s.Frames = frames
-		}
-		if s.Interval, err = optDuration(e, "Interval"); err != nil {
-			return nil, err
-		}
-		if _, ok := e.Attrs["Enabled"]; ok {
-			if s.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
-				return nil, err
-			}
-		}
-		if _, ok := e.Attrs["Style"]; ok {
-			if s.Style, err = bindStyle(e, ctx); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, s, nil)
-	case "Toggle":
-		checked, err := boundProp[bool](e, ctx, "Checked")
-		if err != nil {
-			return nil, err
-		}
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		changed, err := ctx.Command(e.Attrs["Changed"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <Toggle Changed=%q>: %w", e.Attrs["Changed"], err)
-		}
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		return named(e, ctx, &components.Toggle{
-			Checked: checked, Label: label, Changed: changed, Style: style,
-		}, nil)
-	case "Segmented":
-		selected, err := boundProp[int](e, ctx, "Selected")
-		if err != nil {
-			return nil, err
-		}
-		options, err := optionList(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		changed, err := ctx.Command(e.Attrs["Changed"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <Segmented Changed=%q>: %w", e.Attrs["Changed"], err)
-		}
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		return named(e, ctx, &components.Segmented{
-			Options: options, Selected: selected, Changed: changed, Style: style,
-		}, nil)
-	case "StatusBar":
-		bar, err := buildStatusBar(e, ctx)
-		return named(e, ctx, bar, err)
-	case "Tabs":
-		tb, err := buildTabs(e, ctx)
-		return named(e, ctx, tb, err)
-	case "Tab":
-		return nil, fmt.Errorf("markup: <Tab> is only valid directly inside <Tabs>")
-	case "ButtonBar":
-		kids, attach, err := buildChildren(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		bar := &components.ButtonBar{Children: kids, Separator: e.Attrs["Separator"]}
-		bar.Gap, _ = strconv.Atoi(e.Attrs["Gap"])
-		bar.Uniform = e.Attrs["Uniform"] == "true"
-		if err := attachAll(e, bar, attach); err != nil {
-			return nil, err
-		}
-		return named(e, ctx, bar, nil)
-	case "MenuBar":
-		bar, err := buildMenuBar(e, ctx)
-		return named(e, ctx, bar, err)
-	case "ToastHost":
-		if len(e.Children) > 0 {
-			return nil, fmt.Errorf("markup: <ToastHost> takes no children; toasts are shown from code (Show), not declared")
-		}
-		h := &components.ToastHost{Style: ctx.Styles[e.Attrs["Style"]]}
-		if raw, ok := e.Attrs["Duration"]; ok {
-			d, err := time.ParseDuration(strings.TrimSpace(raw))
-			if err != nil {
-				return nil, fmt.Errorf("markup: <ToastHost Duration=%q>: %w", raw, err)
-			}
-			h.Duration = d
-		}
-		return named(e, ctx, h, nil)
-	case "AdornmentLayer":
-		if len(e.Children) > 0 {
-			return nil, fmt.Errorf("markup: <AdornmentLayer> takes no children; adornments attach themselves at runtime (a Tooltip finds the layer on its own)")
-		}
-		return named(e, ctx, &components.AdornmentLayer{}, nil)
-	case "Tooltip":
-		// Non-visual like KeyBinding: buildChildren routes it to the
-		// parent as an attachment, and the framework's hover routing
-		// (gooey.HoverWatcher) drives it.
-		text, err := literalOrBound(e.Attrs["Text"], ctx)
-		if err != nil {
-			return nil, err
-		}
-		t := &components.Tooltip{Text: text, Style: ctx.Styles[e.Attrs["Style"]]}
-		if t.Delay, err = optDuration(e, "Delay"); err != nil {
-			return nil, err
-		}
-		if g := e.Attrs["Gesture"]; g != "" {
-			// Validated at load, stored in the canonical spelling — the
-			// hint on screen is byte-identical to what a KeyBinding
-			// declares, the MenuItem rule.
-			ev, err := input.ParseGesture(g)
-			if err != nil {
-				return nil, fmt.Errorf("markup: <Tooltip Gesture=%q>: %w", g, err)
-			}
-			t.Gesture = ev.String()
-		}
-		return named(e, ctx, t, nil)
-	case "Validate":
-		// Non-visual like KeyBinding; the HOST's builder wires it to its
-		// bound text source (wireValidate) — building it here only parses
-		// the rule attributes.
-		if len(e.Children) > 0 {
-			return nil, fmt.Errorf("markup: <Validate> takes no children")
-		}
-		v, err := buildValidate(e, ctx)
-		return named(e, ctx, v, err)
-	case "ValidationMarker":
-		// Non-visual like Tooltip: buildChildren routes it to the parent
-		// as an attachment; its floating message shows in the page's
-		// AdornmentLayer. An omitted Error adopts the host TextBox's own
-		// handle, so the common form is just <ValidationMarker/>.
-		if len(e.Children) > 0 {
-			return nil, fmt.Errorf("markup: <ValidationMarker> takes no children")
-		}
-		m := &components.ValidationMarker{Style: ctx.Styles[e.Attrs["Style"]]}
-		if _, ok := e.Attrs["Error"]; ok {
-			var err error
-			if m.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, m, nil)
-	case "KeyBinding":
-		g, err := input.ParseGesture(e.Attrs["Gesture"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <KeyBinding Gesture=%q>: %w", e.Attrs["Gesture"], err)
-		}
-		cmd, err := ctx.Command(e.Attrs["Command"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <KeyBinding Gesture=%q>: %w", e.Attrs["Gesture"], err)
-		}
-		return named(e, ctx, &gooey.KeyBinding{Gesture: g, Command: cmd}, nil)
-	case "Timer":
-		// Non-visual like KeyBinding: buildChildren routes it to the
-		// parent as an attachment, and the Composer starts it.
-		raw := strings.TrimSpace(e.Attrs["Interval"])
-		if raw == "" {
-			return nil, fmt.Errorf("markup: <Timer> needs an Interval (e.g. Interval=\"600ms\")")
-		}
-		d, err := time.ParseDuration(raw)
-		if err != nil {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: %w", raw, err)
-		}
-		if d <= 0 {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: must be positive", raw)
-		}
-		tick, err := ctx.Command(e.Attrs["Tick"])
-		if err != nil {
-			return nil, fmt.Errorf("markup: <Timer Tick=%q>: %w", e.Attrs["Tick"], err)
-		}
-		t := &components.Timer{Interval: d, Tick: tick}
-		// Enabled is optional; absent means always enabled. When present
-		// it is a live bool handle, so the graph can pause the timer.
-		if _, ok := e.Attrs["Enabled"]; ok {
-			if t.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
-				return nil, err
-			}
-		}
-		return named(e, ctx, t, nil)
-	case "Companion":
-		// Non-visual like KeyBinding and Timer: buildChildren routes it to
-		// the parent as an attachment and the Composer starts it. Unlike
-		// them it is a capability — it names a binary — so read the header
-		// of companion.go before touching it.
-		c, err := buildCompanion(e, ctx)
-		return named(e, ctx, c, err)
-	case "Image":
-		im, err := buildImage(e, ctx)
-		return named(e, ctx, im, err)
-	case "Text":
-		style, err := bindStyle(e, ctx)
-		if err != nil {
-			return nil, err
-		}
-		if e.Attrs["Bold"] == "true" {
-			// Bold composes over either form of Style, so it wraps the
-			// handle rather than mutating a value — a bound style stays
-			// live and still gets its bold.
-			base := style
-			style = prop.NewComputed(func() render.Style {
-				s := base.Get()
-				s.Bold = true
-				return s
-			})
-		}
-		t := &components.Text{Style: style}
-		content := strings.TrimSpace(e.Text)
-		if src, err := bindText(content, ctx); err != nil {
-			return nil, err
-		} else if src != nil {
-			t.Content = src
-		} else {
-			t.Content = components.Str(content)
-		}
-		return named(e, ctx, t, nil)
-	default:
-		if ctx.Includes != nil {
-			file := strings.ToLower(e.Name) + ".gooey"
-			if _, err := fs.Stat(ctx.Includes, file); err == nil {
-				w, err := Include(ctx.Includes, file)(e, ctx)
-				return named(e, ctx, w, err)
-			}
-		}
-		return nil, fmt.Errorf("markup: unknown element <%s>", e.Name)
+	// The element registry (elements.go) is the vocabulary: each entry
+	// carries what may be set on the element beside the code that reads
+	// it. Naming is applied HERE, once, so no definition repeats it.
+	if d, ok := elementDefs[e.Name]; ok {
+		w, err := d.Build(e, ctx)
+		return named(e, ctx, w, err)
 	}
+	// No definition and no registered builder: the Includes
+	// convention is the last resort.
+	if ctx.Includes != nil {
+		file := strings.ToLower(e.Name) + ".gooey"
+		if _, err := fs.Stat(ctx.Includes, file); err == nil {
+			w, err := Include(ctx.Includes, file)(e, ctx)
+			return named(e, ctx, w, err)
+		}
+	}
+	return nil, fmt.Errorf("markup: unknown element <%s>", e.Name)
 }
 
 // buildMenuBar consumes its children as DATA rather than as components:
