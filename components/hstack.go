@@ -57,6 +57,13 @@ func (h *HStack) Arrange(b gooey.Rect) {
 		}
 		return
 	}
+	// The same clamp VStack applies on Y, for the same reason: the
+	// measure cache records what each child wanted, Arrange may be
+	// handed less, and an unclamped walk puts later children outside the
+	// stack — where nothing will clip them, because the framework clips
+	// to the buffer and not to the parent. See VStack.Arrange for the
+	// full account.
+	right := b.X + b.W
 	x := b.X
 	placed := false
 	for i, c := range h.Children {
@@ -64,7 +71,8 @@ func (h *HStack) Arrange(b gooey.Rect) {
 		if gapBefore(c, placed) {
 			x += h.Gap
 		}
-		gooey.ArrangeChild(c, gooey.Rect{X: x, Y: b.Y, W: s.W, H: b.H})
+		w := min(s.W, max(0, right-x))
+		gooey.ArrangeChild(c, gooey.Rect{X: min(x, right), Y: b.Y, W: w, H: b.H})
 		x += s.W
 		if !collapsed(c) {
 			placed = true
