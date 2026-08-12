@@ -21,6 +21,7 @@ export const meta = {
 //
 // Read-only. Chooses; does not start.
 const REPO = (typeof args === 'object' && args?.repo) || '/home/elan/repos/WonderForgeLabs/gooey'
+const SLUG = (typeof args === 'object' && args?.slug) || 'WonderForgeLabs/gooey'
 const FINDWORK = (typeof args === 'object' && args?.findWorkScript) ||
   '/home/elan/.claude/plugins/cache/wonderforgelabs-project-ops/project-ops/0.9.1/scripts/find-unblocked-work.sh'
 const CONFLICTS = (typeof args === 'object' && args?.conflicts)
@@ -28,7 +29,7 @@ const CONFLICTS = (typeof args === 'object' && args?.conflicts)
   : '(no conflict map supplied — treat every area as UNKNOWN risk and say so in your risks)'
 const EXCLUDE = (typeof args === 'object' && args?.exclude) || []
 
-const RULES = `You are working in ${REPO}.
+const RULES = `You are working in ${REPO} (GitHub: ${SLUG}).
 
 HARD RULES:
 - READ-ONLY. No edits, commits, pushes, PRs or issues.
@@ -63,7 +64,7 @@ const RANK_SCHEMA = {
   },
 }
 
-const rank = agent(`${RULES}
+const RANK_PROMPT = `${RULES}
 
 Rank the unblocked backlog by VALUE — value delivered per unit of risk, not by priority label.
 
@@ -77,8 +78,7 @@ For the top ~12, read each with \`gh issue view N\` and judge:
 4. **estimatedPRs** — how many PRs done properly, with tests and docs? >1 needs a stacked chain.
 5. **blockedBy** — anything real, including "blocked on a PR in another repo that is currently red".
 
-Return every candidate assessed, with its score and reasoning — not just your favourite. The coordinator needs to be able to disagree with the ranking.`,
-  { schema: RANK_SCHEMA, phase: 'Recon', label: 'value-ranking' })
+Return every candidate assessed, with its score and reasoning — not just your favourite. The coordinator needs to be able to disagree with the ranking.`
 
 const CI_SCHEMA = {
   type: 'object',
@@ -97,7 +97,7 @@ const CI_SCHEMA = {
   },
 }
 
-const ci = agent(`${RULES}
+const CI_PROMPT = `${RULES}
 
 Map the CI surface, so whoever takes this work knows what they must update alongside it.
 
@@ -108,12 +108,18 @@ Hunt specifically for:
 - **freshness** checks (generated code vs source, e.g. codegen + \`git diff --exit-code\`) and what they cover — often narrower than assumed
 - docs or render-manifest checks
 - per-module or per-package loops, and whether they DISCOVER their targets or ENUMERATE them (an enumerated list silently skips anything added later)
-- **required vs advisory**: \`gh api repos/OWNER/REPO/branches/main/protection\` and \`.../rulesets\`. Report exactly what you find. "No required checks" is a critical finding, not a footnote — it means every green tick is advisory.
+- **required vs advisory**: \`gh api repos/${SLUG}/branches/main/protection\` and \`.../rulesets\`. Report exactly what you find. "No required checks" is a critical finding, not a footnote — it means every green tick is advisory.
 
-Then list **gaps**: places CI can report success while covering less than it claims. Find them by reading the workflow logic, not by recalling known issues. A guard whose failure branch cannot fail, a loop that matches nothing and exits 0, a step that swallows a failed sub-step — these are the shapes.`,
-  { schema: CI_SCHEMA, phase: 'Recon', label: 'ci-surface' })
+Then list **gaps**: places CI can report success while covering less than it claims. Find them by reading the workflow logic, not by recalling known issues. A guard whose failure branch cannot fail, a loop that matches nothing and exits 0, a step that swallows a failed sub-step — these are the shapes.`
 
-const [ranking, ciSurface] = await parallel([() => rank, () => ci])
+const [ranking, ciSurface] = await parallel([
+  () => agent(RANK_PROMPT, { schema: RANK_SCHEMA, phase: 'Recon', label: 'value-ranking' }),
+  () => agent(CI_PROMPT, { schema: CI_SCHEMA, phase: 'Recon', label: 'ci-surface' }),
+])
+
+if (!ranking || !ciSurface) {
+  log(`WARNING: recon incomplete — ranking=${ranking ? 'ok' : 'FAILED'}, ci-surface=${ciSurface ? 'ok' : 'FAILED'}. Selection below rests on partial data; treat it as provisional.`)
+}
 
 phase('Select')
 

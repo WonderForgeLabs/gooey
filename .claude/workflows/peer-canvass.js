@@ -42,9 +42,16 @@ export const meta = {
 //
 // Read-only. Never edits, commits, or pushes.
 const REPO = (typeof args === 'object' && args?.repo) || '/home/elan/repos/WonderForgeLabs/gooey'
-const REPLIES = (typeof args === 'object' && args?.replies) || '(none supplied — map from tree state alone, and say so)'
+const SLUG = (typeof args === 'object' && args?.slug) || 'WonderForgeLabs/gooey'
+// Stringify a structured value rather than letting it render as
+// [object Object]: `replies` is naturally a per-peer object, and a
+// silent [object Object] is worse than an obvious error.
+const rawReplies = (typeof args === 'object' && args?.replies) || null
+const REPLIES = rawReplies == null
+  ? '(none supplied — map from tree state alone, and say so)'
+  : (typeof rawReplies === 'string' ? rawReplies : JSON.stringify(rawReplies, null, 2))
 
-const RULES = `You are auditing ${REPO}.
+const RULES = `You are auditing ${REPO} (GitHub: ${SLUG}).
 
 HARD RULES:
 - READ-ONLY. No edits, no commits, no pushes, no PRs, no issues.
@@ -85,7 +92,7 @@ const TREE_SCHEMA = {
   },
 }
 
-const tree = agent(`${RULES}
+const TREE_PROMPT = `${RULES}
 
 Report what is CURRENTLY in flight, from the filesystem and git — not from any narrative.
 
@@ -93,8 +100,7 @@ Do all of:
 - \`git worktree list\`, and \`ls .claude/worktrees/\`. Any name in the second and not the first is abandoned; check for a .git file to confirm.
 - For EVERY live worktree: branch, HEAD, \`git status --porcelain -uall | wc -l\`, and ahead/behind against origin/main (\`git rev-list --left-right --count origin/main...HEAD\`). Compute ahead/behind — a branch that looks ahead is often far behind.
 - Every uncommitted path in every worktree, attributed to its worktree. This is the collision surface; be exhaustive rather than representative.
-- \`git log --oneline --since="48 hours ago" --all\` for where work has actually been landing.`,
-  { schema: TREE_SCHEMA, phase: 'Audit', label: 'tree-state' })
+- \`git log --oneline --since="48 hours ago" --all\` for where work has actually been landing.`
 
 const PR_SCHEMA = {
   type: 'object',
@@ -124,7 +130,7 @@ const PR_SCHEMA = {
   },
 }
 
-const prs = agent(`${RULES}
+const PR_PROMPT = `${RULES}
 
 Report every open PR and, crucially, WHICH FILES each one touches — \`gh pr view N --json files\`.
 
@@ -132,16 +138,24 @@ For each: number, title, branch, mergeable state, file list, and what it is bloc
 
 Then compute **contendedFiles**: any path claimed by more than one PR, or claimed by a PR while also dirty in some worktree. For each, say what actually happens if someone edits it now — "the other PR becomes unmergeable", "a rebase will conflict badly", "harmless, different sections".
 
-A PR whose whole diff is a single file is especially fragile: note it, because an unrelated edit to that file can make it unrecoverable.`,
-  { schema: PR_SCHEMA, phase: 'Audit', label: 'pr-claims' })
+A PR whose whole diff is a single file is especially fragile: note it, because an unrelated edit to that file can make it unrecoverable.`
 
-const [treeState, prState] = await parallel([() => tree, () => prs])
+const [treeState, prState] = await parallel([
+  () => agent(TREE_PROMPT, { schema: TREE_SCHEMA, phase: 'Audit', label: 'tree-state' }),
+  () => agent(PR_PROMPT, { schema: PR_SCHEMA, phase: 'Audit', label: 'pr-claims' }),
+])
+
+if (!treeState || !prState) {
+  log(`WARNING: audit incomplete — tree-state=${treeState ? 'ok' : 'FAILED'}, pr-claims=${prState ? 'ok' : 'FAILED'}. The map below is built on partial data.`)
+}
 
 phase('Map')
 
 const MAP_SCHEMA = {
   type: 'object',
-  required: ['handsOff', 'safeToStart', 'reconciliation', 'staleClaims'],
+  // whoToAsk is REQUIRED on purpose: the prompt itself says it is "easy
+  // to skip", and an optional field that is easy to skip gets skipped.
+  required: ['handsOff', 'safeToStart', 'reconciliation', 'staleClaims', 'whoToAsk'],
   properties: {
     handsOff: {
       type: 'array',

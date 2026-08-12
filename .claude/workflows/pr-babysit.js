@@ -46,16 +46,16 @@ READ-ONLY: no pushes, no merges, no edits, no new comments. You report; someone 
 
   If a verdict seems to have vanished, it is often recoverable:
   \`\`\`
-  gh api repos/OWNER/REPO/issues/comments/<id> --jq .node_id
+  gh api repos/${SLUG}/issues/comments/<id> --jq .node_id
   gh api graphql -f query='{node(id:"<node_id>"){... on IssueComment{
     userContentEdits(first:20){nodes{editedAt diff}}}}}'
   \`\`\`
 
 **2. A re-run hides the deciding attempt.** \`gh run view\`, check-runs, and \`/actions/runs/<id>/jobs\` all report ONLY the latest attempt. A job that failed on attempt 1 shows as queued. Read it explicitly:
-  \`gh api repos/OWNER/REPO/actions/runs/<id>/attempts/1/jobs\`
+  \`gh api repos/${SLUG}/actions/runs/<id>/attempts/1/jobs\`
 
 ## Read ALL THREE comment surfaces
-\`gh pr view N --comments\` (issue-level), \`gh api repos/OWNER/REPO/pulls/N/comments\` (inline), \`gh api repos/OWNER/REPO/pulls/N/reviews\` plus replies. Green checks are not consent, and a finding raised in a thread reply is still a finding.`
+\`gh pr view N --comments\` (issue-level), \`gh api repos/${SLUG}/pulls/N/comments\` (inline), \`gh api repos/${SLUG}/pulls/N/reviews\` plus replies. Green checks are not consent, and a finding raised in a thread reply is still a finding.`
 
 phase('Assess')
 
@@ -105,11 +105,17 @@ For **openFindings**, list every finding from every surface with whether it is f
 If \`review / pr-review\` is green but no verdict rendered, set verdictRendered=false and say which of the three situations it looks like. Attempt the edit-history recovery before concluding a verdict is lost.`,
   { schema: PR_SCHEMA, phase: 'Assess', label: `assess:#${n}` })))
 
+const ok = assessments.filter(Boolean)
+const dropped = PRS.filter((_, i) => !assessments[i])
+if (dropped.length) {
+  log(`WARNING: ${dropped.length}/${PRS.length} PR assessments FAILED and were not evaluated: ${dropped.join(', ')}`)
+}
+
 phase('Decide')
 
 const DECIDE_SCHEMA = {
   type: 'object',
-  required: ['perPR', 'sleepSeconds', 'sleepReason', 'escalate'],
+  required: ['perPR', 'sleepSeconds', 'sleepReason', 'needsEscalation', 'escalate'],
   properties: {
     perPR: {
       type: 'array',
@@ -118,7 +124,7 @@ const DECIDE_SCHEMA = {
         required: ['pr', 'state', 'nextAction', 'readyForReview', 'blockedBy'],
         properties: {
           pr: { type: 'integer' },
-          state: { type: 'string', description: 'DONE | FIX | WAIT | ASK' },
+          state: { type: 'string', enum: ['DONE', 'FIX', 'WAIT', 'ASK'], description: 'DONE = green AND verdict rendered AND every finding resolved' },
           nextAction: { type: 'string', description: 'the single next thing to do' },
           readyForReview: { type: 'boolean', description: 'if draft: should it be marked ready now?' },
           blockedBy: { type: 'string' },
@@ -127,7 +133,10 @@ const DECIDE_SCHEMA = {
     },
     sleepSeconds: { type: 'integer', description: 'how long before the next babysit turn' },
     sleepReason: { type: 'string' },
-    escalate: { type: 'string', description: 'what to put to a human, or "nothing"' },
+    // A boolean, not a magic string: the log used to compare against the
+    // literal "nothing", so "None." or "N/A" silently read as an escalation.
+    needsEscalation: { type: 'boolean' },
+    escalate: { type: 'string', description: 'what to put to a human; empty when needsEscalation is false' },
   },
 }
 
@@ -136,7 +145,7 @@ const decision = await agent(`${RULES}
 Decide the next move for each PR, and how long to wait before looking again.
 
 ASSESSMENTS (attempt ${ATTEMPT}):
-${JSON.stringify(assessments.filter(Boolean), null, 2)}
+${JSON.stringify(ok, null, 2)}${dropped.length ? `\n\nNOT ASSESSED — the agent for these PRs failed: ${dropped.join(', ')}. Do NOT mark them DONE; set state=ASK and say they were not assessed.` : ''}
 
 Per PR, set **state**:
 - **DONE** — code checks green, a verdict RENDERED, and every finding fixed or explicitly declined. All three. Green alone is not DONE.
@@ -156,6 +165,6 @@ Per PR, set **state**:
   { schema: DECIDE_SCHEMA, phase: 'Decide', label: 'decide' })
 
 const done = decision.perPR.filter((p) => p.state === 'DONE').length
-log(`${done}/${decision.perPR.length} done · sleep ${decision.sleepSeconds}s · ${decision.escalate !== 'nothing' ? 'ESCALATE' : 'no escalation'}`)
+log(`${done}/${PRS.length} done (${ok.length} assessed${dropped.length ? `, ${dropped.length} FAILED` : ''}) · sleep ${decision.sleepSeconds}s · ${decision.needsEscalation ? 'ESCALATE' : 'no escalation'}`)
 
-return { decision, assessments: assessments.filter(Boolean) }
+return { decision, assessments: ok, notAssessed: dropped }
