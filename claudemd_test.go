@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -114,6 +115,28 @@ func TestCLAUDEMDVerifyLoopReachesEveryNestedModule(t *testing.T) {
 			"loop keeps exiting 0 — see issue #207.", claudeMD)
 	}
 
+	// POSIX ONLY, and skipped rather than emulated on Windows.
+	//
+	// The point of this test is that the command WRITTEN IN THE DOC really
+	// reaches every module, so it has to run that command rather than a Go
+	// reimplementation of it — a reimplementation would pass while the
+	// documented line was broken, which is the failure this test exists to
+	// catch. That makes it inescapably POSIX: `find … -name go.mod` is a
+	// POSIX utility, and Windows ships a find.exe that searches text inside
+	// files and would take `-name` as a filename.
+	//
+	// So on Windows there is nothing honest to assert, and the choice is
+	// between skipping and breaking `go test ./...` at the repo root for
+	// every native-Windows contributor — which CLAUDE.md's own Verify
+	// section tells everyone to run. A skip with a reason is the correct
+	// outcome: the claim is unverifiable on that platform, and saying so is
+	// better than a green run that checked nothing or a red one that found
+	// no defect.
+	if runtime.GOOS == "windows" {
+		t.Skip("the documented discovery is a POSIX `find` invocation; Windows' " +
+			"find.exe is an unrelated text-search tool, so this claim cannot be " +
+			"checked here. Verify the loop under WSL or Git Bash.")
+	}
 	argv := shellWords(t, cmd)
 	out, err := exec.Command(argv[0], argv[1:]...).Output()
 	if err != nil {
