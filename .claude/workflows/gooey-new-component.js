@@ -367,10 +367,27 @@ log(`reconcile survey: ${staleDocs.length} stale doc claims, ${adoptFindings.len
 // Disjoint write sets — each updater owns an explicit set and may touch
 // nothing else, so they cannot collide. The new spec's own file belongs
 // to Verify (it appends ## Executed); nobody here touches it.
-const inSet = (f, preds) => preds.some(p => p(f.path))
-const coreDocs = staleDocs.filter(f => inSet(f, [p => p.startsWith('docs/markup-reference'), p => p.startsWith('docs/architecture'), p => p === 'README.md' || p.startsWith('README')]))
-const learnDocs = staleDocs.filter(f => f.path.startsWith('docs/learn/') && !f.path.startsWith('docs/learn/examples/'))
-const specDocs = staleDocs.filter(f => f.path.startsWith('docs/specs/') && f.path !== specPath)
+// ONE PREDICATE PER BUCKET, used for all three jobs it has to do: which
+// findings land in the bucket, what the updater DECLARES it owns, and
+// whether an adopt finding on that path folds into the same updater.
+//
+// They used to be written out three times, and the copies had already
+// drifted: the bucket filter took any `docs/architecture*` or `README*`
+// while owns() took three exact filenames, and learnDocs bucketed with no
+// extension check while owns() required `.md`. A path caught by the loose
+// half and missed by the strict half — `docs/architecture-notes.md` is a
+// real one — got assigned to the core updater as a finding while being
+// carved OUT of every updater's write set, so it could only be fixed by an
+// agent disobeying its own instructions. That is finding 3 of #180
+// reopened one layer down, and it reopens again the moment these are
+// separate expressions. Deriving all three from the same function is what
+// makes the divergence unrepresentable rather than merely fixed.
+const coreDocsPred = p => p.startsWith('docs/markup-reference') || p.startsWith('docs/architecture') || p.startsWith('README')
+const learnDocsPred = p => p.startsWith('docs/learn/') && !p.startsWith('docs/learn/examples/')
+const specDocsPred = p => p.startsWith('docs/specs/') && p !== specPath
+const coreDocs = staleDocs.filter(f => coreDocsPred(f.path))
+const learnDocs = staleDocs.filter(f => learnDocsPred(f.path))
+const specDocs = staleDocs.filter(f => specDocsPred(f.path))
 const otherDocs = staleDocs.filter(f => !coreDocs.includes(f) && !learnDocs.includes(f) && !specDocs.includes(f))
 
 // Disjointness has to hold ACROSS the doc sets and the adoption sets,
@@ -381,9 +398,9 @@ const otherDocs = staleDocs.filter(f => !coreDocs.includes(f) && !learnDocs.incl
 // collection step STOPs on. So: what each doc updater DECLARES it owns,
 // as a predicate, and the rule that a path has exactly one owner.
 const docAgents = [
-  { assigned: coreDocs, owns: p => p === 'docs/markup-reference.md' || p === 'docs/architecture.md' || p === 'README.md' },
-  { assigned: learnDocs, owns: p => p.startsWith('docs/learn/') && !p.startsWith('docs/learn/examples/') && p.endsWith('.md') },
-  { assigned: specDocs, owns: p => p.startsWith('docs/specs/') && p !== specPath },
+  { assigned: coreDocs, owns: coreDocsPred },
+  { assigned: learnDocs, owns: learnDocsPred },
+  { assigned: specDocs, owns: specDocsPred },
   { assigned: otherDocs, owns: p => otherDocs.some(f => f.path === p) },
 ].filter(a => a.assigned.length)
 
@@ -441,8 +458,14 @@ For each finding: re-read the file NOW (concurrent sessions; the finding's quote
 List any assigned finding you judged wrong under skipped, with the reason. changed[] must stay inside your write set.${SEED_RULES}${ISOLATION_RULES}${GIT_RULES}`
 
 const updaters = []
+// The write set is the canonical targets UNION every path actually
+// assigned to this updater. Listing only the canonical three was the other
+// half of the same bug: the bucket predicate can hand this agent
+// `docs/architecture-notes.md`, and an agent told to fix a finding on a
+// file its write set forbids has no legal move. Deduped so the common case
+// still reads as exactly the three names.
 if (coreDocs.length) updaters.push(() => agent(
-  updaterBrief(['docs/markup-reference.md', 'docs/architecture.md', 'README.md'], coreDocs,
+  updaterBrief([...new Set(['docs/markup-reference.md', 'docs/architecture.md', 'README.md', ...coreDocs.map(f => f.path)])], coreDocs,
     `markup-reference gets the component's full element entry (attributes, binding, load errors) matching the existing entries' shape; README's capability matrix/status rows must match what the spec says shipped.`),
   { label: 'update:core-docs', phase: 'Reconcile', schema: RECONCILE_SCHEMA, isolation: 'worktree' },
 ))
@@ -615,7 +638,16 @@ if (!verify.green) {
     build: { files: build.files, invariantChecklist: build.invariantChecklist },
     reconciled: reconciled.map(r => ({ changed: r.changed, skipped: r.skipped })),
     collection: collection || 'no worktree edits to collect',
-    note: 'The working tree holds the component, the spec, and the collected reconciliation edits, all uncommitted and all red. Epic issues (if filed) are already live on GitHub and now point at unfinished work — fix or say so there.',
+    // REPORTED ON THE RED PATH TOO, and this is the path where it matters
+    // most. The success shape carries docsAndDemos; the failure shape used
+    // to drop it, so a run that regenerated GIFs and docs and THEN went red
+    // left those regenerated files uncommitted in the tree with nothing in
+    // the result saying they existed. The human triaging a red run is
+    // exactly the reader who needs to know what is sitting in their working
+    // tree — omitting it here hid output precisely when it was least
+    // expected and hardest to notice.
+    docsAndDemos: { scriptUpdated: regen?.scriptUpdated ?? false, regenRan: !!regenResult, regen: regenResult || undefined },
+    note: 'The working tree holds the component, the spec, the collected reconciliation edits, and any regenerated docs/demos — all uncommitted and all red. Epic issues (if filed) are already live on GitHub and now point at unfinished work — fix or say so there.',
   }
 }
 
