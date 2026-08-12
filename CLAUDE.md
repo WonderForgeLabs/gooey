@@ -21,8 +21,8 @@ to be run on its own. **Discover them — never enumerate them.** A written
 list of module names is stale the first time someone adds one, and the
 failure is silent: the loop still exits 0, so you report a verified tree
 having never compiled the new module. That is exactly how this file came to
-name five modules and skip seven `packs/temporal-*`. `ci.yml` discovers
-`packs/*` with a glob for the same reason.
+name eight modules across two loops and still skip seven `packs/temporal-*`.
+`ci.yml` discovers `packs/*` with a glob for the same reason.
 
 ```sh
 # Every nested module, discovered the way ci.yml discovers packs/*.
@@ -33,8 +33,14 @@ name five modules and skip seven `packs/temporal-*`. `ci.yml` discovers
 # with `-not -path './.*'` is not enough — that only anchors at the top.
 # .claude/worktrees/ holds whole checkouts of this repo, and
 # examples/temporal-worker/.venv vendors two Go modules of Temporal's
-# own; either way you end up vetting someone else's tree. `.?*` rather
-# than `.*` because `.*` matches `.` itself and prunes the whole walk.
+# own; either way you end up vetting someone else's tree.
+#
+# `-mindepth 1` is the load-bearing half of that: it is what lets a
+# depth-1 dot-directory be pruned at all, AND it keeps `-name` off the
+# starting point. Drop it and `-name '.*'` matches `.` itself, prunes the
+# whole walk, and prints nothing while still exiting 0. `.?*` is only
+# belt-and-braces for whoever removes `-mindepth 1` later — with it
+# present the two patterns are identical (checked: both find 16).
 #
 # Piped into `while read` rather than `for m in $(…)`: unquoted command
 # substitution word-splits AND glob-expands, so one directory with a
