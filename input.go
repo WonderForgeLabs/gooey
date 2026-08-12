@@ -410,9 +410,16 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 			m.parent[at] = w
 			if kb, ok := at.(*KeyBinding); ok && !frozen {
 				// A scoped KeyBinding is a SECOND route to a component,
-				// independent of HandleKey: Dispatch interleaves each
-				// level's bindings with that level's handler, so freezing
-				// one without the other leaves half the door open.
+				// independent of HandleKey — Dispatch interleaves each
+				// level's bindings with that level's handler.
+				//
+				// Skipping it here is DEFENCE IN DEPTH rather than the
+				// guarantee, and the distinction is worth keeping honest:
+				// a binding only fires while the focused chain passes
+				// through its host, and nothing inside a frozen subtree
+				// can be focused, so this registration was already
+				// unreachable. TestFocusCannotBeSetIntoAFrozenSubtree is
+				// the test that actually holds the door.
 				m.bindings[w] = append(m.bindings[w], kb)
 			}
 			// Attachments get the same seams components do: an

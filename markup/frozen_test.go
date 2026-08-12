@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 )
 
 // A frozen subtree renders but does not act. The consequence with teeth
@@ -23,6 +24,15 @@ import (
 type frozenHost struct {
 	gooey.Base
 	child gooey.Component
+	// got records every mouse event routed HERE, which is how a test
+	// asserts that an event aimed at a descendant arrived at the host
+	// instead of being swallowed.
+	got []input.MouseEvent
+}
+
+func (h *frozenHost) HandleMouse(ev input.MouseEvent) bool {
+	h.got = append(h.got, ev)
+	return true
 }
 
 func (h *frozenHost) Frozen() bool                       { return true }
@@ -31,6 +41,21 @@ func (h *frozenHost) Measure(a gooey.Size) gooey.Size    { return gooey.MeasureC
 func (h *frozenHost) Arrange(b gooey.Rect)               { h.Base.Arrange(b); gooey.ArrangeChild(h.child, b) }
 func (h *frozenHost) Render(*gooey.Frame)                {}
 func (h *frozenHost) AcceptsFocus() bool                 { return true }
+
+// sink is a leaf that records every mouse event it receives AND consumes
+// it, so a test can tell "the descendant never got it" apart from "the
+// descendant got it and the host saw it bubble past".
+type sink struct {
+	gooey.Base
+	got []input.MouseEvent
+}
+
+func (s *sink) HandleMouse(ev input.MouseEvent) bool {
+	s.got = append(s.got, ev)
+	return true
+}
+func (s *sink) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 6, H: 1} }
+func (s *sink) Render(*gooey.Frame)           {}
 
 // withFrozen registers <Frozen> in ctx, building a frozenHost around its
 // single child.
@@ -51,6 +76,9 @@ func withFrozen(ctx *Context) *Context {
 			h.Attach(a)
 		}
 		return h, nil
+	}
+	ctx.Components["Sink"] = func(e Element, c *Context) (gooey.Component, error) {
+		return &sink{}, nil
 	}
 	return ctx
 }

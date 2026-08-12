@@ -258,6 +258,71 @@ passes with the protected thing deleted protects nothing.
   later "freeze everything" simplification would break, and it is the
   one that protects the picture.
 
+## What the implementation changed
+
+Three things moved between the design above and the code. The first is a
+simplification, the second and third are the same defect this project
+keeps meeting.
+
+### The retarget is ONE seam, not two
+
+The design put a `Frozen` check in `FocusManager.target` and another in
+`setHover`. Both were written, both worked, and the press test failed
+anyway: `DispatchMouse` sets the implicit captor **from the raw hit,
+before routing** (`mouse.go:180`), and `target` returns the captor first —
+so the descendant got the event back through its own capture.
+
+The fix is to retarget once, at the top of `DispatchMouse`, and let
+everything downstream hold the effective hit: the captor a press takes,
+the focus a press moves, the click synthesized on release, hover, and
+every kind that routes through `target`. `target` and `setHover` are back
+to their original bodies with a comment saying why the check is not
+there.
+
+That also fixed a *test* problem. With the check in two places, deleting
+either one left the tests green — the classic reason a guard looks
+verified and is not. One seam, one deletion, seven failures.
+
+### The KeyBinding freeze is defence in depth, not the guarantee
+
+The design listed "KeyBindings scoped inside the subtree" as a separate
+blocked route, correctly: `Dispatch` interleaves each level's bindings
+with that level's `HandleKey`, so they are two independent doors.
+
+Writing the test showed the claim was stronger than the evidence could
+support. The obvious test — press the gesture, require nothing to fire —
+passed frozen **and** passed unfrozen, because a scoped binding only
+fires while the focused chain passes through its host, and with focus
+frozen out of the subtree the chain can never get there. The registration
+skip is real and kept, but it was already unreachable.
+
+So the pin is the reachable, consequential thing instead:
+`TestFocusCannotBeSetIntoAFrozenSubtree`. An explicit `SetFocus` — the
+route the control plane's `focus` act takes, by name — must be refused,
+or a remote caller can put the caret in a design surface and type into a
+picture. The code carries the honest note at the skip.
+
+### Two probes that could not fail, found by trying to break them
+
+Both were mine, both caught by the discipline rather than by review:
+
+- **The wheel test asserted only that the host received the event**, and
+  passed with the retarget deleted — because events *bubble*, so the host
+  sees anything its descendants decline. A "the host got it" assertion
+  cannot distinguish retargeting from bubbling. The fix needs a
+  descendant that records **and consumes**: frozen, the sink sees nothing
+  and the host sees the wheel; unfrozen, exactly the reverse.
+- **The damage test's rect assertion was vacuous**, because the wrapper
+  held a single child and a one-child wrapper's bounds equal its child's.
+  A host that repainted its whole subtree would have produced the same
+  rect. The page now puts two texts inside, and the test asserts the
+  precondition — host bounds ≠ child bounds — before asserting the rect.
+
+Ten tests, each verified to fail with its own change reverted, plus a
+control for every freeze assertion. The controls are not ceremony: the
+`<Companion>` control is what proves the harness can observe a spawn at
+all, and the KeyBinding control is what exposed the unreachable claim.
+
 ## Middleware: the `Decorate` seam, pressure-tested and rejected
 
 Elan asked whether the frozen host is "an extensibility point for
@@ -724,11 +789,9 @@ did not), and **written and different**. An attribute with no declared
 
 ## Order of work
 
-1. `Frozen` in the root package + the four touch points (`walk`,
-   `target`, `setHover`, `Composer.collect`), with the tests above, each
-   verified to fail with its change reverted —
-   `TestFreezingAComponentDoesNotSpawnItsProcess` first, since it is the
-   one whose failure escapes the process.
+1. ~~`Frozen` in the root package + the four touch points.~~ **Done**,
+   and it landed as **three** touch points rather than four — see
+   "What the implementation changed" below.
 2. COD in `examples/wysiwyg`: one-child frozen host, focus stop (it is
    the only focusable thing left in the surface), identity map, edit
    vocabulary that records.
