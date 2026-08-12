@@ -35,7 +35,12 @@ name five modules and skip seven `packs/temporal-*`. `ci.yml` discovers
 # examples/temporal-worker/.venv vendors two Go modules of Temporal's
 # own; either way you end up vetting someone else's tree. `.?*` rather
 # than `.*` because `.*` matches `.` itself and prunes the whole walk.
-for mod in $(find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort); do
+#
+# Piped into `while read` rather than `for m in $(…)`: unquoted command
+# substitution word-splits AND glob-expands, so one directory with a
+# space or a `*` in its name would quietly mis-split the list.
+find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort |
+while IFS= read -r mod; do
   m=${mod%/go.mod}; m=${m#./}
   [ "$m" = "." ] && continue   # the root module — covered by the block above
   case "$m" in
