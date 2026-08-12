@@ -68,13 +68,11 @@ touches one.
 **No reflection in core.** Bindings resolve to typed `*prop.Property[T]`
 handles at build time (lvalue semantics, not value), through registries and
 type switches. The only `"reflect"` imports in the repo are generated
-protobuf under `grpc/gen/` and one test file per activity pack — eight
-today, one `*_test.go` under each `packs/temporal-*`, none of them core.
-Check with
+protobuf under `grpc/gen/` and one `*_test.go` per activity pack — eight
+today, one under each `packs/temporal-*`, none of them core. Check with
 `git grep -l '"reflect"'` rather than trusting this sentence's arithmetic.
-This is what keeps a
-future `gooey gen` able to compile markup ahead of time, so "just use
-reflection here" is a design change, not a shortcut.
+This is what keeps a future `gooey gen` able to compile markup ahead of
+time, so "just use reflection here" is a design change, not a shortcut.
 
 **The `Get` call site decides subscribe-vs-read.** `prop.node.recordRead`
 (`prop/prop.go:33`) records an edge only when a computed is on `evalStack`.
