@@ -149,10 +149,15 @@ func TestPatchMarkupDropsFocusInsideThePatchedSubtree(t *testing.T) {
 	// was replaced — so the user keeps their cursor in the right box and
 	// loses their position in it. Typing resumes at offset 0, in the
 	// middle of text they already entered.
-	if caretAfter == len("hello") {
-		t.Errorf("caret survived the patch (=%d) — component-local state now "+
-			"outlives a replace; revisit the spec's focus rule, it may be "+
-			"unnecessary", caretAfter)
+	//
+	// Asserted as the exact value, not merely "different". "Resets to 0"
+	// is the claim two design documents cite, and `!= len("hello")` also
+	// passes for a caret that landed anywhere else — which would be a
+	// different bug wearing this test as evidence that it does not exist.
+	if caretAfter != 0 {
+		t.Errorf("caret = %d after the patch, want 0; the documented behaviour is "+
+			"that the user resumes typing at the START of text they already entered",
+			caretAfter)
 	}
 }
 
@@ -189,6 +194,23 @@ func TestPatchMarkupLosesFocusWhenTheFocusedNameDisappears(t *testing.T) {
 	if foundAfter && after == "Field" {
 		t.Errorf("focus stayed on %q, which no longer exists in the tree", after)
 	}
+
+	// The measured DESTINATION, not merely "not the deleted name".
+	//
+	// Asserting only the negative was the gap: a run where focus cleared
+	// to nothing passed identically, so the test could not distinguish
+	// "focus moved somewhere the user did not ask for" from "focus was
+	// dropped". Those call for opposite fixes, and only the first is
+	// what actually happens — focus lands on the replacement widget, so
+	// the next keystroke goes into a box the user never selected.
+	if !foundAfter {
+		t.Fatalf("focus was cleared entirely; the recorded behaviour is that it MOVES, " +
+			"and a rule written for a cleared focus would not address it")
+	}
+	if after != "Other" {
+		t.Errorf("focus moved to %q, want %q — the neighbour that replaced the "+
+			"focused widget", after, "Other")
+	}
 }
 
 // The third case, and the one a name-only rule cannot see: the focused
@@ -203,7 +225,7 @@ func TestPatchMarkupLosesFocusWhenTheFocusedNameDisappears(t *testing.T) {
 // predicate has to be "the focused name survives AS THE SAME KIND", not
 // merely "survives".
 func TestPatchMarkupKeepsFocusWhenTheNameSurvivesButTheTypeChanges(t *testing.T) {
-	_, values := newVM()
+	vm, values := newVM()
 	app := newTestApp(t, islandMarkup, values)
 	s, err := New(app, Options{Context: app.ctx, Timeout: 3 * time.Second})
 	if err != nil {
@@ -230,11 +252,40 @@ func TestPatchMarkupKeepsFocusWhenTheNameSurvivesButTheTypeChanges(t *testing.T)
 	after, _, foundAfter := focusedName(t, tree)
 	t.Logf("after retyping the focused widget: focused=%q found=%v", after, foundAfter)
 
-	// Record what the focused element now IS, so the log names the hazard.
-	if foundAfter && after == "Field" {
-		t.Logf("the focused name survived a TextBox -> Button substitution: "+
-			"a name-only rejection rule would allow this patch, and caret "+
-			"preservation keyed on same-name-same-type would decline to act "+
-			"(tree=%v)", tree["tree"])
+	// The name survived the substitution, so a rejection rule written as
+	// "refuse a patch that removes the focused name" lets this through.
+	if !foundAfter || after != "Field" {
+		t.Fatalf("focused=%q found=%v, want the name to survive as %q — without "+
+			"that, this test is not exercising the case it is named for",
+			after, foundAfter, "Field")
+	}
+
+	// THE ASSERTION THIS TEST SHIPPED WITHOUT.
+	//
+	// Everything above only establishes that the name is still focused.
+	// The claim that makes this hazard worth a rule — "the user's next
+	// keystroke invokes a command instead of inserting a character" —
+	// was logged rather than asserted, so the most alarming statement in
+	// two design documents rested on a test that never pressed a key.
+	//
+	// Enter, once, on a widget the user still believes is their TextBox.
+	before := vm.incs
+	c.ok("send_keys", map[string]any{"keys": []any{"enter"}})
+	if vm.incs == before {
+		t.Fatalf("Enter did not invoke the command (incs stayed %d) — if this is now "+
+			"the behaviour, the silent-input-corruption claim is wrong and the "+
+			"specs that cite it need correcting", before)
+	}
+	t.Logf("Enter on the retyped widget invoked the bound command %d time(s): "+
+		"a keystroke the user intended as text executed an action instead",
+		vm.incs-before)
+
+	// And the corruption is silent from the client's side too: the patch
+	// that caused it reported success, with nothing in the result naming
+	// the type change. That is the gap a warning field or a rejection
+	// rule would close.
+	if got := vm.note.Get(); got != "hi" {
+		t.Errorf("bound text = %q, want %q — the property should be untouched by "+
+			"the keystroke, which went to a command rather than the box", got, "hi")
 	}
 }

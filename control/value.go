@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -140,15 +141,7 @@ func (v Value) Equal(o Value) bool {
 	case KindAny:
 		return bytes.Equal(v.JSON, o.JSON)
 	case KindImage:
-		// Source bytes when both carry them — that is an exact answer and
-		// a cheap one. Otherwise identity: comparing two decoded images
-		// pixel by pixel would put an image diff on the frame path, which
-		// delta collection runs once per frame per session.
-		a, b := ImageBytesOf(v.Image), ImageBytesOf(o.Image)
-		if a != nil && b != nil {
-			return bytes.Equal(a, b)
-		}
-		return v.Image == o.Image
+		return sameImage(v.Image, o.Image)
 	}
 	return true
 }
@@ -190,6 +183,105 @@ func ImageBytesOf(img image.Image) []byte {
 		return si.Bytes
 	}
 	return nil
+}
+
+// sameImage answers "is this the same picture" for delta collection,
+// which runs once per frame per session — so it must be cheap, and it
+// must never panic.
+//
+// The panic is the reason this is not a bare `==`. Comparing two
+// interface values panics when their dynamic type is identical and NOT
+// comparable, and SourceImage is exactly that: a struct embedding a
+// []byte. Its fields are exported, so any caller can build one with nil
+// Bytes without going through DecodedImageValue — and then two of them
+// on either side of `==` take down the UI goroutine, which is every
+// session's UI, not just the offender's.
+//
+// So: source bytes when both carry them (exact and cheap), pointer
+// identity for the standard image types, which are the ones a real app
+// holds, and "changed" for anything this cannot compare safely. The
+// asymmetry decides the default — a spurious "changed" costs one
+// repaint, and guessing the other way costs the process.
+//
+// reflect.Type.Comparable would answer this in one line and is not
+// available: no reflection in core is invariant #1, and this is the
+// "just use reflection here" case CLAUDE.md calls a design change
+// rather than a shortcut.
+func sameImage(a, b image.Image) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if ab, bb := ImageBytesOf(a), ImageBytesOf(b); ab != nil && bb != nil {
+		return bytes.Equal(ab, bb)
+	}
+	// An allowlist, not a denylist: every arm here is a POINTER type and
+	// therefore comparable. A type absent from it is reported changed
+	// rather than compared, which is why adding an image type to the
+	// framework can never introduce the panic this function exists to
+	// prevent.
+	switch at := a.(type) {
+	case *image.RGBA:
+		bt, ok := b.(*image.RGBA)
+		return ok && at == bt
+	case *image.NRGBA:
+		bt, ok := b.(*image.NRGBA)
+		return ok && at == bt
+	case *image.RGBA64:
+		bt, ok := b.(*image.RGBA64)
+		return ok && at == bt
+	case *image.NRGBA64:
+		bt, ok := b.(*image.NRGBA64)
+		return ok && at == bt
+	case *image.Gray:
+		bt, ok := b.(*image.Gray)
+		return ok && at == bt
+	case *image.Gray16:
+		bt, ok := b.(*image.Gray16)
+		return ok && at == bt
+	case *image.Alpha:
+		bt, ok := b.(*image.Alpha)
+		return ok && at == bt
+	case *image.Alpha16:
+		bt, ok := b.(*image.Alpha16)
+		return ok && at == bt
+	case *image.CMYK:
+		bt, ok := b.(*image.CMYK)
+		return ok && at == bt
+	case *image.YCbCr:
+		bt, ok := b.(*image.YCbCr)
+		return ok && at == bt
+	case *image.NYCbCrA:
+		bt, ok := b.(*image.NYCbCrA)
+		return ok && at == bt
+	case *image.Paletted:
+		bt, ok := b.(*image.Paletted)
+		return ok && at == bt
+	case *image.Uniform:
+		bt, ok := b.(*image.Uniform)
+		return ok && at == bt
+	}
+	return false
+}
+
+// ImageLimits is what the control plane will accept as an image from a
+// client. Both transports decode on the app's single UI goroutine, so a
+// decode that runs long stalls input, layout and every other session's
+// frames — and Bridge.round's timeout bounds the WAITING, not the
+// decode, so the stall outlives it. One policy, stated once, because two
+// transports with two ceilings is the same as having the looser one.
+//
+// The numbers are deliberately generous rather than tight: a phone
+// photograph (4032x3024, about 12.2 megapixels) must still work, since
+// refusing an ordinary picture would push callers toward pre-scaling
+// and hide the limit's purpose. Anything past this is not a terminal
+// image, and the two caps are both load-bearing — bytes alone admit the
+// bomb, whose entire trick is a small file that declares enormous
+// dimensions.
+func ImageLimits() imaging.Limits {
+	return imaging.Limits{
+		MaxBytes:  16 << 20,   // 16 MiB encoded
+		MaxPixels: 16_000_000, // ~64 MiB as RGBA
+	}
 }
 
 // DecodedImageValue is ImageValue for a picture that came from bytes:
