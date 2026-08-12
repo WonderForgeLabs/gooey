@@ -227,3 +227,54 @@ func TestInvokeRejectsNonCommands(t *testing.T) {
 		t.Errorf("invoking a literal = %v", err)
 	}
 }
+
+// TestUnregisterIsOrderIndependentWithinABatch — a batch is a SET, so the
+// same set must succeed however it is written down.
+//
+// It did not. Resolution and deletion shared one pass, so removing a scope
+// before a name inside it deleted the parent and then failed to resolve the
+// child, rolling the whole batch back with "no such name" for a name that
+// existed when the call was made. The reverse spelling of the identical
+// request succeeded. Both orders are asserted here because asserting only
+// the one that used to work proves nothing.
+func TestUnregisterIsOrderIndependentWithinABatch(t *testing.T) {
+	for _, order := range [][]string{
+		{"Scope", "Scope.B"}, // parent first — the spelling that used to fail
+		{"Scope.B", "Scope"}, // child first
+	} {
+		svc, bind := testService(map[string]any{})
+		if err := svc.Register([]Registration{{Name: "Scope.B", Kind: KindInt}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.Unregister(order); err != nil {
+			t.Fatalf("Unregister(%v): %v — a batch is a set; the same set must not "+
+				"depend on the order the caller happened to write it in", order, err)
+		}
+		if _, ok := bind.Values["Scope"]; ok {
+			t.Errorf("Unregister(%v): the scope survived", order)
+		}
+	}
+}
+
+// TestUnregisterLeavesNothingRemovedWhenItFails is the all-or-nothing half,
+// re-pinned against the two-pass implementation: the guarantee now holds
+// because nothing is deleted until every name has resolved, rather than
+// because deletions get undone. A regression to one-pass would delete the
+// first name before discovering the second is missing.
+func TestUnregisterLeavesNothingRemovedWhenItFails(t *testing.T) {
+	svc, bind := testService(map[string]any{})
+	if err := svc.Register([]Registration{
+		{Name: "First", Kind: KindString},
+		{Name: "Second", Kind: KindString},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Unregister([]string{"First", "Second", "Missing"}); err == nil {
+		t.Fatal("a batch naming an absent name must fail")
+	}
+	for _, n := range []string{"First", "Second"} {
+		if _, ok := bind.Values[n]; !ok {
+			t.Errorf("%s was removed by a batch that failed", n)
+		}
+	}
+}

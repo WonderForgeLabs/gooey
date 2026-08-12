@@ -145,6 +145,20 @@ func valueFromProto(tv *controlv1.TypedValue) (control.Value, error) {
 	case *controlv1.TypedValue_AnyJson:
 		return control.JSONValue(k.AnyJson), nil
 	case *controlv1.TypedValue_ImageBytes:
+		// NO BYTES MEANS NO PICTURE, and it round-trips as one.
+		//
+		// valueToProto emits ImageBytesOf(v.Image) for KindImage, which is
+		// empty in two ordinary cases: the value holds no image at all, and
+		// the image was built in-process so it never had source bytes to
+		// keep. Both then came back through here and were handed to the
+		// decoder, which reported "image bytes did not decode" and listed
+		// the host's formats — a malformed-file answer to a value that was
+		// never malformed, for a picture this server itself had just
+		// serialized. Encode/decode has to be a round trip or read-back
+		// lies about what was sent.
+		if len(k.ImageBytes) == 0 {
+			return control.ImageValue(nil), nil
+		}
 		img, err := imaging.DecodeLimited(bytes.NewReader(k.ImageBytes), "image_bytes", control.ImageLimits())
 		if lerr := (*imaging.LimitError)(nil); errors.As(err, &lerr) {
 			// A refusal for size is not a malformed-file answer, and

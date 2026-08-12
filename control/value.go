@@ -607,15 +607,29 @@ func (s *Service) Unregister(names []string) error {
 		key    string
 		val    any
 	}
-	var undo []removed
-	rollback := func() {
-		for i := len(undo) - 1; i >= 0; i-- {
-			undo[i].parent[undo[i].key] = undo[i].val
-		}
-	}
+	// No rollback closure any more, and its absence is the point: with
+	// resolution finished before the first delete, there is no failure
+	// path left that runs after a mutation. All-or-nothing used to be
+	// maintained by undoing; it is now maintained by not starting.
+	// RESOLVE EVERYTHING FIRST, THEN DELETE. A batch is a set, and a set
+	// has no order, so the same set must succeed or fail the same way
+	// however it is written down.
+	//
+	// Resolving and deleting in one pass made that false. Unregister
+	// ["scope", "scope.child"] deleted the parent, then failed to resolve
+	// the child — its scope had just been removed by the previous
+	// iteration — and rolled the whole batch back with "no such name" for
+	// a name that existed when the call was made. Written the other way
+	// round, ["scope.child", "scope"], the identical request succeeded.
+	// A caller holding a set of names cannot be expected to sort it into
+	// the one order the implementation tolerates.
+	//
+	// Two passes fix it by construction: every lookup happens against the
+	// map as the caller found it, so no resolution can be invalidated by a
+	// deletion that is part of the same request.
+	targets := make([]removed, 0, len(names))
 	for _, name := range names {
 		if strings.TrimSpace(name) == "" {
-			rollback()
 			return invalidf("cannot unregister: a name is required")
 		}
 		segs := strings.Split(name, ".")
@@ -635,11 +649,14 @@ func (s *Service) Unregister(names []string) error {
 			val, ok = m[leaf]
 		}
 		if !ok {
-			rollback()
+			// Nothing has been deleted yet, so there is nothing to roll
+			// back — the all-or-nothing guarantee holds trivially here.
 			return notFoundf("cannot unregister %q: no such name", name)
 		}
-		delete(m, leaf)
-		undo = append(undo, removed{parent: m, key: leaf, val: val})
+		targets = append(targets, removed{parent: m, key: leaf, val: val})
+	}
+	for _, t := range targets {
+		delete(t.parent, t.key)
 	}
 	return nil
 }
