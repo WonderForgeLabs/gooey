@@ -65,6 +65,30 @@ lesson:
   skip revealed there were two different minimums with two different
   mechanisms, and that the explanation had welded one to the other.
 
+Instance 9 is the one worth dwelling on, because it says something about
+*which instrument* to reach for. The red test was not checking the fix;
+it was checking the **explanation of the failure**, and the explanation
+was what was wrong.
+
+Nothing in review could have caught it. The comment and the code agreed
+with each other perfectly — and agreement is what review is good at
+verifying. What was wrong was the relationship between the model and the
+system: the number described was not the number the code used.
+
+**Review checks coherence. Tests check correspondence.** That is not a
+criticism of reviewers; it is a statement about what the two instruments
+measure, and it tells you when to spend which. Review catches
+contradiction. Execution catches misfit. **A change with no internal
+contradiction and a wrong model is precisely the shape that passes review
+and fails in production** — and it is the same failure as the other eight,
+in the other instrument: eight tests that never touched the system, and
+one review that only ever examined the change against itself.
+
+Which is also the argument for red-first that usually goes unmade. It is
+sold as "write the test before the code", but the load-bearing part is
+**write down what you think breaks, then make the machine disagree with
+you.**
+
 Two corollaries earned the hard way. **A control that fails is not always
 a broken test — sometimes it is telling you the claim is wrong**: the
 `Frozen` KeyBinding test passed frozen *and* unfrozen, which was the
