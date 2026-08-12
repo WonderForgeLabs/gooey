@@ -115,7 +115,12 @@ func TestCLAUDEMDVerifyLoopReachesEveryNestedModule(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		got = append(got, path.Dir(line))
+		// The root go.mod comes out of the same walk. The documented loop
+		// skips it explicitly, because the block above it already covers
+		// the root module.
+		if dir := path.Dir(line); dir != "." {
+			got = append(got, dir)
+		}
 	}
 	sort.Strings(got)
 
