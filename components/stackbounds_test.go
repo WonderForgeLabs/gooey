@@ -52,7 +52,81 @@ func generatedMarkup(depth int) string {
 	return b.String()
 }
 
-// THE BUG. A Grid whose FIXED tracks alone want more than it has.
+// THE SECOND BUG, and the one that produced the reported symptom.
+//
+// A stack measured against a generous avail and then arranged into a
+// smaller rect. That is not exotic — a Grid measuring its children
+// against the screen and arranging them into a fixed track does it on
+// every frame — but it is the only shape that reveals the defect, which
+// is why an earlier repro that measured and arranged with the SAME
+// extent came back green and nearly closed the investigation.
+//
+// v.sizes is what each child WANTED, not a budget. Arrange walked `y`
+// by those cached heights with no bound, so children past the edge were
+// arranged outside the stack, and nothing downstream clips them.
+//
+// The witness was a Border's bottom chrome row reading "╰  </Canvas>" —
+// corner intact, rule overwritten by text from the pane above it.
+func TestStacksClampToTheirArrangedRectWhenMeasuredLarger(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func() (parts []gooey.Rect, parent gooey.Rect)
+	}{
+		{"vstack", func() ([]gooey.Rect, gooey.Rect) {
+			a := &Text{Content: Str(generatedMarkup(8))}
+			b := &Text{Content: Str(generatedMarkup(8))}
+			s := &VStack{Children: []gooey.Component{a, b}}
+			s.Measure(gooey.Size{W: 40, H: 40}) // generous
+			pane := gooey.Rect{X: 2, Y: 3, W: 40, H: 10}
+			s.Arrange(pane) // then squeezed
+			return []gooey.Rect{a.Bounds(), b.Bounds()}, pane
+		}},
+		{"hstack", func() ([]gooey.Rect, gooey.Rect) {
+			long := strings.Repeat("wide-column-content ", 12)
+			a := &Text{Content: Str(long)}
+			b := &Text{Content: Str(long)}
+			s := &HStack{Children: []gooey.Component{a, b}}
+			s.Measure(gooey.Size{W: 400, H: 4})
+			pane := gooey.Rect{X: 5, Y: 1, W: 30, H: 4}
+			s.Arrange(pane)
+			return []gooey.Rect{a.Bounds(), b.Bounds()}, pane
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts, parent := tc.run()
+			for i, got := range parts {
+				if outside(got, parent) {
+					t.Errorf("child %d arranged at %+v, outside the stack's own %+v\n"+
+						"the measure cache is what the child WANTED; Arrange may be handed "+
+						"less, and nothing clips a component to its parent", i, got, parent)
+				}
+			}
+		})
+	}
+}
+
+// The clamp must not cost the first child the room that does exist —
+// otherwise "fix the overflow" becomes "blank the pane", which would
+// pass the test above just as well.
+func TestAClampedStackStillFillsTheRoomItHas(t *testing.T) {
+	a := &Text{Content: Str(generatedMarkup(8))}
+	b := &Text{Content: Str(generatedMarkup(8))}
+	s := &VStack{Children: []gooey.Component{a, b}}
+	s.Measure(gooey.Size{W: 40, H: 40})
+	pane := gooey.Rect{X: 2, Y: 3, W: 40, H: 10}
+	s.Arrange(pane)
+
+	if got := a.Bounds(); got.Y != pane.Y || got.H != pane.H {
+		t.Errorf("first child = %+v, want it to fill the pane (y=%d h=%d) — it wanted "+
+			"more than the pane has, so it should get all of it", got, pane.Y, pane.H)
+	}
+	if got := b.Bounds(); got.H != 0 {
+		t.Errorf("second child = %+v, want h=0 — there is no room left, and a "+
+			"zero-area rect is the only honest answer", got)
+	}
+}
+
+// THE FIRST BUG. A Grid whose FIXED tracks alone want more than it has.
 //
 // Starving the star tracks is not enough: `remaining` floors at zero,
 // so the stars collapse correctly and the fixed tracks keep their full
