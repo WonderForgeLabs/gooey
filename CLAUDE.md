@@ -16,23 +16,60 @@ go vet ./...     # whole-repo compile check — use this, not `go build`
 go test ./...
 ```
 
-`./...` stops at the module boundary, and there are **eight nested
-modules** it skips. Run each one:
+`./...` stops at the module boundary, and every nested module it skips has
+to be run on its own. **Discover them — never enumerate them.** A written
+list of module names is stale the first time someone adds one, and the
+failure is silent: the loop still exits 0, so you report a verified tree
+having never compiled the new module. That is exactly how this file came to
+name eight modules across two loops and still skip seven `packs/temporal-*`.
+`ci.yml` discovers `packs/*` with a glob for the same reason.
 
 ```sh
-for m in handlers/temporal packs/temporal-visibility imagefmt/svg \
-         examples/gitui examples/kanbandemo; do
-  ( cd "$m" && go vet ./... && go test ./... ) || echo "FAIL $m"
-done
-for m in grpc mcp handlers/exec; do
-  ( cd "$m" && go vet ./... && go test -race ./... ) || echo "FAIL $m"
+# Every nested module, discovered the way ci.yml discovers packs/*.
+# -race matches CI: handlers/*, packs/*, mcp and grpc run under the
+# detector; the root module and imagefmt/svg do not. examples/* are in
+# neither list because CI does not run them at all, so they get the
+# plain run here — see the paragraph below.
+#
+# Pruning dot-directories at EVERY depth is load-bearing, and filtering
+# with `-not -path './.*'` is not enough — that only anchors at the top.
+# The two offenders are both UNTRACKED, so neither exists in a fresh
+# clone and you cannot check this from the repo alone: .claude/worktrees/
+# holds whole checkouts, and examples/temporal-worker/.venv (gitignored;
+# appears once you run that example) vendors two go.mod files of
+# Temporal's own. That asymmetry is the point — a top-anchored filter
+# passes in CI and walks into someone else's tree on your machine.
+#
+# `-mindepth 1` is the load-bearing half of that: it is what lets a
+# depth-1 dot-directory be pruned at all, AND it keeps `-name` off the
+# starting point. Drop it and `-name '.*'` matches `.` itself, prunes the
+# whole walk, and prints nothing while still exiting 0. `.?*` is only
+# belt-and-braces for whoever removes `-mindepth 1` later — with it
+# present the two patterns are identical (checked: both find 16).
+#
+# Piped into `while read` rather than `for m in $(…)`: unquoted command
+# substitution word-splits AND glob-expands, so one directory with a
+# space or a `*` in its name would quietly mis-split the list.
+find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort |
+while IFS= read -r mod; do
+  m=${mod%/go.mod}; m=${m#./}
+  [ "$m" = "." ] && continue   # the root module — covered by the block above
+  case "$m" in
+    handlers/*|packs/*|mcp|grpc) race=-race ;;
+    *)                           race= ;;
+  esac
+  ( cd "$m" && go vet ./... && go test $race ./... ) || echo "FAIL $m"
 done
 ```
 
-The `-race` on those last three is not a nicety: what their tests prove is
-that no RPC, tool body, or child-process callback touches the property
-graph off the UI goroutine, and without the detector that assertion is only
-half made. `.github/workflows/ci.yml` is the authority on what CI runs.
+That is **15** modules today (16 `go.mod` counting the root). If it walks
+noticeably fewer, suspect the loop before you trust the green.
+
+The `-race` where CI applies it is not a nicety: what those tests prove is
+that no RPC, tool body, activity goroutine, or child-process callback
+touches the property graph off the UI goroutine, and without the detector
+that assertion is only half made. `.github/workflows/ci.yml` is the
+authority on what CI runs.
 
 Two gaps CI leaves you to cover by hand: `examples/gitui` and
 `examples/kanbandemo` are **not built by CI at all**, so a core API change
@@ -47,9 +84,11 @@ touches one.
 **No reflection in core.** Bindings resolve to typed `*prop.Property[T]`
 handles at build time (lvalue semantics, not value), through registries and
 type switches. The only `"reflect"` imports in the repo are generated
-protobuf under `grpc/gen/` and one test in `packs/`. This is what keeps a
-future `gooey gen` able to compile markup ahead of time, so "just use
-reflection here" is a design change, not a shortcut.
+protobuf under `grpc/gen/` and one `*_test.go` per activity pack — eight
+today, one under each `packs/temporal-*`, none of them core. Check with
+`git grep -l '"reflect"'` rather than trusting this sentence's arithmetic.
+This is what keeps a future `gooey gen` able to compile markup ahead of
+time, so "just use reflection here" is a design change, not a shortcut.
 
 **The `Get` call site decides subscribe-vs-read.** `prop.node.recordRead`
 (`prop/prop.go:33`) records an edge only when a computed is on `evalStack`.
@@ -198,15 +237,32 @@ mouse input cannot be injected through a recording pty, so every feature
 must stay keyboard-operable; and `agg` renders the cell plane only, so
 captures need halfblock, never sixel or kitty.
 
-## Known-bad on main
+## A red suite is yours
 
-Neither of these is your fault, and a red suite from either is pre-existing:
+**There is no known-bad list here, and adding a static one is not allowed.**
+Main is expected green. If a test fails, it is your problem until an **open
+issue says otherwise** — and you establish that by reading the issue's
+state, not by reading a sentence in this file.
 
-- `handlers/temporal` — `TestPagingKeysPageTheDashboardSelection`
-  (`internal/ops/ops_test.go:614`) **fails under `-race`**: an activity
-  goroutine started from a Command reaches the graph concurrently with the
-  test. Issue **#182**. The module is green without `-race`, which is what
-  CI runs for it.
-- `TestSIGWINCHResizesTheComposition` (`signals_linux_test.go:104`, root
-  module) is a timing **flake** — it waits on real deadlines and splits the
-  transcript on sync markers. Issue **#183**.
+This rule replaces a "Known-bad on main" section that named issues #182 and
+#183 as pre-existing failures. Both were already fixed *in this file's own
+ancestry* when it was written (`ba6a7ff`, `b5869ae` both precede `13ebe2b`),
+so for its entire life the file told every reader to wave through a `-race`
+failure in `handlers/temporal` and a SIGWINCH timing failure in the root
+module — the two places a concurrency regression is most likely to land. It
+also claimed CI runs `handlers/temporal` without `-race`; that had stopped
+being true in `b5869ae`, the very fix it was citing. A stale dismissal is
+worse than no list, because it spends the attention that would have caught
+the bug (issue #207).
+
+So the mechanism for any future entry has to be **derived or expiring, never
+hand-maintained**:
+
+- cite an issue number and require the reader to check that it is still
+  **open** — a closed issue means the entry is dead and the failure is real;
+- never assert "this failure is expected" in prose that outlives the fix;
+- prefer `t.Skip` with the issue number in the skip message, so the claim
+  lives next to the test and dies with it in the same commit.
+
+If you believe a failure is pre-existing, confirm it against `origin/main`
+in a clean checkout and report *that*, rather than inheriting the belief.
