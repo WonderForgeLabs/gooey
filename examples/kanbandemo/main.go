@@ -72,6 +72,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
@@ -472,6 +473,14 @@ func main() {
 	withWorker := flag.Bool("with-worker", true, "launch the Python Temporal dynamic-UI worker (examples/temporal-worker) as a companion, sharing this app's process lifetime; pass -with-worker=false to disable")
 	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks examples/temporal-worker/requirements.txt")
 	workerTaskQueue := flag.String("worker-task-queue", "kanbandemo-dynamic-ui", "Temporal task queue the worker companion polls")
+	// The gRPC control plane, alongside MCP rather than instead of it:
+	// the two surfaces share one control.Service and answer different
+	// clients. An Attach client (examples/wysiwyg) needs this one — its
+	// editing loop is a subscribed stream, which MCP has no shape for.
+	//
+	// Random port by default for the same reason -mcp takes one (#188):
+	// a fixed default is how two demos on one machine collide.
+	grpcAddr := flag.String("grpc", "127.0.0.1:0", "loopback address for the gRPC control plane; port 0 picks a free port; empty disables it")
 	flag.Parse()
 
 	// --- board state: three plain slices, nothing fancier. Moving a card
@@ -852,6 +861,28 @@ func main() {
 		help.Set(helpText)
 	} else {
 		help.Set("started with -mcp \"\": no server is listening")
+	}
+
+	if *grpcAddr != "" {
+		// Options.Context is not optional: without it the service has no
+		// binding context, so ValidateMarkup and the declared-schema
+		// path lose the very thing a remote editor validates against.
+		// Name/Version surface in every session's Welcome, which is how
+		// an attached client identifies what it is driving.
+		gsrv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
+			Addr:    *grpcAddr,
+			Context: ctx,
+			Name:    "gooey-kanbandemo",
+			Version: "1",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		// Close joins rather than merely signalling — the framework rule
+		// that a stop must wait, not just ask.
+		defer gsrv.Close()
+		help.Set(help.Get() + "\n\ngRPC control plane: " + gsrv.Addr() + "  (gooey.control.v1)\n" +
+			"attach the markup editor:  cd examples/wysiwyg && go run . -attach " + gsrv.Addr() + " -island Help")
 	}
 
 	if err := app.Run(context.Background()); err != nil {

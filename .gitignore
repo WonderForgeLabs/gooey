@@ -26,3 +26,5 @@ recordings/
 /colordemo
 /mcpdemo
 /temporaldemo
+# a main package built in place drops its executable beside its source
+/examples/wysiwyg/wysiwyg

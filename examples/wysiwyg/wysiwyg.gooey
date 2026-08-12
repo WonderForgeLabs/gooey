@@ -1,0 +1,88 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Name="Shell" Rows="1,1*,12,1" Cols="2*,46">
+
+    <!-- KeyBindings live on the ROOT. A binding on an inner element
+         never fires when focus is elsewhere, so global gestures belong
+         where every event passes through. -->
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="c" Command="{{.ToCanvas}}"/>
+    <KeyBinding Gesture="v" Command="{{.ToVStack}}"/>
+    <KeyBinding Gesture="x" Command="{{.Delete}}"/>
+    <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
+    <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
+    <!-- The text escape hatch for a row whose Kind has a finite value
+         set: enter cycles those, `e` always opens the raw value. Safe as
+         a root binding while typing, because dispatch is focused-first
+         and the TextBox consumes the key before it bubbles this far. -->
+    <KeyBinding Gesture="e" Command="{{.EditText}}"/>
+
+    <Text Grid.Row="0" Grid.Col="0" Style="title">gooey builder — catalog-driven</Text>
+    <Text Grid.Row="0" Grid.Col="1" Style="dim">c/v container · x delete · q quit</Text>
+
+    <!-- THE ISLAND. Everything inside <Preview> is discarded and rebuilt
+         on every edit. No input may live here: replacing a subtree
+         resets component-local state, and a caret is component-local. -->
+    <Border Grid.Row="1" Grid.Col="0" Title="preview">
+      <Preview Name="Island"/>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Col="1" Title="palette (from Catalog)">
+      <ItemsView Name="Palette" Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
+                 Activate="{{.Add}}">
+        <ItemsView.ItemTemplate>
+          <HStack Gap="1">
+            <Text Width="16">{{.Name}}</Text>
+            <Text Width="8" Style="dim">{{.Attrs}}</Text>
+            <Text Style="dim">{{.Kids}}</Text>
+          </HStack>
+        </ItemsView.ItemTemplate>
+      </ItemsView>
+    </Border>
+
+    <Border Grid.Row="2" Grid.Col="0" Title="markup">
+      <VStack>
+        <Text>{{.TreeText}}</Text>
+        <Text Style="dim">{{.Source}}</Text>
+      </VStack>
+    </Border>
+
+    <!-- The inspector. Its TextBox is a SIBLING of <Preview>, never a
+         descendant, which is what makes the caret survive a rebuild.
+         TestEditorInputsAreSiblingsOfThePreview fails if this moves. -->
+    <Border Grid.Row="2" Grid.Col="1" Title="inspector (AttrsFor)">
+      <VStack>
+        <ItemsView Name="Attrs" Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
+                   Activate="{{.BeginEdit}}" Height="7">
+          <!-- Mark is the modified-from-default column: "•" where the
+               document's value differs from AttrSpec.Default, blank
+               where it does not or where no default is declared. Rows
+               arrive grouped by markup.CategoryOf, so the order is the
+               categorised view without header rows to complicate the
+               selection index. -->
+          <ItemsView.ItemTemplate>
+            <HStack Gap="1">
+              <Text Width="1" Style="sel">{{.Mark}}</Text>
+              <Text Width="13">{{.Name}}</Text>
+              <Text Width="7" Style="dim">{{.Kind}}</Text>
+              <Text Width="13" Style="dim">{{.Legal}}</Text>
+              <Text Style="ok">{{.Value}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+        <HStack Gap="1">
+          <Text Width="14" Style="sel">{{.EditName}}</Text>
+          <TextBox Name="Editor" Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
+        </HStack>
+        <!-- The description pane. AttrSpec.Doc is empty everywhere
+             today, so this shows the legal values instead and will show
+             prose the moment Doc is populated — wired now so that
+             becomes data entry rather than plumbing. -->
+        <Text Name="Describe" Style="dim">{{.EditDoc}}</Text>
+      </VStack>
+    </Border>
+
+    <StatusBar Grid.Row="3" Grid.Col="0" Left="{{.Status}}"/>
+    <Text Grid.Row="3" Grid.Col="1" Style="dim">tab · enter cycles · e types</Text>
+  </Grid>
+</Gooey>
