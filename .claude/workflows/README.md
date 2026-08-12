@@ -153,3 +153,100 @@ reporting success.
 
 Cost: 12 agents, roughly 700k output tokens and ~12 minutes wall clock
 for a full run.
+
+## peer-canvass
+
+Before dispatching work in a repo where several sessions are active:
+audit worktrees, branches, dirty paths and open PRs empirically, then
+reconcile that against what peers *said* they were doing.
+
+```
+Workflow({ name: 'peer-canvass' })
+Workflow({ name: 'peer-canvass', args: { replies: '...peer summaries...' } })
+```
+
+Workflow agents cannot `SendMessage`, so the coordinator asks peers
+directly and passes the answers in as `args.replies`. The highest-value
+field is `reconciliation` — where the two sources **disagree**. A peer
+saying "I'm not touching X" while X is dirty in their worktree, or a
+branch reported as ahead that is 88 commits behind, is exactly what a
+conflict check is for.
+
+Collision avoidance is the smaller half. `whoToAsk` names, per area, the
+peer who has read those files most recently — the cheapest design review
+available, and the one most likely to know the thing you are about to
+build already exists. Message peers when stuck, when a design has two
+defensible shapes, when you want someone to argue with, or when an
+inherited claim is load-bearing enough to check.
+
+Not every exchange needs an outcome. "Nothing of mine touches that —
+done here, call back if it changes" is a complete reply. Ending a thread
+that way is cheaper for both sides than keeping it alive hunting for a
+deliverable.
+
+Read-only; 3 agents.
+
+## select-work
+
+Pick ONE project off the board by value-per-risk, decide whether it
+needs a decision record, and shape the PR stack.
+
+```
+Workflow({ name: 'select-work' })
+Workflow({ name: 'select-work', args: { conflicts: {...}, exclude: [130, 206] } })
+```
+
+Pass `peer-canvass`'s map as `args.conflicts`, or it will happily choose
+work that collides. Every candidate returns with its score and reasoning,
+not just the winner, so the ranking can be argued with rather than only
+the result.
+
+Two outputs earn their place beyond the choice itself. `ciWork` says
+which lint/freshness/manifest checks the change must update — and when
+the answer is *none*, flags it, because a change nothing verifies needs
+a human reader. `doNotTouch` names paths that would break someone else,
+with the consequence: a file that is another PR's entire diff belongs
+there.
+
+The decision-record verdict is deliberately conservative. A record is a
+separate first PR, docs only, green and approved before any code — but
+only when there is a real decision with more than one defensible answer.
+A record that restates a verified fact is a document that decides
+nothing.
+
+Read-only; 3 agents.
+
+## pr-babysit
+
+One turn of the babysit cycle: assess a PR (or a stack), classify every
+failure as infra or real, and decide what to fix, what to wait on, and
+how long to sleep.
+
+```
+Workflow({ name: 'pr-babysit', args: { prs: [209, 210] } })
+Workflow({ name: 'pr-babysit', args: { prs: [209], attempt: 3 } })
+```
+
+Open PRs as **drafts** early — a review on a draft costs an edit, a
+review on a finished PR costs a rework — then loop this until every PR
+is DONE. DONE means three things, not one: code checks green, a verdict
+actually **rendered**, and every finding fixed or explicitly declined.
+
+The two traps it encodes are this repo's, learned the expensive way. A
+green `pr-review` is not a review: the run can abort and still exit 0,
+complete and post nothing, or *overwrite* a finished review — the
+comment is sticky and edited in place. Require a rendered verdict in the
+body, never "no unchecked boxes" (a just-started review has none
+either). And a re-run hides the deciding attempt, so read
+`/actions/runs/<id>/attempts/1/jobs` rather than the latest.
+
+`attempt` drives the backoff: real failures get a short sleep because
+there is work to do, infra failures back off progressively up to **8
+hours**. These faults recover on their own timescale and hammering them
+burns runner capacity other sessions are queued behind.
+
+Assesses and recommends; never pushes, never merges. Anything that is a
+decision rather than a task — a merge, dropping a severable PR, a
+finding worth disputing — comes back in `escalate`.
+
+Read-only; 1 agent per PR, plus 1.
