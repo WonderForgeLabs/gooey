@@ -1,11 +1,11 @@
-package main
+package preview
 
 import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// mirror is what a <Preview> becomes when it appears inside the document
+// Mirror is what a <Preview> becomes when it appears inside the document
 // being previewed.
 //
 // # Why this exists
@@ -34,7 +34,7 @@ import (
 // from the palette would have been the editor lying by omission about
 // what the document can contain — the failure this project spent its
 // length cataloguing.
-type mirror struct {
+type Mirror struct {
 	gooey.Base
 	style render.Style
 }
@@ -48,7 +48,7 @@ type mirror struct {
 // without turning the pane into noise at small sizes.
 const mirrorDepth = 4
 
-func (m *mirror) Measure(avail gooey.Size) gooey.Size { return avail }
+func (m *Mirror) Measure(avail gooey.Size) gooey.Size { return avail }
 
 // Render draws concentric frames, each inset by one cell and dimmer than
 // the last, so the pane recedes into itself.
@@ -56,7 +56,7 @@ func (m *mirror) Measure(avail gooey.Size) gooey.Size { return avail }
 // It composes no children on purpose. A version built from nested
 // components would be a real tree and would reintroduce exactly the
 // depth the crash came from; drawing the illusion in one pass cannot.
-func (m *mirror) Render(f *gooey.Frame) {
+func (m *Mirror) Render(f *gooey.Frame) {
 	b := m.Bounds()
 	for d := 0; d < mirrorDepth; d++ {
 		inset := d * 2

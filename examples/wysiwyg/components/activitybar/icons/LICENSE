@@ -1,0 +1,13 @@
+These SVG files are Codicons, Visual Studio Code's icon set.
+
+    Source:    https://github.com/microsoft/vscode-codicons
+    Copyright: (c) Microsoft Corporation
+    License:   CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+
+Fetched from src/icons/ in that repository, unmodified on disk. The
+activitybar package substitutes the documents' fill="currentColor" for a
+concrete colour before rasterizing, which is a render-time substitution
+and not a change to these files.
+
+CC BY 4.0 permits use and modification, commercial included, and requires
+attribution — which is what this file is. Keep it beside the icons.

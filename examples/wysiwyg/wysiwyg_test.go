@@ -7,14 +7,16 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
-// buildShell builds the editor's page the way main does, so every test
-// below asserts against the real tree rather than a reconstruction.
-func buildShell(t *testing.T) (*editor, gooey.Component) {
+// buildPage builds the editor's SHIPPED page — whatever wysiwyg.gooey
+// currently is. It is deliberately not parameterised: a test that asserts
+// something about the page the user gets has to read that page.
+func buildPage(t *testing.T) (*editor, gooey.Component) {
 	t.Helper()
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	src, err := os.ReadFile("wysiwyg.gooey")
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +27,50 @@ func buildShell(t *testing.T) (*editor, gooey.Component) {
 	}
 	ed.rebuild()
 	return ed, root
+}
+
+// paneLayout mounts all four panes as siblings. The shipped page does not
+// do this today — it is empty, pending the canvas-first rebuild — so the
+// two structural tests below assert against this instead.
+//
+// BE CLEAR ABOUT WHAT THAT COSTS. While the page was a four-pane shell,
+// those tests read the shipped markup, so a future edit that nested an
+// input inside the preview would have failed them. Against a fixture they
+// can only prove the PANES permit a correct arrangement, not that the
+// shipped page uses one. The missing half comes back the moment the new
+// shell exists, by pointing them at buildPage again.
+//
+// What survives the change intact is the stronger guarantee the
+// extraction bought: <Preview> is a control whose markup is a fixed
+// Border wrapping its host, with no slot for children at all. An input
+// inside the rebuilt island is no longer a mistake a page can make.
+const paneLayout = `<Gooey><Grid Rows="1*,1*" Cols="1*,1*">
+  <Preview Grid.Row="0" Grid.Col="0" Name="Island"/>
+  <Palette Grid.Row="0" Grid.Col="1" Items="{{.PaletteItems}}" Sel="{{.PaletteSel}}" Activate="{{.Add}}"/>
+  <MarkupView Grid.Row="1" Grid.Col="0" Tree="{{.TreeText}}" Source="{{.Source}}"/>
+  <Inspector Grid.Row="1" Grid.Col="1" Items="{{.AttrItems}}" Sel="{{.AttrSel}}" Activate="{{.BeginEdit}}"
+             EditName="{{.EditName}}" EditValue="{{.EditValue}}" Commit="{{.CommitEdit}}" Doc="{{.EditDoc}}"/>
+</Grid></Gooey>`
+
+func buildPanes(t *testing.T) (*editor, gooey.Component) {
+	t.Helper()
+	ed := newEditor(editorFS())
+	root, err := markup.Build([]byte(paneLayout), ed.ctx)
+	if err != nil {
+		t.Fatalf("the four panes do not compose: %v", err)
+	}
+	ed.rebuild()
+	return ed, root
+}
+
+// TestTheShippedPageLoads is what buildPage still pins on its own, and it
+// is not nothing: the page is what the app starts with, and a page that
+// does not load is a black screen at launch.
+func TestTheShippedPageLoads(t *testing.T) {
+	_, root := buildPage(t)
+	if root == nil {
+		t.Fatal("no root")
+	}
 }
 
 // TestEditorInputsAreSiblingsOfThePreview is the structural mitigation
@@ -43,7 +89,7 @@ func buildShell(t *testing.T) (*editor, gooey.Component) {
 // test fails if a later edit moves one inside, so the guarantee cannot
 // rot silently.
 func TestEditorInputsAreSiblingsOfThePreview(t *testing.T) {
-	_, root := buildShell(t)
+	_, root := buildPanes(t)
 
 	island := findPreview(root)
 	if island == nil {
@@ -62,7 +108,7 @@ func TestEditorInputsAreSiblingsOfThePreview(t *testing.T) {
 // half: rebuilding the island repeatedly must leave the inspector's
 // TextBox — and the text in it — exactly where it was.
 func TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput(t *testing.T) {
-	ed, root := buildShell(t)
+	ed, root := buildPanes(t)
 	box := firstTextBox(root)
 	if box == nil {
 		t.Fatal("no TextBox in the editor")
@@ -85,7 +131,7 @@ func TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput(t *testing.T) {
 // TestPaletteComesFromTheCatalog — claim 1. The palette is not a
 // hand-listed menu; it is whatever this context can build.
 func TestPaletteComesFromTheCatalog(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	if len(ed.palette) < 20 {
 		t.Fatalf("palette has %d entries; the catalog has more than that", len(ed.palette))
 	}
@@ -124,7 +170,7 @@ func TestPaletteComesFromTheCatalog(t *testing.T) {
 // containers, must offer a different attribute set: Canvas.Left is
 // meaningful under a <Canvas> and silently dropped under a <VStack>.
 func TestInspectorFollowsTheParent(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.rebuild()
 	ed.selected = 0
 
@@ -161,7 +207,7 @@ func TestInspectorFollowsTheParent(t *testing.T) {
 // exactly what the old loader did, and it is the defect the catalog work
 // exists to delete.
 func TestRetypingStripsAttributesTheNewParentCannotHonor(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.rebuild()
 	ed.retype("VStack")
 	for _, k := range ed.root.Kids {
@@ -179,7 +225,7 @@ func TestRetypingStripsAttributesTheNewParentCannotHonor(t *testing.T) {
 // this meaningful: before it, markup with a stray attribute loaded
 // cleanly and did the wrong thing.
 func TestEveryEditProducesMarkupThatBuilds(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.rebuild()
 	for i := range ed.palette {
 		ed.paletteSel.Set(i)
@@ -213,7 +259,7 @@ func TestEveryEditProducesMarkupThatBuilds(t *testing.T) {
 // Found by running the app and looking at the screen. The unit tests
 // were green throughout.
 func TestEveryBoundNameResolvesToALiveHandle(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	for name, v := range ed.ctx.Values {
 		if v == nil {
 			t.Errorf("%q is bound to a nil handle; its pane will render empty with no error", name)
@@ -242,7 +288,7 @@ func TestEveryBoundNameResolvesToALiveHandle(t *testing.T) {
 //
 // This asserts through the property, not around it.
 func TestDerivedListsInvalidateOnEdit(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.rebuild()
 	ed.selected = 0
 
@@ -268,7 +314,7 @@ func TestDerivedListsInvalidateOnEdit(t *testing.T) {
 // ---- tree helpers ----
 
 func findPreview(c gooey.Component) gooey.Component {
-	if _, ok := c.(*preview); ok {
+	if _, ok := c.(*preview.Pane); ok {
 		return c
 	}
 	for _, k := range children(c) {
@@ -332,7 +378,7 @@ func children(c gooey.Component) []gooey.Component {
 // element the EDITOR registers for itself may appear in the palette,
 // whatever it is called.
 func TestPaletteNeverOffersTheEditorsOwnChrome(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	if len(ed.ctx.Components) == 0 {
 		t.Fatal("the editor registers no chrome, so this test asserts nothing")
 	}
@@ -355,7 +401,7 @@ func TestPaletteNeverOffersTheEditorsOwnChrome(t *testing.T) {
 // other end: even if something put <Preview> in a document, the document
 // vocabulary cannot build it.
 func TestDocumentCannotBuildTheEditorsChrome(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	for name := range ed.ctx.Components {
 		if ed.docCtx.Components[name] != nil {
 			continue
@@ -387,7 +433,7 @@ func TestDocumentCannotBuildTheEditorsChrome(t *testing.T) {
 //  3. and it survives nesting inside a container — the case the obvious
 //     parent-only guard would have missed.
 func TestPreviewIsPlaceableAndBecomesAMirror(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 
 	var offered bool
 	for _, e := range ed.palette {
@@ -418,8 +464,8 @@ func TestPreviewIsPlaceableAndBecomesAMirror(t *testing.T) {
 	}
 }
 
-func findMirror(c gooey.Component) *mirror {
-	if m, ok := c.(*mirror); ok {
+func findMirror(c gooey.Component) *preview.Mirror {
+	if m, ok := c.(*preview.Mirror); ok {
 		return m
 	}
 	for _, k := range children(c) {
@@ -430,7 +476,7 @@ func findMirror(c gooey.Component) *mirror {
 	return nil
 }
 
-func containsPreviewPane(c gooey.Component, pane *preview) bool {
+func containsPreviewPane(c gooey.Component, pane *preview.Pane) bool {
 	if c == gooey.Component(pane) {
 		return true
 	}
@@ -456,7 +502,7 @@ func containsPreviewPane(c gooey.Component, pane *preview) bool {
 // declares no Default for. Empty is a third state, not a false, and
 // AttrSpec.Default is empty exactly where nothing could check it.
 func TestModifiedIsExactlyDifferingFromTheDeclaredDefault(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
 	ed.selected = 0
@@ -506,7 +552,7 @@ func TestModifiedIsExactlyDifferingFromTheDeclaredDefault(t *testing.T) {
 // would sit in the same list the selection indexes into and every
 // activation would have to guard against editing one.
 func TestInspectorRowsAreGroupedByCategory(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
 	ed.selected = 1 // the Button: it has an event, a style and a layout surface

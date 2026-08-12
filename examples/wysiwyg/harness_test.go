@@ -37,13 +37,23 @@ type testApp struct {
 
 func newTestApp(t *testing.T, src string, values map[string]any) *testApp {
 	t.Helper()
+	return newTestAppIn(t, src, &markup.Context{Values: values})
+}
+
+// newTestAppIn runs a page against a context the caller owns, which is
+// what lets a test host the EDITOR's own page — the editor's context
+// carries its styles and its four pane builders, and a page built without
+// them is a different page.
+func newTestAppIn(t *testing.T, src string, ctx *markup.Context) *testApp {
+	t.Helper()
 	a := &testApp{
 		disp: gooey.NewDispatcher(),
 		cols: 80, rows: 24,
 		quit: make(chan struct{}),
 		done: make(chan struct{}),
 	}
-	a.ctx = &markup.Context{Values: values, Dispatcher: a.disp}
+	a.ctx = ctx
+	a.ctx.Dispatcher = a.disp
 	root, err := markup.Build([]byte(src), a.ctx)
 	if err != nil {
 		t.Fatalf("build markup: %v", err)

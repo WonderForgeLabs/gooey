@@ -32,7 +32,7 @@ func rowIndex(t *testing.T, ed *editor, name string) (int, attrRow) {
 // that IS the per-Kind editor. A row with a finite value set advances; a
 // free-text row loads the input and changes nothing.
 func TestEnterCyclesFiniteValuesAndTypesEverythingElse(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
 	ed.selected = 1 // the Button
@@ -69,7 +69,7 @@ func TestEnterCyclesFiniteValuesAndTypesEverythingElse(t *testing.T) {
 // one-way door, and a required one has no unset state at all: removing it
 // is a load error.
 func TestTheCycleOffersUnsetOnlyWhereUnsetIsLegal(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
 	ed.selected = 1
@@ -125,7 +125,7 @@ func TestTheCycleOffersUnsetOnlyWhereUnsetIsLegal(t *testing.T) {
 // catalog lying about the target, which is the defect this whole project
 // exists to remove.
 func TestEveryCycledValueProducesMarkupThatBuilds(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
 
@@ -159,7 +159,7 @@ func TestEveryCycledValueProducesMarkupThatBuilds(t *testing.T) {
 // TestCommandRowsOfferOnlyActions — a Click= offered a name that is not a
 // command would produce a load error from a list the editor supplied.
 func TestCommandRowsOfferOnlyActions(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	offered := ed.commandBindings()
 	if len(offered) == 0 {
 		t.Fatal("no command bindings offered: the test would prove nothing")
@@ -190,7 +190,7 @@ func TestCommandRowsOfferOnlyActions(t *testing.T) {
 // TestStyleRowsComeFromTheLiveContext — a hardcoded style list would
 // offer names the app does not have and omit the ones it does.
 func TestStyleRowsComeFromTheLiveContext(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	got := ed.valueSet(markup.AttrSpec{Kind: markup.KindStyle})
 	for name := range ed.docCtx.Styles {
 		if !contains(got, name) {

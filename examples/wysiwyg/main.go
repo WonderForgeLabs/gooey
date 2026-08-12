@@ -22,7 +22,9 @@
 //     one whose absence would have the editor offering positioning that
 //     applyLayout silently discards.
 //
-// # Layout, and the one structural rule
+// # The page is empty, and that is the current state of the work
+//
+// The four-pane shell this file used to arrange is gone:
 //
 //	┌────────────────────────────┬──────────────────┐
 //	│ Preview   (REBUILT)        │ Palette          │
@@ -30,25 +32,48 @@
 //	│ Markup output              │ Inspector INPUTS │
 //	└────────────────────────────┴──────────────────┘
 //
-// The preview subtree is thrown away and rebuilt on every edit.
-// Replacing a subtree resets component-local state, and a caret is
-// component-local: an input inside the rebuilt island would jump to
-// offset 0 on every keystroke, so the user's next character lands in the
-// middle of their own text. The mitigation is structural, and it is the
-// one that can be checked rather than remembered — every input is a
-// SIBLING of the preview, asserted by
-// TestEditorInputsAreSiblingsOfThePreview.
+// It worked, and it was the wrong shape: it made you operate a markup
+// TREE and showed you a canvas as a side effect, when the canvas is what
+// you want to touch. Rearranging four boxes would not have fixed that, so
+// the layout is being built again rather than edited — canvas first.
+//
+// What survives, and where:
+//
+//   - the four panes, as controls in components/<pane>/, each declaring
+//     its own surface with <x:Property> and owning its own chrome. They
+//     are unmounted, not deleted: wysiwyg.gooey no longer instantiates
+//     them. panes_test.go is what still holds them to their contracts.
+//   - everything below the panes — the document model, the catalog-driven
+//     palette and inspector, the per-Kind editors, remote mode — is
+//     untouched. It is the part that was never the problem.
+//
+// The one structural rule the old layout existed to enforce is now
+// enforced by construction: the preview subtree is thrown away and rebuilt
+// on every edit, and replacing a subtree resets component-local state — a
+// caret most visibly. <Preview> is a control whose markup is a fixed
+// Border around its host, with no slot for children, so an input inside
+// the rebuilt island is no longer an arrangement a page can express.
+//
+// # Building the next one
+//
+// The editor serves its own control plane (-serve, -mcp) as well as
+// attaching to another app's (-attach). That is not symmetry for its own
+// sake: with no UI left, patching the running editor through its own
+// control plane is how the next UI arrives, and serve_test.go is the
+// evidence that the empty page can actually receive one.
+//
+//	go run . -serve 127.0.0.1:7777 -mcp 127.0.0.1:7778
 //
 // # Keys
 //
-//	tab / shift+tab   move between panes
-//	up / down         move within a list
-//	enter             palette: add the element; attributes: edit it
-//	c / v             retype the container (Canvas / VStack)
-//	x                 delete the selected element
-//	q, ctrl+c         quit
+//	q, ctrl+c   quit
 //
-// Everything is keyboard-operable on purpose: mouse events cannot be
+// The bindings live on the page ROOT. A KeyBinding only fires while the
+// focused chain passes through its host, and an empty page has no focus
+// stop — on an inner element it would never fire and the app could not be
+// quit.
+//
+// Everything must stay keyboard-operable: mouse events cannot be
 // exercised under a recording pty, so a demo that needed one could never
 // be captured.
 package main
@@ -57,6 +82,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,7 +91,16 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/activitybar"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/inspector"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/markupview"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/palette"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/preview"
+	"github.com/WonderForgeLabs/gooey/graphics"
+	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/mcp"
+	"github.com/WonderForgeLabs/gooey/term"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -73,18 +108,104 @@ import (
 func main() {
 	addr := flag.String("attach", "", "drive a remote gooey app at this loopback address instead of previewing locally")
 	island := flag.String("island", "", "the Name= of the element in the remote app this editor owns")
+	// The editor SERVES a control plane as well as attaching to one.
+	// Those are opposite directions on the same protocol and both are
+	// wanted: -attach makes the editor drive another app, -serve/-mcp
+	// make the editor itself drivable, which is how its own UI gets
+	// built — patch_markup into the running editor instead of
+	// edit-rebuild-relaunch.
+	//
+	// Port 0 by default, on loopback, and read back from Addr(): a fixed
+	// port is a collision the day two of these run at once (#188).
+	serveAddr := flag.String("serve", "127.0.0.1:0", "loopback address for this editor's OWN gRPC control plane; empty disables it")
+	mcpAddr := flag.String("mcp", "127.0.0.1:0", "loopback address for this editor's OWN MCP endpoint; empty disables it")
+	// Chrome is drawn in PIXELS where the terminal has them, and an app
+	// gets a pixel protocol only when capabilities say so — the
+	// environment ladder reports colour depth but can never report
+	// graphics support, so without a probe the answer is always "none"
+	// and every sixel component silently falls back to cells.
+	//
+	// The probe is the honest route: DA1 reports sixel support AND the
+	// cell size sixel scales by. -graphics forces one for a terminal that
+	// supports it without saying so, and then the cell size has to be
+	// assumed, because only a probe could have known it.
+	gfx := flag.String("graphics", "", `force a pixel protocol: "sixel", "kitty", "iterm2", or "cells" for the halfblock fallback; empty probes`)
 	flag.Parse()
 
-	ed := newEditor()
-	dir := "."
-	if _, err := os.Stat(filepath.Join(dir, "wysiwyg.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
+	opts := []gooey.Option{}
+	switch *gfx {
+	case "":
+		opts = append(opts, gooey.WithCapabilityProbe())
+	case "cells":
+		opts = append(opts, gooey.WithGraphics(nil))
+	default:
+		enc, err := encoderNamed(*gfx)
+		if err != nil {
+			gooey.Exit(err)
+		}
+		opts = append(opts,
+			gooey.WithGraphics(enc),
+			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
 	}
-	app := gooey.NewApp(markup.Page(os.DirFS(dir), "wysiwyg.gooey", ed.ctx))
+
+	root := editorFS()
+	ed := newEditor(root)
+	pageSrc := func() []byte {
+		b, _ := fs.ReadFile(root, PageFile)
+		return b
+	}
+	// Page WATCHES, and it has to be told what to watch: it cannot infer
+	// that a <Palette> will resolve to a file. Every pane's markup is
+	// listed, so editing any of them rebuilds the page in place — which is
+	// the reason the panes read from disk rather than from an embed.
+	app := gooey.NewApp(markup.Page(root, PageFile, ed.ctx, paneFiles...), opts...)
 	ed.app = app
 	ed.ctx.Dispatcher = app.Dispatcher()
 	ed.watchFit(app)
+
+	// Both servers are handed ed.ctx — the EDITOR's context, not docCtx.
+	// A control-plane client is driving the editor, so the vocabulary it
+	// validates and patches against is the editor's chrome. Without a
+	// Context the name-addressed RPCs report FAILED_PRECONDITION and the
+	// whole point is lost.
+	//
+	// Started BEFORE app.Run so a client that connects immediately finds
+	// a listener; the session hooks are posted to the UI goroutine and
+	// run when the loop reaches them.
+	if *serveAddr != "" {
+		gsrv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
+			Addr:    *serveAddr,
+			Context: ed.ctx,
+			Doc:     pageSrc,
+			Name:    "gooey-wysiwyg",
+			Version: "1",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		// Close joins rather than merely signalling.
+		defer gsrv.Close()
+		ed.serving = append(ed.serving, "grpc "+gsrv.Addr())
+	}
+	if *mcpAddr != "" {
+		// No Doc here: mcp.Options has no equivalent — the declared-schema
+		// path is the gRPC server's, and swap_markup builds against
+		// Context instead.
+		msrv, err := mcp.Serve(app, mcp.Options{
+			Addr:    *mcpAddr,
+			Context: ed.ctx,
+			Name:    "gooey-wysiwyg",
+			Version: "1",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		defer msrv.Close()
+		ed.serving = append(ed.serving, "mcp "+msrv.URL())
+	}
+	if len(ed.serving) > 0 {
+		ed.serveInfo.Set(strings.Join(ed.serving, "\n"))
+	}
 
 	if *addr != "" {
 		if *island == "" {
@@ -106,6 +227,47 @@ func main() {
 	if err := app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
 	}
+}
+
+// PageFile is the editor's own page, and paneFiles is every control's
+// markup. Both are paths in the editor's root FS.
+const PageFile = "wysiwyg.gooey"
+
+var paneFiles = []string{palette.File, inspector.File, markupview.File}
+
+// editorFS is the editor's root: the directory holding wysiwyg.gooey and
+// components/. `go run .` puts that at the working directory; an
+// installed binary carries it beside the executable.
+//
+// os.DirFS rather than embed.FS is a development choice with a cost and a
+// payoff. The cost is that the binary is not self-contained. The payoff is
+// that every .gooey in the tree hot reloads — the page and all three
+// markup panes — which is what makes editing the UI a save rather than a
+// rebuild. Swapping in an embed.FS for a release changes this function
+// and nothing else.
+func editorFS() fs.FS {
+	dir := "."
+	if _, err := os.Stat(filepath.Join(dir, PageFile)); err != nil {
+		exe, _ := os.Executable()
+		dir = filepath.Dir(exe)
+	}
+	return os.DirFS(dir)
+}
+
+// encoderNamed resolves -graphics. The list is the encoders that exist,
+// not a guess: an unknown name is an error at startup rather than a
+// silent fallback to cells, because "my sixel chrome did not appear" is
+// the least diagnosable failure this flag has.
+func encoderNamed(name string) (graphics.Encoder, error) {
+	switch name {
+	case "sixel":
+		return graphics.Sixel{}, nil
+	case "kitty":
+		return graphics.Kitty{}, nil
+	case "iterm2":
+		return graphics.ITerm2{}, nil
+	}
+	return nil, fmt.Errorf("wysiwyg: -graphics %q: want sixel, kitty, iterm2 or cells", name)
 }
 
 // ---- the document being edited ----
@@ -170,6 +332,11 @@ type editor struct {
 	palette    []markup.ElementSpec
 	paletteSel *prop.Property[int]
 	attrSel    *prop.Property[int]
+	// activitySel is which icon on the rail is lit. It is an ordinary
+	// source property like any other selection — the rail happens to be
+	// drawn in pixels, which changes how it is painted and nothing about
+	// how it is bound.
+	activitySel *prop.Property[int]
 
 	// Bindable surface.
 	paletteItems *prop.Property[components.ItemSource]
@@ -195,8 +362,18 @@ type editor struct {
 	// something to invalidate on.
 	rev *prop.Property[int]
 
-	pv  *preview
+	// fsys is where the page and every pane's markup is read from.
+	fsys fs.FS
+
+	pv  *preview.Pane
 	app *gooey.App
+
+	// serving names the control-plane endpoints this editor is listening
+	// on, in the order they came up; serveInfo is the same thing bound
+	// into the page. With no UI left, the address you would drive the
+	// editor from is the only thing worth putting on screen.
+	serving   []string
+	serveInfo *prop.Property[string]
 
 	// remote, when set, means the editor is driving ANOTHER app: the
 	// document is patched into that app's island instead of previewed
@@ -209,15 +386,22 @@ type editor struct {
 	swapped bool
 }
 
-func newEditor() *editor {
+// newEditor takes the editor's root FS because the panes are markup on
+// disk, not markup compiled in. One FS for the page and every control:
+// os.DirFS in development, so editing a pane's .gooey hot reloads it, and
+// the same line takes an embed.FS for a release build. That seam is the
+// whole reason markup loading is an fs.FS rather than a path.
+func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
+		fsys: fsys,
 		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
 			{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
 			{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
 		}},
 		selected:   0,
-		paletteSel: prop.NewSource(0),
-		attrSel:    prop.NewSource(0),
+		paletteSel:  prop.NewSource(0),
+		attrSel:     prop.NewSource(0),
+		activitySel: prop.NewSource(1), // the toolbox, which is what the side bar shows
 		source:     prop.NewSource(""),
 		status:     prop.NewSource(""),
 		editName:   prop.NewSource(""),
@@ -227,7 +411,8 @@ func newEditor() *editor {
 		fits:       prop.NewSource(true),
 		fitMsg:     prop.NewSource(""),
 		rev:        prop.NewSource(0),
-		pv:         &preview{},
+		serveInfo:  prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
+		pv:         &preview.Pane{},
 	}
 
 	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
@@ -314,6 +499,8 @@ func newEditor() *editor {
 			"EditValue":    ed.editValue,
 			"EditDoc":      ed.editDoc,
 			"TreeText":     ed.treeText,
+			"ActivitySel":  ed.activitySel,
+			"Serving":      ed.serveInfo,
 			"Fits":         ed.fits,
 			"Cramped":      ed.cramped,
 			"FitMsg":       ed.fitMsg,
@@ -344,13 +531,20 @@ func newEditor() *editor {
 			"ok":    {Fg: render.RGB(120, 200, 140)},
 			"title": {Fg: render.RGB(180, 200, 255), Bold: true},
 		},
+		// THE EDITOR'S OWN CHROME, and all of it. Each pane is a control
+		// in components/<pane>/, so the shell is four instantiations and
+		// the panes' internals are checked contracts rather than markup
+		// that happened to bind the right names.
+		//
+		// These live on ctx and NEVER on docCtx: a document that could
+		// build the editor's panes would contain the thing that renders
+		// it. See the two-context comment above.
 		Components: map[string]markup.Builder{
-			// The island. Declared in markup so the layout — and the
-			// sibling rule the layout exists to enforce — is visible in
-			// one place rather than assembled in Go.
-			"Preview": func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
-				return ed.pv, nil
-			},
+			"Preview":     preview.Builder(ed.pv),
+			"ActivityBar": activitybar.Builder(ed.fsys, nil),
+			"Palette":     palette.Builder(ed.fsys),
+			"MarkupView":  markupview.Builder(ed.fsys),
+			"Inspector":   inspector.Builder(ed.fsys),
 		},
 	}
 
@@ -374,10 +568,8 @@ func newEditor() *editor {
 			// it honestly. It simply builds something else here: an
 			// Escher mirror rather than the real pane, so previewing a
 			// document that contains a preview is a visual instead of a
-			// stack overflow. See mirror.go.
-			"Preview": func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
-				return &mirror{style: ctx.Styles["dim"]}, nil
-			},
+			// stack overflow. See components/preview/mirror.go.
+			"Preview": preview.MirrorBuilder(ed.ctx.Styles["dim"]),
 		},
 	}
 
@@ -652,7 +844,7 @@ func (ed *editor) rebuild() {
 		return
 	}
 	ed.status.Set("✓ builds")
-	ed.pv.swap(w)
+	ed.pv.Swap(w)
 }
 
 func (ed *editor) outline() string {

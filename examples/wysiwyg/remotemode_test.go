@@ -19,7 +19,7 @@ import (
 func attachedEditor(t *testing.T) (*editor, *markup.Context) {
 	t.Helper()
 	addr, vm := target(t)
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
 	if err := ed.attach(ctx, addr, "Island"); err != nil {
@@ -148,7 +148,7 @@ func TestRemoteModeBindsAgainstTheTargetsContext(t *testing.T) {
 // TestLocalModeStillPreviewsInProcess — attaching is opt-in, and the
 // local path must be untouched by its existence.
 func TestLocalModeStillPreviewsInProcess(t *testing.T) {
-	ed := newEditor()
+	ed := newEditor(editorFS())
 	if ed.remote != nil {
 		t.Fatal("a fresh editor must be in local mode")
 	}
@@ -156,7 +156,7 @@ func TestLocalModeStillPreviewsInProcess(t *testing.T) {
 	if s := ed.status.Get(); s != "✓ builds" {
 		t.Errorf("local status = %q, want the in-process build", s)
 	}
-	if ed.pv.child == nil {
+	if ed.pv.Child() == nil {
 		t.Error("local mode did not populate the preview island")
 	}
 }

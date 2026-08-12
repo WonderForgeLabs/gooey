@@ -754,9 +754,9 @@ informative than converting the one we have.
 Notes 2–4, done in the editor, no framework change:
 
 - the selection cue is `Style="sel"`, not `warn` — an accent, not an
-  alarm (`examples/wysiwyg/wysiwyg.gooey:62`);
+  alarm (`examples/wysiwyg/components/inspector/inspector.gooey`);
 - enum rows list their own members and binding-only rows say
-  `{{.GoType}}`, via `legalValues` (`examples/wysiwyg/main.go:395`);
+  `{{.GoType}}`, via `legalValues` (`examples/wysiwyg/main.go:430`);
 - required attributes carry `*` on the name rather than a column that is
   blank nine rows in ten;
 - a description pane shows `Doc` where the catalog has prose and the
