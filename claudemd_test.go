@@ -26,6 +26,17 @@ const claudeMD = "CLAUDE.md"
 // backticked path in the doc whose first segment is one of these is a
 // module reference, which lets TestCLAUDEMDNamesNoDeletedModule tell
 // `handlers/temporal` apart from `prop/prop.go:33`.
+//
+// Yes, this is an enumerated list in a change whose whole point is that
+// enumerated lists go stale — so it is worth saying why it is not derived
+// from discoverModules. Deriving it would drop a namespace from the set at
+// the exact moment its last module is deleted, which is precisely the case
+// this test exists to catch: the doc would still name the dead module and
+// nothing would complain. A stale entry here fails safe in the other
+// direction — a module added under a NEW namespace simply is not checked
+// for staleness by this secondary test, while
+// TestCLAUDEMDVerifyLoopReachesEveryNestedModule, the primary anti-drift
+// guard, discovers it with no list at all.
 var moduleNamespaces = map[string]bool{
 	"handlers": true,
 	"packs":    true,
