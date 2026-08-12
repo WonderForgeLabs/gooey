@@ -57,12 +57,12 @@ func (h *HStack) Arrange(b gooey.Rect) {
 		}
 		return
 	}
-	// The same clamp VStack applies on Y, for the same reason: the
-	// measure cache records what each child wanted, Arrange may be
-	// handed less, and an unclamped walk puts later children outside the
-	// stack — where nothing will clip them, because the framework clips
-	// to the buffer and not to the parent. See VStack.Arrange for the
-	// full account.
+	// The clamp VStack applies on Y, applied here on X — this stack's own
+	// main axis — for the same reason: the measure cache records what each
+	// child wanted, Arrange may be handed less, and an unclamped walk puts
+	// later children outside the stack, where nothing will clip them
+	// because the framework clips to the buffer and not to the parent. See
+	// VStack.Arrange for the full account.
 	right := b.X + b.W
 	x := b.X
 	placed := false

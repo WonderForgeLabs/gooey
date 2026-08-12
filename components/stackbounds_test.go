@@ -314,3 +314,84 @@ func TestVStackLeavesFittingChildrenExactlyWhereTheyWere(t *testing.T) {
 		t.Errorf("second child = %+v, want y=3 h=1", got)
 	}
 }
+
+// TestGridDoesNotArrangeColumnsPastItsOwnEdge is the COLUMN-AXIS half of
+// TestGridDoesNotArrangeTracksPastItsOwnEdge.
+//
+// It exists because the two axes are separate code paths that merely look
+// alike: Arrange resolves rows and columns with independent calls, so a
+// clamp applied to one and forgotten on the other is a live possibility
+// that a row-only test cannot see. Every Grid test in this file drove the
+// row axis with a star track, which left the column axis asserted by
+// nothing at all.
+func TestGridDoesNotArrangeColumnsPastItsOwnEdge(t *testing.T) {
+	cols, err := ParseGridLens("1,1*,12,1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := ParseGridLens("1*")
+
+	for _, w := range []int{24, 15, 14, 13, 10, 6, 2, 1} {
+		cells := []*Text{
+			{Content: Str("a")}, {Content: Str("b")},
+			{Content: Str("c")}, {Content: Str("d")},
+		}
+		g := &Grid{Rows: rows, Cols: cols}
+		for i, c := range cells {
+			c.LayoutProps().Col = i
+			g.Children = append(g.Children, c)
+		}
+
+		screen := gooey.Rect{X: 0, Y: 0, W: w, H: 6}
+		g.Measure(gooey.Size{W: screen.W, H: screen.H})
+		g.Arrange(screen)
+
+		for i, c := range cells {
+			if got := c.Bounds(); outside(got, screen) {
+				t.Errorf("screen W=%d: col %d arranged at %+v, outside the grid's own %+v\n"+
+					"nothing clips a component to its parent, so this column paints over its "+
+					"neighbours or off-screen entirely", w, i, got, screen)
+			}
+		}
+	}
+}
+
+// TestGridWithNoStarTrackStillClamps covers the weight == 0 branch of
+// distributeStars — the one that returns clampToExtent(out, extent)
+// directly instead of dividing anything up.
+//
+// A grid of only fixed tracks is the case where over-allocation is most
+// obvious and least defended: the sizes are stated outright, so if they
+// sum past the extent there is no star to absorb the difference and the
+// arithmetic simply walks off the end. Every other Grid test here carries
+// a star track, so that early return was reached by nothing.
+func TestGridWithNoStarTrackStillClamps(t *testing.T) {
+	rows, err := ParseGridLens("1,12,1") // 14 cells of fixed track, no star
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, _ := ParseGridLens("8")
+
+	for _, h := range []int{20, 14, 13, 8, 2, 1, 0} {
+		cells := []*Text{
+			{Content: Str("head")}, {Content: Str("body")}, {Content: Str("foot")},
+		}
+		g := &Grid{Rows: rows, Cols: cols}
+		for i, c := range cells {
+			c.LayoutProps().Row = i
+			g.Children = append(g.Children, c)
+		}
+
+		screen := gooey.Rect{X: 0, Y: 0, W: 8, H: h}
+		g.Measure(gooey.Size{W: screen.W, H: screen.H})
+		g.Arrange(screen)
+
+		for i, c := range cells {
+			if got := c.Bounds(); outside(got, screen) {
+				t.Errorf("all-fixed rows at H=%d: row %d arranged at %+v, outside %+v\n"+
+					"with no star track there is nothing to absorb the overflow, so an "+
+					"unclamped grid walks straight off its own bottom edge", h, i, got, screen)
+			}
+		}
+	}
+}
