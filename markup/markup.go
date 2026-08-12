@@ -627,6 +627,25 @@ func parseVisibility(s string) (gooey.Visibility, error) {
 // same slot: its children are attachments only, appended to the very
 // list the bare form feeds — two spellings, one downstream path. Bare
 // non-visual children stay as the terse shorthand.
+// BuildChildren builds an element's children for a REGISTERED component's
+// Builder, splitting them the way every builtin container gets them:
+// visual children in kids, non-visual ones (KeyBindings, Tooltips,
+// Companions) in attach, for the caller to return from Attachments.
+//
+// It exists because a Builder receives an Element whose Children are
+// unbuilt markup, and until this was exported there was no way for a
+// custom component to have markup children at all. The tiers that could
+// — Include and UserControl — build a FILE, so their children come from
+// the control's own markup rather than from the instantiation site. A
+// custom container wants the opposite.
+//
+// A caller that ignores attach silently drops every KeyBinding written
+// inside it, which is the same class of defect as dropping an unknown
+// attribute: return them from Attachments, or reject them.
+func BuildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
+	return buildChildren(e, ctx)
+}
+
 func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
 	for _, c := range e.Children {
 		w, err := build(c, ctx)

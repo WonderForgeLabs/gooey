@@ -179,6 +179,77 @@ func TestRoundingDoesNotDarkenFlatColour(t *testing.T) {
 	}
 }
 
+// TestTransparentPixelsEmitNothing is what makes line-art chrome possible
+// at all.
+//
+// Sixel has no alpha: a register is opaque, and a pixel with no register
+// is never written, leaving the cell as it was. So transparency must be
+// carried as ABSENCE. Before this, alpha was discarded — every
+// transparent pixel became black and got a register — so any image that
+// was not a solid rectangle painted a black box over whatever it framed.
+//
+// The image here is the shape that matters: a stroked outline with a
+// hollow middle. The assertion is that the hollow contributes NO colour,
+// which is checked by declaring exactly one register for a two-"colour"
+// picture.
+func TestTransparentPixelsEmitNothing(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 8, 6))
+	// A one-pixel border, fully transparent inside.
+	for y := 0; y < 6; y++ {
+		for x := 0; x < 8; x++ {
+			if x == 0 || y == 0 || x == 7 || y == 5 {
+				img.Set(x, y, color.RGBA{0xff, 0xff, 0xff, 0xff})
+			}
+		}
+	}
+	pal := paletteOf(t, img, 8, 1, 1, 6)
+	if len(pal) != 1 {
+		t.Fatalf("declared %d registers for an outline with a transparent middle; "+
+			"the hole is being treated as a colour, which paints a box over the content: %v", len(pal), pal)
+	}
+	for _, v := range pal {
+		if v != [3]int{100, 100, 100} {
+			t.Errorf("the one register is %v, want the stroke's white", v)
+		}
+	}
+}
+
+// TestAFullyTransparentImageEmitsNoPicture — the degenerate case of the
+// above. Nothing to declare, so nothing to paint; a stream that declared
+// a register here would clear cells it was never asked to touch.
+func TestAFullyTransparentImageEmitsNoPicture(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 8, 6)) // zero value: alpha 0 throughout
+	var out []byte
+	if err := (Sixel{}).Encode(&out, img, 8, 1, 1, 6); err != nil {
+		t.Fatalf("a transparent image is not an error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("a fully transparent image emitted %d bytes; it must emit none", len(out))
+	}
+}
+
+// TestAntiAliasedEdgesResolveToOneStateOrTheOther — the format has two
+// states per pixel, so a soft edge has to land on one. Half alpha is the
+// threshold: the opaque core of a stroke survives, the outer fringe drops
+// out. This pins the rule so a later change cannot quietly move it.
+func TestAntiAliasedEdgesResolveToOneStateOrTheOther(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 6))
+	alphas := []uint8{0x00, 0x40, 0xc0, 0xff} // out, out, in, in
+	for x, a := range alphas {
+		for y := 0; y < 6; y++ {
+			img.Set(x, y, color.RGBA{a, a, a, a}) // premultiplied
+		}
+	}
+	var out []byte
+	if err := (Sixel{}).Encode(&out, img, 4, 1, 1, 6); err != nil {
+		t.Fatal(err)
+	}
+	pal := paletteOf(t, img, 4, 1, 1, 6)
+	if len(pal) != 2 {
+		t.Errorf("declared %d registers; the two columns at or above half alpha are in, the two below are out", len(pal))
+	}
+}
+
 // TestAnEmptyTargetIsAnErrorNotAnEmptyImage — a zero cell size is what an
 // unprobed terminal reports, and the old encoder answered it with an
 // 18-byte image that painted nothing while reporting success. That is the

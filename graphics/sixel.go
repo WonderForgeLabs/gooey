@@ -72,15 +72,45 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 	// One pass to the protocol's own color space, counting as it goes.
 	// key is the 0..100 triple packed; counts feeds the median cut's
 	// weighting, so a color covering half the image pulls a box toward it.
+	//
+	// TRANSPARENT PIXELS ARE NOT COLORS. Sixel has no alpha channel at
+	// all: a register is opaque and a pixel with no register is simply
+	// never written, leaving whatever was in that cell. So transparency
+	// maps to ABSENCE, and the encoder has to carry it as absence rather
+	// than as a color.
+	//
+	// This was previously discarded — `r, g, b, _ :=` — which made every
+	// transparent pixel black and gave it a register. Any image that was
+	// not a solid rectangle therefore painted a black box: line-art
+	// chrome, an icon with a cut-out, a frame meant to surround content.
+	// That is why pixel chrome had to be a filled strip before this.
 	keys := make([]int32, pxW*pxH)
+	opaque := make([]bool, pxW*pxH)
 	counts := map[int32]int{}
 	for y := 0; y < pxH; y++ {
 		for x := 0; x < pxW; x++ {
-			r, g, b, _ := rgba.At(x, y).RGBA()
+			r, g, b, a := rgba.At(x, y).RGBA()
+			i := y*pxW + x
+			// Half alpha is the threshold, and a threshold is the honest
+			// choice rather than a limitation to apologise for: the format
+			// has two states per pixel, so a partially transparent edge
+			// must resolve to one of them. Anti-aliased strokes still read
+			// as smooth because their core is opaque and only the outer
+			// fringe drops out.
+			if a < 0x8000 {
+				continue
+			}
+			opaque[i] = true
 			k := packSixel(to100(uint8(r>>8)), to100(uint8(g>>8)), to100(uint8(b>>8)))
-			keys[y*pxW+x] = k
+			keys[i] = k
 			counts[k]++
 		}
+	}
+	// A fully transparent image is not an error and must not emit a
+	// picture: with no registers there is nothing to declare and nothing
+	// to paint.
+	if len(counts) == 0 {
+		return nil
 	}
 
 	palette, index := buildPalette(counts)
@@ -88,9 +118,14 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 	// The index plane: every pixel's register, resolved through the map
 	// the palette builder returned. No nearest-color search anywhere —
 	// each distinct color was assigned when the palette was built.
+	//
+	// Transparent pixels keep no register. registersInBand and the band
+	// loop both consult opaque, so they contribute to nothing.
 	idx := make([]uint8, len(keys))
 	for i, k := range keys {
-		idx[i] = index[k]
+		if opaque[i] {
+			idx[i] = index[k]
+		}
 	}
 
 	buf := append(*out, "\x1bP0;0;0q"...)
@@ -108,12 +143,12 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 	line := make([]byte, pxW)
 	for y0 := 0; y0 < pxH; y0 += 6 {
 		first := true
-		for _, reg := range registersInBand(idx, pxW, pxH, y0, len(palette)) {
+		for _, reg := range registersInBand(idx, opaque, pxW, pxH, y0, len(palette)) {
 			any := false
 			for x := 0; x < pxW; x++ {
 				var bits byte
 				for dy := 0; dy < 6 && y0+dy < pxH; dy++ {
-					if idx[(y0+dy)*pxW+x] == reg {
+					if i := (y0 + dy) * pxW + x; opaque[i] && idx[i] == reg {
 						bits |= 1 << dy
 					}
 				}
@@ -144,12 +179,14 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 // same bytes, or damage-tracked flushing sees a change where there is
 // none. (Map iteration order is why the previous version could emit a
 // different byte stream for an identical picture.)
-func registersInBand(idx []uint8, pxW, pxH, y0, n int) []uint8 {
+func registersInBand(idx []uint8, opaque []bool, pxW, pxH, y0, n int) []uint8 {
 	seen := make([]bool, n)
 	for dy := 0; dy < 6 && y0+dy < pxH; dy++ {
 		row := (y0 + dy) * pxW
 		for x := 0; x < pxW; x++ {
-			seen[idx[row+x]] = true
+			if opaque[row+x] {
+				seen[idx[row+x]] = true
+			}
 		}
 	}
 	out := make([]uint8, 0, n)

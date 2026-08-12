@@ -44,22 +44,25 @@
     <ActivityBar Name="ActivityBar" Grid.Row="0" Grid.Col="0" Sel="{{.ActivitySel}}"
                  Height="8" VAlign="Start"/>
 
-    <Border Name="SideBar" Grid.Row="0" Grid.Col="1" Title="EXPLORER">
+    <!-- Pixel line art, sliced into a ring so the interior stays on the
+         cell plane where text belongs. Falls back to the same shape in
+         box-drawing runes, in the same cells, where there is no protocol. -->
+    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Title="EXPLORER" Style="dim">
       <Text Style="dim"/>
-    </Border>
+    </Panel>
 
     <!-- The designer. It HOSTS rather than displays — the one region that
          owns a live component tree — which is why it is the piece the
          canvas grows out of rather than one pane among four. -->
     <Preview Name="EditorArea" Grid.Row="0" Grid.Col="2" Title="designer"/>
 
-    <Border Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES">
+    <Panel Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES" Style="dim">
       <Text Style="dim"/>
-    </Border>
+    </Panel>
 
-    <Border Name="Panel" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Title="OUTPUT">
+    <Panel Name="Output" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Title="OUTPUT" Style="dim">
       <Text Style="dim">{{.Source}}</Text>
-    </Border>
+    </Panel>
 
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"
                Left="{{.Status}}" Right="{{.Serving}}"/>

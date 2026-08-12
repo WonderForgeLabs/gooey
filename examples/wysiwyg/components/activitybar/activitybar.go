@@ -133,9 +133,24 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 		// dependency. Reading sel outside and closing over the value
 		// would produce a rail that draws once and never changes again —
 		// and nothing in the framework would report it.
-		return &components.Image{Src: prop.NewComputed(func() image.Image {
+		img := &components.Image{Src: prop.NewComputed(func() image.Image {
 			return r.Rail(sel.Get())
-		})}, nil
+		})}
+		// The Image is a PICTURE — no focus, no keys, no hit-testing — so
+		// on its own the rail was unselectable, which was the bug.
+		//
+		// The behaviour comes from components.Segmented, which already had
+		// all of it: bound int selection, clamped, rocker-rule arrows,
+		// click-to-segment, focus stop. It gained a Vertical axis and a
+		// Child so the picture could be this rail instead of drawn labels.
+		// Writing a second strip here would have been a third copy of that
+		// behaviour in the repo — Tabs re-implements it too.
+		return &components.Segmented{
+			Selected: sel,
+			Vertical: true,
+			Child:    img,
+			Count:    len(icons),
+		}, nil
 	}
 }
 

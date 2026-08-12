@@ -92,6 +92,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/activitybar"
+	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/panel"
 	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
@@ -539,6 +540,9 @@ func newEditor(fsys fs.FS) *editor {
 		Components: map[string]markup.Builder{
 			"Preview":     preview.Builder(ed.pv),
 			"ActivityBar": activitybar.Builder(ed.fsys, nil),
+			// One Art per app: the frame cache is keyed by size and colour,
+			// so panes of the same size share a raster.
+			"Panel": panel.Builder(panel.NewArt(ed.fsys)),
 		},
 	}
 
