@@ -28,10 +28,16 @@ name five modules and skip seven `packs/temporal-*`. `ci.yml` discovers
 # Every nested module, discovered the way ci.yml discovers packs/*.
 # -race matches CI: handlers/*, packs/*, mcp and grpc run under the
 # detector; the root module and imagefmt/svg do not.
-# -not -path './.*' is load-bearing — .claude/worktrees/ holds whole
-# checkouts, and without it this loop re-tests every worktree on the box.
-for mod in $(find . -mindepth 2 -name go.mod -not -path './.*' | sort); do
+#
+# Pruning dot-directories at EVERY depth is load-bearing, and filtering
+# with `-not -path './.*'` is not enough — that only anchors at the top.
+# .claude/worktrees/ holds whole checkouts of this repo, and
+# examples/temporal-worker/.venv vendors two Go modules of Temporal's
+# own; either way you end up vetting someone else's tree. `.?*` rather
+# than `.*` because `.*` matches `.` itself and prunes the whole walk.
+for mod in $(find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort); do
   m=${mod%/go.mod}; m=${m#./}
+  [ "$m" = "." ] && continue   # the root module — covered by the block above
   case "$m" in
     handlers/*|packs/*|mcp|grpc) race=-race ;;
     *)                           race= ;;
