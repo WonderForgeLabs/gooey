@@ -84,6 +84,7 @@ func main() {
 	app := gooey.NewApp(markup.Page(os.DirFS(dir), "wysiwyg.gooey", ed.ctx))
 	ed.app = app
 	ed.ctx.Dispatcher = app.Dispatcher()
+	ed.watchFit(app)
 
 	if *addr != "" {
 		if *island == "" {
@@ -179,6 +180,14 @@ type editor struct {
 	editValue    *prop.Property[string]
 	editDoc      *prop.Property[string]
 	treeText     *prop.Property[string]
+	// fits is false while the terminal is too small to lay the shell out,
+	// and it drives Visibility on both roots. cramped is its inverse, and
+	// it is a computed rather than a second source: two sources for one
+	// fact drift, and the frame where they disagree shows either both
+	// roots or neither.
+	fits    *prop.Property[bool]
+	cramped *prop.Property[bool]
+	fitMsg  *prop.Property[string]
 	// rev ticks on every edit. The list sources are computed over the
 	// document, which is plain Go state and therefore invisible to the
 	// property graph — a computed that reads no property records no
@@ -215,9 +224,13 @@ func newEditor() *editor {
 		editValue:  prop.NewSource(""),
 		editDoc:    prop.NewSource(""),
 		treeText:   prop.NewSource(""),
+		fits:       prop.NewSource(true),
+		fitMsg:     prop.NewSource(""),
 		rev:        prop.NewSource(0),
 		pv:         &preview{},
 	}
+
+	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
 
 	// The list sources are built BEFORE the context, because
 	// Context.Values captures each handle BY VALUE: a property created
@@ -301,6 +314,9 @@ func newEditor() *editor {
 			"EditValue":    ed.editValue,
 			"EditDoc":      ed.editDoc,
 			"TreeText":     ed.treeText,
+			"Fits":         ed.fits,
+			"Cramped":      ed.cramped,
+			"FitMsg":       ed.fitMsg,
 			"Add":          gooey.Command(func() { ed.addSelected() }),
 			"Delete":       gooey.Command(func() { ed.deleteSelected() }),
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),

@@ -6,6 +6,73 @@ stands on its own. The second is the reason it got written, and is also
 its first real consumer — which is the correct order of those two facts,
 not the order the work was requested in.
 
+## Thesis: a check that reports success without having checked
+
+Everything below is a variation on one failure, and it is worth stating
+before the details rather than after, because it is what the work is
+actually about.
+
+**A silent drop is a check that did not happen. A vacuous test is a check
+that did not happen. They are the same defect at two altitudes.**
+
+The originating bug is `applyLayout` accepting an attribute nobody reads
+— the loader *appearing* to validate while validating nothing. Every
+mitigation in this document is an attempt to make that impossible, and
+the recurring discovery is that **the mitigations have the same failure
+mode as the thing they mitigate**: a declared vocabulary that
+over-declares passes every test; a drift test whose probe renders nothing
+passes; a corpus test whose corpus excludes the failing shape passes; a
+guard implemented twice cannot be deleted and therefore cannot be
+verified.
+
+Nine instances were found in the course of this work, in four distinct
+mechanisms, and the tally is the argument — one would be an anecdote:
+
+| # | The check | Why it reported success |
+|---|---|---|
+| 1 | `applyLayout`'s attribute loop | No `default:` arm — the originating defect |
+| 2 | Over-declared `ElementDef` attributes | Nothing reads them, so nothing rejects them; **the entire suite passes** |
+| 3 | A transport barrier test | Passed with the barrier **deleted** — `act()` already blocked |
+| 4 | `TestEveryGooeyFileInTheRepoHasValidAttributes` | 626 elements, 37 files, and a fragment is never a file |
+| 5 | A `VStack` overflow repro | Measured and arranged into **the same rect**, where the cached size and the clamped total coincide |
+| 6 | An A/B of two builds | `git stash push` **silently no-ops** on a committed file, so both arms were the same build |
+| 7 | `TestDeclaredDefaultsRenderIdenticallyToOmission` | Passed 13/13 while the probe **rendered nothing** |
+| 8 | A `Frozen` wheel test | Events **bubble**, so "the host received it" is true with or without the retarget |
+| 9 | The editor's minimum-size red test | **Skipped** — measured one row below the wrong minimum of two |
+
+Four mechanisms, one shape: *the check ran, the check reported success,
+and the check never touched the fact.* None is detectable by reading,
+because a test that cannot fail and a test that passed are identical from
+outside — same name, same green, same duration.
+
+The separators are per-mechanism, which is why "be careful" is not the
+lesson:
+
+- **Delete the guard and watch it fail.** Catches 1, 3. Requires a
+  SINGLE seam: a guard implemented in two places cannot be deleted, and
+  #8's sibling — the `Frozen` retarget written in both `target` and
+  `DispatchMouse` — stayed green with either half removed. *Redundant
+  implementations make a guard un-deletable, which makes it
+  unverifiable.* That is an argument for consolidation on grounds nobody
+  usually cites.
+- **Name the class your corpus collects, not its size.** Catches 4.
+- **Vary the setup, not the arity.** Catches 5.
+- **Assert the arms differ before trusting that they agree.** Catches 6,
+  8, and is the general form of 7.
+- **Pair every equivalence assertion with a discrimination assertion.**
+  Catches 7, and is the only one that can be made structural.
+- **A skip is not a pass.** Catches 9 — and that one went further: the
+  skip revealed there were two different minimums with two different
+  mechanisms, and that the explanation had welded one to the other.
+
+Two corollaries earned the hard way. **A control that fails is not always
+a broken test — sometimes it is telling you the claim is wrong**: the
+`Frozen` KeyBinding test passed frozen *and* unfrozen, which was the
+evidence that the guarantee, not the test, was misstated. And **a
+negative assertion needs a control proving the harness could have seen
+the positive**: "no process spawned" means nothing against a harness that
+could not observe a spawn either way.
+
 ## The defect
 
 `applyLayout` (`markup/markup.go`) switches on the attribute key and has
@@ -1422,42 +1489,10 @@ that worked were mechanical every time — extract the rule into one
 function both paths call, delete the guard and watch the test fail, walk
 the tree and assert.
 
-## A check that reports success without having checked
+## The evidence behind the thesis
 
-This is the record's spine, promoted out of a bullet, because it is the
-same defect four times in one day wearing four disguises. Every instance
-had a green signal, and in every instance the signal was produced by
-something that had not looked.
-
-| # | The check | Why it reported success |
-|---|---|---|
-| 1 | A barrier test in the transport layer | Passed with the barrier **deleted** — `act()` already blocked, so the test never exercised the thing it named |
-| 2 | A test written over a suspected bad line in `VStack` | Passed because the repro measured and arranged into **the same rect**, where the cached size and the clamped total coincide |
-| 3 | An A/B comparison of two builds | Both arms agreed because `git stash push` **silently no-ops** on a committed file, so the two arms were the same build |
-| 4 | `TestDeclaredDefaultsRenderIdenticallyToOmission` | Passed 13/13 while the probe **rendered nothing** — an empty `<Text/>` and single-child stacks |
-
-Four different mechanisms, one shape: **the check ran, the check
-reported success, and the check never touched the fact.** None of the
-four is detectable by reading the test, because a test that cannot fail
-and a test that passed look identical from outside — same name, same
-green, same duration.
-
-The only reliable separator is an adversarial second move, and it takes
-a different form per instance, which is why "be careful" is not the
-lesson:
-
-- **Delete the guard and watch it fail.** Catches #1.
-- **Vary the setup, not the arity.** Catches #2: both parties guessed the
-  discriminator was one child versus two, and it was
-  `Measure(generous)` then `Arrange(smaller)` — the shape a `Grid`
-  produces every frame, so the common case, not the exotic one.
-- **Assert the two arms differ before trusting that they agree.** Catches
-  #3, and it is the general form of #4.
-- **Pair every equivalence assertion with a discrimination assertion.**
-  Catches #4, and is the only one of the four that can be made
-  structural: `TestDeclaredDefaultsAreDiscriminating` requires some other
-  legal value to render differently, so the identity test is *proved*
-  able to fail rather than assumed to be.
+The tally is at the top of this document. What follows is the detail for
+the instances that produced reusable technique.
 
 ### The 13/13, with its causes intact
 

@@ -1,5 +1,13 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Grid Name="Shell" Rows="1,1*,12,1" Cols="2*,46">
+  <!-- Two roots, one visible at a time. The shell has an UNDECLARED
+       MINIMUM SIZE — its fixed tracks alone want 14 rows — and below it
+       Grid.Arrange lays the bottom rows off the screen with no error
+       anywhere. Rather than paint that, the editor says what it needs.
+       The numbers in the message are derived from these very tracks (see
+       fit.go), so editing Rows= or Cols= moves them too. -->
+  <Canvas>
+  <Text Canvas.Left="1" Canvas.Top="1" Visibility="{{.Cramped}}" Style="warn">{{.FitMsg}}</Text>
+  <Grid Name="Shell" Visibility="{{.Fits}}" Rows="1,1*,12,1" Cols="2*,46">
 
     <!-- KeyBindings live on the ROOT. A binding on an inner element
          never fires when focus is elsewhere, so global gestures belong
@@ -85,4 +93,5 @@
     <StatusBar Grid.Row="3" Grid.Col="0" Left="{{.Status}}"/>
     <Text Grid.Row="3" Grid.Col="1" Style="dim">tab · enter cycles · e types</Text>
   </Grid>
+  </Canvas>
 </Gooey>
