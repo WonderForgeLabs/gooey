@@ -82,16 +82,82 @@ func TestTheVerticalAxisUsesUpAndDown(t *testing.T) {
 }
 
 // TestAnEndOfTravelArrowIsNotConsumedVertically is the rocker rule on the
-// new axis — the difference between a control you can leave and one that
-// traps the keyboard.
+// new axis, which Wrap="false" now selects rather than it being universal.
 func TestAnEndOfTravelArrowIsNotConsumedVertically(t *testing.T) {
 	s, sel := railSeg(t)
+	s.Wrap = NoWrapping
 	if s.HandleKey(input.Named(input.KeyUp)) {
 		t.Error("up at the first slot was consumed; the keyboard is trapped")
 	}
 	sel.Set(3)
 	if s.HandleKey(input.Named(input.KeyDown)) {
 		t.Error("down at the last slot was consumed; the keyboard is trapped")
+	}
+}
+
+// TestTheRailWrapsAtBothEndsByDefault — reported against the running
+// editor: going all the way down should return to the top.
+//
+// railSeg sets no Wrap, so this is the DEFAULT being asserted, not a
+// configured mode. Both directions, because a modulo that forgets Go's %
+// keeps the sign of its dividend wraps correctly downward and clamps
+// upward — one direction passing proves nothing about the other.
+func TestTheRailWrapsAtBothEndsByDefault(t *testing.T) {
+	s, sel := railSeg(t)
+	sel.Set(3)
+	if !s.HandleKey(input.Named(input.KeyDown)) || sel.Get() != 0 {
+		t.Errorf("down at the last slot left sel=%d; it must return to the first", sel.Get())
+	}
+	if !s.HandleKey(input.Named(input.KeyUp)) || sel.Get() != 3 {
+		t.Errorf("up at the first slot left sel=%d; it must return to the last", sel.Get())
+	}
+}
+
+// TestWrappingStillLeavesTheCrossAxisAlone is the load-bearing half of
+// making wrapping the default: with the strip's own axis always consumed,
+// the cross axis is the only arrow that can still move focus out. If this
+// ever fails, a rail down the left edge has trapped the keyboard.
+func TestWrappingStillLeavesTheCrossAxisAlone(t *testing.T) {
+	s, _ := railSeg(t)
+	for _, k := range []input.Key{input.KeyLeft, input.KeyRight} {
+		if s.HandleKey(input.Named(k)) {
+			t.Errorf("a wrapping vertical strip consumed %v; nothing can leave it sideways", k)
+		}
+	}
+}
+
+// TestTheWheelStepsTheSelection — reported against the running editor: the
+// strip did not move with the scroll wheel. Tabs and ItemsView both handled
+// the wheel; Segmented did not, so the rail was the one strip in the repo
+// that ignored it.
+func TestTheWheelStepsTheSelection(t *testing.T) {
+	s, sel := railSeg(t)
+	if !s.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 1, Y: 1}) || sel.Get() != 1 {
+		t.Errorf("a wheel-down notch left sel=%d, want 1", sel.Get())
+	}
+	if !s.HandleMouse(input.MouseEvent{Kind: input.WheelUp, X: 1, Y: 1}) || sel.Get() != 0 {
+		t.Errorf("a wheel-up notch left sel=%d, want 0", sel.Get())
+	}
+	// Anywhere in the strip, not over a particular segment: the wheel is a
+	// next/previous gesture. y=7 is the LAST slot, and a notch there must
+	// still step by one rather than select the slot under the pointer.
+	sel.Set(0)
+	if !s.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: 1, Y: 7}) || sel.Get() != 1 {
+		t.Errorf("a notch over the last slot selected %d; the wheel steps, it does not point", sel.Get())
+	}
+}
+
+// TestTheWheelOutsideTheStripIsNotConsumed — a rail beside a scrollable
+// pane must not eat that pane's scrolling.
+func TestTheWheelOutsideTheStripIsNotConsumed(t *testing.T) {
+	s, sel := railSeg(t)
+	for _, c := range []struct{ x, y int }{{9, 1}, {1, 9}, {-1, 1}} {
+		if s.HandleMouse(input.MouseEvent{Kind: input.WheelDown, X: c.x, Y: c.y}) {
+			t.Errorf("a wheel notch at (%d,%d) is outside the strip and must not be consumed", c.x, c.y)
+		}
+	}
+	if sel.Get() != 0 {
+		t.Error("an outside wheel notch moved the selection")
 	}
 }
 

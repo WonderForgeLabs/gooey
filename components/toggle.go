@@ -181,10 +181,22 @@ func (t *Toggle) HandleMouse(ev input.MouseEvent) bool {
 // row reaches for when "on/off" is not the question.
 //
 // Selection lives in a bound int, so the viewmodel and the control share
-// one property rather than keeping copies in step. Arrows move the
-// selection and — the same rule Toggle uses — are consumed only while
-// there is somewhere to move, so an arrow at either end leaves the
-// control instead of dead-ending in it.
+// one property rather than keeping copies in step.
+//
+// # Wrapping, and why it does not trap the keyboard
+//
+// Arrows along the strip's own axis CYCLE by default: down at the last
+// segment returns to the first. That reverses Toggle's rocker rule, where
+// an arrow with nowhere to go is left unconsumed so it becomes a focus
+// move — and reversing it is deliberate, because the two controls are not
+// the same shape. A rocker has two ends and living at one of them is
+// meaningful; a rail of icons is a ring you spin.
+//
+// The rule survives where it matters. This control never handles the CROSS
+// axis, so left and right on a vertical rail still fall through to spatial
+// focus navigation, up and down on a horizontal strip still do, and Tab is
+// untouched — every strip remains escapable by keyboard. Set Wrap to false
+// for the rocker tier, and an end-of-travel arrow bubbles again.
 //
 // # Two axes, and two ways to draw
 //
@@ -220,7 +232,25 @@ type Segmented struct {
 	// how many segments it depicts.
 	Child gooey.Component
 	Count int
+
+	// Wrap decides what an arrow does at the end of travel: with it on,
+	// down at the last segment returns to the first. NIL MEANS ON — see
+	// wraps() for why the field is a pointer and why on is the default.
+	Wrap *bool
 }
+
+// wraps reports whether the selection cycles at the ends.
+//
+// A pointer, because the useful default is TRUE and a bool's zero value is
+// false. The alternatives were both worse: a NoWrap field makes the markup
+// attribute read as a double negative (Wrap="false" is what an author
+// writes), and a plain Wrap bool would silently disable cycling for every
+// existing caller that never heard of it.
+func (s *Segmented) wraps() bool { return s.Wrap == nil || *s.Wrap }
+
+// NoWrapping is the shorthand for the rocker tier, for callers writing a
+// literal: Segmented{Wrap: NoWrapping}.
+var NoWrapping = new(bool)
 
 // count is how many segments there are, from whichever source is in use.
 func (s *Segmented) count() int {
@@ -408,9 +438,37 @@ func (s *Segmented) Select(i int) bool {
 	return true
 }
 
-// HandleKey: left/right step the selection and are consumed only when
-// they move it; space and enter cycle, wrapping, so the control is fully
-// operable without arrows.
+// step moves the selection by d, cycling at the ends when Wrap is on.
+//
+// It reports whether anything moved, which is what decides consumption —
+// so with wrapping ON the strip's own axis is always consumed, and with it
+// off the rocker rule stands and an end-of-travel arrow bubbles.
+//
+// THE KEYBOARD IS NOT TRAPPED EITHER WAY, and that is what makes wrapping
+// safe as a default. The escape is the CROSS axis, which this control
+// never handles: left and right on a vertical rail fall straight through
+// to spatial focus navigation, as does up and down on a horizontal strip.
+// Tab is unaffected in both cases. What wrapping costs is the ability to
+// leave along the strip's own axis, which was never how anyone left a rail
+// down the left edge of a window.
+func (s *Segmented) step(d int) bool {
+	n := s.count()
+	if n == 0 {
+		return false
+	}
+	i := s.Index() + d
+	if s.wraps() {
+		// Positive modulo: Go's % keeps the sign of the dividend, so -1 % 4
+		// is -1 and a bare modulo would clamp to 0 instead of wrapping to
+		// the last segment.
+		i = ((i % n) + n) % n
+	}
+	return s.Select(i)
+}
+
+// HandleKey: left/right step the selection, cycling at the ends unless
+// Wrap says otherwise; space and enter cycle regardless, so the control is
+// fully operable without arrows.
 func (s *Segmented) HandleKey(ev input.KeyEvent) bool {
 	if s.disabled() {
 		return false
@@ -427,9 +485,9 @@ func (s *Segmented) HandleKey(ev input.KeyEvent) bool {
 	}
 	switch {
 	case ev == input.Named(prev):
-		return s.Select(s.Index() - 1)
+		return s.step(-1)
 	case ev == input.Named(next):
-		return s.Select(s.Index() + 1)
+		return s.step(1)
 	case ev == input.Named(input.KeyHome):
 		return s.Select(0)
 	case ev == input.Named(input.KeyEnd):
@@ -441,16 +499,43 @@ func (s *Segmented) HandleKey(ev input.KeyEvent) bool {
 	return false
 }
 
-// HandleMouse selects the segment the pointer landed on.
+// HandleMouse selects the segment the pointer landed on, and steps the
+// selection on a wheel notch.
+//
+// The wheel is over the STRIP, not over a segment: rolling the wheel is a
+// "next/previous" gesture, so where in the strip the pointer sits is
+// irrelevant beyond being inside it. That is the same reading Tabs gives it
+// (tabs.go:313) and ItemsView gives it, and the reason the hit test here is
+// a bounds check rather than segmentAt — asking which segment the pointer
+// is over would imply the wheel moved relative to that segment, which is
+// not what any of the three do.
+//
+// Notch direction follows the screen, not the axis: up means previous on a
+// vertical rail and also on a horizontal strip, because a wheel has one
+// axis and the user's hand does not rotate with the control.
 func (s *Segmented) HandleMouse(ev input.MouseEvent) bool {
-	if s.disabled() || ev.Kind != input.MouseClick {
+	if s.disabled() {
 		return false
 	}
-	if i, ok := s.segmentAt(ev.X, ev.Y); ok {
-		s.Select(i)
-		return true
+	switch ev.Kind {
+	case input.MouseClick:
+		if i, ok := s.segmentAt(ev.X, ev.Y); ok {
+			s.Select(i)
+			return true
+		}
+		return false
+	case input.WheelUp:
+		return s.inBounds(ev.X, ev.Y) && s.step(-1)
+	case input.WheelDown:
+		return s.inBounds(ev.X, ev.Y) && s.step(1)
 	}
 	return false
+}
+
+// inBounds is the whole-strip hit test the wheel uses.
+func (s *Segmented) inBounds(x, y int) bool {
+	b := s.Bounds()
+	return x >= b.X && x < b.X+b.W && y >= b.Y && y < b.Y+b.H
 }
 
 // segmentAt maps a point to an option index.

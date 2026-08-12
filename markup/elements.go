@@ -774,6 +774,17 @@ var defSegmented = &ElementDef{
 		{Name: "Options", Kind: KindBinding, Binds: BindsEither, GoType: "[]string", Required: true, Origin: OriginBuiltin},
 		{Name: "Selected", Kind: KindBinding, Binds: BindsBinding, GoType: "int", Required: true, Origin: OriginBuiltin},
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
+		// NO DECLARED DEFAULT, deliberately, even though the effective
+		// default is true.
+		//
+		// TestDeclaredDefaultsAreDiscriminating requires that a declared
+		// Default make a STATIC RENDER difference — otherwise the identity
+		// test that guards it can never fail, and the declaration is a claim
+		// nothing checks. Wrap changes what an arrow key DOES; it paints
+		// nothing either way. So the fact lives in Doc, where it is prose
+		// rather than an unguarded assertion.
+		{Name: "Wrap", Kind: KindBool, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "Cycle the selection at the ends: down at the last segment returns to the first. On unless set to false."},
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -793,9 +804,25 @@ var defSegmented = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		return named(e, ctx, &components.Segmented{
+		sg := &components.Segmented{
 			Options: options, Selected: selected, Changed: changed, Style: style,
-		}, nil)
+		}
+		// Only an explicit Wrap="false" turns cycling off. Absent means nil
+		// means on, so the attribute is never written for the default —
+		// which keeps "unset" and "set to the default" the same tree.
+		//
+		// optBool, not `== "true"`: a bool attribute that fell back to
+		// false on an unrecognized spelling would turn Wrap="yes" into
+		// "stop cycling" silently, and this is the attribute where the two
+		// answers are hardest to tell apart by looking.
+		if _, ok := e.Attrs["Wrap"]; ok {
+			w, err := optBool(e, "Wrap")
+			if err != nil {
+				return nil, err
+			}
+			sg.Wrap = &w
+		}
+		return named(e, ctx, sg, nil)
 	},
 }
 

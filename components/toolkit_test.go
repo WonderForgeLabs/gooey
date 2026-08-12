@@ -270,9 +270,21 @@ func TestToggleClickPicksTheSideItLandedOn(t *testing.T) {
 
 // ---- Segmented ----
 
+// TestSegmentedArrowsStopAtTheEnds pins the ROCKER TIER, which is now what
+// Wrap="false" selects rather than what every Segmented does.
+//
+// Wrapping became the default because a rail of icons is a ring rather than
+// a switch with two ends. This test kept its assertions and gained the one
+// line that asks for the old behaviour explicitly — the rule it describes
+// is still real, still reachable, and still worth a pin. The cycling half
+// is pinned next door in TestSegmentedArrowsWrapByDefault.
 func TestSegmentedArrowsStopAtTheEnds(t *testing.T) {
 	sel := prop.NewSource(0)
-	sg := &Segmented{Options: Strs([]string{"Day", "Week", "Month"}), Selected: sel}
+	sg := &Segmented{
+		Options:  Strs([]string{"Day", "Week", "Month"}),
+		Selected: sel,
+		Wrap:     NoWrapping,
+	}
 
 	if sg.HandleKey(input.Named(input.KeyLeft)) {
 		t.Fatal("left consumed the key at the first segment")
