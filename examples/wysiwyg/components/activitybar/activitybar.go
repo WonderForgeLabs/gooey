@@ -97,7 +97,14 @@ var (
 	bg       = color.RGBA{0x1e, 0x1e, 0x24, 0xff} // the rail's own ground
 	inactive = color.RGBA{0x86, 0x88, 0x99, 0xff}
 	active   = color.RGBA{0xe8, 0xeb, 0xf7, 0xff}
-	marker   = color.RGBA{0x6c, 0x9c, 0xff, 0xff}
+	marker = color.RGBA{0x6c, 0x9c, 0xff, 0xff}
+	// markerBlurred is the same hue at roughly a third of the distance
+	// from the rail's own ground: still visibly the accent, no longer
+	// competing with whatever does hold the keyboard. Mixed here rather
+	// than emitted with alpha because sixel has no alpha channel at all —
+	// a translucent marker is not expressible, so the blend is done in the
+	// source pixels.
+	markerBlurred = color.RGBA{0x36, 0x48, 0x74, 0xff}
 )
 
 // Builder registers the rail as <ActivityBar Sel="{{.Selected}}"/>.
@@ -129,28 +136,37 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 		if err := r.Preload(); err != nil {
 			return nil, err
 		}
+		// The strip is built BEFORE the picture, because the picture
+		// depends on the strip's focus. Src is assigned after.
+		seg := &components.Segmented{
+			Selected: sel,
+			Vertical: true,
+			Count:    len(icons),
+		}
 		// Get is INSIDE the computed, which is what records the
 		// dependency. Reading sel outside and closing over the value
 		// would produce a rail that draws once and never changes again —
 		// and nothing in the framework would report it.
+		//
+		// IsFocused() is read the same way and for the same reason: it is a
+		// plain property read (input.go:159), so calling it here subscribes
+		// the picture to focus, and moving focus onto or off the rail
+		// redraws exactly this image. Reading it outside the closure would
+		// bake in "unfocused" forever.
 		img := &components.Image{Src: prop.NewComputed(func() image.Image {
-			return r.Rail(sel.Get())
+			return r.Rail(sel.Get(), seg.IsFocused())
 		})}
+		seg.Child = img
 		// The Image is a PICTURE — no focus, no keys, no hit-testing — so
 		// on its own the rail was unselectable, which was the bug.
 		//
 		// The behaviour comes from components.Segmented, which already had
-		// all of it: bound int selection, clamped, rocker-rule arrows,
-		// click-to-segment, focus stop. It gained a Vertical axis and a
-		// Child so the picture could be this rail instead of drawn labels.
-		// Writing a second strip here would have been a third copy of that
-		// behaviour in the repo — Tabs re-implements it too.
-		return &components.Segmented{
-			Selected: sel,
-			Vertical: true,
-			Child:    img,
-			Count:    len(icons),
-		}, nil
+		// all of it: bound int selection, clamped, wrapping arrows, wheel
+		// notches, click-to-segment, focus stop. It gained a Vertical axis
+		// and a Child so the picture could be this rail instead of drawn
+		// labels. Writing a second strip here would have been a third copy
+		// of that behaviour in the repo — Tabs re-implements it too.
+		return seg, nil
 	}
 }
 
@@ -211,7 +227,13 @@ func (r *Renderer) icon(file string, tint color.RGBA) (image.Image, error) {
 
 // Rail draws the whole strip: background, every icon in its state, and
 // the selection marker beside the active one.
-func (r *Renderer) Rail(sel int) image.Image {
+//
+// focused changes the CUE, not the selection. Reported against the running
+// editor as "no idea where focus is": the marker was the same bright blue
+// whether the rail had the keyboard or not, so the one thing on screen that
+// looked active was lying half the time. Focus is a property, so this is a
+// picture derived from state like everything else — see Builder.
+func (r *Renderer) Rail(sel int, focused bool) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, railW, slotH*len(r.icons)))
 	draw.Draw(img, img.Bounds(), &image.Uniform{bg}, image.Point{}, draw.Src)
 
@@ -223,9 +245,19 @@ func (r *Renderer) Rail(sel int) image.Image {
 			// VS Code's active cue: a bar on the leading edge, not a
 			// filled slot. A filled slot at this size reads as a button
 			// that has been pressed and stuck.
+			//
+			// DIMMER WHEN THE RAIL DOES NOT HOLD FOCUS. A colour change
+			// rather than removing the bar: which view is showing is still
+			// true when focus is elsewhere, so the cue must stay legible
+			// and only stop claiming the keyboard.
+			m := marker
+			if !focused {
+				m = markerBlurred
+				tint = inactive
+			}
 			draw.Draw(img,
 				image.Rect(0, top, markerW, top+slotH),
-				&image.Uniform{marker}, image.Point{}, draw.Src)
+				&image.Uniform{m}, image.Point{}, draw.Src)
 		}
 		glyph, err := r.icon(ic.File, tint)
 		if err != nil {

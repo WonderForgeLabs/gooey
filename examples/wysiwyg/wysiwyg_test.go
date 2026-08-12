@@ -321,38 +321,79 @@ func children(c gooey.Component) []gooey.Component {
 // third chrome component is added, so the assertion is structural: no
 // element the EDITOR registers for itself may appear in the palette,
 // whatever it is called.
-func TestPaletteNeverOffersTheEditorsOwnChrome(t *testing.T) {
+// THE TWO "ABSENCE" TESTS HERE WENT VACUOUS AND WERE REPLACED.
+//
+// TestPaletteNeverOffersTheEditorsOwnChrome and
+// TestDocumentCannotBuildTheEditorsChrome both looped over
+// ed.ctx.Components and skipped any name also registered in docCtx. That
+// was right while <Preview> was the only shared name. Registering <Panel>
+// and <ActivityBar> as document vocabulary — they are reusable components,
+// and withholding them made the toolbox misdescribe the app — meant every
+// name was skipped and both loop bodies stopped executing. Two green tests
+// asserting nothing, which is the failure this repo keeps cataloguing.
+//
+// They are not restored with an exemption list, because the thing worth
+// guarding was never "chrome is absent from the document". It is that A
+// DOCUMENT MUST NOT BE ABLE TO BUILD THE COMPONENT THAT RENDERS THE
+// DOCUMENT — Measure recursed until the stack overflowed. That invariant
+// survives sharing, so it is stated below in a form that stays honest as
+// more components become document vocabulary.
+
+// TestNoDocumentBuilderYieldsThePreviewPane is the recursion guard, stated
+// as what it actually protects.
+//
+// Every name the DOCUMENT can build is built, and none of them may produce
+// the pane that hosts the document. That covers <Preview> (which builds a
+// Mirror here instead) and every component registered later, without
+// needing to be told which names are dangerous.
+func TestNoDocumentBuilderYieldsThePreviewPane(t *testing.T) {
 	ed := newEditor(editorFS())
-	if len(ed.ctx.Components) == 0 {
-		t.Fatal("the editor registers no chrome, so this test asserts nothing")
+	if len(ed.docCtx.Components) == 0 {
+		t.Fatal("the document context registers nothing, so this test asserts nothing")
 	}
+	checked := 0
+	for name := range ed.docCtx.Components {
+		// Sel= is required by <ActivityBar> and harmless on the others,
+		// which ignore unknown attributes as registered builders may.
+		src := `<Gooey><VStack Name="R"><` + name + ` Name="X" Sel="{{.ActivitySel}}"/></VStack></Gooey>`
+		root, err := markup.Build([]byte(src), ed.docCtx)
+		if err != nil {
+			// A builder may legitimately refuse these attributes. That is
+			// not this test's business — it cannot recurse if it cannot
+			// build — but it must not be counted as checked.
+			continue
+		}
+		checked++
+		walkTree(root, func(c gooey.Component) {
+			if p, ok := c.(*preview.Pane); ok {
+				t.Errorf("a document built <%s> into %T (%p): the document now contains the "+
+					"component that renders it, and Measure never bottoms out", name, p, p)
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no document builder could be exercised; this test asserts nothing")
+	}
+}
+
+// TestTheEditorsOwnComponentsAreDocumentVocabulary is the positive half —
+// the reason the tests above changed shape.
+//
+// A toolbox that lists every builtin while omitting the components the
+// editor is built out of misdescribes the app, which is the same class of
+// dishonesty as rendering "unknown" as "none".
+func TestTheEditorsOwnComponentsAreDocumentVocabulary(t *testing.T) {
+	ed := newEditor(editorFS())
 	offered := map[string]bool{}
 	for _, e := range ed.palette {
 		offered[e.Name] = true
 	}
-	for name := range ed.ctx.Components {
-		if ed.docCtx.Components[name] != nil {
-			continue // deliberately part of the document's vocabulary
+	for _, name := range []string{"Panel", "ActivityBar"} {
+		if ed.docCtx.Components[name] == nil {
+			t.Errorf("<%s> is not document vocabulary; a document cannot use the editor's own component", name)
 		}
-		if offered[name] {
-			t.Errorf("the palette offers <%s>, which is the editor's own chrome: "+
-				"a document containing it renders the document, and Measure never bottoms out", name)
-		}
-	}
-}
-
-// TestDocumentCannotBuildTheEditorsChrome is the same guarantee at the
-// other end: even if something put <Preview> in a document, the document
-// vocabulary cannot build it.
-func TestDocumentCannotBuildTheEditorsChrome(t *testing.T) {
-	ed := newEditor(editorFS())
-	for name := range ed.ctx.Components {
-		if ed.docCtx.Components[name] != nil {
-			continue
-		}
-		src := "<Gooey><VStack Name=\"R\"><" + name + " Name=\"X\"/></VStack></Gooey>"
-		if _, err := markup.Build([]byte(src), ed.docCtx); err == nil {
-			t.Errorf("a document built <%s>; the editor's chrome must not be in the document vocabulary", name)
+		if !offered[name] {
+			t.Errorf("the toolbox does not offer <%s>", name)
 		}
 	}
 }

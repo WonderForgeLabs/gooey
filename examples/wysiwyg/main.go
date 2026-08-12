@@ -202,7 +202,11 @@ func main() {
 		ed.serving = append(ed.serving, "mcp "+msrv.URL())
 	}
 	if len(ed.serving) > 0 {
-		ed.serveInfo.Set(strings.Join(ed.serving, "\n"))
+		// Joined with SPACES, not a newline. This lands in a one-row status
+		// bar, so "grpc …\nmcp …" showed the gRPC address and silently ate
+		// the MCP URL — the one string a client needs and cannot guess,
+		// since the port is 0 by default and therefore different every run.
+		ed.serveInfo.Set(strings.Join(ed.serving, "   "))
 	}
 
 	if *addr != "" {
@@ -362,6 +366,10 @@ type editor struct {
 
 	// fsys is where the page and every pane's markup is read from.
 	fsys fs.FS
+	// art is the panel frame cache, ONE per app: it is keyed by size and
+	// colour, so the shell's panels and any panel a document contains share
+	// a raster instead of rasterizing the same frame twice.
+	art *panel.Art
 
 	pv  *preview.Pane
 	app *gooey.App
@@ -392,6 +400,7 @@ type editor struct {
 func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
 		fsys: fsys,
+		art:  panel.NewArt(fsys),
 		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
 			{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
 			{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
@@ -542,7 +551,7 @@ func newEditor(fsys fs.FS) *editor {
 			"ActivityBar": activitybar.Builder(ed.fsys, nil),
 			// One Art per app: the frame cache is keyed by size and colour,
 			// so panes of the same size share a raster.
-			"Panel": panel.Builder(panel.NewArt(ed.fsys)),
+			"Panel": panel.Builder(ed.art),
 		},
 	}
 
@@ -568,6 +577,30 @@ func newEditor(fsys fs.FS) *editor {
 			// document that contains a preview is a visual instead of a
 			// stack overflow. See components/preview/mirror.go.
 			"Preview": preview.MirrorBuilder(ed.ctx.Styles["dim"]),
+
+			// THE EDITOR'S REUSABLE COMPONENTS ARE DOCUMENT VOCABULARY TOO,
+			// and the distinction is recursion, not provenance.
+			//
+			// The two-context split exists because <Preview> renders the
+			// document: a document containing one contains the thing
+			// drawing it, and Measure recursed until the stack overflowed.
+			// Nothing of the kind is true of <Panel> or <ActivityBar>. They
+			// are ordinary components that happen to have been written here
+			// first, and a document is entitled to a framed region or an
+			// icon rail like any other.
+			//
+			// Withholding them made the toolbox misdescribe the app: it
+			// listed every builtin and the two registered stand-ins while
+			// silently omitting the components this editor is actually
+			// built out of, which is the same class of dishonesty as
+			// rendering "unknown" as "none".
+			//
+			// The SAME builders as the editor's chrome, sharing one Art
+			// cache: a panel in the document and a panel in the shell are
+			// the same component at the same size, so they should be the
+			// same raster too.
+			"Panel":       panel.Builder(ed.art),
+			"ActivityBar": activitybar.Builder(ed.fsys, nil),
 		},
 	}
 

@@ -10,12 +10,12 @@
        │ STATUS BAR                                   │
        └──────────────────────────────────────────────┘
 
-       THREE REGIONS ARE EMPTY, and that is the state of the work rather
-       than an omission. The side bar, the properties grid and the panel
-       held the old tree editor's panes; they are gone with it. What
-       replaces them is built from reusable components — the first of
-       which is the tab strip the activity rail turns out to be an
-       instance of.
+       EVERY REGION NOW HOLDS REAL ELEMENTS, bound to the editor's own
+       state. Nothing here is a placeholder and nothing is an embedded Go
+       string: the toolbox is a live view of the registered vocabulary, the
+       properties grid a live view of AttrsFor(selection), and both arrive
+       through the same bindings the deleted panes used — the panes were
+       the old UI, the bindings were never the problem.
 
        Every region carries a Name, which is the working method rather
        than documentation: each is a patch_markup address, so a region can
@@ -26,7 +26,7 @@
        The activity bar's track is 4 cells because the rail is drawn 40
        pixels wide and a cell is commonly 10 across. That is the one place
        in this file where a number comes from the pixel plane. -->
-  <Grid Name="Page" Rows="1*,10,1" Cols="4,34,1*,46">
+  <Grid Name="Page" Rows="1*,10,1" Cols="4,38,1*,46">
 
     <!-- KeyBindings live on the ROOT. A binding only fires while the
          focused chain passes through its host, so a page whose focus can
@@ -44,24 +44,162 @@
     <ActivityBar Name="ActivityBar" Grid.Row="0" Grid.Col="0" Sel="{{.ActivitySel}}"
                  Height="8" VAlign="Start"/>
 
-    <!-- Pixel line art, sliced into a ring so the interior stays on the
-         cell plane where text belongs. Falls back to the same shape in
-         box-drawing runes, in the same cells, where there is no protocol. -->
-    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Title="EXPLORER" Style="dim">
-      <Text Style="dim"/>
+    <!-- THE SIDE BAR, showing the toolbox — which is what the activity
+         rail's default selection points at.
+
+         PaletteItems is the live catalog, not a table compiled in: it is a
+         computed over the registered vocabulary, so an element added to the
+         context appears here with no edit to this file. The Kids column is
+         the child mode, which is the honest answer to "may I put things
+         inside this" — and "?" in Attrs means a registered component that
+         declares no schema, a state that has to read differently from one
+         that genuinely takes no attributes.
+
+         Panel's chrome is pixel line art sliced into a ring, so the
+         interior stays on the cell plane where text belongs; it falls back
+         to the same shape in box-drawing runes where there is no pixel
+         protocol. -->
+    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Title="TOOLBOX" Style="dim">
+      <VStack>
+        <!-- ONE COLUMN: the component's name.
+             "COMPONENT", not "ELEMENT" — the toolbox lists things you place,
+             and what you place is a component; "element" is the markup
+             spelling of it, which is the designer's business and not the
+             user's.
+
+             THE ATTRS AND CHILDREN COLUMNS ARE GONE. They carried real
+             catalog facts — the attribute count, "? unknown" for a
+             registered builder whose schema cannot be enumerated, and the
+             child mode — but a toolbox is a place to pick a component from,
+             not a table to read. Those facts have a better home in the
+             PROPERTIES pane, which is about the one component you selected
+             and has room to say it in words. The honesty rule they existed
+             to make visible still holds in the model and is still pinned by
+             TestPaletteComesFromTheCatalog; what changed is where the UI
+             shows it, and that debt is real until the properties pane
+             carries it. -->
+        <HStack Gap="1" Height="1">
+          <Text Style="sel">COMPONENT</Text>
+        </HStack>
+        <ItemsView Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
+                   Activate="{{.Add}}">
+          <ItemsView.ItemTemplate>
+            <HStack Gap="1">
+              <Text>{{.Name}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+      </VStack>
     </Panel>
 
     <!-- The designer. It HOSTS rather than displays — the one region that
          owns a live component tree — which is why it is the piece the
-         canvas grows out of rather than one pane among four. -->
-    <Preview Name="EditorArea" Grid.Row="0" Grid.Col="2" Title="designer"/>
+         canvas grows out of rather than one pane among four.
 
-    <Panel Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES" Style="dim">
-      <Text Style="dim"/>
+         FRAMED BY THE SAME <Panel> AS EVERY OTHER REGION. <Preview> carries
+         no chrome of its own by design: when it wrapped itself in a Border
+         the designer was the one region outlined by a different mechanism
+         than its neighbours — box-drawing runes beside pixel line art — in
+         a shell whose whole point is that the frames match. Chrome belongs
+         to the container, so it is written here. -->
+    <Panel Name="EditorArea" Grid.Row="0" Grid.Col="2" Title="DESIGNER" Pad="1">
+      <Preview Name="Island"/>
     </Panel>
 
-    <Panel Name="Output" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Title="OUTPUT" Style="dim">
-      <Text Style="dim">{{.Source}}</Text>
+    <!-- PROPERTIES. Real elements bound to the editor's own state, not a
+         placeholder: AttrItems is a computed over AttrsFor(selected), so
+         this grid re-rows itself when the selection moves and repaints
+         nothing else.
+
+         THE TEXTBOX LIVES HERE, and that is a structural claim rather than
+         a layout choice. The designer's subtree is discarded and rebuilt on
+         every edit, and a caret is component-local state, so an input
+         inside it would lose the caret mid-word. This region is a SIBLING
+         of EditorArea, which is what keeps that from happening. -->
+    <Panel Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES" Style="dim">
+      <!-- A GRID WITH DECLARED TRACKS, NOT A VSTACK — and this is a bug fix,
+           not a preference.
+           As a VStack this pane could not be edited at all. A VStack sizes
+           each child by what it measures, ItemsView measures greedily, and
+           so the list took all 41 rows and the edit row underneath it was
+           arranged at W:0 H:0 on a row past the bottom of the panel. The
+           mechanism worked perfectly — a keystroke dispatched to that
+           TextBox did change the attribute — but the input was invisible and
+           unclickable, so "I can't modify values" was exactly right.
+           Only the LIST is elastic. Everything else is a fixed track that
+           gets its rows before the star is resolved, which is the same rule
+           an adornment row follows: a row that must exist has to be
+           declared, because a container with a greedy sibling will not
+           leave it anything. -->
+      <Grid Rows="1,1*,1,2" Cols="1*">
+        <!-- Same rule as the toolbox: these widths are the row template's
+             widths. The lead column is one cell wide and unlabelled because
+             its header would be the glyph itself. -->
+        <HStack Grid.Row="0" Gap="1">
+          <Text Width="1" Style="sel"> </Text>
+          <Text Width="13" Style="sel">ATTRIBUTE</Text>
+          <Text Width="8" Style="sel">TYPE</Text>
+          <Text Style="sel">VALUE</Text>
+        </HStack>
+        <ItemsView Grid.Row="1" Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
+                   Activate="{{.BeginEdit}}">
+          <!-- Mark is the modified-from-default column: "•" where the
+               document's value differs from the declared default. Rows
+               arrive grouped by markup.CategoryOf. -->
+          <ItemsView.ItemTemplate>
+            <HStack Gap="1">
+              <Text Width="1" Style="sel">{{.Mark}}</Text>
+              <Text Width="13">{{.Name}}</Text>
+              <Text Width="8" Style="dim">{{.Kind}}</Text>
+              <Text Style="ok">{{.Value}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+        <!-- THE EDITOR. Enter on a row above loads its name and value here;
+             enter here commits. A finite-valued attribute cycles instead of
+             opening this, so the input is for the values only prose can
+             give. -->
+        <!-- A GRID, NOT AN HSTACK, for the same reason the pane is one: the
+             TextBox measures greedily on the cross axis too. In an HStack it
+             reported a width of 134 inside a 44-cell pane and was arranged
+             straight through the panel border and off the right of the
+             screen. Cols="16,1*" gives the label a fixed track and hands
+             the input exactly what is left. Grid has no Gap — the track
+             width carries it — and 16 is where the TYPE column starts
+             above, so the input lines up with the column it edits. -->
+        <Grid Grid.Row="2" Rows="1" Cols="16,1*">
+          <Text Grid.Row="0" Grid.Col="0" Style="sel">{{.EditName}}</Text>
+          <TextBox Grid.Row="0" Grid.Col="1" Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
+        </Grid>
+        <!-- The description line. The catalog's Doc is empty on most
+             attributes today, so the editor sends legal values instead and
+             will send prose the moment Doc is populated. -->
+        <Text Grid.Row="3" Style="dim">{{.EditDoc}}</Text>
+      </Grid>
+    </Panel>
+
+    <!-- THE BOTTOM PANEL, VS Code's: one region, several views, a tab strip
+         choosing between them.
+
+         TWO TABS, NOT FOUR. VS Code ships PROBLEMS / OUTPUT / DEBUG CONSOLE
+         / TERMINAL; only the first two have anything real behind them here,
+         and a tab that opens onto a blank pane is a worse lie than a
+         missing tab. The strip grows when there is something to put in it.
+
+         <Tabs> is the existing component, not a new one — the same strip
+         behaviour the activity rail turned out to be an instance of. -->
+    <Panel Name="Output" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Style="dim">
+      <Tabs Name="PanelTabs">
+        <!-- PROBLEMS is first, as it is in VS Code: FitMsg is what the fit
+             watcher says about the current terminal size, which is the one
+             diagnostic this editor produces about itself. -->
+        <Tab Header="PROBLEMS">
+          <Text Style="dim">{{.FitMsg}}</Text>
+        </Tab>
+        <Tab Header="OUTPUT">
+          <Text Style="dim">{{.Source}}</Text>
+        </Tab>
+      </Tabs>
     </Panel>
 
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"

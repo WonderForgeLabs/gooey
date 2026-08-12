@@ -33,6 +33,49 @@ func isMarker(img image.Image, y int) bool {
 	return r == marker.R && g == marker.G && b == marker.B
 }
 
+// isBlurredMarker is the unfocused cue. Separate from isMarker rather than
+// a tolerance on it: the two states must be TELLABLE APART, and a fuzzy
+// "close to blue" predicate would pass for both.
+func isBlurredMarker(img image.Image, y int) bool {
+	r, g, b := at(img, 1, y)
+	return r == markerBlurred.R && g == markerBlurred.G && b == markerBlurred.B
+}
+
+// TestTheMarkerDimsWhenTheRailLosesFocus — reported against the running
+// editor as "no idea where focus is".
+//
+// Written as a pair, like the marker-placement test: the focused rail shows
+// the bright cue and NOT the dim one, the unfocused rail the reverse. One
+// direction alone would pass against a rail that drew the same colour
+// always, since isMarker would simply be false in both cases if the colour
+// were wrong.
+func TestTheMarkerDimsWhenTheRailLosesFocus(t *testing.T) {
+	r := railFS()
+	const sel = 1
+	mid := sel*slotH + slotH/2
+
+	focused := r.Rail(sel, true)
+	if !isMarker(focused, mid) {
+		t.Error("a focused rail does not show the bright marker")
+	}
+	if isBlurredMarker(focused, mid) {
+		t.Error("a focused rail shows the dim marker")
+	}
+
+	blurred := r.Rail(sel, false)
+	if !isBlurredMarker(blurred, mid) {
+		t.Error("an unfocused rail does not dim the marker; focus is invisible")
+	}
+	if isMarker(blurred, mid) {
+		t.Error("an unfocused rail still shows the bright marker")
+	}
+	// The cue must still be THERE. Which view is showing is true whether or
+	// not the rail holds the keyboard, so losing focus may not erase it.
+	if rr, gg, bb := at(blurred, 1, mid); rr == bg.R && gg == bg.G && bb == bg.B {
+		t.Error("an unfocused rail erased the marker entirely; the selection is still real")
+	}
+}
+
 // TestEveryIconAssetLoads is the precondition for everything below. It is
 // separate from the drawing tests on purpose: "the rail is blank" and
 // "the rail is wrong" are different failures and should not share a
@@ -115,7 +158,7 @@ func TestTheTintIsAppliedBeforeRasterizing(t *testing.T) {
 func TestTheRailIsOneSlotPerIcon(t *testing.T) {
 	for _, n := range []int{1, 4} {
 		r := &Renderer{fsys: os.DirFS("../../"), icons: DefaultIcons[:n]}
-		img := r.Rail(0)
+		img := r.Rail(0, true)
 		if got, want := img.Bounds().Dy(), slotH*n; got != want {
 			t.Errorf("%d icons: height %d, want %d", n, got, want)
 		}
@@ -132,7 +175,7 @@ func TestTheRailIsOneSlotPerIcon(t *testing.T) {
 func TestTheMarkerIsBesideTheSelectedIconAndNowhereElse(t *testing.T) {
 	r := railFS()
 	for sel := range DefaultIcons {
-		img := r.Rail(sel)
+		img := r.Rail(sel, true)
 		for i := range DefaultIcons {
 			mid := i*slotH + slotH/2
 			got, want := isMarker(img, mid), i == sel
@@ -148,7 +191,7 @@ func TestTheMarkerIsBesideTheSelectedIconAndNowhereElse(t *testing.T) {
 // different images, or the rail is not drawn from Sel at all.
 func TestSelectionChangesThePicture(t *testing.T) {
 	r := railFS()
-	a, b := r.Rail(0), r.Rail(2)
+	a, b := r.Rail(0, true), r.Rail(2, true)
 	for y := 0; y < a.Bounds().Dy(); y++ {
 		for x := 0; x < a.Bounds().Dx(); x++ {
 			r1, g1, b1 := at(a, x, y)
@@ -167,7 +210,7 @@ func TestSelectionChangesThePicture(t *testing.T) {
 func TestAnOutOfRangeSelectionStillDraws(t *testing.T) {
 	r := railFS()
 	for _, sel := range []int{-1, 99} {
-		img := r.Rail(sel)
+		img := r.Rail(sel, true)
 		if img.Bounds().Dy() != slotH*len(DefaultIcons) {
 			t.Errorf("sel=%d: wrong height", sel)
 		}

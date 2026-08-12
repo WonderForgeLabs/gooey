@@ -15,7 +15,6 @@ package preview
 
 import (
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -35,28 +34,23 @@ type Pane struct {
 	size  gooey.Size
 }
 
-// Builder registers the pane as <Preview Title="designer"/>, with p as
-// its host.
+// Builder registers the pane as <Preview/>, with p as its host.
 //
-// There is no .gooey here, and that is the rule rather than an exception:
-// this control is two components deep — a titled Border around the host —
-// so it is built with the OBJECT MODEL. A markup file would express the
-// same two nodes as a string that has to be parsed at every load, and a
-// string is the one form the compiler cannot check.
+// IT CARRIES NO CHROME OF ITS OWN. It used to wrap itself in a
+// components.Border, which made the designer the one region framed by a
+// different mechanism than every other region — box-drawing runes beside
+// pixel line art, in a shell whose whole point is that the frames match.
+// Chrome belongs to <Panel>, so the shell writes:
 //
-// Markup earns its keep where a pane is a LAYOUT — the palette's list and
-// item template, the inspector's seven-way grid. It does not earn it for
-// a wrapper.
+//	<Panel Title="designer"><Preview/></Panel>
+//
+// and the designer is framed by the same component as the rest.
 //
 // One Pane per Builder, deliberately: the editor has exactly one preview,
 // and a second instance of this element would mount the same tree twice.
 func Builder(p *Pane) markup.Builder {
 	return func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
-		title := e.Attrs["Title"]
-		if title == "" {
-			title = "designer"
-		}
-		return &components.Border{Title: components.Str(title), Child: p}, nil
+		return p, nil
 	}
 }
 

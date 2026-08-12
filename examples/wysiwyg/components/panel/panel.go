@@ -60,6 +60,16 @@ type Pane struct {
 
 	Title string
 	Child gooey.Component
+	// Pad is cells of breathing room INSIDE the frame, on top of the one
+	// cell the ring itself occupies. Zero is legal and means the content
+	// touches the frame, which is what a dense list wants; 1 is what
+	// prose and forms want.
+	//
+	// It is padding rather than the child's margin because the frame owns
+	// it: the whole reason a pane looks cramped is the relation between
+	// its border and its content, and that is the pane's business, not
+	// each child's.
+	Pad int
 
 	art    *Art
 	style  render.Style
@@ -115,10 +125,13 @@ func (p *Pane) ChildComponents() []gooey.Component {
 // Measure reserves the ring: one cell on every side, exactly as a
 // <Border> does. The pixel and cell tiers agree on this, which is what
 // makes the two interchangeable without moving anything.
+// inset is the ring plus the padding, per side.
+func (p *Pane) inset() int { return 1 + max(0, p.Pad) }
+
 func (p *Pane) Measure(avail gooey.Size) gooey.Size {
 	if p.Child != nil {
-		inner := gooey.Size{W: max(0, avail.W-2), H: max(0, avail.H-2)}
-		gooey.MeasureChild(p.Child, inner)
+		d := 2 * p.inset()
+		gooey.MeasureChild(p.Child, gooey.Size{W: max(0, avail.W-d), H: max(0, avail.H-d)})
 	}
 	return avail
 }
@@ -128,9 +141,12 @@ func (p *Pane) Arrange(b gooey.Rect) {
 	if p.Child == nil {
 		return
 	}
+	in := p.inset()
+	// The title sits ON the top edge, so a padded pane gets its first
+	// content row below the frame rather than behind the title.
 	gooey.ArrangeChild(p.Child, gooey.Rect{
-		X: b.X + 1, Y: b.Y + 1,
-		W: max(0, b.W-2), H: max(0, b.H-2),
+		X: b.X + in, Y: b.Y + in,
+		W: max(0, b.W-2*in), H: max(0, b.H-2*in),
 	})
 }
 
