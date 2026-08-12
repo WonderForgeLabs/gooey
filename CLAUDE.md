@@ -27,13 +27,18 @@ name eight modules across two loops and still skip seven `packs/temporal-*`.
 ```sh
 # Every nested module, discovered the way ci.yml discovers packs/*.
 # -race matches CI: handlers/*, packs/*, mcp and grpc run under the
-# detector; the root module and imagefmt/svg do not.
+# detector; the root module and imagefmt/svg do not. examples/* are in
+# neither list because CI does not run them at all, so they get the
+# plain run here — see the paragraph below.
 #
 # Pruning dot-directories at EVERY depth is load-bearing, and filtering
 # with `-not -path './.*'` is not enough — that only anchors at the top.
-# .claude/worktrees/ holds whole checkouts of this repo, and
-# examples/temporal-worker/.venv vendors two Go modules of Temporal's
-# own; either way you end up vetting someone else's tree.
+# The two offenders are both UNTRACKED, so neither exists in a fresh
+# clone and you cannot check this from the repo alone: .claude/worktrees/
+# holds whole checkouts, and examples/temporal-worker/.venv (gitignored;
+# appears once you run that example) vendors two go.mod files of
+# Temporal's own. That asymmetry is the point — a top-anchored filter
+# passes in CI and walks into someone else's tree on your machine.
 #
 # `-mindepth 1` is the load-bearing half of that: it is what lets a
 # depth-1 dot-directory be pruned at all, AND it keeps `-name` off the
