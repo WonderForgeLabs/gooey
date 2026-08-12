@@ -357,7 +357,7 @@ is data an agent acts on, so it publishes an `outputSchema` and returns
 mutation acks which stay text-only.
 
 **The registration surface is control's FULL kind table** — string,
-int, bool, float, duration, color, and `any` — deliberately wider than
+int, bool, float, duration, color, `any`, and `image` — deliberately wider than
 `set_value`'s kept ceiling, because this is a NEW surface mirroring the
 contract's `PropertyRegistration`, not a widening of a preserved one.
 Initial-value semantics at the JSON boundary: string/int/bool/float

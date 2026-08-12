@@ -226,6 +226,34 @@ binding path `.Activity.<Name>.Result`.
 In the app: **ctrl+n** cycles which activity the star runs, **ctrl+l** clears the result,
 **ctrl+c** quits. Tab moves focus; enter/space presses.
 
+## The other two pages
+
+`-page` swaps the whole document, and the directory ships three. The `Values` map in
+`main.go` is what they share: every page binds against the same properties, so a page is
+only a view onto one control plane.
+
+| `-page` | what it is for |
+|---|---|
+| `dynamicactivities.gooey` (default) | the star, the activity list, the result pane |
+| `zoom.gooey` | an image viewer for `three-ways.svg`, with `+`/`-` zoom |
+| `live.gooey` | a TextBox and a Text on the same `Input` property, and nothing else |
+
+**Both the default page and `zoom.gooey` carry `<Gooey Graphics="halfblock">`.** The
+graphics protocol is a document setting, not a launch flag, and that is deliberate: the
+choice belongs to the artwork on the page rather than to whoever started the process.
+It matters here because this demo gets recorded — under a recording pty, capability
+detection answers for the pty and not for a real terminal, so a page that left the
+decision to detection would record as something other than what it is. Delete the
+attribute and the app probes instead; the pages are written to survive either answer
+(`zoom.gooey`'s `Chrome="pixel"` buttons fall back to box-drawing runes at the same
+three-row footprint, so the layout does not shift when a protocol is found).
+
+`three-ways.svg` is decoded through `imagefmt/svg` and reaches the plane as an `image`
+value — the one `TypedValue` kind with no markup literal, so it can only be *bound*
+(`<Image Src="{{…}}">`), never written inline. `zoom.gooey` is the page that shows it
+large, and its own header comment explains why `HAlign`/`VAlign="Start"` is what makes
+`Cols`/`Rows` mean anything: they are a request, and the default `Stretch` discards it.
+
 ## Things worth knowing if you are copying this
 
 - **`Canvas` children position with `Canvas.Left` / `Canvas.Top`.** Bare `Left`/`Top` are

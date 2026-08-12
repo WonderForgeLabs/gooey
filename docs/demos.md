@@ -56,7 +56,8 @@ Exercises conditional dependency recording: pausing flips a branch so the live b
 
 The markuplog UI is defined in a `.gooey` XML file that hot-reloads on edit: two live sed edits (a title change, then a new Grid row) rebuild the component tree in place while the log buffer, frame counter, and stream all survive untouched.
 
-The walkthrough: the log viewer loads its Grid UI from `live.gooey` and streams colored log lines (title: logview, hot reloads=0). About 4 seconds in, an off-screen editor seds the file so the Border title becomes "logview ✦ LIVE EDITED" — the status line ticks to hot reloads=1 while lines arrived keeps climbing (52 and counting). ~3.5 seconds later a second sed extends the Grid Rows spec and inserts a new accent Text row ("★ this line was just added in the editor — no restart, buffer intact") above the LogPane — hot reloads=2, lines arrived=84, never reset. 'q' quits cleanly.
+The walkthrough: the log viewer loads its Grid UI from the page it is given —
+`cmd/markuplog/logview.gooey` unless a path is passed — and streams colored log lines (title: logview, hot reloads=0). About 4 seconds in, an off-screen editor seds the file so the Border title becomes "logview ✦ LIVE EDITED" — the status line ticks to hot reloads=1 while lines arrived keeps climbing (52 and counting). ~3.5 seconds later a second sed extends the Grid Rows spec and inserts a new accent Text row ("★ this line was just added in the editor — no restart, buffer intact") above the LogPane — hot reloads=2, lines arrived=84, never reset. 'q' quits cleanly.
 
 - Run: `go run ./cmd/markuplog [path/to/logview.gooey]`
 - Keys: `space` pause/follow, `f` cycle filter (ERROR/WARN/all), `q` quit
@@ -357,6 +358,18 @@ run of cells, positioned with the attached `Canvas.Left`/`Canvas.Top`,
 every run bound to the same two registered color properties. The
 `<Button>` comes after the runs it sits on, because paint order is tree
 order and hit-testing is topmost-first.
+
+**The pages pin their own pixel protocol.** `dynamicactivities.gooey` and
+`zoom.gooey` both carry `<Gooey Graphics="halfblock">`, which is the
+document-level setting rather than a launch flag: the choice belongs to the
+artwork on the page, not to whoever started the process. That matters here
+because this demo is recorded — under a recording pty, capability detection
+answers for the pty rather than for a real terminal, so a page that left the
+decision to detection would record as something other than what it is. The
+counterpart is `three-ways.svg`, decoded through `imagefmt/svg` and pushed
+over the control plane as an `image` value: the one kind with no markup
+literal, bindable through `<Image Src="{{...}}">` and not writable inline.
+`zoom.gooey` is the page that shows it large.
 
 - Run: `cd examples/dynamic-activities && go run .` — its own module,
   same dependency-quarantine reason as `mcpdemo` and `kanbandemo`, and
