@@ -230,9 +230,10 @@ ancestry* when it was written (`ba6a7ff`, `b5869ae` both precede `13ebe2b`),
 so for its entire life the file told every reader to wave through a `-race`
 failure in `handlers/temporal` and a SIGWINCH timing failure in the root
 module — the two places a concurrency regression is most likely to land. It
-also claimed CI runs `handlers/temporal` without `-race`, which was never
-true. A stale dismissal is worse than no list: it spends the attention that
-would have caught the bug (issue #207).
+also claimed CI runs `handlers/temporal` without `-race`; that had stopped
+being true in `b5869ae`, the very fix it was citing. A stale dismissal is
+worse than no list, because it spends the attention that would have caught
+the bug (issue #207).
 
 So the mechanism for any future entry has to be **derived or expiring, never
 hand-maintained**:
