@@ -54,6 +54,40 @@ type HasBackground interface {
 	BackgroundProperty() *prop.Property[render.Color]
 }
 
+// Frozen is implemented by a component whose subtree renders but does not
+// act. The picture is live; the behaviour is not.
+//
+// Descendants lay out, paint, and keep their own paint nodes — damage
+// granularity is untouched — and they are simply never the target of
+// anything. Keys, scoped KeyBindings, mnemonics, clicks, drags, the
+// wheel, hover watchers and focus all stop at the frozen component, and
+// nothing Startable below it is started.
+//
+// The motivating case is a UI builder's design surface: click a button
+// and it sits there like a picture. A read-only preview and a disabled
+// subtree are the same shape.
+//
+// Two things are deliberately NOT frozen, because freezing them would
+// freeze the picture rather than the behaviour. Validators are computeds
+// that evaluate during paint, and their evaluation is what puts a
+// validation marker on screen — so a validator with a side effect gets
+// that side effect anyway, and nothing here can prevent it. And a style
+// that reads HoverState still repaints, because hover is an ordinary
+// property; what is lost is only motion over time, which in this
+// framework needs a clock, and a clock is a Startable.
+//
+// The component itself is not frozen — its subtree is. A frozen host is
+// still focusable, still receives the events its subtree would have, and
+// its own attachments still run. That is what makes it the place a design
+// surface puts its own gestures.
+type Frozen interface{ Frozen() bool }
+
+// isFrozen reports whether w freezes its subtree.
+func isFrozen(w Component) bool {
+	f, ok := w.(Frozen)
+	return ok && f.Frozen()
+}
+
 // Decorator is implemented by components whose Render owns no cells of
 // its own: it re-styles cells that earlier siblings painted (ItemsView's
 // row highlight). The Composer's z-ordered repaint pass does not force

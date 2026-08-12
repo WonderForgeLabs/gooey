@@ -309,7 +309,7 @@ func NewFocusManager(root Component) *FocusManager {
 		DoubleClickInterval: DefaultDoubleClickInterval,
 		Now:                 time.Now,
 	}
-	m.walk(root, nil)
+	m.walk(root, nil, false)
 	for _, w := range m.order {
 		if t, ok := w.(FocusTarget); ok {
 			t.SetFocused(false) // components outlive tree rebuilds
@@ -348,7 +348,7 @@ func (m *FocusManager) Resync() {
 	m.bindings = map[Component][]*KeyBinding{}
 	m.watchers = m.watchers[:0]
 	m.mnemonics = m.mnemonics[:0]
-	m.walk(m.root, nil)
+	m.walk(m.root, nil, false)
 	for _, hw := range m.watchers {
 		hw.over = wasOver[hw.w]
 	}
@@ -385,21 +385,34 @@ func (m *FocusManager) Resync() {
 	}
 }
 
-func (m *FocusManager) walk(w, parent Component) {
+// walk builds the input tree. frozen is true inside a Frozen subtree, and
+// what it turns off is exactly the registrations that make a component
+// TARGETABLE — focus stops, scoped KeyBindings, mnemonics, hover
+// watchers. Structure is still recorded: m.parent feeds capture and hover
+// liveness, depth/ancestor, and the retarget below, and FocusHost wiring
+// is a seam a component needs whether or not anything can reach it.
+//
+// The frozen component itself is not frozen; its subtree is. So w's own
+// registrations use the INCOMING flag, and children get frozen || w.
+func (m *FocusManager) walk(w, parent Component, frozen bool) {
 	m.parent[w] = parent
-	if f, ok := w.(Focusable); ok && f.AcceptsFocus() {
+	if f, ok := w.(Focusable); ok && f.AcceptsFocus() && !frozen {
 		m.order = append(m.order, w)
 	}
 	if h, ok := w.(FocusHost); ok {
 		h.SetFocusManager(m)
 	}
-	if _, ok := w.(MnemonicHandler); ok {
+	if _, ok := w.(MnemonicHandler); ok && !frozen {
 		m.mnemonics = append(m.mnemonics, w)
 	}
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
 			m.parent[at] = w
-			if kb, ok := at.(*KeyBinding); ok {
+			if kb, ok := at.(*KeyBinding); ok && !frozen {
+				// A scoped KeyBinding is a SECOND route to a component,
+				// independent of HandleKey: Dispatch interleaves each
+				// level's bindings with that level's handler, so freezing
+				// one without the other leaves half the door open.
 				m.bindings[w] = append(m.bindings[w], kb)
 			}
 			// Attachments get the same seams components do: an
@@ -413,16 +426,34 @@ func (m *FocusManager) walk(w, parent Component) {
 			if fh, ok := at.(FocusHost); ok {
 				fh.SetFocusManager(m)
 			}
-			if hw, ok := at.(HoverWatcher); ok {
+			if hw, ok := at.(HoverWatcher); ok && !frozen {
 				m.watchers = append(m.watchers, &hoverWatch{host: w, w: hw})
 			}
 		}
 	}
 	if c, ok := w.(Container); ok {
+		kidsFrozen := frozen || isFrozen(w)
 		for _, ch := range c.ChildComponents() {
-			m.walk(ch, w)
+			m.walk(ch, w, kidsFrozen)
 		}
 	}
+}
+
+// frozenHostFor is the component that owns events aimed at w: the
+// OUTERMOST Frozen ancestor at or above it, or w itself when there is
+// none.
+//
+// Outermost rather than nearest, because a frozen host nested inside
+// another frozen subtree cannot act either — handing it the event would
+// be routing to something that is itself supposed to be a picture.
+func (m *FocusManager) frozenHostFor(w Component) Component {
+	target := w
+	for n := w; n != nil; n = m.parent[n] {
+		if isFrozen(n) && n != w {
+			target = n
+		}
+	}
+	return target
 }
 
 // depth is how many ancestors w has; ancestor walks that many links back
@@ -589,6 +620,9 @@ func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
 				return true
 			}
 		}
+		if attachedKey(n, ev) {
+			return true
+		}
 		if h, ok := n.(KeyHandler); ok && h.HandleKey(ev) {
 			return true
 		}
@@ -608,6 +642,43 @@ func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
 	}
 	if d, ok := arrowDir(ev); ok {
 		return m.FocusDir(d)
+	}
+	return false
+}
+
+// attachedKey offers ev to w's attachments that handle keys, and reports
+// that one consumed it. It is the seam a BEHAVIOUR attachment needs: a
+// KeyBinding maps one gesture to one command, but a type-ahead search
+// consumes a whole class of keys and keeps state between them, which no
+// number of bindings expresses.
+//
+// Two things about where it sits in Dispatch are load-bearing.
+//
+// It runs AFTER the level's KeyBindings, so a gesture the page declared
+// out loud still outranks a behaviour that would otherwise absorb it —
+// <KeyBinding Gesture="/"> on a list keeps meaning what it says.
+//
+// It runs BEFORE the host's own HandleKey, and that ordering is the
+// whole point: ItemsView already claims j and k for navigation
+// (components/itemsview.go), so an attachment offered keys after its
+// host could never see a letter the host wanted. Reversing these two
+// lines does not fail to compile and does not fail most tests — it
+// silently makes a type-ahead unable to search for anything starting
+// with j. TestAttachmentKeysPrecedeHost pins it.
+//
+// The attachment list is read from the host rather than collected in
+// walk: a cached copy would be a second statement of what Attachments()
+// already says, and the second copy is the one that goes stale across a
+// Resync.
+func attachedKey(w Component, ev input.KeyEvent) bool {
+	a, ok := w.(Attacher)
+	if !ok {
+		return false
+	}
+	for _, at := range a.Attachments() {
+		if h, ok := at.(KeyHandler); ok && h.HandleKey(ev) {
+			return true
+		}
 	}
 	return false
 }
