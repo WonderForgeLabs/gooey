@@ -56,8 +56,11 @@ Evolution rules:
   legal in protobuf and deliberately visible in review — that is the
   act of landing #101, and nothing can squat those numbers meanwhile.
   Earmarks that SHOULD eventually be used (future propKinds rows,
-  TypedValue 8–15) are comments, not reservations, since `reserved`
-  forbids use rather than deferring it.
+  TypedValue 9–15) are comments, not reservations, since `reserved`
+  forbids use rather than deferring it. This range shrinks as earmarks
+  are spent: 8 is `image_bytes`, and the number is written here rather
+  than left as "8–15" precisely because an earmark comment that still
+  offers a taken number is how two fields end up claiming one slot.
 - **A breaking redesign is `gooey.control.v2`**, a new package beside
   v1, both served during migration. Standard proto package versioning;
   no in-place breakage ever.
@@ -73,6 +76,7 @@ Evolution rules:
 | `duration` | `duration_value` | `google.protobuf.Duration` | well-known type; no dependency cost, buf ships it. |
 | `color` | `color_value` | `Color{set, red, green, blue}` | mirrors `render.Color` **including `Set`**: unset-use-terminal-default must stay distinguishable from black. |
 | `any` | `any_json` | `bytes` (UTF-8 JSON) | the escape hatch, exactly as in propKinds. JSON, not `google.protobuf.Any`: `Any` carries a type URL into a registry that reflection-free gooey neither has nor wants; JSON matches how `any` values already cross every other boundary (MCP results, served values). |
+| `image` | `image_bytes` | `bytes` (encoded image) | the one kind with NO propKinds row, so the lockstep rule above does not apply to it: a propKinds row parses a markup LITERAL and there is no way to write a picture inline. It is still bindable — `<Image Src="{{.Logo}}">` type-checks against `*prop.Property[image.Image]` — which makes bindability and literal-spellability the same axis for every other kind and different for this one. Carried encoded and decoded through the imaging registry at the adapter, so a bad picture is one clear error at the boundary rather than a blank image later. Empty bytes mean NO picture and round-trip as one; only non-empty bytes that fail to decode are an error. |
 
 What is deliberately NOT in TypedValue: `render.Style` and `[]float64`
 handles, which `list_values` reports today. They are not propKinds rows,
