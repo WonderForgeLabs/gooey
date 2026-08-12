@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -144,7 +145,12 @@ func valueFromProto(tv *controlv1.TypedValue) (control.Value, error) {
 	case *controlv1.TypedValue_AnyJson:
 		return control.JSONValue(k.AnyJson), nil
 	case *controlv1.TypedValue_ImageBytes:
-		img, err := imaging.Decode(bytes.NewReader(k.ImageBytes), "image_bytes")
+		img, err := imaging.DecodeLimited(bytes.NewReader(k.ImageBytes), "image_bytes", control.ImageLimits())
+		if lerr := (*imaging.LimitError)(nil); errors.As(err, &lerr) {
+			// A refusal for size is not a malformed-file answer, and
+			// saying so is what stops a caller retrying the same bomb.
+			return control.Value{}, status.Error(codes.InvalidArgument, lerr.Error())
+		}
 		if err != nil {
 			// Naming what the host can read matters more than the decode
 			// error: formats are registered by blank import, so "this

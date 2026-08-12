@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -221,7 +222,18 @@ func (s *Server) v1Tools() []*Tool {
 				"existing binding context, and its root must carry the same Name= as the element it " +
 				"replaces, so the address survives iteration. Layout attributes the fragment does not " +
 				"restate (Grid.Row, Width, Margin, ...) are preserved from the old element. Atomic: any " +
-				"failure leaves the running tree, the name table and focus exactly as they were.",
+				"failure leaves the running tree, the name table and focus exactly as they were. " +
+				"ORDERING CAVEAT: MCP tool calls are NOT ordered against each other — each runs on its " +
+				"own handler goroutine and reaches the app in whatever order it arrives, so " +
+				"set_value followed by a patch_markup that reads that value can apply in either " +
+				"order. Serialize the pair yourself (await each call's result before sending the " +
+				"next), or drive the gRPC Attach stream, whose acts ARE ordered. " +
+				"FOCUS CAVEAT: replacing a subtree that contains the focused element re-resolves " +
+				"focus by NAME. If the focused name is absent from the fragment, focus moves to " +
+				"another element rather than clearing; if the name is present but is now a " +
+				"different KIND of component, focus stays and the user's next keystroke is " +
+				"delivered to the new component — Enter on what was a TextBox and is now a Button " +
+				"invokes that Button's command. Neither case is reported in the result.",
 			Schema: object(map[string]any{
 				"name":   prop_("string", "The Name= of the element to replace."),
 				"source": prop_("string", "Markup for the replacement subtree, rooted at <Gooey> with exactly one child carrying the same Name."),
@@ -894,11 +906,22 @@ func registrationInitial(name string, kind control.Kind, raw any) (control.Value
 		if !ok {
 			return control.Value{}, initialMismatch(name, "a base64 string of an encoded image", raw)
 		}
-		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+		s = strings.TrimSpace(s)
+		lim := control.ImageLimits()
+		// Checked on the ENCODED string, before DecodeString allocates
+		// its output: base64 costs 4 bytes per 3, so this is the last
+		// point at which an oversized payload is still free to refuse.
+		if lim.MaxBytes > 0 && base64.StdEncoding.DecodedLen(len(s)) > lim.MaxBytes {
+			return control.Value{}, fmt.Errorf("registration %q: the image is larger than the %d-byte limit", name, lim.MaxBytes)
+		}
+		data, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
 			return control.Value{}, fmt.Errorf("registration %q: the image is not valid base64: %v", name, err)
 		}
-		img, err := imaging.Decode(bytes.NewReader(data), name)
+		img, err := imaging.DecodeLimited(bytes.NewReader(data), name, lim)
+		if lerr := (*imaging.LimitError)(nil); errors.As(err, &lerr) {
+			return control.Value{}, fmt.Errorf("registration %q: %s", name, lerr.Detail)
+		}
 		if err != nil {
 			return control.Value{}, fmt.Errorf("registration %q: those bytes did not decode as an image (%v); this app reads %s",
 				name, err, strings.Join(imaging.Names(), ", "))
