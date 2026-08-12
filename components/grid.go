@@ -225,7 +225,7 @@ func distributeStars(defs []GridLen, base []int, extent int) []int {
 		}
 	}
 	if weight == 0 {
-		return out
+		return clampToExtent(out, extent)
 	}
 	remaining := max(0, extent-used)
 	given := 0
@@ -240,7 +240,55 @@ func distributeStars(defs []GridLen, base []int, extent int) []int {
 	if last >= 0 { // hand rounding leftovers to the last star track
 		out[last] += remaining - given
 	}
-	return out
+	return clampToExtent(out, extent)
+}
+
+// clampToExtent makes the track sizes sum to no more than extent.
+//
+// Starving the star tracks is not enough on its own. `remaining` floors
+// at zero, so once the FIXED and Auto tracks alone want more than the
+// grid has, the stars correctly collapse and the fixed tracks keep
+// their full demand anyway — and offsets() then walks the cumulative
+// total straight past the grid's own edge. Every track from that point
+// on is handed a rect outside the parent.
+//
+// That is not a cosmetic overrun. Nothing in the framework clips a
+// component to its arranged rect — render.Cells.SetString clips to the
+// BUFFER, not the parent — so a rect is a promise to paint there and
+// nowhere else. A child given an out-of-bounds rect keeps that promise
+// faithfully and paints over its neighbours, or off-screen entirely.
+// Text.Render is the clearest case: it clips diligently to its own
+// Bounds(), which by then is the wrong rectangle.
+//
+// Found in examples/wysiwyg, whose shell is Rows="1,1*,12,1" — fourteen
+// rows of fixed demand. Above ~15 rows of terminal it is invisible;
+// below, the 12-row markup pane runs past the bottom and the status bar
+// is arranged entirely outside the screen.
+//
+// Truncating the straddling track rather than scaling every track is
+// deliberate: a fixed track means "this many cells", and a grid that is
+// out of room should show the first tracks at their stated size and
+// lose the last, exactly as clipping text keeps the first lines. The
+// alternative — shrinking everything proportionally — silently violates
+// every fixed size on the page to honour a total that cannot be met.
+func clampToExtent(sizes []int, extent int) []int {
+	if extent < 0 {
+		extent = 0
+	}
+	run := 0
+	for i, s := range sizes {
+		if s < 0 {
+			sizes[i], s = 0, 0
+		}
+		switch {
+		case run >= extent:
+			sizes[i] = 0
+		case run+s > extent:
+			sizes[i] = extent - run
+		}
+		run += sizes[i]
+	}
+	return sizes
 }
 
 func offsets(sizes []int, start int) []int {
