@@ -3,19 +3,25 @@
 
        ┌──┬───────────┬──────────────────┬────────────┐
        │A │ SIDE BAR  │  EDITOR AREA     │ PROPERTIES │
-       │c │ (toolbox) │  (the designer)  │  (grid)    │
+       │c │           │  (the designer)  │            │
        │t ├───────────┴──────────────────┴────────────┤
-       │  │ PANEL (markup output)                     │
+       │  │ PANEL                                     │
        ├──┴───────────────────────────────────────────┤
        │ STATUS BAR                                   │
        └──────────────────────────────────────────────┘
 
-       Every region carries a Name, and that is the working method rather
-       than documentation: each one is a patch_markup address, so a region
-       can be replaced in the running editor without touching the others.
-       This file and the live app are the same thing seen twice — Page
-       watches it, so a save here rebuilds, and so does a save in any
-       pane's own .gooey.
+       THREE REGIONS ARE EMPTY, and that is the state of the work rather
+       than an omission. The side bar, the properties grid and the panel
+       held the old tree editor's panes; they are gone with it. What
+       replaces them is built from reusable components — the first of
+       which is the tab strip the activity rail turns out to be an
+       instance of.
+
+       Every region carries a Name, which is the working method rather
+       than documentation: each is a patch_markup address, so a region can
+       be replaced in the running editor without touching the others. This
+       file and the live app are the same thing seen twice — Page watches
+       it, so a save here rebuilds.
 
        The activity bar's track is 4 cells because the rail is drawn 40
        pixels wide and a cell is commonly 10 across. That is the one place
@@ -27,12 +33,9 @@
          sit anywhere needs its global gestures where every event passes. -->
     <KeyBinding Gesture="q" Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
-    <KeyBinding Gesture="c" Command="{{.ToCanvas}}"/>
-    <KeyBinding Gesture="v" Command="{{.ToVStack}}"/>
     <KeyBinding Gesture="x" Command="{{.Delete}}"/>
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
-    <KeyBinding Gesture="e" Command="{{.EditText}}"/>
 
     <!-- Drawn in PIXELS, not cells: an icon is a shape, and a terminal
          draws shapes badly out of box-drawing characters. Invisible to
@@ -41,21 +44,22 @@
     <ActivityBar Name="ActivityBar" Grid.Row="0" Grid.Col="0" Sel="{{.ActivitySel}}"
                  Height="8" VAlign="Start"/>
 
-    <Palette Name="SideBar" Grid.Row="0" Grid.Col="1"
-             Items="{{.PaletteItems}}" Sel="{{.PaletteSel}}" Activate="{{.Add}}"/>
+    <Border Name="SideBar" Grid.Row="0" Grid.Col="1" Title="EXPLORER">
+      <Text Style="dim"/>
+    </Border>
 
     <!-- The designer. It HOSTS rather than displays — the one region that
          owns a live component tree — which is why it is the piece the
          canvas grows out of rather than one pane among four. -->
     <Preview Name="EditorArea" Grid.Row="0" Grid.Col="2" Title="designer"/>
 
-    <Inspector Name="Properties" Grid.Row="0" Grid.Col="3"
-               Items="{{.AttrItems}}" Sel="{{.AttrSel}}" Activate="{{.BeginEdit}}"
-               EditName="{{.EditName}}" EditValue="{{.EditValue}}"
-               Commit="{{.CommitEdit}}" Doc="{{.EditDoc}}"/>
+    <Border Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES">
+      <Text Style="dim"/>
+    </Border>
 
-    <MarkupView Name="Panel" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4"
-                Tree="{{.TreeText}}" Source="{{.Source}}"/>
+    <Border Name="Panel" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Title="OUTPUT">
+      <Text Style="dim">{{.Source}}</Text>
+    </Border>
 
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"
                Left="{{.Status}}" Right="{{.Serving}}"/>

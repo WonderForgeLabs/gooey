@@ -92,9 +92,6 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/activitybar"
-	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/inspector"
-	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/markupview"
-	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/palette"
 	"github.com/WonderForgeLabs/gooey/examples/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
@@ -233,7 +230,7 @@ func main() {
 // markup. Both are paths in the editor's root FS.
 const PageFile = "wysiwyg.gooey"
 
-var paneFiles = []string{palette.File, inspector.File, markupview.File}
+var paneFiles []string
 
 // editorFS is the editor's root: the directory holding wysiwyg.gooey and
 // components/. `go run .` puts that at the working directory; an
@@ -542,9 +539,6 @@ func newEditor(fsys fs.FS) *editor {
 		Components: map[string]markup.Builder{
 			"Preview":     preview.Builder(ed.pv),
 			"ActivityBar": activitybar.Builder(ed.fsys, nil),
-			"Palette":     palette.Builder(ed.fsys),
-			"MarkupView":  markupview.Builder(ed.fsys),
-			"Inspector":   inspector.Builder(ed.fsys),
 		},
 	}
 

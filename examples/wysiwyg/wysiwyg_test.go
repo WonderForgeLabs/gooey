@@ -29,104 +29,48 @@ func buildPage(t *testing.T) (*editor, gooey.Component) {
 	return ed, root
 }
 
-// paneLayout mounts all four panes as siblings. The shipped page does not
-// do this today — it is empty, pending the canvas-first rebuild — so the
-// two structural tests below assert against this instead.
-//
-// BE CLEAR ABOUT WHAT THAT COSTS. While the page was a four-pane shell,
-// those tests read the shipped markup, so a future edit that nested an
-// input inside the preview would have failed them. Against a fixture they
-// can only prove the PANES permit a correct arrangement, not that the
-// shipped page uses one. The missing half comes back the moment the new
-// shell exists, by pointing them at buildPage again.
-//
-// What survives the change intact is the stronger guarantee the
-// extraction bought: <Preview> is a control whose markup is a fixed
-// Border wrapping its host, with no slot for children at all. An input
-// inside the rebuilt island is no longer a mistake a page can make.
-const paneLayout = `<Gooey><Grid Rows="1*,1*" Cols="1*,1*">
-  <Preview Grid.Row="0" Grid.Col="0" Name="Island"/>
-  <Palette Grid.Row="0" Grid.Col="1" Items="{{.PaletteItems}}" Sel="{{.PaletteSel}}" Activate="{{.Add}}"/>
-  <MarkupView Grid.Row="1" Grid.Col="0" Tree="{{.TreeText}}" Source="{{.Source}}"/>
-  <Inspector Grid.Row="1" Grid.Col="1" Items="{{.AttrItems}}" Sel="{{.AttrSel}}" Activate="{{.BeginEdit}}"
-             EditName="{{.EditName}}" EditValue="{{.EditValue}}" Commit="{{.CommitEdit}}" Doc="{{.EditDoc}}"/>
+// shellLayout is what the editor currently composes: the activity rail
+// and the designer. It is the shipped page's arrangement minus the empty
+// regions, so a test using it is testing the real thing rather than a
+// hypothetical one.
+const shellLayout = `<Gooey><Grid Rows="1*" Cols="4,1*">
+  <ActivityBar Grid.Row="0" Grid.Col="0" Name="Rail" Sel="{{.ActivitySel}}"/>
+  <Preview Grid.Row="0" Grid.Col="1" Name="Island" Title="designer"/>
 </Grid></Gooey>`
 
-func buildPanes(t *testing.T) (*editor, gooey.Component) {
-	t.Helper()
-	ed := newEditor(editorFS())
-	root, err := markup.Build([]byte(paneLayout), ed.ctx)
-	if err != nil {
-		t.Fatalf("the four panes do not compose: %v", err)
-	}
-	ed.rebuild()
-	return ed, root
-}
-
-// TestTheShippedPageLoads is what buildPage still pins on its own, and it
-// is not nothing: the page is what the app starts with, and a page that
-// does not load is a black screen at launch.
+// TestTheShippedPageLoads is not nothing: the page is what the app starts
+// with, and a page that does not load is a black screen at launch. With
+// three regions empty it is most of what the shipped markup can be held
+// to.
 func TestTheShippedPageLoads(t *testing.T) {
 	_, root := buildPage(t)
 	if root == nil {
 		t.Fatal("no root")
 	}
+	if findPreview(root) == nil {
+		t.Error("the shipped page does not mount the designer; the one region that hosts is the one the canvas grows from")
+	}
 }
 
-// TestEditorInputsAreSiblingsOfThePreview is the structural mitigation
-// for the caret hazard, and the reason it is worth having rather than a
-// convention: it is checkable at BUILD TIME.
+// THE CARET TESTS ARE GONE WITH THE PANE THEY GUARDED.
 //
-// Patching or rebuilding a subtree preserves focus and the bound text
-// but resets the caret to 0, because a caret is component-local state
-// and the component was replaced. The editor rebuilds its preview on
-// every keystroke, so an input inside that island would send the user's
-// next character to the middle of their own text — a data-shaped bug
-// that reads as "the app put my text in the wrong place" and trains
-// people to blame themselves.
+// TestEditorInputsAreSiblingsOfThePreview and its behavioural half asserted
+// that the editor's only TextBox — the inspector's — was never a
+// descendant of the rebuilt preview island, because rebuilding a subtree
+// resets a caret to 0 and the user's next character lands mid-word.
 //
-// Keeping inputs OUTSIDE the rebuilt island removes the question. This
-// test fails if a later edit moves one inside, so the guarantee cannot
-// rot silently.
-func TestEditorInputsAreSiblingsOfThePreview(t *testing.T) {
-	_, root := buildPanes(t)
-
-	island := findPreview(root)
-	if island == nil {
-		t.Fatal("no <Preview> island in the editor's page")
-	}
-	inside := countInputs(island)
-	if inside != 0 {
-		t.Errorf("%d input(s) live inside the rebuilt island; a rebuild resets their caret to 0. Move them out — they must be SIBLINGS of <Preview>.", inside)
-	}
-	if total := countInputs(root); total == 0 {
-		t.Fatal("the editor has no inputs at all, so this test is asserting nothing")
-	}
-}
-
-// TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput is the behavioural
-// half: rebuilding the island repeatedly must leave the inspector's
-// TextBox — and the text in it — exactly where it was.
-func TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput(t *testing.T) {
-	ed, root := buildPanes(t)
-	box := firstTextBox(root)
-	if box == nil {
-		t.Fatal("no TextBox in the editor")
-	}
-	ed.editValue.Set("hello")
-
-	for i := 0; i < 5; i++ {
-		ed.addSelected()
-		ed.retype("VStack")
-		ed.retype("Canvas")
-	}
-	if got := firstTextBox(root); got != box {
-		t.Error("the inspector's TextBox was replaced by a preview rebuild")
-	}
-	if got := ed.editValue.Get(); got != "hello" {
-		t.Errorf("the editor's own input lost its text across rebuilds: %q", got)
-	}
-}
+// The inspector is gone, so the editor has no input at all, and both
+// tests would now pass by asserting nothing: zero inputs inside the island
+// is trivially true when there are zero inputs anywhere. Keeping them
+// green would have been the exact failure this branch has catalogued nine
+// times. They are at b41aa2a and in the commit that removed the panes.
+//
+// THE HAZARD IS NOT GONE, and whatever input arrives next inherits it.
+// One half of the old mitigation survives structurally: <Preview> builds a
+// Border around its host with no slot for children, so no page can nest
+// anything inside the island. The half that is missing is the assertion
+// that the editor's inputs are SIBLINGS of it — restore it, pointed at
+// buildPage, on the first commit that adds a TextBox back.
 
 // TestPaletteComesFromTheCatalog — claim 1. The palette is not a
 // hand-listed menu; it is whatever this context can build.

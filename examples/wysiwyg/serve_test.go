@@ -83,10 +83,10 @@ func TestTheEmptyPageIsPatchable(t *testing.T) {
 // whole workflow in one test: patch a real layout into the empty page and
 // require it to take.
 //
-// It patches the FOUR PANES, not a lone <Text>, because that is the case
-// with something to get wrong: the panes are controls registered in the
-// editor's context, so a server handed the wrong context builds a lone
-// Text perfectly and fails on the first <Palette>.
+// It patches REGISTERED COMPONENTS, not a lone <Text>, because that is
+// the case with something to get wrong: <ActivityBar> and <Preview> exist
+// only in the editor's context, so a server handed the wrong context
+// builds a lone Text perfectly and fails on the first one of these.
 func TestTheEditorCanBeBuiltThroughItsOwnControlPlane(t *testing.T) {
 	_, client := servedEditor(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -95,9 +95,9 @@ func TestTheEditorCanBeBuiltThroughItsOwnControlPlane(t *testing.T) {
 	// PatchMarkup replaces the named element, so the fragment's own root
 	// has to carry that name — the layout is the same one the structural
 	// tests compose, addressed at <Page>.
-	frag := strings.Replace(paneLayout, `<Grid Rows=`, `<Grid Name="Page" Rows=`, 1)
+	frag := strings.Replace(shellLayout, `<Grid Rows=`, `<Grid Name="Page" Rows=`, 1)
 	if !strings.Contains(frag, `Name="Page"`) {
-		t.Fatal("the fragment was not addressed at <Page>; paneLayout's root changed shape")
+		t.Fatal("the fragment was not addressed at <Page>; shellLayout's root changed shape")
 	}
 
 	named, err := client.remote.r.Patch(ctx, "Page", frag)
