@@ -19,10 +19,14 @@ no `add`/`commit`/`push`, plain `mv`/`rm` only — which protects the
 git worktree with a disjoint write set, which protects the *working
 tree*: two agents editing one path in one checkout is a silent
 last-writer-wins fork, and no amount of index discipline prevents it.
-A collection step copies those edits back and stops on any collision
-rather than picking a winner. Sequential single-writer phases stay in
-the main checkout, where isolation would add merge-back cost for no
-concurrency benefit.
+A worktree is branched from a commit and these workflows never commit,
+so each updater seeds its tree with the uncommitted build first —
+otherwise an adopter cannot compile the component it is adopting. A
+collection step copies the edits back, stopping on any collision and
+refusing any file the shared checkout has moved on from since that
+worktree branched, rather than picking a winner. Sequential
+single-writer phases stay in the main checkout, where isolation would
+add merge-back cost for no concurrency benefit.
 
 **Requires** (the three interactive workflows): the `superpowers`
 plugin (`superpowers:brainstorming`), `frontend-design`

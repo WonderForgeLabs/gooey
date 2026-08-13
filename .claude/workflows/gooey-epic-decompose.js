@@ -33,7 +33,7 @@ if (!DOC) return { aborted: 'args.doc is required — the repo-relative doc to d
 
 const GIT_RULES = `
 GIT & FILE DISCIPLINE (hard rules):
-- NEVER run mutating git: no add/commit/push/stash/checkout/restore/reset, no \`git mv\`/\`git rm\` — plain \`mv\`/\`rm\` only. The coordinator that invoked this workflow owns the index. Read-only git (status/diff/log/ls-files) is fine. \`gh\` issue/project calls are allowed — they are this workflow's job — but only in the File/Xref phases, never during Plan.
+- NEVER run mutating git: no add/commit/push/stash/checkout/restore/reset, no \`git mv\`/\`git rm\` — plain \`mv\`/\`rm\` only. The coordinator that invoked this workflow owns the index. Read-only git (status/diff/log/ls-files) is fine. Read-only \`gh\` (issue view/list, project item queries) is fine in EVERY phase — Plan is expected to read the house model issues. MUTATING \`gh\` — issue create/edit, project item add/edit — is this workflow's job but only in the File/Xref phases, never during Plan.
 - Never \`git add -A\` — never \`git add\` at all.
 - Build nothing into the repo; anything you must compile goes to /tmp.
 - \`git status\` collapses untracked directories; report staging candidates as explicit file paths from \`git status --porcelain -uall\`, never directories.
