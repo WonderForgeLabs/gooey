@@ -103,6 +103,44 @@ func TestAttachWelcomeAndActResults(t *testing.T) {
 	}
 }
 
+// The stream carries both halves of the CRUD pair: a client that grew
+// the viewmodel over its session must be able to shrink it there too,
+// without dropping to the unary surface.
+func TestAttachRegisterAndUnregisterActs(t *testing.T) {
+	h := newHarness(t)
+	a := attach(t, h, &controlv1.Subscription{})
+	a.welcome()
+
+	a.act(1, &controlv1.Act{Act: &controlv1.Act_RegisterProperties{
+		RegisterProperties: &controlv1.RegisterPropertiesRequest{
+			Properties: []*controlv1.PropertyRegistration{{
+				Name: "Ephemeral", Kind: controlv1.ValueKind_VALUE_KIND_STRING,
+			}},
+		},
+	}})
+	if res := a.recv().GetResult(); res.Code != 0 || res.GetRegisterProperties() == nil {
+		t.Fatalf("register act = %v", res)
+	}
+
+	a.act(2, &controlv1.Act{Act: &controlv1.Act_UnregisterNames{
+		UnregisterNames: &controlv1.UnregisterNamesRequest{Names: []string{"Ephemeral"}},
+	}})
+	if res := a.recv().GetResult(); res.Code != 0 || res.GetUnregisterNames() == nil {
+		t.Fatalf("unregister act = %v", res)
+	}
+	if _, err := h.ctl.GetProperty(context.Background(), &controlv1.GetPropertyRequest{Name: "Ephemeral"}); err == nil {
+		t.Error("Ephemeral still resolves after the unregister act")
+	}
+
+	// A missing name answers in-stream and leaves the session up.
+	a.act(3, &controlv1.Act{Act: &controlv1.Act_UnregisterNames{
+		UnregisterNames: &controlv1.UnregisterNamesRequest{Names: []string{"Ephemeral"}},
+	}})
+	if res := a.recv().GetResult(); codes.Code(res.Code) != codes.NotFound {
+		t.Fatalf("second unregister = %v", res)
+	}
+}
+
 func TestAttachFrameDeltaPrecedesItsActResult(t *testing.T) {
 	h := newHarness(t)
 	a := attach(t, h, &controlv1.Subscription{Properties: true})

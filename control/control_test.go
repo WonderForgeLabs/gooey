@@ -145,6 +145,53 @@ func TestRegisterIsAtomicAndRefusesCollisions(t *testing.T) {
 	}
 }
 
+// Unregister is Register's inverse: the delete half of a CRUD surface
+// over the binding context. A client that can grow the viewmodel must be
+// able to shrink it again, or every generated name leaks for the life of
+// the process.
+func TestUnregisterRemovesNamesAtomically(t *testing.T) {
+	svc, bind := testService(map[string]any{"AppOwned": prop.NewSource("x")})
+
+	if err := svc.Register([]Registration{
+		{Name: "A", Kind: KindString},
+		{Name: "Scope.B", Kind: KindInt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A batch naming something absent leaves EVERYTHING behind — the
+	// same all-or-nothing contract Register has.
+	err := svc.Unregister([]string{"A", "NotThere"})
+	if err == nil || !strings.Contains(err.Error(), "NotThere") {
+		t.Fatalf("err = %v, want one naming the missing name", err)
+	}
+	if _, ok := bind.Values["A"]; !ok {
+		t.Error("a failed batch removed an earlier name anyway")
+	}
+
+	// The happy path removes both, including through a dotted scope.
+	if err := svc.Unregister([]string{"A", "Scope.B"}); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	if _, ok := bind.Values["A"]; ok {
+		t.Error("A survived Unregister")
+	}
+	if _, err := svc.Value("Scope.B"); err == nil {
+		t.Error("Scope.B still resolves after Unregister")
+	}
+
+	// Names the app itself installed are removable too — the context is
+	// the one source of truth, and it does not track provenance.
+	if err := svc.Unregister([]string{"AppOwned"}); err != nil {
+		t.Errorf("app-owned name: %v", err)
+	}
+
+	// An empty name is refused rather than silently matching nothing.
+	if err := svc.Unregister([]string{"  "}); err == nil {
+		t.Error("blank name was accepted")
+	}
+}
+
 func TestValueEqual(t *testing.T) {
 	cases := []struct {
 		a, b Value
@@ -178,5 +225,56 @@ func TestInvokeRejectsNonCommands(t *testing.T) {
 	}
 	if err := svc.Invoke("Lit"); err == nil || err.(*Error).Kind != KindInvalidArgument {
 		t.Errorf("invoking a literal = %v", err)
+	}
+}
+
+// TestUnregisterIsOrderIndependentWithinABatch — a batch is a SET, so the
+// same set must succeed however it is written down.
+//
+// It did not. Resolution and deletion shared one pass, so removing a scope
+// before a name inside it deleted the parent and then failed to resolve the
+// child, rolling the whole batch back with "no such name" for a name that
+// existed when the call was made. The reverse spelling of the identical
+// request succeeded. Both orders are asserted here because asserting only
+// the one that used to work proves nothing.
+func TestUnregisterIsOrderIndependentWithinABatch(t *testing.T) {
+	for _, order := range [][]string{
+		{"Scope", "Scope.B"}, // parent first — the spelling that used to fail
+		{"Scope.B", "Scope"}, // child first
+	} {
+		svc, bind := testService(map[string]any{})
+		if err := svc.Register([]Registration{{Name: "Scope.B", Kind: KindInt}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.Unregister(order); err != nil {
+			t.Fatalf("Unregister(%v): %v — a batch is a set; the same set must not "+
+				"depend on the order the caller happened to write it in", order, err)
+		}
+		if _, ok := bind.Values["Scope"]; ok {
+			t.Errorf("Unregister(%v): the scope survived", order)
+		}
+	}
+}
+
+// TestUnregisterLeavesNothingRemovedWhenItFails is the all-or-nothing half,
+// re-pinned against the two-pass implementation: the guarantee now holds
+// because nothing is deleted until every name has resolved, rather than
+// because deletions get undone. A regression to one-pass would delete the
+// first name before discovering the second is missing.
+func TestUnregisterLeavesNothingRemovedWhenItFails(t *testing.T) {
+	svc, bind := testService(map[string]any{})
+	if err := svc.Register([]Registration{
+		{Name: "First", Kind: KindString},
+		{Name: "Second", Kind: KindString},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Unregister([]string{"First", "Second", "Missing"}); err == nil {
+		t.Fatal("a batch naming an absent name must fail")
+	}
+	for _, n := range []string{"First", "Second"} {
+		if _, ok := bind.Values[n]; !ok {
+			t.Errorf("%s was removed by a batch that failed", n)
+		}
 	}
 }

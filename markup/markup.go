@@ -182,9 +182,58 @@ type Context struct {
 // resolve the attributes that build the context the content is built
 // against.
 type document struct {
-	ns      map[string]string
-	decls   declarations
-	content Element
+	ns       map[string]string
+	decls    declarations
+	content  Element
+	settings PageSettings
+}
+
+// PageSettings are the declarations that belong to the DOCUMENT rather
+// than to any element in it — attributes on <Gooey> itself. They are
+// separated from everything else in this package because the host needs
+// them BEFORE it builds a tree: an App is constructed with its options
+// and only then asked for content, so a knob that changes construction
+// cannot be discovered from the built component.
+//
+// Read them with ReadPageSettings, which parses without building.
+type PageSettings struct {
+	// Graphics forces the image protocol: kitty, sixel, iterm2 or
+	// halfblock. Empty — the default — lets the terminal's capabilities
+	// decide, which is right for an app that ships to unknown terminals.
+	//
+	// It lives in the document because it is a property of the ARTWORK a
+	// page carries, not of the machine it runs on: a page built around a
+	// detailed SVG wants real pixels wherever it runs, and detection
+	// answers for whoever launched the process — which is the wrong
+	// terminal whenever the app was started from a script, a recording
+	// pty, or a supervisor.
+	Graphics string
+}
+
+// gooeyAttrs are the attributes <Gooey> itself accepts. Anything else on
+// the root is a load error rather than a silent no-op, for the same
+// reason it is on every other element: an attribute that does nothing
+// looks exactly like one that works.
+var gooeyAttrs = map[string]bool{"Graphics": true}
+
+// graphicsModes is the closed set Graphics accepts. Keep it in step with
+// the encoders a host can install; an unknown value fails at load rather
+// than falling back, because falling back silently is how a page ends up
+// rendering as blocks with no explanation.
+var graphicsModes = map[string]bool{
+	"kitty": true, "sixel": true, "iterm2": true, "halfblock": true,
+}
+
+// ReadPageSettings parses a document far enough to read its <Gooey>
+// attributes and no further. It builds nothing, binds nothing, and needs
+// no Context — so a host can consult it while assembling the options it
+// will construct the App with.
+func ReadPageSettings(fsys fs.FS, name string) (PageSettings, error) {
+	doc, err := loadDocument(fsys, name)
+	if err != nil {
+		return PageSettings{}, err
+	}
+	return doc.settings, nil
 }
 
 func parseDocument(src []byte) (*document, error) {
@@ -195,6 +244,10 @@ func parseDocument(src []byte) (*document, error) {
 	if root.Name != "Gooey" {
 		return nil, fmt.Errorf("markup: root element must be <Gooey>, got <%s>", root.Name)
 	}
+	settings, err := readGooeyAttrs(root.Attrs)
+	if err != nil {
+		return nil, err
+	}
 	decls, kids, err := splitDeclarations(root)
 	if err != nil {
 		return nil, err
@@ -202,7 +255,36 @@ func parseDocument(src []byte) (*document, error) {
 	if len(kids) != 1 {
 		return nil, fmt.Errorf("markup: <Gooey> must have exactly one child")
 	}
-	return &document{ns: ns, decls: decls, content: kids[0]}, nil
+	return &document{ns: ns, decls: decls, content: kids[0], settings: settings}, nil
+}
+
+// readGooeyAttrs validates the root's own attributes. xmlns declarations
+// are consumed by the parser before this sees them, so anything left is
+// either a document setting or a mistake.
+func readGooeyAttrs(attrs map[string]string) (PageSettings, error) {
+	var s PageSettings
+	for k, v := range attrs {
+		if !gooeyAttrs[k] {
+			return s, fmt.Errorf("markup: <Gooey> has no attribute %q; it takes %s", k, quotedKeys(gooeyAttrs))
+		}
+		switch k {
+		case "Graphics":
+			if !graphicsModes[v] {
+				return s, fmt.Errorf("markup: <Gooey Graphics=%q>: unknown mode; want %s", v, quotedKeys(graphicsModes))
+			}
+			s.Graphics = v
+		}
+	}
+	return s, nil
+}
+
+func quotedKeys(m map[string]bool) string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, strconv.Quote(k))
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 // Variant is the per-protocol suffix a document may specialize on:

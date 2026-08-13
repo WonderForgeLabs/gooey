@@ -86,6 +86,23 @@ export interface TypedValue {
          */
         anyJson: Uint8Array;
     } | {
+        oneofKind: "imageBytes";
+        /**
+         * An ENCODED image: the file's own bytes (PNG, JPEG, GIF, BMP, ICO
+         * in core; SVG and others from whatever format modules the host
+         * blank-imported). Deliberately not raw pixels — the host already
+         * owns a format registry, and a client that had to say width,
+         * height and stride would be reimplementing decoders to talk to a
+         * decoder.
+         *
+         * A reader decodes through that registry, so an unknown format is a
+         * clean INVALID_ARGUMENT naming what the host can read rather than
+         * a silently blank picture.
+         *
+         * @generated from protobuf field: bytes image_bytes = 8
+         */
+        imageBytes: Uint8Array;
+    } | {
         oneofKind: undefined;
     };
 }
@@ -603,12 +620,32 @@ export enum ValueKind {
      * in propKinds. On the wire an `any` value is UTF-8 JSON bytes
      * (TypedValue.any_json).
      *
-     * 8–15 are earmarked (not reserved) for future propKinds rows, so
-     * ValueKind and the TypedValue oneof can grow in lockstep.
-     *
      * @generated from protobuf enum value: VALUE_KIND_ANY = 7;
      */
-    ANY = 7
+    ANY = 7,
+    /**
+     * An image, carried as ENCODED BYTES (TypedValue.image_bytes) and
+     * decoded through the host's imaging registry.
+     *
+     * This is the one kind with no propKinds row, and deliberately: a
+     * propKinds row is a parser for a markup LITERAL, and there is no way
+     * to write a picture inline. Markup can still BIND one —
+     * <Image Src="{{.Logo}}"> type-checks against
+     * *prop.Property[image.Image] — so the ability to bind and the ability
+     * to spell a literal are genuinely different axes here, and only for
+     * this kind.
+     *
+     * It exists because otherwise no client can put a picture on a page at
+     * all: markup swapped over the control plane is built from bytes and
+     * has no file system, so <Image Src="logo.png"> cannot resolve, and
+     * before this there was no property type to bind Src to instead.
+     *
+     * 9–15 are earmarked (not reserved) for future propKinds rows, so
+     * ValueKind and the TypedValue oneof can grow in lockstep.
+     *
+     * @generated from protobuf enum value: VALUE_KIND_IMAGE = 8;
+     */
+    IMAGE = 8
 }
 /**
  * EntryKind classifies one name in the binding context, matching the
@@ -760,7 +797,8 @@ class TypedValue$Type extends MessageType<TypedValue> {
             { no: 4, name: "float_value", kind: "scalar", oneof: "kind", T: 1 /*ScalarType.DOUBLE*/ },
             { no: 5, name: "duration_value", kind: "message", oneof: "kind", T: () => Duration },
             { no: 6, name: "color_value", kind: "message", oneof: "kind", T: () => Color },
-            { no: 7, name: "any_json", kind: "scalar", oneof: "kind", T: 12 /*ScalarType.BYTES*/ }
+            { no: 7, name: "any_json", kind: "scalar", oneof: "kind", T: 12 /*ScalarType.BYTES*/ },
+            { no: 8, name: "image_bytes", kind: "scalar", oneof: "kind", T: 12 /*ScalarType.BYTES*/ }
         ]);
     }
     create(value?: PartialMessage<TypedValue>): TypedValue {
@@ -817,6 +855,12 @@ class TypedValue$Type extends MessageType<TypedValue> {
                         anyJson: reader.bytes()
                     };
                     break;
+                case /* bytes image_bytes */ 8:
+                    message.kind = {
+                        oneofKind: "imageBytes",
+                        imageBytes: reader.bytes()
+                    };
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -850,6 +894,9 @@ class TypedValue$Type extends MessageType<TypedValue> {
         /* bytes any_json = 7; */
         if (message.kind.oneofKind === "anyJson")
             writer.tag(7, WireType.LengthDelimited).bytes(message.kind.anyJson);
+        /* bytes image_bytes = 8; */
+        if (message.kind.oneofKind === "imageBytes")
+            writer.tag(8, WireType.LengthDelimited).bytes(message.kind.imageBytes);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

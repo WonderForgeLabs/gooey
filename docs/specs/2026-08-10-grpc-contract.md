@@ -56,8 +56,11 @@ Evolution rules:
   legal in protobuf and deliberately visible in review — that is the
   act of landing #101, and nothing can squat those numbers meanwhile.
   Earmarks that SHOULD eventually be used (future propKinds rows,
-  TypedValue 8–15) are comments, not reservations, since `reserved`
-  forbids use rather than deferring it.
+  TypedValue 9–15) are comments, not reservations, since `reserved`
+  forbids use rather than deferring it. This range shrinks as earmarks
+  are spent: 8 is `image_bytes`, and the number is written here rather
+  than left as "8–15" precisely because an earmark comment that still
+  offers a taken number is how two fields end up claiming one slot.
 - **A breaking redesign is `gooey.control.v2`**, a new package beside
   v1, both served during migration. Standard proto package versioning;
   no in-place breakage ever.
@@ -73,6 +76,7 @@ Evolution rules:
 | `duration` | `duration_value` | `google.protobuf.Duration` | well-known type; no dependency cost, buf ships it. |
 | `color` | `color_value` | `Color{set, red, green, blue}` | mirrors `render.Color` **including `Set`**: unset-use-terminal-default must stay distinguishable from black. |
 | `any` | `any_json` | `bytes` (UTF-8 JSON) | the escape hatch, exactly as in propKinds. JSON, not `google.protobuf.Any`: `Any` carries a type URL into a registry that reflection-free gooey neither has nor wants; JSON matches how `any` values already cross every other boundary (MCP results, served values). |
+| `image` | `image_bytes` | `bytes` (encoded image) | the one kind with NO propKinds row, so the lockstep rule above does not apply to it: a propKinds row parses a markup LITERAL and there is no way to write a picture inline. It is still bindable — `<Image Src="{{.Logo}}">` type-checks against `*prop.Property[image.Image]` — which makes bindability and literal-spellability the same axis for every other kind and different for this one. Carried encoded and decoded through the imaging registry at the adapter, so a bad picture is one clear error at the boundary rather than a blank image later. Empty bytes mean NO picture and round-trip as one; only non-empty bytes that fail to decode are an error. |
 
 What is deliberately NOT in TypedValue: `render.Style` and `[]float64`
 handles, which `list_values` reports today. They are not propKinds rows,
@@ -113,6 +117,7 @@ gesture, `FAILED_PRECONDITION` no context or composition,
 | `SetFocus(name)` | focus to a named focus stop |
 | `SwapMarkup(source, register[])` | page replacement over the surviving viewmodel, optionally growing it first (#89); atomic on failure |
 | `RegisterProperties(registrations)` | grow the viewmodel without swapping (#89); existing name = error, one source of truth |
+| `UnregisterNames(names)` | shrink it again — Register's inverse; missing name = `NOT_FOUND` and the batch is refused; removal does not disturb the RUNNING tree (a bound component holds its handle), it takes the name out of scope for markup built afterwards |
 | `GetDeclaredSchema(source?)` | an x:Property block as `ControlSchema` (#62); empty source = the running page's document |
 | `PatchMarkup(name, source)` | one named element's subtree replaced in place (#117); fragment root keeps the Name, unstated layout attrs preserved, atomic on failure |
 | `ListStyles()` | the markup context's style table — the names `Style="..."` can resolve (#117) |
@@ -125,7 +130,9 @@ client message is `Subscription` (opt-in channels: properties with
 optional name filter, frames, input echo, lifecycle); every later one
 is an `Act` — a client-numbered envelope whose oneof reuses the
 **unary request messages verbatim** (SetProperty, InvokeCommand,
-SendKeys, SendPointer, SetFocus, SwapMarkup, RegisterProperties). Acts
+SendKeys, SendPointer, SetFocus, SwapMarkup, RegisterProperties,
+UnregisterNames — the CRUD pair travels together, so a client that grew
+the viewmodel over its session can shrink it there too). Acts
 apply in stream order on the UI goroutine — the remote mirror of the
 one ordered input stream — and each is answered by one `ActResult`
 (same id, status code + the unary response message), in-stream so a
@@ -172,6 +179,7 @@ Every v1 MCP tool, argument-for-argument:
 | `focus` | `name` | `ControlService.SetFocus` | renamed to avoid colliding with the noun |
 | `swap_markup` | `source`, `register[]` | `ControlService.SwapMarkup` | `register[]` (optional, #89) grows the viewmodel before the build and rolls back with a failed one; Named-table restore on failure is contract behavior |
 | `register_properties` | `properties[]` | `ControlService.RegisterProperties` | grow the viewmodel without swapping (#89); existing name = error, batches all-or-nothing, commands excluded |
+| `unregister_properties` | `names[]` | `ControlService.UnregisterNames` | the inverse; unknown name = error, batches all-or-nothing; a name a generation loop invented need not leak for the life of the process |
 | `patch_markup` | `name`, `source` | `ControlService.PatchMarkup` | fragment root must carry the same Name (the address survives iteration); layout attrs not restated are preserved from the old element |
 | `list_styles` | — | `ControlService.ListStyles` | `styles` → `StyleInfo[]`; only set attributes are meaningful (colors carry `Set`) |
 | `validate_markup` | `source` | `ControlService.ValidateMarkup` | invalid markup is `valid=false` + the typed error IN the response — the one RPC where a bad document is not `INVALID_ARGUMENT`, because validity is the answer |
@@ -213,6 +221,29 @@ Carried over from the MCP server, unchanged in spirit:
 - **The Dispatcher is still the only door.** Same confinement rule,
   same settle barrier, same panic-recovery-to-status-error; a client
   must not be able to kill the app.
+
+### What a `context.Context` does and does not carry
+
+Recorded because it is easy to assume more: gRPC-Go propagates a
+caller's **deadline** (as the `grpc-timeout` header), **cancellation**,
+and whatever is put in **explicit metadata**. It does NOT propagate
+`context.WithValue` values — those are in-process only and have no wire
+representation. Per-session identity or configuration therefore travels
+as metadata (`metadata.AppendToOutgoingContext` /
+`metadata.FromIncomingContext`), never as a context value, and nothing
+in this contract should be read as implying otherwise.
+
+Where that lands in this server today: the unary handlers take the
+inbound `context.Context` and deliberately **ignore** it — the wait is
+bounded by `Options.Timeout` on the bridge, not by the caller's
+deadline, so a client cannot shorten (or lengthen) how long the UI
+goroutine is waited on. `Attach` is the exception that does honor
+cancellation: its loop selects on `stream.Context().Done()`, so a
+client hanging up — or a companion process whose context is cancelled
+at teardown — ends the session. That asymmetry is a deliberate
+consequence of the settle barrier, not an oversight: a half-applied act
+has no meaning, so an act that has reached the UI goroutine runs to the
+next composed frame regardless of what the caller does.
 
 ## Module layout plan (#110 / #111)
 

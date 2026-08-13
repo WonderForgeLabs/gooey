@@ -41,6 +41,24 @@ Both rules are enforced at build time. The default `xmlns` attribute is decorati
 
 The "exactly one child" rule counts *visual* children. `<x:Property>` declarations are also direct children of the root, and are not content.
 
+### `<Gooey>` attributes
+
+`<Gooey>` accepts one attribute of its own, and anything else on the root is a **load error** rather than a silent no-op — the same rule every other element follows.
+
+| attribute | values | meaning |
+|---|---|---|
+| `Graphics` | `kitty`, `sixel`, `iterm2`, `halfblock` | Force the pixel protocol. Omit it — the default — to let the terminal's capabilities decide. |
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026" Graphics="sixel">
+```
+
+An unrecognised value fails at load rather than falling back, because falling back quietly is how a page ends up rendering as coloured blocks with no explanation of why.
+
+The setting lives in the **document** because it is a property of the artwork the page carries, not of the machine it runs on. A page built around a detailed SVG wants real pixels wherever it goes, while capability detection answers for whoever launched the process — which is the wrong terminal whenever the app was started from a script, a recording pty, or a supervisor.
+
+Hosts read it with `markup.ReadPageSettings`, which parses the root and no further: it builds nothing and binds nothing, so the answer is available before there is a component tree to ask.
+
 ## Built-in elements
 
 ### Border

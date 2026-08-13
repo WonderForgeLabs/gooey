@@ -113,7 +113,7 @@ Reusable capability ships from this repo in three shapes, per the
 **handler packs** (`handlers/<name>` — gooey-coupled `HandlerProvider`s
 behind an xmlns URI: `net`, `fs`, `temporal`, `exec`), **activity packs**
 (`packs/<runtime>-<domain>` — gooey-free standalone modules anyone in
-that runtime's ecosystem can import: the `packs/temporal-*` family), and
+that runtime's ecosystem can import: `packs/temporal-visibility`), and
 plain **component/format libraries** (root packages). The module
 boundary follows dependency hygiene: a zero-third-party-dep handler pack
 lives in the root module, any third-party dependency forces a nested
@@ -141,7 +141,20 @@ state, and the terminal contributes only the capability grant that lets
 served markup signal that one workflow. `examples/kanbandemo` is driven
 from the outside instead: `examples/temporal-worker`, a Python Temporal
 worker, has Claude generate a page and pushes it into the running board
-through the MCP `swap_markup` tool. The sidecars these arrangements need
+through the MCP `swap_markup` tool. `examples/dynamic-activities` closes
+the circle: its companion is a Python worker that is *itself* an MCP
+server offering CRUD over Temporal activities, so a tool call turns a
+blob of Python source into a live activity, registers a result property
+for it as an act on a held-open `SessionService.Attach` stream, and
+patches a button that runs it onto the page — the same stream keeps a
+live mirror of the app's properties, so the worker reconciles against
+what a user did at the keyboard instead of overwriting it, and hears
+`Swapped`/`Closing` lifecycle events. Meanwhile the app's star button,
+whose activity type
+name is a bound path rather than a literal, runs whichever activity was
+created last with no rebinding at all. (That demo executes arbitrary
+supplied code on purpose; its README says so at the top.) The sidecars
+these arrangements need
 — a worker, a dev server — ride `gooey.Companion` (goroutines) and
 `gooey.CompanionCmd` (child processes), started before the first frame
 and stopped with the app
@@ -194,7 +207,8 @@ live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
 | `cmd/colordemo` | [colordemo.gif](docs/media/demos/colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/mcpdemo` | [mcpdemo.gif](docs/media/demos/mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
 | `examples/kanbandemo` | — | A real Kanban board that is also an MCP server, with a live traffic log; `examples/temporal-worker` pushes generated markup into it over `swap_markup` |
-| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The whole component kit alive at once, organized under a `<Tabs>` into six pages — panels and inputs, meters and an ItemsView template, Canvas/ColorPicker/Image, Validate behaviors, and the overlay plane (MenuBar, ToastHost, AdornmentLayer, Popup) |
+| `examples/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
+| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The UI toolkit — every component the kit ships, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer` |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)

@@ -54,6 +54,22 @@ const (
 	// in propKinds. On the wire an `any` value is UTF-8 JSON bytes
 	// (TypedValue.any_json).
 	ValueKind_VALUE_KIND_ANY ValueKind = 7
+	// An image, carried as ENCODED BYTES (TypedValue.image_bytes) and
+	// decoded through the host's imaging registry.
+	//
+	// This is the one kind with no propKinds row, and deliberately: a
+	// propKinds row is a parser for a markup LITERAL, and there is no way
+	// to write a picture inline. Markup can still BIND one —
+	// <Image Src="{{.Logo}}"> type-checks against
+	// *prop.Property[image.Image] — so the ability to bind and the ability
+	// to spell a literal are genuinely different axes here, and only for
+	// this kind.
+	//
+	// It exists because otherwise no client can put a picture on a page at
+	// all: markup swapped over the control plane is built from bytes and
+	// has no file system, so <Image Src="logo.png"> cannot resolve, and
+	// before this there was no property type to bind Src to instead.
+	ValueKind_VALUE_KIND_IMAGE ValueKind = 8
 )
 
 // Enum value maps for ValueKind.
@@ -67,6 +83,7 @@ var (
 		5: "VALUE_KIND_DURATION",
 		6: "VALUE_KIND_COLOR",
 		7: "VALUE_KIND_ANY",
+		8: "VALUE_KIND_IMAGE",
 	}
 	ValueKind_value = map[string]int32{
 		"VALUE_KIND_UNSPECIFIED": 0,
@@ -77,6 +94,7 @@ var (
 		"VALUE_KIND_DURATION":    5,
 		"VALUE_KIND_COLOR":       6,
 		"VALUE_KIND_ANY":         7,
+		"VALUE_KIND_IMAGE":       8,
 	}
 )
 
@@ -407,6 +425,7 @@ type TypedValue struct {
 	//	*TypedValue_DurationValue
 	//	*TypedValue_ColorValue
 	//	*TypedValue_AnyJson
+	//	*TypedValue_ImageBytes
 	Kind          isTypedValue_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -512,6 +531,15 @@ func (x *TypedValue) GetAnyJson() []byte {
 	return nil
 }
 
+func (x *TypedValue) GetImageBytes() []byte {
+	if x != nil {
+		if x, ok := x.Kind.(*TypedValue_ImageBytes); ok {
+			return x.ImageBytes
+		}
+	}
+	return nil
+}
+
 type isTypedValue_Kind interface {
 	isTypedValue_Kind()
 }
@@ -547,6 +575,20 @@ type TypedValue_AnyJson struct {
 	AnyJson []byte `protobuf:"bytes,7,opt,name=any_json,json=anyJson,proto3,oneof"`
 }
 
+type TypedValue_ImageBytes struct {
+	// An ENCODED image: the file's own bytes (PNG, JPEG, GIF, BMP, ICO
+	// in core; SVG and others from whatever format modules the host
+	// blank-imported). Deliberately not raw pixels — the host already
+	// owns a format registry, and a client that had to say width,
+	// height and stride would be reimplementing decoders to talk to a
+	// decoder.
+	//
+	// A reader decodes through that registry, so an unknown format is a
+	// clean INVALID_ARGUMENT naming what the host can read rather than
+	// a silently blank picture.
+	ImageBytes []byte `protobuf:"bytes,8,opt,name=image_bytes,json=imageBytes,proto3,oneof"`
+}
+
 func (*TypedValue_StringValue) isTypedValue_Kind() {}
 
 func (*TypedValue_IntValue) isTypedValue_Kind() {}
@@ -560,6 +602,8 @@ func (*TypedValue_DurationValue) isTypedValue_Kind() {}
 func (*TypedValue_ColorValue) isTypedValue_Kind() {}
 
 func (*TypedValue_AnyJson) isTypedValue_Kind() {}
+
+func (*TypedValue_ImageBytes) isTypedValue_Kind() {}
 
 // Color mirrors render.Color, including its Set flag: a terminal color
 // is either an explicit RGB or "unset, use the terminal default", and
@@ -1774,7 +1818,7 @@ var File_gooey_control_v1_types_proto protoreflect.FileDescriptor
 
 const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x1cgooey/control/v1/types.proto\x12\x10gooey.control.v1\x1a\x1egoogle/protobuf/duration.proto\"\xb9\x02\n" +
+	"\x1cgooey/control/v1/types.proto\x12\x10gooey.control.v1\x1a\x1egoogle/protobuf/duration.proto\"\xdc\x02\n" +
 	"\n" +
 	"TypedValue\x12#\n" +
 	"\fstring_value\x18\x01 \x01(\tH\x00R\vstringValue\x12\x1d\n" +
@@ -1786,7 +1830,9 @@ const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"\x0eduration_value\x18\x05 \x01(\v2\x19.google.protobuf.DurationH\x00R\rdurationValue\x12:\n" +
 	"\vcolor_value\x18\x06 \x01(\v2\x17.gooey.control.v1.ColorH\x00R\n" +
 	"colorValue\x12\x1b\n" +
-	"\bany_json\x18\a \x01(\fH\x00R\aanyJsonB\x06\n" +
+	"\bany_json\x18\a \x01(\fH\x00R\aanyJson\x12!\n" +
+	"\vimage_bytes\x18\b \x01(\fH\x00R\n" +
+	"imageBytesB\x06\n" +
 	"\x04kind\"U\n" +
 	"\x05Color\x12\x10\n" +
 	"\x03set\x18\x01 \x01(\bR\x03set\x12\x10\n" +
@@ -1887,7 +1933,7 @@ const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"InputEvent\x12.\n" +
 	"\x03key\x18\x01 \x01(\v2\x1a.gooey.control.v1.KeyEventH\x00R\x03key\x12:\n" +
 	"\apointer\x18\x02 \x01(\v2\x1e.gooey.control.v1.PointerEventH\x00R\apointerB\a\n" +
-	"\x05event*\xc0\x01\n" +
+	"\x05event*\xd6\x01\n" +
 	"\tValueKind\x12\x1a\n" +
 	"\x16VALUE_KIND_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11VALUE_KIND_STRING\x10\x01\x12\x12\n" +
@@ -1896,7 +1942,8 @@ const file_gooey_control_v1_types_proto_rawDesc = "" +
 	"\x10VALUE_KIND_FLOAT\x10\x04\x12\x17\n" +
 	"\x13VALUE_KIND_DURATION\x10\x05\x12\x14\n" +
 	"\x10VALUE_KIND_COLOR\x10\x06\x12\x12\n" +
-	"\x0eVALUE_KIND_ANY\x10\a*\x86\x01\n" +
+	"\x0eVALUE_KIND_ANY\x10\a\x12\x14\n" +
+	"\x10VALUE_KIND_IMAGE\x10\b*\x86\x01\n" +
 	"\tEntryKind\x12\x1a\n" +
 	"\x16ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ENTRY_KIND_PROPERTY\x10\x01\x12\x16\n" +
@@ -2018,6 +2065,7 @@ func file_gooey_control_v1_types_proto_init() {
 		(*TypedValue_DurationValue)(nil),
 		(*TypedValue_ColorValue)(nil),
 		(*TypedValue_AnyJson)(nil),
+		(*TypedValue_ImageBytes)(nil),
 	}
 	file_gooey_control_v1_types_proto_msgTypes[15].OneofWrappers = []any{
 		(*InputEvent_Key)(nil),

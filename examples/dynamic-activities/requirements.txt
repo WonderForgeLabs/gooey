@@ -1,0 +1,21 @@
+# Standalone-activity execution (client.execute_activity) and dynamic activities
+# (@activity.defn(dynamic=True)) are both recent additions to the Python SDK.
+temporalio>=1.31
+
+# The MCP server. 2.x renamed FastMCP to MCPServer (mcp.server.mcpserver) and
+# moved the streamable-HTTP app onto it; worker.py is written against that.
+# Note for anyone adding claude-agent-sdk here: it pins mcp back to 1.29.x,
+# which has neither MCPServer nor the same result-error spelling.
+mcp>=2,<3
+uvicorn>=0.30
+
+# The generated control-plane client. It lives in THIS repo and is not
+# published, so it is named by PATH rather than by name.
+#
+# A bare `gooey-control` here would be a dependency-confusion hole: no
+# such project exists on PyPI today, so pip resolves nothing and the
+# install fails loudly — but the day someone registers that name, this
+# file would start silently installing a stranger's code with no version
+# pin and no warning. A relative path can only ever mean the client in
+# this checkout.
+-e ../../clients/python

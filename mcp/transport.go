@@ -41,7 +41,8 @@ const instructions = "This server drives a running gooey terminal app. " +
 	"tree_snapshot and screen_text show what is on screen; list_values shows the bindable " +
 	"state and list_styles the registered style names; invoke_command, set_value, " +
 	"send_keys, send_mouse and focus act on it; register_properties grows the bindable " +
-	"state with new typed source properties; swap_markup replaces the whole page, " +
+	"state with new typed source properties and unregister_properties removes names " +
+	"again; swap_markup replaces the whole page, " +
 	"optionally registering new properties first so the new page can bind them; " +
 	"patch_markup replaces one named element's subtree, and validate_markup checks markup " +
 	"against the live context without touching the app. Every call runs on the app's UI " +

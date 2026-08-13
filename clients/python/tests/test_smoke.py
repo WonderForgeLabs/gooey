@@ -56,9 +56,26 @@ class TypedValueRoundTrip(unittest.TestCase):
             subscribe=session_pb2.Subscription(frames=True)
         )
 
+    def test_registration_crud_pair_exists(self):
+        # Both halves, on both transports: a client that can grow the
+        # binding context must be able to shrink it again.
+        control_pb2.RegisterPropertiesRequest(
+            properties=[
+                types_pb2.PropertyRegistration(
+                    name="Fresh", kind=types_pb2.ValueKind.VALUE_KIND_STRING
+                )
+            ]
+        )
+        control_pb2.UnregisterNamesRequest(names=["Fresh"])
+        session_pb2.Act(
+            id=1, unregister_names=control_pb2.UnregisterNamesRequest(names=["Fresh"])
+        )
+
     def test_service_stubs_exist(self):
         self.assertTrue(hasattr(control_pb2_grpc, "ControlServiceStub"))
         self.assertTrue(hasattr(session_pb2_grpc, "SessionServiceStub"))
+        self.assertTrue(hasattr(control_pb2_grpc.ControlServiceStub, "__init__"))
+        self.assertIn("UnregisterNames", control_pb2_grpc.ControlServiceServicer.__dict__)
 
 
 if __name__ == "__main__":

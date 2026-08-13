@@ -139,6 +139,16 @@ class RegisterPropertiesResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
+class UnregisterNamesRequest(_message.Message):
+    __slots__ = ("names",)
+    NAMES_FIELD_NUMBER: _ClassVar[int]
+    names: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, names: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class UnregisterNamesResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
 class GetDeclaredSchemaRequest(_message.Message):
     __slots__ = ("source",)
     SOURCE_FIELD_NUMBER: _ClassVar[int]
