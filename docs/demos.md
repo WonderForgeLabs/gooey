@@ -1,6 +1,6 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo` and `wysiwyg` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
 `cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
@@ -303,6 +303,23 @@ under instrumentation, and `gooey.CompanionCmd` collapsing a
 hand-managed sidecar into the app's own lifetime. It is the app
 [Tutorial 8](learn/08-remote-control.md) drives.
 
+## wysiwyg
+
+GIF: docs-and-demos workflow.
+
+A terminal UI builder that edits gooey markup, laid out the way VS Code is: an activity rail, a side bar, the designer, a properties pane, a bottom panel and a status bar. It is the component catalog's first real consumer, and it exists to test the SHAPE of that surface against running code rather than to be a finished editor.
+
+Three claims from the catalog spec are exercised here rather than asserted. The palette is `(*markup.Context).Catalog()`, and an element whose attributes are *not* knowable renders differently from one that simply takes none — a registered component is kept in the list so that case is visible rather than theoretical. The inspector is `markup.AttrsFor(spec, parent)` and never `spec.Attrs`, which is a true statement about the element and a misleading answer to "what can I set here". And attached properties are scoped to the PARENT: retype the container between `<Canvas>` and `<VStack>` and `Canvas.Left` enters and leaves the selected child's attribute list, which is the rule a flat per-element list cannot express and the one whose absence would have the editor offering positioning that `applyLayout` silently discards.
+
+Every region in `wysiwyg.gooey` carries a `Name`, and that is the working method rather than documentation: each name is a `patch_markup` address, so a region can be replaced in the running editor without touching the others. The editor SERVES its own gRPC control plane and MCP endpoint as well as ATTACHING to another app's — opposite directions on one protocol — which is what lets the next iteration of its own UI be patched in while it runs.
+
+Two layout facts in the page are bug fixes with the failure written next to them. The properties pane is a `<Grid>` with declared tracks rather than a `<VStack>`, because `ItemsView` measures greedily: as a VStack the list took every row and the edit row underneath it was arranged at W:0 H:0 past the bottom of the panel — the keystrokes worked, the input was simply invisible. And the `TextBox` lives in the properties pane rather than in the designer, because the designer's subtree is thrown away and rebuilt on every edit and a caret is component-local state; being a *sibling* of the designer is what keeps it from losing the caret mid-word.
+
+- Run: `cd examples/wysiwyg && go run .` — it is a nested module, so the root `./...` does not build it; `-attach 127.0.0.1:7777 -island Body` drives another app's control plane instead of previewing locally, `-serve`/`-mcp` set this editor's own endpoints (empty disables), `-graphics sixel|kitty|iterm2|cells` forces a pixel protocol
+- Keys: `ctrl+n`/`ctrl+p` next/previous element, `x` delete, `q`/`ctrl+c` quit; the bindings live on the page ROOT because a `KeyBinding` only fires while the focused chain passes through its host
+
+Exercises the catalog as a public surface, `patch_markup` as an addressing scheme, and the panel chrome drawn as pixel line art sliced into a ring so the interior stays on the cell plane where a terminal draws text best — falling back to the same shape in box-drawing runes where there is no pixel protocol.
+
 ## colordemo
 
 ![colordemo](media/demos/colordemo.gif)
@@ -354,6 +371,23 @@ Tabs made this the demo that stresses *collapse*, and the reorganization found t
 The demo page carries two layout budgets that are also pinned, because both failures are invisible until they are on screen: the `ValidationMarker` gets an empty *fixed* row of its own on the forms tab (an `Auto` row with no children sizes to nothing, and the adornment plane paints above everything, so the marker simply erased `[ submit ]`), and the three `StatusBar` sections have to fit 96 columns — Left and Right size to their content and Center is centred in what is left, so a key-hint string that grows takes the clock's breathing room first and then collides with the status text.
 
 The GIF is recorded under a pty, which reports no graphics protocol, so the pixel button is showing its universal tier: the same three-row pill drawn in box-drawing runes. That is the honest result of recording, not a fallback the component reaches for by accident — the pixel tiers are verified separately, by driving the demo with `--mode` and checking the protocol bytes in the captured log.
+
+## typeaheaddemo
+
+GIF: docs-and-demos workflow.
+
+`<TypeAhead>` — Windows Explorer's type-ahead find — on a list whose rows are PICTURES, to find out what Explorer semantics feel like when a row's identity is art rather than a line of text. Type a letter and the selection jumps to the first record whose title begins with it, in the list's *current* sort order, wrapping at the end; repeat the letter to cycle through the records that start with it, and pause a second and the buffer is dropped. Nothing is ever filtered and no row is ever hidden, which is what makes "any movement resets the search" coherent.
+
+`TypeAhead` is a *behaviour attachment*, not a component, and that is the whole reason it can do this: attachments are offered keys before the host view sees them, so `j` and `k` reach the search even though `ItemsView` binds both as movement. The trade is stated rather than hidden — this list has no vim navigation, because the letters went to the search.
+
+Three things are hard to see on a list of text rows and obvious here. Image rows are TALL: a cover is four cells high, so a terminal shows six or seven of them, and a jump you cannot see the neighbours of is a teleport — the status line under the list is the only thing telling you where you landed. A jump that leaves the visible window re-realizes every row, so one keystroke re-transmits a screenful of pictures, and the footer reports both currencies of that, components repainted and bytes written. And `Key="Title"` is fixed at load time rather than bindable, so sorting by artist with `ctrl+s` still searches titles — which is why the status line names the column being searched.
+
+Two decisions in the page are measurements rather than taste. The item template mentions the reserved `_selected` value, which turns off `ItemsView`'s house highlight and draws a marker column instead: the house highlight re-styles the row's *cells* as Reverse, and a cover's cells are either empty (a graphics protocol paints over them, so the highlight is invisible) or the picture itself (halfblock, so the highlight photo-negatives the art). And the root `<Grid>` deliberately declares no `Background`: the selection marker flips `Visibility`, which makes the Composer restore everything under the marker's rectangle, and a restored ancestor that declares a background is `covered` — which forces its whole subtree to repaint above it. Adding `Background="#141420"` there takes a selection hop from 7 repainted components to 48, pinned by `TestABackgroundAncestorAmplifiesTheSelectionMarker` in `cmd/typeaheaddemo/background_amplification_test.go`.
+
+- Run: `go run ./cmd/typeaheaddemo`, or `--mode=kitty|sixel|iterm2|halfblock` to force a protocol, `--dump` for one frame to stdout, `--hold=3s` to exit unattended
+- Keys: type a letter to jump, `↑`/`↓` move and reset the buffer, `esc` drop the buffer, `ctrl+s` cycle the sort column, `ctrl+r` reverse the sort, `ctrl+q` quit
+
+Exercises the attachment key seam (attachments beat the host's own `HandleKey`, which is what no number of `KeyBinding`s could express), `ItemsView` row realization over pixel content, and the background/damage interaction above. It is also why every accelerator on the page is a *modified* key: `KeyBinding`s are offered a gesture before behaviour attachments are, so a binding on a bare letter would take that letter out of the searchable alphabet permanently, silently, and with no error anywhere.
 
 ## browser
 

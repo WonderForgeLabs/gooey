@@ -276,6 +276,138 @@ func TestHoverInsideAFrozenSubtreeDoesNotLightTheDescendant(t *testing.T) {
 	}
 }
 
+// mnemonicPage puts an accelerator-bearing Button inside the wrapper and
+// a TextBox OUTSIDE it, first, so the same component holds focus in both
+// arms and neither arm's result depends on where focus landed.
+const mnemonicPage = `<Gooey>
+  <VStack>
+    <TextBox Name="outside" Text="{{.Out}}"/>
+    %s<Button Name="btn" Content="_Go" Click="{{.Fire}}"/>%s
+  </VStack>
+</Gooey>`
+
+// TestAMnemonicInsideAFrozenSubtreeDoesNotFire is the row of the freeze
+// table that is BOTH reachable and was unpinned, and the distinction from
+// the KeyBinding row above is the whole point of writing it.
+//
+// A scoped KeyBinding only fires while the focused chain passes through
+// its host, so freezing focus out of the subtree already made it
+// unreachable — the skip at input.go:411 is defence in depth and says so.
+// A mnemonic is the opposite: Dispatch offers it to every MnemonicHandler
+// in m.mnemonics regardless of focus (input.go:637), because accelerators
+// are page-scoped by design. So alt+g on a page containing a design
+// surface would reach into the picture and run the Click of a Button the
+// user was only ever looking at, from anywhere on the page.
+//
+// Measured, not assumed: before this test, deleting `&& !frozen` from the
+// m.mnemonics registration left every test in the repository green.
+func TestAMnemonicInsideAFrozenSubtreeDoesNotFire(t *testing.T) {
+	run := func(frozen bool) int {
+		fired := 0
+		ctx := &Context{Values: map[string]any{
+			"Fire": gooey.Command(func() { fired++ }),
+			"Out":  prop.NewSource("out"),
+		}}
+		c := frozenPage(t, wrap(mnemonicPage, frozen), ctx)
+		// The accelerator has to be registered at all, or both arms report
+		// zero and the pair proves nothing about freezing.
+		btn, err := Find[*components.Button](ctx, "btn")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, isMnemonic := gooey.Component(btn).(gooey.MnemonicHandler); !isMnemonic {
+			t.Fatal("the Button is not a MnemonicHandler: nothing here could fire")
+		}
+		c.Handle(input.KeyOf(input.KeyEvent{
+			Key: input.KeyRune, Rune: 'g', Mods: input.ModAlt}))
+		return fired
+	}
+
+	if fired := run(true); fired != 0 {
+		t.Errorf("alt+g reached a Button inside a frozen subtree %d times, want 0: "+
+			"mnemonics are page-scoped, so freezing focus does not stop them", fired)
+	}
+	if fired := run(false); fired != 1 {
+		t.Errorf("the control fired %d times, want 1: the frozen case proved nothing", fired)
+	}
+}
+
+// hoverWatchPage attaches a HoverWatcher to a component inside the
+// wrapper. <Watch> is non-visual, so buildChildren files it as an
+// attachment exactly as it does a <Tooltip>.
+const hoverWatchPage = `<Gooey>
+  <VStack>
+    %s<Button Name="btn" Content="go" Click="{{.Fire}}">
+      <Watch/>
+    </Button>%s
+    <Text>tail</Text>
+  </VStack>
+</Gooey>`
+
+// TestAHoverWatcherInsideAFrozenSubtreeNeverEnters pins the user-visible
+// guarantee — no tooltip pops out of a picture — and its own reach was
+// measured rather than assumed, because the measurement contradicted the
+// obvious expectation.
+//
+// TWO mechanisms hold this door, and each is sufficient ALONE:
+//
+//  1. the walk declines to register the watcher (input.go:436), so
+//     updateWatchers returns on its len(m.watchers) == 0 fast path;
+//  2. DispatchMouse retargets the hit to the frozen host (mouse.go:176),
+//     so m.within(hw.host, hit) is false for any host inside the subtree.
+//
+// Verified by deleting each on its own and running this test: green both
+// times. Deleting BOTH fails it. So this test cannot pin either mechanism
+// — it pins the GUARANTEE, and it is the only thing in the repository
+// that would survive a refactor removing one of the two.
+//
+// That redundancy is the same shape the Frozen commit removed from
+// target/setHover, and the reason it is kept here rather than collapsed
+// is the KeyBinding precedent: an unreachable-but-correct skip stays, and
+// says out loud that it is defence in depth. The note now at input.go:436
+// is what was missing — without it the next reader deletes the skip, this
+// test stays green, and the freeze table silently loses a row.
+func TestAHoverWatcherInsideAFrozenSubtreeNeverEnters(t *testing.T) {
+	run := func(frozen bool) int {
+		ctx := &Context{Values: map[string]any{"Fire": gooey.Command(func() {})}}
+		c := frozenPage(t, wrap(hoverWatchPage, frozen), ctx)
+		btn, err := Find[*components.Button](ctx, "btn")
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := findWatcher(btn)
+		if w == nil {
+			t.Fatal("the <Watch> was never attached to the Button")
+		}
+		b := btn.Bounds()
+		if b.W == 0 || b.H == 0 {
+			t.Fatal("the Button was never arranged: the pointer cannot be over it")
+		}
+		c.HandleMouse(input.MouseEvent{Kind: input.MouseMove, X: b.X, Y: b.Y})
+		return w.entered
+	}
+
+	if n := run(true); n != 0 {
+		t.Errorf("a HoverWatcher inside a frozen subtree entered %d times, want 0", n)
+	}
+	if n := run(false); n != 1 {
+		t.Errorf("the control entered %d times, want 1: the frozen case proved nothing", n)
+	}
+}
+
+func findWatcher(w gooey.Component) *watcher {
+	a, ok := w.(gooey.Attacher)
+	if !ok {
+		return nil
+	}
+	for _, at := range a.Attachments() {
+		if p, ok := at.(*watcher); ok {
+			return p
+		}
+	}
+	return nil
+}
+
 // ---- what freezing must NOT change ----
 
 // damagePage: a Text inside the wrapper bound to its own property, and a

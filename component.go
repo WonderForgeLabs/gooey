@@ -80,6 +80,24 @@ type HasBackground interface {
 // still focusable, still receives the events its subtree would have, and
 // its own attachments still run. That is what makes it the place a design
 // surface puts its own gestures.
+//
+// FROZEN IS SAMPLED, NOT OBSERVED, and the signature hides that: it is a
+// method, so it looks like it may change its answer at any time, and
+// nothing re-reads it when it does. Every consumer asks once per
+// STRUCTURAL re-sync — FocusManager.walk rebuilds the focus order,
+// bindings, mnemonics and watchers from Resync, and Composer.collect
+// rebuilds the Startable set from walkNodes — and both run only at
+// construction or when a Dynamic marks the composition dirty
+// (composer.go:533). A plain Frame() does neither.
+//
+// So a host that flips its answer to toggle design mode keeps the old
+// routing until something else changes the tree's structure: the subtree
+// stays tabbable, its Startables stay running, and a captor or hover
+// already inside it stays there, because Resync tests liveness against
+// m.parent, which records frozen descendants deliberately. Return a
+// constant, or make the flip a structural change. There is no consumer of
+// a dynamic Frozen in this repository today, which is why this is a
+// documented constraint rather than a mechanism.
 type Frozen interface{ Frozen() bool }
 
 // isFrozen reports whether w freezes its subtree.

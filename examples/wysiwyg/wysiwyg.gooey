@@ -78,12 +78,8 @@
          Panel's chrome is pixel line art sliced into a ring, so the interior
          stays on the cell plane where text belongs; it falls back to the same
          shape in box-drawing runes where there is no pixel protocol. -->
-
-         Panel's chrome is pixel line art sliced into a ring, so the interior
-         stays on the cell plane where text belongs; it falls back to the same
-         shape in box-drawing runes where there is no pixel protocol. -->
     <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Style="dim">
-      <Tabs Name="SideBarViews" Selected="{{.ActivitySel}}">
+      <Tabs Selected="{{.ActivitySel}}">
 
       <!-- 0 — DESIGNER. The rail's first icon. There is nothing to put in a
            side bar for it: the designer IS the editor area, and duplicating

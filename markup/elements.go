@@ -349,10 +349,7 @@ var defVStack = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		var w gooey.Component = &components.HStack{Children: kids, Gap: gap, Background: background}
-		if e.Name == "VStack" {
-			w = &components.VStack{Children: kids, Gap: gap, Background: background}
-		}
+		var w gooey.Component = &components.VStack{Children: kids, Gap: gap, Background: background}
 		if err := attachAll(e, w, attach); err != nil {
 			return nil, err
 		}
@@ -380,9 +377,6 @@ var defHStack = &ElementDef{
 			return nil, err
 		}
 		var w gooey.Component = &components.HStack{Children: kids, Gap: gap, Background: background}
-		if e.Name == "VStack" {
-			w = &components.VStack{Children: kids, Gap: gap, Background: background}
-		}
 		if err := attachAll(e, w, attach); err != nil {
 			return nil, err
 		}

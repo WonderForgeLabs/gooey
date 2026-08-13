@@ -700,7 +700,9 @@ order with wrapping, skipping anything inside a `Collapsed` subtree.
 
 ### Routed dispatch
 
-`FocusManager.Dispatch` is WPF-style bubbling in thirty lines:
+`FocusManager.Dispatch` is WPF-style routing in three phases — tunnel
+down, bubble up, then the page-scoped accelerators on whatever the
+focused chain declined:
 
 ```go
 // tunnel: root -> focused, first consumer ends the dispatch
@@ -709,7 +711,8 @@ for d := m.depth(start); d >= 0; d-- {
         return true
     }
 }
-// then bubble: focused -> root, bindings before handler at each level
+// then bubble: focused -> root. Three things at each level, in this order:
+// the bindings declared there, then the attachments, then the component.
 for n := start; n != nil; n = m.parent[n] {
     for _, b := range m.bindings[n] {
         if b.Gesture == ev && CanExecute(b.Command) {
@@ -717,7 +720,16 @@ for n := start; n != nil; n = m.parent[n] {
             return true
         }
     }
+    if attachedKey(n, ev) {
+        return true
+    }
     if h, ok := n.(KeyHandler); ok && h.HandleKey(ev) {
+        return true
+    }
+}
+// then the page-scoped accelerators, on what the chain declined
+for _, w := range m.mnemonics {
+    if h, ok := w.(MnemonicHandler); ok && m.reachable(w) && h.HandleMnemonic(ev) {
         return true
     }
 }
@@ -733,9 +745,24 @@ tunnelling phase explicitly. `PreviewMouseHandler` is the same for
 pointer events, motion included.
 
 Then the event bubbles: it starts at the focused component and walks up the ancestor chain;
-at each level, `KeyBinding`s attached there match first, then the
-component's own `HandleKey`. The first `true` stops propagation. Tab,
-shift-tab, and the arrow keys navigate focus only in the *unconsumed
+at each level, `KeyBinding`s attached there match first, then the level's
+*key-handling attachments* (`attachedKey`), then the component's own
+`HandleKey`. The first `true` stops propagation.
+
+Both halves of that middle slot are load-bearing, and neither survives
+being swapped. Attachments run **after** the bindings, so a gesture the
+page declared out loud outranks a behaviour that would otherwise absorb
+it — a `<KeyBinding Gesture="/">` on a list keeps meaning what it says.
+They run **before** the host, because a host has usually claimed the
+letters already: `ItemsView` takes `j` and `k` for navigation, so an
+attachment offered keys after it could never search for a word beginning
+with either. Reversing the two lines compiles, and passes almost
+everything; `TestAttachmentKeysPrecedeHost` is what fails. This is the
+seam a *behaviour* needs and a binding cannot express — one gesture to
+one command versus a whole class of keys with state carried between them,
+which is how type-ahead search is an attachment rather than a component.
+
+Tab, shift-tab, and the arrow keys navigate focus only in the *unconsumed
 tail* of that walk — which means any of them is overridable by simply
 handling it, and is what lets a list pane keep its own arrow handling
 while buttons and checkboxes let arrows fall through to navigation.
