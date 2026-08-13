@@ -103,8 +103,10 @@ never imported by it. Writing your own component means embedding
 privileges you do not. Under both sit `prop` (the property graph),
 `input`, `render`, `graphics`, and `term`; beside them, `markup`,
 `format` (computed-property constructors for display strings — byte
-sizes, counts, durations, relative times), and the opt-in `handlers/*`
-and `mcp` modules.
+sizes, counts, durations, relative times), `settings` (one JSON document
+of dotted keys whose values are ordinary bindable properties, persisted
+through a host-supplied provider), and the opt-in `handlers/*` and `mcp`
+modules.
 
 ## Distribution: packs
 
@@ -196,6 +198,7 @@ live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
 | `examples/kanbandemo` | — | A real Kanban board that is also an MCP server, with a live traffic log; `examples/temporal-worker` pushes generated markup into it over `swap_markup` |
 | `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The whole component kit alive at once, organized under a `<Tabs>` into six pages — panels and inputs, meters and an ItemsView template, Canvas/ColorPicker/Image, Validate behaviors, and the overlay plane (MenuBar, ToastHost, AdornmentLayer, Popup) |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
+| `cmd/settingsdemo` | — | External state as properties: three settings bound straight into markup, persisted through a host-supplied provider, with the run's disk-write count on screen |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
 are runnable too, and `cmd/browser` lists both groups:
@@ -236,3 +239,4 @@ background work crosses in over a channel.
 - **The run loop is the framework's, and nothing extends it with another select case** — a dynamic select needs reflection, and it is not needed: every asynchronous source reaches the UI through the Dispatcher, which is the confinement rule anyway: [the runtime](docs/specs/2026-08-10-runtime-signals.md)
 - **No Screen teardown may leave a goroutine reading the terminal** — the ioctls go through `SyscallConn` so the tty stays pollable and Close really cancels a pending read, which is what makes handing the terminal to a child safe: [tty read lifecycle](docs/specs/2026-08-10-tty-read-lifecycle.md)
 - **The `fs.FS` seam is the deployment story** — `os.DirFS` in dev hot-reloads, `embed.FS` in release is a natural no-op, same code: [loading tiers](docs/architecture.md#three-loading-tiers-one-seam)
+- **A setting is an ordinary source property, and saving is dirty-tracked rather than write-through** — `prop.Set` does not compare values and a source property has no invalidate hook of its own, so the store watches each setting with a computed and compares the whole encoded document once per flush: [settings](docs/specs/2026-08-12-settings-store.md)

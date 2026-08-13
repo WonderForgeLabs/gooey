@@ -1,0 +1,24 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="settings → one json document" Style="panel">
+    <Grid Rows="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto">
+      <Text Grid.Row="0" Style="accent">toggle anything; it is written to the document and read back next launch</Text>
+      <Text Grid.Row="1" Style="dim">{{.SourceLine}}</Text>
+      <HStack Grid.Row="2" Gap="2">
+        <Button Content="cycle source" Click="{{.Cycle}}"/>
+        <Button Content="nudge (2 sets, 1 batch, 0 writes)" Click="{{.Nudge}}"/>
+        <Button Content="reset all" Click="{{.Reset}}"/>
+      </HStack>
+      <Checkbox Grid.Row="3" Style="accent" Checked="{{.KeepRecording}}" Label="keep recording on"/>
+      <Checkbox Grid.Row="4" Style="accent" Checked="{{.AutoRestart}}" Label="auto restart app (a persisted flag, not a supervisor)"/>
+      <Text Grid.Row="6" Style="dim">{{.Stats}}</Text>
+      <Text Grid.Row="7" Style="dim">tab + enter/space   s: cycle source   r: recording   a: auto restart   n: nudge   d: reset   q: quit</Text>
+      <KeyBinding Gesture="s" Command="{{.Cycle}}"/>
+      <KeyBinding Gesture="r" Command="{{.ToggleRecord}}"/>
+      <KeyBinding Gesture="a" Command="{{.ToggleRestart}}"/>
+      <KeyBinding Gesture="n" Command="{{.Nudge}}"/>
+      <KeyBinding Gesture="d" Command="{{.Reset}}"/>
+      <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+    </Grid>
+  </Border>
+</Gooey>
