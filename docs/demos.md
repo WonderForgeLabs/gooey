@@ -460,6 +460,36 @@ focus restored on dismiss. All git work (enumeration, `worktree add`
 / `remove`) runs on one worker goroutine and marshals back through the
 dispatcher, per the UI-confinement rule.
 
+## settingsdemo
+
+External state as ordinary properties: the three settings the browser
+wants — last source, keep-recording, auto-restart — persisted through
+the `settings` store and bound straight into markup. The checkboxes are
+bound to `*prop.Property[bool]` handles, the source line to a
+`*prop.Property[string]`, and none of the markup knows those handles
+came off disk. Toggle one and the setting is written; quit and relaunch
+and it is still set.
+
+The `writes` counter on screen is the honest measure of what a setting
+costs: the demo's Provider wraps the file-backed one only to count
+`Save` calls and report them to the UI — posting, never touching the
+counter property directly, because `Save` runs on the store's writer
+goroutine. Hammer `r` and `a` and the counter rises once per keystroke;
+several toggles landing in one dispatcher batch cost one write; a
+setting toggled and toggled back within a batch costs none. Launch and
+quit without touching anything and it stays at zero, because a value
+equal to its default is absent from the document and an unchanged
+document is never re-saved.
+
+- Run: `go run ./cmd/settingsdemo`
+- Keys: `s` cycle the source, `r`/`a` toggle recording / auto-restart, `n` toggle a setting and toggle it straight back in one batch (proving the round trip costs no write), `d` reset to defaults, `q` quit
+
+Exercises the settings store (dirty-tracked deferred saves, the
+computed-watcher over each handle, close-and-join teardown),
+host-supplied persistence through the `Provider` seam, and the
+UI-goroutine confinement rule in the layer where a host would actually
+get it wrong.
+
 ## sysmon
 
 A live system monitor over real `/proc` data — per-core CPU gauges, a
