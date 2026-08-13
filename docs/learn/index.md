@@ -94,6 +94,7 @@ each is a working app you can run and read. Full walkthroughs are in
 | [`cmd/probe` + `cmd/demo`](../demos.md#probe--demo) | Capability detection and the graphics pipeline | [how-to: images](howto/howto-images.md) |
 | [`cmd/toolkitdemo`](../demos.md#toolkitdemo) | The whole toolkit on one page, with MenuBar, ToastHost, and tooltips as overlays | [Tutorial 7](07-app-chrome.md), [concept: overlays](concepts/overlays.md) |
 | [`cmd/sysmon`](../demos.md#sysmon) | A live dashboard over real system data | [Tutorial 2](02-layout.md) |
+| [`cmd/settingsdemo`](../demos.md#settingsdemo) | Settings persist across runs as ordinary bound properties, with the disk-write count on screen | [Tutorial 3](03-binding-and-state.md) |
 | [`cmd/browser`](../demos.md#browser) | Launching another program on your terminal and taking it back — and browsing any worktree or branch of the repo from one running instance | [concept: the App lifecycle](concepts/app-lifecycle.md) |
 | [`mcp/cmd/mcpdemo`](../demos.md#mcpdemo) | An app that is also an MCP server: the tree, the state and the commands are the wire surface | [Tutorial 8](08-remote-control.md) |
 | [`examples/kanbandemo`](../demos.md#kanbandemo--temporal-worker) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
