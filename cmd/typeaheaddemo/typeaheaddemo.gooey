@@ -1,0 +1,56 @@
+<Gooey>
+  <!-- No Background on this Grid, and that is a measurement rather than
+       a taste. The selection marker below flips Visibility, which makes
+       the Composer restore everything under the marker's rectangle — and
+       a restored ancestor that declares a Background is `covered`, so it
+       forces its whole subtree to repaint above it. Adding
+       Background="#141420" here takes a selection hop on THIS page from
+       8 repainted components to 52; the isolated measurement, on a
+       cut-down page, is 7 against 48 — see
+       background_amplification_test.go. -->
+  <Grid Rows="1,1,*,1,1">
+    <Text Grid.Row="0" Style="accent">the shelf — type a title</Text>
+    <Text Grid.Row="1" Style="dim">{{.Sorted}}</Text>
+
+    <!-- The list. TypeAhead is a behaviour attachment: it sees keys
+         BEFORE the view does, which is the only reason it can search for
+         a title beginning with j or k (ItemsView binds both as movement).
+         That is also the trade — this list has no vim navigation. -->
+    <ItemsView Grid.Row="2" Items="{{.Records}}" Selected="{{.Sel}}" Margin="0,1">
+      <TypeAhead Key="Title" Search="{{.Typed}}" NoMatch="{{.Missed}}"/>
+      <ItemsView.ItemTemplate>
+        <Grid Rows="4" Cols="2,9,*">
+          <!-- Selection, drawn by the template. Mentioning _selected
+               turns off the house highlight, which over pixel content is
+               either invisible (a protocol paints above the cells) or a
+               photo-negative of the cover (halfblock, where the picture
+               IS the cells). -->
+          <Text Grid.Col="0" Style="accent" Visibility="{{._selected}}">{{.Bar}}</Text>
+          <Image Grid.Col="1" Src="{{.Cover}}" Cols="8" Rows="4" HAlign="Start" VAlign="Start"/>
+          <VStack Grid.Col="2" Margin="1,0,0,0">
+            <Text Style="title">{{.Title}}</Text>
+            <Text Style="dim">{{.Artist}}</Text>
+            <Text Style="dim">{{.Year}}</Text>
+          </VStack>
+        </Grid>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+
+    <!-- Where the jump landed. On text rows a user reads the neighbours;
+         six tall picture rows do not give them enough neighbours to read,
+         so the position is spelled out. -->
+    <Grid Grid.Row="3" Cols="20,*,20">
+      <Text Grid.Col="0" Style="accent">{{.Search}}</Text>
+      <Text Grid.Col="1" Style="dim">{{.Where}}</Text>
+      <Text Grid.Col="2" Style="miss" Visibility="{{.Missed}}">no match</Text>
+    </Grid>
+    <Text Grid.Row="4" Style="dim">{{.Stats}}   ctrl+s sort   ctrl+r reverse   ctrl+q quit</Text>
+
+    <!-- Every accelerator is modified. A KeyBinding outranks a behaviour
+         attachment, so binding a bare letter here would remove it from
+         the searchable alphabet with no error and no way to notice. -->
+    <KeyBinding Gesture="ctrl+s" Command="{{.CycleSort}}"/>
+    <KeyBinding Gesture="ctrl+r" Command="{{.Reverse}}"/>
+    <KeyBinding Gesture="ctrl+q" Command="{{.Quit}}"/>
+  </Grid>
+</Gooey>

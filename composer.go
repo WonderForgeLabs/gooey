@@ -392,15 +392,27 @@ func (c *Composer) armVisibility(n *paintNode) {
 // is the same walk the FocusManager makes for bindings — collected here
 // so the Composer, which owns the composition's lifetime, also owns the
 // lifetime of anything running inside it.
+// Nothing inside a Frozen subtree is started. That is the widest part of
+// freezing and the one with a safety argument rather than a UX one:
+// Companion.Start spawns a child process, so a frozen tree that still
+// started its Startables would launch a subprocess the moment a design
+// surface was handed one — an effect outside this process, from an
+// editing gesture, outliving the editor that caused it. Declining to
+// start a subtree is this walk's existing responsibility taking a new
+// input, not a new mechanism.
 func (c *Composer) collect(w Component, prev map[Component]*paintNode, n *paintNode) {
+	// The frozen COMPONENT is not itself frozen — its subtree is — so the
+	// test is on ancestors. A design surface's own gestures keep working
+	// while nothing it contains does.
+	frozen := frozenAncestor(n)
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
-			if s, ok := at.(Startable); ok {
+			if s, ok := at.(Startable); ok && !frozen {
 				c.startable = append(c.startable, s)
 			}
 		}
 	}
-	if s, ok := w.(Startable); ok {
+	if s, ok := w.(Startable); ok && !frozen {
 		c.startable = append(c.startable, s)
 	}
 	if ct, ok := w.(Container); ok {
@@ -408,6 +420,23 @@ func (c *Composer) collect(w Component, prev map[Component]*paintNode, n *paintN
 			c.build(ch, prev, n)
 		}
 	}
+}
+
+// frozenAncestor reports whether any STRICT ancestor of n freezes its
+// subtree. The paint-node chain is walked rather than a flag threaded
+// through build/collect: Startables are rare and trees are a dozen levels
+// deep, and a parameter would have to be kept correct through the reused
+// node path as well, where n.parent is reassigned on every re-sync.
+func frozenAncestor(n *paintNode) bool {
+	if n == nil {
+		return false
+	}
+	for p := n.parent; p != nil; p = p.parent {
+		if isFrozen(p.w) {
+			return true
+		}
+	}
+	return false
 }
 
 // structureChanged is the hook handed to every Dynamic container. It only

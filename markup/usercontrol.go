@@ -59,7 +59,10 @@ func Include(fsys fs.FS, name string) Builder {
 // system rejects double registration.
 func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*Context, error), passThrough bool) Builder {
 	return func(e Element, parent *Context) (gooey.Component, error) {
-		doc, err := loadDocument(fsys, name)
+		// Variant-resolved like a page: a control specializes on the pixel
+		// protocol by shipping card.sixel.gooey beside card.gooey, and the
+		// instantiation site is unchanged either way.
+		doc, err := loadDocument(fsys, resolveVariant(fsys, name, parent.Variant))
 		if err != nil {
 			return nil, err
 		}

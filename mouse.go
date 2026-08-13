@@ -83,6 +83,14 @@ func hitTest(w Component, x, y int) Component {
 		return nil
 	}
 	if c, ok := w.(Container); ok {
+		// DELIBERATELY no Frozen check here, and it is not an oversight.
+		// Freezing constrains DISPATCH, not this query: hit-testing must
+		// keep returning the deepest component so a design surface can
+		// call HitTest, find the actual <Button> under the pointer and
+		// select it, while DispatchMouse hands the press to the frozen
+		// host (see FocusManager.target). Stopping the descent here would
+		// make click-to-select impossible, and every freeze test would
+		// stay green while it broke.
 		kids := c.ChildComponents()
 		for i := len(kids) - 1; i >= 0; i-- {
 			if hit := hitTest(kids[i], x, y); hit != nil {
@@ -151,7 +159,21 @@ func (m *FocusManager) Captured() Component { return m.captor }
 // click on the same component inside DoubleClickInterval arrives as
 // Count 2.
 func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
-	hit := m.HitTest(ev.X, ev.Y)
+	// One retarget, here, for everything downstream. A frozen subtree does
+	// not act, so for every routing purpose the effective hit IS the
+	// frozen host: it takes the event, it takes the implicit capture, it
+	// takes the focus a press moves, and the click synthesized on release
+	// is measured against it.
+	//
+	// Retargeting only in target() was not enough and the press proved it:
+	// a press sets the implicit captor from the hit BEFORE routing, and
+	// target() returns the captor first, so the raw descendant got the
+	// event back through the capture. Doing it once at the top is also why
+	// setHover does not repeat the check.
+	//
+	// HitTest itself still returns the deepest component — see the comment
+	// there. This is dispatch; that is a query.
+	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y))
 
 	switch ev.Kind {
 	case input.MousePress:
@@ -214,6 +236,11 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 
 // target is where an event routes: the captor while the pointer is
 // captured, the hit otherwise.
+//
+// No Frozen check here. DispatchMouse retargets the hit ONCE, at the top,
+// and everything downstream — including this — is already holding the
+// effective hit. Doing it in both places is how the freeze tests came to
+// pass with one of the two deleted.
 func (m *FocusManager) target(hit Component) Component {
 	if m.captor != nil {
 		return m.captor
@@ -306,6 +333,17 @@ func (m *FocusManager) Hovered() Component { return m.hover }
 // setHover moves the hover flag to the nearest HoverTarget at or above
 // the hit component, so hover composes: a Border can highlight while the
 // pointer is over the Text inside it.
+// A frozen subtree does not react to the pointer: the hover lands on the
+// frozen host rather than the button underneath it. The retarget happens
+// once, in DispatchMouse, so every caller here is already holding the
+// effective hit.
+//
+// That is a decision with a named cost. Hover STYLING on a descendant is
+// given up, and hover styling is the one animation-shaped thing this
+// framework can do for free, since HoverState is an ordinary property and
+// motion over time would need a clock (which is a Startable, which
+// freezing stops). Wanting it back inside a design surface is an opt-in
+// for whoever turns up with the case, not a default.
 func (m *FocusManager) setHover(hit Component) {
 	// HoverWatcher attachments update on the raw hit, before the
 	// HoverTarget dedup below: the hit can cross from one watched host

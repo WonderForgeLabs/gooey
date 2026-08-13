@@ -181,10 +181,42 @@ func (t *Toggle) HandleMouse(ev input.MouseEvent) bool {
 // row reaches for when "on/off" is not the question.
 //
 // Selection lives in a bound int, so the viewmodel and the control share
-// one property rather than keeping copies in step. Arrows move the
-// selection and — the same rule Toggle uses — are consumed only while
-// there is somewhere to move, so an arrow at either end leaves the
-// control instead of dead-ending in it.
+// one property rather than keeping copies in step.
+//
+// # Wrapping, and why it does not trap the keyboard
+//
+// Arrows along the strip's own axis CYCLE by default: down at the last
+// segment returns to the first. That reverses Toggle's rocker rule, where
+// an arrow with nowhere to go is left unconsumed so it becomes a focus
+// move — and reversing it is deliberate, because the two controls are not
+// the same shape. A rocker has two ends and living at one of them is
+// meaningful; a rail of icons is a ring you spin.
+//
+// The rule survives where it matters. This control never handles the CROSS
+// axis, so left and right on a vertical rail still fall through to spatial
+// focus navigation, up and down on a horizontal strip still do, and Tab is
+// untouched — every strip remains escapable by keyboard. Set Wrap to false
+// for the rocker tier, and an end-of-travel arrow bubbles again.
+//
+// # Two axes, and two ways to draw
+//
+// Vertical stacks the segments instead of laying them across, and swaps
+// which arrows move the selection: the cross-axis pair is deliberately
+// left unhandled, so left/right on a vertical strip falls through to
+// spatial focus navigation and moves OUT of it. A rail down a window's
+// left edge is unusable otherwise.
+//
+// Child replaces the drawn labels with a component. The selection
+// behaviour is identical — bound int, clamped, rocker-rule arrows,
+// click-to-segment — and only the picture changes; with a Child, slot
+// geometry is the bounds divided by Count rather than measured per label.
+// That is what lets a strip of pixel-drawn icons be a Segmented rather
+// than a second implementation of the same behaviour.
+//
+// Dividing the bounds is also why Count is not inferred: with a Child
+// there are no labels to count, and a caller passing a slot size in cells
+// would have to convert from whatever size it drew its art at — a number
+// that is only right while the terminal's cell size matches the guess.
 type Segmented struct {
 	gooey.Base
 	gooey.FocusState
@@ -193,6 +225,48 @@ type Segmented struct {
 	Selected *prop.Property[int]
 	Style    *prop.Property[render.Style]
 	Changed  gooey.Action
+
+	// Vertical stacks the segments down instead of across.
+	Vertical bool
+	// Child, when set, is drawn INSTEAD of the labels, and Count is then
+	// how many segments it depicts.
+	Child gooey.Component
+	Count int
+
+	// Wrap decides what an arrow does at the end of travel: with it on,
+	// down at the last segment returns to the first. NIL MEANS ON — see
+	// wraps() for why the field is a pointer and why on is the default.
+	Wrap *bool
+}
+
+// wraps reports whether the selection cycles at the ends.
+//
+// A pointer, because the useful default is TRUE and a bool's zero value is
+// false. The alternatives were both worse: a NoWrap field makes the markup
+// attribute read as a double negative (Wrap="false" is what an author
+// writes), and a plain Wrap bool would silently disable cycling for every
+// existing caller that never heard of it.
+func (s *Segmented) wraps() bool { return s.Wrap == nil || *s.Wrap }
+
+// NoWrapping is the shorthand for the rocker tier, for callers writing a
+// literal: Segmented{Wrap: NoWrapping}.
+var NoWrapping = new(bool)
+
+// count is how many segments there are, from whichever source is in use.
+func (s *Segmented) count() int {
+	if s.Child != nil {
+		return s.Count
+	}
+	return len(s.options())
+}
+
+// ChildComponents makes a Child-bearing Segmented a container. With no
+// Child it returns nothing and the control is the leaf it always was.
+func (s *Segmented) ChildComponents() []gooey.Component {
+	if s.Child == nil {
+		return nil
+	}
+	return []gooey.Component{s.Child}
 }
 
 func (s *Segmented) disabled() bool { return s.Changed != nil && !s.Changed.CanExecute() }
@@ -202,11 +276,11 @@ func (s *Segmented) options() []string { return getStrs(s.Options) }
 // Index is the selected option, clamped into range so a viewmodel that
 // has not caught up with a shorter list still paints something.
 func (s *Segmented) Index() int {
-	opts := s.options()
-	if s.Selected == nil || len(opts) == 0 {
+	n := s.count()
+	if s.Selected == nil || n == 0 {
 		return 0
 	}
-	return clamp(s.Selected.Get(), 0, len(opts)-1)
+	return clamp(s.Selected.Get(), 0, n-1)
 }
 
 // segWidth is a segment's cell span: the option padded with a space each
@@ -214,6 +288,9 @@ func (s *Segmented) Index() int {
 func segWidth(opt string) int { return len([]rune(opt)) + 2 }
 
 func (s *Segmented) Measure(avail gooey.Size) gooey.Size {
+	if s.Child != nil {
+		return gooey.MeasureChild(s.Child, avail)
+	}
 	opts := s.options()
 	w := 0
 	for i, o := range opts {
@@ -222,13 +299,40 @@ func (s *Segmented) Measure(avail gooey.Size) gooey.Size {
 		}
 		w += segWidth(o)
 	}
+	if s.Vertical {
+		// Stacked: one row per option, as wide as the widest.
+		wide := 0
+		for _, o := range opts {
+			wide = max(wide, segWidth(o))
+		}
+		return gooey.Size{W: min(wide, avail.W), H: min(len(opts), avail.H)}
+	}
 	return gooey.Size{W: min(w, avail.W), H: min(1, avail.H)}
 }
 
+// Arrange hands the whole bounds to a Child. A leaf Segmented keeps
+// Base.Arrange's behaviour untouched.
+func (s *Segmented) Arrange(b gooey.Rect) {
+	s.Base.Arrange(b)
+	if s.Child != nil {
+		gooey.ArrangeChild(s.Child, b)
+	}
+}
+
 func (s *Segmented) Render(f *gooey.Frame) {
+	// With a Child the picture is the child's. A container paints only its
+	// own chrome and this one has none; pre-clearing here would wipe the
+	// very thing it is wrapping.
+	if s.Child != nil {
+		return
+	}
 	b := s.Bounds()
 	opts := s.options()
 	if b.W <= 0 || b.H <= 0 || len(opts) == 0 {
+		return
+	}
+	if s.Vertical {
+		s.renderVertical(f)
 		return
 	}
 	sel := s.Index()
@@ -284,14 +388,46 @@ func (s *Segmented) Render(f *gooey.Frame) {
 	}
 }
 
+// renderVertical is the stacked tier: one option per row, same cues.
+func (s *Segmented) renderVertical(f *gooey.Frame) {
+	b := s.Bounds()
+	opts := s.options()
+	sel := s.Index()
+	base := getSty(s.Style)
+	off := s.disabled()
+	if off {
+		base.Dim = true
+	}
+	for i, o := range opts {
+		y := b.Y + i
+		if y >= b.Y+b.H {
+			break
+		}
+		st := base
+		if i == sel {
+			st.Bold = true
+			st.Reverse = true
+		}
+		if !off && s.IsHovered() {
+			st.Underline = true
+		}
+		f.Cells.SetString(b.X, y, clipRunes(" "+o+" ", b.W), st)
+	}
+	// The focus cue is the selected row's leading marker rather than the
+	// horizontal tier's end arrows: a stacked strip has no ends to mark.
+	if s.IsFocused() && b.W > 0 && sel < b.H {
+		f.Cells.Set(b.X, b.Y+sel, '▸', styleAccent)
+	}
+}
+
 // Select moves the selection and runs Changed, reporting whether
 // anything moved.
 func (s *Segmented) Select(i int) bool {
-	opts := s.options()
-	if s.Selected == nil || s.disabled() || len(opts) == 0 {
+	n := s.count()
+	if s.Selected == nil || s.disabled() || n == 0 {
 		return false
 	}
-	i = clamp(i, 0, len(opts)-1)
+	i = clamp(i, 0, n-1)
 	if s.Selected.Get() == i {
 		return false
 	}
@@ -302,49 +438,138 @@ func (s *Segmented) Select(i int) bool {
 	return true
 }
 
-// HandleKey: left/right step the selection and are consumed only when
-// they move it; space and enter cycle, wrapping, so the control is fully
-// operable without arrows.
+// step moves the selection by d, cycling at the ends when Wrap is on.
+//
+// It reports whether anything moved, which is what decides consumption —
+// so with wrapping ON the strip's own axis is always consumed, and with it
+// off the rocker rule stands and an end-of-travel arrow bubbles.
+//
+// THE KEYBOARD IS NOT TRAPPED EITHER WAY, and that is what makes wrapping
+// safe as a default. The escape is the CROSS axis, which this control
+// never handles: left and right on a vertical rail fall straight through
+// to spatial focus navigation, as does up and down on a horizontal strip.
+// Tab is unaffected in both cases. What wrapping costs is the ability to
+// leave along the strip's own axis, which was never how anyone left a rail
+// down the left edge of a window.
+func (s *Segmented) step(d int) bool {
+	n := s.count()
+	if n == 0 {
+		return false
+	}
+	i := s.Index() + d
+	if s.wraps() {
+		// Positive modulo: Go's % keeps the sign of the dividend, so -1 % 4
+		// is -1 and a bare modulo would clamp to 0 instead of wrapping to
+		// the last segment.
+		i = ((i % n) + n) % n
+	}
+	return s.Select(i)
+}
+
+// HandleKey: left/right step the selection, cycling at the ends unless
+// Wrap says otherwise; space and enter cycle regardless, so the control is
+// fully operable without arrows.
 func (s *Segmented) HandleKey(ev input.KeyEvent) bool {
 	if s.disabled() {
 		return false
 	}
-	opts := s.options()
-	if len(opts) == 0 {
+	n := s.count()
+	if n == 0 {
 		return false
 	}
+	// The strip's own axis moves the selection; the cross axis is left
+	// alone so it reaches spatial focus navigation and moves out.
+	prev, next := input.KeyLeft, input.KeyRight
+	if s.Vertical {
+		prev, next = input.KeyUp, input.KeyDown
+	}
 	switch {
-	case ev == input.Named(input.KeyLeft):
-		return s.Select(s.Index() - 1)
-	case ev == input.Named(input.KeyRight):
-		return s.Select(s.Index() + 1)
+	case ev == input.Named(prev):
+		return s.step(-1)
+	case ev == input.Named(next):
+		return s.step(1)
 	case ev == input.Named(input.KeyHome):
 		return s.Select(0)
 	case ev == input.Named(input.KeyEnd):
-		return s.Select(len(opts) - 1)
+		return s.Select(n - 1)
 	case ev == input.Named(input.KeyEnter), ev == input.Rune(' '):
-		s.Select((s.Index() + 1) % len(opts))
+		s.Select((s.Index() + 1) % n)
 		return true
 	}
 	return false
 }
 
-// HandleMouse selects the segment the pointer landed on.
+// HandleMouse selects the segment the pointer landed on, and steps the
+// selection on a wheel notch.
+//
+// The wheel is over the STRIP, not over a segment: rolling the wheel is a
+// "next/previous" gesture, so where in the strip the pointer sits is
+// irrelevant beyond being inside it. That is the same reading Tabs gives it
+// (tabs.go:313) and ItemsView gives it, and the reason the hit test here is
+// a bounds check rather than segmentAt — asking which segment the pointer
+// is over would imply the wheel moved relative to that segment, which is
+// not what any of the three do.
+//
+// Notch direction follows the screen, not the axis: up means previous on a
+// vertical rail and also on a horizontal strip, because a wheel has one
+// axis and the user's hand does not rotate with the control.
 func (s *Segmented) HandleMouse(ev input.MouseEvent) bool {
-	if s.disabled() || ev.Kind != input.MouseClick {
+	if s.disabled() {
 		return false
 	}
-	if i, ok := s.segmentAt(ev.X); ok {
-		s.Select(i)
-		return true
+	switch ev.Kind {
+	case input.MouseClick:
+		if i, ok := s.segmentAt(ev.X, ev.Y); ok {
+			s.Select(i)
+			return true
+		}
+		return false
+	case input.WheelUp:
+		return s.inBounds(ev.X, ev.Y) && s.step(-1)
+	case input.WheelDown:
+		return s.inBounds(ev.X, ev.Y) && s.step(1)
 	}
 	return false
 }
 
-// segmentAt maps a column to an option index, counting the separator
-// columns as belonging to neither side.
-func (s *Segmented) segmentAt(x int) (int, bool) {
-	at := s.Bounds().X
+// inBounds is the whole-strip hit test the wheel uses.
+func (s *Segmented) inBounds(x, y int) bool {
+	b := s.Bounds()
+	return x >= b.X && x < b.X+b.W && y >= b.Y && y < b.Y+b.H
+}
+
+// segmentAt maps a point to an option index.
+//
+// Three geometries, one per way of drawing. With a Child there are no
+// labels to measure, so the bounds are divided by Count on the active
+// axis; stacked labels are one per row; a horizontal row measures each
+// label and counts the separator columns as belonging to neither side.
+func (s *Segmented) segmentAt(x, y int) (int, bool) {
+	b := s.Bounds()
+	if x < b.X || x >= b.X+b.W || y < b.Y || y >= b.Y+b.H {
+		return 0, false
+	}
+	n := s.count()
+	if n == 0 {
+		return 0, false
+	}
+	if s.Child != nil {
+		off, extent := x-b.X, b.W
+		if s.Vertical {
+			off, extent = y-b.Y, b.H
+		}
+		if extent <= 0 {
+			return 0, false
+		}
+		return min(off*n/extent, n-1), true
+	}
+	if s.Vertical {
+		if i := y - b.Y; i < n {
+			return i, true
+		}
+		return 0, false
+	}
+	at := b.X
 	for i, o := range s.options() {
 		if i > 0 {
 			if x == at {

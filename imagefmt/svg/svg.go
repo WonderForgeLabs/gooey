@@ -45,6 +45,41 @@ func match(h []byte) bool {
 	return bytes.Contains(h, []byte("<svg"))
 }
 
+// RasterizeAt renders an SVG at a size the CALLER chooses, rather than at
+// the document's intrinsic size.
+//
+// The registry path deliberately rasterizes at intrinsic size, which is
+// right when the pixel pipeline is going to rescale to a cell rectangle
+// anyway. It is wrong for the case this exists for: a 16x16 icon that
+// needs to land at 32x32 on the pixel plane. Rasterizing at 16 and
+// scaling up throws away the one advantage a vector source has — the
+// renderer can draw it sharp at any size, and only if it is asked to.
+//
+// Aspect is preserved: the icon is fitted into w x h and centred, so a
+// non-square target letterboxes rather than distorting.
+func RasterizeAt(r io.Reader, w, h int) (image.Image, error) {
+	if w < 1 || h < 1 {
+		return nil, fmt.Errorf("svg: target size %dx%d", w, h)
+	}
+	icon, err := oksvg.ReadIconStream(r)
+	if err != nil {
+		return nil, err
+	}
+	vw, vh := icon.ViewBox.W, icon.ViewBox.H
+	if vw <= 0 || vh <= 0 {
+		return nil, fmt.Errorf("svg: no intrinsic size (needs a viewBox or width/height)")
+	}
+	// Fit, then centre. SetTarget takes the destination rectangle, so the
+	// offsets are where the fitted box starts.
+	s := min(float64(w)/vw, float64(h)/vh)
+	dw, dh := vw*s, vh*s
+	icon.SetTarget((float64(w)-dw)/2, (float64(h)-dh)/2, dw, dh)
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	scanner := rasterx.NewScannerGV(w, h, img, img.Bounds())
+	icon.Draw(rasterx.NewDasher(w, h, scanner), 1)
+	return img, nil
+}
+
 func decode(r io.Reader) (image.Image, error) {
 	icon, err := oksvg.ReadIconStream(r)
 	if err != nil {

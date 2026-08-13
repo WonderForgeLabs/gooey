@@ -178,13 +178,15 @@ A declared gesture — a non-visual element:
 | `Gesture` | Key gesture, parsed by `input.ParseGesture` (syntax below). |
 | `Command` | Binding or bare handler name, same resolution as `Click`. A command whose `When` condition is false does not match: the gesture is not consumed and the key keeps bubbling, so an outer binding can still have it. |
 
-Attachment and scoping semantics: a KeyBinding is never laid out or painted. The builder hangs it off its parent element as an attachment (any element that embeds `gooey.Base` can host one — a Grid, Border, stack, or custom component). Key dispatch starts at the focused component and walks up its ancestor chain to the root; at each level the KeyBindings attached there are matched first, then that component's own key handler. So:
+Attachment and scoping semantics: a KeyBinding is never laid out or painted. The builder hangs it off its parent element as an attachment (any element that embeds `gooey.Base` can host one — a Grid, Border, stack, or custom component). Key dispatch starts at the focused component and walks up its ancestor chain to the root; at each level the KeyBindings attached there are matched first, then any **behaviour attachments** that handle keys (`<TypeAhead>`), then that component's own key handler. So:
 
 - A binding declared on the page root is effectively global — every focused component's chain passes through the root. The `q`/`esc`/`ctrl+c` bindings in `cmd/reader/reader.gooey` work this way.
 - A binding declared inside a control fires only while focus is inside that control. `cmd/reader/storylist.gooey` attaches `<KeyBinding Gesture="enter" Command="{{.Open}}"/>` to the story pane's Border, so enter opens a story only while that pane has focus.
 - The first consumer stops propagation, and unconsumed `tab`/`shift+tab` move focus — so either can be overridden by binding or handling it.
 
-Before any of that, the event **tunnels**: every ancestor from the root down to the focused component that implements `gooey.PreviewKeyHandler` is offered the event first, and the first to take it ends the dispatch — no target handling, no bubbling, no bindings. `gooey.PreviewMouseHandler` does the same for pointer events. This is the parent-veto mechanism: a modal scrim swallows what is aimed at the layer underneath without any of those components being consulted. The full order is **tunnel down → target and bubble up (bindings then handler at each level) → app fallbacks**.
+Before any of that, the event **tunnels**: every ancestor from the root down to the focused component that implements `gooey.PreviewKeyHandler` is offered the event first, and the first to take it ends the dispatch — no target handling, no bubbling, no bindings. `gooey.PreviewMouseHandler` does the same for pointer events. This is the parent-veto mechanism: a modal scrim swallows what is aimed at the layer underneath without any of those components being consulted. The full order is **tunnel down → target and bubble up (bindings, then attachment handlers, then the component's handler at each level) → app fallbacks**.
+
+Why attachment handlers sit between the two: a KeyBinding maps one gesture to one command, which is the wrong shape for a behaviour that consumes a whole class of keys and keeps state between them. Such an attachment must be offered keys **before** its host — `ItemsView` claims `j` and `k` as movement, so a type-ahead consulted after it could never search for a word beginning with `j` — but **after** the level's bindings, so a gesture the page declared out loud still wins.
 
 ### Conditional commands
 
@@ -712,6 +714,41 @@ rows := prop.NewComputed(func() components.ItemSource {
 **Selection visual.** The selected row's cells are re-styled `Reverse` by the view. A template that mentions the reserved value `_selected` takes that over and gets no house highlight. Two reserved row values are always in the context: `_selected` and `_hovered`, both `*prop.Property[bool]`.
 
 **Rows are windowed and reused.** Only the rows that fit are built, keyed by item index; a change re-projects the window and Sets only the values that differ, so changing one item repaints that row and nothing else. Row height is discovered by measuring the template against the view's full height — a template rooted in something that stretches (a `Grid` with default star rows) will ask for the whole view and give you a one-row list. Say what the row wants: `<Grid Rows="1">`, or `Height="1"`.
+
+### TypeAhead
+
+`components.TypeAhead` — Windows Explorer's type-ahead find, attached to an `ItemsView`. You type; the selection jumps to the first item whose `Key` value has that prefix, in the collection's current order, wrapping at the end.
+
+```xml
+<ItemsView Items="{{.Rows}}" Selected="{{.Sel}}">
+  <TypeAhead Key="Title" Search="{{.Typed}}" NoMatch="{{.Missed}}"/>
+  <ItemsView.ItemTemplate>…</ItemsView.ItemTemplate>
+</ItemsView>
+```
+
+| Attribute | Meaning |
+| --- | --- |
+| `Key` | **Required.** Which projected item value to match. A projection is a `map[string]any` and, with no reflection anywhere, nothing else can say which entry is the label. |
+| `Search` | Binding to a `string`: the live buffer. |
+| `NoMatch` | Binding to a `bool`: the last keystroke matched nothing. |
+| `Timeout` | Idle reset, default `1s`. |
+
+It **selects; it does not filter** — no row is ever hidden. That is what makes "any movement resets the search" coherent: a filter would make rows reappear underneath the user mid-gesture. Matching is case-insensitive **prefix**, not fuzzy (`dc` finds `dcache`, not `DocumentCache`), because "the first match in the current sort order" is not something subsequence matching has.
+
+**The mode is entered implicitly** — there is no arming key, as in Explorer. Two things follow:
+
+- The idle `Timeout` is load-bearing, not a nicety. `a`, pause, `b` lands on the first `b`, not on `ab`. Without it the buffer grows forever.
+- **A list with a `<TypeAhead>` loses `j`/`k` navigation**, because `j` now types `j`. The trade is opt-in per list and visible in the markup; every list without the element keeps them.
+
+Repeating one letter **cycles**: `aaa` steps through successive items beginning with `a` rather than searching for the repetition. Refining does not: the second character of `ap` searches from the current selection, so you keep the item you just landed on when it still matches.
+
+**Any movement resets the buffer** — arrows, Home/End, PgUp/PgDn, enter, tab, esc, and equally a click, the wheel, or a viewmodel write. Navigation keys are declined rather than consumed, so the list still performs the movement.
+
+**A miss is state, not sound.** The selection stays put and `NoMatch` goes true; the character stays in the buffer, so continuing to type keeps missing, and a typo is escaped by pausing. There is no terminal bell: input dispatch has no route to the output stream, and `render.Screen` treats `0x07` as an OSC terminator, so a bell would be invisible to gooey's own tests. Bind `NoMatch` to whatever your page should show.
+
+Binding `Search` is optional but recommended. Explorer displays nothing and survives on muscle memory; an implicitly-armed TUI mode that shows nothing is misrepresenting what the next keystroke will do, and a status-bar `<Text>` costs one property.
+
+`<TypeAhead>` on anything but an `<ItemsView>` is a load error.
 
 ### Timer
 

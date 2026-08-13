@@ -169,6 +169,112 @@ func TestBindingScopeFollowsAncestorChain(t *testing.T) {
 	}
 }
 
+// keyEater is a stand-in for a behaviour attachment that consumes a class
+// of keys and keeps state between them — the shape a type-ahead search
+// needs, and the one a KeyBinding cannot express. Non-visual, so the
+// framework attaches it instead of laying it out.
+type keyEater struct {
+	gooey.Base
+	on   bool
+	seen []rune
+}
+
+func (e *keyEater) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
+func (e *keyEater) Render(*gooey.Frame)           {}
+func (e *keyEater) NonVisual() bool               { return true }
+
+func (e *keyEater) HandleKey(ev input.KeyEvent) bool {
+	if !e.on || ev.Key != input.KeyRune {
+		return false
+	}
+	e.seen = append(e.seen, ev.Rune)
+	return true
+}
+
+// An attachment that handles keys must be offered them BEFORE its host.
+//
+// This is the ordering the whole seam exists for: ItemsView claims j and k
+// for navigation, so an attachment consulted after its host could never
+// search for a word beginning with j. Swap the two calls in
+// FocusManager.Dispatch and this test fails — which is the point of it.
+func TestAttachmentKeysPrecedeHost(t *testing.T) {
+	pane := &keyPane{}
+	eater := &keyEater{on: true}
+	pane.Attach(eater)
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{pane}}, 20, 5)
+
+	if !c.HandleKey(input.Rune('j')) {
+		t.Fatal("j was not handled")
+	}
+	if string(eater.seen) != "j" {
+		t.Fatalf("attachment saw %q, want \"j\" — it must be offered the key before its host", string(eater.seen))
+	}
+	if pane.moved != 0 {
+		t.Fatalf("host consumed j (moved=%d); the attachment had already taken it", pane.moved)
+	}
+}
+
+// A key the attachment declines still reaches the host — declining is how
+// an attachment hands navigation back.
+func TestDeclinedAttachmentKeysReachHost(t *testing.T) {
+	pane := &keyPane{}
+	eater := &keyEater{} // off: declines everything
+	pane.Attach(eater)
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{pane}}, 20, 5)
+
+	if !c.HandleKey(input.Rune('j')) {
+		t.Fatal("j was not handled")
+	}
+	if len(eater.seen) != 0 {
+		t.Fatalf("attachment consumed %q while declining", string(eater.seen))
+	}
+	if pane.moved != 1 {
+		t.Fatalf("pane.moved = %d, want 1 — a declined key must reach the host", pane.moved)
+	}
+}
+
+// A gesture the page declared out loud outranks a behaviour that would
+// otherwise absorb it: bindings are matched before attachment handlers at
+// the same level.
+func TestKeyBindingsOutrankAttachmentHandlers(t *testing.T) {
+	pane := &keyPane{}
+	eater := &keyEater{on: true}
+	pane.Attach(eater)
+	fired := 0
+	pane.Attach(&gooey.KeyBinding{Gesture: input.Rune('/'), Command: gooey.Command(func() { fired++ })})
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{pane}}, 20, 5)
+
+	if !c.HandleKey(input.Rune('/')) {
+		t.Fatal("/ was not handled")
+	}
+	if fired != 1 {
+		t.Fatalf("binding fired %d times, want 1", fired)
+	}
+	if len(eater.seen) != 0 {
+		t.Fatalf("attachment swallowed a declared gesture: %q", string(eater.seen))
+	}
+}
+
+// Attachment key handling is scoped like a KeyBinding: it only runs while
+// the focused component's ancestor chain passes through its host.
+func TestAttachmentKeysScopeToTheFocusChain(t *testing.T) {
+	inner, outer := &keyPane{}, &keyPane{}
+	scoped := &VStack{Children: []gooey.Component{inner}}
+	eater := &keyEater{on: true}
+	scoped.Attach(eater)
+	c := gooey.NewComposer(&VStack{Children: []gooey.Component{scoped, outer}}, 20, 6)
+
+	c.HandleKey(input.Rune('a'))
+	if string(eater.seen) != "a" {
+		t.Fatalf("attachment saw %q with focus inside its subtree, want \"a\"", string(eater.seen))
+	}
+	c.Focus().SetFocus(outer)
+	c.HandleKey(input.Rune('b'))
+	if string(eater.seen) != "a" {
+		t.Fatalf("attachment saw %q with focus outside its subtree", string(eater.seen))
+	}
+}
+
 func TestFocusStateDamagesOnlyItsReader(t *testing.T) {
 	// A component that never reads IsFocused must not repaint on focus moves.
 	quiet := &Text{Content: prop.NewSource("static")}
