@@ -57,6 +57,27 @@ func (s *sink) HandleMouse(ev input.MouseEvent) bool {
 func (s *sink) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 6, H: 1} }
 func (s *sink) Render(*gooey.Frame)           {}
 
+// watcher is a HoverWatcher attachment that counts enter edges.
+//
+// It is a probe rather than a components.Tooltip on purpose. A Tooltip's
+// delay is a Startable, so freezing stops it by a SECOND mechanism, and a
+// tooltip that failed to pop up would not say which of the two held the
+// door — the exact ambiguity that let two of these guards go unpinned.
+type watcher struct {
+	gooey.Base
+	entered int
+}
+
+func (w *watcher) NonVisual() bool               { return true }
+func (w *watcher) Interrupted()                  {}
+func (w *watcher) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
+func (w *watcher) Render(*gooey.Frame)           {}
+func (w *watcher) PointerOver(over bool) {
+	if over {
+		w.entered++
+	}
+}
+
 // withFrozen registers <Frozen> in ctx, building a frozenHost around its
 // single child.
 func withFrozen(ctx *Context) *Context {
@@ -79,6 +100,9 @@ func withFrozen(ctx *Context) *Context {
 	}
 	ctx.Components["Sink"] = func(e Element, c *Context) (gooey.Component, error) {
 		return &sink{}, nil
+	}
+	ctx.Components["Watch"] = func(e Element, c *Context) (gooey.Component, error) {
+		return &watcher{}, nil
 	}
 	return ctx
 }

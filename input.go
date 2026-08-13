@@ -402,6 +402,16 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 	if h, ok := w.(FocusHost); ok {
 		h.SetFocusManager(m)
 	}
+	// A mnemonic is the one route into a frozen subtree that freezing
+	// FOCUS does not already close, and the contrast with the KeyBinding
+	// skip below is worth stating: a scoped binding only fires while the
+	// focused chain passes through its host, but Dispatch offers every
+	// mnemonic to every MnemonicHandler in m.mnemonics no matter what
+	// holds focus, because accelerators are page-scoped by design. So
+	// this skip is the guarantee, not defence in depth — without it,
+	// alt+g runs the Click of a Button the user is only looking at.
+	// TestAMnemonicInsideAFrozenSubtreeDoesNotFire is the pin, and it is
+	// the only test that fails when this line loses its !frozen.
 	if _, ok := w.(MnemonicHandler); ok && !frozen {
 		m.mnemonics = append(m.mnemonics, w)
 	}
@@ -433,6 +443,17 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 			if fh, ok := at.(FocusHost); ok {
 				fh.SetFocusManager(m)
 			}
+			// DEFENCE IN DEPTH, like the KeyBinding skip and unlike the
+			// mnemonic one, and the note matters because it is what stops
+			// the next reader deleting this line against a green suite.
+			// updateWatchers only ever sees the hit DispatchMouse already
+			// retargeted to the frozen host (mouse.go:176), so
+			// within(hw.host, hit) is false for every host inside the
+			// subtree whether or not this registration happened.
+			// Measured: deleting this !frozen leaves the whole repository
+			// green, and so does deleting the retarget; only removing both
+			// fails TestAHoverWatcherInsideAFrozenSubtreeNeverEnters, which
+			// is why that test pins the guarantee rather than either door.
 			if hw, ok := at.(HoverWatcher); ok && !frozen {
 				m.watchers = append(m.watchers, &hoverWatch{host: w, w: hw})
 			}
