@@ -427,6 +427,27 @@ func (r *Remote) Size() (cols, rows int) {
 	return r.cols, r.rows
 }
 
+// Close ends the session and JOINS the reader goroutine.
+//
+// The join is the whole point, and it is the framework's stop idiom applied
+// to a stream instead of a ticker: close-then-wait, never close alone. A
+// Close that only cancelled would return while read() was still inside
+// Recv, and that goroutine can still call r.fail — which calls OnLost, an
+// app-supplied callback that touches the editor. So without the join,
+// "Close returned" does not mean "nothing else will be delivered", and a
+// callback can fire against a torn-down editor after teardown looked
+// complete. Intermittent by construction: it depends on whether the reader
+// happened to be between Recv calls.
+//
+// ORDER IS LOAD-BEARING. The wait must come after r.stop(), which cancels
+// the stream context and is what makes the pending Recv return an error so
+// read() can reach its `defer close(r.done)`. Waiting before the cancel
+// would block forever on a healthy stream.
+//
+// The nil guard is for a zero-valued Remote, not for the normal path:
+// Connect starts the reader on the line before it returns, and every
+// earlier failure returns (nil, err), so any Remote a caller holds has a
+// running reader.
 func (r *Remote) Close() error {
 	if r.stream != nil {
 		_ = r.stream.CloseSend()
@@ -434,5 +455,9 @@ func (r *Remote) Close() error {
 	if r.stop != nil {
 		r.stop()
 	}
-	return r.conn.Close()
+	err := r.conn.Close()
+	if r.done != nil {
+		<-r.done
+	}
+	return err
 }
