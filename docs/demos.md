@@ -482,7 +482,7 @@ equal to its default is absent from the document and an unchanged
 document is never re-saved.
 
 - Run: `go run ./cmd/settingsdemo`
-- Keys: `s` cycle the source, `r`/`a` toggle recording / auto-restart, `n` nudge a numeric setting, `d` reset to defaults, `q` quit
+- Keys: `s` cycle the source, `r`/`a` toggle recording / auto-restart, `n` toggle a setting and toggle it straight back in one batch (proving the round trip costs no write), `d` reset to defaults, `q` quit
 
 Exercises the settings store (dirty-tracked deferred saves, the
 computed-watcher over each handle, close-and-join teardown),

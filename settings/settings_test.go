@@ -17,8 +17,11 @@ import (
 )
 
 // The three settings this package was built for, spelled the way an app
-// spells them. They are also the three shapes that have to work without
-// reflection: a string, a bool, and (for good measure) an int.
+// spells them. Two shapes between them — a string and two bools; the
+// third shape that has to work without reflection, an int, gets its own
+// test (TestAnIntSettingRoundTrips), because JSON has no integers and a
+// decoder that went through float64 would be exactly the kind of bug a
+// string/bool suite never notices.
 const (
 	keySource  = "browser.lastSource"
 	keyRecord  = "browser.keepRecording"
@@ -180,6 +183,39 @@ func TestChangingSetsWriteOncePerBatch(t *testing.T) {
 	}
 	if got := decode(t, m.Doc())[keyRecord]; got != true {
 		t.Fatalf("document[%s] = %v, want true", keyRecord, got)
+	}
+}
+
+// TestAnIntSettingRoundTrips is the third shape the const block above
+// promises. It matters because JSON has no integers: encoding/json
+// decodes an untyped number as float64, and a store that read its
+// document through map[string]any before reaching the handle would hand
+// Value[int] a float64 and fail — or worse, truncate. Storing 14 and
+// reading 14 back through a fresh Store is what pins that the typed
+// path really is json.Unmarshal into *int, in both directions.
+func TestAnIntSettingRoundTrips(t *testing.T) {
+	const keySize = "browser.fontSize"
+
+	m, s := open(t, `{"browser.fontSize":14}`)
+	size := mustValue(t, s, keySize, 12)
+	if got := size.Get(); got != 14 {
+		t.Fatalf("%s = %d, want the stored 14", keySize, got)
+	}
+
+	d := gooey.NewDispatcher()
+	stop := s.Start(d.Post)
+	size.Set(9)
+	drain(d)
+	stop()
+
+	if got := decode(t, m.Doc())[keySize]; got != float64(9) {
+		t.Fatalf("document[%s] = %v (%T), want the JSON number 9", keySize, got, got)
+	}
+
+	// And back in through a second Store, the way a relaunch reads it.
+	_, s2 := open(t, m.Doc())
+	if got := mustValue(t, s2, keySize, 12).Get(); got != 9 {
+		t.Fatalf("relaunch read %d, want the written 9", got)
 	}
 }
 
