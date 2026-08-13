@@ -144,23 +144,55 @@ nothing dirty writes nothing (`TestStopWritesNothingWhenNothingChanged`).
   both types. A hand-edited file must not stop the app from starting, and
   must not be silent either.
 
-## No untyped `Write`
+## No untyped `Write(key, any)` — but there is `SetRaw(key, json)`
 
 The CRUD the ask named maps as:
 
 | ask | surface |
 |---|---|
 | read | `handle.Get()`, or `Store.Raw(key)` for tooling with no types |
-| upsert | `handle.Set(v)` |
+| upsert | `handle.Set(v)`, or `Store.SetRaw(key, raw)` for keys with no handle |
 | delete | `Store.Delete(key)` |
 | list | `Store.Keys()` |
 
-There is deliberately **no** `Write(key string, v any)`. A write has to
-reach the typed handle or the bound UI diverges from the document with
-nothing to say so, and reaching a typed handle from an untyped key is
-exactly the reflection the framework does not do. `Delete` is the
-destructive half, and on a registered key it means "forget it, go back
-to the default" — an ordinary `Set`, so anything bound to it repaints.
+There is deliberately **no** `Write(key string, v any)` — an `any` has
+to be interrogated for its type, which is the reflection the framework
+does not do. The first cut of this spec claimed the stronger thing,
+that *no* untyped write was possible without reflection, and that was
+wrong: `SetRaw(key, json.RawMessage)` reaches the typed handle through
+the entry's own `setRaw` closure, which was compiled knowing `T` — the
+same discipline as `encode` and `reset`. A registered key routes
+through its handle (so `Raw` and `Get` still can never disagree, and
+everything bound repaints); a raw value that will not decode as the
+handle's type is a shaped error that changes nothing; an unregistered
+key lands in the pass-through map and persists on the next flush.
+
+`Delete` is the destructive half, and on a registered key it means
+"forget it, go back to the default" — an ordinary `Set`, so anything
+bound to it repaints.
+
+## State documents
+
+`SetRaw` is what makes a **state** store — machine-written app state,
+as against human-edited preferences — expressible as a second `Store`
+over its own document (`browser.state.json` beside `browser.json`).
+The split is vscode's settings.json / workspaceState split, and it is
+drawn at the *document*, not in the API: nothing in the package is
+preference-specific. What distinguishes state is that its keys appear
+at runtime — scroll position per file, layout per pane — so they cannot
+be pre-registered the way a preference can; `SetRaw` needs no prior
+registration, and a key written raw in one run can be claimed by
+`Value` in the next, which picks the stored value up off the
+pass-through map exactly as it would any other stored key.
+
+One measured note from the tests: `SetRaw` compacts its input, but the
+flush comparison never needed it — `encoding/json` re-compacts every
+`RawMessage` at document-encode time, so whitespace was already
+invisible to the "did anything change" test. The compaction buys early
+validation with an error naming the key, and canonical bytes from
+`Raw`. The test that discovered this (`TestSetRawCompactsWhatRawReadsBack`)
+records it, because its first version pinned the false claim and passed
+with the mechanism deleted.
 
 ## No reflection in core
 
