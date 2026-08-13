@@ -57,6 +57,22 @@
 // Dispatcher, exactly as a Timer's tick does. Store.Start has
 // gooey.Startable's signature for that reason, though a store is
 // normally owned by the app rather than by the tree.
+//
+// # State documents
+//
+// A STATE store — machine-written app state, as against human-edited
+// preferences — is a second Store over its own document:
+//
+//	state, _ := settings.Open(settings.UserFile("gooey", "browser.state.json"))
+//
+// Nothing in the package is preference-specific; the split is the same
+// one vscode draws between settings.json and workspaceState, and it is
+// drawn at the DOCUMENT, not in the API. What distinguishes state is
+// that its keys appear at runtime — scroll position per file, layout
+// per pane — which is what SetRaw exists for: an upsert that needs no
+// prior registration. Typed handles still work in a state document for
+// the keys an app does know ahead of time, and a key written raw in one
+// run can be claimed by Value in the next.
 package settings
 
 import (
@@ -89,19 +105,22 @@ type Provider interface {
 	Save(doc []byte) error
 }
 
-// entry is one registered key: the closures that read and reset its
-// typed handle, plus the watcher that notices a Set.
+// entry is one registered key: the closures that read, reset, and
+// raw-write its typed handle, plus the watcher that notices a Set.
 //
 // The closures are what keep the store reflection-free at its own
 // boundary. T is a compile-time parameter of Value, so each entry
 // carries functions that already know their own type; the store itself
 // never asks a value what it is. This is the same discipline markup's
-// propKinds table uses.
+// propKinds table uses — and setRaw is why an untyped write can still
+// reach a typed handle: the closure was compiled knowing T, so the
+// unmarshal happens inside it, not in the store.
 type entry struct {
 	key    string
 	defRaw json.RawMessage
 	encode func() (json.RawMessage, error)
 	reset  func()
+	setRaw func(json.RawMessage) error
 	watch  *prop.Property[int]
 }
 
@@ -225,6 +244,14 @@ func Value[T any](s *Store, key string, def T) (*prop.Property[T], error) {
 		return json.RawMessage(b), nil
 	}
 	e.reset = func() { p.Set(def) }
+	e.setRaw = func(raw json.RawMessage) error {
+		var got T
+		if err := json.Unmarshal(raw, &got); err != nil {
+			return fmt.Errorf("settings: SetRaw(%q): %s is not a %T, which is the type the registered handle carries: %w", key, raw, def, err)
+		}
+		p.Set(got)
+		return nil
+	}
 	// The watcher is the only way to observe a Set: Property.Set
 	// invalidates its dependents, never itself, so a dependent is what a
 	// notification has to be made of. Reading p INSIDE this computed is
@@ -315,6 +342,43 @@ func (s *Store) Raw(key string) (json.RawMessage, bool) {
 	return v, ok
 }
 
+// SetRaw upserts one key as JSON, whether or not a handle owns it. It
+// is the write half of Raw, and the surface that makes a STATE document
+// possible: state keys appear at runtime — scroll position per file,
+// layout per pane — and cannot be pre-registered the way a preference
+// can.
+//
+// A registered key routes through its handle's own setRaw closure, so
+// the typed property is Set and everything bound to it repaints; a raw
+// value that will not decode as the handle's type is a load-shaped
+// error and changes nothing. That routing is what keeps the guarantee
+// Raw already makes — a handle and the document can never disagree —
+// and it is why an untyped write does not need reflection: the closure
+// was compiled knowing T.
+//
+// An unregistered key lands in the pass-through map and persists on the
+// next flush. Like prop.Set, SetRaw does not compare values — a no-op
+// write costs one encode-and-compare at flush time and zero disk
+// writes, the same economics as every other Set.
+//
+// UI goroutine only, like every method on Store.
+func (s *Store) SetRaw(key string, v json.RawMessage) error {
+	if key == "" {
+		return errors.New("settings: SetRaw: empty key")
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, v); err != nil {
+		return fmt.Errorf("settings: SetRaw(%q): value is not valid JSON: %w", key, err)
+	}
+	raw := json.RawMessage(bytes.Clone(buf.Bytes()))
+	if e, ok := s.byKey[key]; ok {
+		return e.setRaw(raw) // the Set fires the watcher, which marks dirty
+	}
+	s.pass[key] = raw
+	s.changed()
+	return nil
+}
+
 // Delete removes a key and reports whether there was one.
 //
 // For a registered key that means resetting its handle to the default
@@ -322,10 +386,6 @@ func (s *Store) Raw(key string) (json.RawMessage, bool) {
 // the default", and the reset is an ordinary Set, so anything bound to
 // it repaints. For a pass-through key it means dropping it from the
 // document.
-//
-// There is deliberately no untyped Write. A write has to reach the
-// typed handle or the bound UI silently diverges from the document, and
-// reaching it from an untyped key would take reflection.
 func (s *Store) Delete(key string) bool {
 	if e, ok := s.byKey[key]; ok {
 		e.reset() // fires the watcher, which marks the store dirty
