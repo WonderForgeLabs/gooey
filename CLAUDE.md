@@ -45,7 +45,7 @@ name eight modules across two loops and still skip seven `packs/temporal-*`.
 # starting point. Drop it and `-name '.*'` matches `.` itself, prunes the
 # whole walk, and prints nothing while still exiting 0. `.?*` is only
 # belt-and-braces for whoever removes `-mindepth 1` later — with it
-# present the two patterns are identical (checked: both find 16).
+# present the two patterns are identical (checked: both find 19).
 #
 # Piped into `while read` rather than `for m in $(…)`: unquoted command
 # substitution word-splits AND glob-expands, so one directory with a
@@ -62,7 +62,7 @@ while IFS= read -r mod; do
 done
 ```
 
-That is **15** modules today (16 `go.mod` counting the root). If it walks
+That is **18** modules today (19 `go.mod` counting the root). If it walks
 noticeably fewer, suspect the loop before you trust the green.
 
 The `-race` where CI applies it is not a nicety: what those tests prove is
