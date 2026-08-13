@@ -1,5 +1,34 @@
 name: CI
 
+# ADR-048 shim: delegates the auto-discoverable half of CI — build, test and
+# publish for every Go module, JS package and Dockerfile in the tree — to
+# forge's workflow of record, ci.reusable.yml. What stays here is what no
+# discovery pass can infer: the `on:` triggers, `concurrency`, the calling job's
+# `permissions` ceiling, the three required-status-check job names, and the
+# `contract` job's proto/codegen gates.
+#
+# What this replaces: three nested Go modules hardcoded in the `test` job, each
+# behind an `if [ -f handlers/temporal/go.mod ]` guard. A module added without
+# also editing this file was never built, and the guard made that look like a
+# pass. That is not hypothetical — `grpc/` is a fifth Go module on main that
+# the old job list never mentioned, so nothing built it, and it has an open
+# Dependabot PR bumping golang.org/x/net. It is covered now, with no YAML
+# naming it.
+#
+# Tracks forge's main branch directly, matching claude-code-review.yml and the
+# other consumer repos in the org. A repo-qualified ref (never a local `./`
+# path) is load-bearing per the ADR's trust model.
+# See https://github.com/WonderForgeLabs/forge/blob/main/.github/workflows/CLAUDE.md
+#
+# THE `uses:` REF BELOW IS TEMPORARILY A BRANCH, NOT `@main`. See the note at
+# the `ci` job. It must read `@main` before this PR leaves draft.
+#
+# Publishing semantics are unchanged: pull requests BUILD the image to catch
+# Dockerfile regressions, and only pushes to main and `v*` tags PUBLISH. The
+# image name is unchanged too — ghcr.io/wonderforgelabs/gooey, which the
+# reusable workflow derives from the root Dockerfile's location rather than from
+# a hardcoded `IMAGE` env var.
+
 on:
   push:
     branches: [main]
@@ -9,138 +38,145 @@ on:
 permissions:
   contents: read
 
-env:
-  IMAGE: ghcr.io/wonderforgelabs/gooey
+concurrency:
+  # PRs: one group per ref so a new push supersedes the in-flight run.
+  # Pushes: a unique group per run so a rapid second merge can never evict the
+  # first commit's still-pending build (a shared group caps at one running + one
+  # pending and evicts the pending one regardless of cancel-in-progress).
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  ci:
+    # Ceiling for every permission the reusable workflow's jobs use — a
+    # workflow_call job can only narrow, never widen, the caller's grant, and
+    # under-granting silently 403s the affected step rather than failing loudly.
+    # `packages: write` is for the image lane's GHCR push.
+    permissions:
+      contents: read
+      packages: write
+    # TEMPORARY BRANCH REF — must become `@main` before this leaves draft.
+    #
+    # ci.reusable.yml does not exist on forge's main yet (WonderForgeLabs/forge#3285
+    # is still open). An unresolvable `uses:` fails the workflow at LOAD time, so
+    # no job runs at all — including `contract`, which does not even depend on
+    # this one. Pinning `@main` early would therefore report zero checks and make
+    # the coverage claim below unverifiable rather than merely red.
+    #
+    # Sequence: forge#3285 merges → flip this to `@main` → undraft this PR.
+    uses: WonderForgeLabs/forge/.github/workflows/ci.reusable.yml@ci/reusable-auto-discovering-ci
+    with:
+      # The two generated TS clients under clients/ts/ define `typecheck` and
+      # `build` — not the reusable workflow's default `lint type-check test
+      # build`. Naming the scripts this repo actually has is required: the lane
+      # fails rather than looping over workspaces running nothing.
+      js_tasks: "typecheck build"
+      # Everything else is the reusable workflow's defaults, deliberately:
+      # `go test -race` now covers EVERY discovered module, not just `mcp`.
+      # That was `mcp`'s deliberate assertion (no tool body touches the
+      # property graph from an HTTP goroutine) and generalising it is strictly
+      # stronger.
+      #
+      # No count here, on purpose. This comment said "all five modules" when
+      # the PR was cut and the number was already wrong by the time it was
+      # rebased — the tree has seventeen nested modules, and this branch adds
+      # another (`paint/`). A transcribed count is the exact failure this job
+      # exists to end: the hand-written matrix it replaces enumerated root,
+      # handlers/*, packs/*, imagefmt/svg and mcp, and silently skipped grpc,
+      # every examples/* module, and anything added later. Discovery has no
+      # such list to go stale, so the comment must not keep one either.
+      #
+      # Every module was verified clean under `-race` before this landed.
+
+  # ---------------------------------------------------------------------------
+  # The three required status checks. Their NAMES are the literal strings the
+  # branch ruleset requires (`test`, `contract`, `image` — plus
+  # `review-with-tracking` from claude-code-review.yml), so they must not be
+  # renamed: a `workflow_call` job's own checks get two-segment names
+  # (`ci / go`), which is why the required-check literals have to live in this
+  # shim rather than in the reusable workflow. Same reason
+  # `review-with-tracking` is a local mirror job there.
+  # ---------------------------------------------------------------------------
+
+  # Mirrors the reusable workflow's Go + JS lanes. `tests_result` and
+  # `image_result` are reported SEPARATELY, so a broken image build reds `image`
+  # and leaves `test` honest.
   test:
+    needs: [ci]
+    # `!cancelled()` rather than `always()`: still reflects a failed `ci`, but
+    # doesn't red the check in a run that cancel-in-progress superseded.
+    if: ${{ !cancelled() }}
+    # A single echo — no reason to occupy a self-hosted runner, matching
+    # claude-code-review.yml's `review-with-tracking` mirror.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
-      # handlers/temporal is a separate module, excluded from the root
-      # ./... patterns. The guard keeps CI green both before and after it
-      # lands on main.
-      #
-      # -race for the reason handlers/exec and mcp have it: the provider
-      # runs every activity on its own goroutine, so a page that fires
-      # several at once is exactly the shape the detector exists for.
-      # Without it the module's concurrency is untested, which is how
-      # #182 sat on main unnoticed.
-      - name: Build and test handlers/temporal
+      - name: Reflect test lane result
+        env:
+          CALL_RESULT: ${{ needs.ci.result }}
+          VERDICT: ${{ needs.ci.outputs.tests_result }}
+          SUMMARY: ${{ needs.ci.outputs.summary }}
         run: |
-          if [ -f handlers/temporal/go.mod ]; then
-            cd handlers/temporal
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/temporal/go.mod not present; skipping"
+          set -euo pipefail
+          echo "${SUMMARY:-(no summary)}"
+          # An empty verdict means the reusable workflow's `results` job never
+          # ran, so there is nothing to be green about. Fail closed.
+          if [ -z "$VERDICT" ]; then
+            echo "::error::Reusable CI reported no test verdict (call result: ${CALL_RESULT})."
+            exit 1
           fi
-
-      # handlers/exec is a separate module too — its jq extraction takes
-      # gojq (pure Go, but a real dependency), and the deps⇒nested rule
-      # of the pack-distribution doctrine keeps it out of the root
-      # graph. -race because its tests drive real child processes and
-      # the timeout/kill path crosses goroutines.
-      - name: Build and test handlers/exec
-        run: |
-          if [ -f handlers/exec/go.mod ]; then
-            cd handlers/exec
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/exec/go.mod not present; skipping"
-          fi
-
-      # Every packs/* directory is an ACTIVITY PACK — its own module with
-      # zero gooey imports (graph: Temporal SDK + API protos only), so
-      # any Go Temporal worker can import it. handlers/temporal consumes
-      # them via replace directives.
-      #
-      # This step DISCOVERS them rather than naming them. Every other
-      # nested module above is a literal name behind an `if [ -f … ]`
-      # guard, and that shape has a failure mode: a module added without
-      # also editing this file is never built, and the guard makes that
-      # look like a pass. packs/ is about to grow to eight modules (epic
-      # #142), so it gets the loop; the rest is left alone because #130
-      # replaces this whole job with forge's auto-discovering CI, which
-      # generalises the same idea. When that lands, this step deletes.
-      #
-      # No `go build ./...`: a pack that ever grows a main package would
-      # write an executable into the tree, and this repo has committed
-      # five that way. `go vet` compiles everything regardless. -race
-      # because these suites run in milliseconds and #130 makes it
-      # universal anyway.
-      - name: Build and test packs/*
-        run: |
-          shopt -s nullglob
-          found=0
-          for mod in packs/*/go.mod; do
-            found=1
-            dir=$(dirname "$mod")
-            echo "::group::$dir"
-            ( cd "$dir" && go vet ./... && go test -race ./... )
-            echo "::endgroup::"
-          done
-          # A zero-match glob is a repo-structure error, not a skip.
-          # packs/ has modules; the only ways to reach this branch are a
-          # rename, a bad path, or a broken checkout — all of which must
-          # be red. A `|| echo` here would have reproduced the exact
-          # failure this step exists to remove.
-          [ "$found" = 1 ] || { echo "::error::no packs/*/go.mod found — packs/ is missing or the glob is wrong"; exit 1; }
-
-      # imagefmt/svg is a separate module for the same reason — the SVG
-      # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
-      # opt in with a blank import.
-      - name: Build and test imagefmt/svg
-        run: |
-          if [ -f imagefmt/svg/go.mod ]; then
-            cd imagefmt/svg
-            go build ./...
-            go vet ./...
-            go test ./...
-          else
-            echo "imagefmt/svg/go.mod not present; skipping"
-          fi
-
-      # mcp is a separate module for the same reason (the MCP SDK's graph),
-      # so the root ./... patterns skip it too. It runs under -race
-      # deliberately: what its tests prove is that no tool body ever touches
-      # the property graph from an http goroutine, and without the detector
-      # that assertion is only half made.
-      - name: Build and test mcp
-        run: |
-          if [ -f mcp/go.mod ]; then
-            cd mcp
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "mcp/go.mod not present; skipping"
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::Test lanes: ${VERDICT}"
+            exit 1
           fi
 
   # The gRPC control plane (issue #110): proto/ is the source of truth,
-  # generated Go/Python/TS is committed. Gates: buf lint, buf breaking
-  # against main, regenerate-and-diff drift check, then each committed
-  # client actually compiles/passes its smoke test.
+  # generated Go/Python/TS is committed. Gates: buf lint, buf breaking against
+  # main, regenerate-and-diff drift check, then the Python client's smoke test.
+  #
+  # This job STAYS LOCAL and is not something the reusable workflow could take
+  # over. Every check in it is an assertion about this repo's contract that no
+  # discovery pass can infer from the file tree: which directory is the proto
+  # source of truth, that generated code is committed and must match the pinned
+  # plugins byte for byte, and that a break against main is a failure rather
+  # than a diff. Auto-discovery answers "what units exist"; it cannot answer
+  # "what must stay true about them".
+  #
+  # Disposition of all six steps the pre-shim `contract` job ran. Four are
+  # KEPT here verbatim; two are dropped only because a lane provably covers
+  # them — verified by running forge's own discover.sh against this tree
+  # (ROOT=<repo> REPO_NAME=gooey), not by reading the reusable workflow:
+  #
+  #   1. buf lint proto                    KEPT — no lane covers it
+  #   2. buf breaking proto --against main KEPT — no lane covers it. This is
+  #      the only thing stopping a wire-incompatible proto change from
+  #      merging, and this repo publishes generated clients in three
+  #      languages.
+  #   3. buf generate + git diff --exit-code  KEPT — no lane covers it
+  #   4. build/vet/test the grpc module    DROPPED — discovery returns
+  #      go_count=5 including `grpc`, and the Go lane adds gofmt and `-race`
+  #      on top of what this step did.
+  #   5. pip install ./clients/python + unittest  KEPT — there is no Python
+  #      lane, so nothing else would run it.
+  #   6. typecheck both TS clients         DROPPED — discovery returns
+  #      js_count=2 (clients/ts/connect, clients/ts/grpc-js) and both define
+  #      a `typecheck` script that is literally `tsc -p tsconfig.json`, the
+  #      same command this step ran. The lane also runs `build`, which this
+  #      step never did.
+  #
+  # Running 4 and 6 in both places would only slow the PR down; nothing else
+  # here is duplicated anywhere.
   contract:
+    # Deliberately still hosted, unlike the reusable workflow's lanes. The ARC
+    # runner image does ship python3 + python3-pip, but `pip install` into a
+    # Debian-managed system environment can refuse under PEP 668
+    # (externally-managed-environment), which the GitHub-hosted image's
+    # pyenv-managed python does not. Moving this job to a self-hosted pool is a
+    # follow-up that needs that verified first, not a side effect of this PR.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -167,75 +203,35 @@ jobs:
           go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
           git diff --exit-code
 
-      # grpc is the wire module (generated Go plus the issue #111
-      # server) — a separate module like mcp/, so grpc-go and protobuf
-      # stay out of the root graph. -race for the same reason mcp runs
-      # under it: the tests prove no RPC touches the property graph off
-      # the UI goroutine, and that claim is half-made without the
-      # detector.
-      - name: Build and test grpc
-        run: |
-          if [ -f grpc/go.mod ]; then
-            cd grpc
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "grpc/go.mod not present; skipping"
-          fi
-
       - name: Python client smoke
         run: |
           python3 -m pip install ./clients/python
           python3 -m unittest discover -s clients/python/tests -v
 
-      - name: TypeScript clients typecheck
-        run: |
-          cd clients/ts/connect
-          npm ci
-          npx tsc -p tsconfig.json
-          cd ../grpc-js
-          npm ci
-          npx tsc -p tsconfig.json
-
+  # Mirrors the reusable workflow's image lane. It builds on every PR and
+  # publishes only on pushes to main and v* tags — the reusable workflow decides
+  # that from the event and the default branch, preserving what the hand-rolled
+  # job did with `if: github.event_name == 'push'`.
   image:
-    needs: test
+    needs: [ci]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      # Pull requests build the image to catch Dockerfile regressions, but
-      # only pushes to main and v* tags publish it.
-      - name: Log in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Reflect image lane result
+        env:
+          CALL_RESULT: ${{ needs.ci.result }}
+          VERDICT: ${{ needs.ci.outputs.image_result }}
+          SUMMARY: ${{ needs.ci.outputs.summary }}
+        run: |
+          set -euo pipefail
+          echo "${SUMMARY:-(no summary)}"
+          if [ -z "$VERDICT" ]; then
+            echo "::error::Reusable CI reported no image verdict (call result: ${CALL_RESULT})."
+            exit 1
+          fi
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::Image lane: ${VERDICT}"
+            exit 1
+          fi
