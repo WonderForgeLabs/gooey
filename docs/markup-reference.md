@@ -890,6 +890,10 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 
 Each `{{.Path}}` must resolve to a `*prop.Property[string]` (a live handle) or a plain `string` (a static splice); anything else is a build error, as is a path that does not resolve.
 
+Two forms are legal inside the braces, and **nothing else is**: `{{.Path}}` and `{{ns:Func args…}}`, a [value namespace](#value-namespaces) call. A brace expression that is neither — an undeclared prefix, a malformed path, an unterminated `{{` — is a **load error** naming what could not be resolved. It is not literal text. (It used to be: before the scanner in `markup/scan.go`, `<Text>{{env:Get `HOME`}}</Text>` loaded clean and painted its own source on the terminal. See issue #221.)
+
+There is consequently no escape for a literal `{{` in content; route it through a property, whose value is never re-parsed. Issue #227 tracks whether that needs a mechanism.
+
 Resolution happens once, at build time, to property handles — not values. This is the lvalue semantics of the design: the built component holds the handles, and evaluation at render time does no lookups. Mixed content becomes a single computed string property over its parts, so setting any bound source property repaints exactly the components that read it — there is no refresh call anywhere.
 
 ### Event bindings
@@ -993,6 +997,63 @@ The fs registration names a **root**: `fshandlers.New(fsys)` grants exactly the 
 The exec provider's registration is an **allowlist**: markup names a registered `Command` (a backtick literal, checked at load), never a binary, and nothing is ever shell-interpreted. Option literals between the name and the arguments select the capture stream (`` `capture=stdout|stderr|combined|both|exit-code` ``) and a gojq extraction (`` `jq=.items[].name` ``), both validated at load time; `` `--` `` ends option parsing. See `handlers/exec/README.md` and `docs/specs/2026-08-10-exec-pack.md`.
 
 A provider is a typed factory — `NewCommand(*markup.Call) (gooey.Command, error)` — with no reflection: arguments arrive as resolved handles, and a provider needing a type other than string type-switches on `Arg.Raw`.
+
+## Value namespaces
+
+The pull half of the same mechanism. A handler namespace answers *what happens when the user does this*; a value namespace answers *what is this worth right now*:
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:env="gooey.dev/handlers/env"
+       xmlns:str="gooey.dev/handlers/str">
+  <Text>hi {{str:Upper .User}}, on {{env:Get `TERM` `(unknown)`}}</Text>
+</Gooey>
+```
+
+```go
+markup.RegisterValues(envhandlers.URI, envhandlers.New("USER", "TERM"))
+markup.RegisterValues(strhandlers.URI, strhandlers.New())
+```
+
+Same grammar, same backtick literals, same `.Path` arguments — a different **position**. A value expression goes wherever a binding goes and resolves at build time to a `*prop.Property[string]`, composing with literals and paths in one run of interpolated content.
+
+### Push and pull are a property of the capability
+
+An **effect** — fetch a URL, run a workflow, spawn a process, play a sound — is an event: it happens at a moment, it can fail, it wants a target. `Click="{{net:Get .Url | into .Body}}"` is right.
+
+A **value** — the environment, an uppercased name — has no moment and nothing to deliver into; it *is* the binding. Writing one on a `Click` would mean declaring a property, declaring a button, and pressing it before the page is correct.
+
+The two registries are separate, so a namespace can grant its read half without its write half — which is exactly what `handlers/env` does. Both crossovers are load errors with specific messages:
+
+```
+markup: {{net:Get …}} is in a value position, but "gooey.dev/handlers/net"
+is registered as a HANDLER namespace (event-only): invoke it from an event
+attribute, as Click="{{net:Get … | into .Target}}"
+```
+
+`| into` in a value position is likewise a load error: a value expression delivers its result by *being* the binding.
+
+### Damage tracking is inherited, not implemented
+
+A provider builds its handle with `prop.NewComputed`, so every `Arg.String()` it calls runs **inside an evaluation** — which is what makes that `Get` a subscription rather than a read. `{{str:Upper .User}}` repaints exactly the components that display it, only when `.User` changes.
+
+The corollary is the usual trap, and it bites providers harder than pages: an argument read behind an early return or a short-circuit drops out of the dependency set on the frames where it does not run. `env:Get`'s fallback and `str:Default` both hoist *both* reads above the branch, and both have a test that fails if someone un-hoists them.
+
+### Providers
+
+| Namespace URI | Package | Functions |
+|---|---|---|
+| `gooey.dev/handlers/env` | `handlers/env` | `` Get `NAME` [`fallback`] `` — an allowlisted environment variable; `Names` — the sorted grant |
+| `gooey.dev/handlers/env` (writable grant) | `handlers/env` | `` Set `NAME` .Value `` / `` Unset `NAME` `` — handler side; writes the process environment **and** the source property, so readers repaint |
+| `gooey.dev/handlers/str` | `handlers/str` | `Upper`, `Lower`, `Trim` (1 arg); `` Replace .S `old` `new` ``; `` Join `sep` a b… ``; `` Default .S `fb` ``; `` Pad .S `n` ``, `` Truncate .S `n` `` (width is a load-time literal, counted in runes) |
+
+The env registration is an **itemized allowlist**, `handlers/exec`'s posture rather than `handlers/fs`'s: the environment is where a process keeps its credentials next to its terminal type, so `envhandlers.New("USER", "HOME")` grants exactly those and an ungranted name is a load error naming the grant. There is deliberately no grant-everything constructor. The variable name is always a backtick literal — an allowlist checked at load time is the point.
+
+A provider is a typed factory — `NewValue(*markup.Call) (*prop.Property[string], error)` — with no reflection. The `Call` is the same struct handler providers receive, with `Target` left invalid, so a provider serving both sides can tell the positions apart.
+
+**Limits today:** value expressions only work in string positions (element content, `Content`, `Title`, `Label`, `Prompt`) — typed attributes such as `Visibility`, `Style` and `Background` resolve through a different path (issue #222). There is no nesting: ``{{str:Upper env:Get `USER`}}`` does not parse, and composition is issue #223's question, likely answered by #99's converter stages.
+
+Design record: [docs/specs/2026-08-12-value-namespaces.md](specs/2026-08-12-value-namespaces.md).
 
 ## Property elements
 
