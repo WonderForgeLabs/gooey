@@ -879,42 +879,59 @@ func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Comp
 
 var bindRe = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
 
-// bindText turns content with {{.Path}} expressions into a computed
-// string property. Pure-literal content returns (nil, nil). Resolution
-// happens once at build time — handles, not values — so evaluation
-// does no lookups; this is the "lvalue semantics" of the design.
+// bindText turns content with {{.Path}} bindings and {{ns:Func …}}
+// value-namespace calls into a computed string property. Pure-literal
+// content returns (nil, nil). Resolution happens once at build time —
+// handles, not values — so evaluation does no lookups; this is the
+// "lvalue semantics" of the design.
+//
+// The computed reads every part's handle on each evaluation, so a
+// change to any of them repaints exactly the components that display
+// this text — including the handle a value provider built, whose own
+// argument Gets are subscriptions for the same reason.
+//
+// Content that contains a brace expression this package cannot resolve
+// is a LOAD ERROR, not literal text; see scan.go for why.
 func bindText(content string, ctx *Context) (*prop.Property[string], error) {
-	m := bindRe.FindAllStringSubmatchIndex(content, -1)
-	if len(m) == 0 {
-		return nil, nil
+	segs, err := scanBindings(content)
+	if err != nil {
+		return nil, err
 	}
 	type part struct {
 		lit string
 		p   *prop.Property[string]
 	}
 	var parts []part
-	pos := 0
-	for _, idx := range m {
-		if idx[0] > pos {
-			parts = append(parts, part{lit: content[pos:idx[0]]})
-		}
-		path := content[idx[2]:idx[3]]
-		v, err := resolve(ctx.Values, path)
-		if err != nil {
-			return nil, err
-		}
-		switch h := v.(type) {
-		case *prop.Property[string]:
+	dynamic := false
+	for _, sg := range segs {
+		switch sg.kind {
+		case segLiteral:
+			parts = append(parts, part{lit: sg.text})
+		case segPath:
+			dynamic = true
+			v, err := resolve(ctx.Values, sg.text)
+			if err != nil {
+				return nil, err
+			}
+			switch h := v.(type) {
+			case *prop.Property[string]:
+				parts = append(parts, part{p: h})
+			case string:
+				parts = append(parts, part{lit: h})
+			default:
+				return nil, fmt.Errorf("markup: {{.%s}} is %T; need *prop.Property[string] or string", sg.text, v)
+			}
+		case segCall:
+			dynamic = true
+			h, err := ctx.valueHandle(sg.call)
+			if err != nil {
+				return nil, err
+			}
 			parts = append(parts, part{p: h})
-		case string:
-			parts = append(parts, part{lit: h})
-		default:
-			return nil, fmt.Errorf("markup: {{.%s}} is %T; need *prop.Property[string] or string", path, v)
 		}
-		pos = idx[1]
 	}
-	if pos < len(content) {
-		parts = append(parts, part{lit: content[pos:]})
+	if !dynamic {
+		return nil, nil
 	}
 	return prop.NewComputed(func() string {
 		var sb strings.Builder
