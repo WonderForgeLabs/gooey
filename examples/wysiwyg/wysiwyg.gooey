@@ -44,22 +44,58 @@
     <ActivityBar Name="ActivityBar" Grid.Row="0" Grid.Col="0" Sel="{{.ActivitySel}}"
                  Height="8" VAlign="Start"/>
 
-    <!-- THE SIDE BAR, showing the toolbox — which is what the activity
-         rail's default selection points at.
+    <!-- THE SIDE BAR — and it now DOES something when you click the rail.
+         Until this, the rail moved a selection that nothing read: whichever
+         icon you picked, the side bar showed the toolbox. An activity rail
+         whose only effect is on its own marker is a control that lies.
 
-         PaletteItems is the live catalog, not a table compiled in: it is a
-         computed over the registered vocabulary, so an element added to the
-         context appears here with no edit to this file. The Kids column is
-         the child mode, which is the honest answer to "may I put things
-         inside this" — and "?" in Attrs means a registered component that
-         declares no schema, a state that has to read differently from one
-         that genuinely takes no attributes.
+         <Tabs Selected="{{.ActivitySel}}"> is the whole mechanism, and no Go
+         was needed for it. Tabs binds Selected to an int; ActivityBar writes
+         that same int. Two components sharing one property is the framework's
+         normal way to connect them — the rail does not know the side bar
+         exists and does not need to.
 
-         Panel's chrome is pixel line art sliced into a ring, so the
-         interior stays on the cell plane where text belongs; it falls back
-         to the same shape in box-drawing runes where there is no pixel
-         protocol. -->
-    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Title="TOOLBOX" Style="dim">
+         THE HEADER STRIP IS DRAWN, and it earns its row. Tabs always
+         renders its headers — there is no markup way to suppress them — so
+         the choice is what they should say rather than whether they appear.
+         They are the only WORDS for these four views: the rail is wordless
+         by construction, four icons and a marker, and an icon rail with no
+         labels anywhere is a guessing game. So the strip is the rail's
+         legend, not a second selector competing with it.
+
+         The names are SHORT because the track is 38 cells and the full
+         words did not fit — the first attempt rendered "PROBL" and read as
+         broken. Four short headers plus separators come to 32 of the 34
+         interior cells.
+
+         ORDER IS THE CONTRACT: these four must stay in the same order as
+         activitybar.DefaultIcons — designer, toolbox, markup, problems —
+         because the rail and this strip share one int and nothing checks
+         the correspondence. That is the fragile thing about doing it this
+         way, and it is the first place to look if clicking an icon shows
+         the wrong view.
+
+         Panel's chrome is pixel line art sliced into a ring, so the interior
+         stays on the cell plane where text belongs; it falls back to the same
+         shape in box-drawing runes where there is no pixel protocol. -->
+
+         Panel's chrome is pixel line art sliced into a ring, so the interior
+         stays on the cell plane where text belongs; it falls back to the same
+         shape in box-drawing runes where there is no pixel protocol. -->
+    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Style="dim">
+      <Tabs Name="SideBarViews" Selected="{{.ActivitySel}}">
+
+      <!-- 0 — DESIGNER. The rail's first icon. There is nothing to put in a
+           side bar for it: the designer IS the editor area, and duplicating
+           its content here would be two views of one thing competing for the
+           selection. So this states that, rather than showing an empty box
+           that reads as a failure to load. -->
+      <Tab Header="DESIGN">
+        <Text Style="dim">The designer is the centre pane.</Text>
+      </Tab>
+
+      <!-- 1 — TOOLBOX, the rail's default. -->
+      <Tab Header="TOOLS">
       <VStack>
         <!-- ONE COLUMN: the component's name.
              "COMPONENT", not "ELEMENT" — the toolbox lists things you place,
@@ -90,6 +126,25 @@
           </ItemsView.ItemTemplate>
         </ItemsView>
       </VStack>
+      </Tab>
+
+      <!-- 2 — MARKUP. The document as text, which is the same string the
+           OUTPUT tab shows. Deliberately the same binding rather than a
+           second copy of the serializer: two views of one document that
+           could disagree would be worse than one view. -->
+      <Tab Header="CODE">
+        <Text Style="dim">{{.Source}}</Text>
+      </Tab>
+
+      <!-- 3 — PROBLEMS. FitMsg is what the fit watcher says about the
+           current terminal size, and it is empty when everything fits —
+           which is why the tab reads as blank most of the time. That is the
+           honest state and not a missing view. -->
+      <Tab Header="ISSUES">
+        <Text Style="dim">{{.FitMsg}}</Text>
+      </Tab>
+
+      </Tabs>
     </Panel>
 
     <!-- The designer. It HOSTS rather than displays — the one region that
