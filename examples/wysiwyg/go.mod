@@ -5,7 +5,10 @@
 // framework's own graph must not take on. It needs BOTH directions of
 // the control plane: grpc as a client (-attach, driving another app) and
 // grpc + mcp as a server (-serve/-mcp, being driven, which is how the
-// editor's own UI gets built). Core gooey stays at golang.org/x/term, and
+// editor's own UI gets built). It also imports .../paint, and through it
+// fogleman/gg and freetype, to draw the panel chrome — the same doctrine,
+// which is why paint is a nested module too. Core gooey stays at
+// golang.org/x/term and golang.org/x/image, and
 // `go build ./...` / `go test ./...` at the repo root skipping this
 // directory is the mechanical proof of it.
 //
@@ -21,10 +24,13 @@ require (
 	github.com/WonderForgeLabs/gooey/grpc v0.0.0
 	github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0-00010101000000-000000000000
 	github.com/WonderForgeLabs/gooey/mcp v0.0.0-00010101000000-000000000000
+	github.com/WonderForgeLabs/gooey/paint v0.0.0-00010101000000-000000000000
+	github.com/fogleman/gg v1.3.0
 	google.golang.org/grpc v1.82.1
 )
 
 require (
+	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.7.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
@@ -49,4 +55,5 @@ replace (
 	github.com/WonderForgeLabs/gooey/grpc => ../../grpc
 	github.com/WonderForgeLabs/gooey/imagefmt/svg => ../../imagefmt/svg
 	github.com/WonderForgeLabs/gooey/mcp => ../../mcp
+	github.com/WonderForgeLabs/gooey/paint => ../../paint
 )

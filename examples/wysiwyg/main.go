@@ -437,7 +437,7 @@ type editor struct {
 func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
 		fsys: fsys,
-		art:  panel.NewArt(fsys),
+		art:  panel.NewArt(),
 		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
 			{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
 			{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
