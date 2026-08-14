@@ -8,6 +8,9 @@
         <Button Name="Quit"  Content=" quit "  Click="{{.Quit}}"/>
       </HStack>
       <TextBox Name="Note" Text="{{.Note}}" Prompt="a note an agent can type into"/>
+      <Border Name="Guest" Title="guest island">
+        <Text Name="GuestBody">{{.Guest.Body}}</Text>
+      </Border>
       <Text Name="Help" Style="dim">{{.Help}}</Text>
     </VStack>
   </Border>

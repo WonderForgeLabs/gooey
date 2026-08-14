@@ -96,6 +96,16 @@ type Options struct {
 	Timeout time.Duration
 	// Name and Version identify this server to clients.
 	Name, Version string
+	// Grant scopes this endpoint to one island: every tool reaches the
+	// granted subtree and the granted value names, and refuses or
+	// narrows everything else (control/grant.go). nil is the HOST's own
+	// endpoint — the whole app.
+	//
+	// The enforcement is not in this package and must not be: it lives
+	// in control.Service, which every tool body already calls, so MCP and
+	// gRPC cannot drift into two different ideas of what an island is.
+	// One path, one model applies to the scope as much as to the verbs.
+	Grant *control.Grant
 }
 
 // Server is a gooey app exposed over MCP.
@@ -130,7 +140,7 @@ func New(host Host, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("gooey/mcp: nil host")
 	}
 	s := &Server{
-		svc: control.NewService(host, opts.Context),
+		svc: control.NewScopedService(host, opts.Context, opts.Grant),
 		ui:  control.NewBridge(host.Post, opts.Timeout),
 		sdk: newSDKServer(firstNonEmpty(opts.Name, "gooey"), firstNonEmpty(opts.Version, "0.1.0")),
 	}

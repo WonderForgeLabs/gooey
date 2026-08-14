@@ -123,6 +123,13 @@ gesture, `FAILED_PRECONDITION` no context or composition,
 | `ListStyles()` | the markup context's style table — the names `Style="..."` can resolve (#117) |
 | `ValidateMarkup(source)` | SwapMarkup's parse-and-bind with no attach and no frame (#117); INVALID markup is response data, not a status |
 
+An endpoint may carry an **island grant** (`grpc.Options.Grant`,
+`mcp.Options.Grant`), and then every row above is narrowed or refused
+per `docs/specs/2026-08-14-island-grants.md` — including a fifth status
+code, `PERMISSION_DENIED`, for a request that reaches past the grant.
+Without a grant nothing changes: the host's own endpoint is the whole
+app, exactly as before.
+
 ### SessionService — one bidi stream
 
 `Attach(stream AttachRequest) returns (stream AttachResponse)`. First

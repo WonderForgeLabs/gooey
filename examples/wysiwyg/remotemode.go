@@ -24,6 +24,16 @@ import (
 // writers, and it means a failed edit can never damage anything the
 // editor does not own.
 //
+// The rule is now ALSO enforced by the host, and the two halves are
+// worth keeping separate in your head. This client behaves; a target
+// that hands out a scoped endpoint (grpc.Options.Grant —
+// control.Island, docs/specs/2026-08-14-island-grants.md) makes the
+// behaving unnecessary, refusing any write outside the island with
+// PERMISSION_DENIED. Against such a target the editor's own discipline
+// is redundancy, not the boundary. Against an UNSCOPED endpoint — the
+// host's own — it is still the only thing there is, which is why it
+// stays.
+//
 // # Validate first, always
 //
 // validate_markup runs the target's real parse-and-bind path without

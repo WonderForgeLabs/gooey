@@ -73,6 +73,12 @@ type DeclaredValue struct {
 }
 
 // Tree serializes the live component tree. depth 0 means unlimited.
+//
+// A SCOPED service is NARROWED, not refused: the walk is rooted at the
+// grant's island, so a guest sees its own subtree and has no way to
+// learn the shape of the rest of the page. Hiding is the point — a guest
+// that could enumerate the host's tree could pick targets for every
+// other verb and discover the app's structure through the refusals.
 func (s *Service) Tree(depth int) (*Node, error) {
 	c, err := s.composer()
 	if err != nil {
@@ -81,6 +87,12 @@ func (s *Service) Tree(depth int) (*Node, error) {
 	root := c.Root()
 	if root == nil {
 		return nil, preconditionf("the composition has no root")
+	}
+	if s.scoped() {
+		root = s.islandRoot()
+		if root == nil {
+			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
 	}
 	return s.walk(root, treeNames(s.bind), c.Focus(), depth, 1), nil
 }
@@ -237,10 +249,32 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 // damage count the framework guarantees. styled asks for the ANSI
 // escape stream a terminal would need to show the screen; plain is one
 // line per row, trailing blanks trimmed.
+// A SCOPED service reads only its island's rectangle, and only in plain
+// form. The crop is the same hiding rule the tree walk uses; the styled
+// refusal is because `styled` is defined as the escape stream a terminal
+// would need to repaint THE SCREEN — Composer.Snapshot writes the whole
+// cell plane in one synchronized update, and there is no rect form of
+// it. Rather than hand a guest the host's whole screen because the
+// convenient API has that shape, the styled read is refused and the
+// plain, croppable one is offered.
 func (s *Service) Screen(styled bool) (string, error) {
 	c, err := s.composer()
 	if err != nil {
 		return "", err
+	}
+	if s.scoped() {
+		if styled {
+			return "", deniedf("a session scoped to island %q cannot take a styled screen read: the styled form is the whole cell plane by construction; ask for the plain form, which is cropped to your island", s.grant.Island)
+		}
+		root := s.islandRoot()
+		if root == nil {
+			return "", deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
+		b, ok := root.(gooey.Bounded)
+		if !ok {
+			return "", preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+		}
+		return cropped(c.Cells(), b.Bounds()), nil
 	}
 	if styled {
 		var sb strings.Builder
@@ -265,6 +299,32 @@ func (s *Service) Screen(styled bool) (string, error) {
 		lines = append(lines, strings.TrimRight(string(row), " "))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// cropped renders one rectangle of the cell plane as plain text, one
+// line per row with trailing blanks trimmed — the same shape Screen's
+// unscoped plain form has, over a window instead of the plane. Cells
+// outside the buffer are blanks: an island arranged partly offscreen
+// reads as short rows, never as a bounds panic.
+func cropped(buf *render.Buffer, r gooey.Rect) string {
+	if r.W <= 0 || r.H <= 0 {
+		return ""
+	}
+	lines := make([]string, 0, r.H)
+	for y := r.Y; y < r.Y+r.H; y++ {
+		row := make([]rune, 0, r.W)
+		for x := r.X; x < r.X+r.W; x++ {
+			ch := ' '
+			if x >= 0 && y >= 0 && x < buf.W && y < buf.H {
+				if got := buf.At(x, y).Rune; got != 0 {
+					ch = got
+				}
+			}
+			row = append(row, ch)
+		}
+		lines = append(lines, strings.TrimRight(string(row), " "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // defaultLayout reports whether every EXPLICIT layout field is at its

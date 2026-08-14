@@ -37,12 +37,23 @@ import (
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/WonderForgeLabs/gooey/control"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
 	controlv1 "github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1"
 )
 
 func main() {
 	addr := flag.String("grpc", "127.0.0.1:7788", "loopback address for the gRPC server; empty disables it")
+	// The GUEST endpoint. Same app, second listener, and the only
+	// difference is that this one carries a Grant — so a client dialing
+	// it reaches <Border Name="Guest"> and the "Guest" value namespace,
+	// and is refused everything else BY THE SERVER.
+	//
+	// Registration is the grant: the host names the island here, in code
+	// it owns, exactly as it registers Components and Handlers. Nothing a
+	// guest sends can widen it, because there is no request field to
+	// widen. The address it was handed IS its capability.
+	guest := flag.String("guest", "127.0.0.1:7789", "loopback address for the SCOPED guest endpoint; empty disables it")
 	drive := flag.String("drive", "", "drive a running grpcdemo at this address instead of being one")
 	flag.Parse()
 
@@ -53,15 +64,16 @@ func main() {
 		}
 		return
 	}
-	serve(*addr)
+	serve(*addr, *guest)
 }
 
 // ---- the app half ----
 
-func serve(addr string) {
+func serve(addr, guestAddr string) {
 	count := prop.NewSource(0)
 	note := prop.NewSource("")
 	help := prop.NewSource("")
+	guestBody := prop.NewSource("this subtree belongs to whoever holds the guest endpoint")
 	readout := prop.NewComputed(func() string {
 		return fmt.Sprintf("count=%d   note=%q", count.Get(), note.Get())
 	})
@@ -75,6 +87,7 @@ func serve(addr string) {
 			"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
 			"Reset":     gooey.Command(func() { count.Set(0) }),
 			"Quit":      gooey.Command(func() { app.Quit() }),
+			"Guest":     map[string]any{"Body": guestBody},
 		},
 		Styles: map[string]render.Style{
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
@@ -108,6 +121,25 @@ func serve(addr string) {
 			"drive it:  go run ./cmd/grpcdemo -drive " + srv.Addr())
 	} else {
 		help.Set("started with -grpc \"\": no server is listening")
+	}
+
+	if guestAddr != "" {
+		gsrv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
+			Addr:    guestAddr,
+			Context: ctx,
+			Name:    "gooey-grpcdemo (guest)",
+			Version: "1",
+			// The whole grant, in one expression. Everything outside
+			// <Border Name="Guest"> and the "Guest" namespace is refused
+			// by the server, whatever the client believes it owns.
+			Grant: control.Island("Guest", "Guest"),
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		defer gsrv.Close()
+		help.Set(help.Get() + "\nscoped guest endpoint on " + gsrv.Addr() +
+			"  (island <Guest>) — try:  wysiwyg -attach " + gsrv.Addr() + " -island Guest")
 	}
 
 	if err := app.Run(context.Background()); err != nil {

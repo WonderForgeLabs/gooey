@@ -47,10 +47,34 @@ func (s *Service) echo(ev input.Event, consumed bool) {
 // markup gesture syntax ("tab", "enter", "ctrl+s"). Routed through the
 // composition, not the app-level handler — the quit key is out of a
 // client's reach. Returns per-event consumption, in send order.
+// A SCOPED session may only type into its own island, and the check has
+// to be on FOCUS rather than on a name, because keys are not
+// name-addressed: they go wherever focus is. So the rule is "the focused
+// element must be inside your island" — which a guest satisfies by
+// calling Focus on something it owns first.
+//
+// The honest consequence, worth stating rather than smoothing over:
+// focus is singular and global — there is one keyboard. Two guests with
+// disjoint islands cannot BOTH hold focus, so they cannot both type at
+// once. Enforcement does not fix that; it makes it a visible refusal
+// instead of silent cross-talk, which is the improvement actually on
+// offer. Every other verb is genuinely concurrent.
 func (s *Service) SendKeys(text string, gestures []string) ([]bool, error) {
 	c, err := s.composer()
 	if err != nil {
 		return nil, err
+	}
+	if s.scoped() {
+		if s.islandRoot() == nil {
+			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
+		f := c.Focus().Focused()
+		if f == nil {
+			return nil, deniedf("nothing is focused, and a scoped session may only send keys while focus is inside its island %q; call SetFocus on an element you own first", s.grant.Island)
+		}
+		if !s.islandSet()[f] {
+			return nil, deniedf("focus is on a %T outside this session's island %q; keys go where focus is, so sending them would type into the host's tree", f, s.grant.Island)
+		}
 	}
 	var events []input.Event
 	for _, r := range text {
@@ -76,10 +100,33 @@ func (s *Service) SendKeys(text string, gestures []string) ([]bool, error) {
 
 // SendPointer injects one pointer event. Hit-testing, hover and
 // focus-follows-click all happen as they would from a real terminal.
+// A SCOPED session may only point at cells its island occupies. The
+// check runs the framework's own HitTest — the same query dispatch
+// runs — so "inside the island" means what the pointer would actually
+// land on, not merely what rectangle it falls in: an overlay drawn on
+// top of the island is not the island.
+//
+// An ACTIVE CAPTURE is checked too. A press captures its target until
+// the release, and while the host is mid-drag every pointer event routes
+// to the captor regardless of where it points; without this a guest's
+// pointer event would be delivered straight into the host's drag.
 func (s *Service) SendPointer(p Pointer) (bool, error) {
 	c, err := s.composer()
 	if err != nil {
 		return false, err
+	}
+	if s.scoped() {
+		if s.islandRoot() == nil {
+			return false, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
+		own := s.islandSet()
+		if cap := c.Focus().Captured(); cap != nil && !own[cap] {
+			return false, deniedf("a %T outside this session's island %q has captured the pointer; every pointer event routes to the captor until it releases", cap, s.grant.Island)
+		}
+		hit := c.Focus().HitTest(p.X, p.Y)
+		if hit == nil || !own[hit] {
+			return false, deniedf("cell (%d,%d) is not inside this session's island %q", p.X, p.Y, s.grant.Island)
+		}
 	}
 	ev := input.MouseEvent{X: p.X, Y: p.Y, Button: p.Button}
 	switch p.Kind {
@@ -122,6 +169,9 @@ func (s *Service) Focus(name string) error {
 	}
 	if s.bind == nil {
 		return errNoContext
+	}
+	if err := s.mayAddress(name); err != nil {
+		return err
 	}
 	w, ok := s.bind.Named[strings.TrimSpace(name)]
 	if !ok {

@@ -319,19 +319,52 @@ type ValueEntry struct {
 // Values describes the bindable surface: every dotted name in the
 // binding context, sorted, plus the Name= identities of the current
 // tree.
+//
+// A SCOPED service NARROWS rather than refuses: a guest is shown the
+// values its grant reaches and the names inside its island, which is
+// also the surface its markup may bind. Hiding beats refusing here —
+// the listing is what a client uses to discover what it may do, so a
+// listing that showed the whole app and then refused most of it would
+// be a map of the host's state handed to a guest that cannot use it.
+//
+// This is also what scopes the streaming FrameDelta: the broadcaster
+// diffs whatever Values reports, so a scoped session's property deltas
+// are its granted values and no others, with no extra filtering code.
 func (s *Service) Values() ([]ValueEntry, []string, error) {
 	if s.bind == nil {
 		return nil, nil, errNoContext
 	}
 	out := make([]ValueEntry, 0)
+	if s.scoped() {
+		collectEntries(s.grantedValues(), "", &out)
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		return out, s.islandNames(), nil
+	}
 	collectEntries(s.bind.Values, "", &out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, namesOf(s.bind.Named), nil
 }
 
+// islandNames is the Name= identities inside the granted island — the
+// addresses a scoped guest may patch and focus.
+func (s *Service) islandNames() []string {
+	set := s.islandSet()
+	out := make([]string, 0, len(set))
+	for n, w := range s.bind.Named {
+		if set[w] {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Value describes one dotted name, resolved exactly as a {{.A.B}}
 // binding resolves.
 func (s *Service) Value(name string) (ValueEntry, error) {
+	if err := s.mayTouchValue(name); err != nil {
+		return ValueEntry{}, err
+	}
 	v, err := s.lookup(name)
 	if err != nil {
 		return ValueEntry{}, err
@@ -412,7 +445,16 @@ func describe(name string, v any) ValueEntry {
 // handle's type; a mismatch is an error naming both sides, and nothing
 // changes — the type switch IS the type check, exactly as it is for
 // markup bindings.
+// A scoped session may write only its GRANTED values. Note what that
+// deliberately does NOT mean: "a property my island binds" is not the
+// rule. An island commonly READS host state — a status line bound to
+// {{.App.Status}} — and being able to display a value is not authority
+// to write it. The two are separate grants because they are separate
+// capabilities, and only the value list confers the write.
 func (s *Service) Set(name string, v Value) error {
+	if err := s.mayTouchValue(name); err != nil {
+		return err
+	}
 	h, err := s.lookup(name)
 	if err != nil {
 		return err
@@ -478,7 +520,17 @@ func setMismatch(name string, want, got Kind) *Error {
 }
 
 // Invoke runs a named command from the binding context.
+//
+// Commands live in the same namespace as properties, so a command is
+// granted exactly the way a property is. That is the whole rule, and it
+// is the right one: a command is host code, and letting a guest run it
+// because its island happens to have a Button bound to it would make
+// PatchMarkup an escalation path — patch in a Button, invoke it, run
+// anything.
 func (s *Service) Invoke(name string) error {
+	if err := s.mayTouchValue(name); err != nil {
+		return err
+	}
 	v, err := s.lookup(name)
 	if err != nil {
 		return err
@@ -544,6 +596,14 @@ func (s *Service) register(regs []Registration) (rollback func(), err error) {
 	for _, r := range regs {
 		if strings.TrimSpace(r.Name) == "" {
 			return rollback, invalidf("a property registration needs a name")
+		}
+		// A scoped guest may only grow the namespace it was granted.
+		// Without this a guest registers a top-level name and then writes
+		// it — which would make register_properties a way to mint a
+		// capability out of nothing, and the grant would bound only the
+		// names that happened to exist at attach time.
+		if err := s.mayTouchValue(r.Name); err != nil {
+			return rollback, err
 		}
 		h, err := sourceFor(r)
 		if err != nil {
