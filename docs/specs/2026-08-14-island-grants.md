@@ -85,14 +85,14 @@ hide, and hiding is the stronger option wherever it is available.
 | `RegisterProperties` | **refuse** unless every new name falls under a granted prefix |
 | `SetFocus(name)` | **refuse** unless inside the island |
 | `SendKeys` | **refuse** unless the CURRENTLY FOCUSED component is inside the island. Keys are not name-addressed; they go where focus is |
-| `SendPointer` | **refuse** unless `HitTest(x,y)` lands inside the island, and unless any active captor is also inside it |
+| `SendPointer` | **refuse** unless `FocusManager.MouseTarget(ev)` — where dispatch would actually route it — is inside the island |
 | `SwapMarkup` | **refuse**, always. No island grant can authorize it |
 | `GetDeclaredSchema("")` | **refuse** — empty source means the host's own running document |
 | `SnapshotTree` | **narrow**: rooted at the island |
 | `ListValues` | **narrow**: granted values, and the `Name=` table filtered to the island |
 | `GetProperty(name)` | **refuse** unless granted |
 | `ScreenText(styled=false)` | **narrow**: cropped to the island's arranged rect |
-| `ScreenText(styled=true)` | **refuse** — the styled form is `Composer.Snapshot`, the whole cell plane in one synchronized update, and there is no rect form of it |
+| `ScreenText(styled=true)` | **narrow**: the island's cells copied into a fresh `render.Buffer` of the island's size and encoded by the ordinary one-shot `Flush`, so the stream is homed at 0,0 and does not betray where on the host's page the island sits |
 | `ValidateMarkup` | pruned build context (below). A denial is an **error**, not a `valid=false` answer |
 | `ListStyles` | **exposed**. Styles are already a host registration, and markup cannot be authored without them |
 | `FrameDelta` property changes | **narrow** — the broadcaster diffs `Service.Values()`, so scoping the service scopes the deltas with no extra code |
@@ -127,12 +127,26 @@ Two details are load-bearing:
   `Named` and `Declared`, a pruned `Values` left committed would
   silently narrow the host's own context, and the failure would surface
   somewhere else entirely.
-- **The denial is classified by experiment, not by string-matching.**
-  "No value named X" is the shape of a typo. So a scoped build that
-  fails is retried against the host's full surface in another scratch;
-  if THAT succeeds, the only difference was the grant. The message says
-  so without naming the value it hid — otherwise a refusal becomes an
-  enumeration of the host's state.
+- **The denial is classified by a typed error, not by string-matching
+  and not by a second build.** "No value named X" is the shape of a typo,
+  so `markup.resolve` now returns a typed `markup.UnresolvedError`
+  carrying the path. A failed scoped build is a denial when `errors.As`
+  finds one AND that path resolves against the host's full surface — one
+  map lookup. The message says so without naming the value it hid,
+  otherwise a refusal becomes an enumeration of the host's state.
+
+  The first version classified **by experiment**: rebuild the same source
+  against the full surface and see whether it succeeded. Correct answers,
+  and it ran the document TWICE — a `<Companion>` in a guest's fragment
+  would have launched two processes on the error path alone.
+  `TestARefusedFragmentRunsItsLoadTimeSideEffectsOnce` is the pin, and it
+  is RED against the double build.
+
+  Note what does *not* depend on this: the classification is about the
+  MESSAGE. If `errors.As` ever misses, the caller gets
+  `INVALID_ARGUMENT` instead of `PERMISSION_DENIED` — the build still
+  failed and the escalation is still blocked. Enforcement never rode on
+  the wording.
 
 What is deliberately NOT pruned: `Components`, `Handlers`, `Rules`,
 `Styles`, `Includes`. Those are already host registrations, and
@@ -168,11 +182,56 @@ is that the contention becomes a **visible refusal** ("focus is on a
 cross-talk into the host's fields. Every other verb is genuinely
 concurrent.
 
+## A scope check must model dispatch, not paraphrase it
+
+The pointer check was first written against `HitTest` plus a separate
+`Captured()` test. That is wrong in **both** directions, and neither
+failure is visible without a test that dispatches the event and asks who
+received it:
+
+- **Too permissive.** `HitTest` returns the deepest component on purpose,
+  but a frozen subtree does not act, so dispatch routes to the frozen
+  HOST. An island underneath a frozen shell it does not own would clear
+  the check and then have its event delivered outside the grant. This
+  stopped being hypothetical the day `preview.Pane` became a `Frozen`
+  host (`docs/specs/2026-08-14-frozen-observed.md`).
+- **Too strict.** While the pointer is captured, every event routes to
+  the captor regardless of where it points — that is what makes a drag
+  work outside the captor's bounds. Refusing on the hit alone refuses a
+  guest's own drag at exactly the moment a drag matters.
+
+The fix is `FocusManager.MouseTarget(ev)`: the routing decision itself,
+exported, so the check *derives* from dispatch instead of restating it.
+It also has to model the press asymmetry — a fresh press discards an
+implicit capture, only a held one survives — which `DispatchMouse` gets
+for free by setting the captor before it routes and a pre-dispatch query
+does not.
+
+`components/mousetarget_test.go` never asserts `MouseTarget` against a
+hand-written expectation: it dispatches, watches which component's
+counter moved, and compares. That is the only form of the test worth
+having, and writing it surfaced a second thing — `MouseMove` does not
+route through `HandleMouse` at all, so the first probe reported
+"delivered to nil" for every motion event and would have passed
+vacuously against a broken `MouseTarget`.
+
+### The grant scopes an event's TARGET, never its bubble
+
+An event delivered inside the island still **bubbles to ancestors
+outside it** when nothing in the island consumes it — `DispatchMouse`
+walks `m.parent` upward, and `FocusManager.Dispatch` does the same for
+keys. That is the framework's event model, and suppressing it for scoped
+sessions would change how the app behaves rather than what a guest may
+reach. A host component that must not see a guest's stray events has to
+consume them, or not be an ancestor.
+
+It also means a test asserting "the host component received nothing" is
+wrong, and `TestGrantRefusesAPointerRetargetedOutOfTheIsland` measures a
+DELTA across the refusal instead: a refused call dispatches nothing at
+all.
+
 ## Residual gaps
 
-- **`send_pointer` and mouse capture.** The captor is checked, but a
-  press-drag started by the host between a guest's hit-test and its
-  dispatch is a window this does not close.
 - **A guest can still infer host geometry** from its own island's bounds
   moving when the host's layout changes.
 - **No per-guest component vocabulary.** A guest may patch in any

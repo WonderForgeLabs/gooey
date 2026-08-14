@@ -234,6 +234,41 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	}
 }
 
+// MouseTarget reports the component DispatchMouse WOULD route ev to,
+// without dispatching it and without touching hover, focus or capture.
+//
+// It exists because a caller that needs to decide something about an
+// event before delivering it — a control-plane session checking that a
+// guest's pointer stays inside its island — must ask about the
+// EFFECTIVE target, and the effective target is not the hit. Two
+// framework behaviours move it, and paraphrasing either one at the call
+// site is how a check drifts from the routing it claims to model:
+//
+//   - Frozen retargets. `HitTest` returns the deepest component on
+//     purpose (see the comment there), but a frozen subtree does not
+//     act, so dispatch routes to the frozen HOST. A check on the raw hit
+//     would clear an event whose delivery lands somewhere else entirely.
+//   - Capture overrides. While the pointer is captured every event goes
+//     to the captor regardless of where it points — which is what makes
+//     a drag work outside the captor's bounds, and a check on the hit
+//     alone would refuse exactly those events.
+//
+// The press asymmetry is the third thing, and it is the one worth
+// spelling out: a fresh press DISCARDS an implicit capture (only a HELD
+// one survives), so a press routes to the hit even when a stale implicit
+// captor is still recorded. DispatchMouse gets that for free by setting
+// m.captor before it calls target; a query made BEFORE dispatch has to
+// say it.
+//
+// UI-goroutine only, like every other query on this type.
+func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
+	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y))
+	if ev.Kind == input.MousePress && !m.held {
+		return hit
+	}
+	return m.target(hit)
+}
+
 // target is where an event routes: the captor while the pointer is
 // captured, the hit otherwise.
 //

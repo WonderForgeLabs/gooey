@@ -1085,6 +1085,24 @@ func boundProp[T any](e Element, ctx *Context, attr string) (*prop.Property[T], 
 	return h, nil
 }
 
+// UnresolvedError is a binding path the context does not contain. It is
+// typed, rather than the plain fmt.Errorf it used to be, so a caller can
+// tell "this document names something that is not here" apart from every
+// other load failure WITHOUT matching on message text.
+//
+// The caller that needs it is the control plane: an endpoint scoped to
+// an island builds markup against a PRUNED value surface, and has to
+// report a document that reached past the grant differently from a
+// document with a typo. errors.As plus one map lookup answers that; the
+// alternative it replaced was building the document a second time
+// against the full surface to see whether it would have worked, which
+// runs every load-time side effect in the document twice.
+type UnresolvedError struct{ Path string }
+
+func (e *UnresolvedError) Error() string {
+	return fmt.Sprintf("markup: %q not found in context", e.Path)
+}
+
 func resolve(values map[string]any, path string) (any, error) {
 	segs := strings.Split(path, ".")
 	var cur any = values
@@ -1095,7 +1113,7 @@ func resolve(values map[string]any, path string) (any, error) {
 		}
 		cur, ok = m[s]
 		if !ok {
-			return nil, fmt.Errorf("markup: %q not found in context", path)
+			return nil, &UnresolvedError{Path: path}
 		}
 	}
 	return cur, nil

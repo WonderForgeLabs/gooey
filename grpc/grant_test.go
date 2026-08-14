@@ -12,6 +12,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -472,7 +473,7 @@ func TestGrantSendsPointerOnlyInsideTheIsland(t *testing.T) {
 		t.Fatalf("pointing inside its own island: %v", err)
 	}
 	// Straight down, past the island's own rows, is the peer's.
-	wantCode(t, point(r.left, x, b.GetY()+b.GetHeight()+1), codes.PermissionDenied, "is not inside this session's island")
+	wantCode(t, point(r.left, x, b.GetY()+b.GetHeight()+1), codes.PermissionDenied, "would be delivered to")
 }
 
 // ---- narrowing rather than refusing ----
@@ -549,7 +550,7 @@ func TestGrantNarrowsTreeAndValues(t *testing.T) {
 	}
 }
 
-func TestGrantCropsTheScreenAndRefusesTheStyledForm(t *testing.T) {
+func TestGrantCropsTheScreenInBothForms(t *testing.T) {
 	r := newIslandRig(t)
 	r.onUI(func() { r.vm.secret.Set("SECRETSTRING") })
 
@@ -572,8 +573,35 @@ func TestGrantCropsTheScreenAndRefusesTheStyledForm(t *testing.T) {
 		t.Errorf("a scoped screen read lost its own island:\n%s", scoped.GetText())
 	}
 
-	_, err = r.left.ctl.ScreenText(context.Background(), &controlv1.ScreenTextRequest{Styled: true})
-	wantCode(t, err, codes.PermissionDenied, "whole cell plane by construction")
+	// The STYLED form is cropped too, not refused: refusing one flag value
+	// while narrowing the other would be an API shape driven by which
+	// helper happened to exist.
+	styled, err := r.left.ctl.ScreenText(context.Background(), &controlv1.ScreenTextRequest{Styled: true})
+	if err != nil {
+		t.Fatalf("scoped styled read: %v", err)
+	}
+	if strings.Contains(styled.GetText(), "SECRETSTRING") {
+		t.Errorf("a scoped STYLED read showed a row outside the island")
+	}
+	if !strings.Contains(styled.GetText(), "left") {
+		t.Errorf("a scoped styled read lost its own island")
+	}
+	// It must still be an escape stream — otherwise "cropped" was
+	// achieved by quietly returning the plain form.
+	if !strings.Contains(styled.GetText(), "\x1b[") {
+		t.Errorf("the scoped styled read carries no escape sequences: %q", styled.GetText())
+	}
+	// And it must be HOMED rather than absolutely positioned: the guest's
+	// screen is its island, so the stream must not encode where on the
+	// host's page that island sits.
+	hostStyled, err := r.host.ctl.ScreenText(context.Background(), &controlv1.ScreenTextRequest{Styled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(styled.GetText()) >= len(hostStyled.GetText()) {
+		t.Errorf("the scoped styled read (%d bytes) is not smaller than the host's (%d)",
+			len(styled.GetText()), len(hostStyled.GetText()))
+	}
 }
 
 // ---- the property the whole contract exists for ----
@@ -956,5 +984,284 @@ func TestGrantNarrowsFrameDamage(t *testing.T) {
 	}
 	if inside == 0 {
 		t.Error("a scoped session saw no damage for a repaint inside its own island")
+	}
+}
+
+// ---- pointer routing: the check must model dispatch, not paraphrase it ----
+//
+// Two framework behaviours move a pointer event off its hit, and a scope
+// check written against HitTest alone gets BOTH wrong — one by letting an
+// escalation through, one by refusing legitimate work.
+
+// freezeHost is a Frozen container registered as <Freeze>, so a test page
+// can put an island underneath one. Not hypothetical since f744ada:
+// preview.Pane in the wysiwyg editor is exactly this shape.
+type freezeHost struct {
+	gooey.Base
+	gooey.FocusState
+	child  gooey.Component
+	frozen bool
+	got    int
+}
+
+func (h *freezeHost) Frozen() bool                          { return h.frozen }
+func (h *freezeHost) ChildComponents() []gooey.Component    { return []gooey.Component{h.child} }
+func (h *freezeHost) Measure(a gooey.Size) gooey.Size       { return gooey.MeasureChild(h.child, a) }
+func (h *freezeHost) Arrange(b gooey.Rect)                  { h.Base.Arrange(b); gooey.ArrangeChild(h.child, b) }
+func (h *freezeHost) Render(*gooey.Frame)                   {}
+func (h *freezeHost) AcceptsFocus() bool                    { return true }
+func (h *freezeHost) HandleMouse(input.MouseEvent) bool     { h.got++; return true }
+func (h *freezeHost) HandleMouseMove(input.MouseEvent) bool { h.got++; return true }
+
+// A guest whose island sits INSIDE a frozen host it does not own: the hit
+// lands in the island, but dispatch retargets to the host, so the event
+// would be delivered outside the grant. The raw-hit check cleared exactly
+// this.
+func TestGrantRefusesAPointerRetargetedOutOfTheIsland(t *testing.T) {
+	var host *freezeHost
+	body := prop.NewSource("x")
+	src := `<Gooey><VStack><Freeze Name="Shell"><Border Name="Isle">` +
+		`<Text Name="IsleText">{{.Isle.Body}}</Text></Border></Freeze></VStack></Gooey>`
+	app := newTestApp(t, src, map[string]any{"Isle": map[string]any{"Body": body}},
+		func(c *markup.Context) {
+			c.Components = map[string]markup.Builder{
+				"Freeze": func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+					kids, _, err := markup.BuildChildren(e, ctx)
+					if err != nil {
+						return nil, err
+					}
+					host = &freezeHost{child: kids[0]}
+					return host, nil
+				},
+			}
+		})
+	ep := endpoint(t, app, control.Island("Isle", "Isle"))
+
+	tree, err := ep.ctl.SnapshotTree(context.Background(), &controlv1.SnapshotTreeRequest{Depth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := tree.GetRoot().GetBounds()
+	x, y := b.GetX()+b.GetWidth()/2, b.GetY()+b.GetHeight()/2
+
+	point := func() error {
+		_, err := ep.ctl.SendPointer(context.Background(), &controlv1.SendPointerRequest{
+			Event: &controlv1.PointerEvent{
+				Kind: controlv1.PointerKind_POINTER_KIND_MOVE, X: x, Y: y,
+				Button: controlv1.MouseButton_MOUSE_BUTTON_NONE,
+			},
+		})
+		return err
+	}
+
+	// THAWED: the event reaches the island. Allowed — and this arm is what
+	// stops the frozen arm below passing for the wrong reason.
+	if err := point(); err != nil {
+		t.Fatalf("pointing inside its own island while thawed: %v", err)
+	}
+
+	// The shell has already been touched here, and that is CORRECT rather
+	// than a leak: the island's Text handles no motion, so the event
+	// BUBBLES to its ancestors exactly as a user's own pointer would. A
+	// grant scopes the TARGET of an event, never its bubble — the bubble
+	// is the framework's event model, shared with keys, and suppressing it
+	// would change how the app behaves rather than what the guest may
+	// reach. So the frozen arm below is measured as a DELTA.
+	baseline := 0
+	done := make(chan struct{})
+	app.Post(func() { baseline = host.got; host.frozen = true; app.comp.Focus().Resync(); close(done) })
+	<-done
+
+	// FROZEN: same cell, same island, but dispatch would now hand the
+	// event to the shell as its TARGET.
+	wantCode(t, point(), codes.PermissionDenied, "would be delivered to")
+
+	after := make(chan int, 1)
+	app.Post(func() { after <- host.got })
+	if got := <-after; got != baseline {
+		t.Errorf("a refused pointer call still dispatched: the shell went from %d to %d events", baseline, got)
+	}
+}
+
+// The mirror image: a guest's OWN drag leaves its island's bounds. The
+// captor is inside the island, so dispatch delivers to the island — and
+// refusing it would break every drag a guest could ever do.
+func TestGrantAllowsAGuestsOwnDragOutsideItsBounds(t *testing.T) {
+	r := newIslandRig(t)
+
+	tree, err := r.left.ctl.SnapshotTree(context.Background(), &controlv1.SnapshotTreeRequest{Depth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := tree.GetRoot().GetBounds()
+	inside := b.GetY() + b.GetHeight()/2
+	below := b.GetY() + b.GetHeight() + 1
+
+	capture := func(name string) {
+		done := make(chan struct{})
+		r.app.Post(func() {
+			r.app.comp.Focus().ReleaseCapture()
+			if !r.app.comp.Focus().CaptureMouse(r.app.ctx.Named[name]) {
+				t.Errorf("CaptureMouse refused %q", name)
+			}
+			close(done)
+		})
+		<-done
+	}
+	move := func(y int32) error {
+		_, err := r.left.ctl.SendPointer(context.Background(), &controlv1.SendPointerRequest{
+			Event: &controlv1.PointerEvent{
+				Kind: controlv1.PointerKind_POINTER_KIND_MOVE, X: b.GetX() + 1, Y: y,
+				Button: controlv1.MouseButton_MOUSE_BUTTON_NONE,
+			},
+		})
+		return err
+	}
+
+	// A HELD capture on something the guest owns, the way a scrollbar
+	// thumb or a splitter holds one while tracking a drag.
+	capture("LeftBox")
+	if err := move(inside); err != nil {
+		t.Fatalf("drag inside the island: %v", err)
+	}
+	// The CELL is the peer's, but the CAPTOR is the guest's, so this is
+	// the guest's own drag and must be allowed.
+	if err := move(below); err != nil {
+		t.Fatalf("a guest's own drag outside its island's bounds was refused: %v", err)
+	}
+
+	// Discrimination: hand the capture to a component OUTSIDE the island
+	// and the same call over the guest's own cells must be refused.
+	capture("RightBox")
+	wantCode(t, move(inside), codes.PermissionDenied, "would be delivered to")
+}
+
+// A load-time side effect in a guest's fragment must run ONCE, even when
+// the fragment is refused.
+//
+// The first version of the grant classified a denial by EXPERIMENT:
+// build against the pruned surface, and if that failed, build again
+// against the host's full surface to see whether the grant was the only
+// difference. It gave the right answer and it ran the document twice —
+// so a fragment containing a <Companion> would have launched two
+// processes on the error path alone. This is the pin for the fix
+// (markup.UnresolvedError + one map lookup); it is RED against the
+// double build, which is the only reason it is worth having.
+type sideEffect struct {
+	gooey.Base
+	n *int
+}
+
+func (s *sideEffect) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 1, H: 1} }
+func (s *sideEffect) Render(*gooey.Frame)           {}
+
+func TestARefusedFragmentRunsItsLoadTimeSideEffectsOnce(t *testing.T) {
+	builds := 0
+	body := prop.NewSource("b")
+	secret := prop.NewSource("s")
+	app := newTestApp(t, `<Gooey><VStack><Text Name="Isle">{{.Isle.Body}}</Text></VStack></Gooey>`,
+		map[string]any{
+			"Isle": map[string]any{"Body": body},
+			"Host": map[string]any{"Secret": secret},
+		},
+		func(c *markup.Context) {
+			c.Components = map[string]markup.Builder{
+				"SideEffect": func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+					builds++
+					return &sideEffect{n: &builds}, nil
+				},
+			}
+		})
+	ep := endpoint(t, app, control.Island("Isle", "Isle"))
+
+	// The side effect is built BEFORE the offending binding, so the
+	// counter records every attempt the server made at the document.
+	frag := `<Gooey><VStack Name="Isle"><SideEffect/><Text>{{.Host.Secret}}</Text></VStack></Gooey>`
+	wantCode(t, ep.patch("Isle", frag), codes.PermissionDenied, "outside this session's granted values")
+
+	got := make(chan int, 1)
+	app.Post(func() { got <- builds })
+	if n := <-got; n != 1 {
+		t.Errorf("a refused fragment built its side-effecting component %d times, want 1", n)
+	}
+
+	// Discrimination: the same fragment WITHOUT the out-of-grant binding
+	// builds once and succeeds, so the count above is a property of the
+	// refusal path and not of the component never being reached.
+	before := make(chan int, 1)
+	app.Post(func() { before <- builds })
+	base := <-before
+	if err := ep.patch("Isle", `<Gooey><VStack Name="Isle"><SideEffect/><Text>{{.Isle.Body}}</Text></VStack></Gooey>`); err != nil {
+		t.Fatalf("in-grant fragment: %v", err)
+	}
+	app.Post(func() { got <- builds })
+	if n := <-got; n != base+1 {
+		t.Errorf("an accepted fragment built its component %d times, want %d", n-base, 1)
+	}
+}
+
+// FrameDelta.repainted means something NARROWER on a scoped session, and
+// this is the test that makes that undeniable rather than a footnote.
+//
+// Two sessions watch the SAME frame — one scoped to Left, one unscoped —
+// and report different counts. That is correct: a guest's damage budget
+// is its own subtree, and the app's total is a measurement of something
+// it neither owns nor can act on. It is also exactly the kind of quiet
+// contract change that a reader would otherwise discover by being
+// confused, so the number is asserted from both sides at once.
+func TestScopedAndUnscopedSessionsCountTheSameFrameDifferently(t *testing.T) {
+	r := newIslandRig(t)
+	guest := r.left.attach(t, &controlv1.Subscription{Frames: true})
+	host := r.host.attach(t, &controlv1.Subscription{Frames: true})
+	guest.drain()
+	host.drain()
+
+	// One write, well outside the island: the HostBar strip repaints.
+	if err := r.host.set("Host.Secret", "a-visible-change"); err != nil {
+		t.Fatal(err)
+	}
+
+	sum := func(s *islandSession) (frames, repainted int) {
+		for {
+			m := s.next(500 * time.Millisecond)
+			if m == nil {
+				return
+			}
+			if f := m.GetFrame(); f != nil {
+				frames++
+				repainted += int(f.GetRepainted())
+			}
+		}
+	}
+	gFrames, gRepainted := sum(guest)
+	hFrames, hRepainted := sum(host)
+
+	if hFrames == 0 || gFrames == 0 {
+		t.Fatalf("both sessions must see the frame: guest=%d host=%d frames", gFrames, hFrames)
+	}
+	if hRepainted == 0 {
+		t.Fatalf("the unscoped session counted no repaints for a visible change")
+	}
+	if gRepainted != 0 {
+		t.Errorf("the scoped session counted %d repaints for a change outside its island, want 0", gRepainted)
+	}
+	if gRepainted == hRepainted {
+		t.Errorf("scoped and unscoped counts agree (%d) — the narrowing is not in effect", gRepainted)
+	}
+
+	// The other direction, so "scoped always reports 0" is ruled out: a
+	// repaint INSIDE the island is counted by both.
+	guest.drain()
+	host.drain()
+	if err := r.left.set("Left.Body", "mine-now"); err != nil {
+		t.Fatal(err)
+	}
+	_, gOwn := sum(guest)
+	_, hOwn := sum(host)
+	if gOwn == 0 {
+		t.Error("the scoped session counted no repaints for a change inside its own island")
+	}
+	if hOwn == 0 {
+		t.Error("the unscoped session counted no repaints for the same change")
 	}
 }

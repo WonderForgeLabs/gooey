@@ -53,6 +53,15 @@ func main() {
 	// it owns, exactly as it registers Components and Handlers. Nothing a
 	// guest sends can widen it, because there is no request field to
 	// widen. The address it was handed IS its capability.
+	//
+	// WHY THIS FLAG EXISTS AT ALL, since a demo flag is a thing to
+	// justify: a grant is issued by a HOST, and until some host issued
+	// one there was no way to reach the scoped path from outside the test
+	// suite. An unreachable feature cannot be demonstrated, cannot be
+	// driven by hand, and cannot be shown to a reviewer — so the smallest
+	// honest host that hands out an island lives here. Pointing this
+	// demo's own -drive client at 7789 instead of 7788 is the whole
+	// difference between holding the control plane and holding an island.
 	guest := flag.String("guest", "127.0.0.1:7789", "loopback address for the SCOPED guest endpoint; empty disables it")
 	drive := flag.String("drive", "", "drive a running grpcdemo at this address instead of being one")
 	flag.Parse()

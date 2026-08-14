@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -220,19 +221,32 @@ func (s *Service) scratchBuild(src string) (root gooey.Component, restore func()
 	}
 
 	// The failure needs a SHAPE, and "no value named X" is the shape of a
-	// typo. So classify by experiment rather than by parsing the message:
-	// rebuild the same source against the host's full surface, in another
-	// scratch. If that succeeds, the only difference was the grant, and
-	// the guest is told so — without being told WHICH name it reached
-	// for, which would turn a refusal into an enumeration of the host's
-	// state.
+	// typo. Classification is one typed-error check plus one map lookup:
+	// if the build failed on an UNRESOLVED PATH, and that same path
+	// resolves against the host's full surface, then the prune is what
+	// removed it and this is a denial rather than bad markup.
+	//
+	// It used to build the document a SECOND time against the full
+	// surface and infer the answer from whether that succeeded. That
+	// worked, and it ran every load-time side effect in the document
+	// twice — a <Companion> in a guest's fragment would have launched two
+	// processes on the error path alone. errors.As costs nothing and
+	// touches nothing.
+	//
+	// Fail-open here is fail-CLOSED for the thing that matters: if the
+	// classification misses, the caller gets InvalidArgument instead of
+	// PermissionDenied, but the build still failed and the escalation is
+	// still blocked. Enforcement never depended on the message.
 	fresh()
-	_, hostErr := markup.Build([]byte(src), s.bind)
-	fresh()
-	if hostErr == nil {
-		return nil, restore, deniedf(
-			"the markup binds one or more names outside this session's granted values (%s); ListValues shows what this session may bind",
-			s.grant.valueList())
+	var unresolved *markup.UnresolvedError
+	if errors.As(err, &unresolved) {
+		if _, lerr := s.lookup(unresolved.Path); lerr == nil {
+			// Deliberately does NOT name the path: a refusal must not
+			// become an enumeration of the host's state.
+			return nil, restore, deniedf(
+				"the markup binds one or more names outside this session's granted values (%s); ListValues shows what this session may bind",
+				s.grant.valueList())
+		}
 	}
 	return nil, restore, err
 }

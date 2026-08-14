@@ -130,6 +130,18 @@ code, `PERMISSION_DENIED`, for a request that reaches past the grant.
 Without a grant nothing changes: the host's own endpoint is the whole
 app, exactly as before.
 
+**One contract field changes MEANING under a grant, and it is the one
+worth reading twice.** `FrameDelta.repainted` counts, for a scoped
+session, the repaints touching its ISLAND — not the app's total. Two
+sessions watching the same frame report different numbers. That is
+correct rather than a leak of consistency: a guest's damage budget is
+its own subtree, and the app-wide count is a measurement of something it
+neither owns nor can act on. A client that needs the app-wide number
+needs an unscoped endpoint, which is to say it needs to be the host.
+`FrameDelta.damage` is filtered the same way, and for the same reason.
+Pinned by `TestScopedAndUnscopedSessionsCountTheSameFrameDifferently`
+(`grpc/grant_test.go`).
+
 ### SessionService — one bidi stream
 
 `Attach(stream AttachRequest) returns (stream AttachResponse)`. First
