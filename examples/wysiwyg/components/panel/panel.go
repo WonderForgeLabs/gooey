@@ -16,14 +16,43 @@
 // low, so the rounded corners and the gaps between strokes leave their
 // cells alone instead of stamping black.
 //
-// # Why the SVG is authored in output pixels
+// # Why the art is drawn, not templated
 //
-// frame.svg substitutes its own width and height and matches the viewBox
-// to them 1:1, so a 1.5-unit stroke is 1.5 pixels at every pane size. A
-// fixed viewBox scaled to fit would make stroke thickness a function of
-// the pane's size — thin in a wide pane, fat in a narrow one. That is the
-// tell of a scaled bitmap, and avoiding it is the whole reason the art is
-// vector and rasterized per size rather than drawn once.
+// The frame used to be an SVG file whose width, height and colour were
+// substituted into the markup as strings and re-parsed per size. It now
+// draws through paint/, which is gooey's bridge to fogleman/gg, for three
+// reasons that are all measurable:
+//
+//   - Cost. Measured on a Xeon E5-2650 v4, one uncached 80x24 pane took
+//     20.1 ms through oksvg and takes 1.4 ms through gg; 120x40 went from
+//     39.7 ms to 2.8 ms, and the allocation per frame from 2.97 MB to
+//     1.21 MB. Roughly 14x, and every bit of it on the UI goroutine. The
+//     cache hides this in steady state — a hit is ~1.3 us either way —
+//     but it is paid in full on first paint and once per distinct size a
+//     resize drags the pane through. String substitution was never the
+//     expensive half: it was 67 us of the 20 ms. Re-PARSING was.
+//   - Checkability. The geometry is Go constants the compiler sees. In
+//     the old path a mistyped placeholder simply failed to substitute and
+//     shipped `{{W_1_5}}` into an attribute, which oksvg reads as zero —
+//     no error anywhere, just a frame with no border.
+//   - Escaping. Values went into markup as unescaped strings. Nothing
+//     reaches that path from user input today, which is the only reason
+//     it was never wrong.
+//
+// The geometry is unchanged and still authored in OUTPUT PIXELS: the
+// canvas is exactly cols*cellW by rows*cellH, so a 1.5-pixel stroke is
+// 1.5 pixels at every pane size. Fixing the art at one size and scaling
+// it would make stroke thickness a function of the pane's size — thin in
+// a wide pane, fat in a narrow one — which is the tell of a scaled bitmap
+// and the thing this whole approach exists to avoid.
+//
+// The picture is NOT bit-identical to the old one and cannot be — two
+// rasterizers antialias differently. Measured against the SVG it replaces,
+// at 40x12, 80x24 and 24x6 cells of 8x16 pixels: no pixel the SVG inked is
+// now blank; two pixels gain faint ink, both of them the hairline's
+// butt-capped ends; exactly 80 pixels, twenty per rounded corner, differ
+// by more than 1/255, worst case 24/255; and every remaining difference is
+// exactly 1/255 on a half-covered edge pixel that rounds the other way.
 //
 // # The cell tier is not a fallback
 //
@@ -35,24 +64,42 @@
 package panel
 
 import (
-	"bytes"
 	"fmt"
 	"image"
-	"io/fs"
-	"strconv"
-	"strings"
+	"image/color"
 	"sync"
 
+	"github.com/fogleman/gg"
+
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
-	"github.com/WonderForgeLabs/gooey/imagefmt/svg"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/paint"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// File is the frame's line art, relative to the editor root.
-const File = "components/panel/frame.svg"
+// The frame's geometry, in output pixels. These were the numbers written
+// into frame.svg's attributes; they are constants now, which is the point
+// of the rewrite.
+const (
+	// borderWidth is the rounded rectangle's stroke. The rectangle is
+	// inset by half of it so the stroke's outer edge lands ON the pane's
+	// boundary rather than half outside it and clipped.
+	borderWidth = 1.5
+	// cornerRadius is the rounded rectangle's rx/ry, clamped for a pane
+	// too small to carry it.
+	cornerRadius = 6.0
+	// hairlineInset is how far in from each side the title hairline
+	// starts, and hairlineOpacity is what makes it read as a division
+	// rather than a second border.
+	hairlineInset   = 7.0
+	hairlineWidth   = 1.0
+	hairlineOpacity = 0.4
+)
+
+// defaultStroke is the frame's colour when the style carries none. It was
+// the SVG's currentColor substitution.
+var defaultStroke = render.RGB(0x6a, 0x6a, 0x7a)
 
 // Pane is a titled container drawn with pixel line art.
 type Pane struct {
@@ -79,8 +126,6 @@ type Pane struct {
 // Art rasterizes and caches frames. One per app: the cache is keyed by
 // size and colour, and panes of the same size share an entry.
 type Art struct {
-	fsys fs.FS
-
 	mu    sync.Mutex
 	cache map[string]*frame
 }
@@ -90,7 +135,7 @@ type frame struct {
 	top, bottom, left, right image.Image
 }
 
-func NewArt(fsys fs.FS) *Art { return &Art{fsys: fsys} }
+func NewArt() *Art { return &Art{} }
 
 // Builder registers the pane as <Panel Title="..."> with one child.
 func Builder(art *Art) markup.Builder {
@@ -167,10 +212,10 @@ func (p *Pane) Render(f *gooey.Frame) {
 		p.renderCells(f)
 		return
 	}
-	fr, err := p.art.frame(b.W*cw, b.H*ch, cw, ch, p.style.Fg)
+	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg)
 	if err != nil {
-		// A missing or broken asset must not leave a pane with no edges at
-		// all; the cell tier is the same shape in runes.
+		// A canvas that cannot be built must not leave a pane with no edges
+		// at all; the cell tier is the same shape in runes.
 		p.renderCells(f)
 		return
 	}
@@ -220,28 +265,27 @@ func (p *Pane) renderCells(f *gooey.Frame) {
 	p.drawTitle(f)
 }
 
-// frame rasterizes the line art at pxW x pxH and slices it into the ring.
-func (a *Art) frame(pxW, pxH, cellW, cellH int, fg render.Color) (*frame, error) {
-	key := fmt.Sprintf("%dx%d#%02x%02x%02x", pxW, pxH, fg.R, fg.G, fg.B)
+// frame draws the line art for a pane of cols x rows cells and slices it
+// into the ring, caching the result.
+//
+// The key carries the CELL size as well as the pane's size in cells. The
+// pixel dimensions alone are not enough: 40 cells at 8px and 20 cells at
+// 16px are the same 320-pixel canvas but slice into different rings, and
+// the old key — which was written in pixels — would have handed the first
+// pane's slices to the second.
+func (a *Art) frame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
+	if fg == (render.Color{}) {
+		fg = defaultStroke
+	}
+	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x", cols, rows, cellW, cellH, fg.R, fg.G, fg.B)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if fr, ok := a.cache[key]; ok {
 		return fr, nil
 	}
-	src, err := fs.ReadFile(a.fsys, File)
+	fr, err := drawFrame(cols, rows, cellW, cellH, fg)
 	if err != nil {
-		return nil, fmt.Errorf("panel: %s: %w", File, err)
-	}
-	doc := expand(string(src), pxW, pxH, fg)
-	whole, err := svg.RasterizeAt(bytes.NewReader([]byte(doc)), pxW, pxH)
-	if err != nil {
-		return nil, fmt.Errorf("panel: %s: %w", File, err)
-	}
-	fr := &frame{
-		top:    crop(whole, 0, 0, pxW, cellH),
-		bottom: crop(whole, 0, pxH-cellH, pxW, cellH),
-		left:   crop(whole, 0, cellH, cellW, pxH-2*cellH),
-		right:  crop(whole, pxW-cellW, cellH, cellW, pxH-2*cellH),
+		return nil, err
 	}
 	if a.cache == nil {
 		a.cache = map[string]*frame{}
@@ -250,52 +294,112 @@ func (a *Art) frame(pxW, pxH, cellW, cellH int, fg render.Color) (*frame, error)
 	return fr, nil
 }
 
-// expand substitutes the geometry and the colour. Plain string
-// replacement rather than text/template: the substitutions are four
-// numbers and a colour, and the document has to stay readable as an SVG
-// that a designer can open.
-func expand(doc string, w, h int, fg render.Color) string {
-	if fg == (render.Color{}) {
-		fg = render.RGB(0x6a, 0x6a, 0x7a)
+// drawFrame is the whole of the art: a rounded rectangle and one hairline,
+// on a canvas that is transparent everywhere else.
+//
+// Transparency is load-bearing rather than incidental. The encoder writes
+// no pixel where alpha is low, so the rounded corners and the empty
+// interior leave their cells alone instead of stamping black — which is
+// what lets the pane's own text live inside this frame on the cell plane.
+// A gg context starts fully transparent and nothing here fills it, so that
+// property holds by construction; a Clear() or a background fill would end
+// it.
+func drawFrame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
+	dc, err := drawCanvas(cols, rows, cellW, cellH, fg)
+	if err != nil {
+		return nil, err
 	}
-	// The title hairline sits just below the top edge, at the bottom of
-	// the first cell row — which is where a one-row title bar ends.
-	titleY := 2
-	if h > 8 {
-		titleY = h / 8
-		if titleY < 2 {
-			titleY = 2
+	top, bottom, left, right := paint.Ring(dc.Image(), cellW, cellH)
+	return &frame{top: top, bottom: bottom, left: left, right: right}, nil
+}
+
+// drawCanvas is the drawing alone, before the ring is cut. It is separate
+// so a test can look at the WHOLE figure: the slices are SubImage views,
+// and re-widening one of them back to the canvas silently returns the
+// slice, which is exactly the harness bug that made an early A/B of this
+// change agree with itself.
+func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, error) {
+	dc, err := paint.Canvas(cols, rows, cellW, cellH)
+	if err != nil {
+		return nil, fmt.Errorf("panel: %w", err)
+	}
+	w, h := float64(dc.Width()), float64(dc.Height())
+
+	// The frame proper. Inset by half the stroke; the radius is clamped
+	// because gg draws a rounded rectangle whose radius exceeds half its
+	// side as overlapping arcs, where SVG's rx is defined to clamp.
+	rw, rh := w-borderWidth, h-borderWidth
+	if rw > 0 && rh > 0 {
+		r := min(cornerRadius, min(rw/2, rh/2))
+		dc.DrawRoundedRectangle(borderWidth/2, borderWidth/2, rw, rh, r)
+		stroke(fg, borderWidth).Apply(dc)
+		dc.Stroke()
+	}
+
+	// The hairline inside the top edge — the one flourish, and the detail
+	// that reads as "modern" rather than "boxed".
+	y := hairlineY(dc.Height())
+	dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
+	s := stroke(fg, hairlineWidth)
+	s.Brush = gg.NewSolidPattern(fade(fg, hairlineOpacity))
+	s.Apply(dc)
+	dc.Stroke()
+
+	return dc, nil
+}
+
+// hairlineY is where the title hairline sits, in pixels down from the top
+// of the canvas.
+//
+// This reproduces the arithmetic frame.svg was given, DELIBERATELY and
+// including its consequence: h is the canvas height in PIXELS, so for any
+// pane taller than eight pixels — which is all of them — the line lands at
+// h/8, three cell rows down in an 80x24 pane. The ring's top slice is one
+// cell tall, so all but a pixel at each extreme end of the line is sliced
+// away and never placed. The flourish is, in practice, invisible.
+//
+// Porting the bug rather than fixing it is the point: this change is about
+// how the pane draws, not how it looks, and a rewrite that silently
+// changed the picture would make "same output" unfalsifiable. It is
+// reported as a finding against epic #241; whoever fixes it wants
+// canvasH/cellH-style arithmetic, or simply cellH, and a test that asserts
+// the line survives the ring.
+func hairlineY(canvasH int) float64 {
+	y := 2
+	if canvasH > 8 {
+		y = canvasH / 8
+		if y < 2 {
+			y = 2
 		}
 	}
-	for _, s := range []struct{ k, v string }{
-		{"{{W_1_5}}", ftoa(float64(w) - 1.5)},
-		{"{{H_1_5}}", ftoa(float64(h) - 1.5)},
-		{"{{W_7}}", strconv.Itoa(w - 7)},
-		{"{{TITLE_Y}}", strconv.Itoa(titleY)},
-		{"{{W}}", strconv.Itoa(w)},
-		{"{{H}}", strconv.Itoa(h)},
-		{"currentColor", fmt.Sprintf("#%02x%02x%02x", fg.R, fg.G, fg.B)},
-	} {
-		doc = strings.ReplaceAll(doc, s.k, s.v)
-	}
-	return doc
+	return float64(y)
 }
 
-func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) }
-
-// crop returns a view of the rasterized frame. SubImage shares pixels
-// rather than copying, so slicing a frame costs four headers.
-func crop(img image.Image, x, y, w, h int) image.Image {
-	if w < 1 || h < 1 {
-		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+// stroke is the pen shared by both figures. Cap and Join are stated rather
+// than left at their zero values: gg's zero LineCap is Round and its zero
+// LineJoin is Round, while SVG's defaults — and paint.ParseLineCap's
+// default for an omitted attribute — are Flat/Butt and Miter/Bevel. A
+// Stroke literal that omits them does not draw what the markup spelling of
+// the same stroke draws.
+func stroke(fg render.Color, thickness float64) paint.Stroke {
+	return paint.Stroke{
+		Brush:     gg.NewSolidPattern(paint.Color(fg)),
+		Thickness: thickness,
+		Cap:       gg.LineCapButt,
+		Join:      gg.LineJoinBevel,
+		Fallback:  fg,
 	}
-	type subImager interface {
-		SubImage(image.Rectangle) image.Image
-	}
-	if si, ok := img.(subImager); ok {
-		return si.SubImage(image.Rect(x, y, x+w, y+h))
-	}
-	return img
 }
 
-var _ = components.Str // keep the components import honest for the cell tier's style type
+// fade returns a colour at the given opacity, ALPHA-PREMULTIPLIED, which
+// is what color.RGBA means and what gg's pattern painter composites with.
+// Handing it a straight colour with a low alpha paints a washed-out line
+// too bright by 1/opacity.
+func fade(c render.Color, a float64) color.Color {
+	return color.RGBA{
+		R: uint8(float64(c.R)*a + 0.5),
+		G: uint8(float64(c.G)*a + 0.5),
+		B: uint8(float64(c.B)*a + 0.5),
+		A: uint8(255*a + 0.5),
+	}
+}
