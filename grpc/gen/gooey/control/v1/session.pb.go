@@ -870,9 +870,25 @@ type FrameDelta struct {
 	// settled values.
 	Changes []*PropertyChange `protobuf:"bytes,2,rep,name=changes,proto3" json:"changes,omitempty"`
 	// Damage rectangles repainted this frame, in cells.
+	//
+	// SCOPED SESSIONS SEE A SUBSET. On an endpoint carrying an island
+	// grant, damage is filtered to the rects intersecting that island —
+	// the rest of the page is the host's geometry and is not a guest's to
+	// read. An unscoped endpoint gets every rect, unchanged.
 	Damage []*Rect `protobuf:"bytes,3,rep,name=damage,proto3" json:"damage,omitempty"`
 	// How many components repainted — the damage-discipline number the
 	// framework's contract tests assert on (focus moves repaint 2).
+	//
+	// THIS FIELD MEANS SOMETHING NARROWER ON A SCOPED SESSION, and the
+	// difference is deliberate rather than incidental: it counts the
+	// repaints touching the session's ISLAND, not the app's total. Two
+	// sessions watching the SAME frame therefore report different numbers,
+	// which is correct — a guest's damage budget is its own subtree, and
+	// the app's total is a measurement of something it does not own and
+	// cannot act on. A client that wants the app-wide number needs an
+	// unscoped endpoint, which is to say it needs to be the host.
+	//
+	// See docs/specs/2026-08-14-island-grants.md.
 	Repainted     int32 `protobuf:"varint,4,opt,name=repainted,proto3" json:"repainted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
