@@ -293,9 +293,16 @@ func quotedKeys(m map[string]bool) string {
 // It is Xamarin's platform-specific XAML, applied to the axis that
 // actually varies in a terminal. A component's own tier check is binary —
 // pixels or cells (buttonchrome.go, colorpicker.go, image.go, panel.go all
-// ask `f.Graphics == nil || f.CellW <= 0`) — and that is the right shape
-// for a component, because what changes between protocols is not what the
-// component IS. It is what the terminal can be asked for:
+// ask `f.Graphics == nil || f.CellW <= 0 || f.CellH <= 0`) — and that is
+// the right shape for a component, because what changes between protocols
+// is not what the component IS. It is what the terminal can be asked for:
+//
+// All three conditions are load-bearing, and this sentence used to name
+// image.go while image.go asked only the first (issue #251): an encoder
+// scales to cols*CellW × rows*CellH, so a protocol pinned without
+// capabilities behind it asks for an image of zero pixels — and taking
+// the pixel branch is what stops halfblock from painting the cells
+// underneath, so the failure is a blank rectangle with no error anywhere.
 //
 //   - sixel has NO ALPHA and 256 registers, so a translucent shadow is
 //     simply not expressible; a transparent pixel is one with no register;

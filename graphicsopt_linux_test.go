@@ -14,6 +14,13 @@ import (
 // that records a placement when there is a protocol and degrades into
 // cells when there is not. The root module cannot import components, and
 // the behavior under test is the Frame's, not the component's.
+//
+// The omission of `f.CellW > 0` that the real Image carries
+// (components/image.go, issue #251) is DELIBERATE and must stay. What
+// this file pins is App.caps backfilling a cell size for a pinned
+// protocol; an unguarded leaf is the harsher probe of that, because a
+// regression there reaches the raster-header assertion below instead of
+// silently landing on the cell tier one layer earlier.
 type pixelLeaf struct {
 	Base
 	img *prop.Property[image.Image]

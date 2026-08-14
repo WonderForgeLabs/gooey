@@ -74,7 +74,7 @@ the honest simpler thing instead.
 **`f.Place` is the pixel plane**, for when cells are not enough:
 
 ```go
-if f.Graphics != nil && f.Caps.CellW > 0 {
+if f.Graphics != nil && f.CellW > 0 && f.CellH > 0 {
 	f.Place(graphics.Placement{Img: img, Col: b.X, Row: b.Y, Cols: 12, Rows: 4})
 } else {
 	// degrade into cells: halfblocks, box-drawing, whatever is honest
@@ -82,7 +82,17 @@ if f.Graphics != nil && f.Caps.CellW > 0 {
 ```
 
 `f.Graphics` is nil when the terminal has no graphics protocol, and then
-the component must draw its cell-plane version instead. The shipped
+the component must draw its cell-plane version instead.
+
+**Test all three, and test `CellH` as well as `CellW`.** An encoder scales
+to `cols*CellW × rows*CellH`, so a zero in *either* metric asks it for an
+image of zero pixels — over cells your `else` branch never got to paint,
+because the placement branch already returned. Nothing errors; the region
+is simply blank. The two metrics are independently fatal, so a guard that
+checks only the width ships half the bug (issue #251, where core's own
+`Image` had this for its entire life). `f.CellW` and `f.Caps.CellW` are
+the same value — `SetCaps` writes both — so either spelling works; the
+shipped components use the short one. The shipped
 exemplars are [`components/buttonchrome.go`](../../../components/buttonchrome.go)
 — a pixel pill sliced around a cell-plane label — and
 [`components/colorpicker.go`](../../../components/colorpicker.go)'s

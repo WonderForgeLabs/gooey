@@ -173,13 +173,23 @@ writes runes — during `Render`:
 ```go
 func (im *Image) Render(f *gooey.Frame) {
     r := im.Bounds()
-    if f.Graphics != nil {
+    if f.Graphics != nil && f.CellW > 0 && f.CellH > 0 {
         f.Place(graphics.Placement{Img: src, Col: r.X, Row: r.Y, Cols: r.W, Rows: r.H})
         return
     }
     graphics.DrawHalfblock(f.Cells, src, r.X, r.Y, r.W, r.H)
 }
 ```
+
+All three conditions are load-bearing, and the third is the one that
+looks redundant. An encoder scales to `cols*CellW × rows*CellH`, so a
+zero in either metric asks it for an image of zero pixels — over cells
+that halfblock never got to paint, because the placement branch already
+returned. The region goes blank with no error on any surface. `CellW`
+and `CellH` are independently fatal for the same reason, which is why
+the guard names both rather than standing in one for the other. This is
+also the rule `buttonchrome.go`, `colorpicker.go` and the wysiwyg
+`panel` follow (issue #251).
 
 `Place` is a method rather than an appendable field because a placement
 has an **owner**. Under the Composer only dirty components re-render, so

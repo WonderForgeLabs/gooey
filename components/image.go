@@ -13,11 +13,11 @@ import (
 // Image is pixel content in a cell rectangle.
 //
 // It renders one of two ways, and the choice is the terminal's, not the
-// author's: with a graphics protocol it records a placement, which the
-// flush emits on the pixel plane over the cells; without one it draws
-// itself INTO the cell buffer as halfblock runes. Nothing else in the
-// tree changes either way — the same bounds, the same damage node, the
-// same repaint rules.
+// author's: with a graphics protocol AND a known cell size it records a
+// placement, which the flush emits on the pixel plane over the cells;
+// without either it draws itself INTO the cell buffer as halfblock
+// runes. Nothing else in the tree changes either way — the same bounds,
+// the same damage node, the same repaint rules.
 //
 // Its Src, Cols and Rows are properties like every other visual property,
 // so setting one dirties this component and nothing else. That was not
@@ -75,7 +75,19 @@ func (im *Image) Render(f *gooey.Frame) {
 	if r.W <= 0 || r.H <= 0 {
 		return
 	}
-	if f.Graphics != nil {
+	// The tier test is three conditions, not one. An encoder scales its
+	// output by the cell size — Sixel.Encode to cols*CellW × rows*CellH —
+	// so a protocol pinned with no capabilities behind it, leaving CellW
+	// at zero, asks for an image of zero pixels. Taking this branch is
+	// also what stops halfblock from running, so the cells underneath
+	// stay unpainted: a blank rectangle with nothing on any surface to
+	// see. App.caps backfills term.DefaultCellW/H for exactly this
+	// (app.go:601), but a Composer driven directly does not —
+	// SetGraphics takes an encoder and no metrics at all.
+	//
+	// Same guard as buttonchrome.go:297 and colorpicker.go:163, which is
+	// what markup.go's Variant comment has always claimed this file asks.
+	if f.Graphics != nil && f.CellW > 0 && f.CellH > 0 {
 		f.Place(graphics.Placement{Img: src, Col: r.X, Row: r.Y, Cols: r.W, Rows: r.H})
 		return
 	}
