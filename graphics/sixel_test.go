@@ -228,25 +228,86 @@ func TestAFullyTransparentImageEmitsNoPicture(t *testing.T) {
 	}
 }
 
+// alphaRamp is four columns at four alphas — below, below, above, above
+// the half-alpha threshold — each with a DIFFERENT underlying colour, and
+// each stored the way image.RGBA stores things: premultiplied.
+//
+// The distinct colours are load-bearing rather than decorative. The
+// fixture used to be color.RGBA{a, a, a, a} for every column, which is
+// grey-scaled-by-alpha — that is, WHITE at every alpha. It could
+// therefore never tell "declared this pixel's own colour" apart from
+// "declared its premultiplied contribution", because with white the two
+// answers differ only in brightness and the register count was the same
+// either way. With four different hues the register count separates the
+// two claims below on its own.
+func alphaRamp() image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 6))
+	cols := []struct {
+		a       uint8
+		r, g, b uint8 // the colour the pixel actually is
+	}{
+		{0x00, 0xff, 0x00, 0x00}, // out: invisible
+		{0x40, 0x00, 0xff, 0x00}, // out: below half alpha
+		{0xc0, 0x00, 0x00, 0xff}, // in:  above half alpha
+		{0xff, 0xff, 0xff, 0x00}, // in:  fully opaque
+	}
+	for x, c := range cols {
+		premul := color.RGBA{
+			R: uint8(uint32(c.r) * uint32(c.a) / 0xff),
+			G: uint8(uint32(c.g) * uint32(c.a) / 0xff),
+			B: uint8(uint32(c.b) * uint32(c.a) / 0xff),
+			A: c.a,
+		}
+		for y := 0; y < 6; y++ {
+			img.Set(x, y, premul)
+		}
+	}
+	return img
+}
+
 // TestAntiAliasedEdgesResolveToOneStateOrTheOther — the format has two
 // states per pixel, so a soft edge has to land on one. Half alpha is the
 // threshold: the opaque core of a stroke survives, the outer fringe drops
 // out. This pins the rule so a later change cannot quietly move it.
 func TestAntiAliasedEdgesResolveToOneStateOrTheOther(t *testing.T) {
-	img := image.NewRGBA(image.Rect(0, 0, 4, 6))
-	alphas := []uint8{0x00, 0x40, 0xc0, 0xff} // out, out, in, in
-	for x, a := range alphas {
-		for y := 0; y < 6; y++ {
-			img.Set(x, y, color.RGBA{a, a, a, a}) // premultiplied
-		}
-	}
-	var out []byte
-	if err := (Sixel{}).Encode(&out, img, 4, 1, 1, 6); err != nil {
-		t.Fatal(err)
-	}
-	pal := paletteOf(t, img, 4, 1, 1, 6)
+	pal := paletteOf(t, alphaRamp(), 4, 1, 1, 6)
 	if len(pal) != 2 {
 		t.Errorf("declared %d registers; the two columns at or above half alpha are in, the two below are out", len(pal))
+	}
+}
+
+// TestAKeptPixelIsDeclaredAtItsOwnColourNotItsPremultipliedOne is the
+// other half of that threshold, and the half a resampling Scale made
+// urgent.
+//
+// Once a pixel is over the line it is painted OPAQUE — sixel has no other
+// setting. So the colour it is declared at has to be the pixel's own,
+// which is NOT what color.Color.RGBA hands back: that is premultiplied,
+// the colour already scaled down by alpha. Declaring it renders the
+// 75%-alpha blue column below as 75% of blue, a darker blue that appears
+// nowhere in the source, and since every such pixel sits on a
+// transparency boundary the artefact is a dark rim around the shape.
+//
+// Nearest-neighbour Scale kept this rare — a pixel's alpha came straight
+// from the source, so only genuinely translucent art had any. A
+// resampling kernel manufactures partial alpha along every transparency
+// boundary there is, which is what turned a latent bug into a visible
+// halo and this into a pinned claim.
+func TestAKeptPixelIsDeclaredAtItsOwnColourNotItsPremultipliedOne(t *testing.T) {
+	pal := paletteOf(t, alphaRamp(), 4, 1, 1, 6)
+	declared := map[[3]int]bool{}
+	for _, v := range pal {
+		declared[v] = true
+	}
+	// The two surviving columns, at the colours they ARE.
+	for _, want := range [][3]int{
+		{0, 0, 100}, // the 75%-alpha blue: blue, not 75% of blue
+		{100, 100, 0},
+	} {
+		if !declared[want] {
+			t.Errorf("register %v was not declared; got %v — a kept pixel is being "+
+				"declared at its premultiplied value, which darkens every soft edge", want, pal)
+		}
 	}
 }
 

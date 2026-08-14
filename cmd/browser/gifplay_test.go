@@ -120,6 +120,66 @@ func TestDecodeClipScalesDown(t *testing.T) {
 	}
 }
 
+// TestDecodeClipReducesByAveraging covers the half of the reduction that
+// fitDown does not: fitDown only picks the numbers, and every assertion
+// above it is arithmetic on those numbers. Nothing here noticed which
+// scaler ran, so decodeClip could subsample every frame — dropping thin
+// rules and moiréing anything periodic — with the whole file green.
+//
+// The claim is one a subsampling scaler cannot satisfy at any phase.
+// Reading one source pixel per destination pixel can only ever return a
+// colour the palette already had, so the source is a 1px checkerboard of
+// exactly two: intermediate values in the output are proof that source
+// pixels were combined rather than chosen between.
+func TestDecodeClipReducesByAveraging(t *testing.T) {
+	const w, h = 900, 600
+	dark, light := color.RGBA{40, 40, 40, 255}, color.RGBA{200, 200, 200, 255}
+	pal := color.Palette{dark, light}
+	frame := image.NewPaletted(image.Rect(0, 0, w, h), pal)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			frame.SetColorIndex(x, y, uint8((x+y)%2))
+		}
+	}
+	var buf bytes.Buffer
+	err := gif.EncodeAll(&buf, &gif.GIF{
+		Image:    []*image.Paletted{frame},
+		Delay:    []int{10},
+		Disposal: []byte{gif.DisposalNone},
+		Config:   image.Config{ColorModel: pal, Width: w, Height: h},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "check.gif"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	clip, err := decodeClip(dir, "check.gif", fileKey{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clip.w != gifMaxDim {
+		t.Fatalf("clip width = %d, want the capped %d", clip.w, gifMaxDim)
+	}
+	// Sample the interior; the outermost ring blends with the canvas edge.
+	blended, total := 0, 0
+	for y := 2; y < clip.h-2; y++ {
+		for x := 2; x < clip.w-2; x++ {
+			total++
+			if v := clip.frames[0].RGBAAt(x, y).R; v != dark.R && v != light.R {
+				blended++
+			}
+		}
+	}
+	if blended*2 < total {
+		t.Fatalf("only %d of %d interior pixels hold a value between the source's two colours; "+
+			"the frames are being subsampled, so a one-pixel feature survives or vanishes "+
+			"depending on where the sampling grid lands", blended, total)
+	}
+}
+
 func testClip(path string, n int, d time.Duration) *gifClip {
 	// id mirrors what decodeClip produces for dir "": hostPath("", path)
 	// is just path, so tests address the cache by the same name.
