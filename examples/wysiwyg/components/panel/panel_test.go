@@ -417,7 +417,9 @@ func TestTheHairlineHasFlatEnds(t *testing.T) {
 // it would still be a line — so this measures the value, not its presence.
 func TestHairlineOpacityIsPremultiplied(t *testing.T) {
 	white := render.RGB(0xff, 0xff, 0xff)
-	c, ok := fade(white, hairlineOpacity).(interface{ RGBA() (uint32, uint32, uint32, uint32) })
+	c, ok := fade(white, hairlineOpacity).(interface {
+		RGBA() (uint32, uint32, uint32, uint32)
+	})
 	if !ok {
 		t.Fatal("fade did not return a colour")
 	}
