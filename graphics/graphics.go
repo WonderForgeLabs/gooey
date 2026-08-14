@@ -205,6 +205,18 @@ func (p Placement) SameImage(q Placement) (same bool) {
 // the sixel encoder for what a format with no alpha channel then owes
 // those pixels.
 func Scale(img image.Image, w, h int) *image.RGBA {
+	// Clamp BEFORE allocating. image.Rect canonicalises by swapping its
+	// corners, so image.Rect(0, 0, -4, -4) is not empty — it is a 4x4
+	// rectangle at negative coordinates, and NewRGBA on it returns a real
+	// 16-pixel image. That is the opposite of what a negative size should
+	// produce, and it is invisible to a test that only checks the pixels:
+	// the bytes are all zero either way. Assert the BOUNDS.
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	// An empty source or target is not an error — halfblock will ask for
 	// a zero-column rectangle whenever its component is collapsed. The

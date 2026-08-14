@@ -219,6 +219,15 @@ func TestUpscalingInterpolates(t *testing.T) {
 // bounds reaches here from any decoder handed a truncated file. Neither is
 // an error and neither may panic; the answer is a correctly sized,
 // fully transparent image.
+//
+// The bounds assertion is the load-bearing half, and it was missing.
+// image.Rect canonicalises by swapping corners, so image.Rect(0, 0, -4,
+// -4) is a 4x4 rectangle at negative coordinates rather than an empty
+// one — a real 16-pixel image where the caller asked for nothing. Every
+// byte of it is zero, so the pixel loop below passes on it happily. A
+// transparent image and no image are indistinguishable by pixels; only
+// the rectangle tells them apart, which is why the "negative" case here
+// was green against a Scale that allocated before it validated.
 func TestScaleAnswersForDegenerateSizes(t *testing.T) {
 	src := solidBlock(8, 8)
 	for _, tc := range []struct {
@@ -229,12 +238,26 @@ func TestScaleAnswersForDegenerateSizes(t *testing.T) {
 		{"zero width", src, 0, 10},
 		{"zero height", src, 10, 0},
 		{"negative", src, -4, -4},
+		{"one negative, one positive", src, -4, 10},
 		{"empty source", image.NewRGBA(image.Rect(0, 0, 0, 0)), 10, 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Scale(tc.src, tc.w, tc.h)
 			if got == nil {
 				t.Fatal("nil image")
+			}
+			// The empty-source case is the one that legitimately keeps its
+			// requested size: the TARGET was well formed, there was just
+			// nothing to put in it.
+			if tc.w > 0 && tc.h > 0 {
+				if b := got.Bounds(); b.Dx() != tc.w || b.Dy() != tc.h {
+					t.Fatalf("bounds %v for a %dx%d target, want exactly that size", b, tc.w, tc.h)
+				}
+			} else if b := got.Bounds(); !b.Empty() {
+				t.Fatalf("bounds %v for a %dx%d target, want an EMPTY rectangle: "+
+					"image.Rect swaps corners, so a negative size allocates a real image "+
+					"at negative coordinates whose pixels are all zero and therefore look transparent",
+					b, tc.w, tc.h)
 			}
 			for i, b := range got.Pix {
 				if b != 0 {
