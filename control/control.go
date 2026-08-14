@@ -59,6 +59,11 @@ type Service struct {
 	host Host
 	bind *markup.Context
 
+	// grant scopes this service to one island. nil is the HOST's own
+	// service — unscoped, and the only way to reach the whole app. See
+	// grant.go: registration is the grant, and one endpoint carries one.
+	grant *Grant
+
 	// Doc, when set, supplies the markup source the running page was
 	// built from — what DeclaredSchema falls back to when asked about
 	// "the running document". Optional: a host that builds its tree in
@@ -80,6 +85,20 @@ func NewService(host Host, bind *markup.Context) *Service {
 	return &Service{host: host, bind: bind}
 }
 
+// NewScopedService builds a service whose reach is a Grant — an endpoint
+// for a GUEST rather than for the host. A nil grant is exactly
+// NewService.
+//
+// The grant is fixed at construction because that is what makes it a
+// registration: a guest never names its own capability, it connects to
+// an endpoint the host already narrowed.
+func NewScopedService(host Host, bind *markup.Context, g *Grant) *Service {
+	return &Service{host: host, bind: bind, grant: g}
+}
+
+// Grant is the scope this service speaks for, nil for the host's own.
+func (s *Service) Grant() *Grant { return s.grant }
+
 // Bind is the markup context this service addresses names against.
 func (s *Service) Bind() *markup.Context { return s.bind }
 
@@ -99,6 +118,12 @@ const (
 	// KindFailedPrecondition: the app has no markup context or no live
 	// composition — the request is well-formed but the app cannot answer.
 	KindFailedPrecondition
+	// KindPermissionDenied: the request is well-formed and the app could
+	// answer it, but this session's Grant does not reach the thing it
+	// names. Distinct from NotFound on purpose — a guest asking for
+	// something outside its island must not be told the app has no such
+	// name, because it usually does.
+	KindPermissionDenied
 )
 
 // Error is a classified service failure.
@@ -119,6 +144,10 @@ func notFoundf(format string, args ...any) *Error {
 
 func preconditionf(format string, args ...any) *Error {
 	return &Error{Kind: KindFailedPrecondition, Msg: fmt.Sprintf(format, args...)}
+}
+
+func deniedf(format string, args ...any) *Error {
+	return &Error{Kind: KindPermissionDenied, Msg: fmt.Sprintf(format, args...)}
 }
 
 var errNoContext = &Error{

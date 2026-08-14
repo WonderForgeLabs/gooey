@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"io"
-	"sort"
 	"sync"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -403,7 +402,8 @@ func (b *broadcaster) afterFrame() {
 	comp := b.host.Composer()
 	var damage []*controlv1.Rect
 	if comp != nil {
-		for _, r := range comp.Damage() {
+		// Scoped endpoints see their island's damage, not the app's.
+		for _, r := range b.svc.VisibleDamage(comp.Damage()) {
 			damage = append(damage, rectToProto(r))
 		}
 		// A size change always composes a frame, so detecting it here —
@@ -475,12 +475,13 @@ func anySubscribes(sessions []*session) bool {
 // lifecycle subscriber hears it with the new name table, on the same
 // ordered stream as the frames.
 func (b *broadcaster) afterSwap(gooey.Component) {
+	// The name table comes from the SERVICE, not from the context
+	// directly, so a scoped endpoint reports the names inside its island
+	// rather than handing a guest the host's whole address book. It is
+	// the same sorted list for an unscoped server.
 	var named []string
-	if bind := b.svc.Bind(); bind != nil {
-		for n := range bind.Named {
-			named = append(named, n)
-		}
-		sort.Strings(named)
+	if _, n, err := b.svc.Values(); err == nil {
+		named = n
 	}
 	b.emitLifecycle(b.snapshot(), &controlv1.LifecycleEvent{
 		Event: &controlv1.LifecycleEvent_Swapped{Swapped: &controlv1.Swapped{Named: named}},
@@ -498,7 +499,18 @@ func (b *broadcaster) emitLifecycle(sessions []*session, ev *controlv1.Lifecycle
 
 // afterEvent is the App.AfterEvent hook: terminal input, echoed to
 // input subscribers as consumed.
+//
+// A SCOPED endpoint does not echo it. Terminal input is the HOST's
+// keystrokes — everything the user types, anywhere on the page,
+// including into their own fields — and an island grant is not a grant
+// to watch the user type. A guest still gets the echo of its OWN
+// injections (echoRemote), which is what the echo is for on that side:
+// confirmation that what it sent was dispatched, and whether the tree
+// took it.
 func (b *broadcaster) afterEvent(ev input.Event, consumed bool) {
+	if b.svc.Grant() != nil {
+		return
+	}
 	b.echo(ev, consumed)
 }
 

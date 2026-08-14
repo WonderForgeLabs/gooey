@@ -63,9 +63,16 @@ Two things to notice before touching the wire:
   `handlers/temporal` in nested modules. Run it from its own directory.
 - **Serving is opt-in, and loopback-only.** Nothing listens unless the
   app passed an address, and a non-loopback address is a hard error,
-  not a warning. v1 has no authentication: an MCP client can do
-  anything the keyboard can, so the bind address is the whole security
-  boundary. (There is also an `Origin` guard so a browser page on
+  not a warning. v1 has no authentication, so the bind address is what
+  decides *who* may connect. What a connection may then *do* is a
+  second, separate question, and it has an answer: an endpoint served
+  with `mcp.Options.Grant` (or `grpc.Options.Grant`) is scoped to one
+  named element's subtree and one list of value names — see
+  [island grants](../specs/2026-08-14-island-grants.md). Without a
+  grant the old sentence still holds in full: an MCP client can do
+  anything the keyboard can. Read the two together — the address is
+  authentication's stand-in, the grant is authorization, and neither
+  substitutes for the other. (There is also an `Origin` guard so a browser page on
   another local port cannot drive your terminal — see the
   [MCP server spec](../specs/2026-08-10-mcp-server.md) for why every
   clause of that check — default-deny for anything claiming to be a

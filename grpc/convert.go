@@ -40,6 +40,12 @@ func statusOf(err error) error {
 			return status.Error(codes.NotFound, e.Msg)
 		case control.KindFailedPrecondition:
 			return status.Error(codes.FailedPrecondition, e.Msg)
+		case control.KindPermissionDenied:
+			// PERMISSION_DENIED, never NOT_FOUND. A guest reaching outside
+			// its island has usually named something that really exists,
+			// and answering "no such name" would be a lie that a client
+			// reasonably retries.
+			return status.Error(codes.PermissionDenied, e.Msg)
 		default:
 			return status.Error(codes.InvalidArgument, e.Msg)
 		}

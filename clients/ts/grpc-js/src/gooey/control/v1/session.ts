@@ -386,12 +386,28 @@ export interface FrameDelta {
     /**
      * Damage rectangles repainted this frame, in cells.
      *
+     * SCOPED SESSIONS SEE A SUBSET. On an endpoint carrying an island
+     * grant, damage is filtered to the rects intersecting that island —
+     * the rest of the page is the host's geometry and is not a guest's to
+     * read. An unscoped endpoint gets every rect, unchanged.
+     *
      * @generated from protobuf field: repeated gooey.control.v1.Rect damage = 3
      */
     damage: Rect[];
     /**
      * How many components repainted — the damage-discipline number the
      * framework's contract tests assert on (focus moves repaint 2).
+     *
+     * THIS FIELD MEANS SOMETHING NARROWER ON A SCOPED SESSION, and the
+     * difference is deliberate rather than incidental: it counts the
+     * repaints touching the session's ISLAND, not the app's total. Two
+     * sessions watching the SAME frame therefore report different numbers,
+     * which is correct — a guest's damage budget is its own subtree, and
+     * the app's total is a measurement of something it does not own and
+     * cannot act on. A client that wants the app-wide number needs an
+     * unscoped endpoint, which is to say it needs to be the host.
+     *
+     * See docs/specs/2026-08-14-island-grants.md.
      *
      * @generated from protobuf field: int32 repainted = 4
      */

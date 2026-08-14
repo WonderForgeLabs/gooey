@@ -68,6 +68,20 @@ type Options struct {
 	Timeout time.Duration
 	// Name and Version identify this app in the session Welcome.
 	Name, Version string
+	// Grant scopes this endpoint to one island: every RPC and every act
+	// on it reaches the granted subtree and the granted value names, and
+	// refuses or narrows everything else (control/grant.go).
+	//
+	// nil is the HOST's own endpoint — the whole app, as every endpoint
+	// behaved before grants existed. That default is deliberate: a host
+	// serving itself should not have to opt in to owning its own app.
+	//
+	// REGISTRATION IS THE GRANT. One endpoint carries one grant, fixed
+	// here by the host; a guest never asks for a capability, it connects
+	// to an address that already has one. Two guests with disjoint
+	// islands are two Serve calls on two loopback ports, which is what
+	// lets them drive one app concurrently without interfering.
+	Grant *control.Grant
 }
 
 // Server is a gooey app exposed over gRPC.
@@ -91,7 +105,7 @@ func New(host Host, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		host: host,
-		svc:  control.NewService(host, opts.Context),
+		svc:  control.NewScopedService(host, opts.Context, opts.Grant),
 		ui:   control.NewBridge(host.Post, opts.Timeout),
 		opts: opts,
 	}

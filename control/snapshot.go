@@ -73,6 +73,12 @@ type DeclaredValue struct {
 }
 
 // Tree serializes the live component tree. depth 0 means unlimited.
+//
+// A SCOPED service is NARROWED, not refused: the walk is rooted at the
+// grant's island, so a guest sees its own subtree and has no way to
+// learn the shape of the rest of the page. Hiding is the point — a guest
+// that could enumerate the host's tree could pick targets for every
+// other verb and discover the app's structure through the refusals.
 func (s *Service) Tree(depth int) (*Node, error) {
 	c, err := s.composer()
 	if err != nil {
@@ -81,6 +87,12 @@ func (s *Service) Tree(depth int) (*Node, error) {
 	root := c.Root()
 	if root == nil {
 		return nil, preconditionf("the composition has no root")
+	}
+	if s.scoped() {
+		root = s.islandRoot()
+		if root == nil {
+			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
 	}
 	return s.walk(root, treeNames(s.bind), c.Focus(), depth, 1), nil
 }
@@ -237,10 +249,36 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 // damage count the framework guarantees. styled asks for the ANSI
 // escape stream a terminal would need to show the screen; plain is one
 // line per row, trailing blanks trimmed.
+// A SCOPED service reads only its island's rectangle, in BOTH forms.
+// The crop is the same hiding rule the tree walk uses, and the styled
+// form is cropped rather than refused: refusing one flag value while
+// narrowing the other would be an API shape driven by which helper
+// happened to exist, not by what a guest may see.
+//
+// Composer.Snapshot really is the whole cell plane by construction, but
+// nothing needed a new encoder — the island's cells copy into a fresh
+// render.Buffer of the island's size and the ordinary one-shot Flush
+// encodes that. What a guest receives is a self-contained escape stream
+// for a screen whose entire content is its island, which is exactly the
+// fiction the rest of the scoping maintains.
 func (s *Service) Screen(styled bool) (string, error) {
 	c, err := s.composer()
 	if err != nil {
 		return "", err
+	}
+	if s.scoped() {
+		root := s.islandRoot()
+		if root == nil {
+			return "", deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
+		b, ok := root.(gooey.Bounded)
+		if !ok {
+			return "", preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+		}
+		if styled {
+			return croppedStyled(c.Cells(), b.Bounds(), c.Caps().Color)
+		}
+		return cropped(c.Cells(), b.Bounds()), nil
 	}
 	if styled {
 		var sb strings.Builder
@@ -265,6 +303,66 @@ func (s *Service) Screen(styled bool) (string, error) {
 		lines = append(lines, strings.TrimRight(string(row), " "))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// cropped renders one rectangle of the cell plane as plain text, one
+// line per row with trailing blanks trimmed — the same shape Screen's
+// unscoped plain form has, over a window instead of the plane. Cells
+// outside the buffer are blanks: an island arranged partly offscreen
+// reads as short rows, never as a bounds panic.
+func cropped(buf *render.Buffer, r gooey.Rect) string {
+	if r.W <= 0 || r.H <= 0 {
+		return ""
+	}
+	lines := make([]string, 0, r.H)
+	for y := r.Y; y < r.Y+r.H; y++ {
+		row := make([]rune, 0, r.W)
+		for x := r.X; x < r.X+r.W; x++ {
+			ch := ' '
+			if x >= 0 && y >= 0 && x < buf.W && y < buf.H {
+				if got := buf.At(x, y).Rune; got != 0 {
+					ch = got
+				}
+			}
+			row = append(row, ch)
+		}
+		lines = append(lines, strings.TrimRight(string(row), " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// croppedStyled renders one rectangle of the cell plane as a
+// self-contained ANSI stream — what a terminal of exactly that size
+// would need to show the island, and nothing about the rest of the page.
+//
+// It copies into a fresh Buffer rather than teaching the encoder about
+// rectangles, because a sub-buffer IS the right model here: the guest's
+// screen is its island, so the stream it gets should be homed at 0,0 and
+// as wide as the island, not a set of absolute cursor moves that betray
+// where on the host's page the island sits.
+func croppedStyled(buf *render.Buffer, r gooey.Rect, depth render.ColorDepth) (string, error) {
+	if r.W <= 0 || r.H <= 0 {
+		return "", nil
+	}
+	sub := render.NewBuffer(r.W, r.H)
+	for y := 0; y < r.H; y++ {
+		for x := 0; x < r.W; x++ {
+			ch, st := ' ', render.Style{}
+			if sx, sy := r.X+x, r.Y+y; sx >= 0 && sy >= 0 && sx < buf.W && sy < buf.H {
+				c := buf.At(sx, sy)
+				st = c.Style
+				if c.Rune != 0 {
+					ch = c.Rune
+				}
+			}
+			sub.Set(x, y, ch, st)
+		}
+	}
+	var sb strings.Builder
+	if err := render.Flush(&sb, sub, depth); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 // defaultLayout reports whether every EXPLICIT layout field is at its

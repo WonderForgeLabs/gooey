@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -70,6 +71,13 @@ func (s *Service) DeclaredSchema(source string) (*Schema, error) {
 	sc := &Schema{}
 	src := []byte(source)
 	if strings.TrimSpace(source) == "" {
+		// Empty source means "the running page". That is the host's whole
+		// document, so a scoped guest does not get it — the declaration
+		// block of a page is a description of the host's own surface, and
+		// asking for it is not an island question.
+		if s.scoped() {
+			return nil, deniedf("this session is scoped to island %q and cannot ask about the running page's own document; pass the markup to inspect explicitly", s.grant.Island)
+		}
 		if s.Doc == nil {
 			return nil, preconditionf("the server does not know the running page's source; pass the markup to inspect explicitly")
 		}
@@ -99,9 +107,17 @@ func (s *Service) DeclaredSchema(source string) (*Schema, error) {
 // pre-registered. Atomic: a failed build leaves the running tree, the
 // name table AND the registrations untouched. Returns the new tree's
 // Name= identities.
+// No island grant can authorize a swap. SwapMarkup replaces the WHOLE
+// page and reassigns every Name= in it — including the island names
+// every OTHER attached guest is addressing — so it is the one verb whose
+// blast radius is unbounded by construction. There is no scoped form of
+// it to offer; a guest reshapes its island with PatchMarkup.
 func (s *Service) SwapMarkup(source string, regs []Registration) ([]string, error) {
 	if s.bind == nil {
 		return nil, errNoContext
+	}
+	if s.scoped() {
+		return nil, deniedf("this session is scoped to island %q; SwapMarkup replaces the whole page and reassigns every Name=, which no island grant can authorize — use PatchMarkup on your island", s.grant.Island)
 	}
 	unregister, err := s.register(regs)
 	if err != nil {
@@ -117,7 +133,7 @@ func (s *Service) SwapMarkup(source string, regs []Registration) ([]string, erro
 	if err != nil {
 		restore()
 		unregister()
-		return nil, invalidf("%v", err)
+		return nil, buildErr(err)
 	}
 	s.host.Swap(root)
 	return namesOf(s.bind.Named), nil
@@ -139,9 +155,26 @@ func (s *Service) Validate(source string) (valid bool, loadErr string, named []s
 	named = namesOf(s.bind.Named)
 	restore()
 	if berr != nil {
+		// A denial is NOT "the markup is invalid": the document may be
+		// perfectly good and simply reach past this session's grant. It
+		// stays an error rather than becoming a valid=false answer, so a
+		// client never records "the target rejected my markup" for
+		// something no amount of editing will fix.
+		if denied, ok := berr.(*Error); ok && denied.Kind == KindPermissionDenied {
+			return false, "", nil, denied
+		}
 		return false, berr.Error(), nil, nil
 	}
 	return true, "", named, nil
+}
+
+// buildErr keeps a grant denial classified as one. Everything else out
+// of a scratch build is a load error, which is an invalid argument.
+func buildErr(err error) error {
+	if e, ok := err.(*Error); ok && e.Kind == KindPermissionDenied {
+		return e
+	}
+	return invalidf("%v", err)
 }
 
 // scratchBuild builds markup source against the binding context with
@@ -149,13 +182,73 @@ func (s *Service) Validate(source string) (valid bool, loadErr string, named []s
 // puts the previous maps back — call it on failure (or, for a
 // validation, on every path); on success the fresh maps stay committed
 // and restore must not be called.
+//
+// # The binding surface is part of the grant
+//
+// A scoped service builds against a PRUNED Values map — the grant's
+// names and nothing else. Without this the whole value scope is a sieve:
+// a guest refused SetProperty on .Secret patches
+// <TextBox Text="{{.Secret}}"/> into its own island and reads it off the
+// screen, or patches a Button bound to a host command and presses it.
+// Refusing the verb while leaving the binding open would enforce the
+// spelling of an escalation, not the escalation.
+//
+// Values is restored on EVERY path, success included — unlike Named and
+// Declared, a pruned Values left committed would silently narrow the
+// host's own context.
+//
+// What is deliberately NOT pruned: Components, Handlers, Rules, Styles
+// and Includes. Those are already host registrations — the grant model
+// this extends — and narrowing them per-guest is the capability
+// handshake, which is a later question by explicit direction.
 func (s *Service) scratchBuild(src string) (root gooey.Component, restore func(), err error) {
 	prevNamed, prevDecl := s.bind.Named, s.bind.Declared
-	s.bind.Named = map[string]gooey.Component{}
-	s.bind.Declared = nil
+	fresh := func() { s.bind.Named, s.bind.Declared = map[string]gooey.Component{}, nil }
+	fresh()
 	restore = func() { s.bind.Named, s.bind.Declared = prevNamed, prevDecl }
+
+	if !s.scoped() {
+		root, err = markup.Build([]byte(src), s.bind)
+		return root, restore, err
+	}
+
+	full := s.bind.Values
+	s.bind.Values = s.grantedValues()
 	root, err = markup.Build([]byte(src), s.bind)
-	return root, restore, err
+	s.bind.Values = full
+	if err == nil {
+		return root, restore, nil
+	}
+
+	// The failure needs a SHAPE, and "no value named X" is the shape of a
+	// typo. Classification is one typed-error check plus one map lookup:
+	// if the build failed on an UNRESOLVED PATH, and that same path
+	// resolves against the host's full surface, then the prune is what
+	// removed it and this is a denial rather than bad markup.
+	//
+	// It used to build the document a SECOND time against the full
+	// surface and infer the answer from whether that succeeded. That
+	// worked, and it ran every load-time side effect in the document
+	// twice — a <Companion> in a guest's fragment would have launched two
+	// processes on the error path alone. errors.As costs nothing and
+	// touches nothing.
+	//
+	// Fail-open here is fail-CLOSED for the thing that matters: if the
+	// classification misses, the caller gets InvalidArgument instead of
+	// PermissionDenied, but the build still failed and the escalation is
+	// still blocked. Enforcement never depended on the message.
+	fresh()
+	var unresolved *markup.UnresolvedError
+	if errors.As(err, &unresolved) {
+		if _, lerr := s.lookup(unresolved.Path); lerr == nil {
+			// Deliberately does NOT name the path: a refusal must not
+			// become an enumeration of the host's state.
+			return nil, restore, deniedf(
+				"the markup binds one or more names outside this session's granted values (%s); ListValues shows what this session may bind",
+				s.grant.valueList())
+		}
+	}
+	return nil, restore, err
 }
 
 // ---- targeted subtree replacement (issue #117) ----
@@ -194,6 +287,9 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.mayAddress(name); err != nil {
+		return nil, err
+	}
 	old, ok := s.bind.Named[name]
 	if !ok {
 		return nil, notFoundf("no element named %q; SnapshotTree lists the named elements", name)
@@ -202,6 +298,12 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	// Locate the target's slot before building anything: an unpatchable
 	// address should not cost a build.
 	root := c.Root()
+	// Patching the composition root degrades to a whole swap (below), so
+	// a grant whose island IS the root would be an unscoped SwapMarkup
+	// wearing a patch's name. Refused with the swap's own reasoning.
+	if s.scoped() && old == root {
+		return nil, deniedf("element %q is the composition root; patching it replaces the whole page, which no island grant can authorize", name)
+	}
 	var put func(gooey.Component)
 	if old != root {
 		parent, index := findParent(root, old)
@@ -217,7 +319,7 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	fresh, restore, err := s.scratchBuild(source)
 	if err != nil {
 		restore()
-		return nil, invalidf("%v", err)
+		return nil, buildErr(err)
 	}
 	newNamed, newDecl := s.bind.Named, s.bind.Declared
 
