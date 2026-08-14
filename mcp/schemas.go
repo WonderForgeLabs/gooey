@@ -108,6 +108,16 @@ func registerPropertiesSchema() map[string]any {
 	}, "registered")
 }
 
+func unregisterPropertiesSchema() map[string]any {
+	return object(map[string]any{
+		"unregistered": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "The names just removed, in request order — what list_values will no longer show and markup can no longer bind.",
+		},
+	}, "unregistered")
+}
+
 func validateMarkupSchema() map[string]any {
 	return object(map[string]any{
 		"valid": prop_("boolean", "Whether the markup would build against the app's live binding context."),

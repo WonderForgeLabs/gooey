@@ -29,6 +29,8 @@ import { MessageType } from "@protobuf-ts/runtime";
 import { InputEvent } from "./types";
 import { Rect } from "./types";
 import { PropertyChange } from "./types";
+import { PatchMarkupResponse } from "./control";
+import { UnregisterNamesResponse } from "./control";
 import { RegisterPropertiesResponse } from "./control";
 import { SwapMarkupResponse } from "./control";
 import { SetFocusResponse } from "./control";
@@ -36,6 +38,8 @@ import { SendPointerResponse } from "./control";
 import { SendKeysResponse } from "./control";
 import { InvokeCommandResponse } from "./control";
 import { SetPropertyResponse } from "./control";
+import { PatchMarkupRequest } from "./control";
+import { UnregisterNamesRequest } from "./control";
 import { RegisterPropertiesRequest } from "./control";
 import { SwapMarkupRequest } from "./control";
 import { SetFocusRequest } from "./control";
@@ -170,6 +174,29 @@ export interface Act {
          * @generated from protobuf field: gooey.control.v1.RegisterPropertiesRequest register_properties = 8
          */
         registerProperties: RegisterPropertiesRequest;
+    } | {
+        oneofKind: "unregisterNames";
+        /**
+         * @generated from protobuf field: gooey.control.v1.UnregisterNamesRequest unregister_names = 9
+         */
+        unregisterNames: UnregisterNamesRequest;
+    } | {
+        oneofKind: "patchMarkup";
+        /**
+         * PatchMarkup is an act because an editing client's characteristic
+         * operation is "set a property, then patch the subtree that reads
+         * it", and those two must not race. On this stream they cannot: acts
+         * are applied in stream order on the UI goroutine. Split across a
+         * unary call and an act they can, because the two arrive on
+         * different goroutines and nothing orders them.
+         *
+         * SwapMarkup is the wrong substitute for it: replacing the page
+         * rebuilds every element, so focus, caret and every Name= die on
+         * each edit — unconditionally, and the whole tree at once.
+         *
+         * @generated from protobuf field: gooey.control.v1.PatchMarkupRequest patch_markup = 10
+         */
+        patchMarkup: PatchMarkupRequest;
     } | {
         oneofKind: undefined;
     };
@@ -318,6 +345,18 @@ export interface ActResult {
          * @generated from protobuf field: gooey.control.v1.RegisterPropertiesResponse register_properties = 10
          */
         registerProperties: RegisterPropertiesResponse;
+    } | {
+        oneofKind: "unregisterNames";
+        /**
+         * @generated from protobuf field: gooey.control.v1.UnregisterNamesResponse unregister_names = 11
+         */
+        unregisterNames: UnregisterNamesResponse;
+    } | {
+        oneofKind: "patchMarkup";
+        /**
+         * @generated from protobuf field: gooey.control.v1.PatchMarkupResponse patch_markup = 12
+         */
+        patchMarkup: PatchMarkupResponse;
     } | {
         oneofKind: undefined;
     };
@@ -589,7 +628,9 @@ class Act$Type extends MessageType<Act> {
             { no: 5, name: "send_pointer", kind: "message", oneof: "act", T: () => SendPointerRequest },
             { no: 6, name: "set_focus", kind: "message", oneof: "act", T: () => SetFocusRequest },
             { no: 7, name: "swap_markup", kind: "message", oneof: "act", T: () => SwapMarkupRequest },
-            { no: 8, name: "register_properties", kind: "message", oneof: "act", T: () => RegisterPropertiesRequest }
+            { no: 8, name: "register_properties", kind: "message", oneof: "act", T: () => RegisterPropertiesRequest },
+            { no: 9, name: "unregister_names", kind: "message", oneof: "act", T: () => UnregisterNamesRequest },
+            { no: 10, name: "patch_markup", kind: "message", oneof: "act", T: () => PatchMarkupRequest }
         ]);
     }
     create(value?: PartialMessage<Act>): Act {
@@ -650,6 +691,18 @@ class Act$Type extends MessageType<Act> {
                         registerProperties: RegisterPropertiesRequest.internalBinaryRead(reader, reader.uint32(), options, (message.act as any).registerProperties)
                     };
                     break;
+                case /* gooey.control.v1.UnregisterNamesRequest unregister_names */ 9:
+                    message.act = {
+                        oneofKind: "unregisterNames",
+                        unregisterNames: UnregisterNamesRequest.internalBinaryRead(reader, reader.uint32(), options, (message.act as any).unregisterNames)
+                    };
+                    break;
+                case /* gooey.control.v1.PatchMarkupRequest patch_markup */ 10:
+                    message.act = {
+                        oneofKind: "patchMarkup",
+                        patchMarkup: PatchMarkupRequest.internalBinaryRead(reader, reader.uint32(), options, (message.act as any).patchMarkup)
+                    };
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -686,6 +739,12 @@ class Act$Type extends MessageType<Act> {
         /* gooey.control.v1.RegisterPropertiesRequest register_properties = 8; */
         if (message.act.oneofKind === "registerProperties")
             RegisterPropertiesRequest.internalBinaryWrite(message.act.registerProperties, writer.tag(8, WireType.LengthDelimited).fork(), options).join();
+        /* gooey.control.v1.UnregisterNamesRequest unregister_names = 9; */
+        if (message.act.oneofKind === "unregisterNames")
+            UnregisterNamesRequest.internalBinaryWrite(message.act.unregisterNames, writer.tag(9, WireType.LengthDelimited).fork(), options).join();
+        /* gooey.control.v1.PatchMarkupRequest patch_markup = 10; */
+        if (message.act.oneofKind === "patchMarkup")
+            PatchMarkupRequest.internalBinaryWrite(message.act.patchMarkup, writer.tag(10, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
@@ -878,7 +937,9 @@ class ActResult$Type extends MessageType<ActResult> {
             { no: 7, name: "send_pointer", kind: "message", oneof: "result", T: () => SendPointerResponse },
             { no: 8, name: "set_focus", kind: "message", oneof: "result", T: () => SetFocusResponse },
             { no: 9, name: "swap_markup", kind: "message", oneof: "result", T: () => SwapMarkupResponse },
-            { no: 10, name: "register_properties", kind: "message", oneof: "result", T: () => RegisterPropertiesResponse }
+            { no: 10, name: "register_properties", kind: "message", oneof: "result", T: () => RegisterPropertiesResponse },
+            { no: 11, name: "unregister_names", kind: "message", oneof: "result", T: () => UnregisterNamesResponse },
+            { no: 12, name: "patch_markup", kind: "message", oneof: "result", T: () => PatchMarkupResponse }
         ]);
     }
     create(value?: PartialMessage<ActResult>): ActResult {
@@ -947,6 +1008,18 @@ class ActResult$Type extends MessageType<ActResult> {
                         registerProperties: RegisterPropertiesResponse.internalBinaryRead(reader, reader.uint32(), options, (message.result as any).registerProperties)
                     };
                     break;
+                case /* gooey.control.v1.UnregisterNamesResponse unregister_names */ 11:
+                    message.result = {
+                        oneofKind: "unregisterNames",
+                        unregisterNames: UnregisterNamesResponse.internalBinaryRead(reader, reader.uint32(), options, (message.result as any).unregisterNames)
+                    };
+                    break;
+                case /* gooey.control.v1.PatchMarkupResponse patch_markup */ 12:
+                    message.result = {
+                        oneofKind: "patchMarkup",
+                        patchMarkup: PatchMarkupResponse.internalBinaryRead(reader, reader.uint32(), options, (message.result as any).patchMarkup)
+                    };
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -989,6 +1062,12 @@ class ActResult$Type extends MessageType<ActResult> {
         /* gooey.control.v1.RegisterPropertiesResponse register_properties = 10; */
         if (message.result.oneofKind === "registerProperties")
             RegisterPropertiesResponse.internalBinaryWrite(message.result.registerProperties, writer.tag(10, WireType.LengthDelimited).fork(), options).join();
+        /* gooey.control.v1.UnregisterNamesResponse unregister_names = 11; */
+        if (message.result.oneofKind === "unregisterNames")
+            UnregisterNamesResponse.internalBinaryWrite(message.result.unregisterNames, writer.tag(11, WireType.LengthDelimited).fork(), options).join();
+        /* gooey.control.v1.PatchMarkupResponse patch_markup = 12; */
+        if (message.result.oneofKind === "patchMarkup")
+            PatchMarkupResponse.internalBinaryWrite(message.result.patchMarkup, writer.tag(12, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

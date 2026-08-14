@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -31,6 +33,22 @@ const (
 	// KindAny is the escape hatch for app types with no markup literal,
 	// exactly as in propKinds. Its value crosses as UTF-8 JSON.
 	KindAny
+	// KindImage is an image.Image, carried as ENCODED bytes and decoded
+	// through the imaging registry.
+	//
+	// It is the one Kind with no propKinds row, and the lockstep rule
+	// above does not apply to it. A propKinds row is a parser for a
+	// markup LITERAL and there is no way to write a picture inline;
+	// markup can still BIND one, since <Image Src="{{.Logo}}">
+	// type-checks against *prop.Property[image.Image]. Bindability and
+	// literal-spellability are the same axis for every other kind and
+	// different for this one.
+	//
+	// Without it no client can put a picture on a page: markup swapped
+	// over the control plane is built from bytes and has no file system,
+	// so <Image Src="logo.png"> cannot resolve, and there was no
+	// property type to bind Src to instead.
+	KindImage
 )
 
 // String spells a Kind the way markup does — the Type= attribute values.
@@ -50,6 +68,8 @@ func (k Kind) String() string {
 		return "color"
 	case KindAny:
 		return "any"
+	case KindImage:
+		return "image"
 	}
 	return "unspecified"
 }
@@ -72,6 +92,8 @@ func KindOf(name string) Kind {
 		return KindColor
 	case "any":
 		return KindAny
+	case "image":
+		return KindImage
 	}
 	return KindUnspecified
 }
@@ -88,6 +110,10 @@ type Value struct {
 	Float    float64
 	Duration time.Duration
 	Color    render.Color
+	// Image is the KindImage payload, already decoded. The wire carries
+	// encoded bytes; decoding happens at the adapter so a bad image is
+	// one clear error at the boundary rather than a blank picture later.
+	Image image.Image
 	// JSON is the KindAny payload: one UTF-8 JSON document.
 	JSON []byte
 }
@@ -114,6 +140,8 @@ func (v Value) Equal(o Value) bool {
 		return v.Color == o.Color
 	case KindAny:
 		return bytes.Equal(v.JSON, o.JSON)
+	case KindImage:
+		return sameImage(v.Image, o.Image)
 	}
 	return true
 }
@@ -125,6 +153,142 @@ func FloatValue(v float64) Value          { return Value{Kind: KindFloat, Float:
 func DurationValue(v time.Duration) Value { return Value{Kind: KindDuration, Duration: v} }
 func ColorValue(v render.Color) Value     { return Value{Kind: KindColor, Color: v} }
 func JSONValue(v []byte) Value            { return Value{Kind: KindAny, JSON: v} }
+func ImageValue(v image.Image) Value      { return Value{Kind: KindImage, Image: v} }
+
+// SourceImage is a decoded image that still carries the bytes it came
+// from. It IS an image.Image, so it binds to <Image Src> like any other
+// and nothing downstream needs to know about it.
+//
+// It exists because decoding is lossy in the direction that matters
+// here: given only an image.Image, a reader cannot answer "what did the
+// client send?" — it can only re-encode, which is a different file, and
+// puts an encoder on the ListValues and frame-delta paths to produce it.
+// Keeping the source bytes beside the pixels makes read-back exact and
+// free, at the cost of holding the encoded form for as long as the
+// property lives.
+//
+// A picture constructed in-process (not decoded from bytes) is an
+// ordinary image.Image with no source, and read-back reports no bytes
+// for it rather than inventing some.
+type SourceImage struct {
+	image.Image
+	Bytes []byte
+}
+
+// ImageBytesOf returns the encoded bytes an image was decoded from, or
+// nil when it did not come from any — a type assertion rather than an
+// interface method, so image.Image stays the currency everywhere else.
+func ImageBytesOf(img image.Image) []byte {
+	if si, ok := img.(SourceImage); ok {
+		return si.Bytes
+	}
+	return nil
+}
+
+// sameImage answers "is this the same picture" for delta collection,
+// which runs once per frame per session — so it must be cheap, and it
+// must never panic.
+//
+// The panic is the reason this is not a bare `==`. Comparing two
+// interface values panics when their dynamic type is identical and NOT
+// comparable, and SourceImage is exactly that: a struct embedding a
+// []byte. Its fields are exported, so any caller can build one with nil
+// Bytes without going through DecodedImageValue — and then two of them
+// on either side of `==` take down the UI goroutine, which is every
+// session's UI, not just the offender's.
+//
+// So: source bytes when both carry them (exact and cheap), pointer
+// identity for the standard image types, which are the ones a real app
+// holds, and "changed" for anything this cannot compare safely. The
+// asymmetry decides the default — a spurious "changed" costs one
+// repaint, and guessing the other way costs the process.
+//
+// reflect.Type.Comparable would answer this in one line and is not
+// available: no reflection in core is invariant #1, and this is the
+// "just use reflection here" case CLAUDE.md calls a design change
+// rather than a shortcut.
+func sameImage(a, b image.Image) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if ab, bb := ImageBytesOf(a), ImageBytesOf(b); ab != nil && bb != nil {
+		return bytes.Equal(ab, bb)
+	}
+	// An allowlist, not a denylist: every arm here is a POINTER type and
+	// therefore comparable. A type absent from it is reported changed
+	// rather than compared, which is why adding an image type to the
+	// framework can never introduce the panic this function exists to
+	// prevent.
+	switch at := a.(type) {
+	case *image.RGBA:
+		bt, ok := b.(*image.RGBA)
+		return ok && at == bt
+	case *image.NRGBA:
+		bt, ok := b.(*image.NRGBA)
+		return ok && at == bt
+	case *image.RGBA64:
+		bt, ok := b.(*image.RGBA64)
+		return ok && at == bt
+	case *image.NRGBA64:
+		bt, ok := b.(*image.NRGBA64)
+		return ok && at == bt
+	case *image.Gray:
+		bt, ok := b.(*image.Gray)
+		return ok && at == bt
+	case *image.Gray16:
+		bt, ok := b.(*image.Gray16)
+		return ok && at == bt
+	case *image.Alpha:
+		bt, ok := b.(*image.Alpha)
+		return ok && at == bt
+	case *image.Alpha16:
+		bt, ok := b.(*image.Alpha16)
+		return ok && at == bt
+	case *image.CMYK:
+		bt, ok := b.(*image.CMYK)
+		return ok && at == bt
+	case *image.YCbCr:
+		bt, ok := b.(*image.YCbCr)
+		return ok && at == bt
+	case *image.NYCbCrA:
+		bt, ok := b.(*image.NYCbCrA)
+		return ok && at == bt
+	case *image.Paletted:
+		bt, ok := b.(*image.Paletted)
+		return ok && at == bt
+	case *image.Uniform:
+		bt, ok := b.(*image.Uniform)
+		return ok && at == bt
+	}
+	return false
+}
+
+// ImageLimits is what the control plane will accept as an image from a
+// client. Both transports decode on the app's single UI goroutine, so a
+// decode that runs long stalls input, layout and every other session's
+// frames — and Bridge.round's timeout bounds the WAITING, not the
+// decode, so the stall outlives it. One policy, stated once, because two
+// transports with two ceilings is the same as having the looser one.
+//
+// The numbers are deliberately generous rather than tight: a phone
+// photograph (4032x3024, about 12.2 megapixels) must still work, since
+// refusing an ordinary picture would push callers toward pre-scaling
+// and hide the limit's purpose. Anything past this is not a terminal
+// image, and the two caps are both load-bearing — bytes alone admit the
+// bomb, whose entire trick is a small file that declares enormous
+// dimensions.
+func ImageLimits() imaging.Limits {
+	return imaging.Limits{
+		MaxBytes:  16 << 20,   // 16 MiB encoded
+		MaxPixels: 16_000_000, // ~64 MiB as RGBA
+	}
+}
+
+// DecodedImageValue is ImageValue for a picture that came from bytes:
+// it keeps the source so a reader can hand back exactly what arrived.
+func DecodedImageValue(img image.Image, src []byte) Value {
+	return Value{Kind: KindImage, Image: SourceImage{Image: img, Bytes: src}}
+}
 
 // EntryKind classifies one name in the binding context.
 type EntryKind int
@@ -214,6 +378,8 @@ func describe(name string, v any) ValueEntry {
 		set(KindDuration, DurationValue(h.Get()))
 	case *prop.Property[render.Color]:
 		set(KindColor, ColorValue(h.Get()))
+	case *prop.Property[image.Image]:
+		set(KindImage, ImageValue(h.Get()))
 	case *prop.Property[any]:
 		// The escape hatch: the current value crosses as JSON where it
 		// can, and stays a descriptor where it cannot.
@@ -286,6 +452,11 @@ func (s *Service) Set(name string, v Value) error {
 			return setMismatch(name, KindColor, v.Kind)
 		}
 		p.Set(v.Color)
+	case *prop.Property[image.Image]:
+		if v.Kind != KindImage {
+			return setMismatch(name, KindImage, v.Kind)
+		}
+		p.Set(v.Image)
 	case *prop.Property[any]:
 		if v.Kind != KindAny {
 			return setMismatch(name, KindAny, v.Kind)
@@ -409,6 +580,87 @@ func (s *Service) register(regs []Registration) (rollback func(), err error) {
 	return rollback, nil
 }
 
+// Unregister removes names from the binding context — Register's
+// inverse, and the delete half of a CRUD surface over the viewmodel. A
+// client that can grow the context must be able to shrink it again, or
+// every generated name leaks for the life of the process.
+//
+// All-or-nothing, like Register: a name that does not resolve fails the
+// whole batch and puts back anything already taken out.
+//
+// It does not track provenance — a name the app itself installed is
+// removable too, because the context is the one source of truth and
+// nothing in it records who wrote it. What this does NOT do is disturb
+// the running tree: a component bound to a removed name still holds its
+// property handle directly and keeps rendering and updating. Removal
+// only takes the name out of scope for markup built AFTERWARDS, which
+// is exactly what "unbind it from future pages" means.
+func (s *Service) Unregister(names []string) error {
+	if s.bind == nil {
+		return errNoContext
+	}
+	if s.bind.Values == nil {
+		return errNoContext
+	}
+	type removed struct {
+		parent map[string]any
+		key    string
+		val    any
+	}
+	// No rollback closure any more, and its absence is the point: with
+	// resolution finished before the first delete, there is no failure
+	// path left that runs after a mutation. All-or-nothing used to be
+	// maintained by undoing; it is now maintained by not starting.
+	// RESOLVE EVERYTHING FIRST, THEN DELETE. A batch is a set, and a set
+	// has no order, so the same set must succeed or fail the same way
+	// however it is written down.
+	//
+	// Resolving and deleting in one pass made that false. Unregister
+	// ["scope", "scope.child"] deleted the parent, then failed to resolve
+	// the child — its scope had just been removed by the previous
+	// iteration — and rolled the whole batch back with "no such name" for
+	// a name that existed when the call was made. Written the other way
+	// round, ["scope.child", "scope"], the identical request succeeded.
+	// A caller holding a set of names cannot be expected to sort it into
+	// the one order the implementation tolerates.
+	//
+	// Two passes fix it by construction: every lookup happens against the
+	// map as the caller found it, so no resolution can be invalidated by a
+	// deletion that is part of the same request.
+	targets := make([]removed, 0, len(names))
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			return invalidf("cannot unregister: a name is required")
+		}
+		segs := strings.Split(name, ".")
+		m := s.bind.Values
+		ok := true
+		for _, seg := range segs[:len(segs)-1] {
+			inner, isScope := m[seg].(map[string]any)
+			if !isScope {
+				ok = false
+				break
+			}
+			m = inner
+		}
+		leaf := segs[len(segs)-1]
+		var val any
+		if ok {
+			val, ok = m[leaf]
+		}
+		if !ok {
+			// Nothing has been deleted yet, so there is nothing to roll
+			// back — the all-or-nothing guarantee holds trivially here.
+			return notFoundf("cannot unregister %q: no such name", name)
+		}
+		targets = append(targets, removed{parent: m, key: leaf, val: val})
+	}
+	for _, t := range targets {
+		delete(t.parent, t.key)
+	}
+	return nil
+}
+
 // sourceFor builds the fresh *prop.Property[T] a registration asks for —
 // a type switch over Kind, one case per propKinds row.
 func sourceFor(r Registration) (any, error) {
@@ -465,8 +717,17 @@ func sourceFor(r Registration) (any, error) {
 			}
 		}
 		return prop.NewSource(v), nil
+	case KindImage:
+		// nil is a legitimate starting value: a page can bind <Image
+		// Src="{{.Logo}}"> before anything has supplied a picture, and
+		// Image renders nothing for a nil source rather than failing.
+		var v image.Image
+		if init != nil {
+			v = init.Image
+		}
+		return prop.NewSource(v), nil
 	}
-	return nil, invalidf("registration %q: unknown kind; want one of string, int, bool, float, duration, color, any", r.Name)
+	return nil, invalidf("registration %q: unknown kind; want one of string, int, bool, float, duration, color, any, image", r.Name)
 }
 
 // namesOf is the sorted Name= identities of a name table.

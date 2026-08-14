@@ -58,6 +58,26 @@ func (v *VStack) Arrange(b gooey.Rect) {
 		}
 		return
 	}
+	// The measure cache is not a budget. v.sizes holds what each child
+	// WANTED against whatever avail the last Measure used, and Arrange
+	// can be handed a smaller rect than that — a Grid measuring its
+	// children against the screen and then arranging them into a fixed
+	// track is the ordinary case, not an exotic one. Walking `y` by the
+	// cached heights then marches straight past b's bottom edge, and
+	// every child from that point on is arranged outside the stack.
+	//
+	// Nothing downstream catches it: no part of the framework clips a
+	// component to its arranged rect (render.Cells.SetString clips to
+	// the BUFFER, not the parent), so the child paints exactly where it
+	// was told — over its neighbours, or over the chrome of the Border
+	// that contains it. The reported symptom was a bottom border row
+	// reading "╰  </Canvas>": the corner intact, the rule replaced by
+	// text from a pane that had overrun it.
+	//
+	// The zero-size guard above is this same failure at b.H <= 0, and
+	// its comment already names the class. This is the b.H > 0 half:
+	// real room, just not enough of it.
+	bottom := b.Y + b.H
 	y := b.Y
 	placed := false
 	for i, c := range v.Children {
@@ -65,9 +85,15 @@ func (v *VStack) Arrange(b gooey.Rect) {
 		if gapBefore(c, placed) {
 			y += v.Gap
 		}
+		// Truncate the child that straddles the edge and give nothing to
+		// those past it, rather than scaling every child down: a stack
+		// out of room should show its first children at the size they
+		// asked for and lose the last, the way clipped text keeps its
+		// first lines.
+		h := min(s.H, max(0, bottom-y))
 		// The slot spans the stack's full width; alignment inside it
 		// is the child's business (ArrangeChild).
-		gooey.ArrangeChild(c, gooey.Rect{X: b.X, Y: y, W: b.W, H: s.H})
+		gooey.ArrangeChild(c, gooey.Rect{X: b.X, Y: min(y, bottom), W: b.W, H: h})
 		y += s.H
 		if !collapsed(c) {
 			placed = true

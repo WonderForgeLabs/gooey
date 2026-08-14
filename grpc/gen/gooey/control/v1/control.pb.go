@@ -1023,6 +1023,87 @@ func (*RegisterPropertiesResponse) Descriptor() ([]byte, []int) {
 	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{21}
 }
 
+type UnregisterNamesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Dotted names to remove, e.g. "Result" or "Activity.Sparkle.Out".
+	Names         []string `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnregisterNamesRequest) Reset() {
+	*x = UnregisterNamesRequest{}
+	mi := &file_gooey_control_v1_control_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnregisterNamesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnregisterNamesRequest) ProtoMessage() {}
+
+func (x *UnregisterNamesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gooey_control_v1_control_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnregisterNamesRequest.ProtoReflect.Descriptor instead.
+func (*UnregisterNamesRequest) Descriptor() ([]byte, []int) {
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *UnregisterNamesRequest) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
+type UnregisterNamesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnregisterNamesResponse) Reset() {
+	*x = UnregisterNamesResponse{}
+	mi := &file_gooey_control_v1_control_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnregisterNamesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnregisterNamesResponse) ProtoMessage() {}
+
+func (x *UnregisterNamesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gooey_control_v1_control_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnregisterNamesResponse.ProtoReflect.Descriptor instead.
+func (*UnregisterNamesResponse) Descriptor() ([]byte, []int) {
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{23}
+}
+
 type GetDeclaredSchemaRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Markup source to inspect. Empty asks for the declaration block of
@@ -1035,7 +1116,7 @@ type GetDeclaredSchemaRequest struct {
 
 func (x *GetDeclaredSchemaRequest) Reset() {
 	*x = GetDeclaredSchemaRequest{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[22]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1128,7 @@ func (x *GetDeclaredSchemaRequest) String() string {
 func (*GetDeclaredSchemaRequest) ProtoMessage() {}
 
 func (x *GetDeclaredSchemaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[22]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1141,7 @@ func (x *GetDeclaredSchemaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDeclaredSchemaRequest.ProtoReflect.Descriptor instead.
 func (*GetDeclaredSchemaRequest) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{22}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetDeclaredSchemaRequest) GetSource() string {
@@ -1079,7 +1160,7 @@ type GetDeclaredSchemaResponse struct {
 
 func (x *GetDeclaredSchemaResponse) Reset() {
 	*x = GetDeclaredSchemaResponse{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[23]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1091,7 +1172,7 @@ func (x *GetDeclaredSchemaResponse) String() string {
 func (*GetDeclaredSchemaResponse) ProtoMessage() {}
 
 func (x *GetDeclaredSchemaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[23]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1104,7 +1185,7 @@ func (x *GetDeclaredSchemaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDeclaredSchemaResponse.ProtoReflect.Descriptor instead.
 func (*GetDeclaredSchemaResponse) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{23}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetDeclaredSchemaResponse) GetSchema() *ControlSchema {
@@ -1127,7 +1208,7 @@ type PatchMarkupRequest struct {
 
 func (x *PatchMarkupRequest) Reset() {
 	*x = PatchMarkupRequest{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[24]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1139,7 +1220,7 @@ func (x *PatchMarkupRequest) String() string {
 func (*PatchMarkupRequest) ProtoMessage() {}
 
 func (x *PatchMarkupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[24]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1152,7 +1233,7 @@ func (x *PatchMarkupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PatchMarkupRequest.ProtoReflect.Descriptor instead.
 func (*PatchMarkupRequest) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{24}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *PatchMarkupRequest) GetName() string {
@@ -1180,7 +1261,7 @@ type PatchMarkupResponse struct {
 
 func (x *PatchMarkupResponse) Reset() {
 	*x = PatchMarkupResponse{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[25]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1192,7 +1273,7 @@ func (x *PatchMarkupResponse) String() string {
 func (*PatchMarkupResponse) ProtoMessage() {}
 
 func (x *PatchMarkupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[25]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1205,7 +1286,7 @@ func (x *PatchMarkupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PatchMarkupResponse.ProtoReflect.Descriptor instead.
 func (*PatchMarkupResponse) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{25}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PatchMarkupResponse) GetNamed() []string {
@@ -1223,7 +1304,7 @@ type ListStylesRequest struct {
 
 func (x *ListStylesRequest) Reset() {
 	*x = ListStylesRequest{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[26]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1316,7 @@ func (x *ListStylesRequest) String() string {
 func (*ListStylesRequest) ProtoMessage() {}
 
 func (x *ListStylesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[26]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1329,7 @@ func (x *ListStylesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListStylesRequest.ProtoReflect.Descriptor instead.
 func (*ListStylesRequest) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{26}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{28}
 }
 
 type ListStylesResponse struct {
@@ -1261,7 +1342,7 @@ type ListStylesResponse struct {
 
 func (x *ListStylesResponse) Reset() {
 	*x = ListStylesResponse{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[27]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1273,7 +1354,7 @@ func (x *ListStylesResponse) String() string {
 func (*ListStylesResponse) ProtoMessage() {}
 
 func (x *ListStylesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[27]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1286,7 +1367,7 @@ func (x *ListStylesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListStylesResponse.ProtoReflect.Descriptor instead.
 func (*ListStylesResponse) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{27}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListStylesResponse) GetStyles() []*StyleInfo {
@@ -1306,7 +1387,7 @@ type ValidateMarkupRequest struct {
 
 func (x *ValidateMarkupRequest) Reset() {
 	*x = ValidateMarkupRequest{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[28]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1318,7 +1399,7 @@ func (x *ValidateMarkupRequest) String() string {
 func (*ValidateMarkupRequest) ProtoMessage() {}
 
 func (x *ValidateMarkupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[28]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1331,7 +1412,7 @@ func (x *ValidateMarkupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateMarkupRequest.ProtoReflect.Descriptor instead.
 func (*ValidateMarkupRequest) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{28}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ValidateMarkupRequest) GetSource() string {
@@ -1355,7 +1436,7 @@ type ValidateMarkupResponse struct {
 
 func (x *ValidateMarkupResponse) Reset() {
 	*x = ValidateMarkupResponse{}
-	mi := &file_gooey_control_v1_control_proto_msgTypes[29]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1367,7 +1448,7 @@ func (x *ValidateMarkupResponse) String() string {
 func (*ValidateMarkupResponse) ProtoMessage() {}
 
 func (x *ValidateMarkupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gooey_control_v1_control_proto_msgTypes[29]
+	mi := &file_gooey_control_v1_control_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1380,7 +1461,7 @@ func (x *ValidateMarkupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateMarkupResponse.ProtoReflect.Descriptor instead.
 func (*ValidateMarkupResponse) Descriptor() ([]byte, []int) {
-	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{29}
+	return file_gooey_control_v1_control_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ValidateMarkupResponse) GetValid() bool {
@@ -1454,7 +1535,10 @@ const file_gooey_control_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"properties\x18\x01 \x03(\v2&.gooey.control.v1.PropertyRegistrationR\n" +
 	"properties\"\x1c\n" +
-	"\x1aRegisterPropertiesResponse\"2\n" +
+	"\x1aRegisterPropertiesResponse\".\n" +
+	"\x16UnregisterNamesRequest\x12\x14\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names\"\x19\n" +
+	"\x17UnregisterNamesResponse\"2\n" +
 	"\x18GetDeclaredSchemaRequest\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\"T\n" +
 	"\x19GetDeclaredSchemaResponse\x127\n" +
@@ -1472,7 +1556,7 @@ const file_gooey_control_v1_control_proto_rawDesc = "" +
 	"\x16ValidateMarkupResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x14\n" +
-	"\x05named\x18\x03 \x03(\tR\x05named2\x8f\v\n" +
+	"\x05named\x18\x03 \x03(\tR\x05named2\xf7\v\n" +
 	"\x0eControlService\x12]\n" +
 	"\fSnapshotTree\x12%.gooey.control.v1.SnapshotTreeRequest\x1a&.gooey.control.v1.SnapshotTreeResponse\x12W\n" +
 	"\n" +
@@ -1487,7 +1571,8 @@ const file_gooey_control_v1_control_proto_rawDesc = "" +
 	"\bSetFocus\x12!.gooey.control.v1.SetFocusRequest\x1a\".gooey.control.v1.SetFocusResponse\x12W\n" +
 	"\n" +
 	"SwapMarkup\x12#.gooey.control.v1.SwapMarkupRequest\x1a$.gooey.control.v1.SwapMarkupResponse\x12o\n" +
-	"\x12RegisterProperties\x12+.gooey.control.v1.RegisterPropertiesRequest\x1a,.gooey.control.v1.RegisterPropertiesResponse\x12l\n" +
+	"\x12RegisterProperties\x12+.gooey.control.v1.RegisterPropertiesRequest\x1a,.gooey.control.v1.RegisterPropertiesResponse\x12f\n" +
+	"\x0fUnregisterNames\x12(.gooey.control.v1.UnregisterNamesRequest\x1a).gooey.control.v1.UnregisterNamesResponse\x12l\n" +
 	"\x11GetDeclaredSchema\x12*.gooey.control.v1.GetDeclaredSchemaRequest\x1a+.gooey.control.v1.GetDeclaredSchemaResponse\x12Z\n" +
 	"\vPatchMarkup\x12$.gooey.control.v1.PatchMarkupRequest\x1a%.gooey.control.v1.PatchMarkupResponse\x12W\n" +
 	"\n" +
@@ -1506,7 +1591,7 @@ func file_gooey_control_v1_control_proto_rawDescGZIP() []byte {
 	return file_gooey_control_v1_control_proto_rawDescData
 }
 
-var file_gooey_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_gooey_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_gooey_control_v1_control_proto_goTypes = []any{
 	(*SnapshotTreeRequest)(nil),        // 0: gooey.control.v1.SnapshotTreeRequest
 	(*SnapshotTreeResponse)(nil),       // 1: gooey.control.v1.SnapshotTreeResponse
@@ -1530,32 +1615,34 @@ var file_gooey_control_v1_control_proto_goTypes = []any{
 	(*SwapMarkupResponse)(nil),         // 19: gooey.control.v1.SwapMarkupResponse
 	(*RegisterPropertiesRequest)(nil),  // 20: gooey.control.v1.RegisterPropertiesRequest
 	(*RegisterPropertiesResponse)(nil), // 21: gooey.control.v1.RegisterPropertiesResponse
-	(*GetDeclaredSchemaRequest)(nil),   // 22: gooey.control.v1.GetDeclaredSchemaRequest
-	(*GetDeclaredSchemaResponse)(nil),  // 23: gooey.control.v1.GetDeclaredSchemaResponse
-	(*PatchMarkupRequest)(nil),         // 24: gooey.control.v1.PatchMarkupRequest
-	(*PatchMarkupResponse)(nil),        // 25: gooey.control.v1.PatchMarkupResponse
-	(*ListStylesRequest)(nil),          // 26: gooey.control.v1.ListStylesRequest
-	(*ListStylesResponse)(nil),         // 27: gooey.control.v1.ListStylesResponse
-	(*ValidateMarkupRequest)(nil),      // 28: gooey.control.v1.ValidateMarkupRequest
-	(*ValidateMarkupResponse)(nil),     // 29: gooey.control.v1.ValidateMarkupResponse
-	(*TreeNode)(nil),                   // 30: gooey.control.v1.TreeNode
-	(*ValueInfo)(nil),                  // 31: gooey.control.v1.ValueInfo
-	(*TypedValue)(nil),                 // 32: gooey.control.v1.TypedValue
-	(*PointerEvent)(nil),               // 33: gooey.control.v1.PointerEvent
-	(*PropertyRegistration)(nil),       // 34: gooey.control.v1.PropertyRegistration
-	(*ControlSchema)(nil),              // 35: gooey.control.v1.ControlSchema
-	(*StyleInfo)(nil),                  // 36: gooey.control.v1.StyleInfo
+	(*UnregisterNamesRequest)(nil),     // 22: gooey.control.v1.UnregisterNamesRequest
+	(*UnregisterNamesResponse)(nil),    // 23: gooey.control.v1.UnregisterNamesResponse
+	(*GetDeclaredSchemaRequest)(nil),   // 24: gooey.control.v1.GetDeclaredSchemaRequest
+	(*GetDeclaredSchemaResponse)(nil),  // 25: gooey.control.v1.GetDeclaredSchemaResponse
+	(*PatchMarkupRequest)(nil),         // 26: gooey.control.v1.PatchMarkupRequest
+	(*PatchMarkupResponse)(nil),        // 27: gooey.control.v1.PatchMarkupResponse
+	(*ListStylesRequest)(nil),          // 28: gooey.control.v1.ListStylesRequest
+	(*ListStylesResponse)(nil),         // 29: gooey.control.v1.ListStylesResponse
+	(*ValidateMarkupRequest)(nil),      // 30: gooey.control.v1.ValidateMarkupRequest
+	(*ValidateMarkupResponse)(nil),     // 31: gooey.control.v1.ValidateMarkupResponse
+	(*TreeNode)(nil),                   // 32: gooey.control.v1.TreeNode
+	(*ValueInfo)(nil),                  // 33: gooey.control.v1.ValueInfo
+	(*TypedValue)(nil),                 // 34: gooey.control.v1.TypedValue
+	(*PointerEvent)(nil),               // 35: gooey.control.v1.PointerEvent
+	(*PropertyRegistration)(nil),       // 36: gooey.control.v1.PropertyRegistration
+	(*ControlSchema)(nil),              // 37: gooey.control.v1.ControlSchema
+	(*StyleInfo)(nil),                  // 38: gooey.control.v1.StyleInfo
 }
 var file_gooey_control_v1_control_proto_depIdxs = []int32{
-	30, // 0: gooey.control.v1.SnapshotTreeResponse.root:type_name -> gooey.control.v1.TreeNode
-	31, // 1: gooey.control.v1.ListValuesResponse.values:type_name -> gooey.control.v1.ValueInfo
-	31, // 2: gooey.control.v1.GetPropertyResponse.value:type_name -> gooey.control.v1.ValueInfo
-	32, // 3: gooey.control.v1.SetPropertyRequest.value:type_name -> gooey.control.v1.TypedValue
-	33, // 4: gooey.control.v1.SendPointerRequest.event:type_name -> gooey.control.v1.PointerEvent
-	34, // 5: gooey.control.v1.SwapMarkupRequest.register:type_name -> gooey.control.v1.PropertyRegistration
-	34, // 6: gooey.control.v1.RegisterPropertiesRequest.properties:type_name -> gooey.control.v1.PropertyRegistration
-	35, // 7: gooey.control.v1.GetDeclaredSchemaResponse.schema:type_name -> gooey.control.v1.ControlSchema
-	36, // 8: gooey.control.v1.ListStylesResponse.styles:type_name -> gooey.control.v1.StyleInfo
+	32, // 0: gooey.control.v1.SnapshotTreeResponse.root:type_name -> gooey.control.v1.TreeNode
+	33, // 1: gooey.control.v1.ListValuesResponse.values:type_name -> gooey.control.v1.ValueInfo
+	33, // 2: gooey.control.v1.GetPropertyResponse.value:type_name -> gooey.control.v1.ValueInfo
+	34, // 3: gooey.control.v1.SetPropertyRequest.value:type_name -> gooey.control.v1.TypedValue
+	35, // 4: gooey.control.v1.SendPointerRequest.event:type_name -> gooey.control.v1.PointerEvent
+	36, // 5: gooey.control.v1.SwapMarkupRequest.register:type_name -> gooey.control.v1.PropertyRegistration
+	36, // 6: gooey.control.v1.RegisterPropertiesRequest.properties:type_name -> gooey.control.v1.PropertyRegistration
+	37, // 7: gooey.control.v1.GetDeclaredSchemaResponse.schema:type_name -> gooey.control.v1.ControlSchema
+	38, // 8: gooey.control.v1.ListStylesResponse.styles:type_name -> gooey.control.v1.StyleInfo
 	0,  // 9: gooey.control.v1.ControlService.SnapshotTree:input_type -> gooey.control.v1.SnapshotTreeRequest
 	2,  // 10: gooey.control.v1.ControlService.ScreenText:input_type -> gooey.control.v1.ScreenTextRequest
 	4,  // 11: gooey.control.v1.ControlService.ListValues:input_type -> gooey.control.v1.ListValuesRequest
@@ -1567,27 +1654,29 @@ var file_gooey_control_v1_control_proto_depIdxs = []int32{
 	16, // 17: gooey.control.v1.ControlService.SetFocus:input_type -> gooey.control.v1.SetFocusRequest
 	18, // 18: gooey.control.v1.ControlService.SwapMarkup:input_type -> gooey.control.v1.SwapMarkupRequest
 	20, // 19: gooey.control.v1.ControlService.RegisterProperties:input_type -> gooey.control.v1.RegisterPropertiesRequest
-	22, // 20: gooey.control.v1.ControlService.GetDeclaredSchema:input_type -> gooey.control.v1.GetDeclaredSchemaRequest
-	24, // 21: gooey.control.v1.ControlService.PatchMarkup:input_type -> gooey.control.v1.PatchMarkupRequest
-	26, // 22: gooey.control.v1.ControlService.ListStyles:input_type -> gooey.control.v1.ListStylesRequest
-	28, // 23: gooey.control.v1.ControlService.ValidateMarkup:input_type -> gooey.control.v1.ValidateMarkupRequest
-	1,  // 24: gooey.control.v1.ControlService.SnapshotTree:output_type -> gooey.control.v1.SnapshotTreeResponse
-	3,  // 25: gooey.control.v1.ControlService.ScreenText:output_type -> gooey.control.v1.ScreenTextResponse
-	5,  // 26: gooey.control.v1.ControlService.ListValues:output_type -> gooey.control.v1.ListValuesResponse
-	7,  // 27: gooey.control.v1.ControlService.GetProperty:output_type -> gooey.control.v1.GetPropertyResponse
-	9,  // 28: gooey.control.v1.ControlService.SetProperty:output_type -> gooey.control.v1.SetPropertyResponse
-	11, // 29: gooey.control.v1.ControlService.InvokeCommand:output_type -> gooey.control.v1.InvokeCommandResponse
-	13, // 30: gooey.control.v1.ControlService.SendKeys:output_type -> gooey.control.v1.SendKeysResponse
-	15, // 31: gooey.control.v1.ControlService.SendPointer:output_type -> gooey.control.v1.SendPointerResponse
-	17, // 32: gooey.control.v1.ControlService.SetFocus:output_type -> gooey.control.v1.SetFocusResponse
-	19, // 33: gooey.control.v1.ControlService.SwapMarkup:output_type -> gooey.control.v1.SwapMarkupResponse
-	21, // 34: gooey.control.v1.ControlService.RegisterProperties:output_type -> gooey.control.v1.RegisterPropertiesResponse
-	23, // 35: gooey.control.v1.ControlService.GetDeclaredSchema:output_type -> gooey.control.v1.GetDeclaredSchemaResponse
-	25, // 36: gooey.control.v1.ControlService.PatchMarkup:output_type -> gooey.control.v1.PatchMarkupResponse
-	27, // 37: gooey.control.v1.ControlService.ListStyles:output_type -> gooey.control.v1.ListStylesResponse
-	29, // 38: gooey.control.v1.ControlService.ValidateMarkup:output_type -> gooey.control.v1.ValidateMarkupResponse
-	24, // [24:39] is the sub-list for method output_type
-	9,  // [9:24] is the sub-list for method input_type
+	22, // 20: gooey.control.v1.ControlService.UnregisterNames:input_type -> gooey.control.v1.UnregisterNamesRequest
+	24, // 21: gooey.control.v1.ControlService.GetDeclaredSchema:input_type -> gooey.control.v1.GetDeclaredSchemaRequest
+	26, // 22: gooey.control.v1.ControlService.PatchMarkup:input_type -> gooey.control.v1.PatchMarkupRequest
+	28, // 23: gooey.control.v1.ControlService.ListStyles:input_type -> gooey.control.v1.ListStylesRequest
+	30, // 24: gooey.control.v1.ControlService.ValidateMarkup:input_type -> gooey.control.v1.ValidateMarkupRequest
+	1,  // 25: gooey.control.v1.ControlService.SnapshotTree:output_type -> gooey.control.v1.SnapshotTreeResponse
+	3,  // 26: gooey.control.v1.ControlService.ScreenText:output_type -> gooey.control.v1.ScreenTextResponse
+	5,  // 27: gooey.control.v1.ControlService.ListValues:output_type -> gooey.control.v1.ListValuesResponse
+	7,  // 28: gooey.control.v1.ControlService.GetProperty:output_type -> gooey.control.v1.GetPropertyResponse
+	9,  // 29: gooey.control.v1.ControlService.SetProperty:output_type -> gooey.control.v1.SetPropertyResponse
+	11, // 30: gooey.control.v1.ControlService.InvokeCommand:output_type -> gooey.control.v1.InvokeCommandResponse
+	13, // 31: gooey.control.v1.ControlService.SendKeys:output_type -> gooey.control.v1.SendKeysResponse
+	15, // 32: gooey.control.v1.ControlService.SendPointer:output_type -> gooey.control.v1.SendPointerResponse
+	17, // 33: gooey.control.v1.ControlService.SetFocus:output_type -> gooey.control.v1.SetFocusResponse
+	19, // 34: gooey.control.v1.ControlService.SwapMarkup:output_type -> gooey.control.v1.SwapMarkupResponse
+	21, // 35: gooey.control.v1.ControlService.RegisterProperties:output_type -> gooey.control.v1.RegisterPropertiesResponse
+	23, // 36: gooey.control.v1.ControlService.UnregisterNames:output_type -> gooey.control.v1.UnregisterNamesResponse
+	25, // 37: gooey.control.v1.ControlService.GetDeclaredSchema:output_type -> gooey.control.v1.GetDeclaredSchemaResponse
+	27, // 38: gooey.control.v1.ControlService.PatchMarkup:output_type -> gooey.control.v1.PatchMarkupResponse
+	29, // 39: gooey.control.v1.ControlService.ListStyles:output_type -> gooey.control.v1.ListStylesResponse
+	31, // 40: gooey.control.v1.ControlService.ValidateMarkup:output_type -> gooey.control.v1.ValidateMarkupResponse
+	25, // [25:41] is the sub-list for method output_type
+	9,  // [9:25] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
 	9,  // [9:9] is the sub-list for extension extendee
 	0,  // [0:9] is the sub-list for field type_name
@@ -1605,7 +1694,7 @@ func file_gooey_control_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gooey_control_v1_control_proto_rawDesc), len(file_gooey_control_v1_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -1,6 +1,6 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo` and `wysiwyg` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo`, `wysiwyg` and `dynamic-activities` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
 `cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
@@ -55,7 +55,8 @@ Exercises conditional dependency recording: pausing flips a branch so the live b
 
 The markuplog UI is defined in a `.gooey` XML file that hot-reloads on edit: two live sed edits (a title change, then a new Grid row) rebuild the component tree in place while the log buffer, frame counter, and stream all survive untouched.
 
-The walkthrough: the log viewer loads its Grid UI from `live.gooey` and streams colored log lines (title: logview, hot reloads=0). About 4 seconds in, an off-screen editor seds the file so the Border title becomes "logview ✦ LIVE EDITED" — the status line ticks to hot reloads=1 while lines arrived keeps climbing (52 and counting). ~3.5 seconds later a second sed extends the Grid Rows spec and inserts a new accent Text row ("★ this line was just added in the editor — no restart, buffer intact") above the LogPane — hot reloads=2, lines arrived=84, never reset. 'q' quits cleanly.
+The walkthrough: the log viewer loads its Grid UI from the page it is given —
+`cmd/markuplog/logview.gooey` unless a path is passed — and streams colored log lines (title: logview, hot reloads=0). About 4 seconds in, an off-screen editor seds the file so the Border title becomes "logview ✦ LIVE EDITED" — the status line ticks to hot reloads=1 while lines arrived keeps climbing (52 and counting). ~3.5 seconds later a second sed extends the Grid Rows spec and inserts a new accent Text row ("★ this line was just added in the editor — no restart, buffer intact") above the LogPane — hot reloads=2, lines arrived=84, never reset. 'q' quits cleanly.
 
 - Run: `go run ./cmd/markuplog [path/to/logview.gooey]`
 - Keys: `space` pause/follow, `f` cycle filter (ERROR/WARN/all), `q` quit
@@ -319,6 +320,85 @@ Two layout facts in the page are bug fixes with the failure written next to them
 - Keys: `ctrl+n`/`ctrl+p` next/previous element, `x` delete, `q`/`ctrl+c` quit; the bindings live on the page ROOT because a `KeyBinding` only fires while the focused chain passes through its host
 
 Exercises the catalog as a public surface, `patch_markup` as an addressing scheme, and the panel chrome drawn as pixel line art sliced into a ring so the interior stays on the cell plane where a terminal draws text best — falling back to the same shape in box-drawing runes where there is no pixel protocol.
+
+## dynamic-activities
+
+A star button that runs Python written *after* the app started.
+
+> **This demo executes arbitrary supplied code, unsandboxed, on purpose.**
+> Everything binds loopback only and nothing is authenticated. Read
+> `examples/dynamic-activities/README.md` before running it.
+
+One companion process is both a Temporal worker and an MCP server, and
+that MCP server's tools are CRUD over the worker's own activities.
+`create_activity(name, code)` execs a blob of Python source into a
+callable and puts it in a runtime registry; the worker's ONE registered
+activity is a dynamic dispatcher (`@activity.defn(dynamic=True)`) that
+answers to any activity type name and looks it up there — so an activity
+becomes runnable on a running worker with no redeploy and no restart.
+
+The same tool call then reaches back into the terminal over **one
+`SessionService.Attach` stream** held open for the worker's lifetime:
+`RegisterProperties` a result property `Activity.<Name>.Result` and
+`SetProperty` the app's `Selected`, both as acts applied in stream order
+on the UI goroutine, plus one unary `PatchMarkup` (the only op the `Act`
+oneof lacks) putting a button per activity into the page's
+`ActivityList` element, each bound to ``{{temporal:Activity `<Name>`
+.Input | into .Activity.<Name>.Result}}``. `delete_activity` runs it
+backwards and ends with the `UnregisterNames` act, which exists because
+of this demo: without it every invented name leaks for the life of the
+process.
+
+The stream is what makes this state *sync* rather than hopeful writes.
+The worker subscribes to `properties` (filtered) and `lifecycle`, so it
+has a live mirror of the app's side: pressing ctrl+n in the terminal
+moves `Selected` with no tool call involved, and the worker sees it — a
+delete repoints the selection only when it has actually gone dangling,
+and `run_activity` with no argument sends whatever is in the input box.
+A `Swapped` event means the page was replaced, so the worker re-patches
+its buttons onto the new one; a `Closing` event stops it cleanly.
+
+The framework point: commands still cannot be registered over the
+control plane — behavior needs code, not storage — but the `temporal:`
+handler namespace lets markup bind an activity *call*, and the activity
+is the behavior, so a property plus a markup patch is enough to make a
+new button that runs new code. The hero button goes further: its
+activity type name is a **bound path**, not a backtick literal
+(`Click="{{temporal:Activity .Selected .Input | into .Output}}"`), and
+`markup.Arg` holds the property handle and reads it at click time — so a
+button built at startup runs whichever activity was invented most
+recently, with no rebinding at all.
+
+The star itself is a `Canvas` raster: one background-filled container per
+run of cells, positioned with the attached `Canvas.Left`/`Canvas.Top`,
+every run bound to the same two registered color properties. The
+`<Button>` comes after the runs it sits on, because paint order is tree
+order and hit-testing is topmost-first.
+
+**The pages pin their own pixel protocol.** `dynamicactivities.gooey` and
+`zoom.gooey` both carry `<Gooey Graphics="halfblock">`, which is the
+document-level setting rather than a launch flag: the choice belongs to the
+artwork on the page, not to whoever started the process. That matters here
+because this demo is recorded — under a recording pty, capability detection
+answers for the pty rather than for a real terminal, so a page that left the
+decision to detection would record as something other than what it is. The
+counterpart is `three-ways.svg`, decoded through `imagefmt/svg` and pushed
+over the control plane as an `image` value: the one kind with no markup
+literal, bindable through `<Image Src="{{...}}">` and not writable inline.
+`zoom.gooey` is the page that shows it large.
+
+- Run: `cd examples/dynamic-activities && go run .` — its own module,
+  same dependency-quarantine reason as `mcpdemo` and `kanbandemo`, and
+  it needs a Temporal server plus a Python venv (see its README).
+- Keys: `tab` move focus, `enter`/`space` press, `ctrl+n` cycle which
+  activity the star runs, `ctrl+l` clear the result, `ctrl+c` quit.
+
+Exercises handler namespaces with a *dynamic* activity name, the
+streaming session (`Attach`: subscribe, acts, frame deltas, lifecycle)
+as a real client's primary surface, the control plane's registration
+CRUD pair, `PatchMarkup` from a non-Go client, `Canvas` absolute layout
+with bound backgrounds, and `gooey.CompanionCmd` giving a Python process
+the app's lifetime.
 
 ## colordemo
 

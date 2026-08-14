@@ -29,7 +29,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file gooey/control/v1/control.proto.
  */
 export const file_gooey_control_v1_control: GenFile = /*@__PURE__*/
-  fileDesc("Ch5nb29leS9jb250cm9sL3YxL2NvbnRyb2wucHJvdG8SEGdvb2V5LmNvbnRyb2wudjEiJAoTU25hcHNob3RUcmVlUmVxdWVzdBINCgVkZXB0aBgBIAEoBSJAChRTbmFwc2hvdFRyZWVSZXNwb25zZRIoCgRyb290GAEgASgLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZSIjChFTY3JlZW5UZXh0UmVxdWVzdBIOCgZzdHlsZWQYASABKAgiIgoSU2NyZWVuVGV4dFJlc3BvbnNlEgwKBHRleHQYASABKAkiEwoRTGlzdFZhbHVlc1JlcXVlc3QiUAoSTGlzdFZhbHVlc1Jlc3BvbnNlEisKBnZhbHVlcxgBIAMoCzIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVJbmZvEg0KBW5hbWVkGAIgAygJIiIKEkdldFByb3BlcnR5UmVxdWVzdBIMCgRuYW1lGAEgASgJIkEKE0dldFByb3BlcnR5UmVzcG9uc2USKgoFdmFsdWUYASABKAsyGy5nb29leS5jb250cm9sLnYxLlZhbHVlSW5mbyJPChJTZXRQcm9wZXJ0eVJlcXVlc3QSDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSIVChNTZXRQcm9wZXJ0eVJlc3BvbnNlIiQKFEludm9rZUNvbW1hbmRSZXF1ZXN0EgwKBG5hbWUYASABKAkiFwoVSW52b2tlQ29tbWFuZFJlc3BvbnNlIjEKD1NlbmRLZXlzUmVxdWVzdBIMCgR0ZXh0GAEgASgJEhAKCGdlc3R1cmVzGAIgAygJIjIKEFNlbmRLZXlzUmVzcG9uc2USDAoEc2VudBgBIAEoBRIQCghjb25zdW1lZBgCIAMoCCJDChJTZW5kUG9pbnRlclJlcXVlc3QSLQoFZXZlbnQYASABKAsyHi5nb29leS5jb250cm9sLnYxLlBvaW50ZXJFdmVudCInChNTZW5kUG9pbnRlclJlc3BvbnNlEhAKCGNvbnN1bWVkGAEgASgIIh8KD1NldEZvY3VzUmVxdWVzdBIMCgRuYW1lGAEgASgJIhIKEFNldEZvY3VzUmVzcG9uc2UiXQoRU3dhcE1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJEjgKCHJlZ2lzdGVyGAIgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIjChJTd2FwTWFya3VwUmVzcG9uc2USDQoFbmFtZWQYASADKAkiVwoZUmVnaXN0ZXJQcm9wZXJ0aWVzUmVxdWVzdBI6Cgpwcm9wZXJ0aWVzGAEgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIcChpSZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZSIqChhHZXREZWNsYXJlZFNjaGVtYVJlcXVlc3QSDgoGc291cmNlGAEgASgJIkwKGUdldERlY2xhcmVkU2NoZW1hUmVzcG9uc2USLwoGc2NoZW1hGAEgASgLMh8uZ29vZXkuY29udHJvbC52MS5Db250cm9sU2NoZW1hIjIKElBhdGNoTWFya3VwUmVxdWVzdBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCSIkChNQYXRjaE1hcmt1cFJlc3BvbnNlEg0KBW5hbWVkGAEgAygJIhMKEUxpc3RTdHlsZXNSZXF1ZXN0IkEKEkxpc3RTdHlsZXNSZXNwb25zZRIrCgZzdHlsZXMYASADKAsyGy5nb29leS5jb250cm9sLnYxLlN0eWxlSW5mbyInChVWYWxpZGF0ZU1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJIkUKFlZhbGlkYXRlTWFya3VwUmVzcG9uc2USDQoFdmFsaWQYASABKAgSDQoFZXJyb3IYAiABKAkSDQoFbmFtZWQYAyADKAkyjwsKDkNvbnRyb2xTZXJ2aWNlEl0KDFNuYXBzaG90VHJlZRIlLmdvb2V5LmNvbnRyb2wudjEuU25hcHNob3RUcmVlUmVxdWVzdBomLmdvb2V5LmNvbnRyb2wudjEuU25hcHNob3RUcmVlUmVzcG9uc2USVwoKU2NyZWVuVGV4dBIjLmdvb2V5LmNvbnRyb2wudjEuU2NyZWVuVGV4dFJlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLlNjcmVlblRleHRSZXNwb25zZRJXCgpMaXN0VmFsdWVzEiMuZ29vZXkuY29udHJvbC52MS5MaXN0VmFsdWVzUmVxdWVzdBokLmdvb2V5LmNvbnRyb2wudjEuTGlzdFZhbHVlc1Jlc3BvbnNlEloKC0dldFByb3BlcnR5EiQuZ29vZXkuY29udHJvbC52MS5HZXRQcm9wZXJ0eVJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLkdldFByb3BlcnR5UmVzcG9uc2USWgoLU2V0UHJvcGVydHkSJC5nb29leS5jb250cm9sLnYxLlNldFByb3BlcnR5UmVxdWVzdBolLmdvb2V5LmNvbnRyb2wudjEuU2V0UHJvcGVydHlSZXNwb25zZRJgCg1JbnZva2VDb21tYW5kEiYuZ29vZXkuY29udHJvbC52MS5JbnZva2VDb21tYW5kUmVxdWVzdBonLmdvb2V5LmNvbnRyb2wudjEuSW52b2tlQ29tbWFuZFJlc3BvbnNlElEKCFNlbmRLZXlzEiEuZ29vZXkuY29udHJvbC52MS5TZW5kS2V5c1JlcXVlc3QaIi5nb29leS5jb250cm9sLnYxLlNlbmRLZXlzUmVzcG9uc2USWgoLU2VuZFBvaW50ZXISJC5nb29leS5jb250cm9sLnYxLlNlbmRQb2ludGVyUmVxdWVzdBolLmdvb2V5LmNvbnRyb2wudjEuU2VuZFBvaW50ZXJSZXNwb25zZRJRCghTZXRGb2N1cxIhLmdvb2V5LmNvbnRyb2wudjEuU2V0Rm9jdXNSZXF1ZXN0GiIuZ29vZXkuY29udHJvbC52MS5TZXRGb2N1c1Jlc3BvbnNlElcKClN3YXBNYXJrdXASIy5nb29leS5jb250cm9sLnYxLlN3YXBNYXJrdXBSZXF1ZXN0GiQuZ29vZXkuY29udHJvbC52MS5Td2FwTWFya3VwUmVzcG9uc2USbwoSUmVnaXN0ZXJQcm9wZXJ0aWVzEisuZ29vZXkuY29udHJvbC52MS5SZWdpc3RlclByb3BlcnRpZXNSZXF1ZXN0GiwuZ29vZXkuY29udHJvbC52MS5SZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZRJsChFHZXREZWNsYXJlZFNjaGVtYRIqLmdvb2V5LmNvbnRyb2wudjEuR2V0RGVjbGFyZWRTY2hlbWFSZXF1ZXN0GisuZ29vZXkuY29udHJvbC52MS5HZXREZWNsYXJlZFNjaGVtYVJlc3BvbnNlEloKC1BhdGNoTWFya3VwEiQuZ29vZXkuY29udHJvbC52MS5QYXRjaE1hcmt1cFJlcXVlc3QaJS5nb29leS5jb250cm9sLnYxLlBhdGNoTWFya3VwUmVzcG9uc2USVwoKTGlzdFN0eWxlcxIjLmdvb2V5LmNvbnRyb2wudjEuTGlzdFN0eWxlc1JlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLkxpc3RTdHlsZXNSZXNwb25zZRJjCg5WYWxpZGF0ZU1hcmt1cBInLmdvb2V5LmNvbnRyb2wudjEuVmFsaWRhdGVNYXJrdXBSZXF1ZXN0GiguZ29vZXkuY29udHJvbC52MS5WYWxpZGF0ZU1hcmt1cFJlc3BvbnNlQkZaRGdpdGh1Yi5jb20vV29uZGVyRm9yZ2VMYWJzL2dvb2V5L2dycGMvZ2VuL2dvb2V5L2NvbnRyb2wvdjE7Y29udHJvbHYxYgZwcm90bzM", [file_gooey_control_v1_types]);
+  fileDesc("Ch5nb29leS9jb250cm9sL3YxL2NvbnRyb2wucHJvdG8SEGdvb2V5LmNvbnRyb2wudjEiJAoTU25hcHNob3RUcmVlUmVxdWVzdBINCgVkZXB0aBgBIAEoBSJAChRTbmFwc2hvdFRyZWVSZXNwb25zZRIoCgRyb290GAEgASgLMhouZ29vZXkuY29udHJvbC52MS5UcmVlTm9kZSIjChFTY3JlZW5UZXh0UmVxdWVzdBIOCgZzdHlsZWQYASABKAgiIgoSU2NyZWVuVGV4dFJlc3BvbnNlEgwKBHRleHQYASABKAkiEwoRTGlzdFZhbHVlc1JlcXVlc3QiUAoSTGlzdFZhbHVlc1Jlc3BvbnNlEisKBnZhbHVlcxgBIAMoCzIbLmdvb2V5LmNvbnRyb2wudjEuVmFsdWVJbmZvEg0KBW5hbWVkGAIgAygJIiIKEkdldFByb3BlcnR5UmVxdWVzdBIMCgRuYW1lGAEgASgJIkEKE0dldFByb3BlcnR5UmVzcG9uc2USKgoFdmFsdWUYASABKAsyGy5nb29leS5jb250cm9sLnYxLlZhbHVlSW5mbyJPChJTZXRQcm9wZXJ0eVJlcXVlc3QSDAoEbmFtZRgBIAEoCRIrCgV2YWx1ZRgCIAEoCzIcLmdvb2V5LmNvbnRyb2wudjEuVHlwZWRWYWx1ZSIVChNTZXRQcm9wZXJ0eVJlc3BvbnNlIiQKFEludm9rZUNvbW1hbmRSZXF1ZXN0EgwKBG5hbWUYASABKAkiFwoVSW52b2tlQ29tbWFuZFJlc3BvbnNlIjEKD1NlbmRLZXlzUmVxdWVzdBIMCgR0ZXh0GAEgASgJEhAKCGdlc3R1cmVzGAIgAygJIjIKEFNlbmRLZXlzUmVzcG9uc2USDAoEc2VudBgBIAEoBRIQCghjb25zdW1lZBgCIAMoCCJDChJTZW5kUG9pbnRlclJlcXVlc3QSLQoFZXZlbnQYASABKAsyHi5nb29leS5jb250cm9sLnYxLlBvaW50ZXJFdmVudCInChNTZW5kUG9pbnRlclJlc3BvbnNlEhAKCGNvbnN1bWVkGAEgASgIIh8KD1NldEZvY3VzUmVxdWVzdBIMCgRuYW1lGAEgASgJIhIKEFNldEZvY3VzUmVzcG9uc2UiXQoRU3dhcE1hcmt1cFJlcXVlc3QSDgoGc291cmNlGAEgASgJEjgKCHJlZ2lzdGVyGAIgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIjChJTd2FwTWFya3VwUmVzcG9uc2USDQoFbmFtZWQYASADKAkiVwoZUmVnaXN0ZXJQcm9wZXJ0aWVzUmVxdWVzdBI6Cgpwcm9wZXJ0aWVzGAEgAygLMiYuZ29vZXkuY29udHJvbC52MS5Qcm9wZXJ0eVJlZ2lzdHJhdGlvbiIcChpSZWdpc3RlclByb3BlcnRpZXNSZXNwb25zZSInChZVbnJlZ2lzdGVyTmFtZXNSZXF1ZXN0Eg0KBW5hbWVzGAEgAygJIhkKF1VucmVnaXN0ZXJOYW1lc1Jlc3BvbnNlIioKGEdldERlY2xhcmVkU2NoZW1hUmVxdWVzdBIOCgZzb3VyY2UYASABKAkiTAoZR2V0RGVjbGFyZWRTY2hlbWFSZXNwb25zZRIvCgZzY2hlbWEYASABKAsyHy5nb29leS5jb250cm9sLnYxLkNvbnRyb2xTY2hlbWEiMgoSUGF0Y2hNYXJrdXBSZXF1ZXN0EgwKBG5hbWUYASABKAkSDgoGc291cmNlGAIgASgJIiQKE1BhdGNoTWFya3VwUmVzcG9uc2USDQoFbmFtZWQYASADKAkiEwoRTGlzdFN0eWxlc1JlcXVlc3QiQQoSTGlzdFN0eWxlc1Jlc3BvbnNlEisKBnN0eWxlcxgBIAMoCzIbLmdvb2V5LmNvbnRyb2wudjEuU3R5bGVJbmZvIicKFVZhbGlkYXRlTWFya3VwUmVxdWVzdBIOCgZzb3VyY2UYASABKAkiRQoWVmFsaWRhdGVNYXJrdXBSZXNwb25zZRINCgV2YWxpZBgBIAEoCBINCgVlcnJvchgCIAEoCRINCgVuYW1lZBgDIAMoCTL3CwoOQ29udHJvbFNlcnZpY2USXQoMU25hcHNob3RUcmVlEiUuZ29vZXkuY29udHJvbC52MS5TbmFwc2hvdFRyZWVSZXF1ZXN0GiYuZ29vZXkuY29udHJvbC52MS5TbmFwc2hvdFRyZWVSZXNwb25zZRJXCgpTY3JlZW5UZXh0EiMuZ29vZXkuY29udHJvbC52MS5TY3JlZW5UZXh0UmVxdWVzdBokLmdvb2V5LmNvbnRyb2wudjEuU2NyZWVuVGV4dFJlc3BvbnNlElcKCkxpc3RWYWx1ZXMSIy5nb29leS5jb250cm9sLnYxLkxpc3RWYWx1ZXNSZXF1ZXN0GiQuZ29vZXkuY29udHJvbC52MS5MaXN0VmFsdWVzUmVzcG9uc2USWgoLR2V0UHJvcGVydHkSJC5nb29leS5jb250cm9sLnYxLkdldFByb3BlcnR5UmVxdWVzdBolLmdvb2V5LmNvbnRyb2wudjEuR2V0UHJvcGVydHlSZXNwb25zZRJaCgtTZXRQcm9wZXJ0eRIkLmdvb2V5LmNvbnRyb2wudjEuU2V0UHJvcGVydHlSZXF1ZXN0GiUuZ29vZXkuY29udHJvbC52MS5TZXRQcm9wZXJ0eVJlc3BvbnNlEmAKDUludm9rZUNvbW1hbmQSJi5nb29leS5jb250cm9sLnYxLkludm9rZUNvbW1hbmRSZXF1ZXN0GicuZ29vZXkuY29udHJvbC52MS5JbnZva2VDb21tYW5kUmVzcG9uc2USUQoIU2VuZEtleXMSIS5nb29leS5jb250cm9sLnYxLlNlbmRLZXlzUmVxdWVzdBoiLmdvb2V5LmNvbnRyb2wudjEuU2VuZEtleXNSZXNwb25zZRJaCgtTZW5kUG9pbnRlchIkLmdvb2V5LmNvbnRyb2wudjEuU2VuZFBvaW50ZXJSZXF1ZXN0GiUuZ29vZXkuY29udHJvbC52MS5TZW5kUG9pbnRlclJlc3BvbnNlElEKCFNldEZvY3VzEiEuZ29vZXkuY29udHJvbC52MS5TZXRGb2N1c1JlcXVlc3QaIi5nb29leS5jb250cm9sLnYxLlNldEZvY3VzUmVzcG9uc2USVwoKU3dhcE1hcmt1cBIjLmdvb2V5LmNvbnRyb2wudjEuU3dhcE1hcmt1cFJlcXVlc3QaJC5nb29leS5jb250cm9sLnYxLlN3YXBNYXJrdXBSZXNwb25zZRJvChJSZWdpc3RlclByb3BlcnRpZXMSKy5nb29leS5jb250cm9sLnYxLlJlZ2lzdGVyUHJvcGVydGllc1JlcXVlc3QaLC5nb29leS5jb250cm9sLnYxLlJlZ2lzdGVyUHJvcGVydGllc1Jlc3BvbnNlEmYKD1VucmVnaXN0ZXJOYW1lcxIoLmdvb2V5LmNvbnRyb2wudjEuVW5yZWdpc3Rlck5hbWVzUmVxdWVzdBopLmdvb2V5LmNvbnRyb2wudjEuVW5yZWdpc3Rlck5hbWVzUmVzcG9uc2USbAoRR2V0RGVjbGFyZWRTY2hlbWESKi5nb29leS5jb250cm9sLnYxLkdldERlY2xhcmVkU2NoZW1hUmVxdWVzdBorLmdvb2V5LmNvbnRyb2wudjEuR2V0RGVjbGFyZWRTY2hlbWFSZXNwb25zZRJaCgtQYXRjaE1hcmt1cBIkLmdvb2V5LmNvbnRyb2wudjEuUGF0Y2hNYXJrdXBSZXF1ZXN0GiUuZ29vZXkuY29udHJvbC52MS5QYXRjaE1hcmt1cFJlc3BvbnNlElcKCkxpc3RTdHlsZXMSIy5nb29leS5jb250cm9sLnYxLkxpc3RTdHlsZXNSZXF1ZXN0GiQuZ29vZXkuY29udHJvbC52MS5MaXN0U3R5bGVzUmVzcG9uc2USYwoOVmFsaWRhdGVNYXJrdXASJy5nb29leS5jb250cm9sLnYxLlZhbGlkYXRlTWFya3VwUmVxdWVzdBooLmdvb2V5LmNvbnRyb2wudjEuVmFsaWRhdGVNYXJrdXBSZXNwb25zZUJGWkRnaXRodWIuY29tL1dvbmRlckZvcmdlTGFicy9nb29leS9ncnBjL2dlbi9nb29leS9jb250cm9sL3YxO2NvbnRyb2x2MWIGcHJvdG8z", [file_gooey_control_v1_types]);
 
 /**
  * @generated from message gooey.control.v1.SnapshotTreeRequest
@@ -440,6 +440,38 @@ export const RegisterPropertiesResponseSchema: GenMessage<RegisterPropertiesResp
   messageDesc(file_gooey_control_v1_control, 21);
 
 /**
+ * @generated from message gooey.control.v1.UnregisterNamesRequest
+ */
+export type UnregisterNamesRequest = Message<"gooey.control.v1.UnregisterNamesRequest"> & {
+  /**
+   * Dotted names to remove, e.g. "Result" or "Activity.Sparkle.Out".
+   *
+   * @generated from field: repeated string names = 1;
+   */
+  names: string[];
+};
+
+/**
+ * Describes the message gooey.control.v1.UnregisterNamesRequest.
+ * Use `create(UnregisterNamesRequestSchema)` to create a new message.
+ */
+export const UnregisterNamesRequestSchema: GenMessage<UnregisterNamesRequest> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 22);
+
+/**
+ * @generated from message gooey.control.v1.UnregisterNamesResponse
+ */
+export type UnregisterNamesResponse = Message<"gooey.control.v1.UnregisterNamesResponse"> & {
+};
+
+/**
+ * Describes the message gooey.control.v1.UnregisterNamesResponse.
+ * Use `create(UnregisterNamesResponseSchema)` to create a new message.
+ */
+export const UnregisterNamesResponseSchema: GenMessage<UnregisterNamesResponse> = /*@__PURE__*/
+  messageDesc(file_gooey_control_v1_control, 23);
+
+/**
  * @generated from message gooey.control.v1.GetDeclaredSchemaRequest
  */
 export type GetDeclaredSchemaRequest = Message<"gooey.control.v1.GetDeclaredSchemaRequest"> & {
@@ -458,7 +490,7 @@ export type GetDeclaredSchemaRequest = Message<"gooey.control.v1.GetDeclaredSche
  * Use `create(GetDeclaredSchemaRequestSchema)` to create a new message.
  */
 export const GetDeclaredSchemaRequestSchema: GenMessage<GetDeclaredSchemaRequest> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 22);
+  messageDesc(file_gooey_control_v1_control, 24);
 
 /**
  * @generated from message gooey.control.v1.GetDeclaredSchemaResponse
@@ -475,7 +507,7 @@ export type GetDeclaredSchemaResponse = Message<"gooey.control.v1.GetDeclaredSch
  * Use `create(GetDeclaredSchemaResponseSchema)` to create a new message.
  */
 export const GetDeclaredSchemaResponseSchema: GenMessage<GetDeclaredSchemaResponse> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 23);
+  messageDesc(file_gooey_control_v1_control, 25);
 
 /**
  * @generated from message gooey.control.v1.PatchMarkupRequest
@@ -502,7 +534,7 @@ export type PatchMarkupRequest = Message<"gooey.control.v1.PatchMarkupRequest"> 
  * Use `create(PatchMarkupRequestSchema)` to create a new message.
  */
 export const PatchMarkupRequestSchema: GenMessage<PatchMarkupRequest> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 24);
+  messageDesc(file_gooey_control_v1_control, 26);
 
 /**
  * @generated from message gooey.control.v1.PatchMarkupResponse
@@ -522,7 +554,7 @@ export type PatchMarkupResponse = Message<"gooey.control.v1.PatchMarkupResponse"
  * Use `create(PatchMarkupResponseSchema)` to create a new message.
  */
 export const PatchMarkupResponseSchema: GenMessage<PatchMarkupResponse> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 25);
+  messageDesc(file_gooey_control_v1_control, 27);
 
 /**
  * @generated from message gooey.control.v1.ListStylesRequest
@@ -535,7 +567,7 @@ export type ListStylesRequest = Message<"gooey.control.v1.ListStylesRequest"> & 
  * Use `create(ListStylesRequestSchema)` to create a new message.
  */
 export const ListStylesRequestSchema: GenMessage<ListStylesRequest> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 26);
+  messageDesc(file_gooey_control_v1_control, 28);
 
 /**
  * @generated from message gooey.control.v1.ListStylesResponse
@@ -554,7 +586,7 @@ export type ListStylesResponse = Message<"gooey.control.v1.ListStylesResponse"> 
  * Use `create(ListStylesResponseSchema)` to create a new message.
  */
 export const ListStylesResponseSchema: GenMessage<ListStylesResponse> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 27);
+  messageDesc(file_gooey_control_v1_control, 29);
 
 /**
  * @generated from message gooey.control.v1.ValidateMarkupRequest
@@ -573,7 +605,7 @@ export type ValidateMarkupRequest = Message<"gooey.control.v1.ValidateMarkupRequ
  * Use `create(ValidateMarkupRequestSchema)` to create a new message.
  */
 export const ValidateMarkupRequestSchema: GenMessage<ValidateMarkupRequest> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 28);
+  messageDesc(file_gooey_control_v1_control, 30);
 
 /**
  * @generated from message gooey.control.v1.ValidateMarkupResponse
@@ -605,7 +637,7 @@ export type ValidateMarkupResponse = Message<"gooey.control.v1.ValidateMarkupRes
  * Use `create(ValidateMarkupResponseSchema)` to create a new message.
  */
 export const ValidateMarkupResponseSchema: GenMessage<ValidateMarkupResponse> = /*@__PURE__*/
-  messageDesc(file_gooey_control_v1_control, 29);
+  messageDesc(file_gooey_control_v1_control, 31);
 
 /**
  * ControlService is the request/response surface of a running gooey
@@ -738,6 +770,25 @@ export const ControlService: GenService<{
     methodKind: "unary";
     input: typeof RegisterPropertiesRequestSchema;
     output: typeof RegisterPropertiesResponseSchema;
+  },
+  /**
+   * UnregisterNames removes names from the binding context —
+   * RegisterProperties' inverse, and the delete half of a CRUD surface
+   * over the viewmodel. A client that can grow the context must be able
+   * to shrink it again, or every generated name leaks for the life of
+   * the process. A name that does not resolve is NOT_FOUND and the
+   * whole batch is refused, leaving the context untouched.
+   *
+   * Removal does not disturb the RUNNING tree: a component bound to a
+   * removed name still holds its property handle and keeps rendering.
+   * It takes the name out of scope for markup built afterwards.
+   *
+   * @generated from rpc gooey.control.v1.ControlService.UnregisterNames
+   */
+  unregisterNames: {
+    methodKind: "unary";
+    input: typeof UnregisterNamesRequestSchema;
+    output: typeof UnregisterNamesResponseSchema;
   },
   /**
    * GetDeclaredSchema returns a document's <x:Property> declaration

@@ -1,12 +1,16 @@
 package mcp
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey/control"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -49,7 +53,8 @@ type Tool struct {
 
 // v1Tools is the tool inventory. Read: tree_snapshot, screen_text,
 // list_values, list_styles. Act: invoke_command, set_value, send_keys,
-// send_mouse, focus. Grow the viewmodel: register_properties (#89).
+// send_mouse, focus. Grow and shrink the viewmodel: register_properties
+// (#89), unregister_properties.
 // Mutate structure: swap_markup (optionally registering first),
 // patch_markup. Check: validate_markup.
 //
@@ -113,7 +118,7 @@ func (s *Server) v1Tools() []*Tool {
 			Description: "Set a named source property in the markup context. The value must match the " +
 				"property's type; a mismatch is reported with both types and nothing is changed.",
 			Schema: object(map[string]any{
-				"name":  prop_("string", "The property's name in the markup context."),
+				"name": prop_("string", "The property's name in the markup context."),
 				// The type union is load-bearing, not decoration. A client
 				// with nothing to validate against serializes every argument
 				// as a string, and the coercion below then correctly refuses
@@ -179,6 +184,24 @@ func (s *Server) v1Tools() []*Tool {
 			Run:          s.registerProperties,
 		},
 		{
+			Name: "unregister_properties",
+			Description: "Shrink the viewmodel: remove names from the app's binding context — " +
+				"register_properties' inverse, so a generated name need not leak for the life of the " +
+				"process. A name that does not resolve is refused and the whole batch is left " +
+				"untouched. Removal does NOT disturb the running page: components already bound to a " +
+				"removed name hold their property handle and keep rendering; the name simply goes out " +
+				"of scope for markup built afterwards.",
+			Schema: object(map[string]any{
+				"names": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Dotted names to remove, e.g. Score or Activity.Sparkle.Out.",
+				},
+			}, "names"),
+			OutputSchema: unregisterPropertiesSchema(),
+			Run:          s.unregisterProperties,
+		},
+		{
 			Name: "swap_markup",
 			Description: "Replace the whole page with new gooey markup, built against the app's existing " +
 				"binding context — so the viewmodel, and therefore the app's state, survives the swap. " +
@@ -199,7 +222,18 @@ func (s *Server) v1Tools() []*Tool {
 				"existing binding context, and its root must carry the same Name= as the element it " +
 				"replaces, so the address survives iteration. Layout attributes the fragment does not " +
 				"restate (Grid.Row, Width, Margin, ...) are preserved from the old element. Atomic: any " +
-				"failure leaves the running tree, the name table and focus exactly as they were.",
+				"failure leaves the running tree, the name table and focus exactly as they were. " +
+				"ORDERING CAVEAT: MCP tool calls are NOT ordered against each other — each runs on its " +
+				"own handler goroutine and reaches the app in whatever order it arrives, so " +
+				"set_value followed by a patch_markup that reads that value can apply in either " +
+				"order. Serialize the pair yourself (await each call's result before sending the " +
+				"next), or drive the gRPC Attach stream, whose acts ARE ordered. " +
+				"FOCUS CAVEAT: replacing a subtree that contains the focused element re-resolves " +
+				"focus by NAME. If the focused name is absent from the fragment, focus moves to " +
+				"another element rather than clearing; if the name is present but is now a " +
+				"different KIND of component, focus stays and the user's next keystroke is " +
+				"delivered to the new component — Enter on what was a TextBox and is now a Button " +
+				"invokes that Button's command. Neither case is reported in the result.",
 			Schema: object(map[string]any{
 				"name":   prop_("string", "The Name= of the element to replace."),
 				"source": prop_("string", "Markup for the replacement subtree, rooted at <Gooey> with exactly one child carrying the same Name."),
@@ -527,6 +561,38 @@ func (s *Server) registerProperties(a args) (any, error) {
 	return map[string]any{"registered": registeredNames(regs)}, nil
 }
 
+// unregisterProperties is registration's inverse — the MCP face of
+// ControlService.UnregisterNames. Without it every name a generation
+// loop invents lives as long as the process, and list_values grows
+// monotonically into noise. The service refuses a name that does not
+// resolve and applies the batch all-or-nothing; both arrive here as
+// ordinary tool errors.
+func (s *Server) unregisterProperties(a args) (any, error) {
+	raw, ok := a["names"]
+	if !ok {
+		return nil, fmt.Errorf("missing required argument %q", "names")
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("argument %q must be an array of names, got %T", "names", raw)
+	}
+	names := make([]string, 0, len(list))
+	for _, el := range list {
+		s, ok := el.(string)
+		if !ok {
+			return nil, fmt.Errorf("argument %q must be an array of names; got a %T element", "names", el)
+		}
+		names = append(names, s)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("unregister_properties needs at least one name")
+	}
+	if err := s.svc.Unregister(names); err != nil {
+		return nil, err
+	}
+	return map[string]any{"unregistered": names}, nil
+}
+
 func registeredNames(regs []control.Registration) []string {
 	out := make([]string, 0, len(regs))
 	for _, r := range regs {
@@ -823,6 +889,44 @@ func registrationInitial(name string, kind control.Kind, raw any) (control.Value
 			return control.Value{}, fmt.Errorf("registration %q: %v", name, err)
 		}
 		return control.JSONValue(b), nil
+	case control.KindImage:
+		// base64 of the FILE's bytes — the same thing you would put on
+		// disk, not raw pixels. JSON has no byte type, and the host
+		// already owns a format registry, so asking a client for width,
+		// height and stride would make it reimplement a decoder in order
+		// to talk to one.
+		//
+		// Absent means nil, which is legal: a page can bind
+		// <Image Src="{{.Logo}}"> before any picture exists, and Image
+		// renders nothing rather than failing.
+		if raw == nil {
+			return control.ImageValue(nil), nil
+		}
+		s, ok := raw.(string)
+		if !ok {
+			return control.Value{}, initialMismatch(name, "a base64 string of an encoded image", raw)
+		}
+		s = strings.TrimSpace(s)
+		lim := control.ImageLimits()
+		// Checked on the ENCODED string, before DecodeString allocates
+		// its output: base64 costs 4 bytes per 3, so this is the last
+		// point at which an oversized payload is still free to refuse.
+		if lim.MaxBytes > 0 && base64.StdEncoding.DecodedLen(len(s)) > lim.MaxBytes {
+			return control.Value{}, fmt.Errorf("registration %q: the image is larger than the %d-byte limit", name, lim.MaxBytes)
+		}
+		data, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return control.Value{}, fmt.Errorf("registration %q: the image is not valid base64: %v", name, err)
+		}
+		img, err := imaging.DecodeLimited(bytes.NewReader(data), name, lim)
+		if lerr := (*imaging.LimitError)(nil); errors.As(err, &lerr) {
+			return control.Value{}, fmt.Errorf("registration %q: %s", name, lerr.Detail)
+		}
+		if err != nil {
+			return control.Value{}, fmt.Errorf("registration %q: those bytes did not decode as an image (%v); this app reads %s",
+				name, err, strings.Join(imaging.Names(), ", "))
+		}
+		return control.DecodedImageValue(img, data), nil
 	}
 	return control.Value{}, fmt.Errorf("registration %q: unknown kind", name)
 }
@@ -869,22 +973,24 @@ func registrationsArg(desc string) map[string]any {
 		"description": desc,
 		"items": object(map[string]any{
 			"name": prop_("string", "The dotted name to create. Nested scopes (A.B) materialize as needed; a name that already exists is refused."),
-			"type": enum_("The property's markup type — a propKinds row.", "string", "int", "bool", "float", "duration", "color", "any"),
-			// Same defect as set_value's `value`, same fix — except this one
-			// must NOT be a closed union, because `any` accepts arbitrary
-			// JSON including objects and arrays. Naming the scalar types
-			// only would make a client refuse a legitimate `any` payload,
-			// so this is the one place the absence of a type is correct and
-			// the description carries the contract.
+			"type": enum_("The property's type. All but image are markup propKinds rows; image has no markup literal (there is no way to write a picture inline) but binds fine — <Image Src=\"{{.Logo}}\">.", "string", "int", "bool", "float", "duration", "color", "any", "image"),
+			// Deliberately untyped, unlike set_value's `value`: the `any`
+			// kind accepts arbitrary JSON including objects and arrays, so a
+			// closed union would make a conforming client refuse a legitimate
+			// payload — the same defect as an untyped set_value, pointing the
+			// other way. This is the one place the absence of a type is
+			// correct, and the description carries the contract instead.
 			//
-			// The scalar kinds are still safe here because every one of
-			// them is reachable through a value the client cannot mangle:
-			// int/float arrive as JSON numbers, bool as a JSON boolean, and
-			// string/color/duration as strings.
+			// The scalar kinds are still safe, because each is reachable
+			// through a value a client cannot mangle: int/float as JSON
+			// numbers, bool as a JSON boolean, string/color/duration/image as
+			// strings.
 			"value": map[string]any{"description": "Initial value; absent means the type's zero value. " +
 				"string/int/bool/float take the matching JSON value (a real JSON number or boolean, NOT a quoted one), " +
 				"color a #rrggbb string, duration a Go duration string such as \"750ms\", " +
-				"and any takes any JSON value — object or array included — stored as decoded JSON."},
+				"any takes any JSON value — object or array included — stored as decoded JSON, " +
+				"and image takes base64 of an ENCODED image file (PNG/JPEG/GIF/BMP/ICO, plus any format the app " +
+				"blank-imported) — not raw pixels; absent means nil, which a page may bind before any picture exists."},
 		}, "name", "type"),
 	}
 }

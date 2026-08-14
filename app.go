@@ -160,6 +160,11 @@ func WithCaps(c term.Caps) Option { return func(o *options) { o.caps = &c } }
 // That default is deliberate: emitting an image protocol at a terminal
 // that does not speak it puts garbage on the user's screen, and a probe
 // is the only thing that can tell.
+//
+// Pinning a protocol also pins a CELL SIZE: see App.caps. Sixel scales
+// its output by CellW/CellH, so a pinned protocol with no capabilities
+// behind it would otherwise emit a zero-pixel image — bytes on the wire
+// that draw nothing, over cells the halfblock path never got to paint.
 func WithGraphics(enc graphics.Encoder) Option {
 	return func(o *options) { o.gfx, o.gfxSet = enc, true }
 }
@@ -577,13 +582,42 @@ func (a *App) reload() {
 	a.attach(w)
 }
 
+// caps is the capability set this app composes with: whatever WithCaps
+// or the probe supplied, else the environment ladder, always resized to
+// the terminal we actually have.
+//
+// The last clause is the one with teeth. A cell size is not decoration:
+// Sixel.Encode scales to cols*CellW × rows*CellH, so at CellW == 0 it
+// emits a well-formed image of zero pixels — no error, no glyphs, and no
+// halfblock fallback either, because the presence of an encoder is what
+// sends Image down the placement path in the first place. The result is a
+// black rectangle, which is the worst failure a graphics stack can have.
+//
+// term.Screen.Detect already refuses to return a zero cell size for the
+// same reason (term/term.go:291). Every host that pins a protocol by hand
+// had to reproduce that rule — cmd/demo, cmd/toolkitdemo and cmd/colordemo
+// each carried their own "a forced protocol still needs a cell size"
+// 10×20 — which is the framework asking for the rule to live here instead.
 func (a *App) caps() term.Caps {
+	c := term.Caps{Color: term.DetectColorDepth()}
 	if a.opt.caps != nil {
-		c := *a.opt.caps
-		c.Cols, c.Rows = a.cols, a.rows
-		return c
+		c = *a.opt.caps
 	}
-	return term.Caps{Cols: a.cols, Rows: a.rows, Color: term.DetectColorDepth()}
+	c.Cols, c.Rows = a.cols, a.rows
+	if c.CellW <= 0 && a.pixelPlane(c) {
+		c.CellW, c.CellH = term.DefaultCellW, term.DefaultCellH
+	}
+	return c
+}
+
+// pixelPlane reports whether this composition will emit on the pixel
+// plane at all: a pinned non-nil encoder, or capabilities that name one.
+// A pinned nil encoder is the halfblock fallback and needs no metrics.
+func (a *App) pixelPlane(c term.Caps) bool {
+	if a.opt.gfxSet {
+		return a.opt.gfx != nil
+	}
+	return EncoderFor(c) != nil
 }
 
 // acquire takes the terminal: open, size, raw, mouse, decoder. It is the

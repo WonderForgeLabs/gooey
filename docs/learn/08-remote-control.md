@@ -100,7 +100,7 @@ claude mcp add --transport http kanban http://127.0.0.1:7778/mcp
 The tool inventory: `tree_snapshot`, `screen_text`, `list_values`,
 `list_styles`, `invoke_command`, `set_value`, `send_keys`, `send_mouse`,
 `focus`, `swap_markup`, `patch_markup`, `validate_markup`,
-`register_properties`. The rest of this tutorial exercises the
+`register_properties`, `unregister_properties`. The rest of this tutorial exercises the
 important ones; the calls below all use the same `tools/call` shape:
 
 ```sh
@@ -214,6 +214,12 @@ way. Three companions to know:
   grows the viewmodel over the wire** — without it, a swapped page
   could never bind a name the app didn't pre-register. Commands cannot
   be registered: behavior needs code, not storage.
+- **`unregister_properties` shrinks it again.** A loop that invents a
+  name per generated thing needs to stop inventing them permanently.
+  Removal never disturbs the RUNNING tree — a component already bound
+  to the name keeps its handle and keeps rendering — it only takes the
+  name out of scope for markup built afterwards, so patch the markup
+  first and unregister second.
 
 This loop — generate, validate, swap, look — is exactly what
 `examples/temporal-worker` automates: a Python Temporal worker that

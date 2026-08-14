@@ -1,0 +1,27 @@
+<!-- The smallest page that proves the control plane is live: a TextBox and a
+     Text bound to the SAME property. Type in one and the other follows,
+     because the binding is to the property and not to the widget.
+
+     `Input` is one of the app's control-plane values, so this page is also
+     the smallest way to watch the plane from the outside: `set_value Input`
+     over MCP moves both the box and the label, and typing in the box is
+     visible to `list_values` — the same `Input` the star passes to an
+     activity, with nothing else on the page to explain the result.
+
+     Load it in place of the default page with:
+
+         go run . -page live.gooey -with-worker=false
+
+     `-with-worker=false` is not required, but this page has no button that
+     runs anything, so there is nothing for the Python companion to do.
+
+     (Not to be confused with cmd/markuplog's hot-reload page, which is
+     `cmd/markuplog/logview.gooey`.) -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="live" Style="panel">
+    <VStack Gap="1" Margin="1,0">
+      <TextBox Name="Scratch" Text="{{.Input}}" Prompt="&gt; " AccentStyle="accent"/>
+      <Text Style="accent">{{.Input}}</Text>
+    </VStack>
+  </Border>
+</Gooey>

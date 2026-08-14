@@ -75,8 +75,21 @@ message Act {
     SetFocusRequest set_focus = 6;
     SwapMarkupRequest swap_markup = 7;
     RegisterPropertiesRequest register_properties = 8;
+    UnregisterNamesRequest unregister_names = 9;
+    // PatchMarkup is an act because an editing client's characteristic
+    // operation is "set a property, then patch the subtree that reads
+    // it", and those two must not race. On this stream they cannot: acts
+    // are applied in stream order on the UI goroutine. Split across a
+    // unary call and an act they can, because the two arrive on
+    // different goroutines and nothing orders them.
+    //
+    // SwapMarkup is the wrong substitute for it: replacing the page
+    // rebuilds every element, so focus, caret and every Name= die on
+    // each edit — unconditionally, and the whole tree at once.
+    PatchMarkupRequest patch_markup = 10;
   }
 }
+
 
 message AttachResponse {
   oneof msg {
@@ -87,6 +100,7 @@ message AttachResponse {
     InputEcho input = 5;
   }
 }
+
 
 // Welcome answers the subscribe: who the app is and where its screen
 // stands. Initial state is read through the unary surface (or the
@@ -119,6 +133,8 @@ message ActResult {
     SetFocusResponse set_focus = 8;
     SwapMarkupResponse swap_markup = 9;
     RegisterPropertiesResponse register_properties = 10;
+    UnregisterNamesResponse unregister_names = 11;
+    PatchMarkupResponse patch_markup = 12;
   }
 }
 

@@ -74,6 +74,18 @@ service ControlService {
   // already exists is INVALID_ARGUMENT — one source of truth.
   rpc RegisterProperties(RegisterPropertiesRequest) returns (RegisterPropertiesResponse);
 
+  // UnregisterNames removes names from the binding context —
+  // RegisterProperties' inverse, and the delete half of a CRUD surface
+  // over the viewmodel. A client that can grow the context must be able
+  // to shrink it again, or every generated name leaks for the life of
+  // the process. A name that does not resolve is NOT_FOUND and the
+  // whole batch is refused, leaving the context untouched.
+  //
+  // Removal does not disturb the RUNNING tree: a component bound to a
+  // removed name still holds its property handle and keeps rendering.
+  // It takes the name out of scope for markup built afterwards.
+  rpc UnregisterNames(UnregisterNamesRequest) returns (UnregisterNamesResponse);
+
   // GetDeclaredSchema returns a document's <x:Property> declaration
   // block as a schema (issue #62): the contract a values payload must
   // satisfy before the document can build.
@@ -208,6 +220,13 @@ message RegisterPropertiesRequest {
 }
 
 message RegisterPropertiesResponse {}
+
+message UnregisterNamesRequest {
+  // Dotted names to remove, e.g. "Result" or "Activity.Sparkle.Out".
+  repeated string names = 1;
+}
+
+message UnregisterNamesResponse {}
 
 message GetDeclaredSchemaRequest {
   // Markup source to inspect. Empty asks for the declaration block of

@@ -357,7 +357,7 @@ is data an agent acts on, so it publishes an `outputSchema` and returns
 mutation acks which stay text-only.
 
 **The registration surface is control's FULL kind table** — string,
-int, bool, float, duration, color, and `any` — deliberately wider than
+int, bool, float, duration, color, `any`, and `image` — deliberately wider than
 `set_value`'s kept ceiling, because this is a NEW surface mirroring the
 contract's `PropertyRegistration`, not a widening of a preserved one.
 Initial-value semantics at the JSON boundary: string/int/bool/float
@@ -370,6 +370,20 @@ deliberate and pinned by test: a registered duration/any property still
 shows as a plain `"value"` entry in `list_values` and still refuses
 `set_value` — the #112 ceiling-lift follow-up remains its own deliberate
 change, untouched here.
+
+**`unregister_properties` is the inverse** — the MCP face of
+`ControlService.UnregisterNames`, added with the dynamic-activities
+demo, which invents a bindable name per activity and needs to stop
+inventing them permanently. Without it every generated name lives as
+long as the process and `list_values` grows monotonically into noise.
+Unknown name = refused, batches all-or-nothing, and it publishes an
+`outputSchema` (`unregistered: string[]`) for the same reason
+`register_properties` does. The semantics worth stating once: removal
+does NOT disturb the running tree. A component bound to a removed name
+still holds its property handle and keeps rendering and updating; the
+name simply goes out of scope for markup built AFTERWARDS. That is what
+"unbind it from future pages" means, and it is why a delete flow patches
+the markup first and unregisters second.
 
 One schema (`registrationsArg`) serves both tools' argument, so the two
 registration paths cannot drift; the server instructions text now names
