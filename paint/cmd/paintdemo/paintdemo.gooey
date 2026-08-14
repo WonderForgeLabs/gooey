@@ -1,0 +1,37 @@
+<!-- The shell. It holds no art of its own: each page is a separate
+     .gooey document, instantiated as a markup-only control, so a sample
+     is a file you can copy rather than a fragment you have to extract.
+     All four files hot-reload — edit a plate and it redraws.
+
+     Scene selection is a bound int the KeyBindings set, not a focus
+     gesture on the <Tabs>. Two reasons, and both are constraints rather
+     than taste: mouse input cannot be injected through a recording pty,
+     so a demo that needs a click cannot be captured at all; and a page
+     with no focus stop dispatches keys from the ROOT, so bindings that
+     hang on an inner element would silently never fire. -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="paintdemo" Style="panel">
+    <Grid Rows="Auto,Auto,*,Auto">
+
+      <Text Grid.Row="0" Style="accent">{{.Tier}}</Text>
+      <Text Grid.Row="1" Style="dim">{{.Stats}}</Text>
+
+      <Tabs Grid.Row="2" Selected="{{.Scene}}">
+        <Tab Header="strokes"><StrokesScene/></Tab>
+        <Tab Header="brushes"><BrushesScene/></Tab>
+        <Tab Header="ring"><RingScene/></Tab>
+      </Tabs>
+
+      <Text Grid.Row="3" Style="dim">1/2/3 or n: scene   q: quit</Text>
+
+      <KeyBinding Gesture="1"      Command="{{.Scene1}}"/>
+      <KeyBinding Gesture="2"      Command="{{.Scene2}}"/>
+      <KeyBinding Gesture="3"      Command="{{.Scene3}}"/>
+      <KeyBinding Gesture="n"      Command="{{.NextScene}}"/>
+      <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+      <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+
+    </Grid>
+  </Border>
+</Gooey>
