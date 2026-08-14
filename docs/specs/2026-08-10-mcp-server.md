@@ -139,9 +139,17 @@ fields cannot be discovered without reflection. `<x:Property>`
 would lift it.
 
 **Security posture as shipped.** Loopback binds only — a non-loopback
-`Addr` is a hard error, not a warning. No auth: an MCP client can do
-anything the keyboard can. (The SDK adds a second, complementary guard;
-see the override section.)
+`Addr` is a hard error, not a warning. No auth: an *unscoped* MCP client
+can do anything the keyboard can. (The SDK adds a second, complementary
+guard; see the override section.)
+
+Superseded in part by 2026-08-14-island-grants.md: `Options.Grant` narrows
+what one endpoint reaches — one island's subtree, one value list —
+enforced host-side in `control`, so the sentence above describes the
+grant-less default rather than the ceiling. The distinction that matters
+is unchanged: a grant is **scoping, not authentication**. It bounds a
+guest that was handed an address; it does nothing about who can reach the
+host's own unscoped endpoint, which is still the bind address's job.
 
 The `Origin` check is the loopback trust boundary and is **default-deny
 for anything claiming to be a browser**. Absent header → allow (Go and

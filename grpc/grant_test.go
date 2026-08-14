@@ -240,6 +240,77 @@ func TestGrantRefusesInvokingHostCommands(t *testing.T) {
 	})
 }
 
+// TestGrantKeepsValuesNotFoundDistinctFromDenied is the value-axis twin
+// of TestGrantKeepsNotFoundDistinctFromDenied, and it exists because the
+// element axis had the ordering right while this one did not: the three
+// value verbs asked the grant BEFORE they asked whether the name was even
+// real, so every unreachable name came back PERMISSION_DENIED.
+//
+// That is an oracle. Ask for "Host.Secret" and "Host.Sekret" with the
+// broken order and both say DENIED; with the right order the second says
+// NOT_FOUND, and the difference is the whole point — a guest must not be
+// able to sift the host's private surface out of the error codes.
+//
+// The two arms are what make this a discrimination rather than a
+// tautology. A fix that returned NOT_FOUND for everything would pass the
+// first arm alone, and it would have destroyed the grant.
+func TestGrantKeepsValuesNotFoundDistinctFromDenied(t *testing.T) {
+	r := newIslandRig(t)
+
+	get := func(name string) error {
+		_, err := r.left.ctl.GetProperty(context.Background(), &controlv1.GetPropertyRequest{Name: name})
+		return err
+	}
+	invoke := func(name string) error {
+		_, err := r.left.ctl.InvokeCommand(context.Background(), &controlv1.InvokeCommandRequest{Name: name})
+		return err
+	}
+
+	// Absent AND ungranted: existence answers first.
+	for _, tc := range []struct {
+		verb string
+		err  error
+	}{
+		{"GetProperty", get("Host.Sekret")},
+		{"SetProperty", r.left.set("Host.Sekret", "x")},
+		{"InvokeCommand", invoke("Host.Dangr")},
+		{"GetProperty/top-level", get("NoSuchScope")},
+	} {
+		wantCode(t, tc.err, codes.NotFound, "no value named")
+		_ = tc.verb
+	}
+
+	// Present but ungranted: the grant still refuses, and says so.
+	for _, err := range []error{
+		get("Host.Secret"),
+		r.left.set("Host.Secret", "x"),
+		invoke("Host.Danger"),
+	} {
+		wantCode(t, err, codes.PermissionDenied, "outside this session's granted values")
+	}
+
+	// And an UNSCOPED session sees no change: it was never subject to
+	// either check, so the reordering must not have moved its errors.
+	_, err := r.host.ctl.GetProperty(context.Background(), &controlv1.GetPropertyRequest{Name: "Host.Sekret"})
+	wantCode(t, err, codes.NotFound, "no value named")
+}
+
+// Register is the one value verb whose precondition is ABSENCE, so it
+// keeps permission-first ordering on purpose: checking existence first
+// would refuse every legitimate registration. This pins that the
+// resolveValue reordering did not sweep it up — an out-of-grant name that
+// does not exist must still be DENIED here, not NOT_FOUND, because
+// "does not exist" is exactly what the caller is asking to change.
+func TestRegisterKeepsPermissionFirstOrdering(t *testing.T) {
+	r := newIslandRig(t)
+	_, err := r.left.ctl.RegisterProperties(context.Background(), &controlv1.RegisterPropertiesRequest{
+		Properties: []*controlv1.PropertyRegistration{{
+			Name: "Host.Minted", Kind: controlv1.ValueKind_VALUE_KIND_STRING,
+		}},
+	})
+	wantCode(t, err, codes.PermissionDenied, "outside this session's granted values")
+}
+
 // The prefix rule is by dotted SEGMENT, so a grant of "Left" must not
 // spill onto a sibling namespace whose name merely starts with it.
 func TestGrantPrefixMatchesWholeSegments(t *testing.T) {

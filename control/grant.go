@@ -211,6 +211,34 @@ func (s *Service) mayAddress(name string) error {
 	return nil
 }
 
+// resolveValue is the value axis of mayAddress's ordering rule:
+// existence first, the grant second. A name that is BOTH absent from the
+// context and outside the grant has to come back NOT_FOUND, because the
+// alternative hands a guest an oracle — ask for a name, and a
+// PERMISSION_DENIED where a NOT_FOUND was expected says "that one is
+// real". Enumerating the host's private surface should not be a matter
+// of reading which error came back.
+//
+// It costs nothing to be careful here: lookup runs against s.bind.Values,
+// which is the host's FULL surface. The prune to grantedValues happens
+// only inside scratchBuild, bracketed and restored (markup.go:215-218),
+// so this resolution sees every name and the grant alone decides.
+//
+// Register is deliberately NOT built on this. There the name must NOT
+// already exist, so "check existence first" would refuse every legitimate
+// registration; permission-first is the correct order for the one verb
+// whose precondition is absence.
+func (s *Service) resolveValue(name string) (any, error) {
+	v, err := s.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.mayTouchValue(name); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
 // mayTouchValue guards a verb that names a VALUE (a property or a
 // command).
 func (s *Service) mayTouchValue(name string) error {

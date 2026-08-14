@@ -362,10 +362,7 @@ func (s *Service) islandNames() []string {
 // Value describes one dotted name, resolved exactly as a {{.A.B}}
 // binding resolves.
 func (s *Service) Value(name string) (ValueEntry, error) {
-	if err := s.mayTouchValue(name); err != nil {
-		return ValueEntry{}, err
-	}
-	v, err := s.lookup(name)
+	v, err := s.resolveValue(name)
 	if err != nil {
 		return ValueEntry{}, err
 	}
@@ -452,10 +449,7 @@ func describe(name string, v any) ValueEntry {
 // to write it. The two are separate grants because they are separate
 // capabilities, and only the value list confers the write.
 func (s *Service) Set(name string, v Value) error {
-	if err := s.mayTouchValue(name); err != nil {
-		return err
-	}
-	h, err := s.lookup(name)
+	h, err := s.resolveValue(name)
 	if err != nil {
 		return err
 	}
@@ -528,10 +522,7 @@ func setMismatch(name string, want, got Kind) *Error {
 // PatchMarkup an escalation path — patch in a Button, invoke it, run
 // anything.
 func (s *Service) Invoke(name string) error {
-	if err := s.mayTouchValue(name); err != nil {
-		return err
-	}
-	v, err := s.lookup(name)
+	v, err := s.resolveValue(name)
 	if err != nil {
 		return err
 	}
