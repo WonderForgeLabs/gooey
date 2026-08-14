@@ -37,6 +37,19 @@
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
 
+    <!-- DESIGN ↔ LIVE. The designer is a gooey.Frozen host, so this one
+         gesture decides whether the document is a picture or a working UI,
+         and the re-route lands in the frame this key schedules — the
+         document's focus stops, mnemonics, hover watchers and Startables
+         all appear and disappear with it.
+
+         A BARE LETTER IS SAFE HERE for the same reason q and x already
+         are: Dispatch bubbles from the FOCUSED component upwards, and
+         these bindings are on the root, which is the last level it
+         reaches. A "d" typed into the PROPERTIES TextBox is consumed by
+         that TextBox's own HandleKey levels earlier and never arrives. -->
+    <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
+
     <!-- Drawn in PIXELS, not cells: an icon is a shape, and a terminal
          draws shapes badly out of box-drawing characters. Invisible to
          screen_text, which reads the cell plane — see the package comment
@@ -253,7 +266,11 @@
       </Tabs>
     </Panel>
 
+    <!-- The centre section is the DESIGN/LIVE indicator. StatusBar's three
+         sections are components with their own paint nodes, so the mode
+         flip repaints this one and leaves the build status and the control
+         plane addresses either side of it alone. -->
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"
-               Left="{{.Status}}" Right="{{.Serving}}"/>
+               Left="{{.Status}}" Center="{{.ModeText}}" Right="{{.Serving}}"/>
   </Grid>
 </Gooey>

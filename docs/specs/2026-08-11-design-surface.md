@@ -85,6 +85,17 @@ Neither requires hiding the subtree.
 
 ## The seam: a frozen subtree
 
+> **Superseded in one respect.** This document specifies `Frozen` as a
+> value **sampled** at structural re-sync, which made a toggleable design
+> mode impossible and was recorded as a constraint rather than a
+> mechanism. It is now **observed**: reading a property inside `Frozen()`
+> subscribes, and a changed answer re-routes input, re-tabs the page and
+> stops or starts the subtree's Startables in the same frame. See
+> `docs/specs/2026-08-14-frozen-observed.md`. Everything else below —
+> what freezing covers, the three touch points, the guards and their
+> tests — is unchanged.
+
+
 Ruled by Elan: *"i want it to render, i just don't want it to do stuff.
 you click a button, in design mode it just sits there like a still pic."*
 

@@ -67,6 +67,23 @@
 // # Keys
 //
 //	q, ctrl+c   quit
+//	d           DESIGN ↔ LIVE
+//
+// # DESIGN and LIVE
+//
+// The designer pane is a gooey.Frozen host, which is what a design surface
+// is FOR: in DESIGN mode (the default) the document lays out and paints
+// exactly as it will, and nothing in it is tabbable, clickable, hoverable
+// or running — you cannot accidentally operate the thing you are drawing,
+// and a <Companion> dropped on the canvas does not spawn its process.
+// Press d and the same tree gets its behaviour back so you can try it.
+//
+// Nothing is re-mounted for that. `design` is one source property; the
+// pane's Frozen() reads it, the Composer observes the read, and the frame
+// the keystroke schedules re-derives the focus order, the scoped bindings,
+// the mnemonics, the hover watchers and the Startable set before anything
+// paints. This editor is that mechanism's first consumer, and the mechanism
+// stayed a documented constraint until there was one.
 //
 // The bindings live on the page ROOT. A KeyBinding only fires while the
 // focused chain passes through its host, and an empty page has no focus
@@ -357,6 +374,26 @@ type editor struct {
 	fits    *prop.Property[bool]
 	cramped *prop.Property[bool]
 	fitMsg  *prop.Property[string]
+	// design is the mode switch, and it is the editor's first consumer of
+	// gooey.Frozen. True (the default) means the designer pane is a
+	// PICTURE: the document lays out and paints exactly as it will, and
+	// nothing in it is tabbable, clickable or running. False hands the
+	// document back its behaviour so you can try what you just built.
+	//
+	// It is one source property read from two places — preview.Pane.Frozen
+	// and modeText — which is what makes the flip land in the same frame as
+	// the keystroke. Nothing else is needed: the framework observes the
+	// read Frozen() makes and re-syncs the composition.
+	//
+	// Freezing by default also fixes something the editor had wrong before
+	// there was a switch at all. Every focusable component in the DOCUMENT
+	// was a focus stop in the EDITOR, so tab walked out of the shell and
+	// into the thing being edited, and a document containing a <TextBox>
+	// gave the user two carets with no way to tell which one the keyboard
+	// was in.
+	design   *prop.Property[bool]
+	modeText *prop.Property[string]
+
 	// rev ticks on every edit. The list sources are computed over the
 	// document, which is plain Go state and therefore invisible to the
 	// property graph — a computed that reads no property records no
@@ -417,12 +454,27 @@ func newEditor(fsys fs.FS) *editor {
 		treeText:   prop.NewSource(""),
 		fits:       prop.NewSource(true),
 		fitMsg:     prop.NewSource(""),
+		design:     prop.NewSource(true),
 		rev:        prop.NewSource(0),
 		serveInfo:  prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
 		pv:         &preview.Pane{},
 	}
 
 	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
+
+	// The pane is the frozen host. Binding it here rather than at its
+	// construction keeps the property and its two readers in one place.
+	ed.pv.BindDesignMode(ed.design)
+
+	// The status bar's centre, and it is the only cue the user gets that
+	// clicking the designer will or will not do anything. A mode with no
+	// indicator is a mode you find out about by being surprised.
+	ed.modeText = prop.NewComputed(func() string {
+		if ed.design.Get() {
+			return ModeDesign
+		}
+		return ModeLive
+	})
 
 	// The list sources are built BEFORE the context, because
 	// Context.Values captures each handle BY VALUE: a property created
@@ -511,6 +563,8 @@ func newEditor(fsys fs.FS) *editor {
 			"Fits":         ed.fits,
 			"Cramped":      ed.cramped,
 			"FitMsg":       ed.fitMsg,
+			"ModeText":     ed.modeText,
+			"ToggleMode":   gooey.Command(func() { ed.toggleMode() }),
 			"Add":          gooey.Command(func() { ed.addSelected() }),
 			"Delete":       gooey.Command(func() { ed.deleteSelected() }),
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
@@ -1055,6 +1109,41 @@ func (ed *editor) retype(elem string) {
 	}
 	ed.rebuild()
 }
+
+// ModeDesign and ModeLive are the status bar's centre section, and they
+// are THE SAME WIDTH on purpose — measured, not decorative.
+//
+// A label that changed width would move the section's bounds, and a
+// bounds change vacates cells: the Composer clears the old rect and
+// force-repaints everything that sat beneath it, which here is the status
+// bar and the page's root Grid. Measured on the shipped page at 160x48,
+// that turned a one-component flip into three
+// (damage [{0 0 160 48} {0 47 160 1} {48 47 24 1}]). All three repaints
+// are correct — they restore what the wider label used to cover — and all
+// three are avoidable by not changing width for a word.
+//
+// TestTheTwoModeLabelsAreTheSameWidth is what stops the next edit
+// undoing that silently; TestTheModeFlipRepaintsOnlyTheIndicator is what
+// it buys.
+const (
+	ModeDesign = "DESIGN — d for LIVE"
+	ModeLive   = "LIVE — d for DESIGN"
+)
+
+// toggleMode flips the designer between a picture and a working UI.
+//
+// This is the whole switch. There is no re-mount, no rebuild and no second
+// tree: the pane's Frozen() reads this property, the Composer observes that
+// read, and the frame this Set schedules re-derives the focus order, the
+// scoped bindings, the mnemonics, the hover watchers and the Startable set
+// before anything paints. The next keystroke or click is already routed the
+// new way.
+//
+// Inverting rather than assigning is what makes it idempotence-safe:
+// prop.Set does not compare values, so a Set to the value already held
+// would still invalidate the observer — harmless, because the Composer's
+// sweep compares the ANSWER, but there is no reason to spend it.
+func (ed *editor) toggleMode() { ed.design.Set(!ed.design.Get()) }
 
 func (ed *editor) selectNext(d int) {
 	n := len(ed.root.Kids)

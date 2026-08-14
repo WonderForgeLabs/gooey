@@ -100,6 +100,17 @@ type paintNode struct {
 	// visibility sweep below then does what it always did.
 	visObs *prop.Property[int]
 
+	// frozenObs is the same two-part shape applied to Frozen, and it
+	// exists only for a component that implements it: a computed whose
+	// evaluation CALLS Frozen(), so whatever properties the host reads to
+	// decide become this observer's dependencies by the ordinary call-site
+	// rule. Like visObs it is not a paint node — it never renders and never
+	// counts as damage — and its OnInvalidate only schedules a frame.
+	// frozen is the answer as of the last sweep; the sweep comparing the
+	// two is what raises structDirty.
+	frozenObs *prop.Property[bool]
+	frozen    bool
+
 	// The pixel plane, per node: what this component recorded the last
 	// time it painted, and what the terminal is currently showing for it.
 	places []graphics.Placement
@@ -276,6 +287,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		c.nodes = append(c.nodes, n)
 		c.nodeOf[w] = n
 		c.armVisibility(n)
+		c.armFrozen(n)
 		c.collect(w, prev, n)
 		return
 	}
@@ -345,6 +357,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 	c.nodes = append(c.nodes, n)
 	c.nodeOf[w] = n
 	c.armVisibility(n)
+	c.armFrozen(n)
 	if d, ok := w.(Dynamic); ok {
 		d.SetStructureHook(c.structureChanged)
 	}
@@ -384,6 +397,57 @@ func (c *Composer) armVisibility(n *paintNode) {
 		}
 	})
 	n.visObs.Get() // arm: record the dependency and sync the field
+}
+
+// armFrozen is armVisibility's twin, and it is what turns Frozen from a
+// value sampled at re-sync into one that re-routes input in the frame it
+// changes.
+//
+// THE OBSERVER TAKES NO NEW INTERFACE. Its evaluation calls Frozen()
+// itself, so any property the host reads to decide becomes a dependency of
+// this node by the ordinary call-site rule — the same discovery that makes
+// a Render's reads its damage declaration. A host whose Frozen() returns a
+// constant reads nothing, records nothing, is never invalidated, and costs
+// one dead computed; a host whose answer is `p.Get()` or
+// `mode.Get() && !sel.Get()` is observed with no declaration at all. The
+// alternative considered was a second method returning a
+// *prop.Property[bool] for the framework to watch, which would have been
+// two statements of one fact that can disagree, and would have forbidden a
+// host whose frozen-ness is DERIVED unless it maintained a mirror source —
+// and prop.Set does not compare values, so that mirror would re-dirty the
+// composition on every no-op write.
+//
+// The observer only ever SCHEDULES a frame. It deliberately does not raise
+// structDirty itself: an invalidation says "something Frozen() read
+// changed", not "the answer changed", and a re-sync that walks the tree,
+// stops and restarts Startables and rebuilds the focus order is far too
+// expensive to run for an answer that came back the same. Frame's sweep
+// compares against n.frozen and raises the flag only on a real flip —
+// exactly the division of labour between visObs and the visibility sweep.
+//
+// Arming lives here rather than in the FocusManager, which is the other
+// consumer, because the FocusManager owns neither an invalidate hook nor
+// per-component storage, and because freezing has TWO consumers: the input
+// tree and the Startable set. One observer in the Composer wakes both; one
+// in the FocusManager would have left Startables sampled.
+//
+// Called from build for new and reused nodes alike. There is no late-arm
+// pass like Frame's for visObs: whether a component implements Frozen is
+// fixed at compile time, so a node that did not arm here never will.
+func (c *Composer) armFrozen(n *paintNode) {
+	if n.frozenObs != nil {
+		return
+	}
+	if _, ok := n.w.(Frozen); !ok {
+		return
+	}
+	n.frozenObs = prop.NewComputed(func() bool { return isFrozen(n.w) })
+	n.frozenObs.OnInvalidate(func() {
+		if c.invalid != nil {
+			c.invalid()
+		}
+	})
+	n.frozen = n.frozenObs.Get() // arm: record the dependency and seed the sweep
 }
 
 // collect gathers the lifetime-bearing parts of one component and
@@ -514,11 +578,31 @@ func (c *Composer) Frame() (*Frame, int) {
 	// outside any evaluation — plain re-arms, not reads that subscribe
 	// this frame to anything. The nil check doubles as late arming for a
 	// binding made after the composition was built.
+	//
+	// The frozen sweep rides in the same loop, and it has to be BEFORE the
+	// structDirty block below rather than beside the bounds/visibility
+	// sweeps that come after it: raising the flag is the whole point, and
+	// the block that consumes it runs between the two. Re-Getting the
+	// observer is not optional bookkeeping either — a dirty computed stays
+	// dirty until read, so a node left unread would go deaf to the NEXT
+	// flip.
 	for _, n := range c.nodes {
 		if n.visObs != nil {
 			n.visObs.Get()
 		} else {
 			c.armVisibility(n)
+		}
+		if n.frozenObs != nil {
+			if f := n.frozenObs.Get(); f != n.frozen {
+				// A flip is a STRUCTURAL change, because what it changes is
+				// what the tree's shape means: walkNodes re-derives the
+				// Startable set through frozenAncestor, and Resync re-derives
+				// the focus order, the scoped bindings, the mnemonics and the
+				// hover watchers. Both already run off this flag for a
+				// Dynamic container, and neither needed a new input.
+				n.frozen = f
+				c.structureChanged()
+			}
 		}
 	}
 	// Unconditional layout, outside any eval context: reads here are

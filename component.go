@@ -81,23 +81,31 @@ type HasBackground interface {
 // its own attachments still run. That is what makes it the place a design
 // surface puts its own gestures.
 //
-// FROZEN IS SAMPLED, NOT OBSERVED, and the signature hides that: it is a
-// method, so it looks like it may change its answer at any time, and
-// nothing re-reads it when it does. Every consumer asks once per
-// STRUCTURAL re-sync — FocusManager.walk rebuilds the focus order,
-// bindings, mnemonics and watchers from Resync, and Composer.collect
-// rebuilds the Startable set from walkNodes — and both run only at
-// construction or when a Dynamic marks the composition dirty
-// (composer.go:533). A plain Frame() does neither.
+// FLIPPING IT IS A STRUCTURAL CHANGE, and the framework makes that happen
+// rather than asking the host to. Composer.armFrozen gives every
+// implementer an observer whose evaluation CALLS this method, so any
+// property read inside it is subscribed by the ordinary call-site rule; a
+// Set on that property schedules a frame, Frame's sweep compares the new
+// answer against the last one, and a real flip raises the same structDirty
+// a Dynamic container raises. The re-sync that follows runs in the SAME
+// frame, before anything paints: walkNodes re-derives the Startable set
+// through frozenAncestor, FocusManager.Resync re-derives the focus order,
+// the scoped bindings, the mnemonics and the hover watchers, and
+// FocusManager.evictFrozen retargets a hover and drops a capture that is
+// now inside the picture. So pressing the key that turns design mode on
+// leaves nothing in the subtree reachable by the very next event.
 //
-// So a host that flips its answer to toggle design mode keeps the old
-// routing until something else changes the tree's structure: the subtree
-// stays tabbable, its Startables stay running, and a captor or hover
-// already inside it stays there, because Resync tests liveness against
-// m.parent, which records frozen descendants deliberately. Return a
-// constant, or make the flip a structural change. There is no consumer of
-// a dynamic Frozen in this repository today, which is why this is a
-// documented constraint rather than a mechanism.
+// Freezing costs no repaint of its own. It changes what the tree MEANS,
+// not what it looks like, so the only components that repaint for a flip
+// are the ones that read the same property while painting (a mode
+// indicator) plus the two involved if focus had to leave the subtree.
+//
+// THE LIMIT, and it is the same limit every derived value in this
+// framework has: the observer subscribes to what Frozen() READS. An
+// implementation over plain Go state — a bare bool field written by a
+// handler — records no dependency, so nothing notices when it changes and
+// the old sampled behaviour is what you get. Read a property, or call
+// Composer.InvalidateStructure by hand.
 type Frozen interface{ Frozen() bool }
 
 // isFrozen reports whether w freezes its subtree.
