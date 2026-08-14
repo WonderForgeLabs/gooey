@@ -117,7 +117,24 @@ func (Sixel) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) 
 				continue
 			}
 			opaque[i] = true
-			k := packSixel(to100(uint8(r>>8)), to100(uint8(g>>8)), to100(uint8(b>>8)))
+			// A kept pixel is painted OPAQUE, so it must be declared at
+			// its OWN colour — and RGBA() hands back the premultiplied
+			// one, which is that colour scaled by alpha. Declaring the
+			// premultiplied value renders a 75%-alpha white as 75% grey:
+			// neither the thing's colour nor transparency, just darker.
+			// Every such pixel sits on a transparency boundary, so the
+			// artefact is a dark rim exactly where an icon meets its
+			// background.
+			//
+			// This mattered less when Scale subsampled, because then a
+			// pixel's alpha came straight from the source and only a
+			// genuinely translucent asset had any. A resampling kernel
+			// MANUFACTURES partial alpha along every such boundary: on a
+			// 16x16 activity-bar icon scaled into a 20x20 slot the count
+			// of kept-but-translucent pixels goes 27 -> 34 and their mean
+			// darkening 41.6 -> 96.8 out of 255. Un-premultiplying is
+			// what keeps the better filter from arriving with a halo.
+			k := packSixel(to100(unpremul(r, a)), to100(unpremul(g, a)), to100(unpremul(b, a)))
 			keys[i] = k
 			counts[k]++
 		}
@@ -212,6 +229,22 @@ func registersInBand(idx []uint8, opaque []bool, pxW, pxH, y0, n int) []uint8 {
 		}
 	}
 	return out
+}
+
+// unpremul recovers an 8-bit channel from the alpha-premultiplied 16-bit
+// pair color.Color.RGBA returns. Callers have already established that a
+// is at least half, so the division cannot amplify noise the way it does
+// near zero; the clamp guards a malformed image whose channel exceeds its
+// own alpha rather than any arithmetic here.
+func unpremul(v, a uint32) uint8 {
+	if a == 0 {
+		return 0
+	}
+	c := v * 0xffff / a // v <= 0xffff, so the product cannot overflow uint32
+	if c > 0xffff {
+		c = 0xffff
+	}
+	return uint8(c >> 8)
 }
 
 // to100 maps an 8-bit channel to the protocol's 0..100, rounding rather

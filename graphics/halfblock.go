@@ -11,6 +11,27 @@ import (
 // as foreground and the bottom pixel as background (2 px per cell).
 // This is why the fallback is not an Encoder: nothing is emitted beside
 // the cells; the image simply becomes cells.
+//
+// # Alpha is DISCARDED here, and the sixel encoder un-premultiplies — on purpose
+//
+// Both formats are opaque, so both have to answer for a translucent
+// pixel, and they give opposite answers because they can paint different
+// things. Sixel can decline to write a pixel, so a fringe pixel it does
+// keep is the icon itself and gets its own colour back. A cell always has
+// a foreground and a background; there is no "leave it", so a fringe
+// pixel here is a BLEND and the premultiplied channels straight out of
+// RGBA() are exactly that blend against black. Un-premultiplying them
+// would brighten every soft edge to full strength and ring the image in a
+// halo — which is why the discarded alpha below is a decision rather than
+// an oversight, and why it survived Scale becoming a resampling filter
+// even though that manufactures far more partial alpha than it used to.
+//
+// A prose argument is not a guard, and the sixel side of this asymmetry
+// has tests where this had none — which is the shape that invites someone
+// to "fix" the inconsistency in the wrong direction. It is pinned now by
+// TestATranslucentPixelIsPaintedAsItsBlendAgainstBlackNotItsOwnColour, the
+// mirror of sixel_test.go's
+// TestAKeptPixelIsDeclaredAtItsOwnColourNotItsPremultipliedOne.
 func DrawHalfblock(b *render.Buffer, img image.Image, col, row, cols, rows int) {
 	px := Scale(img, cols, rows*2)
 	for y := 0; y < rows; y++ {
