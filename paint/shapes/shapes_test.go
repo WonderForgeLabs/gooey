@@ -126,6 +126,29 @@ func TestLoadErrors(t *testing.T) {
 			`<Figure><Line Stroke="#fff"/><Text>a</Text><Text>b</Text></Figure>`,
 			"at most one content child",
 		}, {
+			// A shape never reaches markup.build, so core's checkProps
+			// never sees it. This check was missing in the first version
+			// of this package and <Rectangle.Fil> loaded clean with the
+			// brush inside it silently never applied — found in review.
+			"a property element a shape does not have",
+			`<Figure><Rectangle Stroke="#fff"><Rectangle.Bogus><SolidColorBrush Color="#000"/></Rectangle.Bogus></Rectangle></Figure>`,
+			"does not accept the property element",
+		}, {
+			"a near-miss property element on a shape",
+			`<Figure><Rectangle Stroke="#fff"><Rectangle.Fil><SolidColorBrush Color="#000"/></Rectangle.Fil></Rectangle></Figure>`,
+			"does not accept the property element",
+		}, {
+			// A pen attribute with no pen. Inert would be defensible;
+			// silent is not, because the only symptom is a shape with no
+			// outline and no explanation.
+			"StrokeThickness with no Stroke",
+			`<Figure><Ellipse Fill="#fff" StrokeThickness="8"/></Figure>`,
+			"there is no pen to apply it to",
+		}, {
+			"StrokeDashArray with no Stroke",
+			`<Figure><Ellipse Fill="#fff" StrokeDashArray="4,2"/></Figure>`,
+			"there is no pen to apply it to",
+		}, {
 			"an unknown brush element",
 			`<Figure><Line><Line.Stroke><TartanBrush/></Line.Stroke></Line></Figure>`,
 			"unknown brush",
@@ -398,6 +421,48 @@ func TestRasterKeyCarriesTheCellSize(t *testing.T) {
 	}
 	if again != b {
 		t.Fatal("the same size redrew instead of hitting the memo")
+	}
+}
+
+// TestAFillOnlyShapeIsNotInsetByAPhantomPen: Stroke.Thickness defaults
+// to 1 whether or not a Stroke was declared, and the geometry used to
+// inset by half of it unconditionally — so every fill-only shape landed
+// half a pixel inside where the markup put it, with nothing to say why.
+// Found in review, on brushes.gooey's own RadialGradientBrush plate.
+//
+// The assertion is the ALPHA of the boundary pixel, not the extent of
+// the ink. A first attempt asserted "the leftmost inked column is 0" and
+// passed with the bug restored: a half-pixel inset antialiases column 0
+// to half coverage, which is still ink. The half pixel is the whole
+// defect, so the test has to be able to see a half pixel.
+func TestAFillOnlyShapeIsNotInsetByAPhantomPen(t *testing.T) {
+	edgeAlpha := func(body string) uint32 {
+		t.Helper()
+		w := buildPage(t, body)
+		f := w.(*Figure)
+		r, err := f.raster(20, 6, nominalCellW, nominalCellH, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, a := r.img.At(0, 3*nominalCellH).RGBA()
+		return a
+	}
+	// A fill that covers the whole figure must cover the whole figure:
+	// the boundary pixel is fully opaque, not half-covered by a pen that
+	// is never drawn.
+	if got := edgeAlpha(`<Figure><Rectangle Rect="0,0,1,1" Fill="#ffffff"/></Figure>`); got != 0xffff {
+		t.Errorf("the boundary pixel of a fill-only rectangle has alpha %d, want 65535; a pen that is never drawn inset the fill by half its width", got)
+	}
+	// The discriminating half: a shape that DOES have a pen must still
+	// be inset, or this is a deleted feature rather than a fix. An
+	// 8-pixel stroke centred on the boundary would put four pixels
+	// outside the canvas; inset, its outer edge lands exactly on it, so
+	// the boundary pixel is fully opaque for a different reason — and
+	// pixel 4 is inside the stroke either way. What separates them is
+	// the far side: uninset, the stroke's outer half is clipped away and
+	// the rectangle reads 4 pixels narrower.
+	if got := edgeAlpha(`<Figure><Rectangle Rect="0,0,1,1" Stroke="#ffffff" StrokeThickness="8"/></Figure>`); got != 0xffff {
+		t.Errorf("the boundary pixel of a stroked rectangle has alpha %d, want 65535; the stroke's outer edge must land ON the boundary rather than half outside it", got)
 	}
 }
 

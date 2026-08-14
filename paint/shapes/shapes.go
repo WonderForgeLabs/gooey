@@ -388,6 +388,15 @@ func parseShape(e markup.Element) (Shape, error) {
 	if err := unknownAttr(e.Name, e.Attrs, allowed); err != nil {
 		return Shape{}, err
 	}
+	// The property elements too, and this is the check that is easiest to
+	// forget: a shape never reaches markup.build, so core's checkProps
+	// never sees it either. Without this <Rectangle.Fil> loads clean and
+	// the brush inside it is simply never applied — the exact silent
+	// drop this package's whole load-time story exists to prevent, one
+	// element deeper than where it was first written.
+	if err := unknownProp(e, map[string]bool{"Fill": true, "Stroke": true}); err != nil {
+		return Shape{}, err
+	}
 
 	s := Shape{Kind: kind}
 	var err error
@@ -433,6 +442,19 @@ func parseShape(e markup.Element) (Shape, error) {
 	}
 	if s.StrokeBrush == nil && s.FillBrush == nil {
 		return Shape{}, fmt.Errorf(`markup: <%s> paints nothing: give it a Stroke (e.g. Stroke="#6c9cff") or a Fill`, e.Name)
+	}
+	// A pen attribute with no pen is a load error rather than a silently
+	// inert one. It is a plausible mistake — a XAML author reasonably
+	// expects StrokeThickness to imply an outline — and it has no other
+	// symptom: the shape simply comes out with no border and nothing
+	// anywhere says why. The same reasoning as <Rectangle> with neither
+	// Stroke nor Fill, one step in.
+	if s.StrokeBrush == nil {
+		for _, a := range []string{"StrokeThickness", "StrokeDashArray", "StrokeLineCap", "StrokeLineJoin"} {
+			if v, ok := e.Attrs[a]; ok && strings.TrimSpace(v) != "" {
+				return Shape{}, fmt.Errorf(`markup: <%s %s=%q>: there is no pen to apply it to; add a Stroke (e.g. Stroke="#6c9cff") or drop the attribute`, e.Name, a, v)
+			}
+		}
 	}
 
 	// Cap and Join are stated rather than left at gg's zero values. gg's
@@ -601,6 +623,27 @@ func unknownAttr(elem string, attrs map[string]string, allowed map[string]bool) 
 	sort.Strings(known)
 	return fmt.Errorf("markup: <%s %s=%q>: no such attribute; <%s> takes %s",
 		elem, unknown[0], attrs[unknown[0]], elem, strings.Join(known, ", "))
+}
+
+func unknownProp(e markup.Element, allowed map[string]bool) error {
+	names := make([]string, 0, len(e.Props))
+	for name := range e.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if allowed[name] {
+			continue
+		}
+		known := make([]string, 0, len(allowed))
+		for k := range allowed {
+			known = append(known, k)
+		}
+		sort.Strings(known)
+		return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>; it takes %s",
+			e.Name, e.Name, name, strings.Join(known, " and "))
+	}
+	return nil
 }
 
 func colorAttr(e markup.Element, name string) (render.Color, error) {
@@ -907,6 +950,15 @@ func brushPattern(b *Brush, w, h float64, flat bool) gg.Pattern {
 	return b.Pattern(w, h)
 }
 
+// pen is the width the geometry has to make room for: the stroke's, or
+// zero when the shape has no stroke to draw.
+func pen(s Shape) float64 {
+	if s.StrokeBrush == nil {
+		return 0
+	}
+	return s.Stroke.Thickness
+}
+
 func path(dc *gg.Context, s Shape, w, h float64) {
 	switch s.Kind {
 	case KindRectangle:
@@ -914,7 +966,13 @@ func path(dc *gg.Context, s Shape, w, h float64) {
 		// figure's boundary rather than half outside it and clipped —
 		// panel's rule, and the reason a full-bleed rectangle looks like
 		// it has three sides without it.
-		t := s.Stroke.Thickness
+		//
+		// A shape with no pen gets no inset. Thickness defaults to 1
+		// whether or not a Stroke was declared, so insetting
+		// unconditionally shrank every fill-only shape by half a pixel
+		// for no reason anyone could see — small, but it is the fill
+		// landing somewhere other than where the markup put it.
+		t := pen(s)
 		x, y := s.X*w+t/2, s.Y*h+t/2
 		rw, rh := s.W*w-t, s.H*h-t
 		if rw <= 0 || rh <= 0 {
@@ -928,7 +986,8 @@ func path(dc *gg.Context, s Shape, w, h float64) {
 		}
 		dc.DrawRectangle(x, y, rw, rh)
 	case KindEllipse:
-		dc.DrawEllipse(s.CX*w, s.CY*h, s.RX*w-s.Stroke.Thickness/2, s.RY*h-s.Stroke.Thickness/2)
+		t := pen(s)
+		dc.DrawEllipse(s.CX*w, s.CY*h, s.RX*w-t/2, s.RY*h-t/2)
 	case KindLine:
 		dc.DrawLine(s.X0*w, s.Y0*h, s.X1*w, s.Y1*h)
 	case KindPolyline:
