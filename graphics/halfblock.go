@@ -25,6 +25,13 @@ import (
 // halo — which is why the discarded alpha below is a decision rather than
 // an oversight, and why it survived Scale becoming a resampling filter
 // even though that manufactures far more partial alpha than it used to.
+//
+// A prose argument is not a guard, and the sixel side of this asymmetry
+// has tests where this had none — which is the shape that invites someone
+// to "fix" the inconsistency in the wrong direction. It is pinned now by
+// TestATranslucentPixelIsPaintedAsItsBlendAgainstBlackNotItsOwnColour, the
+// mirror of sixel_test.go's
+// TestAKeptPixelIsDeclaredAtItsOwnColourNotItsPremultipliedOne.
 func DrawHalfblock(b *render.Buffer, img image.Image, col, row, cols, rows int) {
 	px := Scale(img, cols, rows*2)
 	for y := 0; y < rows; y++ {

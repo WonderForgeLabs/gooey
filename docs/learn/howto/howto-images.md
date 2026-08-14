@@ -68,8 +68,24 @@ else:
 }
 ```
 
-`graphics.Scale(img, w, h)` resizes to a pixel size with
-nearest-neighbour sampling if you need to prepare the source.
+`graphics.Scale(img, w, h)` resizes to a pixel size if you need to
+prepare the source. It **resamples** with a triangle (bilinear) kernel:
+every destination pixel is a weighted average of the source pixels it
+covers, so a reduction keeps thin features instead of hitting or missing
+them on a grid, and an enlargement is smooth rather than blocky. The
+triangle kernel has no negative lobes, so its output is always a convex
+combination of its inputs and it cannot overshoot the source's range and
+ring a hard edge — which is why it is bilinear rather than a cubic like
+CatmullRom. `Scale`'s doc comment carries the measurements behind that
+choice.
+
+Reducing costs accordingly: it reads every source pixel now, where
+subsampling read only as many as it wrote. A 1920×1080 photo into a
+200×120 halfblock rectangle is tens of milliseconds. That runs on the
+Image's paint node, so it re-runs only when the source, the size, or the
+damage changes — not once a frame — but resizing the terminal changes the
+size, so a large source scaled straight into a pane will stutter on
+resize. Scale once and bind the result if the size is not really varying.
 
 An image asks for a cell rectangle and means it, so give it an alignment
 if its parent would otherwise stretch it:
