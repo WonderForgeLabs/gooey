@@ -95,7 +95,6 @@ Neither requires hiding the subtree.
 > what freezing covers, the three touch points, the guards and their
 > tests — is unchanged.
 
-
 Ruled by Elan: *"i want it to render, i just don't want it to do stuff.
 you click a button, in design mode it just sits there like a still pic."*
 

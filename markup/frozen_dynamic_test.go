@@ -435,3 +435,53 @@ func TestFrozenOverPlainGoStateIsStillSampled(t *testing.T) {
 			"the escape hatch the doc names does not work", n)
 	}
 }
+
+// TestFreezingClearsTheFocusMemory closes the last of the things
+// m.parent's deliberate liveness lie keeps alive across a freeze.
+//
+// PreviouslyFocused is what an overlay restores to on dismiss, and it
+// tests liveness against m.parent — which records frozen descendants on
+// purpose (see walk). So without evictFrozen's clear it goes on naming a
+// component that is now inside a picture, SetFocus refuses it because it
+// is no longer in m.order, and the caller gets a bare false.
+//
+// That is the failure worth pinning: not a crash, not a misroute, but an
+// overlay written as `if !SetFocus(PreviouslyFocused())` with no fallback
+// leaving focus wherever it happened to be. Returning nil says "there is
+// nothing to restore to", which is true and which a caller can branch on.
+//
+// The unfrozen arm is what stops this passing vacuously: the same tab and
+// the same flip against a host that never freezes must still remember.
+func TestFreezingClearsTheFocusMemory(t *testing.T) {
+	run := func(freeze bool) (prev gooey.Component, inside gooey.Component) {
+		ctx := designCtx(false)
+		c := frozenPage(t, designPage, ctx)
+		in, err := Find[*components.TextBox](ctx, "inside")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Focus the inside box, then move away: that MOVE is what records
+		// m.prev, and it has to happen while the subtree is still live.
+		if !c.Focus().SetFocus(in) {
+			t.Fatal("could not focus the inside box while the host was live")
+		}
+		c.Focus().FocusNext()
+		if got := c.Focus().PreviouslyFocused(); got != gooey.Component(in) {
+			t.Fatalf("PreviouslyFocused = %T before any freeze, want the inside box", got)
+		}
+
+		if freeze {
+			designProp(ctx).Set(true)
+		}
+		c.Frame()
+		return c.Focus().PreviouslyFocused(), in
+	}
+
+	if prev, _ := run(true); prev != nil {
+		t.Errorf("PreviouslyFocused = %T after the freeze, want nil: it names a "+
+			"component inside a picture, and SetFocus will refuse it with a bare false", prev)
+	}
+	if prev, in := run(false); prev != gooey.Component(in) {
+		t.Errorf("the control arm forgot too (%T): the freeze case proves nothing", prev)
+	}
+}

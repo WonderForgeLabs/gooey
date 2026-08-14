@@ -416,6 +416,27 @@ func (m *FocusManager) evictFrozen() {
 	if m.captor != nil && m.frozenHostFor(m.captor) != m.captor {
 		m.captor, m.held = nil, false
 	}
+	// m.prev and m.lastClick are memories of a component, not live
+	// routing, and they are CLEARED rather than retargeted: the frozen
+	// host is not where focus was, and it is not what was clicked.
+	//
+	// Clearing m.prev is what makes the failure loud instead of silent.
+	// PreviouslyFocused tests liveness against m.parent, which records
+	// frozen descendants deliberately, so without this it keeps naming a
+	// component inside a picture; SetFocus then refuses it and returns
+	// false, and an overlay written as `if !SetFocus(PreviouslyFocused())`
+	// with no fallback leaves focus wherever it happened to be. Returning
+	// nil says "there is nothing to restore to", which is true and which
+	// a caller can branch on.
+	//
+	// m.lastClick goes with its counter: a double-click is two presses on
+	// the same component, and the second one can no longer land there.
+	if m.prev != nil && m.frozenHostFor(m.prev) != m.prev {
+		m.prev = nil
+	}
+	if m.lastClick != nil && m.frozenHostFor(m.lastClick) != m.lastClick {
+		m.lastClick, m.clicks = nil, 0
+	}
 }
 
 // walk builds the input tree. frozen is true inside a Frozen subtree, and
