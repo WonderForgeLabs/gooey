@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/prop"
 )
 
 // A frozen subtree renders but does not act. The consequence with teeth
@@ -28,6 +30,21 @@ type frozenHost struct {
 	// asserts that an event aimed at a descendant arrived at the host
 	// instead of being swallowed.
 	got []input.MouseEvent
+	// when, where set, is the property the host's answer is DERIVED from —
+	// the shape a real design surface takes. Nil means the constant `true`
+	// every test written before the flip was observable relies on, and it
+	// is also the case that must keep costing nothing: a Frozen() that
+	// reads no property records no dependency and is never woken.
+	when *prop.Property[bool]
+	// state, where set, is the same answer held in PLAIN GO STATE. It is
+	// the documented limit of the mechanism made testable — nothing
+	// subscribes to a field — and it exists so the negative case is pinned
+	// rather than asserted in prose.
+	state *bool
+	// calls counts how often the framework has asked. A spurious re-sync
+	// is otherwise invisible — it repaints nothing, moves no focus and
+	// keeps every hover edge — so cost is the only thing left to measure.
+	calls int
 }
 
 func (h *frozenHost) HandleMouse(ev input.MouseEvent) bool {
@@ -35,7 +52,16 @@ func (h *frozenHost) HandleMouse(ev input.MouseEvent) bool {
 	return true
 }
 
-func (h *frozenHost) Frozen() bool                       { return true }
+func (h *frozenHost) Frozen() bool {
+	h.calls++
+	if h.when != nil {
+		return h.when.Get()
+	}
+	if h.state != nil {
+		return *h.state
+	}
+	return true
+}
 func (h *frozenHost) ChildComponents() []gooey.Component { return []gooey.Component{h.child} }
 func (h *frozenHost) Measure(a gooey.Size) gooey.Size    { return gooey.MeasureChild(h.child, a) }
 func (h *frozenHost) Arrange(b gooey.Rect)               { h.Base.Arrange(b); gooey.ArrangeChild(h.child, b) }
@@ -90,6 +116,31 @@ func withFrozen(ctx *Context) *Context {
 			return nil, err
 		}
 		h := &frozenHost{}
+		// When="{{.X}}" makes the host's answer DERIVED, through the same
+		// binding resolution every other control uses — not a test-only
+		// back door, so what the tests exercise is what an app writes.
+		// Absent, the host is the constant-true one the older tests use.
+		if raw := e.Attrs["When"]; raw != "" {
+			v, err := c.BindingValue(raw)
+			if err != nil {
+				return nil, fmt.Errorf("markup: <Frozen When=%q>: %w", raw, err)
+			}
+			p, ok := v.(*prop.Property[bool])
+			if !ok {
+				return nil, fmt.Errorf("markup: <Frozen When=%q> is %T; need *prop.Property[bool]", raw, v)
+			}
+			h.when = p
+		}
+		// State="X" is the same fact read out of a plain Go bool — the
+		// mechanism's documented blind spot, wired up so a test can watch it
+		// stay blind.
+		if name := e.Attrs["State"]; name != "" {
+			b, ok := c.Values[name].(*bool)
+			if !ok {
+				return nil, fmt.Errorf("markup: <Frozen State=%q> is %T; need *bool", name, c.Values[name])
+			}
+			h.state = b
+		}
 		if len(kids) > 0 {
 			h.child = kids[0]
 		}

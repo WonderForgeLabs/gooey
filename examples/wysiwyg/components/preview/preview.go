@@ -16,6 +16,7 @@ package preview
 import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -32,6 +33,40 @@ type Pane struct {
 	child gooey.Component
 	hook  func()
 	size  gooey.Size
+
+	// design is the mode switch: true means the mounted tree is a PICTURE
+	// and nothing in it acts. See Frozen.
+	design *prop.Property[bool]
+}
+
+// BindDesignMode makes the pane a gooey.Frozen host whose answer is a
+// property rather than a constant, which is the whole point of a design
+// surface: the same tree is a picture while you are building it and a
+// working UI while you are trying it, and the switch between them is one
+// Set.
+//
+// It is wired in Go rather than through a <Preview Design="{{...}}">
+// attribute because this pane is already constructed in Go and handed to
+// Builder — one instance per editor, deliberately — so an attribute would
+// be a second route to a field the builder cannot honestly own.
+func (p *Pane) BindDesignMode(design *prop.Property[bool]) { p.design = design }
+
+// Frozen is gooey.Frozen, and the Get is what makes the flip observable:
+// called from the Composer's frozen observer this read SUBSCRIBES, so
+// setting the property re-routes input, stops the document's Startables
+// and re-tabs the page in the same frame. Called from dispatch or from the
+// re-sync walk the identical line is a plain read. The call site decides,
+// as everywhere else.
+//
+// An unbound pane is frozen. That is the safe default for what this
+// component IS — a preview you cannot accidentally click into — and it
+// means forgetting to bind the mode leaves a picture rather than a live
+// tree wired to nothing.
+func (p *Pane) Frozen() bool {
+	if p.design == nil {
+		return true
+	}
+	return p.design.Get()
 }
 
 // Builder registers the pane as <Preview/>, with p as its host.

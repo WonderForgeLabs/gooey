@@ -383,6 +383,60 @@ func (m *FocusManager) Resync() {
 	if _, live := m.parent[m.lastClick]; !live {
 		m.lastClick, m.clicks = nil, 0
 	}
+	m.evictFrozen()
+}
+
+// evictFrozen is the pointer half of a host that froze SINCE the last
+// re-sync, and it is the one thing the liveness checks above cannot cover.
+//
+// Focus is already handled: the walk left the subtree out of m.order, so
+// the loop above finds no index for a focused descendant and hands focus to
+// the first stop. Hover and capture are the opposite — both are tested for
+// liveness against m.parent, and m.parent records frozen descendants
+// DELIBERATELY (see walk), so both checks pass for a component that is now
+// inside a picture. Without this, a pointer that was already over a design
+// surface when it froze goes on lighting the button underneath, and a drag
+// that started before the flip keeps steering the thing it grabbed —
+// DispatchMouse's retarget cannot help, because target() returns the captor
+// first and the captor was set from an un-retargeted hit.
+//
+// Hover is RETARGETED rather than cleared: the pointer really is over the
+// frozen host, so the state the next motion event would arrive at is the
+// state to jump to now. setHover does the watcher edges on the way, which
+// is what takes a tooltip down as the surface freezes under it.
+//
+// Capture is DROPPED rather than handed to the host, and that asymmetry is
+// deliberate: the host never received the press, so giving it the release
+// would synthesize a click nobody made. It is the same call the liveness
+// check makes for a captor that vanished mid-drag.
+func (m *FocusManager) evictFrozen() {
+	if h := m.frozenHostFor(m.hover); h != m.hover {
+		m.setHover(h)
+	}
+	if m.captor != nil && m.frozenHostFor(m.captor) != m.captor {
+		m.captor, m.held = nil, false
+	}
+	// m.prev and m.lastClick are memories of a component, not live
+	// routing, and they are CLEARED rather than retargeted: the frozen
+	// host is not where focus was, and it is not what was clicked.
+	//
+	// Clearing m.prev is what makes the failure loud instead of silent.
+	// PreviouslyFocused tests liveness against m.parent, which records
+	// frozen descendants deliberately, so without this it keeps naming a
+	// component inside a picture; SetFocus then refuses it and returns
+	// false, and an overlay written as `if !SetFocus(PreviouslyFocused())`
+	// with no fallback leaves focus wherever it happened to be. Returning
+	// nil says "there is nothing to restore to", which is true and which
+	// a caller can branch on.
+	//
+	// m.lastClick goes with its counter: a double-click is two presses on
+	// the same component, and the second one can no longer land there.
+	if m.prev != nil && m.frozenHostFor(m.prev) != m.prev {
+		m.prev = nil
+	}
+	if m.lastClick != nil && m.frozenHostFor(m.lastClick) != m.lastClick {
+		m.lastClick, m.clicks = nil, 0
+	}
 }
 
 // walk builds the input tree. frozen is true inside a Frozen subtree, and
