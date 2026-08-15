@@ -46,14 +46,20 @@
 #   models, re-downloaded by say.sh on first run, and not ours to
 #   redistribute.
 #
+# CI FETCHES THESE. actions/checkout defaults to lfs:FALSE, which is the
+# dangerous default here: a job that checks out without it gets pointer TEXT
+# where a binary should be, and pointer text is a perfectly valid file, so
+# nothing errors. A step reading one sees 130 bytes beginning "version
+# https://git-lfs.github.com/spec/v1" and carries on as if that were the
+# content. Every actions/checkout in .github/workflows/ therefore sets
+# `lfs: true`, and TestEveryCheckoutFetchesLFS fails if one does not —
+# including the one in the next workflow somebody adds.
+#
 # CONSEQUENCES FOR A CLONE WITHOUT GIT-LFS. Everything still works; some
 # files are pointer text. The wavs re-render with `say.sh all` and only the
 # exact timings are lost. GIFs recorded before this rule play as they always
 # did; ones recorded after will not animate in `cmd/browser` until the
-# objects are fetched. CI is unaffected either way — actions/checkout
-# defaults to lfs:false, and nothing in the build or the test suite reads a
-# committed GIF (cmd/browser's gifplay tests encode their own into a temp
-# dir).
+# objects are fetched.
 *.wav filter=lfs diff=lfs merge=lfs -text
 *.gif filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
