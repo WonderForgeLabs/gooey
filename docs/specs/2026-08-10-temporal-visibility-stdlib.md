@@ -257,6 +257,25 @@ Landed as designed. The record of fact:
   `ci.yml`, mirroring the other nested modules (no `-race`: matching
   `handlers/temporal`, whose tests these follow; nothing here asserts
   goroutine discipline).
+  **Superseded 2026-08-15 — this module races, and it has for its whole
+  life (#262).** The line above is left as written because this file is a
+  dated record, but do not act on it. It needed no judgement call to
+  resolve: its rule was "match `handlers/temporal`", and one day after it
+  was written `b5869ae` (#182/#190) put `handlers/temporal` **under
+  `-race`** — because a real data race had been sitting on main precisely
+  where nothing was watching. So the spec's own rule, applied today,
+  yields `-race`; and its second clause ("nothing here asserts goroutine
+  discipline") is the exact belief #182 disproved for the module this one
+  was copying.
+  `ci.yml` has raced every `packs/*` since the glob landed, so the two
+  have contradicted each other from the start with nothing failing to
+  reveal it — the tests pass under the detector either way.
+  **The tier is not decided here.** `CLAUDE.md`'s Verify section and
+  `ci.yml`'s case arm are the authority, and
+  `TestCIWorkflowRaceTierMatchesCLAUDEMD` fails if those two drift, so
+  there is a check behind them and there is none behind a sentence in a
+  spec. A decision record should say what was decided and why; when it
+  also restates a mechanism, the restatement is what goes stale.
 - READMEs: the pack's own (import path, names, proto promise, Python
   interop snippet, no-gooey guarantee); `handlers/temporal/README.md`
   links to it.
