@@ -1,24 +1,43 @@
-# Git LFS.
+# Git LFS, by FILE TYPE rather than by path.
 #
-# The Rectangle's rendered narration — 24 wavs, ~46MB — is committed rather
-# than regenerated, because it is the take the talk was TIMED against. Every
-# **DURATION:** marker in NARRATION.md is measured off these exact files, so a
-# clone that re-renders instead of fetching gets a script whose timings
-# describe audio it does not have. Derived, yes; reproducible byte-for-byte,
-# no.
+# A path rule (`presentations/the-rectangle/audio/*.wav`) was the first
+# version and it is the same defect as a hand-maintained list: the next talk
+# in the next directory gets plain-git binaries and nobody notices until the
+# clone is huge. The type is the durable fact — a wav is a wav wherever it
+# lands.
 #
-# LFS rather than plain git because 46MB of binary would sit in every clone's
-# history forever, and re-cutting the script rewrites all 24.
+# WHY THE AUDIO IS COMMITTED AT ALL. The Rectangle's 24 rendered takes look
+# like derived output and mostly are, but every **DURATION:** marker in its
+# NARRATION.md is measured with ffprobe against these exact files. A clone
+# that re-renders instead of fetching gets a script whose timings describe
+# audio it does not have. Piper is deterministic enough to sound the same and
+# not enough to be the same file.
 #
-# What is deliberately NOT here:
+# WHY LFS. 46MB of binary, and re-cutting the script rewrites all 24 — that
+# is history every clone would carry forever.
 #
-#   voices/  — 224MB of piper's models. Third-party, downloaded by say.sh on
-#              first run, and not ours to redistribute.
-#   .txt     — the receipts beside each wav. Small, text, and diffable, and
-#              they are what present.py compares to decide a take is stale;
-#              in LFS a fresh clone could not run that check without fetching.
+# WHAT IS NOT HERE, AND WHY:
+#
+#   *.gif, *.png — 21 GIFs (7.3MB) and 9 PNGs are ALREADY committed as plain
+#     git objects. Adding them here would not convert those; it would only
+#     convert the next one touched, leaving the same file type stored two
+#     ways. Doing it properly means `git lfs migrate` and a history rewrite,
+#     which is a repo-wide decision and not this branch's to make. If someone
+#     takes it, the docs-and-demos workflow re-records every GIF, so it is the
+#     natural moment.
+#
+#   voices/ — 224MB of piper's models are gitignored outright, not stored.
+#     Third-party, re-downloaded by say.sh on first run, not ours to
+#     redistribute.
+#
+#   the .txt receipts beside each wav — deliberately ordinary git objects.
+#     Small, diffable, and present.py compares them to decide a take is
+#     stale; in LFS a fresh clone could not run that check without fetching
+#     the very thing it is checking.
 #
 # CI does not fetch these. actions/checkout defaults to lfs:false, so its
-# working copy has pointer files — which is correct, because nothing in the
-# build or the test suite reads presentations/.
-presentations/the-rectangle/audio/*.wav filter=lfs diff=lfs merge=lfs -text
+# working copy has pointer files — correct, because nothing in the build or
+# the test suite reads presentations/. A contributor without git-lfs still
+# gets a working clone: the wavs are pointer text, `say.sh all` re-renders
+# them, and only the exact timings are lost.
+*.wav filter=lfs diff=lfs merge=lfs -text
