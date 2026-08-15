@@ -19,12 +19,14 @@
 // KeyBinding attachments are all built as Go literals here. cmd/markuplog
 // runs the same viewmodel with the tree authored in XML markup instead,
 // and the contrast between the two files is the point of having both.
+// Only the TREE differs between them — both run on gooey.App, because a
+// hand-written select loop is not the Go-composition flavor of anything.
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"strings"
 	"time"
 
@@ -33,7 +35,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 type line struct {
@@ -81,7 +82,7 @@ func main() {
 
 	// --- commands: the same func() values a markup Click= or
 	// <KeyBinding Command=…> would resolve to, bound here by hand.
-	running := true
+	var app *gooey.App
 	togglePause := gooey.Command(func() {
 		if follow.Get() {
 			frozen.Set(lines.Get()) // snapshot, then switch branch
@@ -100,7 +101,7 @@ func main() {
 			filter.Set("")
 		}
 	})
-	quit := gooey.Command(func() { running = false })
+	quit := gooey.Command(func() { app.Quit() })
 
 	// --- retained tree, composed in Go ---
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
@@ -149,46 +150,31 @@ func main() {
 		root.Attach(kb)
 	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// gooey.Tree is the Content for a tree built in Go and never
+	// replaced — the same run loop markuplog gets from markup.Page, minus
+	// the reload. What used to be sixty lines here (open, raw mode,
+	// mouse, decoder goroutine, select, deferred restore) is the App's,
+	// along with the parts those sixty lines never got right: SIGWINCH,
+	// ctrl+z, and dying with the terminal intact.
+	app = gooey.NewApp(gooey.Tree(root))
 
-	needsFrame := true
-	comp := gooey.NewComposer(root, cols, rows)
-	comp.OnInvalidate(func() { needsFrame = true })
+	// The firehose. It is the APP's clock rather than the tree's — a
+	// <Timer> would be the tree's, which is the right choice in markuplog
+	// where a hot reload replaces the tree and must not reset the stream.
+	// Every posts onto the UI goroutine, so the closure is ordinary UI
+	// code.
+	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), nextLine())) })
 
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
+	// Stats about the frame about to be composed: setting a property from
+	// here folds its repaint into that frame instead of scheduling
+	// another one.
+	app.BeforeFrame(func() {
+		statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
+			lineCount, app.Frames(), visible.Evals(), app.PaintedLastFrame()))
+	})
 
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-
-	gen := time.NewTicker(130 * time.Millisecond)
-	defer gen.Stop()
-	frames, lastPainted := 0, 0
-
-	for running {
-		if needsFrame {
-			frames++
-			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
-				lineCount, frames, visible.Evals(), lastPainted))
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case <-gen.C:
-			lines.Set(append(lines.Get(), nextLine()))
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
 }
 

@@ -178,13 +178,16 @@ type logPane struct {
 
 func (p *logPane) Measure(avail gooey.Size) gooey.Size { return avail }
 
+// levelStyles is package-level because Render is a paint node: building
+// the map inside it allocates on every repaint of the pane.
+var levelStyles = map[string]render.Style{
+	"ERROR": {Fg: render.RGB(240, 90, 90), Bold: true},
+	"WARN":  {Fg: render.RGB(230, 190, 80)},
+	"INFO":  {},
+	"DEBUG": {Fg: render.RGB(120, 120, 130)},
+}
+
 func (p *logPane) Render(f *gooey.Frame) {
-	styles := map[string]render.Style{
-		"ERROR": {Fg: render.RGB(240, 90, 90), Bold: true},
-		"WARN":  {Fg: render.RGB(230, 190, 80)},
-		"INFO":  {},
-		"DEBUG": {Fg: render.RGB(120, 120, 130)},
-	}
 	b := p.Bounds()
 	ls := p.src.Get()
 	if len(ls) > b.H {
@@ -195,7 +198,7 @@ func (p *logPane) Render(f *gooey.Frame) {
 		if len(s) > b.W {
 			s = s[:b.W]
 		}
-		f.Cells.SetString(b.X, b.Y+i, s, styles[l.level])
+		f.Cells.SetString(b.X, b.Y+i, s, levelStyles[l.level])
 	}
 }
 
