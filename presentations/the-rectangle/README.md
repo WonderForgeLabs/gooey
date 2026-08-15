@@ -1,6 +1,23 @@
 # The Rectangle
 
-A nine-minute talk introducing gooey, given *inside* gooey.
+A talk introducing gooey, given *inside* gooey. Twenty-four beats in two acts.
+
+**Act I · Concept** (1–16) is the explanation: what a terminal actually is, a
+tour of what people built in one anyway, why drawing one is harder than it
+looks, and the single idea the framework is built around. It is adapted from
+`examples/introdeck`, and several of its beats want a real program on screen
+rather than a slide — each says which.
+
+**Act II · The Rectangle** (17–24) is the functional demo: the same claims,
+live, in a running program that is rewritten from outside while the audience
+watches. It needs nothing but the wysiwyg editor.
+
+The hand-over is beat 11, and it is audible — beats 1–11 are the presenter's
+voice, everything from 12 on is the agent's.
+
+**20:03 end to end** — 16:41 spoken, 3:22 of holds, split 12:12 / 7:51 between
+the acts. Those are measured off the rendered audio, not estimated; see the
+Narration section.
 
 There is no presentation program here. The slides are a `<Canvas>` patched over
 the centre pane of a running `examples/wysiwyg` — the markup editor — which
@@ -8,16 +25,19 @@ keeps running underneath and goes back to being an editor when the talk ends.
 Advancing a slide is one `set_value` per field; nothing rebuilds, and only the
 components that read the changed property repaint.
 
-That arrangement is not a stunt for its own sake. Four of the eight beats make a
+That arrangement is not a stunt for its own sake. Four of Act II's beats make a
 claim about the framework that the screen has to back up live, and building the
 deck any other way would make those beats a lie:
 
 | beat | the claim | what proves it |
 |---|---|---|
-| 2 | a change repaints only what read it | the rail and status bar don't flicker when a slide advances |
-| 3 | markup is a live file, state outlives it | one attribute collapsed two panes; the ColorPicker kept its colour |
-| 4 | the tree is the API | the `grpc` / `mcp` addresses on the status bar are real and reachable |
-| 7 | the UI can be built from outside | every `Deck.*` property was registered into a process compiled without them |
+| 18 | a change repaints only what read it | the rail and status bar don't flicker when a slide advances |
+| 19 | markup is a live file, state outlives it | one attribute collapsed two panes; the ColorPicker kept its colour |
+| 20 | the tree is the API | the `grpc` / `mcp` addresses on the status bar are real and reachable |
+| 23 | the UI can be built from outside | every `Deck.*` property was registered into a process compiled without them |
+
+Act I's live beats (3, 5, 6, 7, 8, 16) are the same rule from the other side:
+they host a real program, or they are honestly a slide about one.
 
 ## Running it
 
@@ -43,8 +63,38 @@ cd presentations/the-rectangle
 ./present.py setup      # register 14 properties, install deck.gooey, show slide 1
 ./present.py next       # advance
 ./present.py 5          # jump
+./present.py keys       # presenter mode: pgdn/pgup in THIS terminal
+./present.py rehearse   # the whole talk unattended, with narration and holds
 ./present.py teardown   # give the designer pane back
 ```
+
+## Driving it from the keyboard
+
+Two ways, and they differ in more than ergonomics.
+
+`./present.py keys` reads pgdn/pgup in the **presenter's** terminal and turns
+each press into the same `set_value` calls. That terminal needs focus, which is
+the real cost — but the deck stays property-bound, so beat 23's claim holds in
+full.
+
+`./present.py tabs` instead generates a deck built from `<Tabs>`, whose
+`HandleKey` consumes `ctrl+pgup` / `ctrl+pgdn` from anywhere in its subtree
+(`components/tabs.go:265`) — so the **editor window itself** drives the talk,
+with no host code, no `gooey.Action`, and no `KeyBinding`. Setup focuses the
+`Tabs` by name, because those keys bubble *up* from the focused component and
+focus otherwise sits on the ActivityBar, a sibling of the pane.
+
+Whichever is installed, the commands are the same — `present.py` sets `Deck.Sel`
+as well as the `Deck.*` fields when that property exists, so `next`, `prev`, a
+slide number and `keys` all drive either deck. (They did not, for a while: a
+numeric jump against the tab deck moved nothing and reported success anyway.)
+
+The trade is real and worth stating out loud: the control plane registers
+**source** properties, never **computeds**. A tab index cannot recompute
+`Deck.Title`, so the tab deck carries its slides **literally** in markup. The
+words move out of the property graph and into the XML, which softens beat 23
+from "every string is a property registered from outside" to "the whole deck
+was patched in from outside". Both are true; one is a bigger claim.
 
 `present.py` finds the app by probing loopback for a gooey MCP server. With more
 than one gooey app running that guess can land on the wrong one — pin it with
@@ -54,11 +104,21 @@ status bar.
 ## Narration
 
 ```sh
-./say.sh all            # render every beat to audio/NN-ryan.wav
+./say.sh all            # every beat, each in its own marked voice
 ./say.sh 3              # just beat 3
-./say.sh 3 claude       # beat 3 in the second voice
+./say.sh 3 claude       # override the voice
 ./say.sh play 03-ryan
 ```
+
+Each beat carries a `**VOICE:**` marker and `say.sh` reads it: beats 1–11
+render as `en_US-ryan-high`, 12–24 as `en_US-lessac-high`. That split is not
+decoration — beat 11 *is* the hand-over and says so out loud, so a single-voice
+render makes that beat a lie.
+
+Re-render and then **re-measure**: the `**DURATION:**` markers in `NARRATION.md`
+come from `ffprobe` on the wavs, and the estimated first pass was short on
+nearly every beat — one by twenty-four seconds. A timing you rehearse against is
+worse than no timing, because you pace to it.
 
 Offline, via [piper](https://github.com/OHF-Voice/piper1-gpl) through `uvx` — no
 key, no budget, no network, so the script can be re-cut as many times as the
@@ -82,6 +142,16 @@ the agent speaking about itself.
 
 `NARRATION.md` is the only file to edit for content. `deck.gooey` is layout and
 changes rarely; `present.py` reads both and hardcodes neither.
+
+One sharp edge if you edit slide text: a slide that **shows** markup can contain
+a binding as prose, and `scanBindings` finds bindings anywhere in a `Text` body
+(`markup.go:984`) with no escape syntax. In the property deck that is harmless —
+the text is a property *value* and nothing re-parses it. In the tab deck it is
+markup, and beat 16's literal `{{.Count}}` fails the build with `"Count" not
+found in context`. `present.py tabs` handles it by registering each such name as
+a string whose value is its own spelling, so `{{.Count}}` resolves to the text
+`{{.Count}}` and the slide shows what it meant to. It reports which names it
+quoted.
 
 ## Known cosmetic defect
 

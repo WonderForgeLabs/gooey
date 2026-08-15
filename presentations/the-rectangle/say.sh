@@ -53,17 +53,39 @@ PY
   ffprobe -v error -show_entries format=duration -of default=nw=1 "$file" 2>/dev/null || echo
 }
 
+# The **VOICE:** marker for beat $1, unless $2 overrides it.
+voice_of() {
+  [ -n "$2" ] && { printf '%s' "$2"; return; }
+  python3 -c "
+import re,pathlib,sys
+m=re.findall(r'\*\*VOICE:\*\*\s*(\w+)',pathlib.Path('NARRATION.md').read_text())
+i=int(sys.argv[1])
+print(m[i-1] if len(m)>=i else 'narrator')" "$1"
+}
+
+# Whole blocks, not opening fences. The preamble explains the format and so
+# mentions ```speak in prose; counting fences made `all` walk two beats past
+# the end, and piper wrote an empty 25-*.wav rather than failing.
 count() {
-  python3 -c "import re,pathlib;print(len(re.findall(r'\`\`\`speak',pathlib.Path('NARRATION.md').read_text())))"
+  python3 -c "
+import re,pathlib
+print(len(re.findall(r'\`\`\`speak\n(.*?)\`\`\`',pathlib.Path('NARRATION.md').read_text(),re.S)))"
 }
 
 case "$1" in
   play) paplay "$out/$2.wav" ;;
   all)
+    # Per-beat voice, from the **VOICE:** markers. The talk hands over from the
+    # presenter to the agent at beat 12 and never hands back, and beat 11 says
+    # so out loud — so a single-voice render makes that beat a lie. An explicit
+    # role as $2 overrides, for checking one voice end to end.
     ensure_voices; mkdir -p "$out"
     n=1; last=$(count)
-    while [ "$n" -le "$last" ]; do render "$n" "$2"; n=$((n + 1)); done
+    while [ "$n" -le "$last" ]; do
+      render "$n" "$(voice_of "$n" "$2")"
+      n=$((n + 1))
+    done
     ;;
   ''|*[!0-9]*) echo "usage: say.sh {all|<beat>|play <basename>} [claude]" >&2; exit 2 ;;
-  *) ensure_voices; mkdir -p "$out"; render "$1" "$2" ;;
+  *) ensure_voices; mkdir -p "$out"; render "$1" "$(voice_of "$1" "$2")" ;;
 esac
