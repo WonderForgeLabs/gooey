@@ -15,7 +15,7 @@ watches. It needs nothing but the wysiwyg editor.
 The hand-over is beat 11, and it is audible — beats 1–11 are the presenter's
 voice, everything from 12 on is the agent's.
 
-**20:03 end to end** — 16:41 spoken, 3:22 of holds, split 12:12 / 7:51 between
+**21:16 end to end** — 17:54 spoken, 3:22 of holds, split 13:03 / 8:13 between
 the acts. Those are measured off the rendered audio, not estimated; see the
 Narration section.
 
@@ -139,6 +139,18 @@ Re-render and then **re-measure**: the `**DURATION:**` markers in `NARRATION.md`
 come from `ffprobe` on the wavs, and the estimated first pass was short on
 nearly every beat — one by twenty-four seconds. A timing you rehearse against is
 worse than no timing, because you pace to it.
+
+Each wav gets a `.txt` receipt holding the exact line that produced it. That is
+what makes two things possible: `present.py rehearse` **refuses to run** against
+audio whose text no longer matches the script, and a truncated take is
+detectable, because characters-per-second is comparable across the deck. Both
+checks exist because both failures happened — a stale take sounds completely
+fine and times wrong, and a half-written wav measured 0:29 for a 0:47 beat.
+
+The staleness check compares *text*, not mtime. mtime was the first attempt and
+it was useless: re-measuring the DURATION markers rewrites `NARRATION.md` and
+marked all 24 takes stale over a change that touched no speech. A check that
+fires on every routine edit is a check you learn to skip.
 
 Offline, via [piper](https://github.com/OHF-Voice/piper1-gpl) through `uvx` — no
 key, no budget, no network, so the script can be re-cut as many times as the

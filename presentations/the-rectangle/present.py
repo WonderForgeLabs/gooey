@@ -206,6 +206,39 @@ def holds():
     return out
 
 
+def spoken():
+    """Each ```speak block flattened to one line — what say.sh feeds piper."""
+    return [" ".join(b.split()) for b in fenced("speak")]
+
+
+def stale_takes():
+    """Beats whose rendered audio says something the script no longer says.
+
+    Rehearsing against a stale take is the worst kind of wrong, because it
+    sounds completely fine: you hear a confident reading of a sentence you
+    deleted, time the beat against it, and find out in the room.
+
+    Compared by TEXT, against the .txt receipt say.sh writes next to each
+    wav — not by mtime. mtime was the first attempt and it was useless:
+    re-measuring the DURATION markers rewrites NARRATION.md and marked all
+    24 takes stale over a change that touched no speech at all. A check
+    that fires on every routine edit is a check you learn to skip.
+
+    A take with no receipt counts as stale: it was rendered before this
+    existed, so what it says is unknown, and unknown is not fine.
+    """
+    now = spoken()
+    out = []
+    for i in range(1, len(now) + 1):
+        takes = sorted((HERE / "audio").glob(f"{i:02d}-*.wav"))
+        if not takes:
+            continue          # missing is a different problem; rehearse says so
+        receipt = takes[0].with_suffix(".txt")
+        if not receipt.exists() or receipt.read_text().strip() != now[i - 1]:
+            out.append(i)
+    return out
+
+
 def rehearse(url):
     """Play the talk to an empty room, at its real pace."""
     import time
@@ -215,6 +248,11 @@ def rehearse(url):
         print(f"  ! {len(hs)} HOLD markers for {n} slides — using 4s where absent",
               file=sys.stderr)
         hs = (hs + [4] * n)[:n]
+    if stale := stale_takes():
+        sys.exit(f"  ! audio older than NARRATION.md for beat(s) "
+                 f"{', '.join(map(str, stale))} — run ./say.sh all first.\n"
+                 f"    (rehearsing against a take of words you have since "
+                 f"changed sounds fine and times wrong.)")
     for i in range(1, n + 1):
         show(url, i)
         # Either voice — the talk hands over from the presenter to the agent at
