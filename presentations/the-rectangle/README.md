@@ -5,7 +5,7 @@ A talk introducing gooey, given *inside* gooey. Twenty-four beats in two acts.
 **Act I · Concept** (1–16) is the explanation: what a terminal actually is, a
 tour of what people built in one anyway, why drawing one is harder than it
 looks, and the single idea the framework is built around. It is adapted from
-`examples/introdeck`, and several of its beats want a real program on screen
+`apps/introdeck`, and several of its beats want a real program on screen
 rather than a slide — each says which.
 
 **Act II · The Rectangle** (17–24) is the functional demo: the same claims,
@@ -20,7 +20,7 @@ the acts. Those are measured off the rendered audio, not estimated; see the
 Narration section.
 
 There is no presentation program here. The slides are a `<Canvas>` patched over
-the centre pane of a running `examples/wysiwyg` — the markup editor — which
+the centre pane of a running `apps/wysiwyg` — the markup editor — which
 keeps running underneath and goes back to being an editor when the talk ends.
 Advancing a slide is one `set_value` per field; nothing rebuilds, and only the
 components that read the changed property repaint.
@@ -42,7 +42,7 @@ they host a real program, or they are honestly a slide about one.
 ## One overlap the merge introduced
 
 Beats **6** ("And then it could hear") and **22** ("And then it could sing") are
-the same demo — `examples/soundboard` — making the same point twice, that the
+the same demo — `apps/soundboard` — making the same point twice, that the
 step grid is cells because it is discrete state and the scope is pixels because
 it is a continuous signal. Beat 6 is introdeck's; beat 22 is this deck's. Both
 hold twenty seconds for the program to run, so it is twenty minutes apart and
@@ -54,7 +54,7 @@ stronger of the two — it says "the data decided, not the framework" out loud �
 so the cut is probably beat 6, demoted to a slide about the era rather than a
 live run.
 
-Neither beat plays anything by itself. `examples/soundboard` is a separate
+Neither beat plays anything by itself. `apps/soundboard` is a separate
 program and nothing here launches it; in the first rehearsal both holds were
 twenty seconds of silence. It needs a second window, a pty, or `App.Suspend` the
 way `cmd/browser` does it — that staging is not decided.
@@ -65,14 +65,14 @@ Start the editor and leave it alone — **do not restart it mid-talk**, or beat 
 stops being true:
 
 ```sh
-cd examples/wysiwyg && go run .
+cd apps/wysiwyg && go run .
 ```
 
 Collapse the side panes so the designer owns the width. This is beat 3's demo,
 so do it on camera if the room is technical:
 
 ```
-# examples/wysiwyg/wysiwyg.gooey
+# apps/wysiwyg/wysiwyg.gooey
 <Grid Name="Page" Rows="1*,10,1" Cols="4,38,1*,46">   →   Rows="1*,0,1" Cols="4,0,1*,0"
 ```
 
@@ -167,7 +167,7 @@ the agent speaking about itself.
 
 | | |
 |---|---|
-| `NARRATION.md` | the talk. Slides (```` ```slide ````), speech (```` ```speak ````) and the backdrop (```` ```ghost ````) in one file, the way `examples/introdeck` does it — so the deck and the script cannot drift apart |
+| `NARRATION.md` | the talk. Slides (```` ```slide ````), speech (```` ```speak ````) and the backdrop (```` ```ghost ````) in one file, the way `apps/introdeck` does it — so the deck and the script cannot drift apart |
 | `deck.gooey` | the slide surface: a `patch_markup` fragment rooted at `Name="EditorArea"` |
 | `present.py` | the remote control |
 | `say.sh` | the narration renderer |

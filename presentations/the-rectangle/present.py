@@ -2,7 +2,7 @@
 """Drive The Rectangle over a running gooey app's MCP endpoint.
 
 The talk has no presentation program. It is a `patch_markup` into whatever
-gooey app is listening — in practice `examples/wysiwyg` — plus one `set_value`
+gooey app is listening — in practice `apps/wysiwyg` — plus one `set_value`
 per field to advance. This script is the remote control, and it is the only
 executable in the directory.
 

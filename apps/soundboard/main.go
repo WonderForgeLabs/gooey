@@ -1,7 +1,7 @@
 // soundboard: eight channels, a sixteen-step sequencer, and one stereo
 // stream out.
 //
-//	cd examples/soundboard && go build -o soundboard . && ./soundboard
+//	cd apps/soundboard && go build -o soundboard . && ./soundboard
 //
 // The beat it appears in is the one where a rectangle full of letters
 // turns out to be able to make a noise and show you the noise. It is a
@@ -17,7 +17,7 @@
 //     as pixels through halfblock (board.go).
 //   - <Image> from a HANDLE. The badge is generated at startup and bound
 //     as an image.Image, which is the same seam that stops a third party
-//     putting a pixel on your screen in examples/store. On a terminal
+//     putting a pixel on your screen in apps/store. On a terminal
 //     with sixel it is real graphics; on one without, the framework
 //     degrades it to halfblocks with no branch in this program.
 //   - UI-goroutine confinement under load. A 130 BPM sequencer costs the

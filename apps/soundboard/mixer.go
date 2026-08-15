@@ -13,7 +13,7 @@ package main
 // The audio goroutine runs at 48 kHz and never touches the property
 // graph. It owns the playheads, the step clock and the meters; the UI
 // reads all of that as a Snapshot value, once a frame, and does one Set.
-// The same shape as examples/synth, for the same reason: properties are
+// The same shape as apps/synth, for the same reason: properties are
 // unlocked and UI-confined, and 48000 Sets a second would be a bug even
 // if it were legal.
 

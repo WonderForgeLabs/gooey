@@ -34,15 +34,15 @@ before the take rather than during it:
 (cd ../synth       && go build -o synth .)
 ```
 
-Beat 3.2 and beat 3.5 both edit a **tracked** file — `examples/intro/main.go`
+Beat 3.2 and beat 3.5 both edit a **tracked** file — `apps/intro/main.go`
 and `counter.gooey` — because a copy would not be the program the beat claims to
 be showing. Reset between rehearsals:
 
 ```sh
-git checkout examples/intro/main.go examples/introdeck/counter.gooey
+git checkout apps/intro/main.go apps/introdeck/counter.gooey
 ```
 
-`introtarget` is the Part 4 subject: `examples/intro`'s empty tree plus
+`introtarget` is the Part 4 subject: `apps/intro`'s empty tree plus
 `control.NewService` and `mcp.Serve`, and nothing else. It listens on
 `127.0.0.1:7900`, and every property and every element that appears in it
 during 4.6 through 4.8 is registered from outside, at runtime, into a process
@@ -240,7 +240,7 @@ agreed on was text.
 
   <Text Grid.Row="0" Style="body">and then people started doing it for fun</Text>
 
-  <!-- examples/scene, hosted. Its own app, its own module, thirty
+  <!-- apps/scene, hosted. Its own app, its own module, thirty
        frames a second — and inside it exactly one component repaints
        per frame, which is pinned by a damage-count test rather than
        claimed in a comment.
@@ -286,7 +286,7 @@ presenting from. We'll get to that.
 
   <Text Grid.Row="0" Style="body">and it turned out the rectangle could make a noise, and show you the noise</Text>
 
-  <!-- examples/soundboard, hosted. Eight channels summed in Go, one
+  <!-- apps/soundboard, hosted. Eight channels summed in Go, one
        stereo stream to the sound server, a sixteen-step sequencer whose
        clock is counted in SAMPLES rather than in frames. The badge in
        its corner is an <Image> from a generated handle: real graphics
@@ -334,7 +334,7 @@ half-blocks. The program doesn't know which.
 
   <Text Grid.Row="0" Style="body">1999, roughly · the visualiser</Text>
 
-  <!-- examples/synth: a polyphonic instrument and the spectrum
+  <!-- apps/synth: a polyphonic instrument and the spectrum
        analyser everyone remembers from a media player. The bars are a
        real FFT of the samples going to the speaker, not an animation
        of one.
@@ -838,15 +838,15 @@ on it.
        This edits a TRACKED file. That is the same bargain beat 3.5
        makes with counter.gooey, and the same reset:
 
-           git checkout examples/intro/main.go
+           git checkout apps/intro/main.go
 
        Nothing needs prebuilding here — watchgo.sh builds on entry — but
-       `examples/intro` is in the ROOT module and this deck is not, so
+       `apps/intro` is in the ROOT module and this deck is not, so
        the build has to run in that directory rather than through
        `go run ../intro`, which cannot cross the boundary. -->
   <Grid Grid.Row="1" Cols="*,*">
 
-    <Border Grid.Col="0" Title="examples/intro/main.go — all of it" Style="island">
+    <Border Grid.Col="0" Title="apps/intro/main.go — all of it" Style="island">
       <Terminal Name="Source" Cmd="TERM=xterm-256color vim -n -u NONE -N --cmd 'set shortmess+=F' -c 'set nu' ../intro/main.go"/>
     </Border>
 
@@ -1220,12 +1220,12 @@ Hold onto that. It's about to stop being a convenience.
 <Gooey xmlns="wonderforge.io/gooey/2026">
 <Grid Name="Stage" Grid.Row="2" Rows="Auto,*,Auto">
 
-  <Text Grid.Row="0" Style="body">the six lines. this is the whole diff between examples/intro and examples/introtarget.</Text>
+  <Text Grid.Row="0" Style="body">the six lines. this is the whole diff between apps/intro and apps/introtarget.</Text>
 
   <!-- Written out rather than included, because this slide is about
-       reading the lines. They are the real ones: examples/introtarget/
-       main.go is examples/intro/main.go plus exactly this. -->
-  <Border Grid.Row="1" Title="examples/introtarget/main.go — the addition" Style="island">
+       reading the lines. They are the real ones: apps/introtarget/
+       main.go is apps/intro/main.go plus exactly this. -->
+  <Border Grid.Row="1" Title="apps/introtarget/main.go — the addition" Style="island">
     <VStack Gap="1" Margin="4,2">
 
       <Text Style="mono">ctx := &amp;markup.Context{Values: map[string]any{}}
@@ -1407,7 +1407,7 @@ from here.
 
   <!-- Two processes, on camera, both real.
 
-       LEFT is examples/introtarget: examples/intro's empty tree plus
+       LEFT is apps/introtarget: apps/intro's empty tree plus
        control.NewService and mcp.Serve, and nothing else. It declares no
        properties and no markup, so everything that appears in it during
        Part 4 was registered from outside, into a process compiled
@@ -1474,7 +1474,7 @@ with any of this in mind.
 
   <!-- Two processes, on camera, both real.
 
-       LEFT is examples/introtarget: examples/intro's empty tree plus
+       LEFT is apps/introtarget: apps/intro's empty tree plus
        control.NewService and mcp.Serve, and nothing else. It declares no
        properties and no markup, so everything that appears in it during
        Part 4 was registered from outside, into a process compiled
@@ -1539,7 +1539,7 @@ And I'd rather be told no like that than be trusted more than I've earned.
 
   <!-- Two processes, on camera, both real.
 
-       LEFT is examples/introtarget: examples/intro's empty tree plus
+       LEFT is apps/introtarget: apps/intro's empty tree plus
        control.NewService and mcp.Serve, and nothing else. It declares no
        properties and no markup, so everything that appears in it during
        Part 4 was registered from outside, into a process compiled

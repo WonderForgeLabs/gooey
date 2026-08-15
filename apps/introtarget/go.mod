@@ -1,4 +1,4 @@
-module github.com/WonderForgeLabs/gooey/examples/soundboard
+module github.com/WonderForgeLabs/gooey/apps/introtarget
 
 go 1.25.6
 

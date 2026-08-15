@@ -1,23 +1,23 @@
 // introtarget: the empty app from beat 3.2, with the door open.
 //
-//	cd examples/introtarget && go build -o introtarget . && ./introtarget
+//	cd apps/introtarget && go build -o introtarget . && ./introtarget
 //
 // Part 4 of the introduction is an agent building an interface for a
-// program that has none. This is that program. It is examples/intro —
+// program that has none. This is that program. It is apps/intro —
 // an app whose whole tree is one empty Text — plus the two lines that
 // let something outside the process reach it:
 //
 //	control.NewService   the state and markup surface
 //	mcp.Serve            that surface, over the wire
 //
-// # Why this is a second binary rather than a flag on examples/intro
+// # Why this is a second binary rather than a flag on apps/intro
 //
 // Beat 3.2's claim is that sixteen lines is the floor, and the slide
 // shows the file. A flag would put an MCP server in the file being read
 // out as "there is no user interface in any of them", which is exactly
 // the kind of quiet dishonesty the deck is about not doing. It also
 // cannot be done at all in that module: `mcp` is a nested module and
-// examples/intro is in the root one, so importing it there is a
+// apps/intro is in the root one, so importing it there is a
 // doctrine change (CLAUDE.md, "Heavy dependencies live in nested
 // modules").
 //

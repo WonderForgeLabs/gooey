@@ -1,4 +1,4 @@
-module github.com/WonderForgeLabs/gooey/examples/synth
+module github.com/WonderForgeLabs/gooey/apps/introdeck
 
 go 1.25.6
 

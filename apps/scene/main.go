@@ -1,6 +1,6 @@
 // scene: a demo, in the demoscene sense.
 //
-//	cd examples/scene && go build -o scene . && ./scene
+//	cd apps/scene && go build -o scene . && ./scene
 //
 // It exists for one beat of the introduction — the point in the
 // chronology where terminal programs stop being tools and start being
