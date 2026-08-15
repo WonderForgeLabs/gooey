@@ -26,24 +26,111 @@ import (
 // and the DCS/APC blocks the graphics protocols use) rather than
 // printing them, and tolerates a sequence split across writes.
 //
-// It is a model of a terminal, not an emulator: no scrollback, no
-// scrolling regions, no wrap. Content written past the last column or row
-// is dropped, which is what a gooey frame never does anyway.
+// # It used to be a model, and is now also a display
+//
+// The original sentence here was "a model of a terminal, not an emulator:
+// no scrollback, no scrolling regions, no wrap", and for replaying a
+// gooey flush that was exactly right — a frame never writes past the last
+// column, never scrolls, and repositions absolutely for every run.
+//
+// Then this type started being fed a real pty and its cells blitted into
+// a real frame, and every one of those omissions became a visible defect
+// at once. The one that gave it away: an editor inserting a line emits
+// IL (`ESC[L`) and shifts characters with ICH/DCH (`ESC[@`, `ESC[P`),
+// none of which were implemented — so the inserted text landed ON TOP of
+// the line already there and the two spliced into one unreadable row. It
+// looked like something occluding something else. It was arithmetic that
+// never happened.
+//
+// So the CSI set below is now the one a full-screen program actually
+// uses: absolute column and row addressing, insert/delete of characters
+// and lines, scroll up/down, a scrolling region, and deferred autowrap.
+// Not a complete VT — no scrollback, no origin mode, no character sets —
+// but enough that vim, a shell and top are modelled rather than mangled.
+//
+// Deferred wrap is the subtle one and it is why gooey's own flush is
+// unaffected: writing to the LAST column sets a pending flag rather than
+// moving the cursor, so a frame that fills a row edge to edge and then
+// repositions never scrolls the screen. Wrapping eagerly would have
+// broken every full-width row this package emits.
 type Screen struct {
 	Buf *Buffer
 
 	x, y    int
 	cur     Style
 	pending []byte
+
+	// The scrolling region, inclusive, in rows. Defaults to the whole
+	// screen; DECSTBM (`ESC[r`) narrows it, and every vertical motion —
+	// LF at the bottom, IL, DL, SU, SD, RI — is relative to it.
+	top, bot int
+
+	// wrapNext is the deferred-wrap flag: set after printing into the
+	// last column, consumed by the next printable rune.
+	wrapNext bool
+	// nowrap tracks DECAWM (`ESC[?7l`). Inverted so the zero value is
+	// autowrap-on, which is what a terminal boots with.
+	nowrap bool
+
+	// saved cursor, for ESC 7 / ESC 8 and CSI s / CSI u
+	sx, sy  int
+	sStyle  Style
+	hasSave bool
+
+	// What the program running on this screen asked for, recorded so a
+	// host can answer the question "may I forward a mouse report to it".
+	mouseTrack, mouseSGR bool
+
+	// DECTCEM (`ESC[?25l`). Inverted so the zero value is "visible",
+	// which is what a terminal boots with.
+	cursorHidden bool
 }
 
-func NewScreen(w, h int) *Screen { return &Screen{Buf: NewBuffer(w, h)} }
+// Cursor is where the program on this screen would put the caret, in
+// cells relative to the screen's own origin.
+//
+// It exists because a host draws this model into ITS cell plane, and a
+// cell plane has no cursor: gooey hides the real one for the whole
+// frame (`term.Screen` emits `ESC[?25l` once at startup), so a guest's
+// caret is invisible unless the host paints it. A shell with no caret
+// does not read as "a shell waiting for input" — it reads as a frozen
+// screenshot, which is exactly the wrong impression for a pane whose
+// whole point is that the thing inside it is alive.
+func (s *Screen) Cursor() (x, y int) { return s.x, s.y }
+
+// CursorVisible reports DECTCEM. A full-screen program hides the caret
+// while it repaints and shows it again when it is ready for a key, so
+// honouring this is what makes a painted caret mean "your turn" rather
+// than "here is where the last byte landed".
+func (s *Screen) CursorVisible() bool { return !s.cursorHidden }
+
+// MouseTracking reports whether the program has enabled mouse reporting
+// (DECSET 1000/1002/1003).
+//
+// It exists for hosts. Forwarding a mouse report to a guest that never
+// asked for one does not do nothing — the bytes arrive on its stdin and
+// it types them into itself. Anything relaying a pointer has to gate on
+// this, and this is the only place that knows.
+func (s *Screen) MouseTracking() bool { return s.mouseTrack }
+
+// MouseSGR reports whether the program asked for the SGR encoding
+// (DECSET 1006) rather than the legacy X10 one. A host should send what
+// was asked for; X10 cannot express coordinates past 223.
+func (s *Screen) MouseSGR() bool { return s.mouseSGR }
+
+func NewScreen(w, h int) *Screen {
+	return &Screen{Buf: NewBuffer(w, h), top: 0, bot: h - 1}
+}
 
 // Resize re-targets the model, clearing it — the same thing a terminal
-// does to a full-frame flush that follows a size change.
+// does to a full-frame flush that follows a size change. The scrolling
+// region goes with it: a region that outlived a resize would pin the
+// bottom of the screen to a row that no longer exists.
 func (s *Screen) Resize(w, h int) {
 	s.Buf = NewBuffer(w, h)
 	s.x, s.y = 0, 0
+	s.top, s.bot = 0, h-1
+	s.wrapNext = false
 }
 
 // Text is the visible screen as lines, trailing blanks trimmed.
@@ -112,16 +199,159 @@ func (s *Screen) Write(p []byte) (int, error) {
 func (s *Screen) put(r rune) {
 	switch r {
 	case '\r':
-		s.x = 0
-	case '\n':
-		s.y++
+		s.x, s.wrapNext = 0, false
+	case '\n', '\v', '\f':
+		s.index()
+		s.wrapNext = false
 	case '\b':
 		if s.x > 0 {
 			s.x--
 		}
+		s.wrapNext = false
+	case '\t':
+		// Eight-column tab stops. Previously this fell through to the
+		// default and wrote a literal tab INTO a cell, which is a glyph
+		// the terminal then renders as who-knows-what — and a shell emits
+		// tabs constantly.
+		if n := (s.x/8 + 1) * 8; n < s.Buf.W {
+			s.x = n
+		} else {
+			s.x = s.Buf.W - 1
+		}
+		s.wrapNext = false
+	case 0x07: // BEL — audible, not visible
 	default:
+		if s.wrapNext && !s.nowrap {
+			s.x = 0
+			s.index()
+		}
+		s.wrapNext = false
 		s.Buf.Set(s.x, s.y, r, s.cur)
+		if s.x >= s.Buf.W-1 {
+			// Deferred wrap: the cursor STAYS on the last column and a
+			// flag is set. Moving now would scroll the screen every time
+			// a frame filled a row to its edge.
+			s.wrapNext = true
+			return
+		}
 		s.x++
+	}
+}
+
+// index moves down one row, scrolling the region when it is already at
+// the bottom of it. This is what a line feed does, and what makes a
+// hosted shell scroll instead of overwriting its last line forever.
+func (s *Screen) index() {
+	if s.y == s.bot {
+		s.scrollUp(1)
+		return
+	}
+	if s.y < s.Buf.H-1 {
+		s.y++
+	}
+}
+
+// reverseIndex is index's mirror: up one, scrolling the region down when
+// already at its top. Editors use it to open a line above the viewport.
+func (s *Screen) reverseIndex() {
+	if s.y == s.top {
+		s.scrollDown(1)
+		return
+	}
+	if s.y > 0 {
+		s.y--
+	}
+}
+
+// scrollUp moves the region's rows up by n and blanks the n rows it
+// vacates at the bottom.
+func (s *Screen) scrollUp(n int) { s.scrollRegion(s.top, n) }
+
+// scrollDown is the same in the other direction.
+func (s *Screen) scrollDown(n int) { s.scrollRegion(s.top, -n) }
+
+// scrollRegion shifts rows [from, bot] by n (positive = up). It is one
+// function rather than two because the only difference is the direction
+// of the copy, and two copies of this loop is two places to get the
+// off-by-one wrong.
+func (s *Screen) scrollRegion(from, n int) {
+	if n == 0 || from > s.bot {
+		return
+	}
+	w, blank := s.Buf.W, Cell{Rune: ' '}
+	rows := s.bot - from + 1
+	if n >= rows || -n >= rows {
+		for y := from; y <= s.bot; y++ {
+			for x := 0; x < w; x++ {
+				s.Buf.Cells[y*w+x] = blank
+			}
+		}
+		return
+	}
+	if n > 0 {
+		for y := from; y <= s.bot-n; y++ {
+			copy(s.Buf.Cells[y*w:(y+1)*w], s.Buf.Cells[(y+n)*w:(y+n+1)*w])
+		}
+		for y := s.bot - n + 1; y <= s.bot; y++ {
+			for x := 0; x < w; x++ {
+				s.Buf.Cells[y*w+x] = blank
+			}
+		}
+		return
+	}
+	n = -n
+	for y := s.bot; y >= from+n; y-- {
+		copy(s.Buf.Cells[y*w:(y+1)*w], s.Buf.Cells[(y-n)*w:(y-n+1)*w])
+	}
+	for y := from; y < from+n && y <= s.bot; y++ {
+		for x := 0; x < w; x++ {
+			s.Buf.Cells[y*w+x] = blank
+		}
+	}
+}
+
+// insertChars shifts the rest of the row right, blanking n cells at the
+// cursor. This and deleteChars are how an editor edits a line without
+// redrawing it, and their absence is what spliced two lines into one.
+func (s *Screen) insertChars(n int) {
+	w := s.Buf.W
+	if s.y < 0 || s.y >= s.Buf.H || n <= 0 {
+		return
+	}
+	row := s.Buf.Cells[s.y*w : (s.y+1)*w]
+	if s.x >= w {
+		return
+	}
+	if n > w-s.x {
+		n = w - s.x
+	}
+	copy(row[s.x+n:], row[s.x:w-n])
+	for i := s.x; i < s.x+n; i++ {
+		row[i] = Cell{Rune: ' ', Style: s.cur}
+	}
+}
+
+func (s *Screen) deleteChars(n int) {
+	w := s.Buf.W
+	if s.y < 0 || s.y >= s.Buf.H || n <= 0 {
+		return
+	}
+	row := s.Buf.Cells[s.y*w : (s.y+1)*w]
+	if s.x >= w {
+		return
+	}
+	if n > w-s.x {
+		n = w - s.x
+	}
+	copy(row[s.x:], row[s.x+n:])
+	for i := w - n; i < w; i++ {
+		row[i] = Cell{Rune: ' ', Style: s.cur}
+	}
+}
+
+func (s *Screen) eraseChars(n int) {
+	for i := 0; i < n; i++ {
+		s.Buf.Set(s.x+i, s.y, ' ', Style{})
 	}
 }
 
@@ -160,7 +390,43 @@ func (s *Screen) escape(b []byte) (used int, complete bool) {
 			}
 		}
 		return 0, false
+	case '(', ')', '*', '+', '#', ' ':
+		// THREE-byte escapes: charset designation (ESC ( B selects
+		// ASCII as G0), DECALN (ESC # 8), and the C1-control select
+		// (ESC SP F). None of them change the cell plane, but they must
+		// still be CONSUMED — top emits ESC ( B constantly, and a
+		// two-byte consume leaves the B to be printed as text. That is
+		// what a screen full of stray Bs is.
+		if len(b) < 3 {
+			return 0, false
+		}
+		return 3, true
 	case '\\': // a stray string terminator
+		return 2, true
+	case 'D': // IND — index
+		s.index()
+		return 2, true
+	case 'M': // RI — reverse index. An editor scrolling back a line uses
+		// this and nothing else; swallowed as a no-op it simply redraws
+		// the same row twice.
+		s.reverseIndex()
+		return 2, true
+	case 'E': // NEL — next line
+		s.x = 0
+		s.index()
+		return 2, true
+	case '7': // DECSC
+		s.saveCursor()
+		return 2, true
+	case '8': // DECRC
+		s.restoreCursor()
+		return 2, true
+	case 'c': // RIS — full reset
+		s.Buf.Clear()
+		s.x, s.y = 0, 0
+		s.top, s.bot = 0, s.Buf.H-1
+		s.cur, s.wrapNext, s.nowrap = Style{}, false, false
+		s.cursorHidden = false
 		return 2, true
 	default:
 		return 2, true // two-byte escape we do not model
@@ -169,12 +435,45 @@ func (s *Screen) escape(b []byte) (used int, complete bool) {
 
 func (s *Screen) csi(body string, final byte) {
 	if strings.HasPrefix(body, "?") {
-		// Private modes. The alternate screen arrives blank, which is the
-		// one that matters: it is why a host invalidates its flush after
-		// re-acquiring the terminal.
-		if (final == 'h' || final == 'l') && strings.Contains(body, "1049") {
-			s.Buf.Clear()
-			s.x, s.y = 0, 0
+		// Private modes. Two of them reach the cell plane, and the modes
+		// are PARSED rather than substring-matched: `strings.Contains(body,
+		// "7")` is true of ?47, ?1007 and ?27 as well as ?7, and a mode
+		// switch that fires on the wrong number turns wrapping on and off
+		// at random.
+		if final != 'h' && final != 'l' {
+			return
+		}
+		for _, m := range csiArgs(strings.TrimPrefix(body, "?")) {
+			switch m {
+			case 47, 1047, 1049:
+				// The alternate screen arrives blank, which is why a host
+				// invalidates its flush after re-acquiring the terminal.
+				s.Buf.Clear()
+				s.x, s.y = 0, 0
+				s.wrapNext = false
+			case 7:
+				// DECAWM. A shell turns wrap off around its prompt redraw
+				// and back on after it; honouring it is the difference
+				// between a long command line wrapping and overwriting its
+				// own last column.
+				s.nowrap = final == 'l'
+			case 1000, 1002, 1003:
+				// Mouse TRACKING. Recorded rather than acted on: nothing
+				// here draws a pointer. It is here because a host that
+				// forwards mouse reports to a guest has to know whether
+				// the guest asked for any — a program that did not will
+				// read `ESC[<0;5;5M` as keystrokes and type it into
+				// itself. MouseTracking is the only honest gate for that.
+				s.mouseTrack = final == 'h'
+			case 1006:
+				s.mouseSGR = final == 'h'
+			case 25:
+				// DECTCEM. Recorded for the same reason as mouse
+				// tracking: this model has no caret of its own, and the
+				// host that draws it needs to know whether the guest
+				// wanted one right now.
+				s.cursorHidden = final == 'l'
+			}
 		}
 		return
 	}
@@ -185,25 +484,100 @@ func (s *Screen) csi(body string, final byte) {
 		}
 		return def
 	}
+	// Any explicit cursor motion cancels a pending wrap.
 	switch final {
-	case 'H', 'f':
+	case 'H', 'f', 'A', 'B', 'C', 'D', 'E', 'F', 'G', '`', 'd', 'u':
+		s.wrapNext = false
+	}
+
+	switch final {
+	case 'H', 'f': // CUP
 		s.y, s.x = arg(0, 1)-1, arg(1, 1)-1
-	case 'A':
+	case 'A': // CUU
 		s.y -= arg(0, 1)
-	case 'B':
+	case 'B': // CUD
 		s.y += arg(0, 1)
-	case 'C':
+	case 'C': // CUF
 		s.x += arg(0, 1)
-	case 'D':
+	case 'D': // CUB
 		s.x -= arg(0, 1)
+	case 'E': // CNL
+		s.y += arg(0, 1)
+		s.x = 0
+	case 'F': // CPL
+		s.y -= arg(0, 1)
+		s.x = 0
+	case 'G', '`': // CHA / HPA — absolute column
+		s.x = arg(0, 1) - 1
+	case 'd': // VPA — absolute row
+		s.y = arg(0, 1) - 1
 	case 'J':
 		s.erase(arg(0, 0))
 	case 'K':
 		s.eraseLine(arg(0, 0))
+	case '@': // ICH
+		s.insertChars(arg(0, 1))
+	case 'P': // DCH
+		s.deleteChars(arg(0, 1))
+	case 'X': // ECH
+		s.eraseChars(arg(0, 1))
+	case 'L': // IL — open n lines AT the cursor, pushing the rest down
+		if s.y >= s.top && s.y <= s.bot {
+			s.scrollRegion(s.y, -arg(0, 1))
+			s.x = 0
+		}
+	case 'M': // DL — remove n lines at the cursor, pulling the rest up
+		if s.y >= s.top && s.y <= s.bot {
+			s.scrollRegion(s.y, arg(0, 1))
+			s.x = 0
+		}
+	case 'S': // SU
+		s.scrollUp(arg(0, 1))
+	case 'T': // SD
+		s.scrollDown(arg(0, 1))
+	case 'r': // DECSTBM
+		t, b := arg(0, 1)-1, arg(1, s.Buf.H)-1
+		if t < 0 {
+			t = 0
+		}
+		if b >= s.Buf.H {
+			b = s.Buf.H - 1
+		}
+		if t < b {
+			s.top, s.bot = t, b
+		} else {
+			s.top, s.bot = 0, s.Buf.H-1
+		}
+		// DECSTBM homes the cursor. Programs rely on that — omit it and
+		// the first line an editor draws after setting its region lands
+		// wherever the cursor happened to be.
+		s.x, s.y = 0, s.top
+	case 's': // save cursor (ANSI.SYS form)
+		s.saveCursor()
+	case 'u': // restore cursor
+		s.restoreCursor()
 	case 'm':
 		s.sgr(args, body)
 	}
 	s.x, s.y = max(0, s.x), max(0, s.y)
+	if s.x >= s.Buf.W {
+		s.x = s.Buf.W - 1
+	}
+	if s.y >= s.Buf.H {
+		s.y = s.Buf.H - 1
+	}
+}
+
+func (s *Screen) saveCursor() {
+	s.sx, s.sy, s.sStyle, s.hasSave = s.x, s.y, s.cur, true
+}
+
+func (s *Screen) restoreCursor() {
+	if !s.hasSave {
+		s.x, s.y = 0, 0
+		return
+	}
+	s.x, s.y, s.cur = s.sx, s.sy, s.sStyle
 }
 
 func (s *Screen) erase(mode int) {
@@ -252,6 +626,12 @@ func (s *Screen) sgr(args []int, body string) {
 			s.cur.Underline = true
 		case 7:
 			s.cur.Reverse = true
+		case 22:
+			s.cur.Bold, s.cur.Dim = false, false
+		case 24:
+			s.cur.Underline = false
+		case 27:
+			s.cur.Reverse = false
 		case 38, 48:
 			c, used := parseColor(args[i+1:])
 			if args[i] == 38 {
@@ -260,14 +640,38 @@ func (s *Screen) sgr(args []int, body string) {
 				s.cur.Bg = c
 			}
 			i += used
+		case 39:
+			s.cur.Fg = Color{}
+		case 49:
+			s.cur.Bg = Color{}
+		default:
+			// The indexed forms. These were unhandled while Screen was
+			// only ever a test model — "nothing asks a model screen what
+			// shade a cell is" — but the model is a display now: a hosted
+			// guest's cells get blitted into a frame, and an unhandled
+			// SGR 32 is a green word painted in the previous color.
+			switch n := args[i]; {
+			case n >= 30 && n <= 37:
+				s.cur.Fg = palette256(n - 30)
+			case n >= 40 && n <= 47:
+				s.cur.Bg = palette256(n - 40)
+			case n >= 90 && n <= 97:
+				s.cur.Fg = palette256(n - 90 + 8)
+			case n >= 100 && n <= 107:
+				s.cur.Bg = palette256(n - 100 + 8)
+			}
 		}
 	}
 }
 
 // parseColor reads an extended color parameter and reports how many
-// arguments it consumed. The 256-color form is not inverted back to RGB —
-// nothing asks a model screen what shade a cell is, only whether the flush
-// changed style where it should have.
+// arguments it consumed.
+//
+// The 256-color form is expanded through palette256 rather than stashed
+// as an index. It used to be stashed — Color{R: uint8(idx)} — on the
+// grounds that nothing asks a model screen what shade a cell is. Once
+// those cells are blitted into a real frame, something does: index 4 is
+// blue, and R=4,G=0,B=0 is black.
 func parseColor(rest []int) (Color, int) {
 	if len(rest) == 0 {
 		return Color{}, 0
@@ -282,9 +686,19 @@ func parseColor(rest []int) (Color, int) {
 		if len(rest) < 2 {
 			return Color{Set: true}, len(rest)
 		}
-		return Color{R: uint8(rest[1]), Set: true}, 2
+		return palette256(clamp255(rest[1])), 2
 	}
 	return Color{Set: true}, 1
+}
+
+func clamp255(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 255 {
+		return 255
+	}
+	return n
 }
 
 func csiArgs(body string) []int {
