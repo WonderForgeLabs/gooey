@@ -716,7 +716,9 @@ One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no
 }),
 ```
 
-The map's keys are what the template's bindings resolve against; its values become property handles the view Sets as the item changes. `string`, `bool`, `int`, `float64`, `render.Style` and `render.Color` become live handles; anything else crosses as a fixed literal for the life of the row (useful for a `gooey.Command`, not for anything that changes).
+The map's keys are what the template's bindings resolve against; its values become property handles the view Sets as the item changes. `string`, `bool`, `int`, `float64`, `render.Style`, `render.Color`, `[]int` and `image.Image` become live handles; anything else crosses as a fixed literal for the life of the row (useful for a `gooey.Command`, not for anything that changes).
+
+A picture may be projected either way, and both follow the record when rows are reused. Project the `image.Image` itself for a picture the record already holds; project a `*prop.Property[image.Image]` — `components.Img(...)`, or a handle the app keeps — when the app wants to fill it in **after** the row exists, as an async thumbnail does. A handle the app owns and Sets later reaches the row without the collection re-projecting at all.
 
 Use `components.ItemsOf` instead when the projection reads more than the item — a lookup table, a filter, a formatting mode. A projection runs during layout, where reads record nothing, so those reads have to happen in your own computed to become dependencies:
 

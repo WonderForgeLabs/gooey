@@ -2,6 +2,8 @@ package components
 
 import (
 	"fmt"
+	"image"
+	"image/color"
 	"strings"
 	"testing"
 	"time"
@@ -793,6 +795,146 @@ func TestEmptyListRealizesNothing(t *testing.T) {
 	}
 	if got := row(f.Cells, 1); got != "item1" {
 		t.Fatalf("row 1 = %q", got)
+	}
+}
+
+// ---- pictures in reusable rows (#217) ----
+//
+// Rows are keyed by collection index and reused, so a re-sort re-projects
+// row 0 with a different record. Every other kind of row value follows the
+// record because rowValue's switch names it; images did not, and the
+// failure was silent — one record's title over another record's cover.
+//
+// `shade` reads a swatch's identity back out as a number, so a row can
+// render its picture as text and the assertions can be about pixels
+// without decoding any.
+
+type cover struct {
+	Title string
+	Art   image.Image
+}
+
+func shade(img image.Image) int {
+	if img == nil {
+		return -1
+	}
+	c, ok := img.At(0, 0).(color.RGBA)
+	if !ok {
+		return -1
+	}
+	return int(c.R)
+}
+
+// coverList builds a two-row list whose template renders each record's
+// shade. proj decides HOW the picture is projected — that is the whole
+// axis under test.
+func coverList(t *testing.T, items []cover, proj func(cover) map[string]any) (*prop.Property[[]cover], *gooey.Composer) {
+	t.Helper()
+	src := prop.NewSource(items)
+	v := &ItemsView{
+		Items: Items(src, proj),
+		Template: func(values map[string]any) (gooey.Component, error) {
+			p, ok := values["Art"].(*prop.Property[image.Image])
+			if !ok {
+				return nil, fmt.Errorf("Art is %T, want a live image handle", values["Art"])
+			}
+			return &Text{Content: prop.NewComputed(func() string {
+				return fmt.Sprint(shade(p.Get()))
+			})}, nil
+		},
+	}
+	return src, gooey.NewComposer(v, 10, 2)
+}
+
+// The bare spelling. Before #217 this did not even reach the assertions:
+// a raw image.Image was not a handle, so the template failed to load.
+func TestARawImageRowValueFollowsTheRecord(t *testing.T) {
+	proj := func(c cover) map[string]any {
+		return map[string]any{"Title": c.Title, "Art": c.Art}
+	}
+	a, b := swatch(10), swatch(20)
+	src, c := coverList(t, []cover{{"A", a}, {"B", b}}, proj)
+
+	f, _ := c.Frame()
+	if got := rowsOf(f.Cells, 2); got[0] != "10" || got[1] != "20" {
+		t.Fatalf("initial rows = %v, want [10 20]", got)
+	}
+
+	// A re-sort: the same two records, swapped. Row 0 is REUSED and
+	// re-projected with record B.
+	src.Set([]cover{{"B", b}, {"A", a}})
+	f, _ = c.Frame()
+	if got := rowsOf(f.Cells, 2); got[0] != "20" || got[1] != "10" {
+		t.Fatalf("after the swap rows = %v, want [20 10] — the picture did not travel with the record", got)
+	}
+}
+
+// The natural spelling, and the one that made #217 silent: components.Img
+// builds a FRESH property on every projection, so the template bound the
+// first one and the row showed that picture forever.
+func TestAnImgHandleRowValueFollowsTheRecord(t *testing.T) {
+	proj := func(c cover) map[string]any {
+		return map[string]any{"Title": c.Title, "Art": Img(c.Art)}
+	}
+	a, b := swatch(10), swatch(20)
+	src, c := coverList(t, []cover{{"A", a}, {"B", b}}, proj)
+
+	f, _ := c.Frame()
+	if got := rowsOf(f.Cells, 2); got[0] != "10" || got[1] != "20" {
+		t.Fatalf("initial rows = %v, want [10 20]", got)
+	}
+
+	src.Set([]cover{{"B", b}, {"A", a}})
+	f, _ = c.Frame()
+	if got := rowsOf(f.Cells, 2); got[0] != "20" || got[1] != "10" {
+		t.Fatalf("after the swap rows = %v, want [20 10] — Img(...) is the spelling #217 was about", got)
+	}
+}
+
+// A fresh property per projection must not cost a repaint when the
+// picture is unchanged. This is the pin that stops the fix above from
+// buying correctness with the damage guarantee: following a pointer that
+// is new every time would repaint every row of every re-sort.
+func TestAnEqualImageReprojectionIsDamageFree(t *testing.T) {
+	proj := func(c cover) map[string]any {
+		return map[string]any{"Title": c.Title, "Art": Img(c.Art)}
+	}
+	a, b := swatch(10), swatch(20)
+	src, c := coverList(t, []cover{{"A", a}, {"B", b}}, proj)
+	c.Frame()
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d, want 0", painted)
+	}
+
+	src.Set([]cover{{"A", a}, {"B", b}}) // same pictures, new Img handles
+	if _, painted := c.Frame(); painted != 1 {
+		t.Fatalf("an equal re-projection painted %d components, want 1 (the view's observer node only)", painted)
+	}
+}
+
+// The opposite use, which the old pass-through supported by accident and
+// which the indirection keeps: a property the APP owns, filled in after
+// the row was built. An async thumbnail must reach the row without the
+// collection re-projecting at all.
+func TestAnAppOwnedImagePropertyStillReachesTheRow(t *testing.T) {
+	slot := Img(nil)
+	proj := func(c cover) map[string]any {
+		return map[string]any{"Title": c.Title, "Art": slot}
+	}
+	_, c := coverList(t, []cover{{"A", nil}}, proj)
+
+	f, _ := c.Frame()
+	if got := row(f.Cells, 0); got != "-1" {
+		t.Fatalf("row = %q before the picture arrives, want -1", got)
+	}
+
+	slot.Set(swatch(30)) // no Items change: the app fills its own handle
+	f, painted := c.Frame()
+	if got := row(f.Cells, 0); got != "30" {
+		t.Fatalf("row = %q after the app filled its own property, want 30", got)
+	}
+	if painted != 1 {
+		t.Fatalf("an async fill painted %d components, want 1 (the row's Text)", painted)
 	}
 }
 
