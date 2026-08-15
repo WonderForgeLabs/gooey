@@ -13,7 +13,8 @@
 //     a gradient with the same function the flush uses, so the cost of
 //     each tier is visible side by side on one terminal.
 //   - A Canvas holding both, plus an overlapping cascade of swatches at
-//     absolute coordinates.
+//     absolute coordinates — five instances of swatch.gooey, a
+//     markup-only control resolved by name through Context.Includes.
 //
 // Everything is styled by ONE property: Style="{{.AccentStyle}}" in the
 // markup is a live handle onto a computed over the picked color, so
@@ -23,22 +24,27 @@
 //	colors --depth=256        force a color tier (truecolor|256|16)
 //	colors --graphics=kitty   force the pixel tier (kitty|sixel|iterm2|cells)
 //	colors --hold=3s          exit after a while instead of on q
+//
+// The run loop is gooey.App's: terminal acquisition, the input decoder,
+// the frame scheduler and the hot-reload watcher are the framework's job,
+// and the only thing this file reads back OUT of the composition is the
+// capability line at the bottom of the page — which is a property of the
+// composition rather than of the viewmodel, so it is read once on the
+// first frame and published into ordinary source properties.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/graphics"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
@@ -47,72 +53,27 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	// Capability detection, and the flags that override it. Forcing a
-	// tier is what makes the difference recordable: a GIF recorder
-	// renders truecolor cells, so the only way to show what a 256-color
-	// terminal — or one without a graphics protocol — does is to emit
-	// what that terminal would get.
-	//
-	// This is the full Screen.Detect handshake, not just the color-depth
-	// environment read: the picker's pixel tier exists only where the
-	// probe finds a graphics protocol AND a cell size to generate the
-	// bars against. This demo once avoided Detect because its probe
-	// abandoned a pending tty read that then stole the first keystrokes;
-	// the probe now reads synchronously under a deadline (see
-	// term.readUntilDA1), so a keyboard-driven demo can afford it. It
-	// still must run HERE — before Raw and before the input decoder
-	// starts — so its replies cannot interleave with input events.
-	caps := term.Caps{Cols: cols, Rows: rows, Color: term.DetectColorDepth()}
-	if det, err := screen.Detect(); err == nil {
-		caps = det
-	}
-	detected, forced := caps.Color, false
+	// Forcing a tier is what makes the difference recordable: a GIF
+	// recorder renders truecolor cells, so the only way to show what a
+	// 256-color terminal — or one without a graphics protocol — does is to
+	// emit what that terminal would get.
+	forcedDepth, depthForced := render.TrueColor, false
 	if *depthFlag != "" {
 		d, ok := render.ParseColorDepth(*depthFlag)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown depth %q (want truecolor, 256, or 16)\n", *depthFlag)
 			os.Exit(2)
 		}
-		caps.Color, forced = d, true
+		forcedDepth, depthForced = d, true
 	}
-
-	// The pixel tier: by default the terminal's answer stands (that is
-	// the component's contract — the choice is the terminal's, not the
+	// The pixel tier: by default the terminal's answer stands (that is the
+	// component's contract — the choice is the terminal's, not the
 	// author's); the flag exists to force a protocol on, or off with
 	// "cells", for recordings and side-by-side comparison.
-	var gfx graphics.Encoder
-	gfxForced := false
-	switch *gfxFlag {
-	case "":
-	case "cells":
-		gfxForced = true
-	case "kitty":
-		gfx, gfxForced = graphics.Kitty{}, true
-	case "sixel":
-		gfx, gfxForced = graphics.Sixel{}, true
-	case "iterm2":
-		gfx, gfxForced = graphics.ITerm2{}, true
-	default:
-		fmt.Fprintf(os.Stderr, "unknown graphics %q (want kitty, sixel, iterm2, or cells)\n", *gfxFlag)
+	gfx, gfxForced, err := encoderFor(*gfxFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
-	}
-	if gfx != nil && caps.CellW == 0 {
-		caps.CellW, caps.CellH = 10, 20 // a forced protocol still needs a cell size
-	}
-	gfxName := "cells"
-	if gfxForced {
-		if gfx != nil {
-			gfxName = gfx.Name()
-		}
-	} else if enc := gooey.EncoderFor(caps); enc != nil {
-		gfxName = enc.Name()
 	}
 
 	// --- viewmodel: one source property, everything else derived ---
@@ -138,19 +99,23 @@ func main() {
 		})
 	}
 
+	// What the composition turned out to be, as properties. Capabilities
+	// are not viewmodel state — nothing can bind them and no markup can
+	// ask for them — so the status line reads them off the Composer on the
+	// first frame and Sets them here, where a computed can see them.
+	depth := prop.NewSource(render.TrueColor)
+	depthNote := prop.NewSource("detected")
+	gfxName := prop.NewSource("cells")
 	status := prop.NewComputed(func() string {
-		c := accent.Get()
-		src := "detected"
-		if forced {
-			src = fmt.Sprintf("forced (terminal reports %s)", detected)
-		}
-		shown := render.Approximate(c, caps.Color)
+		// Every Get runs unconditionally: a read behind an `if` drops out
+		// of the dependency set on the frames it does not execute.
+		c, d, note, name := accent.Get(), depth.Get(), depthNote.Get(), gfxName.Get()
+		shown := render.Approximate(c, d)
 		return fmt.Sprintf("depth %s [%s]   gfx %s   picked #%02X%02X%02X → shown #%02X%02X%02X",
-			caps.Color, src, gfxName,
-			c.R, c.G, c.B, shown.R, shown.G, shown.B)
+			d, note, name, c.R, c.G, c.B, shown.R, shown.G, shown.B)
 	})
 
-	running := true
+	var app *gooey.App
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Accent":      accent,
@@ -158,7 +123,7 @@ func main() {
 			"Tint0":       tints[0], "Tint1": tints[1], "Tint2": tints[2],
 			"Tint3": tints[3], "Tint4": tints[4],
 			"Status": status,
-			"Quit":   gooey.Command(func() { running = false }),
+			"Quit":   gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"dim": {Fg: render.RGB(140, 140, 150), Bg: panel},
@@ -178,59 +143,81 @@ func main() {
 		dir = filepath.Dir(exe)
 	}
 	fsys := os.DirFS(dir)
-	tree, err := markup.Load(fsys, "colors.gooey", ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	// <Swatch/> resolves to swatch.gooey by convention: a markup-only
+	// control needs no registration, only somewhere to be found.
+	ctx.Includes = fsys
+
+	// "Let capabilities decide" is a probe, not an absence: without one
+	// the app has a color depth and no graphics answer at all, so the
+	// picker's pixel tier could never appear. The probe runs inside Run,
+	// before the decoder starts, so its replies cannot interleave with
+	// input events.
+	opts := []gooey.Option{gooey.WithCapabilityProbe()}
+	if gfxForced {
+		// Pinning is all it takes: App.caps supplies the assumed cell size
+		// a pinned protocol needs.
+		opts = append(opts, gooey.WithGraphics(gfx))
 	}
-
-	needsFrame := true
-	var comp *gooey.Composer
-	attach := func(w gooey.Component) {
-		comp = gooey.NewComposer(w, cols, rows)
-		// The capabilities reach every component's Render through the Frame.
-		comp.SetCaps(caps)
-		if gfxForced {
-			comp.SetGraphics(gfx) // nil pins the cell tier
-		}
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Component, 1)
-	stopWatch := markup.Watch(fsys, "colors.gooey", ctx, func(w gooey.Component) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
-
-	events := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, events)
-
-	var deadline <-chan time.Time
+	// The extra name is what makes editing the CONTROL hot-reload too: a
+	// watcher cannot infer an <Include>, because resolving one needs the
+	// build that has not happened yet.
+	app = gooey.NewApp(markup.Page(fsys, "colors.gooey", ctx, "swatch.gooey"), opts...)
 	if *hold > 0 {
-		deadline = time.After(*hold)
+		app.Every(*hold, app.Quit)
 	}
 
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
+	told := false
+	app.BeforeFrame(func() {
+		c := app.Composer()
+		caps := c.Caps()
+		if !told {
+			told = true
+			name := "cells"
+			if enc := c.Graphics(); enc != nil {
+				name = enc.Name()
+			}
+			gfxName.Set(name)
+			if depthForced {
+				// Read BEFORE the override below, so the note can still
+				// report what the terminal actually said.
+				depthNote.Set(fmt.Sprintf("forced (terminal reports %s)", caps.Color))
+			}
 		}
-		select {
-		case <-deadline:
-			running = false
-		case w := <-swaps:
-			attach(w)
-		case ev := <-events:
-			comp.Handle(ev)
+		// Re-applied rather than set once: a hot reload builds a fresh
+		// Composer from the app's own caps, which never carry the flag.
+		if depthForced && caps.Color != forcedDepth {
+			caps.Color = forcedDepth
+			c.SetCaps(caps)
 		}
+		// Guarded because prop.Set does not compare: an unconditional Set
+		// would invalidate the status line on every single frame.
+		if got := c.Caps().Color; depth.Get() != got {
+			depth.Set(got)
+		}
+	})
+
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
 	}
+}
+
+// encoderFor resolves --graphics. "cells" is a real answer, not the
+// absence of one: it forces the universal tier, which is what you want
+// when checking what the page looks like with no pixel plane at all.
+func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
+	switch mode {
+	case "":
+		return nil, false, nil // capabilities decide
+	case "kitty":
+		return graphics.Kitty{}, true, nil
+	case "sixel":
+		return graphics.Sixel{}, true, nil
+	case "iterm2":
+		return graphics.ITerm2{}, true, nil
+	case "cells":
+		return nil, true, nil
+	}
+	return nil, false, fmt.Errorf("unknown graphics %q (want kitty, sixel, iterm2, or cells)", mode)
 }
 
 // scaleColor multiplies a color's channels, staying in range.

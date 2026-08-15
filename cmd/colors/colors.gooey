@@ -25,17 +25,18 @@
         <!-- Stacked cards, and a real overlap: each swatch is 10 cells
              wide and 2 rows tall, stepping 4 right and 1 down, so every
              card shares 6 cells of its lower row with the next one.
-             Tree order IS z-order — the later sibling paints on top. -->
-        <Text Canvas.Left="46" Canvas.Top="1" Style="{{.Tint0}}">██████████
-██████████</Text>
-        <Text Canvas.Left="50" Canvas.Top="2" Style="{{.Tint1}}">██████████
-██████████</Text>
-        <Text Canvas.Left="54" Canvas.Top="3" Style="{{.Tint2}}">██████████
-██████████</Text>
-        <Text Canvas.Left="58" Canvas.Top="4" Style="{{.Tint3}}">██████████
-██████████</Text>
-        <Text Canvas.Left="62" Canvas.Top="5" Style="{{.Tint4}}">██████████
-██████████</Text>
+             Tree order IS z-order — the later sibling paints on top.
+
+             The card itself is swatch.gooey, a markup-only control: the
+             five instances differ only in a bound tint and a position,
+             which is exactly what an <Include> is for. Placement stays
+             on the INSTANCE — Canvas.Left/Top are the element's, not the
+             control's, so a control never has to declare them. -->
+        <Swatch Tint="{{.Tint0}}" Canvas.Left="46" Canvas.Top="1"/>
+        <Swatch Tint="{{.Tint1}}" Canvas.Left="50" Canvas.Top="2"/>
+        <Swatch Tint="{{.Tint2}}" Canvas.Left="54" Canvas.Top="3"/>
+        <Swatch Tint="{{.Tint3}}" Canvas.Left="58" Canvas.Top="4"/>
+        <Swatch Tint="{{.Tint4}}" Canvas.Left="62" Canvas.Top="5"/>
         <Text Canvas.Left="46" Canvas.Top="0" Style="dim">overlapping cascade, placed by Canvas.Left/Top</Text>
       </Canvas>
 

@@ -49,7 +49,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var stages = []string{"Idle", "Fetch", "Build", "Deploy"}
@@ -395,14 +394,14 @@ func main() {
 	// there is no protocol and no cell size, and the button draws its
 	// pill in box runes instead. Both are correct; the caption says
 	// which one you are looking at.
+	//
+	// Pinning is all it takes. A forced protocol still needs a cell size —
+	// the chrome is generated at that resolution — but that rule now lives
+	// in App.caps, which supplies term.DefaultCellW/H for exactly the case
+	// this demo used to spell out by hand.
 	var opts []gooey.Option
 	if forced {
-		// A forced protocol still needs a cell size — the chrome is
-		// generated at that resolution — and only a probe can really
-		// know it, so assume the common 10×20.
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
+		opts = append(opts, gooey.WithGraphics(enc))
 	} else {
 		opts = append(opts, gooey.WithCapabilityProbe())
 	}
@@ -417,11 +416,16 @@ func main() {
 		}
 		told = true
 		c := app.Composer()
-		name := "cells (no graphics protocol)"
-		if enc := c.Graphics(); enc != nil {
-			name = enc.Name()
+		// No encoder means no pixel plane, and a cell size is a property
+		// OF that plane: the caption used to print 10×20 there because the
+		// demo passed those capabilities in itself, which was a number for
+		// a resolution nothing was being generated at.
+		enc := c.Graphics()
+		if enc == nil {
+			tier.Set("chrome: cells (no graphics protocol)")
+			return
 		}
-		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", name, c.Caps().CellW, c.Caps().CellH))
+		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", enc.Name(), c.Caps().CellW, c.Caps().CellH))
 	})
 	if err := app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
@@ -473,32 +477,9 @@ func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
 	return nil, false, fmt.Errorf("unknown -mode %q: want kitty, sixel, iterm2 or cells", mode)
 }
 
-func clampIdx(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(stages) {
-		return len(stages) - 1
-	}
-	return i
-}
-
-func clampTab(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(tabNames) {
-		return len(tabNames) - 1
-	}
-	return i
-}
-
-func clamp100(v int) int {
-	if v < 0 {
-		return 0
-	}
-	if v > 100 {
-		return 100
-	}
-	return v
-}
+// The bound index properties are edited by components (a Segmented, a
+// Tabs strip) and by commands, so every read of one is clamped rather
+// than trusted: markup can bind an int, but it cannot declare a range.
+func clampIdx(i int) int { return min(max(i, 0), len(stages)-1) }
+func clampTab(i int) int { return min(max(i, 0), len(tabNames)-1) }
+func clamp100(v int) int { return min(max(v, 0), 100) }
