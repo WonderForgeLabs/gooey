@@ -1,0 +1,19 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- A file that exists to be edited on camera.
+
+       Beat 1.3 hosts a real vi on this, and the schedule in
+       editor.keys ends with a series of exit attempts that all fail,
+       because the buffer is modified and none of the commands it tries
+       will discard it.
+
+       It is deliberately NOT counter.gooey. That file is the subject of
+       beat 2.5, it is watched, and it is in git — and the first version
+       of this gag used `:exit`, which in vi means WRITE AND QUIT. It
+       wrote. Twice. -->
+  <Border Title="hello" Style="panel">
+    <VStack Gap="1" Margin="2,1">
+      <Text Style="headline">{{.Label}}</Text>
+      <Text Style="body">a layout is a file</Text>
+    </VStack>
+  </Border>
+</Gooey>

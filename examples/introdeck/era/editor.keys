@@ -1,0 +1,35 @@
+# 1976: ed grows a full-screen face and the terminal stops being a
+# receipt printer. This is the first program on the chronology that
+# OWNS the rectangle — it addresses the whole screen, tracks a cursor,
+# and redraws in place.
+#
+# It is also the one everybody has a story about, so the beat ends with
+# the story. The AI drives; the AI cannot get out; the AI asks a human.
+# Which is the thesis of the first half of this presentation, delivered
+# as a joke about an editor from 1976.
+#
+# EVERY command below must FAIL. The first draft of this file used
+# `:exit`, which in vi is write-and-quit — so the gag quietly saved the
+# file, twice, before anyone noticed. The rule for editing this file:
+# if a line would leave the editor or touch the disk, it is wrong.
+# :q :quit :qa :qall all refuse while the buffer is modified. :x :xit
+# :exit :wq ZZ do not.
+2.5  G
+1.0  o
+0.8  <!-- claude was here -->
+1.6  \e
+2.0  :q\n
+2.6  :quit\n
+2.4  :qa\n
+2.2  \e
+1.4  :qall\n
+3.0  :!echo "elan.  elan.  how do i get out of this."\n
+#
+# And that is where it stops. No :q! at the end.
+#
+# The first version quit cleanly at the finish, which meant the punchline
+# was on screen for about a second and then the island went blank —
+# a slide whose last state is an empty box. Leaving it stuck is both
+# funnier and more honest: the beat is that it cannot get out, so it
+# does not get out. The guest is killed when the slide changes, which
+# is the only exit it was ever going to get.
