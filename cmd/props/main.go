@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -46,17 +47,17 @@ func main() {
 		}
 		return fmt.Sprintf("watching b = %d   (a is invisible to me)", b.Get())
 	})
-	countLabel := prop.NewComputed(func() string {
-		return fmt.Sprintf("count (ticks 1/s) : %d", count.Get())
-	})
-	modeLabel := prop.NewComputed(func() string {
-		return fmt.Sprintf("mode              : %s", mode.Get())
+	// count is an int, and an interpolation takes string handles only —
+	// so this one label stays in Go while mode, already a string, binds
+	// straight into the page.
+	countText := prop.NewComputed(func() string {
+		return strconv.Itoa(count.Get())
 	})
 
 	var app *gooey.App
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"CountLabel": countLabel, "ModeLabel": modeLabel,
+			"Count": countText, "Mode": mode,
 			"Detail": detail, "Stats": stats,
 			// Commands are the whole event surface. Bumping the unwatched
 			// source still runs its command and still Sets the property —
