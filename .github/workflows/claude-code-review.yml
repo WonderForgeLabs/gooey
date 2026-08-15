@@ -123,24 +123,54 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read # list the PR's comments to find the review sticky
+      actions: read # resolve the sticky's job link to the SHA it reviewed
     steps:
-      - name: Reflect reusable workflow result
+      # Checks out the PR's own tree, so a PR may edit the assertion that
+      # judges it. That is a deliberate, bounded trade and not an oversight:
+      # this check is NOT required to merge, so neutering the script buys a
+      # PR nothing, and `reviewmirror_test.go` runs the script's suite inside
+      # `go test ./...` — a neutered script reds the `. (test)` leg, which is
+      # a check people actually read. IF this check is ever made required,
+      # that changes: source the script from the base branch instead, the way
+      # the `review` job pins forge's reusable workflow at @main for exactly
+      # this reason. Note the bootstrap that forces the order — the PR adding
+      # the script cannot be judged by a base-branch copy that does not yet
+      # exist.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Every value below is a trusted event field (a repo slug, an integer,
+      # and a job-result enum), but they go through env: rather than inline
+      # ${{ }} regardless — an interpolation habit is only worth having if it
+      # holds on the safe cases too.
+      - name: Assert a rendered review exists for this head
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
           RESULT: ${{ needs.review.result }}
-        run: |
-          echo "Reusable review workflow result: $RESULT"
-          if [ "$RESULT" != "success" ] && [ "$RESULT" != "skipped" ]; then
-            echo "::error::The claude-code-review.reusable.yml call did not succeed (result=$RESULT)."
-            exit 1
-          fi
+        run: sh .github/scripts/assert-review-rendered.sh "$REPO" "$PR" "$RESULT"
 
-# `skipped` counts as satisfied, and that is load-bearing rather than
+# The assertion lives in a script, not inline here, because inline YAML cannot
+# be run or tested — and this job's whole history is of passing while meaning
+# nothing (#198). `.github/scripts/assert-review-rendered_test.sh` is nine
+# cases with a near-miss twin for every positive, and `reviewmirror_test.go`
+# runs that suite as part of `go test ./...`, so neutering the script turns
+# the root module red rather than turning this check quietly green.
+#
+# `skipped` still counts as satisfiABLE, and that is load-bearing rather than
 # defensive: every internal job of the reusable workflow has its own `if:` that
 # legitimately skips on events this workflow shouldn't act on (e.g. an
 # unrelated label add/remove, which this shim forwards broadly so the
 # do-not-merge labels reach the gate). When every internal job skips, the
 # `review` call job's own result is `skipped`, not `success` — treating that as
 # a failure would fail the check on every unrelated label change.
+#
+# What changed is that `skipped` no longer counts as satisfIED on its own. It
+# means "no new review was needed", which is only true if an existing review
+# covers this head — so the script goes on to check that, and a label event on
+# a commit nothing has reviewed is now red instead of green.
 
 # When track_progress is enabled (in the reusable workflow):
 # - Creates a tracking comment with progress checkboxes
