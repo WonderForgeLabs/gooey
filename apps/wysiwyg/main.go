@@ -116,10 +116,29 @@
 // one would change how the workspace lays out and leave the saved
 // document untouched.
 //
+// # Moving
+//
+// Drag an element on the surface and it moves. Only a child of a
+// <Canvas> — free geometry belongs to the PARENT, so a child of a <Grid>
+// would mean re-celling and a child of a <VStack> reordering, and neither
+// is this gesture. A press on one of those selects and does not drag,
+// rather than writing a Canvas.Left the parent would silently discard.
+//
+// The gesture is two-speed, and the split is the whole design: each
+// motion writes gooey.Layout.Left/Top on the LIVE COMPONENT and asks for
+// a frame, and only the release writes markup and rebuilds. Writing
+// markup per motion would re-mount the entire designer subtree per
+// pointer report and would look identical on screen — which is why
+// drag_test.go pins per-motion and on-release damage separately. Measured
+// on a two-element document: 6 per motion, 12 on release, 7 when the
+// motion drags across another element.
+//
 // THE POSITIONS HAVE NOWHERE TO LIVE, and that is stated rather than
-// solved. Things are positioned on a surface that is never saved, so a
-// move produces no diff in the user's document. Nothing here invents a
-// home for that state — no attribute, no comment, no property element.
+// solved. Things are positioned on a surface that is never saved, so the
+// in-flight offset exists only in memory (dragState) until a release
+// records it as Canvas.Left/Top on the element itself. Nothing here
+// invents a home for design-time state — no attribute, no comment, no
+// property element.
 //
 // The pointer is a second way in, never the only one. ctrl+n and ctrl+p
 // remain the whole gesture from the keyboard, which is not politeness:
@@ -248,7 +267,7 @@ func main() {
 			return nil
 		}
 		return c.Focus().HitTest(x, y)
-	})
+	}, app.Invalidate)
 
 	// Both servers are handed ed.ctx — the EDITOR's context, not docCtx.
 	// A control-plane client is driving the editor, so the vocabulary it
@@ -565,6 +584,13 @@ type editor struct {
 	hitTest func(x, y int) gooey.Component
 	docRoot gooey.Component
 	nodeOf  map[gooey.Component]*node
+
+	// drag is the move gesture in flight, and invalidateFn is what asks
+	// for the frame it needs — see drag.go. invalidateFn is injected for
+	// the same reason hitTest is: the tests drive Composer.Frame()
+	// directly and have no *gooey.App.
+	drag         dragState
+	invalidateFn func()
 
 	// serving names the control-plane endpoints this editor is listening
 	// on, in the order they came up; serveInfo is the same thing bound

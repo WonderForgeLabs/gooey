@@ -30,20 +30,15 @@ import "github.com/WonderForgeLabs/gooey"
 // selecting against a tree that is no longer on screen — a bug with no
 // symptom except the wrong element appearing in the properties grid. A
 // closure resolves it per press.
-func (ed *editor) bindPicking(hit func(x, y int) gooey.Component) {
+// invalidate is what asks for a frame after a write the property graph
+// cannot see — see drag.go. Both are injected rather than reached through
+// ed.app, because the composer is not a fixture.
+func (ed *editor) bindPicking(hit func(x, y int) gooey.Component, invalidate func()) {
 	ed.hitTest = hit
-	ed.pv.BindSelect(ed.selectAt)
-}
-
-// selectAt is what a press in the designer means. It always consumes:
-// in DESIGN mode the designer owns its own surface, and a press that
-// resolved to nothing is still a press the picture swallowed.
-func (ed *editor) selectAt(x, y int) bool {
-	if ed.hitTest == nil {
-		return false
-	}
-	ed.setSelection(ed.nodeAt(ed.hitTest(x, y)))
-	return true
+	ed.invalidateFn = invalidate
+	// The editor IS the Designer: press, drag and release are one
+	// interface so a host cannot bind selection and forget movement.
+	ed.pv.BindDesigner(ed)
 }
 
 // nodeChain is the design nodes the pointer is inside, OUTERMOST FIRST:

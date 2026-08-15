@@ -22,10 +22,27 @@ import (
 // what can answer HitTest, and it does not exist until after the page is
 // built.
 func designerPage(t *testing.T) (*editor, *gooey.Composer) {
+	ed, c, _ := designerPageCounting(t)
+	return ed, c
+}
+
+// designerPageCounting also returns how many frames the editor ASKED for.
+//
+// The counter is the pin on the trap that would otherwise cost an hour:
+// Layout.Left/Top are plain int fields, so a drag that writes one and
+// does not call App.Invalidate schedules no frame and the element does
+// not move — with no error. In a test the frame is driven by hand, so
+// without counting the request the assertion would pass on code that
+// never asked.
+func designerPageCounting(t *testing.T) (*editor, *gooey.Composer, *int) {
 	t.Helper()
 	ed, c := designPage(t)
-	ed.bindPicking(func(x, y int) gooey.Component { return c.Focus().HitTest(x, y) })
-	return ed, c
+	frames := 0
+	ed.bindPicking(
+		func(x, y int) gooey.Component { return c.Focus().HitTest(x, y) },
+		func() { frames++ },
+	)
+	return ed, c, &frames
 }
 
 // docKid is the component built for root.Kids[i].

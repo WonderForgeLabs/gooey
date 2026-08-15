@@ -39,8 +39,29 @@ type Pane struct {
 	// and nothing in it acts. See Frozen.
 	design *prop.Property[bool]
 
-	// sel is the design-surface selection gesture. See BindSelect.
-	sel func(x, y int) bool
+	// designer is the design-surface gesture set. See BindDesigner.
+	designer Designer
+}
+
+// Designer is the editor's half of the design-surface gestures: what a
+// press, a drag and a release MEAN, which is document knowledge this
+// component deliberately does not have.
+//
+// It replaced a single select-on-press closure when dragging arrived.
+// Three related callbacks passed separately would have let a host bind
+// one and forget another — a press that selects and a motion that does
+// nothing is a designer where things cannot be moved, with no error
+// anywhere — so they are one interface a host implements or does not.
+//
+// Every method reports whether it consumed the event.
+type Designer interface {
+	// Press selects what is under the cell, and may begin a drag.
+	Press(x, y int) bool
+	// Drag continues a drag in progress. Called for raw motion, which is
+	// why the pane opts into MouseMoveHandler.
+	Drag(x, y int) bool
+	// Release commits a drag in progress.
+	Release(x, y int) bool
 }
 
 // BindDesignMode makes the pane a gooey.Frozen host whose answer is a
@@ -90,7 +111,7 @@ func (p *Pane) Frozen() bool {
 // FocusManager.HitTest, which is the editor's to make (it holds the
 // composer) and not a paraphrase this file should keep its own copy of.
 // Reporting true consumes the press.
-func (p *Pane) BindSelect(sel func(x, y int) bool) { p.sel = sel }
+func (p *Pane) BindDesigner(d Designer) { p.designer = d }
 
 // HandleMouse is click-to-select, gated on the pane being FROZEN.
 //
@@ -113,13 +134,38 @@ func (p *Pane) BindSelect(sel func(x, y int) bool) { p.sel = sel }
 // input.ButtonRight yet, and quietly selecting on a right press would
 // spend the gesture a context menu will want.
 func (p *Pane) HandleMouse(ev input.MouseEvent) bool {
-	if p.sel == nil || !p.Frozen() {
+	if p.designer == nil || !p.Frozen() {
 		return false
 	}
-	if ev.Kind != input.MousePress || ev.Button != input.ButtonLeft {
+	if ev.Button != input.ButtonLeft {
 		return false
 	}
-	return p.sel(ev.X, ev.Y)
+	switch ev.Kind {
+	case input.MousePress:
+		return p.designer.Press(ev.X, ev.Y)
+	case input.MouseRelease:
+		return p.designer.Release(ev.X, ev.Y)
+	}
+	return false
+}
+
+// HandleMouseMove is gooey.MouseMoveHandler, and the pane opts into raw
+// motion for exactly one reason: a drag is motion.
+//
+// It costs nothing when nothing is being dragged — Drag returns false
+// immediately — and motion is delivered only to components that ask for
+// it, so the rest of the tree is unaffected.
+//
+// THE PRESS ALREADY CAPTURED THIS PANE. DispatchMouse sets the implicit
+// captor from the (frozen-retargeted) hit before routing, so every motion
+// event of the gesture arrives here even when the pointer leaves the
+// designer entirely — which is what makes a drag that wanders over the
+// properties grid and back still work. No CaptureMouse call is needed.
+func (p *Pane) HandleMouseMove(ev input.MouseEvent) bool {
+	if p.designer == nil || !p.Frozen() {
+		return false
+	}
+	return p.designer.Drag(ev.X, ev.Y)
 }
 
 // Builder registers the pane as <Preview/>, with p as its host.
