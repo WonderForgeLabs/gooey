@@ -17,7 +17,7 @@ No workflow is involved — this is a **standalone activity**
 ## Setup
 
 ```sh
-cd apps/temporal-worker
+cd apps/kanban/worker
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U -r requirements.txt
 cp .env.example .env   # then fill in a credential, if you don't already have one active
@@ -47,9 +47,12 @@ generated markup.
 Running this worker by hand next to a target app is two shells and, in practice, the
 manually-started process outliving the demo — the same shape
 `docs/specs/2026-08-10-companions.md` describes for the Temporal wizard's dev server.
-`apps/kanban` wires this worker in as a `gooey.CompanionCmd`: the Go app starts
-it before its first frame and kills it (the whole process group, not just the direct
-child) when it quits, so there is nothing left polling after the demo closes.
+`apps/kanban` — the parent directory — wires this worker in as a `gooey.CompanionCmd`:
+the Go app starts it before its first frame and kills it (the whole process group, not
+just the direct child) when it quits, so there is nothing left polling after the demo
+closes. That companion relationship is why this directory sits *inside* the app rather
+than beside it in `apps/`: its lifetime is the board's, and `main.go` finds it at
+`filepath.Join(dir, "worker")`.
 
 ```sh
 cd apps/kanban
@@ -59,13 +62,13 @@ go run . -mcp 127.0.0.1:7778 -with-worker -worker-python /path/to/.venv/bin/pyth
 `-worker-task-queue` (default `kanban-dynamic-ui`) keeps a companion-launched worker
 here from colliding with one you run by hand against the generic
 `gooey-dynamic-ui-task-queue`. The companion's stdout/stderr are redirected to
-`apps/temporal-worker/kanban-worker.log` — a gooey app owns the terminal, so the
+`apps/kanban/worker/kanban-worker.log` — a gooey app owns the terminal, so the
 worker's output never goes to the tty directly (see the "Output goes to `os.DevNull`"
 note in `docs/specs/2026-08-10-companions.md`). Trigger it the same way, pointed at the
 companion's queue:
 
 ```sh
-cd apps/temporal-worker
+cd apps/kanban/worker
 TEMPORAL_TASK_QUEUE=kanban-dynamic-ui python trigger.py GenerateUI "the kanban board's todo column"
 ```
 

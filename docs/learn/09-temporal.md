@@ -228,7 +228,7 @@ readiness, the grace window, and the teardown guarantee.
 
 ## Closing the loop: a worker that writes UI
 
-[`apps/temporal-worker`](../../apps/temporal-worker) is the two
+[`apps/kanban/worker`](../../apps/kanban/worker) is the two
 tutorials shaking hands: a Python Temporal worker whose one dynamic
 activity has Claude generate gooey markup about any topic, then pushes
 it into a running app's `swap_markup` over MCP (tutorial 8). Run it as
@@ -237,7 +237,7 @@ a companion of the Kanban board:
 ```sh
 cd apps/kanban
 go run . -worker-python /path/to/.venv/bin/python   # -with-worker is on by default
-# then, from apps/temporal-worker:
+# then, in a second shell, from apps/kanban/worker:
 TEMPORAL_TASK_QUEUE=kanban-dynamic-ui python trigger.py GenerateUI "a topic"
 ```
 

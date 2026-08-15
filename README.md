@@ -141,9 +141,10 @@ usual arrangement: its markup is *served by* a Temporal workflow — the
 workflow is the application, versioned and replayed like any workflow
 state, and the terminal contributes only the capability grant that lets
 served markup signal that one workflow. `apps/kanban` is driven
-from the outside instead: `apps/temporal-worker`, a Python Temporal
-worker, has Claude generate a page and pushes it into the running board
-through the MCP `swap_markup` tool. `apps/dynamic-activities` closes
+from the outside instead: `apps/kanban/worker`, the Python Temporal
+worker it launches as a companion, has Claude generate a page and
+pushes it into the running board through the MCP `swap_markup` tool.
+`apps/dynamic-activities` closes
 the circle: its companion is a Python worker that is *itself* an MCP
 server offering CRUD over Temporal activities, so a tool call turns a
 blob of Python source into a live activity, registers a result property
@@ -208,7 +209,7 @@ live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
 | `handlers/temporal/cmd/wizardui` | [wizarddemo.gif](handlers/temporal/wizarddemo.gif) (earlier cut; final GIF: docs-and-demos workflow) | Workflow-served markup: every screen arrives as a workflow query payload, and the terminal contributes only the capability grant |
 | `cmd/colors` | [colors.gif](docs/media/demos/colors.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
 | `mcp/cmd/server` | [server.gif](docs/media/demos/server.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `apps/kanban` | — | A real Kanban board that is also an MCP server, with a live traffic log; `apps/temporal-worker` pushes generated markup into it over `swap_markup` |
+| `apps/kanban` | — | A real Kanban board that is also an MCP server, with a live traffic log; its own `apps/kanban/worker` companion pushes generated markup into it over `swap_markup` |
 | `apps/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
 | `cmd/toolkit` | [toolkit.gif](docs/media/demos/toolkit.gif) | The UI toolkit — every component the kit ships, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer` |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |

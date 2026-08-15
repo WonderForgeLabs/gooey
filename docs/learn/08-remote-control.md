@@ -229,7 +229,7 @@ way. Three companions to know:
   first and unregister second.
 
 This loop — generate, validate, swap, look — is exactly what
-`apps/temporal-worker` automates: a Python Temporal worker that
+`apps/kanban/worker` automates: a Python Temporal worker that
 has Claude write markup and pushes it into this app's `swap_markup`.
 Drop the `-with-worker=false` from step 1 (and point `-worker-python`
 at a venv) to see it as a one-shell arrangement

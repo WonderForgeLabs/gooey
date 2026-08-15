@@ -151,7 +151,7 @@ wrong.
 
 This venv is **this example's own** — `.venv/` here, gitignored, and what `main.go`
 auto-selects when `-worker-python` is left at its default. Do not point it at
-`apps/temporal-worker/.venv`: that one is built for a different demo (it carries
+`apps/kanban/worker/.venv`: that one is built for a different demo (it carries
 `claude-agent-sdk`, which pins `mcp` back to 1.29.x, and it has neither `grpcio` nor
 `gooey-control`).
 

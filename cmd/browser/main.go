@@ -147,8 +147,11 @@ var roots = []struct {
 	// nested modules because they import gooey/mcp's SDK graph. ownDir
 	// covers both cases: `go run .` from the app's directory works
 	// whether it is its own module or part of the root one.
-	// Non-Go entries (the Python temporal-worker) have no main.go and
-	// fall out of the scan naturally.
+	// Every entry here is a Go app today. The scan is one level deep and
+	// requires a main.go, so an app's own subdirectories — kanban's
+	// Python worker/ companion, say — are never entries in their own
+	// right; they belong to the app that owns them, and that is the
+	// point of them living inside it.
 	{path: "apps", group: "apps", prefix: "app-", ownDir: true},
 }
 

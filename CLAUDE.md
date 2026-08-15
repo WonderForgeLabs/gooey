@@ -48,7 +48,7 @@ by a character.
 # with `-not -path './.*'` is not enough — that only anchors at the top.
 # The two offenders are both UNTRACKED, so neither exists in a fresh
 # clone and you cannot check this from the repo alone: .claude/worktrees/
-# holds whole checkouts, and apps/temporal-worker/.venv (gitignored;
+# holds whole checkouts, and apps/kanban/worker/.venv (gitignored;
 # appears once you run that example) vendors two go.mod files of
 # Temporal's own. That asymmetry is the point — a top-anchored filter
 # passes in CI and walks into someone else's tree on your machine.
