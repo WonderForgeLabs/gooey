@@ -149,6 +149,35 @@ func TestLoadErrors(t *testing.T) {
 			`<Figure><Ellipse Fill="#fff" StrokeDashArray="4,2"/></Figure>`,
 			"there is no pen to apply it to",
 		}, {
+			"StrokeLineCap with no Stroke",
+			`<Figure><Ellipse Fill="#fff" StrokeLineCap="Round"/></Figure>`,
+			"there is no pen to apply it to",
+		}, {
+			"StrokeLineJoin with no Stroke",
+			`<Figure><Ellipse Fill="#fff" StrokeLineJoin="Round"/></Figure>`,
+			"there is no pen to apply it to",
+		}, {
+			// One level below the shape. This is the SAME defect as the
+			// two shape-property cases above, found again by review after
+			// it had been fixed once — which is why validation is now a
+			// sweep over a declared table rather than a check inside each
+			// parser. These four cases are the regression pins for that.
+			"a property element a brush does not have",
+			`<Figure><Line><Line.Stroke><LinearGradientBrush Fallback="#fff"><LinearGradientBrush.StartPoint>0,0</LinearGradientBrush.StartPoint><GradientStop Color="#fff" Offset="0"/><GradientStop Color="#000" Offset="1"/></LinearGradientBrush></Line.Stroke></Line></Figure>`,
+			"does not accept the property element",
+		}, {
+			"a property element a solid brush does not have",
+			`<Figure><Rectangle><Rectangle.Fill><SolidColorBrush Color="#fff"><SolidColorBrush.Color>#000</SolidColorBrush.Color></SolidColorBrush></Rectangle.Fill></Rectangle></Figure>`,
+			"does not accept the property element",
+		}, {
+			"a property element a radial brush does not have",
+			`<Figure><Rectangle><Rectangle.Fill><RadialGradientBrush Fallback="#fff"><RadialGradientBrush.Centre>0,0</RadialGradientBrush.Centre><GradientStop Color="#fff" Offset="0"/><GradientStop Color="#000" Offset="1"/></RadialGradientBrush></Rectangle.Fill></Rectangle></Figure>`,
+			"does not accept the property element",
+		}, {
+			"a property element a gradient stop does not have",
+			`<Figure><Line><Line.Stroke><LinearGradientBrush Fallback="#fff"><GradientStop Color="#fff" Offset="0"><GradientStop.Color>#000</GradientStop.Color></GradientStop><GradientStop Color="#000" Offset="1"/></LinearGradientBrush></Line.Stroke></Line></Figure>`,
+			"does not accept the property element",
+		}, {
 			"an unknown brush element",
 			`<Figure><Line><Line.Stroke><TartanBrush/></Line.Stroke></Line></Figure>`,
 			"unknown brush",
@@ -375,8 +404,16 @@ func TestCellTierTakesTheDeclaredFallbackOfAGradient(t *testing.T) {
 // three-part guard, and paint.Canvas refusing a canvas of zero pixels so
 // that raster returns an error and Render falls back anyway. Deleting
 // the guard's `|| fr.CellW <= 0 || fr.CellH <= 0` was measured against
-// this test and it still passed — the redundancy is real and deliberate,
-// and it is precisely the second net that components.Image lacks.
+// this test and it still passed.
+//
+// The redundancy is real and deliberate, and it is exactly what
+// components.Image did not have — which is issue #251, fixed in #257.
+// Image branched on f.Graphics alone and had no fallible canvas
+// underneath to catch it, so a forced protocol with no capability probe
+// left the region blank with no error anywhere. Read #251 for why the
+// second net matters; this comment exists so the next person to
+// "simplify" the guard here knows it is load-bearing on its own merits
+// even though no test can isolate it.
 func TestAForcedProtocolWithNoCellSizeStillDraws(t *testing.T) {
 	for _, c := range []struct{ w, h int }{{0, 20}, {10, 0}, {0, 0}} {
 		_, f := fig(t, `<Figure><Rectangle Stroke="#6c9cff" StrokeThickness="3"/></Figure>`, 20, 6, graphics.Sixel{}, c.w, c.h)

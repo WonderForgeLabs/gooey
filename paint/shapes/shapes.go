@@ -26,8 +26,11 @@
 // Context.spec (markup/attrcheck.go:151) returns AttrsKnown=false for
 // anything in Components and checkProps exempts it outright, so the
 // framework will not catch a misspelled attribute or an unknown property
-// element here — checkAttrs and checkProps below do, on the <Companion>
-// and <Validate> model, at LOAD time.
+// element here. The `vocabulary` table below states every element's
+// surface and checkVocab sweeps a whole <Figure> subtree against it at
+// LOAD time, before any parser runs — see that table's comment for why
+// the check is not inside the parsers, which is where it started and
+// twice failed.
 //
 // # One canvas per <Figure>, not one per shape
 //
@@ -263,20 +266,152 @@ func Builder() markup.Builder {
 	}
 }
 
-// figureAttrs is <Figure>'s own vocabulary. The universal surface —
-// Name, Width, Grid.Row and the rest — is applied by the framework
-// AFTER this builder returns (markup.build calls applyLayout), so it has
-// to be allowed here or every laid-out figure would be rejected.
-var figureAttrs = map[string]bool{"Slice": true, "Style": true}
+// ---- the declared surface, and the one sweep that checks it ----
+//
+// Every element this package parses states its whole surface here, and
+// checkVocab walks a <Figure> subtree against this table BEFORE any
+// parser runs. Validation is therefore structural rather than per-parser:
+// a parser cannot forget to validate, because no parser validates.
+//
+// This is not the shape it started in, and the reason is worth keeping.
+// The first version checked attributes inside each parser. Review found
+// that parseShape checked e.Attrs and not e.Props, so <Rectangle.Fil>
+// loaded clean with the brush inside it silently never applied. That was
+// fixed by adding a check to parseShape — and review found the SAME bug
+// again one level down, in parseBrushElement and parseStops, in the same
+// PR. Twice in one change is not carelessness, it is a design that makes
+// forgetting the default: each new parser started unvalidated and had to
+// remember to opt in.
+//
+// So the check moved out of the parsers entirely. Adding an element now
+// means adding a row here, and a row that is missing fails loudly on the
+// first document that uses the element rather than quietly on the first
+// document that misspells one of its properties.
+//
+// It is also the shape markup/elementdef.go argues for in core: each
+// element STATES its own surface, in one literal, colocated with the code
+// that reads it — rather than the surface being implicit in control flow
+// where nothing can check it.
+type vocabRow struct {
+	// attrs and props are the element's whole surface. A nil props map
+	// means the element takes no property elements at all.
+	attrs, props map[string]bool
+	// propHint is appended to an unknown-property error where a generic
+	// message would leave the author guessing. <Figure.Stroke> is the
+	// motivating case: it is a reasonable thing to write and the answer
+	// is that brushes belong on shapes.
+	propHint string
+}
+
+var vocabulary = map[string]vocabRow{}
+
+func init() {
+	// <Figure> also accepts the universal surface — Name, Width,
+	// Grid.Row and the rest — because the framework applies those AFTER
+	// this builder returns (markup.build calls applyLayout). Omitting
+	// them here would reject every laid-out figure.
+	//
+	// Attached properties cannot be scoped to the actual parent:
+	// Element.parent is unexported, so a registered builder cannot tell
+	// whether it sits in a <Grid>. The union is accepted and the
+	// framework's own applyLayout does the work; core's narrower check
+	// is not reproducible from outside the package.
+	figure := set("Slice", "Style")
+	for _, a := range markup.UniversalAttrs() {
+		figure[a.Name] = true
+	}
+	for _, p := range markup.AttachedParents() {
+		for _, a := range markup.AttachedAttrs(p) {
+			figure[a.Name] = true
+		}
+	}
+	vocabulary["Figure"] = vocabRow{
+		attrs:    figure,
+		props:    set("Behaviors"),
+		propHint: "; a brush is a property of the SHAPE that uses it, e.g. <Rectangle.Fill>",
+	}
+
+	// The shapes. Each is the shared pen-and-brush surface plus its own
+	// geometry, and each takes the two brush slots.
+	for name, kind := range shapeKinds {
+		attrs := set(paintAttrs...)
+		for _, a := range geometryAttrs[kind] {
+			attrs[a] = true
+		}
+		vocabulary[name] = vocabRow{attrs: attrs, props: set("Fill", "Stroke")}
+	}
+
+	// The brushes and their stops, from the same literals the PARSERS
+	// dispatch on. Deriving both from one table is the last hole closed:
+	// with two tables, adding a brush to the dispatch and forgetting the
+	// vocabulary row would leave that brush silently unvalidated — the
+	// same forget-by-default this restructure exists to remove, moved up
+	// one level. Measured: deleting a row made its property-element test
+	// pass again.
+	//
+	// None of them takes a property element, and stating that as an
+	// empty set rather than by omission is what makes
+	// <LinearGradientBrush.StartPoint> a load error.
+	for name, def := range brushKinds {
+		vocabulary[name] = vocabRow{attrs: set(def.attrs...), props: set()}
+	}
+	vocabulary[stopElement] = vocabRow{attrs: set("Color", "Offset"), props: set()}
+}
+
+func set(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// checkVocab walks an element and everything below it that this package
+// owns, checking each against its declared row.
+//
+// An element NOT in the table is skipped rather than rejected, and the
+// recursion stops there. That is what lets a <Text> or a <VStack> sit
+// inside a <Figure> untouched: element identity is the framework's
+// business for content, and the parsers' business for brushes, where a
+// better error than "unknown element" is available. Nothing is lost — a
+// <Rectangle> nested inside a <VStack> is not a shape, so it goes to
+// BuildChildren and fails there as an unknown element.
+func checkVocab(e markup.Element) error {
+	row, known := vocabulary[e.Name]
+	if !known {
+		return nil
+	}
+	if err := unknownAttr(e.Name, e.Attrs, row.attrs); err != nil {
+		return err
+	}
+	if err := unknownProp(e, row.props, row.propHint); err != nil {
+		return err
+	}
+	// Property elements first, so a bad brush attribute is reported
+	// before a bad child further down the document.
+	names := make([]string, 0, len(e.Props))
+	for name := range e.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, c := range e.Props[name].Children {
+			if err := checkVocab(c); err != nil {
+				return err
+			}
+		}
+	}
+	for _, c := range e.Children {
+		if err := checkVocab(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func build(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
-	if err := checkFigureAttrs(e); err != nil {
+	if err := checkVocab(e); err != nil {
 		return nil, err
-	}
-	for name := range e.Props {
-		if name != "Behaviors" {
-			return nil, fmt.Errorf("markup: <Figure> does not accept the property element <Figure.%s>; a brush is a property of the SHAPE that uses it, e.g. <Rectangle.Fill>", name)
-		}
 	}
 
 	f := &Figure{style: ctx.Styles[e.Attrs["Style"]]}
@@ -317,27 +452,6 @@ func build(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
 	return f, nil
 }
 
-func checkFigureAttrs(e markup.Element) error {
-	allowed := map[string]bool{}
-	for k := range figureAttrs {
-		allowed[k] = true
-	}
-	for _, a := range markup.UniversalAttrs() {
-		allowed[a.Name] = true
-	}
-	// Attached properties cannot be scoped to the actual parent here:
-	// Element.parent is unexported, so a registered builder cannot tell
-	// whether it sits in a <Grid>. The union is accepted and the
-	// framework's own applyLayout does the work; the narrower check core
-	// performs is not reproducible from outside the package.
-	for _, p := range markup.AttachedParents() {
-		for _, a := range markup.AttachedAttrs(p) {
-			allowed[a.Name] = true
-		}
-	}
-	return unknownAttr("Figure", e.Attrs, allowed)
-}
-
 func parseSlice(raw string) (Slice, error) {
 	switch strings.TrimSpace(raw) {
 	case "", "Full":
@@ -356,6 +470,31 @@ var shapeKinds = map[string]ShapeKind{
 	"Line":      KindLine,
 	"Polyline":  KindPolyline,
 }
+
+// brushKinds is both the brush dispatch table and the source of those
+// elements' declared vocabulary — one literal, read by parseBrushElement
+// and by init. shapeKinds serves the same double duty above.
+var brushKinds = map[string]struct {
+	kind  BrushKind
+	attrs []string
+}{
+	"SolidColorBrush":     {BrushSolid, []string{"Color"}},
+	"LinearGradientBrush": {BrushLinear, []string{"StartPoint", "EndPoint", "Fallback"}},
+	"RadialGradientBrush": {BrushRadial, []string{"Center", "Radius", "Fallback"}},
+}
+
+func brushNames() []string {
+	out := make([]string, 0, len(brushKinds))
+	for n := range brushKinds {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// stopElement is a gradient's only child, named once so parseStops and
+// the vocabulary cannot disagree about its spelling.
+const stopElement = "GradientStop"
 
 // paintAttrs is the stroke-and-fill surface every shape shares. It is
 // MAUI's spelling throughout, which is paint's stated contract: "every
@@ -378,26 +517,6 @@ func parseShape(e markup.Element) (Shape, error) {
 	if len(e.Children) > 0 {
 		return Shape{}, fmt.Errorf("markup: <%s> takes no children; a brush goes in <%s.Fill> or <%s.Stroke>", e.Name, e.Name, e.Name)
 	}
-	allowed := map[string]bool{}
-	for _, a := range paintAttrs {
-		allowed[a] = true
-	}
-	for _, a := range geometryAttrs[kind] {
-		allowed[a] = true
-	}
-	if err := unknownAttr(e.Name, e.Attrs, allowed); err != nil {
-		return Shape{}, err
-	}
-	// The property elements too, and this is the check that is easiest to
-	// forget: a shape never reaches markup.build, so core's checkProps
-	// never sees it either. Without this <Rectangle.Fil> loads clean and
-	// the brush inside it is simply never applied — the exact silent
-	// drop this package's whole load-time story exists to prevent, one
-	// element deeper than where it was first written.
-	if err := unknownProp(e, map[string]bool{"Fill": true, "Stroke": true}); err != nil {
-		return Shape{}, err
-	}
-
 	s := Shape{Kind: kind}
 	var err error
 	switch kind {
@@ -520,40 +639,36 @@ func parseBrushElement(owner, name string, slot markup.Element) (*Brush, error) 
 	b := slot.Children[0]
 	var br Brush
 	var err error
-	switch b.Name {
-	case "SolidColorBrush":
-		if err := unknownAttr(b.Name, b.Attrs, map[string]bool{"Color": true}); err != nil {
-			return nil, err
-		}
-		br.Kind = BrushSolid
+	// Dispatch comes from brushKinds, the same literal the vocabulary is
+	// built from. That is what makes "unknown brush" and "unvalidated
+	// brush" the same impossible state: a name this switch can reach is a
+	// name the table has a row for, by construction rather than by two
+	// people remembering to edit two places.
+	def, ok := brushKinds[b.Name]
+	if !ok {
+		return nil, fmt.Errorf("markup: <%s.%s>: unknown brush <%s>; want %s", owner, name, b.Name, strings.Join(brushNames(), ", "))
+	}
+	br.Kind = def.kind
+	switch def.kind {
+	case BrushSolid:
 		if br.Solid, err = colorAttr(b, "Color"); err != nil {
 			return nil, err
 		}
 		return &br, nil
-	case "LinearGradientBrush":
-		if err := unknownAttr(b.Name, b.Attrs, map[string]bool{"StartPoint": true, "EndPoint": true, "Fallback": true}); err != nil {
-			return nil, err
-		}
-		br.Kind = BrushLinear
+	case BrushLinear:
 		if br.X0, br.Y0, err = pointAttr(b, "StartPoint", 0, 0); err != nil {
 			return nil, err
 		}
 		if br.X1, br.Y1, err = pointAttr(b, "EndPoint", 1, 1); err != nil {
 			return nil, err
 		}
-	case "RadialGradientBrush":
-		if err := unknownAttr(b.Name, b.Attrs, map[string]bool{"Center": true, "Radius": true, "Fallback": true}); err != nil {
-			return nil, err
-		}
-		br.Kind = BrushRadial
+	case BrushRadial:
 		if br.CX, br.CY, err = pointAttr(b, "Center", 0.5, 0.5); err != nil {
 			return nil, err
 		}
 		if br.R, err = floatAttr(b, "Radius", 0.5); err != nil {
 			return nil, err
 		}
-	default:
-		return nil, fmt.Errorf("markup: <%s.%s>: unknown brush <%s>; want SolidColorBrush, LinearGradientBrush or RadialGradientBrush", owner, name, b.Name)
 	}
 
 	if br.Stops, err = parseStops(b); err != nil {
@@ -578,11 +693,8 @@ func parseBrushElement(owner, name string, slot markup.Element) (*Brush, error) 
 func parseStops(b markup.Element) ([]paint.GradientStop, error) {
 	var out []paint.GradientStop
 	for _, c := range b.Children {
-		if c.Name != "GradientStop" {
-			return nil, fmt.Errorf("markup: <%s> holds <GradientStop> children only; got <%s>", b.Name, c.Name)
-		}
-		if err := unknownAttr(c.Name, c.Attrs, map[string]bool{"Color": true, "Offset": true}); err != nil {
-			return nil, err
+		if c.Name != stopElement {
+			return nil, fmt.Errorf("markup: <%s> holds <%s> children only; got <%s>", b.Name, stopElement, c.Name)
 		}
 		col, err := colorAttr(c, "Color")
 		if err != nil {
@@ -593,12 +705,12 @@ func parseStops(b markup.Element) ([]paint.GradientStop, error) {
 			return nil, err
 		}
 		if off < 0 || off > 1 {
-			return nil, fmt.Errorf("markup: <GradientStop Offset=%q>: an offset is a fraction of the gradient, 0 to 1", c.Attrs["Offset"])
+			return nil, fmt.Errorf("markup: <%s Offset=%q>: an offset is a fraction of the gradient, 0 to 1", stopElement, c.Attrs["Offset"])
 		}
 		out = append(out, paint.GradientStop{Color: col, Offset: off})
 	}
 	if len(out) < 2 {
-		return nil, fmt.Errorf("markup: <%s> needs at least two <GradientStop> children, got %d; one stop is a solid colour and should be written as one", b.Name, len(out))
+		return nil, fmt.Errorf("markup: <%s> needs at least two <%s> children, got %d; one stop is a solid colour and should be written as one", b.Name, stopElement, len(out))
 	}
 	return out, nil
 }
@@ -625,7 +737,7 @@ func unknownAttr(elem string, attrs map[string]string, allowed map[string]bool) 
 		elem, unknown[0], attrs[unknown[0]], elem, strings.Join(known, ", "))
 }
 
-func unknownProp(e markup.Element, allowed map[string]bool) error {
+func unknownProp(e markup.Element, allowed map[string]bool, hint string) error {
 	names := make([]string, 0, len(e.Props))
 	for name := range e.Props {
 		names = append(names, name)
@@ -640,8 +752,12 @@ func unknownProp(e markup.Element, allowed map[string]bool) error {
 			known = append(known, k)
 		}
 		sort.Strings(known)
-		return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>; it takes %s",
-			e.Name, e.Name, name, strings.Join(known, " and "))
+		if len(known) == 0 {
+			return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>; it takes none%s",
+				e.Name, e.Name, name, hint)
+		}
+		return fmt.Errorf("markup: <%s> does not accept the property element <%s.%s>; it takes %s%s",
+			e.Name, e.Name, name, strings.Join(known, " and "), hint)
 	}
 	return nil
 }
