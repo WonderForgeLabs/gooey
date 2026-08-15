@@ -1,0 +1,19 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Chromatica's toolbar.
+       
+       Note what this vendor had to do to add ONE control: reproduce the
+       host's entire toolbar. PatchMarkup replaces a named element, it
+       does not append to one — so a vendor that wants a slot next to
+       your button must rewrite your button too, and nothing stops it
+       coming back slightly different. That is a real hazard and it is
+       left visible rather than papered over.
+       
+       Every binding below resolves against the HOST's context. This
+       vendor cannot invent a value; it can only reach what northwind
+       already put on the table. -->
+  <HStack Name="Toolbar" Gap="2">
+    <ColorPicker Value="{{.Tint}}"/>
+    <Text Style="dim">{{.Wallet}}</Text>
+    <Button Content="integrations" Click="{{.OpenStore}}"/>
+  </HStack>
+</Gooey>
