@@ -1,6 +1,7 @@
 package components
 
 import (
+	"image"
 	"slices"
 	"time"
 
@@ -758,6 +759,64 @@ func rowValue(v any) (handle any, set func(any), touch func()) {
 				p.Set(c)
 			}
 		}, func() { p.Get() }
+	case image.Image:
+		// A picture straight off the record. Before this case a bare
+		// image.Image was not a handle at all, so a template binding it
+		// failed to LOAD — loud, but it made the wrong spelling below the
+		// only one that appeared to work.
+		//
+		// Compared like every other kind, so a re-projection that hands
+		// back the same picture stays damage-free.
+		p := prop.NewSource(x)
+		return p, func(nv any) {
+			if i, ok := nv.(image.Image); ok && !sameImage(i, p.Get()) {
+				p.Set(i)
+			}
+		}, func() { p.Get() }
+	case *prop.Property[image.Image]:
+		// components.Img(r.img) — the spelling that type-checked, loaded,
+		// and was SILENTLY WRONG. It used to fall through to the default
+		// and cross as a literal, so the template bound the first
+		// projection's property and that row showed the first record's
+		// picture for the rest of its life. Rows are keyed by index and
+		// reused, so a re-sort moved the title and left the cover.
+		//
+		// The handle is a computed over an INDIRECTION rather than the
+		// projected property itself, which is what lets the two opposite
+		// uses both work:
+		//
+		//   - a fresh Img(...) built by each projection re-points `cur`,
+		//     so the picture follows the record into the row;
+		//   - a property the APP owns and fills in later — an async
+		//     thumbnail — is read through, so a Set on it reaches the row
+		//     without the collection re-projecting at all. That use is
+		//     what the pass-through accidentally supported, and it is the
+		//     reason this case does not simply unwrap and copy.
+		//
+		// Both compares are load-bearing and neither is redundant. The
+		// POINTER compare is the app-owned case: same property means
+		// nothing about the binding moved, and re-pointing would be a
+		// pointless invalidation. The PICTURE compare is the Img(...)
+		// case, where the pointer is fresh on every projection and
+		// following it blindly would repaint every row of the list on
+		// every re-sort — the damage guarantee, lost to a spelling.
+		//
+		// Declining to re-point a throwaway property is safe because
+		// nobody holds it to Set later; an app that mixes the two styles
+		// on ONE binding — a fresh property per projection that it also
+		// fills asynchronously — is the case this cannot serve, and it
+		// could not be served by the pass-through either.
+		cur := prop.NewSource(x)
+		h := prop.NewComputed(func() image.Image { return imageOf(cur.Get()) })
+		return h, func(nv any) {
+			q, ok := nv.(*prop.Property[image.Image])
+			if !ok || q == cur.Get() {
+				return
+			}
+			if !sameImage(imageOf(q), h.Get()) {
+				cur.Set(q)
+			}
+		}, func() { h.Get() }
 	case []int:
 		// Positions into the item — finder's matched-rune indexes. The
 		// compare is by contents, so a re-projection that produces the
@@ -771,6 +830,27 @@ func rowValue(v any) (handle any, set func(any), touch func()) {
 		}, func() { p.Get() }
 	}
 	return v, nil, nil
+}
+
+// imageOf reads a projected image property, tolerating the nil handle a
+// projection is free to produce for a record with no picture.
+func imageOf(p *prop.Property[image.Image]) image.Image {
+	if p == nil {
+		return nil
+	}
+	return p.Get()
+}
+
+// sameImage reports whether two projected pictures are the same value.
+//
+// Identity is interface equality, for the reason graphics.Placement's
+// SameImage gives: images are pointers in every practical case, so this
+// is a pointer compare. A non-comparable image would make == panic, and
+// the recover turns that into "cannot tell" — which costs one extra Set
+// and the repaint that follows, never a crash in the UI goroutine.
+func sameImage(a, b image.Image) (same bool) {
+	defer func() { recover() }() //nolint:errcheck // a panic here means "not comparable"
+	return a == b
 }
 
 // rowHighlight is the house selection visual, and it paints no cells of

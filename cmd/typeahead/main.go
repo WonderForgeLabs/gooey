@@ -151,26 +151,24 @@ func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
 	}
 }
 
-// record is one item. Its picture is a plain image.Image, and getting it
-// onto the screen is the single hardest thing in this demo.
+// record is one item. Its picture is a plain image.Image, projected
+// straight onto the row like every other field.
 //
-// ItemsView projects an item into a map[string]any and wraps each value
-// in a handle the template binds — but only for the types rowValue's
-// switch names (components/itemsview.go:717). image.Image is not one of
-// them, and neither is *prop.Property[image.Image]: both fall through to
-// the default, which returns the value AS the handle with no setter. So
-// whatever a row's <Image Src> resolves to on the frame the row is built
-// is what that row shows FOREVER.
+// It was not always this simple, and the history is the reason this demo
+// exists. Rows are keyed by collection INDEX and reused, so a re-sort
+// re-projects row 22 with a different record. ItemsView wraps each
+// projected value in a handle the template binds, but only for the types
+// rowValue's switch names — and image.Image was not one of them, nor was
+// *prop.Property[image.Image]. Both fell through to the default, which
+// returns the value AS the handle with no setter, so a row showed the
+// picture it was built with FOREVER: one record's title over another
+// record's cover, with no error anywhere (gooey #217).
 //
-// Rows are keyed by collection INDEX and reused, so re-sorting re-projects
-// row 22 with a different record: the title updates (strings have a
-// setter), the picture does not. You get one record's name over another
-// record's cover, with no error anywhere.
-//
-// The way out is `shown` below: the model owns one image property per
-// POSITION, hands the row that stable handle, and writes the new picture
-// into it whenever the order changes. The row's binding never has to be
-// replaced because it was never per-record in the first place.
+// The demo's workaround was an image property per POSITION, written by
+// the model whenever the order changed — the app moving pixels to the
+// row, because the row's binding could not be re-pointed. rowValue now
+// names both image shapes, so that machinery is gone and the projection
+// below says what it means.
 type record struct {
 	Title  string
 	Artist string
@@ -178,20 +176,11 @@ type record struct {
 	img    image.Image
 }
 
-// shown is a record in a position: the record's data, plus the image
-// property that BELONGS TO THAT POSITION and is what the row at that
-// index binds.
-type shown struct {
-	record
-	art *prop.Property[image.Image]
-}
-
 type model struct {
 	all    []record
-	slots  []*prop.Property[image.Image] // one per position, never replaced
-	sortBy *prop.Property[int]           // 0 title, 1 artist, 2 year
+	sortBy *prop.Property[int] // 0 title, 1 artist, 2 year
 	desc   *prop.Property[bool]
-	sorted *prop.Property[[]shown]
+	sorted *prop.Property[[]record]
 	sel    *prop.Property[int]
 	typed  *prop.Property[string]
 	missed *prop.Property[bool]
@@ -211,19 +200,10 @@ func newModel() *model {
 		missed: prop.NewSource(false),
 		stats:  prop.NewSource(""),
 	}
-	m.slots = make([]*prop.Property[image.Image], len(m.all))
-	for i := range m.slots {
-		m.slots[i] = components.Img(nil)
-	}
 	// The order is a computed over the two sort properties, so changing
 	// either one invalidates the collection through the ordinary graph and
 	// the list re-projects. No refresh call anywhere.
-	//
-	// The computed only PAIRS each position with its slot property. It
-	// does not write the pictures — a Set inside an evaluation would
-	// invalidate dependents mid-evaluation. syncSlots does that, from the
-	// command handler, outside any evaluation.
-	m.sorted = prop.NewComputed(func() []shown {
+	m.sorted = prop.NewComputed(func() []record {
 		out := append([]record(nil), m.all...)
 		by, down := m.sortBy.Get(), m.desc.Get()
 		sort.SliceStable(out, func(i, j int) bool {
@@ -242,40 +222,19 @@ func newModel() *model {
 			}
 			return less
 		})
-		res := make([]shown, len(out))
-		for i, r := range out {
-			res[i] = shown{record: r, art: m.slots[i]}
-		}
-		return res
+		return out
 	})
-	m.syncSlots()
 	return m
-}
-
-// syncSlots writes the picture of the record now in each position into
-// that position's property. It is the price of a row binding that can
-// never be re-pointed: the app has to move the pixels to the row instead
-// of moving the row to the pixels.
-//
-// Runs from a command handler, outside any evaluation, so these Gets
-// subscribe to nothing; each Set is compared, so an order that did not
-// actually move a picture costs no repaint.
-func (m *model) syncSlots() {
-	for i, s := range m.sorted.Get() {
-		if m.slots[i].Get() != s.img {
-			m.slots[i].Set(s.img)
-		}
-	}
 }
 
 // items is the ItemSource the page binds.
 func (m *model) items() *prop.Property[components.ItemSource] {
-	return components.Items(m.sorted, func(r shown) map[string]any {
+	return components.Items(m.sorted, func(r record) map[string]any {
 		return map[string]any{
 			"Title":  r.Title,
 			"Artist": r.Artist,
 			"Year":   fourDigits(r.Year),
-			"Cover":  r.art,
+			"Cover":  r.img,
 			// Every row projects the same four-cell bar; it is the marker
 			// column's content, shown only while the row is selected. A
 			// template's context is the ITEM and nothing else, so a
@@ -300,7 +259,6 @@ func (m *model) resort(mutate func()) {
 		was = cur[m.sel.Get()].Title
 	}
 	mutate()
-	m.syncSlots()
 	for i, r := range m.sorted.Get() {
 		if r.Title == was {
 			if m.sel.Get() != i {

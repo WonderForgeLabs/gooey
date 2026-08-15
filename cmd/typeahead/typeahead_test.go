@@ -335,16 +335,18 @@ func TestSearchDoesNotFollowTheSortColumn(t *testing.T) {
 
 // ---- the projection trap ----
 
-// image.Image is not one of the types ItemsView's rowValue switch names
-// (components/itemsview.go:717), so an image projected as a bare VALUE
-// crosses as a literal: fixed for the life of the row, with no setter.
-// Re-projecting that row — which is exactly what a re-sort does, since
-// rows are keyed by INDEX — then updates the title and leaves the
-// picture belonging to whatever used to sit at that index.
+// An image projected as a bare value used to cross as a literal — fixed
+// for the life of the row, with no setter — because rowValue's switch
+// named neither image.Image nor *prop.Property[image.Image]. Re-projecting
+// a row, which is exactly what a re-sort does since rows are keyed by
+// INDEX, then updated the title and left the picture belonging to whatever
+// used to sit at that index (gooey #217).
 //
-// The demo projects the record's own property HANDLE instead, so the art
-// travels with the record. This pins that: after a re-sort, every
-// realized row's Image must hold the art of the record now at its index.
+// rowValue names both shapes now, so the demo projects `r.img` directly.
+// This pins the behaviour that fix buys: after a re-sort, every realized
+// row's Image must hold the art of the record now at its index. The
+// framework-level pins live in components/itemsview_test.go; this one is
+// end-to-end through the real page, the real template and a real sort.
 func TestCoversTravelWithTheRecordAcrossAReSort(t *testing.T) {
 	r := newRig(t, nil)
 	// Land somewhere with company, then re-sort under the selection.
@@ -364,8 +366,8 @@ func TestCoversTravelWithTheRecordAcrossAReSort(t *testing.T) {
 		if title != want.Title {
 			t.Fatalf("row %d shows title %q, want %q", index, title, want.Title)
 		}
-		if img != want.art.Get() {
-			t.Fatalf("row %d (%q) is showing another record's cover — an image projected as a value has no setter", index, want.Title)
+		if img != want.img {
+			t.Fatalf("row %d (%q) is showing another record's cover — the picture did not travel with the record", index, want.Title)
 		}
 	})
 	if seen == 0 {
