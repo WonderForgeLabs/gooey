@@ -19,10 +19,19 @@
 // that same pane, decoded and coalesced into whole frames and animated
 // by a clock the Composer owns (gifplay.go).
 //
-// None of it needs a restart. A poll fingerprints every directory the UI
-// reads from (watch.go), so a recording finished in another terminal, a
-// new demo, an added .gooey file or an edited doc comment all reach the
-// list and the visible preview on their own.
+// None of it needs a restart. A <Timer> in the page polls a fingerprint
+// of every directory the UI reads from (watch.go), so a recording
+// finished in another terminal, a new demo, an added .gooey file or an
+// edited doc comment all reach the list and the visible preview on
+// their own.
+//
+// Two markup documents describe the screen. browser.gooey is the shell:
+// the grid, the chrome, every key gesture, the poll, and the picker's
+// place in z-order. infopane.gooey is the preview pane, a markup-only
+// control instantiated with the handles it needs — the lines it shows,
+// their order, and which of them collapse are all declared there. What
+// is left in Go is data (the directory scan), algorithms (markdown,
+// GIF coalescing, git), and the three leaves markup has no element for.
 //
 // The tree being browsed does not have to be the tree the browser was
 // launched from. `b` opens a source picker (picker.go) listing the
@@ -327,10 +336,13 @@ func main() {
 			len(ds)-learn, learn)
 	})
 	// The picker exists before the hint because the hint READS it: while
-	// the picker is open the hint shows the picker's keys, and that read
-	// is also what guarantees opening and dismissing schedule a frame —
-	// the popup's own paint node has no dependencies before its first
-	// evaluation, so an always-painted node must carry the subscription.
+	// the picker is open the hint shows the picker's keys.
+	//
+	// That read used to be load-bearing for a second reason — it was the
+	// only subscription to the open property, because a Collapsed popup
+	// never evaluates its own Render and so the FIRST open scheduled no
+	// frame. components.Popup carries its own subscription now (see
+	// picker.go), so this is just a hint saying what the keys are.
 	// What to do with a picked source is wired below, once the app and
 	// the launch machinery exist.
 	var switchTo func(source)
@@ -355,6 +367,52 @@ func main() {
 		}
 		return "enter run   r record" + play + "   b sources   j/k ↑/↓ select   q quit"
 	})
+
+	// The preview pane's header is five lines of text ABOUT the
+	// selection. The lines themselves are infopane.gooey's; what is here
+	// is only what markup cannot derive.
+	//
+	// The split is deliberate and worth reading twice, because it is the
+	// whole shape of "push structure into markup". <Text> interpolates
+	// literal and bound segments, so every fixed word — "r record → ",
+	// "recordings/", ".cast" — belongs in the document, and the handle
+	// beside it carries DATA and nothing else. Only where the string has
+	// a BRANCH in it (three ways to spell a `go run` line; an artifact
+	// pair that is one path or two) does a whole-line computed earn its
+	// place, because the binding dialect has no conditional.
+	//
+	// Each line also has a companion flag, because "this line is absent"
+	// is a Visibility question and markup can ask it
+	// (Visibility="{{.ShowPlay}}"), where Go used to answer it with an
+	// `if` around a paint. They are flags rather than emptiness tests
+	// only because bindVisibility takes a bool or a Visibility and
+	// nothing else — there is no string-is-empty converter.
+	cmdLine := selLine(demos, sel, cur, func(d demo, _ source) string {
+		switch {
+		case d.ownDir:
+			return "cd " + d.dir + " && go run ."
+		case d.modDir != "":
+			return "cd " + d.modDir + " && go run ./" + strings.TrimPrefix(d.dir, d.modDir+"/")
+		}
+		return "go run ./" + d.dir
+	})
+	recName := selLine(demos, sel, cur, func(d demo, _ source) string { return d.rec })
+	gifPath := selLine(demos, sel, cur, func(d demo, _ source) string { return d.gifPath })
+	sourceDesc := selLine(demos, sel, cur, func(_ demo, src source) string { return src.describe() })
+	// The hint has no room for the artifact paths, so they live in the
+	// pane, where `r` and `p` each say exactly which file they mean.
+	artifacts := selLine(demos, sel, cur, func(d demo, _ source) string {
+		art := recDir + "/" + d.rec + ".cast"
+		if d.gif {
+			art += "  +  " + recDir + "/" + d.rec + ".gif"
+		}
+		return art
+	})
+	hasDemos := selFlag(demos, sel, cur, func(demo, source) bool { return true })
+	noDemos := prop.NewComputed(func() bool { return len(demos.Get()) == 0 })
+	showSource := selFlag(demos, sel, cur, func(_ demo, src source) bool { return !src.Launch })
+	showRecorded := selFlag(demos, sel, cur, func(d demo, _ source) bool { return d.cast })
+	showPlay := selFlag(demos, sel, cur, func(d demo, _ source) bool { return d.gifPath != "" })
 
 	// The pane border names the active source, so which tree you are
 	// looking at is chrome, not something to remember.
@@ -387,12 +445,45 @@ func main() {
 	// rebuilds the preview component, and playback should not stop because
 	// browser.gooey was saved. What it may NOT outlive is the composition
 	// being live: the component hands it to the Composer as a Startable, so
-	// Composer.Close stops the ticker (see demoInfo.Start).
+	// Composer.Close stops the ticker (see demoBody.Start).
 	play := newPlayer(status)
+
+	// The markup root is resolved BEFORE the context, because the
+	// context names a second document: the preview pane is its own
+	// markup-only control (an Include), loaded through the same fs.FS
+	// seam and listed on markup.Page below so editing it hot-reloads.
+	mdir := filepath.Join("cmd", "browser")
+	if _, err := os.Stat(filepath.Join(mdir, "browser.gooey")); err != nil {
+		exe, _ := os.Executable()
+		mdir = filepath.Dir(exe)
+	}
+	mfs := os.DirFS(mdir)
+
+	// rescan is what the page's <Timer> ticks. The fingerprint is
+	// UI-goroutine state: the command runs posted, like every Action.
+	fingerprint := watchKey(root, root)
 
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Title": title, "Hint": hint, "Status": status, "PaneTitle": paneTitle,
+			// The preview pane's header: the data each line interpolates,
+			// plus the flag that collapses it.
+			"CmdLine": cmdLine, "RecName": recName, "GifPath": gifPath,
+			"SourceDesc": sourceDesc, "Artifacts": artifacts,
+			"HasDemos": hasDemos, "NoDemos": noDemos, "ShowSource": showSource,
+			"ShowRecorded": showRecorded, "ShowPlay": showPlay,
+			// The directory is a data source like any other, polled onto
+			// the UI goroutine: a new recording, a new demo, an added
+			// .gooey file or an edited doc comment shows up without a key
+			// being pressed. One bump re-derives the list AND the pane
+			// currently on screen, because both are bound to the same
+			// computed.
+			"Rescan": gooey.Command(func() {
+				if k := watchKey(cur.Get().Root, root); k != fingerprint {
+					fingerprint = k
+					rev.Set(rev.Get() + 1)
+				}
+			}),
 			"Run": gooey.Command(func() {
 				if ds := demos.Get(); len(ds) > 0 {
 					d := ds[clampIdx(sel.Get(), len(ds))]
@@ -443,21 +534,20 @@ func main() {
 			"DemoList": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return &demoList{demos: demos, sel: sel}, nil
 			},
-			"DemoInfo": func(markup.Element, *markup.Context) (gooey.Component, error) {
-				return &demoInfo{demos: demos, sel: sel, play: play, cur: cur}, nil
+			// The preview pane is markup (infopane.gooey); this is only
+			// the body it cannot declare — rendered markdown, wrapped doc
+			// text, or a GIF frame.
+			"DemoBody": func(markup.Element, *markup.Context) (gooey.Component, error) {
+				return &demoBody{demos: demos, sel: sel, play: play}, nil
 			},
+			"InfoPane": markup.Include(mfs, "infopane.gooey"),
 			"SourcePicker": func(markup.Element, *markup.Context) (gooey.Component, error) {
 				return picker, nil
 			},
 		},
 	}
 
-	mdir := filepath.Join("cmd", "browser")
-	if _, err := os.Stat(filepath.Join(mdir, "browser.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mdir = filepath.Dir(exe)
-	}
-	app = gooey.NewApp(markup.Page(os.DirFS(mdir), "browser.gooey", ctx))
+	app = gooey.NewApp(markup.Page(mfs, "browser.gooey", ctx, "infopane.gooey"))
 
 	// The hand-off, in one call. App.Suspend restores the terminal, JOINS
 	// the input decoder so nothing of ours is still reading the tty while
@@ -562,19 +652,6 @@ func main() {
 		})
 	}
 
-	// The directory is a data source like any other, polled onto the UI
-	// goroutine: a new recording, a new demo, an added .gooey file or an
-	// edited doc comment shows up without a key being pressed. One bump
-	// re-derives the list AND the pane currently on screen, because both
-	// are bound to the same computed.
-	fingerprint := watchKey(root, root)
-	app.Every(watchInterval, func() {
-		if k := watchKey(cur.Get().Root, root); k != fingerprint {
-			fingerprint = k
-			rev.Set(rev.Get() + 1)
-		}
-	})
-
 	// Playback belongs to the entry that was selected when it started.
 	// Moving the selection, or a rescan that re-resolved (or re-recorded)
 	// the GIF, ends it — checked here rather than in a setter because the
@@ -661,6 +738,37 @@ func recordDemo(launchRoot, srcRoot, gifTool string, haveGif bool, recorder stri
 }
 
 func clampIdx(i, n int) int { return max(0, min(i, n-1)) }
+
+// selLine and selFlag build the preview pane's viewmodel: one computed
+// per line of the header, over the SELECTED entry.
+//
+// The three Gets happen before the empty-list return, and that order is
+// the whole contract. A dependency is recorded by the Get that actually
+// runs, so a line that returned early past sel.Get() would go deaf to
+// the selection moving — the pane would keep showing the previous
+// entry's command until something unrelated forced a repaint. Same rule
+// the old Render followed by reading `cur` above its own early return.
+func selLine(demos *prop.Property[[]demo], sel *prop.Property[int], cur *prop.Property[source],
+	f func(d demo, src source) string) *prop.Property[string] {
+	return prop.NewComputed(func() string {
+		ds, src, i := demos.Get(), cur.Get(), sel.Get()
+		if len(ds) == 0 {
+			return ""
+		}
+		return f(ds[clampIdx(i, len(ds))], src)
+	})
+}
+
+func selFlag(demos *prop.Property[[]demo], sel *prop.Property[int], cur *prop.Property[source],
+	f func(d demo, src source) bool) *prop.Property[bool] {
+	return prop.NewComputed(func() bool {
+		ds, src, i := demos.Get(), cur.Get(), sel.Get()
+		if len(ds) == 0 {
+			return false
+		}
+		return f(ds[clampIdx(i, len(ds))], src)
+	})
+}
 
 // demoList is the directory-bound list pane — a focus stop.
 type demoList struct {
@@ -749,99 +857,60 @@ func (w *demoList) Render(f *gooey.Frame) {
 	}
 }
 
-// demoInfo is the preview pane: a header of what the selection would DO,
-// and a body of what it SAYS — its README rendered as markdown, its doc
-// comment when it has no README, or its recorded GIF while `p` is
-// playing.
+// demoBody is what the preview pane cannot declare: the selection's
+// README rendered as markdown, its main.go doc comment when it has no
+// README, or a frame of its recorded GIF while `p` is playing.
+//
+// Everything ABOVE it in the pane — the command line, the artifact
+// paths, the source name, and which of them are showing at all — is
+// markup now (infopane.gooey), bound to computeds. What is left here is
+// exactly the three things markup has no element for: a markdown
+// renderer, a text wrapper, and an aspect-fitted image.
 //
 // It is a Startable as well as a Component. The Composer collects Startables
 // on the same walk that finds key bindings, so the animation clock's
 // lifetime is the composition's: a hot reload or a teardown stops it
 // without anything here having to notice.
-type demoInfo struct {
+type demoBody struct {
 	gooey.Base
 	demos *prop.Property[[]demo]
 	sel   *prop.Property[int]
-	cur   *prop.Property[source]
 	play  *player
 }
 
-func (w *demoInfo) Measure(avail gooey.Size) gooey.Size { return avail }
+func (w *demoBody) Measure(avail gooey.Size) gooey.Size { return avail }
 
-func (w *demoInfo) Start(post func(func())) func() { return w.play.Start(post) }
+func (w *demoBody) Start(post func(func())) func() { return w.play.Start(post) }
 
-func (w *demoInfo) Render(f *gooey.Frame) {
-	b := w.Bounds()
-	// The source is read unconditionally, ABOVE the empty-list return: a
-	// dependency is recorded by the Get that runs, and a pane showing
-	// "no demos" for a sparse old branch still has to repaint when the
-	// source changes back.
-	src := w.cur.Get()
+func (w *demoBody) Render(f *gooey.Frame) {
+	// Every read this node depends on happens FIRST, above any early
+	// return. A dependency is recorded by the Get that actually runs, and
+	// a body too short to draw into still has to hear about playback —
+	// which is the same reason Current reads `playing` before `clip`.
 	ds := w.demos.Get()
-	if len(ds) == 0 {
-		f.Cells.SetString(b.X, b.Y, "no demos in this source", dim)
-		return
-	}
-	d := ds[clampIdx(w.sel.Get(), len(ds))]
-
-	y := b.Y
-	line := func(s string, st render.Style) {
-		if y < b.Y+b.H {
-			f.Cells.SetString(b.X, y, clip(s, b.W), st)
-		}
-		y++
-	}
-	if !src.Launch {
-		line("source: "+src.describe(), dim)
-	}
-	cmdline := "go run ./" + d.dir
-	switch {
-	case d.ownDir:
-		cmdline = "cd " + d.dir + " && go run ."
-	case d.modDir != "":
-		cmdline = "cd " + d.modDir + " && go run ./" + strings.TrimPrefix(d.dir, d.modDir+"/")
-	}
-	line(cmdline, accent)
-	// The hint no longer has room for the artifact paths, so they live
-	// here, where `r` and `p` each say exactly which file they mean.
-	line("r record → "+recDir+"/"+d.rec+".cast", dim)
-	if d.cast {
-		art := recDir + "/" + d.rec + ".cast"
-		if d.gif {
-			art += "  +  " + recDir + "/" + d.rec + ".gif"
-		}
-		line("recorded: "+art, dim)
-	}
-	if d.gifPath != "" {
-		line("p play → "+d.gifPath, dim)
-	}
-	y++
-
-	// Reading the player inside Render is what makes the animation cheap:
-	// the frame index becomes a dependency of THIS paint node and of
-	// nothing else, so a tick repaints one component. The read is
-	// unconditional for the same reason it comes first inside Current —
-	// a dependency is recorded by the Get that actually happens, and a
-	// pane too short to draw into still has to hear about playback.
+	i := w.sel.Get()
 	img := w.play.Current()
 
-	h := b.Y + b.H - y
-	if h <= 0 {
+	b := w.Bounds()
+	if len(ds) == 0 || b.W <= 0 || b.H <= 0 {
 		return
 	}
+	d := ds[clampIdx(i, len(ds))]
+
 	if img != nil {
-		if cols, rows := fitCells(img.Bounds().Dx(), img.Bounds().Dy(), b.W, h); cols > 0 && rows > 0 {
-			graphics.DrawHalfblock(f.Cells, img, b.X+(b.W-cols)/2, y+(h-rows)/2, cols, rows)
+		if cols, rows := fitCells(img.Bounds().Dx(), img.Bounds().Dy(), b.W, b.H); cols > 0 && rows > 0 {
+			graphics.DrawHalfblock(f.Cells, img, b.X+(b.W-cols)/2, b.Y+(b.H-rows)/2, cols, rows)
 		}
 		return
 	}
 	if d.readme != "" {
-		drawLines(f, b.X, y, b.W, h, renderMarkdown(d.readme, b.W, markdownStyles()))
+		drawLines(f, b.X, b.Y, b.W, b.H, renderMarkdown(d.readme, b.W, markdownStyles()))
 		return
 	}
 	// No README: the doc comment, as plain wrapped text. A Go comment is
 	// not markdown and pretending otherwise would style its `//` prose
 	// with rules its author never opted into.
+	y := b.Y
 	for _, para := range strings.Split(d.doc, "\n") {
 		for _, ln := range wrapLine(para, b.W) {
 			if y >= b.Y+b.H {
