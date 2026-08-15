@@ -1,0 +1,4 @@
+# Derived, and big. `say.sh` re-downloads the models and re-renders the takes.
+voices/
+audio/
+.current
