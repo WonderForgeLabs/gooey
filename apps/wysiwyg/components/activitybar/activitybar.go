@@ -8,21 +8,12 @@
 // # The icons are real assets, rasterized at the size they are drawn
 //
 // They are VS Code's own Codicons — the SVGs in icons/ next to this file,
-// fetched from microsoft/vscode-codicons. Two consequences worth stating,
-// because both were the point:
-//
-//   - VECTOR, RENDERED AT TARGET SIZE. A codicon is a 16x16 document.
-//     Decoding it through the imaging registry rasterizes at that
-//     intrinsic size, and scaling a 16px raster up to a 32px slot is
-//     exactly the blur this was meant to avoid. svg.RasterizeAt renders
-//     the paths at the destination size instead, so the curves are drawn
-//     sharp rather than resampled.
-//   - THE TINT IS PART OF THE SOURCE. Codicons declare
-//     fill="currentColor", which is a CSS cascade the rasterizer has no
-//     cascade for. Substituting the colour into the document before
-//     rasterizing both resolves that and gives active/inactive states for
-//     free — the icon is drawn in its colour rather than drawn grey and
-//     recoloured after.
+// fetched from microsoft/vscode-codicons. A codicon is a 16x16 monochrome
+// document declaring fill="currentColor", so it has to be rasterized at
+// the size it will be drawn and tinted before it is rasterized rather than
+// after. Both live in svg.IconSet now, along with the cache that keeps
+// either off the paint path; this package supplies the three things that
+// are actually its own — Dir, iconPx, and the two state colours.
 //
 // Attribution: Codicons are copyright Microsoft Corporation, licensed
 // CC-BY-4.0. See icons/LICENSE.
@@ -42,13 +33,11 @@
 package activitybar
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"io/fs"
-	"strings"
 	"sync"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -97,7 +86,7 @@ var (
 	bg       = color.RGBA{0x1e, 0x1e, 0x24, 0xff} // the rail's own ground
 	inactive = color.RGBA{0x86, 0x88, 0x99, 0xff}
 	active   = color.RGBA{0xe8, 0xeb, 0xf7, 0xff}
-	marker = color.RGBA{0x6c, 0x9c, 0xff, 0xff}
+	marker   = color.RGBA{0x6c, 0x9c, 0xff, 0xff}
 	// markerBlurred is the same hue at roughly a third of the distance
 	// from the rail's own ground: still visibly the accent, no longer
 	// competing with whatever does hold the keyboard. Mixed here rather
@@ -173,56 +162,66 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 // Renderer holds the rasterized icons so the rail is not re-rendered from
 // SVG on every repaint.
 //
-// The cache is keyed by (file, tint) because tinting happens BEFORE
-// rasterization — an icon in two colours is two rasters, not one raster
-// recoloured. Four icons in two states is eight small images, built once.
+// The tint-substitution, rasterize-at-size and per-(path, tint) cache that
+// used to live here in private form are now svg.IconSet. They were never
+// specific to this rail — a toolbox, a tab strip and a tree all want the
+// same three — and keeping a second copy here would have meant the next
+// consumer wrote a third. What stays is what IS specific: which directory,
+// which pixel size, and the two state colours.
 type Renderer struct {
 	fsys  fs.FS
 	icons []Icon
 
-	mu    sync.Mutex
-	cache map[string]image.Image
-	err   error
+	mu      sync.Mutex
+	iconSet *svg.IconSet
 }
 
 // Preload rasterizes every icon in both states, so a broken asset is
 // found at load rather than at first paint.
 func (r *Renderer) Preload() error {
-	for _, ic := range r.icons {
-		for _, c := range []color.RGBA{inactive, active} {
-			if _, err := r.icon(ic.File, c); err != nil {
-				return err
-			}
-		}
+	files := make([]string, len(r.icons))
+	for i, ic := range r.icons {
+		files[i] = ic.File
 	}
-	return nil
+	return wrap(r.set().Preload(files, inactive, active))
+}
+
+// set builds the icon set on first use rather than in a constructor,
+// because a Renderer is also made as a plain struct literal — the tests
+// do it, so Builder is not the only way in and a constructor-assigned
+// field would be nil on those. Under the mutex, so two paints racing for
+// the first icon share one set instead of one silently discarding the
+// other's cache.
+func (r *Renderer) set() *svg.IconSet {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.iconSet == nil {
+		sub, err := fs.Sub(r.fsys, Dir)
+		if err != nil {
+			// fs.Sub rejects only an invalid path and Dir is a constant,
+			// so this cannot fire without an edit to Dir itself. Falling
+			// back to the unrooted FS keeps that edit a per-icon "file
+			// does not exist" rather than a nil dereference here.
+			sub = r.fsys
+		}
+		r.iconSet = svg.Icons(sub, iconPx)
+	}
+	return r.iconSet
 }
 
 func (r *Renderer) icon(file string, tint color.RGBA) (image.Image, error) {
-	key := fmt.Sprintf("%s#%02x%02x%02x", file, tint.R, tint.G, tint.B)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if img, ok := r.cache[key]; ok {
-		return img, nil
+	img, err := r.set().At(file, tint)
+	return img, wrap(err)
+}
+
+// wrap names the directory the icon set was rooted at. The set reports the
+// path it was given, which is relative to Dir — on its own that is a file
+// name with no indication of where to go and look for it.
+func wrap(err error) error {
+	if err == nil {
+		return nil
 	}
-	path := Dir + "/" + file
-	src, err := fs.ReadFile(r.fsys, path)
-	if err != nil {
-		return nil, fmt.Errorf("activitybar: %s: %w", path, err)
-	}
-	// currentColor is a CSS cascade with no cascade here. Substituting it
-	// is both the fix and the tinting mechanism.
-	hex := fmt.Sprintf("#%02x%02x%02x", tint.R, tint.G, tint.B)
-	doc := strings.ReplaceAll(string(src), "currentColor", hex)
-	img, err := svg.RasterizeAt(bytes.NewReader([]byte(doc)), iconPx, iconPx)
-	if err != nil {
-		return nil, fmt.Errorf("activitybar: %s: %w", path, err)
-	}
-	if r.cache == nil {
-		r.cache = map[string]image.Image{}
-	}
-	r.cache[key] = img
-	return img, nil
+	return fmt.Errorf("activitybar %s: %w", Dir, err)
 }
 
 // Rail draws the whole strip: background, every icon in its state, and
