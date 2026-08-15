@@ -168,7 +168,10 @@ is stale: in LFS, a fresh clone could not run that check without fetching.
 
 You need `git lfs` to get the wavs. Without it a clone still works — the files
 are pointer text, `say.sh all` re-renders them, and only the exact timings are
-lost.
+lost. Every `actions/checkout` in CI sets `lfs: true`, because the default is
+`false` and a pointer file is a valid file: a job that reads one gets 130 bytes
+of metadata and no error at all. `TestEveryCheckoutFetchesLFS` fails if any
+workflow forgets.
 
 Piper is audibly synthetic. It is a rehearsal instrument — good enough to time
 the beats and hear where a sentence runs long. A final take probably wants a
