@@ -57,6 +57,16 @@ expect() {
   fi
 }
 
+# check <name> <actual> <want> -- for the cases that are about the scripts
+# themselves rather than about a hook's verdict on a payload.
+check() {
+  if [ "$2" = "$3" ]; then
+    pass=$((pass+1)); printf '  ok   %-58s [CHECK]\n' "$1"
+  else
+    fail=$((fail+1)); printf '  FAIL %-58s [CHECK] got %s want %s\n' "$1" "$2" "$3"
+  fi
+}
+
 G="$plugin/hooks/bash-guard.sh"
 F="$plugin/hooks/go-format.sh"
 
@@ -86,11 +96,39 @@ chmod +x "$repo/.hooktest-bin/fakebin"
 printf '#!/bin/sh\necho hi\n' > "$repo/.hooktest-bin/script.sh"
 chmod +x "$repo/.hooktest-bin/script.sh"
 expect BLOCK  "git add <dir> holding an ELF"        "$G" "$(bash_json 'git add .hooktest-bin/')"
+# Naming the binary itself, and the one-liner it actually gets typed as. The
+# compound is the important one: nothing is staged at PreToolUse time, so the
+# `git commit` half sees an empty index and the `git add` half is the only
+# thing between the agent and a committed ELF.
+expect BLOCK  "git add <the ELF itself, not its dir>" "$G" "$(bash_json 'git add .hooktest-bin/fakebin')"
+expect BLOCK  "git add <ELF> && git commit -- <ELF>"  "$G" "$(bash_json 'git add .hooktest-bin/fakebin && git commit -m wip -- .hooktest-bin/fakebin')"
+expect SILENT "NEAR-MISS git add a 755 .sh by name" "$G" "$(bash_json 'git add .hooktest-bin/script.sh')"
 rm -f "$repo/.hooktest-bin/fakebin"
 expect SILENT "NEAR-MISS same dir, only a 755 .sh"  "$G" "$(bash_json 'git add .hooktest-bin/')"
 expect SILENT "NEAR-MISS this plugin's own dir"     "$G" "$(bash_json 'git add .claude/plugin/')"
 expect SILENT "NEAR-MISS git commit, nothing staged" "$G" "$(bash_json 'git commit -m wip')"
 rm -rf "$repo/.hooktest-bin"
+
+# The `git commit` half needs a real index with a real ELF in it. Without a
+# positive case here the arm was unproved: `run.sh` carried only the near-miss
+# (a commit with nothing staged), which passes just as well against a check
+# that never looks at the index, and `mutate.sh` had nothing to turn red.
+#
+# It runs against a THROWAWAY repo rather than this checkout: staging into the
+# live index would leave it dirty if this script is interrupted, and the gate's
+# only notion of identity is the module path in go.mod, so a temp directory
+# with one line in it is a gooey repo as far as the hook is concerned.
+fake=$(mktemp -d "${TMPDIR:-/tmp}/gooey-hooktest.XXXXXX")
+printf 'module github.com/WonderForgeLabs/gooey\n' > "$fake/go.mod"
+( cd "$fake" && git init -q ) >/dev/null 2>&1
+printf '\177ELF\002\001\001\000junk' > "$fake/stagedbin"
+printf '#!/bin/sh\necho hi\n'        > "$fake/staged.sh"
+chmod +x "$fake/stagedbin" "$fake/staged.sh"
+( cd "$fake" && git add staged.sh ) >/dev/null 2>&1
+expect SILENT "NEAR-MISS git commit, only a 755 .sh staged" "$G" "$(bash_json 'git commit -m wip' "$fake")"
+( cd "$fake" && git add stagedbin ) >/dev/null 2>&1
+expect BLOCK  "git commit with an ELF already staged" "$G" "$(bash_json 'git commit -m wip' "$fake")"
+rm -rf "$fake"
 
 echo "== 4. git stash =="
 expect BLOCK  "git stash clear"                     "$G" "$(bash_json 'git stash clear')"
@@ -121,6 +159,28 @@ rm -f "$repo/.hooktest-bad.go" "$repo/.hooktest-ok.go"
 echo "== 7. the gate itself =="
 expect SILENT "NEAR-MISS every rule, outside gooey" "$G" "$(bash_json 'git add -A; git stash clear; go build ./...' /tmp)"
 expect SILENT "empty command"                       "$G" "$(bash_json '')"
+
+echo "== 8. portability: the GNU-isms that fail SILENTLY on macOS =="
+# `\n` in a sed REPLACEMENT is a GNU extension -- BSD sed substitutes a
+# literal `n`. hook_segments used to be four sed substitutions, so on macOS it
+# returned the whole command as one segment and BOTH blocking checks weakened
+# without a word: `git status && git add -A` stopped being blocked, because
+# the `git add` segment no longer existed. Compounding it, mutate.sh used GNU
+# `sed -i EXPR FILE`, which BSD reads as "-i with suffix EXPR", so every
+# mutation reported DID NOT APPLY and the suite could not even diagnose the
+# first problem. Neither failure is visible from a Linux box, which is why
+# these are checks and not a sentence in the README.
+check "hook_segments splits on && || ; and |" \
+  "$( . "$plugin/hooks/lib.sh"; hook_segments 'a && b || c ; d | e' | grep -c . )" 5
+# The pattern below is written with a bracket expression so this line does not
+# match itself, and comment lines are stripped first so that the paragraph
+# above -- which has to name the thing it forbids -- does not count as three
+# violations. There is no portable in-place spelling: GNU takes the next
+# argument as the expression, BSD takes it as the backup suffix, and `-i ''`
+# flips which one breaks. Write to a temp file and copy it back instead.
+check "no GNU sed in-place edits anywhere in the plugin" \
+  "$(cat "$plugin"/hooks/*.sh "$plugin"/scripts/*.sh "$here"/*.sh |
+       grep -v '^[[:space:]]*#' | grep -c 'sed[ ]-i')" 0
 
 echo
 if [ "$fail" -eq 0 ]; then

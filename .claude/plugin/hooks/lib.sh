@@ -65,8 +65,17 @@ hook_in_gooey() {
 # the two cases a whole-string grep gets wrong in opposite directions.
 # A separator inside quotes over-splits, which can only ever cost a spurious
 # ADVISORY line; nothing here blocks on a pattern a quote could fabricate.
+#
+# awk, NOT sed. `\n` in a sed REPLACEMENT is a GNU extension: BSD/macOS sed
+# substitutes a literal `n`, so this function used to degenerate into "return
+# the whole command as one segment" on every Mac -- silently, and in the
+# direction that WEAKENS both blocking checks. `git status && git add -A`
+# went straight through, because the `git add` segment no longer existed.
+# awk's gsub takes a real newline in its replacement string on every awk
+# (checked against gawk, mawk and busybox awk); the `||` alternative is
+# listed before `|` and POSIX leftmost-longest matching keeps it that way.
 hook_segments() {
-  printf '%s\n' "$1" | sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g; s/|/\n/g'
+  printf '%s\n' "$1" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }'
 }
 
 # Does this segment invoke $2 as its command (leading position)?

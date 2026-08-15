@@ -89,21 +89,35 @@ If you genuinely want everything, enumerate it and look at the list:
 # ------------------------------------------------------------------------
 # 3. A pathspec that would sweep in a compiled executable -- BLOCKING.
 #
-# Covers both halves: `git add <dir>/` where the directory holds an untracked
-# binary, and `git commit` with an ELF already staged. Detection is by magic
-# bytes, not the mode bit -- this repo is full of legitimately-755 shell
-# scripts and blocking those would make the hook worse than useless.
+# Three halves, not two. `git add <dir>/` where the directory holds an
+# untracked binary; `git add <binary>` NAMING it, which is the most direct
+# form of the mistake and which an earlier version of this check waved
+# through because it only inspected pathspecs that resolved to a DIRECTORY;
+# and `git commit` with an ELF already staged.
+#
+# The by-name case is the one that matters most in practice, because
+# `git add toolkitdemo && git commit -m wip -- toolkitdemo` is a single Bash
+# call: at PreToolUse time nothing is staged yet, so the `git commit` half
+# has nothing to look at and the `git add` half is the only thing standing
+# there. `toolkitdemo` is one of the names .gitignore does not cover.
+#
+# Detection is by magic bytes, not the mode bit -- this repo is full of
+# legitimately-755 shell scripts and blocking those would make the hook worse
+# than useless.
 # ------------------------------------------------------------------------
 found=""
-add_dirs=$(printf '%s\n' "$segs" | sed -n 's/^[[:space:]]*git[[:space:]]\{1,\}add[[:space:]]\{1,\}//p')
-if [ -n "$add_dirs" ]; then
-  for a in $add_dirs; do
+add_paths=$(printf '%s\n' "$segs" | sed -n 's/^[[:space:]]*git[[:space:]]\{1,\}add[[:space:]]\{1,\}//p')
+if [ -n "$add_paths" ]; then
+  for a in $add_paths; do
     case "$a" in -*) continue ;; esac
     p="$repo/${a%/}"
-    [ -d "$p" ] || continue
-    for f in $(cd "$repo" && git ls-files -o --exclude-standard -- "${a%/}" 2>/dev/null); do
-      hook_is_binary "$repo/$f" && found="$found $f"
-    done
+    if [ -d "$p" ]; then
+      for f in $(cd "$repo" && git ls-files -o --exclude-standard -- "${a%/}" 2>/dev/null); do
+        hook_is_binary "$repo/$f" && found="$found $f"
+      done
+    elif [ -f "$p" ]; then
+      hook_is_binary "$p" && found="$found ${a%/}"
+    fi
   done
 fi
 if printf '%s\n' "$segs" | grep -Eq '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then

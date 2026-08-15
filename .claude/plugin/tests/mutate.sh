@@ -31,7 +31,13 @@ mutate() {
   dir=$1; name=$2; wantcase=$3; file=$4; expr=$5
   restore
   before=$(cat "$file")
-  sed -i "$expr" "$file"
+  # NOT `sed -i`. There is no portable spelling of it: GNU reads the next
+  # argument as the expression, BSD reads it as the backup suffix, and on a
+  # Mac every mutation below reported DID NOT APPLY -- so this script's own
+  # harness guard fired fourteen times and the suite could not diagnose the
+  # real problem underneath it. Writing to a temp file and copying it back is
+  # portable, and `cat >` (not `mv`) keeps the hook scripts executable.
+  sed "$expr" "$file" > "$work/mutated" && cat "$work/mutated" > "$file"
   after=$(cat "$file")
   if [ "$before" = "$after" ]; then
     fail=$((fail+1))
@@ -65,6 +71,12 @@ mutate under "git add -A: the -A arm removed" \
   "git add -A" "$G" "s|hook_has_word \"\$args\" '\\\\-A'|false|"
 mutate under "binary check: magic-byte test always says no" \
   "git add <dir> holding an ELF" "$L" 's|^  case "\$magic" in|  case "NOPE" in|'
+mutate under "binary check: add inspects only DIRECTORIES again" \
+  "git add <the ELF itself, not its dir>" "$G" 's|elif \[ -f "\$p" \]; then|elif false; then|'
+mutate under "binary check: commit half never reads the index" \
+  "git commit with an ELF already staged" "$G" 's|git diff --cached --name-only|true|'
+mutate under "hook_segments: no splitting at all (the BSD sed failure)" \
+  "cd x && go build ./... (segmented)" "$L" "s|awk .{ gsub.*|cat|"
 mutate under "stash clear: the block arm removed" \
   "git stash clear" "$G" 's|git\[\[:space:\]\]+stash\[\[:space:\]\]+clear|__never__|'
 mutate under "grep: the advisory removed" \
