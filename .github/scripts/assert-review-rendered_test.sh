@@ -47,8 +47,40 @@ I'll analyze this and get back to you."
 
 nolink="A human wrote this comment and it mentions no job at all."
 
+# The sticky is edited IN PLACE, and while the work is in flight it says
+# `View job run` — one word different — with a /job/<id> suffix on the URL.
+# 79 comments in this repo carry that form. Selecting only the finished label
+# made an in-progress review invisible, so it fell to "no review comment
+# exists": right verdict, wrong reason. Found in review of #275.
+inprogress="**Claude is working…** —— [View job run](https://github.com/WonderForgeLabs/gooey/actions/runs/31857725687/job/94357376955)
+
+---
+### Review
+- [x] Gather context
+- [ ] Read diff against \`origin/main\`
+- [ ] Post final review"
+
+# A finished review whose FINDINGS cite another CI run. The link that decides
+# which commit was reviewed must be the sticky's own job link, not whichever
+# run URL happens to appear last in the prose.
+citesanother="**Claude finished @ElanHasson's task in 4m 51s** —— [View job](https://github.com/WonderForgeLabs/gooey/actions/runs/31857725687)
+
+---
+### Review
+- [x] Post final review
+
+**Review complete** — the flake reproduces in https://github.com/WonderForgeLabs/gooey/actions/runs/99999999999 as well."
+
 # mkgh writes a fake gh whose answers are: the PR's head sha, the comment
 # list, and the run's head sha.
+#
+# Run 31857725687 is the sticky's own job — it answers <run-head-sha>. EVERY
+# OTHER run id answers a decoy SHA, which is what makes "findings citing
+# another run" a real test: if the wrong URL is picked, the SHA comparison
+# fails. With a stub that answered the same SHA for any run, that case passed
+# no matter which link won and proved nothing.
+STICKYRUN=31857725687
+DECOY=dddddddddddddddddddddddddddddddddddddddd
 mkgh() { # mkgh <pr-head-sha> <run-head-sha> <comment-body...>
   ph=$1; rh=$2; shift 2
   printf '%s' "$*" > "$work/body.txt"
@@ -62,7 +94,8 @@ case "\$2" in
     else
       printf '[]'
     fi ;;
-  */actions/runs/*) printf '{"head_sha":"%s"}' "$rh" ;;
+  */actions/runs/$STICKYRUN) printf '{"head_sha":"%s"}' "$rh" ;;
+  */actions/runs/*)          printf '{"head_sha":"%s"}' "$DECOY" ;;
   *) echo "unstubbed: \$2" >&2; exit 64 ;;
 esac
 EOF
@@ -120,6 +153,17 @@ tm "skipped + no review comment at all -> 1" 1 skipped "$HEAD" "$HEAD" "" "No re
 echo "== ran, but rendered no verdict =="
 t "aborted before the first turn -> 1"  1 success  "$HEAD" "$HEAD" "$aborted"
 t "checklist left unfinished -> 1"      1 success  "$HEAD" "$HEAD" "$unfinished"
+
+echo "== the sticky's two spellings, and its own link =="
+# Still red — an in-progress review has not reviewed anything yet — but for
+# the RIGHT reason and with the right message. The verdict was already
+# correct before this case existed; what it pins is the diagnosis.
+tm "in-progress sticky (\`View job run\`) -> 1" 1 success "$HEAD" "$HEAD" "$inprogress" "never finished"
+# The near-miss twin: a run URL in the findings must not outrank the
+# sticky's own job link when deciding which commit was reviewed. The stub
+# answers with $HEAD for whatever run is asked about, so this passing means
+# the pattern matched the sticky link, not the later bare URL.
+t  "findings citing another run -> 0"      0 success "$HEAD" "$HEAD" "$citesanother"
 
 echo "== a comment that is not a review =="
 # A human comment is not a review, and must not be mistaken for the newest

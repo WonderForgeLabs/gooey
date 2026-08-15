@@ -62,24 +62,47 @@ esac
 head=$($GH api "repos/$repo/pulls/$pr" | jq -r '.head.sha')
 [ -n "$head" ] && [ "$head" != "null" ] || fail "Could not read the head SHA of $repo#$pr."
 
+# ONE pattern, used for both selecting the sticky and reading the run out of
+# it. Two patterns is how the first version got this wrong: jq selected on
+# `[View job](` while sed pulled `/actions/runs/<n>` from anywhere in the
+# body, so a comment whose findings happened to cite a second CI run would
+# have resolved the wrong SHA. Sharing the regex makes that divergence
+# unrepresentable.
+#
+# `View job[^]]*` covers both labels the action writes, which is not a
+# hypothetical: the sticky is edited IN PLACE and says `[View job run](…)`
+# while the work is in flight, `[View job](…)` once finished. 79 comments in
+# this repo carry the first form. Matching only the finished label meant an
+# in-progress review fell through to "no review comment exists" — the verdict
+# stayed correct and still failed closed, but the message named the wrong
+# case, and a diagnostic that lies is the thing this whole file exists to
+# stop.
+#
+# The URL also carries a `/job/<id>` suffix in the in-progress form, so the
+# run id is captured explicitly rather than by trailing-match.
+linkre='\[View job[^]]*\]\(https?://[^)]*/actions/runs/(?<run>[0-9]+)'
+
+# --paginate: a long-running PR can exceed one page of comments, and the
+# review sticky is one of the OLDEST comments on a busy PR, not the newest.
+comments=$($GH api "repos/$repo/issues/$pr/comments?per_page=100" --paginate)
+
 # Comments come back oldest-first; the newest one carrying a job link is the
 # review sticky for the most recent attempt.
-body=$($GH api "repos/$repo/issues/$pr/comments?per_page=100" |
-  jq -r '[.[] | select(.body | test("\\[View job\\]\\(https://[^)]*/actions/runs/[0-9]+\\)"))] | last | .body // ""')
+body=$(printf '%s' "$comments" |
+  jq -r --arg re "$linkre" '[.[] | select(.body | test($re))] | last | .body // ""')
 
 [ -n "$body" ] || fail "No review comment on $repo#$pr — nothing has reviewed $head."
 
-# Unreachable by construction, and kept deliberately: the jq above already
-# DEFINES a review comment as one carrying a job link, so anything it selects
-# has one for sed to find. The guard is a backstop for the two patterns
-# drifting apart in a later edit — without it an empty $run builds the URL
+# Unreachable by construction, and kept deliberately: `$linkre` selected this
+# body, so the same pattern captures from it. The guard is a backstop for a
+# later edit breaking that identity — without it an empty $run builds the URL
 # `…/actions/runs/` and the failure surfaces three lines down as a confusing
 # SHA mismatch instead of naming itself.
 #
 # Its unreachability was found by the suite, not by reading: asserting the
 # MESSAGE rather than just the exit code turned this from a passing case into
 # a failing one.
-run=$(printf '%s' "$body" | sed -n 's|.*/actions/runs/\([0-9][0-9]*\).*|\1|p' | tail -1)
+run=$(printf '%s' "$body" | jq -Rs -r --arg re "$linkre" 'capture($re).run // ""')
 [ -n "$run" ] || fail "The newest review comment on $repo#$pr carries no job link, so what it reviewed cannot be established."
 
 sha=$($GH api "repos/$repo/actions/runs/$run" | jq -r '.head_sha')
