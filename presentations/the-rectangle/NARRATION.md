@@ -60,8 +60,17 @@ change.
 `HOLD` is dead air *after* the words, where the thing being described actually
 happens on screen. Beat 24's hold is `∞` — the deck ends and stays up.
 
-Spoken 16:41 · holds 3:22 · **total 20:03**, split 12:12 / 7:51 across the two
+Spoken 17:54 · holds 3:22 · **total 21:16**, split 13:03 / 8:13 across the two
 acts. The holds on 6, 7 and 22 are demos, not pauses; don't compress them.
+
+Two traps in measuring this, both of which produced a wrong number here
+before they were closed. `say.sh` writes the `.txt` receipt *before* piper
+finishes the wav, so waiting on the receipt and then measuring reads a file
+still being written — beat 24 came out at 0:29 for a 0:47 take. And a take that
+is short for its text is a **truncated** take, not a fast reading: the receipt
+says what the words were, so characters-per-second is comparable across the
+deck. Everything here sits at 19.7 c/s for the narrator and 17.8 for the agent.
+An outlier is a defect.
 
 ---
 
@@ -296,7 +305,7 @@ agreed on was text.
 
 ## 5 · And then it started showing off
 
-**DURATION:** 0:42 · **HOLD:** 0:12 · **VOICE:** narrator
+**DURATION:** 0:41 · **HOLD:** 0:12 · **VOICE:** narrator
 
 **LIVE:** `examples/scene` — a gooey app hosted inside a gooey app.
 
@@ -389,7 +398,7 @@ half blocks. The program doesn't know which.
 
 ## 7 · And then it could sing
 
-**DURATION:** 0:50 · **HOLD:** 0:20 · **VOICE:** narrator
+**DURATION:** 0:51 · **HOLD:** 0:20 · **VOICE:** narrator
 
 **LIVE:** `examples/synth` — click it, then play it with the letter keys.
 
@@ -475,7 +484,7 @@ the terminal can do. Everything has changed about what people ask it to do.
 
 ## 9 · Why that's harder than it looks
 
-**DURATION:** 0:39 · **HOLD:** 0:06 · **VOICE:** narrator
+**DURATION:** 0:40 · **HOLD:** 0:06 · **VOICE:** narrator
 
 ```slide
 {
@@ -518,7 +527,7 @@ gooey is a framework for not doing any of that by hand.
 
 ## 10 · Which way round
 
-**DURATION:** 0:24 · **HOLD:** 0:05 · **VOICE:** narrator
+**DURATION:** 0:25 · **HOLD:** 0:05 · **VOICE:** narrator
 
 ```slide
 {
@@ -592,16 +601,16 @@ Go ahead.
 
 ## 12 · The redraw question
 
-**DURATION:** 0:21 · **HOLD:** 0:05 · **VOICE:** claude
+**DURATION:** 0:22 · **HOLD:** 0:05 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 12 · THE REDRAW QUESTION ",
   "Deck.Title": "one number changes. what do you redraw?",
-  "Deck.Body": "\n\n    a screen with a hundred things on it\n\n    a list, some panels, a status bar, a couple of counters\n\n\n    one number changes\n\n\n    what do you redraw?\n\n\nThat question sounds like a detail. It isn't.\n\nHow a framework answers it decides how the whole thing gets built — and it is\nthe reason this exists, rather than being one more library that draws boxes.",
-  "Deck.Spot": "◀── every framework you have used answered this. most of them answered it twice.",
+  "Deck.Body": "\n\n    a screen with a hundred things on it\n\n    a list, some panels, a status bar, a couple of counters\n\n\n    one number changes\n\n\n    what do you redraw?\n\n\nThat question sounds like a detail. It isn't.\n\nHow a framework answers it decides almost everything else about it: what you\nhave to remember, what it costs to be wrong, and how big the screen can get\nbefore anyone notices.",
+  "Deck.Spot": "◀── every framework you have used has an answer to this. they are all defensible.",
   "Deck.Arrow": "                                        ▲",
-  "Deck.Blurb": "the next three slides are the three available answers. gooey takes the third,\nand the third one is why there is no dirty flag anywhere in this framework.",
+  "Deck.Blurb": "the next two slides are three answers. two of them are what almost everything\nyou have ever used does, and they are good answers. this is a trade, not a fix.",
   "Deck.Meme": "the boring question that decides everything.",
   "Deck.Pos": "12 / 24",
   "Deck.Pct": 50,
@@ -619,25 +628,25 @@ bar, a couple of counters. One number changes.
 What do you redraw?
 
 That question sounds like a detail. It isn't. How a framework answers it decides
-how the whole thing gets built, and it's the reason this exists rather than being
-one more library that draws boxes.
+almost everything else about it: what you have to remember, what it costs to be
+wrong, and how big the screen gets before anyone notices.
 ```
 
 ---
 
 ## 13 · The first two answers
 
-**DURATION:** 0:45 · **HOLD:** 0:06 · **VOICE:** claude
+**DURATION:** 0:53 · **HOLD:** 0:06 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 13 · THE FIRST TWO ANSWERS ",
   "Deck.Title": "redraw everything · or rebuild it and compare",
-  "Deck.Body": "    ONE · redraw everything\n\n           simple. flickers. gets slow.\n           works until the screen gets big or the updates come fast,\n           and then you can watch the thing being rebuilt.\n\n\n    TWO · redraw everything into MEMORY,\n          compare against last time,\n          send only the differences\n\n           this is a virtual DOM, and it is a good answer.\n           it is what most of these frameworks do.\n\n           but look at what it is doing:\n\n               it rebuilds 100 things\n               to discover that 99 of them didn't change\n\n           every frame.",
+  "Deck.Body": "    ONE · redraw everything\n\n           the simplest thing that works, and no bookkeeping at all.\n           you pay for it when the screen gets big or the updates come\n           fast, and then you can watch the thing being rebuilt.\n\n\n    TWO · redraw everything into MEMORY,\n          compare against last time,\n          send only the differences\n\n           this is a virtual DOM. it is a genuinely good answer and\n           it is most of why the web feels the way it does.\n\n           the trade it makes:\n\n               it rebuilds 100 things\n               to learn that 99 of them are unchanged\n\n           for a browser, that is the right trade.",
   "Deck.Spot": "◀── if answer two sounds familiar from the web, it should. same shape.",
   "Deck.Arrow": "                                        ▲",
-  "Deck.Blurb": "neither answer is wrong. both are doing work proportional to the SIZE OF THE\nSCREEN, when the thing that actually happened was proportional to the size of\nthe change.",
-  "Deck.Meme": "rebuilding a hundred things to learn that ninety-nine are fine.",
+  "Deck.Blurb": "neither answer is wrong, and both are in production everywhere. what they share\nis that the work is proportional to the SIZE OF THE SCREEN, when the thing that\nhappened was proportional to the size of the CHANGE.",
+  "Deck.Meme": "the work is sized by the screen, not by the news.",
   "Deck.Pos": "13 / 24",
   "Deck.Pct": 54,
   "Deck.Hint": "work ∝ screen ───────────┐",
@@ -657,27 +666,29 @@ So the second answer is smarter. Redraw everything, but into memory rather than
 onto the screen. Then compare that fresh copy against what was there a moment
 ago, find the differences, and send only those.
 
-That's what most of these frameworks do, and it's a good answer. If it sounds
-familiar from the web, it should — it's the same shape as a virtual DOM.
+That's what most of these frameworks do, and it is a genuinely good answer. If
+it sounds familiar from the web, it should — it's the same shape as a virtual
+DOM, and it's most of why the web feels the way it does.
 
-But look at what it's doing. Every single frame, it rebuilds a hundred things in
-order to discover that ninety nine of them didn't change.
+And here's the trade it makes. Every frame, it rebuilds a hundred things in
+order to learn that ninety nine of them are unchanged. For a browser that is
+absolutely the right trade. It's still a trade, and it's worth naming.
 ```
 
 ---
 
 ## 14 · The third answer
 
-**DURATION:** 0:42 · **HOLD:** 0:08 · **VOICE:** claude
+**DURATION:** 0:53 · **HOLD:** 0:08 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 14 · THE THIRD ANSWER ",
   "Deck.Title": "the read IS the subscription",
-  "Deck.Body": "    THREE · know which parts read which data\n\n            one number changes\n              → two things on screen ever read it\n              → redraw those two\n\n            no comparing. nothing was rebuilt.\n            there is nothing to compare, BECAUSE nothing was rebuilt.\n\n\nAnd here is the part worth the whole framework: you never declare any of it.\n\nThere is no dependency list to maintain. No \"this depends on that\". No call\nto say \"I changed something, please update\".\n\nYou read the value while you are drawing.\n\nAnd the reading IS the subscription. That is the entire mechanism.",
-  "Deck.Spot": "◀── no AffectsRender. no InvalidateVisual. no dirty flag to forget.",
+  "Deck.Body": "    THREE · know which parts read which data\n\n            one number changes\n              → two things on screen ever read it\n              → redraw those two\n\n            no comparing. nothing was rebuilt.\n            there is nothing to compare, BECAUSE nothing was rebuilt.\n\n\nThe part I like: you never declare any of it.\n\nThere is no dependency list to maintain. No \"this depends on that\". No call\nto say \"I changed something, please update\".\n\nYou read the value while you are drawing.\n\nAnd the reading IS the subscription. That is the entire mechanism.",
+  "Deck.Spot": "◀── no AffectsRender. no InvalidateVisual. no dependency list to keep in step.",
   "Deck.Arrow": "                                        ▲",
-  "Deck.Blurb": "every component's Render runs inside a computed node. a property read during\npaint records an edge in the graph — so reading a value while drawing is not a\nread that happens to work, it is the damage declaration.",
+  "Deck.Blurb": "every component's Render runs inside a computed node, so a read during paint\nrecords an edge. it is not free: that bookkeeping happens on every read, and you\nbuy it back the moment the screen is bigger than the change — not before.",
   "Deck.Meme": "work ∝ the change, not ∝ the screen.",
   "Deck.Pos": "14 / 24",
   "Deck.Pct": 58,
@@ -704,22 +715,26 @@ changed something, please update.
 
 You read the value while you're drawing. And the reading is the subscription.
 That's the whole mechanism.
+
+It isn't free. Every read during a paint gets recorded, so there's bookkeeping
+here that the other two answers don't carry. You buy that back the moment the
+screen is bigger than the change, and not one moment before.
 ```
 
 ---
 
 ## 15 · Why one list beats two
 
-**DURATION:** 0:26 · **HOLD:** 0:05 · **VOICE:** claude
+**DURATION:** 0:54 · **HOLD:** 0:05 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 15 · WHY ONE LIST BEATS TWO ",
   "Deck.Title": "the two lists can never disagree, because there is one",
-  "Deck.Body": "    most systems keep TWO lists:\n\n        what the code actually reads\n        what you TOLD the framework it reads\n\n    they drift.\n\n        forgot one     →  it silently stops updating\n        one too many   →  it redraws for nothing\n\n\n    here there is ONE list,\n    and it is produced by running the code.\n\n\nIt cannot be out of date, because it is rebuilt by the act of drawing.\n\nThat is the reason this is worth building a framework around, rather than\nbeing a clever trick you use once.",
-  "Deck.Spot": "◀── the failure mode that does not exist here: a stale cell with no error",
+  "Deck.Body": "    two sources of truth, kept in step by hand:\n\n        what the code actually reads\n        what the framework was TOLD it reads\n\n    any two lists drift. not through carelessness — structurally.\n\n        one short  →  a value stops updating, silently\n        one over   →  it redraws for nothing\n\n\n    here there is ONE list,\n    and it is produced by running the code.\n\n\nIt cannot be out of date, because it is rebuilt by the act of drawing.\n\nAnd it is not magic. There is exactly one way left to get this wrong: a Get\nbehind an early return, or on the short-circuit side of ||, never runs — so it\nis never recorded, and that component goes deaf to that property. No error.\nJust a stale cell.",
+  "Deck.Spot": "◀── one list, produced by running the code — so it cannot describe code that didn't run",
   "Deck.Arrow": "                                        ▲",
-  "Deck.Blurb": "there is one way to still get it wrong, and it is worth knowing: a Get behind\nan early return, or on the short-circuit side of || , doesn't run — so it isn't\nrecorded, and that component goes deaf to that property. hoist your reads.",
+  "Deck.Blurb": "damage-count tests are what pin any of this down. Composer.Frame() returns how\nmany components repainted, and 141 assertions across the repo name an exact\nnumber — so if a change moves one, that IS the change, and it has to be argued.",
   "Deck.Meme": "you cannot forget to update a list you never write.",
   "Deck.Pos": "15 / 24",
   "Deck.Pct": 62,
@@ -729,23 +744,30 @@ That's the whole mechanism.
 ```
 
 ```speak
-The reason that's worth building a framework around is that the two lists can
-never disagree.
+What I like about that is that the two lists can never disagree.
 
 In most systems there's what your code actually depends on, and then there's what
-you told the framework it depends on. Those drift apart. You forget an entry and
-something silently stops updating. You add one too many and things redraw for no
+you told the framework it depends on. Those drift apart — not because anyone was
+careless, but because two lists kept in step by hand always do. One falls behind
+and something silently stops updating. One runs ahead and things redraw for no
 reason.
 
 Here there's only one list, and it's produced by running the code. It cannot be
 out of date, because it's rebuilt by the act of drawing.
+
+And I should say the obvious thing rather than let you find it later. This isn't
+magic, and there is exactly one way left to get it wrong. A read that doesn't
+run — behind an early return, or on the short circuit side of an or — never gets
+recorded, and that component goes deaf to that value. No error. Just a stale
+cell. The list is produced by running the code, so it can't describe code that
+didn't run.
 ```
 
 ---
 
 ## 16 · The layout is a file
 
-**DURATION:** 1:01 · **HOLD:** 0:10 · **VOICE:** claude
+**DURATION:** 1:02 · **HOLD:** 0:10 · **VOICE:** claude
 
 **LIVE:** `counter.gooey` open in vim on the left, the same file running on the
 right. Edit and `:w`; the right pane rebuilds within a second.
@@ -758,7 +780,7 @@ right. Edit and `:w`; the right pane rebuilds within a second.
   "Deck.Spot": "◀── that is not a preview. it is the same file, loaded and running.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "and this is not a development convenience bolted on the side — it is how the app\nloads its interface in the first place. os.DirFS plus a watcher in dev, embed.FS\nin release, the same code path either way.",
-  "Deck.Meme": "which matters enormously in about ten minutes, for reasons I won't spoil.",
+  "Deck.Meme": "the file is the interface — in dev and in release, the same path.",
   "Deck.Pos": "16 / 24",
   "Deck.Pct": 67,
   "Deck.Hint": "END OF ACT I ────────────┐",
@@ -787,8 +809,8 @@ watch the screen change. No restart. No rebuild. Whatever the program was in the
 middle of doing, it keeps doing.
 
 That isn't a development convenience bolted on the side. It's how the app loads
-its interface in the first place. Which matters a great deal in about ten
-minutes, for reasons I'm not going to spoil.
+its interface in the first place — which matters later, when something other
+than a person starts editing that file.
 ```
 
 ---
@@ -836,17 +858,17 @@ The claim in the top callout is checkable live: advancing to this slide was
 eleven `set_value` calls and nothing else. The rail, the scrim and the status bar
 never repainted.
 
-**DURATION:** 1:00 · **HOLD:** 0:06 · **VOICE:** claude
+**DURATION:** 1:07 · **HOLD:** 0:06 · **VOICE:** claude
 
 ```slide
 {
-  "Deck.Kicker": " 18 · THE ONE INTERESTING IDEA ",
+  "Deck.Kicker": " 18 · THE SAME IDEA, LIVE ",
   "Deck.Title": "when something changes, what redraws?",
-  "Deck.Body": "Every UI framework answers exactly one question. Everything else follows from it.\n\n\n  IMMEDIATE MODE    redraw everything, every frame.\n                    dead simple. turns the terminal into a 60fps furnace,\n                    and every cell you repaint is a cell that flickers.\n\n  RETAINED MODE     keep a tree. mark things dirty BY HAND.\n                    fast — right up until you forget one InvalidateVisual.\n                    then you have a stale cell, no error, and no idea why.\n\n  gooey             neither. THE READ IS THE SUBSCRIPTION.\n\n\nThere is no AffectsRender. There is no InvalidateVisual.\nThere is no dirty flag for you to forget, because there is no dirty flag.",
+  "Deck.Body": "Every UI framework answers exactly one question. Everything else follows from it.\n\n\n  IMMEDIATE MODE    redraw everything, every frame.\n                    the simplest thing that works, and no bookkeeping at\n                    all. you pay for it in flicker and in heat.\n\n  RETAINED MODE     keep a tree, mark things dirty by hand.\n                    fast, and in wide production use. correctness is\n                    manual: a missed invalidation is a stale cell.\n\n  gooey             neither. THE READ IS THE SUBSCRIPTION.\n\n\nThere is no AffectsRender and no InvalidateVisual, because there is no dirty\nflag to set. The trade: the graph does bookkeeping on every read during a paint.",
   "Deck.Spot": "◀── the rail didn't repaint when this slide changed. neither did the status bar. only the card did.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "every component's Render is wrapped in a prop.NewComputed (composer.go:260).\nso reading a property while painting IS the damage declaration. the graph\nrecords the edge, and a change repaints exactly the components that read it.",
-  "Deck.Meme": "\"I forgot to call InvalidateVisual\" is not a bug that is available to you here.",
+  "Deck.Meme": "one question. three defensible answers. this is the third one.",
   "Deck.Pos": "18 / 24",
   "Deck.Pct": 75,
   "Deck.Hint": "1 property Set ─────────┐",
@@ -858,13 +880,14 @@ never repainted.
 Every user interface framework answers exactly one question, and everything else
 follows from the answer. The question is: when something changes, what redraws?
 
-The first answer is immediate mode. Redraw everything, every frame. It is dead
-simple, and it turns the terminal into a sixty frames per second furnace. Every
-cell you repaint is a cell that can flicker.
+The first answer is immediate mode. Redraw everything, every frame. It is the
+simplest thing that works and it carries no bookkeeping at all, and you pay for
+that in flicker and in heat.
 
 The second answer is retained mode. Keep a tree, and mark things dirty by hand.
-That is fast, right up until you forget one call. Then you have a stale cell on
-screen, no error anywhere, and no idea why.
+That is fast, and it is in wide production use. What it asks of you is that
+correctness is manual: a missed invalidation is a stale cell on screen, with no
+error attached to it.
 
 gooey does neither. The read is the subscription.
 
@@ -873,8 +896,10 @@ property while you are painting is not a read that happens to work. It is the
 damage declaration. The graph records the edge, and when that property changes,
 exactly the components that read it repaint. Nothing else.
 
-There is no AffectsRender here. There is no InvalidateVisual. There is no dirty
-flag for you to forget, because there is no dirty flag.
+There is no AffectsRender here and no InvalidateVisual, because there is no
+dirty flag to set. And that is a trade too: the graph is doing bookkeeping on
+every read during every paint. Three answers, all defensible. This is the third
+one.
 ```
 
 ---
@@ -885,7 +910,7 @@ flag for you to forget, because there is no dirty flag.
 `Cols` in `examples/wysiwyg/wysiwyg.gooey`, save, and let them watch it reflow.
 If you do, note out loud that the ColorPicker's value survived.
 
-**DURATION:** 0:50 · **HOLD:** 0:10 · **VOICE:** claude
+**DURATION:** 0:49 · **HOLD:** 0:10 · **VOICE:** claude
 
 ```slide
 {
@@ -895,7 +920,7 @@ If you do, note out loud that the ColorPicker's value survived.
   "Deck.Spot": "◀── the toolbox and the property editor are still here. they are zero cells wide.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "markup loads through an fs.FS seam: os.DirFS plus a watcher in dev, embed.FS in\nrelease, the same code path either way. hot reload is not a debug-only feature\nbolted onto the side — it is what the seam is for.",
-  "Deck.Meme": "the layout is data. it was always data. we just stopped compiling it in.",
+  "Deck.Meme": "the layout is data. the only question was ever when you compile it.",
   "Deck.Pos": "19 / 24",
   "Deck.Pct": 79,
   "Deck.Hint": "one attribute ──────────┐",
@@ -929,14 +954,14 @@ can be non destructive.
 Point at the status bar. The addresses are real; if someone in the room wants to
 `curl` the MCP endpoint, let them.
 
-**DURATION:** 0:58 · **HOLD:** 0:10 · **VOICE:** claude
+**DURATION:** 1:07 · **HOLD:** 0:10 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 20 · THE TREE IS THE API ",
   "Deck.Title": "the tree is the API",
-  "Deck.Body": "Look at the bottom right of this screen. Those addresses are real:\n\n    grpc 127.0.0.1:46573        mcp http://127.0.0.1:45975/mcp\n\nAn app opts in with one call:\n\n    srv, err := mcp.Serve(app, mcp.Options{Addr: \"127.0.0.1:0\", Context: ctx})\n\nAnd an agent gets fourteen tools: read the component tree, read the screen,\nsend keys, send mouse, move focus, invoke commands, set values, register new\nproperties, patch one named region, swap the whole page, and validate markup\nwithout touching the app at all.\n\nNothing here was written for the agent's benefit. Names come from Name=\nattributes. The bindable state IS the Context's Values map. The commands the\nbuttons already use are the commands an agent invokes.\n\nThe automation surface, the accessibility surface and the live-edit surface\nturn out to be one protocol.",
-  "Deck.Spot": "◀── I have clicked nothing. every slide so far arrived over that mcp address.",
+  "Deck.Body": "Look at the bottom right of this screen. Those addresses are real:\n\n    grpc 127.0.0.1:46573        mcp http://127.0.0.1:45975/mcp\n\nAn app opts in with one call:\n\n    srv, err := mcp.Serve(app, mcp.Options{Addr: \"127.0.0.1:0\", Context: ctx})\n\nAnd an agent gets fourteen tools: read the component tree, read the screen,\nsend keys, send mouse, move focus, invoke commands, set values, register new\nproperties, patch one named region, swap the whole page, and validate markup\nwithout touching the app at all.\n\nNothing here was written for the agent's benefit. Names come from Name=\nattributes. The bindable state IS the Context's Values map. The commands the\nbuttons already use are the commands an agent invokes.\n\nThe automation surface, the accessibility surface and the live-edit surface\nturn out to be one protocol.\n\nWhat it will NOT do: register a computed, or register a command. State can be\ngrown from outside. Behaviour still needs code.",
+  "Deck.Spot": "◀── every slide so far arrived over that address. no keyboard, no mouse.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "every tool body runs on the app's UI goroutine, marshalled through control.Bridge,\nand returns only after the next frame is composed — so a read taken right after a\nwrite sees the write. nothing holds a component reference between requests.",
   "Deck.Meme": "your UI was already an API. it just didn't have a port.",
@@ -967,6 +992,10 @@ The commands an agent invokes are the same commands the buttons already use.
 Which means the automation surface, the accessibility surface, and the live edit
 surface are not three features. They are one protocol, and you get all three the
 moment you have the first one.
+
+One limit worth stating. It will not register a computed, and it will not
+register a command. State can be grown from outside a running program.
+Behaviour still needs code.
 ```
 
 ---
@@ -983,7 +1012,7 @@ moment you have the first one.
   "Deck.Spot": "◀── a 128 BPM sequencer costs this graph 30 Sets a second, not 8000. that's the next slide.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "a Startable's stop func must close AND join: func() { close(done); <-stopped }.\nclose alone lets a tick that already won its select post after Close — and then\nthe lifetime test flakes instead of failing, which is worse.",
-  "Deck.Meme": "unlocked is a feature. undisciplined is a bug.",
+  "Deck.Meme": "no lock, one door. the rule is the whole design.",
   "Deck.Pos": "21 / 24",
   "Deck.Pct": 87,
   "Deck.Hint": "one goroutine ──────────┐",
@@ -1022,7 +1051,7 @@ slide. The slide is the fallback, not the plan.
 **OVERLAPS BEAT 6**, which is the same program making the same point. Keep this
 one and demote beat 6 if you are cutting.
 
-**DURATION:** 0:54 · **HOLD:** 0:20 · **VOICE:** claude
+**DURATION:** 0:53 · **HOLD:** 0:20 · **VOICE:** claude
 
 ```slide
 {
@@ -1070,13 +1099,13 @@ property graph as thirty sets a second.
 The turn. Everything before this could have been a well-built app; this is the
 part that isn't about gooey being nice to write.
 
-**DURATION:** 0:52 · **HOLD:** 0:12 · **VOICE:** claude
+**DURATION:** 0:56 · **HOLD:** 0:12 · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 23 · BUILT FROM OUTSIDE ",
   "Deck.Title": "none of this existed in the binary",
-  "Deck.Body": "Every string on every slide you have seen is a property named Deck-something:\n\n    Deck.Kicker    Deck.Title     Deck.Body     Deck.Ghost\n    Deck.Spot      Deck.Arrow     Deck.Blurb    Deck.Meme\n    Deck.Pos       Deck.Pct       Deck.Hint     Deck.Bg    ...\n\nThe wysiwyg editor was compiled knowing none of them. They were created at\nruntime, from outside the process, by an agent:\n\n    register_properties   →   14 typed source properties\n    patch_markup          →   one named region replaced: EditorArea\n    set_value             →   advance a slide\n\nThe editor did not consent, and could not have refused. There is no approval\nhook on the control plane today: an app that calls mcp.Serve grants UI-rewrite\ncapability at process start and is never asked again.\n\nThat is a known gap, written down, and it is the next thing to build.",
+  "Deck.Body": "Every string on every slide you have seen is a property named Deck-something:\n\n    Deck.Kicker    Deck.Title     Deck.Body     Deck.Ghost\n    Deck.Spot      Deck.Arrow     Deck.Blurb    Deck.Meme\n    Deck.Pos       Deck.Pct       Deck.Hint     Deck.Bg    ...\n\nThe wysiwyg editor was compiled knowing none of them. They were created at\nruntime, from outside the process, by an agent:\n\n    register_properties   →   14 typed source properties\n    patch_markup          →   one named region replaced: EditorArea\n    set_value             →   advance a slide\n\nThere is no approval hook on the control plane today. An app that calls\nmcp.Serve grants UI-rewrite capability at process start and is never asked\nagain — no per-action prompt, no scope, no audit trail.\n\nThat is a real gap, not a design position. It is written down, and it is the\nnext thing to build.",
   "Deck.Spot": "◀── the toolbox still lists the element vocabulary. it has never heard of Deck.Title.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "registration is typed and all-or-nothing, and a name that already exists is\nrefused — the binding context stays the one source of truth. a swap that fails\nto build rolls its own registrations back with it.",
@@ -1100,14 +1129,15 @@ connection. Fourteen typed properties registered into a live binding context.
 One named region of the tree replaced. And then, to advance a slide, a single
 value set.
 
-Now the uncomfortable part, and I want to say it plainly rather than skip it.
+Now the part I would rather say plainly than skip.
 
-The editor did not consent to any of that, and it could not have refused.
 There is no approval hook on the control plane today. An application that calls
-serve grants full user interface rewrite capability at process start, and it is
-never asked again.
+serve grants full user interface rewrite capability at process start, and is
+never asked again. No per action prompt. No scope. No audit trail.
 
-That is a known gap. It is written down. And it is the next thing to build.
+That is a real gap rather than a design position, and on a talk about letting
+something else hold the pen, it is the first question you should be asking. It
+is written down, and it is the next thing to build.
 ```
 
 ---
@@ -1117,14 +1147,14 @@ That is a known gap. It is written down. And it is the next thing to build.
 Press `d` at the end if the room is the right kind of room. The pane behind the
 card becomes an editable document again, live, with the deck still on it.
 
-**DURATION:** 0:43 · **HOLD:** ∞ · **VOICE:** claude
+**DURATION:** 0:47 · **HOLD:** ∞ · **VOICE:** claude
 
 ```slide
 {
   "Deck.Kicker": " 24 · YOU ARE LOOKING AT IT ",
   "Deck.Title": "you are looking at it",
   "Deck.Body": "This talk is not a slideshow. It is:\n\n    ·  one <Canvas>, patched into a text editor that is still running\n    ·  fourteen properties that did not exist when that editor started\n    ·  a <ProgressBar> bound to an int\n    ·  a scrim of the editor's own markup, in dim grey\n    ·  zero restarts, and zero lines of presentation code\n\nPress `d` and the pane behind this card becomes an editable document again.\nNothing was consumed. The editor never stopped being an editor.\n\n\n    A terminal is 142 × 51 cells and a damage list.\n    Everything else is what you decide to put in it.",
-  "Deck.Spot": "◀── still an editor. still live. still has no idea it just gave a talk.",
+  "Deck.Spot": "◀── still an editor. still live. press d and it goes back to work.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "gooey — a XAML-like TUI framework for Go. retained visual tree, lazy dependency-\nproperty graph, XML markup with Go-template bindings, damage-tracked rendering.",
   "Deck.Meme": "thanks for watching a text editor pretend to be PowerPoint.",
@@ -1145,8 +1175,8 @@ and zero lines of presentation code, because there is no presentation program �
 there is an editor with something else in its middle pane.
 
 If I press D right now, that pane goes back to being an editable document, live,
-with all of this still on it. Nothing was consumed. It never stopped being an
-editor.
+with all of this still on it. Nothing was consumed, and it never stopped being
+an editor — it just had something else in its middle pane for twenty minutes.
 
 A terminal is a hundred and forty two columns by fifty one rows, and a list of
 what changed. Everything else is whatever you decide to put in it.

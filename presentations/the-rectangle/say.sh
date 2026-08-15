@@ -31,6 +31,21 @@ ensure_voices() {
       "$narrator" "$claude" )
 }
 
+# The Nth ```speak block as ONE line, on stdout.
+#
+# One line because piper treats newlines as separate utterances and the
+# seams are audible; paragraph breaks become sentence pauses instead.
+line() {
+  python3 - "$1" <<'PY'
+import re, sys, pathlib
+blocks = re.findall(r"```speak\n(.*?)```", pathlib.Path("NARRATION.md").read_text(), re.S)
+n = int(sys.argv[1])
+if not 1 <= n <= len(blocks):
+    sys.exit(f"beat {n} out of range (1..{len(blocks)})")
+print(" ".join(blocks[n - 1].split()))
+PY
+}
+
 # beat N -> the Nth ```speak block, spoken by $2
 render() {
   n=$1
@@ -39,16 +54,32 @@ render() {
     *)      voice=$narrator; tag=ryan ;;
   esac
   file=$(printf '%s/%02d-%s.wav' "$out" "$n" "$tag")
-  python3 - "$n" <<'PY' | uvx --from piper-tts piper -m "$voice" --data-dir "$voices" -f "$file"
-import re, sys, pathlib
-blocks = re.findall(r"```speak\n(.*?)```", pathlib.Path("NARRATION.md").read_text(), re.S)
-n = int(sys.argv[1])
-if not 1 <= n <= len(blocks):
-    sys.exit(f"beat {n} out of range (1..{len(blocks)})")
-# One line: piper treats newlines as separate utterances and the seams are
-# audible. Paragraph breaks become sentence pauses instead.
-print(" ".join(blocks[n - 1].split()))
-PY
+  txt=${file%.wav}.txt
+
+  # Extract to a FILE first, then feed piper from it. The obvious shape --
+  # `line "$n" | piper` -- cannot fail correctly: `set -e` judges a
+  # pipeline by its LAST command, so when the extract side died piper
+  # still ran, got empty stdin, wrote a header-only wav and exited 0.
+  # That is how a 0-byte 25-*.wav appeared while `all` reported success.
+  if ! line "$n" > "$txt"; then
+    rm -f "$txt"
+    echo "say.sh: beat $n -- could not extract the speak block" >&2
+    return 1
+  fi
+  uvx --from piper-tts piper -m "$voice" --data-dir "$voices" -f "$file" < "$txt"
+
+  # The .txt is not a by-product, it is the receipt: it records exactly
+  # what this wav says, so staleness can be decided by COMPARING TEXT
+  # rather than by comparing mtimes. mtime was the first attempt and it
+  # was useless -- re-measuring the DURATION markers rewrites NARRATION.md
+  # and invalidated all 24 takes on a change that touched no speech. A
+  # check that cries wolf on every routine edit trains you to ignore it,
+  # which is worse than not having it.
+  size=$(wc -c < "$file" 2>/dev/null || echo 0)
+  if [ "$size" -lt 4096 ]; then
+    echo "say.sh: beat $n rendered $size bytes -- that is silence, not narration" >&2
+    return 1
+  fi
   printf '%s  ' "$file"
   ffprobe -v error -show_entries format=duration -of default=nw=1 "$file" 2>/dev/null || echo
 }
