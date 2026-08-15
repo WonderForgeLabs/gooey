@@ -13,8 +13,180 @@ env:
   IMAGE: ghcr.io/wonderforgelabs/gooey
 
 jobs:
-  test:
+  # EVERY MODULE IN THE REPO IS DISCOVERED HERE — NOTHING BELOW NAMES ONE.
+  #
+  # The `test` job used to be seven steps: `go build/vet/test` for the
+  # root, then one literal `if [ -f <path>/go.mod ]` step each for
+  # handlers/temporal, handlers/exec, imagefmt/svg and mcp (with grpc's
+  # copy over in `contract`), plus a glob loop for packs/*. Only the glob
+  # was discovery, and the comment on it already predicted what happened
+  # next: "a module added without also editing this file is never built,
+  # and the guard makes that look like a pass."
+  #
+  # It came true twice. `paint/` (the fogleman/gg bridge, #229 and #241)
+  # landed with no step at all and was caught by a human reading a diff.
+  # `examples/wysiwyg` — a real consumer of core — was never built either,
+  # alongside examples/gitui, examples/kanbandemo and
+  # examples/dynamic-activities. Both times every job was green, because a
+  # green CI meant "everything I was told about passed".
+  #
+  # The discovery below is character-for-character the loop in CLAUDE.md's
+  # `## Verify` section — same `find`, same pruning — because
+  # `TestCIWorkflowDiscoversEveryNestedModule` extracts this exact command
+  # out of this file, runs it, and compares the result against a walk of
+  # the tree. That test is what makes the module count KNOWABLE rather
+  # than asserted: it goes red the moment this command stops reaching a
+  # module, which no amount of green in the matrix can do on its own.
+  # `TestCLAUDEMDVerifyLoopReachesEveryNestedModule` pins the doc the same
+  # way, so the workflow and the doc cannot drift apart either.
+  discover:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mods.outputs.matrix }}
+      count: ${{ steps.mods.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover modules
+        id: mods
+        run: |
+          set -u
+
+          # `-mindepth 1` lets a depth-1 dot-directory be pruned at all AND
+          # keeps `-name` off the starting point; without it `.?*` matches
+          # `.` itself, prunes the whole walk, prints nothing, and still
+          # exits 0. Pruning at every depth (not `-not -path './.*'`, which
+          # only anchors at the top) keeps this out of .claude/worktrees/
+          # and stray .venv trees on a developer machine. Neither exists in
+          # a clean CI checkout — that asymmetry is exactly why the rule
+          # has to be written here rather than rediscovered locally.
+          tmp=${RUNNER_TEMP:-/tmp}
+          find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print |
+            sed 's|^\./||' | sort > "$tmp/modules-found"
+
+          # A SECOND, INDEPENDENT MECHANISM, because an empty matrix is the
+          # same bug in a new costume: GitHub SKIPS a job whose matrix has
+          # no legs, and a skipped job is not a failed one. git knows the
+          # tracked go.mod files; the walk knows the ones on disk. Any
+          # disagreement is a real defect — either the prune/pathspec
+          # broke, or somebody added a module and never `git add`ed its
+          # go.mod, in which case CI would be testing a module that does
+          # not exist for anybody else. Two mechanisms agreeing is a
+          # stronger claim than "at least one was found", which 0 == 0 also
+          # satisfies.
+          git ls-files -- ':(glob)**/go.mod' | sort > "$tmp/modules-tracked"
+          if ! diff -u "$tmp/modules-tracked" "$tmp/modules-found"; then
+            echo "::error::the module walk and git ls-files disagree; see the diff above"
+            exit 1
+          fi
+
+          mapfile -t mods < "$tmp/modules-found"
+          # The floor the cross-check cannot provide on its own. The root
+          # go.mod is the one module whose absence means the checkout
+          # itself is broken, so requiring it plus one more is a bound that
+          # no plausible breakage satisfies by accident. Membership, not
+          # position: the list is sorted, and `examples/…` sorts before
+          # `go.mod`, so testing mods[0] rejected a perfectly good tree
+          # (found by running this script against the worktree).
+          if [ "${#mods[@]}" -lt 2 ] || ! grep -qxF 'go.mod' "$tmp/modules-found"; then
+            printf '%s\n' "${mods[@]}"
+            echo "::error::discovery found ${#mods[@]} module(s) and no root go.mod — the checkout or the walk is broken"
+            exit 1
+          fi
+
+          # The ONLY hand-written classification left in this file, and it
+          # matches PATH PATTERNS, not module names: a new pack, handler or
+          # example is covered the moment its go.mod is committed.
+          #
+          # THE RULE, stated so the arms can be checked against it: a
+          # module races when its tests exist to prove that nothing
+          # touches the property graph off the UI goroutine — that is,
+          # when it serves somebody else's goroutine. handlers/*, packs/*,
+          # mcp and grpc all do (RPCs, tool bodies, activity goroutines,
+          # child-process callbacks); #182 sat on main because one of them
+          # was not raced. paint starts no goroutines at all, so the
+          # detector would buy CI time and no assertion — the reasoning
+          # #258 wrote for its own step, kept here now that discovery
+          # subsumes it.
+          #
+          # That rule is NOT derivable, and pretending otherwise would be
+          # worse than a case statement: "serves a foreign goroutine" is a
+          # claim about what a suite asserts, not a property of the tree,
+          # and every mechanical proxy (does it spawn goroutines? does it
+          # import net/http?) misclassifies the root module, which spawns
+          # plenty and is deliberately not raced. What IS derivable is the
+          # drift: TestCIWorkflowRaceTierMatchesCLAUDEMD compares this arm
+          # against CLAUDE.md's, and rejects a namespaced entry written
+          # literally (`handlers/temporal` instead of `handlers/*`),
+          # because a literal is where the next module silently drops a
+          # tier.
+          #
+          # The safe evolution, if this ever drifts again, is to invert it:
+          # race by DEFAULT and make exemption the explicit act, so a new
+          # module fails toward the stronger check. Not done here — it
+          # would race the root module, which is a tier change, and tier
+          # changes belong in their own PR rather than smuggled into a
+          # mechanism one.
+          #
+          # examples/* are VETTED BUT NOT TESTED. Vetting is the point: it
+          # is what catches a core API change breaking a consumer, the
+          # breakage CLAUDE.md says goes silent today. Their tests are
+          # deliberately left out — examples/wysiwyg alone carries
+          # goroutine-leak, pty-harness and control-plane-server suites,
+          # and putting that flake surface on a required gate buys little,
+          # since an example is not part of the framework's contract.
+          # Promoting one is a one-line change to the case below.
+          #
+          # Everything the two arms above do not name gets the plain run —
+          # written as the default arm rather than a third list, so nobody
+          # has to keep a roster of library modules current. That the root
+          # module's own tests do not race is a known gap, inherited
+          # unchanged rather than smuggled into this change.
+          for mod in "${mods[@]}"; do
+            m=${mod%go.mod}; m=${m%/}; m=${m:-.}
+            case "$m" in
+              examples/*)                  mode='vet'  ;;
+              handlers/*|packs/*|mcp|grpc) mode='race' ;;
+              *)                           mode='test' ;;
+            esac
+            printf '%s\t%s\n' "$m" "$mode"
+          done > "$tmp/modules-tiered"
+
+          matrix=$(jq -Rnc '[inputs | split("\t") | {module: .[0], mode: .[1]}]' < "$tmp/modules-tiered")
+          legs=$(jq length <<<"$matrix")
+          # The JSON must describe every discovered module or this job is
+          # lying about its own coverage — the failure mode being fixed,
+          # one level up.
+          if [ "$legs" != "${#mods[@]}" ]; then
+            echo "::error::built $legs matrix leg(s) from ${#mods[@]} discovered module(s)"
+            exit 1
+          fi
+
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$legs" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $legs modules discovered"
+            echo
+            jq -r '.[] | "- `\(.module)` — \(.mode)"' <<<"$matrix"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # One leg per discovered module, so a failure names its own module
+  # instead of arriving as "the test job is red". `fail-fast: false`
+  # because the useful output of a broken core API change is the full list
+  # of modules it broke, not the first one alphabetically.
+  #
+  # No `go build ./...` anywhere, including the root, where it used to
+  # run: a main package writes an executable into the tree (this repo has
+  # committed five that way), and `go vet` type-checks every package plus
+  # its tests, so it strictly subsumes build as an error detector.
+  test:
+    needs: discover
+    name: ${{ matrix.module }} (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,118 +194,46 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Build
-        run: go build ./...
+          cache-dependency-path: '**/go.sum'
 
       - name: Vet
+        working-directory: ${{ matrix.module }}
         run: go vet ./...
 
       - name: Test
+        if: matrix.mode == 'test'
+        working-directory: ${{ matrix.module }}
         run: go test ./...
 
-      # handlers/temporal is a separate module, excluded from the root
-      # ./... patterns. The guard keeps CI green both before and after it
-      # lands on main.
-      #
-      # -race for the reason handlers/exec and mcp have it: the provider
-      # runs every activity on its own goroutine, so a page that fires
-      # several at once is exactly the shape the detector exists for.
-      # Without it the module's concurrency is untested, which is how
-      # #182 sat on main unnoticed.
-      - name: Build and test handlers/temporal
-        run: |
-          if [ -f handlers/temporal/go.mod ]; then
-            cd handlers/temporal
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/temporal/go.mod not present; skipping"
-          fi
+      - name: Test (race)
+        if: matrix.mode == 'race'
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...
 
-      # handlers/exec is a separate module too — its jq extraction takes
-      # gojq (pure Go, but a real dependency), and the deps⇒nested rule
-      # of the pack-distribution doctrine keeps it out of the root
-      # graph. -race because its tests drive real child processes and
-      # the timeout/kill path crosses goroutines.
-      - name: Build and test handlers/exec
+  # A matrix job with no legs is SKIPPED, not failed, and `needs:` treats
+  # a skipped dependency as satisfied-but-not-successful in ways that are
+  # easy to get wrong. This gate is the one place that turns "the matrix
+  # never ran" into red, and it is why `image` needs it rather than
+  # needing `test` directly.
+  modules:
+    needs: [discover, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All discovered modules passed
+        env:
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MODULE_COUNT: ${{ needs.discover.outputs.count }}
         run: |
-          if [ -f handlers/exec/go.mod ]; then
-            cd handlers/exec
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "handlers/exec/go.mod not present; skipping"
-          fi
-
-      # Every packs/* directory is an ACTIVITY PACK — its own module with
-      # zero gooey imports (graph: Temporal SDK + API protos only), so
-      # any Go Temporal worker can import it. handlers/temporal consumes
-      # them via replace directives.
-      #
-      # This step DISCOVERS them rather than naming them. Every other
-      # nested module above is a literal name behind an `if [ -f … ]`
-      # guard, and that shape has a failure mode: a module added without
-      # also editing this file is never built, and the guard makes that
-      # look like a pass. packs/ is about to grow to eight modules (epic
-      # #142), so it gets the loop; the rest is left alone because #130
-      # replaces this whole job with forge's auto-discovering CI, which
-      # generalises the same idea. When that lands, this step deletes.
-      #
-      # No `go build ./...`: a pack that ever grows a main package would
-      # write an executable into the tree, and this repo has committed
-      # five that way. `go vet` compiles everything regardless. -race
-      # because these suites run in milliseconds and #130 makes it
-      # universal anyway.
-      - name: Build and test packs/*
-        run: |
-          shopt -s nullglob
-          found=0
-          for mod in packs/*/go.mod; do
-            found=1
-            dir=$(dirname "$mod")
-            echo "::group::$dir"
-            ( cd "$dir" && go vet ./... && go test -race ./... )
-            echo "::endgroup::"
-          done
-          # A zero-match glob is a repo-structure error, not a skip.
-          # packs/ has modules; the only ways to reach this branch are a
-          # rename, a bad path, or a broken checkout — all of which must
-          # be red. A `|| echo` here would have reproduced the exact
-          # failure this step exists to remove.
-          [ "$found" = 1 ] || { echo "::error::no packs/*/go.mod found — packs/ is missing or the glob is wrong"; exit 1; }
-
-      # imagefmt/svg is a separate module for the same reason — the SVG
-      # rasterizer (oksvg + rasterx) stays out of core's graph, and apps
-      # opt in with a blank import.
-      - name: Build and test imagefmt/svg
-        run: |
-          if [ -f imagefmt/svg/go.mod ]; then
-            cd imagefmt/svg
-            go build ./...
-            go vet ./...
-            go test ./...
-          else
-            echo "imagefmt/svg/go.mod not present; skipping"
-          fi
-
-      # mcp is a separate module for the same reason (the MCP SDK's graph),
-      # so the root ./... patterns skip it too. It runs under -race
-      # deliberately: what its tests prove is that no tool body ever touches
-      # the property graph from an http goroutine, and without the detector
-      # that assertion is only half made.
-      - name: Build and test mcp
-        run: |
-          if [ -f mcp/go.mod ]; then
-            cd mcp
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "mcp/go.mod not present; skipping"
-          fi
+          echo "discover: $DISCOVER_RESULT ($MODULE_COUNT modules)"
+          echo "test:     $TEST_RESULT"
+          [ "$DISCOVER_RESULT" = success ] || { echo "::error::discovery did not succeed"; exit 1; }
+          [ "$TEST_RESULT" = success ] || { echo "::error::the per-module matrix did not succeed"; exit 1; }
+          case "$MODULE_COUNT" in
+            ''|*[!0-9]*) echo "::error::discovery reported no module count"; exit 1 ;;
+          esac
+          [ "$MODULE_COUNT" -ge 2 ] || { echo "::error::discovery reported only $MODULE_COUNT module(s)"; exit 1; }
 
   # The gRPC control plane (issue #110): proto/ is the source of truth,
   # generated Go/Python/TS is committed. Gates: buf lint, buf breaking
@@ -167,22 +267,12 @@ jobs:
           go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
           git diff --exit-code
 
-      # grpc is the wire module (generated Go plus the issue #111
-      # server) — a separate module like mcp/, so grpc-go and protobuf
-      # stay out of the root graph. -race for the same reason mcp runs
-      # under it: the tests prove no RPC touches the property graph off
-      # the UI goroutine, and that claim is half-made without the
-      # detector.
-      - name: Build and test grpc
-        run: |
-          if [ -f grpc/go.mod ]; then
-            cd grpc
-            go build ./...
-            go vet ./...
-            go test -race ./...
-          else
-            echo "grpc/go.mod not present; skipping"
-          fi
+      # grpc used to be built and tested here, alongside the proto gates.
+      # It is a module like any other now, so the `test` matrix covers it
+      # (under -race, unchanged) and this job stays about the wire
+      # contract: lint, breaking-change, drift, and the committed non-Go
+      # clients. Leaving a copy here would have made grpc the one module
+      # this file still named.
 
       - name: Python client smoke
         run: |
@@ -199,7 +289,10 @@ jobs:
           npx tsc -p tsconfig.json
 
   image:
-    needs: test
+    # `modules`, not `test`: an empty matrix leaves `test` SKIPPED, and a
+    # skipped dependency would let the image publish on a run that
+    # compiled nothing.
+    needs: modules
     runs-on: ubuntu-latest
     permissions:
       contents: read

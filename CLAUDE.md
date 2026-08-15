@@ -22,14 +22,27 @@ list of module names is stale the first time someone adds one, and the
 failure is silent: the loop still exits 0, so you report a verified tree
 having never compiled the new module. That is exactly how this file came to
 name eight modules across two loops and still skip seven `packs/temporal-*`.
-`ci.yml` discovers `packs/*` with a glob for the same reason.
+`ci.yml` ran the same risk from the other end and lost twice — `paint/` and
+every `examples/*` module went unbuilt behind a wall of green — so it now
+builds its job matrix from **this exact command**, and
+`TestCIWorkflowAndCLAUDEMDShareOneDiscovery` fails if the two ever differ
+by a character.
 
 ```sh
-# Every nested module, discovered the way ci.yml discovers packs/*.
-# -race matches CI: handlers/*, packs/*, mcp and grpc run under the
-# detector; the root module and imagefmt/svg do not. examples/* are in
-# neither list because CI does not run them at all, so they get the
-# plain run here — see the paragraph below.
+# Every nested module — the same discovery ci.yml uses to build its
+# per-module matrix.
+#
+# The `case` below IS the -race tier, character for character the one in
+# ci.yml, and TestCIWorkflowRaceTierMatchesCLAUDEMD fails if they drift —
+# so read the arm, not a sentence restating it. The rule it encodes: a
+# module races when its tests exist to prove nothing touches the property
+# graph off the UI goroutine, i.e. when it serves somebody else's
+# goroutine. Everything else gets the plain run.
+#
+# The one place this loop is deliberately WIDER than CI: CI vets
+# `examples/*` without running their suites, and this runs them. So a
+# green CI does not mean an example's own tests passed; a green loop
+# here does.
 #
 # Pruning dot-directories at EVERY depth is load-bearing, and filtering
 # with `-not -path './.*'` is not enough — that only anchors at the top.
@@ -45,11 +58,18 @@ name eight modules across two loops and still skip seven `packs/temporal-*`.
 # starting point. Drop it and `-name '.*'` matches `.` itself, prunes the
 # whole walk, and prints nothing while still exiting 0. `.?*` is only
 # belt-and-braces for whoever removes `-mindepth 1` later — with it
-# present the two patterns are identical (checked: both find 19).
+# present the two patterns find the same set.
 #
 # Piped into `while read` rather than `for m in $(…)`: unquoted command
 # substitution word-splits AND glob-expands, so one directory with a
 # space or a `*` in its name would quietly mis-split the list.
+#
+# Failures go to a FILE, not to `echo FAIL`. The pipe puts the loop body
+# in a subshell, so a counter set in there dies with it — which is how
+# the previous version of this loop came to print `FAIL handlers/exec`
+# somewhere in ten thousand lines of go output and still exit 0. Reading
+# the last line is the check; the loop cannot make it for you.
+: > /tmp/gooey-verify-fails
 find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort |
 while IFS= read -r mod; do
   m=${mod%/go.mod}; m=${m#./}
@@ -58,12 +78,25 @@ while IFS= read -r mod; do
     handlers/*|packs/*|mcp|grpc) race=-race ;;
     *)                           race= ;;
   esac
-  ( cd "$m" && go vet ./... && go test $race ./... ) || echo "FAIL $m"
+  ( cd "$m" && go vet ./... && go test $race ./... ) || echo "$m" >> /tmp/gooey-verify-fails
 done
+if [ -s /tmp/gooey-verify-fails ]; then
+  echo "FAILED: $(tr '\n' ' ' < /tmp/gooey-verify-fails)"
+else
+  echo "all nested modules green"
+fi
 ```
 
-That is **18** modules today (19 `go.mod` counting the root). If it walks
-noticeably fewer, suspect the loop before you trust the green.
+**How many modules that is, is deliberately not written here.** A number in
+prose is a sample taken once: this sentence used to say 15 (`490cbfe`) and
+was still saying it three modules later, until a stack-landing commit
+happened to notice (`1c119ff`). That is an enumerated list wearing a
+smaller hat. `TestCLAUDEMDVerifyLoopReachesEveryNestedModule` runs the
+command above and compares it against a walk of the tree, and
+`TestCIWorkflowDiscoversEveryNestedModule` does the same for `ci.yml`, so
+the count is derived on every run of the root suite. Want the number? Run
+the `find` — and if it walks noticeably fewer than the tree looks like it
+holds, suspect the loop before you trust the green.
 
 The `-race` where CI applies it is not a nicety: what those tests prove is
 that no RPC, tool body, activity goroutine, or child-process callback
@@ -71,10 +104,12 @@ touches the property graph off the UI goroutine, and without the detector
 that assertion is only half made. `.github/workflows/ci.yml` is the
 authority on what CI runs.
 
-Two gaps CI leaves you to cover by hand: `examples/gitui` and
-`examples/kanbandemo` are **not built by CI at all**, so a core API change
-breaks them silently — build them yourself when you touch the root module.
-And the root module's own tests do not run under `-race` in CI.
+One gap CI leaves you to cover by hand, and one it no longer does. CI now
+discovers every module and gives each its own matrix leg, so a core API
+change that breaks `examples/gitui` or any other consumer turns that leg
+red by name — but examples are **vetted, not tested** there, so their own
+suites (`examples/wysiwyg` has a dozen) run only in the loop above. The
+root module's tests still do not run under `-race` in CI.
 
 ## Invariants
 

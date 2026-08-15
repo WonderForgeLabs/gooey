@@ -90,8 +90,12 @@ Rationale — consumer dependency hygiene, stated once, both directions:
 
 In-repo, nested modules consume each other via `replace` directives
 (`handlers/temporal` → root and → `packs/temporal-visibility`), and
-each nested module gets its own CI build/vet/test step in `ci.yml`
-because the root sweep skips it.
+each nested module gets its own CI vet/test job in `ci.yml` because the
+root sweep skips it. That job is no longer written by hand: `ci.yml`
+discovers every `go.mod` in the tree and builds one matrix leg per
+module, so a new pack is covered the moment its `go.mod` is committed.
+The tier it lands in (`-race` or not) is still a path-pattern rule in
+that file.
 
 ## Naming
 
