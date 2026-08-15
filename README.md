@@ -19,7 +19,7 @@ iTerm2, halfblock fallback) riding a second plane over the cell buffer.
 Three UserControl panes, one input system: focus-scoped keys, live
 network fetches, and a feed added at runtime persisting to OPML.
 
-![statedemo](docs/media/demos/statedemo.gif)
+![state](docs/media/demos/state.gif)
 
 Pure markup, no code-behind: buttons and a checkbox drive manual vs
 reactive JSON serialization through the property graph.
@@ -39,7 +39,7 @@ in a property.
 ## Quick start
 
 ```sh
-go run ./cmd/statedemo
+go run ./cmd/state
 ```
 
 A UI is a `.gooey` file — elements map to components, attributes to
@@ -140,10 +140,10 @@ service. The demos run this in both directions. `wizardui` inverts the
 usual arrangement: its markup is *served by* a Temporal workflow — the
 workflow is the application, versioned and replayed like any workflow
 state, and the terminal contributes only the capability grant that lets
-served markup signal that one workflow. `examples/kanbandemo` is driven
-from the outside instead: `examples/temporal-worker`, a Python Temporal
+served markup signal that one workflow. `apps/kanban` is driven
+from the outside instead: `apps/temporal-worker`, a Python Temporal
 worker, has Claude generate a page and pushes it into the running board
-through the MCP `swap_markup` tool. `examples/dynamic-activities` closes
+through the MCP `swap_markup` tool. `apps/dynamic-activities` closes
 the circle: its companion is a Python worker that is *itself* an MCP
 server offering CRUD over Temporal activities, so a tool call turns a
 blob of Python source into a live activity, registers a result property
@@ -191,28 +191,28 @@ and stopped with the app
 Each has a walkthrough in [docs/demos.md](docs/demos.md). Most live
 under `cmd/`; demos whose dependencies are quarantined in nested modules
 live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
-`examples/`) and run from that module's directory.
+`apps/`) and run from that module's directory.
 
 | Demo | GIF | Proves |
 |---|---|---|
-| `cmd/probe` + `cmd/demo` | [demo.gif](docs/media/demos/demo.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
-| `cmd/propdemo` | [propdemo.gif](docs/media/demos/propdemo.gif) | Lazy property graph: unwatched sources render zero frames |
+| `cmd/probe` + `cmd/pixels` | [pixels.gif](docs/media/demos/pixels.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
+| `cmd/props` | [props.gif](docs/media/demos/props.gif) | Lazy property graph: unwatched sources render zero frames |
 | `cmd/logview` | [logview.gif](docs/media/demos/logview.gif) | Conditional dependency recording: pause drops the firehose out of the graph |
 | `cmd/markuplog` | [markuplog.gif](docs/media/demos/markuplog.gif) | Markup hot reload: live edits rebuild the tree, buffer intact |
 | `cmd/finder` | [finder.gif](docs/media/demos/finder.gif) | Input-to-derived-view pipeline with per-pane damage |
 | `cmd/reader` | [reader.gif](docs/media/demos/reader.gif) | Multi-UserControl composition, scoped input, live fetches |
-| `cmd/statedemo` | [statedemo.gif](docs/media/demos/statedemo.gif) | No-code-behind markup and reactive serialization |
-| `cmd/cardsdemo` | [cardsdemo.gif](docs/media/demos/cardsdemo.gif) | Markup-declared `<x:Property>` surfaces: one markup-only control, four instances over four live data streams ([timerdemo.gif](docs/media/demos/timerdemo.gif) isolates its `<Timer>` element) |
+| `cmd/state` | [state.gif](docs/media/demos/state.gif) | No-code-behind markup and reactive serialization |
+| `cmd/cards` | [cards.gif](docs/media/demos/cards.gif) | Markup-declared `<x:Property>` surfaces: one markup-only control, four instances over four live data streams ([timerdemo.gif](docs/media/demos/timerdemo.gif) isolates its `<Timer>` element) |
 | `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](docs/media/demos/temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
 | `handlers/temporal/cmd/temporalops` | [temporalops.gif](docs/media/demos/temporalops.gif) | A live Temporal visibility dashboard: every Temporal call declared in markup, an `ItemsView` over real API responses, paging on real page tokens |
 | `handlers/temporal/cmd/wizardui` | [wizarddemo.gif](handlers/temporal/wizarddemo.gif) (earlier cut; final GIF: docs-and-demos workflow) | Workflow-served markup: every screen arrives as a workflow query payload, and the terminal contributes only the capability grant |
-| `cmd/colordemo` | [colordemo.gif](docs/media/demos/colordemo.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
-| `mcp/cmd/mcpdemo` | [mcpdemo.gif](docs/media/demos/mcpdemo.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `examples/kanbandemo` | — | A real Kanban board that is also an MCP server, with a live traffic log; `examples/temporal-worker` pushes generated markup into it over `swap_markup` |
-| `examples/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
-| `cmd/toolkitdemo` | [toolkitdemo.gif](docs/media/demos/toolkitdemo.gif) | The UI toolkit — every component the kit ships, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer` |
+| `cmd/colors` | [colors.gif](docs/media/demos/colors.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
+| `mcp/cmd/server` | [server.gif](docs/media/demos/server.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
+| `apps/kanban` | — | A real Kanban board that is also an MCP server, with a live traffic log; `apps/temporal-worker` pushes generated markup into it over `swap_markup` |
+| `apps/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
+| `cmd/toolkit` | [toolkit.gif](docs/media/demos/toolkit.gif) | The UI toolkit — every component the kit ships, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer` |
 | `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
-| `cmd/settingsdemo` | — | External state as properties: three settings bound straight into markup, persisted through a host-supplied provider, with the run's disk-write count on screen |
+| `cmd/prefs` | — | External state as properties: three settings bound straight into markup, persisted through a host-supplied provider, with the run's disk-write count on screen |
 
 The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
 are runnable too, and `cmd/browser` lists both groups:

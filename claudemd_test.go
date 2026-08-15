@@ -183,7 +183,7 @@ func TestCLAUDEMDNamesNoDeletedModule(t *testing.T) {
 	for _, m := range backticked.FindAllStringSubmatch(string(b), -1) {
 		ref := m[1]
 		// A nested module is exactly `namespace/name`. Deeper paths are
-		// something else — `examples/gitui/gitui` is the binary that module
+		// something else — `apps/gitui/gitui` is the binary that module
 		// builds, and the Traps section names it on purpose.
 		parts := strings.Split(ref, "/")
 		if len(parts) != 2 || !moduleNamespaces[parts[0]] || seen[ref] {

@@ -132,7 +132,7 @@ watches the file. A few rules worth knowing:
 - `Name`, `Tooltip`, and the layout attributes (`Grid.*`, `Width`, …)
   are never checked: they belong to the element, not the control.
 
-`cmd/cardsdemo` in this repository is the larger worked example — a
+`cmd/cards` in this repository is the larger worked example — a
 markup-only demo whose `card.gooey` and `badge.gooey` gained a checked,
 defaulted, typed contract with zero Go changes. Full rules:
 [the reference](../markup-reference.md#declared-properties-xproperty).

@@ -41,7 +41,7 @@ error rather than a signpost, so check they are installed first.
 
 Which one:
 
-- A new **demo** (something in `cmd/` or `examples/` that shows the
+- A new **demo** (something in `cmd/` or `apps/` that shows the
   framework off) → `gooey-new-demo`.
 - A new **component** (something in `components/` with a markup builder,
   damage pins, and docs/adopters to reconcile) → `gooey-new-component`.
@@ -86,7 +86,7 @@ checklist in the result), and then the reconciliation fan-out that is
 the point: parallel agents, each in **its own git worktree** with a
 disjoint write set, update every stale doc claim (`docs/markup-reference.md`, `docs/learn/**`, README matrix,
 `docs/architecture.md`, other specs' `## Executed`), adopt the component
-wherever shipped code hand-rolls it (the Tabs/kanbandemo model — the
+wherever shipped code hand-rolls it (the Tabs/kanban model — the
 hand-rolled version is deleted in the same change), audit/update
 `docs-and-demos.js` itself, and offer the user the full GIF/doc regen.
 
@@ -135,7 +135,7 @@ edited elsewhere cannot break a recording mid-run:
 ```sh
 S=/tmp/gooey-recordings
 mkdir -p $S
-for d in probe demo propdemo logview markuplog finder reader statedemo; do
+for d in probe demo props logview markuplog finder reader state; do
   go build -o $S/$d ./cmd/$d
 done
 cp cmd/*/*.gooey $S/

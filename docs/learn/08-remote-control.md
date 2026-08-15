@@ -14,19 +14,19 @@ the same surface with generated clients and a streaming session.
 [Tutorial 4](04-input-commands.md). Nothing here requires Temporal or
 any external service — one Go toolchain and `curl` is enough.
 
-The app you drive is [`examples/kanbandemo`](../../examples/kanbandemo)
+The app you drive is [`apps/kanban`](../../apps/kanban)
 — read its `main.go` alongside this page; every claim below is a comment
-there. The smaller [`mcp/cmd/mcpdemo`](../../mcp/cmd/mcpdemo) is the
+there. The smaller [`mcp/cmd/server`](../../mcp/cmd/server) is the
 same idea at postcard size
-([`mcpdemo.gif`](../media/demos/mcpdemo.gif) shows it driven live).
+([`server.gif`](../media/demos/server.gif) shows it driven live).
 
-<!-- GIF: docs-and-demos workflow — kanbandemo driven over MCP, board
+<!-- GIF: docs-and-demos workflow — kanban driven over MCP, board
      changing while curl runs in a second pane -->
 
 ## Step 1: Start the board
 
 ```sh
-cd examples/kanbandemo && go run . -with-worker=false
+cd apps/kanban && go run . -with-worker=false
 ```
 
 You get a three-column board — Todo, Doing, Done — with a text box, add
@@ -57,7 +57,7 @@ still work. `Options.Addr` **must be loopback**.
 
 Two things to notice before touching the wire:
 
-- **`kanbandemo` is its own Go module.** Importing `gooey/mcp` pulls in
+- **`kanban` is its own Go module.** Importing `gooey/mcp` pulls in
   the MCP SDK's dependency graph, and core gooey's `go build ./...`
   must never see it — the same quarantine that puts `mcp/`, `grpc/` and
   `handlers/temporal` in nested modules. Run it from its own directory.
@@ -80,8 +80,8 @@ Two things to notice before touching the wire:
   gRPC needs no Origin machinery because browsers cannot speak it
   natively.) One caveat: `mcp.Serve` owns the listener and enforces the
   loopback rule. If you take that over with `mcp.New` and mount the
-  handler on your own `http.Server` — as kanbandemo does, to wrap it —
-  the guarantee becomes *your* problem, which is why kanbandemo
+  handler on your own `http.Server` — as kanban does, to wrap it —
+  the guarantee becomes *your* problem, which is why kanban
   re-implements the check.
 
 ## Step 2: Connect a client
@@ -128,7 +128,7 @@ column's buttons, `McpTabBtn`, `LogTabBtn`, `LogPanel`.
 
 Those names are the point. **Everything you named in markup for your
 own sanity is an address a client can act on.** Nothing in
-`kanbandemo` was written for the agent's benefit; the automation
+`kanban` was written for the agent's benefit; the automation
 surface falls out of ordinary markup discipline.
 
 There is a deliberate ceiling: built-in widgets serialize their
@@ -229,7 +229,7 @@ way. Three companions to know:
   first and unregister second.
 
 This loop — generate, validate, swap, look — is exactly what
-`examples/temporal-worker` automates: a Python Temporal worker that
+`apps/temporal-worker` automates: a Python Temporal worker that
 has Claude write markup and pushes it into this app's `swap_markup`.
 Drop the `-with-worker=false` from step 1 (and point `-worker-python`
 at a venv) to see it as a one-shell arrangement

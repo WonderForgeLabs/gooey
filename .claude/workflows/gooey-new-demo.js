@@ -1,7 +1,7 @@
 export const meta = {
   name: 'gooey-new-demo',
   description: 'Interview-first, design-first pipeline for building a new gooey demo',
-  whenToUse: 'When the user wants a new demo (cmd/<name> or examples/<name>) and the shape is not already decided. Interactive: it interviews the user, iterates on mockups and a live MCP-driven prototype until they approve, and only then writes real code. Not for mechanical tweaks to existing demos.',
+  whenToUse: 'When the user wants a new demo (cmd/<name> or apps/<name>) and the shape is not already decided. Interactive: it interviews the user, iterates on mockups and a live MCP-driven prototype until they approve, and only then writes real code. Not for mechanical tweaks to existing demos.',
   phases: [
     { title: 'Interview', detail: 'brainstorm with the user until a direction is picked' },
     { title: 'Explore', detail: 'capability map, prior art, spec contracts for the chosen area' },
@@ -59,8 +59,8 @@ FRAMEWORK INVARIANTS — violating one is a defect, not a style choice:
 // user, via pasted screen_text) iterate on the real thing, not a drawing.
 const HARNESS = `
 LIVE PROTOTYPING HARNESS (build once, reuse every round):
-- Scratch module OUTSIDE the repo at /tmp/gooey-proto-<name>/: own go.mod (module scratch/proto) requiring github.com/WonderForgeLabs/gooey and github.com/WonderForgeLabs/gooey/mcp, with replace directives at ${REPO} and ${REPO}/mcp. mcp/ is a nested module — anything importing it needs its own module (see the header comment in ${REPO}/examples/kanbandemo/go.mod).
-- Model main.go on ${REPO}/mcp/cmd/mcpdemo/main.go: load the page with markup.Page(os.DirFS(dir), "name.gooey", ctx, also...) — App.Run wires its watcher through the Dispatcher so file edits hot-reload (~300ms polling; the older markup.Watch built trees off the UI goroutine and is not the path). Name any Include/UserControl files in the also... variadic or edits to them will not reload. Viewmodel is prop.NewSource/NewComputed handles; then one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call — pass the markup Context or the name-addressed tools (list_values, set_value, invoke_command) see nothing. Pick a free port (not 7777); an empty Addr means an ephemeral port readable from srv.Addr().
+- Scratch module OUTSIDE the repo at /tmp/gooey-proto-<name>/: own go.mod (module scratch/proto) requiring github.com/WonderForgeLabs/gooey and github.com/WonderForgeLabs/gooey/mcp, with replace directives at ${REPO} and ${REPO}/mcp. mcp/ is a nested module — anything importing it needs its own module (see the header comment in ${REPO}/apps/kanban/go.mod).
+- Model main.go on ${REPO}/mcp/cmd/server/main.go: load the page with markup.Page(os.DirFS(dir), "name.gooey", ctx, also...) — App.Run wires its watcher through the Dispatcher so file edits hot-reload (~300ms polling; the older markup.Watch built trees off the UI goroutine and is not the path). Name any Include/UserControl files in the also... variadic or edits to them will not reload. Viewmodel is prop.NewSource/NewComputed handles; then one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call — pass the markup Context or the name-addressed tools (list_values, set_value, invoke_command) see nothing. Pick a free port (not 7777); an empty Addr means an ephemeral port readable from srv.Addr().
 - A gooey app needs a pty: run it in the background under script -qec "stty cols 110 rows 32; /tmp/gooey-proto-<name>/proto" /dev/null — the stty MUST set a size or the pty is 0x0 and paints nothing.
 - Drive it over MCP streamable HTTP at http://127.0.0.1:<port>/mcp. Plain curl JSON-RPC works: initialize, notifications/initialized (carry the Mcp-Session-Id header), then tools/call — read ${REPO}/mcp/e2e_linux_test.go for the exact wire sequence, and leave a drive.sh wrapper in the scratch dir so later rounds reuse it.
 - The tools: screen_text (your screenshot — quote it in results and in AskUserQuestion previews), tree_snapshot, swap_markup / patch_markup / validate_markup (change the UI without restarting), send_keys, send_mouse, focus, set_value / list_values, invoke_command, list_styles, register_properties.
@@ -71,7 +71,7 @@ const INTERVIEW_SCHEMA = {
   required: ['decided', 'name', 'purpose', 'audience', 'capabilities', 'compelling', 'layoutDirection', 'openQuestions'],
   properties: {
     decided: { type: 'boolean', description: 'true only if the user explicitly picked a direction' },
-    name: { type: 'string', description: 'demo name (dir name under cmd/ or examples/)' },
+    name: { type: 'string', description: 'demo name (dir name under cmd/ or apps/)' },
     purpose: { type: 'string', description: 'what the demo proves, in the user\'s words' },
     audience: { type: 'string' },
     capabilities: { type: 'array', items: { type: 'string' }, description: 'framework capabilities it must exercise' },
@@ -99,7 +99,7 @@ const BUILD_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['location', 'files', 'tests', 'notes'],
   properties: {
-    location: { type: 'string', description: 'cmd/<name> or examples/<name>' },
+    location: { type: 'string', description: 'cmd/<name> or apps/<name>' },
     files: { type: 'array', items: { type: 'string' }, description: 'repo-relative paths written' },
     tests: { type: 'array', items: { type: 'string' }, description: 'test names added and what each pins' },
     notes: { type: 'string' },
@@ -142,7 +142,7 @@ phase('Interview')
 let interview = await agent(
   `You are running the Interview phase of the gooey-new-demo workflow in ${REPO}: the user wants a new demo${IDEA ? ` — their seed idea: "${IDEA}"` : ''} and YOUR job is to land a decided direction with them, not to design or build anything.
 FIRST invoke the brainstorming process skill: call the Skill tool with skill "superpowers:brainstorming" and follow it — it owns this phase's process.
-Ground yourself before asking anything: skim ${REPO}/README.md, ${REPO}/docs/demos.md, and the cmd/ + examples/ dirs so your options are real and you never propose a demo that already exists.
+Ground yourself before asking anything: skim ${REPO}/README.md, ${REPO}/docs/demos.md, and the cmd/ + apps/ dirs so your options are real and you never propose a demo that already exists.
 Then interview the user (AskUserQuestion, multiple rounds as needed): what should this demo PROVE, who is it for, which framework capabilities must it exercise (properties/damage, markup+hot reload, input/focus/mouse, MCP control plane, graphics, Temporal...), and what does "compelling" mean for it. When the conversation narrows to layout/shape, present 2-4 concrete alternatives as side-by-side ASCII mockups in option previews and let the user pick.
 Do NOT proceed on assumptions: decided=true only when the user has explicitly picked a direction. If they are still torn, put what remains in openQuestions and set decided=false.
 ${INTERACTION_RULES}
@@ -169,7 +169,7 @@ while (!design) {
       { label: 'explore:capabilities', phase: 'Explore' },
     ),
     () => agent(
-      `Read-only exploration in ${REPO}. Prior art for a new demo "${interview.name}" (${interview.purpose}): read the closest existing demos in cmd/ and examples/ (main.go + .gooey), note the canonical host-loop boilerplate, how each wires markup + viewmodel + input, and which patterns this demo should copy vs avoid. Also: cmd/ demos live in the root module; anything importing gooey/mcp (or other heavy deps) must be its own module under examples/ like examples/kanbandemo — say which this demo needs. Return a compact brief with file:line pointers.${GIT_RULES}`,
+      `Read-only exploration in ${REPO}. Prior art for a new demo "${interview.name}" (${interview.purpose}): read the closest existing demos in cmd/ and apps/ (main.go + .gooey), note the canonical host-loop boilerplate, how each wires markup + viewmodel + input, and which patterns this demo should copy vs avoid. Also: cmd/ demos live in the root module; anything importing gooey/mcp (or other heavy deps) must be its own module under apps/ like apps/kanban — say which this demo needs. Return a compact brief with file:line pointers.${GIT_RULES}`,
       { label: 'explore:prior-art', phase: 'Explore' },
     ),
     () => agent(
@@ -229,7 +229,7 @@ DIRECTION: ${JSON.stringify(interview)}
 APPROVED DESIGN: ${JSON.stringify(design)}
 GROUNDING: ${grounding}
 Rules:
-- Location: cmd/${interview.name}/ in the root module; examples/${interview.name}/ with its OWN go.mod only if it imports gooey/mcp or other quarantined deps (copy the module-header rationale style from examples/kanbandemo/go.mod).
+- Location: cmd/${interview.name}/ in the root module; apps/${interview.name}/ with its OWN go.mod only if it imports gooey/mcp or other quarantined deps (copy the module-header rationale style from apps/kanban/go.mod).
 - Markup-first: the UI is a .gooey file (start from the harness prototype at ${design.markupFile} — it is the approved design), Go holds the viewmodel/logic. Follow the house host-loop idiom from the closest existing demo.
 - A package-header comment in main.go saying what the demo proves and its key map (the docs agents read these).
 - Damage-count tests where behavior is non-trivial, following markup/tabs_test.go's style (build from markup, mutate a bound source, assert the exact painted count); skip them only where the demo is a straight composition of already-pinned components.

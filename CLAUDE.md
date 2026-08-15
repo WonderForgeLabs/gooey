@@ -23,7 +23,7 @@ failure is silent: the loop still exits 0, so you report a verified tree
 having never compiled the new module. That is exactly how this file came to
 name eight modules across two loops and still skip seven `packs/temporal-*`.
 `ci.yml` ran the same risk from the other end and lost twice — `paint/` and
-every `examples/*` module went unbuilt behind a wall of green — so it now
+every `apps/*` module went unbuilt behind a wall of green — so it now
 builds its job matrix from **this exact command**, and
 `TestCIWorkflowAndCLAUDEMDShareOneDiscovery` fails if the two ever differ
 by a character.
@@ -40,7 +40,7 @@ by a character.
 # goroutine. Everything else gets the plain run.
 #
 # The one place this loop is deliberately WIDER than CI: CI vets
-# `examples/*` without running their suites, and this runs them. So a
+# `apps/*` without running their suites, and this runs them. So a
 # green CI does not mean an example's own tests passed; a green loop
 # here does.
 #
@@ -48,7 +48,7 @@ by a character.
 # with `-not -path './.*'` is not enough — that only anchors at the top.
 # The two offenders are both UNTRACKED, so neither exists in a fresh
 # clone and you cannot check this from the repo alone: .claude/worktrees/
-# holds whole checkouts, and examples/temporal-worker/.venv (gitignored;
+# holds whole checkouts, and apps/temporal-worker/.venv (gitignored;
 # appears once you run that example) vendors two go.mod files of
 # Temporal's own. That asymmetry is the point — a top-anchored filter
 # passes in CI and walks into someone else's tree on your machine.
@@ -121,9 +121,9 @@ authority on what CI runs.
 
 One gap CI leaves you to cover by hand, and one it no longer does. CI now
 discovers every module and gives each its own matrix leg, so a core API
-change that breaks `examples/gitui` or any other consumer turns that leg
+change that breaks `apps/gitui` or any other consumer turns that leg
 red by name — but examples are **vetted, not tested** there, so their own
-suites (`examples/wysiwyg` has a dozen) run only in the loop above. The
+suites (`apps/wysiwyg` has a dozen) run only in the loop above. The
 root module's tests still do not run under `-race` in CI.
 
 ## Invariants
@@ -221,16 +221,28 @@ needs an SDK" is a new nested module.
 
 ## Traps
 
-**`go build ./...` writes 23 executables into the repo root.** Every main
-package under `cmd/` and `docs/learn/examples/` lands as a file named after
-its directory. `.gitignore` lists 14 of them — that list exists because
-they have been committed before — and it does *not* cover `toolkitdemo` or
-any `docs/learn/examples/*` binary, so `git add -A` will happily commit
-those. The nested modules do the same thing in their own directories —
-`examples/gitui/gitui` and `examples/kanbandemo/kanbandemo` are neither
-tracked nor ignored. Use `go vet ./...` for a whole-repo check, or
+**`go build ./...` writes 25 executables into the repo root**, one per main
+package under `cmd/` and `docs/learn/examples/`, named after its directory —
+and each nested module does the same in its own root, for 38 in all.
+`.gitignore` now covers every one, but only because the block is
+**generated**: the hand-maintained version it replaced listed 18 entries
+covering 16 of the 38, two of them naming repo-root paths no build has ever
+produced. Regenerate it (the command is in a comment above the block) after
+adding, renaming or removing any main package; a substring edit cannot
+maintain it. Use `go vet ./...` for a whole-repo check, or
 `go build -o /tmp/gooey-bin/ ./...` when you actually want binaries; `-o`
 accepts a directory for a multi-package build and leaves the tree clean.
+
+**A `cmd/<name>` that matches a sibling package directory builds nothing,
+silently.** `cmd/settingsdemo` could not become `cmd/settings` because
+`settings/` exists: `go build ./cmd/settings` errors with `build output
+"settings" already exists and is a directory`, `go build ./...` **exits 0
+and writes no binary at all**, and `go build -o settings ./cmd/settings`
+treats the name as an output *directory* and drops the executable inside the
+source package. That is why the binary is `cmd/prefs` while the package it
+exercises is `settings` — see
+`docs/specs/2026-08-15-apps-rename.md`, which also carries the old→new
+path map for every pre-2026-08-15 spec.
 
 **`prop.Set` does not compare values** (`prop/prop.go:101`). Setting a
 property to what it already holds still invalidates every dependent and

@@ -125,7 +125,7 @@ func TestPixelButtonHoverRetransmitsWithoutIDs(t *testing.T) {
 }
 
 // The reported bug, end to end: a pixel button on a page that also
-// hosts a toast layer (the toolkitdemo shape), driven through the
+// hosts a toast layer (the toolkit shape), driven through the
 // DISPATCHER the way a terminal drives it. The empty full-page host
 // used to win the hit test, so no mouse event ever reached the button
 // and no state change ever reached the wire — under sixel there is no

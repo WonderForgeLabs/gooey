@@ -284,7 +284,7 @@ func TestBoundVisibilitySurvivesACollapsedAncestor(t *testing.T) {
 //
 // Zero-height-with-width is the case the shipped pages do not reach on
 // their own, which is exactly why it is pinned here rather than left to
-// cmd/toolkitdemo's screen-compare tests.
+// cmd/toolkit's screen-compare tests.
 func TestZeroRectComponentsPaintNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name string

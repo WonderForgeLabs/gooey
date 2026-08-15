@@ -3,34 +3,76 @@ feeds.opml
 *.log
 node_modules/
 __pycache__/
-# the kanbandemo worker's venv (main.go auto-selects it when present)
-examples/temporal-worker/.venv/
+# the kanban worker's venv (main.go auto-selects it when present)
+apps/temporal-worker/.venv/
 # same for the dynamic-activities companion (main.go auto-selects it too)
-examples/dynamic-activities/.venv/
+apps/dynamic-activities/.venv/
 clients/ts/*/dist/
 clients/python/build/
 clients/python/dist/
 clients/python/*.egg-info/
 recordings/
 .claude/worktrees/
-# root-built demo binaries (go build ./cmd/x writes ./x)
+# Built executables. `go build ./...` writes one file per main package into
+# the CURRENT directory, so a main package's binary lands at the root of ITS
+# OWN module — not at the repo root. Every entry below is therefore
+# <module-dir>/<package-dir-name>, and the repo-root entries are just the
+# root module's share of that rule.
+#
+# THIS BLOCK IS GENERATED, NOT HAND-MAINTAINED. Regenerate it after adding,
+# renaming or removing any main package — a hand-edit is how it came to list
+# 18 entries (two of which, /mcpdemo and /temporaldemo, named paths no build
+# has ever produced) against 38 real main packages, leaving 22 binaries free
+# to ride into a `git add -A` — all ten docs/learn/examples/* ones among them:
+#
+#   find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort |
+#   while IFS= read -r mod; do
+#     m=${mod%/go.mod}; rel=${m#./}; [ "$rel" = "." ] && rel=
+#     go -C "$m" list -f '{{if eq .Name "main"}}{{.Dir}}{{end}}' ./... |
+#     while IFS= read -r d; do
+#       [ -n "$d" ] || continue
+#       printf '/%s%s\n' "${rel:+$rel/}" "$(basename "$d")"
+#     done
+#   done | sort -u
+#
+# Discovering the modules rather than listing them is the same rule CI's
+# discover job and CLAUDE.md's Verify loop follow, and for the same reason: a
+# written list of modules is stale the first time someone adds one.
+/01-first-app
+/02-layout
+/03-binding-and-state
+/04-input-commands
+/05-usercontrols
+/06-custom-components
+/07-app-chrome
+/apps/dynamic-activities/dynamic-activities
+/apps/gitui/gitui
+/apps/kanban/kanban
+/apps/wysiwyg/wysiwyg
 /browser
-/cardsdemo
-/reader
-/statedemo
-/sysmon
-/probe
-/demo
+/cards
+/colors
 /finder
+/grpc/grpcdemo
+/handlers/temporal/temporaldemo
+/handlers/temporal/temporalops
+/handlers/temporal/temporalworker
+/handlers/temporal/visibilityworker
+/handlers/temporal/wizardui
+/handlers/temporal/wizardworker
+/howto-custom-draw
+/howto-forms
+/howto-handlers
 /logview
 /markuplog
-/propdemo
-/colordemo
-/mcpdemo
-/temporaldemo
-/typeaheaddemo
-/settingsdemo
-# a main package built in place drops its executable beside its source
-/examples/wysiwyg/wysiwyg
-# `cd paint && go build ./...` writes ./paintdemo into the module root
-/paint/paintdemo
+/mcp/server
+/paint/plates
+/pixels
+/prefs
+/probe
+/props
+/reader
+/state
+/sysmon
+/toolkit
+/typeahead

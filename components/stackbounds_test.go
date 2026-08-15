@@ -16,7 +16,7 @@ package components
 // OVERFLOW case was not: a stack with real area whose children simply
 // want more of it walks `y` straight past its own bottom edge.
 //
-// Found in examples/wysiwyg, where the generated-markup pane is two
+// Found in apps/wysiwyg, where the generated-markup pane is two
 // <Text> in a <VStack> inside a fixed 12-row Grid row. It stayed hidden
 // because it needs content longer than the pane's author imagined, and
 // generated markup — deep indentation, long attribute lists — exceeds
@@ -133,7 +133,7 @@ func TestAClampedStackStillFillsTheRoomItHas(t *testing.T) {
 // demand anyway. offsets() then walks the cumulative total past the
 // grid's own edge and every later track is arranged outside it.
 //
-// examples/wysiwyg's shell is Rows="1,1*,12,1" — fourteen rows of fixed
+// apps/wysiwyg's shell is Rows="1,1*,12,1" — fourteen rows of fixed
 // demand — so on a terminal shorter than that the 12-row markup pane
 // runs past the bottom and the status bar is arranged entirely
 // off-screen. That is the reported "text just overflows its bounds".

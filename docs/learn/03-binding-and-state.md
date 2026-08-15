@@ -172,7 +172,7 @@ The difference is the call site:
 - Outside any evaluation — in a command, an event handler, your `main` —
   a `Get` is a plain read.
 
-One function can mean both things depending on who calls it. `cmd/statedemo`
+One function can mean both things depending on who calls it. `cmd/state`
 in this repository leans on exactly that: a single `snapshot()` function
 serializes the app either on demand (from a command, subscribing to
 nothing) or reactively (from a computed, subscribing to everything it

@@ -35,7 +35,7 @@ Work through these in order — each builds on the last.
 
 Tutorials 1-6 are the core sequence; 7-9 are what you reach for when the
 app grows chrome, a wire surface, or a durable backend. Tutorials 8 and 9
-run demos that live in nested modules (`mcp/`, `examples/kanbandemo`,
+run demos that live in nested modules (`mcp/`, `apps/kanban`,
 `handlers/temporal`), so they are run from those directories rather than
 the repo root.
 
@@ -83,21 +83,21 @@ each is a working app you can run and read. Full walkthroughs are in
 
 | Demo | Proves | Learn it first in |
 |---|---|---|
-| [`cmd/propdemo`](../demos.md#propdemo) | Unwatched sources render zero frames | [Tutorial 3](03-binding-and-state.md) |
-| [`cmd/statedemo`](../demos.md#statedemo) | Markup with no code-behind; reactive serialization | [Tutorial 4](04-input-commands.md) |
+| [`cmd/props`](../demos.md#props) | Unwatched sources render zero frames | [Tutorial 3](03-binding-and-state.md) |
+| [`cmd/state`](../demos.md#state) | Markup with no code-behind; reactive serialization | [Tutorial 4](04-input-commands.md) |
 | [`cmd/logview`](../demos.md#logview) | Conditional dependencies: pause drops a firehose out of the graph | [Tutorial 3](03-binding-and-state.md) |
 | [`cmd/markuplog`](../demos.md#markuplog) | The same app in markup, hot-reloaded live | [Tutorial 1](01-first-app.md), [how-to: hot reload](howto/howto-hot-reload.md) |
 | [`cmd/finder`](../demos.md#finder) | Input to derived view, with per-pane damage | [Tutorial 4](04-input-commands.md) + [Tutorial 6](06-custom-components.md) |
 | [`cmd/reader`](../demos.md#reader) | Multi-UserControl composition, scoped input, live fetches | [Tutorial 5](05-usercontrols.md), [how-to: async](howto/howto-async.md) |
-| [`cmd/cardsdemo`](../demos.md#cardsdemo) | `<x:Property>` end to end: one markup-only control declaring a typed, defaulted, partly-required surface, instantiated four times over four live streams | [Tutorial 5](05-usercontrols.md) |
-| [`cmd/colordemo`](../demos.md#colordemo) | Canvas absolute layout and per-terminal color tiers | [how-to: images](howto/howto-images.md) |
-| [`cmd/probe` + `cmd/demo`](../demos.md#probe--demo) | Capability detection and the graphics pipeline | [how-to: images](howto/howto-images.md) |
-| [`cmd/toolkitdemo`](../demos.md#toolkitdemo) | The whole toolkit on one page, with MenuBar, ToastHost, and tooltips as overlays | [Tutorial 7](07-app-chrome.md), [concept: overlays](concepts/overlays.md) |
+| [`cmd/cards`](../demos.md#cards) | `<x:Property>` end to end: one markup-only control declaring a typed, defaulted, partly-required surface, instantiated four times over four live streams | [Tutorial 5](05-usercontrols.md) |
+| [`cmd/colors`](../demos.md#colors) | Canvas absolute layout and per-terminal color tiers | [how-to: images](howto/howto-images.md) |
+| [`cmd/probe` + `cmd/pixels`](../demos.md#probe--pixels) | Capability detection and the graphics pipeline | [how-to: images](howto/howto-images.md) |
+| [`cmd/toolkit`](../demos.md#toolkit) | The whole toolkit on one page, with MenuBar, ToastHost, and tooltips as overlays | [Tutorial 7](07-app-chrome.md), [concept: overlays](concepts/overlays.md) |
 | [`cmd/sysmon`](../demos.md#sysmon) | A live dashboard over real system data | [Tutorial 2](02-layout.md) |
-| [`cmd/settingsdemo`](../demos.md#settingsdemo) | Settings persist across runs as ordinary bound properties, with the disk-write count on screen | [Tutorial 3](03-binding-and-state.md) |
+| [`cmd/prefs`](../demos.md#prefs) | Settings persist across runs as ordinary bound properties, with the disk-write count on screen | [Tutorial 3](03-binding-and-state.md) |
 | [`cmd/browser`](../demos.md#browser) | Launching another program on your terminal and taking it back — and browsing any worktree or branch of the repo from one running instance | [concept: the App lifecycle](concepts/app-lifecycle.md) |
-| [`mcp/cmd/mcpdemo`](../demos.md#mcpdemo) | An app that is also an MCP server: the tree, the state and the commands are the wire surface | [Tutorial 8](08-remote-control.md) |
-| [`examples/kanbandemo`](../demos.md#kanbandemo--temporal-worker) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
+| [`mcp/cmd/server`](../demos.md#mcp-server) | An app that is also an MCP server: the tree, the state and the commands are the wire surface | [Tutorial 8](08-remote-control.md) |
+| [`apps/kanban`](../demos.md#kanban--temporal-worker) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
 | [`handlers/temporal/cmd/temporaldemo`](../demos.md#temporaldemo) | A button whose behavior is a durable activity run by a worker elsewhere | [Tutorial 9](09-temporal.md), [how-to: async](howto/howto-async.md) |
 | [`handlers/temporal/cmd/temporalops`](../demos.md#temporalops) | A real ops dashboard with every Temporal call declared in markup | [Tutorial 9](09-temporal.md), [how-to: lists](howto/howto-lists.md) |
 | [`handlers/temporal/cmd/wizardui`](../demos.md#wizardui) | A terminal with no application in it: the workflow serves the markup | [Tutorial 9](09-temporal.md), [how-to: handlers](howto/howto-handlers.md) |

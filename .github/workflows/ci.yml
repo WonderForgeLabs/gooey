@@ -25,9 +25,9 @@ jobs:
   #
   # It came true twice. `paint/` (the fogleman/gg bridge, #229 and #241)
   # landed with no step at all and was caught by a human reading a diff.
-  # `examples/wysiwyg` — a real consumer of core — was never built either,
-  # alongside examples/gitui, examples/kanbandemo and
-  # examples/dynamic-activities. Both times every job was green, because a
+  # `apps/wysiwyg` — a real consumer of core — was never built either,
+  # alongside apps/gitui, apps/kanban and
+  # apps/dynamic-activities. Both times every job was green, because a
   # green CI meant "everything I was told about passed".
   #
   # The discovery below is character-for-character the loop in CLAUDE.md's
@@ -85,7 +85,7 @@ jobs:
           # go.mod is the one module whose absence means the checkout
           # itself is broken, so requiring it plus one more is a bound that
           # no plausible breakage satisfies by accident. Membership, not
-          # position: the list is sorted, and `examples/…` sorts before
+          # position: the list is sorted, and `apps/…` sorts before
           # `go.mod`, so testing mods[0] rejected a perfectly good tree
           # (found by running this script against the worktree).
           if [ "${#mods[@]}" -lt 2 ] || ! grep -qxF 'go.mod' "$tmp/modules-found"; then
@@ -128,10 +128,10 @@ jobs:
           # changes belong in their own PR rather than smuggled into a
           # mechanism one.
           #
-          # examples/* are VETTED BUT NOT TESTED. Vetting is the point: it
+          # apps/* are VETTED BUT NOT TESTED. Vetting is the point: it
           # is what catches a core API change breaking a consumer, the
           # breakage CLAUDE.md says goes silent today. Their tests are
-          # deliberately left out — examples/wysiwyg alone carries
+          # deliberately left out — apps/wysiwyg alone carries
           # goroutine-leak, pty-harness and control-plane-server suites,
           # and putting that flake surface on a required gate buys little,
           # since an example is not part of the framework's contract.
@@ -145,7 +145,7 @@ jobs:
           for mod in "${mods[@]}"; do
             m=${mod%go.mod}; m=${m%/}; m=${m:-.}
             case "$m" in
-              examples/*)                  mode='vet'  ;;
+              apps/*)                      mode='vet'  ;;
               handlers/*|packs/*|mcp|grpc) mode='race' ;;
               *)                           mode='test' ;;
             esac

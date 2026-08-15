@@ -10,7 +10,7 @@
 A hands-on walkthrough that builds one small app in five steps: a static
 tree, then live state, then markup, then interactivity, then reusable
 controls. Every code block compiles against the current tree — when in
-doubt, `cmd/statedemo` and `cmd/reader` are the canonical versions of
+doubt, `cmd/state` and `cmd/reader` are the canonical versions of
 everything shown here.
 
 For the ideas behind these mechanics, read [architecture.md](architecture.md).
@@ -200,7 +200,7 @@ The loop body: render if dirty, then block on input. `comp.Frame()`
 runs layout (Measure/Arrange — unconditional, cheap at terminal scale)
 and re-paints only the components whose paint nodes are dirty into a
 persistent cell buffer; it returns the frame and how many components
-actually painted, which `cmd/statedemo` uses to show damage tracking on
+actually painted, which `cmd/state` uses to show damage tracking on
 screen. `comp.Flush` writes the buffer to the tty. `comp.Handle` routes
 the event: mouse events hit-test the tree, key events start at the
 focused component and bubble up through attached `KeyBinding`s and
@@ -510,7 +510,7 @@ Because `Render` reads `s.value.Get()`, the bound property is a paint
 dependency: any `Set` — from this component's keys or from anywhere else —
 repaints the stepper and nothing more. (For mouse support, also
 implement `HandleMouse(input.MouseEvent) bool`; see the checkbox in
-`cmd/statedemo/main.go`.)
+`cmd/state/main.go`.)
 
 The viewmodel gains commands and the custom element registers as a
 `markup.Builder` under `Context.Components`. The builder receives the raw
@@ -713,14 +713,14 @@ markup a binding came from.
 ## Where to go next
 
 - **Demos** — [demos.md](demos.md) walks all of them.
-  `cmd/statedemo` ([media/demos/statedemo.gif](media/demos/statedemo.gif)) is this
+  `cmd/state` ([media/demos/state.gif](media/demos/state.gif)) is this
   tutorial's endpoint taken further: damage tracking made visible, a
   reactive-vs-command serialization toggle, and a custom checkbox with
   mouse support. `cmd/reader` ([media/demos/reader.gif](media/demos/reader.gif)) is the
   first real multi-UserControl app — three panes, focus-scoped keys,
-  background fetches applied over a channel. `cmd/propdemo`,
+  background fetches applied over a channel. `cmd/props`,
   `cmd/markuplog`, `cmd/logview`, `cmd/finder`, `cmd/sysmon`, and
-  `cmd/demo`/`cmd/probe` (graphics) each isolate one subsystem.
+  `cmd/pixels`/`cmd/probe` (graphics) each isolate one subsystem.
 - **How it works** — [architecture.md](architecture.md): the property
   graph, the composer's damage model, the input tree, and the two
   rendering planes ([../README.md](../README.md) has the original

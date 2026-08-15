@@ -234,7 +234,7 @@ in gojq, so it lives in its own Go module
 imported from the root module's example tree. `net` and `fs` are
 stdlib-only and root-resident; that split is the module-boundary rule,
 and it is why the snippets above are snippets. The full running exec
-sample is [`examples/gitui`](../../../examples/gitui); the contract doc
+sample is [`apps/gitui`](../../../apps/gitui); the contract doc
 is [`handlers/exec/README.md`](../../../handlers/exec/README.md) and
 the design record the
 [exec pack spec](../../specs/2026-08-10-exec-pack.md).

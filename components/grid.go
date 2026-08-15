@@ -260,7 +260,7 @@ func distributeStars(defs []GridLen, base []int, extent int) []int {
 // Text.Render is the clearest case: it clips diligently to its own
 // Bounds(), which by then is the wrong rectangle.
 //
-// Found in examples/wysiwyg, whose shell is Rows="1,1*,12,1" — fourteen
+// Found in apps/wysiwyg, whose shell is Rows="1,1*,12,1" — fourteen
 // rows of fixed demand. Above ~15 rows of terminal it is invisible;
 // below, the 12-row markup pane runs past the bottom and the status bar
 // is arranged entirely outside the screen.
