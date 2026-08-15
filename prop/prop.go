@@ -97,6 +97,22 @@ func (p *Property[T]) Get() T {
 	return p.value
 }
 
+// Settable reports whether Set is legal: true for a source property,
+// false for a computed one.
+//
+// It exists because "is this an lvalue?" is otherwise unanswerable from
+// outside this package, and a caller that hands property handles to
+// author-written markup has to answer it at LOAD time. Set panics on a
+// computed (below), so without this a mutation written against a derived
+// property builds cleanly and panics on the first click — a compile-time
+// error turned into a runtime one, which is the opposite of the rule the
+// markup layer is built on.
+//
+// Evals() cannot substitute: a computed the app has already Get once is
+// clean and does not re-evaluate, so its eval count is indistinguishable
+// from a source's.
+func (p *Property[T]) Settable() bool { return p.compute == nil }
+
 // Set assigns a source property's value and invalidates dependents.
 func (p *Property[T]) Set(v T) {
 	if p.compute != nil {
