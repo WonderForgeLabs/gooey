@@ -94,8 +94,9 @@ precisely the class of defect this plugin exists to catch.
 ## Testing the hooks
 
 ```sh
-sh .claude/plugin/tests/run.sh       # every rule paired with its near-miss
-sh .claude/plugin/tests/mutate.sh    # proves those cases can actually fail
+sh .claude/plugin/tests/run.sh             # every rule paired with its near-miss
+sh .claude/plugin/tests/mutate.sh          # proves those cases can actually fail
+sh .claude/plugin/tests/verify-grading.sh  # verify.sh's verdict + block selector
 ```
 
 Both print their own totals on the last line and exit non-zero on any failure.
@@ -109,11 +110,20 @@ each check in a **named direction** and asserts that the *right* case goes red:
 - **under-generalise** — the check stops firing → a WARN/BLOCK case reds
 - **over-generalise** — the check fires on everything → a NEAR-MISS case reds
 
-It also refuses to score a mutation whose `sed` did not change the file, which
-is not hypothetical: four mutations were silently no-ops on the first run —
-`||` inside an `s|…|…|` expression — and without that guard they would have
-been reported as proved. An A/B whose arms agree is a harness result, not a
-finding.
+It also **refuses to score a mutation whose `sed` did not change the file**,
+which is not hypothetical: four of the mutations were silent no-ops on the
+first run — `||` inside an `s|…|…|` expression — so `sed` errored, the file was
+untouched, the suite stayed green, and four hooks would have shipped reported
+as *proved* while never being exercised. A green mutation suite without that
+guard is indistinguishable from one that mutates nothing. An A/B whose arms
+agree is a harness result, not a finding.
+
+`verify-grading.sh` covers the other half — that `verify.sh` grades the verdict
+line and **fails shut** when there is no verdict, and that its
+select-the-block-by-content rule errors on zero *and* on two rather than
+picking one. It carries a positive control (exactly one block → exit 0), which
+is what stops the three error cases from passing against a script that always
+errored.
 
 ## Validating the manifests
 

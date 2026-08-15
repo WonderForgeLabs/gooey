@@ -65,13 +65,32 @@ else that wrapper does.
 
 **4. A sweep over a table checks only the rows that are there.** A
 vocabulary sweep looked complete and stayed green when a row was deleted,
-because `for _, e := range table` simply iterates one fewer time. In this repo
-today, `examples/wysiwyg`'s `TestPaletteComesFromTheCatalog` guards
-completeness with `len(ed.palette) < 20` against a catalog holding
-substantially more than 20 — several rows of slack, so deleting most single
-elements from `markup/elements.go` trips nothing. The only real completeness
-guards nearby (`markup/catalog_test.go`) check a **fixed list of named
-elements**, which catches deleting one of *those* and nothing else.
+because `for _, e := range table` simply iterates one fewer time.
+
+The live instance is `examples/wysiwyg/wysiwyg_test.go`'s
+`TestPaletteComesFromTheCatalog`, which guards completeness with
+`len(ed.palette) < 20` against a palette holding substantially more than 20 —
+several rows of slack, so deleting a single element trips nothing. The only
+real completeness guards nearby (`markup/catalog_test.go`) check a **fixed
+list of named elements**, which catches deleting one of *those* and nothing
+else.
+
+**Be exact about whose claim that is**, because getting it wrong is a
+different instance of the same disease. `ed.palette` is a field on the
+**editor** (`examples/wysiwyg/main.go`), built from
+`(*markup.Context).Catalog()`. It is *not* core's element table — that lives
+in `markup/elements.go`, which contains no `palette` at all. So the slack is
+the editor's claim about its own palette, and it belongs to the editor's
+owner. Reporting it as a weakness in core would be a **true fact attached to
+the neighbouring thing**: coherent, plausible, survives review, and only
+correspondence catches it. This repo produced two of those in one week — this
+one, and an `ElementSpec` / `DeclaredSurface` mix-up. Check the attribution
+with a grep before you write the sentence:
+
+```sh
+command grep -rn 'len(.*palette)' --include='*.go' .   # quote the glob: zsh
+                                                       # will not expand it
+```
 
 `examples/wysiwyg/perkind_test.go` names this class in its own comment, and is
 the model for what to do instead — assert synthetically when the real data has
@@ -102,11 +121,36 @@ no instance of the case:
 
 ### The harness trap that makes both arms agree
 
-An A/B whose two arms agree is a **harness result**, not a finding. The
-specific way it has happened here: `git stash push -- <file>` on a *committed*
-file reverts nothing, so both arms ran the fix and of course agreed. Before
-trusting an A/B, **observe the revert changing something** — `git diff` after
-applying the mutation, and confirm the bytes moved.
+An A/B whose two arms agree is a **harness result**, not a finding.
+
+> **A mutation you did not observe changing the file is not a mutation.**
+
+Two ways it has happened here, and note that the second one happened *to a
+tool built to teach the first*:
+
+- `git stash push -- <file>` on a **committed** file reverts nothing. Both arms
+  ran the fix and of course agreed.
+- This plugin's own `tests/mutate.sh` applies each mutation with `sed`. On its
+  first run, **four of fourteen `sed` expressions were silent no-ops** — the
+  `||` in the shell snippets they targeted collided with the `|` delimiter in
+  `s|…|…|`, so `sed` errored to stderr, the file was untouched, the suite
+  stayed green, and every one of those four checks would have been reported as
+  *proved* while never being exercised at all. Four hooks would have shipped
+  with no evidence behind them.
+
+  What caught it was a guard that compares the file before and after and
+  **refuses to score the mutation at all** if the bytes did not move:
+
+  ```sh
+  before=$(cat "$file"); sed -i "$expr" "$file"; after=$(cat "$file")
+  [ "$before" = "$after" ] && { echo "MUTATION DID NOT APPLY"; return; }
+  ```
+
+  A green mutation suite without that guard is indistinguishable from a
+  mutation suite that mutates nothing. Build the guard **first**.
+
+So before trusting any A/B: apply the mutation, **diff the file**, confirm the
+bytes moved, and only then believe what the arms tell you.
 
 ## Discrimination arms already in the tree
 

@@ -35,9 +35,25 @@ fi
 mode=${1:-all}
 
 # Pull the fenced `sh` block that does the module discovery out of CLAUDE.md.
-# Selected by CONTENT (the block that discovers go.mod files), not by
-# position, so reordering the Verify section does not silently select the
-# wrong block. Zero or two matches is a hard error rather than a guess.
+#
+# Selected by CONTENT -- the block containing `-name go.mod` -- and NOT by
+# position. The Verify section already opens with a different ```sh block
+# (`go vet ./...`), so "take the first one" and "take the last one" are both
+# wrong today, and reordering the section would silently change which block a
+# positional selector picked.
+#
+# ZERO OR TWO MATCHES IS A HARD ERROR, AND THAT IS THE LOAD-BEARING PART.
+# Do not "simplify" it to `head -1`, `tail -1`, or a match that takes whatever
+# it finds first. The whole reason this script extracts the loop instead of
+# carrying a copy is that a second, drifted copy is the failure mode -- so if
+# someone adds another ```sh block that also discovers go.mod, the right
+# behaviour is to STOP and make a human look, not to pick one and report green
+# over a loop nobody chose. A selector that silently picks would reintroduce
+# exactly the defect this script exists to avoid.
+#
+# Both branches are covered by the grading test: zero blocks and two blocks
+# each exit 65, and a run with no verdict line at all exits 1 rather than 0
+# (it fails SHUT). If you change this function, re-run those.
 extract_loop() {
   awk '
     /^```sh$/     { inblock = 1; buf = ""; hit = 0; next }
