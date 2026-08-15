@@ -503,6 +503,139 @@ func TestAFillOnlyShapeIsNotInsetByAPhantomPen(t *testing.T) {
 	}
 }
 
+// TestAStrokeWiderThanItsShapeDrawsNothing: a radius is RELATIVE and a
+// thickness is in PIXELS, so whether the inset leaves anything behind
+// depends on the figure's size and cannot be checked at load — the same
+// document is fine in a wide pane and inverted in a narrow one.
+//
+// The rectangle case already returned early on a non-positive size; the
+// ellipse did not, and handing gg a negative radius is not the harmless
+// no-op it is for a rectangle. Found in review, which measured it:
+// 3765 inked pixels against 694 for a correctly proportioned ellipse.
+//
+// The assertion is an ink COUNT rather than "is anything drawn", because
+// the bug's signature is drawing too MUCH. A test that asked whether the
+// shape appeared would pass on the wrong shape.
+func TestAStrokeWiderThanItsShapeDrawsNothing(t *testing.T) {
+	ink := func(body string) int {
+		t.Helper()
+		w := buildPage(t, body)
+		f := w.(*Figure)
+		r, err := f.raster(20, 6, nominalCellW, nominalCellH, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		b := r.img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if _, _, _, a := r.img.At(x, y).RGBA(); a > 0 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	// A pen 50px wide on a radius of 0.05*160 = 8px: the inset takes the
+	// radius to -17, which gg draws as a large wrong shape.
+	if n := ink(`<Figure><Ellipse Center="0.5,0.5" RadiusX="0.05" RadiusY="0.3" Stroke="#ffffff" StrokeThickness="50"/></Figure>`); n != 0 {
+		t.Errorf("an ellipse whose pen is wider than its radius inked %d pixels, want 0; a negative radius must draw nothing rather than something else", n)
+	}
+	// Same shape for a rectangle, which has always guarded — pinned so
+	// the two cases cannot drift apart again.
+	if n := ink(`<Figure><Rectangle Rect="0.4,0.4,0.05,0.05" Stroke="#ffffff" StrokeThickness="50"/></Figure>`); n != 0 {
+		t.Errorf("a rectangle whose pen is wider than its size inked %d pixels, want 0", n)
+	}
+	// The discriminating half: a well-proportioned ellipse must still
+	// draw, or the guard is just a shape that never renders.
+	if n := ink(`<Figure><Ellipse Center="0.5,0.5" RadiusX="0.4" RadiusY="0.4" Stroke="#ffffff" StrokeThickness="4"/></Figure>`); n == 0 {
+		t.Error("a normally proportioned stroked ellipse inked nothing; the guard is too aggressive")
+	}
+	// And the OPEN shapes must be untouched by it. This is the negative
+	// case, and it is the one that catches over-generalisation: a guard
+	// written as "bounding box minus pen" applied to every kind would
+	// suppress a thick line, because a line's bounding box is zero in the
+	// direction it does not run. A line has no interior for a pen to eat
+	// — the pen is dragged ALONG it — so an 80-pixel line is an 80-pixel
+	// line and must draw.
+	if n := ink(`<Figure><Line From="0,0.5" To="1,0.5" Stroke="#ffffff" StrokeThickness="80"/></Figure>`); n == 0 {
+		t.Error("a very thick line inked nothing; the degeneracy guard reached an open shape, which has no extent for a pen to consume")
+	}
+	if n := ink(`<Figure><Polyline Points="0.1,0.5 0.5,0.5 0.9,0.5" Closed="true" Stroke="#ffffff" StrokeThickness="80"/></Figure>`); n == 0 {
+		t.Error("a very thick closed polyline inked nothing; Closed joins the ends, it does not start insetting the stroke")
+	}
+}
+
+// TestEveryShapeKindDeclaresWhetherItIsClosed is the structural half of
+// the guard above. The degeneracy question is asked once, before the
+// switch, from a per-kind extent function — so a kind added to
+// shapeKinds is covered by construction. What is NOT automatic is
+// noticing that a new closed kind was declared open, and that is a
+// judgement no test can make.
+//
+// What this can pin is that the two answers stay in sync with the
+// parser: every kind the package can build has a shapeKinds row, and
+// every row's extent is either nil or actually returns the bounding box
+// of a unit shape. A row that silently returned (0, 0) would make its
+// shape vanish everywhere.
+func TestEveryShapeKindDeclaresWhetherItIsClosed(t *testing.T) {
+	if len(shapeKinds) == 0 {
+		t.Fatal("no shape kinds declared")
+	}
+	for name, def := range shapeKinds {
+		if def.extent == nil {
+			continue // an open shape, checked by the thick-line case above
+		}
+		// A unit shape filling the figure must measure the whole canvas.
+		s := Shape{Kind: def.kind, W: 1, H: 1, RX: 0.5, RY: 0.5}
+		ew, eh := def.extent(s, 160, 96)
+		if ew != 160 || eh != 96 {
+			t.Errorf("%s: a unit shape measures %vx%v, want 160x96; an extent that under-reports makes the shape vanish and one that over-reports defeats the guard", name, ew, eh)
+		}
+	}
+}
+
+// TestMiterIsDrawnAsBevel pins the one place paint's vocabulary does not
+// map cleanly onto gg's. gg has no miter join, so paint.ParseLineJoin
+// accepts MAUI's word and returns Bevel rather than rejecting a document
+// over a name XAML authors write reflexively.
+//
+// It is pinned here because strokes.gooey now ADVERTISES it — the plate
+// is labelled Miter and draws a bevel, and a page that teaches a
+// behaviour should not be the only thing asserting it. Measured: Miter
+// and Bevel are pixel-identical at 1902 inked pixels, Round differs at
+// 1917. The second half is what makes the first meaningful; without it
+// the test also passes if every join renders the same.
+func TestMiterIsDrawnAsBevel(t *testing.T) {
+	ink := func(join string) int {
+		t.Helper()
+		body := fmt.Sprintf(`<Figure><Polyline Points="0.1,0.85 0.35,0.15 0.6,0.85 0.85,0.15" Stroke="#ffffff" StrokeThickness="7" StrokeLineJoin="%s"/></Figure>`, join)
+		w := buildPage(t, body)
+		f := w.(*Figure)
+		r, err := f.raster(20, 6, nominalCellW, nominalCellH, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		b := r.img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if _, _, _, a := r.img.At(x, y).RGBA(); a > 0 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	miter, bevel, round := ink("Miter"), ink("Bevel"), ink("Round")
+	if miter != bevel {
+		t.Errorf("Miter inked %d and Bevel %d; gg has no miter join, so the two must be the same drawing", miter, bevel)
+	}
+	if miter == round {
+		t.Errorf("every join inked %d pixels — the joins are indistinguishable, so the test above proves nothing", miter)
+	}
+}
+
 // ---- damage ----
 
 // TestAFigureDoesNotRepaintWhenItsNeighbourChanges is the claim paint

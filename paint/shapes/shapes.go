@@ -60,13 +60,17 @@
 // only the drawing differs — and it is what makes these samples visible
 // in an agg capture, which renders the cell plane only.
 //
-// It is also where paint.Stroke's Fallback field earns its keep. The
-// cell tier redraws every shape with its brush replaced by its declared
-// fallback colour, so per-shape Fallback lands per-cell for free. A
-// gradient brush must declare one: paint's doc says "a gradient has no
-// cell-plane equivalent, so the caller states what it collapses to
-// rather than having a mean of its stops guessed for it", and omitting
-// it is a load error rather than a guess.
+// The cell tier redraws every shape with its BRUSH replaced by that
+// brush's declared fallback colour, so a per-shape fallback lands
+// per-cell for free. A gradient must declare one: paint's doc says "a
+// gradient has no cell-plane equivalent, so the caller states what it
+// collapses to rather than having a mean of its stops guessed for it",
+// and omitting it is a load error rather than a guess.
+//
+// Note that this does NOT go through paint.Stroke.Fallback, which this
+// paragraph used to claim. The fallback lives on the Brush because a
+// shape has two of them and Stroke.Fallback describes only a pen; see
+// parseShape for the whole story, and #241 for the field's fate.
 //
 // The obvious alternative is graphics.DrawHalfblock, which is already
 // written, gives twice the vertical resolution and full colour — and is
@@ -198,6 +202,11 @@ type Shape struct {
 	// CornerRadius is in PIXELS, like StrokeThickness. A radius in
 	// fractions would go oval on a non-square figure.
 	CornerRadius float64
+
+	// extent is the shape's declared bounding-box measure, copied from
+	// its shapeDef at parse time so path() needs no reverse lookup from
+	// kind back to the table. nil means an open shape.
+	extent func(s Shape, w, h float64) (float64, float64)
 
 	Stroke paint.Stroke
 	// StrokeBrush and FillBrush are nil when the shape does not paint
@@ -333,9 +342,9 @@ func init() {
 
 	// The shapes. Each is the shared pen-and-brush surface plus its own
 	// geometry, and each takes the two brush slots.
-	for name, kind := range shapeKinds {
+	for name, def := range shapeKinds {
 		attrs := set(paintAttrs...)
-		for _, a := range geometryAttrs[kind] {
+		for _, a := range def.attrs {
 			attrs[a] = true
 		}
 		vocabulary[name] = vocabRow{attrs: attrs, props: set("Fill", "Stroke")}
@@ -462,14 +471,51 @@ func parseSlice(raw string) (Slice, error) {
 	return 0, fmt.Errorf("markup: <Figure Slice=%q>: want Full or Ring", raw)
 }
 
-// shapeKinds is both the dispatch table and the answer to "is this child
-// a shape or content", which is why it is a map rather than a switch.
-var shapeKinds = map[string]ShapeKind{
-	"Rectangle": KindRectangle,
-	"Ellipse":   KindEllipse,
-	"Line":      KindLine,
-	"Polyline":  KindPolyline,
+// shapeKinds is the ONE literal per shape element: its kind, the
+// geometry attributes it adds to the shared pen surface, and how to
+// measure the extent its pen is inset from. It is also the answer to "is
+// this child a shape or content", which is why it is a map and not a
+// switch.
+//
+// The extent field is what stops the degeneracy guard from being
+// per-kind. Review found KindRectangle guarding its post-inset size and
+// KindEllipse not — the third instance in this PR of a correct treatment
+// applied to one branch and not its sibling — so the question is asked
+// once, above the switch, and every kind answers it by construction.
+//
+// The two guards turned out to be the same inequality, which is what
+// made this possible rather than merely tidy. The rectangle asked
+// `W*w - t <= 0`. The ellipse needs `RX*w - t/2 <= 0`, and that is
+// exactly `2*RX*w - t <= 0`. Both are `extent - pen <= 0` where extent
+// is the bounding box in that dimension: a closed shape's pen straddles
+// its boundary, so it consumes t from each dimension whether that
+// dimension is expressed as a side or as a radius.
+var shapeKinds = map[string]shapeDef{
+	"Rectangle": {KindRectangle, []string{"Rect", "CornerRadius"}, rectExtent},
+	"Ellipse":   {KindEllipse, []string{"Center", "RadiusX", "RadiusY"}, ellipseExtent},
+	// Line and Polyline are OPEN: the pen is dragged ALONG a path rather
+	// than inset from a boundary, so there is no extent for it to
+	// consume and no thickness that makes them degenerate. A 200-pixel
+	// line is a legitimate 200-pixel line. Polyline stays open even with
+	// Closed="true" — closing the path joins its ends, it does not start
+	// insetting the stroke.
+	"Line":     {KindLine, []string{"From", "To"}, nil},
+	"Polyline": {KindPolyline, []string{"Points", "Closed"}, nil},
 }
+
+type shapeDef struct {
+	kind  ShapeKind
+	attrs []string
+	// extent measures a CLOSED shape's bounding box in pixels. nil marks
+	// an open shape, which is never degenerate.
+	extent func(s Shape, w, h float64) (float64, float64)
+}
+
+func rectExtent(s Shape, w, h float64) (float64, float64) { return s.W * w, s.H * h }
+
+// ellipseExtent returns DIAMETERS, not radii — that is the whole reason
+// one guard covers both shapes.
+func ellipseExtent(s Shape, w, h float64) (float64, float64) { return 2 * s.RX * w, 2 * s.RY * h }
 
 // brushKinds is both the brush dispatch table and the source of those
 // elements' declared vocabulary — one literal, read by parseBrushElement
@@ -504,20 +550,13 @@ var paintAttrs = []string{
 	"StrokeLineJoin", "StrokeThickness",
 }
 
-// geometryAttrs is what each shape adds on top.
-var geometryAttrs = map[ShapeKind][]string{
-	KindRectangle: {"Rect", "CornerRadius"},
-	KindEllipse:   {"Center", "RadiusX", "RadiusY"},
-	KindLine:      {"From", "To"},
-	KindPolyline:  {"Points", "Closed"},
-}
-
 func parseShape(e markup.Element) (Shape, error) {
-	kind := shapeKinds[e.Name]
+	def := shapeKinds[e.Name]
+	kind := def.kind
 	if len(e.Children) > 0 {
 		return Shape{}, fmt.Errorf("markup: <%s> takes no children; a brush goes in <%s.Fill> or <%s.Stroke>", e.Name, e.Name, e.Name)
 	}
-	s := Shape{Kind: kind}
+	s := Shape{Kind: kind, extent: def.extent}
 	var err error
 	switch kind {
 	case KindRectangle:
@@ -599,9 +638,22 @@ func parseShape(e markup.Element) (Shape, error) {
 	if s.Stroke.Thickness <= 0 {
 		return Shape{}, fmt.Errorf("markup: <%s StrokeThickness=%q>: a stroke must be wider than zero pixels; omit Stroke to draw no outline", e.Name, e.Attrs["StrokeThickness"])
 	}
-	if s.StrokeBrush != nil {
-		s.Stroke.Fallback = s.StrokeBrush.Solid
-	}
+	// paint.Stroke.Fallback is deliberately NOT set here, and the reason
+	// belongs next to the omission rather than in a commit message.
+	//
+	// It was set, and the value was never read: Stroke.Apply makes gg
+	// calls only (paint/paint.go:105) and nothing in this package
+	// consults it. The cell tier's per-shape fallback comes from
+	// Brush.Solid via brushPattern, which is the right mechanism because
+	// it covers the FILL as well — Stroke.Fallback describes a pen and a
+	// shape has two brushes. Leaving the assignment in would tell a
+	// future reader that the field drives the degrade, which is exactly
+	// the wrong place to start looking when the degrade is wrong.
+	//
+	// So paint.Stroke.Fallback now has no consumer anywhere in the tree,
+	// which is a stronger form of the finding this PR already filed
+	// against #241: the package doc lists Fallback as one of four things
+	// paint carries, and its first real caller found no use for it.
 	return s, nil
 }
 
@@ -1076,6 +1128,20 @@ func pen(s Shape) float64 {
 }
 
 func path(dc *gg.Context, s Shape, w, h float64) {
+	// ONE degeneracy question for every closed shape, asked before the
+	// switch so a new kind is covered by declaring its extent rather than
+	// by remembering to guard. See shapeKinds for why the rectangle's and
+	// the ellipse's guards were the same inequality all along.
+	//
+	// It cannot be a load-time check: a radius is relative and a
+	// thickness is in pixels, so the same document is fine in a wide pane
+	// and inverted in a narrow one.
+	if s.extent != nil {
+		ew, eh := s.extent(s, w, h)
+		if t := pen(s); ew-t <= 0 || eh-t <= 0 {
+			return
+		}
+	}
 	switch s.Kind {
 	case KindRectangle:
 		// Inset by half the stroke so its outer edge lands ON the
@@ -1091,9 +1157,6 @@ func path(dc *gg.Context, s Shape, w, h float64) {
 		t := pen(s)
 		x, y := s.X*w+t/2, s.Y*h+t/2
 		rw, rh := s.W*w-t, s.H*h-t
-		if rw <= 0 || rh <= 0 {
-			return
-		}
 		if s.CornerRadius > 0 {
 			// gg draws a radius larger than half the side as
 			// overlapping arcs, where SVG's rx is defined to clamp.
@@ -1102,6 +1165,17 @@ func path(dc *gg.Context, s Shape, w, h float64) {
 		}
 		dc.DrawRectangle(x, y, rw, rh)
 	case KindEllipse:
+		// The same guard the rectangle has, and for a sharper reason.
+		// A radius is RELATIVE and a thickness is in PIXELS, so whether
+		// the inset leaves anything behind depends on the figure's size
+		// and cannot be checked at load: the same document is fine in a
+		// wide pane and inverted in a narrow one.
+		//
+		// Handing gg a negative radius is not the harmless no-op it is
+		// for a rectangle. Measured: RadiusX="0.05" with
+		// StrokeThickness="50" on a 160x96 canvas inks 3765 pixels
+		// against 694 for a correctly proportioned ellipse — a large
+		// wrong shape rather than nothing.
 		t := pen(s)
 		dc.DrawEllipse(s.CX*w, s.CY*h, s.RX*w-t/2, s.RY*h-t/2)
 	case KindLine:

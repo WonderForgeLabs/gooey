@@ -44,13 +44,21 @@
             StrokeThickness="15" StrokeLineCap="Round"/>
     </Figure>
 
-    <!-- StrokeLineJoin="Miter" is accepted and drawn as Bevel: gg has no
-         miter join. paint.ParseLineJoin takes the name rather than
-         rejecting a word MAUI authors write reflexively, and says so. -->
-    <Text Grid.Row="2" Grid.Col="2" Style="dim">StrokeLineJoin="Round"</Text>
+    <!-- This plate says Miter and draws a BEVEL, and that is the plate.
+         gg has no miter join, so paint.ParseLineJoin accepts the name —
+         a word MAUI authors write reflexively — and draws the nearest
+         thing it has rather than rejecting the document. The corners
+         below are the evidence: they are cut flat, not pointed.
+
+         It said Round until review pointed out that the comment
+         explained a collapse the plate never showed. A page whose whole
+         job is exercising paint's parsers should demonstrate the one
+         place its vocabulary does not map cleanly onto gg's, which is
+         worth more than a fourth well-behaved plate. -->
+    <Text Grid.Row="2" Grid.Col="2" Style="dim">StrokeLineJoin="Miter" → bevel</Text>
     <Figure Grid.Row="3" Grid.Col="2">
       <Polyline Points="0.1,0.85 0.35,0.15 0.6,0.85 0.85,0.15"
-                Stroke="#7ad3a0" StrokeThickness="7" StrokeLineJoin="Round"/>
+                Stroke="#7ad3a0" StrokeThickness="7" StrokeLineJoin="Miter"/>
     </Figure>
 
   </Grid>
