@@ -74,8 +74,22 @@ re-trigger it.
 
 **Only close/reopen re-runs the review.** `workflow_dispatch` runs just the
 mirror job; a label event skips the review; `gh run rerun --failed` skips it
-too. (The "PR too big to ever review" theory is falsified — it has completed on
-about the fifth attempt.)
+too.
+
+**`pr-review` completing is not the workflow going green**, and conflating the
+two is the same mistake as the section below. On this repo's most-retried PR the
+review job started succeeding early and kept succeeding; what held the workflow
+red for another ten runs was `merge-gate` — infrastructure, not a judgement. So
+"the review still hasn't run" and "the checks are still red" are different
+claims needing different evidence. Read the jobs, not the run conclusion:
+
+```sh
+gh api repos/WonderForgeLabs/gooey/actions/runs/<id>/jobs \
+  --jq '.jobs[] | "\(.conclusion)\t\(.name)"'
+```
+
+Note also that `cancel-in-progress` supersedes runs, so "the Nth attempt" is not
+a well-defined quantity — count runs that were not cancelled, or don't count.
 
 ### `merge-gate` failing in ~60s is infrastructure, not a verdict
 
@@ -87,10 +101,23 @@ a judgement about your PR. Read the job log first, then:
 gh run rerun --failed <run-id>
 ```
 
-Related: the bots run on forge's self-hosted pool (ADR-048 shims inherit
-`forge-runners-default-vsphere`), so when the homelab ARC listener is down they
-queue forever rather than failing. A job pending for a long time with no log is
-that, not your PR.
+Related, and the exception is the actionable half: **which pool a job runs on
+decides what a long pending means, and it is not one answer for all the bots.**
+`review / pr-review`, `review / merge-gate` and the @claude bot come from
+forge's reusable workflows and inherit `forge-runners-default-vsphere`
+(ADR-048), so when the homelab ARC listener is down they queue forever rather
+than failing — a job pending a long time with no log is that, not your PR.
+
+But the `review-with-tracking` mirror is `ubuntu-latest` ("Trivially cheap
+mirror step"), and so are **both** jobs of the `claude-make-follow-up-issues`
+bot recommended above, `remove-label` included. Those are unaffected by the
+homelab entirely, so the "ARC listener is down" diagnosis is simply wrong for
+them. `issue-intake` and `issue-reopen-audit` use the `-small-` and `-agent-`
+pools, not `-default-`. Derive it rather than remembering it:
+
+```sh
+grep -rn 'runs-on\|uses: WonderForgeLabs' .github/workflows/
+```
 
 The `review-with-tracking` mirror exists because a `workflow_call`'s jobs get
 two-segment check names, so the literal required-status-check string has to live
@@ -128,13 +155,42 @@ the latest attempt, so a re-run hides the run that actually decided. Fetch
 
 ## Stacks
 
-`gh stack link` **retargets PR bases and does not rebase.** The branches
-therefore do not form a real linear chain, and the atomic `gh stack merge`
-refuses until they do. Rebase them into a chain first, or merge bottom-up by
-hand.
+**Stack related PRs.** Base a dependent PR on the PR it depends on, never on
+`main`. That is the standing rule here and it is the only thing in this section
+that is a decision rather than a behaviour.
 
-`gh stack submit` saying "up to date" is about **PR metadata, not the branch
-tip** — confirm with `git rev-parse` against the remote.
+Everything else about `gh stack` is behaviour of a **v0.1.0 extension**, which
+makes it the one place in this plugin where remembered facts would be written
+down for a component guaranteed to drift — the exact defect the plugin exists to
+remove. So: run the help, do not trust this file.
+
+```sh
+gh stack link --help      # retargets bases, and PUSHES; does not rebase
+gh stack rebase --help    # the cascading rebase — the fix for a broken chain
+gh stack merge --help     # what is checked locally vs. by GitHub
+gh stack submit --help
+```
+
+The judgement worth carrying, which `--help` will not tell you:
+
+- `link` gets you a stack whose branches need not form a real linear chain, and
+  the atomic `merge` will not paper over that. **Note which layer refuses**:
+  `merge` does no client-side linearity check at all — "Only basic pull request
+  state is checked before merging (open and not a draft); GitHub evaluates
+  branch protection and repository rules when the merge runs" — so the failure
+  comes back from GitHub, that is where to read it, and no local flag bypasses
+  it ("Bypassing merge requirements is not supported for stacks").
+- The built-in fix is **`gh stack rebase`**, a cascading rebase that ensures
+  each branch has the previous layer's tip in its history. Reach for that before
+  rebasing by hand or merging bottom-up.
+- `gh stack submit` saying "up to date" has been *observed* to be about PR
+  metadata rather than the branch tip — but that observation is **uncertified**,
+  and `submit --help` says the opposite ("1. Pushes all branches to the
+  remote"). Reproducing it means running `submit` against a live stack, which is
+  a write nobody should make to check a doc. The mitigation is cheap either way,
+  and the docs promising a push makes it *more* worth doing, not less: confirm
+  the tip with `git rev-parse` against the remote instead of trusting the
+  message.
 
 **A squash merge orphans the stack above it.** After the bottom PR squash-lands,
 the ones above it need `git rebase --onto`; find `<oldbase>` as the commit whose
