@@ -32,3 +32,5 @@ recordings/
 /settingsdemo
 # a main package built in place drops its executable beside its source
 /examples/wysiwyg/wysiwyg
+# `cd paint && go build ./...` writes ./paintdemo into the module root
+/paint/paintdemo

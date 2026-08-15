@@ -1,6 +1,6 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, and `kanbandemo`, `wysiwyg` and `dynamic-activities` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, `paintdemo` under `paint/cmd/`, and `kanbandemo`, `wysiwyg` and `dynamic-activities` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
 `cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
@@ -401,6 +401,23 @@ as a real client's primary surface, the control plane's registration
 CRUD pair, `PatchMarkup` from a non-Go client, `Canvas` absolute layout
 with bound backgrounds, and `gooey.CompanionCmd` giving a Python process
 the app's lifetime.
+
+## paintdemo
+
+![paintdemo](media/demos/paintdemo.gif)
+
+Drawing declared in markup: three pages of plates whose pens, brushes and geometry are attributes in a `.gooey` file, drawn through `paint/` — gooey's bridge to `fogleman/gg` — with no plate list in Go at all.
+
+The Go program supplies a viewmodel and four lines of registration. `paint` is a nested module, so the root cannot import it and no builtin element could ever be `<Ellipse>`; the seam is `markup.Context.Components`, the same one `examples/wysiwyg` uses for `<Panel>`. After that the documents draw themselves, and all four hot-reload — edit a plate and it redraws with the scene index intact.
+
+The walkthrough: **strokes** is the pen — `StrokeThickness` at 1, 5 and 15 pixels, `StrokeDashArray="16,16"`, a round `StrokeLineCap`, and a polyline whose `StrokeLineJoin="Miter"` draws a *bevel*. Every one of those attributes is read by one of `paint`'s parsers and spelled the way MAUI spells it — and the last plate is the one place that spelling does not map cleanly onto `gg`, which has no miter join. `paint.ParseLineJoin` takes MAUI's word and draws the nearest thing it has rather than rejecting the document, so the plate's corners are cut flat; `TestMiterIsDrawnAsBevel` pins it, because a page that teaches a behaviour should not be the only thing asserting it. **brushes** is what the line is painted with: a colour literal is a SolidColorBrush (MAUI's shorthand), while gradients have structure and so arrive as property elements — `<Rectangle.Fill><LinearGradientBrush StartPoint="0,0" …>` — including a gradient on the *pen* rather than the fill. Every gradient declares a `Fallback` and has to: a gradient has no cell-plane equivalent, so deleting one is a load error rather than a guess. **ring** is why `paint` has a `Ring` at all — placements composite over the cell plane, so `Slice="Ring"` places only the four rectangles that are not the interior and the text inside stays glyphs instead of becoming a picture of glyphs.
+
+Note when reading the capture: this is the CELL tier throughout, because `agg` renders the cell plane only and a recording pty answers no capability query. That is the point rather than a limitation — the figures occupy exactly the same cells either way, and the three stroke thicknesses are ▒, ▓ and █ because coverage is mapped through a cube root; a linear map put all three in the same bucket and made the page three identical rows. On a terminal with sixel, kitty or iTerm2 the same documents rasterize at exactly the pixel size of the cells they occupy.
+
+- Run: `cd paint && go run ./cmd/paintdemo` — it is a nested module, so the root `./...` does not build it; `--mode=kitty|sixel|iterm2|cells` forces a tier, `--dir` points at another directory of pages, `--hold=5s` exits unattended
+- Keys: `1`/`2`/`3` select a page, `n` cycles, `q`/`esc`/`ctrl+c` quit
+
+Exercises `paint`'s whole parser surface — `ParseColor`, `ParseBrush`, `ParseDashArray`, `ParseLineCap`, `ParseLineJoin`, `LinearGradient`, `RadialGradient` — which had no caller before this demo; `Canvas` sized in terminal cells so art is never resampled; `Ring` slicing a frame around live cell content; and the registration seam that lets a nested module contribute markup elements without the root module knowing they exist.
 
 ## colordemo
 

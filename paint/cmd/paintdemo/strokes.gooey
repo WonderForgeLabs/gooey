@@ -1,0 +1,65 @@
+<!-- The pen. Every attribute on this page is read by one of paint's
+     parsers — StrokeThickness by a float read, StrokeDashArray by
+     paint.ParseDashArray, StrokeLineCap by ParseLineCap, StrokeLineJoin
+     by ParseLineJoin — and every one of them is spelled the way MAUI
+     spells it, which is paint's stated contract.
+
+     Thicknesses are in PIXELS, not fractions. Coordinates are fractions
+     of the figure, so this page draws the same picture at any pane size,
+     but a 6-pixel stroke is 6 pixels wide in all of them. That asymmetry
+     is the whole reason paint.Canvas is measured in cells: art rasterized
+     at the resolution the terminal will actually display is never
+     resampled, and a scaled bitmap's give-away is exactly a stroke that
+     gets fatter as the pane gets narrower. -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,*,Auto,*" Cols="*,*,*">
+
+    <Text Grid.Row="0" Grid.Col="0" Style="dim">StrokeThickness="1"</Text>
+    <Figure Grid.Row="1" Grid.Col="0">
+      <Line From="0.08,0.5" To="0.92,0.5" Stroke="#6c9cff" StrokeThickness="1"/>
+    </Figure>
+
+    <Text Grid.Row="0" Grid.Col="1" Style="dim">StrokeThickness="5"</Text>
+    <Figure Grid.Row="1" Grid.Col="1">
+      <Line From="0.08,0.5" To="0.92,0.5" Stroke="#6c9cff" StrokeThickness="5"/>
+    </Figure>
+
+    <Text Grid.Row="0" Grid.Col="2" Style="dim">StrokeThickness="15"</Text>
+    <Figure Grid.Row="1" Grid.Col="2">
+      <Line From="0.08,0.5" To="0.92,0.5" Stroke="#6c9cff" StrokeThickness="15"/>
+    </Figure>
+
+    <Text Grid.Row="2" Grid.Col="0" Style="dim">StrokeDashArray="16,16"</Text>
+    <Figure Grid.Row="3" Grid.Col="0">
+      <Line From="0.08,0.5" To="0.92,0.5" Stroke="#e0b070"
+            StrokeThickness="5" StrokeDashArray="16,16"/>
+    </Figure>
+
+    <!-- Round caps extend the line by half its thickness at each end,
+         which is why this plate's line looks slightly longer than the
+         flat-capped ones above it at the same From/To. -->
+    <Text Grid.Row="2" Grid.Col="1" Style="dim">StrokeLineCap="Round"</Text>
+    <Figure Grid.Row="3" Grid.Col="1">
+      <Line From="0.12,0.5" To="0.88,0.5" Stroke="#e0b070"
+            StrokeThickness="15" StrokeLineCap="Round"/>
+    </Figure>
+
+    <!-- This plate says Miter and draws a BEVEL, and that is the plate.
+         gg has no miter join, so paint.ParseLineJoin accepts the name —
+         a word MAUI authors write reflexively — and draws the nearest
+         thing it has rather than rejecting the document. The corners
+         below are the evidence: they are cut flat, not pointed.
+
+         It said Round until review pointed out that the comment
+         explained a collapse the plate never showed. A page whose whole
+         job is exercising paint's parsers should demonstrate the one
+         place its vocabulary does not map cleanly onto gg's, which is
+         worth more than a fourth well-behaved plate. -->
+    <Text Grid.Row="2" Grid.Col="2" Style="dim">StrokeLineJoin="Miter" → bevel</Text>
+    <Figure Grid.Row="3" Grid.Col="2">
+      <Polyline Points="0.1,0.85 0.35,0.15 0.6,0.85 0.85,0.15"
+                Stroke="#7ad3a0" StrokeThickness="7" StrokeLineJoin="Miter"/>
+    </Figure>
+
+  </Grid>
+</Gooey>

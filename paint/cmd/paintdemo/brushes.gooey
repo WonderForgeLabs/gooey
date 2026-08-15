@@ -1,0 +1,69 @@
+<!-- The brush. A colour literal in the attribute is a SolidColorBrush —
+     MAUI's shorthand, and paint.ParseBrush's — so the simple case needs
+     no property element. Anything with structure is a property element,
+     which is XAML's own answer to "this value is too rich for a quoted
+     string".
+
+     Gradient StartPoint/EndPoint/Center are FRACTIONS of the shape's
+     figure, as they are in MAUI, so a brush does not know how big the
+     thing it paints is.
+
+     Every gradient here declares a Fallback and has to: a gradient has no
+     cell-plane equivalent, and paint's rule is that the author states
+     what it collapses to rather than having a mean of its stops guessed.
+     Delete one and the page fails to LOAD, which is the point — the
+     alternative is a document that looks right until someone opens it in
+     a terminal with no sixel. -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="Auto,*,Auto,*" Cols="*,*">
+
+    <Text Grid.Row="0" Grid.Col="0" Style="dim">Fill="#2f3550" — the shorthand</Text>
+    <Figure Grid.Row="1" Grid.Col="0">
+      <Rectangle Rect="0.06,0.12,0.88,0.76" CornerRadius="8"
+                 Fill="#2f3550" Stroke="#6c9cff" StrokeThickness="2"/>
+    </Figure>
+
+    <Text Grid.Row="0" Grid.Col="1" Style="dim">LinearGradientBrush</Text>
+    <Figure Grid.Row="1" Grid.Col="1">
+      <Rectangle Rect="0.06,0.12,0.88,0.76" CornerRadius="8"
+                 Stroke="#6c9cff" StrokeThickness="2">
+        <Rectangle.Fill>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Fallback="#4a5480">
+            <GradientStop Color="#6c9cff" Offset="0"/>
+            <GradientStop Color="#242430" Offset="1"/>
+          </LinearGradientBrush>
+        </Rectangle.Fill>
+      </Rectangle>
+    </Figure>
+
+    <Text Grid.Row="2" Grid.Col="0" Style="dim">RadialGradientBrush</Text>
+    <Figure Grid.Row="3" Grid.Col="0">
+      <Ellipse Center="0.5,0.5" RadiusX="0.44" RadiusY="0.44">
+        <Ellipse.Fill>
+          <RadialGradientBrush Center="0.42,0.38" Radius="0.6" Fallback="#7ad3a0">
+            <GradientStop Color="#d8ffe8" Offset="0"/>
+            <GradientStop Color="#7ad3a0" Offset="0.45"/>
+            <GradientStop Color="#1d3a2c" Offset="1"/>
+          </RadialGradientBrush>
+        </Ellipse.Fill>
+      </Ellipse>
+    </Figure>
+
+    <!-- A gradient PEN, not just a gradient fill. Stroke takes the same
+         property element Fill does, because paint.Stroke's Brush is a
+         gg.Pattern like any other. -->
+    <Text Grid.Row="2" Grid.Col="1" Style="dim">a gradient on the pen</Text>
+    <Figure Grid.Row="3" Grid.Col="1">
+      <Polyline Points="0.08,0.8 0.28,0.3 0.48,0.62 0.68,0.18 0.92,0.5"
+                StrokeThickness="4" StrokeLineCap="Round" StrokeLineJoin="Round">
+        <Polyline.Stroke>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="1,0" Fallback="#c98bd8">
+            <GradientStop Color="#6c9cff" Offset="0"/>
+            <GradientStop Color="#e06c9c" Offset="1"/>
+          </LinearGradientBrush>
+        </Polyline.Stroke>
+      </Polyline>
+    </Figure>
+
+  </Grid>
+</Gooey>

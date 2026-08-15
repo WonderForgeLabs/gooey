@@ -1,0 +1,51 @@
+<!-- The reason paint has a Ring at all.
+
+     Pixel placements composite OVER the cell plane. A figure that placed
+     one image across its whole box would bury everything inside it — the
+     text below would be a picture of nothing, hidden under a rectangle.
+     Slice="Ring" places only the four rectangles that are NOT the
+     interior (paint.Ring), so the frame is pixel art and its contents
+     stay on the cell plane, where a terminal draws text best.
+
+     Slice="Full" is the other choice, and it is right whenever the figure
+     has nothing inside it: the plates on the other two pages are all
+     Full.
+
+     Both spellings occupy the same cells. The ring claims one cell on
+     every side exactly as a <Border> does, so nothing moves when this
+     runs on a terminal with no pixel protocol and the frame is drawn in
+     block runes instead. -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Grid Rows="*,Auto" Cols="*,*">
+
+    <Figure Grid.Row="0" Grid.Col="0" Slice="Ring" Margin="1">
+      <Rectangle Rect="0,0,1,1" CornerRadius="7" Stroke="#6c9cff" StrokeThickness="2"/>
+      <VStack Gap="1">
+        <Text Style="accent">this text is on the cell plane</Text>
+        <Text Style="dim">The frame around it is a rasterized rounded</Text>
+        <Text Style="dim">rectangle, sliced into four placements. The</Text>
+        <Text Style="dim">interior is never covered by any of them, so</Text>
+        <Text Style="dim">these glyphs are glyphs and not a picture of</Text>
+        <Text Style="dim">glyphs.</Text>
+      </VStack>
+    </Figure>
+
+    <!-- A dashed ring, to show that the ring is an ordinary figure: any
+         shape may be drawn, the slicing is what differs. -->
+    <Figure Grid.Row="0" Grid.Col="1" Slice="Ring" Margin="1">
+      <Rectangle Rect="0,0,1,1" CornerRadius="2" Stroke="#e0b070"
+                 StrokeThickness="3" StrokeDashArray="16,16"/>
+      <VStack Gap="1">
+        <Text Style="accent">same slicing, different pen</Text>
+        <Text Style="dim">Transparency does the rest: a gg context</Text>
+        <Text Style="dim">starts fully transparent and nothing fills it,</Text>
+        <Text Style="dim">so the gaps between dashes write no pixel and</Text>
+        <Text Style="dim">leave their cells alone instead of stamping</Text>
+        <Text Style="dim">black.</Text>
+      </VStack>
+    </Figure>
+
+    <Text Grid.Row="1" Grid.ColSpan="2" Style="dim">Slice="Ring" — the interior stays on the cell plane; Slice="Full" (the default) would bury it.</Text>
+
+  </Grid>
+</Gooey>
