@@ -29,7 +29,14 @@ func designerPage(t *testing.T) (*editor, *gooey.Composer) {
 }
 
 // docKid is the component built for root.Kids[i].
-func docKid(ed *editor, i int) gooey.Component { return childComponents(ed.docRoot)[i] }
+// docKid is the component built for the USER'S ROOT's i'th child.
+//
+// Two hops, and the first one is the wrapping model: docRoot is the built
+// SURFACE, whose only child is the user's root, whose children are the
+// document nodes.
+func docKid(ed *editor, i int) gooey.Component {
+	return childComponents(childComponents(ed.docRoot)[0])[i]
+}
 
 // under is the tests' OWN containment check, written out rather than
 // reusing componentPath: it guards the preconditions of the walk, and a
@@ -90,8 +97,8 @@ func paneOrigin(t *testing.T, c *gooey.Composer) (int, int) {
 // it is noted in the report rather than papered over here.
 func widen(t *testing.T, ed *editor, c *gooey.Composer) {
 	t.Helper()
-	ed.root.Kids[0].Attrs["Width"] = "6"
-	ed.root.Kids[0].Attrs["Height"] = "1"
+	ed.doc().Kids[0].Attrs["Width"] = "6"
+	ed.doc().Kids[0].Attrs["Height"] = "1"
 	ed.rebuild()
 	if !strings.HasPrefix(ed.status.Get(), "✓") {
 		t.Fatalf("the widened document does not build: %s", ed.status.Get())
@@ -117,13 +124,13 @@ func TestClickingTheDesignerSelectsWhatIsUnderThePointer(t *testing.T) {
 		t.Fatalf("the Button was never arranged (%v): the pointer cannot be over it", b)
 	}
 
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 	if !press(c, b.X, b.Y) {
 		t.Fatal("a press in the designer was not consumed: it reached nothing that handles it")
 	}
-	if ed.sel != ed.root.Kids[1] {
+	if ed.sel != ed.doc().Kids[1] {
 		t.Fatalf("a press on the Button selected %s, want the <Button> (<Button Name=%q>)",
-			nodeName(ed.sel), ed.root.Kids[1].Attrs["Name"])
+			nodeName(ed.sel), ed.doc().Kids[1].Attrs["Name"])
 	}
 
 	// And back to the Text, which is what makes the 1 above a measurement.
@@ -133,23 +140,27 @@ func TestClickingTheDesignerSelectsWhatIsUnderThePointer(t *testing.T) {
 		t.Fatalf("(%d,%d) is not on the <Text> (%T): this press asserts nothing", tx, ty, got)
 	}
 	press(c, tx, ty)
-	if ed.sel != ed.root.Kids[0] {
+	if ed.sel != ed.doc().Kids[0] {
 		t.Errorf("a press on the Text selected %s, want the <Text>", nodeName(ed.sel))
 	}
 }
 
-// TestAPressOnANestedChildSelectsItsTopLevelNode is the ancestor walk.
+// TestAPressSelectsTheDEEPESTNodeItLandsOn is the ancestor walk, and its
+// claim INVERTED when the surface became chrome.
 //
-// HitTest returns the DEEPEST component on purpose, and root.Kids is flat,
-// so a press on the <Text> inside a <Border> has to resolve to the
-// <Border> — and so does a press on the Border's own chrome. Both, in one
-// test, because "the same node" is the claim.
-func TestAPressOnANestedChildSelectsItsTopLevelNode(t *testing.T) {
+// While root.Kids was flat, a press on a <Text> inside a <Border> had to
+// resolve UP to the Border, because a flat index could not name the Text.
+// Now the user's own root is a node like any other and everything they
+// place is nested inside it, so a policy that climbed to the top would
+// select the root whatever you clicked. The press selects what it landed
+// on; a press on the container's own chrome still selects the container,
+// because that is what the pointer is actually over.
+func TestAPressSelectsTheDEEPESTNodeItLandsOn(t *testing.T) {
 	ed, c := designerPage(t)
 
 	// A document whose second node has a child of its own. <Border> takes
 	// exactly one child, which is why addSelected seeds one.
-	ed.root.Kids = []*node{
+	ed.doc().Kids = []*node{
 		{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "0", "Canvas.Top": "0", "Width": "6", "Height": "1"}},
 		{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "4"},
 			Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Inner", "Width": "6", "Height": "1"}}}},
@@ -177,20 +188,20 @@ func TestAPressOnANestedChildSelectsItsTopLevelNode(t *testing.T) {
 		t.Fatalf("HitTest returned the <Border> itself at the child's cell (%d,%d): "+
 			"this press does not exercise the ancestor walk", cb.X, cb.Y)
 	}
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 	press(c, cb.X, cb.Y)
-	if ed.sel != ed.root.Kids[1] {
-		t.Errorf("a press on the <Text> INSIDE the <Border> selected %s, want the <Border>: "+
-			"the walk from the hit to the selectable node did not happen", nodeName(ed.sel))
+	if ed.sel != ed.doc().Kids[1].Kids[0] {
+		t.Errorf("a press on the <Text> INSIDE the <Border> selected %s, want the inner <Text>: "+
+			"the walk did not reach the node the pointer was actually over", nodeName(ed.sel))
 	}
 
-	// The container's own chrome — the border rune in its top-left corner —
-	// must land on the same node.
-	ed.setSelection(ed.root.Kids[0])
+	// The container's own chrome — the border rune in its top-left corner
+	// — selects the CONTAINER, which is how a container stays selectable
+	// at all once its children are.
+	ed.setSelection(ed.doc().Kids[0])
 	press(c, bb.X, bb.Y)
-	if ed.sel != ed.root.Kids[1] {
-		t.Errorf("a press on the <Border>'s own chrome selected %s, want the <Border>: chrome and child "+
-			"must resolve to the same node", nodeName(ed.sel))
+	if ed.sel != ed.doc().Kids[1] {
+		t.Errorf("a press on the <Border>'s own chrome selected %s, want the <Border>", nodeName(ed.sel))
 	}
 }
 
@@ -208,25 +219,48 @@ func TestAPressOnANestedChildSelectsItsTopLevelNode(t *testing.T) {
 // shimmed for compatibility.
 func TestAPressOnBareCanvasSelectsNothing(t *testing.T) {
 	ed, c := designerPage(t)
-	x, y := paneOrigin(t, c)
 
-	// The document's root is arranged at the pane's origin and its two
-	// children sit at Canvas.Left=2, so this cell is inside the Canvas and
-	// on neither of them. Assert that rather than assume it.
+	// THE ROOT HAS TO BE GIVEN A SIZE FOR THIS TEST TO EXIST AT ALL, and
+	// that is a finding rather than a fixture detail: a <Canvas> measures
+	// the space it is offered, so the user's root fills the surface and
+	// there is NO bare surface to press. With the default document every
+	// press lands on the root or on something in it, and selecting the
+	// root is correct — it is a real element the user saves.
+	//
+	// So the empty state is reachable exactly when the root does not cover
+	// the surface. Sizing it here is what creates the uncovered region.
+	ed.doc().Attrs["Width"] = "10"
+	ed.doc().Attrs["Height"] = "4"
+	ed.doc().Attrs["HAlign"] = "Start"
+	ed.doc().Attrs["VAlign"] = "Start"
+	ed.rebuild()
+	c.Frame()
+
+	rootComp := childComponents(ed.docRoot)[0]
+	rb := rootComp.(interface{ Bounds() gooey.Rect }).Bounds()
+	if rb.W == 0 || rb.H == 0 {
+		t.Fatalf("the user's root was never arranged (%v)", rb)
+	}
+	// A cell inside the designer but OUTSIDE the user's root.
+	x, y := rb.X+rb.W+2, rb.Y+rb.H+2
+	pane := findPreview(c.Root())
+	pb := pane.(interface{ Bounds() gooey.Rect }).Bounds()
+	if x >= pb.X+pb.W || y >= pb.Y+pb.H {
+		t.Fatalf("the probe cell (%d,%d) is outside the designer %v", x, y, pb)
+	}
 	hit := c.Focus().HitTest(x, y)
-	for i := range ed.root.Kids {
-		if under(docKid(ed, i), hit) {
-			t.Fatalf("(%d,%d) is inside a design node after all: this press asserts nothing", x, y)
-		}
+	if under(rootComp, hit) {
+		t.Fatalf("(%d,%d) is inside the user's root after all (%T): this press asserts nothing",
+			x, y, hit)
 	}
 
-	ed.setSelection(ed.root.Kids[1])
+	ed.setSelection(ed.doc().Kids[1])
 	if !press(c, x, y) {
-		t.Error("a press on the designer's empty canvas was not consumed; in DESIGN mode the " +
+		t.Error("a press on the designer's bare surface was not consumed; in DESIGN mode the " +
 			"picture swallows its own clicks whether or not they hit a node")
 	}
 	if ed.sel != nil {
-		t.Errorf("a press on bare canvas selected %s, want nothing", nodeName(ed.sel))
+		t.Errorf("a press on the bare surface selected %s, want nothing", nodeName(ed.sel))
 	}
 	// Nothing selected has to be USABLE, not merely stored: the inspector
 	// resolves to no target and offers no rows, rather than panicking or
@@ -240,8 +274,32 @@ func TestAPressOnBareCanvasSelectsNothing(t *testing.T) {
 	// And the keyboard must be able to get BACK out of the empty state, or
 	// a stray click on the background would strand the user.
 	ed.selectNext(1)
-	if ed.sel != ed.root.Kids[0] {
+	if ed.sel != ed.doc().Kids[0] {
 		t.Errorf("ctrl+n out of the empty state selected %s, want the first node", nodeName(ed.sel))
+	}
+}
+
+// TestAPressOnTheUsersRootSelectsIt is the other half, and it is the case
+// the DEFAULT document actually produces.
+//
+// A <Canvas> root fills the surface, so a press on what looks like empty
+// background is a press on the root — a real element that reaches the
+// saved file. Selecting it is right; it is only the SURFACE that must
+// select nothing.
+func TestAPressOnTheUsersRootSelectsIt(t *testing.T) {
+	ed, c := designerPage(t)
+	x, y := paneOrigin(t, c)
+	hit := c.Focus().HitTest(x, y)
+	for i := range ed.doc().Kids {
+		if under(docKid(ed, i), hit) {
+			t.Fatalf("(%d,%d) is on a child, not the root: this press asserts nothing", x, y)
+		}
+	}
+	ed.setSelection(nil)
+	press(c, x, y)
+	if ed.sel != ed.doc() {
+		t.Errorf("a press on the root's own area selected %s, want the user's root <%s>",
+			nodeName(ed.sel), ed.doc().Elem)
 	}
 }
 
@@ -264,16 +322,16 @@ func TestTheDesignerSelectsInDESIGNModeOnly(t *testing.T) {
 	}
 
 	x, y := paneOrigin(t, c)
-	ed.setSelection(ed.root.Kids[1])
+	ed.setSelection(ed.doc().Kids[1])
 	press(c, x, y)
-	if ed.sel != ed.root.Kids[1] {
+	if ed.sel != ed.doc().Kids[1] {
 		t.Errorf("a LIVE-mode press on the document's background moved the selection to %s: "+
 			"the designer is taking clicks that belong to the app being tried", nodeName(ed.sel))
 	}
 	if btn := findButton(c.Root()); btn != nil {
 		b := btn.Bounds()
 		press(c, b.X, b.Y)
-		if ed.sel != ed.root.Kids[1] {
+		if ed.sel != ed.doc().Kids[1] {
 			t.Errorf("a LIVE-mode press on the Button moved the selection to %s", nodeName(ed.sel))
 		}
 	}
@@ -289,7 +347,7 @@ func TestTheDesignerSelectsInDESIGNModeOnly(t *testing.T) {
 		b := btn.Bounds()
 		ed.setSelection(nil)
 		press(c, b.X, b.Y)
-		if ed.sel != ed.root.Kids[1] {
+		if ed.sel != ed.doc().Kids[1] {
 			t.Fatalf("back in DESIGN a press on the Button selected %s, want the <Button>: the "+
 				"LIVE assertions above pass for a gesture that never worked", nodeName(ed.sel))
 		}
@@ -324,7 +382,7 @@ func TestSelectingCostsTheSameFiveComponentsWhicheverGestureMovesIt(t *testing.T
 	ed, c := designerPage(t)
 	// Two <Text> nodes: one element, one attribute set, so the grid re-rows
 	// nothing and the damage is the values that actually differ.
-	ed.root.Kids = []*node{
+	ed.doc().Kids = []*node{
 		{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1", "Width": "6", "Height": "1"}},
 		{Elem: "Text", Attrs: map[string]string{"Name": "T2", "Canvas.Left": "2", "Canvas.Top": "3", "Width": "6", "Height": "1"}},
 	}
@@ -335,11 +393,11 @@ func TestSelectingCostsTheSameFiveComponentsWhicheverGestureMovesIt(t *testing.T
 		t.Fatalf("the second <Text> was never arranged (%v)", b)
 	}
 
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 	settle(t, c)
 	press(c, b.X, b.Y)
 	_, pointer := c.Frame()
-	if ed.sel != ed.root.Kids[1] {
+	if ed.sel != ed.doc().Kids[1] {
 		t.Fatalf("the press did not move the selection (%s); the count below is of nothing", nodeName(ed.sel))
 	}
 	if pointer != selectionDamage {
@@ -350,13 +408,13 @@ func TestSelectingCostsTheSameFiveComponentsWhicheverGestureMovesIt(t *testing.T
 		t.Fatalf("the next frame repainted %d with nothing changed: the count above is not damage", again)
 	}
 
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 	settle(t, c)
 	if !c.Handle(input.KeyOf(input.KeyEvent{Key: input.KeyRune, Rune: 'n', Mods: input.ModCtrl})) {
 		t.Fatal("ctrl+n was not consumed: the keyboard selection binding is gone")
 	}
 	_, keyboard := c.Frame()
-	if ed.sel != ed.root.Kids[1] {
+	if ed.sel != ed.doc().Kids[1] {
 		t.Fatalf("ctrl+n did not move the selection (%s)", nodeName(ed.sel))
 	}
 	if keyboard != pointer {
@@ -399,14 +457,14 @@ func TestSelectingNeverRepaintsTheDesigner(t *testing.T) {
 	}
 	b := btn.Bounds()
 
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 	settle(t, c)
 	press(c, b.X, b.Y)
 	if _, painted := c.Frame(); painted == 0 {
 		t.Fatal("selecting repainted nothing at all: this test would pass for a gesture that " +
 			"does not work")
 	}
-	if ed.sel != ed.root.Kids[1] {
+	if ed.sel != ed.doc().Kids[1] {
 		t.Fatalf("the press did not move the selection (%s)", nodeName(ed.sel))
 	}
 	for _, r := range c.Damage() {
@@ -428,25 +486,25 @@ func within(r, outer gooey.Rect) bool {
 // events cannot be injected through a recording pty at all.
 func TestTheKeyboardStillSelects(t *testing.T) {
 	ed, c := designerPage(t)
-	n := len(ed.root.Kids)
+	n := len(ed.doc().Kids)
 	if n < 2 {
 		t.Fatalf("the starting document has %d nodes; cycling asserts nothing", n)
 	}
-	ed.setSelection(ed.root.Kids[0])
+	ed.setSelection(ed.doc().Kids[0])
 
 	ctrl := func(r rune) bool {
 		return c.Handle(input.KeyOf(input.KeyEvent{Key: input.KeyRune, Rune: r, Mods: input.ModCtrl}))
 	}
-	if !ctrl('n') || ed.sel != ed.root.Kids[1] {
+	if !ctrl('n') || ed.sel != ed.doc().Kids[1] {
 		t.Fatalf("ctrl+n left the selection at %s, want the <Button>", nodeName(ed.sel))
 	}
-	if !ctrl('p') || ed.sel != ed.root.Kids[0] {
+	if !ctrl('p') || ed.sel != ed.doc().Kids[0] {
 		t.Fatalf("ctrl+p left the selection at %s, want the <Text>", nodeName(ed.sel))
 	}
 	// And the properties grid follows it, which is the point of selecting.
-	ed.setSelection(ed.root.Kids[1]) // the Button
+	ed.setSelection(ed.doc().Kids[1]) // the Button
 	btnRows := rowNames(ed)
-	ed.setSelection(ed.root.Kids[0]) // the Text
+	ed.setSelection(ed.doc().Kids[0]) // the Text
 	if textRows := rowNames(ed); textRows == btnRows {
 		t.Error("the inspector offers the same attributes for the <Text> and the <Button>: " +
 			"the selection is stored but nothing reads it")
@@ -476,16 +534,27 @@ func rowNames(ed *editor) string {
 func TestTheBuiltTreeCorrespondsToTheDocument(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
-	if got := len(childComponents(ed.docRoot)); got != len(ed.root.Kids) {
-		t.Fatalf("the built tree has %d children for %d document nodes: positional selection "+
-			"would pick a neighbour of whatever was clicked", got, len(ed.root.Kids))
+	// docRoot is the built SURFACE. Its one child is the user's root, and
+	// THAT one's children are the document nodes — the extra hop is the
+	// wrapping model, and asserting it here is what keeps the inversion
+	// honest about which level is which.
+	if got := len(childComponents(ed.docRoot)); got != 1 {
+		t.Fatalf("the built surface has %d children, want 1 (the user's root)", got)
+	}
+	builtRoot := childComponents(ed.docRoot)[0]
+	if got := len(childComponents(builtRoot)); got != len(ed.doc().Kids) {
+		t.Fatalf("the built root has %d children for %d document nodes: positional selection "+
+			"would pick a neighbour of whatever was clicked", got, len(ed.doc().Kids))
 	}
 	if ed.nodeOf[ed.docRoot] != ed.root {
-		t.Error("the built root does not map to the document root")
+		t.Error("the built surface does not map to the surface node")
+	}
+	if ed.nodeOf[builtRoot] != ed.doc() {
+		t.Error("the built root does not map to the user's root")
 	}
 	// Names are not what the mapping USES — that is the point, since a user
 	// can rename or delete one — but they are what can check it.
-	for i, kid := range ed.root.Kids {
+	for i, kid := range ed.doc().Kids {
 		name := kid.Attrs["Name"]
 		comp := ed.docCtx.Named[name]
 		if comp != docKid(ed, i) {
@@ -499,7 +568,7 @@ func TestTheBuiltTreeCorrespondsToTheDocument(t *testing.T) {
 	// A document that does NOT build must drop the mapping rather than
 	// leave the previous tree's components addressed by this document.
 	stale := ed.docCtx.Named["T1"]
-	ed.root.Kids = append(ed.root.Kids, &node{Elem: "NotAnElement", Attrs: map[string]string{}})
+	ed.doc().Kids = append(ed.doc().Kids, &node{Elem: "NotAnElement", Attrs: map[string]string{}})
 	ed.rebuild()
 	if _, err := markup.Build([]byte(ed.source.Get()), ed.docCtx); err == nil {
 		t.Fatal("the fixture document builds after all; the arm below asserts nothing")
@@ -526,10 +595,10 @@ func TestTheBuiltTreeCorrespondsToTheDocument(t *testing.T) {
 // last child silently promoted the selection to the root.
 func TestDeletingWalksTheSelectionAndEmptiesIt(t *testing.T) {
 	ed, _ := designerPage(t)
-	if len(ed.root.Kids) != 2 {
-		t.Fatalf("the starting document has %d nodes; this test wants the shipped two", len(ed.root.Kids))
+	if len(ed.doc().Kids) != 2 {
+		t.Fatalf("the starting document has %d nodes; this test wants the shipped two", len(ed.doc().Kids))
 	}
-	first, second := ed.root.Kids[0], ed.root.Kids[1]
+	first, second := ed.doc().Kids[0], ed.doc().Kids[1]
 
 	// Deleting a node with a successor selects the successor — the node
 	// that took its place, not the one before it.
@@ -543,8 +612,8 @@ func TestDeletingWalksTheSelectionAndEmptiesIt(t *testing.T) {
 	// Deleting the LAST remaining node leaves NOTHING selected — not the
 	// container it was in.
 	ed.deleteSelected()
-	if len(ed.root.Kids) != 0 {
-		t.Fatalf("the document still holds %d nodes", len(ed.root.Kids))
+	if len(ed.doc().Kids) != 0 {
+		t.Fatalf("the document still holds %d nodes", len(ed.doc().Kids))
 	}
 	if ed.sel != nil {
 		t.Errorf("deleting the last node selected %s, want nothing: the selection was promoted "+
@@ -559,13 +628,13 @@ func TestDeletingWalksTheSelectionAndEmptiesIt(t *testing.T) {
 
 	// Deleting from the END selects the new end, which is the third
 	// landing and the one an off-by-one would reach.
-	ed.root.Kids = []*node{
+	ed.doc().Kids = []*node{
 		{Elem: "Text", Body: "a", Attrs: map[string]string{"Name": "A"}},
 		{Elem: "Text", Body: "b", Attrs: map[string]string{"Name": "B"}},
 	}
-	ed.setSelection(ed.root.Kids[1])
+	ed.setSelection(ed.doc().Kids[1])
 	ed.deleteSelected()
-	if ed.sel != ed.root.Kids[0] {
+	if ed.sel != ed.doc().Kids[0] {
 		t.Errorf("deleting the last of two selected %s, want the remaining node", nodeName(ed.sel))
 	}
 }
@@ -596,7 +665,7 @@ func nodeName(n *node) string {
 // would quietly flatten it.
 func TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode(t *testing.T) {
 	ed, c := designerPage(t)
-	ed.root.Kids = []*node{
+	ed.doc().Kids = []*node{
 		{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "0"},
 			Kids: []*node{{Elem: "Border", Attrs: map[string]string{"Name": "B2"},
 				Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Deep", "Width": "6", "Height": "1"}}}}}},
@@ -622,10 +691,13 @@ func TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode(t *testing.T) {
 	}
 
 	chain := ed.nodeChain(hit)
-	want := []*node{ed.root, ed.root.Kids[0], ed.root.Kids[0].Kids[0], ed.root.Kids[0].Kids[0].Kids[0]}
+	// SURFACE, user root, then the three nested nodes: the surface is in
+	// the chain (it is where the walk starts) and is excluded by the
+	// POLICY, not by the walk.
+	want := []*node{ed.root, ed.doc(), ed.doc().Kids[0], ed.doc().Kids[0].Kids[0], ed.doc().Kids[0].Kids[0].Kids[0]}
 	if len(chain) != len(want) {
 		t.Fatalf("the walk reported %d nodes for a hit three deep, want %d: it collapses nesting "+
-			"the selection model will need", len(chain), len(want))
+			"the selection model needs", len(chain), len(want))
 	}
 	for i := range want {
 		if chain[i] != want[i] {
@@ -634,11 +706,15 @@ func TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode(t *testing.T) {
 		}
 	}
 
-	// And today's POLICY still lands on the top-level node — the chain is
-	// richer than the selection, not instead of it.
+	// And the POLICY lands on the deepest node — the chain is what makes
+	// that expressible, and the surface is excluded from it.
 	press(c, b.X, b.Y)
-	if ed.sel != ed.root.Kids[0] {
-		t.Errorf("a press three levels deep selected %s, want the top-level <Border>", nodeName(ed.sel))
+	deepest := ed.doc().Kids[0].Kids[0].Kids[0]
+	if ed.sel != deepest {
+		t.Errorf("a press three levels deep selected %s, want the innermost <Text>", nodeName(ed.sel))
+	}
+	if ed.sel == ed.root {
+		t.Error("the surface was selected: it is chrome and must never be")
 	}
 }
 
@@ -652,7 +728,7 @@ func TestTheWalkStopsWhereTheTreeStopsCorresponding(t *testing.T) {
 	ed, c := designerPage(t)
 	// <Tabs> with one <Tab>: the Tab's header strip means the built tree
 	// below Tabs is not one component per document child.
-	ed.root.Kids = []*node{
+	ed.doc().Kids = []*node{
 		{Elem: "Tabs", Attrs: map[string]string{"Name": "T", "Canvas.Left": "0", "Canvas.Top": "0"},
 			Kids: []*node{{Elem: "Tab", Attrs: map[string]string{"Header": "one"},
 				Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Inside", "Width": "6", "Height": "1"}}}}}},
@@ -667,7 +743,7 @@ func TestTheWalkStopsWhereTheTreeStopsCorresponding(t *testing.T) {
 	// test would pass on a correspondence that never broke, which is the
 	// shape of a green test asserting nothing. Measured: <Tab> carries one
 	// document child and builds a component with none.
-	tab := ed.root.Kids[0].Kids[0]
+	tab := ed.doc().Kids[0].Kids[0]
 	inner := ed.docCtx.Named["Inside"]
 	if inner == nil {
 		t.Fatal("the inner <Text> was not built at all")
@@ -694,19 +770,20 @@ func TestTheWalkStopsWhereTheTreeStopsCorresponding(t *testing.T) {
 		t.Fatalf("the probe cell is not inside <Tabs> (%T): this test asserts nothing", hit)
 	}
 	chain := ed.nodeChain(hit)
-	if len(chain) < 2 || chain[0] != ed.root || chain[1] != ed.root.Kids[0] {
-		t.Fatalf("the walk lost the top-level node inside a container it cannot map through: %v", chain)
+	if len(chain) < 3 || chain[0] != ed.root || chain[1] != ed.doc() || chain[2] != ed.doc().Kids[0] {
+		t.Fatalf("the walk lost the <Tabs> inside a container it cannot map through: %v", chain)
 	}
 	// Nothing the walk reports may be a node it could not verify.
 	for _, n := range chain {
-		if n == ed.root.Kids[0].Kids[0].Kids[0] {
+		if n == ed.doc().Kids[0].Kids[0].Kids[0] {
 			t.Error("the walk reported the node below the unverifiable pairing: it mapped a " +
 				"document node onto a component that merely sits at the same offset")
 		}
 	}
 	press(c, tb.X+1, tb.Y+1)
-	if ed.sel != ed.root.Kids[0] {
-		t.Errorf("a press inside <Tabs> selected %s, want the <Tabs>: a container the inversion cannot "+
-			"descend must still be selectable itself", nodeName(ed.sel))
+	if ed.sel != ed.doc().Kids[0] {
+		t.Errorf("a press inside <Tabs> selected %s, want the <Tabs>: a container the inversion "+
+			"cannot descend must still be selectable itself, and the press must not fall through "+
+			"to something the walk could not verify", nodeName(ed.sel))
 	}
 }

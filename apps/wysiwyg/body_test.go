@@ -30,7 +30,21 @@ func addFromPalette(t *testing.T, ed *editor, elem string) (*node, int) {
 		if e.Name == elem {
 			ed.paletteSel.Set(i)
 			ed.addSelected()
-			return ed.root.Kids[len(ed.root.Kids)-1], len(ed.root.Kids) - 1
+			// ed.sel, NOT the root's last child: an add goes INTO the
+			// selected container, so the root's last child is only the new
+			// node when the root happened to be the target. addSelected
+			// selects what it added, which is the one reliable handle on
+			// it. The index is the position within its actual parent.
+			n := ed.sel
+			idx := -1
+			if p := ed.parentOf(n); p != nil {
+				for j, k := range p.Kids {
+					if k == n {
+						idx = j
+					}
+				}
+			}
+			return n, idx
 		}
 	}
 	t.Fatalf("the palette does not offer <%s>", elem)
@@ -281,9 +295,9 @@ func TestABodyBindingIsLiveAndNotLiteralText(t *testing.T) {
 	}
 	c.Frame()
 
-	txt, ok := docKid(ed, len(ed.root.Kids)-1).(*components.Text)
+	txt, ok := docKid(ed, len(ed.doc().Kids)-1).(*components.Text)
 	if !ok {
-		t.Fatalf("the node built a %T, not a *components.Text", docKid(ed, len(ed.root.Kids)-1))
+		t.Fatalf("the node built a %T, not a *components.Text", docKid(ed, len(ed.doc().Kids)-1))
 	}
 	if got := txt.Content.Get(); got == "{{.Serving}}" {
 		t.Fatal("the body was taken literally: the binding was downgraded to its own source text")
@@ -326,7 +340,7 @@ func TestOnlyBodyElementsAreSeededWithOne(t *testing.T) {
 	for i := range ed.palette {
 		ed.paletteSel.Set(i)
 		ed.addSelected()
-		n := ed.root.Kids[len(ed.root.Kids)-1]
+		n := ed.doc().Kids[len(ed.doc().Kids)-1]
 		switch {
 		case ed.takesBody(n.Elem) && n.Body == "":
 			t.Errorf("<%s> takes a body and was added without one: it is invisible and "+

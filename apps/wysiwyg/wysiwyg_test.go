@@ -116,7 +116,7 @@ func TestPaletteComesFromTheCatalog(t *testing.T) {
 func TestInspectorFollowsTheParent(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
-	ed.sel = ed.root.Kids[0]
+	ed.sel = ed.doc().Kids[0]
 
 	has := func(name string) bool {
 		for _, r := range ed.attrRows() {
@@ -154,7 +154,7 @@ func TestRetypingStripsAttributesTheNewParentCannotHonor(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
 	ed.retype("VStack")
-	for _, k := range ed.root.Kids {
+	for _, k := range ed.doc().Kids {
 		if _, ok := k.Attrs["Canvas.Left"]; ok {
 			t.Errorf("<%s> kept Canvas.Left under a <VStack>", k.Elem)
 		}
@@ -234,7 +234,7 @@ func TestEveryBoundNameResolvesToALiveHandle(t *testing.T) {
 func TestDerivedListsInvalidateOnEdit(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
-	ed.sel = ed.root.Kids[0]
+	ed.sel = ed.doc().Kids[0]
 
 	names := func() map[string]bool {
 		src := ed.attrItems.Get()
@@ -542,7 +542,7 @@ func TestModifiedIsExactlyDifferingFromTheDeclaredDefault(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.sel = ed.root.Kids[0]
+	ed.sel = ed.doc().Kids[0]
 
 	row := func(name string) attrRow {
 		t.Helper()
@@ -563,7 +563,7 @@ func TestModifiedIsExactlyDifferingFromTheDeclaredDefault(t *testing.T) {
 		t.Errorf("an absent Visibility must not read as modified (default %q)", r.def)
 	}
 
-	target := ed.root.Kids[0]
+	target := ed.doc().Kids[0]
 	target.Attrs["Visibility"] = "Visible" // the declared default, written out
 	if r := row("Visibility"); r.modified {
 		t.Error("a value equal to the default must not read as modified: " +
@@ -592,7 +592,7 @@ func TestInspectorRowsAreGroupedByCategory(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.sel = ed.root.Kids[1] // the Button: it has an event, a style and a layout surface
+	ed.sel = ed.doc().Kids[1] // the Button: it has an event, a style and a layout surface
 
 	rows := ed.attrRows()
 	if len(rows) < 6 {

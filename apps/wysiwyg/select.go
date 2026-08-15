@@ -85,25 +85,28 @@ func (ed *editor) nodeChain(hit gooey.Component) []*node {
 
 // nodeAt is the POLICY: which node of the chain the editor selects.
 //
-// Today that is the top-level one — chain[1], the child of the surface —
-// because everything the user places sits directly on it. When the
-// surface becomes chrome that a user drops a <Grid> onto and then selects
-// things INSIDE, this function is what changes (it returns a deeper chain
-// element) and nodeChain above stays as it is.
+// It is the DEEPEST node the walk could verify, and that is the whole
+// point of the surface being chrome: the user's own root is chain[1] and
+// everything they place is below it, so a policy that stopped at chain[1]
+// would select the root whatever you clicked. Clicking a <Text> inside a
+// <Grid> inside the user's root selects the Text.
+//
+// This is the ONE line that changed when the surface became chrome, which
+// is why the walk was built to return a chain rather than an index.
 //
 // NIL IS A DECISION, NOT A FAILURE CODE. A press that resolves to the
 // surface itself — bare canvas — selects NOTHING. The surface is the
 // editor's own workspace rather than part of the document, so selecting
 // it would point the properties grid at something the user cannot save
 // and offer them attributes that never reach their file. An empty grid is
-// the honest answer, and it is a state the selection can hold now that it
+// the honest answer, and it is a state the selection can hold because it
 // is a node pointer rather than an index.
 func (ed *editor) nodeAt(hit gooey.Component) *node {
 	chain := ed.nodeChain(hit)
 	if len(chain) < 2 {
 		return nil
 	}
-	return chain[1]
+	return chain[len(chain)-1]
 }
 
 // componentPath is the components from root down to w inclusive, or false

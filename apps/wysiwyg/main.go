@@ -87,9 +87,39 @@
 // stray click on the background cannot strand you.
 //
 // The selection is a NODE, not an index. That is what lets it hold
-// "nothing" without a sentinel, and what will let it name something
-// nested when the surface starts carrying containers the user can select
-// into.
+// "nothing" without a sentinel and name a node at any depth: a press
+// selects the DEEPEST element it landed on, so clicking a <Text> inside a
+// <Grid> selects the Text, and clicking the Grid's own chrome selects the
+// Grid.
+//
+// # The surface, and what a save writes
+//
+// The designer draws the document on a <Canvas> that is the editor's
+// WORKSPACE — it exists so everything on it has free geometry to be moved
+// in, and it is not part of what the user is building. The user's own
+// root lives inside it:
+//
+//	<Canvas Name="Surface">      the workspace, never saved
+//	  <Canvas Name="Root">       the USER'S root — this is the document
+//	    <Text/> <Button/>        what they placed
+//
+// A save writes from the user's root down. So does the CODE tab, the
+// OUTPUT tab and pushRemote — one artifact seen three ways. Only the
+// preview builds the wrapper, because only the preview needs the
+// geometry.
+//
+// Two consequences worth knowing before they surprise you. Pressing what
+// looks like empty background usually selects the user's ROOT, because a
+// <Canvas> root fills the surface — there is bare surface to click only
+// when the root does not cover it. And `c`/`v` retype the USER'S root,
+// never the surface; both are Canvases by default, so retyping the wrong
+// one would change how the workspace lays out and leave the saved
+// document untouched.
+//
+// THE POSITIONS HAVE NOWHERE TO LIVE, and that is stated rather than
+// solved. Things are positioned on a surface that is never saved, so a
+// move produces no diff in the user's document. Nothing here invents a
+// home for that state — no attribute, no comment, no property element.
 //
 // The pointer is a second way in, never the only one. ctrl+n and ctrl+p
 // remain the whole gesture from the keyboard, which is not politeness:
@@ -563,13 +593,20 @@ func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
 		fsys: fsys,
 		art:  panel.NewArt(),
-		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
-			// The Text carries a BODY, for the same reason addSelected
-			// seeds one: without it this element measures zero and the
-			// document the editor opens with contains something the user
-			// can neither see nor click.
-			{Elem: "Text", Body: "T1", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
-			{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
+		// THE SURFACE, then the user's document inside it. Two Canvases
+		// that mean different things: the outer one is the editor's
+		// workspace and is never saved, the inner one is the user's root
+		// and is the whole of what a save writes. retype changes the
+		// INNER one.
+		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Surface"}, Kids: []*node{
+			{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
+				// The Text carries a BODY, for the same reason addSelected
+				// seeds one: without it this element measures zero and the
+				// document the editor opens with contains something the
+				// user can neither see nor click.
+				{Elem: "Text", Body: "T1", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
+				{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
+			}},
 		}},
 		paletteSel:  prop.NewSource(0),
 		attrSel:     prop.NewSource(0),
@@ -591,7 +628,7 @@ func newEditor(fsys fs.FS) *editor {
 	// Set after the literal because it points INTO it: the selection is a
 	// node pointer, so it cannot be written in the same composite literal
 	// that creates the node it names.
-	ed.sel = ed.root.Kids[0]
+	ed.sel = ed.doc().Kids[0]
 
 	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
 
@@ -1112,6 +1149,21 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 	return markup.ElementSpec{Name: n.Elem}, parent, n
 }
 
+// doc is the USER'S ROOT — the element a save writes, and the only child
+// of the surface.
+//
+// ed.root is the design SURFACE: a <Canvas> that exists so everything
+// dropped on it has free geometry to be dragged around in. It is the
+// editor's workspace and is never serialized, which is what makes "where
+// do the positions live" a real question rather than a detail — under a
+// save that writes doc() and nothing above it, a position on the surface
+// has no home in the file at all. Nothing here invents one.
+func (ed *editor) doc() *node { return ed.root.Kids[0] }
+
+// isSurface reports whether n is the design surface rather than part of
+// the user's document. Nothing selectable, deletable or saveable.
+func (ed *editor) isSurface(n *node) bool { return n == ed.root }
+
 // parentOf returns the node holding n, or nil for the root and for a node
 // that is not in this document.
 func (ed *editor) parentOf(n *node) *node { return parentIn(ed.root, n) }
@@ -1134,7 +1186,22 @@ func (ed *editor) rebuild() {
 	// Tick FIRST, so every derived list recomputes even if the build
 	// below fails and returns early.
 	ed.rev.Set(ed.rev.Get() + 1)
-	src := "<Gooey>\n" + ed.root.markup("  ") + "</Gooey>\n"
+	// TWO MARKUP STRINGS, and which one is which is the whole wrapping
+	// model:
+	//
+	//   src  — the USER'S DOCUMENT, from doc() down. This is what a save
+	//          writes, what the CODE and OUTPUT tabs show, and what
+	//          pushRemote sends. The surface Canvas is the editor's
+	//          workspace and appears in none of them: a remote app
+	//          rendering the designer's own scaffolding would be showing
+	//          the user something they cannot save, cannot edit and did
+	//          not write, and it would make the wire contract depend on an
+	//          editor implementation detail.
+	//   full — the same document INSIDE the surface, which is the only
+	//          thing built for the preview, because the surface is what
+	//          gives everything on it free geometry.
+	src := "<Gooey>\n" + ed.doc().markup("  ") + "</Gooey>\n"
+	full := "<Gooey>\n" + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
@@ -1151,8 +1218,9 @@ func (ed *editor) rebuild() {
 	}
 
 	// Built against the DOCUMENT vocabulary, so a document can never
-	// contain the editor's own chrome.
-	w, err := markup.Build([]byte(src), ed.docCtx)
+	// contain the editor's own chrome. FULL, not src: the preview is the
+	// document on its surface.
+	w, err := markup.Build([]byte(full), ed.docCtx)
 	if err != nil {
 		// A load error is normal while editing and must never take the
 		// editor down with it. The previous preview stays on screen.
@@ -1179,10 +1247,17 @@ func (ed *editor) outline() string {
 		}
 		return "  "
 	}
-	fmt.Fprintf(&b, "%s<%s>\n", mark(ed.root), ed.root.Elem)
-	for _, k := range ed.root.Kids {
-		fmt.Fprintf(&b, "%s  <%s Name=%q>\n", mark(k), k.Elem, k.Attrs["Name"])
+	// From the USER'S ROOT down, and to full depth. The surface is not in
+	// the outline for the same reason it is not in the save: it is not
+	// part of what the user is building.
+	var walk func(n *node, indent string)
+	walk = func(n *node, indent string) {
+		fmt.Fprintf(&b, "%s%s<%s Name=%q>\n", mark(n), indent, n.Elem, n.Attrs["Name"])
+		for _, k := range n.Kids {
+			walk(k, indent+"  ")
+		}
 	}
+	walk(ed.doc(), "")
 	return b.String()
 }
 
@@ -1192,8 +1267,11 @@ func (ed *editor) addSelected() {
 		return
 	}
 	spec := ed.palette[i]
+	// INTO the selected container, not always at the root. See addTarget
+	// for the leaf case, which is the one that would fail silently.
+	into := ed.addTarget()
 	n := &node{Elem: spec.Name, Attrs: map[string]string{
-		"Name": fmt.Sprintf("%s%d", spec.Name, len(ed.root.Kids)+1),
+		"Name": fmt.Sprintf("%s%d", spec.Name, len(into.Kids)+1),
 	}}
 	// An element whose content is its body is seeded with one, and the
 	// seed is its Name so two of them are told apart on the canvas. This
@@ -1231,13 +1309,62 @@ func (ed *editor) addSelected() {
 			})
 		}
 	}
-	if ed.root.Elem == "Canvas" {
+	// Free geometry only where the PARENT gives it. Under a <Grid> or a
+	// <VStack> a Canvas.Left is silently discarded, which is the defect
+	// the catalog work exists to delete.
+	if into.Elem == "Canvas" {
 		n.Attrs["Canvas.Left"] = "2"
-		n.Attrs["Canvas.Top"] = fmt.Sprint(len(ed.root.Kids)*2 + 1)
+		n.Attrs["Canvas.Top"] = fmt.Sprint(len(into.Kids)*2 + 1)
 	}
-	ed.root.Kids = append(ed.root.Kids, n)
+	into.Kids = append(into.Kids, n)
 	ed.sel = n
 	ed.rebuild()
+}
+
+// addTarget is the node a palette click appends INTO, and the leaf case
+// is the dangerous one.
+//
+// The chain is: the selected node if it can hold children, else its
+// PARENT, else the user's root. Appending into a LEAF must never happen —
+// a leaf element discards children with no error at load and nothing at
+// runtime, so a Button added while a <Text> is selected would simply not
+// exist. For a direct-manipulation editor that is the worst possible
+// failure: the user clicks, nothing appears, and there is no diagnostic
+// anywhere to explain it.
+//
+// ChildSpec.Mode is the right question to ask here, and it is worth
+// noting the asymmetry with the BODY question, where Mode was the WRONG
+// derivation: Mode says what may nest inside an element, which is exactly
+// "can this hold children". It says nothing about whether content arrives
+// as a body, which is what BodySpec is for.
+func (ed *editor) addTarget() *node {
+	if n := ed.sel; n != nil && !ed.isSurface(n) {
+		if ed.holdsChildren(n.Elem) {
+			return n
+		}
+		if p := ed.parentOf(n); p != nil && !ed.isSurface(p) {
+			return p
+		}
+	}
+	return ed.doc()
+}
+
+// holdsChildren asks the catalog whether an element may contain children
+// at all. An element the palette does not describe is treated as a leaf —
+// the safe answer, because the cost of being wrong the other way is a
+// silent drop.
+func (ed *editor) holdsChildren(elem string) bool {
+	for _, e := range ed.palette {
+		if e.Name != elem {
+			continue
+		}
+		switch e.Children.Mode {
+		case markup.ModeLeaf, markup.ModeNone, markup.ModeAttachments:
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // seedRequired gives every required attribute a value, which is what
@@ -1254,7 +1381,7 @@ func (ed *editor) addSelected() {
 // type comes from AttrSpec.GoType, dispatched by a switch on the type's
 // spelling: a string compared against known names, not reflection.
 func (ed *editor) seedRequired(spec markup.ElementSpec, n *node) {
-	for _, a := range markup.AttrsFor(spec, ed.root.Elem) {
+	for _, a := range markup.AttrsFor(spec, ed.addTarget().Elem) {
 		if !a.Required {
 			continue
 		}
@@ -1327,8 +1454,13 @@ func (ed *editor) deleteSelected() {
 		return
 	}
 	p := ed.parentOf(n)
-	if p == nil {
-		return // the root is not deletable
+	if p == nil || ed.isSurface(p) {
+		// The user's ROOT is not deletable: a document has to have one,
+		// and removing it would leave the surface holding nothing while
+		// doc() still expected a child. Deleting the surface is not
+		// expressible at all — it is not in the outline and cannot be
+		// selected.
+		return
 	}
 	for i, k := range p.Kids {
 		if k != n {
@@ -1353,11 +1485,17 @@ func (ed *editor) deleteSelected() {
 // follow — Canvas.Left is meaningful under a <Canvas> and silently
 // dropped under a <VStack>.
 func (ed *editor) retype(elem string) {
-	if ed.root.Elem == elem {
+	// THE USER'S ROOT, not the surface. Both are <Canvas> by default and
+	// retyping the wrong one is invisible until you look at the saved
+	// file: changing the surface would alter how the workspace lays out
+	// and leave the document untouched, which is the exact opposite of
+	// what c and v are for.
+	root := ed.doc()
+	if root.Elem == elem {
 		return
 	}
-	ed.root.Elem = elem
-	for _, k := range ed.root.Kids {
+	root.Elem = elem
+	for _, k := range root.Kids {
 		// Attributes the new parent does not contribute are removed
 		// rather than left to be ignored. Leaving them is what the old
 		// loader did, and it is the defect this whole change deletes.
@@ -1420,7 +1558,13 @@ func (ed *editor) toggleMode() { ed.design.Set(!ed.design.Get()) }
 // whichever end the direction implies, which is what keeps ctrl+n usable
 // after a press on bare canvas.
 func (ed *editor) selectNext(d int) {
-	kids := ed.root.Kids
+	// Siblings of the current selection, so ctrl+n walks the level you are
+	// on rather than always the top. With nothing selected there is no
+	// level yet, so it starts at the user's root's children.
+	kids := ed.doc().Kids
+	if p := ed.parentOf(ed.sel); p != nil && !ed.isSurface(p) {
+		kids = p.Kids
+	}
 	if len(kids) == 0 {
 		return
 	}
