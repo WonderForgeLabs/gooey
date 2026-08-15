@@ -817,7 +817,7 @@ case ev := <-events:
 ```xml
 <Companion Name="temporal-worker"
            Path="python3"
-           Dir="../temporal-worker"
+           Dir="worker"
            Log="worker.log"
            Error="{{.WorkerError}}"
            Exited="{{.Quit}}">

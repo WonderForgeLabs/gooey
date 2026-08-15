@@ -4,7 +4,7 @@ feeds.opml
 node_modules/
 __pycache__/
 # the kanban worker's venv (main.go auto-selects it when present)
-apps/temporal-worker/.venv/
+apps/kanban/worker/.venv/
 # same for the dynamic-activities companion (main.go auto-selects it too)
 apps/dynamic-activities/.venv/
 clients/ts/*/dist/

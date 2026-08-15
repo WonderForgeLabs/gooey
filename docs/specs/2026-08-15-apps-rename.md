@@ -79,11 +79,35 @@ artifact was named after its directory, it moved with it.
 | `examples/dynamic-activities` | `apps/dynamic-activities` | module path `…/gooey/apps/dynamic-activities` |
 | `examples/gitui` | `apps/gitui` | module path `…/gooey/apps/gitui` |
 | `examples/kanbandemo` | `apps/kanban` | module path `…/gooey/apps/kanban` |
-| `examples/temporal-worker` | `apps/temporal-worker` | Python; not a Go module |
+| `examples/temporal-worker` | `apps/kanban/worker` | Python; not a Go module. Two steps: this rename landed it at `apps/temporal-worker`, and a follow-up moved it inside its owner — see "The worker was not a top-level application" below |
 | `examples/wysiwyg` | `apps/wysiwyg` | module path `…/gooey/apps/wysiwyg` |
 
 The `replace` directives in those four `go.mod` files are unchanged: the
 directory depth is the same, so `../../` still resolves.
+
+### The worker was not a top-level application
+
+`apps/temporal-worker` was a landing spot this rename got wrong, and a
+follow-up moved it to **`apps/kanban/worker`**. The test is the one this
+directory exists to apply: `apps/` names the things a reader would call
+applications, and the Python worker is not one — it has no UI, no
+`main.go`, and no independent lifetime. `apps/kanban` is the only thing
+that launches it, as a `gooey.CompanionCmd` whose lifetime is the
+board's, so its source belongs under the app that owns it. The move
+turned `filepath.Join(dir, "..", "temporal-worker")` into
+`filepath.Join(dir, "worker")` — the relationship stated in the tree
+rather than in a comment.
+
+Two consequences, both already true of the new layout:
+
+- `cmd/browser`'s `apps/` root scans **one level deep** for a `main.go`,
+  so an app's own subdirectories are never entries in their own right.
+  Before the move that scan had a non-Go peer to explain; now it does
+  not.
+- The `docs/demos.md` heading was `## kanban + temporal-worker`, and
+  headings there are anchors. It is `## kanban` now, with
+  `docs/learn/index.md` retargeted in the same change — a heading rename
+  breaks an inbound link silently.
 
 ### Commands in the root module
 

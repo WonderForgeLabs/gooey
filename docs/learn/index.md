@@ -97,7 +97,7 @@ each is a working app you can run and read. Full walkthroughs are in
 | [`cmd/prefs`](../demos.md#prefs) | Settings persist across runs as ordinary bound properties, with the disk-write count on screen | [Tutorial 3](03-binding-and-state.md) |
 | [`cmd/browser`](../demos.md#browser) | Launching another program on your terminal and taking it back — and browsing any worktree or branch of the repo from one running instance | [concept: the App lifecycle](concepts/app-lifecycle.md) |
 | [`mcp/cmd/server`](../demos.md#mcp-server) | An app that is also an MCP server: the tree, the state and the commands are the wire surface | [Tutorial 8](08-remote-control.md) |
-| [`apps/kanban`](../demos.md#kanban--temporal-worker) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
+| [`apps/kanban`](../demos.md#kanban) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
 | [`handlers/temporal/cmd/temporaldemo`](../demos.md#temporaldemo) | A button whose behavior is a durable activity run by a worker elsewhere | [Tutorial 9](09-temporal.md), [how-to: async](howto/howto-async.md) |
 | [`handlers/temporal/cmd/temporalops`](../demos.md#temporalops) | A real ops dashboard with every Temporal call declared in markup | [Tutorial 9](09-temporal.md), [how-to: lists](howto/howto-lists.md) |
 | [`handlers/temporal/cmd/wizardui`](../demos.md#wizardui) | A terminal with no application in it: the workflow serves the markup | [Tutorial 9](09-temporal.md), [how-to: handlers](howto/howto-handlers.md) |

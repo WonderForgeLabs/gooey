@@ -15,16 +15,19 @@
 //
 // # The worker companion
 //
-// apps/temporal-worker is a Python Temporal worker that pushes
-// generated markup into a running gooey app's swap_markup — a second
-// shell, hand-started and hand-killed, the same operational annoyance
+// worker/ is a Python Temporal worker that pushes generated markup into
+// a running gooey app's swap_markup — a second shell, hand-started and
+// hand-killed, the same operational annoyance
 // docs/specs/2026-08-10-companions.md describes for the Temporal wizard
-// demo. -with-worker collapses it into this one, the same way
+// demo. It lives inside this app's directory because this app is the
+// only thing that launches it: a companion's lifetime is its host's, so
+// its source belongs under its host rather than beside it in apps/.
+// -with-worker collapses it into this one, the same way
 // cmd/wizardui --with-dev-server does for its own sidecar: the worker
 // becomes a gooey.CompanionCmd, started before the first frame and
 // killed (process group, not just the direct child) when this app quits.
 // It is opt-in — the worker needs a Python venv with the deps in
-// apps/temporal-worker/requirements.txt and a reachable Temporal
+// apps/kanban/worker/requirements.txt and a reachable Temporal
 // server, neither of which the base demo should require:
 //
 //	cd apps/kanban && go run . -mcp 127.0.0.1:7778 -with-worker \
@@ -475,8 +478,8 @@ func main() {
 	// worker companion's GOOEY_MCP_URL alike. Pass -mcp 127.0.0.1:7778 for
 	// a fixed port when a client is registered against one.
 	addr := flag.String("mcp", "127.0.0.1:0", "loopback address for the MCP server; port 0 picks a free port; empty disables it")
-	withWorker := flag.Bool("with-worker", true, "launch the Python Temporal dynamic-UI worker (apps/temporal-worker) as a companion, sharing this app's process lifetime; pass -with-worker=false to disable")
-	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks apps/temporal-worker/requirements.txt")
+	withWorker := flag.Bool("with-worker", true, "launch the Python Temporal dynamic-UI worker (apps/kanban/worker) as a companion, sharing this app's process lifetime; pass -with-worker=false to disable")
+	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks apps/kanban/worker/requirements.txt")
 	workerTaskQueue := flag.String("worker-task-queue", "kanban-dynamic-ui", "Temporal task queue the worker companion polls")
 	// The gRPC control plane, alongside MCP rather than instead of it:
 	// the two surfaces share one control.Service and answer different
@@ -827,11 +830,11 @@ func main() {
 			"text and a live log of every raw MCP request/response this server has handled — including the call reading this."
 
 		if *withWorker {
-			// apps/temporal-worker relative to kanban's own source
-			// directory, not whatever cwd this binary happened to launch
-			// from — dir already resolved that split above (`.` under
-			// `go run`, the executable's directory otherwise).
-			workerDir := filepath.Join(dir, "..", "temporal-worker")
+			// worker/ relative to kanban's own source directory, not
+			// whatever cwd this binary happened to launch from — dir
+			// already resolved that split above (`.` under `go run`, the
+			// executable's directory otherwise).
+			workerDir := filepath.Join(dir, "worker")
 			logPath := filepath.Join(workerDir, "kanban-worker.log")
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 			if err != nil {
@@ -844,7 +847,7 @@ func main() {
 			defer logFile.Close()
 
 			// Prefer the worker's own venv when the flag is left at its
-			// default: apps/temporal-worker/.venv is where its deps
+			// default: apps/kanban/worker/.venv is where its deps
 			// (temporalio, claude-agent-sdk) are installed, and system
 			// python3 almost never has them — a worker that can't import
 			// them exits, and a dead companion tears the app down. An
@@ -870,7 +873,7 @@ func main() {
 			app.AddCompanion(gooey.CompanionCmd("temporal-worker", cmd, gooey.CompanionOutput(logFile)))
 
 			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + logPath + "\n" +
-				"trigger it from apps/temporal-worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
+				"trigger it from apps/kanban/worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
 				" python trigger.py GenerateUI \"some topic\""
 		}
 		help.Set(helpText)

@@ -251,10 +251,11 @@ UI loop, and hot-swappable markup as a wire payload
 ([spec](specs/2026-08-10-mcp-server.md)). [Tutorial 8](learn/08-remote-control.md)
 drives this surface step by step.
 
-## kanban + temporal-worker
+## kanban
 
 A real Kanban board — Todo, Doing, Done — that is also an MCP server,
-and the target `apps/temporal-worker` pushes generated UI into.
+and the target `apps/kanban/worker` — its own Python companion — pushes
+generated UI into.
 
 GIF: docs-and-demos workflow.
 
@@ -271,7 +272,7 @@ as a custom `LogPanel` element because its tail-anchored `Scroll` field
 has no markup attribute yet.
 
 The worker is the control-plane story run from the other side:
-`apps/temporal-worker` is a Python Temporal worker with one
+`apps/kanban/worker` is a Python Temporal worker with one
 **dynamic activity** that answers to any activity type name a caller
 invents, hands the name plus a topic to Claude, and pushes the generated
 markup into the running board over `swap_markup` (generation is
@@ -285,13 +286,13 @@ quits, output redirected to a log file because the app owns the tty
 - Run: `cd apps/kanban && go run . -mcp 127.0.0.1:7778` — its
   own module, for the same dependency-quarantine reason as `mcp/cmd/server`.
   With the worker companion (needs a Temporal server and a Python venv
-  with `apps/temporal-worker/requirements.txt`):
+  with `apps/kanban/worker/requirements.txt`):
 
   ```sh
   go run . -mcp 127.0.0.1:7778 -with-worker -worker-python /path/to/.venv/bin/python
   ```
 
-  then trigger it from `apps/temporal-worker`:
+  then trigger it from `apps/kanban/worker`:
   `TEMPORAL_TASK_QUEUE=kanban-dynamic-ui python trigger.py GenerateUI "some topic"`.
 - Keys: `tab` move focus, type in the input and `enter` adds a card,
   each column's buttons move/remove the selected card, `ctrl+t` (or the
