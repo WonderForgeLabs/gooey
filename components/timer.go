@@ -46,29 +46,13 @@ func (t *Timer) NonVisual() bool               { return true }
 // error: a timer with nothing to do is a legal thing to declare while
 // building a page.
 func (t *Timer) Start(post func(func())) func() {
-	if t.Interval <= 0 || t.Tick == nil || post == nil {
+	if t.Tick == nil {
 		return func() {}
 	}
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(t.Interval)
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				// Post, never call: this goroutine must not touch the
-				// graph. The closure runs later, on the UI loop.
-				post(t.fire)
-			}
-		}
-	}()
-	// Joining makes stop a barrier: a tick that already won the select
-	// posts before stop returns, so Close ⇒ no further posts, ever.
-	return func() { close(done); <-stopped }
+	// gooey.Every owns the close-and-join contract — see startable.go. It
+	// also declines a non-positive interval, which is why Interval <= 0 is
+	// no longer guarded here.
+	return gooey.Every(post, t.Interval, t.fire)
 }
 
 // fire runs on the UI goroutine, having been posted there.

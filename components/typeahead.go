@@ -125,28 +125,8 @@ func (t *TypeAhead) timeout() time.Duration {
 // The goroutine never touches the property graph — it posts expire, which
 // runs later on the UI goroutine and is ordinary code there.
 func (t *TypeAhead) Start(post func(func())) func() {
-	if post == nil {
-		return func() {}
-	}
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(t.tick())
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				post(t.expire)
-			}
-		}
-	}()
-	// Joining makes stop a barrier: a tick that already won the select
-	// posts before stop returns, so Close ⇒ no further posts, ever.
-	// Signalling alone lets one land afterwards.
-	return func() { close(done); <-stopped }
+	// gooey.Every owns the close-and-join contract — see startable.go.
+	return gooey.Every(post, t.tick(), t.expire)
 }
 
 // tick is the expiry poll. Quarter of the timeout keeps the worst-case

@@ -109,27 +109,8 @@ func (s *Spinner) Glyph() string {
 
 // Start runs the frame ticker until the returned stop func is called.
 func (s *Spinner) Start(post func(func())) func() {
-	if post == nil {
-		return func() {}
-	}
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(s.interval())
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				post(s.step)
-			}
-		}
-	}()
-	// Joining makes stop a barrier: a tick that already won the select
-	// posts before stop returns, so Close ⇒ no further posts, ever.
-	return func() { close(done); <-stopped }
+	// gooey.Every owns the close-and-join contract — see startable.go.
+	return gooey.Every(post, s.interval(), s.step)
 }
 
 // step runs on the UI goroutine, having been posted there. A disabled

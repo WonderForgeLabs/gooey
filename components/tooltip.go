@@ -1,7 +1,6 @@
 package components
 
 import (
-	"sync"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -61,10 +60,10 @@ type Tooltip struct {
 	layer *AdornmentLayer     // where the popup is showing, nil when hidden
 	pop   *tipPopup
 
-	post func(func())
-	done chan struct{}
-	wg   sync.WaitGroup
-	gen  int // hover generation: bumped on every edge, stales pending shows
+	// One show per hover, all cancelled together — gooey.Delays owns the
+	// close-and-join contract this used to spell out by hand.
+	delays gooey.Delays
+	gen    int // hover generation: bumped on every edge, stales pending shows
 }
 
 func (t *Tooltip) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
@@ -85,16 +84,7 @@ func (t *Tooltip) IsShown() bool { return t.pop != nil }
 // Start arms the delay timer: post is the only path back to the UI
 // loop, and the returned stop closes the gate and joins every delay
 // goroutine still in flight — once stop returns, no show ever arrives.
-func (t *Tooltip) Start(post func(func())) func() {
-	t.post = post
-	done := make(chan struct{})
-	t.done = done
-	return func() {
-		t.post = nil
-		close(done)
-		t.wg.Wait()
-	}
-}
+func (t *Tooltip) Start(post func(func())) func() { return t.delays.Start(post) }
 
 func (t *Tooltip) delay() time.Duration {
 	if t.Delay == 0 {
@@ -114,29 +104,18 @@ func (t *Tooltip) PointerOver(over bool) {
 		return
 	}
 	d := t.delay()
-	if d <= 0 || t.post == nil {
+	// No delay, or no dispatcher to delay onto, means show now. Delays
+	// declines both cases identically, and "declined" would read as "never
+	// shows" — which is why it is asked rather than told.
+	if d <= 0 || !t.delays.Armed() {
 		t.show()
 		return
 	}
-	gen, post, done := t.gen, t.post, t.done
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		tm := time.NewTimer(d)
-		defer tm.Stop()
-		select {
-		case <-done:
-		case <-tm.C:
-			// The join in stop makes this safe: a timer that already
-			// fired posts before stop returns, and one that has not is
-			// cancelled by done. Either way, stop ⇒ no shows, ever.
-			select {
-			case <-done:
-			default:
-				post(func() { t.showIf(gen) })
-			}
-		}
-	}()
+	// gen is captured here, not read in the closure: showIf compares it
+	// against the current generation, so a hover that moved on stales its
+	// own pending show. Reading t.gen inside would always match.
+	gen := t.gen
+	t.delays.After(d, func() { t.showIf(gen) })
 }
 
 // Interrupted is the framework's activity notification: any key or

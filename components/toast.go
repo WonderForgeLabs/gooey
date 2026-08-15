@@ -1,7 +1,6 @@
 package components
 
 import (
-	"sync"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -43,9 +42,9 @@ type ToastHost struct {
 
 	toasts    []*Toast
 	structure func()
-	post      func(func())
-	done      chan struct{}
-	wg        sync.WaitGroup
+	// One dismissal per toast, all cancelled together — gooey.Delays owns
+	// the close-and-join contract this used to spell out by hand.
+	delays gooey.Delays
 }
 
 func (h *ToastHost) ChildComponents() []gooey.Component {
@@ -64,16 +63,7 @@ func (h *ToastHost) SetStructureHook(fn func()) { h.structure = fn }
 // Start arms auto-dismissal: post is the only path back to the UI loop,
 // and the returned stop closes the gate and joins every timer goroutine
 // still in flight — once stop returns, no further dismissals arrive.
-func (h *ToastHost) Start(post func(func())) func() {
-	h.post = post
-	done := make(chan struct{})
-	h.done = done
-	return func() {
-		h.post = nil
-		close(done)
-		h.wg.Wait()
-	}
-}
+func (h *ToastHost) Start(post func(func())) func() { return h.delays.Start(post) }
 
 // Show puts msg up for the host's default duration and returns the
 // toast, which Dismiss takes down early.
@@ -93,28 +83,10 @@ func (h *ToastHost) ShowFor(msg string, d time.Duration) *Toast {
 	if h.structure != nil {
 		h.structure()
 	}
-	if h.post != nil && d > 0 {
-		post, done := h.post, h.done
-		h.wg.Add(1)
-		go func() {
-			defer h.wg.Done()
-			timer := time.NewTimer(d)
-			defer timer.Stop()
-			select {
-			case <-done:
-			case <-timer.C:
-				// The join in stop makes this safe: a timer that already
-				// fired posts before stop returns, and one that has not
-				// fired is cancelled by done. Either way, stop ⇒ no
-				// further posts, ever.
-				select {
-				case <-done:
-				default:
-					post(func() { h.Dismiss(t) })
-				}
-			}
-		}()
-	}
+	// Unconditional: Delays.After declines a non-positive d and an
+	// unstarted group on its own, which is exactly the sticky toast and
+	// the no-dispatcher case this used to guard by hand.
+	h.delays.After(d, func() { h.Dismiss(t) })
 	return t
 }
 
