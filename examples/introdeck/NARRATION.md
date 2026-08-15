@@ -792,26 +792,51 @@ on it.
      the window had changed, because nothing had a size to tell it. -->
 <Grid Name="Stage" Grid.Row="2" Rows="Auto,*,Auto">
 
-  <Text Grid.Row="0" Style="body">sixteen lines. no user interface in any of them.</Text>
+  <Text Grid.Row="0" Style="body">sixteen lines. no user interface in any of them. the numbers are on the left — count them.</Text>
 
-  <!-- The app, hosted. Not a screenshot and not a cue card: a child
-       process on a pty, its output modelled by render.Screen, its cells
-       blitted into this slide. It fills the row and follows it: resize
-       the window and the guest gets a SIGWINCH.
+  <!-- Two islands, because the beat makes two claims and used to show
+       only one of them. It says "sixteen lines" and "here's the whole
+       program" while the audience looked at a black rectangle and took
+       both on faith.
+
+       LEFT is the source, in a real vim on the real file — read-only
+       (-R), no swapfile (-n), no vimrc (-u NONE). `set nu` is the
+       load-bearing flag: line numbers are what turn "sixteen lines"
+       from a claim into something anyone in the room can check, and
+       the file is exactly sixteen lines long.
+
+       -R matters beyond tidiness. This is a TRACKED file, and a stray
+       keystroke while the pane has capture is a real edit to the repo.
+       Beat 3.5's vim is deliberately writable because editing is the
+       point there; here it is not.
+
+       RIGHT is that same program running. Not a screenshot and not a
+       cue card: a child process on a pty, its output modelled by
+       render.Screen, its cells blitted into this slide. It fills its
+       column and follows it — resize the window and the guest gets a
+       SIGWINCH.
 
        Cmd is a built binary because examples/intro is in the ROOT
-       module and this deck is not — `go run ../intro` cannot cross that
-       boundary. Build it first:
+       module and this deck is not — `go run ../intro` cannot cross
+       that boundary. Build it first:
 
            (cd ../intro && go build -o intro .)
 
        If it is missing the island says so in red, which is the right
        failure for a slide: visible, on screen, before the take. -->
-  <Border Grid.Row="1" Title="a terminal, inside the terminal" Style="island">
-    <Terminal Cmd="../intro/intro"/>
-  </Border>
+  <Grid Grid.Row="1" Cols="*,*">
 
-  <Text Grid.Row="2" Style="dim">click it to capture input · ctrl+alt+any key to release · dim means the deck still has the keys</Text>
+    <Border Grid.Col="0" Title="examples/intro/main.go — all of it" Style="island">
+      <Terminal Name="Source" Cmd="TERM=xterm-256color vim -n -u NONE -N -R --cmd 'set shortmess+=F' -c 'set nu' ../intro/main.go"/>
+    </Border>
+
+    <Border Grid.Col="1" Title="…and that program, running" Style="island">
+      <Terminal Name="App" Cmd="../intro/intro"/>
+    </Border>
+
+  </Grid>
+
+  <Text Grid.Row="2" Style="dim">left is the file, read-only · right is it running · click either to capture input · ctrl+alt+any key to release</Text>
 
 </Grid>
 </Gooey>
