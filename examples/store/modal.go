@@ -32,18 +32,20 @@ package main
 // modal you can tab out of, so there are two of these: one around the
 // panes, one around the status bar.
 //
-// # The sampling constraint, and how it is satisfied
+// # Why there is no plumbing here
 //
-// `Frozen` is SAMPLED, not observed (component.go): every consumer asks
-// once per STRUCTURAL re-sync, and a plain frame does neither. A host
-// that flips its answer without one keeps the old routing — the subtree
-// stays tabbable and a captor already inside it stays there. The doc
-// says: return a constant, or make the flip a structural change.
+// Frozen is OBSERVED. Composer.armFrozen wraps every implementer in a
+// computed whose evaluation calls Frozen(), so whatever that method
+// reads becomes a dependency by the ordinary call-site rule — no
+// declaration, no second method, no handle to keep in step. Store.Blocked
+// reads s.pane, so setting s.pane schedules a frame, the sweep sees the
+// answer flip, and the re-sync runs in that same frame before anything
+// paints. Nothing in this file has to ask for it.
 //
-// So Store.setPane calls Composer.InvalidateStructure after moving the
-// pane property, and that is the only reason this works. Setting the
-// property alone would dim the backdrop and leave it fully interactive,
-// which is the worst of both — it would LOOK blocked.
+// The limit is the same one every derived value here has: the observer
+// subscribes to what Frozen() READS. A bare bool field written by a
+// handler records no dependency and gets the old sampled behaviour. That
+// is why blocked is a func rather than a bool this struct stores.
 
 import (
 	"github.com/WonderForgeLabs/gooey"

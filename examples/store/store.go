@@ -117,27 +117,33 @@ func (s *Store) committed(items []Integration) int {
 func (s *Store) OpenStore()  { s.setPane(paneStore) }
 func (s *Store) CloseStore() { s.setPane(paneOps); s.clearReceipt() }
 
-// setPane is the ONLY way the pane moves, and the InvalidateStructure is
-// why. Frozen is sampled at a structural re-sync and nowhere else
-// (component.go), so a Modal whose predicate flipped without one would
-// keep the old routing: the backdrop would look blocked and still be
-// tabbable, clickable, and able to hold the focus. Setting the property
-// on its own is the bug; this is the fix, and it is one line in one
-// place because every caller goes through here.
+// setPane guards the Set rather than forcing anything. prop.Set does not
+// compare values, so setting the pane to what it already holds
+// invalidates every dependent and costs a repaint — and one of those
+// dependents is now the observer behind <Modal>.
 func (s *Store) setPane(p string) {
 	if s.pane.Get() == p {
-		return // prop.Set does not compare, and a re-sync is not free
+		return
 	}
 	s.pane.Set(p)
-	if s.resync != nil {
-		s.resync()
-	}
 }
 
-// Blocked reports whether the backdrop is inert. It is the Modal's
-// predicate, and it is a method rather than a captured bool so that the
-// re-sync reads the CURRENT pane rather than the one that was true when
-// the tree was built.
+// Blocked reports whether the backdrop is inert — the Modal's predicate,
+// and the reason it is a method that READS A PROPERTY rather than a
+// captured bool.
+//
+// That is the whole contract now. Composer.armFrozen wraps every Frozen
+// implementer in an observer whose evaluation calls this method, so
+// s.pane becomes a dependency by the ordinary call-site rule; the Set
+// above schedules a frame, the sweep sees the answer flip, and the
+// re-sync — focus order, scoped bindings, mnemonics, hover watchers,
+// Startables — runs in the SAME frame, before anything paints.
+//
+// This used to call Composer.InvalidateStructure by hand through an
+// injected func, because Frozen was sampled at a structural re-sync and
+// nothing raised one. A bare bool field written by a handler would still
+// need that: the observer subscribes to what Frozen() READS, and plain
+// Go state records no dependency.
 func (s *Store) Blocked() bool { return s.pane.Get() == panePurchase }
 
 // Buy opens the sheet for the selected row. An already-active

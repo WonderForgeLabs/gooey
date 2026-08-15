@@ -37,7 +37,8 @@ import (
 )
 
 func main() {
-	addr := flag.String("mcp", "127.0.0.1:7788", "loopback address for the control plane; empty disables it")
+	addr := flag.String("mcp", "127.0.0.1:7788", "loopback address for the OWNER's control plane; empty disables it")
+	vendor := flag.String("vendor", "127.0.0.1:7789", "loopback address vendors are given; empty disables it")
 	flag.Parse()
 
 	dir := os.DirFS(".")
@@ -52,20 +53,60 @@ func main() {
 	store.app = gooey.NewApp(markup.Page(dir, "store.gooey", ctx))
 	store.svc = control.NewService(store.app, ctx)
 
-	// Frozen is sampled at a structural re-sync (component.go), so the
-	// modal's backdrop only actually goes inert when one is forced. This
-	// is that force, and store.go routes every pane change through it.
-	store.resync = func() {
-		if c := store.app.Composer(); c != nil {
-			c.InvalidateStructure()
-		}
-	}
-
+	// TWO endpoints, and the difference between them is the demo.
+	//
+	// The owner's port is unscoped: Northwind can reach its own app,
+	// which is what an app owner has always been able to do.
 	if *addr != "" {
 		srv, err := mcp.Serve(store.app, mcp.Options{
 			Addr:    *addr,
 			Context: ctx,
 			Name:    "northwind-ops",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		defer srv.Close()
+	}
+
+	// The vendor's port carries a GRANT, and the grant is the whole of
+	// what a vendor can do: the subtree under Name="Toolbar", and three
+	// values. Not the services list, not the item list, not Subscribe,
+	// not Quit, not the page.
+	//
+	// Three values, and the third one is the interesting one. Tint is
+	// what Chromatica was actually sold — the handle its picker moves.
+	// Wallet and OpenStore are Northwind's OWN toolbar content, and the
+	// vendor needs them because patch_markup REPLACES a named element
+	// rather than appending to it: to add one control beside Northwind's
+	// button, Chromatica has to redraw Northwind's button, which means
+	// binding Northwind's values.
+	//
+	// So the narrowest grant that lets this product work is strictly
+	// wider than the product's own purpose, and that is a real property
+	// of subtree replacement rather than an oversight here. Granting
+	// only Tint is not a hypothetical: it was tried, and the host
+	// refused the patch with "the markup binds one or more names outside
+	// this session's granted values".
+	//
+	// This used to be a comment in store.gooey claiming those names were
+	// "the app owner's whole grant". It was not: control.Service resolved
+	// every name against the entire binding context, so the vendor could
+	// patch any element, write any property, invoke any command and swap
+	// the whole page. Client politeness is not a boundary. Now the grant
+	// is a struct field on the server the host started, and there is no
+	// request field to widen and no token to forge — a guest cannot name
+	// a capability it was not handed.
+	//
+	// The address IS the capability, which is why this is a second Serve
+	// on a second port rather than a flag on the first. A second vendor
+	// with a disjoint island is a third one.
+	if *vendor != "" {
+		srv, err := mcp.Serve(store.app, mcp.Options{
+			Addr:    *vendor,
+			Context: ctx,
+			Name:    "northwind-ops (vendor island)",
+			Grant:   control.Island("Toolbar", "Tint", "Wallet", "OpenStore"),
 		})
 		if err != nil {
 			gooey.Exit(err)

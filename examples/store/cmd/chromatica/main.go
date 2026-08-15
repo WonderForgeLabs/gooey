@@ -1,13 +1,19 @@
 // chromatica: a vendor. A separate process, on the other side of the
 // wire, being paid to change an app it did not write.
 //
-//	go run ./cmd/chromatica -addr 127.0.0.1:7788
+//	go run ./cmd/chromatica -addr 127.0.0.1:7789
 //
 // This is the whole product. It reads the host's tree to find the seam
 // it was sold access to, then replaces one named element with markup of
 // its own. It has no library from northwind, no plugin API, no SDK — it
 // speaks MCP over HTTP, which is the same door an agent uses and the
 // same door a person's keyboard reaches through.
+//
+// The port matters. 7789 is the VENDOR island, not Northwind's own
+// control plane — one endpoint, one grant, and this one reaches the
+// subtree under Name="Toolbar" plus the value Tint. Everything below is
+// written against that brief, and none of it is on the honour system any
+// more: point this at a name outside the island and the host refuses.
 //
 // What it deliberately does NOT do, because it cannot:
 //
@@ -41,7 +47,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:7788", "the host app's control plane")
+	addr := flag.String("addr", "127.0.0.1:7789", "the vendor island this app was sold")
 	target := flag.String("target", "Toolbar", "the named element to replace")
 	src := flag.String("markup", "cmd/chromatica/toolbar.gooey", "this vendor's markup")
 	flag.Parse()
