@@ -50,6 +50,11 @@ type Store struct {
 	services *prop.Property[[]Service]
 	svcSel   *prop.Property[int]
 
+	// vendors is what is actually running, as opposed to what has been
+	// paid for. Set by main once the vendor island's address is known —
+	// nil until then, which is why nothing may call it during NewStore.
+	vendors *vendors
+
 	// --- the marketplace ---
 	items   *prop.Property[[]Integration]
 	itemSel *prop.Property[int]
@@ -195,7 +200,12 @@ func (s *Store) Subscribe() {
 	s.items.Set(items)
 	s.walletC.Set(s.walletC.Get() - it.Cents)
 	s.monthlyC.Set(s.committed(items))
-	s.confirm("subscribed — " + it.Vendor + " may now modify this app")
+	// The receipt comes from the launch, not from a fixed string, because
+	// the two outcomes are different news. This used to say "may now
+	// modify this app" whether or not anything was running, which is true
+	// and useless: the grant existed and the product did not, and the only
+	// way to find out was to notice the toolbar had not changed.
+	s.confirm(s.vendors.launch(*it))
 	s.setPane(paneStore)
 	s.buying.Set(-1)
 }
@@ -212,7 +222,28 @@ func (s *Store) Cancel() {
 	items[i].Calls = 0
 	s.items.Set(items)
 	s.monthlyC.Set(s.committed(items))
-	s.confirm("cancelled " + items[i].Vendor)
+	// Two things to undo, and the second one is the interesting half.
+	//
+	// Stopping the process is the obvious one, and for a long-running
+	// vendor it is the whole job. It is not enough here: chromatica is a
+	// ONE-SHOT. It patches the toolbar and exits, so by the time you
+	// cancel there is usually nothing left to kill — and the picker it
+	// installed is still on screen, because a patch is a change to the
+	// running tree and not a lease on it.
+	//
+	// So a vendor's work outlives the vendor, and taking the money back
+	// does not take the UI back. Only the host can do that, by patching
+	// its own markup over the top. That asymmetry is worth seeing rather
+	// than papering over: it is the same asymmetry as the missing
+	// approval hook, one step later in the story.
+	s.vendors.stop(items[i].ID)
+	msg := "cancelled " + items[i].Vendor
+	if items[i].Cmd != "" {
+		if err := s.restoreToolbar(); err != nil {
+			msg += " — but its toolbar is still installed: " + err.Error()
+		}
+	}
+	s.confirm(msg)
 }
 
 // Tick jitters the host app's own numbers and advances usage on the

@@ -1,0 +1,20 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Northwind's own toolbar, as a patch source.
+
+       This exists so Cancel can put it back. A vendor's patch outlives
+       the vendor — chromatica is a one-shot that exits the moment it has
+       written its markup, so killing the process does nothing to the UI
+       it left behind. Without this file, cancelling a subscription
+       removes the billing and leaves the product on screen forever,
+       which is a worse story than the one the demo is telling.
+
+       Keep this identical to the Toolbar fragment in store.gooey. It is
+       a second copy of four lines and the duplication is deliberate: the
+       initial tree has to come from the page, and a patch source has to
+       be a whole document. examples/introdeck/live.gooey makes the same
+       trade for the same reason. -->
+  <HStack Name="Toolbar" Gap="2">
+    <Text Style="dim">{{.Wallet}}</Text>
+    <Button Content="integrations" Click="{{.OpenStore}}"/>
+  </HStack>
+</Gooey>

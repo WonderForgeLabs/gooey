@@ -51,6 +51,18 @@ type Integration struct {
 	Cents  int    // per month
 	Active bool
 	Calls  int // usage this billing period
+
+	// Cmd is the vendor's own program, launched when you subscribe and
+	// killed when you cancel. Empty means a catalogue entry with no
+	// product behind it, which is most of them here.
+	//
+	// It is a package path in THIS module because the demo ships the
+	// vendor next to the host. That is a convenience of the demo and not
+	// a property of the model: the process it starts links nothing from
+	// northwind, and reaches the app only through the vendor island. A
+	// real one would arrive as a binary from somewhere else and the host
+	// would not be able to tell.
+	Cmd string
 }
 
 // The logo path matters more than it looks. <Image Src="…"> resolves a
@@ -67,6 +79,7 @@ func catalog() []Integration {
 			Blurb:  "Recolour any panel. Adds a picker to the toolbar you already use.",
 			Logo:   "assets/chromatica.svg",
 			Cents:  199,
+			Cmd:    "./cmd/chromatica",
 		},
 		{
 			ID:     "vestibule",

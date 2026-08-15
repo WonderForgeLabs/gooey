@@ -44,6 +44,13 @@ func main() {
 	dir := os.DirFS(".")
 	store := NewStore(dir)
 
+	// What Subscribe launches, and what teardown kills. It is handed the
+	// VENDOR address and never the owner's — the address is the
+	// capability, so passing the wrong one here would silently hand a
+	// third party the unscoped port.
+	store.vendors = newVendors(*vendor)
+	defer store.vendors.stopAll()
+
 	ctx := store.Context(store.logo)
 
 	// <Modal> is registered from here rather than from Context because
