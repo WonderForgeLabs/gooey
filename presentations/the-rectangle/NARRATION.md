@@ -345,6 +345,10 @@ presenting from. We'll get to that.
 **LIVE:** `examples/soundboard`. Needs a sound server; without one it still runs
 and still draws, says `silent`, and the meters stay at zero.
 
+**OVERLAPS BEAT 22.** Same program, same cells-vs-pixels point, twenty minutes
+apart. If you are giving this live, cut one — beat 22 is the stronger, so this
+is probably the one that becomes a slide about the era instead of a live run.
+
 ```slide
 {
   "Deck.Kicker": " 06 · IT COULD MAKE A NOISE ",
@@ -1014,6 +1018,9 @@ the race detector, so the detector catches it instead.
 
 If the room has speakers, run `examples/soundboard` here instead of showing the
 slide. The slide is the fallback, not the plan.
+
+**OVERLAPS BEAT 6**, which is the same program making the same point. Keep this
+one and demote beat 6 if you are cutting.
 
 **DURATION:** 0:54 · **HOLD:** 0:20 · **VOICE:** claude
 

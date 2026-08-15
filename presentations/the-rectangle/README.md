@@ -39,6 +39,26 @@ deck any other way would make those beats a lie:
 Act I's live beats (3, 5, 6, 7, 8, 16) are the same rule from the other side:
 they host a real program, or they are honestly a slide about one.
 
+## One overlap the merge introduced
+
+Beats **6** ("And then it could hear") and **22** ("And then it could sing") are
+the same demo — `examples/soundboard` — making the same point twice, that the
+step grid is cells because it is discrete state and the scope is pixels because
+it is a continuous signal. Beat 6 is introdeck's; beat 22 is this deck's. Both
+hold twenty seconds for the program to run, so it is twenty minutes apart and
+forty seconds of the same thing.
+
+Left in deliberately: cutting either one renumbers the deck, and Act II was to
+be kept as it was. If you are giving this live, pick one. Beat 22 is the
+stronger of the two — it says "the data decided, not the framework" out loud —
+so the cut is probably beat 6, demoted to a slide about the era rather than a
+live run.
+
+Neither beat plays anything by itself. `examples/soundboard` is a separate
+program and nothing here launches it; in the first rehearsal both holds were
+twenty seconds of silence. It needs a second window, a pty, or `App.Suspend` the
+way `cmd/browser` does it — that staging is not decided.
+
 ## Running it
 
 Start the editor and leave it alone — **do not restart it mid-talk**, or beat 8
