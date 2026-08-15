@@ -34,6 +34,14 @@ before the take rather than during it:
 (cd ../synth       && go build -o synth .)
 ```
 
+Beat 3.2 and beat 3.5 both edit a **tracked** file — `examples/intro/main.go`
+and `counter.gooey` — because a copy would not be the program the beat claims to
+be showing. Reset between rehearsals:
+
+```sh
+git checkout examples/intro/main.go examples/introdeck/counter.gooey
+```
+
 `introtarget` is the Part 4 subject: `examples/intro`'s empty tree plus
 `control.NewService` and `mcp.Serve`, and nothing else. It listens on
 `127.0.0.1:7900`, and every property and every element that appears in it
@@ -799,44 +807,56 @@ on it.
        program" while the audience looked at a black rectangle and took
        both on faith.
 
-       LEFT is the source, in a real vim on the real file — read-only
-       (-R), no swapfile (-n), no vimrc (-u NONE). `set nu` is the
-       load-bearing flag: line numbers are what turn "sixteen lines"
-       from a claim into something anyone in the room can check, and
-       the file is exactly sixteen lines long.
+       LEFT is the source, in a real vim on the real file — no swapfile
+       (-n), no vimrc (-u NONE). `set nu` is the load-bearing flag: line
+       numbers are what turn "sixteen lines" from a claim into something
+       anyone in the room can check, and the file is exactly sixteen
+       lines long.
 
-       -R matters beyond tidiness. This is a TRACKED file, and a stray
-       keystroke while the pane has capture is a real edit to the repo.
-       Beat 3.5's vim is deliberately writable because editing is the
-       point there; here it is not.
+       It is WRITABLE, and that is the beat. Edit it, save, and the
+       right-hand pane rebuilds and restarts in front of you.
 
-       RIGHT is that same program running. Not a screenshot and not a
-       cue card: a child process on a pty, its output modelled by
-       render.Screen, its cells blitted into this slide. It fills its
-       column and follows it — resize the window and the guest gets a
-       SIGWINCH.
+       RIGHT is watchgo.sh: `go build`, shown, then the binary it just
+       produced. Not a screenshot and not a cue card — a child process
+       on a pty, its output modelled by render.Screen, its cells blitted
+       into this slide. It fills its column and follows it; resize the
+       window and the guest gets a SIGWINCH.
 
-       Cmd is a built binary because examples/intro is in the ROOT
-       module and this deck is not — `go run ../intro` cannot cross
-       that boundary. Build it first:
+       Showing the compile is the whole reason this pane is not just
+       `../intro/intro`. Beat 3.5 edits MARKUP and nothing restarts —
+       the running tree picks the file up and the count survives. Here
+       the source is Go, so there is a compiler in the way and the
+       process has to die. Watching the build run is what makes that
+       difference something the room SEES rather than something I
+       assert two slides later. A broken edit is worth doing on purpose
+       once: the compiler's error lands in the pane, and the app that
+       was running is gone until it builds.
 
-           (cd ../intro && go build -o intro .)
+       The one-second pause after `ok` is deliberate — without it the
+       compile is a single frame nobody can read.
 
-       If it is missing the island says so in red, which is the right
-       failure for a slide: visible, on screen, before the take. -->
+       This edits a TRACKED file. That is the same bargain beat 3.5
+       makes with counter.gooey, and the same reset:
+
+           git checkout examples/intro/main.go
+
+       Nothing needs prebuilding here — watchgo.sh builds on entry — but
+       `examples/intro` is in the ROOT module and this deck is not, so
+       the build has to run in that directory rather than through
+       `go run ../intro`, which cannot cross the boundary. -->
   <Grid Grid.Row="1" Cols="*,*">
 
     <Border Grid.Col="0" Title="examples/intro/main.go — all of it" Style="island">
-      <Terminal Name="Source" Cmd="TERM=xterm-256color vim -n -u NONE -N -R --cmd 'set shortmess+=F' -c 'set nu' ../intro/main.go"/>
+      <Terminal Name="Source" Cmd="TERM=xterm-256color vim -n -u NONE -N --cmd 'set shortmess+=F' -c 'set nu' ../intro/main.go"/>
     </Border>
 
-    <Border Grid.Col="1" Title="…and that program, running" Style="island">
-      <Terminal Name="App" Cmd="../intro/intro"/>
+    <Border Grid.Col="1" Title="go build · then run · on every save" Style="island">
+      <Terminal Name="App" Cmd="./watchgo.sh ../intro main.go intro"/>
     </Border>
 
   </Grid>
 
-  <Text Grid.Row="2" Style="dim">left is the file, read-only · right is it running · click either to capture input · ctrl+alt+any key to release</Text>
+  <Text Grid.Row="2" Style="dim">click the editor to capture input · edit and :w · the right pane recompiles and restarts · ctrl+alt+any key gives it back</Text>
 
 </Grid>
 </Gooey>
