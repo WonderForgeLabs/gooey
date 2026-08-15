@@ -16,7 +16,7 @@
       <Border Grid.Col="1" Title="right pane" Style="panel">
         <VStack Gap="1">
           <Button Content="right A" Click="{{.RightA}}"/>
-          <Checkbox Checked="{{.Loud}}" Label="loud mode"/>
+          <Checkbox Checked="{{.Loud}}" Label="loud mode" Style="accent"/>
           <Text Style="dim">s is bound here too</Text>
         </VStack>
         <KeyBinding Gesture="s" Command="{{.RightScoped}}"/>
