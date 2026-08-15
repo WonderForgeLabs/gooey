@@ -60,10 +60,13 @@ fmt.Println(s.Text())      // s.Contains("saved") for a single row
 Cut the log at the last `\x1b[?1049l` first if the app exited cleanly: leaving
 the alternate screen blanks it, and `script` appends its own trailer.
 
-> `.claude/agents/gooey-dev.md` used to say "extract the final frame by finding
-> the last `\x1b[H` in the log", and it was wrong for the reason above — the
-> last `\x1b[H` is the *first* flush of a frame, not the last. It now points
-> here. If you meet that advice anywhere else, it is stale.
+> This contradicts `.claude/agents/gooey-dev.md`, which still says "extract the
+> final frame by finding the last `\x1b[H` in the log". That line is stale.
+> `howto-testing.md` and this skill are right; the agent file has not been
+> updated — deliberately, because it is **host configuration** rather than
+> plugin content and does not belong in this plugin's diff. Tracked in #267,
+> which wants its own PR. If that issue is closed and the line still reads that
+> way, this note is the stale one.
 
 The framework's own pty tests work this way — `testTTY.waitFor` polls the
 modelled screen, and `waitForBytes` is the separate helper for assertions that
