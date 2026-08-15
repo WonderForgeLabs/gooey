@@ -200,6 +200,19 @@ for every squash-merged PR whether it landed or was stranded — check
 `merge_commit_sha` ancestry instead, and validate your method against a
 known-good case before trusting it.
 
+**`gh stack sync` is the obvious tool for that and it is not sufficient.** Its
+documented step 4 cascade-rebases stack branches onto their updated parents and
+step 5 force-pushes them atomically; nothing in its contract is
+*boundary-aware*, and a boundary-unaware replay after a squash is exactly what
+manufactures the spurious conflicts above. (Reasoned from
+`gh stack sync --help`, not observed — certifying it would mean force-pushing a
+stranded stack.) This is the **opposite** call from the `link`/`merge` case
+further up, where `gh stack rebase` *is* the built-in answer you should reach
+for, and the two situations look alike without being alike: the hard part of a
+post-squash recovery is not the rebase, it is finding the commit at which
+main's squash and the stack's originals are the same tree — a judgement no
+cascade makes for you.
+
 One landmine: **a workflow `uses:` pointing at a feature branch fails at LOAD
 time.** Deleting that branch kills every job in the file, including ones that
 never needed it. Split workflow commits out rather than merging that in.
