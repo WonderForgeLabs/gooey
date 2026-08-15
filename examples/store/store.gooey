@@ -2,11 +2,17 @@
   <!-- Northwind Ops.
 
        Nothing in this file knows that a marketplace exists beyond the
-       toolbar button, and nothing in it knows any vendor's name. The
-       named elements below are the only addresses a vendor can reach:
-       Shell, Toolbar, OpsPane, StorePane, Sheet. That list is the app
-       owner's whole grant, and it is visible here rather than in a
-       policy file somewhere. -->
+       toolbar button, and nothing in it knows any vendor's name.
+
+       The named elements below — Shell, Toolbar, OpsPane, StorePane,
+       Sheet — are the addresses that EXIST. They are not what a vendor
+       can reach: this comment used to say they were, and that was a
+       comment rather than a boundary, because control.Service resolved
+       every name against the whole binding context. The grant is now a
+       struct field on the server the host starts (main.go), a vendor
+       gets its own port carrying it, and what Chromatica can address is
+       Toolbar plus three values. Read main.go for the grant; this file
+       only says what there is to grant. -->
   <Border Name="Shell" Title="northwind ops — production" Style="panel" Background="{{.Tint}}">
     <Grid Rows="Auto,*,Auto" Margin="1,0">
 

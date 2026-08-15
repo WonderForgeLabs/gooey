@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
@@ -26,10 +27,13 @@ func TestMarkupLoads(t *testing.T) {
 // The sheet floats over the store list now instead of collapsing it,
 // which means every focus stop behind it is still in the tree: the
 // ItemsView, the store pane's three buttons, and the integrations
-// button down in the status bar. <Modal> freezes them — but Frozen is
-// SAMPLED, not observed, so the freeze only takes effect at a
-// structural re-sync. Store.setPane forces one. Without that call this
-// test walks straight out of the dialog and into the app behind it.
+// button down in the status bar. <Modal> freezes them, and Store.Blocked
+// reads s.pane — which is what makes the freeze OBSERVED rather than
+// sampled, so it lands in the frame the pane changes.
+//
+// The pin is the tab walk, not the mechanism: it fails identically if
+// the freeze never arrives, if it arrives a frame late, or if a focus
+// stop is added outside both Modal wrappers.
 func TestFocusIsTrappedInsideTheDialog(t *testing.T) {
 	s := NewStore(os.DirFS("."))
 	ctx := s.Context(s.logo)
@@ -39,12 +43,11 @@ func TestFocusIsTrappedInsideTheDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The Composer owns the FocusManager and re-syncs it itself when a
+	// Frozen answer flips, so this is the real path rather than a
+	// stand-in wired up by the test.
 	c := gooey.NewComposer(root, 120, 40)
-	fm := gooey.NewFocusManager(root)
-	s.resync = func() {
-		c.InvalidateStructure()
-		fm.Resync()
-	}
+	fm := c.Focus()
 	c.Frame()
 
 	s.itemSel.Set(0)
@@ -89,3 +92,56 @@ func within(w, c gooey.Component) bool {
 	}
 	return false
 }
+
+// The vendor port's grant is the demo's central claim, so it gets a
+// test rather than a comment — which is exactly the change #250 made to
+// the framework, applied to the app that was making the claim.
+func TestTheVendorIslandIsNarrowerThanTheApp(t *testing.T) {
+	s := NewStore(os.DirFS("."))
+	ctx := s.Context(s.logo)
+	RegisterModal(ctx, s.Blocked)
+	root, err := markup.Load(os.DirFS("."), "store.gooey", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := gooey.NewComposer(root, 120, 40)
+	c.Frame()
+
+	vendor := control.NewScopedService(composerHost{c}, ctx, control.Island("Toolbar", "Tint", "Wallet", "OpenStore"))
+
+	// NARROWED, not refused: a listing shows the granted world, so a
+	// guest cannot refuse-probe its way to a map of what it cannot
+	// touch.
+	vals, _, err := vendor.Values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, v := range vals {
+		got[v.Name] = true
+	}
+	for _, want := range []string{"Tint", "Wallet", "OpenStore"} {
+		if !got[want] {
+			t.Errorf("the vendor island cannot see %q, which its toolbar markup binds", want)
+		}
+	}
+	for _, forbidden := range []string{"Subscribe", "Quit", "Items", "Services", "Receipt"} {
+		if got[forbidden] {
+			t.Errorf("the vendor island can see %q; the grant is wider than the product", forbidden)
+		}
+	}
+
+	// REFUSED: an element outside the island.
+	if _, err := vendor.PatchMarkup("Shell", `<Gooey xmlns="wonderforge.io/gooey/2026"><Border Name="Shell"><Text>owned</Text></Border></Gooey>`); err == nil {
+		t.Error("the vendor patched Shell; the island is not enforced")
+	}
+}
+
+// composerHost is a control.Host backed by a real Composer, which the
+// grant needs: an island is resolved against the LIVE tree on every
+// call, so a host that returns no composer cannot resolve one at all.
+type composerHost struct{ c *gooey.Composer }
+
+func (h composerHost) Post(fn func())            { fn() }
+func (h composerHost) Composer() *gooey.Composer { return h.c }
+func (h composerHost) Swap(gooey.Component)      {}
