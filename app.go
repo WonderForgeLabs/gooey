@@ -595,7 +595,7 @@ func (a *App) reload() {
 //
 // term.Screen.Detect already refuses to return a zero cell size for the
 // same reason (term/term.go:291). Every host that pins a protocol by hand
-// had to reproduce that rule — cmd/demo, cmd/toolkitdemo and cmd/colordemo
+// had to reproduce that rule — cmd/pixels, cmd/toolkit and cmd/colors
 // each carried their own "a forced protocol still needs a cell size"
 // 10×20 — which is the framework asking for the rule to live here instead.
 func (a *App) caps() term.Caps {

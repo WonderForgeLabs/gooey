@@ -162,8 +162,8 @@ A `CompanionCmd`'s stdout/stderr go to `os.DevNull` unless you pass
 `CompanionOutput(w)`. A child writing to the inherited stdout paints
 over a raw-mode screen with bytes the framework cannot repaint. Give
 long-lived companions a log file (an `*os.File` is handed to the child
-directly; any other writer is piped and copied); `examples/kanbandemo`
-writes its Python worker's output to `kanbandemo-worker.log` and closes
+directly; any other writer is piped and copied); `apps/kanban`
+writes its Python worker's output to `kanban-worker.log` and closes
 the file after `Run` returns — safe, because `Run` only returns after
 every companion is waited for.
 
@@ -192,7 +192,7 @@ Each is one flag away from the multi-shell deployment it replaces:
   grace), and connection work in `Build`.
 - [`handlers/temporal/cmd/temporalops`](../../../handlers/temporal/cmd/temporalops)
   — same shape over the visibility pack ([Tutorial 9](../09-temporal.md)).
-- [`examples/kanbandemo`](../../../examples/kanbandemo) `-with-worker` —
+- [`apps/kanban`](../../../apps/kanban) `-with-worker` —
   a **Python** process as a companion, log-file output, its own task
   queue.
 

@@ -169,14 +169,14 @@ the picture it already has instead of receiving it again; hide the
 component and the placement is deleted (kitty) or erased by repainting
 the cells under it (sixel, iTerm2).
 
-`cmd/demo` is the worked example — an image in an ordinary `gooey.App`,
+`cmd/pixels` is the worked example — an image in an ordinary `gooey.App`,
 with keys for each of those transitions and a footer counting the bytes
 each one cost:
 
 ```sh
-go run ./cmd/demo                 # detect, run interactively
-go run ./cmd/demo --mode=sixel    # force a protocol
-go run ./cmd/demo --dump          # one full frame to stdout, no tty
+go run ./cmd/pixels                 # detect, run interactively
+go run ./cmd/pixels --mode=sixel    # force a protocol
+go run ./cmd/pixels --dump          # one full frame to stdout, no tty
 ```
 
 ## Capturing images
@@ -199,7 +199,7 @@ holds differences. Replay the whole log through `render.Screen` instead —
 it is an `io.Writer`, so it takes the bytes as they come and `Text()`
 gives you the screen.
 
-The repository's [`demo.gif`](../../media/demos/demo.gif) shows the
+The repository's [`pixels.gif`](../../media/demos/pixels.gif) shows the
 capability detection and the pipeline; [`docs/demos.md`](../../demos.md)
 catalogs what each demo exercises.
 

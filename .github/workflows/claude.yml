@@ -79,7 +79,7 @@ jobs:
         - `mcp/` is a SEPARATE Go module for the same reason — the official
           modelcontextprotocol/go-sdk brings eight modules with it. Build and
           test it with `cd mcp && go build ./... && go test -race ./...`; its
-          demo lives at `mcp/cmd/mcpdemo`.
+          demo lives at `mcp/cmd/server`.
         - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
           `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
           control, `input/` routed event stream, `markup/` XML to component tree,

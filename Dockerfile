@@ -8,7 +8,7 @@
 #	docker run -it --rm ghcr.io/wonderforgelabs/gooey            # reader
 #	docker run -it --rm ghcr.io/wonderforgelabs/gooey finder /   # any other demo
 #
-# Demos: probe, demo, propdemo, logview, markuplog, finder, reader, statedemo,
+# Demos: probe, demo, props, logview, markuplog, finder, reader, state,
 # sysmon. There is deliberately no ENTRYPOINT — that is what lets the demo name
 # be passed as the command.
 #
@@ -27,23 +27,23 @@ COPY . .
 # separate module and is not built here.
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/bin/ \
-	./cmd/probe ./cmd/demo ./cmd/propdemo ./cmd/logview ./cmd/markuplog \
-	./cmd/finder ./cmd/reader ./cmd/statedemo ./cmd/sysmon
+	./cmd/probe ./cmd/pixels ./cmd/props ./cmd/logview ./cmd/markuplog \
+	./cmd/finder ./cmd/reader ./cmd/state ./cmd/sysmon
 
 # Two asset layouts, because the demos resolve markup two different ways.
 #
-# finder, reader and statedemo look under the working directory first and fall
+# finder, reader and state look under the working directory first and fall
 # back to the directory holding the executable, so the assets go beside the
 # binaries. markuplog has no executable-relative fallback: it reads
 # cmd/markuplog/logview.gooey relative to the working directory unless given a
 # path argument. Mirroring the source layout under /opt/gooey serves markuplog
 # and is also the first path the other three probe.
 RUN set -eux; \
-	cp cmd/finder/finder.gooey cmd/statedemo/statedemo.gooey cmd/reader/*.gooey /out/bin/; \
-	mkdir -p /out/gooey/cmd/finder /out/gooey/cmd/markuplog /out/gooey/cmd/statedemo /out/gooey/cmd/reader; \
+	cp cmd/finder/finder.gooey cmd/state/state.gooey cmd/reader/*.gooey /out/bin/; \
+	mkdir -p /out/gooey/cmd/finder /out/gooey/cmd/markuplog /out/gooey/cmd/state /out/gooey/cmd/reader; \
 	cp cmd/finder/finder.gooey /out/gooey/cmd/finder/; \
 	cp cmd/markuplog/logview.gooey /out/gooey/cmd/markuplog/; \
-	cp cmd/statedemo/statedemo.gooey /out/gooey/cmd/statedemo/; \
+	cp cmd/state/state.gooey /out/gooey/cmd/state/; \
 	cp cmd/reader/*.gooey /out/gooey/cmd/reader/
 
 # distroless/static carries ca-certificates, which the reader needs to fetch

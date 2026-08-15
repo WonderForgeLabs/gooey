@@ -6,7 +6,7 @@
 // paint's parsers were, until this package, dead code with tests.
 // ParseBrush, ParseColor, ParseDashArray, ParseLineCap, ParseLineJoin,
 // LinearGradient and RadialGradient had no caller anywhere in the tree:
-// the one real consumer, examples/wysiwyg/components/panel, draws a
+// the one real consumer, apps/wysiwyg/components/panel, draws a
 // figure it knows at compile time and so uses Canvas, Ring, Color and a
 // Stroke literal. paint's doc says of the parsers "every element that
 // takes a stroke spells it identically", and there was no element. This
@@ -19,7 +19,7 @@
 // module cannot import it and no builtin element can ever be named
 // <Ellipse>. The seam is markup.Context.Components: the host app
 // registers Builder() under whatever names it wants, exactly as
-// examples/wysiwyg registers <Panel>. Nothing in core changes, and an
+// apps/wysiwyg registers <Panel>. Nothing in core changes, and an
 // app that does not want a 2D graphics library does not link one.
 //
 // The consequence is that this package validates its own vocabulary.

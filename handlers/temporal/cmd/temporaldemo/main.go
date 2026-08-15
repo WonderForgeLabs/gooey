@@ -13,7 +13,7 @@
 // capabilities its host chose to hand it.
 //
 // The Cycle and Quit commands are ordinary viewmodel delegates, the same
-// no-code-behind arrangement as cmd/statedemo — the contrast is the
+// no-code-behind arrangement as cmd/state — the contrast is the
 // point: those are app behavior, the two handler buttons are framework
 // behavior parameterized by markup.
 //

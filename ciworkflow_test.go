@@ -17,7 +17,7 @@ import (
 // single exception discovered by glob. The comment on that glob predicted
 // the failure exactly — "a module added without also editing this file is
 // never built, and the guard makes that look like a pass" — and it
-// happened twice, to `paint` (#229, #241) and to every `examples/*`
+// happened twice, to `paint` (#229, #241) and to every `apps/*`
 // module, both times with every job green.
 //
 // These tests pin the fix. `ci.yml` must DISCOVER modules with the same
@@ -58,7 +58,7 @@ func discoveryIn(t *testing.T, name, body string) string {
 		t.Fatalf("%s must DISCOVER modules with a `find … -name go.mod` command "+
 			"rather than naming them. A literal step per module is never run for a "+
 			"module nobody added a step for, and the run still goes green — that is "+
-			"how `paint` and every `examples/*` module went untested (#207).", name)
+			"how `paint` and every `apps/*` module went untested (#207).", name)
 	}
 	return strings.TrimSpace(cmd)
 }

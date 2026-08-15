@@ -144,7 +144,7 @@ pane := &components.ItemsView{
 ```
 
 `cmd/logview` is the worked example — a log pane that follows the tail
-until you scroll up — and `examples/kanbandemo` has another.
+until you scroll up — and `apps/kanban` has another.
 
 ## Watch out
 

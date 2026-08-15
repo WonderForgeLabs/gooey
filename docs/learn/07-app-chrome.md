@@ -291,7 +291,7 @@ is **absent, the bar starts no animation goroutine at all**; absence is
 load-bearing. `Thresholds="true"` opts into the shared good/warn/crit
 color ramp, and it is opt-in for a reason: a gauge's high number is a
 warning, but painting a 96%-finished job crit-red says the reverse of
-what happened. (`cmd/toolkitdemo` drives the indeterminate mode from a
+what happened. (`cmd/toolkit` drives the indeterminate mode from a
 computed, which is the idiomatic wiring.)
 
 **[`Spinner`](../markup-reference.md#spinner)** — activity with no
@@ -368,7 +368,7 @@ so `tab` never lands on a button nobody can see.
 
 - Concept: [overlays](concepts/overlays.md) — why document order is
   z-order, and how dismissing an overlay restores what it covered.
-- The full-size version: [`cmd/toolkitdemo`](../demos.md) puts waves 1
+- The full-size version: [`cmd/toolkit`](../demos.md) puts waves 1
   and 2 on one page, including the pixel-chrome `Button` this tutorial
   skipped.
 - Reference: the per-element sections in

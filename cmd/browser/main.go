@@ -110,9 +110,9 @@ func scanEnvFor(srcRoot, launchRoot string) scanEnv {
 // examples second — and because a recursive walk of the module would
 // also find things that are not meant to be launched.
 //
-// Recordings are named with the prefix, not the display name: `cmd/demo`
-// and a future `docs/learn/examples/demo` would otherwise write to the
-// same recordings/demo.cast.
+// Recordings are named with the prefix, not the display name: `cmd/pixels`
+// and a future `docs/learn/examples/pixels` would otherwise write to the
+// same recordings/pixels.cast.
 //
 // ownDir is where the two roots genuinely differ. The demos locate their
 // markup relative to the MODULE ROOT (with a fallback beside the
@@ -138,18 +138,18 @@ var roots = []struct {
 	// same group keeps the list smooth; the info pane's command line is
 	// what tells the full story (cd handlers/temporal && go run …).
 	{path: "handlers/temporal/cmd", group: "demos", prefix: "temporal-", modDir: "handlers/temporal"},
-	// mcpdemo moved into mcp/ when that package became a nested module of
-	// its own, for the same reason: the MCP SDK's graph is quarantined
-	// there, and a binary that imports it has to live inside it.
+	// mcp/cmd/server moved into mcp/ when that package became a nested
+	// module of its own, for the same reason: the MCP SDK's graph is
+	// quarantined there, and a binary that imports it has to live inside it.
 	{path: "mcp/cmd", group: "demos", prefix: "mcp-", modDir: "mcp"},
 	{path: "docs/learn/examples", group: "learn examples", prefix: "learn-", ownDir: true},
-	// examples/ holds showcase apps; some (kanbandemo) are their own
+	// apps/ holds showcase applications; some (kanban) are their own
 	// nested modules because they import gooey/mcp's SDK graph. ownDir
-	// covers both cases: `go run .` from the demo's directory works
-	// whether the demo is its own module or part of the root one.
+	// covers both cases: `go run .` from the app's directory works
+	// whether it is its own module or part of the root one.
 	// Non-Go entries (the Python temporal-worker) have no main.go and
 	// fall out of the scan naturally.
-	{path: "examples", group: "examples", prefix: "example-", ownDir: true},
+	{path: "apps", group: "apps", prefix: "app-", ownDir: true},
 }
 
 // moduleRoot walks up from cwd to the directory holding go.mod — `go

@@ -300,7 +300,7 @@ its previous dependencies (`Get` deletes itself from each dep's
 makes conditional reads precise: if the compute function is
 `if mode { a.Get() } else { b.Get() }`, only the branch actually taken
 this time is watched. Changing the untaken branch's source produces no
-invalidation at all — `cmd/propdemo` demonstrates this live with a
+invalidation at all — `cmd/props` demonstrates this live with a
 watched/unwatched source pair you can toggle.
 
 The read-vs-subscription distinction falls out of the same mechanism:
@@ -494,7 +494,7 @@ The consequence is minimal damage with zero bookkeeping in components: a
 `Set` on any property dirties precisely the paint nodes that read it,
 and `Composer.Frame` re-evaluates only dirty nodes into the persistent
 buffer. `components/composer_test.go` pins this down (change one of three texts,
-exactly one node repaints), and `cmd/propdemo` shows it live (a tick
+exactly one node repaints), and `cmd/props` shows it live (a tick
 repainting 2 of 8 components).
 
 ### Damage semantics: pre-clear leaves, fill backgrounds, repaint in z-order

@@ -10,7 +10,7 @@ background fill.
 That makes overlay hosting a declaration, not machinery: **declare the
 overlay element as the LAST child**. In a `Grid`, an element's position
 (`Grid.Row`) is independent of its document order, so "last child, top
-row" is spellable directly — `cmd/toolkitdemo`'s markup declares its
+row" is spellable directly — `cmd/toolkit`'s markup declares its
 `MenuBar`, `ToastHost`, and `AdornmentLayer` as the Grid's last children
 with `Grid.Row="0"` keeping the bar on the top row.
 
@@ -67,10 +67,10 @@ the host opts out of hit-testing while its toasts stay hittable.
 
 ## Where to see it
 
-`cmd/toolkitdemo` is the whole story on one page (menu over content,
+`cmd/toolkit` is the whole story on one page (menu over content,
 toasts, tooltips; dismissing any of them restores the exact screen), and
 `cmd/browser`'s source picker is the recipe reused in an app. Both are
-walked through in [demos.md](../../demos.md); toolkitdemo's pty test is
+walked through in [demos.md](../../demos.md); toolkit's pty test is
 what pins the guarantee — esc on an open menu restores the exact screen,
 and a toast leaves no scar.
 

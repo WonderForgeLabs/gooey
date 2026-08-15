@@ -13,7 +13,7 @@ import (
 // and the component are looking at the same property rather than at copies
 // kept in sync.
 //
-// Promoted from cmd/statedemo.
+// Promoted from cmd/state.
 type Checkbox struct {
 	gooey.Base
 	gooey.FocusState

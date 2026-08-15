@@ -1,6 +1,6 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `mcpdemo` under `mcp/cmd/`, `paintdemo` under `paint/cmd/`, and `kanbandemo`, `wysiwyg` and `dynamic-activities` under `examples/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `server` under `mcp/cmd/`, `plates` under `paint/cmd/`, and `kanban`, `wysiwyg` and `dynamic-activities` under `apps/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
 `cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
@@ -8,28 +8,28 @@ Each demo exercises one slice of the framework; most are recorded as a GIF under
 go run ./cmd/browser
 ```
 
-## probe / demo
+## probe / pixels
 
-![demo](media/demos/demo.gif)
+![pixels](media/demos/pixels.gif)
 
 Retained visual tree + graphics protocol detection (sixel/kitty/iterm2/halfblock).
 
-`probe` reports the terminal's capabilities — size, cell pixel dimensions, and which graphics protocols it supports. `demo` then renders a retained component tree containing an image through the best available protocol, falling back to halfblock rendering.
+`probe` reports the terminal's capabilities — size, cell pixel dimensions, and which graphics protocols it supports. `pixels` then renders a retained component tree containing an image through the best available protocol, falling back to halfblock rendering.
 
-- Run: `go run ./cmd/probe && go run ./cmd/demo`
+- Run: `go run ./cmd/probe && go run ./cmd/pixels`
 - Keys: any key exits; `--mode` forces a protocol; `--dump` prints one frame
 
 Exercises the terminal capability-detection layer (`term`) and the retained-tree renderer's graphics pipeline, which draws an image through the best or forced protocol.
 
-## propdemo
+## props
 
-![propdemo](media/demos/propdemo.gif)
+![props](media/demos/props.gif)
 
 Dependency-tracked properties only repaint what actually changed: hammering an unwatched source produces zero frames, watched bumps render instantly, and each frame repaints only 2 of 8 components.
 
 The walkthrough: for the first ~3 seconds only the 1 Hz tick renders (frames 1-4, events=0). Then 'b' is pressed five times while the detail computed watches source a — no new frames appear until the next tick, when the events counter jumps from 0 to 5 in one hop (frames=5, "watching a = 0 (b is invisible to me)"). Pressing 'a' bumps the watched source and a frame renders instantly. 'm' toggles the watched source to b ("watching b", "a is invisible to me"), after which two 'b' presses render instantly — detail evals climb to 5 and only 2 of 8 components repaint per frame. 'q' quits.
 
-- Run: `go run ./cmd/propdemo`
+- Run: `go run ./cmd/props`
 - Keys: `a`/`b` bump sources, `m` toggle watched, `q` quit
 
 Exercises the dependency-property graph (`prop`) driving the retained tree: the whole scene is one computed property, so frames render only when something the UI actually read has changed.
@@ -89,22 +89,22 @@ The walkthrough: reader launches and four default feeds fetch live over the netw
 
 Exercises multi-UserControl composition: three `.gooey` controls with their own contexts, data crossing boundaries only through attribute bindings, and the framework's input system — focus stops, per-pane key handling, and `<KeyBinding>`s declared in markup bound to viewmodel commands.
 
-## statedemo
+## state
 
-![statedemo](media/demos/statedemo.gif)
+![state](media/demos/state.gif)
 
 Buttons + checkbox: manual JSON snapshots vs reactive serialization through the property graph.
 
 The walkthrough: a manual serialize goes stale as clicks mutate state; checking auto-serialize swaps the text box to a live computed; from then on every click re-serializes reactively.
 
-- Run: `go run ./cmd/statedemo`
+- Run: `go run ./cmd/state`
 - Keys: click or `tab`+`enter`/`space`, `s` serialize, `q` quit
 
 Exercises the "no code-behind" contract — pure markup with built-in components and all delegates in the viewmodel — and viewmodel-side state serialization, where typed property handles are snapshotted into a plain struct for `encoding/json`.
 
-## cardsdemo
+## cards
 
-![cardsdemo](media/demos/cardsdemo.gif)
+![cards](media/demos/cards.gif)
 
 The "just XAML" UserControl demo: every panel on screen is an instance of `card.gooey` — a markup-only control resolved by convention (`ctx.Includes`), never registered, with no code-behind — and `card.gooey` itself instantiates `badge.gooey`, proving markup-only controls nest. The page context has `Values` and `Styles` only: no `Components` map, no setup func anywhere in the app.
 
@@ -112,7 +112,7 @@ The control's contract is *declared*, not implied: four `<x:Property>` elements 
 
 The data stream is declared too: a `<Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Ticking}}"/>` in the page markup drives the metrics ([timerdemo.gif](media/demos/timerdemo.gif) isolates this element). The checkbox's `Checked` shares the same `Ticking` property the Timer's `Enabled` binds, and `Enabled` is read at fire time on the UI loop — so unchecking the box pauses the stream through the property graph, with no start/stop call anywhere.
 
-- Run: `go run ./cmd/cardsdemo`
+- Run: `go run ./cmd/cards`
 - Keys: `space`/click toggle the ticking checkbox, `q`/`esc`/`ctrl+c` quit
 
 Exercises markup-declared dependency properties end to end (declaration, type-check, per-instance defaults, strict mode), convention-resolved Includes nesting, and the `<Timer>` element's Composer-owned lifecycle. All three `.gooey` files hot-reload; editing `card.gooey` restyles every card at once, state intact.
@@ -208,9 +208,9 @@ GIF: docs-and-demos workflow; [`handlers/temporal/wizarddemo.gif`](../handlers/t
 
 Exercises workflow-served markup end to end: markup as *data* crossing a query boundary, the `wf:` handler namespace with its optional `| into` receipt, registration-as-capability-grant scoped to a single workflow ID, and companions (`gooey.Companion` goroutines and `gooey.CompanionCmd` child processes, [spec](specs/2026-08-10-companions.md)) collapsing a three-shell deployment into one.
 
-## mcpdemo
+## mcp server
 
-![mcpdemo](media/demos/mcpdemo.gif)
+![mcp server](media/demos/server.gif)
 
 A small gooey app that is also an MCP server: an agent (or any MCP
 client) attaches to `http://127.0.0.1:7777/mcp` and reads the live tree,
@@ -239,7 +239,7 @@ rendered screen, `invoke_command` presses `Increment` and `Cycle`,
 counter's value survives, because state lives in the properties, not the
 tree.
 
-- Run: `cd mcp && go run ./cmd/mcpdemo -mcp 127.0.0.1:7777` (empty
+- Run: `cd mcp && go run ./cmd/server -mcp 127.0.0.1:7777` (empty
   `-mcp` disables the server). It lives in `mcp/` because the MCP SDK's
   dependency graph is quarantined in that nested module.
 - Keys: `tab` move, `enter`/`space` press, `q` quit — but the keyboard
@@ -251,10 +251,10 @@ UI loop, and hot-swappable markup as a wire payload
 ([spec](specs/2026-08-10-mcp-server.md)). [Tutorial 8](learn/08-remote-control.md)
 drives this surface step by step.
 
-## kanbandemo + temporal-worker
+## kanban + temporal-worker
 
 A real Kanban board — Todo, Doing, Done — that is also an MCP server,
-and the target `examples/temporal-worker` pushes generated UI into.
+and the target `apps/temporal-worker` pushes generated UI into.
 
 GIF: docs-and-demos workflow.
 
@@ -271,7 +271,7 @@ as a custom `LogPanel` element because its tail-anchored `Scroll` field
 has no markup attribute yet.
 
 The worker is the control-plane story run from the other side:
-`examples/temporal-worker` is a Python Temporal worker with one
+`apps/temporal-worker` is a Python Temporal worker with one
 **dynamic activity** that answers to any activity type name a caller
 invents, hands the name plus a topic to Claude, and pushes the generated
 markup into the running board over `swap_markup` (generation is
@@ -282,17 +282,17 @@ before the first frame, killed (process group and all) when the app
 quits, output redirected to a log file because the app owns the tty
 ([companions spec](specs/2026-08-10-companions.md)).
 
-- Run: `cd examples/kanbandemo && go run . -mcp 127.0.0.1:7778` — its
-  own module, for the same dependency-quarantine reason as `mcpdemo`.
+- Run: `cd apps/kanban && go run . -mcp 127.0.0.1:7778` — its
+  own module, for the same dependency-quarantine reason as `mcp/cmd/server`.
   With the worker companion (needs a Temporal server and a Python venv
-  with `examples/temporal-worker/requirements.txt`):
+  with `apps/temporal-worker/requirements.txt`):
 
   ```sh
   go run . -mcp 127.0.0.1:7778 -with-worker -worker-python /path/to/.venv/bin/python
   ```
 
-  then trigger it from `examples/temporal-worker`:
-  `TEMPORAL_TASK_QUEUE=kanbandemo-dynamic-ui python trigger.py GenerateUI "some topic"`.
+  then trigger it from `apps/temporal-worker`:
+  `TEMPORAL_TASK_QUEUE=kanban-dynamic-ui python trigger.py GenerateUI "some topic"`.
 - Keys: `tab` move focus, type in the input and `enter` adds a card,
   each column's buttons move/remove the selected card, `ctrl+t` (or the
   `[ MCP ]`/`[ Log ]` header buttons) flips the bottom tab, `q` quit
@@ -316,7 +316,7 @@ Every region in `wysiwyg.gooey` carries a `Name`, and that is the working method
 
 Two layout facts in the page are bug fixes with the failure written next to them. The properties pane is a `<Grid>` with declared tracks rather than a `<VStack>`, because `ItemsView` measures greedily: as a VStack the list took every row and the edit row underneath it was arranged at W:0 H:0 past the bottom of the panel — the keystrokes worked, the input was simply invisible. And the `TextBox` lives in the properties pane rather than in the designer, because the designer's subtree is thrown away and rebuilt on every edit and a caret is component-local state; being a *sibling* of the designer is what keeps it from losing the caret mid-word.
 
-- Run: `cd examples/wysiwyg && go run .` — it is a nested module, so the root `./...` does not build it; `-attach 127.0.0.1:7777 -island Body` drives another app's control plane instead of previewing locally, `-serve`/`-mcp` set this editor's own endpoints (empty disables), `-graphics sixel|kitty|iterm2|cells` forces a pixel protocol
+- Run: `cd apps/wysiwyg && go run .` — it is a nested module, so the root `./...` does not build it; `-attach 127.0.0.1:7777 -island Body` drives another app's control plane instead of previewing locally, `-serve`/`-mcp` set this editor's own endpoints (empty disables), `-graphics sixel|kitty|iterm2|cells` forces a pixel protocol
 - Keys: `d` toggle DESIGN/LIVE (the status bar names the mode and the key), `ctrl+n`/`ctrl+p` next/previous element, `x` delete, `q`/`ctrl+c` quit; the bindings live on the page ROOT because a `KeyBinding` only fires while the focused chain passes through its host
 
 DESIGN is the default and it is the `Frozen` seam's first consumer: the preview renders the document but does not route input into it, so tab stays inside the editor shell instead of walking out into the thing being edited. `d` flips it live — `Frozen` is observed rather than sampled, so the routing changes in the same frame, and the flip repaints exactly the one component that names the mode.
@@ -329,7 +329,7 @@ A star button that runs Python written *after* the app started.
 
 > **This demo executes arbitrary supplied code, unsandboxed, on purpose.**
 > Everything binds loopback only and nothing is authenticated. Read
-> `examples/dynamic-activities/README.md` before running it.
+> `apps/dynamic-activities/README.md` before running it.
 
 One companion process is both a Temporal worker and an MCP server, and
 that MCP server's tools are CRUD over the worker's own activities.
@@ -389,8 +389,8 @@ over the control plane as an `image` value: the one kind with no markup
 literal, bindable through `<Image Src="{{...}}">` and not writable inline.
 `zoom.gooey` is the page that shows it large.
 
-- Run: `cd examples/dynamic-activities && go run .` — its own module,
-  same dependency-quarantine reason as `mcpdemo` and `kanbandemo`, and
+- Run: `cd apps/dynamic-activities && go run .` — its own module,
+  same dependency-quarantine reason as `mcp/cmd/server` and `kanban`, and
   it needs a Temporal server plus a Python venv (see its README).
 - Keys: `tab` move focus, `enter`/`space` press, `ctrl+n` cycle which
   activity the star runs, `ctrl+l` clear the result, `ctrl+c` quit.
@@ -402,26 +402,26 @@ CRUD pair, `PatchMarkup` from a non-Go client, `Canvas` absolute layout
 with bound backgrounds, and `gooey.CompanionCmd` giving a Python process
 the app's lifetime.
 
-## paintdemo
+## plates
 
-![paintdemo](media/demos/paintdemo.gif)
+![plates](media/demos/plates.gif)
 
 Drawing declared in markup: three pages of plates whose pens, brushes and geometry are attributes in a `.gooey` file, drawn through `paint/` — gooey's bridge to `fogleman/gg` — with no plate list in Go at all.
 
-The Go program supplies a viewmodel and four lines of registration. `paint` is a nested module, so the root cannot import it and no builtin element could ever be `<Ellipse>`; the seam is `markup.Context.Components`, the same one `examples/wysiwyg` uses for `<Panel>`. After that the documents draw themselves, and all four hot-reload — edit a plate and it redraws with the scene index intact.
+The Go program supplies a viewmodel and four lines of registration. `paint` is a nested module, so the root cannot import it and no builtin element could ever be `<Ellipse>`; the seam is `markup.Context.Components`, the same one `apps/wysiwyg` uses for `<Panel>`. After that the documents draw themselves, and all four hot-reload — edit a plate and it redraws with the scene index intact.
 
 The walkthrough: **strokes** is the pen — `StrokeThickness` at 1, 5 and 15 pixels, `StrokeDashArray="16,16"`, a round `StrokeLineCap`, and a polyline whose `StrokeLineJoin="Miter"` draws a *bevel*. Every one of those attributes is read by one of `paint`'s parsers and spelled the way MAUI spells it — and the last plate is the one place that spelling does not map cleanly onto `gg`, which has no miter join. `paint.ParseLineJoin` takes MAUI's word and draws the nearest thing it has rather than rejecting the document, so the plate's corners are cut flat; `TestMiterIsDrawnAsBevel` pins it, because a page that teaches a behaviour should not be the only thing asserting it. **brushes** is what the line is painted with: a colour literal is a SolidColorBrush (MAUI's shorthand), while gradients have structure and so arrive as property elements — `<Rectangle.Fill><LinearGradientBrush StartPoint="0,0" …>` — including a gradient on the *pen* rather than the fill. Every gradient declares a `Fallback` and has to: a gradient has no cell-plane equivalent, so deleting one is a load error rather than a guess. **ring** is why `paint` has a `Ring` at all — placements composite over the cell plane, so `Slice="Ring"` places only the four rectangles that are not the interior and the text inside stays glyphs instead of becoming a picture of glyphs.
 
 Note when reading the capture: this is the CELL tier throughout, because `agg` renders the cell plane only and a recording pty answers no capability query. That is the point rather than a limitation — the figures occupy exactly the same cells either way, and the three stroke thicknesses are ▒, ▓ and █ because coverage is mapped through a cube root; a linear map put all three in the same bucket and made the page three identical rows. On a terminal with sixel, kitty or iTerm2 the same documents rasterize at exactly the pixel size of the cells they occupy.
 
-- Run: `cd paint && go run ./cmd/paintdemo` — it is a nested module, so the root `./...` does not build it; `--mode=kitty|sixel|iterm2|cells` forces a tier, `--dir` points at another directory of pages, `--hold=5s` exits unattended
+- Run: `cd paint && go run ./cmd/plates` — it is a nested module, so the root `./...` does not build it; `--mode=kitty|sixel|iterm2|cells` forces a tier, `--dir` points at another directory of pages, `--hold=5s` exits unattended
 - Keys: `1`/`2`/`3` select a page, `n` cycles, `q`/`esc`/`ctrl+c` quit
 
 Exercises `paint`'s whole parser surface — `ParseColor`, `ParseBrush`, `ParseDashArray`, `ParseLineCap`, `ParseLineJoin`, `LinearGradient`, `RadialGradient` — which had no caller before this demo; `Canvas` sized in terminal cells so art is never resampled; `Ring` slicing a frame around live cell content; and the registration seam that lets a nested module contribute markup elements without the root module knowing they exist.
 
-## colordemo
+## colors
 
-![colordemo](media/demos/colordemo.gif)
+![colors](media/demos/colors.gif)
 
 Absolute layout, capability-adaptive color, and a component whose experience changes with the terminal.
 
@@ -446,32 +446,32 @@ forces the tier for verification and the status line names the one in
 play. Ground truth: [the ColorPicker pixel-tier
 spec](specs/2026-08-10-colorpicker-pixel.md).
 
-- Run: `go run ./cmd/colordemo`, `--depth=truecolor|256|16` to force a
+- Run: `go run ./cmd/colors`, `--depth=truecolor|256|16` to force a
   color tier, or `--graphics=kitty|sixel|iterm2|cells` to force the pixel tier
 - Keys: `↑`/`↓` channel, `←`/`→` adjust (shift = ×16), `home`/`end` saturate, click or scroll a bar, `q` quit
 
 Exercises the `Canvas` panel and its `Canvas.Left`/`Canvas.Top` attached properties, depth-aware SGR emission (`38;2` / `38;5` / `30-37`) with the buffer staying 24-bit throughout, capabilities reaching components through `Frame.Caps`, and bound `Style` attributes as the closest thing gooey has to theming.
 
-## toolkitdemo
+## toolkit
 
-![toolkitdemo](media/demos/toolkitdemo.gif)
+![toolkit](media/demos/toolkit.gif)
 
 Every component the kit ships, alive at once and spelled entirely in markup — the catalogue page, and the one demo whose job is coverage rather than a story. Thirty components on one flat screen is a wall, so they are organized under a `<Tabs>` into six pages: **job** (`ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ButtonBar`, `Button` in both chromes, `Tooltip`), **basics** (`Border`, `VStack`, `Grid`, `Text`, `TextBox`, `Checkbox`), **data** (`Gauge`, `Sparkline`, and an `ItemsView` with an `<ItemsView.ItemTemplate>`), **visual** (`Canvas`, `ColorPicker`, `Image`), **forms** (`<Validate>` behaviors, inline error `Text`s, a floating `ValidationMarker`), and **overlays** (`Popup`, through the one owner this demo writes in Go). The page chrome — `MenuBar`, `StatusBar`, `ToastHost`, `AdornmentLayer` — plus the `Timer`s and `KeyBinding`s live *outside* the tabs, because they belong to the app rather than to any one page, and because an overlay declared inside a collapsed tab would be collapsed along with it.
 
 The walkthrough: the job opens in its fetch stage, which has no measurable progress — so the `ProgressBar` marches a band instead of claiming a number and the `Spinner` turns beside it, while the pixel `Button` shows the three-row pill it draws where a graphics protocol exists. `ctrl+pgdn` moves to **basics**, where typing into the `TextBox` updates the bound `Text` above it a keystroke at a time and the `Checkbox` unticks the job tab's captions — a bool bound to `Visibility`, so the rows leave *layout* rather than blanking. On **data**, `↓` walks an `ItemsView` whose template renders this very catalogue (the kit describing itself), the detail `Border` beside it tracking the selection, and `enter` toasts the row. On **visual**, the `ColorPicker`'s channels drive one `Accent` property that a swatch, a `Style`, and the `Image`'s `Src` all read — the gradient is a *computed* `image.Image`, so moving green regenerates it. On **forms**, a short name and a junk address hold their inline errors until they pass, and the over-long tag floats its message through the `AdornmentLayer` instead of taking a row; `[ submit ]` un-greys itself the moment the gate computed over the published error properties turns true. On **overlays**, `ShowFor` with a negative duration puts up a toast that never expires and `Dismiss` takes it back down, then the preset picker drops a `Popup` list over the page, commits a colour into the same property the visual tab edits, and re-opens from a `Button` that does not own it — `esc` dismissing it restores the covered cells exactly. `ctrl+pgdn` wraps back to the job, where the log line reads `accent preset → orchid`: the popup's commit reached the viewmodel a whole page away.
 
-- Run: `go run ./cmd/toolkitdemo`, or `--mode=kitty|sixel|iterm2|cells` to force the pixel button's chrome, `--hold=15s` to exit unattended
+- Run: `go run ./cmd/toolkit`, or `--mode=kitty|sixel|iterm2|cells` to force the pixel button's chrome, `--hold=15s` to exit unattended
 - Keys: `ctrl+pgdn`/`ctrl+pgup` next/previous tab from anywhere, `←`/`→` on the strip itself, `tab` move focus, `enter`/`↓` open the focused menu or popup, `esc` close it, `space` toggle, `ctrl+s`/`ctrl+x`/`ctrl+r` start/abort/reset, `ctrl+t` toast, `q` quit; hovering a button shows its tooltip, and clicking a tab header selects it (the GIF is keyboard-only — everything here is operable without a pointer, which is what makes it recordable)
 
 Exercises the toolkit end to end: the Startable animation discipline shared by `ProgressBar`, `Spinner`, the toast auto-dismiss timers and the tooltip delay (post, never touch the graph from the goroutine; stop closes and joins), rocker arrow semantics that consume a key only when it moves something, `ButtonBar` uniform sizing and its `gooey.FocusHost` focus scope, pixel button chrome placed per paint node, `Validate` behaviors publishing error properties a computed can gate a command on — and the overlay story: document order is z-order, so the `MenuBar`, `ToastHost` and `AdornmentLayer` are declared as the root Grid's *last* children while `Grid.Row` keeps the bar on the top row, the open menu holds the pointer capture so a click elsewhere dismisses without activating what is underneath, and dismissing any overlay — menu, toast, tooltip, or popup — repaints exactly the components it was covering (the Composer's restore pass).
 
-Tabs made this the demo that stresses *collapse*, and the reorganization found three framework bugs doing it. A `Grid` arranged into a zero rect was returning off a stale measure cache, so its children kept the bounds they had; the Composer erases a component by noticing its bounds *changed*, so a hidden page's whole subtree stayed painted over the page that replaced it. `Border` and `Gauge` painted a row at their own `Y` without checking they had one, putting cells outside their damage rect where no sweep could reach them (`Border` worse than most: at zero width its far-edge arithmetic walks backwards). And every stack panel indexed a per-child measure cache that a collapsed-on-first-frame container never fills, which panicked. All three are pinned — `components/layout_test.go` for the layout and paint contracts, `cmd/toolkitdemo/toolkit_test.go` for the screen-level one, which composes each tab from scratch and demands it be byte-identical to the same tab reached by switching.
+Tabs made this the demo that stresses *collapse*, and the reorganization found three framework bugs doing it. A `Grid` arranged into a zero rect was returning off a stale measure cache, so its children kept the bounds they had; the Composer erases a component by noticing its bounds *changed*, so a hidden page's whole subtree stayed painted over the page that replaced it. `Border` and `Gauge` painted a row at their own `Y` without checking they had one, putting cells outside their damage rect where no sweep could reach them (`Border` worse than most: at zero width its far-edge arithmetic walks backwards). And every stack panel indexed a per-child measure cache that a collapsed-on-first-frame container never fills, which panicked. All three are pinned — `components/layout_test.go` for the layout and paint contracts, `cmd/toolkit/toolkit_test.go` for the screen-level one, which composes each tab from scratch and demands it be byte-identical to the same tab reached by switching.
 
 The demo page carries two layout budgets that are also pinned, because both failures are invisible until they are on screen: the `ValidationMarker` gets an empty *fixed* row of its own on the forms tab (an `Auto` row with no children sizes to nothing, and the adornment plane paints above everything, so the marker simply erased `[ submit ]`), and the three `StatusBar` sections have to fit 96 columns — Left and Right size to their content and Center is centred in what is left, so a key-hint string that grows takes the clock's breathing room first and then collides with the status text.
 
 The GIF is recorded under a pty, which reports no graphics protocol, so the pixel button is showing its universal tier: the same three-row pill drawn in box-drawing runes. That is the honest result of recording, not a fallback the component reaches for by accident — the pixel tiers are verified separately, by driving the demo with `--mode` and checking the protocol bytes in the captured log.
 
-## typeaheaddemo
+## typeahead
 
 GIF: docs-and-demos workflow.
 
@@ -481,9 +481,9 @@ GIF: docs-and-demos workflow.
 
 Three things are hard to see on a list of text rows and obvious here. Image rows are TALL: a cover is four cells high, so a terminal shows six or seven of them, and a jump you cannot see the neighbours of is a teleport — the status line under the list is the only thing telling you where you landed. A jump that leaves the visible window re-realizes every row, so one keystroke re-transmits a screenful of pictures, and the footer reports both currencies of that, components repainted and bytes written. And `Key="Title"` is fixed at load time rather than bindable, so sorting by artist with `ctrl+s` still searches titles — which is why the status line names the column being searched.
 
-Two decisions in the page are measurements rather than taste. The item template mentions the reserved `_selected` value, which turns off `ItemsView`'s house highlight and draws a marker column instead: the house highlight re-styles the row's *cells* as Reverse, and a cover's cells are either empty (a graphics protocol paints over them, so the highlight is invisible) or the picture itself (halfblock, so the highlight photo-negatives the art). And the root `<Grid>` deliberately declares no `Background`: the selection marker flips `Visibility`, which makes the Composer restore everything under the marker's rectangle, and a restored ancestor that declares a background is `covered` — which forces its whole subtree to repaint above it. Adding `Background="#141420"` there takes a selection hop from 7 repainted components to 48, pinned by `TestABackgroundAncestorAmplifiesTheSelectionMarker` in `cmd/typeaheaddemo/background_amplification_test.go`.
+Two decisions in the page are measurements rather than taste. The item template mentions the reserved `_selected` value, which turns off `ItemsView`'s house highlight and draws a marker column instead: the house highlight re-styles the row's *cells* as Reverse, and a cover's cells are either empty (a graphics protocol paints over them, so the highlight is invisible) or the picture itself (halfblock, so the highlight photo-negatives the art). And the root `<Grid>` deliberately declares no `Background`: the selection marker flips `Visibility`, which makes the Composer restore everything under the marker's rectangle, and a restored ancestor that declares a background is `covered` — which forces its whole subtree to repaint above it. Adding `Background="#141420"` there takes a selection hop from 7 repainted components to 48, pinned by `TestABackgroundAncestorAmplifiesTheSelectionMarker` in `cmd/typeahead/background_amplification_test.go`.
 
-- Run: `go run ./cmd/typeaheaddemo`, or `--mode=kitty|sixel|iterm2|halfblock` to force a protocol, `--dump` for one frame to stdout, `--hold=3s` to exit unattended
+- Run: `go run ./cmd/typeahead`, or `--mode=kitty|sixel|iterm2|halfblock` to force a protocol, `--dump` for one frame to stdout, `--hold=3s` to exit unattended
 - Keys: type a letter to jump, `↑`/`↓` move and reset the buffer, `esc` drop the buffer, `ctrl+s` cycle the sort column, `ctrl+r` reverse the sort, `ctrl+q` quit
 
 Exercises the attachment key seam (attachments beat the host's own `HandleKey`, which is what no number of `KeyBinding`s could express), `ItemsView` row realization over pixel content, and the background/damage interaction above. It is also why every accelerator on the page is a *modified* key: `KeyBinding`s are offered a gesture before behaviour attachments are, so a binding on a bare letter would take that letter out of the searchable alphabet permanently, silently, and with no error anywhere.
@@ -517,7 +517,7 @@ in the listing.
 
 Two groups is all it indexes: `cmd/` and the tutorial examples under
 `docs/learn/examples/`. The nested-module demos — `temporaldemo`,
-`temporalops`, `wizardui`, `mcpdemo`, `kanbandemo` — are absent by
+`temporalops`, `wizardui`, `mcp/cmd/server`, `kanban` — are absent by
 construction, because each has to be run from inside its own module's
 directory so its `go.mod` graph applies.
 
@@ -559,7 +559,7 @@ focus restored on dismiss. All git work (enumeration, `worktree add`
 / `remove`) runs on one worker goroutine and marshals back through the
 dispatcher, per the UI-confinement rule.
 
-## settingsdemo
+## prefs
 
 External state as ordinary properties: the three settings the browser
 wants — last source, keep-recording, auto-restart — persisted through
@@ -580,7 +580,7 @@ quit without touching anything and it stays at zero, because a value
 equal to its default is absent from the document and an unchanged
 document is never re-saved.
 
-- Run: `go run ./cmd/settingsdemo`
+- Run: `go run ./cmd/prefs`
 - Keys: `s` cycle the source, `r`/`a` toggle recording / auto-restart, `n` toggle a setting and toggle it straight back in one batch (proving the round trip costs no write), `d` reset to defaults, `q` quit
 
 Exercises the settings store (dirty-tracked deferred saves, the

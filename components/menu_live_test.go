@@ -11,7 +11,7 @@ import (
 // The LIVE-DISPATCH regression for issue #125: menu clicks must survive
 // the real event pipeline — input.Event through Composer.Handle, hit
 // testing, focus-follows-click, capture — on a page shaped like
-// cmd/toolkitdemo, where a full-page ToastHost is declared AFTER the
+// cmd/toolkit, where a full-page ToastHost is declared AFTER the
 // MenuBar (document order is z-order, so the toast layer is topmost).
 //
 // Wave 2's tests synthesized events directly on the bar's handlers and

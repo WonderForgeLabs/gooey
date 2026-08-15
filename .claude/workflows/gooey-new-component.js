@@ -1,7 +1,7 @@
 export const meta = {
   name: 'gooey-new-component',
   description: 'Interview-first component pipeline: spec, live-harness design loop, build, then reconcile every doc and adopter it touches',
-  whenToUse: 'When the user wants a new framework component in components/. Interactive: interviews the user, iterates a live MCP-driven prototype until they approve, writes the decision record first, files a project-ops epic from it, builds with damage pins and load-error cases, then fans out to reconcile stale docs and adopt the component wherever hand-rolled equivalents exist (the Tabs/kanbandemo model). Not for demos (use gooey-new-demo) or small fixes.',
+  whenToUse: 'When the user wants a new framework component in components/. Interactive: interviews the user, iterates a live MCP-driven prototype until they approve, writes the decision record first, files a project-ops epic from it, builds with damage pins and load-error cases, then fans out to reconcile stale docs and adopt the component wherever hand-rolled equivalents exist (the Tabs/kanban model). Not for demos (use gooey-new-demo) or small fixes.',
   phases: [
     { title: 'Interview', detail: 'brainstorm with the user until the component is decided' },
     { title: 'Explore', detail: 'component idioms, existing pressure/adopters, spec contracts' },
@@ -83,9 +83,9 @@ FRAMEWORK INVARIANTS — the checklist the build must honor EXPLICITLY (violatin
 // app hosting the in-progress prototype and drives it over MCP.
 const HARNESS = `
 BUILD-RUN-INSPECT HARNESS (the core mechanic — every design round goes through it):
-- Scratch module OUTSIDE the repo at /tmp/gooey-proto-<component>/: own go.mod (module scratch/proto) requiring github.com/WonderForgeLabs/gooey and github.com/WonderForgeLabs/gooey/mcp, with replace directives at ${REPO} and ${REPO}/mcp. mcp/ is a nested module — anything importing it needs its own module (see the header comment in ${REPO}/examples/kanbandemo/go.mod).
+- Scratch module OUTSIDE the repo at /tmp/gooey-proto-<component>/: own go.mod (module scratch/proto) requiring github.com/WonderForgeLabs/gooey and github.com/WonderForgeLabs/gooey/mcp, with replace directives at ${REPO} and ${REPO}/mcp. mcp/ is a nested module — anything importing it needs its own module (see the header comment in ${REPO}/apps/kanban/go.mod).
 - The prototype component lives IN THE SCRATCH MODULE (a local package), not in the repo: implement it against the real gooey interfaces (Component/Base, FocusState, HoverState, *prop.Property[T]) so the eventual move into components/ is a copy, not a rewrite. Register a scratch markup builder for it if the markup shape is under design; hosting it from Go composition is fine for early rounds.
-- Host app modeled on ${REPO}/mcp/cmd/mcpdemo/main.go: a .gooey page exercising the prototype in realistic surroundings (neighbors, a Grid, focusable siblings), loaded via markup.Page(os.DirFS(dir), "name.gooey", ctx, also...) so file edits hot-reload (~300ms polling; name Include/UserControl files in also... or their edits won't reload), viewmodel of prop handles, one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call — pass the markup Context or the name-addressed tools (list_values, set_value, invoke_command) see nothing. Pick a free port (not 7777); an empty Addr means an ephemeral port readable from srv.Addr().
+- Host app modeled on ${REPO}/mcp/cmd/server/main.go: a .gooey page exercising the prototype in realistic surroundings (neighbors, a Grid, focusable siblings), loaded via markup.Page(os.DirFS(dir), "name.gooey", ctx, also...) so file edits hot-reload (~300ms polling; name Include/UserControl files in also... or their edits won't reload), viewmodel of prop handles, one mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:<port>", Context: ctx}) call — pass the markup Context or the name-addressed tools (list_values, set_value, invoke_command) see nothing. Pick a free port (not 7777); an empty Addr means an ephemeral port readable from srv.Addr().
 - Loop: edit prototype -> go build -o /tmp/gooey-proto-<component>/proto . -> run under script -qec "stty cols 110 rows 32; .../proto" /dev/null in the background (the stty MUST set a size or the pty is 0x0 and paints nothing) -> drive over MCP -> screen_text -> judge -> kill -> edit again. Restarts are seconds; do many small loops, not one big one.
 - Drive it over MCP streamable HTTP at http://127.0.0.1:<port>/mcp. Plain curl JSON-RPC works: initialize, notifications/initialized (carry the Mcp-Session-Id header), then tools/call — read ${REPO}/mcp/e2e_linux_test.go for the exact wire sequence, and leave a drive.sh wrapper in the scratch dir so later rounds reuse it.
 - The tools: screen_text (your screenshot — quote it in results and AskUserQuestion previews), tree_snapshot, swap_markup / patch_markup / validate_markup, send_keys, send_mouse, focus, set_value / list_values, invoke_command, list_styles, register_properties.
@@ -211,7 +211,7 @@ phase('Interview')
 let interview = await agent(
   `You are running the Interview phase of the gooey-new-component workflow in ${REPO}: the user wants a new component${IDEA ? ` — their seed idea: "${IDEA}"` : ''} and YOUR job is to land a decided direction with them, not to design or build anything.
 FIRST invoke the brainstorming process skill: call the Skill tool with skill "superpowers:brainstorming" and follow it — it owns this phase's process.
-Ground yourself before asking anything: skim ${REPO}/components/ (what exists), docs/markup-reference.md, the toolkit epic (gh issue view 72), and search for hand-rolled equivalents of the idea across cmd/ examples/ docs/learn/examples/ (use command grep) — pressure sites are the strongest argument for a component and the Tabs precedent (kanbandemo's hand-rolled switcher, deleted on adoption) is the model.
+Ground yourself before asking anything: skim ${REPO}/components/ (what exists), docs/markup-reference.md, the toolkit epic (gh issue view 72), and search for hand-rolled equivalents of the idea across cmd/ apps/ docs/learn/examples/ (use command grep) — pressure sites are the strongest argument for a component and the Tabs precedent (kanban's hand-rolled switcher, deleted on adoption) is the model.
 Then interview the user (AskUserQuestion, multiple rounds as needed): what problem does it solve, what is the API direction (bound properties? commands? key map?), what is the markup shape, what is explicitly OUT of scope. Present competing API/markup sketches as concrete options with previews when the conversation narrows.
 Do NOT proceed on assumptions: decided=true only when the user has explicitly picked a direction. If they are still torn, put what remains in openQuestions and set decided=false.
 ${INTERACTION_RULES}
@@ -236,7 +236,7 @@ while (!design) {
       { label: 'explore:idioms', phase: 'Explore' },
     ),
     () => agent(
-      `Read-only exploration in ${REPO}. Find every existing hand-rolled equivalent or near-equivalent of a "${interview.name}" (${interview.problem}) across cmd/, examples/, docs/learn/examples/, and code embedded in docs pages (use command grep — the wrapper skips gitignored paths). User-claimed pressure sites to verify: ${JSON.stringify(interview.pressure)}. For each: path, how it works today, and whether adopting the new component would delete it (the kanbandemo/Tabs model) or is contract surface to leave alone (the cmd/reader model — its panes were deliberately not migrated to Tabs). Return a compact list.${GIT_RULES}`,
+      `Read-only exploration in ${REPO}. Find every existing hand-rolled equivalent or near-equivalent of a "${interview.name}" (${interview.problem}) across cmd/, apps/, docs/learn/examples/, and code embedded in docs pages (use command grep — the wrapper skips gitignored paths). User-claimed pressure sites to verify: ${JSON.stringify(interview.pressure)}. For each: path, how it works today, and whether adopting the new component would delete it (the kanban/Tabs model) or is contract surface to leave alone (the cmd/reader model — its panes were deliberately not migrated to Tabs). Return a compact list.${GIT_RULES}`,
       { label: 'explore:pressure', phase: 'Explore' },
     ),
     () => agent(
@@ -344,8 +344,8 @@ const survey = await parallel([
     { label: 'survey:stale-docs', phase: 'Reconcile', schema: SURVEY_SCHEMA },
   ),
   () => agent(
-    `Read-only survey in ${REPO}. Find every piece of SHIPPED CODE that should adopt the new "${interview.name}" component: cmd/ demos, examples/**, docs/learn/examples/**, and code embedded in docs pages, wherever a hand-rolled equivalent now exists. The explore phase found these candidates — re-verify each in the CURRENT tree (other sessions write concurrently) and finish the sweep: ${grounding.slice(0, 4000)}
-The Tabs precedent is the bar: kanbandemo's hand-rolled switcher was deleted in the same PR that shipped Tabs — but cmd/reader's panes were contract surface and left alone. Judge each site: adopt (kind=adopt) or leave (omit, note why in \`what\` of a doc-stale finding only if a doc claims otherwise). Do NOT edit anything.${GIT_RULES}`,
+    `Read-only survey in ${REPO}. Find every piece of SHIPPED CODE that should adopt the new "${interview.name}" component: cmd/ demos, apps/**, docs/learn/examples/**, and code embedded in docs pages, wherever a hand-rolled equivalent now exists. The explore phase found these candidates — re-verify each in the CURRENT tree (other sessions write concurrently) and finish the sweep: ${grounding.slice(0, 4000)}
+The Tabs precedent is the bar: kanban's hand-rolled switcher was deleted in the same PR that shipped Tabs — but cmd/reader's panes were contract surface and left alone. Judge each site: adopt (kind=adopt) or leave (omit, note why in \`what\` of a doc-stale finding only if a doc claims otherwise). Do NOT edit anything.${GIT_RULES}`,
     { label: 'survey:adopters', phase: 'Reconcile', schema: SURVEY_SCHEMA },
   ),
 ])
@@ -491,8 +491,8 @@ for (const site of adopters) {
   ;(adoptByDir[d] = adoptByDir[d] || []).push(site)
 }
 // Fold a nested directory into its shallowest ancestor. Two write sets
-// where one contains the other are NOT disjoint — examples/kanbandemo
-// and examples/kanbandemo/panel would hand two isolated agents
+// where one contains the other are NOT disjoint — apps/kanban
+// and apps/kanban/panel would hand two isolated agents
 // overlapping ownership, and the collection step cannot see that: it
 // compares identical paths, not containment. Shallowest-first ordering
 // guarantees an ancestor is promoted to a root before its descendants
@@ -541,7 +541,7 @@ for (const [dir, sites] of Object.entries(adoptByDir)) {
       dir === '.' ? 'the repo root (files directly in it only)' : dir + '/',
       ...(carved.length ? [`EXCEPT these, which another updater (or Verify) owns — read them if you like, never edit them: ${carved.join(', ')}`] : []),
     ], sites,
-      `Adopt the component the way kanbandemo adopted Tabs: the hand-rolled equivalent is DELETED in favor of the component (plain rm for dead files — never git rm), markup/bindings rewritten to the new element, behavior preserved. Build this site's binary to /tmp and smoke it under a pty (script -qec with an explicit stty size) before reporting. If on re-reading you judge this site contract surface that must NOT migrate (the cmd/reader precedent), skip with the reason.`),
+      `Adopt the component the way kanban adopted Tabs: the hand-rolled equivalent is DELETED in favor of the component (plain rm for dead files — never git rm), markup/bindings rewritten to the new element, behavior preserved. Build this site's binary to /tmp and smoke it under a pty (script -qec with an explicit stty size) before reporting. If on re-reading you judge this site contract surface that must NOT migrate (the cmd/reader precedent), skip with the reason.`),
     { label: `adopt:${dir}`, phase: 'Reconcile', schema: RECONCILE_SCHEMA, effort: 'high', isolation: 'worktree' },
   ))
 }
@@ -611,7 +611,7 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 Touched so far — component: ${JSON.stringify(build.files)}; spec: ${specPath}; reconciled: ${JSON.stringify(reconciled.map(r => ({ owned: r.owned, changed: r.changed })))}
 Run and report each:
 1. Root module: go vet ./... && go test ./... (NEVER go build ./... at the root — it drops executables next to tracked ones).
-2. Every nested module: cd mcp && go test -race ./...; cd grpc && go test -race ./...; every other dir with its own go.mod (discover: command find ${REPO} -name go.mod -not -path '*/.claude/*') gets go vet + go test — INCLUDING every examples/ and docs/learn/examples/ module: each must vet.
+2. Every nested module: cd mcp && go test -race ./...; cd grpc && go test -race ./...; every other dir with its own go.mod (discover: command find ${REPO} -name go.mod -not -path '*/.claude/*') gets go vet + go test — INCLUDING every apps/ and docs/learn/examples/ module: each must vet.
 3. gofmt -l over every touched .go file — must be empty.
 4. Damage pins: run the component's tests verbosely and confirm each count the spec promises.
 5. Markdown: every relative link and image path in every touched doc resolves to a real file; every file a touched doc links to is either tracked (git ls-files --error-unmatch) or present on the staging list you are about to produce — a link into nowhere fails.

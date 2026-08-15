@@ -18,7 +18,7 @@
 // a flake rather than as the missing line it is.
 //
 // This package exists because that rule was written down in three places
-// and still got missed. examples/wysiwyg's Remote.Close cancelled its
+// and still got missed. apps/wysiwyg's Remote.Close cancelled its
 // stream and returned without waiting for the reader, and no test failed —
 // there was nothing that could fail. A review caught it. Reviews are not a
 // mechanism.
@@ -108,7 +108,7 @@ type TB interface {
 // forgets to join usually still produces a goroutine that exits: cancel the
 // context, close the connection, and it finishes a few microseconds later,
 // long before the binary ends. Measured — removing the join from
-// examples/wysiwyg's Remote.Close left that package green under TestMain.
+// apps/wysiwyg's Remote.Close left that package green under TestMain.
 //
 // So the assertion is taken the instant stop returns, with no settle window:
 //
@@ -127,7 +127,7 @@ type TB interface {
 // will produce a test that passes forever while the bug is present. The
 // instrument is the problem: runtime.Stack(buf, true) stops the world and
 // formats every goroutine in the process, which costs more than the gap being
-// hunted. Both directions were measured against examples/wysiwyg's reader —
+// hunted. Both directions were measured against apps/wysiwyg's reader —
 // with the join removed the reader was already gone from every post-Close
 // dump, and sampled immediately after its own `go` statement it was ABSENT
 // FROM THE DUMP ENTIRELY in 5 of 8 runs while provably parked in Recv. A
@@ -135,7 +135,7 @@ type TB interface {
 //
 // For a window that tight, assert on the EFFECT the barrier protects instead:
 // make the callback take a margin you choose, and require stop not to return
-// until it has completed. examples/wysiwyg/leak_test.go does exactly that and
+// until it has completed. apps/wysiwyg/leak_test.go does exactly that and
 // explains why.
 //
 // # owned is not optional

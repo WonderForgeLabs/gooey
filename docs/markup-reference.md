@@ -127,7 +127,7 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 </HStack>
 ```
 
-(from `cmd/statedemo/statedemo.gooey`)
+(from `cmd/state/state.gooey`)
 
 ### Text
 
@@ -704,7 +704,7 @@ The marker is persistent: it lives in the layer for as long as it is attached, s
 
 `<ItemsView.ItemTemplate>` is required and takes exactly one child element. The view is a focus stop with the house list keys — `↑`/`↓`/`j`/`k`, `PgUp`/`PgDn`, `Home`/`End`, `enter` — plus wheel, click to select, and a second click to activate. Keys it does not use bubble, so page-level `<KeyBinding>`s still work while the list has focus.
 
-One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no** `Selected` binding into a tail-anchored scroll view — the log-pane shape, where 0 pins the window to the end and scrolling up moves into history that stays put while new items arrive. A Go-composed view sets the field directly; `examples/kanbandemo` registers such a view as a custom element for exactly this reason.
+One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no** `Selected` binding into a tail-anchored scroll view — the log-pane shape, where 0 pins the window to the end and scrolling up moves into history that stays put while new items arrive. A Go-composed view sets the field directly; `apps/kanban` registers such a view as a custom element for exactly this reason.
 
 **The template is a factory, not a tree.** Its element subtree is captured at load and instantiated once per item, against a context whose values are *that item's* — dot is the ITEM. Page values are deliberately out of reach inside a template, the same isolation a UserControl gets; anything a row needs must come through the projection. Everything else the document carries — styles, registered components, handlers, includes, the `xmlns` table — is inherited, so a template may place a registered custom component exactly like any other markup.
 
@@ -808,7 +808,7 @@ case ev := <-events:
 }
 ```
 
-`cmd/cardsdemo` drives its whole data stream this way.
+`cmd/cards` drives its whole data stream this way.
 
 ### Companion
 
@@ -1137,7 +1137,7 @@ accentStyle := prop.NewComputed(func() render.Style {
 })
 ```
 
-Setting `accent` dirties `accentStyle`, which dirties exactly the components that read it while painting, and they repaint. No styling system is involved — it is the ordinary property graph, and it is as close to theming as gooey currently gets. `cmd/colordemo` styles its border, title, and swatches this way from the color being edited. `Text Bold="true"` composes over either form.
+Setting `accent` dirties `accentStyle`, which dirties exactly the components that read it while painting, and they repaint. No styling system is involved — it is the ordinary property graph, and it is as close to theming as gooey currently gets. `cmd/colors` styles its border, title, and swatches this way from the color being edited. `Text Bold="true"` composes over either form.
 
 ## Custom components
 
@@ -1157,7 +1157,7 @@ Components: map[string]markup.Builder{
 
 (from `cmd/markuplog`)
 
-The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/statedemo/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it).
+The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it).
 
 ## UserControls
 
@@ -1235,7 +1235,7 @@ A control file can declare its own property surface. Declarations are direct chi
 </Gooey>
 ```
 
-(from `cmd/cardsdemo`, the whole demo's Go file has no control code in it at all)
+(from `cmd/cards`, the whole demo's Go file has no control code in it at all)
 
 **A declared markup property is an ordinary dependency property, registered from markup.** Each declaration materializes exactly what a code-behind would have wired by hand — a `*prop.Property[T]` node in the same graph, read by the same `Get`, invalidated by the same `Set`. There is one property system; this is its markup tier, the way `DependencyProperty.Register` is its code tier.
 
