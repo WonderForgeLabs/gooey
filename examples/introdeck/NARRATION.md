@@ -1024,29 +1024,53 @@ recreated. And the reason it works is the next thing we add.
      rest of the window, whatever the window turns out to be. -->
 <Grid Name="Stage" Grid.Row="2" Rows="Auto,*,Auto">
 
-  <Text Grid.Row="0" Style="body">a number that changes, and a sentence that was never told about it.</Text>
+  <Text Grid.Row="0" Style="body">a number that changes, and a sentence that was never told about it. its definition is on the right.</Text>
 
-  <!-- No Include here: this slide IS the markup being talked about, so
-       it is written out where it can be read off the screen.
+  <!-- The running thing and its own source, side by side. The beat's
+       claim is about what is NOT in the markup — "nobody ever updates
+       that sentence" — and that is only worth saying if the room can
+       read the definition and find no update in it. Written inline, as
+       this slide used to be, the audience had to take my word for it.
 
-       The last Text is the whole point. It is not updated by anything —
-       it interpolates {{.Count}}, and interpolating it is what
-       subscribes it. A rule, not a value. -->
-  <Border Grid.Row="1" Title="state" Style="island">
-    <VStack Gap="1" Margin="4,2">
+       The editor is on the RIGHT here, and on the left on beat 3.5.
+       That is deliberate: 3.5 is about the file driving the program, so
+       the file leads; this beat is about the program and then where it
+       came from, so the program leads.
 
-      <Text Style="headline">count {{.Count}}</Text>
+       READ-ONLY (-R), and not an oversight. Beat 3.5 one slide ago is
+       the edit-markup-live demo and owns it; doing the same trick twice
+       running dilutes both. This pane is a viewer, and -R is what stops
+       a stray keystroke turning it into a broken edit nobody meant to
+       make. If it should ever become editable, it needs a syncState
+       twin of deck.go's syncCounter — the file is not watched.
 
-      <Button Content="+1" Click="{{.Bump}}"/>
+       No second copy: the left is state.gooey resolved through the
+       Include seam — <State/> finds it by convention (view.go:34), the
+       same way <Counter/> finds counter.gooey — and the right is vim on
+       that same path. Count and Bump arrive as attributes.
 
-      <Text Style="body">nobody ever updates this sentence. it says {{.Count}}
-because it reads {{.Count}}, and reading it is the whole
-subscription.</Text>
+       state.gooey carries NO comment, which is a rule and not an
+       omission: counter.gooey has none either, and the two are the only
+       files in this deck a room ever reads. The first draft of
+       state.gooey explained itself in sixteen lines, and on screen that
+       put the whole point — {{.Count}} on lines 20 and 24 — below the
+       fold, behind prose about slide construction that the audience has
+       no reason to read. A file that gets shown is a slide. Every file
+       here that is NOT shown (live.gooey, stage.gooey) is commented at
+       length; the reasoning for these two lives in the beat instead. -->
+  <Grid Grid.Row="1" Cols="*,*">
 
+    <VStack Grid.Col="0">
+      <State Count="{{.Count}}" Bump="{{.Bump}}"/>
     </VStack>
-  </Border>
 
-  <Text Grid.Row="2" Style="dim">click +1 · the sentence follows because it read the number, and that is the entire mechanism</Text>
+    <Border Grid.Col="1" Title="state.gooey — the thing on the left, defined" Style="island">
+      <Terminal Name="Source" Cmd="TERM=xterm-256color vim -n -u NONE -N -R --cmd 'set shortmess+=F' -c 'set nu' state.gooey"/>
+    </Border>
+
+  </Grid>
+
+  <Text Grid.Row="2" Style="dim">click +1 · the sentence follows because it read the number · read the right pane and find the line that updates it — there isn't one</Text>
 
 </Grid>
 </Gooey>

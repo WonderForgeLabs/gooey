@@ -1,0 +1,15 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="state" Style="island">
+    <VStack Gap="1" Margin="4,2">
+
+      <Text Style="headline">count {{.Count}}</Text>
+
+      <Button Content="+1" Click="{{.Bump}}"/>
+
+      <Text Style="body">nobody ever updates this sentence. it says {{.Count}}
+because it reads {{.Count}}, and reading it is the whole
+subscription.</Text>
+
+    </VStack>
+  </Border>
+</Gooey>
