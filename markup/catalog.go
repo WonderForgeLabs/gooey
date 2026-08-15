@@ -182,6 +182,35 @@ type SlotSpec struct {
 	Doc      string
 }
 
+// BodySpec describes an element whose CONTENT is its XML body rather
+// than an attribute: <Text>hello</Text>, not <Text Content="hello"/>.
+//
+// This exists because the fact was previously stated only in prose.
+// defText's Doc said "The content is the element's body, not an
+// attribute" and nothing in the data said so, which left a consumer
+// two bad options. Keying on ChildSpec.Mode is the tempting one and it
+// is wrong: fourteen builtins are ModeLeaf and exactly one reads
+// e.Text, so a properties grid built that way offers a content row on
+// thirteen elements that discard it. The other option is a hardcoded
+// `name == "Text"`, which is the denylist this package keeps deleting.
+//
+// The fields mirror AttrSpec deliberately — a body is an attribute in
+// every respect except where it is written, so a consumer that already
+// renders an AttrSpec row can render this one with the same code. In
+// particular Binds is NOT decoration: <Text>'s body goes through
+// bindText, so {{.Title}} in the body is a live binding, and an editor
+// that assumed literal-only would silently downgrade it to text.
+//
+// Note for anyone rendering a body editor: the content is TRIMMED
+// (elements.go:91 calls strings.TrimSpace), so leading and trailing
+// whitespace cannot be expressed in markup at all.
+type BodySpec struct {
+	Kind   Kind
+	Binds  Binds
+	GoType string
+	Doc    string
+}
+
 // ChildSpec describes what may nest inside an element.
 type ChildSpec struct {
 	Mode ChildMode
@@ -217,7 +246,11 @@ type ElementSpec struct {
 	// this is not a []string. The first consumer of the catalog
 	// discovered that omission by generating markup that would not
 	// load.
-	Slots    []SlotSpec
+	Slots []SlotSpec
+	// Body is non-nil when the element's content is its XML body rather
+	// than an attribute. Nil means "no body content" — the common case,
+	// and NOT the same statement as Children.Mode == ModeLeaf.
+	Body     *BodySpec
 	Children ChildSpec
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.

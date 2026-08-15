@@ -61,6 +61,11 @@ type ElementDef struct {
 	// Children is what may nest inside.
 	Children ChildSpec
 
+	// Body declares that this element's content is its XML BODY rather
+	// than an attribute — see BodySpec. Nil for everything that reads
+	// its content from e.Attrs, which is all but one builtin.
+	Body *BodySpec
+
 	// Open marks an element whose attribute set is EXTENDED at runtime
 	// from the Context — <Validate>, whose vocabulary is its builtin
 	// rules plus Context.Rules. An open element's Attrs is the builtin
@@ -135,6 +140,14 @@ func (d *ElementDef) spec() ElementSpec { return d.specAs(OriginBuiltin) }
 // is exactly as knowable as a builtin one.
 func (d *ElementDef) specAs(origin Origin) ElementSpec {
 	nonVisual, focusable, attaches, hasLayout := d.axes()
+	// Copied for the same reason Attrs and Slots are: a spec is handed
+	// out, and a caller must not be able to reach back through it and
+	// edit the registry's own definition.
+	var body *BodySpec
+	if d.Body != nil {
+		b := *d.Body
+		body = &b
+	}
 	return ElementSpec{
 		Name:       d.Name,
 		Origin:     origin,
@@ -144,6 +157,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Open:       d.Open,
 		Attrs:      append([]AttrSpec(nil), d.Attrs...),
 		Slots:      append([]SlotSpec(nil), d.Slots...),
+		Body:       body,
 		Children:   d.Children,
 		NonVisual:  nonVisual,
 		Focusable:  focusable,

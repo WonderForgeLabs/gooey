@@ -70,6 +70,13 @@ var defText = &ElementDef{
 		{Name: "Bold", Kind: KindBool, Binds: BindsLiteral, Default: "false", Origin: OriginBuiltin},
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
 	},
+	// The one builtin whose content is its body. KindText/BindsEither
+	// because the Build below hands the body to bindText: a literal and
+	// a {{.Path}} binding are both legal there, exactly as on Tooltip.
+	Body: &BodySpec{
+		Kind: KindText, Binds: BindsEither, GoType: "string",
+		Doc: "The run of text. Trimmed, so leading and trailing spaces cannot be expressed.",
+	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		style, err := BoundStyle(e, ctx)
