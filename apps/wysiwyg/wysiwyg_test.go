@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
@@ -116,7 +116,7 @@ func TestPaletteComesFromTheCatalog(t *testing.T) {
 func TestInspectorFollowsTheParent(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
-	ed.selected = 0
+	ed.sel = ed.root.Kids[0]
 
 	has := func(name string) bool {
 		for _, r := range ed.attrRows() {
@@ -234,7 +234,7 @@ func TestEveryBoundNameResolvesToALiveHandle(t *testing.T) {
 func TestDerivedListsInvalidateOnEdit(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.rebuild()
-	ed.selected = 0
+	ed.sel = ed.root.Kids[0]
 
 	names := func() map[string]bool {
 		src := ed.attrItems.Get()
@@ -382,20 +382,72 @@ func TestNoDocumentBuilderYieldsThePreviewPane(t *testing.T) {
 // A toolbox that lists every builtin while omitting the components the
 // editor is built out of misdescribes the app, which is the same class of
 // dishonesty as rendering "unknown" as "none".
+// The check is REACHABILITY, not which map the registration lives in.
+// It used to read ed.docCtx.Components[name] != nil, which pinned the
+// mechanism rather than the claim — and when ActivityBar moved to
+// Context.Elements to declare its Sel attribute, this failed while the
+// document's access to it was strictly better than before. A test whose
+// stated claim is "a document can use this element" must not fail
+// because the element became describable.
 func TestTheEditorsOwnComponentsAreDocumentVocabulary(t *testing.T) {
 	ed := newEditor(editorFS())
 	offered := map[string]bool{}
 	for _, e := range ed.palette {
 		offered[e.Name] = true
 	}
+	registered := map[string]bool{}
+	for name := range ed.docCtx.Components {
+		registered[name] = true
+	}
+	for name := range ed.docCtx.Elements {
+		registered[name] = true
+	}
 	for _, name := range []string{"Panel", "ActivityBar"} {
-		if ed.docCtx.Components[name] == nil {
+		if !registered[name] {
 			t.Errorf("<%s> is not document vocabulary; a document cannot use the editor's own component", name)
 		}
 		if !offered[name] {
 			t.Errorf("the toolbox does not offer <%s>", name)
 		}
 	}
+}
+
+// ActivityBar declares its surface, and the palette is why that matters:
+// clicking it used to emit <ActivityBar Name="ActivityBar1"/>, which
+// fails to load because the rail requires a bound Sel=. seedRequired can
+// only seed what the catalog describes.
+//
+// Mutation: register ActivityBar through Components instead of Elements
+// and this fails at the Required check — Catalog gives a Builder
+// AttrsKnown false with no Attrs at all, which is precisely the state
+// that produced the bug.
+func TestTheToolboxCanDescribeActivityBarsRequiredAttribute(t *testing.T) {
+	ed := newEditor(editorFS())
+	var spec *markup.ElementSpec
+	for i, e := range ed.palette {
+		if e.Name == "ActivityBar" {
+			spec = &ed.palette[i]
+		}
+	}
+	if spec == nil {
+		t.Fatal("ActivityBar is absent from the palette")
+	}
+	if !spec.AttrsKnown {
+		t.Fatal("ActivityBar's attributes are still unknowable; the palette cannot seed what it cannot describe")
+	}
+	for _, a := range markup.AttrsFor(*spec, "Canvas") {
+		if a.Name != "Sel" {
+			continue
+		}
+		// These three are exactly what seedRequired consumes: Required
+		// decides whether to seed, Binds whether to write a binding
+		// rather than a literal, GoType which handle to create.
+		if !a.Required || a.Binds != markup.BindsBinding || a.GoType != "int" {
+			t.Errorf("Sel = {Required:%v Binds:%q GoType:%q}, want {true binding int}", a.Required, a.Binds, a.GoType)
+		}
+		return
+	}
+	t.Error("ActivityBar does not declare Sel, so the palette will emit markup that cannot load")
 }
 
 // TestPreviewIsPlaceableAndBecomesAMirror.
@@ -490,7 +542,7 @@ func TestModifiedIsExactlyDifferingFromTheDeclaredDefault(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.selected = 0
+	ed.sel = ed.root.Kids[0]
 
 	row := func(name string) attrRow {
 		t.Helper()
@@ -540,7 +592,7 @@ func TestInspectorRowsAreGroupedByCategory(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.selected = 1 // the Button: it has an event, a style and a layout surface
+	ed.sel = ed.root.Kids[1] // the Button: it has an event, a style and a layout surface
 
 	rows := ed.attrRows()
 	if len(rows) < 6 {

@@ -66,8 +66,37 @@
 //
 // # Keys
 //
-//	q, ctrl+c   quit
-//	d           DESIGN ↔ LIVE
+//	q, ctrl+c        quit
+//	d                DESIGN ↔ LIVE
+//	x                delete the selected element
+//	ctrl+n, ctrl+p   select the next / previous element
+//
+// # Selecting
+//
+// In DESIGN mode a left press in the designer selects the element under
+// the pointer, and it is the same edit ctrl+n makes — both call
+// setSelection, so both cost the same repaint.
+//
+// A press that lands on no element selects NOTHING, and the properties
+// grid goes empty. That is deliberate rather than a gap: the design
+// surface is the editor's workspace and is never written to the saved
+// document, so selecting it would point the grid at something the user
+// cannot save and offer attributes that never reach their file. ctrl+n
+// and ctrl+p are the way back out of the empty state — with nothing
+// selected they start from whichever end the direction implies, so a
+// stray click on the background cannot strand you.
+//
+// The selection is a NODE, not an index. That is what lets it hold
+// "nothing" without a sentinel, and what will let it name something
+// nested when the surface starts carrying containers the user can select
+// into.
+//
+// The pointer is a second way in, never the only one. ctrl+n and ctrl+p
+// remain the whole gesture from the keyboard, which is not politeness:
+// mouse reports cannot be injected through a recording pty at all, so a
+// designer that could only be driven by pointer could never be captured.
+// See select.go for how the press finds its node, and why the framework
+// needed no new seam for it.
 //
 // # DESIGN and LIVE
 //
@@ -97,6 +126,7 @@ package main
 
 import (
 	"context"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -107,17 +137,17 @@ import (
 	"sync"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/activitybar"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/panel"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
-	"github.com/WonderForgeLabs/gooey/term"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
@@ -180,6 +210,15 @@ func main() {
 	ed.app = app
 	ed.ctx.Dispatcher = app.Dispatcher()
 	ed.watchFit(app)
+	// Click-to-select. The composer is resolved per press rather than
+	// captured: a hot reload of the page builds a new one.
+	ed.bindPicking(func(x, y int) gooey.Component {
+		c := app.Composer()
+		if c == nil {
+			return nil
+		}
+		return c.Focus().HitTest(x, y)
+	})
 
 	// Both servers are handed ed.ctx — the EDITOR's context, not docCtx.
 	// A control-plane client is driving the editor, so the vocabulary it
@@ -300,12 +339,51 @@ func encoderNamed(name string) (graphics.Encoder, error) {
 type node struct {
 	Elem  string
 	Attrs map[string]string
-	Kids  []*node
+	// Body is the element's TEXT CONTENT — the "hello" in
+	// <Text>hello</Text> — and it is a field rather than an entry in
+	// Attrs because it is genuinely not an attribute. <Text>'s own
+	// catalog entry says so ("The content is the element's body, not an
+	// attribute", markup/elements.go defText.Doc), and until this field
+	// existed the editor could not express it at all: every <Text> the
+	// toolbox added serialized as <Text Name="Text3"/>, which builds
+	// fine, measures zero and is therefore invisible on the canvas AND
+	// unhittable — hitTest never returns a zero-size component. A user
+	// who reached for Text first would have concluded that selecting was
+	// broken, and reported a serialization bug.
+	Body string
+	Kids []*node
 	// Slots are property elements — <ItemsView.ItemTemplate> — which
 	// are structured attributes rather than children, and which the
 	// catalog can report as REQUIRED.
 	Slots map[string]*node
 }
+
+// bodySpec is the catalog's answer to "is this element's content its
+// body", and nil means it is not.
+//
+// THIS USED TO BE `elem == "Text"`. The fact was real but lived only in
+// defText's Doc prose, so an editor had no data to read and had to
+// hardcode the one name — the denylist shape this project keeps
+// deleting. markup.BodySpec is that fact moved into data, and this is
+// now a lookup in the SAME catalog the palette is built from, so an
+// element that gains a body is offered one here without this file
+// changing.
+//
+// Read from ed.palette rather than from a fresh Catalog() call because
+// the palette IS the document's vocabulary — the editor's own chrome is
+// deliberately not in it, and a body row on <Preview> would be a row on
+// something the user cannot author.
+func (ed *editor) bodySpec(elem string) *markup.BodySpec {
+	for _, e := range ed.palette {
+		if e.Name == elem {
+			return e.Body
+		}
+	}
+	return nil
+}
+
+// takesBody is the boolean form, for the seeding path.
+func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
 func (n *node) markup(indent string) string {
 	var b strings.Builder
@@ -317,6 +395,19 @@ func (n *node) markup(indent string) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Fprintf(&b, " %s=%q", k, n.Attrs[k])
+	}
+	// A body and children are mutually exclusive here: no element in the
+	// catalog takes both, and emitting both would make the body's meaning
+	// depend on where the parser happened to put it.
+	if n.Body != "" && len(n.Kids) == 0 && len(n.Slots) == 0 {
+		// ESCAPED, because the body is free text the user typed. An
+		// unescaped "<" or "&" turns the whole document into a parse
+		// error, and a .gooey parse error surfaces as "no root element"
+		// rather than as anything pointing at the character.
+		var esc strings.Builder
+		xml.EscapeText(&esc, []byte(n.Body))
+		b.WriteString(">" + esc.String() + "</" + n.Elem + ">\n")
+		return b.String()
 	}
 	if len(n.Kids) == 0 && len(n.Slots) == 0 {
 		b.WriteString("/>\n")
@@ -348,8 +439,20 @@ type editor struct {
 	ctx    *markup.Context
 	docCtx *markup.Context
 
-	root     *node
-	selected int // index into root.Kids; -1 selects the container itself
+	root *node
+	// sel is the selected node, or NIL FOR NOTHING SELECTED — which is a
+	// real state rather than a missing value, and is what a press on bare
+	// canvas produces.
+	//
+	// It is a node POINTER and not an index, and that is the change that
+	// made the empty state cheap rather than a sentinel. An int index into
+	// root.Kids can name a top-level child and nothing else: not "nothing",
+	// which it has to spell as a magic -1 or -2, and not anything nested,
+	// which the design surface will need the moment the user drops a
+	// container and expects to select what is inside it. A *node names any
+	// node at any depth, survives its siblings being reordered or deleted,
+	// and survives the node being renamed — none of which an index does.
+	sel *node
 
 	palette    []markup.ElementSpec
 	paletteSel *prop.Property[int]
@@ -414,6 +517,25 @@ type editor struct {
 	pv  *preview.Pane
 	app *gooey.App
 
+	// hitTest is the framework's deepest-component query, and docRoot /
+	// nodeOf are what make its answer mean something: the tree rebuild
+	// BUILT for this document, and which design node every component in it
+	// came from. Together they are click-to-select — see select.go.
+	//
+	// Both are nil whenever the picture on screen is NOT this document: a
+	// build that failed (the previous preview stays up, deliberately) or
+	// remote mode (there is no local tree at all). Mapping a press against
+	// a stale tree would select a neighbour of what was clicked, silently,
+	// which is worse than selecting the container.
+	//
+	// nodeOf is keyed on the COMPONENT and valued with the *node pointer.
+	// Not a Name, which the user can change or delete, and not a position,
+	// which under a chrome-only design surface never reaches the saved
+	// file at all.
+	hitTest func(x, y int) gooey.Component
+	docRoot gooey.Component
+	nodeOf  map[gooey.Component]*node
+
 	// serving names the control-plane endpoints this editor is listening
 	// on, in the order they came up; serveInfo is the same thing bound
 	// into the page. With no UI left, the address you would drive the
@@ -442,26 +564,34 @@ func newEditor(fsys fs.FS) *editor {
 		fsys: fsys,
 		art:  panel.NewArt(),
 		root: &node{Elem: "Canvas", Attrs: map[string]string{"Name": "Root"}, Kids: []*node{
-			{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
+			// The Text carries a BODY, for the same reason addSelected
+			// seeds one: without it this element measures zero and the
+			// document the editor opens with contains something the user
+			// can neither see nor click.
+			{Elem: "Text", Body: "T1", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "2", "Canvas.Top": "1"}},
 			{Elem: "Button", Attrs: map[string]string{"Name": "B1", "Content": "click", "Canvas.Left": "2", "Canvas.Top": "3"}},
 		}},
-		selected:   0,
 		paletteSel:  prop.NewSource(0),
 		attrSel:     prop.NewSource(0),
 		activitySel: prop.NewSource(1), // the toolbox, which is what the side bar shows
-		source:     prop.NewSource(""),
-		status:     prop.NewSource(""),
-		editName:   prop.NewSource(""),
-		editValue:  prop.NewSource(""),
-		editDoc:    prop.NewSource(""),
-		treeText:   prop.NewSource(""),
-		fits:       prop.NewSource(true),
-		fitMsg:     prop.NewSource(""),
-		design:     prop.NewSource(true),
-		rev:        prop.NewSource(0),
-		serveInfo:  prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
-		pv:         &preview.Pane{},
+		source:      prop.NewSource(""),
+		status:      prop.NewSource(""),
+		editName:    prop.NewSource(""),
+		editValue:   prop.NewSource(""),
+		editDoc:     prop.NewSource(""),
+		treeText:    prop.NewSource(""),
+		fits:        prop.NewSource(true),
+		fitMsg:      prop.NewSource(""),
+		design:      prop.NewSource(true),
+		rev:         prop.NewSource(0),
+		serveInfo:   prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
+		pv:          &preview.Pane{},
 	}
+
+	// Set after the literal because it points INTO it: the selection is a
+	// node pointer, so it cannot be written in the same composite literal
+	// that creates the node it names.
+	ed.sel = ed.root.Kids[0]
 
 	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
 
@@ -603,9 +733,15 @@ func newEditor(fsys fs.FS) *editor {
 		// These live on ctx and NEVER on docCtx: a document that could
 		// build the editor's panes would contain the thing that renders
 		// it. See the two-context comment above.
+		// ActivityBar is registered through Elements, not Components: it
+		// DECLARES Sel, so the catalog can describe it and the attribute
+		// check applies to it. See the docCtx registration below, where
+		// the difference is load-bearing rather than tidy.
+		Elements: map[string]*markup.ElementDef{
+			"ActivityBar": activitybar.Def(ed.fsys, nil),
+		},
 		Components: map[string]markup.Builder{
-			"Preview":     preview.Builder(ed.pv),
-			"ActivityBar": activitybar.Builder(ed.fsys, nil),
+			"Preview": preview.Builder(ed.pv),
 			// One Art per app: the frame cache is keyed by size and colour,
 			// so panes of the same size share a raster.
 			"Panel": panel.Builder(ed.art),
@@ -656,8 +792,32 @@ func newEditor(fsys fs.FS) *editor {
 			// cache: a panel in the document and a panel in the shell are
 			// the same component at the same size, so they should be the
 			// same raster too.
-			"Panel":       panel.Builder(ed.art),
-			"ActivityBar": activitybar.Builder(ed.fsys, nil),
+			"Panel": panel.Builder(ed.art),
+		},
+		// ActivityBar DECLARES its surface, and on the document context
+		// that is the difference between an element the palette can offer
+		// and one it cannot.
+		//
+		// The bug this fixes was reported from the running editor:
+		// clicking ActivityBar emitted <ActivityBar Name="ActivityBar1"/>
+		// and the insert failed to load with "needs Sel=". seedRequired
+		// walks AttrsFor(spec, …) looking for Required attributes to
+		// seed, and a Builder registration contributes no Attrs at all —
+		// Catalog gives it AttrsKnown false, because a Builder is a func
+		// and not a schema. So the palette offered an element it could
+		// not produce valid markup for.
+		//
+		// With the declaration in hand seedRequired sees
+		// {Required, BindsBinding, GoType:"int"}, grows the viewmodel a
+		// prop.NewSource(0), and writes Sel="{{.ActivityBar1_Sel}}".
+		//
+		// <Panel> stays a Builder deliberately: its only attribute is a
+		// Style name it reads by hand, nothing about it is required, and
+		// adding a declaration it does not need would suggest the two
+		// registrations are ranked when they are not. Declare when there
+		// is a contract worth checking.
+		Elements: map[string]*markup.ElementDef{
+			"ActivityBar": activitybar.Def(ed.fsys, nil),
 		},
 	}
 
@@ -745,7 +905,22 @@ type attrRow struct {
 	// false: markup.AttrSpec.Default is empty exactly where nothing can
 	// check it.
 	modified bool
+	// body marks the one row that edits node.Body rather than an entry in
+	// node.Attrs. Carried as a FLAG rather than inferred from the name at
+	// each use, because "is this row the body" is asked in three places
+	// and a string comparison repeated three times is three chances to
+	// spell it differently.
+	body bool
 }
+
+// BodyRowName is how the body row is labelled in the properties grid.
+//
+// Parenthesised on purpose, following Visual Studio's (Name): it is the
+// grid's spelling for an entry that is NOT a property of the object. A
+// row called Content or Text would be copied into markup as
+// Content="hello" and produce "no such attribute" from a name the editor
+// itself put on screen.
+const BodyRowName = "(text)"
 
 // isModified compares the document's value against the declared default.
 // Absent means default, and a value equal to the default is not a
@@ -842,6 +1017,28 @@ func (ed *editor) attrRows() []attrRow {
 		return nil
 	}
 	var rows []attrRow
+	// The BODY row, where the element has one. It is not an attribute and
+	// must not be dressed as one: BodyRowName is parenthesised, the way
+	// Visual Studio writes (Name), so nobody copies it into markup as
+	// Content="…" and gets a load error from a list the editor supplied.
+	if bs := ed.bodySpec(target.Elem); bs != nil {
+		// Kind and legal come from the SPEC, and Binds is the load-bearing
+		// one: <Text>'s body goes through bindText, so {{.Title}} typed
+		// here is a live binding rather than the literal text "{{.Title}}".
+		// legalValues already renders that distinction for attributes, and
+		// a body is an attribute in every respect but where it is written
+		// — so it is rendered by the same function rather than by a second
+		// description that could disagree with it.
+		rows = append(rows, attrRow{
+			name:  BodyRowName,
+			kind:  string(bs.Kind),
+			legal: legalValues(markup.AttrSpec{Kind: bs.Kind, Binds: bs.Binds, GoType: bs.GoType}),
+			value: target.Body,
+			doc:   bs.Doc,
+			cat:   markup.CategoryCommon,
+			body:  true,
+		})
+	}
 	for _, a := range markup.AttrsFor(spec, parent) {
 		v := target.Attrs[a.Name]
 		rows = append(rows, attrRow{
@@ -889,12 +1086,23 @@ func categoryRank(c string) int {
 }
 
 // target resolves the selection to (spec, parent element name, node).
+//
+// A nil node is NOTHING SELECTED, and every caller already treated a nil
+// target as "no rows" — that is why the empty state cost so little: the
+// grid, the editors and the description pane all bottom out here.
 func (ed *editor) target() (markup.ElementSpec, string, *node) {
-	n := ed.root
+	n := ed.sel
+	if n == nil {
+		return markup.ElementSpec{}, "", nil
+	}
+	// The PARENT is what decides which attached properties are on offer —
+	// Canvas.Left under a <Canvas>, Grid.Row under a <Grid> — so it is
+	// looked up rather than assumed to be the root. That lookup is what
+	// lets a nested node be selected without the inspector lying about
+	// what can be set on it.
 	parent := ""
-	if ed.selected >= 0 && ed.selected < len(ed.root.Kids) {
-		n = ed.root.Kids[ed.selected]
-		parent = ed.root.Elem
+	if p := ed.parentOf(n); p != nil {
+		parent = p.Elem
 	}
 	for _, e := range ed.palette {
 		if e.Name == n.Elem {
@@ -902,6 +1110,22 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 		}
 	}
 	return markup.ElementSpec{Name: n.Elem}, parent, n
+}
+
+// parentOf returns the node holding n, or nil for the root and for a node
+// that is not in this document.
+func (ed *editor) parentOf(n *node) *node { return parentIn(ed.root, n) }
+
+func parentIn(at, n *node) *node {
+	for _, k := range at.Kids {
+		if k == n {
+			return at
+		}
+		if p := parentIn(k, n); p != nil {
+			return p
+		}
+	}
+	return nil
 }
 
 // ---- edits ----
@@ -913,6 +1137,10 @@ func (ed *editor) rebuild() {
 	src := "<Gooey>\n" + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
+	// Dropped up front, on every path: from here until the swap below
+	// succeeds there is no tree that corresponds to this document, and
+	// click-to-select must not map a press against one that does not.
+	ed.docRoot, ed.nodeOf = nil, nil
 
 	if ed.remote != nil {
 		// Driving another app: the target's live binding context is the
@@ -933,21 +1161,27 @@ func (ed *editor) rebuild() {
 	}
 	ed.status.Set("✓ builds")
 	ed.pv.Swap(w)
+	// The one moment the document and the built tree are known to
+	// correspond: w is what markup.Build made of THIS document. Inverted
+	// here rather than re-derived at click time, because a later edit moves
+	// one and not the other. See mapNodes for what happens where the two
+	// stop lining up.
+	ed.docRoot = w
+	ed.nodeOf = map[gooey.Component]*node{}
+	ed.mapNodes(ed.root, w)
 }
 
 func (ed *editor) outline() string {
 	var b strings.Builder
-	marker := "  "
-	if ed.selected < 0 {
-		marker = "> "
-	}
-	fmt.Fprintf(&b, "%s<%s>\n", marker, ed.root.Elem)
-	for i, k := range ed.root.Kids {
-		marker = "  "
-		if i == ed.selected {
-			marker = "> "
+	mark := func(n *node) string {
+		if ed.sel == n {
+			return "> "
 		}
-		fmt.Fprintf(&b, "%s  <%s Name=%q>\n", marker, k.Elem, k.Attrs["Name"])
+		return "  "
+	}
+	fmt.Fprintf(&b, "%s<%s>\n", mark(ed.root), ed.root.Elem)
+	for _, k := range ed.root.Kids {
+		fmt.Fprintf(&b, "%s  <%s Name=%q>\n", mark(k), k.Elem, k.Attrs["Name"])
 	}
 	return b.String()
 }
@@ -961,6 +1195,15 @@ func (ed *editor) addSelected() {
 	n := &node{Elem: spec.Name, Attrs: map[string]string{
 		"Name": fmt.Sprintf("%s%d", spec.Name, len(ed.root.Kids)+1),
 	}}
+	// An element whose content is its body is seeded with one, and the
+	// seed is its Name so two of them are told apart on the canvas. This
+	// is not cosmetic: without a body a <Text> measures zero, which means
+	// it does not appear, cannot be clicked, and cannot be selected in
+	// order to be given the body that would fix it. The palette must not
+	// add something the editor cannot then edit.
+	if ed.takesBody(spec.Name) {
+		n.Body = n.Attrs["Name"]
+	}
 	ed.seedRequired(spec, n)
 	for _, sl := range spec.Slots {
 		if !sl.Required {
@@ -993,7 +1236,7 @@ func (ed *editor) addSelected() {
 		n.Attrs["Canvas.Top"] = fmt.Sprint(len(ed.root.Kids)*2 + 1)
 	}
 	ed.root.Kids = append(ed.root.Kids, n)
-	ed.selected = len(ed.root.Kids) - 1
+	ed.sel = n
 	ed.rebuild()
 }
 
@@ -1071,13 +1314,36 @@ func literalFor(a markup.AttrSpec) string {
 	return "x"
 }
 
+// deleteSelected removes the selected node from whatever holds it.
+//
+// What it selects afterwards is the node that took the deleted one's
+// place, or the last one when the end was deleted, or NOTHING when the
+// parent is now empty. That last case is the one an index could not
+// express: the old code left selected at -1, which meant "the container",
+// so deleting the last child silently promoted the selection to the root.
 func (ed *editor) deleteSelected() {
-	if ed.selected < 0 || ed.selected >= len(ed.root.Kids) {
+	n := ed.sel
+	if n == nil {
 		return
 	}
-	ed.root.Kids = append(ed.root.Kids[:ed.selected], ed.root.Kids[ed.selected+1:]...)
-	if ed.selected >= len(ed.root.Kids) {
-		ed.selected = len(ed.root.Kids) - 1
+	p := ed.parentOf(n)
+	if p == nil {
+		return // the root is not deletable
+	}
+	for i, k := range p.Kids {
+		if k != n {
+			continue
+		}
+		p.Kids = append(p.Kids[:i], p.Kids[i+1:]...)
+		switch {
+		case len(p.Kids) == 0:
+			ed.sel = nil
+		case i < len(p.Kids):
+			ed.sel = p.Kids[i]
+		default:
+			ed.sel = p.Kids[len(p.Kids)-1]
+		}
+		break
 	}
 	ed.rebuild()
 }
@@ -1148,13 +1414,35 @@ const (
 // sweep compares the ANSWER, but there is no reason to spend it.
 func (ed *editor) toggleMode() { ed.design.Set(!ed.design.Get()) }
 
+// selectNext walks the selection through the root's children — and it is
+// the KEYBOARD's whole route to the empty state's exit. With nothing
+// selected there is no "next" relative to anything, so it starts at
+// whichever end the direction implies, which is what keeps ctrl+n usable
+// after a press on bare canvas.
 func (ed *editor) selectNext(d int) {
-	n := len(ed.root.Kids)
-	if n == 0 {
+	kids := ed.root.Kids
+	if len(kids) == 0 {
 		return
 	}
-	ed.selected = (ed.selected + d + n) % n
-	ed.rebuild()
+	at := -1
+	for i, k := range kids {
+		if k == ed.sel {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		if d > 0 {
+			ed.setSelection(kids[0])
+		} else {
+			ed.setSelection(kids[len(kids)-1])
+		}
+		return
+	}
+	// setSelection, not rebuild: ctrl+n and a click in the designer are the
+	// same edit to the same field, and there is no reason for the keyboard
+	// to cost a re-mount of the whole designer when the pointer does not.
+	ed.setSelection(kids[(at+d+len(kids))%len(kids)])
 }
 
 // selectedRow is the inspector row under the cursor, and whether there
@@ -1277,7 +1565,17 @@ func (ed *editor) commitEdit() {
 	if target == nil {
 		return
 	}
-	if v := ed.editValue.Get(); v == "" {
+	v := ed.editValue.Get()
+	// The body is a field, not a map entry, so "" clears it by assignment
+	// rather than by delete — and it must be matched on the row's flag
+	// route, not on the name alone, or an element that ever grows a real
+	// attribute spelled like BodyRowName would write to the wrong place.
+	if r, ok := ed.selectedRow(); ok && r.body && r.name == name {
+		target.Body = v
+		ed.rebuild()
+		return
+	}
+	if v == "" {
 		delete(target.Attrs, name)
 	} else {
 		target.Attrs[name] = v

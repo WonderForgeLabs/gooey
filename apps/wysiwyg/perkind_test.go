@@ -35,7 +35,7 @@ func TestEnterCyclesFiniteValuesAndTypesEverythingElse(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.selected = 1 // the Button
+	ed.sel = ed.root.Kids[1] // the Button
 
 	// KindEnum: Chrome. Enter must move it.
 	i, before := rowIndex(t, ed, "Chrome")
@@ -72,7 +72,7 @@ func TestTheCycleOffersUnsetOnlyWhereUnsetIsLegal(t *testing.T) {
 	ed := newEditor(editorFS())
 	ed.retype("Canvas")
 	ed.rebuild()
-	ed.selected = 1
+	ed.sel = ed.root.Kids[1]
 
 	_, chrome := rowIndex(t, ed, "Chrome") // optional KindEnum
 	if !contains(chrome.cycle(), "") {
@@ -131,7 +131,7 @@ func TestEveryCycledValueProducesMarkupThatBuilds(t *testing.T) {
 
 	laps := 0
 	for _, sel := range []int{0, 1} {
-		ed.selected = sel
+		ed.sel = ed.root.Kids[sel]
 		for _, r := range ed.attrRows() {
 			cyc := r.cycle()
 			if len(cyc) == 0 {

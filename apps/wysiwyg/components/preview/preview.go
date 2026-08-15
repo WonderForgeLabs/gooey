@@ -15,6 +15,7 @@ package preview
 
 import (
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -37,6 +38,9 @@ type Pane struct {
 	// design is the mode switch: true means the mounted tree is a PICTURE
 	// and nothing in it acts. See Frozen.
 	design *prop.Property[bool]
+
+	// sel is the design-surface selection gesture. See BindSelect.
+	sel func(x, y int) bool
 }
 
 // BindDesignMode makes the pane a gooey.Frozen host whose answer is a
@@ -67,6 +71,55 @@ func (p *Pane) Frozen() bool {
 		return true
 	}
 	return p.design.Get()
+}
+
+// BindSelect installs click-to-select, the design surface's own gesture.
+//
+// IT BELONGS ON THIS COMPONENT AND NOWHERE ELSE, and that is a framework
+// fact rather than a filing decision. gooey.Frozen exempts the host from
+// its own freeze precisely so a design surface has somewhere to put its
+// gestures, and DispatchMouse retargets a press inside a frozen subtree
+// to that host in ONE place at the top (mouse.go:176). So in DESIGN mode
+// this pane is the only component a press inside the document can reach
+// — the document's own Button never sees it, which is the whole point of
+// the mode.
+//
+// sel is handed the pressed cell rather than a component because the
+// retarget is lossy on purpose: by the time the event arrives here the
+// deepest hit is gone, and recovering it is a call to
+// FocusManager.HitTest, which is the editor's to make (it holds the
+// composer) and not a paraphrase this file should keep its own copy of.
+// Reporting true consumes the press.
+func (p *Pane) BindSelect(sel func(x, y int) bool) { p.sel = sel }
+
+// HandleMouse is click-to-select, gated on the pane being FROZEN.
+//
+// THE MODE GUARD IS NOT BELT-AND-BRACES. In LIVE mode this pane is an
+// ordinary ancestor of a live tree, and bubbling is what makes that
+// matter: a press the document does not consume — on a Canvas's empty
+// background, on a Text, on any of the many components that handle no
+// pointer at all — walks up its ancestors and arrives here exactly as a
+// DESIGN-mode press does. Selecting on it would take clicks that belong
+// to the thing the user asked to try, which is the one thing LIVE mode
+// exists for.
+//
+// The Frozen() call is a plain READ. Dispatch is not an evaluation
+// context, so this Get records no dependency and needs none: the
+// Composer's frozen observer already subscribes to the same property,
+// and it is what re-routed the event to this method in the first place.
+//
+// Press, not click: selection should follow the button going down, the
+// way focus-follows-click does. Left only — nothing in the repo consumes
+// input.ButtonRight yet, and quietly selecting on a right press would
+// spend the gesture a context menu will want.
+func (p *Pane) HandleMouse(ev input.MouseEvent) bool {
+	if p.sel == nil || !p.Frozen() {
+		return false
+	}
+	if ev.Kind != input.MousePress || ev.Button != input.ButtonLeft {
+		return false
+	}
+	return p.sel(ev.X, ev.Y)
 }
 
 // Builder registers the pane as <Preview/>, with p as its host.

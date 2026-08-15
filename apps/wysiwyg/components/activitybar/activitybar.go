@@ -110,6 +110,52 @@ var (
 // Src is a COMPUTED image — a picture derived from the selection, which
 // redraws when the selection changes because a computed that reads a
 // property subscribes to it. No invalidate call, no clock.
+// Def is Builder plus the declaration, for hosts that register through
+// Context.Elements. It is what makes the rail DESCRIBABLE rather than
+// merely nameable, and the bug it fixes was reported from the running
+// editor: clicking ActivityBar in the toolbox emitted
+//
+//	<ActivityBar Name="ActivityBar1"/>
+//
+// which fails to load with "needs Sel=". The palette seeds an inserted
+// element's required attributes from AttrSpec.Required + GoType, and a
+// Builder registration has no Attrs to read — so it offered an element
+// it could not produce valid markup for. Declaring Sel closes that: the
+// palette now seeds a bound int handle and the insert loads.
+//
+// Registering through Elements also turns on the attribute check, so
+// <ActivityBar Sell="{{.X}}"> becomes a load error with a near-miss
+// suggestion instead of an attribute nothing reads. Builder is kept for
+// hosts that predate the seam and for the tests that use it directly.
+func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
+	return &markup.ElementDef{
+		Name: "ActivityBar",
+		// The rail IS an Image — one sixel band, not one per icon — and
+		// the proto is what the catalog derives the behavioural axes
+		// from. Focusable is true through the Segmented inside it, but
+		// that is the INSTANCE's business; the proto answers for the
+		// type, which is what a catalog describes.
+		Proto: &components.Image{},
+		Known: true,
+		Doc:   "A vertical icon rail. The picture is derived from the selection.",
+		Attrs: []markup.AttrSpec{
+			// Required AND binding-only, which is exactly what
+			// selProperty enforces at load — a literal would be a rail
+			// that can never change its selection. The two statements
+			// have to agree: this one is what the palette reads, that one
+			// is what actually rejects, and a declaration that promised a
+			// literal would seed markup the builder refuses.
+			{
+				Name: "Sel", Kind: markup.KindBinding, Binds: markup.BindsBinding,
+				GoType: "int", Required: true, Origin: markup.OriginRegistered,
+				Doc: "The selected slot, as a live *prop.Property[int]. The rail is drawn from it.",
+			},
+		},
+		Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+		Build:    Builder(fsys, icons),
+	}
+}
+
 func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 	if len(icons) == 0 {
 		icons = DefaultIcons
