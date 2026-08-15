@@ -14,11 +14,12 @@
 // focus stop (fzf-style — typing is always live), the results are an
 // <ItemsView Focusable="false"> whose clicks and wheel arrive by
 // hit-testing, page-level gestures are <KeyBinding> declarations bound
-// to viewmodel commands — so main's event loop is one call to
-// Composer.Handle.
+// to viewmodel commands — so there is no event loop here at all, only
+// gooey.App.
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -33,7 +34,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 type match struct {
@@ -104,20 +104,23 @@ func main() {
 	})
 
 	// --- commands: the page's gestures resolve to these at load time.
-	var comp *gooey.Composer
+	var app *gooey.App
 	var ctx *markup.Context
-	running, chosen := true, ""
-	selectBy := func(d func() int) gooey.Command {
-		return gooey.Command(func() { sel.Set(clampSel(sel.Get()+d(), len(matches.Get()))) })
-	}
-	one := func(n int) func() int { return func() int { return n } }
-	// A page is the results view's height. The view is looked up lazily —
-	// commands resolve at load time, before the tree exists.
-	page := func() int {
-		if v, err := markup.Find[*components.ItemsView](ctx, "results"); err == nil {
-			return max(1, v.Bounds().H)
-		}
-		return 10
+	chosen := ""
+	// forward hands a page-level gesture to the results view's own key
+	// handling. The selection arithmetic it needs — clamp, page by the
+	// realized window height, a comparison-guarded Set so holding a key
+	// at either end costs no repaint — is already ItemsView.HandleKey;
+	// what markup cannot say is "send this gesture to THAT element", so
+	// a command says it instead. The view is looked up per press because
+	// commands resolve at load time, before the tree exists, and a hot
+	// reload builds a new one.
+	forward := func(k input.KeyEvent) gooey.Command {
+		return gooey.Command(func() {
+			if v, err := markup.Find[*components.ItemsView](ctx, "results"); err == nil {
+				v.HandleKey(k)
+			}
+		})
 	}
 	ctx = &markup.Context{
 		Values: map[string]any{
@@ -125,21 +128,22 @@ func main() {
 			"Query":     query,
 			"Rows":      resultRows,
 			"Selection": sel,
+			"Preview":   preview,
 			// An edit invalidates the ranking, so the selection returns
 			// to the top — the TextBox says WHAT changed, the demo says
 			// what that means.
 			"ResetSelection": gooey.Command(func() { sel.Set(0) }),
-			"SelectPrev":     selectBy(one(-1)),
-			"SelectNext":     selectBy(one(+1)),
-			"SelectPageUp":   selectBy(func() int { return -page() }),
-			"SelectPageDown": selectBy(page),
+			"SelectPrev":     forward(input.Named(input.KeyUp)),
+			"SelectNext":     forward(input.Named(input.KeyDown)),
+			"SelectPageUp":   forward(input.Named(input.KeyPageUp)),
+			"SelectPageDown": forward(input.Named(input.KeyPageDown)),
 			"Accept": gooey.Command(func() {
 				if ms := matches.Get(); len(ms) > 0 {
 					chosen = ms[clampSel(sel.Get(), len(ms))].path
 				}
-				running = false
+				app.Quit()
 			}),
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -149,69 +153,37 @@ func main() {
 		},
 		Components: map[string]markup.Builder{
 			"MatchLine": buildMatchLine,
-			"Preview": func(markup.Element, *markup.Context) (gooey.Component, error) {
-				return &previewPane{lines: preview}, nil
-			},
+			"Preview":   buildPreview,
 		},
 	}
 
-	mkDir := "cmd/finder"
-	if _, err := os.Stat(filepath.Join(mkDir, "finder.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mkDir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(mkDir)
-	name := "finder.gooey"
-	tree, err := markup.Load(fsys, name, ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
-
-	needsFrame := true
-	attach := func(w gooey.Component) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Component, 1)
-	stopWatch := markup.Watch(fsys, name, ctx, func(w gooey.Component) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-	screen.EnableMouse()
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
-	}
-	screen.Restore()
+	// markup.Page is the whole hot-reload story: the App rebuilds on the
+	// UI goroutine, which is where binding resolution has to happen. The
+	// hand-rolled loop this replaced watched with markup.Watch, and that
+	// built the replacement tree — resolving bindings, touching the
+	// property graph — on the watcher's own goroutine.
+	app = gooey.NewApp(markup.Page(os.DirFS(pageDir()), pageFile, ctx))
+	err := app.Run(context.Background())
 	if chosen != "" {
 		fmt.Println(chosen)
 	}
+	gooey.Exit(err)
+}
+
+const pageFile = "finder.gooey"
+
+// pageDir finds the markup whether the demo was started from the
+// repository root, from its own directory, or as an installed binary
+// sitting next to its page.
+func pageDir() string {
+	if _, err := os.Stat(pageFile); err == nil {
+		return "."
+	}
+	if _, err := os.Stat(filepath.Join("cmd/finder", pageFile)); err == nil {
+		return "cmd/finder"
+	}
+	exe, _ := os.Executable()
+	return filepath.Dir(exe)
 }
 
 func clampSel(i, n int) int {
@@ -280,6 +252,27 @@ func (w *matchLine) Render(f *gooey.Frame) {
 	}
 }
 
+// buildPreview is the markup builder for <Preview Lines="{{.Preview}}"/>.
+// The pane could have closed over the computed directly — it is the same
+// package — but then the page would show a component with no stated
+// input, and hot-reloading the file could not re-point it. An attribute
+// says where the text comes from.
+func buildPreview(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+	lv, err := ctx.BindingValue(e.Attrs["Lines"])
+	if err != nil {
+		return nil, fmt.Errorf("markup: <Preview Lines=%q>: %w", e.Attrs["Lines"], err)
+	}
+	lines, ok := lv.(*prop.Property[[]string])
+	if !ok {
+		return nil, fmt.Errorf("markup: <Preview Lines=%q> is %T; need *prop.Property[[]string]", e.Attrs["Lines"], lv)
+	}
+	return &previewPane{lines: lines}, nil
+}
+
+// previewPane paints the head of the selected file with a line-number
+// gutter. It is a component because markup has no element between
+// <Text> — one style for the whole run — and <ItemsView>, which would
+// make each of two hundred lines a selectable component of its own.
 type previewPane struct {
 	gooey.Base
 	lines *prop.Property[[]string]
