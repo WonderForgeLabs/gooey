@@ -89,27 +89,11 @@ func (p *ProgressBar) interval() time.Duration {
 // Start runs the animation ticker. A bar that can never be
 // indeterminate declines to start at all.
 func (p *ProgressBar) Start(post func(func())) func() {
-	if p.Indeterminate == nil || post == nil {
+	if p.Indeterminate == nil {
 		return func() {}
 	}
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(p.interval())
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				post(p.step)
-			}
-		}
-	}()
-	// Joining makes stop a barrier: a tick that already won the select
-	// posts before stop returns, so Close ⇒ no further posts, ever.
-	return func() { close(done); <-stopped }
+	// gooey.Every owns the close-and-join contract — see startable.go.
+	return gooey.Every(post, p.interval(), p.step)
 }
 
 // step runs on the UI goroutine. A determinate bar advances nothing, so
