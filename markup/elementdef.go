@@ -120,11 +120,24 @@ func (d *ElementDef) axes() (nonVisual, focusable, attaches, hasLayout bool) {
 }
 
 // spec renders the declaration as the catalog entry consumers read.
-func (d *ElementDef) spec() ElementSpec {
+func (d *ElementDef) spec() ElementSpec { return d.specAs(OriginBuiltin) }
+
+// specAs is spec with the provenance supplied by the caller, because the
+// SAME declaration means different things depending on who registered
+// it. A definition in this package's registry is builtin; the identical
+// struct handed to Context.Elements by a host app is registered, and a
+// palette that showed it as builtin would be claiming this build of
+// gooey compiled it in.
+//
+// Origin is provenance only — a consumer deciding whether Attrs is
+// trustworthy must read AttrsKnown, which is d.Known either way. That is
+// the whole point of the seam: a registered element with a declaration
+// is exactly as knowable as a builtin one.
+func (d *ElementDef) specAs(origin Origin) ElementSpec {
 	nonVisual, focusable, attaches, hasLayout := d.axes()
 	return ElementSpec{
 		Name:       d.Name,
-		Origin:     OriginBuiltin,
+		Origin:     origin,
 		Go:         goTypeOf(d.Proto),
 		AttrsKnown: d.Known,
 		Opaque:     d.Opaque,

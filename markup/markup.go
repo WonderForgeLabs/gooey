@@ -81,7 +81,38 @@ type Context struct {
 	// Styles resolves Style="name" attributes.
 	Styles map[string]render.Style
 	// Components adds custom element builders (e.g. LogPane).
+	//
+	// A Builder is a FUNC, so an element registered here contributes a
+	// name and nothing else: Catalog gives it AttrsKnown false, and
+	// checkAttrs declines to validate anything on it. Prefer Elements
+	// below when the component has an attribute vocabulary worth
+	// declaring; this map remains correct for genuinely dynamic builders
+	// and for the many hosts that were written before Elements existed.
 	Components map[string]Builder
+	// Elements adds custom elements WITH A DECLARATION — the same
+	// *ElementDef the built-in vocabulary is made of, so a host's own
+	// component is describable rather than merely nameable.
+	//
+	// The gap this closes is not cosmetic. The first consumer of the
+	// catalog was the wysiwyg palette, which seeds an inserted element's
+	// REQUIRED attributes (AttrSpec.Required + GoType) so that clicking a
+	// palette entry produces markup that loads. A component registered
+	// through Components has no Attrs for it to read, so the palette
+	// emitted <ActivityBar Name="ActivityBar1"/> — and ActivityBar
+	// requires a bound Sel=, so the insert failed to load with an error
+	// naming an attribute the user was never offered a way to supply.
+	//
+	// Declaring also buys the check, and that is the larger half: with a
+	// schema in hand, checkAttrs stops declining (attrcheck.go) and an
+	// unknown attribute on a registered element becomes a load error with
+	// a near-miss suggestion, exactly as on a built-in. Registering
+	// through Components means a typo is silently ignored forever.
+	//
+	// Resolution order is Elements, then Components, then the built-in
+	// registry, then the Includes convention. A name in BOTH maps is a
+	// load error rather than a silent winner: which one won would
+	// otherwise depend on nothing a reader can see.
+	Elements map[string]*ElementDef
 	// Handlers is the code-behind side of the event-binding split:
 	// Click="OnSave" resolves here, while Click="{{.Save}}" resolves a
 	// func in Values. The binding form works in markup-only controls;
@@ -922,6 +953,18 @@ func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
 }
 
 func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
+	// A host DECLARATION outranks a host builder, and a name in both is
+	// refused rather than resolved. Two registrations for one element
+	// means one of them is unreachable, and which one wins would depend
+	// on the order these ifs happen to be written in — the same reason
+	// registerElements panics on a duplicate builtin.
+	if d, ok := ctx.Elements[e.Name]; ok {
+		if _, dup := ctx.Components[e.Name]; dup {
+			return nil, fmt.Errorf("markup: <%s> is registered in both Context.Elements and Context.Components; one of them is unreachable, so declare it once", e.Name)
+		}
+		w, err := d.Build(e, ctx)
+		return named(e, ctx, w, err)
+	}
 	if b, ok := ctx.Components[e.Name]; ok {
 		w, err := b(e, ctx)
 		return named(e, ctx, w, err)

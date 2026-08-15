@@ -437,16 +437,38 @@ func BuiltinElements() []ElementSpec {
 // that genuinely takes no attributes.
 func (ctx *Context) Catalog() []ElementSpec {
 	builtins := BuiltinElements()
-	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Components))
+	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
+	seen := make(map[string]bool, len(builtins))
+
+	// DECLARED HOST ELEMENTS FIRST, and the order is the whole
+	// correctness argument rather than a preference.
+	//
+	// buildComponent consults Context.Elements BEFORE the built-in
+	// registry, so a host declaration of a name gooey also defines is
+	// what actually builds. Adding builtins first and skipping the
+	// collision — which is what the Components loop below does — would
+	// leave the catalog describing an element the document will never
+	// get: right name, wrong attributes, wrong Go type. A palette
+	// reading that would offer attributes the real component rejects.
+	//
+	// The Components loop keeps its skip because it has nothing better
+	// to offer: an opaque builder's entry is a name and a disclaimer, so
+	// replacing a builtin's real vocabulary with it would lose
+	// information rather than correct it. That asymmetry is the point of
+	// declaring.
+	for name, d := range ctx.Elements {
+		seen[name] = true
+		out = append(out, d.specAs(OriginRegistered))
+	}
 	for _, e := range builtins {
+		if seen[e.Name] {
+			continue
+		}
 		if e.Open {
 			e.Attrs = ctx.openAttrs(e)
 		}
-		out = append(out, e)
-	}
-	seen := make(map[string]bool, len(out))
-	for _, e := range out {
 		seen[e.Name] = true
+		out = append(out, e)
 	}
 	for name := range ctx.Components {
 		if seen[name] {
