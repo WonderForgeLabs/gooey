@@ -154,9 +154,21 @@ fires on every routine edit is a check you learn to skip.
 
 Offline, via [piper](https://github.com/OHF-Voice/piper1-gpl) through `uvx` — no
 key, no budget, no network, so the script can be re-cut as many times as the
-timings need. The first run downloads two voice models (~230 MB) into `voices/`.
-Both `voices/` and `audio/` are gitignored: they are derived, and one of them is
-worth re-deriving every time the script changes.
+timings need. The first run downloads two voice models (~230 MB) into `voices/`,
+which stays out of the repo: third-party, re-downloadable, and not ours to
+redistribute.
+
+`audio/` **is** committed, through Git LFS (`.gitattributes` at the repo root).
+It looks derived and mostly is, but every `**DURATION:**` marker in
+`NARRATION.md` is measured off these exact files — so a clone that re-renders
+instead of fetching gets a script whose timings describe audio it does not
+have. The `.txt` receipts are ordinary git objects rather than LFS ones,
+because they are small and because `present.py` compares them to decide a take
+is stale: in LFS, a fresh clone could not run that check without fetching.
+
+You need `git lfs` to get the wavs. Without it a clone still works — the files
+are pointer text, `say.sh all` re-renders them, and only the exact timings are
+lost.
 
 Piper is audibly synthetic. It is a rehearsal instrument — good enough to time
 the beats and hear where a sentence runs long. A final take probably wants a
