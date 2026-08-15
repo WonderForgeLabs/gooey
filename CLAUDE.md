@@ -69,7 +69,22 @@ by a character.
 # the previous version of this loop came to print `FAIL handlers/exec`
 # somewhere in ten thousand lines of go output and still exit 0. Reading
 # the last line is the check; the loop cannot make it for you.
-: > /tmp/gooey-verify-fails
+#
+# `mktemp`, NOT a fixed name like /tmp/gooey-verify-fails, and this is
+# not fussiness — do not simplify it back. This repo routinely has five
+# to fifteen agents live at once in their own worktrees, all following
+# THIS file, and /tmp is shared by every one of them. On a fixed name
+# two loops interleave: one truncates while another appends, so you
+# report `FAILED: handlers/exec` for a module you built cleanly, or you
+# read the file in the window after someone else's truncate and print
+# "all nested modules green" over a real failure. A check that can
+# quietly report the wrong answer is the defect this whole section
+# exists to remove, so it may not be reintroduced by the loop itself.
+#
+# `< <(find …)` would let a counter survive and drop the file entirely,
+# but it is a bashism; this block stays POSIX (`sh -n` clean) because
+# people paste it into whatever /bin/sh they have.
+fails=$(mktemp "${TMPDIR:-/tmp}/gooey-verify-fails.XXXXXX")
 find . -mindepth 1 -name '.?*' -prune -o -name go.mod -print | sort |
 while IFS= read -r mod; do
   m=${mod%/go.mod}; m=${m#./}
@@ -78,12 +93,12 @@ while IFS= read -r mod; do
     handlers/*|packs/*|mcp|grpc) race=-race ;;
     *)                           race= ;;
   esac
-  ( cd "$m" && go vet ./... && go test $race ./... ) || echo "$m" >> /tmp/gooey-verify-fails
+  ( cd "$m" && go vet ./... && go test $race ./... ) || echo "$m" >> "$fails"
 done
-if [ -s /tmp/gooey-verify-fails ]; then
-  echo "FAILED: $(tr '\n' ' ' < /tmp/gooey-verify-fails)"
+if [ -s "$fails" ]; then
+  echo "FAILED: $(tr '\n' ' ' < "$fails")"   # kept at $fails for inspection
 else
-  echo "all nested modules green"
+  echo "all nested modules green"; rm -f "$fails"
 fi
 ```
 
