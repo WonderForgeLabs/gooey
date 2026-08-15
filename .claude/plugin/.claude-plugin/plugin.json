@@ -1,0 +1,21 @@
+{
+  "name": "gooey",
+  "version": "0.1.0",
+  "description": "Working knowledge for the gooey repo, as skills and hooks rather than oral tradition: how to verify a change across every nested module (discovered, never enumerated), how to write a component without silently breaking damage tracking, how to write a test that can actually fail, how to capture a demo under a pty, and how to land a PR through a review gate that fails open. Six checks across two hook scripts, three of them blocking, each aimed at a mistake this repo has actually shipped.",
+  "author": {
+    "name": "WonderForgeLabs",
+    "url": "https://github.com/WonderForgeLabs"
+  },
+  "repository": "https://github.com/WonderForgeLabs/gooey",
+  "license": "MIT",
+  "keywords": [
+    "gooey",
+    "go",
+    "tui",
+    "terminal",
+    "damage-tracking",
+    "testing",
+    "verification",
+    "hooks"
+  ]
+}

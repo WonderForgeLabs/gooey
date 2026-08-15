@@ -1,0 +1,17 @@
+{
+  "name": "gooey",
+  "owner": {
+    "name": "WonderForgeLabs",
+    "url": "https://github.com/WonderForgeLabs"
+  },
+  "metadata": {
+    "description": "Claude Code tooling that ships with the gooey framework repo."
+  },
+  "plugins": [
+    {
+      "name": "gooey",
+      "source": "./.claude/plugin",
+      "description": "Skills and hooks for working the gooey repo: derived whole-tree verification, component and damage-tracking rules, tests that can actually fail, pty/asciinema capture, and the PR gate as it actually behaves."
+    }
+  ]
+}
