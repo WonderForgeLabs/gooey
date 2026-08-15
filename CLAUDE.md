@@ -276,10 +276,19 @@ bubbling rather than being consumed (`input.go:587`).
 
 **A `Startable`'s stop func must close AND join.** `close(done)` alone lets
 a tick that already won its select post *after* `Close`, and lifetime tests
-flake. The idiom is `func() { close(done); <-stopped }`
-(`components/timer.go:71`; also `spinner.go:132`, `progressbar.go:112`;
-Tooltip and Toast use the `wg.Wait()` variant). Joining is what makes stop
-a barrier: Close ⇒ no further posts, ever.
+flake. Joining is what makes stop a barrier: Close ⇒ no further posts, ever.
+The idiom now lives in `startable.go`, not hand-rolled per component:
+`gooey.Every` (`startable.go:42`) owns it for periodic ticks — Timer,
+Spinner, and ProgressBar all delegate to it (`components/timer.go:55`,
+`spinner.go:113`, `progressbar.go:96`) rather than writing their own
+`done`/`stopped` channels. `gooey.Delays` (`startable.go:80`) owns the same
+contract for a group of one-shot delays that stop together — Tooltip and
+ToastHost embed it (`components/tooltip.go:65`, `toast.go:47`) for
+per-hover shows and per-toast dismissals, where the count in flight is
+unbounded and a single ticker doesn't fit. A `Startable` that still
+hand-rolls its own `done`/`stopped` pair is a claim that neither shape fits —
+`Companion.Start` (`components/companion.go:133`) is the one legitimate
+case, joining a subprocess `Wait()` rather than a ticker.
 
 **Never call `Fd()` on the tty.** `os.File.Fd()` puts the file in blocking
 mode and removes it from Go's netpoller; after that a pending `Read` is an
