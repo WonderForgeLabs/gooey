@@ -9,6 +9,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/internal/viewport"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -113,6 +114,7 @@ type options struct {
 	mouse    bool
 	probe    bool
 	caps     *term.Caps
+	size     *[2]int
 	gfx      graphics.Encoder
 	gfxSet   bool
 	quitKeys []input.KeyEvent
@@ -149,6 +151,18 @@ func WithCapabilityProbe() Option { return func(o *options) { o.probe = true } }
 // WithCaps supplies capabilities outright, skipping both the probe and
 // the environment ladder. For hosts that already know.
 func WithCaps(c term.Caps) Option { return func(o *options) { o.caps = &c } }
+
+// WithSize declares the viewport for a host whose terminal cannot report
+// one. It is a FALLBACK, not an override: a terminal that answers the
+// ioctl wins, and on a real tty this option is never consulted.
+//
+// It is the only way to state a size. term.Caps carries Cols and Rows and
+// so looks like the place for it, but App.caps overwrites both from the
+// app's own size on every call — capability detection describes what a
+// terminal can do, never how big it is.
+func WithSize(cols, rows int) Option {
+	return func(o *options) { o.size = &[2]int{cols, rows} }
+}
 
 // WithGraphics pins the pixel protocol instead of letting capabilities
 // choose it. A nil encoder forces the halfblock fallback, where pixel
@@ -632,7 +646,7 @@ func (a *App) acquire() error {
 	if err != nil {
 		return fmt.Errorf("gooey: no terminal: %w", err)
 	}
-	cols, rows := s.Size()
+	cols, rows := a.startSize(s)
 	if a.opt.probe && a.opt.caps == nil {
 		if c, err := s.Detect(); err == nil {
 			a.opt.caps = &c
@@ -675,6 +689,43 @@ func (a *App) release() {
 		a.leaked = true
 	}
 	a.screen, a.events = nil, nil
+}
+
+// The viewport hook is how control-plane acts reach resized without it
+// becoming public API. Installed here rather than exported as a method
+// because a host must not be able to re-target the viewport behind the
+// framework's back; see internal/viewport.
+//
+// Post, not a direct call: the act arrives on whatever goroutine the
+// transport used, and everything past resized touches the property graph.
+func init() {
+	viewport.Resize = func(host any, cols, rows int) error {
+		a, ok := host.(*App)
+		if !ok {
+			return viewport.ErrNotResizable
+		}
+		if cols <= 0 || rows <= 0 {
+			return fmt.Errorf("viewport: size %dx%d is not positive", cols, rows)
+		}
+		a.Post(func() { a.resized(cols, rows) })
+		return nil
+	}
+}
+
+// startSize is the viewport the app opens at. A terminal that can answer
+// is authoritative — a declared size must never make an app paint 120
+// columns into a 40-column window. WithSize answers only when the
+// terminal cannot, which is every non-tty backend and is why the option
+// exists at all; without it such a host silently gets term.Screen.Size's
+// 80x24 constant with no way to say otherwise.
+func (a *App) startSize(s *term.Screen) (cols, rows int) {
+	if c, r, ok := s.SizeOK(); ok {
+		return c, r
+	}
+	if a.opt.size != nil {
+		return a.opt.size[0], a.opt.size[1]
+	}
+	return s.Size()
 }
 
 // resized re-targets the composition at a new size.

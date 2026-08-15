@@ -105,7 +105,13 @@ func (s *Screen) control(fn func(fd int) error) error {
 	return inner
 }
 
-func (s *Screen) Size() (cols, rows int) {
+// SizeOK reports the terminal's size and whether the terminal could
+// answer at all. Size is the same query with the historical 80x24
+// fallback already applied, which throws that distinction away — and a
+// host carrying its own declared size needs it, because "the terminal
+// says 80x24" and "there is no terminal to ask" call for different
+// answers.
+func (s *Screen) SizeOK() (cols, rows int, ok bool) {
 	var c, r int
 	err := s.control(func(fd int) error {
 		var e error
@@ -113,9 +119,16 @@ func (s *Screen) Size() (cols, rows int) {
 		return e
 	})
 	if err != nil || c <= 0 || r <= 0 {
-		return 80, 24
+		return 0, 0, false
 	}
-	return c, r
+	return c, r, true
+}
+
+func (s *Screen) Size() (cols, rows int) {
+	if c, r, ok := s.SizeOK(); ok {
+		return c, r
+	}
+	return 80, 24
 }
 
 // Raw enters raw mode + alternate screen with hidden cursor.
