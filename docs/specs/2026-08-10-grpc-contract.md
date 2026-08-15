@@ -433,10 +433,16 @@ New `contract` job beside `test`: `buf lint proto`; `buf breaking
 proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'` (after
 fetching main into that neutral branch, so it works on PRs and is a
 no-op on main pushes); the drift gate (`buf generate` + `git diff
---exit-code`); grpc module build/vet/test; Python smoke (`pip install
-./clients/python` then unittest discover); TS typecheck per flavor
-(`npm ci && npx tsc -p tsconfig.json`, lockfiles committed). All
-static commands; buf always runs as `go run …buf@v1.72.0`.
+--exit-code`); Python smoke (`pip install ./clients/python` then
+unittest discover); TS typecheck per flavor (`npm ci && npx tsc -p
+tsconfig.json`, lockfiles committed). All static commands; buf always
+runs as `go run …buf@v1.72.0`.
+
+The `grpc` module's own vet/test used to run here too. It does not any
+more: `ci.yml` discovers every `go.mod` in the tree and gives each one
+a matrix leg (`grpc` still under `-race`), so `contract` is now purely
+about the wire contract. Keeping a copy here would have made `grpc` the
+one module that file still named by hand.
 
 Publishing is a **separate workflow**, `publish-clients.yml`, on `v*`
 tag pushes (releasing is not a gate). Version = the git tag. npm: both
