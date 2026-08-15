@@ -90,18 +90,39 @@ func (v *vendors) launch(it Integration) string {
 		return "subscribed — " + it.Vendor + " failed to build: " + firstLine(string(out))
 	}
 
+	// The vendor's output goes to a FILE, and this is not tidiness.
+	//
+	// chromatica narrates what it is doing on stdout -- "chromatica │
+	// dialling…", "chromatica │ patched: {…}". Run from its own terminal
+	// that is the point of it. Inherited from the store it is a disaster:
+	// this process holds the terminal in raw mode on the alternate screen,
+	// and a child writing to the same fd paints straight onto cells the
+	// damage model believes are clean. They are not repainted, because
+	// nothing that owns them changed -- so the garbage stays until
+	// something else happens to dirty that row. The first version of this
+	// inherited os.Stderr and scribbled JSON across the running UI.
+	//
+	// A file rather than io.Discard because what the vendor did is worth
+	// being able to read afterwards, and the path goes in the receipt.
+	logPath := filepath.Join(os.TempDir(), "northwind-vendor-"+it.ID+".log")
+	logf, err := os.Create(logPath)
+	if err != nil {
+		return "subscribed — " + it.Vendor + " could not open a log: " + err.Error()
+	}
 	cmd := exec.Command(bin, "-addr", v.addr)
-	cmd.Stdout = os.Stderr // the app owns stdout; the vendor's log is not UI
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logf
+	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
+		logf.Close()
 		return "subscribed — " + it.Vendor + " failed to start: " + err.Error()
 	}
-	// Reap it. Without this the process stays a zombie after it exits,
-	// and `ps` during a demo is a fair thing for someone to do.
-	go func() { _ = cmd.Wait() }()
+	// Reap it, and close the log with it. Without the Wait the process
+	// stays a zombie after it exits, and `ps` during a demo is a fair
+	// thing for someone to do.
+	go func() { _ = cmd.Wait(); logf.Close() }()
 
 	v.procs[it.ID] = &vendorProc{cmd: cmd}
-	return "subscribed — " + it.Vendor + " is running and may now modify this app"
+	return "subscribed — " + it.Vendor + " is running · log " + logPath
 }
 
 // stop ends one vendor. Cancelling a subscription that leaves the vendor
