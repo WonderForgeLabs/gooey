@@ -1,0 +1,24 @@
+# Git LFS.
+#
+# The Rectangle's rendered narration — 24 wavs, ~46MB — is committed rather
+# than regenerated, because it is the take the talk was TIMED against. Every
+# **DURATION:** marker in NARRATION.md is measured off these exact files, so a
+# clone that re-renders instead of fetching gets a script whose timings
+# describe audio it does not have. Derived, yes; reproducible byte-for-byte,
+# no.
+#
+# LFS rather than plain git because 46MB of binary would sit in every clone's
+# history forever, and re-cutting the script rewrites all 24.
+#
+# What is deliberately NOT here:
+#
+#   voices/  — 224MB of piper's models. Third-party, downloaded by say.sh on
+#              first run, and not ours to redistribute.
+#   .txt     — the receipts beside each wav. Small, text, and diffable, and
+#              they are what present.py compares to decide a take is stale;
+#              in LFS a fresh clone could not run that check without fetching.
+#
+# CI does not fetch these. actions/checkout defaults to lfs:false, so its
+# working copy has pointer files — which is correct, because nothing in the
+# build or the test suite reads presentations/.
+presentations/the-rectangle/audio/*.wav filter=lfs diff=lfs merge=lfs -text

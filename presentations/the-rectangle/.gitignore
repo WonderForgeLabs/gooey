@@ -1,4 +1,11 @@
-# Derived, and big. `say.sh` re-downloads the models and re-renders the takes.
+# audio/ is COMMITTED, through LFS — see ../../.gitattributes. It is the take
+# the talk was timed against, so it is not really derived in the way the word
+# usually means.
+
+# 224MB of piper's voice models. Third-party, re-downloaded by say.sh on first
+# run, and not ours to redistribute.
 voices/
-audio/
+
+# The presenter's current slide number, rewritten on every advance. Committing
+# it would make a diff out of every rehearsal.
 .current
