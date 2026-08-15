@@ -32,14 +32,23 @@ Their governing rule: **wherever a fact could be derived by a command, the
 skill gives the command instead of the number.** That is the single biggest
 lesson this repo produced. `scripts/verify.sh` takes it furthest — it holds no
 copy of the module list *or of the discovery command*, and instead extracts the
-loop out of `CLAUDE.md` and runs it, because `CLAUDE.md`'s copy is the one three
-root-module tests already pin against a walk of the tree.
+loop out of `CLAUDE.md` and runs it, because `CLAUDE.md`'s copy is the one a
+root-module test already **executes** and diffs against an independent
+`filepath.WalkDir` — with sibling tests doing the same for `ci.yml` and pinning
+the two against each other. Which tests those are is in `verify-a-change`; run
+them rather than counting them here.
 
 ## Hooks
 
 Six checks in two scripts. One process per Bash call and one per file edit —
 with five to fifteen agents live in separate worktrees, per-check subprocesses
 would be a real tax.
+
+Those three numbers are all different on purpose, and it is worth saying so
+once: `hooks.json` registers **two** entries (one `PreToolUse`/Bash, one
+`PostToolUse`/edit), those two scripts run **six** checks between them, and
+**three** of the six block. A count of registered hooks is not a count of
+checks, and neither is a count of blocks.
 
 | # | Check | Event | Mode |
 | --- | --- | --- | --- |
@@ -77,7 +86,14 @@ cost of it landing exceeds the cost of a false block.
 - **A compiled executable in a pathspec** has no legitimate case in this repo.
   Detection is by **magic bytes, not the mode bit** — this tree is full of
   legitimately-755 shell scripts and blocking those would make the hook worse
-  than useless.
+  than useless. "Pathspec" means all three shapes: a *directory* holding an
+  untracked binary, the binary *named directly*, and an ELF already staged
+  when `git commit` runs. The middle one is the one that matters, because
+  `git add toolkitdemo && git commit -m wip -- toolkitdemo` is a single Bash
+  call — nothing is staged yet when the hook runs, so the `commit` half sees
+  an empty index and the `add` half is the only thing standing there. An
+  earlier version of this check inspected only pathspecs that resolved to a
+  directory and waved that straight through.
 - **`git stash clear`** destroys every worktree's stash at once; the stack is
   repo-global and this repo runs five to fifteen worktrees. There is no version
   of that which is right. `drop` and `pop` only *warn*, with the live listing
@@ -117,6 +133,12 @@ untouched, the suite stayed green, and four hooks would have shipped reported
 as *proved* while never being exercised. A green mutation suite without that
 guard is indistinguishable from one that mutates nothing. An A/B whose arms
 agree is a harness result, not a finding.
+
+That guard has since caught a second, larger instance of the same thing: on
+macOS, `sed -i EXPR FILE` is read as "in place, backup suffix EXPR", so *every*
+mutation was a no-op and the whole sweep reported DID NOT APPLY fourteen times.
+`mutate.sh` now writes to a temp file and copies it back, which is the only
+portable in-place edit there is.
 
 `verify-grading.sh` covers the other half — that `verify.sh` grades the verdict
 line and **fails shut** when there is no verdict, and that its

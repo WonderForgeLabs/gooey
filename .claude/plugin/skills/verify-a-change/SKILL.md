@@ -38,8 +38,9 @@ itself named eight modules across two loops while skipping seven
 twice, with `paint/` and every `examples/*` module going unbuilt behind a wall
 of green.
 
-Three tests in the root module now pin all of this, and they are the reason
-this skill can afford to state nothing:
+The root module now pins all of this, and that is the reason this skill can
+afford to state nothing. The table is the list; there is no count of it here,
+for the same reason there is no count of modules:
 
 | Test | File | What it does |
 | --- | --- | --- |

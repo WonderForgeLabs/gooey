@@ -6,10 +6,15 @@
 # thing to test is not "does it run go", it is "does it grade the verdict
 # line, and does it fail SHUT when there is no verdict at all".
 #
-# Five fake repos, identical except for what their CLAUDE.md loop prints. No
-# Go is compiled; the loop is a stub. That is deliberate -- a test that ran
-# the real suite would take ten minutes and would prove nothing extra about
-# the grading.
+# Most cases below build a fake repo, identical to its neighbours except for
+# what its CLAUDE.md loop prints. No Go is compiled; the loop is a stub. That
+# is deliberate -- a test that ran the real suite would take ten minutes and
+# would prove nothing extra about the grading. The last case is the exception
+# and runs the selector against this repo's real CLAUDE.md, because a
+# synthetic file cannot drift.
+#
+# The number of cases is not written here on purpose: read the total on the
+# last line, the same rule the rest of this plugin follows.
 #
 #   sh .claude/plugin/tests/verify-grading.sh
 
@@ -73,6 +78,29 @@ e "TWO discovery blocks -> error"         '# f\n\n```sh\n# -name go.mod\n:\n```\
 # The positive control: one discovery block, correctly found. Without this,
 # every case above would pass against a verify.sh that always exited 65.
 e "exactly one discovery block -> 0"      '# f\n\n```sh\ngo vet ./...\n```\n```sh\n# -name go.mod\n:\n```\n' 0
+
+echo "== the selector against THIS repo's real CLAUDE.md =="
+# Everything above is synthetic, and the synthetic cases cannot catch the
+# thing most likely to go wrong: verify.sh's selector is STRICTER than the Go
+# tests that supposedly pin the same file. `claudemd_test.go`'s `findCmd` is a
+# first-match regexp scoped to the `## Verify` section and is fence-agnostic
+# (`findCmd.FindString(verifySection(t))`), so a second illustrative
+# `find … -name go.mod` anywhere in CLAUDE.md, or relabelling the fence
+# ```bash, leaves all four Go tests green while verify.sh exits 65 and every
+# agent's one-liner stops working. This is the only case that runs the real
+# selector over the real file.
+real=$(cd "$here/../../.." && pwd)
+CLAUDE_PROJECT_DIR="$real" sh "$V" --print >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass=$((pass+1)); printf '  ok   %-44s exit=%s\n' "this repo's CLAUDE.md selects" "$rc"
+else
+  fail=$((fail+1)); printf '  FAIL %-44s exit=%s want=0\n' "this repo's CLAUDE.md selects" "$rc"
+  printf '       %s/CLAUDE.md no longer has exactly one ```sh fence\n' "$real"
+  printf '       containing `-name go.mod`. The Go tests will NOT catch this:\n'
+  printf '       claudemd_test.go regexps the FIRST match inside `## Verify`\n'
+  printf '       and does not look at fences at all.\n'
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

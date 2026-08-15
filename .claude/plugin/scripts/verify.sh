@@ -108,7 +108,22 @@ if [ "$mode" != "--root-only" ]; then
     "all nested modules green") ;;
     FAILED:*) rc=1 ;;
     *)
+      # Fail SHUT: no verdict means nothing here can say the tree compiled.
+      # Name the likely cause, because the most common one is not a broken
+      # loop at all -- it is an OLDER CLAUDE.md. The verdict lines this arm
+      # grades ("all nested modules green" / "FAILED: …") were added to the
+      # loop by #261; on any branch that predates it the loop ends with a
+      # bare `echo "FAIL $m"` per module and prints nothing at all when
+      # everything passes, so a perfectly green tree lands here.
       echo "verify.sh: the loop's last line is not a verdict: $verdict" >&2
+      echo "  This is a RED, and it says nothing about whether the tree" >&2
+      echo "  compiled -- only that the loop did not report." >&2
+      echo "  Most likely: CLAUDE.md's Verify loop predates the one that" >&2
+      echo "  prints a verdict line. Compare what it ends with:" >&2
+      echo "      \"\${CLAUDE_PLUGIN_ROOT}\"/scripts/verify.sh --print | tail -n 8" >&2
+      echo "  If it has no verdict, read the scroll above by hand -- and note" >&2
+      echo "  that the loop cannot set an exit status of its own, which is the" >&2
+      echo "  whole reason the verdict line exists." >&2
       rc=1
       ;;
   esac

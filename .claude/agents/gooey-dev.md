@@ -63,7 +63,7 @@ markup with Go-template bindings, terminal rendering.
 ### Testing conventions
 
 - `go test ./...` must stay green; damage-count assertions are contract tests, not implementation detail.
-- Interactive verification: build to a scratch dir, then `script -qec "stty cols W rows H; ./bin" log` with scripted stdin via `printf` OCTAL escapes (`\011` tab, `\015` enter, `\033[B` arrow — dash printf has no `\x` hex). Extract the final frame by finding the last `\x1b[H` in the log.
+- Interactive verification: build to a scratch dir, then `script -qec "stty cols W rows H; ./bin" log` with scripted stdin via `printf` OCTAL escapes (`\011` tab, `\015` enter, `\033[B` arrow — dash printf has no `\x` hex). To read the final frame, replay the whole log through `render.Screen` (an `io.Writer` that models a terminal) and assert on `s.Text()`. Do **not** hunt for the last `\x1b[H`: that is only the FIRST flush of a frame, so you get a half-painted screen. Cut the log at the last `\x1b[?1049l` first if the app exited cleanly. `docs/learn/howto/howto-testing.md` and the `gooey:capture-a-demo` skill are the authority.
 - GIFs: asciinema + agg (cell plane only — sixel/kitty need a real terminal). Mouse can't be exercised under recording ptys; everything must stay keyboard-operable.
 - The repo IS a git repository (initialized 2026-08-10). You still never commit, amend, or push — commits are the coordinator's/user's job; your deliverable is a clean working tree plus your report.
 
