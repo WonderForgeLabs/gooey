@@ -33,7 +33,7 @@ type App struct {
 
 	// logo is an image handle, not a path. <Image Src> takes a literal
 	// path or a handle the app already holds — the same rule that keeps a
-	// third party from putting a pixel on your screen in examples/store —
+	// third party from putting a pixel on your screen in apps/store —
 	// and here it means the artwork is generated at startup and never
 	// touches the filesystem at all.
 	logo *prop.Property[image.Image]

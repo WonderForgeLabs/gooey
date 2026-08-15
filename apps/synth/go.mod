@@ -1,4 +1,4 @@
-module github.com/WonderForgeLabs/gooey/examples/introtarget
+module github.com/WonderForgeLabs/gooey/apps/synth
 
 go 1.25.6
 

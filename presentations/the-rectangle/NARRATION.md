@@ -6,7 +6,7 @@ one idea the framework is built around. **Act II · The Rectangle** (17–24) is
 the same claims, live, in a running program that gets rewritten from outside
 while the audience watches.
 
-Act I is adapted from `examples/introdeck`, which is a talk of its own with its
+Act I is adapted from `apps/introdeck`, which is a talk of its own with its
 own runnable host; several of its beats want a real program on screen rather
 than a slide, and each says so. Act II is the functional demo and needs nothing
 but the wysiwyg editor.
@@ -29,7 +29,7 @@ PY
 ```
 
 **The shape of the thing.** This is a talk *about* gooey given *in* gooey, and
-more specifically inside `examples/wysiwyg` — a running markup editor whose
+more specifically inside `apps/wysiwyg` — a running markup editor whose
 centre pane has been replaced with a slide. The editor is not a host that was
 written to present; it is an editor, still running, still editing, that had a
 `patch_markup` done to it from outside and kept going. Beat 8 collects on that,
@@ -178,7 +178,7 @@ rectangle that text moves through.
 
 **DURATION:** 0:31 · **HOLD:** 0:08 · **VOICE:** narrator
 
-**LIVE:** a real shell on a pty, typing to itself. `examples/introdeck` drives
+**LIVE:** a real shell on a pty, typing to itself. `apps/introdeck` drives
 this from `era/greenscreen.keys`. When the machine is slow, the slide is slow —
 that is the point, and it is why it is not a recording.
 
@@ -307,7 +307,7 @@ agreed on was text.
 
 **DURATION:** 0:41 · **HOLD:** 0:12 · **VOICE:** narrator
 
-**LIVE:** `examples/scene` — a gooey app hosted inside a gooey app.
+**LIVE:** `apps/scene` — a gooey app hosted inside a gooey app.
 
 ```slide
 {
@@ -351,7 +351,7 @@ presenting from. We'll get to that.
 
 **DURATION:** 0:49 · **HOLD:** 0:20 · **VOICE:** narrator
 
-**LIVE:** `examples/soundboard`. Needs a sound server; without one it still runs
+**LIVE:** `apps/soundboard`. Needs a sound server; without one it still runs
 and still draws, says `silent`, and the meters stay at zero.
 
 **OVERLAPS BEAT 22.** Same program, same cells-vs-pixels point, twenty minutes
@@ -400,7 +400,7 @@ half blocks. The program doesn't know which.
 
 **DURATION:** 0:51 · **HOLD:** 0:20 · **VOICE:** narrator
 
-**LIVE:** `examples/synth` — click it, then play it with the letter keys.
+**LIVE:** `apps/synth` — click it, then play it with the letter keys.
 
 ```slide
 {
@@ -907,7 +907,7 @@ one.
 ## 19 · The layout is a file
 
 **HOLD is the beat.** Collapse the panes live if the room is technical: edit
-`Cols` in `examples/wysiwyg/wysiwyg.gooey`, save, and let them watch it reflow.
+`Cols` in `apps/wysiwyg/wysiwyg.gooey`, save, and let them watch it reflow.
 If you do, note out loud that the ColorPicker's value survived.
 
 **DURATION:** 0:49 · **HOLD:** 0:10 · **VOICE:** claude
@@ -1045,7 +1045,7 @@ the race detector, so the detector catches it instead.
 
 ## 22 · And then it could sing
 
-If the room has speakers, run `examples/soundboard` here instead of showing the
+If the room has speakers, run `apps/soundboard` here instead of showing the
 slide. The slide is the fallback, not the plan.
 
 **OVERLAPS BEAT 6**, which is the same program making the same point. Keep this
@@ -1057,7 +1057,7 @@ one and demote beat 6 if you are cutting.
 {
   "Deck.Kicker": " 22 · AND THEN IT COULD SING ",
   "Deck.Title": "and then it could sing",
-  "Deck.Body": "examples/soundboard: eight channels, a sixteen-step sequencer, one stereo\nstream out. Real audio — voices summed in Go with per-channel gain and pan,\ninterleaved into one buffer, piped to the sound server.\n\nTwo rendering strategies, chosen by what the data IS:\n\n    THE STEP GRID    discrete state, so it is drawn as CELLS. it lines up, it\n                     reads at a distance, and it survives a capture that only\n                     records the cell plane.\n\n    THE SCOPE        a continuous signal, so it is drawn as PIXELS, through\n                     halfblock — or sixel, where the terminal has it.\n\nAnd the rule from the last slide, under load: the mixer owns its numbers\nbehind a mutex, and a Startable copies ONE snapshot per frame. Forty-eight\nthousand samples a second become thirty property Sets.",
+  "Deck.Body": "apps/soundboard: eight channels, a sixteen-step sequencer, one stereo\nstream out. Real audio — voices summed in Go with per-channel gain and pan,\ninterleaved into one buffer, piped to the sound server.\n\nTwo rendering strategies, chosen by what the data IS:\n\n    THE STEP GRID    discrete state, so it is drawn as CELLS. it lines up, it\n                     reads at a distance, and it survives a capture that only\n                     records the cell plane.\n\n    THE SCOPE        a continuous signal, so it is drawn as PIXELS, through\n                     halfblock — or sixel, where the terminal has it.\n\nAnd the rule from the last slide, under load: the mixer owns its numbers\nbehind a mutex, and a Startable copies ONE snapshot per frame. Forty-eight\nthousand samples a second become thirty property Sets.",
   "Deck.Spot": "◀── a rectangle full of letters, making a noise, and showing you the noise.",
   "Deck.Arrow": "                                        ▲",
   "Deck.Blurb": "<Image> binds from an image.Image handle, so the badge is real graphics on a\nterminal with sixel and degrades to halfblocks on one without — and there is no\nbranch anywhere in the program that knows which happened.",

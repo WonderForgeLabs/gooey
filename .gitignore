@@ -47,7 +47,14 @@ recordings/
 /07-app-chrome
 /apps/dynamic-activities/dynamic-activities
 /apps/gitui/gitui
+/apps/introdeck/introdeck
+/apps/introtarget/introtarget
 /apps/kanban/kanban
+/apps/scene/scene
+/apps/soundboard/soundboard
+/apps/store/chromatica
+/apps/store/store
+/apps/synth/synth
 /apps/wysiwyg/wysiwyg
 /browser
 /cards
@@ -63,6 +70,7 @@ recordings/
 /howto-custom-draw
 /howto-forms
 /howto-handlers
+/intro
 /logview
 /markuplog
 /mcp/server

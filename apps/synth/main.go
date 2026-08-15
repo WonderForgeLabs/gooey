@@ -1,6 +1,6 @@
 // synth: a polyphonic synthesiser with a visualiser, in a terminal.
 //
-//	cd examples/synth && go build -o synth . && ./synth
+//	cd apps/synth && go build -o synth . && ./synth
 //
 // It is the last stop on the chronology in the gooey introduction — the
 // point where a rectangle full of letters turns out to be able to make

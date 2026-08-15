@@ -1,6 +1,6 @@
 // introdeck: the gooey introduction, presented by gooey.
 //
-//	cd examples/introdeck && go run .
+//	cd apps/introdeck && go run .
 //
 // NARRATION.md is the script, the slide deck and the edit list at once.
 // It is parsed at load: a ```speak fence is the audio, a ```screen fence

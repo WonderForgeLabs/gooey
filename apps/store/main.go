@@ -1,6 +1,6 @@
 // store: three parties, one screen.
 //
-//	cd examples/store && go run .
+//	cd apps/store && go run .
 //
 // Northwind Ops is an app somebody shipped. `elan` is the person using
 // it. Chromatica, Vestibule and Ledgerline are companies being paid to

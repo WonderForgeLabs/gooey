@@ -11,7 +11,7 @@
        Keep this identical to the Toolbar fragment in store.gooey. It is
        a second copy of four lines and the duplication is deliberate: the
        initial tree has to come from the page, and a patch source has to
-       be a whole document. examples/introdeck/live.gooey makes the same
+       be a whole document. apps/introdeck/live.gooey makes the same
        trade for the same reason. -->
   <HStack Name="Toolbar" Gap="2">
     <Text Style="dim">{{.Wallet}}</Text>

@@ -1,4 +1,4 @@
-module github.com/WonderForgeLabs/gooey/examples/scene
+module github.com/WonderForgeLabs/gooey/apps/soundboard
 
 go 1.25.6
 

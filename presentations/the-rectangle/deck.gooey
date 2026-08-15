@@ -4,7 +4,7 @@
 
        This file is a patch_markup FRAGMENT, not a page: its root child
        carries Name="EditorArea", which is the address of the pane it
-       replaces in a running examples/wysiwyg. That is the whole trick of
+       replaces in a running apps/wysiwyg. That is the whole trick of
        this talk — the slides are not a slideshow program, they are the
        editor's centre pane with something else in it, and the editor
        keeps running underneath.
