@@ -68,22 +68,25 @@ jobs:
 
         **Module Layout**
         - Root module `github.com/WonderForgeLabs/gooey` (Go 1.25)
-        - `handlers/temporal/` is a SEPARATE Go module on purpose — the
-          Temporal SDK's gRPC/protobuf dependency graph must never enter the
-          core framework's. Core gooey depends only on `golang.org/x/term`.
-          It is excluded from the root `./...` patterns, so build and test it
-          with a separate `cd handlers/temporal && go build ./... && go test ./...`.
-        - `handlers/exec/` is a SEPARATE Go module for the same reason — its
-          jq extraction depends on gojq. Build and test it with
-          `cd handlers/exec && go build ./... && go test -race ./...`.
-        - `mcp/` is a SEPARATE Go module for the same reason — the official
-          modelcontextprotocol/go-sdk brings eight modules with it. Build and
-          test it with `cd mcp && go build ./... && go test -race ./...`; its
-          demo lives at `mcp/cmd/server`.
+        - Every directory with its own `go.mod` is a SEPARATE module on
+          purpose, so a heavy dependency graph — the Temporal SDK's
+          gRPC/protobuf, gojq, the MCP SDK's — never enters the core
+          framework's. There are many more than any list here would name, and
+          this paragraph used to name three of them as though that were all.
+          DISCOVER them instead: `CLAUDE.md`'s Verify section carries the
+          command, `ci.yml` builds its job matrix from that same command, and
+          those two are the authority.
+        - Nested modules are excluded from the root `./...`, so a green root
+          run says NOTHING about them. `CLAUDE.md`'s verify loop is also the
+          authority on which get `-race`.
+        - The root `go.mod`'s direct requirements are deliberately few — read
+          the file rather than recalling them, and treat adding one as a
+          decision to check with a human, not a routine edit.
         - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
           `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
           control, `input/` routed event stream, `markup/` XML to component tree,
-          `cmd/` demo apps, `docs/` architecture and learn tutorials.
+          `cmd/` demo apps, `apps/` the larger applications, `docs/`
+          architecture and learn tutorials.
 
         **Architectural Invariants**
         - One cell renderer and N graphics protocols — the cell plane and the
@@ -96,7 +99,15 @@ jobs:
           decision — check with a human before adding one to the root go.mod.
 
         **Verification**
-        Before claiming work is done, run `go build ./...`, `go vet ./...`, and
-        `go test ./...` from the repo root, plus the `handlers/temporal`,
-        `handlers/exec`, and `mcp` module runs above when any is touched. Report real output — never assert a
-        command passed without running it.
+        Before claiming work is done, run `go vet ./...` and `go test ./...`
+        from the repo root, plus a run per nested module — discovered, not
+        recalled — when one is touched.
+
+        Use `go vet ./...` for the whole-repo compile check and NOT
+        `go build ./...`. `go build ./...` writes an executable into the repo
+        root for every main package, `.gitignore` does not cover all of them,
+        and several have been committed that way; `CLAUDE.md`'s Traps section
+        is the record. When binaries are genuinely wanted,
+        `go build -o /tmp/gooey-bin/ ./...` leaves the tree clean.
+
+        Report real output — never assert a command passed without running it.
