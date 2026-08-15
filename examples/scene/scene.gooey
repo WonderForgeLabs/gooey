@@ -1,0 +1,39 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- The chrome. Every element on this page except <Scene> is painted
+       once, at startup, and never again — while the raster next to them
+       redraws thirty times a second. Nothing here says so; the Scene's
+       Render reads the frame counter and these do not. -->
+  <Border Title="scene · a gooey demo" Style="panel">
+    <Grid Rows="Auto,*,Auto" Margin="1,0">
+
+      <HStack Grid.Row="0" Gap="3">
+        <Text Style="headline">{{.Effect}}</Text>
+        <Text Style="dim">{{.Names}}</Text>
+      </HStack>
+
+      <!-- No Width, no Height. The framebuffer is derived from the cell
+           rect this ends up with, at double the row count, so resizing
+           the window resizes the demo. -->
+      <Scene Grid.Row="1"/>
+
+      <HStack Grid.Row="2" Gap="3">
+        <Text Style="dim">n/p or ←/→ effect · space pause · q quit</Text>
+        <Text Style="hot" Visibility="{{.Paused}}">PAUSED</Text>
+
+        <!-- The clock is a component with no pixels: Measure returns
+             zero, Render does nothing, and all it owns is the goroutine
+             that advances the frame counter. It lives in the markup
+             rather than in main.go because its lifetime IS the page's
+             lifetime, which the tree already models — and it sits inside
+             this HStack because <Border> takes exactly one child and a
+             Startable is a visual child like any other. -->
+        <Clock/>
+      </HStack>
+
+    </Grid>
+
+    <KeyBinding Gesture="space" Command="{{.Pause}}"/>
+    <KeyBinding Gesture="q"     Command="{{.Quit}}"/>
+    <KeyBinding Gesture="esc"   Command="{{.Quit}}"/>
+  </Border>
+</Gooey>
