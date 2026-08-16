@@ -21,11 +21,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -79,16 +78,10 @@ func main() {
 		},
 	}
 
-	dir := "cmd/props"
-	if _, err := os.Stat(filepath.Join(dir, "props.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-
 	// The whole runtime: the App owns the terminal, the decoder, the
 	// frame loop and the signal story; the page is content it builds and
 	// rebuilds. Everything below is this demo's own behavior.
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "props.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("props", "props.gooey"), "props.gooey", ctx))
 
 	events := 0
 	app.OnEvent(func(ev input.Event) {

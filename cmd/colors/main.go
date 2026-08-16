@@ -30,9 +30,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -161,12 +161,7 @@ func main() {
 		},
 	}
 
-	dir := "cmd/colors"
-	if _, err := os.Stat(filepath.Join(dir, "colors.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("colors", "colors.gooey")
 
 	// The probe is unconditional: even under --depth or --graphics this
 	// page reports what the terminal actually said ("forced (terminal
