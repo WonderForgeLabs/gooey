@@ -213,11 +213,35 @@ in the framework will catch a violation.
 **joins** the decoder while draining its channel, bounded by
 `term.DecoderTimeout`, with `Screen.DecoderLeaked` as the tripwire.
 
-**Heavy dependencies live in nested modules.** The root `go.mod` has
-exactly two direct requirements (`golang.org/x/image`, `golang.org/x/term`).
-Adding a third is a doctrine change, not a routine edit — see
-`docs/specs/2026-08-10-pack-distribution.md`. The default answer to "this
-needs an SDK" is a new nested module.
+**Heavy dependencies live in nested modules.** The rule is about what an
+SDK drags in, not about the count: a dependency that pulls a client library,
+a protocol stack or a transitive graph belongs in a nested module, and the
+default answer to "this needs an SDK" is still a new nested module — see
+`docs/specs/2026-08-10-pack-distribution.md`.
+
+What the rule is *not* is a ban on adding anything. This section used to
+read "exactly two direct requirements … adding a third is a doctrine
+change", and that framing made a small library sound like the same decision
+as vendoring a cloud SDK. It is not, and treating it as one bought a
+hand-rolled line-scanner where a parser belonged (`lfscheckout_test.go`,
+which now uses `gopkg.in/yaml.v3` to read the workflows).
+
+Judge a dependency by **what it compiles into**, not by the `require`
+count — those are different questions and the module graph will not
+distinguish them for you. `go mod graph` shows yaml.v3 pulling
+`gopkg.in/check.v1`, which looks like a transitive dependency and is not
+one: it is yaml's own *test* dep, so it is in the graph and in nothing that
+builds. The check that answers the real question is:
+
+```sh
+go list -deps ./...     # what the non-test build actually compiles
+```
+
+A test-only dependency appears in neither that list nor a consumer's binary.
+
+Read the current set with `go list -m all` rather than trusting a number
+written here; a count in prose is a sample taken once, and this file has
+already been wrong about one.
 
 ## Traps
 

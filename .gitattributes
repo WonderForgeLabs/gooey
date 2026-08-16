@@ -1,0 +1,82 @@
+# Git LFS, by FILE TYPE rather than by path.
+#
+# A path rule (`presentations/the-rectangle/audio/*.wav`) was the first
+# version and it is a hand-maintained list wearing a smaller hat: the next
+# talk in the next directory gets plain-git binaries and nobody notices until
+# a clone is huge. The type is the durable fact — a wav is a wav wherever it
+# lands.
+#
+# ADDING A TYPE HERE REQUIRES ONE RENORMALIZING COMMIT. This block used to
+# claim the opposite — that existing blobs are simply untouched — and cited
+# `git status` staying clean across docs/media/demos/ as having VERIFIED it.
+# That check was a false negative and it cost a red CI.
+#
+# The mechanism: an attribute does not change a committed blob, but it does
+# change how the working tree is compared to one. Every GIF in history is
+# raw bytes; under `*.gif filter=lfs` the clean filter turns the file on disk
+# into a pointer before the comparison, so pointer-vs-bytes reads as MODIFIED
+# — forever, in every clone, for a file nobody edited. CI's `git diff
+# --exit-code` failed on thirty files while the commit that caused it
+# reported a clean tree locally.
+#
+# It reported clean because git caches stat information: in a worktree that
+# already had those files checked out, the filter never re-ran. A fresh
+# clone has no such cache and sees the truth. So the verification was done
+# in the one environment that cannot observe the failure, which is worth
+# more attention than the LFS detail — check a checkout rule against a
+# CHECKOUT, not against the tree you happen to be sitting in.
+#
+# `git add --renormalize` is the fix and it is one commit: the blobs become
+# pointers going forward, the working tree keeps real bytes, and history is
+# untouched. Whoever adds the next type does the same, or leaves the tree
+# permanently dirty. That is what "forward-only" actually costs.
+#
+# The payoff is still prospective and still real. The docs-and-demos
+# workflow re-records EVERY GIF in one go; at 7.5MB a sweep, each pass used
+# to land in history forever. That is precisely the cost LFS exists to
+# remove.
+#
+# No history REWRITE is planned, and renormalizing is not one. `git lfs
+# migrate` would additionally reclaim the 7.5MB already in history, but it
+# rewrites shared history and is a repo-wide call nobody has made.
+#
+# WHY THE AUDIO IS COMMITTED AT ALL. The Rectangle's 24 rendered takes look
+# like derived output and mostly are, but every **DURATION:** marker in its
+# NARRATION.md is measured with ffprobe against these exact files. A clone
+# that re-renders instead of fetching gets a script whose timings describe
+# audio it does not have. Piper is deterministic enough to sound the same and
+# not enough to be the same file.
+#
+# WHAT IS DELIBERATELY NOT HERE:
+#
+#   The .txt receipts beside each wav. LFS is a fix for SIZE and for
+#   BINARINESS, and 470 bytes of plain English is neither — all 24 together
+#   are 20KB. Storing them here would cost the things that make them useful:
+#   they would stop diffing in review and in `git log -p`, which is exactly
+#   how you audit a script change, and they would stop being greppable. It
+#   would also break the check they exist for, because present.py compares
+#   each receipt to the current script to decide a take is stale, and against
+#   a pointer file every take reads stale. Twenty kilobytes buys none of that
+#   back.
+#
+#   voices/ — gitignored outright rather than stored. 224MB of piper's own
+#   models, re-downloaded by say.sh on first run, and not ours to
+#   redistribute.
+#
+# CI FETCHES THESE. actions/checkout defaults to lfs:FALSE, which is the
+# dangerous default here: a job that checks out without it gets pointer TEXT
+# where a binary should be, and pointer text is a perfectly valid file, so
+# nothing errors. A step reading one sees 130 bytes beginning "version
+# https://git-lfs.github.com/spec/v1" and carries on as if that were the
+# content. Every actions/checkout in .github/workflows/ therefore sets
+# `lfs: true`, and TestEveryCheckoutFetchesLFS fails if one does not —
+# including the one in the next workflow somebody adds.
+#
+# CONSEQUENCES FOR A CLONE WITHOUT GIT-LFS. Everything still works; some
+# files are pointer text. The wavs re-render with `say.sh all` and only the
+# exact timings are lost. GIFs recorded before this rule play as they always
+# did; ones recorded after will not animate in `cmd/browser` until the
+# objects are fetched.
+*.wav filter=lfs diff=lfs merge=lfs -text
+*.gif filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
