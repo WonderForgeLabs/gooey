@@ -580,7 +580,11 @@ var defTextBox = &ElementDef{
 			}
 		}
 		if a, ok := e.Attrs["AccentStyle"]; ok {
-			tb.AccentStyle = components.Sty(ctx.Styles[a])
+			st, err := styleNamed(e, ctx, "AccentStyle", a)
+			if err != nil {
+				return nil, err
+			}
+			tb.AccentStyle = components.Sty(st)
 		}
 		// Error is the validation handle: a typed binding to the field's
 		// error property (empty = valid), never literal text.
@@ -590,7 +594,11 @@ var defTextBox = &ElementDef{
 			}
 		}
 		if a, ok := e.Attrs["InvalidStyle"]; ok {
-			tb.InvalidStyle = components.Sty(ctx.Styles[a])
+			st, err := styleNamed(e, ctx, "InvalidStyle", a)
+			if err != nil {
+				return nil, err
+			}
+			tb.InvalidStyle = components.Sty(st)
 		}
 		// A <Validate> behavior (bare or in <TextBox.Behaviors>) wires
 		// against the bound Text source and takes over the Error slot.
@@ -909,7 +917,11 @@ var defToastHost = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ToastHost> takes no children; toasts are shown from code (Show), not declared")
 		}
-		h := &components.ToastHost{Style: ctx.Styles[e.Attrs["Style"]]}
+		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		if err != nil {
+			return nil, err
+		}
+		h := &components.ToastHost{Style: st}
 		if raw, ok := e.Attrs["Duration"]; ok {
 			d, err := time.ParseDuration(strings.TrimSpace(raw))
 			if err != nil {
@@ -953,7 +965,11 @@ var defTooltip = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		t := &components.Tooltip{Text: text, Style: ctx.Styles[e.Attrs["Style"]]}
+		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		if err != nil {
+			return nil, err
+		}
+		t := &components.Tooltip{Text: text, Style: st}
 		if t.Delay, err = optDuration(e, "Delay"); err != nil {
 			return nil, err
 		}
@@ -988,7 +1004,11 @@ var defValidationMarker = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ValidationMarker> takes no children")
 		}
-		m := &components.ValidationMarker{Style: ctx.Styles[e.Attrs["Style"]]}
+		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		if err != nil {
+			return nil, err
+		}
+		m := &components.ValidationMarker{Style: st}
 		if _, ok := e.Attrs["Error"]; ok {
 			var err error
 			if m.Error, err = boundProp[string](e, ctx, "Error"); err != nil {

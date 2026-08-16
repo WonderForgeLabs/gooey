@@ -315,18 +315,23 @@ ancestor).
 **A `Startable`'s stop func must close AND join.** `close(done)` alone lets
 a tick that already won its select post *after* `Close`, and lifetime tests
 flake. Joining is what makes stop a barrier: Close ⇒ no further posts, ever.
-Do **not** hand-roll the `done`/`stopped` pair — the contract lives in
-`gooey.Every` (`startable.go:42`, stopping at `startable.go:63`) for a
-ticker and `gooey.Delays` (`startable.go:89`) for an unbounded set of
-one-shots, and a `Startable` forwards its `Start` to one of them (Timer,
-Spinner, ProgressBar to `Every`; Tooltip and Toast to `Delays`). It was
-written out by hand in seven controls until
+The idiom now lives in `startable.go`, not hand-rolled per component:
+`gooey.Every` (`startable.go:42`) owns it for periodic ticks — Timer,
+Spinner, and ProgressBar all delegate to it (`components/timer.go:55`,
+`spinner.go:113`, `progressbar.go:96`) rather than writing their own
+`done`/`stopped` channels. `gooey.Delays` (`startable.go:80`) owns the same
+contract for a group of one-shot delays that stop together — Tooltip and
+ToastHost embed it (`components/tooltip.go:65`, `toast.go:47`) for
+per-hover shows and per-toast dismissals, where the count in flight is
+unbounded and a single ticker doesn't fit. It was written out by hand in
+seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
-them, so channels of your own are now a claim that neither shape fits.
-`App.Every` (`app.go:349`) is the exception that does not yet honour it:
-its stop closes `done` and returns without joining, so a tick already past
-its select can still post after stop returned — fix in flight in
-[PR #282](https://github.com/WonderForgeLabs/gooey/pull/282).
+them, and `App.Every` shipped the signal-no-join defect in the runtime
+itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
+delegated it too (`app.go:363`). A `Startable` that still hand-rolls its
+own `done`/`stopped` pair is a claim that neither shape fits —
+`Companion.Start` (`components/companion.go:133`) is the one legitimate
+case, joining a subprocess `Wait()` rather than a ticker.
 
 **Never call `Fd()` on the tty.** `os.File.Fd()` puts the file in blocking
 mode and removes it from Go's netpoller; after that a pending `Read` is an
