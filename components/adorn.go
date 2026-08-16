@@ -188,6 +188,48 @@ func (l *AdornmentLayer) DecoratesCells() {}
 // layer would starve every click and hover on the page.
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
 
+// attachAdornment is the attach half both AdornmentLayer customers share:
+// find the page's layer through the input tree and put pop in it,
+// returning the layer it went into — or nil, meaning "not placed", for
+// the three ways that can fail identically. No host yet and no input
+// tree yet are both "too early, ask again on the next walk"; a page that
+// declares no layer is "this app shows no adornments", which is a
+// supported configuration and not an error (a tooltipless page, a form
+// whose errors show only in the TextBox).
+//
+// The already-placed guard stays at the CALL SITE, because "already up"
+// is not the same question for the two of them: a Tooltip is transient
+// and asks it per hover, a ValidationMarker is persistent and asks it on
+// every input-tree re-sync. Only the lookup-and-add is common.
+func attachAdornment(host gooey.Component, mgr *gooey.FocusManager, pop Adornment) *AdornmentLayer {
+	if host == nil || mgr == nil {
+		return nil
+	}
+	layer := findAdornmentLayer(mgr.Root())
+	if layer == nil {
+		return nil
+	}
+	layer.Add(pop)
+	return layer
+}
+
+// findAdornmentLayer walks the live tree for the page's layer. Overlays
+// are declared last, so the walk searches later siblings first.
+func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
+	if l, ok := w.(*AdornmentLayer); ok {
+		return l
+	}
+	if c, ok := w.(gooey.Container); ok {
+		kids := c.ChildComponents()
+		for i := len(kids) - 1; i >= 0; i-- {
+			if l := findAdornmentLayer(kids[i]); l != nil {
+				return l
+			}
+		}
+	}
+	return nil
+}
+
 // anchorBounds is an anchor's arranged rectangle, and whether it has one
 // worth anchoring to — a nil or unbounded component, or one arranged to
 // nothing (a collapsed subtree), has not.
