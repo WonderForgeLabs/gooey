@@ -155,7 +155,7 @@ func buildStatusBar(e Element, ctx *Context) (gooey.Component, error) {
 func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 	t := &components.Tabs{}
 	var err error
-	if raw, ok := e.Attrs["Selected"]; ok && strings.TrimSpace(raw) != "" {
+	if suppliedAttr(e, "Selected") {
 		if t.Selected, err = Bound[int](e, ctx, "Selected"); err != nil {
 			return nil, err
 		}

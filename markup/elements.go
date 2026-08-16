@@ -595,7 +595,7 @@ var defTextBox = &ElementDef{
 		}
 		// Error is the validation handle: a typed binding to the field's
 		// error property (empty = valid), never literal text.
-		if _, ok := e.Attrs["Error"]; ok {
+		if suppliedAttr(e, "Error") {
 			if tb.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 				return nil, err
 			}
@@ -680,7 +680,7 @@ var defProgressBar = &ElementDef{
 		p.Thresholds = e.Attrs["Thresholds"] == "true"
 		// Indeterminate is optional, and its absence is load-bearing: a
 		// bar that can never be indeterminate starts no goroutine.
-		if _, ok := e.Attrs["Indeterminate"]; ok {
+		if suppliedAttr(e, "Indeterminate") {
 			if p.Indeterminate, err = Bound[bool](e, ctx, "Indeterminate"); err != nil {
 				return nil, err
 			}
@@ -726,7 +726,7 @@ var defSpinner = &ElementDef{
 		if s.Interval, err = optDuration(e, "Interval"); err != nil {
 			return nil, err
 		}
-		if _, ok := e.Attrs["Enabled"]; ok {
+		if suppliedAttr(e, "Enabled") {
 			if s.Enabled, err = Bound[bool](e, ctx, "Enabled"); err != nil {
 				return nil, err
 			}
@@ -1016,7 +1016,7 @@ var defValidationMarker = &ElementDef{
 			return nil, err
 		}
 		m := &components.ValidationMarker{Style: st}
-		if _, ok := e.Attrs["Error"]; ok {
+		if suppliedAttr(e, "Error") {
 			var err error
 			if m.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 				return nil, err
@@ -1079,7 +1079,7 @@ var defTimer = &ElementDef{
 		t := &components.Timer{Interval: d, Tick: tick}
 		// Enabled is optional; absent means always enabled. When present
 		// it is a live bool handle, so the graph can pause the timer.
-		if _, ok := e.Attrs["Enabled"]; ok {
+		if suppliedAttr(e, "Enabled") {
 			if t.Enabled, err = Bound[bool](e, ctx, "Enabled"); err != nil {
 				return nil, err
 			}
@@ -1119,12 +1119,12 @@ var defTypeAhead = &ElementDef{
 			t.Timeout = d
 		}
 		var err error
-		if _, ok := e.Attrs["Search"]; ok {
+		if suppliedAttr(e, "Search") {
 			if t.Search, err = Bound[string](e, ctx, "Search"); err != nil {
 				return nil, err
 			}
 		}
-		if _, ok := e.Attrs["NoMatch"]; ok {
+		if suppliedAttr(e, "NoMatch") {
 			if t.NoMatch, err = Bound[bool](e, ctx, "NoMatch"); err != nil {
 				return nil, err
 			}

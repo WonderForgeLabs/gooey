@@ -126,7 +126,7 @@ func buildCompanion(e Element, ctx *Context) (gooey.Component, error) {
 	if c.Env, err = companionEnv(e, ctx); err != nil {
 		return nil, err
 	}
-	if _, ok := e.Attrs["Error"]; ok {
+	if suppliedAttr(e, "Error") {
 		if c.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 			return nil, err
 		}
