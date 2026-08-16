@@ -105,7 +105,10 @@ Three details make this work:
 incremental: only a full frame starts with `\x1b[H`, and after the first
 one the log holds *differences* — a keystroke that turns `n=2` into `n=3`
 puts a single `3` on the wire. Searching the bytes for what the app is
-showing finds the first frame, or nothing.
+showing finds the first frame, or nothing. This is exactly the mistake
+that produced [#183](https://github.com/WonderForgeLabs/gooey/issues/183),
+a SIGWINCH test that sampled a half-written frame, fixed by
+[PR #189](https://github.com/WonderForgeLabs/gooey/pull/189):
 
 Replay the whole log through `render.Screen` instead. It is an
 `io.Writer` that models a terminal, so you feed it the bytes and ask what

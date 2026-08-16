@@ -1,5 +1,6 @@
 # Frozen, observed
 
+Landed in [PR #249](https://github.com/WonderForgeLabs/gooey/pull/249).
 Supersedes the "FROZEN IS SAMPLED, NOT OBSERVED" paragraph in
 `gooey.Frozen`'s doc comment and closes the one gap
 `docs/specs/2026-08-11-design-surface.md` left open.

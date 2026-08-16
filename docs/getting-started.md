@@ -10,8 +10,9 @@
 A hands-on walkthrough that builds one small app in five steps: a static
 tree, then live state, then markup, then interactivity, then reusable
 controls. Every code block compiles against the current tree — when in
-doubt, `cmd/state` and `cmd/reader` are the canonical versions of
-everything shown here.
+doubt, `cmd/reader` is the canonical version of the hand-rolled loop
+shown here (`cmd/state` is a `gooey.App` program now, and shows the
+markup end of it).
 
 For the ideas behind these mechanics, read [architecture.md](architecture.md).
 For the full element and attribute catalog, see
@@ -182,6 +183,13 @@ goroutine, decodes them into `input.Event` values (a tagged union of
 `KeyEvent` and `MouseEvent`), and sends them on the channel. Escape-
 sequence ambiguity (a lone Esc vs. the start of an arrow key) is handled
 inside with a 40 ms idle timeout.
+
+`DecodeEvents` is the unowned primitive, and every hand-rolled demo here
+starts it this way — but a decoder started by hand is nobody's, so
+`Restore` has nothing to join. `screen.Events(16)` starts the same
+decoder and hands the Screen ownership of the goroutine, which is what
+lets teardown prove it died before the tty goes to a child process.
+That is what `gooey.App` uses, and one more reason new apps start there.
 
 ```go
 for {
@@ -398,7 +406,9 @@ What changed relative to the step 1 loop:
 - Composer construction moved into `attach`, because the POC composer is
   static: a new tree needs a new Composer.
 - `markup.Watch` polls the file's ModTime and rebuilds on change (parse
-  errors keep the old tree). The callback runs on the watcher goroutine,
+  errors keep the old tree); the 300 ms poll is a stopgap, tracked for
+  replacement by filesystem notifications in
+  [#53](https://github.com/WonderForgeLabs/gooey/issues/53). The callback runs on the watcher goroutine,
   so it sends the new tree over `swaps` and the loop attaches it on the
   UI goroutine. On an `embed.FS`, ModTimes never change and the same
   call is a natural no-op.
@@ -509,8 +519,9 @@ func (s *stepper) HandleKey(ev input.KeyEvent) bool {
 Because `Render` reads `s.value.Get()`, the bound property is a paint
 dependency: any `Set` — from this component's keys or from anywhere else —
 repaints the stepper and nothing more. (For mouse support, also
-implement `HandleMouse(input.MouseEvent) bool`; see the checkbox in
-`cmd/state/main.go`.)
+implement `HandleMouse(input.MouseEvent) bool` — `Checkbox.HandleMouse`
+in `components/checkbox.go` is the short version, and
+[learn/howto/howto-mouse.md](learn/howto/howto-mouse.md) is the guide.)
 
 The viewmodel gains commands and the custom element registers as a
 `markup.Builder` under `Context.Components`. The builder receives the raw
@@ -621,7 +632,10 @@ and its registration:
 `Styles`, `Components`, `Handlers`, and `Includes` left nil in the child
 context inherit from the parent; `Named` is scoped per instance. The
 demos wrap the `BindingValue` + type-assert dance in a small generic
-helper — see `attr[T]` in `cmd/reader/controls.go`.
+helper — see `attr[T]` in `cmd/reader/controls.go`. Letting a registered
+component declare a checked surface instead, the way `<x:Property>` does
+for markup controls, is in flight as
+[PR #290](https://github.com/WonderForgeLabs/gooey/pull/290).
 
 **Include: markup only, zero code.** For controls that need no typed
 setup, the instance's attributes simply become the control's context:
@@ -714,9 +728,10 @@ markup a binding came from.
 
 - **Demos** — [demos.md](demos.md) walks all of them.
   `cmd/state` ([media/demos/state.gif](media/demos/state.gif)) is this
-  tutorial's endpoint taken further: damage tracking made visible, a
-  reactive-vs-command serialization toggle, and a custom checkbox with
-  mouse support. `cmd/reader` ([media/demos/reader.gif](media/demos/reader.gif)) is the
+  tutorial's endpoint taken further — damage tracking made visible and a
+  reactive-vs-command serialization toggle — though it is a `gooey.App`
+  program with no hand-rolled loop and no custom component left in it.
+  `cmd/reader` ([media/demos/reader.gif](media/demos/reader.gif)) is the
   first real multi-UserControl app — three panes, focus-scoped keys,
   background fetches applied over a channel. `cmd/props`,
   `cmd/markuplog`, `cmd/logview`, `cmd/finder`, `cmd/sysmon`, and
@@ -733,7 +748,8 @@ markup a binding came from.
   why; most of it has shipped. Start with
   [specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md)
   (`x:Property` declarations — shipped; `gooey gen` is the part still
-  ahead),
+  ahead, tracked as epic
+  [#59](https://github.com/WonderForgeLabs/gooey/issues/59)),
   [specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md)
   (handler namespaces — shipped, see `handlers/temporal/cmd/temporaldemo` and
   [markup-reference.md](markup-reference.md#handler-namespaces)), and

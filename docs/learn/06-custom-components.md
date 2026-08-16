@@ -151,6 +151,13 @@ Now use it:
 the universal layout attributes **after** the builder returns, so any
 component embedding `Base` gets them for free.
 
+Notice that `Max` is parsed straight out of `e.Attrs["Max"]` with
+`strconv.Atoi` rather than resolved as a bindable property the way `Value`
+is — a third-party builder can only reach a live bound attribute through
+the exported `BindingValue`, which requires `{{...}}` syntax and errors on
+a literal. Built-in elements don't have this restriction; it's a known
+gap: [#266](https://github.com/WonderForgeLabs/gooey/issues/266).
+
 A registered builder wins over every other resolution path, so you can
 also shadow a built-in element name if you ever need to.
 

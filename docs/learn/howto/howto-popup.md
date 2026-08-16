@@ -11,7 +11,10 @@ once in `components.Popup`, and an owner wires it in **four lines**.
 `<Popup>` tag. It was extracted after the framework had grown four
 hand-rolled copies (the `MenuBar` dropdown, the `Tooltip`, the demo
 browser's source picker, the `ToastHost` hosting shape), so the shape
-is proven by adoption: `MenuBar` runs entirely on it, and `Tooltip`
+is proven by adoption
+([#96](https://github.com/WonderForgeLabs/gooey/issues/96),
+[PR #143](https://github.com/WonderForgeLabs/gooey/pull/143)):
+`MenuBar` runs entirely on it, and `Tooltip`
 adopted the **placement** half only (`PlacePopup`) because its lifecycle
 is a hover timer, not a focus-and-capture gesture.
 
@@ -252,6 +255,8 @@ into a component so you cannot get it wrong.
   no pointer-anchored context menus yet.
 - **One popup per owner.** Nesting — a submenu opening off a dropdown —
   has no support.
+  ([#104](https://github.com/WonderForgeLabs/gooey/issues/104) tracks
+  submenus, pointer-anchored context menus, and mnemonics as menus v2.)
 - A toast is *not* a popup — no anchor, no dismissal grammar, no focus
   or capture. `ToastHost` shares only the z-hosting convention.
 

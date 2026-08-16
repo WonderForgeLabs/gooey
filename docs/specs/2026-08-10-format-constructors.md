@@ -1,6 +1,6 @@
 # Format helpers as computed-property constructors (issue #159)
 
-**Status:** executed.
+**Status:** executed ([PR #164](https://github.com/WonderForgeLabs/gooey/pull/164)).
 
 **Date:** 2026-08-10
 
@@ -72,7 +72,8 @@ record ([2026-08-10-pipeline-grammar-v2.md](2026-08-10-pipeline-grammar-v2.md))
 already reserved the space: binding converter stages are *ordered value
 transforms* sharing the tail parser and the reserved-word set with
 handler clauses, and stage names outside the reserved five are exactly
-where converters land. When #99 builds its registry, each registered
+where converters land. When [#99](https://github.com/WonderForgeLabs/gooey/issues/99)
+(open) builds its registry, each registered
 stage name resolves to one of these functions — the stage does
 `FormatBytes` on the read path with dependency recording flowing
 through the converted read, and Go-side and markup-side formatting can

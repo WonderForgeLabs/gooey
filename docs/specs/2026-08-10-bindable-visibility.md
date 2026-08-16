@@ -1,4 +1,4 @@
-# Bindable Visibility (issue #12, remainder)
+# Bindable Visibility ([issue #12](https://github.com/WonderForgeLabs/gooey/issues/12), remainder)
 
 Executed 2026-08-10. This record closes the "Roadmap, not done: bindable
 `Visibility`" section of `2026-08-10-container-backgrounds.md` and the
@@ -17,6 +17,7 @@ what was underneath, and relayouts. The whole gap was waking it up.
 
 ## Chosen design: the composer owns invalidation
 
+Landed as [PR #141](https://github.com/WonderForgeLabs/gooey/pull/141).
 Three pieces, none of which touches an invariant:
 
 1. **`Layout` carries the binding.** `BindVisibility(*prop.Property[Visibility])`,

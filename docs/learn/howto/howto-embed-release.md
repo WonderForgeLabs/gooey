@@ -83,7 +83,8 @@ cheap guards:
   compile.
 - Embedding does not precompile anything. The XML is still parsed and the
   tree still built at startup; the only change is where the bytes come
-  from. A compiled tier (`gooey gen`) is designed but not implemented.
+  from. A compiled tier (`gooey gen`) is designed but not implemented
+  ([#59](https://github.com/WonderForgeLabs/gooey/issues/59)).
 
 ## See also
 

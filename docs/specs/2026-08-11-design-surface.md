@@ -1,6 +1,11 @@
 # The design surface: COD, edit/runtime vocabularies, selection, and a property grid (design)
 
-Status: proposed. Nothing here is built. Its prerequisite —
+Status: partially implemented. `Frozen` (see
+`docs/specs/2026-08-14-frozen-observed.md`), `AttrSpec.Default`/`Category`,
+and the per-`Kind` grid editors are built (items 1, 6-8 in "Order of
+work" below); COD, click-to-select, the selection adornment, keyboard
+sizing/moving, and `Context.ComponentDefs` (items 2-5, 9-10) are not. Its
+prerequisite —
 `docs/specs/2026-08-11-component-catalog-and-wysiwyg-builder.md` — is
 built and running, and this record is the second half of the same
 question: the catalog answers *what may I set on this element*, and a
@@ -91,7 +96,7 @@ Neither requires hiding the subtree.
 > mechanism. It is now **observed**: reading a property inside `Frozen()`
 > subscribes, and a changed answer re-routes input, re-tabs the page and
 > stops or starts the subtree's Startables in the same frame. See
-> `docs/specs/2026-08-14-frozen-observed.md`. Everything else below —
+> `docs/specs/2026-08-14-frozen-observed.md`, landed in [PR #249](https://github.com/WonderForgeLabs/gooey/pull/249). Everything else below —
 > what freezing covers, the three touch points, the guards and their
 > tests — is unchanged.
 
@@ -414,7 +419,7 @@ which is the least interesting way for a good idea to be right.
 ## COD: what it is, where it lives, and what it is not
 
 **COD is an editor component, not a framework one.** The framework gains
-the `InputBoundary` interface and three lines of routing; everything else
+the `Frozen` interface and three lines of routing; everything else
 lives in `examples/wysiwyg`. That split matters because the seam is
 generally useful (a read-only preview, a disabled subtree, a thumbnail)
 while a design surface is not something the framework should have an
@@ -424,7 +429,7 @@ COD is:
 
 - a one-child container (`ChildComponents` returns the built document
   root — the walk is preserved),
-- `InputBoundary() bool { return true }`,
+- `Frozen() bool { return true }`,
 - `Focusable` — it is the focus stop that receives the sizing and moving
   keys, since nothing under it can be focused any more,
 - the owner of a `map[gooey.Component]*node`, recorded at build time,
@@ -724,6 +729,8 @@ Two things fall out of that table that are worth naming:
   earlier.
 
 ## Prerequisite: `Context.ComponentDefs`
+
+Tracked in [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290), open.
 
 The grid cannot be honest about a host app's own components while
 `Components` is `map[string]Builder` — a func is not a schema, so every

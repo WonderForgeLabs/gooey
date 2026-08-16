@@ -1,6 +1,6 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `server` under `mcp/cmd/`, `plates` under `paint/cmd/`, and `kanban`, `wysiwyg` and `dynamic-activities` under `apps/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `server` under `mcp/cmd/`, `plates` under `paint/cmd/`, and `kanban`, `gitui`, `wysiwyg` and `dynamic-activities` under `apps/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
 `cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
 
@@ -305,6 +305,21 @@ under instrumentation, and `gooey.CompanionCmd` collapsing a
 hand-managed sidecar into the app's own lifetime. It is the app
 [Tutorial 8](learn/08-remote-control.md) drives.
 
+## gitui
+
+GIF: docs-and-demos workflow.
+
+A lazygit-lite built entirely on the exec pack: three panes over a real git repository — changed files, recent commits, and a diff that follows the selection — and not one git invocation lives in Go code. Every action is a `{{sys:Run ...}}` expression in `gitui.gooey`; `main.go` contributes only the capability grant, an itemized allowlist of four fixed binaries plus baked argv prefixes (`git-status`, `git-log`, `git-diff`, `git-branch`). Markup can invoke exactly those four, with exactly the arguments their registrations allow — there is no shell anywhere, so a diff path is never re-parsed by `/bin/sh`.
+
+`r` fans one gesture out to three `sys:Run` calls at once through a local custom element, `<Refresh>`, whose builder resolves each attribute the way `Click` does and returns a single `*gooey.KeyBinding` running all three; it also posts one initial run through the Dispatcher so the panes are full before anyone presses anything.
+
+Commands run in the app's own working directory, so launched from anywhere inside this repository, gitui browses gooey itself — including whatever edit you're making to it right now.
+
+- Run: `cd apps/gitui && go run .` — its own module, for the same dependency-quarantine reason as `apps/kanban`: it imports `handlers/exec`, which pulls in gojq.
+- Keys: `tab` focus, `↑`/`↓` or `j`/`k` select, `r` refresh, `q`/`ctrl+c` quit
+
+Exercises the exec pack's `sys:` namespace end to end: capability-grant registration as the only route from markup to a real binary, a bound argument (`.SelectedPath`) crossing into a command's argv at invoke time, and a non-visual custom element hung off the root Grid to fan one keystroke into several handler calls.
+
 ## wysiwyg
 
 GIF: docs-and-demos workflow.
@@ -349,8 +364,8 @@ oneof lacks) putting a button per activity into the page's
 `ActivityList` element, each bound to ``{{temporal:Activity `<Name>`
 .Input | into .Activity.<Name>.Result}}``. `delete_activity` runs it
 backwards and ends with the `UnregisterNames` act, which exists because
-of this demo: without it every invented name leaks for the life of the
-process.
+of this demo (landed in [PR #206](https://github.com/WonderForgeLabs/gooey/pull/206)):
+without it every invented name leaks for the life of the process.
 
 The stream is what makes this state *sync* rather than hopeful writes.
 The worker subscribes to `properties` (filtered) and `lifecycle`, so it
@@ -407,7 +422,7 @@ the app's lifetime.
 
 ![plates](media/demos/plates.gif)
 
-Drawing declared in markup: three pages of plates whose pens, brushes and geometry are attributes in a `.gooey` file, drawn through `paint/` — gooey's bridge to `fogleman/gg` — with no plate list in Go at all.
+Drawing declared in markup: three pages of plates whose pens, brushes and geometry are attributes in a `.gooey` file, drawn through `paint/` — gooey's bridge to `fogleman/gg` — with no plate list in Go at all (tracked in [#256](https://github.com/WonderForgeLabs/gooey/issues/256)).
 
 The Go program supplies a viewmodel and four lines of registration. `paint` is a nested module, so the root cannot import it and no builtin element could ever be `<Ellipse>`; the seam is `markup.Context.Components`, the same one `apps/wysiwyg` uses for `<Panel>`. After that the documents draw themselves, and all four hot-reload — edit a plate and it redraws with the scene index intact.
 
@@ -430,7 +445,7 @@ The walkthrough: the `ColorPicker` edits one `Accent` property; the border, titl
 
 The GIF runs the demo twice, `--depth=truecolor` and then `--depth=256`, driven by identical keystrokes so the two tiers can be compared at the same color: the truecolor pass shows smooth bars, a wide swatch, and a bare `#FFAA3C`; the 256 pass shows banded bars, a narrow swatch, and `#FFAA3C → xterm 215`. On a 16-color terminal the bars stop pretending to be gradients at all and become a fill meter with `≈ yellow`.
 
-There is a fourth tier the GIF can never show. On a terminal with a
+There is a fourth tier the GIF can never show (tracked in [#24](https://github.com/WonderForgeLabs/gooey/issues/24)). On a terminal with a
 graphics protocol and a known cell size, each channel bar records **one**
 `Frame.Place` of a gradient image generated at the terminal's exact
 pixels-per-cell — the same sweep `renderBar` paints per cell, drawn per
@@ -466,7 +481,7 @@ The walkthrough: the job opens in its fetch stage, which has no measurable progr
 
 Exercises the toolkit end to end: the Startable animation discipline shared by `ProgressBar`, `Spinner`, the toast auto-dismiss timers and the tooltip delay (post, never touch the graph from the goroutine; stop closes and joins), rocker arrow semantics that consume a key only when it moves something, `ButtonBar` uniform sizing and its `gooey.FocusHost` focus scope, pixel button chrome placed per paint node, `Validate` behaviors publishing error properties a computed can gate a command on — and the overlay story: document order is z-order, so the `MenuBar`, `ToastHost` and `AdornmentLayer` are declared as the root Grid's *last* children while `Grid.Row` keeps the bar on the top row, the open menu holds the pointer capture so a click elsewhere dismisses without activating what is underneath, and dismissing any overlay — menu, toast, tooltip, or popup — repaints exactly the components it was covering (the Composer's restore pass).
 
-Tabs made this the demo that stresses *collapse*, and the reorganization found three framework bugs doing it. A `Grid` arranged into a zero rect was returning off a stale measure cache, so its children kept the bounds they had; the Composer erases a component by noticing its bounds *changed*, so a hidden page's whole subtree stayed painted over the page that replaced it. `Border` and `Gauge` painted a row at their own `Y` without checking they had one, putting cells outside their damage rect where no sweep could reach them (`Border` worse than most: at zero width its far-edge arithmetic walks backwards). And every stack panel indexed a per-child measure cache that a collapsed-on-first-frame container never fills, which panicked. All three are pinned — `components/layout_test.go` for the layout and paint contracts, `cmd/toolkit/toolkit_test.go` for the screen-level one, which composes each tab from scratch and demands it be byte-identical to the same tab reached by switching.
+Tabs made this the demo that stresses *collapse*, and the reorganization found three framework bugs doing it (tracked in [#179](https://github.com/WonderForgeLabs/gooey/issues/179)). A `Grid` arranged into a zero rect was returning off a stale measure cache, so its children kept the bounds they had; the Composer erases a component by noticing its bounds *changed*, so a hidden page's whole subtree stayed painted over the page that replaced it. `Border` and `Gauge` painted a row at their own `Y` without checking they had one, putting cells outside their damage rect where no sweep could reach them (`Border` worse than most: at zero width its far-edge arithmetic walks backwards). And every stack panel indexed a per-child measure cache that a collapsed-on-first-frame container never fills, which panicked. All three are pinned — `components/layout_test.go` for the layout and paint contracts, `cmd/toolkit/toolkit_test.go` for the screen-level one, which composes each tab from scratch and demands it be byte-identical to the same tab reached by switching.
 
 The demo page carries two layout budgets that are also pinned, because both failures are invisible until they are on screen: the `ValidationMarker` gets an empty *fixed* row of its own on the forms tab (an `Auto` row with no children sizes to nothing, and the adornment plane paints above everything, so the marker simply erased `[ submit ]`), and the three `StatusBar` sections have to fit 96 columns — Left and Right size to their content and Center is centred in what is left, so a key-hint string that grows takes the clock's breathing room first and then collides with the status text.
 
@@ -523,7 +538,7 @@ construction, because each has to be run from inside its own module's
 directory so its `go.mod` graph applies.
 
 The tree being browsed doesn't have to be the tree the browser was
-launched from. `b` opens a **source picker**: every worktree of the
+launched from. `b` opens a **source picker** (tracked in [#131](https://github.com/WonderForgeLabs/gooey/issues/131)): every worktree of the
 repository (name, tip subject, `*` when it has tracked modifications) and
 every local branch that has no worktree. Picking a worktree switches to
 it; picking a bare branch materializes a throwaway **detached** worktree

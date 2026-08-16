@@ -1,6 +1,6 @@
 # Settings: external state as bindable properties
 
-Status: implemented (`settings/`, `cmd/settingsdemo`)
+Status: implemented (`settings/`, `cmd/settingsdemo`), landed in [PR #233](https://github.com/WonderForgeLabs/gooey/pull/233)
 
 ## The ask
 
@@ -145,6 +145,8 @@ nothing dirty writes nothing (`TestStopWritesNothingWhenNothingChanged`).
   must not be silent either.
 
 ## No untyped `Write(key, any)` — but there is `SetRaw(key, json)`
+
+Landed in [PR #234](https://github.com/WonderForgeLabs/gooey/pull/234).
 
 The CRUD the ask named maps as:
 
