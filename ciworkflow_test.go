@@ -165,3 +165,121 @@ func TestCIWorkflowRaceTierMatchesCLAUDEMD(t *testing.T) {
 		}
 	}
 }
+
+// bufGenOutGrep pulls the `grep -oP '<pattern>' proto/buf.gen.yaml`
+// invocation out of the "Generated code drift" step, so the test below runs
+// the SAME extraction ci.yml runs rather than a second implementation that
+// could silently drift from it.
+var bufGenOutGrep = regexp.MustCompile(`grep -oP '([^']+)' proto/buf\.gen\.yaml`)
+
+// TestGeneratedCodeDriftWatchesEveryBufOutput pins the drift step's own
+// derivation. The step used to watch a hand-written list of four
+// directories copied out of proto/buf.gen.yaml once; that list is exactly
+// the failure `discover` already fixed once for modules — stale the moment
+// a plugin's `out:` changes — except a stale watch here is worse than a
+// stale module list, because the step keeps running and calls whatever
+// differs in the WRONG directory "Generated code drift" rather than simply
+// skipping something.
+//
+// So the step now derives its pathspec from proto/buf.gen.yaml with a grep
+// at run time, and CI itself guards the two ways that grep can go wrong: an
+// empty parse (fails loud, already the safe direction for `git diff
+// --exit-code`) and a parsed-but-nonexistent path (its `[ ! -d "$d" ]`
+// check). What CI cannot catch on its own is a grep that parses cleanly to
+// the WRONG set of existing paths — nothing distinguishes that from a
+// correct parse until real drift goes unwatched. This test is that check:
+// it runs ci.yml's own grep command and compares the result against an
+// independent line-scan of proto/buf.gen.yaml that does not share the
+// regex, so agreement between the two is a real cross-check rather than one
+// mechanism confirming itself.
+func TestGeneratedCodeDriftWatchesEveryBufOutput(t *testing.T) {
+	body := readFileString(t, ciWorkflow)
+	m := bufGenOutGrep.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("%s's \"Generated code drift\" step must DERIVE its watched paths "+
+			"from proto/buf.gen.yaml with a `grep -oP '...' proto/buf.gen.yaml` "+
+			"extraction, not a written list — a written list goes stale the moment "+
+			"a plugin's `out:` is added, removed or renamed, and the stale watch "+
+			"then calls whatever differs elsewhere \"Generated code drift\", which "+
+			"is actively misleading rather than merely incomplete.", ciWorkflow)
+	}
+
+	out, err := exec.Command("grep", "-oP", m[1], "proto/buf.gen.yaml").Output()
+	if err != nil {
+		t.Fatalf("running ci.yml's own extraction (%s): %v", m[0], err)
+	}
+	var raw []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			raw = append(raw, line)
+		}
+	}
+	got := uniqSorted(raw)
+
+	want := independentBufOutDirs(t)
+	if len(want) == 0 {
+		t.Fatal("proto/buf.gen.yaml has no `out:` plugin field; the independent " +
+			"parse below is wrong, not the file")
+	}
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("ci.yml's grep extraction disagrees with an independent parse of "+
+			"proto/buf.gen.yaml:\n  ci.yml's grep:      %v\n  independent parse: %v\n"+
+			"A silent disagreement here IS the failure the step's own existence-"+
+			"guard exists to catch at run time — this test catches it before the "+
+			"run, and before it can pass over real drift.", got, want)
+	}
+
+	// The existence guard the step runs at CI time, run here too: a
+	// directory this test's own independent parse thinks is real but the
+	// checkout does not have would mean the parse — not just ci.yml's
+	// regex — is wrong.
+	for _, d := range want {
+		fi, err := os.Stat(d)
+		if err != nil || !fi.IsDir() {
+			t.Errorf("proto/buf.gen.yaml declares out: %s, which is not a directory "+
+				"in this checkout", d)
+		}
+	}
+}
+
+// independentBufOutDirs re-derives the `out:` set with its own line scan,
+// deliberately not ci.yml's regex, so TestGeneratedCodeDriftWatchesEveryBufOutput's
+// comparison is between two independent readings rather than a regex
+// checked against itself.
+func independentBufOutDirs(t *testing.T) []string {
+	t.Helper()
+
+	b, err := os.ReadFile("proto/buf.gen.yaml")
+	if err != nil {
+		t.Fatalf("reading proto/buf.gen.yaml: %v", err)
+	}
+
+	var dirs []string
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == line {
+			continue // no leading indent: a top-level key, never a plugin's `out:`
+		}
+		if !strings.HasPrefix(trimmed, "out:") {
+			continue
+		}
+		if val := strings.TrimSpace(strings.TrimPrefix(trimmed, "out:")); val != "" {
+			dirs = append(dirs, val)
+		}
+	}
+	return uniqSorted(dirs)
+}
+
+// uniqSorted sorts and de-duplicates, mirroring the `sort -u` ci.yml pipes
+// its own grep through.
+func uniqSorted(xs []string) []string {
+	sort.Strings(xs)
+	out := xs[:0:0]
+	for i, x := range xs {
+		if i == 0 || x != xs[i-1] {
+			out = append(out, x)
+		}
+	}
+	return out
+}
