@@ -45,18 +45,18 @@ func (ed *editor) bindPicking(hit func(x, y int) gooey.Component, invalidate fun
 // the surface root, then each nested node down to the deepest one under
 // the cursor. Empty when the hit is not in the document at all.
 //
-// THIS IS THE WALK, AND IT IS DELIBERATELY NOT "climb to a top-level
-// kid". HitTest returns the deepest COMPONENT — the <Text> inside the
-// <Border> inside the node — and the interesting question is which
-// DESIGN NODE owns it. Answering that as a chain rather than as an index
-// keeps the walk independent of how much of the tree the editor can
-// currently address: today only root.Kids is selectable, so nodeAt takes
-// chain[1] and stops. When nesting becomes selectable, the POLICY in
-// nodeAt changes and this function does not.
+// THIS IS THE WALK, AND IT IS DELIBERATELY NOT A POLICY. HitTest returns
+// the deepest COMPONENT — the <Text> inside the <Border> inside the node
+// — and the interesting question is which DESIGN NODE owns it. Answering
+// that as a chain rather than as an index is what has let the policy
+// invert twice without this function changing a line: it climbed to the
+// top-level kid while the selection was a flat index, took the deepest
+// node when the surface became chrome, and now indexes from the drill
+// scope. Every one of those is an index into this chain.
 //
 // A press on a container's own chrome and a press on its child produce
-// chains that agree on every element but the last, which is what makes
-// them select the same thing under today's policy.
+// chains that agree on every element but the last, which is why
+// nodeAtDepth's clamp is what makes chrome selectable at all.
 func (ed *editor) nodeChain(hit gooey.Component) []*node {
 	if hit == nil || ed.docRoot == nil {
 		return nil
@@ -78,16 +78,50 @@ func (ed *editor) nodeChain(hit gooey.Component) []*node {
 	return chain
 }
 
-// nodeAt is the POLICY: which node of the chain the editor selects.
+// selectionScope is the DRILL SCOPE — Blend's "active container" — and
+// the whole reason it needs no state of its own is that it is DERIVED:
 //
-// It is the DEEPEST node the walk could verify, and that is the whole
-// point of the surface being chrome: the user's own root is chain[1] and
-// everything they place is below it, so a policy that stopped at chain[1]
-// would select the root whatever you clicked. Clicking a <Text> inside a
-// <Grid> inside the user's root selects the Text.
+//	scope == parentOf(selection), clamped to the user's root.
 //
-// This is the ONE line that changed when the surface became chrome, which
-// is why the walk was built to return a chain rather than an index.
+// That identity is what makes the three gestures compose without a
+// separate variable that could go stale. A single click selects a child
+// OF THE SCOPE, so after any click the scope is the parent of what is
+// selected and the same click repeated is idempotent. A double-click
+// selects one level deeper, which moves the scope down one. Escape
+// selects the parent, which moves the scope up one — and because the
+// scope followed, the next single click at the same cell re-selects the
+// node Escape just landed on instead of drilling straight back in.
+//
+// A separate `ed.scope` field would have had to be reset by hand from
+// four places (a click outside it, a delete, a retype, a document
+// rebuild), and each one it was forgotten in is a designer that selects
+// something the user cannot see a reason for.
+func (ed *editor) selectionScope() *node {
+	n := ed.sel
+	if n == nil || n == ed.doc() || ed.isSurface(n) {
+		return ed.doc()
+	}
+	p := ed.parentOf(n)
+	if p == nil || ed.isSurface(p) {
+		return ed.doc()
+	}
+	return p
+}
+
+// nodeAt is the POLICY: which node of the chain a single click selects.
+//
+// SHALLOW-FIRST, WITHIN THE SCOPE — the outermost node under the pointer
+// that is a child of the current drill scope. This is the Blend / Figma /
+// Illustrator model and it INVERTED the deepest-first policy that came
+// before it, because deepest-first has a defect that gets worse as
+// documents nest: a <Border> wrapping a <Text> covers itself entirely
+// with its own child, so every press inside it selected the Text and the
+// Border was effectively unselectable — and, once dragging arrived,
+// unmovable. Its own one-cell chrome was the only way in.
+//
+// Shallow-first has no such hole. Every node is reachable: the outermost
+// by one click, anything below it by a double-click per level, and the
+// way back out is Escape.
 //
 // NIL IS A DECISION, NOT A FAILURE CODE. A press that resolves to the
 // surface itself — bare canvas — selects NOTHING. The surface is the
@@ -97,11 +131,81 @@ func (ed *editor) nodeChain(hit gooey.Component) []*node {
 // the honest answer, and it is a state the selection can hold because it
 // is a node pointer rather than an index.
 func (ed *editor) nodeAt(hit gooey.Component) *node {
+	return ed.nodeAtDepth(hit, 0)
+}
+
+// nodeAtDepth is nodeAt with `extra` levels of drill applied — 0 for a
+// single click, 1 for a double-click.
+//
+// EXACTLY ONE LEVEL PER DOUBLE-CLICK, not all the way to the deepest hit.
+// Drilling straight to the bottom would make the intermediate containers
+// unreachable by pointer again, which is the defect this policy exists to
+// remove; and it composes, because after the first double-click the scope
+// has moved down one, so the second double-click at the same cell drills
+// from there.
+//
+// Clamping at the end of the chain is what makes the gesture safe to
+// repeat: a double-click on something with nothing below it selects that
+// same thing rather than nothing.
+func (ed *editor) nodeAtDepth(hit gooey.Component, extra int) *node {
 	chain := ed.nodeChain(hit)
 	if len(chain) < 2 {
 		return nil
 	}
-	return chain[len(chain)-1]
+	i := ed.scopeIndex(chain, ed.selectionScope()) + 1 + extra
+	if i >= len(chain) {
+		i = len(chain) - 1
+	}
+	return chain[i]
+}
+
+// scopeIndex locates the drill scope in a chain, POPPING OUTWARD until it
+// finds one — which is what makes clicking away from the current scope
+// leave it rather than select nothing.
+//
+// With a <Border> drilled into and a sibling <Border> clicked, the scope
+// is in neither the chain nor below it; walking up its ancestors reaches
+// the user's root, which is in every chain, and the click selects the
+// sibling at the level the two share. That is the same "click outside the
+// group to leave it" every direct-manipulation editor has, and it falls
+// out of the walk rather than needing a rule.
+//
+// 1 is the floor rather than 0: chain[0] is the SURFACE, which is chrome,
+// so the outermost thing a click may ever select is chain[1], the user's
+// own root.
+func (ed *editor) scopeIndex(chain []*node, scope *node) int {
+	for s := scope; s != nil; s = ed.parentOf(s) {
+		for i, n := range chain {
+			if n == s {
+				return i
+			}
+		}
+	}
+	return 1
+}
+
+// selectParent is Escape, and the spelling is Microsoft's rather than
+// invented: "To select the parent of a current selection in the designer,
+// press the ESC key" (the WPF designer's own documentation). Figma is the
+// odd one out here — there Escape deselects entirely — and the difference
+// matters, because a designer where Escape clears the selection gives the
+// user no way back UP a tree they drilled into except by clicking outside
+// and starting again.
+//
+// At the top it is a NO-OP rather than a clear. The user's root's parent
+// is the surface, which is chrome and must never be selected, and
+// clearing instead would make Escape mean two different things depending
+// on how deep you happen to be.
+func (ed *editor) selectParent() {
+	n := ed.sel
+	if n == nil || n == ed.doc() || ed.isSurface(n) {
+		return
+	}
+	p := ed.parentOf(n)
+	if p == nil || ed.isSurface(p) {
+		return
+	}
+	ed.setSelection(p)
 }
 
 // componentPath is the components from root down to w inclusive, or false

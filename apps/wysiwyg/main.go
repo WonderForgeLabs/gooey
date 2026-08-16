@@ -70,12 +70,38 @@
 //	d                DESIGN ↔ LIVE
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
+//	esc              select the PARENT of the selection
 //
 // # Selecting
 //
-// In DESIGN mode a left press in the designer selects the element under
-// the pointer, and it is the same edit ctrl+n makes — both call
-// setSelection, so both cost the same repaint.
+// SHALLOW-FIRST, THE BLEND MODEL, and it is worth being precise about
+// which parts of it were verified rather than remembered:
+//
+//   - a single click selects the OUTERMOST element under the pointer that
+//     is a child of the current drill scope — not of the document root.
+//     The scope moves as you drill, which is what makes repeated drilling
+//     work at all;
+//   - a double-click drills EXACTLY ONE LEVEL, not to the deepest hit.
+//     Going straight to the bottom would put the intermediate containers
+//     back out of reach, which is the defect this model exists to remove;
+//   - esc selects the PARENT. That spelling is Microsoft's — "To select
+//     the parent of a current selection in the designer, press the ESC
+//     key" — and not Figma's, where esc deselects entirely. It walks the
+//     scope up with it, so the next click at the same cell re-selects
+//     what esc landed on instead of drilling straight back in.
+//
+// This INVERTED the deepest-first policy that came before it, and the
+// reason was a real defect rather than a preference: a <Border> is
+// covered entirely by its own child, so every press inside one selected
+// the child and the container was reachable only through its one-cell
+// chrome — effectively unselectable, and after the drag work effectively
+// unmovable.
+//
+// THE DRILL SCOPE IS DERIVED, not stored: it is parentOf(selection),
+// clamped to the user's root. A stored scope would need resetting by hand
+// from four places (a click outside it, a delete, a retype, a rebuild)
+// and each one it was forgotten in is a designer that selects something
+// with no visible reason. See select.go.
 //
 // A press that lands on no element selects NOTHING, and the properties
 // grid goes empty. That is deliberate rather than a gap: the design
@@ -87,10 +113,7 @@
 // stray click on the background cannot strand you.
 //
 // The selection is a NODE, not an index. That is what lets it hold
-// "nothing" without a sentinel and name a node at any depth: a press
-// selects the DEEPEST element it landed on, so clicking a <Text> inside a
-// <Grid> selects the Text, and clicking the Grid's own chrome selects the
-// Grid.
+// "nothing" without a sentinel and name a node at any depth.
 //
 // # The surface, and what a save writes
 //
@@ -118,20 +141,43 @@
 //
 // # Moving
 //
-// Drag an element on the surface and it moves. Only a child of a
-// <Canvas> — free geometry belongs to the PARENT, so a child of a <Grid>
-// would mean re-celling and a child of a <VStack> reordering, and neither
-// is this gesture. A press on one of those selects and does not drag,
-// rather than writing a Canvas.Left the parent would silently discard.
+// Drag an element on the surface and it moves. WHAT THAT MEANS IS DECIDED
+// BY THE PARENT, because free geometry belongs to the parent and not to
+// the element:
+//
+//   - a child of a <Canvas> has Canvas.Left/Canvas.Top and goes wherever
+//     the pointer goes;
+//   - a child of a <Grid> has Grid.Row/Grid.Col and SNAPS to whichever
+//     cell the pointer is in;
+//   - a child of a <VStack> has no geometry at all — its position is its
+//     index — so a drag there means reorder, which is not implemented.
+//
+// The snap happens DURING the drag, cell to cell, not on release. An
+// element that floated under the pointer and jumped into a cell when the
+// button came up would be a preview that lies about what the release is
+// going to do, which is what people report as a bug.
+//
+// TWO ELEMENTS MAY LAND IN THE SAME CELL. Grid renders that as an overlap
+// and reports nothing, and it is accepted rather than solved: bumping the
+// second element would move something the user did not drag, and refusing
+// the drop would fail the gesture for a reason the pointer gives no cue
+// about. The overlap is at least visible on screen.
+//
+// A REFUSED DRAG SAYS SO. A press on a child of a stack selects it and
+// then writes a sentence into the status bar naming the element and the
+// container that decided it — because a gesture that silently does
+// nothing is what a broken editor looks like too, and there was no
+// diagnostic anywhere to tell them apart.
 //
 // The gesture is two-speed, and the split is the whole design: each
-// motion writes gooey.Layout.Left/Top on the LIVE COMPONENT and asks for
-// a frame, and only the release writes markup and rebuilds. Writing
-// markup per motion would re-mount the entire designer subtree per
-// pointer report and would look identical on screen — which is why
-// drag_test.go pins per-motion and on-release damage separately. Measured
-// on a two-element document: 6 per motion, 12 on release, 7 when the
-// motion drags across another element.
+// motion writes the attached properties on the LIVE COMPONENT's
+// gooey.Layout (Left/Top, or Row/Col) and asks for a frame, and only the
+// release writes markup and rebuilds. Writing markup per motion would
+// re-mount the entire designer subtree per pointer report and would look
+// identical on screen — which is why drag_test.go pins per-motion and
+// on-release damage as a COMPARISON rather than as constants. Measured on
+// a two-element document: 6 per motion, 12 on release, 7 when the motion
+// drags across another element.
 //
 // THE POSITIONS HAVE NOWHERE TO LIVE, and that is stated rather than
 // solved. Things are positioned on a surface that is never saved, so the
@@ -517,10 +563,26 @@ type editor struct {
 	attrItems    *prop.Property[components.ItemSource]
 	source       *prop.Property[string]
 	status       *prop.Property[string]
-	editName     *prop.Property[string]
-	editValue    *prop.Property[string]
-	editDoc      *prop.Property[string]
-	treeText     *prop.Property[string]
+	// dragHint is what a REFUSED drag says, and statusText is the one
+	// string the status bar's left section actually shows: the hint when
+	// there is one, the build status otherwise.
+	//
+	// Two sources and a computed rather than one property both writers
+	// share, because they answer different questions and the shared
+	// property loses one of them. "✓ builds" is a standing claim about
+	// the document; "you cannot move this, and here is why" is about the
+	// gesture that just happened. Writing the hint into ed.status would
+	// discard the build state, and the user would have to make an edit to
+	// find out whether their document still loads.
+	//
+	// The hint is cleared by any drag that proceeds and by any rebuild,
+	// so the build status comes back on its own.
+	dragHint   *prop.Property[string]
+	statusText *prop.Property[string]
+	editName   *prop.Property[string]
+	editValue  *prop.Property[string]
+	editDoc    *prop.Property[string]
+	treeText   *prop.Property[string]
 	// fits is false while the terminal is too small to lay the shell out,
 	// and it drives Visibility on both roots. cramped is its inverse, and
 	// it is a computed rather than a second source: two sources for one
@@ -639,6 +701,7 @@ func newEditor(fsys fs.FS) *editor {
 		activitySel: prop.NewSource(1), // the toolbox, which is what the side bar shows
 		source:      prop.NewSource(""),
 		status:      prop.NewSource(""),
+		dragHint:    prop.NewSource(""),
 		editName:    prop.NewSource(""),
 		editValue:   prop.NewSource(""),
 		editDoc:     prop.NewSource(""),
@@ -657,6 +720,19 @@ func newEditor(fsys fs.FS) *editor {
 	ed.sel = ed.doc().Kids[0]
 
 	ed.cramped = prop.NewComputed(func() bool { return !ed.fits.Get() })
+
+	// Both Gets are HOISTED above the branch, because a dependency is
+	// recorded by the Get that actually RUNS: leaving the ed.status.Get()
+	// behind the `if` would drop it from the dependency set on every
+	// frame a hint is showing, and the moment the hint cleared the status
+	// bar would go deaf to the build status with no error anywhere.
+	ed.statusText = prop.NewComputed(func() string {
+		hint, build := ed.dragHint.Get(), ed.status.Get()
+		if hint != "" {
+			return hint
+		}
+		return build
+	})
 
 	// The pane is the frozen host. Binding it here rather than at its
 	// construction keeps the property and its two readers in one place.
@@ -749,7 +825,9 @@ func newEditor(fsys fs.FS) *editor {
 			"AttrItems":    ed.attrItems,
 			"AttrSel":      ed.attrSel,
 			"Source":       ed.source,
-			"Status":       ed.status,
+			// The COMPUTED, not the source: the page asks for one string
+			// and the editor has two writers for it. See statusText.
+			"Status":       ed.statusText,
 			"EditName":     ed.editName,
 			"EditValue":    ed.editValue,
 			"EditDoc":      ed.editDoc,
@@ -765,6 +843,7 @@ func newEditor(fsys fs.FS) *editor {
 			"Delete":       gooey.Command(func() { ed.deleteSelected() }),
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
 			"PrevEl":       gooey.Command(func() { ed.selectNext(-1) }),
+			"SelectParent": gooey.Command(func() { ed.selectParent() }),
 			"ToCanvas":     gooey.Command(func() { ed.retype("Canvas") }),
 			"ToVStack":     gooey.Command(func() { ed.retype("VStack") }),
 			"BeginEdit":    gooey.Command(func() { ed.beginEdit() }),

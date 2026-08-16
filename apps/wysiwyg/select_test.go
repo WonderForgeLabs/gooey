@@ -3,11 +3,19 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
+
+// pressEsc is the SelectParent gesture, through the page's own KeyBinding
+// rather than by calling ed.selectParent: a binding on the wrong element
+// never fires, and a direct call would pass for a page that has none.
+func pressEsc(c *gooey.Composer) bool {
+	return c.Handle(input.KeyOf(input.KeyEvent{Key: input.KeyEsc}))
+}
 
 // Click-to-select, against the SHIPPED page and the real editor.
 //
@@ -75,6 +83,53 @@ func press(c *gooey.Composer, x, y int) bool {
 	return c.HandleMouse(input.MouseEvent{
 		Kind: input.MousePress, Button: input.ButtonLeft, X: x, Y: y,
 	})
+}
+
+// clickClock PINS the click clock and returns the way to advance it.
+//
+// The count on a synthesized click is a function of wall time
+// (FocusManager.clickCount), and a test that raced 400ms of it would be a
+// test that fails on a loaded machine and blames the designer. With the
+// clock stopped, two clicks in a row are ALWAYS a double click and
+// advancing past the interval always breaks the sequence — so which
+// gesture a test is making becomes a decision it states rather than a
+// timing it hopes for.
+//
+// Taken from c.Focus() at call time rather than captured: the composer
+// builds a new FocusManager whenever the tree is swapped.
+func clickClock(c *gooey.Composer) func(time.Duration) {
+	at := time.Unix(0, 0)
+	c.Focus().Now = func() time.Time { return at }
+	return func(d time.Duration) { at = at.Add(d) }
+}
+
+// singleClick is a press and its release. A click is SYNTHESIZED by the
+// dispatcher on the release, so a test that only presses never produces
+// one at all — which is why most of this file can press alone and stay
+// unaffected by the drill gesture.
+func singleClick(c *gooey.Composer, x, y int) {
+	press(c, x, y)
+	release(c, x, y)
+}
+
+// doubleClick is two clicks with no time between them, on a pinned clock.
+//
+// IT DELIBERATELY ASSERTS NOTHING. The count that makes the second click
+// a double click is the framework's, and a helper that checked it would
+// be checking the framework rather than the editor — while giving every
+// test that calls it a second way to fail that has nothing to do with
+// what it claims. What proves the gesture really arrived is the SINGLE
+// click arm in TestADoubleClickDrillsExactlyOneLevel: one click provably
+// does not drill, so a pair that does drill can only have arrived as
+// Count 2.
+//
+// Call clickClock first, and advance past the interval between separate
+// gestures — two double-clicks back to back with no advance are four
+// clicks counting 1,2,1,2, which is two double-clicks only by accident.
+func doubleClick(t *testing.T, c *gooey.Composer, x, y int) {
+	t.Helper()
+	singleClick(c, x, y)
+	singleClick(c, x, y)
 }
 
 // settle frames until nothing repaints, so a later count is damage and
@@ -162,21 +217,17 @@ func TestClickingTheDesignerSelectsWhatIsUnderThePointer(t *testing.T) {
 	}
 }
 
-// TestAPressSelectsTheDEEPESTNodeItLandsOn is the ancestor walk, and its
-// claim INVERTED when the surface became chrome.
+// nestedPage is a document whose second node has a child of its own:
 //
-// While root.Kids was flat, a press on a <Text> inside a <Border> had to
-// resolve UP to the Border, because a flat index could not name the Text.
-// Now the user's own root is a node like any other and everything they
-// place is nested inside it, so a policy that climbed to the top would
-// select the root whatever you clicked. The press selects what it landed
-// on; a press on the container's own chrome still selects the container,
-// because that is what the pointer is actually over.
-func TestAPressSelectsTheDEEPESTNodeItLandsOn(t *testing.T) {
-	ed, c := designerPage(t)
-
-	// A document whose second node has a child of its own. <Border> takes
-	// exactly one child, which is why addSelected seeds one.
+//	<Canvas Root>
+//	  <Text T1/>
+//	  <Border B1><Text Inner/></Border>
+//
+// <Border> takes exactly one child, which is why addSelected seeds one.
+// It returns the cells of the inner <Text> and of the Border's own chrome.
+func nestedPage(t *testing.T) (ed *editor, c *gooey.Composer, innerX, innerY, chromeX, chromeY int) {
+	t.Helper()
+	ed, c = designerPage(t)
 	ed.doc().Kids = []*node{
 		{Elem: "Text", Attrs: map[string]string{"Name": "T1", "Canvas.Left": "0", "Canvas.Top": "0", "Width": "6", "Height": "1"}},
 		{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "4"},
@@ -188,37 +239,264 @@ func TestAPressSelectsTheDEEPESTNodeItLandsOn(t *testing.T) {
 	}
 	c.Frame()
 
-	inner := docKid(ed, 1)
-	kids := childComponents(inner)
+	border := docKid(ed, 1)
+	kids := childComponents(border)
 	if len(kids) == 0 {
 		t.Fatal("the <Border> built with no child: there is no nested hit to make")
 	}
-	child := kids[0]
-	cb := child.(interface{ Bounds() gooey.Rect }).Bounds()
-	bb := inner.(interface{ Bounds() gooey.Rect }).Bounds()
+	cb := kids[0].(interface{ Bounds() gooey.Rect }).Bounds()
+	bb := border.(interface{ Bounds() gooey.Rect }).Bounds()
 	if cb.W == 0 || bb.W == 0 {
 		t.Fatalf("nothing was arranged: border %v child %v", bb, cb)
 	}
-
-	// The nested hit. Confirm it really is nested, or the walk is untested.
-	if got := c.Focus().HitTest(cb.X, cb.Y); got == inner {
+	// Confirm the inner cell really is nested, or every assertion made
+	// from it is about a hit that never descended.
+	if got := c.Focus().HitTest(cb.X, cb.Y); got == border {
 		t.Fatalf("HitTest returned the <Border> itself at the child's cell (%d,%d): "+
-			"this press does not exercise the ancestor walk", cb.X, cb.Y)
+			"a press there does not exercise the ancestor walk", cb.X, cb.Y)
 	}
+	return ed, c, cb.X, cb.Y, bb.X, bb.Y
+}
+
+// TestAPressSelectsTheOUTERMOSTNodeInTheScope is the selection POLICY, and
+// its claim has now inverted TWICE. The history matters because the test
+// name is in two PRs' reviews and a reader tracking it will otherwise
+// reconstruct it wrong:
+//
+//  1. TestAPressOnANestedChildSelectsItsTopLevelNode — while ed.sel was
+//     an int index into root.Kids, a flat index could not name a nested
+//     node, so a press had to climb to the top-level kid.
+//  2. TestAPressSelectsTheDEEPESTNodeItLandsOn — when the surface became
+//     chrome, the user's own root became chain[1] and everything they
+//     place is below it, so climbing to the top selected the root
+//     whatever you clicked. The policy went to the deepest node.
+//  3. This one. Deepest-first has a hole that gets worse as documents
+//     nest: a <Border> is covered entirely by its own child, so every
+//     press inside it selected the <Text> and the Border was reachable
+//     only through its one-cell chrome — effectively unselectable, and
+//     after the drag work effectively unmovable. Shallow-first (Blend,
+//     Figma, Illustrator) has no such hole, because double-click drills
+//     and Escape walks back up.
+//
+// The container's own chrome still selects the container under all three,
+// which is why that arm alone could never have caught the change.
+func TestAPressSelectsTheOUTERMOSTNodeInTheScope(t *testing.T) {
+	ed, c, ix, iy, bx, by := nestedPage(t)
+
 	ed.setSelection(ed.doc().Kids[0])
-	press(c, cb.X, cb.Y)
-	if ed.sel != ed.doc().Kids[1].Kids[0] {
-		t.Errorf("a press on the <Text> INSIDE the <Border> selected %s, want the inner <Text>: "+
-			"the walk did not reach the node the pointer was actually over", nodeName(ed.sel))
+	press(c, ix, iy)
+	if ed.sel != ed.doc().Kids[1] {
+		t.Errorf("a press on the <Text> INSIDE the <Border> selected %s, want the <Border>: "+
+			"a container covered by its own child has to be selectable by pressing it",
+			nodeName(ed.sel))
 	}
 
 	// The container's own chrome — the border rune in its top-left corner
-	// — selects the CONTAINER, which is how a container stays selectable
-	// at all once its children are.
+	// — selects the container too, which is the case that agrees under
+	// every policy this file has had.
 	ed.setSelection(ed.doc().Kids[0])
-	press(c, bb.X, bb.Y)
+	press(c, bx, by)
 	if ed.sel != ed.doc().Kids[1] {
 		t.Errorf("a press on the <Border>'s own chrome selected %s, want the <Border>", nodeName(ed.sel))
+	}
+
+	// AND THE INNER NODE IS STILL REACHABLE, which is what makes the
+	// inversion an improvement rather than a trade. Without this arm the
+	// test above passes for a designer that can no longer select anything
+	// nested at all.
+	ed.setSelection(ed.doc().Kids[0])
+	doubleClick(t, c, ix, iy)
+	if ed.sel != ed.doc().Kids[1].Kids[0] {
+		t.Errorf("a double-click on the <Text> inside the <Border> selected %s, want the inner "+
+			"<Text>: shallow-first with no way down is a designer that cannot reach its own "+
+			"nesting", nodeName(ed.sel))
+	}
+}
+
+// TestADoubleClickDrillsExactlyOneLevel.
+//
+// One level, not all the way to the deepest hit — drilling straight to the
+// bottom would put the intermediate containers back out of reach, which is
+// the defect shallow-first exists to remove. Three nested nodes is the
+// smallest fixture where "one level" and "all the way" differ.
+func TestADoubleClickDrillsExactlyOneLevel(t *testing.T) {
+	ed, c := designerPage(t)
+	ed.doc().Kids = []*node{
+		{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "0"},
+			Kids: []*node{{Elem: "Border", Attrs: map[string]string{"Name": "B2"},
+				Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Deep", "Width": "6", "Height": "1"}}}}}},
+	}
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the fixture document does not build: %s", ed.status.Get())
+	}
+	c.Frame()
+
+	outer := ed.doc().Kids[0]
+	mid := outer.Kids[0]
+	deep := mid.Kids[0]
+	b := ed.docCtx.Named["Deep"].(interface{ Bounds() gooey.Rect }).Bounds()
+	if b.W == 0 {
+		t.Fatalf("the inner <Text> was never arranged (%v)", b)
+	}
+
+	advance := clickClock(c)
+	ed.setSelection(nil)
+
+	// A SINGLE click stops at the outermost. This is the discriminator:
+	// without it every assertion below passes for an implementation that
+	// selects the deepest hit on any click at all.
+	singleClick(c, b.X, b.Y)
+	if ed.sel != outer {
+		t.Fatalf("a single click three levels deep selected %s, want the outer <Border>",
+			nodeName(ed.sel))
+	}
+
+	advance(time.Second)
+	doubleClick(t, c, b.X, b.Y)
+	if ed.sel != mid {
+		t.Fatalf("one double-click selected %s, want the MIDDLE <Border>: a drill that goes "+
+			"straight to the deepest hit puts the containers back out of reach",
+			nodeName(ed.sel))
+	}
+
+	// And the gesture COMPOSES: the scope moved with the selection, so the
+	// next double-click drills from there rather than repeating itself.
+	advance(time.Second)
+	doubleClick(t, c, b.X, b.Y)
+	if ed.sel != deep {
+		t.Errorf("a second double-click selected %s, want the innermost <Text>: the drill "+
+			"scope did not follow the selection down", nodeName(ed.sel))
+	}
+
+	// A third is a no-op rather than a fall-off-the-end.
+	advance(time.Second)
+	doubleClick(t, c, b.X, b.Y)
+	if ed.sel != deep {
+		t.Errorf("a double-click with nothing below it selected %s, want the innermost <Text>",
+			nodeName(ed.sel))
+	}
+}
+
+// TestEscapeSelectsTheParentAndTheNextClickAgrees.
+//
+// Escape's spelling is Microsoft's — "To select the parent of a current
+// selection in the designer, press the ESC key" — and NOT Figma's, where
+// Escape deselects entirely. The difference is load-bearing here: a
+// designer whose Escape clears the selection gives no way back up a tree
+// a double-click drilled into.
+//
+// The second half is the part a naive implementation fails. Escape has to
+// move the DRILL SCOPE, not only the selection: if it moved the selection
+// up and left the scope where it was, the very next single click at the
+// same cell would drill straight back in and Escape would look like it
+// did nothing.
+func TestEscapeSelectsTheParentAndTheNextClickAgrees(t *testing.T) {
+	ed, c, ix, iy, _, _ := nestedPage(t)
+	border := ed.doc().Kids[1]
+	inner := border.Kids[0]
+
+	advance := clickClock(c)
+	ed.setSelection(nil)
+	doubleClick(t, c, ix, iy)
+	if ed.sel != inner {
+		t.Fatalf("the drill did not reach the inner <Text> (%s); escaping from it proves nothing",
+			nodeName(ed.sel))
+	}
+
+	if !pressEsc(c) {
+		t.Fatal("esc was not consumed: the SelectParent binding is not on the page root")
+	}
+	if ed.sel != border {
+		t.Fatalf("esc selected %s, want the <Border> that holds it", nodeName(ed.sel))
+	}
+
+	// THE COHERENCE ARM.
+	advance(time.Second)
+	singleClick(c, ix, iy)
+	if ed.sel != border {
+		t.Errorf("after esc, a click at the same cell selected %s, want the <Border> again: "+
+			"esc moved the selection out and left the drill scope in, so the click drilled "+
+			"straight back", nodeName(ed.sel))
+	}
+
+	// Up to the user's root, and then esc STOPS. The root's parent is the
+	// surface, which is chrome and must never be selected.
+	pressEsc(c)
+	if ed.sel != ed.doc() {
+		t.Fatalf("esc from the <Border> selected %s, want the user's root", nodeName(ed.sel))
+	}
+	pressEsc(c)
+	if ed.sel != ed.doc() {
+		t.Errorf("esc at the user's root selected %s: it walked into the design surface, which "+
+			"is the editor's workspace and is never saved", nodeName(ed.sel))
+	}
+}
+
+// TestClickingOutsideTheScopePopsOutOfIt.
+//
+// Having drilled into one <Border>, a click on a SIBLING must select the
+// sibling — not nothing, and not something inside it. This is the "click
+// outside the group to leave it" every direct-manipulation editor has, and
+// here it falls out of the scope walk rather than needing a reset rule,
+// which is the whole reason the scope is derived from the selection
+// instead of being a field somebody has to remember to clear.
+// The fixture nests the two siblings inside a COMMON container:
+//
+//	<Canvas Root>
+//	  <Canvas Group>
+//	    <Border B1><Text In1/></Border>
+//	    <Border B2><Text In2/></Border>
+//
+// which is what makes the assertion sharp. With them at the top level,
+// popping out ONE level to the shared container and popping out ALL the
+// way to the root give the same answer, so the test would pass for an
+// implementation that reset the scope to the root whenever it missed.
+// Inside a group the two differ: one level selects <Border B2>, all the
+// way selects <Canvas Group>.
+func TestClickingOutsideTheScopePopsOutOfIt(t *testing.T) {
+	ed, c := designerPage(t)
+	ed.doc().Kids = []*node{
+		{Elem: "Canvas", Attrs: map[string]string{"Name": "Group", "Canvas.Left": "0", "Canvas.Top": "0"},
+			Kids: []*node{
+				{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "0"},
+					Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "In1", "Width": "6", "Height": "1"}}}},
+				{Elem: "Border", Attrs: map[string]string{"Name": "B2", "Canvas.Left": "0", "Canvas.Top": "6"},
+					Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "In2", "Width": "6", "Height": "1"}}}},
+			}},
+	}
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the fixture document does not build: %s", ed.status.Get())
+	}
+	c.Frame()
+
+	group := ed.doc().Kids[0]
+	one, two := group.Kids[0], group.Kids[1]
+	b1 := ed.docCtx.Named["In1"].(interface{ Bounds() gooey.Rect }).Bounds()
+	b2 := ed.docCtx.Named["In2"].(interface{ Bounds() gooey.Rect }).Bounds()
+	if b1.W == 0 || b2.W == 0 {
+		t.Fatalf("the fixture was not arranged: %v %v", b1, b2)
+	}
+
+	advance := clickClock(c)
+	ed.setSelection(nil)
+	// Two levels down: the group, then the first <Border>, then its Text.
+	doubleClick(t, c, b1.X, b1.Y)
+	advance(time.Second)
+	doubleClick(t, c, b1.X, b1.Y)
+	if ed.sel != one.Kids[0] {
+		t.Fatalf("the drill into the first <Border> reached %s, want its inner <Text>; the click "+
+			"below proves nothing", nodeName(ed.sel))
+	}
+
+	advance(time.Second)
+	singleClick(c, b2.X, b2.Y)
+	if ed.sel != two {
+		t.Errorf("drilled inside the first <Border>, a click on the SECOND selected %s, want "+
+			"<Border B2>: the scope popped to the wrong level — one level out is the group the "+
+			"two share, and anything further is a reset the user did not ask for",
+			nodeName(ed.sel))
 	}
 }
 
@@ -668,18 +946,14 @@ func nodeName(n *node) string {
 	return "<" + n.Elem + ">"
 }
 
-// TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode is the shape part
-// 2 inherits, and it is asserted separately from what part 1 DOES with it.
+// TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode is the SHAPE, and
+// it is asserted separately from what the policy does with it.
 //
-// nodeAt today takes chain[1] and stops, because ed.sel is an int
-// index into root.Kids and a flat index cannot name depth. The walk itself
-// must not have that limit baked in: when the design surface becomes a
-// Canvas a user drops a <Grid> onto and then selects things inside, the
-// POLICY in nodeAt changes and this chain does not.
-//
-// A test for a capability nothing consumes yet is worth its keep here
-// precisely because nothing consumes it: the next change is the one that
-// would quietly flatten it.
+// The walk has now outlived three policies — climb to the top-level kid,
+// take the deepest, index from the drill scope — and changed for none of
+// them, which is the claim this test exists to keep true. Every policy so
+// far has been an index into this chain; a walk that collapsed nesting
+// would have made the shallow-first inversion impossible.
 func TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode(t *testing.T) {
 	ed, c := designerPage(t)
 	ed.doc().Kids = []*node{
@@ -723,12 +997,15 @@ func TestTheWalkReportsTheWholeChainNotJustTheTopLevelNode(t *testing.T) {
 		}
 	}
 
-	// And the POLICY lands on the deepest node — the chain is what makes
-	// that expressible, and the surface is excluded from it.
+	// And the POLICY indexes into it from the drill scope, which with
+	// nothing drilled is the user's root — so chain[2], the outermost of
+	// the three nested nodes. The surface is chain[0] and is excluded by
+	// the policy's floor rather than by the walk.
+	ed.setSelection(nil)
 	press(c, b.X, b.Y)
-	deepest := ed.doc().Kids[0].Kids[0].Kids[0]
-	if ed.sel != deepest {
-		t.Errorf("a press three levels deep selected %s, want the innermost <Text>", nodeName(ed.sel))
+	if ed.sel != ed.doc().Kids[0] {
+		t.Errorf("a press three levels deep selected %s, want the OUTERMOST <Border>",
+			nodeName(ed.sel))
 	}
 	if ed.sel == ed.root {
 		t.Error("the surface was selected: it is chrome and must never be")

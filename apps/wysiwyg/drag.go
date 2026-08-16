@@ -2,18 +2,37 @@ package main
 
 // MOVE: dragging an element around the design surface.
 //
+// TWO KINDS OF MOVE, ONE MECHANISM. Free geometry belongs to the PARENT,
+// so what a drag means depends on what the element is inside:
+//
+//   FREE — a child of a <Canvas> has Canvas.Left/Canvas.Top and goes
+//   wherever the pointer goes.
+//
+//   RE-CELL — a child of a <Grid> has Grid.Row/Grid.Col and no offset at
+//   all, so it SNAPS to whichever cell the pointer is in. Two elements
+//   may land in the same cell; Grid renders that as an overlap and
+//   reports nothing, and that is accepted rather than papered over. See
+//   dragKind.
+//
 // The mechanism is two-speed on purpose, and the split is the whole
 // design:
 //
-//   PER MOTION — write gooey.Layout.Left/Top on the live component and
-//   ask for a frame. Nothing else. No markup, no rebuild, no re-mount.
-//   Composer.Frame lays out unconditionally and its bounds sweep does the
-//   rest: it clears the vacated rect to the ancestor background, repaints
-//   the moved component, and force-repaints whatever the old rect
-//   uncovered.
+//   PER MOTION — write the attached properties on the LIVE component's
+//   gooey.Layout (Left/Top, or Row/Col) and ask for a frame. Nothing
+//   else. No markup, no rebuild, no re-mount. Composer.Frame lays out
+//   unconditionally and its bounds sweep does the rest: it clears the
+//   vacated rect to the ancestor background, repaints the moved
+//   component, and force-repaints whatever the old rect uncovered.
 //
-//   ON RELEASE — write Canvas.Left/Canvas.Top into the document and
-//   rebuild ONCE.
+//   ON RELEASE — write Canvas.Left/Canvas.Top or Grid.Row/Grid.Col into
+//   the document and rebuild ONCE.
+//
+// THE SNAP HAPPENS DURING THE DRAG, NOT ON RELEASE, and that is part of
+// the decision rather than a nicety. An element that floated freely under
+// the pointer and jumped into a cell when the button came up would be a
+// preview that lies about what the release is going to do — which is
+// exactly what a user reports as a bug. Writing Row/Col per motion is the
+// same fast path the free drag uses, so the honest preview costs nothing.
 //
 // Writing markup per motion would work and is the trap. rebuild()
 // discards and re-mounts the whole designer subtree, so a drag would cost
@@ -38,6 +57,7 @@ import (
 	"strconv"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 )
 
 // dragState is the gesture in flight. Zero value means no drag.
@@ -49,10 +69,18 @@ import (
 type dragState struct {
 	node *node
 	comp gooey.Component
+	// kind is dragKind's answer, and only DragFree and DragCell ever
+	// reach here — a gesture that cannot proceed does not start.
+	kind string
 	// startX/startY is where the pointer went down; origL/origT is the
 	// element's offset at that moment.
 	startX, startY int
 	origL, origT   int
+	// origRow/origCol is the DragCell equivalent, and cells is the grid's
+	// cell rectangles in terminal coordinates, probed once at press. See
+	// gridCells for why they are probed rather than computed.
+	origRow, origCol int
+	cells            [][]gooey.Rect
 	// moved is whether any motion actually changed the offset. A press
 	// and release with no movement is a CLICK, and must not write markup
 	// or cost a rebuild.
@@ -69,6 +97,30 @@ func (ed *editor) Press(x, y int) bool {
 	return true
 }
 
+// Click is preview.Designer, and it is the DRILL: a double-click selects
+// one level deeper than the press already selected.
+//
+// A single click is ignored here rather than duplicated — the press did
+// it, and doing it twice would cost a second setSelection for every
+// click, which is a repaint of the properties grid nobody asked for.
+//
+// It never begins a drag. A drag starts on the press that precedes this,
+// and by the time a click is synthesized the button is already up.
+func (ed *editor) Click(x, y, count int) bool {
+	if count < 2 {
+		return false
+	}
+	n := ed.nodeAtDepth(ed.hitTestOrNil(x, y), 1)
+	if n == nil || n == ed.sel {
+		// Nothing below what is already selected. Consumed anyway — the
+		// gesture belongs to the designer — but not spent on a Set that
+		// would repaint the properties grid to show the same rows.
+		return true
+	}
+	ed.setSelection(n)
+	return true
+}
+
 // Drag is preview.Designer: one pointer report during a gesture.
 func (ed *editor) Drag(x, y int) bool {
 	if !ed.drag.active() {
@@ -77,6 +129,9 @@ func (ed *editor) Drag(x, y int) bool {
 	l := gooey.LayoutOf(ed.drag.comp)
 	if l == nil {
 		return false
+	}
+	if ed.drag.kind == DragCell {
+		return ed.dragCell(l, x, y)
 	}
 	left, top := ed.drag.origL+(x-ed.drag.startX), ed.drag.origT+(y-ed.drag.startY)
 	// Clamped at the surface's origin: a negative Canvas.Left is not
@@ -108,6 +163,67 @@ func (ed *editor) Drag(x, y int) bool {
 	return true
 }
 
+// dragCell is the RE-CELL motion: snap to whichever cell the pointer is
+// in, cell by cell, while the button is still down.
+//
+// The offset from the press is deliberately NOT used. A free drag carries
+// the element by its grab point so it does not jump under the pointer;
+// a cell has no sub-cell position to preserve, so the honest rule is the
+// simplest one — the element goes where the pointer IS. Carrying an
+// offset here would put the element in a different cell from the one the
+// pointer is over, which is the same lie as snapping on release.
+func (ed *editor) dragCell(l *gooey.Layout, x, y int) bool {
+	row, col := ed.drag.cellAt(x, y)
+	if l.Row == row && l.Col == col {
+		// Consume it — the gesture owns the pointer — but do not spend a
+		// frame. Most motion inside a cell changes nothing, which is
+		// precisely what makes the snap cheap.
+		return true
+	}
+	l.Row, l.Col = row, col
+	ed.drag.moved = true
+	// Layout.Row/Col are outside the property graph exactly as Left/Top
+	// are: plain int fields, no notification, no frame without this.
+	ed.invalidate()
+	return true
+}
+
+// cellAt is the SNAP: the cell containing the pointer, or the nearest one
+// when the pointer has left the grid.
+//
+// Nearest by squared edge distance rather than by centre: a pointer just
+// past the right edge of the grid belongs to the last column whatever the
+// column's width, and a centre metric gets that wrong on a wide track.
+// Falling back to nearest rather than refusing is what keeps a drag that
+// overshoots the grid recoverable without releasing.
+func (d *dragState) cellAt(x, y int) (int, int) {
+	best, bestRow, bestCol := -1, d.origRow, d.origCol
+	for r := range d.cells {
+		for c := range d.cells[r] {
+			q := d.cells[r][c]
+			if x >= q.X && x < q.X+q.W && y >= q.Y && y < q.Y+q.H {
+				return r, c
+			}
+			dx, dy := edgeDist(x, q.X, q.W), edgeDist(y, q.Y, q.H)
+			if d2 := dx*dx + dy*dy; best < 0 || d2 < best {
+				best, bestRow, bestCol = d2, r, c
+			}
+		}
+	}
+	return bestRow, bestCol
+}
+
+// edgeDist is how far v is outside the span [at, at+size), and 0 inside.
+func edgeDist(v, at, size int) int {
+	if v < at {
+		return at - v
+	}
+	if v >= at+size {
+		return v - (at + size) + 1
+	}
+	return 0
+}
+
 // Release is preview.Designer: commit the gesture.
 //
 // This is the ONLY thing in the drag path that writes markup, which is
@@ -125,48 +241,155 @@ func (ed *editor) Release(x, y int) bool {
 	if l == nil {
 		return true
 	}
-	d.node.Attrs["Canvas.Left"] = strconv.Itoa(l.Left)
-	d.node.Attrs["Canvas.Top"] = strconv.Itoa(l.Top)
+	// The attribute names are the ATTACHED properties of the parent, which
+	// is the same thing that decided the kind — Canvas.Left under a
+	// <Canvas>, Grid.Row under a <Grid>. Writing the wrong pair is the
+	// silent-discard defect the catalog work exists to delete, so the
+	// switch is on the kind rather than on the element name a second time.
+	if d.kind == DragCell {
+		d.node.Attrs["Grid.Row"] = strconv.Itoa(l.Row)
+		d.node.Attrs["Grid.Col"] = strconv.Itoa(l.Col)
+	} else {
+		d.node.Attrs["Canvas.Left"] = strconv.Itoa(l.Left)
+		d.node.Attrs["Canvas.Top"] = strconv.Itoa(l.Top)
+	}
 	ed.rebuild()
+	// After the rebuild the status line says "✓ builds" again, which is
+	// what clears any refusal a previous press left there.
+	ed.sayDrag("")
 	return true
 }
 
 // beginDrag starts a gesture if the selected element can actually be
-// moved, and silently does not if it cannot.
+// moved, AND SAYS SO WHEN IT CANNOT.
 //
-// FREE GEOMETRY IS A PROPERTY OF THE PARENT, not of the element. A child
-// of a <Canvas> has Canvas.Left/Canvas.Top and can be put anywhere; a
-// child of a <Grid> has Grid.Row/Grid.Col and a drag there would mean
-// RE-CELLING, which is a different gesture with a different answer and is
-// deliberately not implemented. A child of a <VStack> has no geometry at
-// all — its position is its index, so a drag there means REORDER.
+// FREE GEOMETRY IS A PROPERTY OF THE PARENT, not of the element — see
+// dragKind for the three answers. What changed here is that the refusal
+// is no longer silent: a press that will not move anything writes a
+// sentence saying which element and why, because "I dragged it and
+// nothing happened" is indistinguishable from a broken editor and there
+// was no diagnostic anywhere to tell the two apart.
 //
-// Refusing rather than guessing is the point: writing Canvas.Left onto a
-// child of a VStack would be silently discarded by applyLayout, which is
-// the exact defect the catalog work exists to delete.
+// Refusing rather than guessing is still the point: writing Canvas.Left
+// onto a child of a VStack would be silently discarded by applyLayout,
+// which is the exact defect the catalog work exists to delete.
 func (ed *editor) beginDrag(x, y int) {
 	ed.drag = dragState{}
 	n := ed.sel
-	if n == nil || ed.isSurface(n) {
-		return
-	}
-	p := ed.parentOf(n)
-	if p == nil || p.Elem != "Canvas" {
+	kind := ed.dragKind(n)
+	if kind != DragFree && kind != DragCell {
+		ed.sayDrag(ed.dragSummary(n, kind))
 		return
 	}
 	comp := ed.componentFor(n)
 	if comp == nil {
+		// The document builds but this node has no component the walk
+		// could verify — see mapNodes. Nothing to move, and the user is
+		// entitled to know that is why.
+		ed.sayDrag(ed.dragSummary(n, DragUnmapped))
 		return
 	}
 	l := gooey.LayoutOf(comp)
 	if l == nil {
+		ed.sayDrag(ed.dragSummary(n, DragUnmapped))
 		return
 	}
-	ed.drag = dragState{
-		node: n, comp: comp,
+	d := dragState{
+		node: n, comp: comp, kind: kind,
 		startX: x, startY: y,
 		origL: l.Left, origT: l.Top,
+		origRow: l.Row, origCol: l.Col,
 	}
+	if kind == DragCell {
+		d.cells = ed.gridCells(ed.parentOf(n), comp)
+		if len(d.cells) == 0 {
+			ed.sayDrag(ed.dragSummary(n, DragUnmapped))
+			return
+		}
+	}
+	ed.drag = d
+	ed.sayDrag("")
+}
+
+// gridCells is the grid's cell rectangles in terminal coordinates, and it
+// is PROBED THROUGH THE REAL Grid.Arrange rather than computed.
+//
+// Recomputing them would mean a second copy of Grid's track arithmetic —
+// star distribution, auto sizing, the offsets — living in an editor, and
+// the day the two disagreed the ghost would snap to a cell the layout
+// then put the element somewhere else in. So instead the dragged
+// component is walked through every cell with its alignment temporarily
+// set to Stretch (which is what makes ArrangeChild hand it the WHOLE slot
+// rather than its desired size inside it), and the bounds that come back
+// are the slots themselves.
+//
+// Once per gesture, not once per motion: it costs an Arrange of the grid
+// per cell, which is nothing for a design-time grid and would still be
+// nothing per motion — but the Layout it mutates is the live one, and
+// doing that repeatedly while the user is dragging is a larger window for
+// a frame to land mid-probe.
+//
+// ONE LIMIT, STATED RATHER THAN HIDDEN: Auto tracks are sized by the
+// MEASURE pass, which this does not re-run, so a grid whose track widths
+// depend on the dragged element sees the slots it had before the drag.
+// The snap still lands the element in the right CELL — the real frame
+// re-measures and re-arranges — but the probed rectangle it was chosen
+// from can be a cell or two stale at the edges.
+func (ed *editor) gridCells(parent *node, comp gooey.Component) [][]gooey.Rect {
+	if parent == nil {
+		return nil
+	}
+	g, _ := ed.componentFor(parent).(*components.Grid)
+	if g == nil {
+		return nil
+	}
+	b := g.Bounds()
+	if b.W <= 0 || b.H <= 0 {
+		return nil
+	}
+	l := gooey.LayoutOf(comp)
+	if l == nil {
+		return nil
+	}
+	// A <Grid> with no declared tracks is one star row by one star column
+	// — components.Grid.rows()/cols() say so — so the counts floor at 1
+	// rather than at len(), which would be zero and probe nothing.
+	rows, cols := max(1, len(g.Rows)), max(1, len(g.Cols))
+
+	saved := *l
+	defer func() {
+		*l = saved
+		// Put the tree back exactly as it was. Composer.Frame lays out
+		// unconditionally so this would be corrected anyway, but a probe
+		// that leaves the tree wrong between here and the next frame is a
+		// probe that any reader has to reason about.
+		g.Arrange(b)
+	}()
+	l.HAlign, l.VAlign = gooey.AlignStretch, gooey.AlignStretch
+	l.Width, l.Height = 0, 0
+	l.Margin = gooey.Thickness{}
+	l.RowSpan, l.ColSpan = 1, 1
+
+	out := make([][]gooey.Rect, rows)
+	for r := range out {
+		out[r] = make([]gooey.Rect, cols)
+		for c := range out[r] {
+			l.Row, l.Col = r, c
+			g.Arrange(b)
+			out[r][c] = boundsOf(comp)
+		}
+	}
+	return out
+}
+
+// boundsOf is Bounds() through the interface every component embedding
+// gooey.Base satisfies. It is an assertion, not reflection — the same
+// test the framework's own hit walk makes.
+func boundsOf(c gooey.Component) gooey.Rect {
+	if b, ok := c.(interface{ Bounds() gooey.Rect }); ok {
+		return b.Bounds()
+	}
+	return gooey.Rect{}
 }
 
 // componentFor is nodeOf inverted for one node. Linear, and deliberately
@@ -198,26 +421,101 @@ func (ed *editor) invalidate() {
 	}
 }
 
-// dragKind reports why an element can or cannot be dragged, in the terms
-// the user would need to be told.
+// The drag kinds. A string rather than a bool because "you cannot move
+// this" is not the interesting part — WHY is, and each reason needs a
+// different sentence.
+const (
+	// DragNone is nothing selected, or the surface, which is chrome.
+	DragNone = "nothing selected"
+	// DragRoot is the user's own root. It is positioned by the surface,
+	// and the surface is never saved, so there is nowhere to record a
+	// move to.
+	DragRoot = "the document root"
+	// DragFree is a child of a <Canvas>: Canvas.Left/Canvas.Top.
+	DragFree = "free"
+	// DragCell is a child of a <Grid>: Grid.Row/Grid.Col, snapped.
+	DragCell = "re-cell"
+	// DragOrder is a child of a <VStack> or an <HStack>: no geometry at
+	// all, position IS the index, so a drag means reorder. Deferred.
+	DragOrder = "reorder"
+	// DragUnmapped is a node the built tree could not be paired with —
+	// see mapNodes. Not a property of the parent; a property of how far
+	// the inversion could descend.
+	DragUnmapped = "unmapped"
+)
+
+// dragKind reports why an element can or cannot be dragged.
 //
-// A string rather than a bool because "you cannot move this" is not the
-// interesting part — WHY is. The three reasons need three different
-// answers and only one of them is decided, so the distinction is kept
-// here rather than collapsed into a false.
+// FREE GEOMETRY IS A PROPERTY OF THE PARENT, not of the element, and the
+// three container answers are the whole rule: a <Canvas> gives its
+// children an offset, a <Grid> gives them a cell, and a stack gives them
+// nothing but their order.
 func (ed *editor) dragKind(n *node) string {
 	if n == nil || ed.isSurface(n) {
-		return "nothing selected"
+		return DragNone
 	}
 	p := ed.parentOf(n)
-	if p == nil {
-		return "the document root"
+	if p == nil || ed.isSurface(p) {
+		return DragRoot
 	}
 	switch p.Elem {
 	case "Canvas":
-		return "free"
+		return DragFree
 	case "Grid":
-		return "re-cell"
+		return DragCell
 	}
-	return "reorder"
+	return DragOrder
+}
+
+// dragSummary is the sentence a refused drag puts on screen.
+//
+// THE SILENT REFUSAL IS THE DEFECT THIS DELETES. Before it, a press on a
+// child of a <VStack> selected the element and then did nothing at all
+// for the rest of the gesture — which is exactly what a broken editor
+// looks like, and there was no diagnostic anywhere to tell the two apart.
+// Every reason names the ELEMENT and the CONTAINER, because "you can't
+// move this" without saying what decides it is the same dead end one step
+// later.
+//
+// It returns "" for the kinds that proceed, so the caller never has to
+// ask twice whether there is anything to say.
+func (ed *editor) dragSummary(n *node, kind string) string {
+	switch kind {
+	case DragNone:
+		return "nothing is selected: press an element to move it"
+	case DragRoot:
+		return nodeLabel(n) + " is the document root: it is positioned by " +
+			"the design surface, which is never saved"
+	case DragOrder:
+		p := ed.parentOf(n)
+		return nodeLabel(n) + " is inside a <" + p.Elem + ">, which positions its " +
+			"children by ORDER: reordering by drag is not implemented yet"
+	case DragUnmapped:
+		return nodeLabel(n) + " has no component this editor can address: the built " +
+			"tree stopped corresponding to the document above it"
+	}
+	return ""
+}
+
+// nodeLabel names an element the way the outline does.
+func nodeLabel(n *node) string {
+	if n == nil {
+		return "nothing"
+	}
+	if name := n.Attrs["Name"]; name != "" {
+		return "<" + n.Elem + " Name=\"" + name + "\">"
+	}
+	return "<" + n.Elem + ">"
+}
+
+// sayDrag posts (or clears) the drag hint, and it GUARDS AT THE CALL SITE
+// because prop.Set does not compare: setting the hint to the empty string
+// it already holds would invalidate the status bar's dependents and cost
+// a repaint on every press of every draggable element, which would show
+// up as the selection gesture getting more expensive for no reason.
+func (ed *editor) sayDrag(msg string) {
+	if ed.dragHint.Get() == msg {
+		return
+	}
+	ed.dragHint.Set(msg)
 }

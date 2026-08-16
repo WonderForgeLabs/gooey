@@ -62,6 +62,17 @@ type Designer interface {
 	Drag(x, y int) bool
 	// Release commits a drag in progress.
 	Release(x, y int) bool
+	// Click is the SYNTHESIZED click, with count is 1 or 2. It is the
+	// drill-in gesture: a double-click selects one level deeper than the
+	// press already selected.
+	//
+	// The count is the framework's, not this pane's. DispatchMouse
+	// synthesizes a click on release and counts repeats against the
+	// captor inside FocusManager.DoubleClickInterval (mouse.go:203) — and
+	// under a frozen host the captor IS this pane, so the count is
+	// already measured against the right component. Timing a second
+	// press here would be a second, worse copy of that.
+	Click(x, y, count int) bool
 }
 
 // BindDesignMode makes the pane a gooey.Frozen host whose answer is a
@@ -129,10 +140,16 @@ func (p *Pane) BindDesigner(d Designer) { p.designer = d }
 // Composer's frozen observer already subscribes to the same property,
 // and it is what re-routed the event to this method in the first place.
 //
-// Press, not click: selection should follow the button going down, the
-// way focus-follows-click does. Left only — nothing in the repo consumes
-// input.ButtonRight yet, and quietly selecting on a right press would
-// spend the gesture a context menu will want.
+// SELECTION FOLLOWS THE PRESS, DRILLING FOLLOWS THE CLICK, and the split
+// is not a detail. Selection should land on the button going down, the
+// way focus-follows-click does — and a drag starts there, so waiting for
+// a click would mean no drag at all. A click is what CARRIES THE COUNT,
+// and a double-click is by definition not knowable until the second
+// release, so drilling has to be the later of the two.
+//
+// Left only — nothing in the repo consumes input.ButtonRight yet, and
+// quietly selecting on a right press would spend the gesture a context
+// menu will want.
 func (p *Pane) HandleMouse(ev input.MouseEvent) bool {
 	if p.designer == nil || !p.Frozen() {
 		return false
@@ -145,6 +162,8 @@ func (p *Pane) HandleMouse(ev input.MouseEvent) bool {
 		return p.designer.Press(ev.X, ev.Y)
 	case input.MouseRelease:
 		return p.designer.Release(ev.X, ev.Y)
+	case input.MouseClick:
+		return p.designer.Click(ev.X, ev.Y, ev.Count)
 	}
 	return false
 }
