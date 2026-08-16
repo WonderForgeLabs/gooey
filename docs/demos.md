@@ -280,7 +280,7 @@ invents, hands the name plus a topic to Claude, and pushes the generated
 markup into the running board over `swap_markup` (generation is
 constrained to bindingless elements, so the page can never reference a
 value the host viewmodel lacks — a bad page would be rejected
-atomically). `-with-worker` runs it as a `gooey.CompanionCmd`: started
+atomically). `-with-worker` runs it as a `gooey.PythonCompanion`: started
 before the first frame, killed (process group and all) when the app
 quits, output redirected to a log file because the app owns the tty
 ([companions spec](specs/2026-08-10-companions.md)).
@@ -303,7 +303,8 @@ quits, output redirected to a log file because the app owns the tty
 Exercises `ItemsView` as a real list surface (three views, shared
 selection properties, `SelectionChanged`-free navigation), `Visibility`
 bindings as a tab mechanism with no structural rebuild, the MCP surface
-under instrumentation, and `gooey.CompanionCmd` collapsing a
+under instrumentation, and `gooey.PythonCompanion` (a `CompanionCmd`
+with the interpreter and log policy folded in) collapsing a
 hand-managed sidecar into the app's own lifetime. It is the app
 [Tutorial 8](learn/08-remote-control.md) drives.
 
@@ -403,8 +404,8 @@ Exercises handler namespaces with a *dynamic* activity name, the
 streaming session (`Attach`: subscribe, acts, frame deltas, lifecycle)
 as a real client's primary surface, the control plane's registration
 CRUD pair, `PatchMarkup` from a non-Go client, `Canvas` absolute layout
-with bound backgrounds, and `gooey.CompanionCmd` giving a Python process
-the app's lifetime.
+with bound backgrounds, and `gooey.PythonCompanion` giving a Python
+process the app's lifetime.
 
 ## plates
 
