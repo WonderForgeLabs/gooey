@@ -47,14 +47,31 @@ INTS = {"Deck.Pct"}
 # ---- the endpoint -----------------------------------------------------------
 
 def rpc(url, method, params, timeout=20):
+    """One JSON-RPC round, and the ONLY place a transport failure is caught.
+
+    The guard lives here rather than at each call site, and that is the
+    whole design of it: there are a dozen call sites across setup, show,
+    tabs, teardown and the keys loop, and the ones that would have been
+    left unguarded are exactly the ones nobody thinks about — the goto
+    inside the key handler, the teardown on the way out. A tool driven
+    live in front of a room must not answer a dropped connection with a
+    stack trace, and "wrap the call sites" is a rule that holds until
+    someone adds the thirteenth.
+    """
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
                        "params": params}).encode()
     req = urllib.request.Request(url, data=body, headers={
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     })
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        sys.exit(f"  ! {method} to {url} failed: {e}\n"
+                 f"    the app is not answering — is it still running?")
+    except json.JSONDecodeError as e:
+        sys.exit(f"  ! {method} to {url} answered something that is not JSON: {e}")
 
 
 def call(url, tool, args):
@@ -123,25 +140,40 @@ def field_type(name):
     return "int" if name in INTS else "string"
 
 
+def register(url, props):
+    """Register properties one at a time, tolerating the already-there ones.
+
+    register_properties refuses a name that already exists and is
+    all-or-nothing, so a batch containing one known name fails as a batch
+    and registers none of the rest. One at a time, letting the refusals
+    fall through, is what makes every command here safe to re-run mid-talk.
+
+    This is a function because it was a loop inside setup() and a DIFFERENT,
+    guardless loop inside setup_tabs() — which registers three of the same
+    names two screens away. Running `setup` and then `tabs`, the ordinary
+    thing to do while deciding which deck to use, aborted the second on
+    Deck.Ghost. The same rule written twice in different words is the
+    signature of a missing function; here the second copy did not have the
+    rule at all.
+
+    Returns how many were actually new.
+    """
+    made = 0
+    for p in props:
+        d = rpc(url, "tools/call", {"name": "register_properties",
+                                    "arguments": {"properties": [p]}})
+        if "error" not in d:
+            made += 1
+    return made
+
+
 def setup(url):
     decks = slides()
     names = {k for s in decks for k in s} | {"Deck.Ghost"} | set(COLORS)
     props = [{"name": n, "type": field_type(n)} for n in sorted(names)]
 
-    # register_properties refuses a name that already exists and is
-    # all-or-nothing, so a re-run of setup would fail as a batch. Register one
-    # at a time and let the already-there ones fall through — this script is
-    # meant to be safe to re-run mid-talk.
-    made = 0
-    for p in props:
-        try:
-            d = rpc(url, "tools/call", {"name": "register_properties",
-                                        "arguments": {"properties": [p]}})
-            if "error" not in d:
-                made += 1
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
-            sys.exit(f"register_properties: {e}")
-    print(f"  registered {made} new properties ({len(props)} total)")
+    print(f"  registered {register(url, props)} new properties "
+          f"({len(props)} total)")
 
     for name, value in COLORS.items():
         call(url, "set_value", {"name": name, "value": value})
@@ -211,6 +243,46 @@ def spoken():
     return [" ".join(b.split()) for b in fenced("speak")]
 
 
+# The **VOICE:** marker maps to a piper voice, and say.sh names the file
+# after the SHORT name. Kept in step with say.sh's `case` by hand, which is
+# two lines in two files and the alternative was parsing shell.
+VOICE_TAG = {"claude": "lessac", "narrator": "ryan"}
+
+
+def voices():
+    """The voice tag of each beat, in document order."""
+    return [VOICE_TAG.get(m, "ryan")
+            for m in re.findall(r"\*\*VOICE:\*\*\s*(\w+)", NARRATION.read_text())]
+
+
+def take_for(i, tags=None):
+    """The audio file for beat `i`, chosen by its VOICE marker.
+
+    This used to be `sorted(glob(f"{i:02d}-*.wav"))[0]`, and the sort is
+    the bug: `NN-lessac.wav` precedes `NN-ryan.wav`, so a beat with both
+    takes silently played lessac no matter which voice the script assigns.
+    Both takes existing is not hypothetical — the README suggests rendering
+    a second voice to spot-check beats 4 and 7, and the talk hands over
+    from the presenter to the agent at beat 12, so which voice you hear IS
+    the content. Getting it wrong is the failure mode the **VOICE:**
+    receipts exist to prevent, arriving through the back door.
+
+    Falls back to whatever take exists, loudly. A missing canonical take is
+    a real answer; substituting the other voice without saying so is not.
+    """
+    tags = tags or voices()
+    want = tags[i - 1] if i <= len(tags) else "ryan"
+    exact = HERE / "audio" / f"{i:02d}-{want}.wav"
+    if exact.exists():
+        return exact
+    others = sorted((HERE / "audio").glob(f"{i:02d}-*.wav"))
+    if not others:
+        return None
+    print(f"  ! beat {i} has no {want} take — falling back to {others[0].name}",
+          file=sys.stderr)
+    return others[0]
+
+
 def stale_takes():
     """Beats whose rendered audio says something the script no longer says.
 
@@ -227,13 +299,12 @@ def stale_takes():
     A take with no receipt counts as stale: it was rendered before this
     existed, so what it says is unknown, and unknown is not fine.
     """
-    now = spoken()
-    out = []
+    now, tags, out = spoken(), voices(), []
     for i in range(1, len(now) + 1):
-        takes = sorted((HERE / "audio").glob(f"{i:02d}-*.wav"))
-        if not takes:
+        take = take_for(i, tags)
+        if take is None:
             continue          # missing is a different problem; rehearse says so
-        receipt = takes[0].with_suffix(".txt")
+        receipt = take.with_suffix(".txt")
         if not receipt.exists() or receipt.read_text().strip() != now[i - 1]:
             out.append(i)
     return out
@@ -253,14 +324,15 @@ def rehearse(url):
                  f"{', '.join(map(str, stale))} — run ./say.sh all first.\n"
                  f"    (rehearsing against a take of words you have since "
                  f"changed sounds fine and times wrong.)")
+    tags = voices()
     for i in range(1, n + 1):
         show(url, i)
-        # Either voice — the talk hands over from the presenter to the agent at
-        # beat 12, so the file for a beat is named after whichever rendered it.
-        takes = sorted((HERE / "audio").glob(f"{i:02d}-*.wav"))
-        if takes:
+        # By the beat's OWN voice. The talk hands over from the presenter to
+        # the agent at beat 12, so which voice you hear is the content and
+        # not a detail of which file happened to sort first.
+        if take := take_for(i, tags):
             # Blocking: the next slide must not arrive over the last sentence.
-            subprocess.run(["paplay", str(takes[0])], check=False)
+            subprocess.run(["paplay", str(take)], check=False)
         else:
             print(f"  (no audio for beat {i} — run ./say.sh all)")
         if hs[i - 1]:
@@ -452,9 +524,7 @@ def setup_tabs(url):
     # on screen that a slide is a live tree and not a rendered picture.
     for i, s in enumerate(slides(), 1):
         props.append({"name": f"Deck.Pct{i}", "type": "int", "value": s["Deck.Pct"]})
-    for p in props:
-        rpc(url, "tools/call", {"name": "register_properties",
-                                "arguments": {"properties": [p]}})
+    register(url, props)
     for i, s in enumerate(slides(), 1):
         call(url, "set_value", {"name": f"Deck.Pct{i}", "value": s["Deck.Pct"]})
     for name, value in COLORS.items():
