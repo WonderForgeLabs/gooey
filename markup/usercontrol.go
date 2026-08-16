@@ -114,6 +114,30 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Styles == nil {
 			child.Styles = parent.Styles
 		}
+		// Resources are AMBIENT, and this line is the whole of that claim
+		// (resources.go, and docs/specs/2026-08-10-styles-and-resources.md
+		// "Control boundaries"). Values isolate: they cross only through the
+		// declared surface. A theme does the opposite — a control inherits
+		// the scope chain of the SITE that instantiated it, so <Card/> placed
+		// inside a <Border.Resources> that redefines "accent" picks up that
+		// accent without the page passing it, and without the control
+		// declaring a property for it.
+		//
+		// Unconditional, not `if child.res.cur == nil`, because a setup func
+		// has no way to set an unexported field: the zero value here means
+		// "setup wrote nothing", never "setup chose isolation". A control
+		// that wants to shadow the ambient chain does it the same way a page
+		// does — by declaring <Gooey.Resources> in its own markup, which
+		// doc.build pushes on top of what we install here.
+		//
+		// cur only. root is the DOCUMENT scope Context.Resource serves, and
+		// it belongs to the page — the context Go code kept a pointer to and
+		// calls Resource on. The child is a different struct, so nothing a
+		// control declares can displace it; leaving root zero here says the
+		// same thing from the other side, that a control's <Gooey.Resources>
+		// is reachable from inside its own subtree and nowhere else.
+		child.res.cur = parent.res.cur
+
 		if child.Declared == nil {
 			child.Declared = parent.Declared
 		}
@@ -181,7 +205,13 @@ func passAttrs(e Element, parent *Context, vals map[string]any) error {
 				return fmt.Errorf("attribute %s: %w", k, err)
 			}
 			vals[k] = cmd
-		} else if bindRe.MatchString(v) {
+		} else if bindRe.MatchString(v) || isCondExpr(v) {
+			// A conditional is gated here for the same reason a binding
+			// is, and the cost of omitting it is worse than a wrong
+			// error: the else branch below stores the attribute as a
+			// literal STRING, so <Card Ready="{{and .A .B}}"/> would hand
+			// the child the seventeen characters rather than a handle,
+			// and the child's {{.Ready}} would render them.
 			h, err := parent.BindingValue(v)
 			if err != nil {
 				return fmt.Errorf("attribute %s: %w", k, err)
@@ -267,7 +297,31 @@ func (ctx *Context) Command(attr string) (gooey.Action, error) {
 // against this context and returns the raw context value — typically a
 // *prop.Property[T] handle. This is the parent side of the UserControl
 // data hand-off.
+//
+// A conditional expression ({{not .Empty}}, {{and .A .B}}, cond.go) is
+// resolved here too, and returns a freshly compiled
+// *prop.Property[bool]. Wiring it at THIS seam rather than at each
+// attribute is what makes the grammar reach every one-way bool
+// attribute in the vocabulary at once — IsEnabled, Visibility, and
+// anything a third-party element reads through Attr or boundProp — with
+// no per-element opt-in to forget. The two grammars are disjoint by
+// their first token, so the order of these branches is not load-bearing;
+// asking the conditional first only means a malformed one gets the
+// conditional's own error instead of "not a binding expression".
+//
+// The value it returns is a COMPUTED, which the caller inherits: a
+// two-way binder handed one will panic on write. That is why nothing
+// here rejects it — the check belongs in the binders that write
+// (prop.Property.Settable), and it has to cover ordinary computed
+// handles in the same change or it will read as a conditional defect.
 func (ctx *Context) BindingValue(attr string) (any, error) {
+	if isCondExpr(attr) {
+		h, err := ctx.condHandle(attr)
+		if err != nil {
+			return nil, err
+		}
+		return h, nil
+	}
 	m := bindRe.FindStringSubmatch(attr)
 	if m == nil {
 		return nil, fmt.Errorf("markup: %q is not a binding expression", attr)

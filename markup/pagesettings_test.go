@@ -8,8 +8,8 @@ import (
 
 func TestPageSettingsFromGooeyRoot(t *testing.T) {
 	fsys := fstest.MapFS{
-		"ok.gooey":   {Data: []byte(`<Gooey Graphics="sixel"><Text>hi</Text></Gooey>`)},
-		"none.gooey": {Data: []byte(`<Gooey><Text>hi</Text></Gooey>`)},
+		"ok.gooey":      {Data: []byte(`<Gooey Graphics="sixel"><Text>hi</Text></Gooey>`)},
+		"none.gooey":    {Data: []byte(`<Gooey><Text>hi</Text></Gooey>`)},
 		"badmode.gooey": {Data: []byte(`<Gooey Graphics="pigeons"><Text>hi</Text></Gooey>`)},
 		"badattr.gooey": {Data: []byte(`<Gooey Graphcis="sixel"><Text>hi</Text></Gooey>`)},
 	}

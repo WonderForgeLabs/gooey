@@ -79,6 +79,9 @@ type Arg struct {
 	// string type-switch on it; there is no reflection here.
 	Raw any
 
+	// read renders Raw, built once at load time by textSource. Nil for
+	// literals.
+	read  func() string
 	lit   string
 	isLit bool
 }
@@ -91,15 +94,18 @@ func (a Arg) IsLiteral() bool { return a.isLit }
 //
 // It is total: argument types are validated when the expression is
 // built, so an Arg that exists can always produce a string.
+//
+// The rendering is textSource's, not this file's — the same function
+// {{.Path}} in a Text uses. That is deliberate: a float64 handed to a
+// handler and the same float64 printed in a label must not disagree, and
+// the only way to guarantee that is to have one type switch rather than
+// two that are meant to match.
 func (a Arg) String() string {
 	if a.isLit {
 		return a.lit
 	}
-	switch v := a.Raw.(type) {
-	case *prop.Property[string]:
-		return v.Get()
-	case string:
-		return v
+	if a.read != nil {
+		return a.read()
 	}
 	return ""
 }
@@ -225,6 +231,18 @@ func (ctx *Context) handlerCommand(x *handlerExpr) (gooey.Command, error) {
 
 // resolveArg turns one argument token into an Arg, failing the load if a
 // bound path is missing or is not a type Arg.String can render.
+//
+// The accepted vocabulary is textSource's — every type a binding can
+// render, not only the string ones. An argument list narrower than a
+// Text's was never a decision: it was an artifact of Arg holding a
+// string switch of its own, and it made {{str:Pad .Count `4`}} a load
+// failure over a perfectly renderable int. Deferring to textSource fixes
+// that and makes the two paths incapable of drifting.
+//
+// Providers that need the value's actual TYPE (prop:Toggle needs a bool,
+// prop:Add needs a number) still type-switch on Arg.Raw and reject what
+// they cannot use — at load time, by name. Widening what Arg can render
+// does not widen what an operation accepts.
 func (ctx *Context) resolveArg(t token) (Arg, error) {
 	if t.kind == tokLiteral {
 		return Arg{lit: t.text, isLit: true}, nil
@@ -233,9 +251,9 @@ func (ctx *Context) resolveArg(t token) (Arg, error) {
 	if err != nil {
 		return Arg{}, err
 	}
-	switch v.(type) {
-	case *prop.Property[string], string:
-		return Arg{Path: t.text, Raw: v}, nil
+	read, ok := textSource(v)
+	if !ok {
+		return Arg{}, fmt.Errorf(".%s is %T; a handler argument must be a value a binding can render — the same vocabulary {{.%s}} in a Text accepts", t.text, v, t.text)
 	}
-	return Arg{}, fmt.Errorf(".%s is %T; need *prop.Property[string] or string", t.text, v)
+	return Arg{Path: t.text, Raw: v, read: read}, nil
 }

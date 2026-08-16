@@ -67,6 +67,7 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -81,14 +82,14 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	enc, forced, err := encoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor(*mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
 	vm := newModel()
-	dir := os.DirFS(pageDir())
+	dir := demomain.MarkupFS("typeahead", pageFile)
 	if *dump {
 		root, err := markup.Load(dir, pageFile, vm.ctx())
 		if err != nil {
@@ -101,20 +102,8 @@ func main() {
 		return
 	}
 
-	opts := []gooey.Option{}
-	if forced {
-		// A forced protocol still needs a cell size: sixel scales by it,
-		// and a zero CellW emits an empty image while Image skips the
-		// halfblock path — a black screen with no error.
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
-
-	app := gooey.NewApp(markup.Page(dir, pageFile, vm.ctx()), opts...)
-	vm.quit = gooey.Command(app.Quit)
+	app := gooey.NewApp(markup.Page(dir, pageFile, vm.ctx()), demomain.GraphicsOptions(enc, forced)...)
+	vm.quit = app.Quit
 	app.BeforeFrame(func() { vm.refresh(app) })
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
@@ -123,33 +112,6 @@ func main() {
 }
 
 const pageFile = "typeahead.gooey"
-
-// pageDir is the demo's own directory, so `go run ./cmd/typeahead`
-// from the repository root finds the markup — the same convention the
-// other markup demos use.
-func pageDir() string {
-	if _, err := os.Stat(pageFile); err == nil {
-		return "."
-	}
-	return "cmd/typeahead"
-}
-
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "halfblock":
-		return nil, true, nil
-	default:
-		return nil, false, fmt.Errorf("unknown mode: %s", mode)
-	}
-}
 
 // record is one item. Its picture is a plain image.Image, projected
 // straight onto the row like every other field.
@@ -185,7 +147,9 @@ type model struct {
 	typed  *prop.Property[string]
 	missed *prop.Property[bool]
 	stats  *prop.Property[string]
-	quit   gooey.Action
+	// quit is filled in once the App exists: the page context is built
+	// before it, and under --dump there is no App at all.
+	quit func()
 }
 
 var sortNames = []string{"title", "artist", "year"}
@@ -315,12 +279,14 @@ func (m *model) ctx() *markup.Context {
 			"Typed":   m.typed,
 			"Missed":  m.missed,
 			"Stats":   m.stats,
-			"Sorted": prop.NewComputed(func() string {
-				dir := "asc"
+			// The sort line's sentence lives in the markup; these are the
+			// two words it interpolates.
+			"SortName": prop.NewComputed(func() string { return sortNames[m.sortBy.Get()] }),
+			"SortDir": prop.NewComputed(func() string {
 				if m.desc.Get() {
-					dir = "desc"
+					return "desc"
 				}
-				return fmt.Sprintf("sorted by %s (%s) · searching titles", sortNames[m.sortBy.Get()], dir)
+				return "asc"
 			}),
 			// The search buffer is the mode indicator. An implicitly armed
 			// mode that shows nothing is a UI misrepresenting what the next
@@ -342,7 +308,11 @@ func (m *model) ctx() *markup.Context {
 			}),
 			"CycleSort": gooey.Command(m.cycleSort),
 			"Reverse":   gooey.Command(m.reverse),
-			"Quit":      gooey.Command(func() { m.runQuit() }),
+			"Quit": gooey.Command(func() {
+				if m.quit != nil {
+					m.quit()
+				}
+			}),
 		},
 		Styles: map[string]render.Style{
 			"dim":    dim,
@@ -350,11 +320,5 @@ func (m *model) ctx() *markup.Context {
 			"title":  {Fg: render.RGB(235, 235, 245), Bold: true},
 			"miss":   {Fg: render.RGB(240, 90, 90), Bold: true},
 		},
-	}
-}
-
-func (m *model) runQuit() {
-	if gooey.CanExecute(m.quit) {
-		m.quit.Run()
 	}
 }

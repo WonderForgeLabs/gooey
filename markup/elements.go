@@ -580,7 +580,7 @@ var defTextBox = &ElementDef{
 			}
 		}
 		if a, ok := e.Attrs["AccentStyle"]; ok {
-			st, err := styleNamed(e, ctx, "AccentStyle", a)
+			st, err := styleValue(e, ctx, "AccentStyle", a)
 			if err != nil {
 				return nil, err
 			}
@@ -594,7 +594,7 @@ var defTextBox = &ElementDef{
 			}
 		}
 		if a, ok := e.Attrs["InvalidStyle"]; ok {
-			st, err := styleNamed(e, ctx, "InvalidStyle", a)
+			st, err := styleValue(e, ctx, "InvalidStyle", a)
 			if err != nil {
 				return nil, err
 			}
@@ -917,7 +917,7 @@ var defToastHost = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ToastHost> takes no children; toasts are shown from code (Show), not declared")
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}
@@ -965,7 +965,7 @@ var defTooltip = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}
@@ -1004,7 +1004,7 @@ var defValidationMarker = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ValidationMarker> takes no children")
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}

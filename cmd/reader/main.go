@@ -7,7 +7,10 @@
 //
 // Input is the framework's: panes are focus stops, j/k/↑/↓ are handled
 // by whichever pane has focus, and enter/q/esc/a are <KeyBinding>s
-// declared in markup and bound to viewmodel commands.
+// declared in markup and bound to viewmodel commands. The add-feed
+// prompt is a <TextBox> in the same markup, with its rules declared as a
+// <Validate> behavior — the run loop below routes events and never reads
+// one.
 //
 //	tab       cycle pane focus          j/k or ↑/↓  move in focused pane
 //	enter     open story (marks read)   a           add feed URL (writes feeds.opml)
@@ -22,10 +25,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -80,79 +84,118 @@ func main() {
 		}
 		return nil
 	})
-	status := prop.NewComputed(func() string {
-		if inputMode.Get() {
-			return "add feed url: " + draft.Get() + "█   (enter=add  esc=cancel)"
-		}
+	// The two halves of the bottom row. Browsing/Prompting drive the
+	// Visibility swap in markup; Fetching is the only part of the old
+	// status string that was ever dynamic, and it is now a section of a
+	// <StatusBar> rather than a suffix on a sentence built in Go.
+	browsing := prop.NewComputed(func() bool { return !inputMode.Get() })
+	fetching := prop.NewComputed(func() string {
 		loading := 0
 		for _, f := range feeds.Get() {
 			if f.Loading {
 				loading++
 			}
 		}
-		s := "tab: pane   j/k: move   enter: open   a: add feed   q: quit"
-		if loading > 0 {
-			s += fmt.Sprintf("   fetching %d…", loading)
+		if loading == 0 {
+			return ""
 		}
-		return s
+		return fmt.Sprintf("fetching %d…", loading)
 	})
 
-	// --- commands: the delegates markup events bind to ---
+	// --- markup: page context + UserControl registrations ---
+	fsys := demomain.MarkupFS("reader", "reader.gooey")
+
+	// ONE context for the life of the app, rebound on every reload. It
+	// has to be one: <Validate> publishes the field's error handle INTO
+	// this map at load time (.DraftErr below), so a context discarded per
+	// load would take the handle the commit reads with it.
 	var comp *gooey.Composer
 	var readerBody gooey.Component
 	quit := false
-	commands := map[string]any{
-		"Quit":       gooey.Command(func() { quit = true }),
-		"AddFeed":    gooey.Command(func() { inputMode.Set(true) }),
-		"ResetStory": gooey.Command(func() { selStory.Set(0) }),
-		"OpenStory": gooey.Command(func() {
-			ss := stories.Get()
-			if len(ss) == 0 {
-				return
-			}
-			s := ss[clampIdx(selStory.Get(), len(ss))]
-			m := map[string]bool{}
-			for k, v := range read.Get() {
-				m[k] = v
-			}
-			m[s.Link] = true
-			read.Set(m)
-			opened.Set(s.Link)
-			comp.Focus().SetFocus(readerBody)
-		}),
-	}
-
-	// --- markup: page context + UserControl registrations ---
-	dir := "cmd/reader"
-	if _, err := os.Stat(filepath.Join(dir, "reader.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
-
-	pageCtx := func() *markup.Context {
-		vals := map[string]any{
+	ctx := &markup.Context{
+		Values: map[string]any{
 			"Feeds": feeds, "SelFeed": selFeed,
 			"Stories": stories, "SelStory": selStory, "Read": read,
-			"Current": current, "Status": status,
-		}
-		for k, v := range commands {
-			vals[k] = v
-		}
-		return &markup.Context{
-			Values: vals,
-			Styles: map[string]render.Style{
-				"panel": {Fg: render.RGB(120, 90, 220)},
-				"dim":   dim,
-			},
-			Components: map[string]markup.Builder{
-				"FeedList":   feedListControl(fsys),
-				"StoryList":  storyListControl(fsys),
-				"ReaderPane": readerPaneControl(fsys, func(w gooey.Component) { readerBody = w }),
-			},
-		}
+			"Current": current,
+			"Draft":   draft, "Browsing": browsing, "Prompting": inputMode,
+			"Fetching": fetching,
+		},
+		Styles: map[string]render.Style{
+			"panel": {Fg: render.RGB(120, 90, 220)},
+			"dim":   dim,
+		},
+		Components: map[string]markup.Builder{
+			"FeedList":   feedListControl(fsys),
+			"StoryList":  storyListControl(fsys),
+			"ReaderPane": readerPaneControl(fsys, func(w gooey.Component) { readerBody = w }),
+		},
 	}
-	tree, err := markup.Load(fsys, "reader.gooey", pageCtx())
+
+	// closePrompt hands focus back to whichever pane the prompt took it
+	// from. PreviouslyFocused is exactly that component — focus moves
+	// record it — and it reports nil once a reload has replaced the tree,
+	// which is the case worth not guessing at.
+	// Focus first, then collapse: a focus stop inside a Collapsed subtree
+	// is unreachable, so moving focus out while the field is still on
+	// screen is what keeps the caret somewhere that exists.
+	closePrompt := func() {
+		if prev := comp.Focus().PreviouslyFocused(); prev != nil {
+			comp.Focus().SetFocus(prev)
+		}
+		inputMode.Set(false)
+		draft.Set("")
+	}
+	// draftErr reads the handle <Validate> published. The lookup is
+	// inside the command rather than resolved once, because the property
+	// does not exist until the page has loaded and a hot reload publishes
+	// a fresh one — the same rule docs/learn/examples/howto-forms follows.
+	draftErr := func() string {
+		p, ok := ctx.Values["DraftErr"].(*prop.Property[string])
+		if !ok {
+			// Only reachable if the markup lost its <Validate>; refusing
+			// beats adding a URL nothing checked.
+			return "no validator"
+		}
+		return p.Get()
+	}
+
+	var addFeed func(string)
+	ctx.Values["Quit"] = gooey.Command(func() { quit = true })
+	ctx.Values["ResetStory"] = gooey.Command(func() { selStory.Set(0) })
+	ctx.Values["StayPut"] = gooey.Command(func() {})
+	ctx.Values["AddFeed"] = gooey.Command(func() {
+		inputMode.Set(true)
+		// Focus AFTER the field is visible — the other half of the rule in
+		// closePrompt: SetFocus on a Collapsed component would put the
+		// caret somewhere nothing is drawn.
+		if box, err := markup.Find[*components.TextBox](ctx, "AddFeed"); err == nil {
+			comp.Focus().SetFocus(box)
+		}
+	})
+	ctx.Values["CancelFeed"] = gooey.Command(closePrompt)
+	ctx.Values["CommitFeed"] = gooey.Command(func() {
+		if draftErr() == "" {
+			addFeed(strings.TrimSpace(draft.Get()))
+		}
+		closePrompt()
+	})
+	ctx.Values["OpenStory"] = gooey.Command(func() {
+		ss := stories.Get()
+		if len(ss) == 0 {
+			return
+		}
+		s := ss[clampIdx(selStory.Get(), len(ss))]
+		m := map[string]bool{}
+		for k, v := range read.Get() {
+			m[k] = v
+		}
+		m[s.Link] = true
+		read.Set(m)
+		opened.Set(s.Link)
+		comp.Focus().SetFocus(readerBody)
+	})
+
+	tree, err := markup.Load(fsys, "reader.gooey", ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -186,15 +229,30 @@ func main() {
 	}
 	attach(tree)
 
-	swaps := make(chan gooey.Component, 1)
+	// The watcher reports only THAT a file changed. Building the
+	// replacement tree resolves bindings and creates computeds, which is
+	// touching the property graph, and the watcher runs on its own
+	// goroutine — so the rebuild happens below, on the UI loop.
+	reloads := make(chan struct{}, 1)
 	stopWatch := markup.WatchAll(fsys,
 		[]string{"reader.gooey", "feedlist.gooey", "storylist.gooey", "readerpane.gooey"},
 		func() {
-			if w, err := markup.Load(fsys, "reader.gooey", pageCtx()); err == nil {
-				swaps <- w
+			select {
+			case reloads <- struct{}{}:
+			default: // one pending rebuild is enough
 			}
 		})
 	defer stopWatch()
+
+	reload := func() {
+		// Names address components, and a rebuild makes new ones: the old
+		// map would answer <Validate>'s and AddFeed's lookups with
+		// components that are no longer on screen.
+		ctx.Named = map[string]gooey.Component{}
+		if w, err := markup.Load(fsys, "reader.gooey", ctx); err == nil {
+			attach(w) // a bad edit keeps the running tree
+		}
+	}
 
 	// --- fetch: goroutine per feed, results applied on the UI loop ---
 	type fetched struct {
@@ -206,7 +264,7 @@ func main() {
 		go func(i int, u string) { results <- fetched{i, fetchFeed(u)} }(i, u)
 	}
 	// An index past the current list marks a newly added feed.
-	addFeed := func(u string) {
+	addFeed = func(u string) {
 		idx := len(feeds.Get()) + 1_000_000
 		go func() { results <- fetched{idx, fetchFeed(u)} }()
 	}
@@ -221,37 +279,15 @@ func main() {
 	events := make(chan input.Event, 64)
 	go term.DecodeEvents(screen, events)
 
-	// dispatch is the root of the input chain. The add-feed prompt is a
-	// modal capture of the KEYBOARD only: while it is up every key is
-	// text and never reaches the tree, but pointer events still route
-	// normally, so hover and focus stay live.
+	// dispatch is the root of the input chain, and it is now only
+	// routing: the add-feed prompt is a focus stop like any other, so
+	// there is no keyboard mode here to check.
 	dispatch := func(ev input.Event) {
 		if ev.IsMouse() {
 			comp.HandleMouse(ev.Mouse)
 			return
 		}
-		k := ev.Key
-		if !inputMode.Get() {
-			comp.HandleKey(k)
-			return
-		}
-		switch {
-		case k == input.Named(input.KeyEnter):
-			if u := strings.TrimSpace(draft.Get()); validURL(u) {
-				addFeed(u)
-			}
-			inputMode.Set(false)
-			draft.Set("")
-		case k == input.Named(input.KeyEsc) || k == ctrlC:
-			inputMode.Set(false)
-			draft.Set("")
-		case k == input.Named(input.KeyBackspace):
-			if s := draft.Get(); s != "" {
-				draft.Set(s[:len(s)-1])
-			}
-		case k.Key == input.KeyRune && k.Mods == 0:
-			draft.Set(draft.Get() + string(k.Rune))
-		}
+		comp.HandleKey(ev.Key)
 	}
 
 	for !quit {
@@ -261,8 +297,8 @@ func main() {
 			needsFrame = false
 		}
 		select {
-		case w := <-swaps:
-			attach(w)
+		case <-reloads:
+			reload()
 		case r := <-results:
 			fs := append([]*Feed(nil), feeds.Get()...)
 			if r.idx < len(fs) {
@@ -294,16 +330,9 @@ func main() {
 	}
 }
 
-var ctrlC = input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}
-
 func shortHost(u string) string {
 	if p, err := url.Parse(u); err == nil && p.Host != "" {
 		return strings.TrimPrefix(p.Host, "www.")
 	}
 	return u
-}
-
-func validURL(u string) bool {
-	p, err := url.Parse(u)
-	return err == nil && (p.Scheme == "http" || p.Scheme == "https") && p.Host != ""
 }

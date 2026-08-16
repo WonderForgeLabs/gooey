@@ -21,11 +21,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -46,17 +46,17 @@ func main() {
 		}
 		return fmt.Sprintf("watching b = %d   (a is invisible to me)", b.Get())
 	})
-	countLabel := prop.NewComputed(func() string {
-		return fmt.Sprintf("count (ticks 1/s) : %d", count.Get())
-	})
-	modeLabel := prop.NewComputed(func() string {
-		return fmt.Sprintf("mode              : %s", mode.Get())
+	// count is an int, and an interpolation takes string handles only —
+	// so this one label stays in Go while mode, already a string, binds
+	// straight into the page.
+	countText := prop.NewComputed(func() string {
+		return strconv.Itoa(count.Get())
 	})
 
 	var app *gooey.App
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"CountLabel": countLabel, "ModeLabel": modeLabel,
+			"Count": countText, "Mode": mode,
 			"Detail": detail, "Stats": stats,
 			// Commands are the whole event surface. Bumping the unwatched
 			// source still runs its command and still Sets the property —
@@ -79,16 +79,10 @@ func main() {
 		},
 	}
 
-	dir := "cmd/props"
-	if _, err := os.Stat(filepath.Join(dir, "props.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-
 	// The whole runtime: the App owns the terminal, the decoder, the
 	// frame loop and the signal story; the page is content it builds and
 	// rebuilds. Everything below is this demo's own behavior.
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "props.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("props", "props.gooey"), "props.gooey", ctx))
 
 	events := 0
 	app.OnEvent(func(ev input.Event) {

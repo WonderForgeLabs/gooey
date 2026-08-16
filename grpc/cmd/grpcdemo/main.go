@@ -43,7 +43,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("grpc", "127.0.0.1:7788", "loopback address for the gRPC server; empty disables it")
+	addr := flag.String("grpc", "127.0.0.1:7788", "bind address for the gRPC server; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	// The GUEST endpoint. Same app, second listener, and the only
 	// difference is that this one carries a Grant — so a client dialing
 	// it reaches <Border Name="Guest"> and the "Guest" value namespace,
@@ -62,7 +62,7 @@ func main() {
 	// honest host that hands out an island lives here. Pointing this
 	// demo's own -drive client at 7789 instead of 7788 is the whole
 	// difference between holding the control plane and holding an island.
-	guest := flag.String("guest", "127.0.0.1:7789", "loopback address for the SCOPED guest endpoint; empty disables it")
+	guest := flag.String("guest", "127.0.0.1:7789", "bind address for the SCOPED guest endpoint; empty disables it. A grant is scoping, not authentication — a non-loopback address still exposes the island")
 	drive := flag.String("drive", "", "drive a running grpcdemo at this address instead of being one")
 	flag.Parse()
 
@@ -114,8 +114,9 @@ func serve(addr, guestAddr string) {
 	if addr != "" {
 		// Serving is one call and it is opt-in, which is the whole
 		// security posture of v1: a control-plane client can do anything
-		// the keyboard can, so nothing listens unless the app said so —
-		// and only on loopback.
+		// the keyboard can, so nothing listens unless the app said so.
+		// There is no authentication, and the bind address is used as
+		// given — a non-loopback one exposes this handle.
 		srv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
 			Addr:    addr,
 			Context: ctx,

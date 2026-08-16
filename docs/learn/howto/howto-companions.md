@@ -46,6 +46,38 @@ cmd := exec.Command("temporal", "server", "start-dev", "--headless")
 dev := gooey.CompanionCmd("temporal-dev", cmd, gooey.CompanionOutput(logFile))
 ```
 
+A **Python worker sitting beside your app** — the shape `apps/kanban`
+and `apps/dynamic-activities` both have — is that same child process
+with three decisions already made, so `gooey.PythonCompanion` makes it a
+description instead of forty lines of `main`:
+
+```go
+worker := gooey.PythonWorker{
+    Name:   "temporal-worker",
+    Dir:    filepath.Join(gooey.SourceDir("kanban.gooey"), "worker"),
+    Script: "worker.py",
+    Python: *workerPython, // an explicit -worker-python always wins
+    Log:    "kanban-worker.log",
+    Env:    []string{"GOOEY_MCP_URL=" + mcpURL},
+}
+app.AddCompanion(gooey.PythonCompanion(worker))
+```
+
+- **The interpreter**: with no explicit choice, `Dir/.venv/bin/python`
+  beats bare `python3` — that venv is where the worker's dependencies
+  are, and a worker that cannot import them exits, which takes your app
+  down with it.
+- **`Dir` and `Log`** are OS paths under the worker's own directory, not
+  under whatever cwd the binary was launched from. `gooey.SourceDir`
+  answers that (`"."` under `go run .`, the executable's directory
+  otherwise) and is what `os.DirFS` and `markup.Context.Dir` want too.
+- **The log's lifetime is the child's**: opened (truncating) when the
+  child starts, closed once it is gone. No `defer logFile.Close()` in
+  `main`, and no log truncated by a run that never reached `Run`.
+
+Everything else — process group, kill escalation, failure phases — is
+`CompanionCmd`'s, unchanged.
+
 Register with `gooey.WithCompanions(dev, worker)` at construction, or
 `app.AddCompanion(c)` before `Run` when the companion must close over
 the App. **Declaration order is start order** — each `Start` returns
