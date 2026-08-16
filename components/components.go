@@ -114,6 +114,49 @@ func clipRunes(s string, w int) string {
 	return string(r[:w])
 }
 
+// paintBanner paints the one-row banner the three overlays share — the
+// tooltip's tip, the validation marker's floating message, and a toast:
+// the row filled edge to edge in the banner style, with " msg " written
+// over it, clipped to the row. It returns the style it actually used, so
+// a caller that decorates further (the tooltip's dim gesture hint) can
+// derive from the same resolved value.
+//
+// msg is a PARAMETER, and that is the whole point of the signature. The
+// `Get` that produced it is the paint node's SUBSCRIPTION to the text,
+// and it has to run in the caller, above the caller's own early returns.
+// A helper that read the property itself — after this function's bounds
+// check, or after an empty-message check — would drop the dependency
+// edge on exactly the frames where the check fails, and the component
+// would go deaf to its own text with no error and no panic to find it
+// by, just a stale cell (CLAUDE.md, "Dependencies are recorded by the
+// `Get` that actually runs"). Taking the already-read string makes that
+// mistake unavailable.
+//
+// def is the style for a caller whose own Style is the zero value; the
+// three overlays disagree about that default on purpose (reverse for a
+// tip, reverse+bold for a toast, white-on-error-red for a marker), so it
+// is asked for rather than assumed.
+//
+// Fill THEN write, which is the tooltip's and the marker's order rather
+// than the toast's write-then-pad. On today's buffer the two are
+// observationally identical — render.Buffer.SetString advances exactly
+// one cell per rune and clipRunes clips by rune count, so "pad from the
+// unclipped rune length to the right edge" covers precisely the cells
+// the write did not — but the equivalence is a coincidence of that
+// arithmetic, and it is the write-then-pad form that has to be re-derived
+// whenever the clip rule or the cell advance changes. Filling first makes
+// "the whole rectangle carries the banner style" true by construction.
+func paintBanner(f *gooey.Frame, b gooey.Rect, msg string, st, def render.Style) render.Style {
+	if st == (render.Style{}) {
+		st = def
+	}
+	for x := b.X; x < b.X+b.W; x++ {
+		f.Cells.Set(x, b.Y, ' ', st)
+	}
+	f.Cells.SetString(b.X, b.Y, clipRunes(" "+msg+" ", b.W), st)
+	return st
+}
+
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
