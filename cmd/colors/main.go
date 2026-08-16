@@ -29,10 +29,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -172,12 +172,7 @@ func main() {
 		},
 	}
 
-	dir := "cmd/colors"
-	if _, err := os.Stat(filepath.Join(dir, "colors.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("colors", "colors.gooey")
 	tree, err := markup.Load(fsys, "colors.gooey", ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

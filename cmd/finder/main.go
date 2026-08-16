@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -155,13 +156,8 @@ func main() {
 		},
 	}
 
-	mkDir := "cmd/finder"
-	if _, err := os.Stat(filepath.Join(mkDir, "finder.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mkDir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(mkDir)
 	name := "finder.gooey"
+	fsys := demomain.MarkupFS("finder", name)
 	tree, err := markup.Load(fsys, name, ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
