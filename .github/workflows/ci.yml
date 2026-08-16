@@ -260,12 +260,68 @@ jobs:
           git fetch origin main:refs/heads/ci-buf-breaking-base
           go run github.com/bufbuild/buf/cmd/buf@v1.72.0 breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
 
-      # Committed generated code must be exactly what the pinned
-      # plugins produce. Remote plugins: needs network, nothing else.
+      # Committed generated code must be exactly what the pinned plugins
+      # produce, and ONLY that — the diff below is scoped to the `out:`
+      # directories, not run bare over the whole tree. Same shape as
+      # `discover` above and for the same reason: the watched paths are
+      # DERIVED from proto/buf.gen.yaml's own `out:` fields at run time,
+      # not written here as a list. A written list goes stale the moment a
+      # plugin is added or an `out:` is renamed, and staleness here is
+      # worse than in `discover` — there the failure mode is "skip a
+      # module", here it is "watch the wrong directory and call whatever
+      # differs there Generated code drift", which is actively misleading
+      # rather than merely incomplete.
+      #
+      # That mislabeling already happened with a bare `git diff
+      # --exit-code`: a PR adding `*.gif filter=lfs` to .gitattributes made
+      # every already-committed demo GIF clean to an LFS pointer and read
+      # as modified, and the unscoped diff failed this job over two dozen
+      # media files no protoc plugin has ever touched — under this step's
+      # name, sending whoever read the log looking in proto/ for a bug
+      # that was actually in .gitattributes.
+      #
+      # The four `out:` dirs also each hold a few hand-authored companions
+      # (clients/python/pyproject.toml, its py.typed marker and its test
+      # suite; clients/ts/*/src/index.ts's handwritten barrels — its own
+      # comment says so) that this pathspec still watches. That is
+      # deliberate slack in the boundary: the alternative is tracking every
+      # generated leaf file by name, which re-adds the exact staleness this
+      # derivation exists to remove.
+      #
+      # `git diff --exit-code` with an EMPTY pathspec after `--`, or none
+      # at all, still fails on a dirty tree — that direction is already
+      # safe and is not guarded below. The unguarded direction is a
+      # mis-parse that yields a PLAUSIBLE, EXISTING, WRONG path (a stray
+      # quote or inline comment folded into the value, say): that pathspec
+      # matches nothing changed, `git diff --exit-code` on an untouched
+      # path exits 0, and the job goes green over real drift in whichever
+      # `out:` dir got missed — silently, exactly the failure this step
+      # exists to catch. The two checks below close that gap: at least one
+      # path parsed, and every parsed path exists in the checkout.
+      # TestGeneratedCodeDriftWatchesEveryBufOutput pins the extraction
+      # itself against an independent parse of proto/buf.gen.yaml.
       - name: Generated code drift
         run: |
           go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
-          git diff --exit-code
+
+          # `out:` lines only: some leading whitespace then the literal
+          # key, so a comment (`#` right after the indent) never matches,
+          # and neither does any other key merely ending in "out:" — none
+          # is preceded by whitespace immediately before those letters.
+          mapfile -t out_dirs < <(grep -oP '^\s+out:\s*\K\S+' proto/buf.gen.yaml | sort -u)
+
+          if [ "${#out_dirs[@]}" -eq 0 ]; then
+            echo "::error::parsed zero \`out:\` directories from proto/buf.gen.yaml — the grep broke, not the tree. Fix the parser before trusting this step again."
+            exit 1
+          fi
+          for d in "${out_dirs[@]}"; do
+            if [ ! -d "$d" ]; then
+              echo "::error::proto/buf.gen.yaml declares out: $d, which does not exist in the checkout. The parser picked up something that is not a real path (a quoted value, an inline comment folded in, a renamed dir) — fix the parser, not this error."
+              exit 1
+            fi
+          done
+
+          git diff --exit-code -- "${out_dirs[@]}"
 
       # grpc used to be built and tested here, alongside the proto gates.
       # It is a module like any other now, so the `test` matrix covers it

@@ -351,21 +351,20 @@ func (a *App) Every(d time.Duration, fn func()) (stop func()) {
 	if d <= 0 || fn == nil {
 		return func() {}
 	}
-	done := make(chan struct{})
-	go func() {
-		t := time.NewTicker(d)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-t.C:
-				a.disp.Post(fn)
-			}
-		}
-	}()
+	// Every (startable.go) owns the close-AND-join contract. This used to
+	// run its own ticker and stop with once.Do(func() { close(done) }) —
+	// signal, no join — which is the exact defect CLAUDE.md lists as a
+	// trap and the reason seven controls were rewritten onto the helper.
+	// It was still live here, in the runtime that starts them.
+	//
+	// The sync.Once stays and is not redundant with the helper: this stop
+	// is registered in a.stops AND returned to the caller, so shutdown and
+	// an explicit stop can both run it, and closing a closed channel
+	// panics. Once makes the second call a no-op; the join makes the first
+	// one a barrier.
+	inner := Every(a.disp.Post, d, fn)
 	var once sync.Once
-	s := func() { once.Do(func() { close(done) }) }
+	s := func() { once.Do(inner) }
 	a.stops = append(a.stops, s)
 	return s
 }
