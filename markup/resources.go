@@ -732,6 +732,30 @@ func styleValue(e Element, ctx *Context, attr, name string) (render.Style, error
 	return styleNamed(e, ctx, attr, name)
 }
 
+// ResolveStyle is styleValue, exported, because a host's own Builder has
+// the same job and until now had no way to do it.
+//
+// Two out-of-package builders index Context.Styles directly —
+// apps/wysiwyg/components/panel (panel.go) and paint/shapes
+// (shapes.go) — and a bare map index yields the ZERO Style on a
+// misspelled name. The element loads, paints unstyled, and reports
+// nothing; that is the same silent failure the in-package check was
+// added to remove, still live wherever the check could not reach.
+// Unexported, it could not reach them by definition.
+//
+// It resolves the full chain, so a host builder adopting it also gains
+// markup-declared <Style> and <Resource> scopes rather than only the
+// host's own table — which is the behaviour a document author already
+// expects from every built-in element.
+//
+//	st, err := markup.ResolveStyle(e, ctx, "Style", e.Attrs["Style"])
+//
+// An empty name is not an error: it means the attribute was omitted, and
+// the zero Style is the correct answer for that.
+func ResolveStyle(e Element, ctx *Context, attr, name string) (render.Style, error) {
+	return styleValue(e, ctx, attr, name)
+}
+
 // lookupStyle walks the scope chain. A miss returns (nil, nil) — the
 // caller falls through to Context.Styles, whose own miss is the load
 // error. A HIT on a key that turns out to be a <Resource> is an error

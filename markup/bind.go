@@ -49,8 +49,17 @@ import (
 // is a load-time error naming both types. An attribute that is not a
 // binding expression at all — a literal in a handle position — is a load
 // error too, rather than a zero value the component would paint.
+//
+// An ABSENT attribute and a PRESENT-but-wrong one are different author
+// mistakes and get different messages, through requiredAttr — the same
+// rule Attr states for third-party builders. Every call site here is a
+// required attribute or is already guarded by its own presence check,
+// so absent reaching this function is always the author's omission.
 func Bound[T any](e Element, ctx *Context, attr string) (*prop.Property[T], error) {
-	raw := e.Attrs[attr]
+	raw, err := requiredAttr(e, attr)
+	if err != nil {
+		return nil, err
+	}
 	v, err := ctx.BindingValue(raw)
 	if err != nil {
 		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
