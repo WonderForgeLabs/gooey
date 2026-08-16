@@ -48,6 +48,7 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -452,12 +453,7 @@ func main() {
 		},
 	}
 
-	mdir := filepath.Join("cmd", "browser")
-	if _, err := os.Stat(filepath.Join(mdir, "browser.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mdir = filepath.Dir(exe)
-	}
-	app = gooey.NewApp(markup.Page(os.DirFS(mdir), "browser.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("browser", "browser.gooey"), "browser.gooey", ctx))
 
 	// The hand-off, in one call. App.Suspend restores the terminal, JOINS
 	// the input decoder so nothing of ours is still reading the tty while
