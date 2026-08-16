@@ -6,22 +6,39 @@
 # a clone is huge. The type is the durable fact — a wav is a wav wherever it
 # lands.
 #
-# FORWARD-ONLY, AND THAT IS NOT A COMPROMISE. Adding a type here does not
-# touch blobs already committed: the 21 GIFs and 9 PNGs in history stay plain
-# git objects and keep checking out as real files, with or without git-lfs
-# installed. Only the next write of a matching file becomes an LFS object.
-# Verified rather than assumed — setting `*.gif` left `git status` clean
-# across docs/media/demos/, which is what "existing blobs are untouched"
-# actually looks like.
+# ADDING A TYPE HERE REQUIRES ONE RENORMALIZING COMMIT. This block used to
+# claim the opposite — that existing blobs are simply untouched — and cited
+# `git status` staying clean across docs/media/demos/ as having VERIFIED it.
+# That check was a false negative and it cost a red CI.
 #
-# So the payoff is prospective, and it is the real one. The docs-and-demos
-# workflow re-records EVERY GIF in one go; at 7.3MB a sweep, each pass
-# currently lands in history forever. That is precisely the cost LFS exists
-# to remove, and it stops with the next sweep rather than needing a migrate.
+# The mechanism: an attribute does not change a committed blob, but it does
+# change how the working tree is compared to one. Every GIF in history is
+# raw bytes; under `*.gif filter=lfs` the clean filter turns the file on disk
+# into a pointer before the comparison, so pointer-vs-bytes reads as MODIFIED
+# — forever, in every clone, for a file nobody edited. CI's `git diff
+# --exit-code` failed on thirty files while the commit that caused it
+# reported a clean tree locally.
 #
-# No history rewrite is planned. `git lfs migrate` on the existing GIFs would
-# reclaim that 7.3MB, but it rewrites shared history and is a repo-wide call
-# nobody has made.
+# It reported clean because git caches stat information: in a worktree that
+# already had those files checked out, the filter never re-ran. A fresh
+# clone has no such cache and sees the truth. So the verification was done
+# in the one environment that cannot observe the failure, which is worth
+# more attention than the LFS detail — check a checkout rule against a
+# CHECKOUT, not against the tree you happen to be sitting in.
+#
+# `git add --renormalize` is the fix and it is one commit: the blobs become
+# pointers going forward, the working tree keeps real bytes, and history is
+# untouched. Whoever adds the next type does the same, or leaves the tree
+# permanently dirty. That is what "forward-only" actually costs.
+#
+# The payoff is still prospective and still real. The docs-and-demos
+# workflow re-records EVERY GIF in one go; at 7.5MB a sweep, each pass used
+# to land in history forever. That is precisely the cost LFS exists to
+# remove.
+#
+# No history REWRITE is planned, and renormalizing is not one. `git lfs
+# migrate` would additionally reclaim the 7.5MB already in history, but it
+# rewrites shared history and is a repo-wide call nobody has made.
 #
 # WHY THE AUDIO IS COMMITTED AT ALL. The Rectangle's 24 rendered takes look
 # like derived output and mostly are, but every **DURATION:** marker in its
