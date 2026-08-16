@@ -51,7 +51,7 @@ import (
 // not AUTHENTICATION. It stops an attached guest from exceeding its
 // brief. It does not stop something that can reach the host's own
 // unscoped endpoint. Authentication is what a non-loopback bind would
-// need, and v1 refuses those outright (checkLoopback).
+// need, and v1 refuses those outright (netutil.CheckLoopback).
 //
 // # Host and guest
 //

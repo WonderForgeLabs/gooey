@@ -59,7 +59,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +76,7 @@ import (
 	temporalhandlers "github.com/WonderForgeLabs/gooey/handlers/temporal"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
+	"github.com/WonderForgeLabs/gooey/netutil"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"go.temporal.io/sdk/client"
@@ -129,28 +129,13 @@ func encoderFor(mode string) (graphics.Encoder, error) {
 	return nil, fmt.Errorf("dynamic-activities: unknown -graphics %q; want kitty, sixel, iterm2 or halfblock", mode)
 }
 
-// checkLoopback refuses a bind that is not loopback. gooeygrpc.Serve
-// enforces this itself; the MCP side is checked here because this app
-// hands mcp.Serve an address, and because the Python companion's own MCP
-// server takes one too — the danger is identical for all three: no
-// authentication, and a control handle on this terminal (and, for the
-// Python one, on this machine).
-func checkLoopback(what, addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("dynamic-activities: bad %s address %q: %w", what, addr, err)
-	}
-	if host == "" {
-		return fmt.Errorf("dynamic-activities: %s %q binds every interface; loopback only (use 127.0.0.1:port)", what, addr)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("dynamic-activities: %s %q is not a loopback address; these servers have no authentication", what, addr)
-	}
-	return nil
-}
+// The loopback rule this app applies to the addresses it is handed is
+// netutil.CheckLoopback, called inline at each flag. gooeygrpc.Serve
+// applies the same function itself; the MCP side is checked here because
+// this app hands mcp.Serve an address, and because the Python
+// companion's own MCP server takes one too — the danger is identical for
+// all three: no authentication, and a control handle on this terminal
+// (and, for the Python one, on this machine).
 
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
@@ -346,7 +331,7 @@ func main() {
 	var mcpURL, grpcURL string
 
 	if *mcpAddr != "" {
-		if err := checkLoopback("-mcp", *mcpAddr); err != nil {
+		if err := netutil.CheckLoopback("dynamic-activities -mcp", *mcpAddr); err != nil {
 			gooey.Exit(err)
 		}
 		srv, err := mcp.Serve(app, mcp.Options{
@@ -382,7 +367,7 @@ func main() {
 		if grpcURL == "" {
 			gooey.Exit(fmt.Errorf("dynamic-activities: -with-worker needs the control plane it registers names through; do not pass -grpc \"\""))
 		}
-		if err := checkLoopback("-activity-mcp", *activityMCP); err != nil {
+		if err := netutil.CheckLoopback("dynamic-activities -activity-mcp", *activityMCP); err != nil {
 			gooey.Exit(err)
 		}
 		logPath := filepath.Join(dir, "worker.log")

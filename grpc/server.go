@@ -9,6 +9,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/netutil"
 	grpcgo "google.golang.org/grpc"
 
 	controlv1 "github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1"
@@ -141,7 +142,7 @@ func Serve(host Host, opts Options) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if err := checkLoopback(addr); err != nil {
+	if err := netutil.CheckLoopback("gooey/grpc", addr); err != nil {
 		return nil, err
 	}
 	s, err := New(host, opts)
@@ -157,28 +158,10 @@ func Serve(host Host, opts Options) (*Server, error) {
 	return s, nil
 }
 
-// checkLoopback refuses a non-loopback bind. This is the whole of v1's
-// security posture — same rule, same shape as the MCP server's — and it
-// is deliberately a hard error rather than a warning: there is no token
-// auth yet, so a server reachable from the network is a remote-control
-// handle on the user's terminal.
-func checkLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("gooey/grpc: bad address %q: %w", addr, err)
-	}
-	switch host {
-	case "localhost":
-		return nil
-	case "":
-		return fmt.Errorf("gooey/grpc: %q binds every interface; v1 is loopback-only (use 127.0.0.1:port)", addr)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("gooey/grpc: %q is not a loopback address; v1 has no authentication, so remote binds are refused", addr)
-	}
-	return nil
-}
+// The loopback rule is netutil.CheckLoopback — literally the same rule
+// the MCP server applies, which is the point: it used to be the same rule
+// written out twice here and twice more in the demo apps, so a fix to one
+// copy reached none of the others.
 
 // Addr is the address the server is listening on, empty if it was built
 // with New rather than Serve.

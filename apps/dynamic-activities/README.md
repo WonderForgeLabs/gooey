@@ -21,9 +21,10 @@ MCP server that this app launched as a companion.
 > you share.
 >
 > When you start the demo the normal way (`go run .`), that is enforced: all three
-> addresses are refused unless they are loopback, the app's own two by `checkLoopback` in
-> `main.go` (pinned by `TestCheckLoopbackRefusesEverythingElse`) and the gRPC one by
-> `grpc.Serve` itself. **`worker.py` has no such check of its own**, so running it by hand
+> addresses are refused unless they are loopback, the app's own two by
+> `netutil.CheckLoopback` (pinned for this app by
+> `TestCheckLoopbackRefusesEverythingElse`, and exhaustively by `netutil`'s own table)
+> and the gRPC one by `grpc.Serve` itself — which applies that same one function. **`worker.py` has no such check of its own**, so running it by hand
 > with `GOOEY_ACTIVITY_MCP_ADDR` set to a non-loopback address will bind it and hand
 > arbitrary code execution to the network. Let the app launch it.
 >

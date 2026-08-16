@@ -69,6 +69,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/netutil"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -155,7 +156,7 @@ func Serve(host Host, opts Options) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if err := checkLoopback(addr); err != nil {
+	if err := netutil.CheckLoopback("gooey/mcp", addr); err != nil {
 		return nil, err
 	}
 	s, err := New(host, opts)
@@ -172,29 +173,11 @@ func Serve(host Host, opts Options) (*Server, error) {
 	return s, nil
 }
 
-// checkLoopback refuses a non-loopback bind. This is the whole of v1's
-// security posture and it is deliberately a hard error rather than a
-// warning: there is no token auth yet, so a server reachable from the
-// network is a remote-control handle on the user's terminal. Remote binds
-// arrive with authentication or not at all.
-func checkLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("gooey/mcp: bad address %q: %w", addr, err)
-	}
-	switch host {
-	case "localhost", "":
-		if host == "" {
-			return fmt.Errorf("gooey/mcp: %q binds every interface; v1 is loopback-only (use 127.0.0.1:port)", addr)
-		}
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("gooey/mcp: %q is not a loopback address; v1 has no authentication, so remote binds are refused", addr)
-	}
-	return nil
-}
+// The loopback rule itself lives in netutil.CheckLoopback, along with the
+// reasoning for every clause. It is public and shared because an
+// embedding host that owns its own listener (see New, above) has to be
+// able to apply the same rule — apps/kanban maintained a hand-copied
+// stand-in for exactly as long as this was unexported.
 
 // Addr is the address the server is listening on, empty if it was built
 // with New rather than Serve.

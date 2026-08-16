@@ -84,6 +84,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
+	"github.com/WonderForgeLabs/gooey/netutil"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -440,34 +441,9 @@ func mcpTrafficLogger(next http.Handler, capture func(dir, text string)) http.Ha
 	})
 }
 
-// checkLoopbackAddr is a light stand-in for gooey/mcp's own unexported
-// checkLoopback. mcp.New's doc says the loopback guarantee becomes the
-// host's problem once it owns the listener itself, which switching to
-// mcp.New (below, so the handler can be wrapped) now makes this app's.
-// Same posture as the package this replaces: v1 MCP has no
-// authentication, so a non-loopback bind is a remote-control handle on
-// this terminal.
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
-}
-
-func checkLoopbackAddr(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("kanban: bad -mcp address %q: %w", addr, err)
-	}
-	if host == "" {
-		return fmt.Errorf("kanban: -mcp %q binds every interface; loopback only (use 127.0.0.1:port)", addr)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("kanban: -mcp %q is not a loopback address; this server has no authentication", addr)
-	}
-	return nil
 }
 
 func main() {
@@ -790,7 +766,11 @@ func main() {
 	}
 
 	if *addr != "" {
-		if err := checkLoopbackAddr(*addr); err != nil {
+		// mcp.New's doc says the loopback guarantee becomes the host's
+		// problem once it owns the listener itself, which this app does
+		// (below, so the handler can be wrapped). Same rule, same
+		// function mcp.Serve would have applied.
+		if err := netutil.CheckLoopback("kanban -mcp", *addr); err != nil {
 			gooey.Exit(err)
 		}
 		// mcp.New builds the server without listening — unlike the
