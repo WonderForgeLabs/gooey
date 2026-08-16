@@ -9,7 +9,7 @@ import (
 )
 
 // goTypeOf renders a component's concrete type for the catalog's Go
-// field. %T is the package's established spelling for this — boundProp's
+// field. %T is the package's established spelling for this — Bound's
 // type errors and the tree snapshot both use it.
 func goTypeOf(c any) string {
 	if c == nil {

@@ -85,12 +85,14 @@
 //
 // # What this package deliberately does not do
 //
-// Shape attributes are LITERALS. A registered builder can resolve a
-// command (Context.Command is exported) but there is no exported way to
-// resolve a {{.Path}} value binding — boundProp and literalOrBound are
-// unexported — so Stroke="{{.Ink}}" cannot work from outside markup.
-// Rather than reach around that with a second binding dialect, these
-// elements take literals and the limitation is reported upstream.
+// Shape attributes are LITERALS. That was once forced — the binding
+// resolvers were unexported, so Stroke="{{.Ink}}" could not work from
+// outside package markup, and rather than reach around it with a second
+// binding dialect these elements took literals and the limitation was
+// reported upstream. It is no longer forced: markup.Bound,
+// markup.BoundText, markup.BoundColor and markup.BoundStyle are
+// exported (#266). Adopting them here is unstarted work, not a
+// constraint.
 package shapes
 
 import (
