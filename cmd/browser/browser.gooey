@@ -9,7 +9,17 @@
            the picker's keys while the picker is open. -->
       <Text Grid.Row="0" Grid.ColSpan="2" Style="accent">{{.Title}}</Text>
       <DemoList Grid.Row="1" Grid.Col="0"/>
-      <DemoInfo Grid.Row="1" Grid.Col="1" Margin="2,0,0,0"/>
+
+      <!-- The preview pane is its own document (infopane.gooey), so the
+           lines it shows and the order it shows them in are editable
+           without touching Go — and hot-reload, because Page names it. -->
+      <InfoPane Grid.Row="1" Grid.Col="1" Margin="2,0,0,0"
+                SourceDesc="{{.SourceDesc}}" ShowSource="{{.ShowSource}}"
+                CmdLine="{{.CmdLine}}"       HasDemos="{{.HasDemos}}"
+                RecName="{{.RecName}}"       NoDemos="{{.NoDemos}}"
+                Artifacts="{{.Artifacts}}"   ShowRecorded="{{.ShowRecorded}}"
+                GifPath="{{.GifPath}}"       ShowPlay="{{.ShowPlay}}"/>
+
       <Text Grid.Row="2" Grid.ColSpan="2" Style="dim">{{.Hint}}</Text>
       <Text Grid.Row="3" Grid.ColSpan="2" Style="accent">{{.Status}}</Text>
 
@@ -25,6 +35,16 @@
       <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
       <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
       <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+
+      <!-- The poll that keeps everything fresh, declared rather than
+           armed in code: a recording finished in another terminal, a new
+           demo, an added .gooey file or an edited doc comment reaches the
+           list and the visible preview on its own. Fast enough to land
+           before you look for it, slow enough that the stat traffic is
+           invisible. Rescan fingerprints the tree (watch.go) and bumps
+           one revision source when it moved; the Composer owns the
+           ticker's lifetime, like every other Startable in the tree. -->
+      <Timer Interval="1500ms" Tick="{{.Rescan}}"/>
 
       <!-- The source picker is the Grid's LAST painted child: document
            order is z-order, so its popup paints above both panes, and

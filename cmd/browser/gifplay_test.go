@@ -375,8 +375,7 @@ func TestAnimationRepaintsOnlyThePreview(t *testing.T) {
 	play := newPlayer(prop.NewSource(""))
 
 	list := &demoList{demos: demos, sel: sel}
-	info := &demoInfo{demos: demos, sel: sel, play: play,
-		cur: prop.NewSource(source{Name: "here", Root: "/", Launch: true})}
+	info := &demoBody{demos: demos, sel: sel, play: play}
 	info.LayoutProps().Col = 1
 	grid := &components.Grid{
 		Cols:     []components.GridLen{components.Star(1), components.Star(1)},
@@ -419,7 +418,7 @@ func TestAnimationRepaintsOnlyThePreview(t *testing.T) {
 // Startable — the walk that finds key bindings finds this too.
 func TestComposerCloseStopsPlayback(t *testing.T) {
 	play := newPlayer(prop.NewSource(""))
-	info := &demoInfo{
+	info := &demoBody{
 		demos: prop.NewComputed(func() []demo { return nil }),
 		sel:   prop.NewSource(0),
 		play:  play,

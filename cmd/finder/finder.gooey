@@ -17,7 +17,7 @@
           <MatchLine Path="{{.Path}}" Hits="{{.Hits}}"/>
         </ItemsView.ItemTemplate>
       </ItemsView>
-      <Preview Grid.Row="2" Grid.Col="1" Margin="2,0,0,0"/>
+      <Preview Grid.Row="2" Grid.Col="1" Margin="2,0,0,0" Lines="{{.Preview}}"/>
 
       <!-- Page-level gestures. With the query line the only focus stop
            they are effectively global: every list gesture lands here

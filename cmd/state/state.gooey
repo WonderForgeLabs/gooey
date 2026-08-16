@@ -8,7 +8,7 @@
         <Button Content="serialize → json" Click="{{.Serialize}}" Visibility="{{.Manual}}"/>
       </HStack>
       <Checkbox Grid.Row="2" Style="accent" Checked="{{.Auto}}" Label="auto-serialize (JSON becomes a computed over the state)"/>
-      <Text Grid.Row="3" Style="dim">{{.Live}}</Text>
+      <Text Grid.Row="3" Style="dim">live state:  count={{.Count}}  message="{{.Message}}"{{.SerializedAt}}</Text>
       <Border Grid.Row="4" Title="state.json" Style="panel">
         <Text Margin="1,0">{{.Json}}</Text>
       </Border>
