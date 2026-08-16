@@ -3,7 +3,8 @@
 Elan, 2026-08-10: "we have lots of loose unorganized go files in repo
 root. Move them to correct place also." The GIF half of that cleanup
 shipped (#169). The ~18 root `.go` files did not, and this record decides
-whether they should.
+whether they should. This analysis is
+[PR #173](https://github.com/WonderForgeLabs/gooey/pull/173).
 
 The mechanism on the table, proposed by the validation agent: move every
 root file into one new package (`internal/core` or `core/`) and keep

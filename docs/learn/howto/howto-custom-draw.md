@@ -186,30 +186,29 @@ make an implementation correct:
   still post after a signal-only stop; joining makes "after stop, no
   posts" true.
 
+`gooey.Every(post, d, fn)` packages both rules for exactly this shape — a
+ticker that posts `fn` every `d` until stopped, with the close-and-join
+handled once instead of hand-rolled per component. A wave collapses to:
+
 ```go
 func (w *wave) Start(post func(func())) (stop func()) {
-	done, stopped := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(80 * time.Millisecond)
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				post(func() { w.phase.Set(w.phase.Get() + 1) })
-			}
-		}
-	}()
-	return func() { close(done); <-stopped }
+	return gooey.Every(post, 80*time.Millisecond, func() {
+		w.phase.Set(w.phase.Get() + 1)
+	})
 }
 ```
 
 [`components/timer.go`](../../../components/timer.go) is the framework's
-own worked example — the same shape plus an `Enabled` property read at
-fire time, on the loop, so the graph can pause a ticker without tearing
-anything down.
+own worked example: `Start` is `gooey.Every(post, t.Interval, t.fire)`, and
+`fire` reads `Enabled` at fire time, on the loop, so the graph can pause a
+ticker without tearing anything down.
+
+For a one-shot delay per instance rather than a recurring tick — Tooltip's
+show-after-hover, Toast's dismiss-after — embed `gooey.Delays` and forward
+`Start` to it; see [`components/tooltip.go`](../../../components/tooltip.go).
+Reach for `gooey.Every`/`gooey.Delays` rather than hand-rolling
+`done`/`stopped` channels — a Startable that does its own channels is a
+claim that neither shape fits.
 
 ## The worked example
 

@@ -4,7 +4,8 @@ Design record, 2026-08-10. Covers scoped resource dictionaries (#95),
 markup styles with setters (#56), selector matching with state
 pseudo-classes (#57), and the demo migration (#58); sketches — without
 committing — the hooks control templates (#94) will need. The issues
-below implement this record without re-deciding anything.
+below implement this record without re-deciding anything. Landed in
+[PR #135](https://github.com/WonderForgeLabs/gooey/pull/135).
 
 ## The commitments
 
@@ -432,6 +433,13 @@ Design-ahead only; nothing here is committed by this record.
    colordemo static entries; `docs/learn/` styles-and-resources
    chapter; README status rows and the "no styling system" lines in
    README and `docs/learn/index.md` removed.
+
+These four stages track as still-OPEN issues:
+[#95](https://github.com/WonderForgeLabs/gooey/issues/95) (resources),
+[#56](https://github.com/WonderForgeLabs/gooey/issues/56) (style
+setters), [#57](https://github.com/WonderForgeLabs/gooey/issues/57)
+(selectors/state), [#58](https://github.com/WonderForgeLabs/gooey/issues/58)
+(migration).
 
 ## Explicitly out
 

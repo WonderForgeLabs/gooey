@@ -24,6 +24,8 @@ said "demo" twice and named its subject once.
 
 ## The decision
 
+Landed in [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
+
 **1. `apps/` for the top-level set.** On 2026-08-12 the word was canvassed
 across the active sessions; three of four peers replied and all three
 independently said `apps/`. The alternative on the table was `usecases/`,
@@ -88,7 +90,7 @@ directory depth is the same, so `../../` still resolves.
 ### The worker was not a top-level application
 
 `apps/temporal-worker` was a landing spot this rename got wrong, and a
-follow-up moved it to **`apps/kanban/worker`**. The test is the one this
+follow-up ([PR #271](https://github.com/WonderForgeLabs/gooey/pull/271)) moved it to **`apps/kanban/worker`**. The test is the one this
 directory exists to apply: `apps/` names the things a reader would call
 applications, and the Python worker is not one — it has no UI, no
 `main.go`, and no independent lifetime. `apps/kanban` is the only thing

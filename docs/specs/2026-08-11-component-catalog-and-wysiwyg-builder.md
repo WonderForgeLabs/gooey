@@ -4,7 +4,7 @@ Two pieces of work that arrived together and are recorded together, in
 the order they should land. The first is a framework correctness fix that
 stands on its own. The second is the reason it got written, and is also
 its first real consumer — which is the correct order of those two facts,
-not the order the work was requested in.
+not the order the work was requested in. Both landed in [PR #215](https://github.com/WonderForgeLabs/gooey/pull/215).
 
 ## Thesis: a check that reports success without having checked
 
@@ -834,10 +834,18 @@ second, and needs no Temporal for itself.
 
 ### `Attach` cannot patch, and the editor is a patching tool
 
-The `Act` oneof carries exactly seven things — `set_property`,
-`invoke_command`, `send_keys`, `send_pointer`, `set_focus`,
-`swap_markup`, `register_properties`. **`patch_markup` is not among
-them.** It exists only on the unary `ControlService`.
+**Superseded: `PR #206` landed `patch_markup` on the `Act` oneof.**
+Option (3) below — "add `patch_markup` to the `Act` oneof" — is now the
+shipped state, not the aspiration. The section is kept as written
+because it explains *why* the interim discipline in (1) existed and the
+ordering hazard it worked around; that reasoning still applies verbatim
+to any caller that issues `PatchMarkup` through the unary
+`ControlService` instead of as an act.
+
+The `Act` oneof carried exactly seven things at the time this was
+written — `set_property`, `invoke_command`, `send_keys`, `send_pointer`,
+`set_focus`, `swap_markup`, `register_properties`. **`patch_markup` was
+not among them.** It existed only on the unary `ControlService`.
 
 This was relayed as "full UI access: properties, patch, swap" and is
 wrong. It matters more than a missing convenience, because the editor's
@@ -867,17 +875,18 @@ about patching. Three ways out, none free:
 3. **Add `patch_markup` to the `Act` oneof.** One field; the semantics
    already exist on the unary side.
 
-(3) is the right end state. (1) is the interim, and because there is no
-ordering guarantee it requires the editor to **serialize on the
+(3) is the right end state, and it has landed ([PR #206](https://github.com/WonderForgeLabs/gooey/pull/206)). (1) was the interim, and because there was no
+ordering guarantee it required the editor to **serialize on the
 `ActResult`** before issuing a dependent unary patch.
 
-That serialization is **self-imposed discipline, not a guarantee the
-transport offers**, and it is written that way so it can be deleted
-cleanly rather than surviving as folklore once (3) lands. The
-measurement above is what makes it cheap: since a subscribed delta
-arrives *before* its own `ActResult`, waiting for the result costs
-nothing that was not already going to be waited for — the happens-before
-comes free.
+That serialization was **self-imposed discipline, not a guarantee the
+transport offered**, deliberately written so it could be deleted cleanly
+once (3) landed rather than surviving as folklore — and it now can be,
+for any client that switches its `PatchMarkup` calls to acts. The
+measurement above is what made it cheap while it was needed: since a
+subscribed delta arrives *before* its own `ActResult`, waiting for the
+result cost nothing that was not already going to be waited for — the
+happens-before came free.
 
 ### The overflow drop, measured
 
@@ -1189,16 +1198,17 @@ correction matters more than the original claim.**
 
 `<Image>` was recorded here as permanently unplaceable by a client — it
 needs a `*prop.Property[image.Image]` and there was no registration kind
-for images. **That is false as a permanent claim, but still true on
-`main` today.**
+for images. **That was false as a permanent claim, and it is no longer
+true on `main` either.**
 
 The distinction matters and this document has to keep it: an image
-registration kind exists in **PR #206, which is open and unmerged**. A
-reader on `main` genuinely cannot place an image. What was wrong was the
-word *permanent* — the capability was absent, not impossible, and this
-document reported the first as the second.
+registration kind landed in [PR #206](https://github.com/WonderForgeLabs/gooey/pull/206) (`VALUE_KIND_IMAGE`,
+`proto/gooey/control/v1/types.proto`). A reader on `main` today can place
+an image. What was wrong at the time was the word *permanent* — the
+capability was absent, not impossible, and this document reported the
+first as the second.
 
-When #206 lands, the registration is:
+The registration is:
 
 ```json
 register_properties {"properties": [
@@ -1346,10 +1356,11 @@ Build the first consumer before declaring an interface settled.
 
 Built as `examples/wysiwyg/remote.go`, holding an `Attach` stream and a
 unary `ControlService` client against the same connection — because
-neither alone suffices. The stream carries property writes and delivers
-subscribed deltas filtered to the names the editor owns; `PatchMarkup`
-is not an act, so replacing one named subtree has to go through the
-unary surface.
+neither alone suffices at the vintage this section describes. The
+stream carries property writes and delivers subscribed deltas filtered
+to the names the editor owns; at the time, `PatchMarkup` was not an act,
+so replacing one named subtree had to go through the unary surface (see
+the amendment above — [PR #206](https://github.com/WonderForgeLabs/gooey/pull/206) since put it on the stream too).
 
 ### The editor is a separate module, deliberately
 

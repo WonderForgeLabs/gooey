@@ -42,7 +42,13 @@ in a binding. The map's keys are what the template's bindings resolve
 against.
 
 Values become live handles when they are `string`, `bool`, `int`,
-`float64`, `render.Style` or `render.Color`. Anything else crosses as a
+`float64`, `render.Style`, `render.Color`, `image.Image`, or a
+`*prop.Property[image.Image]` — a per-row picture updates live too
+([#217](https://github.com/WonderForgeLabs/gooey/issues/217),
+[PR #274](https://github.com/WonderForgeLabs/gooey/pull/274)). That list
+is not exhaustive; `rowValue` in `components/itemsview.go` is the type
+switch of record, and has one more case (`[]int`, for finder's
+matched-rune positions). Anything the switch does not name crosses as a
 fixed literal for the life of the row — fine for a `gooey.Command`, wrong
 for anything that changes.
 

@@ -125,7 +125,7 @@ gesture, `FAILED_PRECONDITION` no context or composition,
 
 An endpoint may carry an **island grant** (`grpc.Options.Grant`,
 `mcp.Options.Grant`), and then every row above is narrowed or refused
-per `docs/specs/2026-08-14-island-grants.md` — including a fifth status
+per [`docs/specs/2026-08-14-island-grants.md`](2026-08-14-island-grants.md) — including a fifth status
 code, `PERMISSION_DENIED`, for a request that reaches past the grant.
 Without a grant nothing changes: the host's own endpoint is the whole
 app, exactly as before.
@@ -682,3 +682,12 @@ the names, wording table, structured round-trip, tools/list surface,
 and the e2e pty test growing a real app's viewmodel over the wire);
 grpc `-race` green; handlers/temporal and imagefmt/svg green; gofmt
 clean.
+
+## Related work
+
+- [#108](https://github.com/WonderForgeLabs/gooey/issues/108) — the
+  umbrella epic this whole record and its amendments serve.
+- [PR #122](https://github.com/WonderForgeLabs/gooey/pull/122) — landed
+  the codegen toolchain (#110).
+- [PR #136](https://github.com/WonderForgeLabs/gooey/pull/136) — landed
+  the server over the shared service layer (#111).

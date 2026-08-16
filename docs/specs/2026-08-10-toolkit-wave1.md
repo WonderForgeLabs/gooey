@@ -9,6 +9,8 @@ than smoothed over.
 
 ## What shipped
 
+Landed in [PR #87](https://github.com/WonderForgeLabs/gooey/pull/87).
+
 Six components in `gooey/components`, each with a markup builder, an
 entry in `docs/markup-reference.md`, and damage-count tests:
 

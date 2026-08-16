@@ -15,7 +15,7 @@ ctx := &markup.Context{
 tree, err := markup.Load(fsys, "app.gooey", ctx)
 ```
 
-`Load` reads from any `fs.FS` — `os.DirFS` in development, `embed.FS` in release; the loader cannot tell the difference. `markup.Watch` (single file) and `markup.WatchAll` (a set of files) poll ModTimes and rebuild on change, which is the hot-reload path: edit the file while the app runs and the tree rebuilds in place, with all state intact because the viewmodel properties are the durable thing and the tree is disposable (see `cmd/markuplog`, [media/demos/markuplog.gif](media/demos/markuplog.gif)). On an immutable FS this degrades to a natural no-op. Parse or build errors during a reload leave the current tree in place.
+`Load` reads from any `fs.FS` — `os.DirFS` in development, `embed.FS` in release; the loader cannot tell the difference. `markup.Watch` (single file) and `markup.WatchAll` (a set of files) poll ModTimes ([#53](https://github.com/WonderForgeLabs/gooey/issues/53) replaces the polling with filesystem notifications) and rebuild on change, which is the hot-reload path: edit the file while the app runs and the tree rebuilds in place, with all state intact because the viewmodel properties are the durable thing and the tree is disposable (see `cmd/markuplog`, [media/demos/markuplog.gif](media/demos/markuplog.gif)) — focus is the one thing a reload still drops, which is [#52](https://github.com/WonderForgeLabs/gooey/issues/52). On an immutable FS this degrades to a natural no-op. Parse or build errors during a reload leave the current tree in place.
 
 Apps built on `gooey.App` do not call `Load` and `Watch` themselves — they hand the whole arrangement to `markup.Page`:
 
@@ -58,6 +58,12 @@ An unrecognised value fails at load rather than falling back, because falling ba
 The setting lives in the **document** because it is a property of the artwork the page carries, not of the machine it runs on. A page built around a detailed SVG wants real pixels wherever it goes, while capability detection answers for whoever launched the process — which is the wrong terminal whenever the app was started from a script, a recording pty, or a supervisor.
 
 Hosts read it with `markup.ReadPageSettings`, which parses the root and no further: it builds nothing and binds nothing, so the answer is available before there is a component tree to ask.
+
+### Per-protocol files: `Context.Variant`
+
+The same axis from the other side. `Graphics` forces a protocol from inside one document; `Variant` picks a *different document* per protocol. Set `ctx.Variant` to the resolved encoder name — `kitty`, `sixel`, `iterm2`, or `cells` where there is no pixel plane — and `Load(fsys, "page.gooey", ctx)` resolves to `page.sixel.gooey` when that sibling exists and to `page.gooey` when it does not. The suffix goes before the extension so the files sort together. UserControls and Includes specialize the same way: ship `card.sixel.gooey` beside `card.gooey` and the instantiation site is unchanged.
+
+Set it **after** capability detection (`App.Graphics().Name()`) — before the probe answers, the honest name is unknown and the base document is right. Empty, the default, disables the lookup entirely. A missing variant is the ordinary case, not an error, which is what makes the axis cheap to adopt one page at a time. `markup.Page` watches every variant name including ones not yet written, so *creating* `page.kitty.gooey` hot-reloads. (The `Variant` doc comment's own list of compliant files keeps going stale — [#260](https://github.com/WonderForgeLabs/gooey/issues/260).)
 
 ## Built-in elements
 
@@ -162,6 +168,8 @@ The interactive focus stop: renders as `[ label ]` and runs its command on enter
 <Button Content="serialize → json" Click="{{.Serialize}}"/>
 ```
 
+`Content` takes the same **mnemonic** marker as a `<Menu Title>`: `Content="_Save"` underlines the S and makes `alt+s` press the button from anywhere on the page, whatever holds focus. The marker is syntax, not text — it is stripped from the label and from every measure and render tier, so `Content="snake_case"` renders `snakecase` and quietly claims `alt+c`; `__` is the literal underscore. Unlike a menu there is **no** first-letter fallback: a button with no marker registers no accelerator. A disabled command declines the accelerator and the key keeps going. See [the MenuBar mnemonic rules](#menubar) for the shared convention.
+
 A command with a `CanExecute` condition (`gooey.NewCommand(save).When(dirty)`) needs nothing extra in markup — the binding resolves it like any delegate. The button then asks the condition **while painting**, so it paints dim and refuses enter, space and clicks while the condition is false, and a flip repaints exactly that one button. See [conditional commands](#conditional-commands).
 
 #### Pixel chrome
@@ -233,7 +241,7 @@ Both forms satisfy `gooey.Action`, which is what every event field is typed as, 
 | `Src` | Required. A literal is a **file path resolved in the same `fs.FS` the page was loaded from** (`markup.Load`'s FS; inside a UserControl or markup-only control, the control's own FS) and decoded at build time — a missing or undecodable file is a load error naming the path and format, wrapping `*imaging.Error`. A binding shares the viewmodel's `*prop.Property[image.Image]` handle. |
 | `Cols`, `Rows` | Required size in cells: a positive int literal, or a binding to an int property. |
 
-Literal `Src` decodes through the `imaging` registry: **png, jpeg, gif, bmp, ico** in core (GIF shows its first frame — animation is a player's job, see the browser demo's gifplay; ICO decodes its largest entry). **SVG** needs the nested module — blank-import `github.com/WonderForgeLabs/gooey/imagefmt/svg` and `.svg` paths rasterize at their intrinsic size (capped at 1024 px). Formats are sniffed by content, not extension.
+Literal `Src` decodes through the `imaging` registry: **png, jpeg, gif, bmp, ico** in core (GIF shows its first frame — animation is a player's job, see the browser demo's gifplay, and an animated player is [#105](https://github.com/WonderForgeLabs/gooey/issues/105); ICO decodes its largest entry). **SVG** needs the nested module — blank-import `github.com/WonderForgeLabs/gooey/imagefmt/svg` and `.svg` paths rasterize at their intrinsic size (capped at 1024 px). Formats are sniffed by content, not extension.
 
 Because the decode happens in the builder, hot reload re-reads the file: editing the page (or the control file naming the image) rebuilds and re-decodes. The watcher stats markup files only, so swapping the image bytes alone does not trigger a rebuild — touch the page.
 
@@ -358,13 +366,14 @@ Space, enter and a click on the label flip it. What makes it a *rocker* rather t
 | `Options` | **Required.** Either a literal pipe-separated list (`Options="Day \| Week \| Month"`, whitespace trimmed) or a binding to a `*prop.Property[[]string]`. |
 | `Selected` | **Required binding** to a `*prop.Property[int]`, clamped into range on read. |
 | `Changed` | Optional command, run after the selection moves. |
+| `Wrap` | `"false"` stops the selection at the ends, restoring `Toggle`'s rocker rule. Absent or `"true"` cycles. Any other spelling is a load error, not a silent false. |
 | `Style` | Named style or a bound style. |
 
 ```xml
 <Segmented Options="Idle | Fetch | Build | Deploy" Selected="{{.StageIndex}}" Changed="{{.StageChanged}}"/>
 ```
 
-`←`/`→` step the selection and, as with `Toggle`, are consumed only while there is somewhere to move — so an arrow at either end leaves the control instead of dead-ending in it. `home`/`end` jump to the ends, space and enter cycle (wrapping), and a click selects the segment under the pointer. The same conditional-`Changed` disable rule applies.
+`←`/`→` step the selection and, unlike `Toggle`, **cycle** at the ends by default — `→` at the last segment returns to the first — so an arrow along the strip's own axis is always consumed. The keyboard is not trapped by that: the **cross** axis is never handled (`↑`/`↓` on a horizontal strip, `←`/`→` on a vertical one) and neither is `tab`, so there is always a way out. `Wrap="false"` selects the rocker tier, where an end-of-travel arrow bubbles instead. `home`/`end` jump to the ends, space and enter cycle regardless, and a click selects the segment under the pointer. The same conditional-`Changed` disable rule applies.
 
 ### StatusBar
 
@@ -374,7 +383,7 @@ Each section takes either form, and giving one section both is a load error:
 
 | Form | Meaning |
 |---|---|
-| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal. |
+| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal — though the exported element catalog still declares all three literal-only, so a property palette built on it will say otherwise ([#314](https://github.com/WonderForgeLabs/gooey/issues/314)). |
 | `<StatusBar.Left>` / `.Center` / `.Right` | A property element holding exactly one component — anything at all. |
 
 ```xml
@@ -417,7 +426,7 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 
 ### Tabs
 
-`components.Tabs` — a header strip over exactly one visible page. The strip is `Segmented` grown a body: same segment geometry, same rocker-rule arrows, same click targets, with the selection deciding which page's content is on screen.
+`components.Tabs` — a header strip over exactly one visible page. The strip is `Segmented` grown a body: same segment geometry, same click targets, with the selection deciding which page's content is on screen. Its arrows follow the **rocker** rule rather than `Segmented`'s default cycling — consumed only when the selection moves.
 
 | Attribute | Meaning |
 |---|---|
@@ -448,7 +457,7 @@ A Tabs sizes to its **active** page (plus one strip row). Pages of different hei
 
 ### MenuBar
 
-`components.MenuBar` — the top menu row: titles across one line, and a dropdown overlay below the open title.
+`components.MenuBar` — the top menu row: titles across one line, and a dropdown overlay below the open title. One flat tier; context menus and submenus are [#104](https://github.com/WonderForgeLabs/gooey/issues/104).
 
 ```xml
 <MenuBar Grid.Row="0" Style="accent">
@@ -590,7 +599,7 @@ Keys:
 
 Mouse: a click places the caret, dragging selects (the drag survives leaving the field, because the press captures the pointer), and a double click selects the word under it.
 
-Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste.
+Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste — tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106).
 
 The field scrolls horizontally to keep the caret visible in either direction, and the caret and the selection anchor are source properties, so moving the caret repaints only this component.
 
@@ -661,6 +670,8 @@ ctx.Rules = map[string]markup.RuleFunc{
 
 The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets. The built-ins cover the DataAnnotations vocabulary; `ctx.Rules` is for **domain** rules beyond it (an internal account-number format, a reserved-name list, a check against a lookup table).
 
+The registration is not *quite* like `Components` and `Handlers` in one respect: `Rules` does not yet cross the control boundary (tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314)). A page registering `ctx.Rules["Email"]` and then writing `<Validate Email="true"/>` inside an Include or UserControl gets "unknown rule", listing only the built-ins. Keep custom rules in the page, or have the control's setup copy `Rules` into the context it returns.
+
 ### ValidationMarker
 
 `components.ValidationMarker` — the **floating** error display, for layouts with no room for an inline error row (the primary pattern is an ordinary bound `<Text>` under the field). A non-visual attachment whose message shows in the page's `AdornmentLayer`, anchored below its host, flipping above when the screen runs out.
@@ -718,7 +729,7 @@ One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no
 
 The map's keys are what the template's bindings resolve against; its values become property handles the view Sets as the item changes. `string`, `bool`, `int`, `float64`, `render.Style`, `render.Color`, `[]int` and `image.Image` become live handles; anything else crosses as a fixed literal for the life of the row (useful for a `gooey.Command`, not for anything that changes).
 
-A picture may be projected either way, and both follow the record when rows are reused. Project the `image.Image` itself for a picture the record already holds; project a `*prop.Property[image.Image]` — `components.Img(...)`, or a handle the app keeps — when the app wants to fill it in **after** the row exists, as an async thumbnail does. A handle the app owns and Sets later reaches the row without the collection re-projecting at all.
+A picture may be projected either way, and both follow the record when rows are reused — the reuse bug behind that rule is [#217](https://github.com/WonderForgeLabs/gooey/issues/217), fixed in [PR #274](https://github.com/WonderForgeLabs/gooey/pull/274). Project the `image.Image` itself for a picture the record already holds; project a `*prop.Property[image.Image]` — `components.Img(...)`, or a handle the app keeps — when the app wants to fill it in **after** the row exists, as an async thumbnail does. A handle the app owns and Sets later reaches the row without the collection re-projecting at all.
 
 Use `components.ItemsOf` instead when the projection reads more than the item — a lookup table, a filter, a formatting mode. A projection runs during layout, where reads record nothing, so those reads have to happen in your own computed to become dependencies:
 
@@ -852,7 +863,7 @@ case ev := <-events:
 | `Error` | Optional binding to a `*prop.Property[string]`. Receives a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden, and `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
 
-Unknown attributes are a **load error** (following `<x:Property>`, not the visual elements): a misspelled `Dir=` that silently ran the child somewhere else, or a misspelled `Log=` that silently sent its output to the null device, are both worse than a startup failure. Layout attributes are rejected for the same reason — a non-visual element has no bounds to place.
+Unknown attributes are a **load error**, as they now are on every element: a misspelled `Dir=` that silently ran the child somewhere else, or a misspelled `Log=` that silently sent its output to the null device, are both worse than a startup failure. Layout attributes are rejected for the same reason — a non-visual element has no bounds to place.
 
 **Output never reaches the terminal.** A child writing to the inherited stdout paints over the UI's bottom rows in raw mode with bytes the framework cannot repair, so the default is the null device and `Log` takes a *path*. There is no `Log="stdout"` and no way to spell one.
 
@@ -869,6 +880,8 @@ ctx.Dir = dir
 
 `fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
 
+**Today that only holds for a companion declared in the page.** `Context.Dir` is not among the fields a UserControl or Include inherits from its parent, so a `<Companion>` inside a control file sees an empty `Dir` and resolves `Dir=`/`Log=` against the process's working directory even when the app set `ctx.Dir` — tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314). Declare companions in the page, or pass absolute paths, until it is fixed.
+
 **Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic). A requested stop does **not** run `Exited`.
 
 **A replaced companion never overlaps its replacement, but the two replacement paths pay for it differently.** Both stop the outgoing child before the incoming one starts; where the wait happens is what differs, and it matters because these services are not idempotent — two children of the same service fight over a port, and the second truncates the log the first is still writing.
@@ -884,7 +897,7 @@ That is one tier down from `gooey.WithCompanions` / `App.AddCompanion`, which st
 
 ## Universal layout attributes
 
-Every element whose component embeds `gooey.Base` (all built-ins and any well-behaved custom component) accepts the FrameworkElement attributes. They map onto the component's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container.
+Every **visual** element (all built-ins whose component embeds `gooey.Base`, and any well-behaved custom component) accepts the FrameworkElement attributes. They map onto the component's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container. The non-visual elements — `<KeyBinding>`, `<Timer>`, `<Tooltip>`, `<Validate>`, `<TypeAhead>`, `<ValidationMarker>`, `<Companion>` — **reject** them at load: they have no bounds to place, so `<Timer Width="4"/>` is an error rather than a silent no-op.
 
 | Attribute | Values | Meaning |
 |---|---|---|
@@ -896,7 +909,7 @@ Every element whose component embeds `gooey.Base` (all built-ins and any well-be
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
 
-The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it) and are simply inert when the parent is not the matching panel. Both are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
+The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it). A **misplaced** one is a load error naming the parent that would have contributed it — `Canvas.Left` under a `<VStack>`, or `Grid.Row` under a `<Canvas>`, does not load, rather than sitting there inert. The one position where all of them are accepted is a document or patch-fragment **root**, which has no layout parent to scope against. Both families are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
 
 ## The binding DSL
 
@@ -971,7 +984,7 @@ markup.RegisterHandlers(temporalhandlers.URI, temporalhandlers.New(client, "gooe
 
 - `prefix` resolves through the document's own xmlns table. Namespaces are **per document** — an Include or UserControl declares its own and cannot inherit the page's, so a control's capabilities never depend on who included it.
 - Arguments are the DSL's usual atoms: `` `backtick literal` `` (a constant string) and `.Path` (a property handle). Bound arguments are read **at invoke time**, not at load — the same lvalue semantics as every other binding, so re-pointing `.Url` changes what the next press fetches.
-- `| into .Target` names the `*prop.Property[string]` the result is written to. It is the only pipeline stage v1 defines, and it is **optional**: a function with no result to deliver is simply written without one — ``{{wf:Signal `approve`}}`` sends the signal and drops the receipt, because delivering to an absent target is a no-op (`markup.Target.Deliver`). Functions that do produce a result still work without the stage; the result is discarded.
+- `| into .Target` names the `*prop.Property[string]` the result is written to. It is the only pipeline stage v1 defines — grammar v2 (`| err`, `| progress`, multiple targets, retry and timeout) is epic [#38](https://github.com/WonderForgeLabs/gooey/issues/38) — and it is **optional**: a function with no result to deliver is simply written without one — ``{{wf:Signal `approve`}}`` sends the signal and drops the receipt, because delivering to an absent target is a no-op (`markup.Target.Deliver`). Functions that do produce a result still work without the stage; the result is discarded.
 
 The expression produces a `gooey.Command`, so it works anywhere a command does — including `<KeyBinding Command="…">`. A handler expression on an Include's attribute is resolved in the *parent* (the document that declared the prefix) and crosses the boundary as an ordinary command value.
 
@@ -1020,7 +1033,7 @@ A provider is a typed factory — `NewCommand(*markup.Call) (gooey.Command, erro
 
 ## Value namespaces
 
-The pull half of the same mechanism. A handler namespace answers *what happens when the user does this*; a value namespace answers *what is this worth right now*:
+The pull half of the same mechanism (landed in [PR #231](https://github.com/WonderForgeLabs/gooey/pull/231); the wider surface is epic [#228](https://github.com/WonderForgeLabs/gooey/issues/228)). A handler namespace answers *what happens when the user does this*; a value namespace answers *what is this worth right now*:
 
 ```xml
 <Gooey xmlns="wonderforge.io/gooey/2026"
@@ -1108,7 +1121,7 @@ A registered custom component is exempt from the second rule: its builder receiv
 </TextBox>
 ```
 
-A visual child inside the slot is a load error naming it; an element that cannot host attachments rejects the slot's contents the way it rejects bare ones.
+A visual child inside the slot is a load error naming it; an element that cannot host attachments rejects the slot's contents the way it rejects bare ones. The set is the framework's own — making a behavior something an author can define in markup is [#100](https://github.com/WonderForgeLabs/gooey/issues/100).
 
 ## Styles
 
@@ -1122,7 +1135,7 @@ Styles: map[string]render.Style{
 }
 ```
 
-Be honest about what this is: a named lookup, not a styling system. There is no cascading, no inheritance, no per-property overrides in markup (except `Text Bold`), no selectors, and an unknown style name silently yields the zero style. It exists so markup files do not embed raw colors.
+Be honest about what this is: a named lookup, not a styling system. There is no cascading, no inheritance, no per-property overrides in markup (except `Text Bold`), no selectors, and an unknown style name silently yields the zero style. It exists so markup files do not embed raw colors. Selectors and markup-declared styles are epic [#54](https://github.com/WonderForgeLabs/gooey/issues/54).
 
 `Style` also accepts a **binding**, which is a different thing entirely:
 
@@ -1159,7 +1172,7 @@ Components: map[string]markup.Builder{
 
 (from `cmd/markuplog`)
 
-The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it).
+The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. Letting a registered component declare its surface and have its attributes checked like a built-in's is [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290). A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it). It is the only resolver a third-party builder has: the built-ins' own `boundProp`/`literalOrBound` stay unexported, which is [#266](https://github.com/WonderForgeLabs/gooey/issues/266).
 
 ## UserControls
 
@@ -1245,7 +1258,7 @@ A control file can declare its own property surface. Declarations are direct chi
 
 | Attribute | Meaning |
 |---|---|
-| `Name` | Required. The attribute callers set, and the path the control's own markup binds (`{{.Title}}`). Cannot be `Name` or a layout attribute — those belong to the element. |
+| `Name` | Required. The attribute callers set, and the path the control's own markup binds (`{{.Title}}`). Cannot be `Name`, `Tooltip`, or a layout attribute — those belong to the element. |
 | `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any`. |
 | `Default` | The literal used when the attribute is absent, coerced by `Type`. A bad default fails the load of the *control*, not of the page. |
 | `Required` | `true` makes an absent attribute a load error. Exclusive with `Default` — a default is what makes an attribute optional. |
@@ -1262,7 +1275,7 @@ Each declaration resolves one of three ways:
 
 ### Strict mode
 
-Declaring anything at all makes the control strict: an attribute the control did not declare is a load error, because the declarations are now its public surface. Layout attributes and `Name` are the *element's*, never the control's, so they are always allowed.
+Declaring anything at all makes the control strict: an attribute the control did not declare is a load error, because the declarations are now its public surface. Layout attributes, `Name` and `Tooltip` are the *element's*, never the control's, so they are always allowed.
 
 ```
 markup: <Card Captoin="per second">: card.gooey declares no dependency property
@@ -1295,7 +1308,7 @@ This makes three control tiers, each adding exactly one thing: Include (implicit
 
 ### Known wrinkle: hot reload resets declared defaults
 
-A declared default materializes a *fresh* source each time the control is instantiated, and a hot reload re-instantiates every control. So state living in a defaulted property resets on reload, while state living in the app's viewmodel (the usual place) survives as it always has. The fix is `Name`-keyed state adoption across rebuilds, which is designed but not implemented; see the [decision record](specs/2026-08-10-markup-declared-properties.md).
+A declared default materializes a *fresh* source each time the control is instantiated, and a hot reload re-instantiates every control. So state living in a defaulted property resets on reload, while state living in the app's viewmodel (the usual place) survives as it always has. The fix is `Name`-keyed state adoption across rebuilds, which is designed but not implemented; see the [decision record](specs/2026-08-10-markup-declared-properties.md), and [#51](https://github.com/WonderForgeLabs/gooey/issues/51) under epic [#50](https://github.com/WonderForgeLabs/gooey/issues/50) for whether that is still true.
 
 ### Explicitly out of scope
 
@@ -1342,7 +1355,7 @@ Two normalizations reflect what the terminal actually sends: `shift` on a printa
 
 ## Designed, not yet implemented
 
-- `gooey gen` — compiled markup plus a typed per-control surface for compile-checked instantiation. `<x:Property>` declarations are the input it was waiting for: a declaration block is both a typed surface and, for the remote-behavior layer, a per-control wire schema.
+- `gooey gen` — compiled markup plus a typed per-control surface for compile-checked instantiation. `<x:Property>` declarations are the input it was waiting for: a declaration block is both a typed surface and, for the remote-behavior layer, a per-control wire schema. Tracked as epic [#59](https://github.com/WonderForgeLabs/gooey/issues/59).
 - `Name`-keyed state adoption across hot reloads, so a declared default's per-instance source survives a rebuild (see [the wrinkle above](#known-wrinkle-hot-reload-resets-declared-defaults)).
 
 For the project overview and demo GIFs, see [../README.md](../README.md).
