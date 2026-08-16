@@ -42,41 +42,32 @@ func (b *Border) Arrange(r gooey.Rect) {
 
 func (b *Border) Render(f *gooey.Frame) {
 	r := b.Bounds()
-	// A degenerate rect is not a small box: with W or H at zero the
-	// far-edge arithmetic (r.X+r.W-1) walks BACKWARDS, and the corners
-	// land outside the node's own bounds — outside its damage rect, so
-	// the composer never cleans them and the scar is permanent. Zero
-	// size happens routinely: a Visible Border inside a Collapsed
-	// ancestor (a hidden Tabs page) is arranged into nothing while
-	// staying paintable. Painting only inside your own bounds is the
-	// damage contract; this is where a Border keeps it.
+	// DrawBoxRunes carries this guard too, and it stays here anyway —
+	// not for the arithmetic but for the DEPENDENCY SET. Returning
+	// before the property reads is what keeps a zero-sized Border
+	// depending on nothing, so restyling a hidden Tabs page's Border
+	// costs no repaint. Delete this and the reads move above the guard,
+	// which is a damage change wearing a dead-code costume. Nothing
+	// goes stale by it: bounds changes bump the node's own revision
+	// (composer.go), so the Border repaints and picks up Style the
+	// frame it gains real bounds.
 	if r.W <= 0 || r.H <= 0 {
 		return
 	}
+	// These reads happen inside the paint node, which is what makes a
+	// color change repaint this Border and nothing else. The helpers
+	// below read no property at all — they are arithmetic over the cell
+	// buffer — so hoisting the loops out of here moved no dependency
+	// edge with them.
 	style := getSty(b.Style)
 	if !style.Bg.Set {
 		if col := getColor(b.Background); col.Set {
 			style.Bg = col
 		}
 	}
-	for x := r.X + 1; x < r.X+r.W-1; x++ {
-		f.Cells.Set(x, r.Y, '─', style)
-		f.Cells.Set(x, r.Y+r.H-1, '─', style)
-	}
-	for y := r.Y + 1; y < r.Y+r.H-1; y++ {
-		f.Cells.Set(r.X, y, '│', style)
-		f.Cells.Set(r.X+r.W-1, y, '│', style)
-	}
-	f.Cells.Set(r.X, r.Y, '╭', style)
-	f.Cells.Set(r.X+r.W-1, r.Y, '╮', style)
-	f.Cells.Set(r.X, r.Y+r.H-1, '╰', style)
-	f.Cells.Set(r.X+r.W-1, r.Y+r.H-1, '╯', style)
-	// Below four columns there is no room even for the title's two pad
-	// spaces: the write starts at r.X+2, so a narrower box puts them
-	// past the far edge — outside this node's damage rect, where the
-	// composer's sweep cannot clean them. Same contract as the
-	// degenerate-rect guard above, one column in.
-	if title := getStr(b.Title); title != "" && r.W >= 4 {
-		f.Cells.SetString(r.X+2, r.Y, " "+clipRunes(title, r.W-6)+" ", style)
-	}
+	DrawBoxRunes(f.Cells, r, style)
+	// The title's in-bounds budget lives in the helper now; see
+	// components/box.go for why "clip, do not skip" and why a box with
+	// no room for a title writes not even the pad spaces.
+	DrawBoxTitle(f.Cells, r, getStr(b.Title), style)
 }

@@ -542,19 +542,10 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 	sel := clamp(m.sel().Get(), 0, max(0, len(menu.Items)-1))
 	st := getSty(m.Style)
 
-	// The box.
-	for x := b.X + 1; x < b.X+b.W-1; x++ {
-		f.Cells.Set(x, b.Y, '─', st)
-		f.Cells.Set(x, b.Y+b.H-1, '─', st)
-	}
-	for y := b.Y + 1; y < b.Y+b.H-1; y++ {
-		f.Cells.Set(b.X, y, '│', st)
-		f.Cells.Set(b.X+b.W-1, y, '│', st)
-	}
-	f.Cells.Set(b.X, b.Y, '╭', st)
-	f.Cells.Set(b.X+b.W-1, b.Y, '╮', st)
-	f.Cells.Set(b.X, b.Y+b.H-1, '╰', st)
-	f.Cells.Set(b.X+b.W-1, b.Y+b.H-1, '╯', st)
+	// The box — the same rounded outline a Border paints, from the same
+	// helper. The separator rows below are this dropdown's own chrome
+	// and stay here.
+	DrawBoxRunes(f.Cells, b, st)
 
 	inner := b.W - 2
 	for i, it := range menu.Items {
