@@ -259,7 +259,32 @@ A real Kanban board — Todo, Doing, Done — that is also an MCP server,
 and the target `apps/kanban/worker` — its own Python companion — pushes
 generated UI into.
 
-GIF: docs-and-demos workflow.
+![kanban](media/demos/kanban.gif)
+
+The walkthrough is the demo's whole claim in one recording: **the same
+board, driven from both sides**. A person types "Record the board" and
+"Ship the GIF" into the input and presses enter, and each lands in Todo.
+Then nobody touches the keyboard — an agent speaks to the board's own
+MCP endpoint (`http://127.0.0.1:7788/mcp`, shown in the mcp tab), calls
+`set_value NewTitle` and `invoke_command AddTask`, and **"filed by an
+agent" appears in Todo**; a second call, `invoke_command TodoMoveRight`,
+carries "Write kanban demo" across into Doing. `ctrl+t` then flips the
+bottom panel to the log, which is showing the JSON-RPC reply to that
+very `TodoMoveRight` — the traffic that moved the card, in the app that
+moved.
+
+Nothing in the recording is a mock: the tool calls are real HTTP POSTs to
+the running binary, and the board repaints because the Dispatcher ran
+them on the UI goroutine.
+
+Two notes for anyone re-recording it. It is captured at **120 columns**
+rather than the 84 the other demos use: the mcp tab's tool-usage help is
+wider than that, and at 100 columns it truncates mid-word
+(`…/DoneRemove/Tog`), which reads as a rendering defect rather than as
+the terminal being narrow. And the board **must be recorded from
+`apps/kanban/`** — it loads `kanban.gooey` relative to its working
+directory, so a capture started from the repo root produces a cast whose
+only line is `open kanban.gooey: no such file or directory`.
 
 Each column is a `components.ItemsView` over an ordinary Go slice
 (`*prop.Property[[]Card]`); adding, moving and removing cards is
