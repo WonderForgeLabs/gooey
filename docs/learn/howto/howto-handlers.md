@@ -124,7 +124,7 @@ body cannot become the application's memory profile. `net:Get` speaks
 ## Task 2: read and list files with fs:
 
 The fs registration names a **root**, and the root is the whole
-security story:
+security story ([#157](https://github.com/WonderForgeLabs/gooey/issues/157)):
 
 ```go
 import fshandlers "github.com/WonderForgeLabs/gooey/handlers/fs"
@@ -175,7 +175,8 @@ or a [companion](../../specs/2026-08-10-companions.md). Full contract:
 ## Task 3: run an allowlisted command with sys:Run
 
 The exec pack's grant is **itemized**: registration names every command
-markup may run, and untrusted markup never names a binary.
+markup may run, and untrusted markup never names a binary
+([#158](https://github.com/WonderForgeLabs/gooey/issues/158)).
 
 ```go
 import exechandlers "github.com/WonderForgeLabs/gooey/handlers/exec"
@@ -287,7 +288,8 @@ things worth trying while it runs:
   result. Multiple targets, `err`/`progress` tails, and converter
   stages are the
   [pipeline grammar v2](../../specs/2026-08-10-pipeline-grammar-v2.md)
-  record, designed but not built.
+  record, designed but not built — tracked in
+  [#38](https://github.com/WonderForgeLabs/gooey/issues/38).
 - **Results are strings.** `fs:List` and `capture=both` deliver JSON
   *text*; projecting it into rows is yours to do in Go today (a
   `json:Deserialize` stage is v2 territory).

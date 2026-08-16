@@ -1,5 +1,7 @@
 # Island grants: the subtree contract, enforced host-side
 
+Landed in [PR #250](https://github.com/WonderForgeLabs/gooey/pull/250).
+
 Until this change, gooey's island contract was a comment.
 
 `examples/wysiwyg/remotemode.go` states it plainly — "The editor owns

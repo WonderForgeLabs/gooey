@@ -18,8 +18,8 @@ The finished code is in
 
 - Go — the version in [`go.mod`](../../go.mod) or newer.
 - A real terminal. gooey apps open `/dev/tty` directly and exit with
-  `no tty:` if there isn't one, so they do not run under an IDE's output
-  pane or a piped shell.
+  `gooey: no terminal:` if there isn't one, so they do not run under an
+  IDE's output pane or a piped shell.
 
 ## Step 1: Create the project
 
@@ -232,7 +232,8 @@ does on every swap.
 
 ## Current limitations
 
-- The watcher is 300 ms ModTime polling, not an OS file-watch API.
+- The watcher is 300 ms ModTime polling, not an OS file-watch API
+  (tracked in [#53](https://github.com/WonderForgeLabs/gooey/issues/53)).
 - `Style="name"` is a lookup with no cascading, selectors, or overrides.
 
 ## Next steps

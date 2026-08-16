@@ -161,7 +161,8 @@ bindings.
 ## Executed (2026-08-10)
 
 Both problems, solved together as this record asked, plus the addendum's
-hidden-container chrome — epic #26.
+hidden-container chrome — epic #26, landed as
+[PR #88](https://github.com/WonderForgeLabs/gooey/pull/88).
 
 **The surface.** `Background *prop.Property[render.Color]` on `Border`,
 `VStack`, `HStack`, `Grid`, and `Canvas`, declared to the framework

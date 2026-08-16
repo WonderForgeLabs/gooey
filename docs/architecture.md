@@ -31,13 +31,14 @@ clients through one settle-barriered door.
 | Package | Holds |
 |---|---|
 | `gooey` (root) | The contracts and the runtime: `Component`, `Container`, `Base`, `Layout` and the measure/arrange sandwich, `Frame`, `Compose`, `Composer`, `Dynamic`, `Startable`, `Dispatcher`, `App` and its signal/companion machinery, focus and mouse routing, `Command`, `KeyBinding` |
-| `gooey/components` | Every built-in component: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`; the overlays `MenuBar`, `ToastHost`, `Tooltip`, `AdornmentLayer` and the `Popup` primitive under them; and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`, `StatusBar`, `ButtonBar` — plus the `Str`/`Sty`/`Strs` literal wrappers |
+| `gooey/components` | The built-in components: `Text`, `Button`, `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`, `Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, `TypeAhead`, `ValidationMarker`, `Companion`; the overlays `MenuBar`, `ToastHost`, `Tooltip`, `AdornmentLayer` and the `Popup` primitive under them; and the containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`, `Tabs`, `StatusBar`, `ButtonBar` — plus the `Str`/`Sty`/`Strs` literal wrappers. `markup/elements.go` is the authority on what markup can name |
 | `prop`, `input`, `render`, `graphics`, `term` | The layers underneath: property graph, decoded event stream, cell buffer and ANSI, pixel protocols, terminal capabilities |
-| `markup` | XML → tree, bindings, `UserControl`, `Include`, `<x:Property>`, handler namespaces |
+| `markup` | XML → tree, bindings, `UserControl`, `Include`, `<x:Property>`, handler and value namespaces |
 | `control` | The in-process control-plane service every remote transport fronts (see [the control plane](#the-control-plane)) |
 | `format`, `imaging` | Display formatting (plain functions plus computed-property constructors, so a formatted string repaints itself); the image-decode registry (png/jpeg/gif/bmp/ico in core) |
-| `handlers/net`, `handlers/fs` | The in-tree capability packs behind markup's handler namespaces |
-| `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `packs/*` | Nested Go modules — heavy SDKs quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, and the `packs/temporal-*` activity packs (one module per Temporal API domain) |
+| `validate`, `settings` | The forms-validation vocabulary over the property graph, and external state — one flat JSON document of dotted keys — as ordinary bindable properties |
+| `handlers/net`, `handlers/fs`, `handlers/env`, `handlers/str` | The in-tree capability packs behind markup's namespaces: `net`/`fs` behind handler namespaces (push), `env`/`str` behind value namespaces (pull) |
+| `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `paint`, `packs/*`, `apps/*` | Nested Go modules — heavy dependencies quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, `paint`'s 2D vector drawing (a graphics library rather than an SDK, but the same doctrine), the `packs/temporal-*` activity packs (one module per Temporal API domain), and the example apps that carry deps of their own. CLAUDE.md's discovery `find` is the authority on the set — the list here is a sample and will go stale |
 | `proto`, `clients` | The `gooey.control.v1` proto contract and the committed generated clients — Go under `grpc/gen`, Python and TypeScript under `clients/` |
 
 The dependency runs one way: **`components` imports the root, and the
@@ -79,6 +80,16 @@ type Buffer struct {
 the buffer and emits ANSI: a cursor-home, then rows of runes with an SGR
 sequence emitted only when the style changes between cells. This path is
 universal — every terminal that can run a TUI can run it.
+
+Color *depth* is a property of the wire, not of the buffer. The buffer
+always holds 24-bit colors; quantization happens once, on the way out,
+so every flush entry point takes a `render.ColorDepth` — `Flush(w, b,
+depth)`, `FlushCells`, `Flusher.Encode`, and `Frame.Depth()` for the
+rare component that wants to preview the answer itself (ColorPicker).
+`TrueColor` emits `38;2;r;g;b`, `Color256` maps to the xterm-256 palette,
+`Color16` to the eight ANSI colors and their bright variants. `TrueColor`
+is the zero value, so an undetected terminal behaves exactly as it did
+before depth existed.
 
 ### Damage reaches the wire: `render.Flusher`
 
@@ -123,7 +134,11 @@ changing `n=2` to `n=3` puts a single `3` on it. Anything that used to
 grep the byte stream for what the app is showing has to reconstruct the
 screen first, which is what `render.Screen` is for — a terminal model you
 can hand to `Flush` or feed from a pty, and the audit that replaying the
-emitted bytes reproduces the buffer.
+emitted bytes reproduces the buffer. The flush and the per-node
+placement damage below landed as one change
+([PR #85](https://github.com/WonderForgeLabs/gooey/pull/85), epic
+[#21](https://github.com/WonderForgeLabs/gooey/issues/21)), which is
+where the argument for cell-level truth over replayed damage lives.
 
 ### The pixel plane
 
@@ -144,13 +159,19 @@ type Encoder interface {
 
 - `graphics.Kitty` — Kitty graphics protocol: PNG, base64, chunked APC
   `_G` sequences (kitty, Ghostty, WezTerm).
-- `graphics.Sixel` — DEC sixel (DCS `q`), colors quantized to a 6×6×6
-  cube, 216 registers, under the 256 limit (xterm, foot, Windows
-  Terminal ≥1.22, VTE ≥0.76, Konsole, mlterm).
+- `graphics.Sixel` — DEC sixel (DCS `q`), 256 color registers chosen
+  from the image rather than from a fixed grid: lossless for anything
+  with ≤256 distinct sixel-space colors (which is every piece of
+  interface chrome ever drawn), a median cut above that. "Distinct" is
+  counted in sixel's own 101-level space, not in 24-bit RGB (xterm,
+  foot, Windows Terminal ≥1.22, VTE ≥0.76, Konsole, mlterm).
 - `graphics.ITerm2` — OSC 1337 inline images (iTerm2, WezTerm, mintty).
 
-Each encoder is roughly fifty lines; adding a future protocol means
-adding one more. Kitty additionally implements `graphics.IDEncoder`,
+An encoder that names a cell rectangle and lets the terminal scale is a
+few dozen lines — kitty is 53, iTerm2 21 — and adding a future protocol
+of that shape means adding one more. Sixel is the exception at 260,
+because carrying actual pixels means owning quantization too. Kitty
+additionally implements `graphics.IDEncoder`,
 which is how the incremental flush asks "can this protocol address a
 placement after the fact?" — a type assertion, like every other
 capability question here.
@@ -189,7 +210,8 @@ returned. The region goes blank with no error on any surface. `CellW`
 and `CellH` are independently fatal for the same reason, which is why
 the guard names both rather than standing in one for the other. This is
 also the rule `buttonchrome.go`, `colorpicker.go` and the wysiwyg
-`panel` follow (issue #251).
+`panel` follow ([#251](https://github.com/WonderForgeLabs/gooey/issues/251),
+applied in [PR #257](https://github.com/WonderForgeLabs/gooey/pull/257)).
 
 `Place` is a method rather than an appendable field because a placement
 has an **owner**. Under the Composer only dirty components re-render, so
@@ -241,27 +263,40 @@ terminal, exploiting the one query every terminal answers:
 
 ```go
 // Kitty query (tiny 1×1 RGB transmit, q=1 → responds if supported),
-// then cell size, then DA1 terminator.
+// then cell size, then the color capability, then DA1 terminator.
 fmt.Fprint(s.tty, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\")
 fmt.Fprint(s.tty, "\x1b[16t")
+fmt.Fprint(s.tty, xtgettcapQuery)
 fmt.Fprint(s.tty, "\x1b[c")
 ```
 
-Three queries go out in one burst: a Kitty graphics probe (a terminal
+Four queries go out in one burst: a Kitty graphics probe (a terminal
 that supports the protocol echoes an APC response containing `i=31`),
-XTWINOPS 16 (cell size in pixels, needed for sixel scaling), and DA1
-(primary device attributes). DA1 is the terminator: terminals answer it
+XTWINOPS 16 (cell size in pixels, needed for sixel scaling), XTGETTCAP
+for the `RGB`/`Tc` terminfo capability, and DA1 (primary device
+attributes). DA1 is the terminator: terminals answer it
 unconditionally, so whatever arrived before it is the answer set.
 Sixel support is DA1 attribute `4`. iTerm2's protocol has no query, so
 it is detected from `TERM_PROGRAM`/`LC_TERMINAL` environment variables.
-The result lands in `term.Caps`, and `Caps.Best()` encodes the
-preference order: `kitty > sixel > iterm2 > halfblock`. `cmd/probe`
-prints exactly what this handshake found for your terminal.
+Color depth is a ladder rather than a single answer —
+`colorDepthFrom(osEnv, parseXTGETTCAP(resp))` takes `COLORTERM`, then a
+`direct` entry in `TERM`, then the terminal's own XTGETTCAP reply, then
+a list of terminals known to be 24-bit, and leaves `TrueColor` standing
+when nothing decides. The result lands in `term.Caps`, and `Caps.Best()`
+encodes the protocol preference order: `kitty > sixel > iterm2 >
+halfblock`. `cmd/probe` prints exactly what this handshake found for
+your terminal.
 
-One wrinkle worth knowing: file deadlines don't work on every tty, so
-`readUntilDA1` runs the read in a goroutine and enforces the 500 ms
-timeout with a `select`, abandoning the pending read on a terminal that
-never answers — acceptable for a probe that runs once.
+One wrinkle worth knowing: the probe sets a 500 ms read deadline on the
+tty and reads *synchronously* under it — through `SyscallConn().Control`
+rather than `Fd()`, which is the whole reason the deadline works at all.
+A goroutine plus a `select` is the obvious alternative and is precisely
+the shape this package refuses: the abandoned read stays parked on the
+tty and swallows the bytes the app's own decoder was waiting for
+([specs/2026-08-10-tty-read-lifecycle.md](specs/2026-08-10-tty-read-lifecycle.md)).
+File deadlines don't work on every tty, so an `ErrNoDeadline` degrades
+to `readOnceBounded` — one blocking read, on the fact that terminals
+answer DA1 unconditionally.
 
 ## The property system
 
@@ -400,6 +435,10 @@ own methods in the FrameworkElement behavior — the "sandwich":
   `Start`/`Center`/`End` use the cached desired size and position it
   inside the slot. Only then does `w.Arrange` run with the final rect.
 
+`MeasureChild` has no depth cap, so a markup cycle that can be
+constructed dies by stack overflow rather than by a load error
+([#216](https://github.com/WonderForgeLabs/gooey/issues/216), open).
+
 `Layout` itself is the FrameworkElement property set — margin
 (`Thickness`, in cells), explicit size, `HAlign`/`VAlign`, and
 `Visibility` (`Visible`, `Hidden` = occupies space but does not paint,
@@ -466,18 +505,36 @@ where the property graph and the component model fuse.
 ```go
 n.node = prop.NewComputed(func() int {
     n.rev.Get()
-    if _, isContainer := w.(Container); !isContainer {
-        if b, ok := w.(Bounded); ok {
-            clearRect(c.frame.Cells, b.Bounds())
+    n.covered = false
+    if b, ok := w.(Bounded); ok {
+        r := b.Bounds()
+        if _, isContainer := w.(Container); !isContainer {
+            fillRect(c.frame.Cells, r, c.clearStyle(n)) // a leaf
+            n.covered = true
+        } else if !paintable(w) {
+            ... // a hidden container
+        } else if bp := backgroundProp(w); bp != nil {
+            ... // a container with a declared background
         }
+        // a chrome-only container pre-clears nothing
     }
+    outer := c.frame.sink // placements are filed under this node
+    n.places = n.places[:0]
+    c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
     if paintable(w) {
         w.Render(c.frame)
     }
+    c.frame.sink = outer
     c.painted++
+    n.stamp = c.frameSeq
     return c.painted
 })
 ```
+
+The pre-clear is three cases and a fall-through, spelled out under
+[damage semantics](#damage-semantics-pre-clear-leaves-fill-backgrounds-repaint-in-z-order)
+below; `c.clearStyle(n)` is what makes it the nearest ancestor's
+background rather than the terminal default.
 
 Evaluating the computed *is* painting the component. Because `Render` runs
 inside an evaluation context, every property the component reads while
@@ -523,7 +580,15 @@ holds. The same pass makes overlapping `Canvas` children and
 runtime-hidden containers correct, and two exemptions keep the counts
 tight: a chrome-only container never forces its own descendants, and a
 `Decorator` (a component that owns no cells, like the ItemsView row
-highlight) is never forced from below.
+highlight) is never forced from below. All of it landed as
+[PR #88](https://github.com/WonderForgeLabs/gooey/pull/88) (epic
+[#26](https://github.com/WonderForgeLabs/gooey/issues/26)), whose three
+children are the three cases:
+[#27](https://github.com/WonderForgeLabs/gooey/issues/27) the
+ancestor-aware leaf pre-clear,
+[#28](https://github.com/WonderForgeLabs/gooey/issues/28) the z-ordered
+repaint, [#29](https://github.com/WonderForgeLabs/gooey/issues/29) the
+hidden container.
 
 ### Layout runs outside the evaluation context
 
@@ -601,7 +666,27 @@ queued for removal. `Composer.InvalidateStructure` triggers the same
 re-sync for a shape change made from outside the tree — the control
 plane's markup patch path is the motivating caller. The node-preserving
 diff is specified in
-[specs/2026-08-10-datatemplates.md](specs/2026-08-10-datatemplates.md).
+[specs/2026-08-10-datatemplates.md](specs/2026-08-10-datatemplates.md)
+and shipped, with ItemsView virtualization, in
+[PR #83](https://github.com/WonderForgeLabs/gooey/pull/83) (epic
+[#14](https://github.com/WonderForgeLabs/gooey/issues/14)).
+
+`Frozen` (`component.go`) is the adjacent seam, and it reaches the same
+flag from the other side: a component whose `Frozen() bool` reports true
+takes its *subtree* out of play — no focus stops, no Startables, every
+pointer event retargeted to the host — while staying live itself, which
+is what lets a design surface keep its own gestures over a picture of a
+UI. The Composer arms an observer for it, `armFrozen`, the same shape as
+`armVisibility`: a computed that calls `Frozen()`, so any property read
+inside subscribes by the ordinary call-site rule, and a real flip raises
+the same structural-change flag a `Dynamic` container raises. The
+re-sync runs in that frame before anything paints, so the key that turns
+design mode on leaves nothing in the subtree reachable by the very next
+event. Freezing costs no repaint of its own. The limit is the usual one:
+the observer subscribes to what `Frozen()` *reads*, so an implementation
+over a plain bool field records no dependency and stays sampled. Design
+record:
+[specs/2026-08-14-frozen-observed.md](specs/2026-08-14-frozen-observed.md).
 
 ### Start and Close: the composition owns its goroutines
 
@@ -627,12 +712,19 @@ started if the composition is running, departures are stopped, so a row
 realized on frame 40 is treated exactly like one that existed at frame
 0.
 
-The stop function must **join**, not just signal. `Timer`'s is the
-model — `close(done); <-stopped` — because a tick that already won its
-`select` still posts before stop returns, so `Close` guarantees no
-further posts, ever. A stop that only closes a channel lets one last
-tick land after teardown, which is precisely the kind of lifetime bug
-that flakes in CI and nowhere else. Hot reload leans on the whole
+The stop function must **join**, not just signal — `close(done);
+<-stopped` — because a tick that already won its `select` still posts
+before stop returns, so `Close` guarantees no further posts, ever. A
+stop that only closes a channel lets one last tick land after teardown,
+which is precisely the kind of lifetime bug that flakes in CI and
+nowhere else. That is one line of difference and it was written out by
+hand in seven controls, so it now lives once, in `startable.go`:
+`gooey.Every(post, d, fn)` for a ticker and `gooey.Delays` for any
+number of one-shots that stop together. `Timer`, `Spinner` and
+`ProgressBar` return `Every`; `Tooltip` and `ToastHost` return
+`Delays.Start`. A `Startable` rolling its own done/stopped pair is now a
+claim that neither shape fits, and nothing will catch it if the claim is
+wrong. Hot reload leans on the whole
 contract: `App.attach` closes the outgoing Composer before the new one
 starts, so a replaced tree's timers cannot keep ticking against a
 viewmodel nobody is showing.
@@ -712,7 +804,11 @@ order with wrapping, skipping anything inside a `Collapsed` subtree.
 
 `FocusManager.Dispatch` is WPF-style routing in three phases — tunnel
 down, bubble up, then the page-scoped accelerators on whatever the
-focused chain declined:
+focused chain declined. Tunnelling, explicit capture and
+`CanExecute` are one design and landed together in
+[PR #86](https://github.com/WonderForgeLabs/gooey/pull/86) (epic
+[#31](https://github.com/WonderForgeLabs/gooey/issues/31)), which is
+where the argument for why they could not be separated lives:
 
 ```go
 // tunnel: root -> focused, first consumer ends the dispatch
@@ -805,10 +901,13 @@ input but never measured, arranged, or painted. Attachment position is
 what scopes it: because dispatch only visits bindings on the focused
 component's ancestor chain, a binding declared inside a control fires only
 while that control's subtree has focus, and one on the page root is
-global. `cmd/reader` uses this: its Enter binding lives in
-`storylist.gooey`, so Enter opens a story only when the story list has
-focus — the same key does nothing from the reader pane, with no `if`
-anywhere.
+global. `cmd/reader` shows both halves of that: its four
+`<KeyBinding>`s (q, esc, ctrl+c, a) sit on the root `<Grid>` in
+`reader.gooey` and are deliberately global, while Enter is scoped
+without a binding at all — `storylist.gooey` passes
+`Activate="{{.Open}}"` to its `ItemsView`, whose own `HandleKey` takes
+Enter, so Enter opens a story only when the list has focus and does
+nothing from the reader pane, with no `if` anywhere.
 
 Event fields are typed `gooey.Action`: something that can `Run()` and can
 say whether running is legal (`CanExecute()`). `Command` is still just
@@ -847,9 +946,15 @@ hover beneath it. Transparency is about the component's own surface,
 not its subtree, so the toasts and adornments inside stay hittable. The
 walk allocates nothing, because it runs on every motion report.
 
-`DispatchMouse` runs two framework behaviors before the app sees
+`DispatchMouse` runs three framework behaviors before the app sees
 anything:
 
+- **The frozen retarget**, once, at the top: a frozen subtree does not
+  act, so for every routing purpose the effective hit is the frozen host
+  — it takes the event, the implicit capture, the focus a press moves,
+  and the click synthesized on release. `HitTest` still returns the
+  deepest component (it is a query, not dispatch); `MouseTarget` is the
+  query that models where an event would actually route.
 - **Focus-follows-click**: a press moves focus to the nearest focusable
   component at or above the hit — or, when there is none, the first
   focusable *below* it, so clicking a pane's border or title focuses
@@ -867,7 +972,9 @@ tracking is high-frequency — except to components that opt in via
 `MouseMoveHandler` (drag, resize). Everyone else sees enter/leave
 through hover.
 
-Both framework behaviors are skipped while the pointer is **captured**.
+Focus-follows-click and hover tracking are both skipped while the
+pointer is **captured**. The frozen retarget is not — it decides what
+"the hit" even means, so it runs first, every time.
 
 A press captures the component it landed on, and until the release every
 pointer event routes to that captor regardless of what the pointer is
@@ -890,7 +997,9 @@ still fire, while one released elsewhere does not. The click carries a
 **count**: a second click on the same component within
 `DoubleClickInterval` (400ms) arrives as `Count: 2`, which is what
 `ItemsView` activates on and what `TextBox` selects a word on. There is
-no triple click — a third click restarts the sequence at 1.
+no triple click — a third click restarts the sequence at 1; that and
+OSC 52 clipboard are deferred deliberately, tracked in
+[#106](https://github.com/WonderForgeLabs/gooey/issues/106).
 
 Wheel events, like everything else, go to the captor while captured and
 to the component under the pointer otherwise — never to the focused one,
@@ -1016,7 +1125,9 @@ story:
 ```
 
 - **Dev**: `os.DirFS` behind `markup.Page`, a 300 ms polling watcher over
-  the page and the files it includes. It reports only THAT something
+  the page and the files it includes — a placeholder for filesystem
+  notifications ([#53](https://github.com/WonderForgeLabs/gooey/issues/53)).
+  It reports only THAT something
   changed; `gooey.App` does the rebuild on the UI goroutine, because
   resolving bindings touches the property graph. Parse errors leave the
   current tree in place, so a bad edit never blanks the running app.
@@ -1024,7 +1135,8 @@ story:
   whole-tree swap seam as `App.Swap`, distinct from the *within*-a-live-
   composition structural changes `Dynamic` handles — while viewmodel
   properties live outside the tree and survive; that is why hot reload
-  keeps your state.
+  keeps your state. Focus does not: it is derived from the tree that was
+  replaced ([#52](https://github.com/WonderForgeLabs/gooey/issues/52)).
 - **Release**: `embed.FS`. The same call is a natural no-op — embed.FS
   reports constant zero ModTimes — so dev and release run identical
   code.
@@ -1092,12 +1204,47 @@ keep lvalue semantics (`.Url` is a handle read at invoke time, not at
 load); and results return through the optional `| into` stage,
 delivered onto the UI goroutine via the context's `Dispatcher`
 (`markup.Target.Deliver` — delivering to an absent target is a no-op)
-because properties are goroutine-confined. Grammar and provider tables:
+because properties are goroutine-confined. `| into` is the only stage
+that ships; `| err`, `| progress`, multiple targets and bounded
+retry/timeout are designed in the v2 grammar and tracked as epic
+[#38](https://github.com/WonderForgeLabs/gooey/issues/38). Grammar and
+provider tables:
 [markup-reference.md](markup-reference.md#handler-namespaces); the pack
 taxonomy and grant doctrine:
 [specs/2026-08-10-pack-distribution.md](specs/2026-08-10-pack-distribution.md);
 the original design record, now history rather than plan:
 [specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md).
+
+### Value namespaces: the pull half of the same mechanism
+
+A handler namespace answers "what happens when the user does this". It
+is reachable only from an event attribute, and its result is *pushed*
+into a property by `| into`. An ambient reading like the environment, or
+a pure transform like uppercasing a name, is not an event — it **is**
+the value of a binding, and wants to go where a binding goes:
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:env="gooey.dev/handlers/env"
+       xmlns:str="gooey.dev/handlers/str">
+  <Text>{{str:Upper .User}} @ {{env:Get `HOSTNAME`}}</Text>
+</Gooey>
+```
+
+Same grammar, opposite direction. A `{{ns:Func …}}` expression in a
+value position resolves at build time to a `*prop.Property[string]`
+handle, exactly as `{{.Path}}` does, and composes with literals and
+paths in the same interpolation. The damage guarantee comes for free:
+the provider builds its handle with `prop.NewComputed`, so every
+argument read runs *inside* an evaluation and is therefore a
+subscription — `{{str:Upper .Name}}` repaints exactly the components
+that display it, when and only when `.Name` changes. The registry is
+separate on purpose: `markup.RegisterValues` grants a document the
+capability to **read** a namespace, `markup.RegisterHandlers` the
+capability to **write** one, so a namespace offering both is registered
+twice and a host can grant either half. Two packs ship in-tree,
+`handlers/env` and `handlers/str`. Decision record:
+[specs/2026-08-12-value-namespaces.md](specs/2026-08-12-value-namespaces.md).
 
 ### UserControl: context isolation and the attribute hand-off
 
@@ -1186,10 +1333,12 @@ a fresh source per instantiation, so hot reload resets it — the concrete
 customer for `Name`-keyed state adoption. Reference:
 [markup-reference.md](markup-reference.md#declared-properties-xproperty);
 decision record:
-[specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md).
+[specs/2026-08-10-markup-declared-properties.md](specs/2026-08-10-markup-declared-properties.md);
+shipped in [PR #84](https://github.com/WonderForgeLabs/gooey/pull/84)
+(epic [#7](https://github.com/WonderForgeLabs/gooey/issues/7)).
 
 `cmd/reader` is the working proof of the whole markup layer: a
-`Grid Cols="24,1*,2*"` shell in `reader.gooey`, three UserControls with
+`Grid Cols="26,1*,2*"` shell in `reader.gooey`, three UserControls with
 their own contexts, bindable focus-aware pane titles, and
 `<KeyBinding>`s scoped by where they are declared. Its design record is
 [specs/2026-08-10-reader-design.md](specs/2026-08-10-reader-design.md),
@@ -1200,7 +1349,9 @@ and the running app is in [demos.md](demos.md).
 A running gooey app can expose itself to out-of-process clients — an
 agent over MCP, a test driver or a dashboard over gRPC — and the
 layering rule is stated in `control/control.go`'s package comment:
-**one path, one model**. `control`, in the root module, is the
+**one path, one model** — the thesis of epic
+[#108](https://github.com/WonderForgeLabs/gooey/issues/108). `control`,
+in the root module, is the
 in-process control-plane service; the gRPC server (`grpc/`, a nested
 module) is a proto adapter over it and the MCP server (`mcp/`, another
 nested module) is a tool adapter over it. A tool or an RPC does what
@@ -1223,22 +1374,57 @@ it never composes a frame, which would steal the app's damage counts),
 the bindable values (`Values`/`Value`/`Set`), commands (`Invoke`),
 input injection (`SendKeys`/`SendPointer` — into the one ordered
 stream, routed via the composition so the app's quit key is out of a
-remote client's reach), focus (`Focus`), and the markup operations
-(`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`, `DeclaredSchema`,
-`Register`). Failures are classified (`KindInvalidArgument`,
-`KindNotFound`, `KindFailedPrecondition`) so a transport maps them
-without parsing text — gRPC into status codes, MCP into tool errors.
+remote client's reach), focus (`Focus`), the viewport (`Resize` —
+advisory on a tty, where the next SIGWINCH overrides it), and the markup
+operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
+`DeclaredSchema`, `Register`/`Unregister`). Failures are classified
+(`KindInvalidArgument`, `KindNotFound`, `KindFailedPrecondition`,
+`KindPermissionDenied`) so a transport maps them without parsing text —
+gRPC into status codes, MCP into tool errors.
 
 The snapshot serializes the tree without reflection, from the same
 interfaces the Composer and the FocusManager already walk —
 `Container`, `Bounded`, `Focusable`, the attachments — plus a type
 switch over the built-ins for per-component props. An unknown Go
 component still yields a useful node (type, bounds, layout, children);
-its fields stay undiscovered, and that is the deliberate ceiling.
+its fields stay undiscovered, and that is the deliberate ceiling — a
+semantic tree of roles, names and states is what would raise it for
+unknown Go components, tracked in
+[#101](https://github.com/WonderForgeLabs/gooey/issues/101).
 Markup-built controls declare their way past it: an `<x:Property>`
 surface is retained on the context and serializes with current values —
 the declaration block finally read as the per-control wire schema the
 x:Property spec said it was.
+
+### Islands: registration is the grant, on the control plane too
+
+A `Service` carries an optional `*Grant`, and a nil one is the host's
+own service — unscoped, the only way to reach the whole app.
+`control.Island("EditorPane", "Doc")` narrows an endpoint to the subtree
+rooted at `Name="EditorPane"` plus the value namespace `Doc`, and
+nothing else. This is the framework's existing model rather than a new
+one: `markup.Context.Components`, `.Handlers` and `.Rules` all work this
+way — the host registers, and what it registered is exactly what the
+guest can reach. There is no token and no negotiation, because the grant
+is a field on the server the host started, not a parameter on the call.
+**The address is the capability**: one endpoint carries one grant, and
+two guests with disjoint islands are two servers on two loopback ports.
+
+Both halves of a grant are used. Some verbs are *refused* outside the
+island, which is what `KindPermissionDenied` exists for — deliberately
+distinct from `KindNotFound`, since a guest asking for something outside
+its island must not be told the app has no such name, because it usually
+does. `SendKeys` is the awkward one and the check has to be on focus
+rather than on a name, since keys go wherever focus is: the focused
+element must be inside your island, which a guest satisfies by calling
+`Focus` on something it owns first. Other verbs are *filtered*:
+`Service.VisibleDamage` clips damage rects to the island. Stated
+plainly, because the distinction matters: a grant is **scoping, not
+authentication**. It stops an attached guest from exceeding its brief;
+it does nothing about something that can reach the host's own unscoped
+endpoint, which is why v1 refuses a non-loopback bind outright. Decision
+record:
+[specs/2026-08-14-island-grants.md](specs/2026-08-14-island-grants.md).
 
 ### Bridge.Do and the settle barrier
 
@@ -1273,16 +1459,29 @@ The proto contract is a decision record,
 package `gooey.control.v1`, additive-only evolution, and `TypedValue`
 mirroring markup's `propKinds` table case for case — adding a wire type
 means adding a propKinds row first, so the two type systems grow in
-lockstep or not at all. `ControlService` is the unary surface,
+lockstep or not at all. There is exactly one documented exception, and
+it names the axis the rule is really about: `image_bytes` /
+`control.KindImage` has no propKinds row, because a propKinds row is a
+parser for a markup *literal* and there is no way to spell a picture
+inline — markup can bind one (`<Image Src="{{.Logo}}">`) without ever
+being able to write one down. `ControlService` is the unary surface,
 argument-for-argument the MCP tool inventory, which is what made
-rerouting MCP over `control` mechanical. `SessionService.Attach` is one
+rerouting MCP over `control`
+([PR #137](https://github.com/WonderForgeLabs/gooey/pull/137))
+mechanical. `SessionService.Attach` is one
 bidi stream: client acts apply in stream order (the remote mirror of
 the one ordered input stream), and `FrameDelta` carries everything one
 composed frame changed — property deltas, damage rects, the repaint
 count — in a single message keyed by frame sequence, so the torn read
 (values arriving without the frame they belong to) is impossible by
 construction. `FrameDelta.repainted` is the same damage number the
-contract tests assert on, put on the wire. The committed generated
+contract tests assert on, put on the wire — on an *unscoped* session. On
+one carrying an island grant both it and `damage` mean something
+narrower, counting only the repaints touching that island, so two
+sessions watching the same frame report different numbers. That is
+correct rather than incidental: a guest's damage budget is its own
+subtree, and the app's total is a measurement of something it does not
+own. The committed generated
 clients live in `grpc/gen` (Go) and `clients/` (Python, TypeScript).
 
 ## Designed, not built
@@ -1291,13 +1490,18 @@ clients live in `grpc/gen` (Go) and `clients/` (Python, TypeScript).
 per-control surface for compile-checked instantiation. `<x:Property>`
 declarations are its input: a declaration block is both a typed surface
 and a per-control wire schema — the control plane now reads it the
-second way; the code-generation reading is the one that remains.
+second way; the code-generation reading is the one that remains. Epic
+[#59](https://github.com/WonderForgeLabs/gooey/issues/59) breaks it into
+codegen, typed surfaces, wire schemas and the CLI.
 
 `Name`-keyed state adoption across hot reloads, so a declared default's
-per-instance source survives a rebuild.
+per-instance source survives a rebuild — epic
+[#50](https://github.com/WonderForgeLabs/gooey/issues/50).
 
 Styles with setters, so a control can be restyled from outside beyond
-passing a style name in.
+passing a style name in — epic
+[#54](https://github.com/WonderForgeLabs/gooey/issues/54), whose
+selector matching covers `:focus` and `:hover`.
 
 This list used to be longer. The remote-handler design
 ([specs/2026-08-10-remote-handlers-design.md](specs/2026-08-10-remote-handlers-design.md))

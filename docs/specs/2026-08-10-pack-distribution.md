@@ -7,6 +7,7 @@ boundaries fall, how versions are cut, and the one security doctrine
 that every kind shares. The in-flight stdlib packs (#157 fs, #158 exec,
 #159 format) are built under this record; `packs/temporal-visibility`
 and `handlers/net`/`handlers/temporal` are its existing instances.
+Landed in [PR #162](https://github.com/WonderForgeLabs/gooey/pull/162).
 
 ## Taxonomy
 
@@ -227,7 +228,10 @@ Checked against the doctrine:
 
 ## What the in-flight packs inherit (informative)
 
-For the #157/#158/#159 agents; their specs cite this record:
+For the #157/#158/#159 agents; their specs cite this record. fs, exec,
+and format landed as [PR #163](https://github.com/WonderForgeLabs/gooey/pull/163),
+[PR #165](https://github.com/WonderForgeLabs/gooey/pull/165), and
+[PR #164](https://github.com/WonderForgeLabs/gooey/pull/164) respectively:
 
 - **fs (#157):** stdlib-only ⇒ root module `handlers/fs`. Grant = the
   `fs.FS` root at registration; writes only via an explicit

@@ -43,6 +43,8 @@ focus restore; idle frames stay 0.
 
 ## Executed
 
+Landed in [PR #93](https://github.com/WonderForgeLabs/gooey/pull/93).
+
 ### The composer gained the reverse half of the z-order pass
 
 The verification step the task ordered ("verify dismiss repaints from
@@ -216,6 +218,8 @@ two overlays is not enough evidence for the right abstraction, and
 both fit in components as-is.
 
 ## Menus round 2 (issues #125, #126) — same day
+
+Landed in [PR #133](https://github.com/WonderForgeLabs/gooey/pull/133).
 
 ### The live-click bug (#125)
 

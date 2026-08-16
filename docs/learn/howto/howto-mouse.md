@@ -125,7 +125,9 @@ is dropped by `Resync`, so a drag cannot outlive the thing being dragged.
 `MouseClick` carries a `Count`: 1 for a single click, 2 for a second
 click on the same component within `FocusManager.DoubleClickInterval`
 (400ms by default). There is no triple click — a third click restarts the
-sequence at 1.
+sequence at 1
+([#106](https://github.com/WonderForgeLabs/gooey/issues/106) tracks
+whether/how to add it).
 
 ```go
 case input.MouseClick:
@@ -159,8 +161,14 @@ case input.MousePress:
 
 Note the coordinate arithmetic: `ev.Y` is an absolute cell row, so
 subtract `w.Bounds().Y` to get a row within the component, then add whatever
-scroll offset the component keeps. `cmd/finder` does exactly this for
-click-to-select.
+scroll offset the component keeps. `cmd/finder` used to hand-roll exactly
+this; its results pane is now a `components.ItemsView` with
+`Focusable="false"`, which gets click-to-select without a row calculation
+of your own — see [how to show a list with a template](howto-lists.md).
+`cmd/browser`'s source picker (`cmd/browser/picker.go`) still hand-rolls
+its own `HandleMouse`, though it reaches the focus manager by implementing
+`SetFocusManager` (`gooey.FocusHost`) directly rather than through an
+injected closure.
 
 Because the component needs the focus manager, which the Composer owns and
 which does not exist until the tree is built, inject a small closure

@@ -1,6 +1,6 @@
 # ColorPicker pixel tier (issue #24)
 
-**Status:** executed. Unblocked by rendering chapter 2 (epic #21):
+**Status:** executed ([PR #121](https://github.com/WonderForgeLabs/gooey/pull/121)). Unblocked by rendering chapter 2 (epic #21):
 per-node placement ownership is what let this be ordinary component
 work instead of pipeline work, exactly as that spec's closing note
 predicted.
@@ -97,4 +97,5 @@ the status line names the tier in play.
   turns out to exist in practice.
 - Placement z-order (kitty `z=`) — the general fix that would make
   overlay markers viable; worth doing only when a component needs
-  overlap that slicing or baking cannot avoid.
+  overlap that slicing or baking cannot avoid. Tracked in
+  [#177](https://github.com/WonderForgeLabs/gooey/issues/177).

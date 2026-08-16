@@ -4,7 +4,7 @@ You have a byte count, a duration, a timestamp, a fraction — and a
 `Text` that wants a string. The `format` package turns one into the
 other as a **computed property**: each constructor takes your typed
 source handle and returns a `*prop.Property[string]` that the graph
-keeps current.
+keeps current ([#159](https://github.com/WonderForgeLabs/gooey/issues/159)).
 
 ```go
 import "github.com/WonderForgeLabs/gooey/format"

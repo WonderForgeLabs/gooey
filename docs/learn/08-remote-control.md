@@ -26,18 +26,23 @@ same idea at postcard size
 ## Step 1: Start the board
 
 ```sh
-cd apps/kanban && go run . -with-worker=false
+cd apps/kanban && go run . -mcp 127.0.0.1:7778 -with-worker=false
 ```
 
 You get a three-column board — Todo, Doing, Done — with a text box, add
 button, and per-column move/remove buttons. The bottom panel shows the
 MCP endpoint, `http://127.0.0.1:7778/mcp`, and behind `ctrl+t` a live
 log of every request the server handles — including the one that is
-reading the log.
+reading the log (added in
+[PR #156](https://github.com/WonderForgeLabs/gooey/pull/156)).
 
-Two flags matter here. `-mcp` is the listen address and already defaults
-to `127.0.0.1:7778`; pass it to move the server or `-mcp=""` to disable
-it. `-with-worker` defaults to **true**, and it launches the demo's
+Two flags matter here. `-mcp` is the listen address; it defaults to
+`127.0.0.1:0`, which asks the kernel for a free port so several
+instances (and several agents) never collide on a well-known one — the
+panel then shows whatever port got picked. Pin it to a fixed port
+(`-mcp 127.0.0.1:7778`, as above) so the endpoint in this tutorial's
+curl commands matches, or `-mcp=""` to disable it. `-with-worker`
+defaults to **true**, and it launches the demo's
 optional Python Temporal companion — which needs a venv and a Temporal
 server, and this tutorial needs neither, so turn it off.
 [Tutorial 9](09-temporal.md) picks that thread up.
@@ -108,7 +113,10 @@ The tool inventory: `tree_snapshot`, `screen_text`, `list_values`,
 `list_styles`, `invoke_command`, `set_value`, `send_keys`, `send_mouse`,
 `focus`, `swap_markup`, `patch_markup`, `validate_markup`,
 `register_properties`, `unregister_properties`. The rest of this tutorial exercises the
-important ones; the calls below all use the same `tools/call` shape:
+important ones; the calls below all use the same `tools/call` shape.
+`send_mouse` coordinates can currently only be inferred — no tool
+reports terminal size, tracked in
+[#204](https://github.com/WonderForgeLabs/gooey/issues/204).
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \
@@ -220,7 +228,9 @@ way. Three companions to know:
 - **`register_properties` (or `swap_markup`'s `register` argument)
   grows the viewmodel over the wire** — without it, a swapped page
   could never bind a name the app didn't pre-register. Commands cannot
-  be registered: behavior needs code, not storage.
+  be registered: behavior needs code, not storage. Landed in
+  [PR #139](https://github.com/WonderForgeLabs/gooey/pull/139)
+  (tracked from [#89](https://github.com/WonderForgeLabs/gooey/issues/89)).
 - **`unregister_properties` shrinks it again.** A loop that invents a
   name per generated thing needs to stop inventing them permanently.
   Removal never disturbs the RUNNING tree — a component already bound
@@ -244,7 +254,9 @@ thin adapter over **`control.Service`** in the root package
 of the `gooey.control.v1` surface, UI-goroutine-only, with
 `control.Bridge` owning the settle barrier. The gRPC server is another
 adapter over the same service. A tool or an RPC does what `control`
-does, or it does not exist — so the two transports cannot drift, and
+does, or it does not exist — so the two transports cannot drift
+(the architecture this section describes, tracked in
+[#112](https://github.com/WonderForgeLabs/gooey/issues/112)), and
 the [contract](../specs/2026-08-10-grpc-contract.md) carries a
 tool-to-RPC mapping table that is argument-for-argument mechanical.
 

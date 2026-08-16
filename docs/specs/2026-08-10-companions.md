@@ -1,6 +1,7 @@
 # Companions: an app's services, with the app's lifetime
 
 Status: implemented 2026-08-10. Owner: root package (`companion.go`).
+A concrete adopter: [PR #138](https://github.com/WonderForgeLabs/gooey/pull/138) wires kanbandemo's Temporal worker in as a `CompanionCmd`.
 
 The Temporal wizard demo took three shells to run — a dev server, a
 worker, the UI — and only one of those is a separate program in any
