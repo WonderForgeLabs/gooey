@@ -118,6 +118,29 @@ up the markup scope chain first and falls back to `ctx.Styles`. Every
 existing demo therefore loads unchanged — its Go map is simply the
 outermost dictionary.
 
+**The collision rule, stated rather than implied: when a host registers
+`Styles["accent"]` and a page declares `<Style Key="accent">`, THE PAGE
+WINS.** That is not a special case; it is the same "nearest declaration
+wins" rule the rest of the chain runs on, with `ctx.Styles` simply
+furthest out. The reason to prefer it is the migration, and it is not
+recoverable from the code: Part 5 moves each demo's palette out of Go one
+key at a time, so a page must be able to declare `accent` and see it take
+effect *without first deleting the Go entry*. Under host-wins that edit
+is a silent no-op, and every demo migration becomes one all-or-nothing
+flip. The other direction is also the more surprising one — a host grant
+silently overriding a style declared three lines above the element that
+uses it makes the visible declaration the lie, which is the same
+silent-drop class as the unknown-key bug below.
+
+What this leaves with no escape hatch, on the record so it is not
+rediscovered as a bug: **a host that must WIN over markup it does not
+control** — high-contrast accessibility mode, or an embedded page from
+elsewhere. Today it cannot; `Context.Styles` is a default, not a policy.
+The answer when that case arrives is an additive, separately named map
+consulted FIRST (`Context.StyleOverrides`), never a reversal of this
+chain: adding a map changes no existing page, while flipping the default
+silently changes every one of them.
+
 One tightening: **an unknown style key is now a LOAD error.** Today
 `ctx.Styles[raw]` on a typo silently renders unstyled — exactly the
 silent-failure mode strict mode and `checkProps` exist to stamp out,

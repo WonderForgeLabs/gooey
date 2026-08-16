@@ -10,8 +10,9 @@
 //
 // POC scope: builtin builders for Border/Grid/VStack/HStack/Text/Button,
 // custom component registration, `{{.Path}}` bindings in text content
-// (resolved to *prop.Property[string] handles, becoming computed
-// strings), event bindings resolved to gooey.Commands (Click,
+// (resolved to typed property handles — see textBindableTypes for the
+// scalars a label can render — becoming computed strings), event
+// bindings resolved to gooey.Commands (Click,
 // <KeyBinding Command=…>), named elements (Name="...") collected for
 // code-behind lookup, and a polling file watcher for hot reload.
 package markup
@@ -72,8 +73,10 @@ type Builder func(e Element, ctx *Context) (gooey.Component, error)
 
 // Context is the binding environment a markup file is built against.
 type Context struct {
-	// Values resolves {{.Name}} roots. Leaves must be
-	// *prop.Property[string] (bound) or string (static).
+	// Values resolves {{.Name}} roots. In text position a leaf may be a
+	// *prop.Property[T] (bound) or a plain T (static) for any T in
+	// textBindableTypes, not string alone; attributes that REQUIRE a
+	// binding are narrower and say so at their own call sites.
 	Values map[string]any
 	// Styles resolves Style="name" attributes.
 	Styles map[string]render.Style
@@ -173,6 +176,12 @@ type Context struct {
 	// being instantiated, installed for the duration of a setup call.
 	// See Context.DeclaredProperties.
 	declared map[string]any
+	// res is the document's resource environment: the innermost
+	// <X.Resources> scope of the element currently being built, plus the
+	// document scope (resources.go). The zero value means "no
+	// markup-declared resources", and every lookup then falls through to
+	// Styles — which is why every existing document loads unchanged.
+	res resourceEnv
 }
 
 // document is one parsed markup file: its namespace table, the
@@ -186,6 +195,7 @@ type document struct {
 	decls    declarations
 	content  Element
 	settings PageSettings
+	res      *resourceBlock // <Gooey.Resources>; nil when the document declares none
 }
 
 // PageSettings are the declarations that belong to the DOCUMENT rather
@@ -248,6 +258,10 @@ func parseDocument(src []byte) (*document, error) {
 	if err != nil {
 		return nil, err
 	}
+	res, err := rootResources(root)
+	if err != nil {
+		return nil, err
+	}
 	decls, kids, err := splitDeclarations(root)
 	if err != nil {
 		return nil, err
@@ -255,7 +269,7 @@ func parseDocument(src []byte) (*document, error) {
 	if len(kids) != 1 {
 		return nil, fmt.Errorf("markup: <Gooey> must have exactly one child")
 	}
-	return &document{ns: ns, decls: decls, content: kids[0], settings: settings}, nil
+	return &document{ns: ns, decls: decls, content: kids[0], settings: settings, res: res}, nil
 }
 
 // readGooeyAttrs validates the root's own attributes. xmlns declarations
@@ -393,6 +407,16 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Component{}
 	}
+	// The document's own scope, pushed for this build and popped after —
+	// the same save/restore the xmlns table above gets, and for the same
+	// reason: a control instantiated mid-build must not leave its scope
+	// installed on a shared context.
+	pop, err := ctx.pushDocumentResources(d.res)
+	if err != nil {
+		return nil, err
+	}
+	defer pop()
+
 	return build(d.content, ctx)
 }
 
@@ -601,8 +625,10 @@ func checkProps(e Element, ctx *Context) error {
 	for _, name := range names {
 		// <X.Behaviors> is universal: every element may carry the
 		// attachment slot (buildChildren consumes it), the same way every
-		// element may carry bare non-visual children.
-		if name == "Behaviors" {
+		// element may carry bare non-visual children. <X.Resources> is
+		// universal for the same reason: it is an ELEMENT-level slot, like
+		// Name and the layout attributes, and no builder ever sees it.
+		if name == "Behaviors" || name == "Resources" {
 			continue
 		}
 		if !allowed[name] {
@@ -619,6 +645,16 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	if err := checkProps(e, ctx); err != nil {
 		return nil, err
 	}
+	// The element's own <X.Resources> covers the element itself and
+	// everything built beneath it — children build inside buildComponent
+	// — and is popped on the way out. That is what makes shadowing
+	// LEXICAL rather than a priority number.
+	pop, err := ctx.pushResources(e.Props["Resources"])
+	if err != nil {
+		return nil, err
+	}
+	defer pop()
+
 	if err := checkAttrs(e, ctx); err != nil {
 		return nil, err
 	}
@@ -683,7 +719,12 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 		case "VAlign":
 			l.VAlign, err = parseAlign(v)
 		case "Visibility":
-			if bindRe.MatchString(v) {
+			// isCondExpr is asked here and not left to bindVisibility
+			// because THIS is the fork between "resolve a handle" and
+			// "parse the word Visible": without it a conditional falls
+			// through to parseVisibility and fails as an unknown
+			// visibility word, naming the wrong grammar in the error.
+			if bindRe.MatchString(v) || isCondExpr(v) {
 				// The bind error carries its own element context; the
 				// generic attribute wrap below would only repeat it.
 				if err := bindVisibility(e, ctx, l, v); err != nil {
@@ -968,6 +1009,120 @@ func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Comp
 
 var bindRe = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
 
+// textBindableTypes names, for the load error, every type a {{.Path}}
+// in text position can render. It is prose, so it can drift from the
+// switch in textSource — TestTextBindableTypesListMatchesTheSwitch
+// binds a handle of every name in it and refuses every type absent
+// from it, which is what keeps the two honest.
+const textBindableTypes = "string, int, int64, float64, bool, time.Duration, render.Color"
+
+// hexDigits backs colorText. Hand-rolled rather than fmt.Sprintf
+// because this runs on every evaluation of a text computed, i.e. inside
+// the repaint path.
+const hexDigits = "0123456789abcdef"
+
+// colorText renders a color the way the rest of the repo already
+// writes one: "#rrggbb", and the EMPTY STRING for an unset color.
+//
+// Both halves are borrowed, not invented. "#rrggbb" is the only color
+// literal gooey's markup accepts (paint.ParseColor documents it as
+// exactly that, kept identical so a Stroke and a Style are written the
+// same way), so a color that is displayed can be pasted back into an
+// attribute. The empty string for Set==false is the control plane's
+// own answer (mcp's hexColor), which matters because a theme editor
+// can read the same color through markup and through the MCP surface
+// and must not see two different renderings of "no color".
+func colorText(c render.Color) string {
+	if !c.Set {
+		return ""
+	}
+	b := [7]byte{'#',
+		hexDigits[c.R>>4], hexDigits[c.R&0xf],
+		hexDigits[c.G>>4], hexDigits[c.G&0xf],
+		hexDigits[c.B>>4], hexDigits[c.B&0xf],
+	}
+	return string(b[:])
+}
+
+// textSource turns one resolved binding value into a string producer,
+// or reports that its type has no text rendering.
+//
+// THE RETURNED CLOSURE MUST ONLY BE CALLED FROM INSIDE AN EVALUATING
+// COMPUTED. That is the whole mechanism: the handle's Get lives in the
+// closure body rather than here, so it runs with the text computed on
+// prop's evalStack and records a dependency (prop/prop.go recordRead).
+// Converting eagerly — reading h.Get() at build time and closing over
+// the string — compiles, loads, paints the right characters once, and
+// then the label never updates again. Nothing in the framework catches
+// that; only a damage-count assertion does.
+//
+// The formats are deliberately the CANONICAL form of each type, not a
+// display policy:
+//
+//   - int/int64: base 10. There is no other candidate.
+//   - float64: strconv 'f' with -1 precision — the shortest decimal
+//     that parses back to the same float64. Lossless, and 'f' never
+//     switches to an exponent, so a plain 1234567.5 does not surface
+//     as "1.2345675e+06" the way %v would. It does mean 1.0/3 renders
+//     all seventeen digits; a label that wants two decimals wants a
+//     converter, not a different default here.
+//   - bool: "true"/"false", the Go form. "Yes"/"No" and "on"/"off" are
+//     display policy and, worse, a localization question.
+//   - time.Duration: the type's own String — "1h32m0s", "320ms" —
+//     which round-trips through time.ParseDuration. format.DurationShort
+//     renders the prettier "1h32m", and being prettier is exactly why
+//     it is a choice the author makes rather than one baked in here.
+//   - render.Color: see colorText.
+//
+// Anything more opinionated belongs to the converter-stage grammar the
+// format package is already written for ({{.Size | bytes}}, #99) or to
+// a format constructor in the viewmodel. This switch exists to delete
+// the strconv adapter that every numeric label needs today, not to
+// become a formatting language.
+func textSource(v any) (func() string, bool) {
+	switch h := v.(type) {
+	case *prop.Property[string]:
+		return h.Get, true
+	case *prop.Property[int]:
+		return func() string { return strconv.Itoa(h.Get()) }, true
+	case *prop.Property[int64]:
+		return func() string { return strconv.FormatInt(h.Get(), 10) }, true
+	case *prop.Property[float64]:
+		return func() string { return strconv.FormatFloat(h.Get(), 'f', -1, 64) }, true
+	case *prop.Property[bool]:
+		return func() string { return strconv.FormatBool(h.Get()) }, true
+	case *prop.Property[time.Duration]:
+		return func() string { return h.Get().String() }, true
+	case *prop.Property[render.Color]:
+		return func() string { return colorText(h.Get()) }, true
+
+	// The same vocabulary as plain values. A context may hold a
+	// constant instead of a handle, and it would be a wart for a
+	// string constant to render while an int constant is a load error.
+	case string:
+		return func() string { return h }, true
+	case int:
+		s := strconv.Itoa(h)
+		return func() string { return s }, true
+	case int64:
+		s := strconv.FormatInt(h, 10)
+		return func() string { return s }, true
+	case float64:
+		s := strconv.FormatFloat(h, 'f', -1, 64)
+		return func() string { return s }, true
+	case bool:
+		s := strconv.FormatBool(h)
+		return func() string { return s }, true
+	case time.Duration:
+		s := h.String()
+		return func() string { return s }, true
+	case render.Color:
+		s := colorText(h)
+		return func() string { return s }, true
+	}
+	return nil, false
+}
+
 // bindText turns content with {{.Path}} bindings and {{ns:Func …}}
 // value-namespace calls into a computed string property. Pure-literal
 // content returns (nil, nil). Resolution happens once at build time —
@@ -979,6 +1134,12 @@ var bindRe = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
 // this text — including the handle a value provider built, whose own
 // argument Gets are subscriptions for the same reason.
 //
+// A bound path need not be a string. textSource converts the scalar
+// types listed in textBindableTypes, so <Text>count: {{.N}}</Text> over
+// a *prop.Property[int] is ordinary markup; the conversion is a closure
+// called from inside this computed, so it subscribes exactly as a
+// string handle does.
+//
 // Content that contains a brace expression this package cannot resolve
 // is a LOAD ERROR, not literal text; see scan.go for why.
 func bindText(content string, ctx *Context) (*prop.Property[string], error) {
@@ -988,7 +1149,7 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 	}
 	type part struct {
 		lit string
-		p   *prop.Property[string]
+		get func() string // nil for a literal segment
 	}
 	var parts []part
 	dynamic := false
@@ -1002,21 +1163,18 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 			if err != nil {
 				return nil, err
 			}
-			switch h := v.(type) {
-			case *prop.Property[string]:
-				parts = append(parts, part{p: h})
-			case string:
-				parts = append(parts, part{lit: h})
-			default:
-				return nil, fmt.Errorf("markup: {{.%s}} is %T; need *prop.Property[string] or string", sg.text, v)
+			get, ok := textSource(v)
+			if !ok {
+				return nil, fmt.Errorf("markup: {{.%s}} is %T; text renders %s — as a *prop.Property[T] handle or a plain value", sg.text, v, textBindableTypes)
 			}
+			parts = append(parts, part{get: get})
 		case segCall:
 			dynamic = true
 			h, err := ctx.valueHandle(sg.call)
 			if err != nil {
 				return nil, err
 			}
-			parts = append(parts, part{p: h})
+			parts = append(parts, part{get: h.Get})
 		}
 	}
 	if !dynamic {
@@ -1025,8 +1183,8 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 	return prop.NewComputed(func() string {
 		var sb strings.Builder
 		for _, p := range parts {
-			if p.p != nil {
-				sb.WriteString(p.p.Get())
+			if p.get != nil {
+				sb.WriteString(p.get())
 			} else {
 				sb.WriteString(p.lit)
 			}
@@ -1046,11 +1204,7 @@ func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
 	if bindRe.MatchString(raw) {
 		return boundProp[render.Style](e, ctx, "Style")
 	}
-	st, err := styleNamed(e, ctx, "Style", raw)
-	if err != nil {
-		return nil, err
-	}
-	return components.Sty(st), nil
+	return styleHandle(e, ctx, "Style", raw)
 }
 
 // styleNamed resolves a style NAME against ctx.Styles and fails on one
