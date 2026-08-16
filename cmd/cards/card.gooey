@@ -9,13 +9,26 @@
        of an attribute that silently did nothing. -->
   <x:Property Name="Title"   Type="string" Required="true"/>
   <x:Property Name="Value"   Type="string" Default="—"/>
-  <x:Property Name="Trend"   Type="string" Default="…"/>
   <x:Property Name="Caption" Type="string" Default="no caption"/>
+
+  <!-- Trend is the SERIES the Sparkline below plots, and it is the one
+       declaration here that is not type-checked. The declaration type
+       table (markup/property.go, propKinds) has string, int, bool,
+       float, duration and color — no slice types — so a []float64
+       handle can only cross a control boundary through Type="any", which
+       accepts anything and checks nothing. Bind a string here and the
+       load error comes from <Sparkline Values> one level down, naming
+       the wrong element. Required="true" is the most this can say. -->
+  <x:Property Name="Trend"   Type="any"    Required="true"/>
 
   <Border Title="{{.Title}}" Style="panel">
     <VStack Margin="1,0">
       <Text Style="big">{{.Value}}</Text>
-      <Text Style="trend">{{.Trend}}</Text>
+      <!-- The trend is a component, not a string the viewmodel drew:
+           the card receives the numbers and the framework picks the
+           glyphs. Height="1" is the single-row plot the old rune string
+           was imitating. -->
+      <Sparkline Values="{{.Trend}}" Height="1" BarWidth="24" Style="trend"/>
       <Badge Text="{{.Caption}}"/>
     </VStack>
   </Border>
