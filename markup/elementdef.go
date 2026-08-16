@@ -35,7 +35,7 @@ import (
 // interfaces. They are deliberately not fields: a hand-written
 // `NonVisual: true` is a second copy of a fact the type already carries,
 // and the second copy is the one that goes stale. A type assertion is
-// not reflection — it is the same mechanism boundProp and every markup
+// not reflection — it is the same mechanism Bound and every markup
 // type-switch already use.
 type ElementDef struct {
 	// Name is the element name as written in markup.

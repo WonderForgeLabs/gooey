@@ -112,7 +112,7 @@ type propKind struct {
 
 // kindOf builds a type-table row for T. T is a compile-time parameter,
 // so the resulting closures do their work with a type assertion and a
-// typed constructor — the same "no reflection" discipline boundProp
+// typed constructor — the same "no reflection" discipline Bound
 // uses for builtin attributes.
 func kindOf[T any](parse func(string) (T, error)) propKind {
 	var want *prop.Property[T]

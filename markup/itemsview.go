@@ -33,7 +33,7 @@ import (
 // any other markup. That is what lets a migrated control keep its custom
 // cell (finder's match highlighting) while the template does the placing.
 func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
-	items, err := boundProp[components.ItemSource](e, ctx, "Items")
+	items, err := Bound[components.ItemSource](e, ctx, "Items")
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 		Highlight: !mentions(row, components.SelectedKey),
 	}
 	if _, ok := e.Attrs["Selected"]; ok {
-		if v.Selected, err = boundProp[int](e, ctx, "Selected"); err != nil {
+		if v.Selected, err = Bound[int](e, ctx, "Selected"); err != nil {
 			return nil, err
 		}
 	}

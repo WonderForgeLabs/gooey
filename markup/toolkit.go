@@ -17,10 +17,14 @@ import (
 // in buildComponent stays a readable index of the element vocabulary,
 // and anything with a real decision in it gets a name.
 
-// literalOrBound is the "text attribute" rule every built-in follows: a
-// value containing {{.Path}} becomes a computed handle, anything else is
-// a literal wrapped as a source. An absent attribute is an empty
-// literal, not nil, so a component never has to test for both.
+// literalOrBound is the raw-string form of the text rule that BoundText
+// (bind.go) exports: a value containing {{.Path}} becomes a computed
+// handle, anything else is a literal wrapped as a source, and empty is
+// an empty literal rather than nil so a component never has to test for
+// both. Prefer BoundText — it takes the element, so its errors can name
+// it. This form stays for the two callers whose input is not an
+// attribute at all: an element's text content, and the Tooltip=
+// shorthand's already-extracted string.
 func literalOrBound(raw string, ctx *Context) (*prop.Property[string], error) {
 	p, err := bindText(raw, ctx)
 	if err != nil {
@@ -80,7 +84,7 @@ func optBool(e Element, attr string) (bool, error) {
 func optionList(e Element, ctx *Context) (*prop.Property[[]string], error) {
 	raw := e.Attrs["Options"]
 	if bindRe.MatchString(raw) {
-		return boundProp[[]string](e, ctx, "Options")
+		return Bound[[]string](e, ctx, "Options")
 	}
 	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf(`markup: <Segmented> needs Options (e.g. Options="Day|Week|Month")`)
@@ -108,7 +112,7 @@ func buildStatusBar(e Element, ctx *Context) (gooey.Component, error) {
 		"Left": &bar.Left, "Center": &bar.Center, "Right": &bar.Right,
 	}
 	for _, name := range statusSections {
-		text, hasAttr := e.Attrs[name]
+		_, hasAttr := e.Attrs[name]
 		slot, hasSlot := e.Props[name]
 		if hasAttr && hasSlot {
 			return nil, fmt.Errorf("markup: <StatusBar> %s is given as both an attribute and <StatusBar.%s>", name, name)
@@ -121,7 +125,7 @@ func buildStatusBar(e Element, ctx *Context) (gooey.Component, error) {
 			}
 			*dst[name] = w
 		case hasAttr:
-			content, err := literalOrBound(text, ctx)
+			content, err := BoundText(e, ctx, name)
 			if err != nil {
 				return nil, err
 			}
@@ -152,14 +156,14 @@ func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 	t := &components.Tabs{}
 	var err error
 	if raw, ok := e.Attrs["Selected"]; ok && strings.TrimSpace(raw) != "" {
-		if t.Selected, err = boundProp[int](e, ctx, "Selected"); err != nil {
+		if t.Selected, err = Bound[int](e, ctx, "Selected"); err != nil {
 			return nil, err
 		}
 	}
 	if t.Changed, err = ctx.Command(e.Attrs["Changed"]); err != nil {
 		return nil, fmt.Errorf("markup: <Tabs Changed=%q>: %w", e.Attrs["Changed"], err)
 	}
-	if t.Style, err = bindStyle(e, ctx); err != nil {
+	if t.Style, err = BoundStyle(e, ctx); err != nil {
 		return nil, err
 	}
 	var attach []gooey.Component
@@ -178,7 +182,7 @@ func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 		if _, ok := c.Attrs["Header"]; !ok {
 			return nil, fmt.Errorf(`markup: <Tab> needs a Header (e.g. Header="log")`)
 		}
-		header, err := literalOrBound(c.Attrs["Header"], ctx)
+		header, err := BoundText(c, ctx, "Header")
 		if err != nil {
 			return nil, err
 		}

@@ -804,7 +804,7 @@ func parseAlign(s string) (gooey.Align, error) {
 // / false→Collapsed — the XAML BooleanToVisibilityConverter default,
 // built in because show/hide state is almost always a bool and gooey has
 // no converter layer. The type switch is the whole type check, same as
-// boundProp: a mismatched handle is a load-time error naming both
+// Bound: a mismatched handle is a load-time error naming both
 // acceptable types.
 func bindVisibility(e Element, ctx *Context, l *gooey.Layout, raw string) error {
 	v, err := ctx.BindingValue(raw)
@@ -952,7 +952,7 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 // input.ParseGesture at load time — a hint that cannot parse is a typo
 // you hear about at startup — and stored in the canonical spelling.
 func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
-	style, err := bindStyle(e, ctx)
+	style, err := BoundStyle(e, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1193,20 +1193,6 @@ func bindText(content string, ctx *Context) (*prop.Property[string], error) {
 	}), nil
 }
 
-// bindStyle resolves the Style attribute, which accepts either form:
-// a bare name is the static lookup in Context.Styles, and a binding
-// expression yields the viewmodel's own *prop.Property[render.Style]
-// handle. The bound form is what makes a style REACTIVE — a computed
-// style over an accent color repaints the components that read it, through
-// the ordinary property graph, with no styling system involved.
-func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
-	raw := e.Attrs["Style"]
-	if bindRe.MatchString(raw) {
-		return boundProp[render.Style](e, ctx, "Style")
-	}
-	return styleHandle(e, ctx, "Style", raw)
-}
-
 // styleNamed resolves a style NAME against ctx.Styles and fails on one
 // that was never registered.
 //
@@ -1236,49 +1222,6 @@ func styleNamed(e Element, ctx *Context, attr, name string) (render.Style, error
 		return render.Style{}, fmt.Errorf("markup: <%s %s=%q>: no style named %q is registered", e.Name, attr, name, name)
 	}
 	return st, nil
-}
-
-// bindColor resolves a color attribute: the #rgb/#rrggbb literal markup
-// already speaks (propKinds "color"), or a binding to the viewmodel's own
-// *prop.Property[render.Color] handle. An absent attribute yields nil —
-// for Background that keeps the container on the chrome-only damage
-// path, so only pages that declare a fill pay for one.
-func bindColor(e Element, ctx *Context, attr string) (*prop.Property[render.Color], error) {
-	raw, ok := e.Attrs[attr]
-	if !ok || raw == "" {
-		return nil, nil
-	}
-	if bindRe.MatchString(raw) {
-		return boundProp[render.Color](e, ctx, attr)
-	}
-	col, err := parseHexColor(raw)
-	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
-	}
-	return components.Col(col), nil
-}
-
-// boundProp resolves an attribute that must be a typed property HANDLE
-// rather than text: <Checkbox Checked="{{.Auto}}"/> shares the
-// viewmodel's property with the component, so the component's Render reads it
-// and its toggle Sets it — the only sense in which gooey has two-way
-// binding, and the reason it needs no converter machinery.
-//
-// The type assertion is the whole type check. There is no reflection
-// here: T is known at the call site, so a mismatched viewmodel property
-// is a load-time error naming both types.
-func boundProp[T any](e Element, ctx *Context, attr string) (*prop.Property[T], error) {
-	raw := e.Attrs[attr]
-	v, err := ctx.BindingValue(raw)
-	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
-	}
-	h, ok := v.(*prop.Property[T])
-	if !ok {
-		var want *prop.Property[T]
-		return nil, fmt.Errorf("markup: <%s %s=%q> is %T; need %T", e.Name, attr, raw, v, want)
-	}
-	return h, nil
 }
 
 // UnresolvedError is a binding path the context does not contain. It is

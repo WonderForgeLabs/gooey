@@ -774,7 +774,7 @@ func isModified(a markup.AttrSpec, value string) bool {
 // rows.
 //
 // The dispatch is a switch on a string Kind. No reflection, and the same
-// mechanism boundProp uses.
+// mechanism markup.Bound uses.
 func (ed *editor) valueSet(a markup.AttrSpec) []string {
 	switch a.Kind {
 	case markup.KindEnum:
@@ -1032,7 +1032,7 @@ func (ed *editor) seedRequired(spec markup.ElementSpec, n *node) {
 }
 
 // newHandle makes a zero-valued source property for a declared GoType.
-// The switch is the whole type check — the same mechanism boundProp
+// The switch is the whole type check — the same mechanism markup.Bound
 // uses, and the reason none of this needs reflection.
 func newHandle(goType string) any {
 	switch goType {

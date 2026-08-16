@@ -33,7 +33,7 @@ func buildImage(e Element, ctx *Context) (gooey.Component, error) {
 	var src *prop.Property[image.Image]
 	if bindRe.MatchString(raw) {
 		var err error
-		if src, err = boundProp[image.Image](e, ctx, "Src"); err != nil {
+		if src, err = Bound[image.Image](e, ctx, "Src"); err != nil {
 			return nil, err
 		}
 	} else {
@@ -66,7 +66,7 @@ func cellCount(e Element, ctx *Context, attr string) (*prop.Property[int], error
 		return nil, fmt.Errorf("markup: <%s> needs %s — a cell count or a binding", e.Name, attr)
 	}
 	if bindRe.MatchString(raw) {
-		return boundProp[int](e, ctx, attr)
+		return Bound[int](e, ctx, attr)
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
