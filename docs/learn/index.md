@@ -32,10 +32,11 @@ Work through these in order — each builds on the last.
 | 7 | [Add app chrome — menu, status bar, toasts, and tips](07-app-chrome.md) | 30 min | A MenuBar with page-wide mnemonics, a bound StatusBar, toasts, and tooltips over a working page |
 | 8 | [Drive your app from outside — MCP and gRPC](08-remote-control.md) | 30 min | A Kanban board driven from another shell: snapshot the tree, press buttons, swap the whole page over the wire |
 | 9 | [Temporal end-to-end](09-temporal.md) | 40 min | A button that is a durable activity, an ops dashboard whose every call is markup, and a terminal a workflow draws |
+| 10 | [Scope resources and theme with styles](10-resources-and-styles.md) | 20 min | A page-level `<Resource>` two sibling panes both read through a `<Style>`, one subtree that shadows it with its own, and a runtime `Set` that repaints only the panel still holding that handle |
 
-Tutorials 1-6 are the core sequence; 7-9 are what you reach for when the
-app grows chrome, a wire surface, or a durable backend. Tutorials 8 and 9
-run demos that live in nested modules (`mcp/`, `apps/kanban`,
+Tutorials 1-6 are the core sequence; 7-10 are what you reach for when the
+app grows chrome, a wire surface, a durable backend, or a theme. Tutorials
+8 and 9 run demos that live in nested modules (`mcp/`, `apps/kanban`,
 `handlers/temporal`), so they are run from those directories rather than
 the repo root.
 
@@ -152,9 +153,14 @@ Short framings, each linking into the deep guide.
 These tutorials document what runs today. Things you may expect and will
 not find:
 
-- **No styling system.** `Style="name"` is a lookup — no cascading,
-  selectors, or setters. A bound `Style="{{.Handle}}"` gets you a
-  reactive computed style, which is as close to theming as this gets.
+- **Styles have no selectors or state yet.** `<Gooey.Resources>` and
+  `<X.Resources>` give you scoped, lexically-shadowed `<Resource>`s and
+  `<Style>`s with `<Setter>`s ([Tutorial 10](10-resources-and-styles.md)),
+  but there is no `TargetType` implicit matching and no `:focus`/`:hover`/
+  `:disabled` state sections yet — declaring one is a load error, not a
+  silent no-op. A bound `Style="{{.Handle}}"` still gets you a reactive
+  computed style outside the whole system, which remains the closest
+  thing to per-state theming until selectors land.
 - **No converters and no two-way binding syntax.** A binding resolves to
   a property handle and that is all; two-way is something a component
   does in code, and formatting a value for display is the `format`
