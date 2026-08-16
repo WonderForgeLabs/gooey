@@ -1,7 +1,10 @@
 package main
 
 import (
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -157,4 +160,93 @@ func TestAHiddenCursorIsNotPainted(t *testing.T) {
 	if at := f.Cells.At(3, 0); at.Style.Reverse || at.Style.Underline {
 		t.Errorf("caret painted for a guest that sent DECTCEM off: %+v", at.Style)
 	}
+}
+
+// Start, which until now no test touched at all: not the pty, not the
+// reader goroutine, not the post() marshaling back to the UI goroutine,
+// and not the close-and-join in the stop func — the four things this
+// repo's invariants care most about, in the one component here that owns
+// a goroutine and a child process.
+//
+// What it pins specifically is the takeover. A scripted island and a
+// person are two writers into one pty master, and the guest cannot tell
+// them apart: click into a Loop="true" terminal mid-script and your
+// keystrokes are spliced through whatever it was typing. So the first
+// human input retires the script, permanently.
+//
+// Linux only, for the same reason the pty is (pty_other.go).
+func TestTakeoverRetiresTheScript(t *testing.T) {
+	if p, err := openPty(20, 5); err != nil {
+		t.Skipf("no pty here: %v", err)
+	} else {
+		p.Close()
+	}
+	// `cat` echoes its stdin, so what the typist sends comes back as
+	// output and lands in the screen — which is how this sees what was
+	// actually written rather than what was merely scheduled.
+	term := NewTerminal("cat", 20, 5)
+	term.Script = []Step{
+		{After: 10 * time.Millisecond, Send: []byte("AAA")},
+		{After: 400 * time.Millisecond, Send: []byte("BBB")},
+	}
+
+	// A real queue, drained by this goroutine. A post that ran the
+	// closure inline would hide the goroutine boundary that is the point.
+	var mu sync.Mutex
+	var posted []func()
+	stop := term.Start(func(fn func()) {
+		mu.Lock()
+		defer mu.Unlock()
+		posted = append(posted, fn)
+	})
+	defer stop()
+
+	screen := func() string {
+		mu.Lock()
+		fns := posted
+		posted = nil
+		mu.Unlock()
+		for _, fn := range fns {
+			fn()
+		}
+		var sb strings.Builder
+		for y := 0; y < term.scr.Buf.H; y++ {
+			sb.WriteString(term.scr.Row(y))
+		}
+		return sb.String()
+	}
+	until := func(what, sub string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(screen(), sub) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: screen is %q, waited for %q", what, screen(), sub)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	until("the first scripted step never reached the guest", "AAA")
+	if term.fail.Get() != "" {
+		t.Fatalf("terminal reported %q", term.fail.Get())
+	}
+
+	// A person takes the keyboard, during the pause before step two.
+	if !term.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 2, Y: 2}) {
+		t.Fatal("a press on an inert terminal must capture")
+	}
+
+	// Step two's own delay, twice over. If the script were still running
+	// it has had every chance.
+	time.Sleep(900 * time.Millisecond)
+	if got := screen(); strings.Contains(got, "BBB") {
+		t.Errorf("the script kept typing after a person took the keyboard; screen is %q", got)
+	}
+
+	// And the person's keys still get through — retiring the typist must
+	// not retire the terminal.
+	if !term.HandleKey(input.KeyEvent{Key: input.KeyRune, Rune: 'Z'}) {
+		t.Fatal("a live terminal dropped a keystroke")
+	}
+	until("the guest never saw the typed key", "Z")
 }

@@ -16,6 +16,13 @@
 // It is also an MCP server, which is not a flourish: this deck was built
 // by an agent with no terminal, so reading the screen back over MCP was
 // the only way to know whether any of it looked right.
+//
+// The deck runs anywhere; its <Terminal> slides do not. That element is
+// a real pty and the pty is Linux's — /dev/ptmx and three ioctls, see
+// pty_linux.go. Elsewhere those slides render the reason instead of a
+// guest (pty_other.go) and everything else works. Said here because this
+// is where `go run .` is written, and a platform note that lives only in
+// a build tag is one the reader meets as a compiler error.
 package main
 
 import (
