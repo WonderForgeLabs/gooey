@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -154,12 +155,8 @@ func main() {
 		},
 	}
 
-	mkDir := "cmd/finder"
-	if _, err := os.Stat(filepath.Join(mkDir, "finder.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mkDir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(mkDir)
+	name := "finder.gooey"
+	fsys := demomain.MarkupFS("finder", name)
 
 	// markup.Page is the hot-reload seam, and it is a real fix over the
 	// swap channel this used to run: markup.Watch built the replacement
@@ -172,7 +169,7 @@ func main() {
 	// A load error at startup comes back from Run before any terminal is
 	// touched, so gooey.Exit prints it on a cooked screen — what the
 	// explicit markup.Load before term.Open used to buy by hand.
-	app = gooey.NewApp(markup.Page(fsys, "finder.gooey", ctx))
+	app = gooey.NewApp(markup.Page(fsys, name, ctx))
 	err := app.Run(context.Background())
 
 	// Printed after Run, so it lands on a restored terminal — the whole

@@ -27,10 +27,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
-	"path/filepath"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -142,12 +141,7 @@ func main() {
 		// here by convention. <Card/> → card.gooey, <Badge/> → badge.gooey.
 	}
 
-	dir := "cmd/cards"
-	if _, err := os.Stat(filepath.Join(dir, "dashboard.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("cards", "dashboard.gooey")
 	ctx.Includes = fsys
 
 	// One page, three files: the two controls it instantiates are named

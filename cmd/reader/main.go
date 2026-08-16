@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -123,12 +123,7 @@ func main() {
 	}
 
 	// --- markup: page context + UserControl registrations ---
-	dir := "cmd/reader"
-	if _, err := os.Stat(filepath.Join(dir, "reader.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("reader", "reader.gooey")
 
 	pageCtx := func() *markup.Context {
 		vals := map[string]any{

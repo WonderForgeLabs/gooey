@@ -38,6 +38,7 @@ import (
 	"sync/atomic"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -179,13 +180,7 @@ func main() {
 		},
 	}
 
-	dir := "cmd/prefs"
-	if _, err := os.Stat(filepath.Join(dir, "prefs.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "prefs.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("prefs", "prefs.gooey"), "prefs.gooey", ctx))
 	// Start after the app exists: post is the store's only route back to
 	// the graph, and stop is what guarantees the last change is written.
 	stop = store.Start(app.Post)
