@@ -838,7 +838,7 @@ case ev := <-events:
 > **Security: this element spawns processes, and markup arrives over MCP.**
 > Any MCP client can call `swap_markup` or `patch_markup`, and those build markup through the same path a page on disk takes. Because markup can now name a binary, **an app that serves MCP and allows companions gives its clients arbitrary command execution** — an escalation past the posture recorded in [`docs/specs/2026-08-10-mcp-server.md`](specs/2026-08-10-mcp-server.md), *"an MCP client can do anything the keyboard can"*. The keyboard cannot spawn `rm -rf`.
 >
-> This is deliberate: a capability honored on one build path and refused on another is two languages sharing a syntax. The perimeter is elsewhere — the MCP server is **opt-in and loopback-only**, with a default-deny `Origin` check — and the off switch is the environment variable **`GOOEY_MARKUP_COMPANIONS`**. Unset or empty means enabled; set it to `0`/`false` (or to anything unparseable — it fails closed) and every `<Companion>` becomes a load error naming the switch. Do not hand untrusted markup to an app whose environment allows companions.
+> This is deliberate: a capability honored on one build path and refused on another is two languages sharing a syntax. The perimeter is elsewhere — the MCP server is **opt-in**, unauthenticated, and bound wherever the host asks (loopback by default, not restricted to it). There is a default-deny `Origin` check, but read what it actually covers: a request carrying **no** `Origin` is allowed through, because that is what a non-browser client looks like. It narrows the *browser* attack surface and does nothing about who can reach the address. The off switch is the environment variable **`GOOEY_MARKUP_COMPANIONS`**. Unset or empty means enabled; set it to `0`/`false` (or to anything unparseable — it fails closed) and every `<Companion>` becomes a load error naming the switch. Do not hand untrusted markup to an app whose environment allows companions.
 
 | Attribute | Meaning |
 |---|---|
@@ -1311,7 +1311,7 @@ Markup-declarable **attached** properties — a markup-only panel defining its o
 
 ```go
 stats, _ := markup.Find[*components.Text](ctx, "stats")
-stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d", lineCount, frames))
+stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d", logdata.Count(), frames))
 ```
 
 (from `cmd/markuplog`)

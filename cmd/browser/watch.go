@@ -17,6 +17,10 @@ package main
 // One rescan is the whole reaction: `demos` is a computed over a
 // revision source, so bumping it re-derives the list AND every pane
 // bound to it, including the one on screen.
+//
+// WHEN it runs is not decided here. The poll is a <Timer> in
+// browser.gooey — a declared interval and a bound command — so this
+// file owns only the fingerprint.
 
 import (
 	"hash"
@@ -25,13 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
-
-// watchInterval is fast enough that a recording finished in another
-// terminal shows up before you look for it, and slow enough that the
-// stat traffic is invisible.
-const watchInterval = 1500 * time.Millisecond
 
 // watchKey fingerprints every directory the UI reads: the demo roots and
 // checked-in GIFs under srcRoot (the ACTIVE source), and recordings

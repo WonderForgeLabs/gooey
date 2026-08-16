@@ -5,7 +5,49 @@
       <StoryList  Grid.Col="1" Stories="{{.Stories}}" Selected="{{.SelStory}}" Read="{{.Read}}" Open="{{.OpenStory}}" Title="stories"/>
       <ReaderPane Grid.Col="2" Story="{{.Current}}"   Title="reader"/>
     </Grid>
-    <Text Grid.Row="1" Style="dim">{{.Status}}</Text>
+
+    <!-- Two elements share the bottom row, swapped by Visibility: the
+         key hints while browsing, the add-feed field while prompting.
+         The hints are a LITERAL here rather than a string the viewmodel
+         concatenates; only the fetch counter is bound, and it sits in
+         the right-hand section so a growing count never pushes a hint
+         off the screen. -->
+    <StatusBar Grid.Row="1" Visibility="{{.Browsing}}"
+               Left="tab: pane   j/k: move   enter: open   a: add feed   q: quit"
+               Right="{{.Fetching}}"/>
+
+    <!-- The add-feed prompt. This was a hand-rolled editor in the run
+         loop — a keyboard mode that intercepted every event before the
+         tree saw it — and it is now an ordinary focus stop. The rules
+         come with it: <Validate> materializes the same computed the Go
+         API builds, wires the field's invalid visual, and publishes the
+         error as .DraftErr for the commit to read. -->
+    <TextBox Grid.Row="1" Name="AddFeed" Visibility="{{.Prompting}}"
+             Prompt="add feed url: " Text="{{.Draft}}" Style="dim" AccentStyle="dim">
+      <TextBox.Behaviors>
+        <Validate Required="true" Url="true" Pattern="(?i)^https?://.+"
+                  Into=".DraftErr" Message="want an http(s) feed url"/>
+      </TextBox.Behaviors>
+
+      <!-- Scoped to the field: a KeyBinding is offered before its host's
+           own HandleKey and before any ancestor's, so these beat both
+           the TextBox's editing keys and the page's q/esc below, and
+           only while focus is in here. -->
+      <KeyBinding Gesture="enter"  Command="{{.CommitFeed}}"/>
+      <KeyBinding Gesture="esc"    Command="{{.CancelFeed}}"/>
+      <KeyBinding Gesture="ctrl+c" Command="{{.CancelFeed}}"/>
+
+      <!-- The prompt is MODAL, and this is the only way to say so.
+           Nothing declares "focus stays here until I am dismissed", so
+           every key that would otherwise leave — tab, shift+tab, and the
+           two arrows the field does not use — is swallowed one at a
+           time by a binding that does nothing. -->
+      <KeyBinding Gesture="tab"       Command="{{.StayPut}}"/>
+      <KeyBinding Gesture="shift+tab" Command="{{.StayPut}}"/>
+      <KeyBinding Gesture="up"        Command="{{.StayPut}}"/>
+      <KeyBinding Gesture="down"      Command="{{.StayPut}}"/>
+    </TextBox>
+
     <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
     <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
