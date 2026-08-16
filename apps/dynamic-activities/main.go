@@ -42,9 +42,11 @@
 // privileges. There is no sandbox and none is planned here: the point of
 // the demo is the round trip, and pretending otherwise would be worse
 // than saying it plainly. Both servers this app starts, and the Python
-// MCP server it launches, are loopback-only and unauthenticated. Do not
-// expose any of them, do not run this on a shared host, and do not point
-// it at anything you care about.
+// MCP server it launches, are unauthenticated. They default to loopback
+// addresses, and nothing stops you from pointing the flags somewhere
+// else — at which point the RCE endpoint is reachable from there too.
+// Do not expose any of them, do not run this on a shared host, and do
+// not point it at anything you care about.
 //
 // # The two servers this app starts
 //
@@ -76,7 +78,6 @@ import (
 	temporalhandlers "github.com/WonderForgeLabs/gooey/handlers/temporal"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
-	"github.com/WonderForgeLabs/gooey/netutil"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"go.temporal.io/sdk/client"
@@ -163,13 +164,13 @@ func activityNames(joined string) []string {
 }
 
 func main() {
-	mcpAddr := flag.String("mcp", "127.0.0.1:0", "loopback address for this app's MCP server; port 0 picks a free port; empty disables it")
-	grpcAddr := flag.String("grpc", "127.0.0.1:0", "loopback address for the control-plane gRPC server; port 0 picks a free port; empty disables it")
+	mcpAddr := flag.String("mcp", "127.0.0.1:0", "bind address for this app's MCP server; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
+	grpcAddr := flag.String("grpc", "127.0.0.1:0", "bind address for the control-plane gRPC server; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	temporalAddr := flag.String("temporal", "127.0.0.1:7233", "Temporal frontend address")
 	taskQueue := flag.String("task-queue", "gooey-dynamic-activities", "Temporal task queue the worker polls and the star button schedules on")
 	withWorker := flag.Bool("with-worker", true, "launch the Python worker + activity MCP server as a companion sharing this app's process lifetime")
 	workerPython := flag.String("worker-python", "python3", "python interpreter for the companion; point it at a venv's bin/python if system python lacks requirements.txt")
-	activityMCP := flag.String("activity-mcp", "127.0.0.1:7802", "loopback address the COMPANION's activity-CRUD MCP server binds")
+	activityMCP := flag.String("activity-mcp", "127.0.0.1:7802", "bind address the COMPANION's activity-CRUD MCP server uses. UNAUTHENTICATED, and its tools run arbitrary Python — a non-loopback address publishes remote code execution")
 	page := flag.String("page", "dynamicactivities.gooey", "which .gooey page to load from the example directory")
 	graphicsMode := flag.String("graphics", "", "force the image protocol: kitty|sixel|iterm2|halfblock; empty lets terminal capabilities decide")
 	flag.Parse()
@@ -323,9 +324,9 @@ func main() {
 	var mcpURL, grpcURL string
 
 	if *mcpAddr != "" {
-		if err := netutil.CheckLoopback("dynamic-activities -mcp", *mcpAddr); err != nil {
-			gooey.Exit(err)
-		}
+		// -mcp is used as given. This endpoint has no authentication, so a
+		// non-loopback address exposes an unauthenticated handle that can
+		// drive the UI; that is the operator's choice.
 		srv, err := mcp.Serve(app, mcp.Options{
 			Addr:    *mcpAddr,
 			Context: ctx,
@@ -339,8 +340,10 @@ func main() {
 	}
 
 	if *grpcAddr != "" {
-		// Serve checks loopback itself and returns the bound address, so
-		// -grpc 127.0.0.1:0 still yields a usable GOOEY_GRPC_ADDR.
+		// Serve returns the bound address, so -grpc 127.0.0.1:0 still
+		// yields a usable GOOEY_GRPC_ADDR. The address is used as given
+		// and the control plane has no authentication, so a non-loopback
+		// address exposes it; that is the operator's choice.
 		srv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
 			Addr:    *grpcAddr,
 			Context: ctx,
@@ -359,9 +362,10 @@ func main() {
 		if grpcURL == "" {
 			gooey.Exit(fmt.Errorf("dynamic-activities: -with-worker needs the control plane it registers names through; do not pass -grpc \"\""))
 		}
-		if err := netutil.CheckLoopback("dynamic-activities -activity-mcp", *activityMCP); err != nil {
-			gooey.Exit(err)
-		}
+		// -activity-mcp is used as given. This endpoint has no
+		// authentication and its create_activity tool runs arbitrary
+		// Python in the worker process, so a non-loopback address
+		// publishes remote code execution; that is the operator's choice.
 		logPath := filepath.Join(dir, "worker.log")
 		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {

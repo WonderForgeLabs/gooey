@@ -4,10 +4,16 @@
 // page's markup. The automation surface, the accessibility surface and
 // the live-edit surface are one protocol.
 //
-// It is opt-in and loopback-only:
+// It is opt-in, and it has no authentication:
 //
 //	srv, err := mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:7777", Context: ctx})
 //	defer srv.Close()
+//
+// The default bind is loopback, and the address is whatever the caller
+// passes — the server does not restrict it. Because there is no
+// authentication, binding a non-loopback address publishes an
+// unauthenticated remote-control handle on the user's terminal to
+// everything that can reach it. That is the operator's call to make.
 //
 // # One path, one model
 //
@@ -69,7 +75,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/markup"
-	"github.com/WonderForgeLabs/gooey/netutil"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -81,9 +86,13 @@ type Host = control.Host
 
 // Options configure a server.
 type Options struct {
-	// Addr is the listen address. It must be loopback: an MCP client can
-	// do anything the keyboard can, and v1 has no authentication. Default
-	// "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	// Addr is the listen address, passed through to net.Listen as given.
+	// Default "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	//
+	// An MCP client can do anything the keyboard can, and this server has
+	// no authentication, so a non-loopback address exposes an
+	// unauthenticated control handle to every host that can reach it.
+	// Nothing here prevents that; it is the operator's choice.
 	Addr string
 	// Context is the markup binding context the app was built against.
 	// It supplies the Named element table, the bindable values, the
@@ -134,8 +143,8 @@ type Server struct {
 
 // New builds a server without listening. The zero-network path: tests
 // drive Handler directly, and a host that already owns an http.Server
-// can mount it wherever it likes — at which point the loopback guarantee
-// becomes that host's problem, which is why Serve is the documented way.
+// can mount it wherever it likes — at which point where this surface is
+// reachable from is entirely that host's decision.
 func New(host Host, opts Options) (*Server, error) {
 	if host == nil {
 		return nil, fmt.Errorf("gooey/mcp: nil host")
@@ -156,9 +165,9 @@ func Serve(host Host, opts Options) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if err := netutil.CheckLoopback("gooey/mcp", addr); err != nil {
-		return nil, err
-	}
+	// addr is used as given. This server has no authentication, so a
+	// non-loopback address exposes an unauthenticated control handle;
+	// that is the operator's choice, not something this package prevents.
 	s, err := New(host, opts)
 	if err != nil {
 		return nil, err
@@ -172,12 +181,6 @@ func Serve(host Host, opts Options) (*Server, error) {
 	go s.http.Serve(ln)
 	return s, nil
 }
-
-// The loopback rule itself lives in netutil.CheckLoopback, along with the
-// reasoning for every clause. It is public and shared because an
-// embedding host that owns its own listener (see New, above) has to be
-// able to apply the same rule — apps/kanban maintained a hand-copied
-// stand-in for exactly as long as this was unexported.
 
 // Addr is the address the server is listening on, empty if it was built
 // with New rather than Serve.

@@ -84,7 +84,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
-	"github.com/WonderForgeLabs/gooey/netutil"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -453,7 +452,7 @@ func main() {
 	// this flag — so the resolved port reaches the help panel and the
 	// worker companion's GOOEY_MCP_URL alike. Pass -mcp 127.0.0.1:7778 for
 	// a fixed port when a client is registered against one.
-	addr := flag.String("mcp", "127.0.0.1:0", "loopback address for the MCP server; port 0 picks a free port; empty disables it")
+	addr := flag.String("mcp", "127.0.0.1:0", "bind address for the MCP server; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	withWorker := flag.Bool("with-worker", true, "launch the Python Temporal dynamic-UI worker (apps/kanban/worker) as a companion, sharing this app's process lifetime; pass -with-worker=false to disable")
 	workerPython := flag.String("worker-python", "python3", "python interpreter for the worker companion; point it at a venv's bin/python if system python lacks apps/kanban/worker/requirements.txt")
 	workerTaskQueue := flag.String("worker-task-queue", "kanban-dynamic-ui", "Temporal task queue the worker companion polls")
@@ -464,7 +463,7 @@ func main() {
 	//
 	// Random port by default for the same reason -mcp takes one (#188):
 	// a fixed default is how two demos on one machine collide.
-	grpcAddr := flag.String("grpc", "127.0.0.1:0", "loopback address for the gRPC control plane; port 0 picks a free port; empty disables it")
+	grpcAddr := flag.String("grpc", "127.0.0.1:0", "bind address for the gRPC control plane; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	flag.Parse()
 
 	// --- board state: three plain slices, nothing fancier. Moving a card
@@ -766,13 +765,11 @@ func main() {
 	}
 
 	if *addr != "" {
-		// mcp.New's doc says the loopback guarantee becomes the host's
-		// problem once it owns the listener itself, which this app does
-		// (below, so the handler can be wrapped). Same rule, same
-		// function mcp.Serve would have applied.
-		if err := netutil.CheckLoopback("kanban -mcp", *addr); err != nil {
-			gooey.Exit(err)
-		}
+		// -mcp is used as given. This endpoint has no authentication and
+		// an MCP client can do anything the keyboard can, so a
+		// non-loopback address exposes an unauthenticated control handle
+		// on this terminal; that is the operator's choice.
+		//
 		// mcp.New builds the server without listening — unlike the
 		// mcp.Serve convenience this demo used before — so this app can
 		// own the net.Listener and http.Server and wrap srv.Handler()

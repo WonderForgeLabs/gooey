@@ -838,7 +838,7 @@ case ev := <-events:
 > **Security: this element spawns processes, and markup arrives over MCP.**
 > Any MCP client can call `swap_markup` or `patch_markup`, and those build markup through the same path a page on disk takes. Because markup can now name a binary, **an app that serves MCP and allows companions gives its clients arbitrary command execution** — an escalation past the posture recorded in [`docs/specs/2026-08-10-mcp-server.md`](specs/2026-08-10-mcp-server.md), *"an MCP client can do anything the keyboard can"*. The keyboard cannot spawn `rm -rf`.
 >
-> This is deliberate: a capability honored on one build path and refused on another is two languages sharing a syntax. The perimeter is elsewhere — the MCP server is **opt-in and loopback-only**, with a default-deny `Origin` check — and the off switch is the environment variable **`GOOEY_MARKUP_COMPANIONS`**. Unset or empty means enabled; set it to `0`/`false` (or to anything unparseable — it fails closed) and every `<Companion>` becomes a load error naming the switch. Do not hand untrusted markup to an app whose environment allows companions.
+> This is deliberate: a capability honored on one build path and refused on another is two languages sharing a syntax. The perimeter is elsewhere — the MCP server is **opt-in**, unauthenticated, bound wherever the host asks (loopback by default, not restricted to it), with a default-deny `Origin` check — and the off switch is the environment variable **`GOOEY_MARKUP_COMPANIONS`**. Unset or empty means enabled; set it to `0`/`false` (or to anything unparseable — it fails closed) and every `<Companion>` becomes a load error naming the switch. Do not hand untrusted markup to an app whose environment allows companions.
 
 | Attribute | Meaning |
 |---|---|

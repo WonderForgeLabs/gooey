@@ -266,24 +266,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// ---- transport and security ----
-
-func TestLoopbackOnlyIsAHardError(t *testing.T) {
-	vm, values := newVM()
-	_ = vm
-	app := newTestApp(t, testMarkup, values, nil)
-	for _, addr := range []string{"0.0.0.0:0", ":0", "192.168.1.10:0", "example.com:7788"} {
-		if _, err := Serve(app, Options{Addr: addr, Context: app.ctx}); err == nil {
-			t.Errorf("Serve(%q) started; a non-loopback bind must be a hard error", addr)
-		}
-	}
-	srv, err := Serve(app, Options{Addr: "localhost:0", Context: app.ctx})
-	if err != nil {
-		t.Fatalf("Serve(localhost) refused: %v", err)
-	}
-	srv.Close()
-}
-
 // ---- read ----
 
 func TestSnapshotTree(t *testing.T) {

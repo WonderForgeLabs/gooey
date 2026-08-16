@@ -121,7 +121,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("attach", "", "drive a remote gooey app at this loopback address instead of previewing locally")
+	addr := flag.String("attach", "", "drive a remote gooey app at this address instead of previewing locally")
 	island := flag.String("island", "", "the Name= of the element in the remote app this editor owns")
 	// The editor SERVES a control plane as well as attaching to one.
 	// Those are opposite directions on the same protocol and both are
@@ -132,8 +132,11 @@ func main() {
 	//
 	// Port 0 by default, on loopback, and read back from Addr(): a fixed
 	// port is a collision the day two of these run at once (#188).
-	serveAddr := flag.String("serve", "127.0.0.1:0", "loopback address for this editor's OWN gRPC control plane; empty disables it")
-	mcpAddr := flag.String("mcp", "127.0.0.1:0", "loopback address for this editor's OWN MCP endpoint; empty disables it")
+	// Neither endpoint is authenticated and neither restricts its bind
+	// address, so a non-loopback one exposes this editor's control
+	// plane; that is the operator's choice.
+	serveAddr := flag.String("serve", "127.0.0.1:0", "bind address for this editor's OWN gRPC control plane; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
+	mcpAddr := flag.String("mcp", "127.0.0.1:0", "bind address for this editor's OWN MCP endpoint; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	// Chrome is drawn in PIXELS where the terminal has them, and an app
 	// gets a pixel protocol only when capabilities say so — the
 	// environment ladder reports colour depth but can never report

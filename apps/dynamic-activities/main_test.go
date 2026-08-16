@@ -9,7 +9,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/markup"
-	"github.com/WonderForgeLabs/gooey/netutil"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -120,28 +119,6 @@ func TestActivityNames(t *testing.T) {
 	for _, c := range cases {
 		if got := activityNames(c.in); len(got) != c.want {
 			t.Errorf("activityNames(%q) = %v, want %d names", c.in, got, c.want)
-		}
-	}
-}
-
-// Both servers this app starts are unauthenticated control handles on
-// the terminal, and the companion's MCP server is an unauthenticated
-// handle on the MACHINE. A non-loopback bind is a hard error for all
-// three, and "" (every interface) is the one that looks harmless.
-//
-// The rule itself is netutil.CheckLoopback and is exhaustively tabled
-// there; what this test pins is that THIS app's addresses still go
-// through it, which is the half a shared function cannot assert for you.
-func TestCheckLoopbackRefusesEverythingElse(t *testing.T) {
-	const what = "dynamic-activities -mcp"
-	for _, ok := range []string{"127.0.0.1:0", "127.0.0.1:7802", "localhost:7802", "[::1]:7802"} {
-		if err := netutil.CheckLoopback(what, ok); err != nil {
-			t.Errorf("CheckLoopback(%q) = %v, want nil", ok, err)
-		}
-	}
-	for _, bad := range []string{":7802", "0.0.0.0:7802", "10.0.0.5:7802", "nonsense"} {
-		if err := netutil.CheckLoopback(what, bad); err == nil {
-			t.Errorf("CheckLoopback(%q) accepted a non-loopback bind", bad)
 		}
 	}
 }

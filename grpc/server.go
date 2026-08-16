@@ -9,7 +9,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/control"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
-	"github.com/WonderForgeLabs/gooey/netutil"
 	grpcgo "google.golang.org/grpc"
 
 	controlv1 "github.com/WonderForgeLabs/gooey/grpc/gen/gooey/control/v1"
@@ -50,11 +49,13 @@ type SessionHost interface {
 
 // Options configure a server.
 type Options struct {
-	// Addr is the listen address. It must be loopback: a control-plane
-	// client can do anything the keyboard can, and v1 has no
-	// authentication, so a non-loopback bind is a hard error — remote
-	// binds arrive with authentication or not at all. Default
-	// "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	// Addr is the listen address, passed through to net.Listen as given.
+	// Default "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	//
+	// A control-plane client can do anything the keyboard can, and this
+	// server has no authentication, so a non-loopback address exposes an
+	// unauthenticated control handle to every host that can reach it.
+	// Nothing here prevents that; it is the operator's choice.
 	Addr string
 	// Context is the markup binding context the app was built against.
 	// Without one the name-addressed RPCs report FAILED_PRECONDITION;
@@ -98,8 +99,8 @@ type Server struct {
 }
 
 // New builds a server without listening, for tests and for hosts that
-// own their listener — at which point the loopback guarantee becomes
-// that host's problem, which is why Serve is the documented way.
+// own their listener — at which point where this surface is reachable
+// from is entirely that host's decision.
 func New(host Host, opts Options) (*Server, error) {
 	if host == nil {
 		return nil, fmt.Errorf("gooey/grpc: nil host")
@@ -142,9 +143,9 @@ func Serve(host Host, opts Options) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if err := netutil.CheckLoopback("gooey/grpc", addr); err != nil {
-		return nil, err
-	}
+	// addr is used as given. This server has no authentication, so a
+	// non-loopback address exposes an unauthenticated control handle;
+	// that is the operator's choice, not something this package prevents.
 	s, err := New(host, opts)
 	if err != nil {
 		return nil, err
@@ -157,11 +158,6 @@ func Serve(host Host, opts Options) (*Server, error) {
 	go s.gs.Serve(ln)
 	return s, nil
 }
-
-// The loopback rule is netutil.CheckLoopback — literally the same rule
-// the MCP server applies, which is the point: it used to be the same rule
-// written out twice here and twice more in the demo apps, so a fix to one
-// copy reached none of the others.
 
 // Addr is the address the server is listening on, empty if it was built
 // with New rather than Serve.

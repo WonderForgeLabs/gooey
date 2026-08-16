@@ -39,10 +39,10 @@ import (
 // # The address IS the capability
 //
 // One control-plane endpoint carries one grant. Two guests with disjoint
-// islands are two servers on two loopback ports, each holding its own
-// grant; that is what lets them drive one app concurrently without
-// interfering. This composes with v1's actual security posture
-// (loopback-only, no authentication) rather than pretending to improve
+// islands are two servers on two ports, each holding its own grant; that
+// is what lets them drive one app concurrently without interfering. This
+// composes with v1's actual security posture (no authentication at all,
+// and a bind address the host chooses) rather than pretending to improve
 // it: a port a guest was never told about is a port it cannot use, and
 // this file makes a port a guest WAS told about narrower than the whole
 // app.
@@ -50,8 +50,10 @@ import (
 // Stated plainly, because the distinction matters: a Grant is SCOPING,
 // not AUTHENTICATION. It stops an attached guest from exceeding its
 // brief. It does not stop something that can reach the host's own
-// unscoped endpoint. Authentication is what a non-loopback bind would
-// need, and v1 refuses those outright (netutil.CheckLoopback).
+// unscoped endpoint, and it does not make a reachable endpoint safe.
+// Bind addresses are unrestricted, so a host that binds beyond loopback
+// is publishing an unauthenticated control handle; authentication is
+// what would fix that, and it does not exist yet.
 //
 // # Host and guest
 //
