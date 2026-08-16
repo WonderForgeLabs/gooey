@@ -6,11 +6,12 @@ A markup file is loaded against a `markup.Context` — the binding environment t
 
 ```go
 ctx := &markup.Context{
-    Values:   map[string]any{...},           // {{.Name}} roots
-    Styles:   map[string]render.Style{...},  // Style="name" lookup
-    Components:  map[string]markup.Builder{...},// custom elements
-    Handlers: map[string]gooey.Action{...},  // bare-name event handlers
-    Includes: fsys,                          // convention-based controls
+    Values:     map[string]any{...},              // {{.Name}} roots
+    Styles:     map[string]render.Style{...},     // Style="name" lookup (outermost scope)
+    Components: map[string]markup.Builder{...},   // custom elements, opaque
+    Elements:   map[string]*markup.ElementDef{...}, // custom elements that DECLARE their surface
+    Handlers:   map[string]gooey.Action{...},     // bare-name event handlers
+    Includes:   fsys,                             // convention-based controls
 }
 tree, err := markup.Load(fsys, "app.gooey", ctx)
 ```
@@ -908,9 +909,48 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a `*prop.Property[string]` (a live handle) or a plain `string` (a static splice); anything else is a build error, as is a path that does not resolve.
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1120`) is:
 
-Two forms are legal inside the braces, and **nothing else is**: `{{.Path}}` and `{{ns:Func args…}}`, a [value namespace](#value-namespaces) call. A brace expression that is neither — an undeclared prefix, a malformed path, an unterminated `{{` — is a **load error** naming what could not be resolved. It is not literal text. (It used to be: before the scanner in `markup/scan.go`, `<Text>{{env:Get `HOME`}}</Text>` loaded clean and painted its own source on the terminal. See issue #221.)
+| Handle | Plain value | Rendered as |
+|---|---|---|
+| `*prop.Property[string]` | `string` | verbatim |
+| `*prop.Property[int]`, `[int64]` | `int`, `int64` | `strconv.Itoa` / `FormatInt` |
+| `*prop.Property[float64]` | `float64` | `strconv.FormatFloat(…, 'f', -1, 64)` |
+| `*prop.Property[bool]` | `bool` | `"true"` / `"false"` |
+| `*prop.Property[time.Duration]` | — | `Duration.String()` |
+| `*prop.Property[render.Color]` | — | `#rrggbb` |
+
+A handle stays live; a plain value is a static splice. There is exactly **one** float spelling — `'f'`, shortest round-trip — and it is deliberately not configurable here: a format string in an attribute is a second templating language. The same table backs handler arguments (`Arg.String`), so a value formats identically wherever it appears.
+
+Three forms are legal inside the braces, and **nothing else is**: `{{.Path}}`, `{{ns:Func args…}}` (a [value namespace](#value-namespaces) call), and `{{op operands…}}` (a [conditional expression](#conditional-expressions)). A brace expression that is none of them — an undeclared prefix, a malformed path, an unterminated `{{` — is a **load error** naming what could not be resolved. It is not literal text. (It used to be: before the scanner in `markup/scan.go`, `<Text>{{env:Get `HOME`}}</Text>` loaded clean and painted its own source on the terminal. See issue #221.)
+
+The three are disjoint by their first token: a binding starts with `.`, a namespace call has a colon after its prefix, and a conditional starts with a bare operator word **followed by operands**. That last clause is what keeps `{{ nonsense }}` — a lone bare word — reporting "neither a binding nor a value-namespace call" instead of a confusing complaint about conditional functions.
+
+### Conditional expressions
+
+A predicate grammar whose result is **always `bool`**, so a page can say "hidden while there is nothing to show" without a computed in the viewmodel:
+
+```xml
+<Text Visibility="{{not .Empty}}">rows</Text>
+<Button IsEnabled="{{and (eq .Name ``) (eq .Email ``)}}" Content="Save"/>
+```
+
+| Form | Arity |
+|---|---|
+| `{{not X}}` | 1 |
+| `{{and X Y …}}` | ≥ 2 |
+| `{{or X Y …}}` | ≥ 2 |
+| `{{eq A B}}`, `{{ne A B}}` | 2 |
+
+where `X` is `.Path` (a `*prop.Property[bool]`) or a parenthesized subexpression, and `A` is `.Path` or a backtick literal. Nesting is allowed **only** through parentheses — `{{and .A (or .B .C)}}` — and a missing paren is a load error naming the trailing token, not a silent reinterpretation.
+
+Everything resolvable fails at **load**: arity, operand types, an unknown operator, a path that does not resolve or resolves to the wrong type. A backtick literal may contain `}`, `{{` or `}}`; an unterminated one names itself.
+
+The handle is a `prop.NewComputed`, so operand reads happen inside its evaluation and become dependencies — a conditional costs exactly what the equivalent hand-written computed costs, and repaints exactly its readers.
+
+**A conditional is one-way.** `Set` on a computed panics, so `Checked="{{not .X}}"` on a Checkbox loads, paints, and panics on the first click. This is inherited, not introduced — `Checked="{{.AnyComputedBool}}"` has always done the same — and the fix belongs in the two-way binders. Use conditionals on one-way attributes: `Visibility`, `IsEnabled`, and the like.
+
+Deliberately **excluded**: ordering (`lt`/`gt`/…), which is meaningless over bool and whose operand types stop being obvious from the name; `float64` in `eq`/`ne`, because exact float equality is a bug in almost every document that would write it; text output (`{{if}}`/`{{else}}` around markup), which would be a build-time tree transformation and a second answer to "what is my element vocabulary"; and bare-word operands, so that "read this property" has one spelling across all three grammars.
 
 There is consequently no escape for a literal `{{` in content; route it through a property, whose value is never re-parsed. Issue #227 tracks whether that needs a mechanism.
 
@@ -1122,7 +1162,9 @@ Styles: map[string]render.Style{
 }
 ```
 
-Be honest about what this is: a named lookup, not a styling system. There is no cascading, no inheritance, no per-property overrides in markup (except `Text Bold`), no selectors, and an unknown style name silently yields the zero style. It exists so markup files do not embed raw colors.
+Be honest about what this is: a named lookup, not a styling system. There is no cascading, no inheritance, no per-property overrides in markup (except `Text Bold`), and no selectors.
+
+An unknown style name is a **load error** — `no style named "typo" is registered` — not a silent zero style. If you are calling `styleValue`'s logic from your own `Builder`, use the exported `markup.ResolveStyle(e, ctx, "Style", name)` rather than indexing `ctx.Styles` directly; a bare map index yields the zero `Style` on a misspelled name, so the element loads, paints unstyled, and reports nothing. Going through `ResolveStyle` also gets your builder the markup-declared scopes below, which a document author already expects from every built-in.
 
 `Style` also accepts a **binding**, which is a different thing entirely:
 
@@ -1139,7 +1181,46 @@ accentStyle := prop.NewComputed(func() render.Style {
 })
 ```
 
-Setting `accent` dirties `accentStyle`, which dirties exactly the components that read it while painting, and they repaint. No styling system is involved — it is the ordinary property graph, and it is as close to theming as gooey currently gets. `cmd/colors` styles its border, title, and swatches this way from the color being edited. `Text Bold="true"` composes over either form.
+Setting `accent` dirties `accentStyle`, which dirties exactly the components that read it while painting, and they repaint. No styling system is involved — it is the ordinary property graph. `cmd/colors` styles its border, title, and swatches this way from the color being edited. `Text Bold="true"` composes over either form.
+
+## Resources: a palette a page can declare
+
+A palette was the one thing a designer edits and the one thing markup could not express. Every demo in this repo carried its colors as a Go `map[string]render.Style`, so changing a shade meant a rebuild, and `cmd/colors` carried `#12121e` in two languages with nothing checking they agreed.
+
+```xml
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Gooey.Resources>
+    <Resource Key="ground" Type="color" Value="#12121e"/>
+    <Style Key="accent" Fg="#ffaa3c" Bold="true"/>
+    <Style Key="panel">
+      <Setter Property="Fg" Resource="ground"/>
+    </Style>
+  </Gooey.Resources>
+  <Border Style="panel">…</Border>
+</Gooey>
+```
+
+`<Gooey.Resources>` is the root's only property element. `<Resource>` declares a typed value; `<Style>` declares a `render.Style` recipe, either as attributes or as `<Setter>` children that can themselves reference a `Resource` by key.
+
+Three properties, all inherited from how the rest of this page already works (see `docs/specs/2026-08-10-styles-and-resources.md`):
+
+- **A resource reference is an lvalue.** The key resolves once, at build, to a `*prop.Property[T]`. The read happens inside the style computed, which is read inside a paint node — so `Set` on a resource repaints exactly the components whose appearance depends on it. No dictionary walk at paint time, no invalidation pass, no styling machinery left running after build. `Context.Resource` hands the handle to Go code, which is what makes a theme swappable at runtime.
+
+- **A `<Style>` is a reactive recipe, not a property bag.** It materializes as one `prop.NewComputed[render.Style]` per instance, fed into the `Style` slot every component already has. Zero component changes.
+
+- **Scoping is lexical and resolved at build.** Entering an element with a `<X.Resources>` slot pushes a scope and leaving pops it, so siblings can never see a scope they are not inside, and an inner definition shadows an outer one by producing a different handle for whoever referenced it there. There are no priority numbers.
+
+### What wins
+
+`Context.Styles` — the host's Go map — is the **outermost** scope, below every markup-declared one, so a page-declared style beats a host-granted style of the same name. That is the same "nearest declaration wins" rule as everywhere else, with `ctx.Styles` simply furthest away.
+
+Two consequences make it the right way round. Migration works one key at a time: a page can move `accent` out of Go into its own `<Gooey.Resources>` and see it take effect without first deleting the Go entry. And the surprising direction is the other one — a host grant silently overriding a style declared three lines above the element using it would make the visible declaration the lie.
+
+A name found in **neither** the lexical chain nor `ctx.Styles` fails the load.
+
+### Control boundaries
+
+Values isolate; **resources are ambient**. A control's markup binds only what crossed its declared surface, but it inherits the theme of the site that instantiated it. A control file may declare its own `<Gooey.Resources>` to shadow that ambient chain for its subtree — with fresh handles per instantiation, so two instances of a control do not share resource state, exactly as two instances do not share declared-property defaults.
 
 ## Custom components
 
@@ -1173,6 +1254,32 @@ A builder resolves its own attributes through the same four functions the built-
 `markup.Bound[bool](e, ctx, "Checked")` is what makes `Checked="{{.Auto}}"` two-way: the builder gets the viewmodel's handle, so `Render` reading it is the repaint dependency and toggling `Set`s the same node.
 
 `Context.BindingValue` is the lower level underneath `Bound` and is still there for a builder that wants the raw `any`. Do not use it for text: it matches a `{{.Path}}` anywhere in the value and returns that handle, so `Label="Hi {{.Who}}!"` resolves to `Who` and silently drops the literal parts. `BoundText` is the rule that keeps them.
+
+### `Context.Elements`: declaring the surface
+
+A `Builder` is a func, and a func is opaque. An element registered through `Context.Components` therefore contributes **a name and nothing else**: `Catalog()` reports it as `AttrsKnown: false`, and — the half that costs you — attribute checking declines on it entirely, so a typo is accepted, ignored, and reported nowhere.
+
+`Context.Elements` takes the same `*markup.ElementDef` the built-ins use, so a host component gets the built-in experience: catalog description, `Required`/`GoType` a palette can seed from, and unknown-attribute errors with near-miss suggestions.
+
+```go
+Elements: map[string]*markup.ElementDef{
+    "ActivityBar": {
+        Name: "ActivityBar", Proto: &components.Image{}, Known: true,
+        Attrs: []markup.AttrSpec{{
+            Name: "Sel", Kind: markup.KindBinding, Binds: markup.BindsBinding,
+            GoType: "int", Required: true, Origin: markup.OriginRegistered,
+        }},
+        Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+        Build:    myBuilder,
+    },
+}
+```
+
+Resolution order is `Elements`, then `Components`, then the built-in registry, then the `Includes` convention. A name present in **both** maps is a load error rather than a silent winner — which one won would otherwise depend on the order two `if`s happen to be written in, and the loser's registration would be dead code nobody can see.
+
+A `Builder` registration is unchanged by any of this. The asymmetry is the point: declare, and you are checked.
+
+`ElementDef.Body` declares an element whose content is its XML **body** rather than an attribute, as `<Text>hello</Text>` is. Do not derive this from `Children.Mode` — "takes no children" and "takes body content" are different statements that merely coincide on `<Text>`, and fourteen built-ins are `ModeLeaf` while exactly one reads a body.
 
 ## UserControls
 

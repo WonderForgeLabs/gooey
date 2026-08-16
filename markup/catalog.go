@@ -182,6 +182,35 @@ type SlotSpec struct {
 	Doc      string
 }
 
+// BodySpec describes an element whose CONTENT is its XML body rather
+// than an attribute: <Text>hello</Text>, not <Text Content="hello"/>.
+//
+// This exists because the fact was previously stated only in prose.
+// defText's Doc said "The content is the element's body, not an
+// attribute" and nothing in the data said so, which left a consumer
+// two bad options. Keying on ChildSpec.Mode is the tempting one and it
+// is wrong: fourteen builtins are ModeLeaf and exactly one reads
+// e.Text, so a properties grid built that way offers a content row on
+// thirteen elements that discard it. The other option is a hardcoded
+// `name == "Text"`, which is the denylist this package keeps deleting.
+//
+// The fields mirror AttrSpec deliberately — a body is an attribute in
+// every respect except where it is written, so a consumer that already
+// renders an AttrSpec row can render this one with the same code. In
+// particular Binds is NOT decoration: <Text>'s body goes through
+// bindText, so {{.Title}} in the body is a live binding, and an editor
+// that assumed literal-only would silently downgrade it to text.
+//
+// Note for anyone rendering a body editor: the content is TRIMMED
+// (elements.go:91 calls strings.TrimSpace), so leading and trailing
+// whitespace cannot be expressed in markup at all.
+type BodySpec struct {
+	Kind   Kind
+	Binds  Binds
+	GoType string
+	Doc    string
+}
+
 // ChildSpec describes what may nest inside an element.
 type ChildSpec struct {
 	Mode ChildMode
@@ -217,7 +246,11 @@ type ElementSpec struct {
 	// this is not a []string. The first consumer of the catalog
 	// discovered that omission by generating markup that would not
 	// load.
-	Slots    []SlotSpec
+	Slots []SlotSpec
+	// Body is non-nil when the element's content is its XML body rather
+	// than an attribute. Nil means "no body content" — the common case,
+	// and NOT the same statement as Children.Mode == ModeLeaf.
+	Body     *BodySpec
 	Children ChildSpec
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.
@@ -437,16 +470,38 @@ func BuiltinElements() []ElementSpec {
 // that genuinely takes no attributes.
 func (ctx *Context) Catalog() []ElementSpec {
 	builtins := BuiltinElements()
-	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Components))
+	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
+	seen := make(map[string]bool, len(builtins))
+
+	// DECLARED HOST ELEMENTS FIRST, and the order is the whole
+	// correctness argument rather than a preference.
+	//
+	// buildComponent consults Context.Elements BEFORE the built-in
+	// registry, so a host declaration of a name gooey also defines is
+	// what actually builds. Adding builtins first and skipping the
+	// collision — which is what the Components loop below does — would
+	// leave the catalog describing an element the document will never
+	// get: right name, wrong attributes, wrong Go type. A palette
+	// reading that would offer attributes the real component rejects.
+	//
+	// The Components loop keeps its skip because it has nothing better
+	// to offer: an opaque builder's entry is a name and a disclaimer, so
+	// replacing a builtin's real vocabulary with it would lose
+	// information rather than correct it. That asymmetry is the point of
+	// declaring.
+	for name, d := range ctx.Elements {
+		seen[name] = true
+		out = append(out, d.specAs(OriginRegistered))
+	}
 	for _, e := range builtins {
+		if seen[e.Name] {
+			continue
+		}
 		if e.Open {
 			e.Attrs = ctx.openAttrs(e)
 		}
-		out = append(out, e)
-	}
-	seen := make(map[string]bool, len(out))
-	for _, e := range out {
 		seen[e.Name] = true
+		out = append(out, e)
 	}
 	for name := range ctx.Components {
 		if seen[name] {
