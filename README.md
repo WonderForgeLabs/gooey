@@ -204,9 +204,7 @@ and stopped with the app
 
 ## Demos
 
-Each has a walkthrough in [docs/demos.md](docs/demos.md) — bar
-`apps/gitui`, which so far is documented only by the header comment in
-its own `main.go`. Most live
+Each has a walkthrough in [docs/demos.md](docs/demos.md). Most live
 under `cmd/`; demos whose dependencies are quarantined in nested modules
 live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
 `paint/cmd/`, `apps/`) and run from that module's directory.

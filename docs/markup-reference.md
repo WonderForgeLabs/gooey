@@ -1172,7 +1172,7 @@ Components: map[string]markup.Builder{
 
 (from `cmd/markuplog`)
 
-The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. Letting a registered component declare its surface and have its attributes checked like a built-in's is [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290). A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it). It is the only resolver a third-party builder has: the built-ins' own `boundProp`/`literalOrBound` stay unexported, which is [#266](https://github.com/WonderForgeLabs/gooey/issues/266).
+The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. Letting a registered component declare its surface and have its attributes checked like a built-in's is proposed in [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290) (open). A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it). It is the only resolver a third-party builder has: the built-ins' own `boundProp`/`literalOrBound` stay unexported, which is [#266](https://github.com/WonderForgeLabs/gooey/issues/266).
 
 ## UserControls
 
