@@ -4,31 +4,39 @@ package main
 // browser can resolve demos against (source.go), enter switches to the
 // selection, esc puts everything back.
 //
-// It is built on the MenuBar overlay recipe, because that recipe is the
-// house answer to "modal list above the page":
+// The overlay MECHANICS are not here any more. components.Popup was
+// extracted from four hand-rolled copies of them, and this file was one
+// of the four — its doc comment says so by name. What the primitive now
+// owns, and this file no longer spells out:
 //
-//   - Document order is z-order, so the picker is the Grid's LAST child;
-//     its popup paints above both panes and the Composer's restore pass
-//     repaints whatever it covered when it closes.
-//   - The picker itself is a CONTAINER (never pre-clears) spanning the
-//     page, Collapsed while closed — which is what keeps it out of tab
-//     order (FocusManager.move skips Collapsed subtrees) and out of
-//     hit-testing (hitTest returns nil at a Collapsed node). The popup
-//     child is the LEAF, so its pre-clear paints exactly the box.
-//   - While open, keys are modal: the picker takes focus (it is in the
-//     focus order regardless of visibility — the walk asks AcceptsFocus,
-//     not Visibility) and swallows everything it does not handle, so `q`
-//     cannot quit the app under an open picker. The pointer is captured,
-//     MenuBar-style: clicks on rows choose, clicks outside dismiss, and
-//     the popup would otherwise be unreachable anyway — capture routes
-//     events that hit-testing never sees.
-//   - Dismissing restores focus to whatever had it at open.
+//   - the open property, and the SURFACE that carries its subscription.
+//     A Collapsed component is not paintable (layout.go:224), so a
+//     closed popup that collapses itself never runs its Render, never
+//     reads the open property, and the first Open schedules no frame.
+//     The old fix was to make an always-painted node read IsOpen — the
+//     `hint` computed in main.go still says so. The primitive's surface
+//     stays Visible and is arranged to a ZERO RECT instead, so its node
+//     evaluates from frame one and no external carrier is needed.
+//   - focus save/restore and pointer capture at open and dismiss;
+//   - the modal key grammar: esc dismisses, and everything this file's
+//     HandleKey declines is swallowed rather than bubbled, so `q` cannot
+//     quit the app under an open picker.
+//
+// What stays here is the part that is about SOURCES: the row model, the
+// scroll window, the box's own drawing, and the mouse grammar. The
+// picker keeps its own Visibility — Collapsed while closed — because
+// that is what keeps it out of tab order (FocusManager.move skips
+// Collapsed subtrees; SetFocus does not, which is how the primitive can
+// still focus it). It is bound to the popup's open state rather than
+// assigned, so a dismissal the primitive performs on its own — esc,
+// a press outside — collapses the picker in the same frame.
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -42,45 +50,55 @@ type sourcePicker struct {
 	// dismissed — the switch itself belongs to main, not the widget.
 	choose func(source)
 
-	mgr     *gooey.FocusManager
-	popup   *sourcePopup
-	kids    []gooey.Component
-	restore gooey.Component
+	pop  *components.Popup
+	kids []gooey.Component
 
-	openP *prop.Property[bool]
 	selP  *prop.Property[int]      // index into srcsP, never into rows
 	srcsP *prop.Property[[]source] // what the open popup lists
 	curID string                   // id() of the active source, for the ● marker
+	top   int                      // first visible row, kept so the selection stays in view
 }
 
 func newSourcePicker(choose func(source)) *sourcePicker {
 	p := &sourcePicker{
 		choose: choose,
-		openP:  prop.NewSource(false),
 		selP:   prop.NewSource(0),
 		srcsP:  prop.NewSource([]source(nil)),
 	}
-	p.popup = &sourcePopup{picker: p}
-	p.kids = []gooey.Component{p.popup}
-	p.LayoutProps().Visibility = gooey.Collapsed
+	p.pop = components.NewPopup(p, p.drawPopup)
+	p.pop.Modal = true // an open picker swallows what it does not understand
+	// Document order is z-order and the surface is the LAST (only) child,
+	// so the box paints above both panes; the Composer's restore pass
+	// repaints what it covered when it goes away.
+	p.kids = []gooey.Component{p.pop.Surface()}
+	p.LayoutProps().BindVisibilityFunc(func() gooey.Visibility {
+		if p.pop.IsOpen() {
+			return gooey.Visible
+		}
+		return gooey.Collapsed
+	})
 	return p
 }
 
 // SetFocusManager receives the input tree (gooey.FocusHost) — the seam
-// focus restore and pointer capture go through.
-func (p *sourcePicker) SetFocusManager(fm *gooey.FocusManager) { p.mgr = fm }
+// focus restore and pointer capture go through. It belongs to the popup.
+func (p *sourcePicker) SetFocusManager(fm *gooey.FocusManager) { p.pop.SetFocusManager(fm) }
 
 func (p *sourcePicker) ChildComponents() []gooey.Component { return p.kids }
 
 // HitTestTransparent: the picker spans the page invisibly; only its
-// popup child owns cells. Moot while open (capture routes everything
-// here), load-bearing the frame it is dismissed on.
+// surface owns cells. Moot while open (capture routes everything here),
+// load-bearing the frame it is dismissed on.
 func (p *sourcePicker) HitTestTransparent() bool { return true }
 
-func (p *sourcePicker) IsOpen() bool { return p.openP.Get() }
+func (p *sourcePicker) IsOpen() bool { return p.pop.IsOpen() }
 
 // Open shows the popup over srcs, with the active source (by id)
 // pre-selected and marked. Runs on the UI goroutine, from a command.
+//
+// The restore target is whatever holds focus right now — the demo list,
+// since `b` is a key binding. Popup's key-open convention (pass nil) is
+// for an owner that already had focus; this one does not.
 func (p *sourcePicker) Open(srcs []source, curID string) {
 	p.curID = curID
 	sel := 0
@@ -92,49 +110,28 @@ func (p *sourcePicker) Open(srcs []source, curID string) {
 	}
 	p.srcsP.Set(srcs)
 	p.selP.Set(sel)
-	p.openP.Set(true)
-	p.LayoutProps().Visibility = gooey.Visible
-	if p.mgr != nil {
-		p.restore = p.mgr.Focused()
-		p.mgr.SetFocus(p)
-		p.mgr.CaptureMouse(p)
+	var restore gooey.Component
+	if m := p.pop.Manager(); m != nil {
+		restore = m.Focused()
 	}
+	p.pop.Open(restore)
 }
 
 // Dismiss closes the popup, releases the pointer, and hands focus back.
-func (p *sourcePicker) Dismiss() {
-	if !p.IsOpen() {
-		return
-	}
-	p.openP.Set(false)
-	p.LayoutProps().Visibility = gooey.Collapsed
-	if p.mgr != nil {
-		if p.mgr.Captured() == gooey.Component(p) {
-			p.mgr.ReleaseCapture()
-		}
-		if p.restore != nil && p.mgr.Focused() == gooey.Component(p) {
-			p.mgr.SetFocus(p.restore)
-		}
-	}
-	p.restore = nil
-}
+func (p *sourcePicker) Dismiss() { p.pop.Dismiss() }
 
 func (p *sourcePicker) Measure(avail gooey.Size) gooey.Size { return avail }
 
-// Arrange centers the popup, sized to its rows and clamped to the page.
-// The open flag is read here in layout — a plain read, recorded nowhere.
+// Arrange centers the surface, sized to its rows and clamped to the
+// page. Reads here happen in layout, outside any evaluation, so they
+// record no dependencies — the surface's own Render carries those.
 func (p *sourcePicker) Arrange(r gooey.Rect) {
 	p.Base.Arrange(r)
-	l := p.popup.LayoutProps()
-	if !p.openP.Get() {
-		l.Visibility = gooey.Collapsed
-		gooey.ArrangeChild(p.popup, gooey.Rect{X: r.X, Y: r.Y, W: 0, H: 0})
+	if !p.pop.IsOpen() {
+		p.pop.ArrangeSurface(false, r)
 		return
 	}
-	l.Visibility = gooey.Visible
-	pr := p.popupRect(r)
-	gooey.MeasureChild(p.popup, gooey.Size{W: pr.W, H: pr.H})
-	gooey.ArrangeChild(p.popup, pr)
+	p.pop.ArrangeSurface(true, p.popupRect(r))
 }
 
 func (p *sourcePicker) popupRect(page gooey.Rect) gooey.Rect {
@@ -184,8 +181,9 @@ func (p *sourcePicker) activate() {
 	}
 }
 
-// HandleKey while open is modal: what it does not handle it swallows, so
-// the page's own gestures (q!) cannot fire under the popup.
+// HandleKey handles the picker's own gestures and hands everything else
+// to the popup, whose Modal flag swallows it — the page's `q` must not
+// fire under the box. Esc lands there too, and dismisses.
 func (p *sourcePicker) HandleKey(ev input.KeyEvent) bool {
 	if !p.IsOpen() {
 		return false
@@ -201,15 +199,23 @@ func (p *sourcePicker) HandleKey(ev input.KeyEvent) bool {
 		p.moveSel(+len(p.srcsP.Get()))
 	case input.Named(input.KeyEnter):
 		p.activate()
-	case input.Named(input.KeyEsc), input.Rune('b'), input.Rune('q'):
+	case input.Rune('b'), input.Rune('q'):
 		p.Dismiss()
+	default:
+		return p.pop.HandleKey(ev)
 	}
 	return true
 }
 
-// HandleMouse sees every pointer event while open (capture). Clicks on a
-// source row choose it; a click anywhere else dismisses without
-// activating what is underneath — the pointer never reaches it.
+// HandleMouse sees every pointer event while open (the popup took the
+// capture). Clicks on a source row choose it; a click anywhere else
+// dismisses without activating what is underneath — the pointer never
+// reaches it.
+//
+// This is deliberately NOT Popup.HandleMouse: the primitive's grammar
+// dismisses on PRESS, and a press-dismissed popup is closed by the time
+// the click arrives, so the residue would fall through to the pane
+// below. The click grammar this file has always had is kept.
 func (p *sourcePicker) HandleMouse(ev input.MouseEvent) bool {
 	if !p.IsOpen() {
 		return false
@@ -217,24 +223,19 @@ func (p *sourcePicker) HandleMouse(ev input.MouseEvent) bool {
 	switch ev.Kind {
 	case input.WheelUp:
 		p.moveSel(-1)
-		return true
 	case input.WheelDown:
 		p.moveSel(+1)
-		return true
-	case input.MousePress:
-		return true
 	case input.MouseClick:
-		if i, ok := p.popup.sourceAt(ev.X, ev.Y); ok {
+		if i, ok := p.sourceAt(ev.X, ev.Y); ok {
 			p.selP.Set(i)
 			p.activate()
 			return true
 		}
-		b := p.popup.Bounds()
+		b := p.pop.SurfaceBounds()
 		if ev.X >= b.X && ev.X < b.X+b.W && ev.Y >= b.Y && ev.Y < b.Y+b.H {
 			return true // popup furniture: border, header row
 		}
 		p.Dismiss()
-		return true
 	}
 	return true
 }
@@ -282,21 +283,10 @@ func sourceRows(ss []source) []sourceRow {
 	return out
 }
 
-// sourcePopup is the box: a leaf, so its paint node pre-clears exactly
-// the popup rectangle — that is what makes it an overlay rather than a
-// see-through frame over the panes below.
-type sourcePopup struct {
-	gooey.Base
-	picker *sourcePicker
-	top    int // first visible row, kept so the selection stays in view
-}
-
-func (pp *sourcePopup) Measure(avail gooey.Size) gooey.Size { return avail }
-
 // rowsWindow is which rows are visible: the popup keeps a scroll window
 // like the ItemsView's, small enough to hand-roll — sources are dozens,
 // not thousands.
-func (pp *sourcePopup) rowsWindow(rows []sourceRow, sel, h int) int {
+func (p *sourcePicker) rowsWindow(rows []sourceRow, sel, h int) int {
 	// Row index of the selected source.
 	selRow := 0
 	for i, r := range rows {
@@ -305,27 +295,21 @@ func (pp *sourcePopup) rowsWindow(rows []sourceRow, sel, h int) int {
 			break
 		}
 	}
-	top := pp.top
+	top := p.top
 	if selRow < top {
 		top = selRow
 	}
 	if selRow >= top+h {
 		top = selRow - h + 1
 	}
-	pp.top = clampIdx(top, max(1, len(rows)-h+1))
-	return pp.top
+	p.top = clampIdx(top, max(1, len(rows)-h+1))
+	return p.top
 }
 
-func (pp *sourcePopup) Render(f *gooey.Frame) {
-	// The open flag is read FIRST and unconditionally: a dependency is
-	// recorded by the Get that actually runs, and this node's
-	// subscription to openP is what turns a Dismiss into a scheduled
-	// frame (whose bounds sweep then collapses the popup and restores
-	// what it covered). The app-side half of the same guarantee is the
-	// hint computed reading IsOpen — see main.go — which covers the
-	// FIRST open, before this node has ever evaluated.
-	pp.picker.openP.Get()
-	b := pp.Bounds()
+// drawPopup paints the box. It runs inside the SURFACE's paint node, so
+// every property it reads is that node's dependency: moving the
+// selection repaints the popup and nothing else.
+func (p *sourcePicker) drawPopup(f *gooey.Frame, b gooey.Rect) {
 	if b.W < 2 || b.H < 2 {
 		return
 	}
@@ -344,15 +328,15 @@ func (pp *sourcePopup) Render(f *gooey.Frame) {
 	f.Cells.Set(b.X+b.W-1, b.Y+b.H-1, '╯', st)
 	f.Cells.SetString(b.X+2, b.Y, " sources ", accent)
 
-	srcs := pp.picker.srcsP.Get()
+	srcs := p.srcsP.Get()
 	rows := sourceRows(srcs)
 	if len(rows) == 0 {
 		f.Cells.SetString(b.X+2, b.Y+1, clip("no sources — not a git repository?", b.W-3), dim)
 		return
 	}
-	sel := clampIdx(pp.picker.selP.Get(), len(srcs))
+	sel := clampIdx(p.selP.Get(), len(srcs))
 	h := b.H - 2
-	top := pp.rowsWindow(rows, sel, h)
+	top := p.rowsWindow(rows, sel, h)
 	for y := 0; y < h && top+y < len(rows); y++ {
 		r := rows[top+y]
 		if r.src < 0 {
@@ -366,7 +350,7 @@ func (pp *sourcePopup) Render(f *gooey.Frame) {
 				f.Cells.Set(x, b.Y+1+y, ' ', st)
 			}
 		}
-		label := r.text(pp.picker.curID)
+		label := r.text(p.curID)
 		if r.s.Root == "" && !r.s.Ephemeral {
 			f.Cells.SetString(b.X+2, b.Y+1+y, clip(label, b.W-3), st)
 			continue
@@ -388,14 +372,14 @@ func (pp *sourcePopup) Render(f *gooey.Frame) {
 }
 
 // sourceAt maps a screen cell to a source index through the same window
-// Render painted — clicks land on what the user sees.
-func (pp *sourcePopup) sourceAt(x, y int) (int, bool) {
-	b := pp.Bounds()
+// drawPopup painted — clicks land on what the user sees.
+func (p *sourcePicker) sourceAt(x, y int) (int, bool) {
+	b := p.pop.SurfaceBounds()
 	if x <= b.X || x >= b.X+b.W-1 || y <= b.Y || y >= b.Y+b.H-1 {
 		return 0, false
 	}
-	rows := sourceRows(pp.picker.srcsP.Get())
-	i := pp.top + (y - b.Y - 1)
+	rows := sourceRows(p.srcsP.Get())
+	i := p.top + (y - b.Y - 1)
 	if i < 0 || i >= len(rows) || rows[i].src < 0 {
 		return 0, false
 	}

@@ -117,21 +117,19 @@ not a dependency and setting it reaches nobody at all.
 evaluated. Add a command that samples the graph:
 
 ```go
-painted := 0 // components repainted by the last frame — a plain Go var
-
 measure := func() {
 	report.Set(fmt.Sprintf(
 		"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d component(s)",
 		count.Get(), noisy.Get(), watch.Get(),
-		label.Evals(), watched.Evals(), painted))
+		label.Evals(), watched.Evals(), app.PaintedLastFrame()))
 }
 ```
 
-and have the loop record the damage count:
-
-```go
-_, painted = comp.Frame()
-```
+`app.PaintedLastFrame()` is the damage count of the frame just flushed —
+how many components repainted. It is an ordinary `int` on the App, not a
+property, so reading it here subscribes to nothing. (Driving the loop
+yourself instead of through `gooey.App`? `comp.Frame()` returns
+`(*Frame, int)` and that int is the same number.)
 
 Run it, press `n` three times to bump `noisy`, then `m` twice to measure:
 
@@ -184,8 +182,8 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
 > **The one thing to avoid.** Never `Set` a property that a component
 > painted from as part of producing every frame — the `Set` dirties the
 > component, which schedules another frame, which sets again. That is why
-> `painted` above is a plain `int` and not a property: the loop writes it
-> every frame, and a plain variable cannot dirty anything.
+> the damage count is a plain `int` on the App and not a property: it is
+> written every frame, and a plain field cannot dirty anything.
 
 ## What you learned
 

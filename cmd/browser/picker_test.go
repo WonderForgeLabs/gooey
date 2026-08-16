@@ -203,7 +203,7 @@ func TestPickerClickOnRowChooses(t *testing.T) {
 	picker.Open(pickerSources(), "/repo")
 	c.Frame()
 
-	b := picker.popup.Bounds()
+	b := picker.pop.SurfaceBounds()
 	// Rows inside the box: header, main, feat/wt, header, old-branch.
 	c.HandleMouse(input.MouseEvent{Kind: input.MouseClick, X: b.X + 2, Y: b.Y + 3})
 	if chosen.Name != "feat/wt" {

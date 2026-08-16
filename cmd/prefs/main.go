@@ -38,6 +38,8 @@ import (
 	"sync/atomic"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
+	strhandlers "github.com/WonderForgeLabs/gooey/handlers/str"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -113,27 +115,22 @@ func main() {
 		gooey.Exit(err)
 	}
 
+	// problem carries its own separator because the page can only
+	// concatenate: markup has no conditional, so "show this only when it
+	// is non-empty" has to be baked into the value.
 	problem := prop.NewSource("")
-	store.OnError(func(err error) { problem.Set(err.Error()) })
+	store.OnError(func(err error) { problem.Set("        ! " + err.Error()) })
 
 	// Everything below reads the setting handles the way it would read
-	// any other property. sourceLine is a computed over lastSource, so
-	// it repaints when — and only when — the setting changes.
-	sourceLine := prop.NewComputed(func() string {
-		if s := lastSource.Get(); s != "" {
-			return "last source:  " + s
-		}
-		return "last source:  (none yet)"
-	})
-	stats := prop.NewComputed(func() string {
-		return fmt.Sprintf("document:  %s        writes this run:  %d%s",
-			path, writes.Get(), func() string {
-				if p := problem.Get(); p != "" {
-					return "        ! " + p
-				}
-				return ""
-			}())
-	})
+	// any other property, and the page reads them directly: the source
+	// line is `last source:  {{str:Default .LastSource ...}}` in
+	// prefs.gooey, so its wording, its fallback and its spacing all
+	// hot-reload with the file.
+	//
+	// writesText exists only because an interpolation takes string
+	// handles: {{.Writes}} on a *prop.Property[int] is a load error, and
+	// there is no str:Int to convert one.
+	writesText := prop.NewComputed(func() string { return strconv.Itoa(writes.Get()) })
 
 	cycle := func() {
 		cur := lastSource.Get()
@@ -150,11 +147,14 @@ func main() {
 
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"SourceLine":    sourceLine,
 			"LastSource":    lastSource,
 			"KeepRecording": keepRecording,
 			"AutoRestart":   autoRestart,
-			"Stats":         stats,
+			// A plain string binds as well as a handle does: the document
+			// path never changes, so it needs no property.
+			"Path":          path,
+			"Writes":        writesText,
+			"Problem":       problem,
 			"Cycle":         gooey.Command(cycle),
 			"ToggleRecord":  gooey.Command(func() { keepRecording.Set(!keepRecording.Get()) }),
 			"ToggleRestart": gooey.Command(func() { autoRestart.Set(!autoRestart.Get()) }),
@@ -179,13 +179,13 @@ func main() {
 		},
 	}
 
-	dir := "cmd/prefs"
-	if _, err := os.Stat(filepath.Join(dir, "prefs.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
+	// The one line of Go behind `{{str:Default .LastSource `(none yet)`}}`.
+	// Registration IS the grant: the page may read the namespaces this
+	// host registered and no others, and an undeclared prefix fails the
+	// load rather than rendering blank.
+	markup.RegisterValues(strhandlers.URI, strhandlers.New())
 
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "prefs.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("prefs", "prefs.gooey"), "prefs.gooey", ctx))
 	// Start after the app exists: post is the store's only route back to
 	// the graph, and stop is what guarantees the last change is written.
 	stop = store.Start(app.Post)

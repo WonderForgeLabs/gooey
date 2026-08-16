@@ -1,0 +1,49 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- No Graphics= here, deliberately: this demo exists to show what the
+       TERMINAL can do, so detection has to run. A page built around
+       artwork that must be pixels wherever it runs says
+       <Gooey Graphics="sixel"> and main honours the page over the mode
+       flag. -->
+  <Border Title="gooey" Style="panel">
+    <VStack Gap="1">
+      <HStack Gap="2">
+        <!-- The shift keys move the picture by widening a spacer. Margin
+             is literal-only in markup, so the offset arrives as text. -->
+        <Text>{{.Pad}}</Text>
+
+        <!-- Cols is a computed (twice Rows: a cell is about half as wide
+             as it is tall), and Visibility binds a Visibility handle
+             rather than a bool — h hides the picture where it stands
+             instead of collapsing the row out from under it. -->
+        <Image Src="{{.Picture}}" Cols="{{.Cols}}" Rows="{{.Rows}}"
+               Visibility="{{.Shown}}"/>
+
+        <VStack>
+          <Text Style="accent">gooey — the pixel plane, damage-tracked</Text>
+          <Text/>
+          <Text Bold="true">{{.Mode}}</Text>
+          <Text/>
+          <Text Style="dim">space  new image      (replace)</Text>
+          <Text Style="dim">+ -    resize         (move)</Text>
+          <Text Style="dim">[ ]    shift          (move)</Text>
+          <Text Style="dim">h      hide / show    (remove)</Text>
+          <Text Style="dim">q      quit</Text>
+        </VStack>
+      </HStack>
+
+      <Text Style="dim">{{.Stats}}</Text>
+    </VStack>
+
+    <!-- The gestures hang off the ROOT because this page has no focus
+         stop: dispatch starts at the focused component or, failing that,
+         here, so a binding one level further in would never fire. -->
+    <KeyBinding Gesture="space" Command="{{.NewImage}}"/>
+    <KeyBinding Gesture="+"     Command="{{.Bigger}}"/>
+    <KeyBinding Gesture="="     Command="{{.Bigger}}"/>
+    <KeyBinding Gesture="-"     Command="{{.Smaller}}"/>
+    <KeyBinding Gesture="]"     Command="{{.ShiftRight}}"/>
+    <KeyBinding Gesture="["     Command="{{.ShiftLeft}}"/>
+    <KeyBinding Gesture="h"     Command="{{.ToggleImage}}"/>
+    <KeyBinding Gesture="q"     Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

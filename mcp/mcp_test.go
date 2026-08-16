@@ -562,18 +562,19 @@ func TestServeEnforcesOwnPort(t *testing.T) {
 	}
 }
 
-func TestServeRefusesNonLoopback(t *testing.T) {
+// TestServeUsesTheAddressItIsGiven pins that Serve binds what the caller
+// asked for and reports it back. There is no bind-address restriction:
+// the server has no authentication, so where it is reachable from is the
+// operator's decision, not this package's. The address here stays
+// loopback because a test has no business opening a port on every
+// interface, not because Serve would refuse anything else.
+func TestServeUsesTheAddressItIsGiven(t *testing.T) {
 	vm, values := newVM()
 	_ = vm
 	app := newTestApp(t, testMarkup, values)
-	for _, addr := range []string{"0.0.0.0:0", ":8080", "8.8.8.8:80"} {
-		if _, err := Serve(app, Options{Addr: addr}); err == nil {
-			t.Errorf("Serve(%q) succeeded; v1 has no auth, so non-loopback binds must be refused", addr)
-		}
-	}
 	srv, err := Serve(app, Options{Addr: "127.0.0.1:0", Context: app.ctx})
 	if err != nil {
-		t.Fatalf("Serve on loopback: %v", err)
+		t.Fatalf("Serve: %v", err)
 	}
 	defer srv.Close()
 	if !strings.HasPrefix(srv.URL(), "http://127.0.0.1:") {

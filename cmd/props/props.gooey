@@ -2,8 +2,8 @@
   <Border Title="gooey props" Style="panel">
     <VStack Gap="1">
       <Text Style="accent">lazy dependency-tracked properties</Text>
-      <Text>{{.CountLabel}}</Text>
-      <Text>{{.ModeLabel}}</Text>
+      <Text>count (ticks 1/s) : {{.Count}}</Text>
+      <Text>mode              : {{.Mode}}</Text>
       <Text Bold="true">{{.Detail}}</Text>
       <Text Style="dim">{{.Stats}}</Text>
       <Text Style="dim">a/b: bump sources   m: toggle watched   q: quit

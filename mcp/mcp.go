@@ -4,10 +4,16 @@
 // page's markup. The automation surface, the accessibility surface and
 // the live-edit surface are one protocol.
 //
-// It is opt-in and loopback-only:
+// It is opt-in, and it has no authentication:
 //
 //	srv, err := mcp.Serve(app, mcp.Options{Addr: "127.0.0.1:7777", Context: ctx})
 //	defer srv.Close()
+//
+// The default bind is loopback, and the address is whatever the caller
+// passes — the server does not restrict it. Because there is no
+// authentication, binding a non-loopback address publishes an
+// unauthenticated remote-control handle on the user's terminal to
+// everything that can reach it. That is the operator's call to make.
 //
 // # One path, one model
 //
@@ -80,9 +86,13 @@ type Host = control.Host
 
 // Options configure a server.
 type Options struct {
-	// Addr is the listen address. It must be loopback: an MCP client can
-	// do anything the keyboard can, and v1 has no authentication. Default
-	// "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	// Addr is the listen address, passed through to net.Listen as given.
+	// Default "127.0.0.1:0" (an ephemeral port; read it back from Addr).
+	//
+	// An MCP client can do anything the keyboard can, and this server has
+	// no authentication, so a non-loopback address exposes an
+	// unauthenticated control handle to every host that can reach it.
+	// Nothing here prevents that; it is the operator's choice.
 	Addr string
 	// Context is the markup binding context the app was built against.
 	// It supplies the Named element table, the bindable values, the
@@ -133,8 +143,8 @@ type Server struct {
 
 // New builds a server without listening. The zero-network path: tests
 // drive Handler directly, and a host that already owns an http.Server
-// can mount it wherever it likes — at which point the loopback guarantee
-// becomes that host's problem, which is why Serve is the documented way.
+// can mount it wherever it likes — and from then on, who can reach this
+// surface is that host's decision alone.
 func New(host Host, opts Options) (*Server, error) {
 	if host == nil {
 		return nil, fmt.Errorf("gooey/mcp: nil host")
@@ -155,9 +165,9 @@ func Serve(host Host, opts Options) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if err := checkLoopback(addr); err != nil {
-		return nil, err
-	}
+	// addr is used as given. This server has no authentication, so a
+	// non-loopback address exposes an unauthenticated control handle;
+	// that is the operator's choice, not something this package prevents.
 	s, err := New(host, opts)
 	if err != nil {
 		return nil, err
@@ -170,30 +180,6 @@ func Serve(host Host, opts Options) (*Server, error) {
 	s.http = &http.Server{Handler: s.Handler()}
 	go s.http.Serve(ln)
 	return s, nil
-}
-
-// checkLoopback refuses a non-loopback bind. This is the whole of v1's
-// security posture and it is deliberately a hard error rather than a
-// warning: there is no token auth yet, so a server reachable from the
-// network is a remote-control handle on the user's terminal. Remote binds
-// arrive with authentication or not at all.
-func checkLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("gooey/mcp: bad address %q: %w", addr, err)
-	}
-	switch host {
-	case "localhost", "":
-		if host == "" {
-			return fmt.Errorf("gooey/mcp: %q binds every interface; v1 is loopback-only (use 127.0.0.1:port)", addr)
-		}
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("gooey/mcp: %q is not a loopback address; v1 has no authentication, so remote binds are refused", addr)
-	}
-	return nil
 }
 
 // Addr is the address the server is listening on, empty if it was built
