@@ -228,9 +228,9 @@ surface falls out of that with no extra declaration. Names come from
 `Name=`, the bindable state IS the Context's `Values` map, and the
 commands the buttons already run are the commands an agent invokes.
 Nothing in the demo is written for the agent's benefit except the single
-`mcp.Serve` call — which is also the whole security posture: opt-in,
-loopback-only, no auth, and an MCP client can do anything the keyboard
-can.
+`mcp.Serve` call — which is also the whole security posture: opt-in, no
+auth, a bind address the host picks (loopback by default, unrestricted),
+and an MCP client can do anything the keyboard can.
 
 The walkthrough (every change in the GIF is a tool call from a script):
 `tree_snapshot` returns the component tree with names, `screen_text` the
@@ -346,7 +346,8 @@ Exercises the catalog as a public surface, `patch_markup` as an addressing schem
 A star button that runs Python written *after* the app started.
 
 > **This demo executes arbitrary supplied code, unsandboxed, on purpose.**
-> Everything binds loopback only and nothing is authenticated. Read
+> Nothing is authenticated, and every bind address is a flag that
+> defaults to loopback but is not restricted to it. Read
 > `apps/dynamic-activities/README.md` before running it.
 
 One companion process is both a Temporal worker and an MCP server, and

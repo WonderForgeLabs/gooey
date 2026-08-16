@@ -1,0 +1,53 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- sysmon's whole surface: layout, styling, the key gestures and the
+       sample clock. main.go is left holding /proc parsing, the viewmodel
+       properties those samples Set, and the one thing this file cannot
+       say (see <CoreGauges/> below). -->
+  <Border Title="sysmon — {{.Host}}" Style="panel">
+    <VStack>
+      <HStack Gap="3">
+        <VStack>
+          <!-- One Gauge per CPU core. The count is not known until
+               /proc/stat has been read, and markup has no repeater over a
+               plain stack, so this is a registered element whose Go
+               builder places the gauges. -->
+          <CoreGauges Values="{{.CorePct}}"/>
+          <Text></Text>
+          <Gauge Label="mem  " Value="{{.MemPct}}"/>
+          <Text Style="dim">{{.MemLabel}}</Text>
+        </VStack>
+        <VStack>
+          <Text Style="dim">total cpu</Text>
+          <Sparkline Values="{{.Hist}}" Height="4"/>
+          <Text></Text>
+          <Text Style="dim">{{.LoadAvg}}</Text>
+          <Text Style="dim">{{.Stats}}</Text>
+        </VStack>
+      </HStack>
+      <Text></Text>
+      <Text Style="accent">{{.TableTitle}}</Text>
+      <!-- The column header is bound rather than written literally: a
+           <Text> body is trimmed, and this one is right-aligned columns
+           that start with four spaces. -->
+      <Text Style="header">{{.TableHeader}}</Text>
+      <!-- Focusable="false" keeps this page focus-less on purpose: the
+           KeyBindings below hang on the page root, and dispatch reaches
+           the root for every key only while nothing is focused. -->
+      <ItemsView Items="{{.TableRows}}" Focusable="false">
+        <ItemsView.ItemTemplate>
+          <Text Style="{{.Style}}">{{.Row}}</Text>
+        </ItemsView.ItemTemplate>
+      </ItemsView>
+    </VStack>
+
+    <KeyBinding Gesture="c"      Command="{{.SortByCPU}}"/>
+    <KeyBinding Gesture="m"      Command="{{.SortByMem}}"/>
+    <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+
+    <!-- The sample clock, declared. It replaces a time.Ticker in a
+         hand-written select loop; the Composer starts and stops it with
+         the composition. -->
+    <Timer Interval="700ms" Tick="{{.Sample}}"/>
+  </Border>
+</Gooey>

@@ -186,9 +186,7 @@ make an implementation correct:
   still post after a signal-only stop; joining makes "after stop, no
   posts" true.
 
-`gooey.Every(post, d, fn)` packages both rules for exactly this shape — a
-ticker that posts `fn` every `d` until stopped, with the close-and-join
-handled once instead of hand-rolled per component. A wave collapses to:
+**You do not write either of them for a ticker.** `gooey.Every` owns both:
 
 ```go
 func (w *wave) Start(post func(func())) (stop func()) {
@@ -198,17 +196,25 @@ func (w *wave) Start(post func(func())) (stop func()) {
 }
 ```
 
-[`components/timer.go`](../../../components/timer.go) is the framework's
-own worked example: `Start` is `gooey.Every(post, t.Interval, t.fire)`, and
-`fire` reads `Enabled` at fire time, on the loop, so the graph can pause a
-ticker without tearing anything down.
+The func you pass runs on the UI loop, so it may `Get` and `Set` freely;
+nothing else in the closure may. A non-positive interval or a nil `fn`
+is a Startable **declining to start** — the returned stop is a no-op and
+no goroutine exists — rather than a panic out of `time.NewTicker`.
 
-For a one-shot delay per instance rather than a recurring tick — Tooltip's
-show-after-hover, Toast's dismiss-after — embed `gooey.Delays` and forward
-`Start` to it; see [`components/tooltip.go`](../../../components/tooltip.go).
-Reach for `gooey.Every`/`gooey.Delays` rather than hand-rolling
-`done`/`stopped` channels — a Startable that does its own channels is a
-claim that neither shape fits.
+For the shape a ticker cannot serve — an unbounded number of one-shot
+delays that must stop together, like a tooltip's show-after-hover or a
+toast's dismissal — embed a `gooey.Delays` and forward `Start` to it;
+`After(d, fn)` arms one, and the group's stop cancels every delay that
+has not fired and joins every one that has.
+
+Both live in [`startable.go`](../../../startable.go), and that file is
+where the contract is written down. Reaching for a hand-rolled
+`done`/`stopped` pair now says "neither shape fits mine" — which is a
+claim worth being sure of, because nothing in the framework checks it.
+[`components/timer.go`](../../../components/timer.go) is the framework's
+own worked example: `gooey.Every` plus an `Enabled` property read at
+fire time, on the loop, so the graph can pause a ticker without tearing
+anything down.
 
 ## The worked example
 
@@ -224,7 +230,8 @@ It demonstrates every section above at once: `Measure` states a want,
 `Render` paints only inside `Bounds()`, one `phase.Get()` is the entire
 damage declaration, `f.Depth()` picks a gradient on truecolor and one
 honest color elsewhere, untouched cells keep the panel's pre-cleared
-fill, and `Start` posts ticks to the loop and joins on stop.
+fill, and `Start` is one `gooey.Every` call that posts ticks to the loop
+and joins on stop.
 
 At full size, the same pattern is all over `cmd/`:
 `cmd/markuplog`'s **LogPane** (a scrollback pane as a registered markup

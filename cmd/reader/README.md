@@ -33,7 +33,13 @@ go run ./cmd/reader
   date to the template. Rows are windowed, so a 400-story feed builds only the
   rows on screen and changing one story repaints one row.
 - **`<KeyBinding>` bound to viewmodel commands**, declared in markup rather than
-  wired up in Go.
+  wired up in Go — including the four scoped to the add-feed field, which fire
+  only while focus is inside it and so beat the page's `q` and `esc`.
+- **The add-feed prompt is a `<TextBox>` with a `<Validate>` behavior.** It used
+  to be a keyboard mode in the run loop that read every key before the tree saw
+  it; it is now an ordinary focus stop, and the URL rules are declared beside it
+  (`Required`, `Url`, an http(s) `Pattern`) instead of being a `validURL` func.
+  The field turns red while what you have typed is not yet a feed URL.
 - **Async work marshalled back to the UI goroutine.** Feeds fetch over the
   network on their own goroutines and hand results back through a channel; the
   property graph is only ever touched on the main loop.

@@ -19,46 +19,45 @@
 // KeyBinding attachments are all built as Go literals here. cmd/markuplog
 // runs the same viewmodel with the tree authored in XML markup instead,
 // and the contrast between the two files is the point of having both.
+// Only the TREE differs between them — both run on gooey.App, because a
+// hand-written select loop is not the Go-composition flavor of anything.
+// So the viewmodel below is duplicated there on purpose — diffing it is
+// the lesson. The one thing NOT duplicated is the synthetic traffic:
+// cmd/internal/logdata has no framework content to compare.
 package main
 
 import (
+	"context"
 	"fmt"
-	"math/rand"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/logdata"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
-
-type line struct {
-	level, text string
-}
 
 func main() {
 	// --- viewmodel ---
-	lines := prop.NewSource([]line{})  // the firehose
-	frozen := prop.NewSource([]line{}) // snapshot taken on pause
+	lines := prop.NewSource([]logdata.Line{})  // the firehose
+	frozen := prop.NewSource([]logdata.Line{}) // snapshot taken on pause
 	follow := prop.NewSource(true)
 	filter := prop.NewSource("") // "", "ERROR", "WARN"
 	scroll := prop.NewSource(0)  // lines back from the tail; 0 = tailing
 
-	visible := prop.NewComputed(func() []line {
-		var src []line
+	visible := prop.NewComputed(func() []logdata.Line {
+		var src []logdata.Line
 		if follow.Get() {
 			src = lines.Get() // live: appends invalidate the scene
 		} else {
 			src = frozen.Get() // paused: appends are invisible here
 		}
 		if f := filter.Get(); f != "" {
-			kept := make([]line, 0, len(src))
+			kept := make([]logdata.Line, 0, len(src))
 			for _, l := range src {
-				if l.level == f {
+				if l.Level == f {
 					kept = append(kept, l)
 				}
 			}
@@ -81,7 +80,7 @@ func main() {
 
 	// --- commands: the same func() values a markup Click= or
 	// <KeyBinding Command=…> would resolve to, bound here by hand.
-	running := true
+	var app *gooey.App
 	togglePause := gooey.Command(func() {
 		if follow.Get() {
 			frozen.Set(lines.Get()) // snapshot, then switch branch
@@ -100,7 +99,7 @@ func main() {
 			filter.Set("")
 		}
 	})
-	quit := gooey.Command(func() { running = false })
+	quit := gooey.Command(func() { app.Quit() })
 
 	// --- retained tree, composed in Go ---
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
@@ -149,47 +148,37 @@ func main() {
 		root.Attach(kb)
 	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// --- the run loop is the framework's ---
+	//
+	// gooey.Tree is the Content for a tree built in Go and never
+	// replaced: the terminal, the decoder, the dispatcher, the frame
+	// scheduling and a teardown that joins the decoder all belong to App
+	// from here. cmd/markuplog — the markup flavor of this same
+	// viewmodel — gets the same loop from markup.Page, with the reload on
+	// top; the two files differ only where the point of the pairing is,
+	// in how the tree is authored.
+	app = gooey.NewApp(gooey.Tree(root))
 
-	needsFrame := true
-	comp := gooey.NewComposer(root, cols, rows)
-	comp.OnInvalidate(func() { needsFrame = true })
+	// The log generator is the app's own clock, not the tree's. A
+	// <Timer> component would be the other choice, and is the wrong one
+	// here for the same reason it is in markuplog: the firehose has to
+	// outlive any one composition. Every posts onto the UI goroutine, so
+	// the closure is ordinary UI code.
+	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), logdata.Next())) })
 
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
+	// Stats about the PREVIOUS frame, folded into the one about to
+	// happen — which is precisely what BeforeFrame is for. Setting a
+	// property from AfterFrame would schedule another frame and the app
+	// would never settle. App.Frames() has already counted this frame by
+	// the time hooks run, and PaintedLastFrame() is still the previous
+	// one's damage, so both numbers mean exactly what they did when this
+	// block lived inside the hand-rolled loop.
+	app.BeforeFrame(func() {
+		statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
+			logdata.Count(), app.Frames(), visible.Evals(), app.PaintedLastFrame()))
+	})
 
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-
-	gen := time.NewTicker(130 * time.Millisecond)
-	defer gen.Stop()
-	frames, lastPainted := 0, 0
-
-	for running {
-		if needsFrame {
-			frames++
-			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
-				lineCount, frames, visible.Evals(), lastPainted))
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case <-gen.C:
-			lines.Set(append(lines.Get(), nextLine()))
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
-	}
+	gooey.Exit(app.Run(context.Background()))
 }
 
 // paneTitle decorates the pane's name with ● while it holds focus.
@@ -217,10 +206,10 @@ var levelStyles = map[string]render.Style{
 
 // projectLine is the projection: the visual decisions the old Render
 // loop made per line, as row values a template binds.
-func projectLine(l line) map[string]any {
+func projectLine(l logdata.Line) map[string]any {
 	return map[string]any{
-		"Text":  fmt.Sprintf("%-5s %s", l.level, l.text),
-		"Style": levelStyles[l.level],
+		"Text":  fmt.Sprintf("%-5s %s", l.Level, l.Text),
+		"Style": levelStyles[l.Level],
 	}
 }
 
@@ -237,28 +226,3 @@ func lineTemplate(values map[string]any) (gooey.Component, error) {
 	}
 	return &components.Text{Content: text, Style: style}, nil
 }
-
-// --- synthetic but realistic traffic ---
-
-var lineCount int
-
-var services = []string{"api-gateway", "auth", "billing", "search", "notifier"}
-
-func nextLine() line {
-	lineCount++
-	ts := time.Now().Format("15:04:05.000")
-	svc := services[rand.Intn(len(services))]
-	switch r := rand.Float64(); {
-	case r < 0.08:
-		return line{"ERROR", fmt.Sprintf("%s %s: upstream timeout after %dms (attempt %d)", ts, svc, 800+rand.Intn(2200), 1+rand.Intn(3))}
-	case r < 0.20:
-		return line{"WARN", fmt.Sprintf("%s %s: retrying request, backoff %dms", ts, svc, 50<<rand.Intn(5))}
-	case r < 0.35:
-		return line{"DEBUG", fmt.Sprintf("%s %s: cache %s key=%s", ts, svc, pick("hit", "miss"), randKey())}
-	default:
-		return line{"INFO", fmt.Sprintf("%s %s: %s /v1/%s %d %dms", ts, svc, pick("GET", "POST"), pick("users", "orders", "events"), pick(200, 201, 204), 2+rand.Intn(120))}
-	}
-}
-
-func pick[T any](xs ...T) T { return xs[rand.Intn(len(xs))] }
-func randKey() string       { return strings.ToLower(fmt.Sprintf("%x", rand.Intn(1<<24))) }

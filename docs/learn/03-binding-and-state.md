@@ -121,12 +121,15 @@ measure := func() {
 	report.Set(fmt.Sprintf(
 		"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d component(s)",
 		count.Get(), noisy.Get(), watch.Get(),
-		// PaintedLastFrame is the damage count of the frame just flushed —
-		// an ordinary int on the App, not a property, so reading it here
-		// subscribes to nothing.
 		label.Evals(), watched.Evals(), app.PaintedLastFrame()))
 }
 ```
+
+`app.PaintedLastFrame()` is the damage count of the frame just flushed —
+how many components repainted. It is an ordinary `int` on the App, not a
+property, so reading it here subscribes to nothing. (Driving the loop
+yourself instead of through `gooey.App`? `comp.Frame()` returns
+`(*Frame, int)` and that int is the same number.)
 
 Run it, press `n` three times to bump `noisy`, then `m` twice to measure:
 
@@ -179,9 +182,8 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
 > **The one thing to avoid.** Never `Set` a property that a component
 > painted from as part of producing every frame — the `Set` dirties the
 > component, which schedules another frame, which sets again. That is why
-> `PaintedLastFrame()` above returns a plain `int` and not a property: the
-> App maintains it internally on every frame, and a plain field cannot
-> dirty anything.
+> the damage count is a plain `int` on the App and not a property: it is
+> written every frame, and a plain field cannot dirty anything.
 
 ## What you learned
 

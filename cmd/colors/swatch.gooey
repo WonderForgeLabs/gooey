@@ -1,0 +1,16 @@
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:x="wonderforge.io/gooey/x">
+  <!-- One card of the cascade, as a markup-only control: no code-behind,
+       no registration — <Swatch/> finds swatch.gooey through
+       Context.Includes by name.
+
+       Tint is a declared dependency property, so an instance that
+       forgets it, or misspells it, fails at LOAD rather than painting
+       nothing. Type="any" because the type table has no `style` row and
+       a render.Style handle has no markup literal; the handle passes
+       through unchecked, which is the escape hatch's whole job. -->
+  <x:Property Name="Tint" Type="any" Required="true"/>
+
+  <Text Style="{{.Tint}}">██████████
+██████████</Text>
+</Gooey>

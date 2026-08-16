@@ -1,11 +1,18 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <Grid Rows="*,*,Auto,Auto" Cols="1*,1*">
+  <Grid Rows="*,*,Auto,Auto,Auto,Auto" Cols="1*,1*">
     <Card Grid.Row="0" Grid.Col="0" Title="requests"  Value="{{.Reqs}}" Trend="{{.ReqsTrend}}" Caption="per second"/>
     <Card Grid.Row="0" Grid.Col="1" Title="latency"   Value="{{.Lat}}"  Trend="{{.LatTrend}}"  Caption="p99 ms"/>
     <Card Grid.Row="1" Grid.Col="0" Title="errors"    Value="{{.Errs}}" Trend="{{.ErrsTrend}}" Caption="last minute"/>
     <Card Grid.Row="1" Grid.Col="1" Title="goroutines" Value="{{.Gors}}" Trend="{{.GorsTrend}}" Caption="live"/>
     <Checkbox Grid.Row="2" Grid.ColSpan="2" Checked="{{.Ticking}}" Label="ticking — the Timer's Enabled binds to this property (space/click toggles)"/>
-    <Text Grid.Row="3" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, four instances, zero code-behind; its four properties are declared with &lt;x:Property&gt;, so these attributes are type-checked   (q: quit)</Text>
+    <!-- Split across three rows rather than one long line: Text
+         (components/text.go) is one row, clipped to width, with no
+         word-wrap, so a single line here silently truncated mid-word
+         past 84 columns. Each line below is measured to stay well
+         under a standard-width capture. -->
+    <Text Grid.Row="3" Grid.ColSpan="2" Style="dim">every panel is card.gooey — one markup-only control, zero code-behind</Text>
+    <Text Grid.Row="4" Grid.ColSpan="2" Style="dim">four properties declared with &lt;x:Property&gt; — these attributes are type-checked</Text>
+    <Text Grid.Row="5" Grid.ColSpan="2" Style="dim">(q: quit)</Text>
     <!-- The data stream is declared, not hand-rolled: the Composer
          starts this timer, its goroutine posts to the Dispatcher, and
          the tick runs on the UI loop like any other command. Enabled is
