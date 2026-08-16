@@ -25,8 +25,8 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -35,7 +35,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
@@ -79,7 +78,7 @@ func main() {
 
 	// --- commands: the same func() values a markup Click= or
 	// <KeyBinding Command=…> would resolve to, bound here by hand.
-	running := true
+	var app *gooey.App
 	togglePause := gooey.Command(func() {
 		if follow.Get() {
 			frozen.Set(lines.Get()) // snapshot, then switch branch
@@ -98,7 +97,7 @@ func main() {
 			filter.Set("")
 		}
 	})
-	quit := gooey.Command(func() { running = false })
+	quit := gooey.Command(func() { app.Quit() })
 
 	// --- retained tree, composed in Go ---
 	dim := render.Style{Fg: render.RGB(140, 140, 150)}
@@ -147,47 +146,36 @@ func main() {
 		root.Attach(kb)
 	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// --- the run loop is the framework's ---
+	//
+	// gooey.Tree is the Content for a tree built in Go and never
+	// replaced: the terminal, the decoder, the dispatcher, the frame
+	// scheduling and a teardown that joins the decoder all belong to App
+	// from here. cmd/markuplog — the markup flavor of this same
+	// viewmodel — has done it this way all along; the two files now
+	// differ only where the point of the pairing is, in how the tree is
+	// authored.
+	app = gooey.NewApp(gooey.Tree(root))
 
-	needsFrame := true
-	comp := gooey.NewComposer(root, cols, rows)
-	comp.OnInvalidate(func() { needsFrame = true })
+	// The log generator is the app's own clock, not the tree's. A
+	// <Timer> component would be the other choice, and is the wrong one
+	// here for the same reason it is in markuplog: the firehose has to
+	// outlive any one composition.
+	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), logdata.Next())) })
 
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-	screen.EnableMouse()
+	// Stats about the PREVIOUS frame, folded into the one about to
+	// happen — which is precisely what BeforeFrame is for. Setting a
+	// property from AfterFrame would schedule another frame and the app
+	// would never settle. App.Frames() has already counted this frame by
+	// the time hooks run, and PaintedLastFrame() is still the previous
+	// one's damage, so both numbers mean exactly what they did when this
+	// block lived inside the hand-rolled loop.
+	app.BeforeFrame(func() {
+		statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
+			logdata.Count(), app.Frames(), visible.Evals(), app.PaintedLastFrame()))
+	})
 
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-
-	gen := time.NewTicker(130 * time.Millisecond)
-	defer gen.Stop()
-	frames, lastPainted := 0, 0
-
-	for running {
-		if needsFrame {
-			frames++
-			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
-				logdata.Count(), frames, visible.Evals(), lastPainted))
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case <-gen.C:
-			lines.Set(append(lines.Get(), logdata.Next()))
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
-	}
+	gooey.Exit(app.Run(context.Background()))
 }
 
 // paneTitle decorates the pane's name with ● while it holds focus.
