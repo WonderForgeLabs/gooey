@@ -89,6 +89,38 @@ type dragState struct {
 
 func (d *dragState) active() bool { return d != nil && d.node != nil }
 
+// dragLive is active() plus the question active() cannot ask: is the
+// node still IN the document?
+//
+// A gesture is not the only thing happening while the button is down.
+// Keys and SGR mouse reports arrive interleaved on ONE ordered stream
+// (input/mouse.go), so a Delete binding fires perfectly well between a
+// press and its release — and deleteSelected unlinks the node without
+// knowing a drag is holding it. What survives is a dragState pointing at
+// a node the document no longer contains and a component no longer
+// mounted, which does not crash: Drag writes Left/Top to a detached
+// component and Release writes Canvas.Left onto an orphan that the next
+// rebuild does not serialise. The write is simply lost, silently, which
+// is the same silent-discard class the drag path exists to delete.
+//
+// Checked here rather than cleared in deleteSelected because the stale
+// pointer is the invariant, not the delete: retype and any future
+// mutator can unlink a node just as easily, and a rule enforced where it
+// is READ cannot be forgotten by the next writer.
+func (ed *editor) dragLive() bool {
+	if !ed.drag.active() {
+		return false
+	}
+	// parentOf is nil only for the surface, and the surface cannot be
+	// selected — so for any node a gesture could have started on, nil
+	// means it has left the tree.
+	if ed.parentOf(ed.drag.node) == nil {
+		ed.drag = dragState{}
+		return false
+	}
+	return true
+}
+
 // Press is preview.Designer. It selects what is under the pointer and,
 // where that element has free geometry, begins a drag.
 func (ed *editor) Press(x, y int) bool {
@@ -123,7 +155,7 @@ func (ed *editor) Click(x, y, count int) bool {
 
 // Drag is preview.Designer: one pointer report during a gesture.
 func (ed *editor) Drag(x, y int) bool {
-	if !ed.drag.active() {
+	if !ed.dragLive() {
 		return false
 	}
 	l := gooey.LayoutOf(ed.drag.comp)
@@ -229,7 +261,7 @@ func edgeDist(v, at, size int) int {
 // This is the ONLY thing in the drag path that writes markup, which is
 // what stops a save from racing a motion.
 func (ed *editor) Release(x, y int) bool {
-	if !ed.drag.active() {
+	if !ed.dragLive() {
 		return false
 	}
 	d := ed.drag

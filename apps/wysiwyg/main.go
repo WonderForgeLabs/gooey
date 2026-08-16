@@ -1760,7 +1760,19 @@ func (ed *editor) cycleValue(r attrRow) {
 			break
 		}
 	}
-	if next == "" {
+	// The same body route commitEdit takes, and for the same reason: the
+	// body is a FIELD, so "" clears it by assignment rather than by
+	// delete, and writing it into Attrs would put a "(text)" attribute
+	// into the markup that no element declares.
+	//
+	// Unreachable today — the body row is built without values, so
+	// cycle() returns nil and the caller never gets here — but nothing
+	// states that as a rule, and the row already carries the flag. A
+	// BodySpec with a finite value set would land the write in the wrong
+	// place with no error.
+	if r.body {
+		target.Body = next
+	} else if next == "" {
 		delete(target.Attrs, r.name)
 	} else {
 		target.Attrs[r.name] = next
