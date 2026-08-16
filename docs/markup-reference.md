@@ -1311,7 +1311,7 @@ Markup-declarable **attached** properties — a markup-only panel defining its o
 
 ```go
 stats, _ := markup.Find[*components.Text](ctx, "stats")
-stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d", lineCount, frames))
+stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d", logdata.Count(), frames))
 ```
 
 (from `cmd/markuplog`)
