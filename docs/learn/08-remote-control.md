@@ -86,7 +86,14 @@ Two things to notice before touching the wire:
   clause of that check — default-deny for anything claiming to be a
   browser, exact loopback hostname match, port pin — is load-bearing.
   gRPC needs no Origin machinery because browsers cannot speak it
-  natively.)
+  natively.
+
+  Read that guard for what it is, though: a request with **no**
+  `Origin` header is allowed through, because that is what a non-browser
+  client looks like. So it bounds what a *browser* can do and says
+  nothing about who can reach the address — `curl`, a script, or another
+  MCP client is unaffected by it. On an exposed bind, the guard is not
+  the thing standing between a stranger and your terminal; nothing is.)
 
 ## Step 2: Connect a client
 

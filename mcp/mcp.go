@@ -143,8 +143,8 @@ type Server struct {
 
 // New builds a server without listening. The zero-network path: tests
 // drive Handler directly, and a host that already owns an http.Server
-// can mount it wherever it likes — at which point where this surface is
-// reachable from is entirely that host's decision.
+// can mount it wherever it likes — and from then on, who can reach this
+// surface is that host's decision alone.
 func New(host Host, opts Options) (*Server, error) {
 	if host == nil {
 		return nil, fmt.Errorf("gooey/mcp: nil host")

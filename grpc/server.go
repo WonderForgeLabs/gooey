@@ -99,8 +99,8 @@ type Server struct {
 }
 
 // New builds a server without listening, for tests and for hosts that
-// own their listener — at which point where this surface is reachable
-// from is entirely that host's decision.
+// own their listener — and from then on, who can reach this surface is
+// that host's decision alone.
 func New(host Host, opts Options) (*Server, error) {
 	if host == nil {
 		return nil, fmt.Errorf("gooey/grpc: nil host")
