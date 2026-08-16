@@ -192,6 +192,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
+          lfs: true
           fetch-depth: 1
 
       # Mint a SECOND token, scoped to the plugin repo. `create-github-app-token`
@@ -225,6 +226,7 @@ jobs:
       - name: Check out project-ops helper scripts
         uses: actions/checkout@v7
         with:
+          lfs: true
           repository: ${{ github.repository_owner }}/project-ops
           ref: main
           path: .project-ops

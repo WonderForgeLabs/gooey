@@ -1,0 +1,175 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Northwind Ops.
+
+       Nothing in this file knows that a marketplace exists beyond the
+       toolbar button, and nothing in it knows any vendor's name.
+
+       The named elements below — Shell, Toolbar, OpsPane, StorePane,
+       Sheet — are the addresses that EXIST. They are not what a vendor
+       can reach: this comment used to say they were, and that was a
+       comment rather than a boundary, because control.Service resolved
+       every name against the whole binding context. The grant is now a
+       struct field on the server the host starts (main.go), a vendor
+       gets its own port carrying it, and what Chromatica can address is
+       Toolbar plus three values. Read main.go for the grant; this file
+       only says what there is to grant. -->
+  <Border Name="Shell" Title="northwind ops — production" Style="panel" Background="{{.Tint}}">
+    <Grid Rows="Auto,*,Auto" Margin="1,0">
+
+      <Text Grid.Row="0" Style="dim">six services · two regions degraded budget · signed in as elan@nullreference.io</Text>
+
+      <!-- ── the backdrop ──────────────────────────────────────────
+           Everything in here is inert while the purchase sheet is up.
+           <Modal> is a Go component (modal.go) because freezing is a Go
+           interface and deliberately NOT in the markup vocabulary: a
+           vendor can inject a sheet that looks modal and cannot make one
+           that is. Northwind ships Go, so Northwind can.
+
+           The inner Grid is not decoration. patch_markup can only
+           rewrite an element whose parent is a VStack, HStack, Grid,
+           Canvas, ButtonBar or Border — <Modal> is none of those, so
+           without it OpsPane and StorePane would stop being addressable
+           and two thirds of the vendor grant would quietly vanish. -->
+      <Modal Grid.Row="1">
+      <Grid Rows="*">
+
+      <!-- ── the app the user actually opened ───────────────────── -->
+      <Grid Name="OpsPane" Rows="Auto,*" Visibility="{{.ShowOps}}">
+        <HStack Grid.Row="0" Gap="2">
+          <Text Width="18" Style="head">service</Text>
+          <Text Width="12" Style="head">region</Text>
+          <Text Width="10" Style="head">state</Text>
+          <Text Width="6"  Style="head">load</Text>
+        </HStack>
+        <ItemsView Grid.Row="1" Items="{{.Services}}" Selected="{{.ServiceSel}}">
+          <ItemsView.ItemTemplate>
+            <HStack Gap="2">
+              <Text Width="18" Style="body">{{.Name}}</Text>
+              <Text Width="12" Style="dim">{{.Region}}</Text>
+              <Text Width="10" Style="{{.Style}}">{{.State}}</Text>
+              <Text Width="6"  Style="dim">{{.Load}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+      </Grid>
+
+      <!-- ── the marketplace ────────────────────────────────────── -->
+      <Grid Name="StorePane" Rows="Auto,Auto,*,Auto,Auto" Visibility="{{.ShowStore}}">
+        <Text Grid.Row="0" Style="head">integrations</Text>
+        <Text Grid.Row="1" Style="dim">third-party. not sold by northwind. each one can change this app.</Text>
+
+        <ItemsView Grid.Row="2" Items="{{.Items}}" Selected="{{.ItemSel}}" Activate="{{.Buy}}">
+          <ItemsView.ItemTemplate>
+            <HStack Gap="2">
+              <Text Width="20" Style="body">{{.Name}}</Text>
+              <Text Width="20" Style="vendor">{{.Vendor}}</Text>
+              <Text Width="11" Style="price">{{.Price}}</Text>
+              <Text Width="11" Style="{{.Style}}">{{.State}}</Text>
+              <Text Width="14" Style="dim">{{.Usage}}</Text>
+            </HStack>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+
+        <Text Grid.Row="3" Style="{{.ReceiptStyle}}" Visibility="{{.HasReceipt}}">{{.Receipt}}</Text>
+
+        <ButtonBar Grid.Row="4" Gap="2">
+          <Button Content="subscribe" Click="{{.Buy}}"/>
+          <Button Content="cancel plan" Click="{{.Cancel}}"/>
+          <Button Content="back" Click="{{.CloseStore}}"/>
+        </ButtonBar>
+      </Grid>
+
+      </Grid>
+      </Modal>
+
+      <!-- ── the purchase sheet: a dialog, not a pane ──────────────
+           HAlign/VAlign Center with no Width or Height is what makes it
+           a BOX: the Border measures its content and the layout sandwich
+           centres the result, so it grows by one line when a refusal
+           appears and shrinks again when the refusal clears. It used to
+           carry neither, and the default for both is Stretch — which is
+           why it filled the window.
+
+           Background is what lets the store list stay visible behind it.
+           A container with a declared background fills its bounds and is
+           marked covered, so the z-ordered pass repaints its subtree
+           above the pane underneath instead of letting the list show
+           through the dialog. -->
+      <Border Name="Sheet" Grid.Row="1"
+              Title="confirm subscription" Style="sheet"
+              HAlign="Center" VAlign="Center"
+              Background="{{.SheetBg}}"
+              Visibility="{{.ShowPurchase}}">
+        <!-- Every row Auto, and no star. A star row claims all the
+             height there is — Grid measures against the FULL available
+             box and only then arranges into tracks — so one `*` in here
+             was enough to make the dialog the size of the window no
+             matter what HAlign/VAlign said. A dialog measures its
+             content or it is not a dialog. -->
+        <Grid Rows="Auto,Auto,Auto,Auto,Auto,Auto" Cols="Auto" Margin="3,1">
+          <!-- Wrapped so the Image takes its preferred size. Dropped
+               straight into a Grid row it stretches to the whole track,
+               and a logo the width of the screen reads as a rendering
+               bug rather than a brand. -->
+          <HStack Grid.Row="0">
+            <Image Src="{{.Logo}}" Cols="18" Rows="6"/>
+          </HStack>
+          <Text  Grid.Row="1" Style="head">{{.BuyName}}</Text>
+          <Text  Grid.Row="2" Style="vendor">by {{.BuyVendor}}</Text>
+          <Text  Grid.Row="3" Style="dim">{{.BuyBlurb}}</Text>
+          <VStack Grid.Row="4" Gap="0">
+            <Text Style="price">{{.BuyPrice}} per month</Text>
+            <Text Style="dim">renews monthly until cancelled · charged to the card on file</Text>
+            <Text Style="dim">balance {{.Wallet}} · committed {{.Monthly}}/mo</Text>
+            <!-- The sheet's own receipt line. Without it a refusal raised
+                 HERE was written to the StorePane's receipt, which this
+                 sheet is covering — so clicking subscribe with an
+                 insufficient balance produced a correct refusal that
+                 nobody could see, and the button read as dead. A message
+                 belongs on the pane that owns the button that caused
+                 it. -->
+            <Text Style="{{.ReceiptStyle}}" Visibility="{{.HasReceipt}}">{{.Receipt}}</Text>
+          </VStack>
+          <ButtonBar Grid.Row="5" Gap="2">
+            <Button Content="subscribe" Click="{{.Subscribe}}"/>
+            <Button Content="not now" Click="{{.Dismiss}}"/>
+          </ButtonBar>
+        </Grid>
+      </Border>
+
+      <!-- ── the toolbar. bottom right, as asked. ─────────────────
+           Wrapped too: the integrations Button is a focus stop, and a
+           modal you can tab into the chrome of is not a modal. Toolbar's
+           own parent is still the HStack below it, so it stays
+           patchable. -->
+      <Modal Grid.Row="2">
+      <StatusBar>
+        <StatusBar.Left>
+          <Text Style="dim">northwind ops v4.2</Text>
+        </StatusBar.Left>
+        <StatusBar.Right>
+          <!-- The outer HStack is not decoration. patch_markup can only
+               rewrite an element whose parent is a VStack, HStack, Grid,
+               Canvas, ButtonBar or Border — a StatusBar slot is none of
+               those, so a Toolbar sitting directly in the slot is
+               unpatchable and a vendor gets a load error instead of a
+               product. One container is the difference between an
+               extension point and a wall. -->
+          <HStack>
+            <HStack Name="Toolbar" Gap="2">
+              <Text Style="dim">{{.Wallet}}</Text>
+              <Button Content="integrations" Click="{{.OpenStore}}"/>
+            </HStack>
+          </HStack>
+        </StatusBar.Right>
+      </StatusBar>
+      </Modal>
+
+    </Grid>
+
+    <Timer Interval="1s" Tick="{{.Tick}}"/>
+    <KeyBinding Gesture="i"      Command="{{.OpenStore}}"/>
+    <KeyBinding Gesture="esc"    Command="{{.CloseStore}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

@@ -200,47 +200,27 @@ and stopped with the app
 | Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Components read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | done | `<x:Property Name="Title" Type="string" Default="untitled"/>` on a control's root — declared markup properties are ordinary dependency properties, registered from markup. Bound attributes pass the parent's handle through type-checked, absent ones materialize a per-instance source with the default, `Required` is a load error. Declaring a surface makes the control strict. Types are a type-switch table (`string`/`int`/`bool`/`float`/`duration`/`color`/`any`), no reflection. No markup-declared *attached* properties; declared defaults reset on hot reload ([spec](docs/specs/2026-08-10-markup-declared-properties.md)) |
 | Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)); pipeline grammar v2 is [#38](https://github.com/WonderForgeLabs/gooey/issues/38) (retry/timeout [#43](https://github.com/WonderForgeLabs/gooey/issues/43), multiple targets [#42](https://github.com/WonderForgeLabs/gooey/issues/42), progress [#41](https://github.com/WonderForgeLabs/gooey/issues/41), error tail [#40](https://github.com/WonderForgeLabs/gooey/issues/40)) |
-| MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Protocol is the official `modelcontextprotocol/go-sdk`, isolated in the nested `mcp/` module so core's graph is unchanged. Opt-in, no auth, binds whatever address the host gives it (`127.0.0.1:0` by default); every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)). The remaining schema and client-observable-state gaps are the tool-surface epic [#205](https://github.com/WonderForgeLabs/gooey/issues/205) |
+| MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Protocol is the official `modelcontextprotocol/go-sdk`, isolated in the nested `mcp/` module so core's graph is unchanged. Loopback-only, opt-in, no auth; every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)). The remaining schema and client-observable-state gaps are the tool-surface epic [#205](https://github.com/WonderForgeLabs/gooey/issues/205) |
 
 ## Demos
-
-Each has a walkthrough in [docs/demos.md](docs/demos.md). Most live
-under `cmd/`; demos whose dependencies are quarantined in nested modules
-live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
-`paint/cmd/`, `apps/`) and run from that module's directory.
-
-| Demo | GIF | Proves |
-|---|---|---|
-| `cmd/probe` + `cmd/pixels` | [pixels.gif](docs/media/demos/pixels.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
-| `cmd/props` | [props.gif](docs/media/demos/props.gif) | Lazy property graph: unwatched sources render zero frames |
-| `cmd/logview` | [logview.gif](docs/media/demos/logview.gif) | Conditional dependency recording: pause drops the firehose out of the graph |
-| `cmd/markuplog` | [markuplog.gif](docs/media/demos/markuplog.gif) | Markup hot reload: live edits rebuild the tree, buffer intact |
-| `cmd/finder` | [finder.gif](docs/media/demos/finder.gif) | Input-to-derived-view pipeline with per-pane damage |
-| `cmd/reader` | [reader.gif](docs/media/demos/reader.gif) | Multi-UserControl composition, scoped input, live fetches |
-| `cmd/state` | [state.gif](docs/media/demos/state.gif) | No-code-behind markup and reactive serialization |
-| `cmd/cards` | [cards.gif](docs/media/demos/cards.gif) | Markup-declared `<x:Property>` surfaces: one markup-only control, four instances over four live data streams ([timerdemo.gif](docs/media/demos/timerdemo.gif) isolates its `<Timer>` element) |
-| `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](docs/media/demos/temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
-| `handlers/temporal/cmd/temporalops` | [temporalops.gif](docs/media/demos/temporalops.gif) | A live Temporal visibility dashboard: every Temporal call declared in markup, an `ItemsView` over real API responses, paging on real page tokens |
-| `handlers/temporal/cmd/wizardui` | [wizarddemo.gif](handlers/temporal/wizarddemo.gif) (earlier cut; final GIF: docs-and-demos workflow) | Workflow-served markup: every screen arrives as a workflow query payload, and the terminal contributes only the capability grant |
-| `cmd/colors` | [colors.gif](docs/media/demos/colors.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
-| `mcp/cmd/server` | [server.gif](docs/media/demos/server.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `apps/kanban` | — | A real Kanban board that is also an MCP server, with a live traffic log; its own `apps/kanban/worker` companion pushes generated markup into it over `swap_markup` |
-| `apps/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
-| `cmd/toolkit` | [toolkit.gif](docs/media/demos/toolkit.gif) | The UI toolkit — the kit's visual components, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer`. Not everything: `TypeAhead` has its own demo below, and `Companion` is non-visual |
-| `cmd/typeahead` | — | `<TypeAhead>` on a list whose rows are pictures: a behaviour attachment that sees keys before `ItemsView` does, and a jump that re-realizes a screenful of images |
-| `apps/wysiwyg` | — | A terminal UI builder that edits gooey markup: the component catalog's first real consumer, serving its own gRPC/MCP control plane while attached to another app's |
-| `apps/gitui` | — | A lazygit-lite over a real repository with not one git invocation in Go code — every command declared in markup through the `exec` pack |
-| `paint/cmd/plates` | [plates.gif](docs/media/demos/plates.gif) | Drawing declared in markup: pens, brushes and geometry as attributes, drawn through `paint/` (the nested `fogleman/gg` bridge) with no plate list in Go |
-| `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
-| `cmd/prefs` | — | External state as properties: three settings bound straight into markup, persisted through a host-supplied provider, with the run's disk-write count on screen |
-
-The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
-are runnable too, and `cmd/browser` lists the demos, the learn examples,
-and the apps:
 
 ```sh
 go run ./cmd/browser
 ```
+
+That is the list. `cmd/browser` scans `cmd/`, `apps/`,
+`handlers/temporal/cmd/`, `mcp/cmd/` and `docs/learn/examples/`, so it shows
+what is *there* — including the run command for each, which differs by where
+the program lives (a nested module cannot be `go run` from the repo root).
+[docs/demos.md](docs/demos.md) has the walkthroughs, and each demo's own
+source is commented with what it exists to prove.
+
+A table of them used to live here, and it is gone on purpose. It was
+hand-maintained, so it drifted the moment anyone added a program — it was
+missing seven apps by the time it was removed — and a stale list is worse
+than no list, because it reads as complete. Same rule as the module
+discovery in [CLAUDE.md](CLAUDE.md) and the generated block in
+`.gitignore`: derive it, or don't write it down.
 
 ## Documentation
 

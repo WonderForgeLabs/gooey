@@ -9,8 +9,8 @@ import (
 
 // Cover art is GENERATED, not loaded. Two reasons, both deliberate:
 //
-//   - the root module has exactly two direct requirements and no binary
-//     assets belong in it, so forty JPEGs were never an option;
+//   - no binary assets belong in the root module, so forty JPEGs were
+//     never an option;
 //   - a picture derived from the title is deterministic, which is what
 //     lets a test say "this row is showing the art for `Halcyon`" without
 //     comparing pixels to a golden file.

@@ -1,0 +1,8 @@
+# The other half of the era: programs that did exactly one thing to a
+# stream of text, and were small enough that anyone could have written
+# them. Both of these ARE written — neither is installed on this
+# machine — which is the point rather than a workaround.
+1.5  ./era/banner gooey\n
+3.5  ./era/cowsay "a terminal is a rectangle that text moves through"\n
+4.0  ./era/banner ok | ./era/cowsay\n
+4.0  clear\n

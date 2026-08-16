@@ -1,8 +1,10 @@
 # Demo Catalog
 
-Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but demos whose dependencies are quarantined in nested modules live with their module: `temporaldemo`, `temporalops` and `wizardui` under `handlers/temporal/cmd/`, `server` under `mcp/cmd/`, `plates` under `paint/cmd/`, and `kanban`, `gitui`, `wysiwyg` and `dynamic-activities` under `apps/`. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
+Each demo exercises one slice of the framework; most are recorded as a GIF under `docs/media/demos/`. Most live under `cmd/`, but a demo whose dependencies are quarantined in a nested module lives with that module — under `handlers/temporal/cmd/`, `mcp/cmd/`, `paint/cmd/` or `apps/` — and runs from there, because `go run ./<dir>` cannot cross a module boundary. Note: there is no `cmd/markupdemo` — the markup demo is `cmd/markuplog`.
 
-`cmd/browser` launches the demos under `cmd/`, and also lists the smaller finished examples from the tutorials under `docs/learn/examples/` as a second group — those two groups are all it indexes, so the nested-module demos above do not appear in it. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
+`cmd/browser` is the list. It scans `cmd/`, `handlers/temporal/cmd/`, `mcp/cmd/`, `apps/` and `docs/learn/examples/` — one level deep, requiring a `main.go`, so an app's own subdirectory (kanban's Python `worker/` companion, say) is never an entry in its own right; it belongs to the app that owns it. `paint/cmd/` is **not** among its roots, so `plates` is the one demo the browser will not launch for you. Which tutorial teaches the ideas behind each demo is tabulated in [learn/index.md](learn/index.md#demo-catalog).
+
+The names of the nested-module demos are deliberately not listed here. They were, and the list was wrong within a release — enumerating what a program already discovers buys nothing and goes stale silently.
 
 ```sh
 go run ./cmd/browser

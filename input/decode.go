@@ -31,9 +31,27 @@ func Decode(b []byte, idle bool) (Event, int, bool) {
 	case c == 0x7f || c == 0x08:
 		return KeyOf(Named(KeyBackspace)), 1, true
 	case c < 0x20:
-		// Control bytes are ctrl+letter (0x01 = ctrl+a). Tab, enter and
-		// backspace are handled above as the named keys people mean.
-		return KeyOf(KeyEvent{Key: KeyRune, Rune: rune('a' + c - 1), Mods: ModCtrl}), 1, true
+		// A control byte is its key with bit 6 cleared — `key & 0x1f` —
+		// so the inverse is `c | 0x40`, NOT `'a' + c - 1`.
+		//
+		// The two agree across 0x01–0x1a, which is ctrl+a through ctrl+z
+		// and covers everything anyone had bound. They diverge on the
+		// five bytes above that range, and the old formula ran off the
+		// end of the alphabet into punctuation: ctrl+] (0x1d) arrived as
+		// ctrl+} , ctrl+\ as ctrl+| , ctrl+_ as ctrl+DEL, and ctrl+space
+		// as ctrl+backtick. A binding on any of them silently never
+		// fired — the key was decoded, dispatched, and matched nothing.
+		//
+		// Tab, enter, escape and backspace are handled above as the named
+		// keys people mean, so they never reach here.
+		r := rune(c | 0x40)
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A' // ctrl+a, not ctrl+A: the shift is not real
+		}
+		if c == 0 {
+			r = ' ' // ctrl+space and ctrl+@ are the same byte; space is what people press
+		}
+		return KeyOf(KeyEvent{Key: KeyRune, Rune: r, Mods: ModCtrl}), 1, true
 	case c < 0x80:
 		return KeyOf(Rune(rune(c))), 1, true
 	default:
