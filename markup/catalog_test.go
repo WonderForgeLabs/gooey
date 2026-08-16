@@ -89,8 +89,8 @@ func TestCatalogKnowsTheElementsItMustKnow(t *testing.T) {
 		{"Button", "Click", KindCommand, BindsEither},      // ctx.Command
 		{"Button", "Content", KindText, BindsEither},       // bindText
 		{"Button", "Chrome", KindEnum, BindsLiteral},       // ParseX + names slice
-		{"Checkbox", "Checked", KindBinding, BindsBinding}, // boundProp[T]
-		{"Canvas", "Background", KindColor, BindsEither},   // bindColor
+		{"Checkbox", "Checked", KindBinding, BindsBinding}, // Bound[T]
+		{"Canvas", "Background", KindColor, BindsEither},   // BoundColor
 		{"Grid", "Rows", KindGridLens, BindsLiteral},       // ParseGridLens
 		{"Timer", "Interval", KindDuration, BindsLiteral},  // ParseDuration
 		{"KeyBinding", "Gesture", KindGesture, BindsLiteral},

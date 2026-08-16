@@ -35,7 +35,7 @@ import (
 // interfaces. They are deliberately not fields: a hand-written
 // `NonVisual: true` is a second copy of a fact the type already carries,
 // and the second copy is the one that goes stale. A type assertion is
-// not reflection — it is the same mechanism boundProp and every markup
+// not reflection — it is the same mechanism Bound and every markup
 // type-switch already use.
 type ElementDef struct {
 	// Name is the element name as written in markup.
@@ -60,6 +60,11 @@ type ElementDef struct {
 
 	// Children is what may nest inside.
 	Children ChildSpec
+
+	// Body declares that this element's content is its XML BODY rather
+	// than an attribute — see BodySpec. Nil for everything that reads
+	// its content from e.Attrs, which is all but one builtin.
+	Body *BodySpec
 
 	// Open marks an element whose attribute set is EXTENDED at runtime
 	// from the Context — <Validate>, whose vocabulary is its builtin
@@ -120,17 +125,39 @@ func (d *ElementDef) axes() (nonVisual, focusable, attaches, hasLayout bool) {
 }
 
 // spec renders the declaration as the catalog entry consumers read.
-func (d *ElementDef) spec() ElementSpec {
+func (d *ElementDef) spec() ElementSpec { return d.specAs(OriginBuiltin) }
+
+// specAs is spec with the provenance supplied by the caller, because the
+// SAME declaration means different things depending on who registered
+// it. A definition in this package's registry is builtin; the identical
+// struct handed to Context.Elements by a host app is registered, and a
+// palette that showed it as builtin would be claiming this build of
+// gooey compiled it in.
+//
+// Origin is provenance only — a consumer deciding whether Attrs is
+// trustworthy must read AttrsKnown, which is d.Known either way. That is
+// the whole point of the seam: a registered element with a declaration
+// is exactly as knowable as a builtin one.
+func (d *ElementDef) specAs(origin Origin) ElementSpec {
 	nonVisual, focusable, attaches, hasLayout := d.axes()
+	// Copied for the same reason Attrs and Slots are: a spec is handed
+	// out, and a caller must not be able to reach back through it and
+	// edit the registry's own definition.
+	var body *BodySpec
+	if d.Body != nil {
+		b := *d.Body
+		body = &b
+	}
 	return ElementSpec{
 		Name:       d.Name,
-		Origin:     OriginBuiltin,
+		Origin:     origin,
 		Go:         goTypeOf(d.Proto),
 		AttrsKnown: d.Known,
 		Opaque:     d.Opaque,
 		Open:       d.Open,
 		Attrs:      append([]AttrSpec(nil), d.Attrs...),
 		Slots:      append([]SlotSpec(nil), d.Slots...),
+		Body:       body,
 		Children:   d.Children,
 		NonVisual:  nonVisual,
 		Focusable:  focusable,

@@ -57,6 +57,9 @@ func parseHandlerExpr(attr string) (*handlerExpr, error) {
 		if t.kind == tokBare {
 			return nil, fmt.Errorf("markup: {{%s:%s …}}: bare word %q — arguments are .Paths or `literals`", x.Prefix, x.Fn, t.text)
 		}
+		if t.kind == tokLParen || t.kind == tokRParen {
+			return nil, fmt.Errorf("markup: {{%s:%s …}}: %q — parentheses group CONDITIONAL subexpressions; handler arguments are .Paths or `literals`", x.Prefix, x.Fn, t.text)
+		}
 		x.Args = append(x.Args, t)
 	}
 
@@ -95,8 +98,10 @@ type tokenKind uint8
 const (
 	tokPath    tokenKind = iota // .Some.Path — text excludes the dot
 	tokLiteral                  // `quoted` — text is the contents
-	tokBare                     // an unquoted word (a stage name, or a mistake)
+	tokBare                     // an unquoted word (a stage name, an operator, or a mistake)
 	tokPipe                     // |
+	tokLParen                   // ( — grouping, meaningful only in cond.go
+	tokRParen                   // )
 )
 
 type token struct {
@@ -112,6 +117,10 @@ func (t token) describe() string {
 		return "literal `" + t.text + "`"
 	case tokPipe:
 		return "|"
+	case tokLParen:
+		return "("
+	case tokRParen:
+		return ")"
 	}
 	return "word " + t.text
 }
@@ -120,6 +129,12 @@ func (t token) describe() string {
 // verbatim (no escapes — a literal cannot contain a backtick), which is
 // why they are the quoting form: XML attributes already spend both
 // quote characters.
+//
+// One lexer serves BOTH expression grammars — the handler form above and
+// the conditional form in cond.go — so `(`, which only cond.go gives a
+// meaning to, is still tokenized here rather than swallowed into a bare
+// word. The handler parser rejects a paren by name; before this it
+// rejected `(x)` as the bare word "(x)", which named the wrong mistake.
 func lex(s string) ([]token, error) {
 	var toks []token
 	r := []rune(s)
@@ -129,6 +144,12 @@ func lex(s string) ([]token, error) {
 			i++
 		case c == '|':
 			toks = append(toks, token{kind: tokPipe, text: "|"})
+			i++
+		case c == '(':
+			toks = append(toks, token{kind: tokLParen, text: "("})
+			i++
+		case c == ')':
+			toks = append(toks, token{kind: tokRParen, text: ")"})
 			i++
 		case c == '`':
 			j := i + 1
@@ -144,6 +165,16 @@ func lex(s string) ([]token, error) {
 			j := i
 			for j < len(r) && !isSep(r[j]) {
 				j++
+			}
+			if j == i {
+				// isSep says this rune ends a word, but no case above
+				// consumed it — the two lists have drifted apart. The
+				// word loop then matches nothing, i never advances, and
+				// lex SPINS: a markup file that hangs the load with no
+				// output, which is how this was found (removing the
+				// paren cases while leaving them in isSep). Turning the
+				// hang into a load error costs one comparison.
+				return nil, fmt.Errorf("lexer has no rule for %q — isSep and the switch above have drifted", string(r[i]))
 			}
 			word := string(r[i:j])
 			if strings.HasPrefix(word, ".") {
@@ -162,5 +193,6 @@ func lex(s string) ([]token, error) {
 }
 
 func isSep(c rune) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '|' || c == '`'
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '|' || c == '`' ||
+		c == '(' || c == ')'
 }

@@ -2,6 +2,7 @@ package markup
 
 import (
 	"fmt"
+	"image"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,7 +47,27 @@ import (
 //
 // The type table is a plain type-switch (below), not reflection: `Type`
 // selects a closure that knows its own T, and `any` is the escape hatch
-// for app types that have no markup literal.
+// for app types the framework has never heard of.
+//
+// Bindability and literal-spellability are SEPARATE axes, and the table
+// says so. Most rows have both: a color is `#08f` in an attribute and a
+// *prop.Property[render.Color] through a binding. Three do not —
+// `style`, `image` and `series` are BIND-ONLY, declarable and
+// type-checked but with no attribute spelling, because their literal
+// would have to be resolved against something the declaration parser
+// cannot see (a style NAME against the page's Context.Styles, an image
+// PATH against the page's fs.FS) or does not exist at all. A bind-only
+// row is still a full row: an absent optional attribute materializes
+// the type's zero handle, a bound one is type-checked, and a literal or
+// a Default is a load error that says to bind instead.
+//
+// That distinction is the whole point of the three rows. Before them,
+// every control taking something more interesting than a scalar had to
+// declare Type="any", which accepts anything and checks nothing — so
+// <Card Trend="{{.Title}}"/> loaded clean and failed one level down
+// inside <Sparkline Values>, naming an element the page's author never
+// wrote. `any` is now for genuine app types ([]*Feed, map[string]bool),
+// not for every handle the table happened to lack.
 
 // XNamespace is gooey's language-services namespace — the XAML `x:`
 // analog. A document declaring xmlns:x="wonderforge.io/gooey/x" may use
@@ -81,11 +102,17 @@ type propKind struct {
 	check func(v any) bool
 	// want names the handle type check wants, for the error message.
 	want string
+	// bindOnly marks a type with no attribute spelling: it crosses a
+	// control boundary as a handle or not at all. source still makes the
+	// zero-valued handle for an absent optional attribute — that is the
+	// three-way rule, unchanged — but a literal at the instantiation
+	// site and a Default on the declaration are both load errors.
+	bindOnly bool
 }
 
 // kindOf builds a type-table row for T. T is a compile-time parameter,
 // so the resulting closures do their work with a type assertion and a
-// typed constructor — the same "no reflection" discipline boundProp
+// typed constructor — the same "no reflection" discipline Bound
 // uses for builtin attributes.
 func kindOf[T any](parse func(string) (T, error)) propKind {
 	var want *prop.Property[T]
@@ -106,8 +133,35 @@ func kindOf[T any](parse func(string) (T, error)) propKind {
 	}
 }
 
-// propKinds is the whole type system of markup declarations. Adding a
-// type is adding a row; there is nowhere else to touch.
+// bindKindOf builds a BIND-ONLY row for T: a type markup can declare
+// and type-check but cannot spell in an attribute.
+//
+// The parse closure is a backstop, not a path. Every caller checks
+// bindOnly first and produces an error naming the element, so this one
+// only fires if a future caller forgets — in which case it fails loudly
+// rather than materializing a silent zero value, which is the failure
+// mode this whole row type exists to remove.
+func bindKindOf[T any](typeName string) propKind {
+	k := kindOf(func(string) (T, error) {
+		var zero T
+		return zero, fmt.Errorf("%s has no literal syntax; bind a handle", typeName)
+	})
+	k.bindOnly = true
+	return k
+}
+
+// propKinds is the whole type system of markup declarations, and adding
+// a type is adding a row.
+//
+// It used to say "there is nowhere else to touch", which is true of the
+// LOADER and false at the boundary. Two other tables are keyed by these
+// same spellings and do not derive from this map: control.KindOf
+// (control/value.go) mirrors the rows onto the wire, whose own doc calls
+// the lockstep rule out; and declKind (catalog.go) maps a declared Type
+// onto a catalog Kind for the component catalog. A new row is invisible
+// to both until they gain a case — the failure is silent and cosmetic
+// (a declared property described as the wrong kind), never a bad load,
+// which is exactly why it is easy to miss.
 var propKinds = map[string]propKind{
 	"string":   kindOf(func(s string) (string, error) { return s, nil }),
 	"int":      kindOf(strconv.Atoi),
@@ -116,9 +170,43 @@ var propKinds = map[string]propKind{
 	"duration": kindOf(time.ParseDuration),
 	"color":    kindOf(parseHexColor),
 
-	// `any` is the escape hatch for app types with no markup literal: a
-	// bound attribute passes through whatever handle the parent holds,
-	// unchecked, exactly as an untyped Include attribute does today.
+	// A style crosses as the viewmodel's own *prop.Property[render.Style]
+	// — the handle that makes a style REACTIVE. Bind-only because the
+	// literal for a style is a NAME resolved against Context.Styles, and
+	// the declaration parser has no context: Declarations() is a pure
+	// function of bytes (it doubles as the wire schema), so a
+	// Default="panel" could not be checked when the CONTROL loads, only
+	// on whichever page happened to omit the attribute. Half a literal
+	// is worse than none, and passing the handle loses nothing: today's
+	// Type="any" + Tint="accent" already fails one level down, because
+	// the inner <Text Style="{{.Tint}}"> wants the same handle.
+	"style": bindKindOf[render.Style]("style"),
+
+	// No way to write a picture inline, and a path literal would be
+	// resolved against the instantiating page's fs.FS — the same
+	// context the declaration parser does not have. <Image Src="logo.png">
+	// keeps that spelling because it IS the page. control.KindImage has
+	// said all of this since before there was a row for it.
+	"image": bindKindOf[image.Image]("image"),
+
+	// A series is what a Sparkline plots. Bind-only follows the element
+	// vocabulary rather than inventing a spelling: <Sparkline Values> is
+	// declared BindsBinding/GoType "[]float64" (elements.go), so a
+	// comma-list here would let a declared property accept text the very
+	// component it feeds refuses. A literal would buy the empty-state
+	// default and the zero handle already is one — an absent optional
+	// series is a nil slice, which plots as nothing.
+	//
+	// Spelled "series", not the MCP tool surface's "number[]": that
+	// vocabulary is deliberately JSON's, this one is markup's.
+	"series": bindKindOf[[]float64]("series"),
+
+	// `any` is the escape hatch for app types the framework has never
+	// heard of: a bound attribute passes through whatever handle the
+	// parent holds, unchecked, exactly as an untyped Include attribute
+	// does today. It is NOT bind-only — a literal still becomes a
+	// *prop.Property[any] holding the string — and it is not the place
+	// to put a type the table could name.
 	"any": {
 		source: func(lit string) (any, error) {
 			if lit == "" {
@@ -290,6 +378,16 @@ func parseDeclaration(e Element) (Declaration, error) {
 		if d.Type == "any" {
 			return d, fmt.Errorf("markup: dependency property %q — Type=\"any\" has no literal syntax, so it takes no Default; bind it or mark it Required", d.Name)
 		}
+		if d.kind.bindOnly {
+			// The point of refusing is WHERE it would have failed. A
+			// Default for a bind-only type would have to resolve against
+			// the instantiating page — its styles, its file system — so
+			// a typo in the CONTROL would surface on whichever page
+			// omitted the attribute, and never on one that always sets
+			// it. Absent still means the zero handle; only a written
+			// Default is an error.
+			return d, fmt.Errorf("markup: dependency property %q — Type=%q has no literal syntax, so it takes no Default: it crosses a control boundary as a handle, never as text; bind it or mark it Required (absent means the zero %s)", d.Name, d.Type, d.Type)
+		}
 		// Coerce now: a bad default is a defect in the CONTROL, and it
 		// should fail when the control loads rather than at whichever
 		// instantiation site happens to omit the attribute.
@@ -341,19 +439,30 @@ func (d Declaration) resolve(file string, e Element, parent *Context) (any, erro
 			return nil, fmt.Errorf("markup: %s: dependency property %q — %w", file, d.Name, err)
 		}
 		return cmd, nil
-	case bindRe.MatchString(raw):
+	// A conditional resolves through the same call and is then checked
+	// against the declared Type like any other handle — so Type="bool"
+	// accepts {{and .A .B}}, and Type="string" rejects it by naming both
+	// types rather than by failing to parse the expression as a literal.
+	case bindRe.MatchString(raw) || isCondExpr(raw):
 		v, err := parent.BindingValue(raw)
 		if err != nil {
 			return nil, fmt.Errorf("markup: %s: dependency property %q — %w", file, d.Name, err)
 		}
 		if !d.kind.check(v) {
-			return nil, fmt.Errorf("markup: %s: dependency property %q — %s=%q is %T; Type=%q needs %s", file, d.Name, d.Name, raw, v, d.Type, d.kind.want)
+			// Name the element the page's author actually wrote. The
+			// contract belongs to `file`, but the mistake is on <Card>,
+			// and an error that names only the control sends a reader
+			// into a file they did not edit.
+			return nil, fmt.Errorf("markup: %s: dependency property %q — <%s %s=%q> is %T; Type=%q needs %s", file, d.Name, e.Name, d.Name, raw, v, d.Type, d.kind.want)
 		}
 		return v, nil
 	default:
+		if d.kind.bindOnly {
+			return nil, fmt.Errorf("markup: %s: dependency property %q — <%s %s=%q>: Type=%q has no literal syntax; pass a handle, as %s=\"{{.Something}}\"", file, d.Name, e.Name, d.Name, raw, d.Type, d.Name)
+		}
 		v, err := d.kind.source(raw)
 		if err != nil {
-			return nil, fmt.Errorf("markup: %s: dependency property %q — %s=%q is not a %s: %w", file, d.Name, d.Name, raw, d.Type, err)
+			return nil, fmt.Errorf("markup: %s: dependency property %q — <%s %s=%q> is not a %s: %w", file, d.Name, e.Name, d.Name, raw, d.Type, err)
 		}
 		return v, nil
 	}

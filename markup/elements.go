@@ -70,9 +70,16 @@ var defText = &ElementDef{
 		{Name: "Bold", Kind: KindBool, Binds: BindsLiteral, Default: "false", Origin: OriginBuiltin},
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
 	},
+	// The one builtin whose content is its body. KindText/BindsEither
+	// because the Build below hands the body to bindText: a literal and
+	// a {{.Path}} binding are both legal there, exactly as on Tooltip.
+	Body: &BodySpec{
+		Kind: KindText, Binds: BindsEither, GoType: "string",
+		Doc: "The run of text. Trimmed, so leading and trailing spaces cannot be expressed.",
+	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +141,7 @@ var defButton = &ElementDef{
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Button Click=%q>: %w", e.Attrs["Click"], err)
 		}
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -274,11 +281,11 @@ var defBorder = &ElementDef{
 		if title == nil {
 			title = components.Str(e.Attrs["Title"])
 		}
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
-		background, err := bindColor(e, ctx, "Background")
+		background, err := BoundColor(e, ctx, "Background")
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +325,7 @@ var defGrid = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		background, err := bindColor(e, ctx, "Background")
+		background, err := BoundColor(e, ctx, "Background")
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +352,7 @@ var defVStack = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		background, err := bindColor(e, ctx, "Background")
+		background, err := BoundColor(e, ctx, "Background")
 		if err != nil {
 			return nil, err
 		}
@@ -372,7 +379,7 @@ var defHStack = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		background, err := bindColor(e, ctx, "Background")
+		background, err := BoundColor(e, ctx, "Background")
 		if err != nil {
 			return nil, err
 		}
@@ -399,7 +406,7 @@ var defCanvas = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		background, err := bindColor(e, ctx, "Background")
+		background, err := BoundColor(e, ctx, "Background")
 		if err != nil {
 			return nil, err
 		}
@@ -443,7 +450,7 @@ var defCheckbox = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		checked, err := boundProp[bool](e, ctx, "Checked")
+		checked, err := Bound[bool](e, ctx, "Checked")
 		if err != nil {
 			return nil, err
 		}
@@ -454,7 +461,7 @@ var defCheckbox = &ElementDef{
 		if label == nil {
 			label = components.Str(e.Attrs["Label"])
 		}
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +485,7 @@ var defGauge = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		value, err := boundProp[int](e, ctx, "Value")
+		value, err := Bound[int](e, ctx, "Value")
 		if err != nil {
 			return nil, err
 		}
@@ -494,7 +501,7 @@ var defGauge = &ElementDef{
 		// Style is an override for the threshold ramp, so it is applied
 		// only when the attribute is actually present.
 		if _, ok := e.Attrs["Style"]; ok {
-			if g.Style, err = bindStyle(e, ctx); err != nil {
+			if g.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -514,7 +521,7 @@ var defSparkline = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		series, err := boundProp[[]float64](e, ctx, "Values")
+		series, err := Bound[[]float64](e, ctx, "Values")
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +529,7 @@ var defSparkline = &ElementDef{
 		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
 		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
 		if _, ok := e.Attrs["Style"]; ok {
-			if s.Style, err = bindStyle(e, ctx); err != nil {
+			if s.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -555,7 +562,7 @@ var defTextBox = &ElementDef{
 		if len(kids) > 0 {
 			return nil, fmt.Errorf("markup: <TextBox> takes no visual children; only attachments like <ValidationMarker> and <Tooltip> may nest here")
 		}
-		text, err := boundProp[string](e, ctx, "Text")
+		text, err := Bound[string](e, ctx, "Text")
 		if err != nil {
 			return nil, err
 		}
@@ -575,12 +582,12 @@ var defTextBox = &ElementDef{
 			tb.Prompt = prompt
 		}
 		if _, ok := e.Attrs["Style"]; ok {
-			if tb.Style, err = bindStyle(e, ctx); err != nil {
+			if tb.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
 			}
 		}
 		if a, ok := e.Attrs["AccentStyle"]; ok {
-			st, err := styleNamed(e, ctx, "AccentStyle", a)
+			st, err := styleValue(e, ctx, "AccentStyle", a)
 			if err != nil {
 				return nil, err
 			}
@@ -588,13 +595,13 @@ var defTextBox = &ElementDef{
 		}
 		// Error is the validation handle: a typed binding to the field's
 		// error property (empty = valid), never literal text.
-		if _, ok := e.Attrs["Error"]; ok {
-			if tb.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
+		if suppliedAttr(e, "Error") {
+			if tb.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 				return nil, err
 			}
 		}
 		if a, ok := e.Attrs["InvalidStyle"]; ok {
-			st, err := styleNamed(e, ctx, "InvalidStyle", a)
+			st, err := styleValue(e, ctx, "InvalidStyle", a)
 			if err != nil {
 				return nil, err
 			}
@@ -637,7 +644,7 @@ var defColorPicker = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		color, err := boundProp[render.Color](e, ctx, "Value")
+		color, err := Bound[render.Color](e, ctx, "Value")
 		if err != nil {
 			return nil, err
 		}
@@ -660,11 +667,11 @@ var defProgressBar = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		value, err := boundProp[int](e, ctx, "Value")
+		value, err := Bound[int](e, ctx, "Value")
 		if err != nil {
 			return nil, err
 		}
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		label, err := BoundText(e, ctx, "Label")
 		if err != nil {
 			return nil, err
 		}
@@ -673,8 +680,8 @@ var defProgressBar = &ElementDef{
 		p.Thresholds = e.Attrs["Thresholds"] == "true"
 		// Indeterminate is optional, and its absence is load-bearing: a
 		// bar that can never be indeterminate starts no goroutine.
-		if _, ok := e.Attrs["Indeterminate"]; ok {
-			if p.Indeterminate, err = boundProp[bool](e, ctx, "Indeterminate"); err != nil {
+		if suppliedAttr(e, "Indeterminate") {
+			if p.Indeterminate, err = Bound[bool](e, ctx, "Indeterminate"); err != nil {
 				return nil, err
 			}
 		}
@@ -682,7 +689,7 @@ var defProgressBar = &ElementDef{
 			return nil, err
 		}
 		if _, ok := e.Attrs["Style"]; ok {
-			if p.Style, err = bindStyle(e, ctx); err != nil {
+			if p.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -703,7 +710,7 @@ var defSpinner = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		label, err := BoundText(e, ctx, "Label")
 		if err != nil {
 			return nil, err
 		}
@@ -719,13 +726,13 @@ var defSpinner = &ElementDef{
 		if s.Interval, err = optDuration(e, "Interval"); err != nil {
 			return nil, err
 		}
-		if _, ok := e.Attrs["Enabled"]; ok {
-			if s.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
+		if suppliedAttr(e, "Enabled") {
+			if s.Enabled, err = Bound[bool](e, ctx, "Enabled"); err != nil {
 				return nil, err
 			}
 		}
 		if _, ok := e.Attrs["Style"]; ok {
-			if s.Style, err = bindStyle(e, ctx); err != nil {
+			if s.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -745,11 +752,11 @@ var defToggle = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		checked, err := boundProp[bool](e, ctx, "Checked")
+		checked, err := Bound[bool](e, ctx, "Checked")
 		if err != nil {
 			return nil, err
 		}
-		label, err := literalOrBound(e.Attrs["Label"], ctx)
+		label, err := BoundText(e, ctx, "Label")
 		if err != nil {
 			return nil, err
 		}
@@ -757,7 +764,7 @@ var defToggle = &ElementDef{
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Toggle Changed=%q>: %w", e.Attrs["Changed"], err)
 		}
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -790,7 +797,7 @@ var defSegmented = &ElementDef{
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		selected, err := boundProp[int](e, ctx, "Selected")
+		selected, err := Bound[int](e, ctx, "Selected")
 		if err != nil {
 			return nil, err
 		}
@@ -802,7 +809,7 @@ var defSegmented = &ElementDef{
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Segmented Changed=%q>: %w", e.Attrs["Changed"], err)
 		}
-		style, err := bindStyle(e, ctx)
+		style, err := BoundStyle(e, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -917,7 +924,7 @@ var defToastHost = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ToastHost> takes no children; toasts are shown from code (Show), not declared")
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}
@@ -961,11 +968,11 @@ var defTooltip = &ElementDef{
 		// Non-visual like KeyBinding: buildChildren routes it to the
 		// parent as an attachment, and the framework's hover routing
 		// (gooey.HoverWatcher) drives it.
-		text, err := literalOrBound(e.Attrs["Text"], ctx)
+		text, err := BoundText(e, ctx, "Text")
 		if err != nil {
 			return nil, err
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}
@@ -1004,14 +1011,14 @@ var defValidationMarker = &ElementDef{
 		if len(e.Children) > 0 {
 			return nil, fmt.Errorf("markup: <ValidationMarker> takes no children")
 		}
-		st, err := styleNamed(e, ctx, "Style", e.Attrs["Style"])
+		st, err := styleValue(e, ctx, "Style", e.Attrs["Style"])
 		if err != nil {
 			return nil, err
 		}
 		m := &components.ValidationMarker{Style: st}
-		if _, ok := e.Attrs["Error"]; ok {
+		if suppliedAttr(e, "Error") {
 			var err error
-			if m.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
+			if m.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 				return nil, err
 			}
 		}
@@ -1072,8 +1079,8 @@ var defTimer = &ElementDef{
 		t := &components.Timer{Interval: d, Tick: tick}
 		// Enabled is optional; absent means always enabled. When present
 		// it is a live bool handle, so the graph can pause the timer.
-		if _, ok := e.Attrs["Enabled"]; ok {
-			if t.Enabled, err = boundProp[bool](e, ctx, "Enabled"); err != nil {
+		if suppliedAttr(e, "Enabled") {
+			if t.Enabled, err = Bound[bool](e, ctx, "Enabled"); err != nil {
 				return nil, err
 			}
 		}
@@ -1112,13 +1119,13 @@ var defTypeAhead = &ElementDef{
 			t.Timeout = d
 		}
 		var err error
-		if _, ok := e.Attrs["Search"]; ok {
-			if t.Search, err = boundProp[string](e, ctx, "Search"); err != nil {
+		if suppliedAttr(e, "Search") {
+			if t.Search, err = Bound[string](e, ctx, "Search"); err != nil {
 				return nil, err
 			}
 		}
-		if _, ok := e.Attrs["NoMatch"]; ok {
-			if t.NoMatch, err = boundProp[bool](e, ctx, "NoMatch"); err != nil {
+		if suppliedAttr(e, "NoMatch") {
+			if t.NoMatch, err = Bound[bool](e, ctx, "NoMatch"); err != nil {
 				return nil, err
 			}
 		}

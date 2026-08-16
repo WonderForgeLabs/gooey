@@ -33,7 +33,7 @@ import (
 // any other markup. That is what lets a migrated control keep its custom
 // cell (finder's match highlighting) while the template does the placing.
 func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
-	items, err := boundProp[components.ItemSource](e, ctx, "Items")
+	items, err := Bound[components.ItemSource](e, ctx, "Items")
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +60,17 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// inside the template must still resolve against the prefixes THIS
 	// document declared.
 	ns := ctx.ns
+	// The resource scope is captured beside it, for the same reason and
+	// with a sharper failure if it is not: a row is realized long after
+	// the scope that declared its styles was popped, so a template naming
+	// a page-declared <Style> would resolve against an empty chain at
+	// SCROLL time.
+	//
+	// Half-hidden, which is why it is worth stating. Validate builds one
+	// throwaway row at load, so a collection that is non-empty then does
+	// catch the error at load — but a table fed by a timer is empty at
+	// load, and the same typo surfaces on first scroll instead.
+	res := ctx.res
 	factory := func(values map[string]any) (gooey.Component, error) {
 		item := &Context{
 			Values:     values,
@@ -70,6 +81,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			Dispatcher: ctx.Dispatcher,
 			Named:      map[string]gooey.Component{},
 			ns:         ns,
+			res:        res,
 		}
 		return build(row, item)
 	}
@@ -82,8 +94,8 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 		// is drawing selection itself.
 		Highlight: !mentions(row, components.SelectedKey),
 	}
-	if _, ok := e.Attrs["Selected"]; ok {
-		if v.Selected, err = boundProp[int](e, ctx, "Selected"); err != nil {
+	if suppliedAttr(e, "Selected") {
+		if v.Selected, err = Bound[int](e, ctx, "Selected"); err != nil {
 			return nil, err
 		}
 	}

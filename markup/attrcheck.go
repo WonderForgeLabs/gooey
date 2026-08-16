@@ -148,7 +148,18 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map
 }
 
 // spec finds the catalog entry for an element name in this context.
+//
+// The order mirrors buildComponent's, and it has to: a spec describing a
+// different element from the one that will build is worse than no spec,
+// because the attribute check would then reject valid markup.
 func (ctx *Context) spec(name string) (ElementSpec, bool) {
+	// A host element with a DECLARATION is checkable like any built-in.
+	// This is the half of Context.Elements that matters most — an
+	// unknown attribute on a registered component used to be ignored
+	// forever, and the near-miss suggestion works here for free.
+	if d, ok := ctx.Elements[name]; ok {
+		return d.specAs(OriginRegistered), true
+	}
 	if _, custom := ctx.Components[name]; custom {
 		return ElementSpec{}, false
 	}

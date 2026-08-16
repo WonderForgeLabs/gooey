@@ -111,7 +111,7 @@ the raw element and interprets attributes however it likes:
 ```go
 Components: map[string]markup.Builder{
 	"Meter": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
-		v, err := intAttr(c, e, "Value")
+		v, err := markup.Bound[int](e, c, "Value")
 		if err != nil {
 			return nil, err
 		}
@@ -124,22 +124,27 @@ Components: map[string]markup.Builder{
 }
 ```
 
-with `intAttr` doing the `BindingValue` plus type-assert dance from
-tutorial 5:
+`markup.Bound[T]` is the same resolver the built-in elements use for
+`<Checkbox Checked="{{.Auto}}"/>`, and it is the reason your builder
+does not repeat the `BindingValue` plus type-assert dance from tutorial
+5. It returns the viewmodel's **handle**, so a `Set` on `Level`
+repaints this meter; a wrong type, or a literal where a handle belongs,
+is a load error naming both sides.
 
-```go
-intAttr := func(c *markup.Context, e markup.Element, name string) (*prop.Property[int], error) {
-	v, err := c.BindingValue(e.Attrs[name])
-	if err != nil {
-		return nil, err
-	}
-	p, ok := v.(*prop.Property[int])
-	if !ok {
-		return nil, fmt.Errorf("<%s %s>: got %T, want *prop.Property[int]", e.Name, name, v)
-	}
-	return p, nil
-}
-```
+Four resolvers make up that surface, and between them they are the whole
+attribute dialect a built-in speaks:
+
+| resolver | attribute shape | absent |
+|---|---|---|
+| `markup.Bound[T](e, ctx, attr)` | `"{{.Path}}"` → the viewmodel's own `*prop.Property[T]` | load error |
+| `markup.BoundText(e, ctx, attr)` | a literal, `"Hi {{.Who}}!"`, or `{{ns:Func …}}` — always a handle | empty literal |
+| `markup.BoundColor(e, ctx, attr)` | `"#ff8800"` or a bound `render.Color` | `nil` |
+| `markup.BoundStyle(e, ctx)` | `Style="accent"` from `Context.Styles`, or a bound `render.Style` | the zero style |
+
+`BoundText` is the one worth reaching for by reflex. Matching
+`{{.Path}}` yourself and calling `BindingValue` looks equivalent and is
+not: it returns the handle and silently drops the literal text around
+it, so `Label="Hi {{.Who}}!"` renders as `world`.
 
 Now use it:
 
@@ -164,11 +169,11 @@ type stepper struct {
 	gooey.Base
 	gooey.FocusState
 	value *prop.Property[int]
-	label string
+	label *prop.Property[string]
 }
 
 func (s *stepper) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(len([]rune(s.label))+10, avail.W), H: min(1, avail.H)}
+	return gooey.Size{W: min(len([]rune(s.label.Get()))+10, avail.W), H: min(1, avail.H)}
 }
 
 func (s *stepper) Render(f *gooey.Frame) {
@@ -177,7 +182,7 @@ func (s *stepper) Render(f *gooey.Frame) {
 	if s.IsFocused() {
 		st.Reverse = true
 	}
-	text := fmt.Sprintf("◂ %3d ▸ %s", s.value.Get(), s.label)
+	text := fmt.Sprintf("◂ %3d ▸ %s", s.value.Get(), s.label.Get())
 	f.Cells.SetString(b.X, b.Y, text, st)
 }
 ```
