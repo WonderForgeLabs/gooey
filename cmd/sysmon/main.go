@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -23,7 +24,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var (
@@ -129,83 +129,76 @@ func main() {
 	// sysmon has no focus stops at all, so a binding on the root is
 	// reached for every key — the page-global scope, for free.
 	// Attachments must exist before the Composer walks the tree.
-	running := true
+	var app *gooey.App
 	for _, kb := range []*gooey.KeyBinding{
-		{Gesture: input.Rune('q'), Command: gooey.Command(func() { running = false })},
-		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: gooey.Command(func() { running = false })},
+		{Gesture: input.Rune('q'), Command: gooey.Command(func() { app.Quit() })},
+		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: gooey.Command(func() { app.Quit() })},
 		{Gesture: input.Rune('c'), Command: gooey.Command(func() { sortKey.Set("cpu") })},
 		{Gesture: input.Rune('m'), Command: gooey.Command(func() { sortKey.Set("mem") })},
 	} {
 		root.Attach(kb)
 	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// --- the run loop is the framework's ---
+	//
+	// gooey.Tree is the Content for a tree built in Go and never
+	// replaced; App owns the terminal, the decoder, frame scheduling and
+	// a teardown that joins the decoder before handing the tty back.
+	//
+	// WithoutMouse keeps this a keyboard-only page, which is what it has
+	// always been: sysmon never enabled SGR reporting, and turning it on
+	// would take terminal text selection away from a monitor whose whole
+	// job is showing numbers you want to copy.
+	//
+	// No graphics probe either — sysmon is cell-only — and none is
+	// needed: App's default capabilities are the color-depth environment
+	// ladder, exactly the term.Caps this demo used to build by hand, so
+	// the gauges still downsample correctly on a 16-color terminal for
+	// the cost of one getenv.
+	app = gooey.NewApp(gooey.Tree(root), gooey.WithoutMouse())
 
-	needsFrame := true
-	comp := gooey.NewComposer(root, cols, rows)
-	// No graphics probe here — sysmon is cell-only — but the color
-	// depth is a pure environment read, so the gauges downsample
-	// correctly on a 16-color terminal for the cost of one getenv.
-	comp.SetCaps(term.Caps{Cols: cols, Rows: rows, Color: term.DetectColorDepth()})
-	comp.OnInvalidate(func() { needsFrame = true })
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer screen.Restore()
-
-	events := make(chan input.Event, 16)
-	go term.DecodeEvents(screen, events)
-
-	tick := time.NewTicker(700 * time.Millisecond)
-	defer tick.Stop()
+	// The sampler is the app's own clock. Every posts to the Dispatcher,
+	// so the closure below runs on the UI goroutine and may touch the
+	// property graph — the /proc reads are cheap enough to do there.
 	prev := first
 	prevProcs := sampleProcs()
-	frames, lastPainted := 0, 0
+	app.Every(700*time.Millisecond, func() {
+		cur := sampleCPU()
+		// Viewmodel-side dedup: only Set what actually changed, so
+		// unchanged gauges never even dirty.
+		for i := 0; i < ncores && i < len(cur.perCore); i++ {
+			if p := int(pct(cur.perCore[i], prev.perCore[i])); p != corePct[i].Get() {
+				corePct[i].Set(p)
+			}
+		}
+		total := pct(cur.total, prev.total)
+		h := append(append([]float64(nil), hist.Get()...), total)
+		if len(h) > 60 {
+			h = h[len(h)-60:]
+		}
+		hist.Set(h)
+		usedMB, totalMB := sampleMem()
+		if p := int(100 * usedMB / max(totalMB, 1)); p != memPct.Get() {
+			memPct.Set(p)
+		}
+		memLabel.Set(fmt.Sprintf("%d / %d MB", usedMB, totalMB))
+		loadavg.Set("load " + sampleLoad())
+		curProcs := sampleProcs()
+		procs.Set(diffProcs(prevProcs, curProcs, cur.total.totalJiffies()-prev.total.totalJiffies()))
+		prev, prevProcs = cur, curProcs
+	})
 
-	for running {
-		if needsFrame {
-			frames++
-			statsP.Set(fmt.Sprintf("frames=%d  components painted last frame=%d", frames, lastPainted))
-			_, lastPainted = comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case <-tick.C:
-			cur := sampleCPU()
-			// Viewmodel-side dedup: only Set what actually changed, so
-			// unchanged gauges never even dirty.
-			for i := 0; i < ncores && i < len(cur.perCore); i++ {
-				if p := int(pct(cur.perCore[i], prev.perCore[i])); p != corePct[i].Get() {
-					corePct[i].Set(p)
-				}
-			}
-			total := pct(cur.total, prev.total)
-			h := append(append([]float64(nil), hist.Get()...), total)
-			if len(h) > 60 {
-				h = h[len(h)-60:]
-			}
-			hist.Set(h)
-			usedMB, totalMB := sampleMem()
-			if p := int(100 * usedMB / max(totalMB, 1)); p != memPct.Get() {
-				memPct.Set(p)
-			}
-			memLabel.Set(fmt.Sprintf("%d / %d MB", usedMB, totalMB))
-			loadavg.Set("load " + sampleLoad())
-			curProcs := sampleProcs()
-			procs.Set(diffProcs(prevProcs, curProcs, cur.total.totalJiffies()-prev.total.totalJiffies()))
-			prev, prevProcs = cur, curProcs
-		case ev := <-events:
-			comp.Handle(ev)
-		}
-	}
+	// The damage counter this demo exists to show off. BeforeFrame folds
+	// it into the frame about to happen: App.Frames() has already
+	// counted this one, and PaintedLastFrame() is still the previous
+	// frame's damage, so both numbers read exactly as they did inside
+	// the hand-rolled loop.
+	app.BeforeFrame(func() {
+		statsP.Set(fmt.Sprintf("frames=%d  components painted last frame=%d",
+			app.Frames(), app.PaintedLastFrame()))
+	})
+
+	gooey.Exit(app.Run(context.Background()))
 }
 
 // ---- custom components ----

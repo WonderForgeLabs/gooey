@@ -14,11 +14,12 @@
 // focus stop (fzf-style — typing is always live), the results are an
 // <ItemsView Focusable="false"> whose clicks and wheel arrive by
 // hit-testing, page-level gestures are <KeyBinding> declarations bound
-// to viewmodel commands — so main's event loop is one call to
-// Composer.Handle.
+// to viewmodel commands — so this file has no event loop at all, and no
+// key handling either: gooey.App owns the terminal and the dispatch.
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -30,11 +31,9 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 type match struct {
@@ -105,9 +104,9 @@ func main() {
 	})
 
 	// --- commands: the page's gestures resolve to these at load time.
-	var comp *gooey.Composer
+	var app *gooey.App
 	var ctx *markup.Context
-	running, chosen := true, ""
+	chosen := ""
 	selectBy := func(d func() int) gooey.Command {
 		return gooey.Command(func() { sel.Set(clampSel(sel.Get()+d(), len(matches.Get()))) })
 	}
@@ -138,9 +137,9 @@ func main() {
 				if ms := matches.Get(); len(ms) > 0 {
 					chosen = ms[clampSel(sel.Get(), len(ms))].path
 				}
-				running = false
+				app.Quit()
 			}),
-			"Quit": gooey.Command(func() { running = false }),
+			"Quit": gooey.Command(func() { app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -158,56 +157,27 @@ func main() {
 
 	name := "finder.gooey"
 	fsys := demomain.MarkupFS("finder", name)
-	tree, err := markup.Load(fsys, name, ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
-	screen, err := term.Open()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no tty:", err)
-		os.Exit(1)
-	}
-	cols, rows := screen.Size()
+	// markup.Page is the hot-reload seam, and it is a real fix over the
+	// swap channel this used to run: markup.Watch built the replacement
+	// TREE on the polling goroutine, which resolves bindings — property
+	// graph work — off the UI goroutine. Page.Watch reports only THAT
+	// the file changed and App rebuilds on the UI goroutine, where that
+	// is legal. An os.DirFS here, an embed.FS in a release build, same
+	// code path either way.
+	//
+	// A load error at startup comes back from Run before any terminal is
+	// touched, so gooey.Exit prints it on a cooked screen — what the
+	// explicit markup.Load before term.Open used to buy by hand.
+	app = gooey.NewApp(markup.Page(fsys, name, ctx))
+	err := app.Run(context.Background())
 
-	needsFrame := true
-	attach := func(w gooey.Component) {
-		comp = gooey.NewComposer(w, cols, rows)
-		comp.OnInvalidate(func() { needsFrame = true })
-		needsFrame = true
-	}
-	attach(tree)
-	swaps := make(chan gooey.Component, 1)
-	stopWatch := markup.Watch(fsys, name, ctx, func(w gooey.Component) { swaps <- w })
-	defer stopWatch()
-
-	if err := screen.Raw(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	evs := make(chan input.Event, 32)
-	go term.DecodeEvents(screen, evs)
-	screen.EnableMouse()
-
-	for running {
-		if needsFrame {
-			comp.Frame()
-			comp.Flush(screen.File())
-			needsFrame = false
-		}
-		select {
-		case w := <-swaps:
-			attach(w)
-		case ev := <-evs:
-			comp.Handle(ev)
-		}
-	}
-	screen.Restore()
+	// Printed after Run, so it lands on a restored terminal — the whole
+	// reason an fzf-alike is worth writing: its answer goes to stdout.
 	if chosen != "" {
 		fmt.Println(chosen)
 	}
+	gooey.Exit(err)
 }
 
 func clampSel(i, n int) int {

@@ -8,20 +8,25 @@
 // Attributes are the entire control contract, and card.gooey DECLARES
 // that contract in markup: four <x:Property> elements give it typed,
 // defaulted, partly-required dependency properties. Literals (Title,
-// Caption) coerce into fresh per-instance sources, bindings (Value,
-// Trend) pass the dashboard's live handles straight through
+// Caption) coerce into fresh per-instance sources, the Value binding
+// passes the dashboard's live string handle straight through
 // type-checked — so four instances of one control show four different
 // ticking data streams, and a misspelled attribute is now a load error
 // instead of an attribute nothing reads. Still zero Go code for the
 // control. All three .gooey files hot-reload; editing card.gooey
 // restyles every card at once, state intact.
+//
+// The trend is a <Sparkline> declared inside card.gooey rather than a
+// string of block runes the viewmodel built: what a card receives is the
+// SERIES, and the plotting is the framework's. That one attribute is
+// where the declaration system runs out, and the reason is written on
+// the declaration — see card.gooey.
 package main
 
 import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
@@ -30,17 +35,22 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-var sparks = []rune("▁▂▃▄▅▆▇█")
-
-// metric is a ticking value with a trend history — one per card.
+// metric is a ticking value with a trend history — one per card. Both
+// fields are property handles: the history is what the card's Sparkline
+// plots, so it has to be able to invalidate that component the same way
+// the value invalidates the big number.
 type metric struct {
 	value *prop.Property[float64]
-	hist  []float64
+	hist  *prop.Property[[]float64]
 	fmt   string
 }
 
 func newMetric(start float64, format string) *metric {
-	return &metric{value: prop.NewSource(start), hist: []float64{start}, fmt: format}
+	return &metric{
+		value: prop.NewSource(start),
+		hist:  prop.NewSource([]float64{start}),
+		fmt:   format,
+	}
 }
 
 func (m *metric) tick(drift float64) {
@@ -49,34 +59,51 @@ func (m *metric) tick(drift float64) {
 		v = 0
 	}
 	m.value.Set(v)
-	m.hist = append(m.hist, v)
-	if len(m.hist) > 24 {
-		m.hist = m.hist[1:]
+	// A fresh slice per tick: prop.Set hands the same backing array to
+	// every reader, and appending in place would mutate a value the
+	// Sparkline may already be plotting.
+	h := append(append([]float64(nil), m.hist.Get()...), v)
+	if len(h) > 24 {
+		h = h[1:]
 	}
+	m.hist.Set(h)
 }
 
-// label and trend are computeds over the metric's source — the card
+// label and trend are computeds over the metric's sources — the card
 // binds these handles through its attributes.
 func (m *metric) label() *prop.Property[string] {
 	return prop.NewComputed(func() string { return fmt.Sprintf(m.fmt, m.value.Get()) })
 }
 
-func (m *metric) trend() *prop.Property[string] {
-	return prop.NewComputed(func() string {
-		m.value.Get() // subscribe; hist rides along on the same tick
-		lo, hi := m.hist[0], m.hist[0]
-		for _, v := range m.hist {
+// sparkFloor is where a Sparkline's lowest DRAWN bar starts.
+//
+// Sparkline plots an absolute 0-100 scale and picks its glyph from
+// int(v/100*8) over " ▁▂▃▄▅▆▇█", so v=0 is a blank cell. These metrics
+// are unbounded (requests per second, p99 milliseconds) and want the
+// autoscaling a trend line normally has: the window's own minimum should
+// read as ▁, not as a hole in the plot. Rescaling onto [12.5, 100] puts
+// the minimum in the first drawn bucket and the maximum in the last.
+const sparkFloor = 12.5
+
+// trend rescales the history window onto the band Sparkline plots. It is
+// the one thing a series has to say in Go, because Sparkline's scale is
+// absolute and this metric's is relative to its own window.
+func (m *metric) trend() *prop.Property[[]float64] {
+	return prop.NewComputed(func() []float64 {
+		h := m.hist.Get()
+		lo, hi := h[0], h[0]
+		for _, v := range h {
 			lo, hi = min(lo, v), max(hi, v)
 		}
-		var sb strings.Builder
-		for _, v := range m.hist {
-			i := 0
+		out := make([]float64, len(h))
+		for i, v := range h {
+			t := 0.0
 			if hi > lo {
-				i = int((v - lo) / (hi - lo) * float64(len(sparks)-1))
+				t = (v - lo) / (hi - lo)
 			}
-			sb.WriteRune(sparks[i])
+			out[i] = sparkFloor + t*(100-sparkFloor)
 		}
-		return sb.String()
+		return out
 	})
 }
 
