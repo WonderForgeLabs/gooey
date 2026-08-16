@@ -27,22 +27,32 @@ func demoFS(t *testing.T) fstest.MapFS {
 	return fsys
 }
 
+// The trend handles are []float64 series because that is what the card's
+// <Sparkline> binds; they were strings of block runes while the card
+// drew its own plot.
 func demoCtx(fsys fstest.MapFS) *markup.Context {
+	series := func() *prop.Property[[]float64] { return prop.NewSource([]float64{12.5, 50, 100}) }
 	return &markup.Context{
 		Values: map[string]any{
 			"Ticking":   prop.NewSource(true),
 			"Reqs":      prop.NewSource("1200"),
-			"ReqsTrend": prop.NewSource("▁▂▃"),
+			"ReqsTrend": series(),
 			"Lat":       prop.NewSource("38.0"),
-			"LatTrend":  prop.NewSource("▁▂▃"),
+			"LatTrend":  series(),
 			"Errs":      prop.NewSource("3"),
-			"ErrsTrend": prop.NewSource("▁▂▃"),
+			"ErrsTrend": series(),
 			"Gors":      prop.NewSource("86"),
-			"GorsTrend": prop.NewSource("▁▂▃"),
+			"GorsTrend": series(),
 			"Advance":   func() {},
 			"Quit":      func() {},
 		},
-		Styles:   map[string]render.Style{},
+		// Every style name the three .gooey files mention has to be here:
+		// an unregistered name is a load error, not a silently unstyled
+		// element, so an empty map fails the load before any assertion in
+		// this file gets to run.
+		Styles: map[string]render.Style{
+			"panel": {}, "big": {}, "trend": {}, "badge": {}, "dim": {},
+		},
 		Includes: fsys,
 	}
 }
