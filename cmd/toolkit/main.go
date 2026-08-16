@@ -388,6 +388,11 @@ func main() {
 	// there is no protocol and no cell size, and the button draws its
 	// pill in box runes instead. Both are correct; the caption says
 	// which one you are looking at.
+	//
+	// Pinning is all it takes: probe, or pin the protocol and the cell
+	// size the chrome is generated at. That pair is identical in every
+	// demo with a -mode flag, so it is demomain.GraphicsOptions rather
+	// than an option list spelled out here.
 	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), demomain.GraphicsOptions(enc, forced)...)
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
@@ -399,11 +404,16 @@ func main() {
 		}
 		told = true
 		c := app.Composer()
-		name := "cells (no graphics protocol)"
-		if enc := c.Graphics(); enc != nil {
-			name = enc.Name()
+		// No encoder means no pixel plane, and a cell size is a property
+		// OF that plane: the caption used to print 10×20 there because the
+		// demo passed those capabilities in itself, which was a number for
+		// a resolution nothing was being generated at.
+		enc := c.Graphics()
+		if enc == nil {
+			tier.Set("chrome: cells (no graphics protocol)")
+			return
 		}
-		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", name, c.Caps().CellW, c.Caps().CellH))
+		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", enc.Name(), c.Caps().CellW, c.Caps().CellH))
 	})
 	if err := app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
@@ -436,32 +446,9 @@ func gradientImage(c render.Color) image.Image {
 	return img
 }
 
-func clampIdx(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(stages) {
-		return len(stages) - 1
-	}
-	return i
-}
-
-func clampTab(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(tabNames) {
-		return len(tabNames) - 1
-	}
-	return i
-}
-
-func clamp100(v int) int {
-	if v < 0 {
-		return 0
-	}
-	if v > 100 {
-		return 100
-	}
-	return v
-}
+// The bound index properties are edited by components (a Segmented, a
+// Tabs strip) and by commands, so every read of one is clamped rather
+// than trusted: markup can bind an int, but it cannot declare a range.
+func clampIdx(i int) int { return min(max(i, 0), len(stages)-1) }
+func clampTab(i int) int { return min(max(i, 0), len(tabNames)-1) }
+func clamp100(v int) int { return min(max(v, 0), 100) }

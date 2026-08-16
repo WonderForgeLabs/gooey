@@ -7,7 +7,7 @@ One process, three jobs:
     (`@activity.defn(dynamic=True)`) that answers to any activity type
     name and looks the name up in the runtime registry.
 
-2.  An MCP server (streamable HTTP, loopback) whose tools are CRUD over
+2.  An MCP server (streamable HTTP, loopback by default) whose tools are CRUD over
     that registry: create_activity takes a name and Python SOURCE and
     execs it into a callable; delete_activity removes it; list/get/run
     round out the surface.
@@ -45,9 +45,11 @@ enough to make a brand-new button that runs brand-new code.
     DANGER — REMOTE CODE EXECUTION BY DESIGN
     create_activity runs whatever Python it is handed, in this process,
     with this process's privileges. There is no sandbox, no allowlist and
-    no review step; that is the demo. Everything binds loopback only.
-    Do not expose these ports, do not run this on a shared host, and do
-    not run it anywhere you would mind an arbitrary `import os` going.
+    no review step; that is the demo. Nothing is authenticated and
+    nothing restricts the bind address — the defaults are loopback and
+    that is all they are. Do not expose these ports, do not run this on
+    a shared host, and do not run it anywhere you would mind an
+    arbitrary `import os` going.
 
 Environment (all set for you by the Go app when it launches this as a
 companion — see apps/dynamic-activities/main.go):

@@ -8,65 +8,25 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// checkbox is a focus stop rendering "[x] label". Tutorial 6 takes this
-// apart line by line; here it is just a component that happens to exist.
-type checkbox struct {
-	gooey.Base
-	gooey.FocusState
-	checked *prop.Property[bool]
-	label   string
-}
-
-func (c *checkbox) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(4+len(c.label), avail.W), H: min(1, avail.H)}
-}
-
-func (c *checkbox) Render(f *gooey.Frame) {
-	b := c.Bounds()
-	box := "[ ] "
-	if c.checked.Get() {
-		box = "[x] "
-	}
-	st := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
-	if c.IsFocused() {
-		st.Reverse = true
-	}
-	f.Cells.SetString(b.X, b.Y, box+c.label, st)
-}
-
-func (c *checkbox) toggle() { c.checked.Set(!c.checked.Get()) }
-
-func (c *checkbox) HandleKey(ev input.KeyEvent) bool {
-	if ev == input.Named(input.KeyEnter) || ev == input.Rune(' ') {
-		c.toggle()
-		return true
-	}
-	return false
-}
-
-func (c *checkbox) HandleMouse(ev input.MouseEvent) bool {
-	if ev.Kind == input.MouseClick {
-		c.toggle()
-		return true
-	}
-	return false
-}
-
 func main() {
 	var app *gooey.App
 
 	last := prop.NewSource("ready — press tab to move focus")
+
+	// loud is bound to the page's <Checkbox Checked="{{.Loud}}"/> — a
+	// built-in, so this whole file contributes nothing but the handle.
+	// Two-way in the only sense gooey has: the Checkbox's Render reads
+	// this property and its toggle Sets it, so the viewmodel and the
+	// component share one property rather than copies kept in sync.
 	loud := prop.NewSource(false)
 
 	// status depends on both: toggling the checkbox restyles the line
@@ -98,19 +58,6 @@ func main() {
 			"panel":  {Fg: render.RGB(120, 90, 220)},
 			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
 			"dim":    {Fg: render.RGB(140, 140, 150)},
-		},
-		Components: map[string]markup.Builder{
-			"Checkbox": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
-				v, err := c.BindingValue(e.Attrs["Checked"])
-				if err != nil {
-					return nil, err
-				}
-				checked, ok := v.(*prop.Property[bool])
-				if !ok {
-					return nil, fmt.Errorf("Checkbox Checked: got %T, want *prop.Property[bool]", v)
-				}
-				return &checkbox{checked: checked, label: e.Attrs["Label"]}, nil
-			},
 		},
 	}
 
