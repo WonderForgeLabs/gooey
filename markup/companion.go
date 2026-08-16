@@ -127,7 +127,7 @@ func buildCompanion(e Element, ctx *Context) (gooey.Component, error) {
 		return nil, err
 	}
 	if _, ok := e.Attrs["Error"]; ok {
-		if c.Error, err = boundProp[string](e, ctx, "Error"); err != nil {
+		if c.Error, err = Bound[string](e, ctx, "Error"); err != nil {
 			return nil, err
 		}
 	}
@@ -330,7 +330,7 @@ func companionEnv(e Element, ctx *Context) ([]components.EnvVar, error) {
 		if strings.ContainsRune(name, '=') {
 			return nil, fmt.Errorf("markup: <Var Name=%q>: an environment variable name cannot contain '='", name)
 		}
-		value, err := literalOrBound(c.Attrs["Value"], ctx)
+		value, err := BoundText(c, ctx, "Value")
 		if err != nil {
 			return nil, err
 		}

@@ -60,11 +60,11 @@ type stepper struct {
 	gooey.Base
 	gooey.FocusState
 	value *prop.Property[int]
-	label string
+	label *prop.Property[string]
 }
 
 func (s *stepper) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(len([]rune(s.label))+10, avail.W), H: min(1, avail.H)}
+	return gooey.Size{W: min(len([]rune(s.label.Get()))+10, avail.W), H: min(1, avail.H)}
 }
 
 func (s *stepper) Render(f *gooey.Frame) {
@@ -73,7 +73,7 @@ func (s *stepper) Render(f *gooey.Frame) {
 	if s.IsFocused() {
 		st.Reverse = true
 	}
-	text := fmt.Sprintf("◂ %3d ▸ %s", s.value.Get(), s.label)
+	text := fmt.Sprintf("◂ %3d ▸ %s", s.value.Get(), s.label.Get())
 	f.Cells.SetString(b.X, b.Y, text, st)
 }
 
@@ -112,19 +112,6 @@ func main() {
 		return fmt.Sprintf("level = %d    other = %d", level.Get(), other.Get())
 	})
 
-	// intAttr resolves an attribute that must be a bound int property.
-	intAttr := func(c *markup.Context, e markup.Element, name string) (*prop.Property[int], error) {
-		v, err := c.BindingValue(e.Attrs[name])
-		if err != nil {
-			return nil, err
-		}
-		p, ok := v.(*prop.Property[int])
-		if !ok {
-			return nil, fmt.Errorf("<%s %s>: got %T, want *prop.Property[int]", e.Name, name, v)
-		}
-		return p, nil
-	}
-
 	ctx := &markup.Context{
 		Values: map[string]any{
 			"Level": level, "Other": other, "Readout": readout,
@@ -136,8 +123,11 @@ func main() {
 			"dim":    {Fg: render.RGB(140, 140, 150)},
 		},
 		Components: map[string]markup.Builder{
+			// markup.Bound[T] is the same resolver the built-in
+			// elements use: it hands back the viewmodel's own handle,
+			// and a wrong type is a load error naming both sides.
 			"Meter": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
-				v, err := intAttr(c, e, "Value")
+				v, err := markup.Bound[int](e, c, "Value")
 				if err != nil {
 					return nil, err
 				}
@@ -147,12 +137,19 @@ func main() {
 				}
 				return &meter{value: v, max: m}, nil
 			},
+			// Label goes through BoundText rather than e.Attrs, so it
+			// accepts a literal, an interpolated "Ch. {{.N}}", or a
+			// value-namespace call — the same latitude a <Text> has.
 			"Stepper": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
-				v, err := intAttr(c, e, "Value")
+				v, err := markup.Bound[int](e, c, "Value")
 				if err != nil {
 					return nil, err
 				}
-				return &stepper{value: v, label: e.Attrs["Label"]}, nil
+				label, err := markup.BoundText(e, c, "Label")
+				if err != nil {
+					return nil, err
+				}
+				return &stepper{value: v, label: label}, nil
 			},
 		},
 	}

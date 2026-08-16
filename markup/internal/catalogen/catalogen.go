@@ -221,17 +221,14 @@ func scan(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[string]
 			}
 		case *ast.CallExpr:
 			callee := calleeName(v.Fun)
-			// A literal naming an attribute: boundProp(e, ctx, "Text"),
-			// bindColor(e, ctx, "Background"), optDuration(e, "Tick").
+			// A literal naming an attribute: Bound(e, ctx, "Text"),
+			// BoundColor(e, ctx, "Background"), optDuration(e, "Tick").
 			for _, arg := range v.Args {
 				if lit, isLit := arg.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
 					if s, err := strconv.Unquote(lit.Value); err == nil && isAttrName(s) && passesElement(v) {
 						read[s] = true
 					}
 				}
-			}
-			if callee == "bindStyle" {
-				read["Style"] = true
 			}
 			if generic[callee] || depth >= 4 || visiting[callee] || !passesElement(v) {
 				return true
@@ -272,9 +269,6 @@ func scanWith(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[str
 						read[s] = true
 					}
 				}
-			}
-			if callee == "bindStyle" {
-				read["Style"] = true
 			}
 			if generic[callee] || depth >= 4 || visiting[callee] || !passesElement(v) {
 				return true
