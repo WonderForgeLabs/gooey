@@ -59,6 +59,11 @@ func main() {
 	RegisterModal(ctx, store.Blocked)
 	store.app = gooey.NewApp(markup.Page(dir, "store.gooey", ctx))
 	store.svc = control.NewService(store.app, ctx)
+	// The route back from the goroutine Subscribe's build runs on, and
+	// the one that puts Cancel's restore behind the vendor RPCs already
+	// queued. Same Dispatcher as control.Bridge posts through, which is
+	// the whole reason the ordering works.
+	store.post = store.app.Post
 
 	// TWO endpoints, and the difference between them is the demo.
 	//

@@ -81,6 +81,17 @@ type Store struct {
 	// mounted before the app exists.
 	resync func()
 
+	// post is App.Post — the only legal route back to the property graph
+	// from a goroutine that is not the UI one. A func field for the same
+	// reason resync is: a test needs a real queue it can drain on its own
+	// terms, and NewStore runs before there is an App to ask.
+	//
+	// Nil means "run it now, on this goroutine", which is right for the
+	// tests that never leave it and WRONG as a way to satisfy an async
+	// test — a fake that runs the closure inline keeps a missing hand-off
+	// green. The test that pins the hand-off supplies a queue.
+	post func(func())
+
 	walletC  *prop.Property[int] // cents
 	monthlyC *prop.Property[int] // cents committed per month
 
@@ -205,7 +216,22 @@ func (s *Store) Subscribe() {
 	// modify this app" whether or not anything was running, which is true
 	// and useless: the grant existed and the product did not, and the only
 	// way to find out was to notice the toolbar had not changed.
-	s.confirm(s.vendors.launch(*it))
+	//
+	// Off the UI goroutine, because launch runs `go build` and this is a
+	// Click handler. A cold build is seconds, and for those seconds the
+	// run loop is not draining, not composing and not reading input — the
+	// app is frozen. In a talk whose whole subject is which party can
+	// freeze your UI, doing it to ourselves on the buy button is the one
+	// bug that would argue against the thesis from the stage.
+	//
+	// Two receipts, not one. The first goes up now so the button visibly
+	// did something; the second replaces it when the build lands. Without
+	// the first, an uncached build looks exactly like a click that missed.
+	s.confirm("subscribed — starting " + it.Vendor + "…")
+	go func(it Integration) {
+		line := s.vendors.launch(it)
+		s.onUI(func() { s.confirm(line) })
+	}(*it)
 	s.setPane(paneStore)
 	s.buying.Set(-1)
 }
@@ -237,13 +263,34 @@ func (s *Store) Cancel() {
 	// than papering over: it is the same asymmetry as the missing
 	// approval hook, one step later in the story.
 	s.vendors.stop(items[i].ID)
-	msg := "cancelled " + items[i].Vendor
-	if items[i].Cmd != "" {
-		if err := s.restoreToolbar(); err != nil {
-			msg += " — but its toolbar is still installed: " + err.Error()
-		}
+	vendorName := items[i].Vendor
+	s.confirm("cancelled " + vendorName)
+	if items[i].Cmd == "" {
+		return
 	}
-	s.confirm(msg)
+	// The restore is POSTED rather than called, and the ordering is the
+	// point. Every vendor RPC is a closure on this same Dispatcher
+	// (control.Bridge), so a patch_markup the vendor sent just before the
+	// kill is already queued. Calling restoreToolbar inline runs it while
+	// that patch is still waiting its turn, and the patch then lands on
+	// top of the restore: Cancel says the toolbar came back and the
+	// picker is still sitting there. Posting puts the restore behind the
+	// queue instead of in front of it.
+	//
+	// It narrows the window; it does not close it. A patch that arrives
+	// AFTER this post still sorts after it, and killing the process does
+	// not un-issue a request already in flight. Closing it needs the
+	// grant itself to be revocable — a cancelled subscription refusing
+	// the patch rather than a host racing to undo it — and grants are
+	// fixed at Serve time (main.go's Grant field), with no seam to hand
+	// back. That is the honest shape of this: the same asymmetry as the
+	// missing approval hook, one step later again. Do not describe it
+	// here as fixed.
+	s.onUI(func() {
+		if err := s.restoreToolbar(); err != nil {
+			s.confirm("cancelled " + vendorName + " — but its toolbar is still installed: " + err.Error())
+		}
+	})
 }
 
 // Tick jitters the host app's own numbers and advances usage on the
@@ -291,6 +338,17 @@ func drift(tick, i int) int {
 // The three ways the receipt line is written. They exist so that no call
 // site sets the text without also saying whether it is a refusal —
 // which is what let a decline render in the confirmation colour.
+// onUI runs fn on the UI goroutine, or right here if nothing wired a
+// queue. Every Get and Set below this line is unlocked by design, so the
+// nil branch is only ever correct on a goroutine that already owns them.
+func (s *Store) onUI(fn func()) {
+	if s.post != nil {
+		s.post(fn)
+		return
+	}
+	fn()
+}
+
 func (s *Store) refuse(msg string)  { s.receipt.Set(msg); s.bad.Set(true) }
 func (s *Store) confirm(msg string) { s.receipt.Set(msg); s.bad.Set(false) }
 func (s *Store) clearReceipt()      { s.receipt.Set(""); s.bad.Set(false) }
