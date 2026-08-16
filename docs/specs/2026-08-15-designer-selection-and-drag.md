@@ -96,10 +96,20 @@ reset sites are not co-located with anything that would remind you:
 | `rebuild` after any edit | keep it — the node pointers survive | (safe, and the one case that lures you into thinking the others are too) |
 
 Four sites, three of them silent when missed, and "silent" here means the
-designer selects something the user can see no reason for. The derived
-form makes all four unanswerable: the scope cannot be stale because it is
-recomputed from `ed.sel`, and `ed.sel` is already maintained by every one
-of those paths because it is the selection.
+designer selects something the user can see no reason for.
+
+**"What resets the scope" was answered by making it unanswerable.** That
+was the open question when this work started, and the derived form does
+not answer it — it deletes it. The scope cannot be stale because it is
+recomputed from `ed.sel` on every read, and `ed.sel` is already maintained
+by every one of those four paths because it *is* the selection. There is
+no state to reset, so there is no site at which to forget.
+
+That is the shape to prefer when it is available, and the test for
+whether it is: **can the derived-from value be computed from state that
+something else is already obliged to keep correct?** Here it can. Where it
+cannot — see the empty-container limit below — the field comes back and
+the four reset sites come back with it.
 
 The three gestures then compose without any of them knowing about the
 others:
