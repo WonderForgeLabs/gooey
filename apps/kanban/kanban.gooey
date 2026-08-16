@@ -65,7 +65,25 @@
       </Tab>
     </Tabs>
 
-    <Text Grid.Row="3" Style="dim">tab: move focus   ↑/↓ or j/k: select a card   enter: add task from the field   ctrl+t: switch mcp/log tab   q: quit</Text>
+    <!-- The bottom row is a StatusBar rather than one dim Text with the
+         gaps counted by hand: navigation against the left edge, the
+         primary action in the middle, mode and exit against the right.
+         Each section is its own paint node, so a hint that later becomes
+         bound (a card count, a worker state) repaints alone.
+
+         The wording is shorter than the Text it replaces because the old
+         one did not fit. That Text asked for 115 columns on a board whose
+         three panels are comfortable near 100, so its tail — "q: quit" —
+         was clipped off the right edge with nothing to say so. StatusBar
+         does not shorten the row by itself; what it changes is WHICH end
+         gives way, because the edges hold and the centre shortens. Saying
+         less is the actual fix, and there is less to say: the field above
+         is already labelled "new task:", and the tab strip above already
+         reads "mcp | log". -->
+    <StatusBar Grid.Row="3"
+               Left="tab: move focus   ↑/↓ or j/k: select a card"
+               Center="enter: add task"
+               Right="ctrl+t: switch tabs   q: quit"/>
 
     <KeyBinding Gesture="q" Command="{{.Quit}}"/>
     <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
