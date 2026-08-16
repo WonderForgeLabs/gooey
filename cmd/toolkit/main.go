@@ -40,12 +40,11 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -113,7 +112,7 @@ func main() {
 	mode := flag.String("mode", "", "force graphics mode: kitty|sixel|iterm2|cells")
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
-	enc, forced, err := encoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor(*mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -383,29 +382,18 @@ func main() {
 		formStatus.Set("saved: " + formName.Get() + " <" + formEmail.Get() + ">")
 	}).When(canSubmit)
 
-	dir := "cmd/toolkit"
-	if _, err := os.Stat(filepath.Join(dir, "toolkit.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("toolkit", "toolkit.gooey")
 
 	// The probe is what turns the pixel chrome on: without capabilities
 	// there is no protocol and no cell size, and the button draws its
 	// pill in box runes instead. Both are correct; the caption says
 	// which one you are looking at.
 	//
-	// Pinning is all it takes. A forced protocol still needs a cell size —
-	// the chrome is generated at that resolution — but that rule now lives
-	// in App.caps, which supplies term.DefaultCellW/H for exactly the case
-	// this demo used to spell out by hand.
-	var opts []gooey.Option
-	if forced {
-		opts = append(opts, gooey.WithGraphics(enc))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
-	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), opts...)
+	// Pinning is all it takes: probe, or pin the protocol and the cell
+	// size the chrome is generated at. That pair is identical in every
+	// demo with a -mode flag, so it is demomain.GraphicsOptions rather
+	// than an option list spelled out here.
+	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), demomain.GraphicsOptions(enc, forced)...)
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
 	}
@@ -456,25 +444,6 @@ func gradientImage(c render.Color) image.Image {
 		}
 	}
 	return img
-}
-
-// encoderFor resolves -mode. "cells" is a real answer, not the absence
-// of one: it forces the universal tier, which is what you want when
-// checking that the pill still reads without a pixel plane.
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "cells":
-		return nil, true, nil
-	}
-	return nil, false, fmt.Errorf("unknown -mode %q: want kitty, sixel, iterm2 or cells", mode)
 }
 
 // The bound index properties are edited by components (a Segmented, a

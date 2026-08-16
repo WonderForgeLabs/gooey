@@ -14,12 +14,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -148,16 +147,10 @@ func main() {
 		},
 	}
 
-	dir := "cmd/state"
-	if _, err := os.Stat(filepath.Join(dir, "state.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-
 	// The framework figures the app observes above — frames, damage,
 	// focus — are the App's and the Composer's own counters, so this
 	// demo no longer keeps a private copy of the run loop to derive them.
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "state.gooey", ctx))
+	app = gooey.NewApp(markup.Page(demomain.MarkupFS("state", "state.gooey"), "state.gooey", ctx))
 	if err := app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
 	}

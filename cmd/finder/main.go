@@ -15,7 +15,7 @@
 // <ItemsView Focusable="false"> whose clicks and wheel arrive by
 // hit-testing, page-level gestures are <KeyBinding> declarations bound
 // to viewmodel commands — so there is no event loop here at all, only
-// gooey.App.
+// gooey.App, which owns the terminal and the dispatch.
 package main
 
 import (
@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -157,33 +158,29 @@ func main() {
 		},
 	}
 
-	// markup.Page is the whole hot-reload story: the App rebuilds on the
-	// UI goroutine, which is where binding resolution has to happen. The
-	// hand-rolled loop this replaced watched with markup.Watch, and that
-	// built the replacement tree — resolving bindings, touching the
-	// property graph — on the watcher's own goroutine.
-	app = gooey.NewApp(markup.Page(os.DirFS(pageDir()), pageFile, ctx))
+	name := "finder.gooey"
+	fsys := demomain.MarkupFS("finder", name)
+
+	// markup.Page is the hot-reload seam, and it is a real fix over the
+	// swap channel this used to run: markup.Watch built the replacement
+	// TREE on the polling goroutine, which resolves bindings — property
+	// graph work — off the UI goroutine. Page.Watch reports only THAT
+	// the file changed and App rebuilds on the UI goroutine, where that
+	// is legal. An os.DirFS here, an embed.FS in a release build, same
+	// code path either way.
+	//
+	// A load error at startup comes back from Run before any terminal is
+	// touched, so gooey.Exit prints it on a cooked screen — what the
+	// explicit markup.Load before term.Open used to buy by hand.
+	app = gooey.NewApp(markup.Page(fsys, name, ctx))
 	err := app.Run(context.Background())
+
+	// Printed after Run, so it lands on a restored terminal — the whole
+	// reason an fzf-alike is worth writing: its answer goes to stdout.
 	if chosen != "" {
 		fmt.Println(chosen)
 	}
 	gooey.Exit(err)
-}
-
-const pageFile = "finder.gooey"
-
-// pageDir finds the markup whether the demo was started from the
-// repository root, from its own directory, or as an installed binary
-// sitting next to its page.
-func pageDir() string {
-	if _, err := os.Stat(pageFile); err == nil {
-		return "."
-	}
-	if _, err := os.Stat(filepath.Join("cmd/finder", pageFile)); err == nil {
-		return "cmd/finder"
-	}
-	exe, _ := os.Executable()
-	return filepath.Dir(exe)
 }
 
 func clampSel(i, n int) int {

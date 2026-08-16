@@ -57,6 +57,7 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -452,12 +453,7 @@ func main() {
 	// context names a second document: the preview pane is its own
 	// markup-only control (an Include), loaded through the same fs.FS
 	// seam and listed on markup.Page below so editing it hot-reloads.
-	mdir := filepath.Join("cmd", "browser")
-	if _, err := os.Stat(filepath.Join(mdir, "browser.gooey")); err != nil {
-		exe, _ := os.Executable()
-		mdir = filepath.Dir(exe)
-	}
-	mfs := os.DirFS(mdir)
+	mfs := demomain.MarkupFS("browser", "browser.gooey")
 
 	// rescan is what the page's <Timer> ticks. The fingerprint is
 	// UI-goroutine state: the command runs posted, like every Action.

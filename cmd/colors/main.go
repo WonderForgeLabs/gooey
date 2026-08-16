@@ -38,10 +38,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/graphics"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -53,10 +52,23 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
 
-	// Forcing a tier is what makes the difference recordable: a GIF
-	// recorder renders truecolor cells, so the only way to show what a
-	// 256-color terminal — or one without a graphics protocol — does is to
-	// emit what that terminal would get.
+	// The flags that override capability detection. Forcing a tier is
+	// what makes the difference recordable: a GIF recorder renders
+	// truecolor cells, so the only way to show what a 256-color terminal
+	// — or one without a graphics protocol — does is to emit what that
+	// terminal would get.
+	//
+	// Detection itself is gooey.WithCapabilityProbe below, which runs the
+	// full Screen.Detect handshake inside App.acquire rather than the
+	// color-depth environment read alone: the picker's pixel tier exists
+	// only where the probe finds a graphics protocol AND a cell size to
+	// generate the bars against. App runs it in exactly the place this
+	// file used to — after opening the terminal, before Raw and before
+	// the input decoder starts — so the replies cannot interleave with
+	// input events. (This demo once avoided Detect because its probe
+	// abandoned a pending tty read that then stole the first keystrokes;
+	// term.readUntilDA1 reads synchronously under a deadline now, so a
+	// keyboard-driven demo can afford it.)
 	forcedDepth, depthForced := render.TrueColor, false
 	if *depthFlag != "" {
 		d, ok := render.ParseColorDepth(*depthFlag)
@@ -70,11 +82,14 @@ func main() {
 	// component's contract — the choice is the terminal's, not the
 	// author's); the flag exists to force a protocol on, or off with
 	// "cells", for recordings and side-by-side comparison.
-	gfx, gfxForced, err := encoderFor(*gfxFlag)
+	gfx, gfxForced, err := demomain.EncoderFor(*gfxFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	// "a forced protocol still needs a cell size" used to be a hand-written
+	// 10×20 right here, in this demo and two others. App.caps owns that
+	// rule now (app.go:599-635) and applies it to any pinned encoder.
 
 	// --- viewmodel: one source property, everything else derived ---
 	accent := prop.NewSource(render.RGB(255, 170, 60))
@@ -137,35 +152,47 @@ func main() {
 		},
 	}
 
-	dir := "cmd/colors"
-	if _, err := os.Stat(filepath.Join(dir, "colors.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("colors", "colors.gooey")
 	// <Swatch/> resolves to swatch.gooey by convention: a markup-only
 	// control needs no registration, only somewhere to be found.
 	ctx.Includes = fsys
 
-	// "Let capabilities decide" is a probe, not an absence: without one
-	// the app has a color depth and no graphics answer at all, so the
-	// picker's pixel tier could never appear. The probe runs inside Run,
-	// before the decoder starts, so its replies cannot interleave with
-	// input events.
+	// The probe is unconditional: even under --depth or --graphics this
+	// page reports what the terminal actually said ("forced (terminal
+	// reports …)"), and the pixel tier needs the cell size regardless.
+	// WithGraphics pins the protocol when a flag asked for one — a nil
+	// encoder pins the cell tier, which is what --graphics=cells means,
+	// and App.caps supplies the assumed cell size a pinned protocol needs.
 	opts := []gooey.Option{gooey.WithCapabilityProbe()}
 	if gfxForced {
-		// Pinning is all it takes: App.caps supplies the assumed cell size
-		// a pinned protocol needs.
 		opts = append(opts, gooey.WithGraphics(gfx))
 	}
-	// The extra name is what makes editing the CONTROL hot-reload too: a
-	// watcher cannot infer an <Include>, because resolving one needs the
-	// build that has not happened yet.
+	// markup.Page is the hot-reload seam. It rebuilds on the UI
+	// goroutine, unlike the markup.Watch + swap channel this replaced,
+	// which resolved bindings — property-graph work — on the watcher's
+	// own goroutine. The extra name is what makes editing the CONTROL
+	// hot-reload too: a watcher cannot infer an <Include>, because
+	// resolving one needs the build that has not happened yet.
 	app = gooey.NewApp(markup.Page(fsys, "colors.gooey", ctx, "swatch.gooey"), opts...)
+
+	// --hold: the same "exit after a while instead of on q" that a
+	// time.After deadline in the old select gave, expressed as the app's
+	// own clock. Every re-fires, but Quit is idempotent and Run has
+	// already returned by then.
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
 	}
 
+	// Capabilities are the App's now, so both the reporting and the
+	// forced depth read and write the live composition here.
+	//
+	// It has to be a hook rather than a one-shot: App re-derives caps
+	// from the probe on every resize and on every hot reload, so a depth
+	// pinned once would be silently un-pinned by the next SIGWINCH. The
+	// != guards keep SetCaps — and the property Sets — to the frames that
+	// actually need them, and BeforeFrame is early enough to satisfy its
+	// "call it before the frame" contract, including the very first one,
+	// so a forced tier is forced from the first cell painted.
 	told := false
 	app.BeforeFrame(func() {
 		c := app.Composer()
@@ -196,28 +223,7 @@ func main() {
 		}
 	})
 
-	if err := app.Run(context.Background()); err != nil {
-		gooey.Exit(err)
-	}
-}
-
-// encoderFor resolves --graphics. "cells" is a real answer, not the
-// absence of one: it forces the universal tier, which is what you want
-// when checking what the page looks like with no pixel plane at all.
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "cells":
-		return nil, true, nil
-	}
-	return nil, false, fmt.Errorf("unknown graphics %q (want kitty, sixel, iterm2, or cells)", mode)
+	gooey.Exit(app.Run(context.Background()))
 }
 
 // scaleColor multiplies a color's channels, staying in range.

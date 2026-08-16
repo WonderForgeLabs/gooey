@@ -10,27 +10,27 @@
 // space/f/q are <KeyBinding> elements bound to viewmodel commands, so
 // this file holds no key handling at all — events arrive decoded and
 // Composer.Handle routes them.
+//
+// The viewmodel below is a deliberate copy of cmd/logview's: the two
+// files exist to be read side by side, and DRYing that out would delete
+// the comparison. The synthetic traffic is shared instead
+// (cmd/internal/logdata) — it is random test data, not a lesson.
 package main
 
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/logdata"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
-
-type line struct {
-	level, text string
-}
 
 func main() {
 	path := "cmd/markuplog/logview.gooey"
@@ -40,22 +40,22 @@ func main() {
 	path, _ = filepath.Abs(path)
 
 	// --- viewmodel: identical to cmd/logview ---
-	lines := prop.NewSource([]line{})
-	frozen := prop.NewSource([]line{})
+	lines := prop.NewSource([]logdata.Line{})
+	frozen := prop.NewSource([]logdata.Line{})
 	follow := prop.NewSource(true)
 	filter := prop.NewSource("")
 
-	visible := prop.NewComputed(func() []line {
-		var src []line
+	visible := prop.NewComputed(func() []logdata.Line {
+		var src []logdata.Line
 		if follow.Get() {
 			src = lines.Get()
 		} else {
 			src = frozen.Get()
 		}
 		if f := filter.Get(); f != "" {
-			kept := make([]line, 0, len(src))
+			kept := make([]logdata.Line, 0, len(src))
 			for _, l := range src {
-				if l.level == f {
+				if l.Level == f {
 					kept = append(kept, l)
 				}
 			}
@@ -122,9 +122,9 @@ func main() {
 				if err != nil {
 					return nil, fmt.Errorf("LogPane Lines: %w", err)
 				}
-				src, ok := v.(*prop.Property[[]line])
+				src, ok := v.(*prop.Property[[]logdata.Line])
 				if !ok {
-					return nil, fmt.Errorf("LogPane Lines: got %T, want *prop.Property[[]line]", v)
+					return nil, fmt.Errorf("LogPane Lines: got %T, want *prop.Property[[]logdata.Line]", v)
 				}
 				return &logPane{src: src}, nil
 			},
@@ -156,14 +156,14 @@ func main() {
 	// The log generator is the app's own clock: it must keep producing
 	// lines across a hot reload, so it belongs to the App rather than to
 	// the tree (a <Timer> would be replaced along with the tree).
-	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), nextLine())) })
+	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), logdata.Next())) })
 
 	app.BeforeFrame(func() {
 		if stats == nil || stats.Content == nil {
 			return
 		}
 		stats.Content.Set(fmt.Sprintf("lines arrived=%d   frames=%d   hot reloads=%d%s",
-			lineCount, app.Frames(), reloads, lastErr))
+			logdata.Count(), app.Frames(), reloads, lastErr))
 	})
 
 	if err := app.Run(context.Background()); err != nil {
@@ -173,7 +173,7 @@ func main() {
 
 type logPane struct {
 	gooey.Base
-	src *prop.Property[[]line]
+	src *prop.Property[[]logdata.Line]
 }
 
 func (p *logPane) Measure(avail gooey.Size) gooey.Size { return avail }
@@ -194,33 +194,10 @@ func (p *logPane) Render(f *gooey.Frame) {
 		ls = ls[len(ls)-b.H:]
 	}
 	for i, l := range ls {
-		s := fmt.Sprintf("%-5s %s", l.level, l.text)
+		s := fmt.Sprintf("%-5s %s", l.Level, l.Text)
 		if len(s) > b.W {
 			s = s[:b.W]
 		}
-		f.Cells.SetString(b.X, b.Y+i, s, levelStyles[l.level])
+		f.Cells.SetString(b.X, b.Y+i, s, levelStyles[l.Level])
 	}
 }
-
-var lineCount int
-
-var services = []string{"api-gateway", "auth", "billing", "search", "notifier"}
-
-func nextLine() line {
-	lineCount++
-	ts := time.Now().Format("15:04:05.000")
-	svc := services[rand.Intn(len(services))]
-	switch r := rand.Float64(); {
-	case r < 0.08:
-		return line{"ERROR", fmt.Sprintf("%s %s: upstream timeout after %dms (attempt %d)", ts, svc, 800+rand.Intn(2200), 1+rand.Intn(3))}
-	case r < 0.20:
-		return line{"WARN", fmt.Sprintf("%s %s: retrying request, backoff %dms", ts, svc, 50<<rand.Intn(5))}
-	case r < 0.35:
-		return line{"DEBUG", fmt.Sprintf("%s %s: cache %s key=%s", ts, svc, pick("hit", "miss"), randKey())}
-	default:
-		return line{"INFO", fmt.Sprintf("%s %s: %s /v1/%s %d %dms", ts, svc, pick("GET", "POST"), pick("users", "orders", "events"), pick(200, 201, 204), 2+rand.Intn(120))}
-	}
-}
-
-func pick[T any](xs ...T) T { return xs[rand.Intn(len(xs))] }
-func randKey() string       { return strings.ToLower(fmt.Sprintf("%x", rand.Intn(1<<24))) }

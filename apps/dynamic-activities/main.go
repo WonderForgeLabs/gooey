@@ -42,9 +42,11 @@
 // privileges. There is no sandbox and none is planned here: the point of
 // the demo is the round trip, and pretending otherwise would be worse
 // than saying it plainly. Both servers this app starts, and the Python
-// MCP server it launches, are loopback-only and unauthenticated. Do not
-// expose any of them, do not run this on a shared host, and do not point
-// it at anything you care about.
+// MCP server it launches, are unauthenticated. They default to loopback
+// addresses, and nothing stops you from pointing the flags somewhere
+// else — at which point the RCE endpoint is reachable from there too.
+// Do not expose any of them, do not run this on a shared host, and do
+// not point it at anything you care about.
 //
 // # The two servers this app starts
 //
@@ -59,9 +61,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -73,8 +73,8 @@ import (
 	// the format with the imaging registry, which is what lets an
 	// agent-authored <Image Src="diagram.svg"> resolve here — vector
 	// artwork rather than block glyphs.
-	_ "github.com/WonderForgeLabs/gooey/imagefmt/svg"
 	temporalhandlers "github.com/WonderForgeLabs/gooey/handlers/temporal"
+	_ "github.com/WonderForgeLabs/gooey/imagefmt/svg"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/mcp"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -129,48 +129,6 @@ func encoderFor(mode string) (graphics.Encoder, error) {
 	return nil, fmt.Errorf("dynamic-activities: unknown -graphics %q; want kitty, sixel, iterm2 or halfblock", mode)
 }
 
-// checkLoopback refuses a bind that is not loopback. gooeygrpc.Serve
-// enforces this itself; the MCP side is checked here because this app
-// hands mcp.Serve an address, and because the Python companion's own MCP
-// server takes one too — the danger is identical for all three: no
-// authentication, and a control handle on this terminal (and, for the
-// Python one, on this machine).
-func checkLoopback(what, addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("dynamic-activities: bad %s address %q: %w", what, addr, err)
-	}
-	if host == "" {
-		return fmt.Errorf("dynamic-activities: %s %q binds every interface; loopback only (use 127.0.0.1:port)", what, addr)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("dynamic-activities: %s %q is not a loopback address; these servers have no authentication", what, addr)
-	}
-	return nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// sourceDir resolves the directory holding this demo's markup: the
-// working directory under `go run .`, else the built binary's own
-// directory. It is also what ctx.Includes and ctx.Dir are rooted at.
-func sourceDir(marker string) string {
-	if fileExists(marker) {
-		return "."
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "."
-	}
-	return filepath.Dir(exe)
-}
-
 // activityNames splits the Python-owned Activities property — the
 // registry as this app sees it. The Go side deliberately keeps NO
 // registry of its own: the worker owns the activities, and this string
@@ -186,18 +144,21 @@ func activityNames(joined string) []string {
 }
 
 func main() {
-	mcpAddr := flag.String("mcp", "127.0.0.1:0", "loopback address for this app's MCP server; port 0 picks a free port; empty disables it")
-	grpcAddr := flag.String("grpc", "127.0.0.1:0", "loopback address for the control-plane gRPC server; port 0 picks a free port; empty disables it")
+	mcpAddr := flag.String("mcp", "127.0.0.1:0", "bind address for this app's MCP server; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
+	grpcAddr := flag.String("grpc", "127.0.0.1:0", "bind address for the control-plane gRPC server; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	temporalAddr := flag.String("temporal", "127.0.0.1:7233", "Temporal frontend address")
 	taskQueue := flag.String("task-queue", "gooey-dynamic-activities", "Temporal task queue the worker polls and the star button schedules on")
 	withWorker := flag.Bool("with-worker", true, "launch the Python worker + activity MCP server as a companion sharing this app's process lifetime")
 	workerPython := flag.String("worker-python", "python3", "python interpreter for the companion; point it at a venv's bin/python if system python lacks requirements.txt")
-	activityMCP := flag.String("activity-mcp", "127.0.0.1:7802", "loopback address the COMPANION's activity-CRUD MCP server binds")
+	activityMCP := flag.String("activity-mcp", "127.0.0.1:7802", "bind address the COMPANION's activity-CRUD MCP server uses. UNAUTHENTICATED, and its tools run arbitrary Python — a non-loopback address publishes remote code execution")
 	page := flag.String("page", "dynamicactivities.gooey", "which .gooey page to load from the example directory")
 	graphicsMode := flag.String("graphics", "", "force the image protocol: kitty|sixel|iterm2|halfblock; empty lets terminal capabilities decide")
 	flag.Parse()
 
-	dir := sourceDir(*page)
+	// The directory holding this demo's markup: "." under `go run .`,
+	// else the built binary's own directory. It is what ctx.Includes,
+	// ctx.Dir and the worker companion below are all rooted at.
+	dir := gooey.SourceDir(*page)
 
 	// --- viewmodel. Everything the star needs is a plain source property;
 	// what makes this demo different is only that .Selected is read as the
@@ -226,7 +187,20 @@ func main() {
 		return "selected: (none yet)"
 	})
 
-	statusLine := prop.NewSource("")
+	// The bottom row's four facts, one property each, because the page
+	// puts them in two places: the backend against the left edge and the
+	// three loopback servers in the centre. They were one string glued
+	// together with " · " until StatusBar took over the arrangement — the
+	// separators are the markup's business, not this file's.
+	//
+	// The backend is knowable now; the other three are set from their
+	// LISTENERS below, because port 0 means the flag does not say what was
+	// bound. Empty stays empty: a server the flags disabled contributes a
+	// zero-width section, not a dangling label.
+	backend := prop.NewSource("temporal " + *temporalAddr + " queue " + *taskQueue)
+	grpcEndpoint := prop.NewSource("")
+	mcpEndpoint := prop.NewSource("")
+	activityEndpoint := prop.NewSource("")
 
 	// Cycle walks the Python-published list. It is the only reason this
 	// app parses Activities at all — the registry itself stays remote.
@@ -256,12 +230,20 @@ func main() {
 			"SelectedLine": selectedLine,
 			"Activities":   activities,
 			"Note":         note,
-			"Status":       statusLine,
-			"StarColor":    starColor,
-			"StarGlow":     starGlow,
-			"Cycle":        cycle,
-			"Clear":        clear,
-			"Quit":         gooey.Command(func() { app.Quit() }),
+
+			// The status row's sections. Separate names rather than one
+			// Status string: each is its own paint node on the page, and
+			// an MCP client can read or set any one of them.
+			"Backend":          backend,
+			"GrpcEndpoint":     grpcEndpoint,
+			"McpEndpoint":      mcpEndpoint,
+			"ActivityEndpoint": activityEndpoint,
+
+			"StarColor": starColor,
+			"StarGlow":  starGlow,
+			"Cycle":     cycle,
+			"Clear":     clear,
+			"Quit":      gooey.Command(func() { app.Quit() }),
 
 			// Zoom for an <Image> an agent placed on the page. The SIZE is
 			// two ordinary int properties, so agent-authored markup binds
@@ -343,12 +325,15 @@ func main() {
 	// run loop's goroutine through this — the confinement rule.
 	ctx.Dispatcher = app.Dispatcher()
 
-	var mcpURL, grpcURL string
+	// grpcURL outlives its block: -with-worker needs it, and the companion
+	// gets it in its environment. The MCP URL does not, so it goes straight
+	// into the property the status row reads.
+	var grpcURL string
 
 	if *mcpAddr != "" {
-		if err := checkLoopback("-mcp", *mcpAddr); err != nil {
-			gooey.Exit(err)
-		}
+		// -mcp is used as given. This endpoint has no authentication, so a
+		// non-loopback address exposes an unauthenticated handle that can
+		// drive the UI; that is the operator's choice.
 		srv, err := mcp.Serve(app, mcp.Options{
 			Addr:    *mcpAddr,
 			Context: ctx,
@@ -358,12 +343,14 @@ func main() {
 			gooey.Exit(err)
 		}
 		defer srv.Close()
-		mcpURL = srv.URL()
+		mcpEndpoint.Set("mcp " + srv.URL())
 	}
 
 	if *grpcAddr != "" {
-		// Serve checks loopback itself and returns the bound address, so
-		// -grpc 127.0.0.1:0 still yields a usable GOOEY_GRPC_ADDR.
+		// Serve returns the bound address, so -grpc 127.0.0.1:0 still
+		// yields a usable GOOEY_GRPC_ADDR. The address is used as given
+		// and the control plane has no authentication, so a non-loopback
+		// address exposes it; that is the operator's choice.
 		srv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
 			Addr:    *grpcAddr,
 			Context: ctx,
@@ -376,57 +363,45 @@ func main() {
 		}
 		defer srv.Close()
 		grpcURL = srv.Addr()
+		grpcEndpoint.Set("grpc " + grpcURL)
 	}
 
 	if *withWorker {
 		if grpcURL == "" {
 			gooey.Exit(fmt.Errorf("dynamic-activities: -with-worker needs the control plane it registers names through; do not pass -grpc \"\""))
 		}
-		if err := checkLoopback("-activity-mcp", *activityMCP); err != nil {
-			gooey.Exit(err)
+		// -activity-mcp is used as given. This endpoint has no
+		// authentication and its create_activity tool runs arbitrary
+		// Python in the worker process, so a non-loopback address
+		// publishes remote code execution; that is the operator's choice.
+		//
+		// The worker as a description rather than forty lines of
+		// orchestration: gooey.PythonCompanion picks the interpreter (the
+		// demo's own .venv beats bare python3, because system python3
+		// almost never has temporalio, mcp and gooey-control, and a
+		// companion that cannot import them exits and takes the app with
+		// it — an explicit -worker-python always wins), opens the
+		// truncating log when the child starts, and closes it only once
+		// the child is gone. The four Env entries ride on top of this
+		// shell's environment, which is what lets an exported
+		// TEMPORAL_* or API key reach the worker.
+		worker := gooey.PythonWorker{
+			Name:   "activity-worker",
+			Dir:    dir,
+			Script: "worker.py",
+			Python: *workerPython,
+			Log:    "worker.log",
+			Env: []string{
+				"GOOEY_GRPC_ADDR=" + grpcURL,
+				"GOOEY_ACTIVITY_MCP_ADDR=" + *activityMCP,
+				"TEMPORAL_ADDRESS=" + *temporalAddr,
+				"TEMPORAL_TASK_QUEUE=" + *taskQueue,
+			},
 		}
-		logPath := filepath.Join(dir, "worker.log")
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-		if err != nil {
-			gooey.Exit(fmt.Errorf("dynamic-activities: cannot open worker log %s: %w", logPath, err))
-		}
-		// Held open for the app's lifetime: app.Run returns only after
-		// teardown has stopped and waited for every companion.
-		defer logFile.Close()
-
-		// Prefer the demo's own venv when the flag is untouched — system
-		// python3 almost never has temporalio, mcp and gooey-control, and a
-		// companion that cannot import them exits, which takes the app down
-		// with it. An explicit -worker-python always wins.
-		python := *workerPython
-		if python == "python3" {
-			if venv := filepath.Join(dir, ".venv", "bin", "python"); fileExists(venv) {
-				python = venv
-			}
-		}
-		cmd := exec.Command(python, "worker.py")
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GOOEY_GRPC_ADDR="+grpcURL,
-			"GOOEY_ACTIVITY_MCP_ADDR="+*activityMCP,
-			"TEMPORAL_ADDRESS="+*temporalAddr,
-			"TEMPORAL_TASK_QUEUE="+*taskQueue,
-		)
-		app.AddCompanion(gooey.CompanionCmd("activity-worker", cmd, gooey.CompanionOutput(logFile)))
-		note.Set("create one: call create_activity on http://" + *activityMCP + "/mcp  (worker log: " + logPath + ")")
+		app.AddCompanion(gooey.PythonCompanion(worker))
+		activityEndpoint.Set("activities " + *activityMCP)
+		note.Set("create one: call create_activity on http://" + *activityMCP + "/mcp  (worker log: " + worker.LogPath() + ")")
 	}
-
-	status := "temporal " + *temporalAddr + " queue " + *taskQueue
-	if grpcURL != "" {
-		status += " · grpc " + grpcURL
-	}
-	if mcpURL != "" {
-		status += " · mcp " + mcpURL
-	}
-	if *withWorker {
-		status += " · activities " + *activityMCP
-	}
-	statusLine.Set(status + "   ctrl+n: next activity   ctrl+l: clear   ctrl+c: quit")
 
 	err = app.Run(context.Background())
 	tc.Close()

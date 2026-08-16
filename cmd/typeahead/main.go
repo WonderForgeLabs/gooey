@@ -67,6 +67,7 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
@@ -81,14 +82,14 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	enc, forced, err := encoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor(*mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
 	vm := newModel()
-	dir := os.DirFS(pageDir())
+	dir := demomain.MarkupFS("typeahead", pageFile)
 	if *dump {
 		root, err := markup.Load(dir, pageFile, vm.ctx())
 		if err != nil {
@@ -101,19 +102,7 @@ func main() {
 		return
 	}
 
-	opts := []gooey.Option{}
-	if forced {
-		// A forced protocol still needs a cell size: sixel scales by it,
-		// and a zero CellW emits an empty image while Image skips the
-		// halfblock path — a black screen with no error.
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
-
-	app := gooey.NewApp(markup.Page(dir, pageFile, vm.ctx()), opts...)
+	app := gooey.NewApp(markup.Page(dir, pageFile, vm.ctx()), demomain.GraphicsOptions(enc, forced)...)
 	vm.quit = app.Quit
 	app.BeforeFrame(func() { vm.refresh(app) })
 	if *hold > 0 {
@@ -123,33 +112,6 @@ func main() {
 }
 
 const pageFile = "typeahead.gooey"
-
-// pageDir is the demo's own directory, so `go run ./cmd/typeahead`
-// from the repository root finds the markup — the same convention the
-// other markup demos use.
-func pageDir() string {
-	if _, err := os.Stat(pageFile); err == nil {
-		return "."
-	}
-	return "cmd/typeahead"
-}
-
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "halfblock":
-		return nil, true, nil
-	default:
-		return nil, false, fmt.Errorf("unknown mode: %s", mode)
-	}
-}
 
 // record is one item. Its picture is a plain image.Image, projected
 // straight onto the row like every other field.

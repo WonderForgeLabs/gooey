@@ -33,11 +33,10 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/graphics"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -52,7 +51,7 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	dir := os.DirFS(pageDir())
+	dir := demomain.MarkupFS("pixels", pageFile)
 
 	// The page settles the protocol if it has an opinion; --mode is the
 	// fallback for a page that says nothing, which is this one. Settings
@@ -67,7 +66,7 @@ func main() {
 	if want == "" {
 		want = *mode
 	}
-	enc, forced, err := encoderFor(want)
+	enc, forced, err := demomain.EncoderFor(want)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -88,21 +87,12 @@ func main() {
 		return
 	}
 
-	// A forced protocol still needs a cell size — sixel scales by it, and
-	// a zero CellW emits a well-formed image of no pixels — but that rule
-	// lives in App.caps now, so pinning is one option again. The rule is
-	// narrower than the 10×20 this demo used to assume, deliberately: a
-	// pinned NIL encoder is the halfblock fallback, which measures in
-	// cells and needs no pixel metrics, so --mode=halfblock reports a
-	// cell of 0×0 in the footer. That is the honest answer — nothing
-	// measured the terminal — and the same one the unforced path gives
-	// when the capability probe goes unanswered.
-	opts := []gooey.Option{gooey.WithoutMouse()}
-	if forced {
-		opts = append(opts, gooey.WithGraphics(enc))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
+	// Probe, or pin the protocol along with the cell size a pinned one
+	// still needs — sixel scales by it, and a zero CellW emits a
+	// well-formed image of no pixels. That pair is identical in every
+	// demo with a --mode flag, so it lives in demomain; the only thing
+	// this demo adds is WithoutMouse.
+	opts := append([]gooey.Option{gooey.WithoutMouse()}, demomain.GraphicsOptions(enc, forced)...)
 
 	app := gooey.NewApp(markup.Page(dir, pageFile, ctx), opts...)
 	vm.bind(app)
@@ -111,37 +101,6 @@ func main() {
 		app.Every(*hold, app.Quit)
 	}
 	gooey.Exit(app.Run(context.Background()))
-}
-
-// pageDir finds the markup whether the demo was started from the
-// repository root, from its own directory, or as an installed binary
-// sitting next to its page.
-func pageDir() string {
-	if _, err := os.Stat(pageFile); err == nil {
-		return "."
-	}
-	if _, err := os.Stat(filepath.Join("cmd/pixels", pageFile)); err == nil {
-		return "cmd/pixels"
-	}
-	exe, _ := os.Executable()
-	return filepath.Dir(exe)
-}
-
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "halfblock":
-		return nil, true, nil
-	default:
-		return nil, false, fmt.Errorf("unknown mode: %s", mode)
-	}
 }
 
 // model is the viewmodel. Everything the keys change is a property, so
