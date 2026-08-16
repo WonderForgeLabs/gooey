@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -816,4 +817,40 @@ func Exit(err error) {
 	}
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+// SourceDir reports the directory this program's own files — its markup,
+// its assets, a companion worker's source — actually live in, which is
+// not the same question as the process's working directory.
+//
+// A demo run the way its docs say (`cd apps/kanban && go run .`) finds
+// them in "."; the same program built and launched from somewhere else
+// finds them beside the executable. marker is a file the directory is
+// known to contain — a .gooey page, usually — and is the whole
+// discriminator.
+//
+// It is what os.DirFS and markup.Context.Dir want to be rooted at, for
+// the reason the markup-companions record gives for resolving a
+// <Companion>'s Dir against its document: a path that means something
+// different depending on where you launched the binary from is a bug
+// generator. Every app that loads markup from disk answers this
+// question, and answering it by hand is how one of them ends up
+// resolving assets against the shell's cwd.
+func SourceDir(marker string) string {
+	if marker != "" && fileExists(marker) {
+		return "."
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	return filepath.Dir(exe)
+}
+
+// fileExists is "there is a readable file here", not a directory — the
+// distinction SourceDir's marker and PythonWorker's venv interpreter
+// both need, and which os.Stat alone does not make.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

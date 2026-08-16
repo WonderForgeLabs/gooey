@@ -68,7 +68,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -440,11 +439,6 @@ func mcpTrafficLogger(next http.Handler, capture func(dir, text string)) http.Ha
 	})
 }
 
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
 func main() {
 	// Port 0 by default: the kernel picks a free one, so several instances
 	// (and several agents) coexist without colliding on a well-known port.
@@ -709,11 +703,10 @@ func main() {
 		},
 	}
 
-	dir := "."
-	if _, err := os.Stat(filepath.Join(dir, "kanban.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
+	// "." under `go run .`, the executable's own directory otherwise —
+	// the framework's answer, so this app and the worker launcher below
+	// agree about where this demo's files are.
+	dir := gooey.SourceDir("kanban.gooey")
 
 	// Includes is what lets AGENT-AUTHORED markup load assets. A page
 	// loaded by markup.Page resolves <Image Src="x.png"> against the FS
@@ -807,49 +800,39 @@ func main() {
 			"text and a live log of every raw MCP request/response this server has handled — including the call reading this."
 
 		if *withWorker {
-			// worker/ relative to kanban's own source directory, not
-			// whatever cwd this binary happened to launch from — dir
-			// already resolved that split above (`.` under `go run`, the
-			// executable's directory otherwise).
-			workerDir := filepath.Join(dir, "worker")
-			logPath := filepath.Join(workerDir, "kanban-worker.log")
-			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-			if err != nil {
-				gooey.Exit(fmt.Errorf("kanban: cannot open worker log %s: %w", logPath, err))
+			// The whole worker, as a description: gooey.PythonCompanion
+			// owns the interpreter choice (an explicit -worker-python
+			// wins, otherwise worker/.venv/bin/python beats bare python3,
+			// because that venv is where temporalio and
+			// claude-agent-sdk are and a worker that cannot import them
+			// exits — taking this app with it), the truncating log, and
+			// the log's lifetime, which ends after the child is gone
+			// rather than at a defer here.
+			//
+			// Dir is worker/ under kanban's own source directory, not
+			// whatever cwd this binary happened to launch from — SourceDir
+			// resolved that split above.
+			//
+			// Env rides on top of the parent's full environment, so an
+			// ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN /
+			// TEMPORAL_ADDRESS already exported in this shell reaches the
+			// worker; the two entries here point it at this app's MCP
+			// endpoint and at a task queue distinct from the generic one
+			// other demos default to.
+			worker := gooey.PythonWorker{
+				Name:   "temporal-worker",
+				Dir:    filepath.Join(dir, "worker"),
+				Script: "worker.py",
+				Python: *workerPython,
+				Log:    "kanban-worker.log",
+				Env: []string{
+					"GOOEY_MCP_URL=" + mcpURL,
+					"TEMPORAL_TASK_QUEUE=" + *workerTaskQueue,
+				},
 			}
-			// Held open for the app's lifetime, not per-write: app.Run
-			// returns only after teardown has stopped and waited for every
-			// companion (docs/specs/2026-08-10-companions.md, "Teardown"),
-			// so the worker is done writing by the time this defer fires.
-			defer logFile.Close()
+			app.AddCompanion(gooey.PythonCompanion(worker))
 
-			// Prefer the worker's own venv when the flag is left at its
-			// default: apps/kanban/worker/.venv is where its deps
-			// (temporalio, claude-agent-sdk) are installed, and system
-			// python3 almost never has them — a worker that can't import
-			// them exits, and a dead companion tears the app down. An
-			// explicit -worker-python always wins; a missing venv falls
-			// straight back to python3, unchanged.
-			python := *workerPython
-			if python == "python3" {
-				if venv := filepath.Join(workerDir, ".venv", "bin", "python"); fileExists(venv) {
-					python = venv
-				}
-			}
-			cmd := exec.Command(python, "worker.py")
-			cmd.Dir = workerDir
-			// Forward the parent's full environment — any ANTHROPIC_API_KEY /
-			// CLAUDE_CODE_OAUTH_TOKEN / TEMPORAL_ADDRESS already exported in
-			// this shell reaches the worker — plus the two overrides that
-			// point it at this app's MCP endpoint and a task queue distinct
-			// from the generic one other demos default to.
-			cmd.Env = append(os.Environ(),
-				"GOOEY_MCP_URL="+mcpURL,
-				"TEMPORAL_TASK_QUEUE="+*workerTaskQueue,
-			)
-			app.AddCompanion(gooey.CompanionCmd("temporal-worker", cmd, gooey.CompanionOutput(logFile)))
-
-			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + logPath + "\n" +
+			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + worker.LogPath() + "\n" +
 				"trigger it from apps/kanban/worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
 				" python trigger.py GenerateUI \"some topic\""
 		}
