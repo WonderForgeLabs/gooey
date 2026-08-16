@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -128,8 +129,32 @@ type Terminal struct {
 	pty *pty
 	cmd *exec.Cmd
 
+	// takeover retires the typist the first time a person takes input.
+	//
+	// Two writers to one pty master is two byte streams into one stdin,
+	// and the guest has no way to tell them apart: a presenter who clicks
+	// into a Loop="true" island mid-script gets their keystrokes spliced
+	// through whatever the script was in the middle of typing. Nothing is
+	// corrupted and the demo is ruined, which is the worse of the two.
+	//
+	// So the human wins and the script stops — permanently, not until the
+	// next loop. Someone who took the keyboard did not want to race it
+	// back. A Once because both ways in (click, ctrl+]) reach it and both
+	// run on the UI goroutine, but the typist reads it from its own.
+	takeover     chan struct{}
+	takeoverOnce sync.Once
+
 	// the size last negotiated with the guest
 	cols, rows int
+}
+
+// yield hands input to the person and retires the script. Safe to call
+// on every keystroke; only the first one does anything.
+func (t *Terminal) yield() {
+	if t.takeover == nil {
+		return
+	}
+	t.takeoverOnce.Do(func() { close(t.takeover) })
 }
 
 func NewTerminal(cmdline string, cols, rows int) *Terminal {
@@ -317,6 +342,7 @@ func (t *Terminal) Start(post func(func())) (stop func()) {
 	// already gone.
 	typed := make(chan struct{})
 	done := make(chan struct{})
+	t.takeover = make(chan struct{})
 	go func() {
 		defer close(typed)
 		if len(t.Script) == 0 {
@@ -327,7 +353,21 @@ func (t *Terminal) Start(post func(func())) (stop func()) {
 				select {
 				case <-done:
 					return
+				case <-t.takeover:
+					// A person has the keyboard. Two writers to one pty
+					// is two byte streams into one stdin.
+					return
 				case <-time.After(st.After):
+				}
+				// Re-checked after the wait, not only before it: the
+				// takeover almost always lands DURING a step's pause,
+				// and a check that only ran before the sleep would still
+				// send this step's keystrokes into a guest someone else
+				// is already typing into.
+				select {
+				case <-t.takeover:
+					return
+				default:
 				}
 				if _, err := p.master.Write(st.Send); err != nil {
 					return
@@ -441,6 +481,7 @@ func (t *Terminal) HandleMouse(ev input.MouseEvent) bool {
 	if !t.live.Get() {
 		if ev.Kind == input.MousePress {
 			t.live.Set(true)
+			t.yield()
 			return true
 		}
 		return false
@@ -508,6 +549,9 @@ func (t *Terminal) encodeMouse(ev input.MouseEvent) []byte {
 func (t *Terminal) HandleKey(ev input.KeyEvent) bool {
 	if isRelease(ev) {
 		t.live.Set(!t.live.Get())
+		if t.live.Get() {
+			t.yield()
+		}
 		return true
 	}
 	if !t.live.Get() || t.pty == nil {
