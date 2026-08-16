@@ -6,6 +6,9 @@
 
       <Text Style="dim">Stepper — a focus stop: left/right adjust it, a click focuses it</Text>
       <Stepper Value="{{.Level}}" Label="level  (drives the meter above)"/>
+      <!-- Label goes through markup.BoundText, so it takes a literal, an
+           interpolation, or a value-namespace call — the same latitude a
+           <Text> has. Here it is a literal. -->
       <Stepper Value="{{.Other}}" Label="other  (nothing else reads it)"/>
 
       <Text Style="accent">{{.Readout}}</Text>

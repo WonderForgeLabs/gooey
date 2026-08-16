@@ -950,7 +950,7 @@ An empty event attribute is not an error — the element simply has no command.
 
 ### Attribute bindings on custom elements
 
-On custom components, UserControls, and Includes, an attribute like `Stories="{{.Stories}}"` is resolved via `Context.BindingValue`, which returns the raw context value — typically a typed `*prop.Property[T]` handle of any `T`, not just string. The receiving code type-asserts it. This is how non-string data crosses element boundaries.
+On custom components, UserControls, and Includes, an attribute like `Stories="{{.Stories}}"` resolves to the raw context value — typically a typed `*prop.Property[T]` handle of any `T`, not just string. This is how non-string data crosses element boundaries. A custom component's builder should reach it through `markup.Bound[T]` (see [Custom components](#custom-components)), which does the type assertion and produces the same load error a built-in would; `Context.BindingValue` is the lower level underneath it, and what a UserControl `setup` uses against the *parent* context.
 
 ## Handler namespaces
 
@@ -1172,7 +1172,20 @@ Components: map[string]markup.Builder{
 
 (from `cmd/markuplog`)
 
-The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. Letting a registered component declare its surface and have its attributes checked like a built-in's is [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290). A builder that wants typed data uses `ctx.BindingValue` — see the `Checkbox` builder in `cmd/state/main.go`, which resolves `Checked="{{.Auto}}"` to a `*prop.Property[bool]` and binds it two-way (render reads it, toggling Sets it). It is the only resolver a third-party builder has: the built-ins' own `boundProp`/`literalOrBound` stay unexported, which is [#266](https://github.com/WonderForgeLabs/gooey/issues/266).
+The universal layout attributes are applied by the framework after the builder returns, so a custom component that embeds `gooey.Base` gets `Margin`, `Grid.Row`, and the rest for free. Letting a registered component declare its surface and have its attributes checked like a built-in's is [PR #290](https://github.com/WonderForgeLabs/gooey/pull/290).
+
+A builder resolves its own attributes through the same four functions the built-in elements use, so a registered component speaks the whole dialect rather than a subset of it (#266):
+
+| resolver | attribute shape | absent |
+|---|---|---|
+| `markup.Bound[T](e, ctx, attr)` | `"{{.Path}}"` → the viewmodel's own `*prop.Property[T]`, shared two-way | load error |
+| `markup.BoundText(e, ctx, attr)` | a literal, an interpolation like `"Hi {{.Who}}!"`, or a `{{ns:Func …}}` call — always a handle, never nil | empty literal |
+| `markup.BoundColor(e, ctx, attr)` | `"#rgb"`/`"#rrggbb"`, or a bound `render.Color` | `nil` |
+| `markup.BoundStyle(e, ctx)` | `Style="name"` from `Context.Styles`, or a bound `render.Style` | the zero style |
+
+`markup.Bound[bool](e, ctx, "Checked")` is what makes `Checked="{{.Auto}}"` two-way: the builder gets the viewmodel's handle, so `Render` reading it is the repaint dependency and toggling `Set`s the same node.
+
+`Context.BindingValue` is the lower level underneath `Bound` and is still there for a builder that wants the raw `any`. Do not use it for text: it matches a `{{.Path}}` anywhere in the value and returns that handle, so `Label="Hi {{.Who}}!"` resolves to `Who` and silently drops the literal parts. `BoundText` is the rule that keeps them.
 
 ## UserControls
 
