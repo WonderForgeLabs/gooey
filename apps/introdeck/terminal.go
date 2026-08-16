@@ -21,9 +21,10 @@ package main
 //     to be a perfectly good VT.
 //   - Startable is the legal way to own a goroutine. It receives post,
 //     the ONLY route from that goroutine back to the property graph.
-//   - The pty is pty_linux.go: three ioctls, no new dependency. The root
-//     module has two direct requirements and a terminal widget is not
-//     grounds for a third.
+//   - The pty is pty_linux.go: three ioctls, no new dependency. A pty
+//     library would be a whole graph for something the kernel already
+//     exposes, and a terminal widget is not grounds for pulling one into
+//     the root module.
 //
 // # The one property that matters
 //

@@ -17,12 +17,12 @@ package main
 //
 // # Why a pipe to pacat and not a sound library
 //
-// The root module has two direct requirements and the doctrine is that a
-// dependency of this weight gets a nested module or does not happen. A
-// synthesiser that needs PortAudio is a different project. `pacat` takes
-// raw interleaved little-endian 16-bit stereo on stdin, which is exactly
-// what a mixer produces, so the whole audio backend is one exec and one
-// io.Writer.
+// The doctrine is that a dependency of this weight gets a nested module or
+// does not happen — it is the transitive graph that decides, not a count of
+// `require` lines. A synthesiser that needs PortAudio is a different
+// project. `pacat` takes raw interleaved little-endian 16-bit stereo on
+// stdin, which is exactly what a mixer produces, so the whole audio backend
+// is one exec and one io.Writer.
 //
 //	pacat --rate=48000 --channels=2 --format=s16le --latency-msec=30
 //
