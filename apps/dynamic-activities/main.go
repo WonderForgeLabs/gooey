@@ -129,14 +129,6 @@ func encoderFor(mode string) (graphics.Encoder, error) {
 	return nil, fmt.Errorf("dynamic-activities: unknown -graphics %q; want kitty, sixel, iterm2 or halfblock", mode)
 }
 
-// The loopback rule this app applies to the addresses it is handed is
-// netutil.CheckLoopback, called inline at each flag. gooeygrpc.Serve
-// applies the same function itself; the MCP side is checked here because
-// this app hands mcp.Serve an address, and because the Python
-// companion's own MCP server takes one too — the danger is identical for
-// all three: no authentication, and a control handle on this terminal
-// (and, for the Python one, on this machine).
-
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
