@@ -13,7 +13,8 @@
 //     a gradient with the same function the flush uses, so the cost of
 //     each tier is visible side by side on one terminal.
 //   - A Canvas holding both, plus an overlapping cascade of swatches at
-//     absolute coordinates.
+//     absolute coordinates — five instances of swatch.gooey, a
+//     markup-only control resolved by name through Context.Includes.
 //
 // Everything is styled by ONE property: Style="{{.AccentStyle}}" in the
 // markup is a live handle onto a computed over the picked color, so
@@ -23,6 +24,13 @@
 //	colors --depth=256        force a color tier (truecolor|256|16)
 //	colors --graphics=kitty   force the pixel tier (kitty|sixel|iterm2|cells)
 //	colors --hold=3s          exit after a while instead of on q
+//
+// The run loop is gooey.App's: terminal acquisition, the input decoder,
+// the frame scheduler and the hot-reload watcher are the framework's job,
+// and the only thing this file reads back OUT of the composition is the
+// capability line at the bottom of the page — which is a property of the
+// composition rather than of the viewmodel, so it is read once on the
+// first frame and published into ordinary source properties.
 package main
 
 import (
@@ -33,7 +41,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
-	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -62,47 +69,27 @@ func main() {
 	// abandoned a pending tty read that then stole the first keystrokes;
 	// term.readUntilDA1 reads synchronously under a deadline now, so a
 	// keyboard-driven demo can afford it.)
-	var depth render.ColorDepth
-	forced := false
+	forcedDepth, depthForced := render.TrueColor, false
 	if *depthFlag != "" {
 		d, ok := render.ParseColorDepth(*depthFlag)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown depth %q (want truecolor, 256, or 16)\n", *depthFlag)
 			os.Exit(2)
 		}
-		depth, forced = d, true
+		forcedDepth, depthForced = d, true
 	}
-
-	// The pixel tier: by default the terminal's answer stands (that is
-	// the component's contract — the choice is the terminal's, not the
+	// The pixel tier: by default the terminal's answer stands (that is the
+	// component's contract — the choice is the terminal's, not the
 	// author's); the flag exists to force a protocol on, or off with
 	// "cells", for recordings and side-by-side comparison.
-	var gfx graphics.Encoder
-	gfxForced := false
-	switch *gfxFlag {
-	case "":
-	case "cells":
-		gfxForced = true
-	case "kitty":
-		gfx, gfxForced = graphics.Kitty{}, true
-	case "sixel":
-		gfx, gfxForced = graphics.Sixel{}, true
-	case "iterm2":
-		gfx, gfxForced = graphics.ITerm2{}, true
-	default:
-		fmt.Fprintf(os.Stderr, "unknown graphics %q (want kitty, sixel, iterm2, or cells)\n", *gfxFlag)
+	gfx, gfxForced, err := demomain.EncoderFor(*gfxFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 	// "a forced protocol still needs a cell size" used to be a hand-written
 	// 10×20 right here, in this demo and two others. App.caps owns that
 	// rule now (app.go:599-635) and applies it to any pinned encoder.
-
-	// What the terminal turned out to be, filled in from the live
-	// composition on the first frame — see the BeforeFrame hook below.
-	// Held as plain vars rather than properties because they are settled
-	// before anything paints and never move again.
-	detected, effective := render.TrueColor, render.TrueColor
-	gfxName := "cells"
 
 	// --- viewmodel: one source property, everything else derived ---
 	accent := prop.NewSource(render.RGB(255, 170, 60))
@@ -127,16 +114,20 @@ func main() {
 		})
 	}
 
+	// What the composition turned out to be, as properties. Capabilities
+	// are not viewmodel state — nothing can bind them and no markup can
+	// ask for them — so the status line reads them off the Composer on the
+	// first frame and Sets them here, where a computed can see them.
+	depth := prop.NewSource(render.TrueColor)
+	depthNote := prop.NewSource("detected")
+	gfxName := prop.NewSource("cells")
 	status := prop.NewComputed(func() string {
-		c := accent.Get()
-		src := "detected"
-		if forced {
-			src = fmt.Sprintf("forced (terminal reports %s)", detected)
-		}
-		shown := render.Approximate(c, effective)
+		// Every Get runs unconditionally: a read behind an `if` drops out
+		// of the dependency set on the frames it does not execute.
+		c, d, note, name := accent.Get(), depth.Get(), depthNote.Get(), gfxName.Get()
+		shown := render.Approximate(c, d)
 		return fmt.Sprintf("depth %s [%s]   gfx %s   picked #%02X%02X%02X → shown #%02X%02X%02X",
-			effective, src, gfxName,
-			c.R, c.G, c.B, shown.R, shown.G, shown.B)
+			d, note, name, c.R, c.G, c.B, shown.R, shown.G, shown.B)
 	})
 
 	var app *gooey.App
@@ -162,12 +153,16 @@ func main() {
 	}
 
 	fsys := demomain.MarkupFS("colors", "colors.gooey")
+	// <Swatch/> resolves to swatch.gooey by convention: a markup-only
+	// control needs no registration, only somewhere to be found.
+	ctx.Includes = fsys
 
 	// The probe is unconditional: even under --depth or --graphics this
 	// page reports what the terminal actually said ("forced (terminal
 	// reports …)"), and the pixel tier needs the cell size regardless.
 	// WithGraphics pins the protocol when a flag asked for one — a nil
-	// encoder pins the cell tier, which is what --graphics=cells means.
+	// encoder pins the cell tier, which is what --graphics=cells means,
+	// and App.caps supplies the assumed cell size a pinned protocol needs.
 	opts := []gooey.Option{gooey.WithCapabilityProbe()}
 	if gfxForced {
 		opts = append(opts, gooey.WithGraphics(gfx))
@@ -175,8 +170,10 @@ func main() {
 	// markup.Page is the hot-reload seam. It rebuilds on the UI
 	// goroutine, unlike the markup.Watch + swap channel this replaced,
 	// which resolved bindings — property-graph work — on the watcher's
-	// own goroutine.
-	app = gooey.NewApp(markup.Page(fsys, "colors.gooey", ctx), opts...)
+	// own goroutine. The extra name is what makes editing the CONTROL
+	// hot-reload too: a watcher cannot infer an <Include>, because
+	// resolving one needs the build that has not happened yet.
+	app = gooey.NewApp(markup.Page(fsys, "colors.gooey", ctx, "swatch.gooey"), opts...)
 
 	// --hold: the same "exit after a while instead of on q" that a
 	// time.After deadline in the old select gave, expressed as the app's
@@ -192,26 +189,38 @@ func main() {
 	// It has to be a hook rather than a one-shot: App re-derives caps
 	// from the probe on every resize and on every hot reload, so a depth
 	// pinned once would be silently un-pinned by the next SIGWINCH. The
-	// != guard keeps SetCaps to the frames that actually need it, and
-	// BeforeFrame is early enough to satisfy its "call it before the
-	// frame" contract — including the very first one, so a forced tier is
-	// forced from the first cell painted.
-	first := true
+	// != guards keep SetCaps — and the property Sets — to the frames that
+	// actually need them, and BeforeFrame is early enough to satisfy its
+	// "call it before the frame" contract, including the very first one,
+	// so a forced tier is forced from the first cell painted.
+	told := false
 	app.BeforeFrame(func() {
 		c := app.Composer()
 		caps := c.Caps()
-		if first {
-			first = false
-			detected = caps.Color
+		if !told {
+			told = true
+			name := "cells"
 			if enc := c.Graphics(); enc != nil {
-				gfxName = enc.Name()
+				name = enc.Name()
+			}
+			gfxName.Set(name)
+			if depthForced {
+				// Read BEFORE the override below, so the note can still
+				// report what the terminal actually said.
+				depthNote.Set(fmt.Sprintf("forced (terminal reports %s)", caps.Color))
 			}
 		}
-		if forced && caps.Color != depth {
-			caps.Color = depth
+		// Re-applied rather than set once: a hot reload builds a fresh
+		// Composer from the app's own caps, which never carry the flag.
+		if depthForced && caps.Color != forcedDepth {
+			caps.Color = forcedDepth
 			c.SetCaps(caps)
 		}
-		effective = caps.Color
+		// Guarded because prop.Set does not compare: an unconditional Set
+		// would invalidate the status line on every single frame.
+		if got := c.Caps().Color; depth.Get() != got {
+			depth.Set(got)
+		}
 	})
 
 	gooey.Exit(app.Run(context.Background()))

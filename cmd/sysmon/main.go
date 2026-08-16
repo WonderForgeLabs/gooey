@@ -1,40 +1,73 @@
 // sysmon is a live system monitor over real /proc data — the "better
-// than logs" component-model demo. Three custom components (Gauge,
-// Sparkline, ProcTable) compose with the builtins; every value flows
-// through dependency properties, so a sample tick repaints only the
-// components whose (rounded) values actually changed — watch the
-// "painted" counter sit near zero on an idle system and spike under
-// load.
+// than logs" component-model demo. Every value flows through dependency
+// properties, so a sample tick repaints only the components whose
+// (rounded) values actually changed — watch the "painted" counter sit
+// near zero on an idle system and spike under load.
 //
 //	c / m   sort process table by CPU / memory
 //	q       quit
+//
+// The screen itself is sysmon.gooey, embedded: the layout, the styles,
+// the four key gestures and the 700ms sample clock are all declared
+// there. What is left in this file is what markup has no way to say —
+// /proc parsing, the viewmodel those samples Set, the row projection,
+// and one registered element for the per-core gauges, whose COUNT is
+// only known once /proc/stat has been read.
 package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-var (
-	accent = render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
-	dim    = render.Style{Fg: render.RGB(140, 140, 150)}
-	// The good/warn/crit ramp moved into the framework with the Gauge
-	// and Sparkline; only the process table still colors its own rows.
-	warn = render.Style{Fg: render.RGB(230, 190, 80)}
-)
+// The page ships in the binary: sysmon has no hot-reload story, and an
+// embed.FS is the same fs.FS seam markuplog fills with os.DirFS — so the
+// demo runs from any working directory.
+//
+//go:embed sysmon.gooey
+var pageFS embed.FS
+
+// warn is the one style left in Go: it is picked per ROW, from the
+// sampled CPU number, inside the projection. Markup has no style
+// triggers yet, so a threshold cannot be declared.
+var warn = render.Style{Fg: render.RGB(230, 190, 80)}
 
 func main() {
+	var app *gooey.App
+	ctx, statsP := newContext(gooey.Command(func() { app.Quit() }))
+
+	// No graphics probe — sysmon is cell-only — and no mouse: the page
+	// has no focus stop and nothing to click. The color depth still comes
+	// from the environment (App's default), so the gauges downsample
+	// correctly on a 16-color terminal for the cost of one getenv.
+	app = gooey.NewApp(markup.Page(pageFS, "sysmon.gooey", ctx), gooey.WithoutMouse())
+	app.BeforeFrame(func() {
+		statsP.Set(fmt.Sprintf("frames=%d  components painted last frame=%d", app.Frames(), app.PaintedLastFrame()))
+	})
+	if err := app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
+	}
+}
+
+// newContext builds the viewmodel and the binding registry sysmon.gooey
+// resolves against, and hands back the stats handle the run loop writes.
+//
+// It is a function rather than a block inside main so that the page can
+// be LOADED in a test: every binding in the file, every style name, every
+// gesture and the <CoreGauges> builder resolve here, and nothing else in
+// the repo compiles that file.
+func newContext(quit gooey.Action) (*markup.Context, *prop.Property[string]) {
 	first := sampleCPU()
 	ncores := len(first.perCore)
 
@@ -93,76 +126,12 @@ func main() {
 		})
 	})
 
-	// --- tree ---
-	host, _ := os.Hostname()
-	gauges := make([]gooey.Component, ncores)
-	for i := range gauges {
-		gauges[i] = &components.Gauge{Label: components.Str(fmt.Sprintf("cpu%-2d", i)), Value: corePct[i]}
-	}
-	left := &components.VStack{Children: append(gauges,
-		&components.Text{Content: components.Str("")},
-		&components.Gauge{Label: components.Str("mem  "), Value: memPct},
-		&components.Text{Content: memLabel, Style: components.Sty(dim)},
-	)}
-	right := &components.VStack{Children: []gooey.Component{
-		&components.Text{Content: components.Str("total cpu"), Style: components.Sty(dim)},
-		&components.Sparkline{Values: hist, Rows: 4},
-		&components.Text{Content: components.Str("")},
-		&components.Text{Content: loadavg, Style: components.Sty(dim)},
-		&components.Text{Content: statsP, Style: components.Sty(dim)},
-	}}
-	root := &components.Border{Title: components.Str("sysmon — " + host), Style: components.Sty(render.Style{Fg: render.RGB(120, 90, 220)}), Child: &components.VStack{Children: []gooey.Component{
-		&components.HStack{Gap: 3, Children: []gooey.Component{left, right}},
-		&components.Text{Content: components.Str("")},
-		&components.Text{Content: tableTitle, Style: components.Sty(accent)},
-		&components.Text{
-			Content: components.Str(fmt.Sprintf("%7s  %-24s %6s %9s", "PID", "COMMAND", "CPU%", "MEM MB")),
-			Style:   components.Sty(render.Style{Bold: true, Underline: true}),
-		},
-		// NoFocus keeps this page focus-less on purpose: the KeyBinding
-		// comment below depends on dispatch starting at the root.
-		&components.ItemsView{Items: tableRows, Template: procTemplate, NoFocus: true},
-	}}}
-
-	// Keys are declared as attachments rather than switched on in the
-	// loop. Dispatch walks up from the focused component to the root, and
-	// sysmon has no focus stops at all, so a binding on the root is
-	// reached for every key — the page-global scope, for free.
-	// Attachments must exist before the Composer walks the tree.
-	var app *gooey.App
-	for _, kb := range []*gooey.KeyBinding{
-		{Gesture: input.Rune('q'), Command: gooey.Command(func() { app.Quit() })},
-		{Gesture: input.KeyEvent{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}, Command: gooey.Command(func() { app.Quit() })},
-		{Gesture: input.Rune('c'), Command: gooey.Command(func() { sortKey.Set("cpu") })},
-		{Gesture: input.Rune('m'), Command: gooey.Command(func() { sortKey.Set("mem") })},
-	} {
-		root.Attach(kb)
-	}
-
-	// --- the run loop is the framework's ---
-	//
-	// gooey.Tree is the Content for a tree built in Go and never
-	// replaced; App owns the terminal, the decoder, frame scheduling and
-	// a teardown that joins the decoder before handing the tty back.
-	//
-	// WithoutMouse keeps this a keyboard-only page, which is what it has
-	// always been: sysmon never enabled SGR reporting, and turning it on
-	// would take terminal text selection away from a monitor whose whole
-	// job is showing numbers you want to copy.
-	//
-	// No graphics probe either — sysmon is cell-only — and none is
-	// needed: App's default capabilities are the color-depth environment
-	// ladder, exactly the term.Caps this demo used to build by hand, so
-	// the gauges still downsample correctly on a 16-color terminal for
-	// the cost of one getenv.
-	app = gooey.NewApp(gooey.Tree(root), gooey.WithoutMouse())
-
-	// The sampler is the app's own clock. Every posts to the Dispatcher,
-	// so the closure below runs on the UI goroutine and may touch the
-	// property graph — the /proc reads are cheap enough to do there.
+	// --- the sample tick, the one command with real work behind it.
+	// <Timer Tick="{{.Sample}}"/> resolves to this at load time, and the
+	// Composer runs it on the UI goroutine, so it may Set freely.
 	prev := first
 	prevProcs := sampleProcs()
-	app.Every(700*time.Millisecond, func() {
+	sample := gooey.Command(func() {
 		cur := sampleCPU()
 		// Viewmodel-side dedup: only Set what actually changed, so
 		// unchanged gauges never even dirty.
@@ -188,28 +157,70 @@ func main() {
 		prev, prevProcs = cur, curProcs
 	})
 
-	// The damage counter this demo exists to show off. BeforeFrame folds
-	// it into the frame about to happen: App.Frames() has already
-	// counted this one, and PaintedLastFrame() is still the previous
-	// frame's damage, so both numbers read exactly as they did inside
-	// the hand-rolled loop.
-	app.BeforeFrame(func() {
-		statsP.Set(fmt.Sprintf("frames=%d  components painted last frame=%d",
-			app.Frames(), app.PaintedLastFrame()))
-	})
+	// --- markup context: the binding registry the page resolves against ---
+	host, _ := os.Hostname()
+	return &markup.Context{
+		Values: map[string]any{
+			"Host":     host,
+			"CorePct":  corePct,
+			"MemPct":   memPct,
+			"MemLabel": memLabel,
+			"Hist":     hist,
+			"LoadAvg":  loadavg,
+			"Stats":    statsP,
 
-	gooey.Exit(app.Run(context.Background()))
+			"TableTitle": tableTitle,
+			// A literal in the page would lose its four leading spaces —
+			// <Text>'s body is trimmed — so the column header comes
+			// through the binding registry as a plain string.
+			"TableHeader": fmt.Sprintf("%7s  %-24s %6s %9s", "PID", "COMMAND", "CPU%", "MEM MB"),
+			"TableRows":   tableRows,
+
+			"Sample":    sample,
+			"SortByCPU": gooey.Command(func() { sortKey.Set("cpu") }),
+			"SortByMem": gooey.Command(func() { sortKey.Set("mem") }),
+			"Quit":      quit,
+		},
+		Styles: map[string]render.Style{
+			"panel":  {Fg: render.RGB(120, 90, 220)},
+			"accent": {Fg: render.RGB(255, 170, 60), Bold: true},
+			"dim":    {Fg: render.RGB(140, 140, 150)},
+			"header": {Bold: true, Underline: true},
+		},
+		Components: map[string]markup.Builder{
+			// The gauge column. Its length is len(/proc/stat's cpuN
+			// lines), which no markup element can range over, so the page
+			// declares WHERE the column goes and this builder fills it —
+			// the same hand-off markuplog's <LogPane Lines="…"/> makes.
+			"CoreGauges": func(e markup.Element, c *markup.Context) (gooey.Component, error) {
+				v, err := c.BindingValue(e.Attrs["Values"])
+				if err != nil {
+					return nil, fmt.Errorf("CoreGauges Values: %w", err)
+				}
+				vals, ok := v.([]*prop.Property[int])
+				if !ok {
+					return nil, fmt.Errorf("CoreGauges Values: got %T, want []*prop.Property[int]", v)
+				}
+				gauges := make([]gooey.Component, len(vals))
+				for i, p := range vals {
+					gauges[i] = &components.Gauge{Label: components.Str(fmt.Sprintf("cpu%-2d", i)), Value: p}
+				}
+				return &components.VStack{Children: gauges}, nil
+			},
+		},
+	}, statsP
 }
 
-// ---- custom components ----
+// ---- what a row is ----
 //
 // The Gauge and Sparkline that used to live here are now framework
 // built-ins (components.Gauge, components.Sparkline) — they were written here,
 // proved here, and promoted once their shape stopped moving. The process
-// table followed: its rows ride components.ItemsView now, and only the
-// projection above — what a process row SAYS — is this demo's own. Full
-// column machinery (sortable headers, per-column widths) is the DataGrid
-// epic, not this table.
+// table followed: its rows ride components.ItemsView now, and the row
+// TEMPLATE is <ItemsView.ItemTemplate> in the page. Only the projection
+// above — what a process row SAYS, and what colour that makes it — is
+// still this demo's own. Full column machinery (sortable headers,
+// per-column widths) is the DataGrid epic, not this table.
 
 type procInfo struct {
 	pid   int
@@ -222,20 +233,6 @@ type procInfo struct {
 type procRow struct {
 	text  string
 	style render.Style
-}
-
-// procTemplate builds one row of the table — the Go spelling of an
-// <ItemsView.ItemTemplate>.
-func procTemplate(values map[string]any) (gooey.Component, error) {
-	text, ok := values["Row"].(*prop.Property[string])
-	if !ok {
-		return nil, fmt.Errorf("Row is %T", values["Row"])
-	}
-	style, ok := values["Style"].(*prop.Property[render.Style])
-	if !ok {
-		return nil, fmt.Errorf("Style is %T", values["Style"])
-	}
-	return &components.Text{Content: text, Style: style}, nil
 }
 
 func clip(s string, w int) string {

@@ -70,30 +70,19 @@ func (w *wave) Render(f *gooey.Frame) {
 
 // Start makes the wave animate itself. The Composer discovers Startable
 // elements when the composition goes live and stops them on Close (hot
-// reload, quit). The goroutine never touches the property graph — it
-// posts a closure to the UI loop, where Set is safe.
+// reload, quit).
+//
+// gooey.Every owns both rules an implementation has to get right. The
+// ticker goroutine never touches the property graph — the closure below
+// is POSTED, and runs later on the UI loop where Set is safe. And the
+// stop it returns closes AND joins: a tick that already won its select
+// still posts before stop returns, so "after stop, no further posts" is
+// a fact rather than a probability. That join is one line and every
+// hand-rolled Startable had to remember it; startable.go owns it now.
 func (w *wave) Start(post func(func())) (stop func()) {
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		tk := time.NewTicker(80 * time.Millisecond)
-		defer tk.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tk.C:
-				post(func() { w.phase.Set(w.phase.Get() + 1) })
-			}
-		}
-	}()
-	// Close AND join: a tick that already won the select still posts
-	// before stop returns, so after stop there are no further posts.
-	return func() {
-		close(done)
-		<-stopped
-	}
+	return gooey.Every(post, 80*time.Millisecond, func() {
+		w.phase.Set(w.phase.Get() + 1)
+	})
 }
 
 func main() {

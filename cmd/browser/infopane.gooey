@@ -1,0 +1,44 @@
+<!-- The preview pane, as a markup-only control (markup.Include). Its
+     attributes ARE its context: the page passes handles in at the
+     instantiation site and every binding below resolves against them,
+     so this file can say nothing about the demo list, the selection or
+     the player — it only knows the five strings and five flags it was
+     handed.
+
+     <Text> interpolates literal and bound segments, which is why the
+     FIXED words live here and the handles carry only data. "r record →",
+     "recordings/", ".cast" are chrome: changing what the pane calls
+     things, or the order it says them in, is an edit to this file and a
+     hot reload, not a Go change. Only CmdLine and Artifacts arrive
+     pre-built, because both have a branch in them and the binding
+     dialect has no conditional.
+
+     Each line is a <Text> and a Visibility flag rather than an `if`
+     around a paint. Visibility="{{...}}" over a bool is XAML's
+     BooleanToVisibilityConverter default (true→Visible,
+     false→Collapsed), and Collapsed in a VStack takes NO ROW — which is
+     what makes "this demo has no recording yet" close the gap instead of
+     leaving a blank line, exactly as the hand-painted version did by
+     not incrementing y. -->
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <VStack>
+    <Text Style="dim" Visibility="{{.NoDemos}}">no demos in this source</Text>
+
+    <Text Style="dim"    Visibility="{{.ShowSource}}">source: {{.SourceDesc}}</Text>
+    <Text Style="accent" Visibility="{{.HasDemos}}">{{.CmdLine}}</Text>
+    <Text Style="dim"    Visibility="{{.HasDemos}}">r record → recordings/{{.RecName}}.cast</Text>
+    <Text Style="dim"    Visibility="{{.ShowRecorded}}">recorded: {{.Artifacts}}</Text>
+    <Text Style="dim"    Visibility="{{.ShowPlay}}">p play → {{.GifPath}}</Text>
+
+    <!-- The blank row between the header and the body. An empty <Text>
+         measures one line, so a spacer is a Text with nothing in it —
+         and it collapses with the rest when there is no selection to
+         describe. -->
+    <Text Visibility="{{.HasDemos}}"/>
+
+    <!-- What markup has no element for: rendered markdown, wrapped doc
+         text, or a GIF frame fitted to whatever height is left. It is
+         the last child, so the VStack hands it the remainder. -->
+    <DemoBody/>
+  </VStack>
+</Gooey>

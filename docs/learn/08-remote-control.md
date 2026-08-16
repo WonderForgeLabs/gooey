@@ -53,7 +53,8 @@ defer srv.Close()
 element table, the bindable values, the commands, and the environment
 `swap_markup` builds against. Without one, the name-addressed tools
 report that the app has no markup context and the tree and screen tools
-still work. `Options.Addr` **must be loopback**.
+still work. `Options.Addr` is used exactly as given; it defaults to
+`127.0.0.1:0`.
 
 Two things to notice before touching the wire:
 
@@ -61,28 +62,38 @@ Two things to notice before touching the wire:
   the MCP SDK's dependency graph, and core gooey's `go build ./...`
   must never see it — the same quarantine that puts `mcp/`, `grpc/` and
   `handlers/temporal` in nested modules. Run it from its own directory.
-- **Serving is opt-in, and loopback-only.** Nothing listens unless the
-  app passed an address, and a non-loopback address is a hard error,
-  not a warning. v1 has no authentication, so the bind address is what
-  decides *who* may connect. What a connection may then *do* is a
-  second, separate question, and it has an answer: an endpoint served
-  with `mcp.Options.Grant` (or `grpc.Options.Grant`) is scoped to one
-  named element's subtree and one list of value names — see
+- **Serving is opt-in, unauthenticated, and binds whatever address you
+  give it.** Nothing listens unless the app passed an address. The
+  default is `127.0.0.1:0`, and the framework does not restrict it: if
+  you pass a non-loopback address, that is what it binds. There is no
+  authentication, so doing that publishes an unauthenticated
+  remote-control handle on your terminal to everything that can reach
+  the address. The framework used to refuse those binds; it no longer
+  does, and the choice is yours to make deliberately.
+
+  What a connection may then *do* is a second, separate question, and
+  it has an answer: an endpoint served with `mcp.Options.Grant` (or
+  `grpc.Options.Grant`) is scoped to one named element's subtree and
+  one list of value names — see
   [island grants](../specs/2026-08-14-island-grants.md). Without a
-  grant the old sentence still holds in full: an MCP client can do
-  anything the keyboard can. Read the two together — the address is
-  authentication's stand-in, the grant is authorization, and neither
-  substitutes for the other. (There is also an `Origin` guard so a browser page on
-  another local port cannot drive your terminal — see the
+  grant, an MCP client can do anything the keyboard can. A grant is
+  authorization and it is real, but it is not authentication, and it
+  does not make an exposed address safe.
+
+  (There is also an `Origin` guard so a browser page on another local
+  port cannot drive your terminal — see the
   [MCP server spec](../specs/2026-08-10-mcp-server.md) for why every
   clause of that check — default-deny for anything claiming to be a
   browser, exact loopback hostname match, port pin — is load-bearing.
   gRPC needs no Origin machinery because browsers cannot speak it
-  natively.) One caveat: `mcp.Serve` owns the listener and enforces the
-  loopback rule. If you take that over with `mcp.New` and mount the
-  handler on your own `http.Server` — as kanban does, to wrap it —
-  the guarantee becomes *your* problem, which is why kanban
-  re-implements the check.
+  natively.
+
+  Read that guard for what it is, though: a request with **no**
+  `Origin` header is allowed through, because that is what a non-browser
+  client looks like. So it bounds what a *browser* can do and says
+  nothing about who can reach the address — `curl`, a script, or another
+  MCP client is unaffected by it. On an exposed bind, the guard is not
+  the thing standing between a stranger and your terminal; nothing is.)
 
 ## Step 2: Connect a client
 
@@ -288,13 +299,16 @@ identical.
   generated pages can bind new names.
 - MCP and gRPC are two skins over one `control.Service` — pick by
   consumer, not by capability.
-- Loopback-only, no auth: the client can do anything the keyboard can.
+- No auth: the client can do anything the keyboard can, and the bind
+  address is yours to choose — a non-loopback one exposes that.
 
 ## Still missing
 
-- **No authentication, no remote binds.** The intended shape is that a
-  non-loopback listen requires TLS + per-RPC credentials, and it lands
-  with the first remote bind or not at all.
+- **No authentication.** The bind address is unrestricted, so an
+  operator can already put these servers on a reachable interface —
+  and doing so today means an unauthenticated control handle. The
+  intended shape for making that safe is TLS + per-RPC credentials; it
+  is not built.
 - **`set_value` has a kept v1 ceiling**: duration- and `any`-typed
   properties are reported by `list_values` but refuse `set_value`
   (registration accepts the full kind table; writing those kinds is a
