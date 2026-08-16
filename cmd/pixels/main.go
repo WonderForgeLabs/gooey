@@ -29,8 +29,8 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -43,7 +43,7 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	enc, forced, err := encoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor(*mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -59,16 +59,7 @@ func main() {
 		return
 	}
 
-	opts := []gooey.Option{gooey.WithoutMouse()}
-	if forced {
-		// A forced protocol still needs a cell size, which only a probe
-		// can know; sixel scales by it, so assume a common 10×20.
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
+	opts := append([]gooey.Option{gooey.WithoutMouse()}, demomain.GraphicsOptions(enc, forced)...)
 
 	app := gooey.NewApp(gooey.Tree(vm.tree()), opts...)
 	vm.bind(app)
@@ -77,23 +68,6 @@ func main() {
 		app.Every(*hold, app.Quit)
 	}
 	gooey.Exit(app.Run(context.Background()))
-}
-
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "halfblock":
-		return nil, true, nil
-	default:
-		return nil, false, fmt.Errorf("unknown mode: %s", mode)
-	}
 }
 
 // model is the viewmodel. Everything the keys change is a property, so

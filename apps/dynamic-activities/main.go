@@ -209,7 +209,20 @@ func main() {
 		return "selected: (none yet)"
 	})
 
-	statusLine := prop.NewSource("")
+	// The bottom row's four facts, one property each, because the page
+	// puts them in two places: the backend against the left edge and the
+	// three loopback servers in the centre. They were one string glued
+	// together with " · " until StatusBar took over the arrangement — the
+	// separators are the markup's business, not this file's.
+	//
+	// The backend is knowable now; the other three are set from their
+	// LISTENERS below, because port 0 means the flag does not say what was
+	// bound. Empty stays empty: a server the flags disabled contributes a
+	// zero-width section, not a dangling label.
+	backend := prop.NewSource("temporal " + *temporalAddr + " queue " + *taskQueue)
+	grpcEndpoint := prop.NewSource("")
+	mcpEndpoint := prop.NewSource("")
+	activityEndpoint := prop.NewSource("")
 
 	// Cycle walks the Python-published list. It is the only reason this
 	// app parses Activities at all — the registry itself stays remote.
@@ -239,12 +252,20 @@ func main() {
 			"SelectedLine": selectedLine,
 			"Activities":   activities,
 			"Note":         note,
-			"Status":       statusLine,
-			"StarColor":    starColor,
-			"StarGlow":     starGlow,
-			"Cycle":        cycle,
-			"Clear":        clear,
-			"Quit":         gooey.Command(func() { app.Quit() }),
+
+			// The status row's sections. Separate names rather than one
+			// Status string: each is its own paint node on the page, and
+			// an MCP client can read or set any one of them.
+			"Backend":          backend,
+			"GrpcEndpoint":     grpcEndpoint,
+			"McpEndpoint":      mcpEndpoint,
+			"ActivityEndpoint": activityEndpoint,
+
+			"StarColor": starColor,
+			"StarGlow":  starGlow,
+			"Cycle":     cycle,
+			"Clear":     clear,
+			"Quit":      gooey.Command(func() { app.Quit() }),
 
 			// Zoom for an <Image> an agent placed on the page. The SIZE is
 			// two ordinary int properties, so agent-authored markup binds
@@ -326,7 +347,10 @@ func main() {
 	// run loop's goroutine through this — the confinement rule.
 	ctx.Dispatcher = app.Dispatcher()
 
-	var mcpURL, grpcURL string
+	// grpcURL outlives its block: -with-worker needs it, and the companion
+	// gets it in its environment. The MCP URL does not, so it goes straight
+	// into the property the status row reads.
+	var grpcURL string
 
 	if *mcpAddr != "" {
 		if err := checkLoopback("-mcp", *mcpAddr); err != nil {
@@ -341,7 +365,7 @@ func main() {
 			gooey.Exit(err)
 		}
 		defer srv.Close()
-		mcpURL = srv.URL()
+		mcpEndpoint.Set("mcp " + srv.URL())
 	}
 
 	if *grpcAddr != "" {
@@ -359,6 +383,7 @@ func main() {
 		}
 		defer srv.Close()
 		grpcURL = srv.Addr()
+		grpcEndpoint.Set("grpc " + grpcURL)
 	}
 
 	if *withWorker {
@@ -392,20 +417,9 @@ func main() {
 			},
 		}
 		app.AddCompanion(gooey.PythonCompanion(worker))
+		activityEndpoint.Set("activities " + *activityMCP)
 		note.Set("create one: call create_activity on http://" + *activityMCP + "/mcp  (worker log: " + worker.LogPath() + ")")
 	}
-
-	status := "temporal " + *temporalAddr + " queue " + *taskQueue
-	if grpcURL != "" {
-		status += " · grpc " + grpcURL
-	}
-	if mcpURL != "" {
-		status += " · mcp " + mcpURL
-	}
-	if *withWorker {
-		status += " · activities " + *activityMCP
-	}
-	statusLine.Set(status + "   ctrl+n: next activity   ctrl+l: clear   ctrl+c: quit")
 
 	err = app.Run(context.Background())
 	tc.Close()
