@@ -278,7 +278,7 @@ func (s *Screen) scrollRegion(from, n int) {
 	if n == 0 || from > s.bot {
 		return
 	}
-	w, blank := s.Buf.W, Cell{Rune: ' '}
+	w, blank := s.Buf.W, s.blank()
 	rows := s.bot - from + 1
 	if n >= rows || -n >= rows {
 		for y := from; y <= s.bot; y++ {
@@ -326,8 +326,9 @@ func (s *Screen) insertChars(n int) {
 		n = w - s.x
 	}
 	copy(row[s.x+n:], row[s.x:w-n])
+	blank := s.blank()
 	for i := s.x; i < s.x+n; i++ {
-		row[i] = Cell{Rune: ' ', Style: s.cur}
+		row[i] = blank
 	}
 }
 
@@ -344,15 +345,40 @@ func (s *Screen) deleteChars(n int) {
 		n = w - s.x
 	}
 	copy(row[s.x:], row[s.x+n:])
+	blank := s.blank()
 	for i := w - n; i < w; i++ {
-		row[i] = Cell{Rune: ' ', Style: s.cur}
+		row[i] = blank
 	}
 }
 
 func (s *Screen) eraseChars(n int) {
+	blank := s.blank()
 	for i := 0; i < n; i++ {
-		s.Buf.Set(s.x+i, s.y, ' ', Style{})
+		s.Buf.Set(s.x+i, s.y, blank.Rune, blank.Style)
 	}
+}
+
+// blank is the cell every erase, scroll and shift leaves behind, and it
+// is a method rather than a `Cell{Rune: ' '}` literal because there were
+// six sites making one and they did not agree: ICH and DCH used the
+// current style, ED, EL, ECH and scrollRegion used the zero one. That
+// disagreement IS the bug — back-color-erase is what makes `ESC[44m`
+// followed by `ESC[K` paint a blue status bar to the end of the line,
+// and with the zero style the bar came out unpainted while the same
+// program's line edits came out blue.
+//
+// It is not simply `s.cur`. A blank cell shows its background, and under
+// SGR 7 that background is the foreground — so Fg, Bg and Reverse all
+// have to survive. Bold and Dim are invisible on a space, and Underline
+// is worse than invisible: carrying it would draw a rule across every
+// region an underlining program erased. xterm's BCE drops them and so
+// does this.
+func (s *Screen) blank() Cell {
+	return Cell{Rune: ' ', Style: Style{
+		Fg:      s.cur.Fg,
+		Bg:      s.cur.Bg,
+		Reverse: s.cur.Reverse,
+	}}
 }
 
 // escape consumes one escape sequence, reporting how many bytes it used
@@ -484,9 +510,16 @@ func (s *Screen) csi(body string, final byte) {
 		}
 		return def
 	}
-	// Any explicit cursor motion cancels a pending wrap.
+	// Any explicit cursor motion cancels a pending wrap. The list is not
+	// "the cursor commands" — it is every final below that assigns s.x or
+	// s.y, and the three easy ones to forget are at the end: IL and DL
+	// home the column, and DECSTBM homes both. Leaving a stale wrapNext
+	// after one of those is the same defect deferred wrap exists to
+	// prevent, just reached by a different sequence: fill a row edge to
+	// edge, set a scrolling region, and the next printed character
+	// scrolls the screen out from under the program.
 	switch final {
-	case 'H', 'f', 'A', 'B', 'C', 'D', 'E', 'F', 'G', '`', 'd', 'u':
+	case 'H', 'f', 'A', 'B', 'C', 'D', 'E', 'F', 'G', '`', 'd', 'u', 'L', 'M', 'r':
 		s.wrapNext = false
 	}
 
@@ -588,8 +621,9 @@ func (s *Screen) erase(mode int) {
 	case 1:
 		to = s.y*s.Buf.W + s.x + 1
 	}
+	blank := s.blank()
 	for i := max(0, from); i < min(to, len(s.Buf.Cells)); i++ {
-		s.Buf.Cells[i] = Cell{Rune: ' '}
+		s.Buf.Cells[i] = blank
 	}
 }
 
@@ -601,8 +635,9 @@ func (s *Screen) eraseLine(mode int) {
 	case 1:
 		to = s.x + 1
 	}
+	blank := s.blank()
 	for x := from; x < to; x++ {
-		s.Buf.Set(x, s.y, ' ', Style{})
+		s.Buf.Set(x, s.y, blank.Rune, blank.Style)
 	}
 }
 

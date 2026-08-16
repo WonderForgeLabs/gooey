@@ -135,3 +135,183 @@ func TestCursorStaysInsideTheScreenAfterAFullRow(t *testing.T) {
 		t.Fatalf("cursor (%d,%d) is outside an 8x3 screen", x, y)
 	}
 }
+
+// The line-editing sequences. These are the ones whose ABSENCE spliced an
+// editor's inserted line on top of the line already there, and until now
+// nothing pinned them — the package doc named the bug and no test could
+// have caught it coming back.
+//
+// Each case asserts the whole row, because that is where these go wrong:
+// an off-by-one in the copy leaves a duplicated or dropped character at
+// one end, and an assertion on one cell is blind to exactly that.
+func TestLineEditingSequences(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+	}{
+		// ICH opens a hole AT the cursor and pushes the rest right; the
+		// characters shifted off the end are gone.
+		{"ICH opens a hole", "abcdef\x1b[1;3H\x1b[2@", "ab  cdef"},
+		{"ICH past the edge clamps", "abcdef\x1b[1;3H\x1b[99@", "ab      "},
+		// DCH closes one and pulls the rest left, blanking the tail.
+		{"DCH closes a hole", "abcdef\x1b[1;3H\x1b[2P", "abef    "},
+		{"DCH past the edge clamps", "abcdef\x1b[1;3H\x1b[99P", "ab      "},
+		// ECH blanks in place — no shift at all. Getting this one wrong
+		// as a DCH is why they are tested next to each other.
+		{"ECH blanks without shifting", "abcdef\x1b[1;3H\x1b[2X", "ab  ef  "},
+		// The default parameter is 1, not 0. A zero would make every one
+		// of these a no-op and the screen would merely look untouched.
+		{"ICH defaults to one", "abcdef\x1b[1;3H\x1b[@", "ab cdef "},
+		{"DCH defaults to one", "abcdef\x1b[1;3H\x1b[P", "abdef   "},
+	} {
+		s := NewScreen(8, 1)
+		if _, err := s.Write([]byte(tc.in)); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := padTo(s.Row(0), 8); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// IL, DL and the scrolling region, on rows rather than columns. IL/DL are
+// relative to the region, which is the half a test on a default region
+// cannot see: with the region ignored, `DECSTBM 2;3` then `DL` would pull
+// row 4 up into row 3 instead of leaving it alone.
+func TestInsertDeleteLineRespectTheScrollingRegion(t *testing.T) {
+	rows := func(s *Screen) [4]string {
+		var out [4]string
+		for i := range out {
+			out[i] = padTo(s.Row(i), 2)
+		}
+		return out
+	}
+
+	full := NewScreen(2, 4)
+	full.Write([]byte("aa\r\nbb\r\ncc\r\ndd"))
+	full.Write([]byte("\x1b[2;1H\x1b[L")) // IL at row 2, whole screen
+	if got, want := rows(full), [4]string{"aa", "  ", "bb", "cc"}; got != want {
+		t.Errorf("IL on the full screen: %q, want %q", got, want)
+	}
+
+	full2 := NewScreen(2, 4)
+	full2.Write([]byte("aa\r\nbb\r\ncc\r\ndd"))
+	full2.Write([]byte("\x1b[2;1H\x1b[M")) // DL at row 2
+	if got, want := rows(full2), [4]string{"aa", "cc", "dd", "  "}; got != want {
+		t.Errorf("DL on the full screen: %q, want %q", got, want)
+	}
+
+	// Region rows 2..3. Row 4 is outside it and must not move.
+	reg := NewScreen(2, 4)
+	reg.Write([]byte("aa\r\nbb\r\ncc\r\ndd"))
+	reg.Write([]byte("\x1b[2;3r\x1b[2;1H\x1b[M"))
+	if got, want := rows(reg), [4]string{"aa", "cc", "  ", "dd"}; got != want {
+		t.Errorf("DL inside a 2..3 region: %q, want %q", got, want)
+	}
+
+	// A delete of the whole region clears it and touches nothing else.
+	wipe := NewScreen(2, 4)
+	wipe.Write([]byte("aa\r\nbb\r\ncc\r\ndd"))
+	wipe.Write([]byte("\x1b[2;3r\x1b[2;1H\x1b[9M"))
+	if got, want := rows(wipe), [4]string{"aa", "  ", "  ", "dd"}; got != want {
+		t.Errorf("DL larger than its region: %q, want %q", got, want)
+	}
+
+	// DECSTBM homes the cursor to the top of the region it just set.
+	home := NewScreen(2, 4)
+	home.Write([]byte("\x1b[3;4r"))
+	if x, y := home.Cursor(); x != 0 || y != 2 {
+		t.Errorf("after DECSTBM 3;4 the cursor is (%d,%d), want (0,2)", x, y)
+	}
+}
+
+// Back-color-erase. A guest sets a background and erases to the end of
+// the line to paint a status bar; if the erase blanks to the DEFAULT
+// style the bar is invisible and the guest has no way to know.
+//
+// The cases are split by which erase does it, because they were four
+// separate blanking loops and only two of them agreed.
+func TestErasesUseTheCurrentBackground(t *testing.T) {
+	blue := RGB(0, 0, 238)
+
+	for _, tc := range []struct {
+		name, in string
+		at       [2]int
+	}{
+		{"EL to end of line", "\x1b[44m\x1b[K", [2]int{3, 0}},
+		{"ED to end of screen", "\x1b[44m\x1b[J", [2]int{3, 1}},
+		{"ECH in place", "\x1b[44m\x1b[4X", [2]int{2, 0}},
+		{"ICH's new hole", "ab\x1b[44m\x1b[1;1H\x1b[2@", [2]int{0, 0}},
+		{"DCH's vacated tail", "abcd\x1b[44m\x1b[1;1H\x1b[2P", [2]int{7, 0}},
+		{"the rows a scroll opens", "\x1b[44m\x1b[2;1H\x1b[M", [2]int{0, 3}},
+	} {
+		s := NewScreen(8, 4)
+		if _, err := s.Write([]byte(tc.in)); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := s.Buf.At(tc.at[0], tc.at[1]).Style.Bg; got != blue {
+			t.Errorf("%s: cell %v has bg %+v, want %+v", tc.name, tc.at, got, blue)
+		}
+	}
+
+	// ...but not every attribute. Underline on a blank cell draws a rule
+	// across the erased region, which is why BCE carries the colours and
+	// Reverse and drops the rest.
+	s := NewScreen(8, 1)
+	s.Write([]byte("\x1b[1;4;7;44m\x1b[K"))
+	got := s.Buf.At(3, 0).Style
+	if got.Underline || got.Bold || got.Dim {
+		t.Errorf("erased cell kept a glyph attribute: %+v", got)
+	}
+	if !got.Reverse || got.Bg != blue {
+		t.Errorf("erased cell lost reverse or background: %+v", got)
+	}
+}
+
+// Every CSI final that assigns s.x or s.y has to cancel the deferred
+// wrap, and the three easy ones to miss are IL, DL and DECSTBM. Without
+// the cancel, a row filled edge to edge followed by one of those makes
+// the NEXT printable character scroll the whole screen — the exact
+// failure deferred wrap was added to prevent, reached sideways.
+func TestCursorMotionCancelsADeferredWrap(t *testing.T) {
+	// The Z is written with NOTHING between it and the motion. An
+	// intervening CUP would cancel the wrap by itself and every arm here
+	// would pass no matter what the motion did — which is what the first
+	// draft of this test did, and it went green against the unfixed code.
+	for _, tc := range []struct{ name, motion string }{
+		{"CUP", "\x1b[1;1H"},
+		{"IL", "\x1b[L"},
+		{"DL", "\x1b[M"},
+		{"DECSTBM", "\x1b[1;3r"},
+	} {
+		s := NewScreen(4, 3)
+		s.Write([]byte("aaaa" + tc.motion + "Z")) // fill row 0 edge to edge, move, print
+		if got := padTo(s.Row(0), 4); got[0] != 'Z' {
+			t.Errorf("%s: row 0 is %q, want it to start with Z — a stale wrap "+
+				"advanced the line before the write landed", tc.name, got)
+		}
+	}
+
+	// And the other half: a sequence that is NOT a motion must leave the
+	// pending wrap armed. Without this the test above is satisfied by
+	// clearing wrapNext unconditionally, which would break every
+	// full-width row this package emits.
+	s := NewScreen(4, 3)
+	s.Write([]byte("aaaa\x1b[0mZ")) // SGR moves nothing
+	if got := padTo(s.Row(0), 4); got != "aaaa" {
+		t.Errorf("SGR cancelled a pending wrap: row 0 is %q, want %q", got, "aaaa")
+	}
+	if got := padTo(s.Row(1), 4); got[0] != 'Z' {
+		t.Errorf("SGR cancelled a pending wrap: row 1 is %q, want it to start with Z", got)
+	}
+}
+
+// Row() reports the row up to its last non-blank cell, which is what a
+// test asserting on text wants and not what a test asserting on the
+// SHAPE of an edit wants: "abef" and "abef    " are the same string to
+// it, and the difference is precisely what an off-by-one produces.
+func padTo(s string, n int) string {
+	for len(s) < n {
+		s += " "
+	}
+	return s
+}
