@@ -1046,7 +1046,42 @@ func bindStyle(e Element, ctx *Context) (*prop.Property[render.Style], error) {
 	if bindRe.MatchString(raw) {
 		return boundProp[render.Style](e, ctx, "Style")
 	}
-	return components.Sty(ctx.Styles[raw]), nil
+	st, err := styleNamed(e, ctx, "Style", raw)
+	if err != nil {
+		return nil, err
+	}
+	return components.Sty(st), nil
+}
+
+// styleNamed resolves a style NAME against ctx.Styles and fails on one
+// that was never registered.
+//
+// Every one of the six style lookups used to be a bare map index, so a
+// missing name yielded the zero Style and the page loaded clean and
+// painted unstyled. `Style="dmi"` for `dim` was not an error, it was
+// plain text — and the symptom reads as somebody's deliberate choice
+// rather than a typo. Two independent readers of this repo hit it on the
+// same afternoon; one A/B'd it, loading a page with `Style="accentt"`
+// successfully while a mistyped BINDING in the same file failed the load
+// instantly.
+//
+// That inconsistency is the bug. The rule is that everything resolvable
+// resolves at load — checkAttrs already rejects an unknown attribute
+// NAME, so rejecting an unknown style VALUE is the same promise applied
+// one level down.
+//
+// An EMPTY attribute stays valid and means the zero style. Absent and
+// empty are "no style"; only a name that was typed and does not exist is
+// an error.
+func styleNamed(e Element, ctx *Context, attr, name string) (render.Style, error) {
+	if name == "" {
+		return render.Style{}, nil
+	}
+	st, ok := ctx.Styles[name]
+	if !ok {
+		return render.Style{}, fmt.Errorf("markup: <%s %s=%q>: no style named %q is registered", e.Name, attr, name, name)
+	}
+	return st, nil
 }
 
 // bindColor resolves a color attribute: the #rgb/#rrggbb literal markup
