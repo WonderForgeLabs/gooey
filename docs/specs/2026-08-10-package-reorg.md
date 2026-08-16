@@ -2,12 +2,14 @@
 
 Directives from Elan 2026-08-10. Execution is QUEUED behind the
 runtime-chapter agent (it is actively writing root-package files);
-the reorg agent gets the tree to itself afterward.
+the reorg agent gets the tree to itself afterward. Landed in
+[PR #82](https://github.com/WonderForgeLabs/gooey/pull/82).
 
 ## Naming: components, not widgets
 
-Elan, verbatim: "Replace 'widget' with 'component' — we make
-components not widgets." Sweep the whole surface:
+Epic [#2](https://github.com/WonderForgeLabs/gooey/issues/2). Elan,
+verbatim: "Replace 'widget' with 'component' — we make components not
+widgets." Sweep the whole surface:
 
 - `Widget` interface → `Component`; `ChildWidgets()` →
   `ChildComponents()` (or `Children()` if free of collisions);

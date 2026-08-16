@@ -152,4 +152,11 @@ declared, or lose a grant entirely. `Build` therefore saves and restores
 ### Still open (deliberately out of scope this pass)
 
 Heartbeat/progress piping (`| progress .Pct`), multiple result targets,
-a retry-policy surface in markup, and `<x:Property>` declarations.
+and a retry-policy surface in markup — now epic
+[#38](https://github.com/WonderForgeLabs/gooey/issues/38), with
+children [#41](https://github.com/WonderForgeLabs/gooey/issues/41)
+(progress), [#42](https://github.com/WonderForgeLabs/gooey/issues/42)
+(multiple targets), and [#43](https://github.com/WonderForgeLabs/gooey/issues/43)
+(retry/timeout); see `2026-08-10-pipeline-grammar-v2.md`. `<x:Property>`
+declarations, since shipped ([#7](https://github.com/WonderForgeLabs/gooey/issues/7) /
+`2026-08-10-markup-declared-properties.md`).

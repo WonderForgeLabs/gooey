@@ -58,6 +58,13 @@ control resolve against the control's values, never the page's.
 ## Out of scope v1
 
 Read-state persistence, auto-refresh, nested OPML categories,
-article scrolling (truncate at pane height), opening links in browser.
+article scrolling (truncate at pane height), opening links in browser —
+collected under epic [#64](https://github.com/WonderForgeLabs/gooey/issues/64)
+and tracked as [#65](https://github.com/WonderForgeLabs/gooey/issues/65)
+(persistence), [#66](https://github.com/WonderForgeLabs/gooey/issues/66)
+(auto-refresh), [#67](https://github.com/WonderForgeLabs/gooey/issues/67)
+(scrolling), [#68](https://github.com/WonderForgeLabs/gooey/issues/68)
+(open in browser), [#69](https://github.com/WonderForgeLabs/gooey/issues/69)
+(nested OPML).
 
 Note: repo is not yet a git repository; spec uncommitted by design.

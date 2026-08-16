@@ -1,0 +1,91 @@
+<Gooey>
+  <!-- THE SLIDE SURFACE — one Canvas, patched over the wysiwyg editor's
+       own DESIGNER pane.
+
+       This file is a patch_markup FRAGMENT, not a page: its root child
+       carries Name="EditorArea", which is the address of the pane it
+       replaces in a running apps/wysiwyg. That is the whole trick of
+       this talk — the slides are not a slideshow program, they are the
+       editor's centre pane with something else in it, and the editor
+       keeps running underneath.
+
+       NOTHING HERE IS SLIDE CONTENT. Every visible string is a binding to
+       a Deck.* property, and those properties do not exist in the wysiwyg
+       binary — they are registered at runtime, from outside, over MCP
+       (see present.sh). Advancing a slide is therefore one set_value per
+       field and no rebuild at all: the paint nodes that read the changed
+       property repaint, and nothing else on the screen does. Slide 2 is
+       about exactly that mechanism, so the deck has to be built this way
+       or the slide is a lie.
+
+       THE TOUR-OVERLAY EFFECT is three layers of ordinary components, not
+       an effect:
+
+         Deck.Ghost   the editor's own markup, in `dim`, across the full
+                      canvas — the scrim.
+         the Border   a lighter Background painted over the scrim — the
+                      spotlight. It pre-clears its own bounds, so the
+                      scrim shows through around it and not under it.
+         Deck.Spot    callouts in `warn`/`ok` that point OUT of the card
+         Deck.Arrow   at real editor chrome — the activity rail above, the
+         Deck.Blurb   status bar below. They are leaves on the same
+         Deck.Meme    Canvas, so each clears only its own rect.
+
+       The callout rows are chosen to miss the scrim's own text: rows 3,
+       37, 39, 43 and 47-48. Ghost lines at those indices are left blank
+       in the Deck.Ghost value rather than being clipped here — a leaf
+       painted over another leaf wins the cell, and the result reads as
+       corruption. Keeping them apart is the narration's job, not the
+       layout's, which is why NARRATION.md ships the ghost text.
+
+       KNOWN COSMETIC DEFECT, and it is visible on every slide: the body
+       text inside the card renders on the terminal's default background
+       rather than the card's. Border fills its interior and the leaf
+       pre-clear inherits that fill (composer.go:263), but Text.Render
+       then writes each glyph cell with its own render.Style
+       (components/text.go:36 -> render/cell.go:59), and none of the
+       registered styles set a Bg. So Style.Bg is the zero value, the
+       glyph cells get the terminal default, and only the padding keeps
+       the card colour. There is no markup-side fix: styles come from the
+       host's ctx.Styles, in Go. -->
+  <Canvas Name="EditorArea" Background="{{.Deck.Bg}}">
+
+    <!-- The scrim. Full-canvas, dim, and deliberately DENSE: it is the
+         editor's real markup, and it reads as the thing the card is
+         sitting on top of. A sparse version was tried and looks like an
+         empty screen with a box on it. -->
+    <Text Canvas.Left="0" Canvas.Top="0" Style="dim">{{.Deck.Ghost}}</Text>
+
+    <!-- Callout pointing UP-LEFT, at the activity rail (rows 0-7, cols
+         0-3). Row 3 sits level with the rail's middle. -->
+    <Text Canvas.Left="0" Canvas.Top="3" Style="warn">{{.Deck.Spot}}</Text>
+
+    <!-- The spotlight. Title carries the slide number, so the kicker is
+         chrome rather than another line of body. -->
+    <Border Canvas.Left="14" Canvas.Top="6" Width="110" Height="30"
+            Background="{{.Deck.Card}}" Style="sel" Title="{{.Deck.Kicker}}">
+      <VStack Gap="1">
+        <Text Bold="true" Style="title">{{.Deck.Title}}</Text>
+        <Text>{{.Deck.Body}}</Text>
+      </VStack>
+    </Border>
+
+    <!-- Below the card: an arrow, the mechanism note, and the joke. Three
+         separate leaves rather than one block, so a slide can change the
+         punchline without repainting the explanation. -->
+    <Text Canvas.Left="16" Canvas.Top="37" Style="warn">{{.Deck.Arrow}}</Text>
+    <Text Canvas.Left="16" Canvas.Top="39" Style="ok">{{.Deck.Blurb}}</Text>
+    <Text Canvas.Left="16" Canvas.Top="43" Style="dim">{{.Deck.Meme}}</Text>
+
+    <!-- The footer rail: position, progress, and a callout aimed at the
+         REAL status bar on the row below (grpc + mcp addresses). The
+         ProgressBar is a live component bound to an int, not drawn text —
+         it is the smallest possible proof that the deck is a gooey tree
+         and not a rendered image. -->
+    <Text Canvas.Left="14" Canvas.Top="47" Style="dim">{{.Deck.Pos}}</Text>
+    <ProgressBar Canvas.Left="24" Canvas.Top="47" Width="60" Value="{{.Deck.Pct}}"/>
+    <Text Canvas.Left="88" Canvas.Top="47" Style="ok">{{.Deck.Hint}}</Text>
+    <Text Canvas.Left="88" Canvas.Top="48" Style="warn">{{.Deck.Line1}}</Text>
+
+  </Canvas>
+</Gooey>

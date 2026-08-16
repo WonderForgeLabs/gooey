@@ -36,11 +36,20 @@ replaces the key set; pass none to own the whole key surface.
 
 An **external `SIGINT`** — `kill -INT`, a supervisor — is a real signal
 and no component sees it: it means stop, and it is honored. SIGINT and
-SIGTERM run the `WithShutdown` hook first (bounded by its timeout, with
-the terminal still up, so it may set properties and paint a farewell),
-then `Run` returns `*SignalError` and `gooey.Exit` applies the shell
-convention — quietly 130 for INT, 143 for TERM; other errors print and
-exit 1.
+SIGTERM run the `WithShutdown` hook first, bounded by its timeout and
+with the terminal still up, then `Run` returns `*SignalError` and
+`gooey.Exit` applies the shell convention — quietly 130 for INT, 143 for
+TERM; other errors print and exit 1.
+
+Two things about that hook are not yet what its API doc promises, both
+tracked in [#315](https://github.com/WonderForgeLabs/gooey/issues/315).
+It does **not** run on the UI goroutine — `gracefulExit` spawns it and
+waits on a channel, so the normal path is ordered, but a hook that
+outlasts its timeout is abandoned and then runs concurrently with quit
+and teardown. And it cannot **paint a farewell**: `gracefulExit` ends by
+quitting, the loop re-tests its stop condition before the next frame, and
+teardown neither composes nor flushes — so a property set in the hook
+never reaches the screen unless the hook frames and flushes by hand.
 
 ## The rest of the signal table
 
@@ -69,7 +78,9 @@ exit 1.
 
 `app.Suspend(fn)` releases the terminal, runs `fn` as its owner, and
 takes it back — this is how `cmd/browser` runs the demo you pick on
-your terminal. Two guarantees make it correct:
+your terminal. The epic that would generalize this into a hand-off,
+[#237](https://github.com/WonderForgeLabs/gooey/issues/237), is parked.
+Two guarantees make it correct:
 
 - **The decoder is joined, not abandoned.** After release, nothing of
   ours is reading the tty — the invariant the
@@ -94,9 +105,12 @@ change while away is picked up on the way back in.
 channel other goroutines select on. It is also **permanent** — an App
 runs once, and there is no restart. Hot reload swaps the composition
 through the same `attach` path as startup — a broken markup save keeps
-the running UI. Companion services start before the terminal is taken
-and stop after it is handed back, so a slow shutdown happens on a
-cooked screen ([how-to: companions](../howto/howto-companions.md)).
+the running UI, though focus is not yet preserved across the swap
+([#52](https://github.com/WonderForgeLabs/gooey/issues/52)). Companion
+services start before the terminal is taken and stop after it is handed
+back, so a slow shutdown happens on a cooked screen ([how-to:
+companions](../howto/howto-companions.md)); they have been declarable in
+markup since [PR #174](https://github.com/WonderForgeLabs/gooey/pull/174).
 
 Depth:
 [specs/2026-08-10-runtime-signals.md](../../specs/2026-08-10-runtime-signals.md)

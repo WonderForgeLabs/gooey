@@ -8,7 +8,8 @@ empty means valid. The input reads it for its invalid visual, an
 ordinary `<Text>` shows it, and form-level validity is a property the
 submit command's `CanExecute` reads. XAML needs three mechanisms for
 this (ValidationRules, `INotifyDataErrorInfo`, ErrorTemplates); here
-they collapse into the property graph.
+they collapse into the property graph
+([#97](https://github.com/WonderForgeLabs/gooey/issues/97)).
 
 ## Declare rules in markup
 

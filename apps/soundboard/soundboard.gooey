@@ -1,0 +1,49 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Rows="Auto,Auto,*,Auto": the readout and the grid take what they
+       need, the scope eats the rest. Nothing on this page carries a
+       size, so the app is whatever size the window is. -->
+  <Border Title="soundboard · eight channels, one output stream" Style="panel">
+    <Grid Rows="Auto,Auto,*,Auto" Margin="1,0">
+
+      <HStack Grid.Row="0" Gap="3">
+        <!-- Wrapped in an HStack so it takes its PREFERRED size. Dropped
+             straight into a Grid row an Image stretches to the whole
+             track, which reads as a background rather than as a badge. -->
+        <Image Src="{{.Logo}}" Cols="18" Rows="3"/>
+        <Text Style="headline">{{.Bpm}} bpm</Text>
+        <Text Style="dim">{{.Sel}}</Text>
+        <ProgressBar Value="{{.Peak}}" Label="out" BarWidth="18"/>
+        <Text Style="hot"  Visibility="{{.Playing}}">▶ playing</Text>
+        <Text Style="dim"  Visibility="{{.Stopped}}">■ stopped</Text>
+        <Text Style="warn">{{.Status}}</Text>
+      </HStack>
+
+      <Board Grid.Row="1"/>
+
+      <Scope Grid.Row="2"/>
+
+      <HStack Grid.Row="3" Gap="3">
+        <!-- The exit is NOT q. q is the first of the sixteen step keys, and
+             Board consumes it before any binding sees it, so the
+             documented way out toggled step one and nothing else. The
+             step row owns qwertyui/asdfghjk outright, which means the
+             exit has to be a key Board declines. -->
+        <Text Style="dim">1–8 hit · qwertyui / asdfghjk toggle steps · ↑↓ select · space play · +/- tempo · m mute · &lt;/&gt; gain · [ ] pan · c clear · esc or ctrl+q quits</Text>
+        <Clock/>
+      </HStack>
+
+    </Grid>
+
+    <KeyBinding Gesture="space" Command="{{.Play}}"/>
+    <KeyBinding Gesture="+"     Command="{{.Faster}}"/>
+    <KeyBinding Gesture="-"     Command="{{.Slower}}"/>
+    <KeyBinding Gesture="m"     Command="{{.Mute}}"/>
+    <KeyBinding Gesture="."     Command="{{.Louder}}"/>
+    <KeyBinding Gesture=","     Command="{{.Quieter}}"/>
+    <KeyBinding Gesture="["     Command="{{.PanLeft}}"/>
+    <KeyBinding Gesture="]"     Command="{{.PanRight}}"/>
+    <KeyBinding Gesture="c"     Command="{{.Clear}}"/>
+    <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+q" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

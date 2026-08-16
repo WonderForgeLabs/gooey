@@ -117,20 +117,15 @@ not a dependency and setting it reaches nobody at all.
 evaluated. Add a command that samples the graph:
 
 ```go
-painted := 0 // components repainted by the last frame — a plain Go var
-
 measure := func() {
 	report.Set(fmt.Sprintf(
 		"count=%d noisy=%d watch=%v | evals: label=%d watched=%d | last frame painted %d component(s)",
 		count.Get(), noisy.Get(), watch.Get(),
-		label.Evals(), watched.Evals(), painted))
+		// PaintedLastFrame is the damage count of the frame just flushed —
+		// an ordinary int on the App, not a property, so reading it here
+		// subscribes to nothing.
+		label.Evals(), watched.Evals(), app.PaintedLastFrame()))
 }
-```
-
-and have the loop record the damage count:
-
-```go
-_, painted = comp.Frame()
 ```
 
 Run it, press `n` three times to bump `noisy`, then `m` twice to measure:
@@ -184,8 +179,9 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
 > **The one thing to avoid.** Never `Set` a property that a component
 > painted from as part of producing every frame — the `Set` dirties the
 > component, which schedules another frame, which sets again. That is why
-> `painted` above is a plain `int` and not a property: the loop writes it
-> every frame, and a plain variable cannot dirty anything.
+> `PaintedLastFrame()` above returns a plain `int` and not a property: the
+> App maintains it internally on every frame, and a plain field cannot
+> dirty anything.
 
 ## What you learned
 
@@ -201,7 +197,8 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
 
 ## Current limitations
 
-- No value converters and no format strings in the binding DSL.
+- No value converters and no format strings in the binding DSL
+  (tracked in [#99](https://github.com/WonderForgeLabs/gooey/issues/99)).
 - No two-way binding syntax in markup. Two-way is component code: the component
   reads the property in `Render` and calls `Set` when the user acts —
   tutorial 4's checkbox and tutorial 6's stepper both do this.

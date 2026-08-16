@@ -200,7 +200,9 @@ reserve-the-space state. A `Set` on the bound property repaints exactly
 what a literal flip repaints: hiding erases the element, collapsing
 relayouts its siblings, and nothing else redraws. The design is written
 up in
-[specs/2026-08-10-bindable-visibility.md](../specs/2026-08-10-bindable-visibility.md).
+[specs/2026-08-10-bindable-visibility.md](../specs/2026-08-10-bindable-visibility.md),
+landed in
+[PR #141](https://github.com/WonderForgeLabs/gooey/pull/141).
 
 From Go you can also flip the plain field at runtime, and the Composer
 notices:

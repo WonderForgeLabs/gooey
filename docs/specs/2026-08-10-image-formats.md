@@ -1,6 +1,6 @@
 # Image file loading: the imaging registry, markup Src, and the SVG module (issue #90)
 
-**Status:** executed. Requested by Elan ("i need an image
+**Status:** executed ([PR #103](https://github.com/WonderForgeLabs/gooey/pull/103)). Requested by Elan ("i need an image
 (png/jpg/gif/svg/ico/bmp) component to use").
 
 **Date:** 2026-08-10
@@ -104,7 +104,8 @@ build time, so at runtime a markup image IS a source property.
 
 ## Deferrals
 
-- GIF animation (gifplay-style player component) — future issue.
+- GIF animation (gifplay-style player component) — tracked as
+  [#105](https://github.com/WonderForgeLabs/gooey/issues/105).
 - 16-bit (BI_BITFIELDS) and PNG-compressed DIB entries in ICO.
 - `<Image>` alignment sugar: an Image in a stretching parent still
   wants `HAlign` from markup, which already exists as a layout
