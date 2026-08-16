@@ -98,6 +98,10 @@ each is a working app you can run and read. Full walkthroughs are in
 | [`cmd/browser`](../demos.md#browser) | Launching another program on your terminal and taking it back — and browsing any worktree or branch of the repo from one running instance | [concept: the App lifecycle](concepts/app-lifecycle.md) |
 | [`mcp/cmd/server`](../demos.md#mcp-server) | An app that is also an MCP server: the tree, the state and the commands are the wire surface | [Tutorial 8](08-remote-control.md) |
 | [`apps/kanban`](../demos.md#kanban) | The same surface on a real list app, plus a live log of every MCP message | [Tutorial 8](08-remote-control.md), [how-to: companions](howto/howto-companions.md) |
+| [`apps/gitui`](../demos.md#gitui) | A real app with no git invocation in Go at all: every action is a `sys:Run` expression behind a capability grant | [how-to: handlers](howto/howto-handlers.md) |
+| [`apps/wysiwyg`](../demos.md#wysiwyg) | A markup editor built on the component catalog and `patch_markup`, serving and attaching to control planes both ways | [Tutorial 8](08-remote-control.md) |
+| [`apps/dynamic-activities`](../demos.md#dynamic-activities) | New buttons that run new code with no redeploy, wired up over one streaming control-plane session | [Tutorial 9](09-temporal.md), [how-to: handlers](howto/howto-handlers.md) |
+| [`paint/cmd/plates`](../demos.md#plates) | Drawing declared in markup, with `paint`'s whole parser surface and no plate list in Go | [how-to: images](howto/howto-images.md) |
 | [`handlers/temporal/cmd/temporaldemo`](../demos.md#temporaldemo) | A button whose behavior is a durable activity run by a worker elsewhere | [Tutorial 9](09-temporal.md), [how-to: async](howto/howto-async.md) |
 | [`handlers/temporal/cmd/temporalops`](../demos.md#temporalops) | A real ops dashboard with every Temporal call declared in markup | [Tutorial 9](09-temporal.md), [how-to: lists](howto/howto-lists.md) |
 | [`handlers/temporal/cmd/wizardui`](../demos.md#wizardui) | A terminal with no application in it: the workflow serves the markup | [Tutorial 9](09-temporal.md), [how-to: handlers](howto/howto-handlers.md) |
@@ -105,7 +109,7 @@ each is a working app you can run and read. Full walkthroughs are in
 `cmd/browser` is the front door to most of it: it indexes exactly two
 groups — the demos under `cmd/` and the tutorial examples under
 `docs/learn/examples/` — shows each one's doc comment, and runs (or
-records) the one you pick. The nested-module demos in the last five rows
+records) the one you pick. The nested-module demos in the last nine rows
 are absent from it by construction, since each must run from inside its
 own module's directory.
 
@@ -154,16 +158,18 @@ not find:
 
 - **No styling system.** `Style="name"` is a lookup — no cascading,
   selectors, or setters. A bound `Style="{{.Handle}}"` gets you a
-  reactive computed style, which is as close to theming as this gets.
+  reactive computed style, which is as close to theming as this gets
+  (tracked in [Epic #54](https://github.com/WonderForgeLabs/gooey/issues/54)).
 - **No converters and no two-way binding syntax.** A binding resolves to
   a property handle and that is all; two-way is something a component
   does in code, and formatting a value for display is the `format`
-  package's computed constructors, not a markup stage.
+  package's computed constructors, not a markup stage (tracked in
+  [#99](https://github.com/WonderForgeLabs/gooey/issues/99)).
 - **Lists are declarative, but items are projected by hand.** `<ItemsView>`
   with an `<ItemsView.ItemTemplate>` works; without reflection, an item
   reaches its template through a `func(T) map[string]any` you write.
   There is no grouping, no headers, no horizontal orientation, and no
-  multi-select.
+  multi-select (tracked in [Epic #59](https://github.com/WonderForgeLabs/gooey/issues/59)).
 - **Attached properties cannot be declared in markup.** `<x:Property>`
   declares ordinary dependency properties on a control's root; the
   framework's own `Grid.Row`/`Canvas.Left` shape is not something your

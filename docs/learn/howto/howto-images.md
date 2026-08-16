@@ -69,7 +69,9 @@ else:
 ```
 
 `graphics.Scale(img, w, h)` resizes to a pixel size if you need to
-prepare the source. It **resamples** with a triangle (bilinear) kernel:
+prepare the source. It **resamples** with a triangle (bilinear) kernel
+([PR #252](https://github.com/WonderForgeLabs/gooey/pull/252) replaced
+the previous subsampling with this):
 every destination pixel is a weighted average of the source pixels it
 covers, so a reduction keeps thin features instead of hitting or missing
 them on a grid, and an enlargement is smooth rather than blocky. The
@@ -114,9 +116,10 @@ src, err := components.LoadImg(assets, "logo.png")    // …wrapped as a propert
 ```
 
 GIF decodes to its **first frame** — animation is a player's job (the
-browser demo's gifplay pattern). ICO picks its largest entry, PNG or
-DIB. A file that is missing or will not decode returns an
-`*imaging.Error` naming the path and the sniffed format.
+browser demo's gifplay pattern); an animated player is tracked in
+[#105](https://github.com/WonderForgeLabs/gooey/issues/105). ICO picks
+its largest entry, PNG or DIB. A file that is missing or will not decode
+returns an `*imaging.Error` naming the path and the sniffed format.
 
 **SVG** costs a real rasterizer, so it lives in a nested module and a
 blank import is the opt-in:
@@ -161,7 +164,12 @@ app := gooey.NewApp(content, gooey.WithGraphics(graphics.Kitty{})) // or pin it
 `WithGraphics(nil)` forces halfblock. The default — no probe, no pinned
 encoder — is halfblock too, deliberately: emitting an image protocol at a
 terminal that does not speak it puts garbage on a user's screen, and only
-a probe can tell.
+a probe can tell. `components.Image` picks its tier from three separate
+conditions — graphics support, and both cell dimensions — rather than one
+flag, which is what keeps it from painting nothing at all on a terminal
+that answers only part of the probe
+([#251](https://github.com/WonderForgeLabs/gooey/issues/251),
+[PR #257](https://github.com/WonderForgeLabs/gooey/pull/257)).
 
 Pixel content is damage-tracked like everything else. Change nothing and
 no image bytes are written; move an image and a kitty terminal re-places

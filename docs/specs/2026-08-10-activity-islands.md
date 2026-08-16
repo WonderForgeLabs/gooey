@@ -59,4 +59,4 @@ last-served markup property.
 - The worker side is a natural CompanionFunc once that lands: the
   islands app self-hosts its activity worker, one shell + dev server.
 - Elan may build this one himself; this spec records the dictated
-  design either way.
+  design either way. Tracked as [#107](https://github.com/WonderForgeLabs/gooey/issues/107).

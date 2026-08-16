@@ -152,6 +152,7 @@ jobs:
       # exist.
       - uses: actions/checkout@v4
         with:
+          lfs: true
           persist-credentials: false
       # Every value below is a trusted event field (a repo slug, an integer,
       # and a job-result enum), but they go through env: rather than inline

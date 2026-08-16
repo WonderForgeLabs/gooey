@@ -1,0 +1,37 @@
+#!/bin/sh
+# cowsay, reimplemented in about thirty lines of shell.
+#
+# Not installed on this machine, and that turns out to be the honest
+# version anyway: the original is a 1999 Perl script that draws a speech
+# bubble and a cow, and the whole point of the beat it appears in is that
+# programs like this were small enough that anyone could have written
+# them. So here it is, written.
+# With arguments, speak them; with none, read stdin — a filter first and
+# a command second, which is how everything in this era was built.
+if [ $# -gt 0 ]; then msg="$*"; else msg=$(cat); fi
+w=0
+# Wrap at 38 columns the hard way, because that is how it was done.
+printf '%s\n' "$msg" | fold -s -w 38 > /tmp/.cowlines.$$
+while IFS= read -r l; do [ ${#l} -gt $w ] && w=${#l}; done < /tmp/.cowlines.$$
+bar=$(printf "%${w}s" "" | tr ' ' '-')
+printf ' _%s_ \n' "$bar"
+n=$(wc -l < /tmp/.cowlines.$$)
+i=0
+while IFS= read -r l; do
+  i=$((i+1))
+  if [ "$n" -eq 1 ]; then o='<'; c='>'
+  elif [ "$i" -eq 1 ]; then o='/'; c='\'
+  elif [ "$i" -eq "$n" ]; then o='\'; c='/'
+  else o='|'; c='|'
+  fi
+  printf '%s %-*s %s\n' "$o" "$w" "$l" "$c"
+done < /tmp/.cowlines.$$
+printf ' -%s- \n' "$bar"
+rm -f /tmp/.cowlines.$$
+cat <<'COW'
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+COW

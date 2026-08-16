@@ -169,10 +169,14 @@ nothing else. There is no focus-specific redraw path in the framework.
 
 ## Step 5: Add a checkbox and feel the graph
 
-`Checkbox` is not a built-in — it is a custom component this example
-registers, and [tutorial 6](06-custom-components.md) takes it apart line by
-line. What matters here is that it binds a `bool` property two-way:
-`Render` reads it, toggling `Set`s it.
+`Checkbox` here shadows the framework's own built-in `components.Checkbox`
+— this example registers its own builder under the same name to keep the
+walkthrough self-contained. A registered builder always wins over a
+built-in element name; see
+[tutorial 6](06-custom-components.md#step-3-register-it-as-a-markup-element)
+for that resolution rule, worked through with a `Meter` instead. What
+matters here is that it binds a `bool` property two-way: `Render` reads
+it, toggling `Set`s it.
 
 ```xml
 <Checkbox Checked="{{.Loud}}" Label="loud mode"/>
@@ -229,6 +233,8 @@ implicit capture, and click synthesis.
 
 ## Beyond the basics
 
+Everything below landed in [PR #86](https://github.com/WonderForgeLabs/gooey/pull/86) (Epic [#31](https://github.com/WonderForgeLabs/gooey/issues/31)).
+
 - **Conditional commands.** `gooey.NewCommand(save).When(dirty)` attaches
   a `CanExecute` condition that is an ordinary bool property. A Button
   bound to it paints dim and refuses activation while the condition is
@@ -251,6 +257,8 @@ implicit capture, and click synthesis.
 - Triple click, and any selection gesture beyond a word.
 - System-clipboard integration (OSC 52); cut and copy stay inside the
   process.
+
+Both are tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106), which also explains why OSC 52 is a deliberate security decision rather than an oversight.
 
 ## Next steps
 

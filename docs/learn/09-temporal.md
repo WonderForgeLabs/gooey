@@ -83,7 +83,9 @@ argument in one flag.
 
 ## Step 2: The visibility pack
 
-[`packs/temporal-visibility`](../../packs/temporal-visibility) is a
+[`packs/temporal-visibility`](../../packs/temporal-visibility)
+(landed in [PR #155](https://github.com/WonderForgeLabs/gooey/pull/155),
+[#144](https://github.com/WonderForgeLabs/gooey/issues/144)) is a
 standard-library-shaped activity pack: the full Temporal Visibility API
 as standalone activities, in a module with **zero gooey imports** — any
 Go Temporal worker can register it with one call:
@@ -110,7 +112,9 @@ go run ./cmd/temporalops --with-dev-server    # one shell, server and all
 
 ([`temporalops.gif`](../media/demos/temporalops.gif).) A live workflow list,
 count, and describe pane — and every Temporal call on that screen is a
-markup expression over the pack's conveniences:
+markup expression over the pack's conveniences. The dashboard landed in
+[PR #168](https://github.com/WonderForgeLabs/gooey/pull/168)
+([#145](https://github.com/WonderForgeLabs/gooey/issues/145)):
 
 ```xml
 Click="{{temporal:Activity `visibility.Query` .Query .PageSize .PageToken | into .RowsJSON}}"
@@ -243,7 +247,9 @@ TEMPORAL_TASK_QUEUE=kanban-dynamic-ui python trigger.py GenerateUI "a topic"
 
 A Temporal trigger in one shell, and the board's page swaps live —
 markup authored by a model, delivered by a workflow-less activity,
-applied atomically by the same path hot reload uses.
+applied atomically by the same path hot reload uses. This worker is
+Python; a Go-client port is tracked in
+[#120](https://github.com/WonderForgeLabs/gooey/issues/120).
 
 ## What you learned
 
@@ -252,7 +258,9 @@ applied atomically by the same path hot reload uses.
   and at-least-once plus scalar-only crossings are the design rules.
 - Activity packs (`packs/temporal-<domain>`) are gooey's Temporal
   standard library: proto-true cores for workflow callers, scalar
-  conveniences for markup.
+  conveniences for markup — which packs beyond visibility get wired
+  into `handlers/temporal` is tracked in
+  [#200](https://github.com/WonderForgeLabs/gooey/issues/200).
 - `wf:Signal` plus a query-served `{markup, values}` payload inverts
   ownership entirely: the workflow is the application, the terminal a
   renderer with a signal channel.

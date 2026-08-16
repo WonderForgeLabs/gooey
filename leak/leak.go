@@ -60,9 +60,10 @@
 // tests written later by someone who never read this comment — which is
 // the only kind of enforcement that survives contact with a repository.
 //
-// It is deliberately dependency-free (runtime and strings) because gooey's
-// root module has exactly two direct requirements by doctrine, and a leak
-// checker is not the thing to spend the third on.
+// It is deliberately dependency-free (runtime and strings): a leak checker
+// that ships a test framework with it is a worse trade than the forty lines
+// below, and this one has to be importable from every nested module without
+// dragging anything along.
 package leak
 
 import (

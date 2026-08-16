@@ -61,7 +61,8 @@ Mutate structure (the "directly" part):
 
 Loopback bind + opt-in flag is v1. Note in docs: an MCP client can do
 anything the keyboard can. Token auth and remote binds are future
-work, not v1.
+work, not v1 — further schema/correctness work on this tool surface is
+tracked under epic [#205](https://github.com/WonderForgeLabs/gooey/issues/205).
 
 ## Proof
 
@@ -245,12 +246,13 @@ JSON-RPC `InvalidParams`. `TestNoStreamAndNoSession` and
 argument handling, result text and error wording are unchanged, so
 `mcpdemo.gif` still shows what happens.
 
-## Extended 2026-08-10: the v1 gaps (#117)
+## Extended 2026-08-10: the v1 gaps ([#117](https://github.com/WonderForgeLabs/gooey/issues/117))
 
 Filed from hands-on use (a Python Temporal worker driving a live app);
 four gaps closed, one path kept: each new tool has its RPC in
 `gooey.control.v1` and its row in the grpc-contract mapping table, added
-the same day (see that record's #117 amendment).
+the same day (see that record's #117 amendment). Landed in
+[PR #128](https://github.com/WonderForgeLabs/gooey/pull/128).
 
 **`patch_markup(name, source)` — targeted subtree replacement.** The
 machinery the original punt said did not exist now does, and the tool is
@@ -333,6 +335,7 @@ serialize; undeclared Go structs never will.
 
 ## Extended 2026-08-10: runtime viewmodel growth (#89)
 
+Landed in [PR #139](https://github.com/WonderForgeLabs/gooey/pull/139).
 Found by a peer session driving `cmd/mcpdemo`: `swap_markup` rebuilds
 against the app's EXISTING context, so a page could never introduce a
 bound property the app didn't pre-register — `ProgressBar

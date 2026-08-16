@@ -1,0 +1,17 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- The default stage: the fragment the deck patches in for any beat
+       that does not bring its own markup.
+
+       This is a whole document, not a fragment, because that is what a
+       patch source is. Keeping it in a file rather than a Go string is
+       the point — nothing in this program assembles markup by
+       concatenation, so there is no shape of it that the loader has not
+       already checked.
+
+       Grid.Row rides on the root because a patch replaces the component,
+       and layout attached properties travel with the component rather
+       than with the slot it lands in. -->
+  <VStack Name="Stage" Grid.Row="2">
+    <Text Name="Body" Style="body" Margin="0,1">{{.Body}}</Text>
+  </VStack>
+</Gooey>

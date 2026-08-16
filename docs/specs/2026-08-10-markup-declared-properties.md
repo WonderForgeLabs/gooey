@@ -3,6 +3,7 @@
 Settled in discussion with Elan 2026-08-10 (via /btw fork). Scheduled
 into the markup work-package that follows the input chapter, alongside
 xmlns/extension expressions and the dotted property-element parse path.
+Tracked as epic [#7](https://github.com/WonderForgeLabs/gooey/issues/7).
 
 ## The commitment
 
@@ -83,7 +84,8 @@ adoption exists — that design item now has a concrete customer.
 
 ## Executed (2026-08-10)
 
-Shipped as specified. `markup/property.go` holds the declaration
+Shipped as specified, landed in [PR #84](https://github.com/WonderForgeLabs/gooey/pull/84).
+`markup/property.go` holds the declaration
 machinery; `markup/usercontrol.go`'s `control` is the shared
 instantiation path for both control tiers; `cmd/cardsdemo`'s
 `card.gooey` and `badge.gooey` are the proof — a markup-only demo that

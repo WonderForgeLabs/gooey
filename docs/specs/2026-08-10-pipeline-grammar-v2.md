@@ -1,12 +1,14 @@
 # Pipeline grammar v2 (design)
 
-Design gate for epic #38, covering its four children: `| err` (#40),
-`| progress` (#41), multiple `into` targets (#42), and a bounded
-retry/timeout surface (#43). The v1 design and implementation record
-live in `2026-08-10-remote-handlers-design.md`; its closing section
-deferred exactly these four because they are all changes to the *same
-grammar* and had to be designed once, together. This document is that
-single pass. No code lands with it.
+Design gate for epic [#38](https://github.com/WonderForgeLabs/gooey/issues/38),
+covering its four children: `| err` (#40), `| progress` (#41), multiple
+`into` targets (#42), and a bounded retry/timeout surface (#43). The v1
+design and implementation record live in
+`2026-08-10-remote-handlers-design.md`; its closing section deferred
+exactly these four because they are all changes to the *same grammar*
+and had to be designed once, together. This document is that single
+pass — it itself landed as [PR #140](https://github.com/WonderForgeLabs/gooey/pull/140).
+No code lands with it.
 
 It also answers the shared-grammar question #99 raises: binding value
 converters (`{{.Bytes | human}}`) must share pipe syntax with handler

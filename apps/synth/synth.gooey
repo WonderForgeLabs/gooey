@@ -1,0 +1,57 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Rows="Auto,*,Auto,Auto": the readout and the controls take their
+       line, the visualiser takes everything left. No component on this
+       page has a size in it, so the instrument is as big as the window
+       and follows it. -->
+  <Border Title="synth · a gooey instrument" Style="panel">
+    <Grid Rows="Auto,*,Auto,Auto" Margin="1,0">
+
+      <HStack Grid.Row="0" Gap="3">
+        <Text Style="headline">{{.Wave}}</Text>
+        <Text Style="dim">oct {{.Octave}}</Text>
+        <Text Style="dim">cutoff {{.Cutoff}}</Text>
+        <Text Style="dim">res {{.Res}}</Text>
+        <Text Style="dim">voices {{.Voices}}</Text>
+        <!-- A meter fed from the same snapshot the bars are drawn from,
+             so it cannot disagree with them. -->
+        <ProgressBar Value="{{.Peak}}" Label="peak" BarWidth="18"/>
+        <Text Style="warn">{{.Status}}</Text>
+      </HStack>
+
+      <Viz Grid.Row="1"/>
+
+      <Keys Grid.Row="2"/>
+
+      <HStack Grid.Row="3" Gap="3">
+        <!-- The exit is NOT q. q is a note — it is the tracker layout's C an
+             octave up — and this line used to advertise it as the way
+             out while Board consumed it as a key press. Pressing the
+             documented quit key played a note and did nothing else,
+             which is an instrument that will not let you leave. Every
+             letter on the keyboard belongs to the keyboard, so the
+             way out has to be something Board declines: esc, or a
+             modifier chord. -->
+        <Text Style="dim">z–m and q–u play · tab wave · ←/→ octave · ↑/↓ cutoff · [ ] resonance · esc or ctrl+q quits</Text>
+
+        <!-- Two components with no pixels. Sampler owns the frame clock
+             and is the only thing that writes to the graph; Board is the
+             focus stop that turns letters into notes. Both are here
+             rather than in main.go because their lifetime is the page's,
+             which the tree already models. -->
+        <Sampler/>
+        <Board/>
+      </HStack>
+
+    </Grid>
+
+    <KeyBinding Gesture="tab"   Command="{{.CycleWave}}"/>
+    <KeyBinding Gesture="right" Command="{{.OctaveUp}}"/>
+    <KeyBinding Gesture="left"  Command="{{.OctaveDn}}"/>
+    <KeyBinding Gesture="up"    Command="{{.CutoffUp}}"/>
+    <KeyBinding Gesture="down"  Command="{{.CutoffDn}}"/>
+    <KeyBinding Gesture="]"     Command="{{.ResUp}}"/>
+    <KeyBinding Gesture="["     Command="{{.ResDn}}"/>
+    <KeyBinding Gesture="esc"    Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+q" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

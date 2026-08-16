@@ -20,6 +20,8 @@ list UI declarative:
 
 ## Decisions
 
+Landed as [PR #83](https://github.com/WonderForgeLabs/gooey/pull/83).
+
 1. **Property-element parse path first.** `<Parent.Child>` dotted
    elements enter the parser as the general mechanism — it serves
    ItemTemplate now and `<x:Property>` (#7) next. A property element's
@@ -138,6 +140,7 @@ its own epic. Grouping, headers, horizontal orientation, recycling pools,
 
 ## Migrations round 2 (2026-08-10, issue #19)
 
+Landed as [PR #127](https://github.com/WonderForgeLabs/gooey/pull/127).
 Finder's results, logview's pane, sysmon's process rows and reader's
 feed list all ride ItemsView now. Migrating them surfaced four gaps,
 each a small addition to the view rather than a new mechanism:

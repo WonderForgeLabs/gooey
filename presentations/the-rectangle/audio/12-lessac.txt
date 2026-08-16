@@ -1,0 +1,1 @@
+Thanks. So. Picture a screen with a hundred things on it. A list, some panels, a status bar, a couple of counters. One number changes. What do you redraw? That question sounds like a detail. It isn't. How a framework answers it decides almost everything else about it: what you have to remember, what it costs to be wrong, and how big the screen gets before anyone notices.

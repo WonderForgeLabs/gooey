@@ -49,6 +49,9 @@ Which one:
   `gooey-epic-decompose` (also called automatically by
   `gooey-new-component` after its spec lands).
 - The demos or docs are **stale** after a change → `gooey-docs-and-demos`.
+- The docs need a **truth audit** — every claim checked against the
+  code, findings verified, issues filed, xref links woven in →
+  `docs-validation-sweep`, then `docs-fix-and-xref`.
 
 ## gooey-new-demo
 
@@ -157,6 +160,57 @@ reporting success.
 
 Cost: 12 agents, roughly 700k output tokens and ~12 minutes wall clock
 for a full run.
+
+## docs-validation-sweep → docs-fix-and-xref
+
+A two-workflow docs audit with the coordinator in the middle. Where
+`docs-and-demos` regenerates, this pair **verifies**: it treats every
+checkable claim in README, CLAUDE.md and docs/** as a hypothesis and
+tests it against the implementation.
+
+`docs-validation-sweep` (read-only): one finder per doc cluster —
+opus on the claim-dense docs, sonnet elsewhere — each chasing every
+file:line anchor, API name, count, and behavior claim into the code;
+every finding then flows through an adversarial opus verifier told to
+refute it, so only evidence-backed findings survive. Decision records
+run in sweep mode (historical drift is expected; only
+presented-as-current falsehoods count). A haiku coverage agent diffs
+the cluster map against the real tree so a new doc can't silently
+escape the audit. Findings are classified doc-inaccuracy / code-bug /
+functional-gap / missing-doc / stale-reference, and each finder also
+proposes issue/PR cross-references from an index the coordinator
+builds first.
+
+Between the two, the coordinator (not an agent): groups confirmed
+code-bug/functional-gap findings by area, files one tracking issue per
+area (an epic only if the volume earns it), skips anything an open PR
+already tracks, and writes each sweep unit to `<unitsDir>/<key>.json`.
+
+`docs-fix-and-xref` (writes): one editor per cluster, disjoint file
+ownership, same checkout. Doc inaccuracies get the smallest edit that
+makes them true; code-level defects are NOT blessed silently — the doc
+states actual behavior and links the tracking issue; xref links go in
+as explicit `[#N](url)` markdown (GitHub does not auto-link `#N` in
+repo files), with a "Related work" trail section on specs carrying 3+
+links. The CLAUDE.md editor knows the verify-loop block is pinned
+character-for-character by tests and runs `go test -run
+'CLAUDEMD|CIWorkflow' .` before reporting.
+
+```
+Workflow({ name: 'docs-validation-sweep', args: { index: '/tmp/…/github-index.md' } })
+// …coordinator files issues, splits units/…
+Workflow({ name: 'docs-fix-and-xref', args: {
+  unitsDir: '/tmp/…/units', index: '/tmp/…/github-index.md',
+  issueMap: '* markup findings → [#314](…)\n* lifecycle findings → [#315](…)' } })
+```
+
+Cost: the sweep is ~29 agents (about 3M subagent tokens for the full
+corpus) and the fix pass ~14; both exceed the default medium workflow
+guideline, so launch them deliberately. First run: 73 findings, 71
+confirmed, 2 refuted; three tracking issues
+([#314](https://github.com/WonderForgeLabs/gooey/issues/314),
+[#315](https://github.com/WonderForgeLabs/gooey/issues/315),
+[#316](https://github.com/WonderForgeLabs/gooey/issues/316)).
 
 ## peer-canvass
 

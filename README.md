@@ -93,12 +93,15 @@ The root package `gooey` is the framework: the `Component` contract,
 `Base`, the layout sandwich, `Frame`, `Composer`, `Dispatcher`, `App`,
 and input routing. The built-in components — `Text`, `Button`,
 `Checkbox`, `TextBox`, `Gauge`, `Sparkline`, `ProgressBar`, `Spinner`,
-`Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`, `Timer`, the
-containers `VStack`, `HStack`, `Grid`, `Border`, `Canvas`,
-`StatusBar`, `ButtonBar`, and the overlays `MenuBar`, `ToastHost`,
-`Tooltip`, and `AdornmentLayer` (their shared anchored-overlay mechanics
-are the Go-side `Popup` primitive) — live in `gooey/components`, which imports the root and is
-never imported by it. Writing your own component means embedding
+`Toggle`, `Segmented`, `ColorPicker`, `Image`, `ItemsView`,
+`ValidationMarker`, the non-visual attachments `Timer`, `TypeAhead` and
+`Companion`, the containers `VStack`, `HStack`, `Grid`, `Border`,
+`Canvas`, `Tabs`, `StatusBar`, `ButtonBar`, and the overlays `MenuBar`,
+`ToastHost`, `Tooltip`, and `AdornmentLayer` (the anchored-overlay
+mechanics are the Go-side `Popup` primitive, whose one full adopter is
+`MenuBar`) — live in `gooey/components`, which imports the root and is
+never imported by it. [docs/markup-reference.md](docs/markup-reference.md)
+is the catalog that stays current. Writing your own component means embedding
 `gooey.Base` and implementing `gooey.Component`; the built-ins have no
 privileges you do not. Under both sit `prop` (the property graph),
 `input`, `render`, `graphics`, and `term`; beside them, `markup`,
@@ -112,10 +115,14 @@ modules.
 
 Reusable capability ships from this repo in three shapes, per the
 [pack-distribution doctrine](docs/specs/2026-08-10-pack-distribution.md):
-**handler packs** (`handlers/<name>` — gooey-coupled `HandlerProvider`s
-behind an xmlns URI: `net`, `fs`, `temporal`, `exec`), **activity packs**
-(`packs/<runtime>-<domain>` — gooey-free standalone modules anyone in
-that runtime's ecosystem can import: `packs/temporal-visibility`), and
+**handler packs** (`handlers/<name>` — gooey-coupled providers behind an
+xmlns URI: `net`, `fs`, `temporal`, `exec`, plus the two value-namespace
+providers `str` and `env`, the latter optionally writable), **activity
+packs** (`packs/<runtime>-<domain>` — gooey-free standalone modules
+anyone in that runtime's ecosystem can import: the `packs/temporal-*`
+modules — eight of them today, `ls packs` is the current list — built
+under the stdlib epic
+[#142](https://github.com/WonderForgeLabs/gooey/issues/142)), and
 plain **component/format libraries** (root packages). The module
 boundary follows dependency hygiene: a zero-third-party-dep handler pack
 lives in the root module, any third-party dependency forces a nested
@@ -123,9 +130,14 @@ module, and activity packs are always standalone — so importing gooey
 never drags SDKs, and importing a pack never drags gooey unless the pack
 is gooey-coupled by nature. Every pack is inert until the host registers
 it, and **registration names the capability's scope** (a client, an
-`fs.FS` root, an allowlist, a task queue); each exposes its registered
-names as data (`AllNames()`) and carries its own README. Releases are Go
-nested-module tags (`packs/temporal-visibility/v0.1.0`).
+`fs.FS` root, an allowlist, a task queue); each pack with a fixed
+vocabulary exposes it as data (`AllNames()`) — `handlers/temporal` is the
+open-vocabulary exception, since the activity type name comes from the
+markup — and every pack carries its own README. Which packs
+`handlers/temporal` wires in by default is still open
+([#200](https://github.com/WonderForgeLabs/gooey/issues/200)): today it is
+`temporal-visibility` alone. Releases are Go nested-module tags
+(`packs/temporal-visibility/v0.1.0`).
 
 ## The control plane
 
@@ -140,7 +152,9 @@ service. The demos run this in both directions. `wizardui` inverts the
 usual arrangement: its markup is *served by* a Temporal workflow — the
 workflow is the application, versioned and replayed like any workflow
 state, and the terminal contributes only the capability grant that lets
-served markup signal that one workflow. `apps/kanban` is driven
+served markup signal that one workflow (generalizing that arrangement
+into a reusable server-driven shell is
+[#44](https://github.com/WonderForgeLabs/gooey/issues/44)). `apps/kanban` is driven
 from the outside instead: `apps/kanban/worker`, the Python Temporal
 worker it launches as a companion, has Claude generate a page and
 pushes it into the running board through the MCP `swap_markup` tool.
@@ -169,58 +183,44 @@ and stopped with the app
 |---|---|---|
 | Retained tree + Measure/Arrange | done | Persistent components, measure/arrange sandwich via `MeasureChild`/`ArrangeChild`; `SIGWINCH` resizes the composition and repaints |
 | Dependency properties | done | Lazy dirty-tracking graph (Slint lineage), not eager WPF-style notification; UI-goroutine-confined |
-| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is component code, and value formatting is the `format` package's computed-property constructors (`format.Bytes(p)` → `Property[string]`; markup converter stages over the same functions are #99) |
-| Markup + hot reload | done | XML over any `fs.FS`; `markup.Page` polls ModTimes and the App rebuilds on the UI goroutine, viewmodel state survives |
+| Bindings | done | `{{.Path}}` resolves once at build time to property handles (lvalue semantics); mixed text content; typed handles across element boundaries. No converters or two-way markup syntax — two-way is component code, and value formatting is the `format` package's computed-property constructors (`format.Bytes(p)` → `Property[string]`; markup converter stages over the same functions are [#99](https://github.com/WonderForgeLabs/gooey/issues/99)) |
+| Value namespaces | done | The pull half of the same xmlns mechanism: `{{str:Upper .User}}`, `` {{env:Get `TERM` `(unknown)`}} `` — a value expression goes wherever a binding goes and resolves at build time to a `*prop.Property[string]`. Registration (`markup.RegisterValues`) is the capability grant, an unregistered prefix is a load error; providers today are `handlers/str` and `handlers/env` ([spec](docs/specs/2026-08-12-value-namespaces.md), [PR #231](https://github.com/WonderForgeLabs/gooey/pull/231)) |
+| Markup + hot reload | done | XML over any `fs.FS`; `markup.Page` polls ModTimes and the App rebuilds on the UI goroutine, viewmodel state survives — focus does not yet ([#52](https://github.com/WonderForgeLabs/gooey/issues/52), epic [#50](https://github.com/WonderForgeLabs/gooey/issues/50)) |
 | UserControls | done | Context isolation, data crosses only via attribute hand-off; the property surface is implicit unless the control declares it with `<x:Property>` |
 | Grid / star sizing | done | `Auto`/`Fixed`/`Star` tracks with spans, XAML `GridLength` semantics |
 | Canvas / absolute layout | done | `Canvas.Left`/`Canvas.Top` attached properties; children may overlap, paint order is tree order |
 | Timers | done | `<Timer Interval="600ms" Tick="{{.Fn}}"/>` — non-visual attachment; the goroutine posts through the Dispatcher and the Composer owns its lifetime, so a hot reload cannot leak one |
 | Commands + KeyBindings | done | `Command` is `func()`; bindings are non-visual attachments scoped by where they are declared; dispatch bubbles, navigation runs in the unconsumed tail |
 | Focus + mouse | done | Framework-owned focus (`FocusState`), spatial arrow navigation (XYFocus), hit-testing, hover, implicit capture, click synthesis, SGR and legacy X10 decoding; focus/hover damage is just property damage |
-| Styles | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, setters, or overrides |
+| Styles | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, setters, or overrides — tracked by the styles epic [#54](https://github.com/WonderForgeLabs/gooey/issues/54) (selectors [#57](https://github.com/WonderForgeLabs/gooey/issues/57), setters [#56](https://github.com/WonderForgeLabs/gooey/issues/56)) |
 | DataTemplates / ItemsView | done | `<ItemsView.ItemTemplate>` via the XAML property-element syntax; the template is a factory instantiated per item against an isolated context. Items arrive through a projection func (`map[string]any`) — the no-reflection stand-in for `x:DataType`. Rows are windowed and index-keyed, so a one-item change repaints one row. No grouping, headers, horizontal orientation, or multi-select |
-| Adornments + Tooltip | done | WPF's adorner plane: an `AdornmentLayer` (last child of the root) hosts components positioned against a *target's* arranged bounds — re-anchored every frame, dropped when the target vanishes. `Tooltip` is the first customer: `<Tooltip Text="…"/>` as a KeyBinding-style attachment or `Tooltip="…"` on any element, delay timer, flip-to-fit, gesture hints, pure markup ([spec](docs/specs/2026-08-10-adornments.md)) |
+| Adornments + Tooltip | done | WPF's adorner plane: an `AdornmentLayer` (last child of the root) hosts components positioned against a *target's* arranged bounds — re-anchored every frame, dropped when the target vanishes. `Tooltip` is the first customer: `<Tooltip Text="…"/>` as a KeyBinding-style attachment or `Tooltip="…"` on any element, delay timer, flip-to-fit, gesture hints, pure markup ([spec](docs/specs/2026-08-10-adornments.md)). Pointer-anchored (free-position) adornments — drag ghosts, crosshairs — are [#177](https://github.com/WonderForgeLabs/gooey/issues/177) |
 | Validation | done | Validators are computeds — `validate.Field(src, rules…)` yields an error property (empty = valid, first failure wins), `validate.All` a value-stabilized is-valid for submit gating via `.When()`. The built-in vocabulary is .NET's DataAnnotations set (Required, MinLen/MaxLen, Pattern, EmailAddress, Url, Phone, CreditCard, Digits, Integer, MinValue/MaxValue, Compare, Range) with stock messages, no third-party deps, and stricter-than-.NET semantics where it matters. Markup: a `<Validate Required="true" EmailAddress="true"/>` behavior on the input (bare child or `<X.Behaviors>` slot) builds the same computed, publishes it (`Into`) for inline error `<Text>`s, and wires the TextBox's invalid visual; `ctx.Rules` registers domain rules beyond the annotations; `<ValidationMarker/>` floats the message via the AdornmentLayer for dense layouts ([spec](docs/specs/2026-08-10-validation-core.md)) |
-| Menus, toasts, popups | done | `MenuBar` (modal dropdowns, page-wide `alt+letter` mnemonics, focus restored on dismiss) and `ToastHost` (auto-dismissed notifications), both declared as the *last* children of the root because document order is z-order. Their shared lifecycle — anchored surface, focus save/restore, pointer capture, dismissal grammar — is extracted as the Go-side `Popup` primitive ([spec](docs/specs/2026-08-10-popup.md)); there is no markup `<Popup>` element yet |
+| Menus, toasts, popups | done | `MenuBar` (modal dropdowns, page-wide `alt+letter` mnemonics, focus restored on dismiss) and `ToastHost` (auto-dismissed notifications), both declared as the *last* children of the root because document order is z-order. The anchored-surface lifecycle — focus save/restore, pointer capture, dismissal grammar — is extracted as the Go-side `Popup` primitive ([spec](docs/specs/2026-08-10-popup.md)), and `MenuBar` is its one full adopter: `Tooltip` takes the placement helper (`PlacePopup`) and hand-rolls the rest, and `ToastHost` does not adopt it at all, both by design. There is no markup `<Popup>` element yet; menus v2 — context menus and submenus — is [#104](https://github.com/WonderForgeLabs/gooey/issues/104) |
 | Color depth adaptation | done | Truecolor / 256 / 16 detected per session; the buffer stays 24-bit and downsampling happens at the wire. Components read `Frame.Caps` to adapt |
 | x:Property (markup-declared properties) | done | `<x:Property Name="Title" Type="string" Default="untitled"/>` on a control's root — declared markup properties are ordinary dependency properties, registered from markup. Bound attributes pass the parent's handle through type-checked, absent ones materialize a per-instance source with the default, `Required` is a load error. Declaring a surface makes the control strict. Types are a type-switch table (`string`/`int`/`bool`/`float`/`duration`/`color`/`any`), no reflection. No markup-declared *attached* properties; declared defaults reset on hot reload ([spec](docs/specs/2026-08-10-markup-declared-properties.md)) |
-| Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)) |
-| MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Protocol is the official `modelcontextprotocol/go-sdk`, isolated in the nested `mcp/` module so core's graph is unchanged. Loopback-only, opt-in, no auth; every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)) |
+| Handler namespaces (xmlns, Temporal) | done | `{{net:Get .Url \| into .Body}}` — events bound to framework handlers declared in markup; registration is the capability grant. One pipeline stage (`into`), one result, no retry surface yet ([spec](docs/specs/2026-08-10-remote-handlers-design.md)); pipeline grammar v2 is [#38](https://github.com/WonderForgeLabs/gooey/issues/38) (retry/timeout [#43](https://github.com/WonderForgeLabs/gooey/issues/43), multiple targets [#42](https://github.com/WonderForgeLabs/gooey/issues/42), progress [#41](https://github.com/WonderForgeLabs/gooey/issues/41), error tail [#40](https://github.com/WonderForgeLabs/gooey/issues/40)) |
+| MCP server (live tree control) | done | `mcp.Serve(app, …)` makes a running app an MCP host: read the tree and the screen, invoke commands, set values, drive keys and mouse, replace the page's markup. Protocol is the official `modelcontextprotocol/go-sdk`, isolated in the nested `mcp/` module so core's graph is unchanged. Loopback-only, opt-in, no auth; every tool marshals through the Dispatcher onto the UI loop ([spec](docs/specs/2026-08-10-mcp-server.md)). The remaining schema and client-observable-state gaps are the tool-surface epic [#205](https://github.com/WonderForgeLabs/gooey/issues/205) |
 
 ## Demos
-
-Each has a walkthrough in [docs/demos.md](docs/demos.md). Most live
-under `cmd/`; demos whose dependencies are quarantined in nested modules
-live with their module (`handlers/temporal/cmd/`, `mcp/cmd/`,
-`apps/`) and run from that module's directory.
-
-| Demo | GIF | Proves |
-|---|---|---|
-| `cmd/probe` + `cmd/pixels` | [pixels.gif](docs/media/demos/pixels.gif) | Capability detection and the graphics pipeline (`--mode` forces a protocol) |
-| `cmd/props` | [props.gif](docs/media/demos/props.gif) | Lazy property graph: unwatched sources render zero frames |
-| `cmd/logview` | [logview.gif](docs/media/demos/logview.gif) | Conditional dependency recording: pause drops the firehose out of the graph |
-| `cmd/markuplog` | [markuplog.gif](docs/media/demos/markuplog.gif) | Markup hot reload: live edits rebuild the tree, buffer intact |
-| `cmd/finder` | [finder.gif](docs/media/demos/finder.gif) | Input-to-derived-view pipeline with per-pane damage |
-| `cmd/reader` | [reader.gif](docs/media/demos/reader.gif) | Multi-UserControl composition, scoped input, live fetches |
-| `cmd/state` | [state.gif](docs/media/demos/state.gif) | No-code-behind markup and reactive serialization |
-| `cmd/cards` | [cards.gif](docs/media/demos/cards.gif) | Markup-declared `<x:Property>` surfaces: one markup-only control, four instances over four live data streams ([timerdemo.gif](docs/media/demos/timerdemo.gif) isolates its `<Timer>` element) |
-| `handlers/temporal/cmd/temporaldemo` | [temporaldemo.gif](docs/media/demos/temporaldemo.gif) | Handler namespaces: a button whose behavior is a remote Temporal activity |
-| `handlers/temporal/cmd/temporalops` | [temporalops.gif](docs/media/demos/temporalops.gif) | A live Temporal visibility dashboard: every Temporal call declared in markup, an `ItemsView` over real API responses, paging on real page tokens |
-| `handlers/temporal/cmd/wizardui` | [wizarddemo.gif](handlers/temporal/wizarddemo.gif) (earlier cut; final GIF: docs-and-demos workflow) | Workflow-served markup: every screen arrives as a workflow query payload, and the terminal contributes only the capability grant |
-| `cmd/colors` | [colors.gif](docs/media/demos/colors.gif) | Canvas absolute layout, per-terminal color tiers, and a page styled live by the color being picked |
-| `mcp/cmd/server` | [server.gif](docs/media/demos/server.gif) | The app as an MCP server: every change in the GIF is a tool call from a script, including the page swapping itself out from under a surviving viewmodel |
-| `apps/kanban` | — | A real Kanban board that is also an MCP server, with a live traffic log; its own `apps/kanban/worker` companion pushes generated markup into it over `swap_markup` |
-| `apps/dynamic-activities` | — | A star button that runs Python written *after* the app started: a companion Temporal worker whose own MCP server is CRUD over its activities, registering each one's result property as an act on a held-open `SessionService.Attach` stream and patching its button onto the page. The same stream mirrors the app's properties back, so the worker reconciles with what the user did at the keyboard. **Unsandboxed code execution by design — read its README before running it** |
-| `cmd/toolkit` | [toolkit.gif](docs/media/demos/toolkit.gif) | The UI toolkit — every component the kit ships, alive at once under a `<Tabs>`: the wave-1 set, `ColorPicker` and `ItemsView`, `<Validate>` behaviors with a floating `ValidationMarker`, `Popup`, and wave 2's `MenuBar`/`ToastHost` overlays with tooltips through the `AdornmentLayer` |
-| `cmd/sysmon` | — | A live `/proc` system monitor: the promoted Gauge/Sparkline components, threshold styling, and Set-only-on-change dedup keeping an idle system near zero repaints |
-| `cmd/prefs` | — | External state as properties: three settings bound straight into markup, persisted through a host-supplied provider, with the run's disk-write count on screen |
-
-The tutorial examples under [`docs/learn/examples/`](docs/learn/examples)
-are runnable too, and `cmd/browser` lists both groups:
 
 ```sh
 go run ./cmd/browser
 ```
+
+That is the list. `cmd/browser` scans `cmd/`, `apps/`,
+`handlers/temporal/cmd/`, `mcp/cmd/` and `docs/learn/examples/`, so it shows
+what is *there* — including the run command for each, which differs by where
+the program lives (a nested module cannot be `go run` from the repo root).
+[docs/demos.md](docs/demos.md) has the walkthroughs, and each demo's own
+source is commented with what it exists to prove.
+
+A table of them used to live here, and it is gone on purpose. It was
+hand-maintained, so it drifted the moment anyone added a program — it was
+missing seven apps by the time it was removed — and a stale list is worse
+than no list, because it reads as complete. Same rule as the module
+discovery in [CLAUDE.md](CLAUDE.md) and the generated block in
+`.gitignore`: derive it, or don't write it down.
 
 ## Documentation
 
@@ -233,9 +233,12 @@ go run ./cmd/browser
 
 ## POC limits, honestly
 
-There is no styling system (named style lookup only). The file watcher is
-300 ms ModTime polling. Properties are confined to the UI goroutine;
-background work crosses in over a channel.
+There is no styling system (named style lookup only —
+[#54](https://github.com/WonderForgeLabs/gooey/issues/54)). The file
+watcher is 300 ms ModTime polling (replacing it with filesystem
+notifications is [#53](https://github.com/WonderForgeLabs/gooey/issues/53)).
+Properties are confined to the UI goroutine; background work crosses in
+through the Dispatcher (`Post` from anywhere, `Drain` on the loop).
 
 ## Architecture decisions, one line each
 
@@ -243,7 +246,7 @@ background work crosses in over a channel.
 - **Capability detection is a handshake, not config** — Kitty query + XTWINOPS + DA1, preference kitty > sixel > iterm2 > halfblock: [detection](docs/architecture.md#capability-detection-is-a-handshake-not-config)
 - **Properties are lazy, not eager** — a set marks dirty and computes nothing; evaluation records its own dependencies, so conditional reads watch only the taken branch: [the property system](docs/architecture.md#the-property-system)
 - **"AffectsRender" is discovered, not declared** — each component's paint is a computed node, so whatever it reads is its damage set: [the Composer](docs/architecture.md#the-composer)
-- **The flush diffs cells, not paint nodes** — components overpaint each other and containers never clear their bounds, so only a buffer comparison is trustworthy; damage counts decide the byte total, never the correctness. An idle frame writes zero bytes, a keystroke writes about thirty: [damage reaches the wire](docs/architecture.md#damage-reaches-the-wire-renderflusher)
+- **The flush diffs cells, not paint nodes** — components overpaint each other and a chrome-only container pre-clears nothing, so only a buffer comparison is trustworthy; damage counts decide the byte total, never the correctness. An idle frame writes zero bytes, a keystroke writes about thirty: [damage reaches the wire](docs/architecture.md#damage-reaches-the-wire-renderflusher)
 - **Pixel placements are owned by the paint node that recorded them** — only dirty components re-render, so a rebuilt-from-scratch placement list would lose every image that did not repaint; and protocols without placement identity erase a vanished image by repainting the cells under it: [damage on the pixel plane](docs/architecture.md#damage-on-the-pixel-plane)
 - **Layout runs outside the evaluation context** — reads during Measure subscribe to nothing, keeping layout out of the graph by construction: [layout vs the graph](docs/architecture.md#layout-runs-outside-the-evaluation-context)
 - **Framework state in source properties makes focus and hover damage free** — moving focus repaints exactly two components: [the input system](docs/architecture.md#the-input-system)

@@ -1,6 +1,6 @@
 # Adornments: the decoration plane, and Tooltip (issues #91, #92)
 
-**Status:** executed.
+**Status:** executed ([PR #129](https://github.com/WonderForgeLabs/gooey/pull/129)).
 
 **Date:** 2026-08-10
 
@@ -199,4 +199,5 @@ and the `Adornment` interface, but no second customer shipped — the
 next one, validation markers, should confirm the interface before it
 calcifies), `docs/learn` chapter + example GIF for the epic's
 acceptance criteria, and pointer-anchored placement (context menus want
-a Place anchored at the pointer, not at a component).
+a Place anchored at the pointer, not at a component) — tracked as
+[#177](https://github.com/WonderForgeLabs/gooey/issues/177).

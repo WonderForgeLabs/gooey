@@ -1,11 +1,18 @@
 # Concept: the property graph
 
-Every visual value in gooey — a label's text, a border's title, whether a
-button is focused — is a `*prop.Property[T]`. Properties form a graph with
-two kinds of node:
+Every value a component *paints* from — a label's text, a border's title,
+whether a button is focused — is a `*prop.Property[T]`. Layout state
+(margin, explicit size, alignment, visibility, grid attachments) is
+deliberately a plain struct of Go fields instead, which is why flipping
+`Layout.Visibility` from code dirties nothing on its own and why
+`Layout.BindVisibility` exists as the one route from the graph into a
+layout field. Properties form a graph with two kinds of node:
 
 - **Source** (`prop.NewSource(v)`) holds a value. `Set` marks its
-  dependents dirty and *computes nothing*.
+  dependents dirty and *computes nothing*. It also does not compare:
+  assigning the value a property already holds still invalidates every
+  dependent and still costs a repaint, so guard at the call site when you
+  need idempotence.
 - **Computed** (`prop.NewComputed(f)`) holds a function. `Get` re-runs `f`
   only when dirty, and the properties read *during* that run are recorded
   as its dependencies.
