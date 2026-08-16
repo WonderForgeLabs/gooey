@@ -328,7 +328,7 @@ seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
 them, and `App.Every` shipped the signal-no-join defect in the runtime
 itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
-delegated it too (`app.go:363`). A `Startable` that still hand-rolls its
+delegated it too (`app.go:364`). A `Startable` that still hand-rolls its
 own `done`/`stopped` pair is a claim that neither shape fits —
 `Companion.Start` (`components/companion.go:133`) is the one legitimate
 case, joining a subprocess `Wait()` rather than a ticker.
