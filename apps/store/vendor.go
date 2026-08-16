@@ -51,10 +51,23 @@ type vendors struct {
 	mu    sync.Mutex
 	addr  string // the VENDOR island. Never the owner's port.
 	procs map[string]*vendorProc
+
+	// build compiles pkg to bin. A field only so a test can supply one
+	// that BLOCKS: what has to be proved about the build is that the UI
+	// goroutine is not waiting on it, and a build that returns
+	// immediately proves that whether or not it is true. The test needs a
+	// slow sink or it is testing nothing.
+	build func(bin, pkg string) ([]byte, error)
 }
 
 func newVendors(addr string) *vendors {
-	return &vendors{addr: addr, procs: map[string]*vendorProc{}}
+	return &vendors{
+		addr:  addr,
+		procs: map[string]*vendorProc{},
+		build: func(bin, pkg string) ([]byte, error) {
+			return exec.Command("go", "build", "-o", bin, pkg).CombinedOutput()
+		},
+	}
 }
 
 // launch starts the vendor behind an Integration, if it has one.
@@ -85,8 +98,11 @@ func (v *vendors) launch(it Integration) string {
 	// GRANDCHILD that Process.Kill cannot reach. Cancel would then report
 	// success while the vendor kept its grant. The build is cached, so
 	// this is slow exactly once.
+	//
+	// Slow exactly once is still slow, which is why the caller runs this
+	// whole function off the UI goroutine (store.go's Subscribe).
 	bin := filepath.Join(os.TempDir(), "northwind-vendor-"+it.ID)
-	if out, err := exec.Command("go", "build", "-o", bin, it.Cmd).CombinedOutput(); err != nil {
+	if out, err := v.build(bin, it.Cmd); err != nil {
 		return "subscribed — " + it.Vendor + " failed to build: " + firstLine(string(out))
 	}
 
