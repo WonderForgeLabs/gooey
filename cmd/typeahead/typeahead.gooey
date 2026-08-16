@@ -10,7 +10,11 @@
        background_amplification_test.go. -->
   <Grid Rows="1,1,*,1,1">
     <Text Grid.Row="0" Style="accent">the shelf — type a title</Text>
-    <Text Grid.Row="1" Style="dim">{{.Sorted}}</Text>
+    <!-- The sentence is markup; only the two words that vary are bound.
+         "searching titles" is a literal because it IS one: <TypeAhead
+         Key="Title"> is fixed at load time, so the claim is as static as
+         the attribute it describes. -->
+    <Text Grid.Row="1" Style="dim">sorted by {{.SortName}} ({{.SortDir}}) · searching titles</Text>
 
     <!-- The list. TypeAhead is a behaviour attachment: it sees keys
          BEFORE the view does, which is the only reason it can search for

@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -41,10 +42,13 @@ func main() {
 	// the button row with no code watching anything.
 	manual := prop.NewComputed(func() bool { return !auto.Get() })
 
-	live := prop.NewComputed(func() string {
-		return fmt.Sprintf("live state:  count=%d  message=%q%s",
-			count.Get(), messages[msgIdx.Get()%len(messages)], serializedAt.Get())
-	})
+	// The live line is composed in state.gooey, so these two are the
+	// smallest handles that line needs rather than the line itself.
+	// message is an index into a Go slice — markup has no indexer — and
+	// countText exists because an interpolation takes string handles,
+	// not a *prop.Property[int].
+	message := prop.NewComputed(func() string { return messages[msgIdx.Get()%len(messages)] })
+	countText := prop.NewComputed(func() string { return strconv.Itoa(count.Get()) })
 
 	var app *gooey.App
 
@@ -70,7 +74,7 @@ func main() {
 			// only things whose changes re-serialize.
 			"viewmodel": map[string]any{
 				"count":   count.Get(),
-				"message": messages[msgIdx.Get()%len(messages)],
+				"message": message.Get(),
 			},
 			// The framework observing itself via the Composer. These
 			// read plain vars and focus state, NOT properties — so even
@@ -129,7 +133,8 @@ func main() {
 
 	ctx := &markup.Context{
 		Values: map[string]any{
-			"Live": live, "Json": display, "Auto": auto, "Manual": manual,
+			"Count": countText, "Message": message, "SerializedAt": serializedAt,
+			"Json": display, "Auto": auto, "Manual": manual,
 			"Increment": gooey.Command(func() { count.Set(count.Get() + 1) }),
 			"Cycle":     gooey.Command(func() { msgIdx.Set(msgIdx.Get() + 1) }),
 			"Serialize": gooey.Command(serialize),

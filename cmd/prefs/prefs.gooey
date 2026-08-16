@@ -1,8 +1,9 @@
-<Gooey xmlns="wonderforge.io/gooey/2026">
+<Gooey xmlns="wonderforge.io/gooey/2026"
+       xmlns:str="gooey.dev/handlers/str">
   <Border Title="settings → one json document" Style="panel">
     <Grid Rows="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto">
       <Text Grid.Row="0" Style="accent">toggle anything; it is written to the document and read back next launch</Text>
-      <Text Grid.Row="1" Style="dim">{{.SourceLine}}</Text>
+      <Text Grid.Row="1" Style="dim">last source:  {{str:Default .LastSource `(none yet)`}}</Text>
       <HStack Grid.Row="2" Gap="2">
         <Button Content="cycle source" Click="{{.Cycle}}"/>
         <Button Content="nudge (2 sets, 1 batch, 0 writes)" Click="{{.Nudge}}"/>
@@ -10,7 +11,7 @@
       </HStack>
       <Checkbox Grid.Row="3" Style="accent" Checked="{{.KeepRecording}}" Label="keep recording on"/>
       <Checkbox Grid.Row="4" Style="accent" Checked="{{.AutoRestart}}" Label="auto restart app (a persisted flag, not a supervisor)"/>
-      <Text Grid.Row="6" Style="dim">{{.Stats}}</Text>
+      <Text Grid.Row="6" Style="dim">document:  {{.Path}}        writes this run:  {{.Writes}}{{.Problem}}</Text>
       <Text Grid.Row="7" Style="dim">tab + enter/space   s: cycle source   r: recording   a: auto restart   n: nudge   d: reset   q: quit</Text>
       <KeyBinding Gesture="s" Command="{{.Cycle}}"/>
       <KeyBinding Gesture="r" Command="{{.ToggleRecord}}"/>

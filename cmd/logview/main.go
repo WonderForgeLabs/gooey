@@ -19,6 +19,8 @@
 // KeyBinding attachments are all built as Go literals here. cmd/markuplog
 // runs the same viewmodel with the tree authored in XML markup instead,
 // and the contrast between the two files is the point of having both.
+// Only the TREE differs between them — both run on gooey.App, because a
+// hand-written select loop is not the Go-composition flavor of anything.
 // So the viewmodel below is duplicated there on purpose — diffing it is
 // the lesson. The one thing NOT duplicated is the synthetic traffic:
 // cmd/internal/logdata has no framework content to compare.
@@ -152,15 +154,16 @@ func main() {
 	// replaced: the terminal, the decoder, the dispatcher, the frame
 	// scheduling and a teardown that joins the decoder all belong to App
 	// from here. cmd/markuplog — the markup flavor of this same
-	// viewmodel — has done it this way all along; the two files now
-	// differ only where the point of the pairing is, in how the tree is
-	// authored.
+	// viewmodel — gets the same loop from markup.Page, with the reload on
+	// top; the two files differ only where the point of the pairing is,
+	// in how the tree is authored.
 	app = gooey.NewApp(gooey.Tree(root))
 
 	// The log generator is the app's own clock, not the tree's. A
 	// <Timer> component would be the other choice, and is the wrong one
 	// here for the same reason it is in markuplog: the firehose has to
-	// outlive any one composition.
+	// outlive any one composition. Every posts onto the UI goroutine, so
+	// the closure is ordinary UI code.
 	app.Every(130*time.Millisecond, func() { lines.Set(append(lines.Get(), logdata.Next())) })
 
 	// Stats about the PREVIOUS frame, folded into the one about to

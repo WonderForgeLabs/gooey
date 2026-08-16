@@ -92,7 +92,7 @@ This is the payoff. Give each pane its own `s` binding by declaring it
   <Border Grid.Col="1" Title="right pane" Style="panel">
     <VStack Gap="1">
       <Button Content="right A" Click="{{.RightA}}"/>
-      <Checkbox Checked="{{.Loud}}" Label="loud mode"/>
+      <Checkbox Checked="{{.Loud}}" Label="loud mode" Style="accent"/>
     </VStack>
     <KeyBinding Gesture="s" Command="{{.RightScoped}}"/>
   </Border>
@@ -169,14 +169,20 @@ nothing else. There is no focus-specific redraw path in the framework.
 
 ## Step 5: Add a checkbox and feel the graph
 
-`Checkbox` is not a built-in — it is a custom component this example
-registers, and [tutorial 6](06-custom-components.md) takes it apart line by
-line. What matters here is that it binds a `bool` property two-way:
-`Render` reads it, toggling `Set`s it.
+`Checkbox` is a built-in: a focus stop rendering `[x] label`, toggled by
+space, enter, or a click. The example registers nothing for it — the page
+supplies a `bool` property and that is the whole wiring.
 
 ```xml
-<Checkbox Checked="{{.Loud}}" Label="loud mode"/>
+<Checkbox Checked="{{.Loud}}" Label="loud mode" Style="accent"/>
 ```
+
+`Checked` binds the property **two-way**, in the only sense gooey has:
+`Render` reads the handle and the toggle `Set`s it, so the viewmodel and
+the component are looking at the same property rather than at copies kept
+in sync. There is no two-way binding *syntax* — there is one handle, read
+by one and written by the other. [Tutorial 6](06-custom-components.md)
+builds a component with exactly this shape from scratch.
 
 Make the status line depend on it:
 

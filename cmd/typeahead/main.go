@@ -103,7 +103,7 @@ func main() {
 	}
 
 	app := gooey.NewApp(markup.Page(dir, pageFile, vm.ctx()), demomain.GraphicsOptions(enc, forced)...)
-	vm.quit = gooey.Command(app.Quit)
+	vm.quit = app.Quit
 	app.BeforeFrame(func() { vm.refresh(app) })
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
@@ -147,7 +147,9 @@ type model struct {
 	typed  *prop.Property[string]
 	missed *prop.Property[bool]
 	stats  *prop.Property[string]
-	quit   gooey.Action
+	// quit is filled in once the App exists: the page context is built
+	// before it, and under --dump there is no App at all.
+	quit func()
 }
 
 var sortNames = []string{"title", "artist", "year"}
@@ -277,12 +279,14 @@ func (m *model) ctx() *markup.Context {
 			"Typed":   m.typed,
 			"Missed":  m.missed,
 			"Stats":   m.stats,
-			"Sorted": prop.NewComputed(func() string {
-				dir := "asc"
+			// The sort line's sentence lives in the markup; these are the
+			// two words it interpolates.
+			"SortName": prop.NewComputed(func() string { return sortNames[m.sortBy.Get()] }),
+			"SortDir": prop.NewComputed(func() string {
 				if m.desc.Get() {
-					dir = "desc"
+					return "desc"
 				}
-				return fmt.Sprintf("sorted by %s (%s) · searching titles", sortNames[m.sortBy.Get()], dir)
+				return "asc"
 			}),
 			// The search buffer is the mode indicator. An implicitly armed
 			// mode that shows nothing is a UI misrepresenting what the next
@@ -304,7 +308,11 @@ func (m *model) ctx() *markup.Context {
 			}),
 			"CycleSort": gooey.Command(m.cycleSort),
 			"Reverse":   gooey.Command(m.reverse),
-			"Quit":      gooey.Command(func() { m.runQuit() }),
+			"Quit": gooey.Command(func() {
+				if m.quit != nil {
+					m.quit()
+				}
+			}),
 		},
 		Styles: map[string]render.Style{
 			"dim":    dim,
@@ -312,11 +320,5 @@ func (m *model) ctx() *markup.Context {
 			"title":  {Fg: render.RGB(235, 235, 245), Bold: true},
 			"miss":   {Fg: render.RGB(240, 90, 90), Bold: true},
 		},
-	}
-}
-
-func (m *model) runQuit() {
-	if gooey.CanExecute(m.quit) {
-		m.quit.Run()
 	}
 }

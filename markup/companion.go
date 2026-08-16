@@ -28,7 +28,8 @@ import (
 // gives its clients arbitrary command execution, which is past the
 // "an MCP client can do anything the keyboard can" posture recorded in
 // docs/specs/2026-08-10-mcp-server.md. The perimeter is that the MCP
-// server is opt-in and loopback-only; the off switch is
+// server is opt-in and unauthenticated, bound wherever the host asks
+// (loopback by default, not restricted to it); the off switch is
 // GOOEY_MARKUP_COMPANIONS (see companionsAllowed). This was decided
 // deliberately: a capability honored on one build path and refused on
 // another is two languages sharing a syntax.

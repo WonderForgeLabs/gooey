@@ -16,16 +16,18 @@ MCP server that this app launched as a companion.
 > **The entry point is the activity MCP server**, `http://127.0.0.1:7802/mcp` by default
 > (`-activity-mcp`). Anything that can open a socket to it can run arbitrary code as you:
 > another process on this machine, another user on a shared box, a browser page that can
-> be talked into a POST. The mitigation is exactly one thing — **every port binds loopback
-> only** — and none of them is authenticated. Loopback is nowhere near enough on a machine
-> you share.
+> be talked into a POST. **None of these ports is authenticated**, and nothing enforces
+> where they bind: every address is a flag (`-mcp`, `-grpc`, `-activity-mcp`) that
+> *defaults* to loopback and will bind whatever you pass instead. Point any of them at a
+> non-loopback address and you have handed arbitrary code execution to everything that can
+> reach it. Loopback is the default, not a guarantee — and on a machine you share it is
+> nowhere near enough even then.
 >
-> When you start the demo the normal way (`go run .`), that is enforced: all three
-> addresses are refused unless they are loopback, the app's own two by `checkLoopback` in
-> `main.go` (pinned by `TestCheckLoopbackRefusesEverythingElse`) and the gRPC one by
-> `grpc.Serve` itself. **`worker.py` has no such check of its own**, so running it by hand
-> with `GOOEY_ACTIVITY_MCP_ADDR` set to a non-loopback address will bind it and hand
-> arbitrary code execution to the network. Let the app launch it.
+> This used to be enforced: the app refused a non-loopback address outright. It no longer
+> does. Choosing the bind address is the operator's job now, and there is no second line
+> of defence behind that choice. The same applies to `worker.py` run by hand with
+> `GOOEY_ACTIVITY_MCP_ADDR` — it never had a check of its own. Let the app launch it, and
+> leave the defaults alone.
 >
 > So: do not expose these ports, do not port-forward or tunnel them, do not run this on a
 > shared host, and do not run it anywhere you would mind an arbitrary `import os` going.
