@@ -30,9 +30,9 @@ import "fmt"
 // six <Meter>s and one typo is otherwise a hunt.
 func Attr[T any](ctx *Context, e Element, name string) (T, error) {
 	var zero T
-	raw, ok := e.Attrs[name]
-	if !ok || raw == "" {
-		return zero, fmt.Errorf("markup: <%s>: attribute %s is required", e.Name, name)
+	raw, err := requiredAttr(e, name)
+	if err != nil {
+		return zero, err
 	}
 	v, err := ctx.BindingValue(raw)
 	if err != nil {
@@ -43,4 +43,27 @@ func Attr[T any](ctx *Context, e Element, name string) (T, error) {
 		return zero, fmt.Errorf("markup: <%s %s>: got %T, want %T", e.Name, name, v, zero)
 	}
 	return t, nil
+}
+
+// requiredAttr is the ONE definition of "absent is reported as absent",
+// shared by Attr and by boundProp — the internal twin every built-in
+// element resolves its handle attributes through.
+//
+// It is shared rather than written twice because boundProp had the bug
+// this file's doc comment describes, in the framework's own vocabulary:
+// an omitted <Checkbox Checked> reported `<Checkbox Checked="">: ""
+// is not a binding expression`, quoting an attribute the author never
+// wrote and blaming the binding syntax for it. buildImage and
+// optionList had each already hand-patched their own way around it
+// (`<Image> needs Src`, `<Segmented> needs Options`), which is what a
+// missing shared rule looks like from the outside.
+//
+// Empty counts as absent. `Checked=""` is not a binding either, and the
+// author's mistake is the same one.
+func requiredAttr(e Element, name string) (string, error) {
+	raw, ok := e.Attrs[name]
+	if !ok || raw == "" {
+		return "", fmt.Errorf("markup: <%s>: attribute %s is required", e.Name, name)
+	}
+	return raw, nil
 }
