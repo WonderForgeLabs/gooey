@@ -19,16 +19,18 @@
 // KeyBinding attachments are all built as Go literals here. cmd/markuplog
 // runs the same viewmodel with the tree authored in XML markup instead,
 // and the contrast between the two files is the point of having both.
+// So the viewmodel below is duplicated there on purpose — diffing it is
+// the lesson. The one thing NOT duplicated is the synthetic traffic:
+// cmd/internal/logdata has no framework content to compare.
 package main
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/logdata"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -36,29 +38,25 @@ import (
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
-type line struct {
-	level, text string
-}
-
 func main() {
 	// --- viewmodel ---
-	lines := prop.NewSource([]line{})  // the firehose
-	frozen := prop.NewSource([]line{}) // snapshot taken on pause
+	lines := prop.NewSource([]logdata.Line{})  // the firehose
+	frozen := prop.NewSource([]logdata.Line{}) // snapshot taken on pause
 	follow := prop.NewSource(true)
 	filter := prop.NewSource("") // "", "ERROR", "WARN"
 	scroll := prop.NewSource(0)  // lines back from the tail; 0 = tailing
 
-	visible := prop.NewComputed(func() []line {
-		var src []line
+	visible := prop.NewComputed(func() []logdata.Line {
+		var src []logdata.Line
 		if follow.Get() {
 			src = lines.Get() // live: appends invalidate the scene
 		} else {
 			src = frozen.Get() // paused: appends are invisible here
 		}
 		if f := filter.Get(); f != "" {
-			kept := make([]line, 0, len(src))
+			kept := make([]logdata.Line, 0, len(src))
 			for _, l := range src {
-				if l.level == f {
+				if l.Level == f {
 					kept = append(kept, l)
 				}
 			}
@@ -178,14 +176,14 @@ func main() {
 		if needsFrame {
 			frames++
 			statsP.Set(fmt.Sprintf("lines arrived=%d   frames rendered=%d   view evals=%d   components painted last frame=%d",
-				lineCount, frames, visible.Evals(), lastPainted))
+				logdata.Count(), frames, visible.Evals(), lastPainted))
 			_, lastPainted = comp.Frame()
 			comp.Flush(screen.File())
 			needsFrame = false
 		}
 		select {
 		case <-gen.C:
-			lines.Set(append(lines.Get(), nextLine()))
+			lines.Set(append(lines.Get(), logdata.Next()))
 		case ev := <-evs:
 			comp.Handle(ev)
 		}
@@ -217,10 +215,10 @@ var levelStyles = map[string]render.Style{
 
 // projectLine is the projection: the visual decisions the old Render
 // loop made per line, as row values a template binds.
-func projectLine(l line) map[string]any {
+func projectLine(l logdata.Line) map[string]any {
 	return map[string]any{
-		"Text":  fmt.Sprintf("%-5s %s", l.level, l.text),
-		"Style": levelStyles[l.level],
+		"Text":  fmt.Sprintf("%-5s %s", l.Level, l.Text),
+		"Style": levelStyles[l.Level],
 	}
 }
 
@@ -237,28 +235,3 @@ func lineTemplate(values map[string]any) (gooey.Component, error) {
 	}
 	return &components.Text{Content: text, Style: style}, nil
 }
-
-// --- synthetic but realistic traffic ---
-
-var lineCount int
-
-var services = []string{"api-gateway", "auth", "billing", "search", "notifier"}
-
-func nextLine() line {
-	lineCount++
-	ts := time.Now().Format("15:04:05.000")
-	svc := services[rand.Intn(len(services))]
-	switch r := rand.Float64(); {
-	case r < 0.08:
-		return line{"ERROR", fmt.Sprintf("%s %s: upstream timeout after %dms (attempt %d)", ts, svc, 800+rand.Intn(2200), 1+rand.Intn(3))}
-	case r < 0.20:
-		return line{"WARN", fmt.Sprintf("%s %s: retrying request, backoff %dms", ts, svc, 50<<rand.Intn(5))}
-	case r < 0.35:
-		return line{"DEBUG", fmt.Sprintf("%s %s: cache %s key=%s", ts, svc, pick("hit", "miss"), randKey())}
-	default:
-		return line{"INFO", fmt.Sprintf("%s %s: %s /v1/%s %d %dms", ts, svc, pick("GET", "POST"), pick("users", "orders", "events"), pick(200, 201, 204), 2+rand.Intn(120))}
-	}
-}
-
-func pick[T any](xs ...T) T { return xs[rand.Intn(len(xs))] }
-func randKey() string       { return strings.ToLower(fmt.Sprintf("%x", rand.Intn(1<<24))) }
