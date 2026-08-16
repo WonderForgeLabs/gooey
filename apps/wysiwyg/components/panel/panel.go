@@ -72,6 +72,7 @@ import (
 	"github.com/fogleman/gg"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/paint"
@@ -231,37 +232,28 @@ func (p *Pane) Render(f *gooey.Frame) {
 // drawTitle puts the title on the CELL plane, over the top edge's
 // placement. Text is what a terminal draws best, and rasterizing a font
 // into the frame would trade crisp glyphs for a picture of glyphs.
+//
+// Both tiers call this: the pixel tier because its title belongs in
+// runes even though its frame does not, and the cell tier because it is
+// the same title in the same cells. It is the one piece the two share
+// unconditionally, which is why components.DrawBoxTitle takes no box.
+//
+// A title too wide for the pane is now CLIPPED rather than dropped —
+// this used to skip the whole label, and matching <Border>, which has
+// always clipped, is the point of sharing the helper. Bold is this
+// pane's own decision and stays here.
 func (p *Pane) drawTitle(f *gooey.Frame) {
-	if p.Title == "" {
-		return
-	}
-	b := p.Bounds()
-	label := " " + p.Title + " "
-	if len(label) > b.W-4 {
-		return
-	}
 	st := p.style
 	st.Bold = true
-	f.Cells.SetString(b.X+2, b.Y, label, st)
+	components.DrawBoxTitle(f.Cells, p.Bounds(), p.Title, st)
 }
 
 // renderCells is the universal tier: the same shape, in runes, in the
-// same cells.
+// same cells — literally components.DrawBoxRunes, the same call
+// <Border> and the menu dropdown make, so "the same shape" is a shared
+// function rather than a promise in a comment.
 func (p *Pane) renderCells(f *gooey.Frame) {
-	b := p.Bounds()
-	st := p.style
-	f.Cells.Set(b.X, b.Y, '╭', st)
-	f.Cells.Set(b.X+b.W-1, b.Y, '╮', st)
-	f.Cells.Set(b.X, b.Y+b.H-1, '╰', st)
-	f.Cells.Set(b.X+b.W-1, b.Y+b.H-1, '╯', st)
-	for x := b.X + 1; x < b.X+b.W-1; x++ {
-		f.Cells.Set(x, b.Y, '─', st)
-		f.Cells.Set(x, b.Y+b.H-1, '─', st)
-	}
-	for y := b.Y + 1; y < b.Y+b.H-1; y++ {
-		f.Cells.Set(b.X, y, '│', st)
-		f.Cells.Set(b.X+b.W-1, y, '│', st)
-	}
+	components.DrawBoxRunes(f.Cells, p.Bounds(), p.style)
 	p.drawTitle(f)
 }
 

@@ -215,6 +215,63 @@ func TestCellTierDrawsTheSameShapeInRunes(t *testing.T) {
 	}
 }
 
+// TestATitleTooWideIsClippedNotDropped pins the behaviour change that came
+// with sharing components.DrawBoxTitle: a title with no room used to be
+// skipped entirely, and now it clips, which is what <Border> has always
+// done.
+//
+// Both halves matter and neither implies the other. That the label appears
+// at all is the change; that the far corner survives is the bug the change
+// had to avoid re-introducing, because the obvious way to stop dropping a
+// title is to write it and let it run over the edge — past the pane's own
+// bounds, therefore outside this paint node's damage rect, where the
+// Composer's sweep can never clean it.
+//
+// The assertions are on the pane's OWN top row rather than on a rune count,
+// so they stay true if the label's budget is ever re-derived.
+func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
+	const title = "Files And Folders And More Files"
+
+	p := &Pane{
+		Title: title,
+		Child: &components.Text{Content: components.Str("inside")},
+		art:   NewArt(),
+		style: render.Style{Fg: render.RGB(0x6c, 0x9c, 0xff)},
+	}
+	p.LayoutProps().Height = 8
+	c := gooey.NewComposer(&components.VStack{Children: []gooey.Component{p}}, 30, 10)
+	c.SetCaps(term8x16(30, 10))
+	c.Frame()
+
+	b := p.Bounds()
+	if len(title) <= b.W {
+		t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
+	}
+
+	var row strings.Builder
+	for x := b.X; x < b.X+b.W; x++ {
+		row.WriteRune(c.Cells().At(x, b.Y).Rune)
+	}
+	got := row.String()
+
+	// Not dropped: the label is there, inset one border cell and one pad.
+	if !strings.HasPrefix(got, "╭─ Files") {
+		t.Errorf("top row is %q; a title too wide is now clipped, not skipped, so it "+
+			"should open ╭─ then the start of %q", got, title)
+	}
+	// Clipped, not overrun: the far corner and the cell before it are still
+	// border. This is what fails if the label is written past its budget.
+	if !strings.HasSuffix(got, "─╮") {
+		t.Errorf("top row is %q; the title has run into the far corner, which paints "+
+			"outside the pane's damage rect", got)
+	}
+	// And the whole label really was truncated.
+	if strings.Contains(got, title) {
+		t.Errorf("top row is %q; it carries the full %d-column title inside a %d-column pane",
+			got, len(title), b.W)
+	}
+}
+
 // TestCellTierIsChosenByTheTierTest walks the three conditions that select
 // it, one at a time.
 //

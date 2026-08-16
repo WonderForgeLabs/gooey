@@ -370,17 +370,16 @@ func (b *Button) renderPillCells(f *gooey.Frame, v buttonVisual) {
 	if v.pressed {
 		label.Bold = true
 	}
-	inner := r.W - 2
-	f.Cells.Set(r.X, r.Y, '╭', st)
-	f.Cells.Set(r.X, r.Y+2, '╰', st)
-	f.Cells.Set(r.X+r.W-1, r.Y, '╮', st)
-	f.Cells.Set(r.X+r.W-1, r.Y+2, '╯', st)
-	for i := 0; i < inner; i++ {
-		f.Cells.Set(r.X+1+i, r.Y, '─', st)
-		f.Cells.Set(r.X+1+i, r.Y+2, '─', st)
-	}
-	f.Cells.Set(r.X, r.Y+1, '│', st)
-	f.Cells.Set(r.X+r.W-1, r.Y+1, '│', st)
+	// The same rounded outline a <Border> paints, from the same helper —
+	// but on pillRows, NOT on r.H. A pill is three rows by definition
+	// (edge, label, edge); a button arranged taller than that keeps a
+	// three-row pill at the top rather than growing into a box, which is
+	// what pillFor rasterizes on the pixel tier and what
+	// buttonchrome_test.go's r.Y..r.Y+pillRows sweep asserts. Passing r
+	// here would silently make the two tiers disagree at any height but
+	// exactly three. The caller has already guaranteed r.H >= pillRows
+	// and r.W >= 3.
+	DrawBoxRunes(f.Cells, gooey.Rect{X: r.X, Y: r.Y, W: r.W, H: pillRows}, st)
 	b.pillLabel(f, label)
 }
 
