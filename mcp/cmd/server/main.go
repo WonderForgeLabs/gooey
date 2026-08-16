@@ -37,7 +37,7 @@ import (
 var messages = []string{"hello, gooey", "the tree is the API", "state is properties", "drive me over MCP"}
 
 func main() {
-	addr := flag.String("mcp", "127.0.0.1:7777", "loopback address for the MCP server; empty disables it")
+	addr := flag.String("mcp", "127.0.0.1:7777", "bind address for the MCP server; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	flag.Parse()
 
 	// --- viewmodel: the same typed handles the markup binds to, and the
@@ -91,6 +91,8 @@ func main() {
 		// Serving is one call and it is opt-in, which is the whole
 		// security posture of v1: an MCP client can do anything the
 		// keyboard can, so nothing listens unless the app said so.
+		// There is no authentication, and the bind address is used as
+		// given — a non-loopback one exposes this handle.
 		srv, err := mcp.Serve(app, mcp.Options{
 			Addr:    *addr,
 			Context: ctx,

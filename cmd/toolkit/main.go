@@ -40,16 +40,14 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/cmd/internal/demomain"
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 var stages = []string{"Idle", "Fetch", "Build", "Deploy"}
@@ -114,7 +112,7 @@ func main() {
 	mode := flag.String("mode", "", "force graphics mode: kitty|sixel|iterm2|cells")
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
-	enc, forced, err := encoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor(*mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -384,29 +382,18 @@ func main() {
 		formStatus.Set("saved: " + formName.Get() + " <" + formEmail.Get() + ">")
 	}).When(canSubmit)
 
-	dir := "cmd/toolkit"
-	if _, err := os.Stat(filepath.Join(dir, "toolkit.gooey")); err != nil {
-		exe, _ := os.Executable()
-		dir = filepath.Dir(exe)
-	}
-	fsys := os.DirFS(dir)
+	fsys := demomain.MarkupFS("toolkit", "toolkit.gooey")
 
 	// The probe is what turns the pixel chrome on: without capabilities
 	// there is no protocol and no cell size, and the button draws its
 	// pill in box runes instead. Both are correct; the caption says
 	// which one you are looking at.
-	var opts []gooey.Option
-	if forced {
-		// A forced protocol still needs a cell size — the chrome is
-		// generated at that resolution — and only a probe can really
-		// know it, so assume the common 10×20.
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
-	} else {
-		opts = append(opts, gooey.WithCapabilityProbe())
-	}
-	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), opts...)
+	//
+	// Pinning is all it takes: probe, or pin the protocol and the cell
+	// size the chrome is generated at. That pair is identical in every
+	// demo with a -mode flag, so it is demomain.GraphicsOptions rather
+	// than an option list spelled out here.
+	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), demomain.GraphicsOptions(enc, forced)...)
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
 	}
@@ -417,11 +404,16 @@ func main() {
 		}
 		told = true
 		c := app.Composer()
-		name := "cells (no graphics protocol)"
-		if enc := c.Graphics(); enc != nil {
-			name = enc.Name()
+		// No encoder means no pixel plane, and a cell size is a property
+		// OF that plane: the caption used to print 10×20 there because the
+		// demo passed those capabilities in itself, which was a number for
+		// a resolution nothing was being generated at.
+		enc := c.Graphics()
+		if enc == nil {
+			tier.Set("chrome: cells (no graphics protocol)")
+			return
 		}
-		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", name, c.Caps().CellW, c.Caps().CellH))
+		tier.Set(fmt.Sprintf("chrome: %s   cell %dx%dpx", enc.Name(), c.Caps().CellW, c.Caps().CellH))
 	})
 	if err := app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
@@ -454,51 +446,9 @@ func gradientImage(c render.Color) image.Image {
 	return img
 }
 
-// encoderFor resolves -mode. "cells" is a real answer, not the absence
-// of one: it forces the universal tier, which is what you want when
-// checking that the pill still reads without a pixel plane.
-func encoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
-	switch mode {
-	case "":
-		return nil, false, nil // capabilities decide
-	case "kitty":
-		return graphics.Kitty{}, true, nil
-	case "sixel":
-		return graphics.Sixel{}, true, nil
-	case "iterm2":
-		return graphics.ITerm2{}, true, nil
-	case "cells":
-		return nil, true, nil
-	}
-	return nil, false, fmt.Errorf("unknown -mode %q: want kitty, sixel, iterm2 or cells", mode)
-}
-
-func clampIdx(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(stages) {
-		return len(stages) - 1
-	}
-	return i
-}
-
-func clampTab(i int) int {
-	if i < 0 {
-		return 0
-	}
-	if i >= len(tabNames) {
-		return len(tabNames) - 1
-	}
-	return i
-}
-
-func clamp100(v int) int {
-	if v < 0 {
-		return 0
-	}
-	if v > 100 {
-		return 100
-	}
-	return v
-}
+// The bound index properties are edited by components (a Segmented, a
+// Tabs strip) and by commands, so every read of one is clamped rather
+// than trusted: markup can bind an int, but it cannot declare a range.
+func clampIdx(i int) int { return min(max(i, 0), len(stages)-1) }
+func clampTab(i int) int { return min(max(i, 0), len(tabNames)-1) }
+func clamp100(v int) int { return min(max(v, 0), 100) }

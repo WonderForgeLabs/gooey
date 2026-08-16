@@ -11,7 +11,9 @@ restart, no per-name Python function.
     DANGER: `create` runs arbitrary code with this process's full
     privileges. There is no sandbox. See the module docstring in
     worker.py and the README — this is remote code execution by design,
-    and the whole reason the endpoint is loopback-only.
+    and the whole reason the endpoint should never leave loopback.
+    Nothing enforces that; the default is loopback and the bind address
+    is the operator's to choose.
 
 The name doubles as a Temporal activity type name AND as a segment of a
 gooey binding path (`.Activity.<Name>.Result`), so it is restricted to

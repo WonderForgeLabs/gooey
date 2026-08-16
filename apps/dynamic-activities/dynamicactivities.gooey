@@ -83,7 +83,33 @@
         </Border>
       </Grid>
 
-      <Text Grid.Row="5" Style="dim">{{.Status}}</Text>
+      <!-- The bottom row used to be one Text bound to a single string
+           main.go glued together with " · " between the parts. StatusBar
+           owns the arrangement now, so nothing in Go counts a separator:
+           the backend sits against the left edge, the loopback servers
+           are one Text each inside an HStack that owns the spacing, and
+           the key hints live here beside the KeyBindings that implement
+           them rather than being appended to a status string.
+
+           Each endpoint keeps its own paint node, which is the promotion
+           StatusBar exists for — the gRPC address landing after its
+           listener binds repaints that Text and nothing else. -->
+      <StatusBar Grid.Row="5" Left="{{.Backend}}"
+                 Right="ctrl+n: next activity   ctrl+l: clear   ctrl+c: quit">
+        <StatusBar.Center>
+          <!-- Margin, not a leading space in the text: StatusBar gives the
+               edges priority and shortens the CENTRE, so on a terminal too
+               narrow for the whole row this section runs up against the
+               backend on its left. One column of margin keeps the two from
+               reading as one word there, and MeasureChild applies it —
+               nothing here counts columns. -->
+          <HStack Gap="2" Margin="1,0">
+            <Text Style="dim">{{.GrpcEndpoint}}</Text>
+            <Text Style="dim">{{.McpEndpoint}}</Text>
+            <Text Style="dim">{{.ActivityEndpoint}}</Text>
+          </HStack>
+        </StatusBar.Center>
+      </StatusBar>
 
       <KeyBinding Gesture="ctrl+n" Command="{{.Cycle}}"/>
       <KeyBinding Gesture="ctrl+l" Command="{{.Clear}}"/>

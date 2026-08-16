@@ -54,6 +54,17 @@ Two constructors cover what apps actually have:
   raw and on the alternate screen.
 * `CompanionCmd(name, *exec.Cmd, opts...)` — a child process.
 
+Two *kinds*, and that stays two — anything further is a composition over
+one of them rather than a third thing to supervise. `PythonCompanion`
+(2026-08-16, `pycompanion.go`) is the first: a `PythonWorker` value
+describing the shape `apps/kanban` and `apps/dynamic-activities` had each
+written out by hand, which it turns into exactly the `CompanionCmd` above
+with the interpreter chosen (`Dir/.venv/bin/python` beats bare `python3`
+unless the caller named one) and the log file's lifetime tied to the
+child's rather than to a `defer` in `main`. It adds no teardown machinery,
+which is the point: the close-and-join contract below is asserted once,
+here, not once per app.
+
 Registered with `WithCompanions(...)` at construction, or
 `AddCompanion` before `Run` for a companion that must close over the App
 itself. Started in declaration order, stopped in reverse.
