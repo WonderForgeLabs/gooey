@@ -1,7 +1,6 @@
 package components
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -57,12 +56,7 @@ type ProgressBar struct {
 // IndeterminateTick is the default animation step.
 const IndeterminateTick = 80 * time.Millisecond
 
-func (p *ProgressBar) value() int {
-	if p.Value == nil {
-		return 0
-	}
-	return clamp(p.Value.Get(), 0, 100)
-}
+func (p *ProgressBar) value() int { return meterValue(p.Value) }
 
 // busy reports whether the bar is in its indeterminate mode. Read during
 // Render it is a paint dependency, so flipping the mode repaints this one
@@ -106,13 +100,7 @@ func (p *ProgressBar) step() {
 	p.phaseProp().Set(p.phaseProp().Get() + 1)
 }
 
-func (p *ProgressBar) Measure(avail gooey.Size) gooey.Size {
-	w := p.Width
-	if w == 0 {
-		w = 34
-	}
-	return gooey.Size{W: min(w, avail.W), H: min(1, avail.H)}
-}
+func (p *ProgressBar) Measure(avail gooey.Size) gooey.Size { return meterSize(p.Width, avail) }
 
 func (p *ProgressBar) Render(f *gooey.Frame) {
 	b := p.Bounds()
@@ -142,19 +130,11 @@ func (p *ProgressBar) renderValue(f *gooey.Frame, x, y, w int) {
 	if p.Style != nil {
 		st = p.Style.Get()
 	}
-	const readout = 5 // " 100%"
-	barW := max(0, w-readout)
-	fill := v * barW / 100
-	for i := 0; i < barW; i++ {
-		if i < fill {
-			f.Cells.Set(x+i, y, '█', st)
-		} else {
-			f.Cells.Set(x+i, y, '░', styleDim)
-		}
-	}
-	if rx := x + barW; rx < x+w {
-		f.Cells.SetString(rx, y, clipRunes(fmt.Sprintf(" %3d%%", v), x+w-rx), st)
-	}
+	// The whole remainder is track, less the reserved readout; the empty
+	// half is dimmed, so a Progress track reads as work not yet done
+	// rather than as a second color of progress.
+	rx := x + renderFillMeter(f, x, y, w-meterReadout, v, st, styleDim)
+	renderMeterReadout(f, rx, y, x+w-rx, v, st)
 }
 
 // renderBusy is the indeterminate bar: a band of fill marching across the

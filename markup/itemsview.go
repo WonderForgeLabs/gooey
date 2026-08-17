@@ -94,7 +94,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 		// is drawing selection itself.
 		Highlight: !mentions(row, components.SelectedKey),
 	}
-	if _, ok := e.Attrs["Selected"]; ok {
+	if suppliedAttr(e, "Selected") {
 		if v.Selected, err = Bound[int](e, ctx, "Selected"); err != nil {
 			return nil, err
 		}

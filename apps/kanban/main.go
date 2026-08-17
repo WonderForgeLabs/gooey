@@ -24,8 +24,9 @@
 // its source belongs under its host rather than beside it in apps/.
 // -with-worker collapses it into this one, the same way
 // cmd/wizardui --with-dev-server does for its own sidecar: the worker
-// becomes a gooey.CompanionCmd, started before the first frame and
-// killed (process group, not just the direct child) when this app quits.
+// becomes a gooey.PythonCompanion — a CompanionCmd with the interpreter
+// and log policy folded in — started before the first frame and killed
+// (process group, not just the direct child) when this app quits.
 // It is opt-in — the worker needs a Python venv with the deps in
 // apps/kanban/worker/requirements.txt and a reachable Temporal
 // server, neither of which the base demo should require:

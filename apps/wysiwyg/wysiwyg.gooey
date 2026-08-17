@@ -37,6 +37,20 @@
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
 
+    <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
+         one invented here: "To select the parent of a current selection in
+         the designer, press the ESC key" is the WPF designer's own
+         documentation, and Blend inherits it. It is the way back OUT of a
+         container a double-click drilled into, and without it a shallow-
+         first designer is a one-way door.
+
+         It is the keyboard's whole share of the drill gesture. Everything
+         here has to stay keyboard-operable because mouse reports cannot be
+         injected through a recording pty at all, so a double-click that
+         could only be undone with another double-click could never be
+         captured. -->
+    <KeyBinding Gesture="esc" Command="{{.SelectParent}}"/>
+
     <!-- DESIGN ↔ LIVE. The designer is a gooey.Frozen host, so this one
          gesture decides whether the document is a picture or a working UI,
          and the re-route lands in the frame this key schedules — the

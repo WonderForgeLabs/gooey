@@ -192,7 +192,7 @@ and stopped with the app
 | Timers | done | `<Timer Interval="600ms" Tick="{{.Fn}}"/>` — non-visual attachment; the goroutine posts through the Dispatcher and the Composer owns its lifetime, so a hot reload cannot leak one |
 | Commands + KeyBindings | done | `Command` is `func()`; bindings are non-visual attachments scoped by where they are declared; dispatch bubbles, navigation runs in the unconsumed tail |
 | Focus + mouse | done | Framework-owned focus (`FocusState`), spatial arrow navigation (XYFocus), hit-testing, hover, implicit capture, click synthesis, SGR and legacy X10 decoding; focus/hover damage is just property damage |
-| Styles | partial | `Style="name"` is a named lookup; `Style="{{.Handle}}"` binds a live `render.Style` property, so a computed style is reactive. No cascading, selectors, setters, or overrides — tracked by the styles epic [#54](https://github.com/WonderForgeLabs/gooey/issues/54) (selectors [#57](https://github.com/WonderForgeLabs/gooey/issues/57), setters [#56](https://github.com/WonderForgeLabs/gooey/issues/56)) |
+| Styles | partial | `Style="name"` resolves through a lexical scope chain — `<Gooey.Resources>`/`<X.Resources>` declare `<Resource>`s and `<Style>`s with `<Setter Property="Fg" Resource="accent"/>`-style bindings, scoped to any subtree and shadowable per element ([spec](docs/specs/2026-08-10-styles-and-resources.md), [tutorial](docs/learn/10-resources-and-styles.md)) — before falling back to `Context.Styles`, the outermost scope. `Style="{{.Handle}}"` still binds a live `render.Style` property directly. No `TargetType` implicit matching and no `:focus`/`:hover`/`:disabled` state sections yet — declaring one is a load error |
 | DataTemplates / ItemsView | done | `<ItemsView.ItemTemplate>` via the XAML property-element syntax; the template is a factory instantiated per item against an isolated context. Items arrive through a projection func (`map[string]any`) — the no-reflection stand-in for `x:DataType`. Rows are windowed and index-keyed, so a one-item change repaints one row. No grouping, headers, horizontal orientation, or multi-select |
 | Adornments + Tooltip | done | WPF's adorner plane: an `AdornmentLayer` (last child of the root) hosts components positioned against a *target's* arranged bounds — re-anchored every frame, dropped when the target vanishes. `Tooltip` is the first customer: `<Tooltip Text="…"/>` as a KeyBinding-style attachment or `Tooltip="…"` on any element, delay timer, flip-to-fit, gesture hints, pure markup ([spec](docs/specs/2026-08-10-adornments.md)). Pointer-anchored (free-position) adornments — drag ghosts, crosshairs — are [#177](https://github.com/WonderForgeLabs/gooey/issues/177) |
 | Validation | done | Validators are computeds — `validate.Field(src, rules…)` yields an error property (empty = valid, first failure wins), `validate.All` a value-stabilized is-valid for submit gating via `.When()`. The built-in vocabulary is .NET's DataAnnotations set (Required, MinLen/MaxLen, Pattern, EmailAddress, Url, Phone, CreditCard, Digits, Integer, MinValue/MaxValue, Compare, Range) with stock messages, no third-party deps, and stricter-than-.NET semantics where it matters. Markup: a `<Validate Required="true" EmailAddress="true"/>` behavior on the input (bare child or `<X.Behaviors>` slot) builds the same computed, publishes it (`Into`) for inline error `<Text>`s, and wires the TextBox's invalid visual; `ctx.Rules` registers domain rules beyond the annotations; `<ValidationMarker/>` floats the message via the AdornmentLayer for dense layouts ([spec](docs/specs/2026-08-10-validation-core.md)) |
@@ -233,12 +233,13 @@ discovery in [CLAUDE.md](CLAUDE.md) and the generated block in
 
 ## POC limits, honestly
 
-There is no styling system (named style lookup only —
-[#54](https://github.com/WonderForgeLabs/gooey/issues/54)). The file
-watcher is 300 ms ModTime polling (replacing it with filesystem
-notifications is [#53](https://github.com/WonderForgeLabs/gooey/issues/53)).
-Properties are confined to the UI goroutine; background work crosses in
-through the Dispatcher (`Post` from anywhere, `Drain` on the loop).
+Styling has no selectors or state overlays yet — scoped resources and
+setter-based styles exist, but `TargetType` matching and `:focus`/
+`:hover`/`:disabled` sections don't. The file watcher is 300 ms ModTime
+polling (replacing it with filesystem notifications is
+[#53](https://github.com/WonderForgeLabs/gooey/issues/53)). Properties
+are confined to the UI goroutine; background work crosses in through the
+Dispatcher (`Post` from anywhere, `Drain` on the loop).
 
 ## Architecture decisions, one line each
 

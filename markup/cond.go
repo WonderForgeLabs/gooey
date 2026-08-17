@@ -64,7 +64,30 @@ import (
 // condExprRe recognizes the conditional form: {{ word operands… }}.
 // The whole body including the operator is captured, then lexed, so an
 // argument error can name the offending token.
-var condExprRe = regexp.MustCompile(`^\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*\s+\S[^}]*?)\s*\}\}\s*$`)
+//
+// The operand run is `.*?` rather than a `}`-excluding class, and that
+// is the division of labour this file is built on: the REGEX decides
+// which grammar an attribute belongs to, and the LEXER decides whether
+// it is well-formed. Excluding `}` made the regex adjudicate
+// well-formedness, badly — a backtick literal containing a brace,
+// {{eq .Name `a}b`}}, stopped matching here and fell through to
+// whatever the call site does with a non-conditional. On Visibility
+// that is parseVisibility, so the user got
+//
+//	attribute Visibility="{{eq .Name `a}b`}}": unknown visibility
+//
+// naming the wrong thing entirely. It still failed at load — the
+// diagnostic was misattributed, not the check missing — but a load
+// error that points at the wrong mechanism is the exact failure this
+// grammar was added to remove, so it is worth the widening.
+//
+// Non-greedy against an anchored tail means the capture ends at the
+// FIRST `}}` with only whitespace after it, which is the intended
+// terminator. (?s:) so a newline inside an operand run is lexed and
+// reported rather than silently unmatching; the old class admitted
+// newlines too, and losing that would have been a second regression
+// hidden inside the fix for the first.
+var condExprRe = regexp.MustCompile(`^\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*\s+\S(?s:.*?))\s*\}\}\s*$`)
 
 // isCondExpr reports whether an attribute value is a conditional
 // expression, so callers can pick this path over the value-binding one.

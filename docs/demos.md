@@ -110,7 +110,9 @@ Exercises the "no code-behind" contract — pure markup with built-in components
 
 The "just XAML" UserControl demo: every panel on screen is an instance of `card.gooey` — a markup-only control resolved by convention (`ctx.Includes`), never registered, with no code-behind — and `card.gooey` itself instantiates `badge.gooey`, proving markup-only controls nest. The page context has `Values` and `Styles` only: no `Components` map, no setup func anywhere in the app.
 
-The control's contract is *declared*, not implied: four `<x:Property>` elements give `card.gooey` typed, defaulted, partly-required dependency properties. Literals (`Title`, `Caption`) coerce into fresh per-instance sources; bindings (`Value`, `Trend`) pass the dashboard's live handles straight through, type-checked — so four instances of one control show four different ticking data streams, and a misspelled attribute is a load error instead of an attribute nothing reads. This is the `x:Property` spec's canonical consumer ([spec](specs/2026-08-10-markup-declared-properties.md)).
+The control's contract is *declared*, not implied: four `<x:Property>` elements give `card.gooey` typed, defaulted, partly-required dependency properties. Literals (`Title`, `Caption`) coerce into fresh per-instance sources; the `Value` binding passes the dashboard's live handle straight through, type-checked — so four instances of one control show four different ticking data streams, and a misspelled attribute is a load error instead of an attribute nothing reads. This is the `x:Property` spec's canonical consumer ([spec](specs/2026-08-10-markup-declared-properties.md)).
+
+`Trend` is the exception, and the demo is more honest for keeping it: it plots a `[]float64` through a `<Sparkline>`, and the declaration type table (`markup/property.go`, `propKinds`) has no slice types — so it crosses the boundary as `Type="any"`, which accepts anything and checks nothing. Bind a string there and the load error surfaces one level down at `<Sparkline Values>`, naming the wrong element. `Required="true"` is the most that declaration can say today. `card.gooey`'s own comment says the same thing at the point of use.
 
 The data stream is declared too: a `<Timer Interval="600ms" Tick="{{.Advance}}" Enabled="{{.Ticking}}"/>` in the page markup drives the metrics ([timerdemo.gif](media/demos/timerdemo.gif) isolates this element). The checkbox's `Checked` shares the same `Ticking` property the Timer's `Enabled` binds, and `Enabled` is read at fire time on the UI loop — so unchecking the box pauses the stream through the property graph, with no start/stop call anywhere.
 
@@ -259,7 +261,32 @@ A real Kanban board — Todo, Doing, Done — that is also an MCP server,
 and the target `apps/kanban/worker` — its own Python companion — pushes
 generated UI into.
 
-GIF: docs-and-demos workflow.
+![kanban](media/demos/kanban.gif)
+
+The walkthrough is the demo's whole claim in one recording: **the same
+board, driven from both sides**. A person types "Record the board" and
+"Ship the GIF" into the input and presses enter, and each lands in Todo.
+Then nobody touches the keyboard — an agent speaks to the board's own
+MCP endpoint (`http://127.0.0.1:7778/mcp`, shown in the mcp tab), calls
+`set_value NewTitle` and `invoke_command AddTask`, and **"filed by an
+agent" appears in Todo**; a second call, `invoke_command TodoMoveRight`,
+carries "Write kanban demo" across into Doing. `ctrl+t` then flips the
+bottom panel to the log, which is showing the JSON-RPC reply to that
+very `TodoMoveRight` — the traffic that moved the card, in the app that
+moved.
+
+Nothing in the recording is a mock: the tool calls are real HTTP POSTs to
+the running binary, and the board repaints because the Dispatcher ran
+them on the UI goroutine.
+
+Two notes for anyone re-recording it. It is captured at **120 columns**
+rather than the 84 the other demos use: the mcp tab's tool-usage help is
+wider than that, and at 100 columns it truncates mid-word
+(`…/DoneRemove/Tog`), which reads as a rendering defect rather than as
+the terminal being narrow. And the board **must be recorded from
+`apps/kanban/`** — it loads `kanban.gooey` relative to its working
+directory, so a capture started from the repo root produces a cast whose
+only line is `open kanban.gooey: no such file or directory`.
 
 Each column is a `components.ItemsView` over an ordinary Go slice
 (`*prop.Property[[]Card]`); adding, moving and removing cards is
@@ -280,7 +307,7 @@ invents, hands the name plus a topic to Claude, and pushes the generated
 markup into the running board over `swap_markup` (generation is
 constrained to bindingless elements, so the page can never reference a
 value the host viewmodel lacks — a bad page would be rejected
-atomically). `-with-worker` runs it as a `gooey.CompanionCmd`: started
+atomically). `-with-worker` runs it as a `gooey.PythonCompanion`: started
 before the first frame, killed (process group and all) when the app
 quits, output redirected to a log file because the app owns the tty
 ([companions spec](specs/2026-08-10-companions.md)).
@@ -303,7 +330,8 @@ quits, output redirected to a log file because the app owns the tty
 Exercises `ItemsView` as a real list surface (three views, shared
 selection properties, `SelectionChanged`-free navigation), `Visibility`
 bindings as a tab mechanism with no structural rebuild, the MCP surface
-under instrumentation, and `gooey.CompanionCmd` collapsing a
+under instrumentation, and `gooey.PythonCompanion` (a `CompanionCmd`
+with the interpreter and log policy folded in) collapsing a
 hand-managed sidecar into the app's own lifetime. It is the app
 [Tutorial 8](learn/08-remote-control.md) drives.
 
@@ -418,8 +446,8 @@ Exercises handler namespaces with a *dynamic* activity name, the
 streaming session (`Attach`: subscribe, acts, frame deltas, lifecycle)
 as a real client's primary surface, the control plane's registration
 CRUD pair, `PatchMarkup` from a non-Go client, `Canvas` absolute layout
-with bound backgrounds, and `gooey.CompanionCmd` giving a Python process
-the app's lifetime.
+with bound backgrounds, and `gooey.PythonCompanion` giving a Python
+process the app's lifetime.
 
 ## plates
 
