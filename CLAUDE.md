@@ -41,6 +41,21 @@ strips the vendored modules' own `go.mod` files, which is why the module
 discovery below still finds exactly the tree's own modules and needs no
 `vendor` prune.
 
+**How many modules are vendored is deliberately not written here** — derive
+it, for the reason the Verify section gives about counts in prose. And
+`vendor/modules.txt` will mislead you if you count it the obvious way:
+`grep -c '^# '` counts **stanzas**, not modules, and a workspace inflates
+that twice over. Each of the tree's own modules gets a self-referencing
+`=> ./path` stanza, and a module required at two versions gets one stanza
+each. Counting stanzas overstated the real figure by more than half in this
+change's own PR description, and a reviewer caught it:
+
+```sh
+# third-party modules actually vendored
+grep '^# ' vendor/modules.txt | awk '{print $2}' |
+  grep -v '^github.com/WonderForgeLabs/gooey' | sort -u | wc -l
+```
+
 ## Verify
 
 ```sh
