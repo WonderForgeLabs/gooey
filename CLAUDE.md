@@ -9,6 +9,38 @@ walkthrough; `docs/specs/` holds the decision records, `docs/learn/` the
 tutorials and how-tos. This file carries only what those do not: the
 rules whose violation is *silent*, and the commands that catch it.
 
+## One workspace, one vendor directory
+
+`go.work` lists **every** module in the tree and `vendor/` at the repo root
+holds their dependencies **once**, merged. Both are committed, and together
+they mean the whole tree builds with the network off and with an empty
+module cache — which is the property to re-check, because it is the one that
+silently stops being true.
+
+Two consequences that are easy to trip over:
+
+- **`go.work` changes resolution, not just downloads.** Every nested module
+  now resolves its siblings to the checkout beside it rather than to a
+  published version. That is what makes a core API change break
+  `apps/gitui` in your working tree instead of at the next tag — a feature
+  here, but it means `go test` in a nested module is no longer testing that
+  module against what it *requires*.
+- **`GOPROXY=off` does not prove vendoring works.** It blocks downloads
+  while the local module cache still satisfies everything, so a tree that
+  would fail on a clean machine passes for you. The discriminating checks
+  are where a package actually resolves, and a build against a cache that
+  is not there:
+
+```sh
+go list -f '{{.Dir}}' google.golang.org/grpc   # must print a path under vendor/
+GOPROXY=off GOMODCACHE=$(mktemp -d) go build ./...
+```
+
+`go work vendor` regenerates the directory after any dependency change; it
+strips the vendored modules' own `go.mod` files, which is why the module
+discovery below still finds exactly the tree's own modules and needs no
+`vendor` prune.
+
 ## Verify
 
 ```sh
