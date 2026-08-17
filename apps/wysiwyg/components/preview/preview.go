@@ -15,6 +15,7 @@ package preview
 
 import (
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -37,6 +38,41 @@ type Pane struct {
 	// design is the mode switch: true means the mounted tree is a PICTURE
 	// and nothing in it acts. See Frozen.
 	design *prop.Property[bool]
+
+	// designer is the design-surface gesture set. See BindDesigner.
+	designer Designer
+}
+
+// Designer is the editor's half of the design-surface gestures: what a
+// press, a drag and a release MEAN, which is document knowledge this
+// component deliberately does not have.
+//
+// It replaced a single select-on-press closure when dragging arrived.
+// Three related callbacks passed separately would have let a host bind
+// one and forget another — a press that selects and a motion that does
+// nothing is a designer where things cannot be moved, with no error
+// anywhere — so they are one interface a host implements or does not.
+//
+// Every method reports whether it consumed the event.
+type Designer interface {
+	// Press selects what is under the cell, and may begin a drag.
+	Press(x, y int) bool
+	// Drag continues a drag in progress. Called for raw motion, which is
+	// why the pane opts into MouseMoveHandler.
+	Drag(x, y int) bool
+	// Release commits a drag in progress.
+	Release(x, y int) bool
+	// Click is the SYNTHESIZED click, with count is 1 or 2. It is the
+	// drill-in gesture: a double-click selects one level deeper than the
+	// press already selected.
+	//
+	// The count is the framework's, not this pane's. DispatchMouse
+	// synthesizes a click on release and counts repeats against the
+	// captor inside FocusManager.DoubleClickInterval (mouse.go:203) — and
+	// under a frozen host the captor IS this pane, so the count is
+	// already measured against the right component. Timing a second
+	// press here would be a second, worse copy of that.
+	Click(x, y, count int) bool
 }
 
 // BindDesignMode makes the pane a gooey.Frozen host whose answer is a
@@ -67,6 +103,88 @@ func (p *Pane) Frozen() bool {
 		return true
 	}
 	return p.design.Get()
+}
+
+// BindSelect installs click-to-select, the design surface's own gesture.
+//
+// IT BELONGS ON THIS COMPONENT AND NOWHERE ELSE, and that is a framework
+// fact rather than a filing decision. gooey.Frozen exempts the host from
+// its own freeze precisely so a design surface has somewhere to put its
+// gestures, and DispatchMouse retargets a press inside a frozen subtree
+// to that host in ONE place at the top (mouse.go:176). So in DESIGN mode
+// this pane is the only component a press inside the document can reach
+// — the document's own Button never sees it, which is the whole point of
+// the mode.
+//
+// sel is handed the pressed cell rather than a component because the
+// retarget is lossy on purpose: by the time the event arrives here the
+// deepest hit is gone, and recovering it is a call to
+// FocusManager.HitTest, which is the editor's to make (it holds the
+// composer) and not a paraphrase this file should keep its own copy of.
+// Reporting true consumes the press.
+func (p *Pane) BindDesigner(d Designer) { p.designer = d }
+
+// HandleMouse is click-to-select, gated on the pane being FROZEN.
+//
+// THE MODE GUARD IS NOT BELT-AND-BRACES. In LIVE mode this pane is an
+// ordinary ancestor of a live tree, and bubbling is what makes that
+// matter: a press the document does not consume — on a Canvas's empty
+// background, on a Text, on any of the many components that handle no
+// pointer at all — walks up its ancestors and arrives here exactly as a
+// DESIGN-mode press does. Selecting on it would take clicks that belong
+// to the thing the user asked to try, which is the one thing LIVE mode
+// exists for.
+//
+// The Frozen() call is a plain READ. Dispatch is not an evaluation
+// context, so this Get records no dependency and needs none: the
+// Composer's frozen observer already subscribes to the same property,
+// and it is what re-routed the event to this method in the first place.
+//
+// SELECTION FOLLOWS THE PRESS, DRILLING FOLLOWS THE CLICK, and the split
+// is not a detail. Selection should land on the button going down, the
+// way focus-follows-click does — and a drag starts there, so waiting for
+// a click would mean no drag at all. A click is what CARRIES THE COUNT,
+// and a double-click is by definition not knowable until the second
+// release, so drilling has to be the later of the two.
+//
+// Left only — nothing in the repo consumes input.ButtonRight yet, and
+// quietly selecting on a right press would spend the gesture a context
+// menu will want.
+func (p *Pane) HandleMouse(ev input.MouseEvent) bool {
+	if p.designer == nil || !p.Frozen() {
+		return false
+	}
+	if ev.Button != input.ButtonLeft {
+		return false
+	}
+	switch ev.Kind {
+	case input.MousePress:
+		return p.designer.Press(ev.X, ev.Y)
+	case input.MouseRelease:
+		return p.designer.Release(ev.X, ev.Y)
+	case input.MouseClick:
+		return p.designer.Click(ev.X, ev.Y, ev.Count)
+	}
+	return false
+}
+
+// HandleMouseMove is gooey.MouseMoveHandler, and the pane opts into raw
+// motion for exactly one reason: a drag is motion.
+//
+// It costs nothing when nothing is being dragged — Drag returns false
+// immediately — and motion is delivered only to components that ask for
+// it, so the rest of the tree is unaffected.
+//
+// THE PRESS ALREADY CAPTURED THIS PANE. DispatchMouse sets the implicit
+// captor from the (frozen-retargeted) hit before routing, so every motion
+// event of the gesture arrives here even when the pointer leaves the
+// designer entirely — which is what makes a drag that wanders over the
+// properties grid and back still work. No CaptureMouse call is needed.
+func (p *Pane) HandleMouseMove(ev input.MouseEvent) bool {
+	if p.designer == nil || !p.Frozen() {
+		return false
+	}
+	return p.designer.Drag(ev.X, ev.Y)
 }
 
 // Builder registers the pane as <Preview/>, with p as its host.
