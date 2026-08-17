@@ -156,13 +156,9 @@ func (t *Toast) Render(f *gooey.Frame) {
 	if b.W <= 0 || b.H <= 0 {
 		return
 	}
-	st := t.Style
-	if st == (render.Style{}) {
-		st = render.Style{Reverse: true, Bold: true}
-	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(" "+t.Text+" ", b.W), st)
-	// Pad the remainder so the whole rectangle carries the toast style.
-	for x := b.X + len([]rune(" "+t.Text+" ")); x < b.X+b.W; x++ {
-		f.Cells.Set(x, b.Y, ' ', st)
-	}
+	// Text is a plain string, not a property — a toast is replaced, never
+	// updated — so no subscription rides on this read. It goes through the
+	// same shared banner paint anyway, which is what keeps the three
+	// overlays looking like one thing.
+	paintBanner(f, b, t.Text, t.Style, render.Style{Reverse: true, Bold: true})
 }

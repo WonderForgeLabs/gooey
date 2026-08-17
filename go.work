@@ -1,0 +1,29 @@
+go 1.25.6
+
+use (
+	.
+	./apps/dynamic-activities
+	./apps/gitui
+	./apps/introdeck
+	./apps/introtarget
+	./apps/kanban
+	./apps/scene
+	./apps/soundboard
+	./apps/store
+	./apps/synth
+	./apps/wysiwyg
+	./grpc
+	./handlers/exec
+	./handlers/temporal
+	./imagefmt/svg
+	./mcp
+	./packs/temporal-batch
+	./packs/temporal-history
+	./packs/temporal-namespace
+	./packs/temporal-operator
+	./packs/temporal-schedule
+	./packs/temporal-taskqueue
+	./packs/temporal-visibility
+	./packs/temporal-workflow
+	./paint
+)

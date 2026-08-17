@@ -314,19 +314,16 @@ func (p *sourcePicker) drawPopup(f *gooey.Frame, b gooey.Rect) {
 		return
 	}
 	st := render.Style{Fg: render.RGB(120, 90, 220)}
-	for x := b.X + 1; x < b.X+b.W-1; x++ {
-		f.Cells.Set(x, b.Y, '─', st)
-		f.Cells.Set(x, b.Y+b.H-1, '─', st)
-	}
-	for y := b.Y + 1; y < b.Y+b.H-1; y++ {
-		f.Cells.Set(b.X, y, '│', st)
-		f.Cells.Set(b.X+b.W-1, y, '│', st)
-	}
-	f.Cells.Set(b.X, b.Y, '╭', st)
-	f.Cells.Set(b.X+b.W-1, b.Y, '╮', st)
-	f.Cells.Set(b.X, b.Y+b.H-1, '╰', st)
-	f.Cells.Set(b.X+b.W-1, b.Y+b.H-1, '╯', st)
-	f.Cells.SetString(b.X+2, b.Y, " sources ", accent)
+	components.DrawBoxRunes(f.Cells, b, st)
+	// The heading takes `accent` while the chrome above takes `st` —
+	// which is exactly why DrawBoxTitle takes its own style rather than
+	// being a parameter of DrawBoxRunes. popupRect's floor of
+	// len(" sources ")+4 == 13 is the same budget the helper enforces
+	// (W-6 >= 7), so at the popup's natural width this writes precisely
+	// what the hand-rolled SetString did; when page.W-2 squeezes the
+	// popup narrower, the helper clips instead of writing past the far
+	// corner and out of this node's damage rect.
+	components.DrawBoxTitle(f.Cells, b, "sources", accent)
 
 	srcs := p.srcsP.Get()
 	rows := sourceRows(srcs)

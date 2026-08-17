@@ -9,11 +9,11 @@
 // noise to the diff a reader is trying to read.
 //
 // Not safe for concurrent use, and deliberately so — Next mutates a
-// package counter with no lock. Both demos call it from the UI goroutine
-// (logview from its main select, markuplog from an App.Every callback the
-// Dispatcher runs on the loop), which is the same confinement the property
-// graph itself relies on. A caller that wants to generate lines off the
-// main goroutine has to marshal them back anyway.
+// package counter with no lock. Both demos call it from an App.Every
+// callback, which the Dispatcher runs on the UI goroutine, and that is
+// the same confinement the property graph itself relies on. A caller
+// that wants to generate lines off the main goroutine has to marshal
+// them back anyway.
 package logdata
 
 import (

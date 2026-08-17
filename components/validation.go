@@ -100,16 +100,16 @@ func (m *ValidationMarker) IsShown() bool {
 }
 
 func (m *ValidationMarker) ensurePlaced() {
-	if m.pop != nil || m.host == nil || m.mgr == nil {
+	if m.pop != nil {
 		return
 	}
-	layer := findAdornmentLayer(m.mgr.Root())
-	if layer == nil {
-		return // no AdornmentLayer on the page: errors show only in the TextBox
+	// Not placed — no host, no input tree, or no AdornmentLayer on the
+	// page — means errors show only in the TextBox, and the next re-sync
+	// asks again.
+	pop := &markerPopup{m: m}
+	if layer := attachAdornment(m.host, m.mgr, pop); layer != nil {
+		m.layer, m.pop = layer, pop
 	}
-	m.layer = layer
-	m.pop = &markerPopup{m: m}
-	layer.Add(m.pop)
 }
 
 // markerPopup is the floating message: an ordinary leaf hosted by the
@@ -173,12 +173,5 @@ func (p *markerPopup) Render(f *gooey.Frame) {
 	if msg == "" || b.W <= 0 || b.H <= 0 {
 		return
 	}
-	st := p.m.Style
-	if st == (render.Style{}) {
-		st = render.Style{Fg: render.RGB(255, 255, 255), Bg: errorRed}
-	}
-	for x := b.X; x < b.X+b.W; x++ {
-		f.Cells.Set(x, b.Y, ' ', st)
-	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(" "+msg+" ", b.W), st)
+	paintBanner(f, b, msg, p.m.Style, render.Style{Fg: render.RGB(255, 255, 255), Bg: errorRed})
 }

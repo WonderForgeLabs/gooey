@@ -199,3 +199,48 @@ func TestToastCarriesTheHostStyle(t *testing.T) {
 		t.Fatalf("toast cell style = %+v, want the host style %+v", got, st)
 	}
 }
+
+// The banner covers its whole rectangle, edge to edge, in BOTH the
+// padded case (message shorter than the row) and the clipped case
+// (message longer than the row it was given). The toast used to reach
+// that by writing the string first and padding from the UNCLIPPED rune
+// length — arithmetic that happens to land on the same cells as filling
+// first, only because render.Buffer advances exactly one cell per rune
+// and clipRunes clips by rune count. The shared paintBanner fills first,
+// so the property holds by construction rather than by that coincidence;
+// this test is what would notice if either form stopped covering the row.
+func TestToastBannerCoversItsWholeRow(t *testing.T) {
+	host, page, _ := toastPage(12, 4)
+	c := gooey.NewComposer(page, 12, 4)
+	c.Frame()
+
+	// Clipped: width() is 37, the row is 12, so the toast IS the row.
+	long := host.ShowFor("a message far too long for this row", -1)
+	c.Frame()
+	for x := 0; x < 12; x++ {
+		if got := c.Cells().At(x, 0).Style; !got.Reverse || !got.Bold {
+			t.Fatalf("clipped toast: cell %d style = %+v, want the toast style across the whole row", x, got)
+		}
+	}
+	if got := row(c.Cells(), 0); got != " a message f" {
+		t.Fatalf("clipped toast row = %q, want the message clipped to the row", got)
+	}
+	host.Dismiss(long)
+	c.Frame()
+
+	// Padded: " ok " is 4 wide in a 12-wide row, right-aligned, so cells
+	// 8..11 carry the style and 0..7 belong to the content beneath.
+	host.ShowFor("ok", -1)
+	c.Frame()
+	for x := 8; x < 12; x++ {
+		if got := c.Cells().At(x, 0).Style; !got.Reverse || !got.Bold {
+			t.Fatalf("padded toast: cell %d style = %+v, want the toast style", x, got)
+		}
+	}
+	if got := c.Cells().At(7, 0).Style; got.Reverse || got.Bold {
+		t.Fatalf("cell 7 style = %+v, want the content style — the toast overreached its rect", got)
+	}
+	if got := row(c.Cells(), 0); got != "######## ok" {
+		t.Fatalf("padded toast row = %q, want the toast right-aligned over the content", got)
+	}
+}

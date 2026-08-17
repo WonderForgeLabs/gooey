@@ -138,16 +138,15 @@ func (t *Tooltip) showIf(gen int) {
 }
 
 func (t *Tooltip) show() {
-	if t.pop != nil || t.host == nil || t.mgr == nil {
+	if t.pop != nil {
 		return
 	}
-	layer := findAdornmentLayer(t.mgr.Root())
-	if layer == nil {
-		return // no AdornmentLayer on the page: nothing to show in
+	// Not placed — no host, no input tree, or no AdornmentLayer on the
+	// page — means no tip, and the next hover asks again.
+	pop := &tipPopup{tip: t}
+	if layer := attachAdornment(t.host, t.mgr, pop); layer != nil {
+		t.layer, t.pop = layer, pop
 	}
-	t.layer = layer
-	t.pop = &tipPopup{tip: t}
-	layer.Add(t.pop)
 }
 
 func (t *Tooltip) hide() {
@@ -176,8 +175,10 @@ func (t *Tooltip) gestureHint() string {
 
 // tipPopup is the visible tip: an ordinary leaf hosted by the
 // AdornmentLayer, so its paint node pre-clears and covers its rectangle
-// — the overlay contract — and its Render reads the Tooltip's Text,
-// which keeps a bound tip live while it is up.
+// — the overlay contract — and its Render reads the Tooltip's Text
+// BEFORE its own bounds early-return (the Popup primitive's
+// subscription-carrier rule), which is what keeps a bound tip live while
+// it is up even on a frame that has nothing to paint.
 type tipPopup struct {
 	gooey.Base
 	tip *Tooltip
@@ -220,18 +221,12 @@ func (p *tipPopup) Place(anchor, layer gooey.Rect) gooey.Rect {
 }
 
 func (p *tipPopup) Render(f *gooey.Frame) {
+	msg := p.text() // before ANY early return: the subscription carrier
 	b := p.Bounds()
 	if b.W <= 0 || b.H <= 0 {
 		return
 	}
-	st := p.tip.Style
-	if st == (render.Style{}) {
-		st = render.Style{Reverse: true}
-	}
-	for x := b.X; x < b.X+b.W; x++ {
-		f.Cells.Set(x, b.Y, ' ', st)
-	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(" "+p.text()+" ", b.W), st)
+	st := paintBanner(f, b, msg, p.tip.Style, render.Style{Reverse: true})
 	if g := p.tip.gestureHint(); g != "" {
 		hs := st
 		hs.Dim = true
@@ -240,21 +235,4 @@ func (p *tipPopup) Render(f *gooey.Frame) {
 			f.Cells.SetString(hx, b.Y, hint, hs)
 		}
 	}
-}
-
-// findAdornmentLayer walks the live tree for the page's layer. Overlays
-// are declared last, so the walk searches later siblings first.
-func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
-	if l, ok := w.(*AdornmentLayer); ok {
-		return l
-	}
-	if c, ok := w.(gooey.Container); ok {
-		kids := c.ChildComponents()
-		for i := len(kids) - 1; i >= 0; i-- {
-			if l := findAdornmentLayer(kids[i]); l != nil {
-				return l
-			}
-		}
-	}
-	return nil
 }

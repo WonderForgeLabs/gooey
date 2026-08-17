@@ -1,0 +1,63 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Gooey.Resources>
+    <!-- The page's own theme. Every reader that stays inside this scope
+         — the ambient pane below — shares this exact property, so one
+         Set on it repaints every one of them and nothing else. -->
+    <Resource Key="accent" Type="color" Value="#ffaa3c"/>
+    <Style Key="panel" Fg="#7a7a8c"/>
+    <Style Key="dim" Fg="#5a5a68"/>
+    <Style Key="accented">
+      <Setter Property="Fg" Resource="accent"/>
+      <Setter Property="Bold" Value="true"/>
+    </Style>
+  </Gooey.Resources>
+
+  <Border Title="resources and styles" Style="panel">
+    <VStack Gap="1">
+      <Text Style="panel">two panes read a style named "accented"; only one of them shadows what it points at</Text>
+
+      <HStack Gap="2">
+        <Border Title="ambient — inherits the page accent" Style="panel">
+          <VStack Gap="1">
+            <Text Style="accented">this line reads the PAGE's accent</Text>
+            <Text Style="accented">so does this one — same property</Text>
+          </VStack>
+        </Border>
+
+        <Border Title="overridden — its own accent" Style="panel">
+          <!-- A subtree scope: both the Resource and the Style that
+               reads it are redeclared here, so lookups inside this
+               Border find THESE definitions first. The style is bound
+               to whichever "accent" was in scope where it was
+               declared — this one, not the page's. -->
+          <Border.Resources>
+            <Resource Key="accent" Type="color" Value="#4fd1c5"/>
+            <Style Key="accented">
+              <Setter Property="Fg" Resource="accent"/>
+              <Setter Property="Bold" Value="true"/>
+            </Style>
+          </Border.Resources>
+          <VStack Gap="1">
+            <Text Style="accented">this line reads THIS pane's accent</Text>
+            <Text Style="accented">a different property — see below</Text>
+          </VStack>
+        </Border>
+      </HStack>
+
+      <Text Style="dim">{{.Report}}</Text>
+
+      <HStack Gap="2">
+        <Button Content="cycle ambient accent" Click="{{.Cycle}}"/>
+        <Button Content="measure" Click="{{.Measure}}"/>
+        <Button Content="quit" Click="{{.Quit}}"/>
+      </HStack>
+
+      <Text Style="dim">a: cycle the page accent   m: measure the last frame   tab: move focus   q: quit</Text>
+    </VStack>
+
+    <KeyBinding Gesture="a" Command="{{.Cycle}}"/>
+    <KeyBinding Gesture="m" Command="{{.Measure}}"/>
+    <KeyBinding Gesture="q" Command="{{.Quit}}"/>
+    <KeyBinding Gesture="ctrl+c" Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

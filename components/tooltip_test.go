@@ -333,6 +333,45 @@ func TestTooltipFlipsAboveAtTheScreenEdge(t *testing.T) {
 	}
 }
 
+// The Text property is the tip's SUBSCRIPTION CARRIER, and this is the
+// pin for it: tipPopup.Render reads Text before its own bounds
+// early-return, so a tip that is up stays live when the property
+// changes. Nothing but the tip repaints — same rune count means the same
+// rect, so there is no bounds sweep and nothing to restore.
+//
+// This is the assertion that catches a banner-paint helper reading the
+// property itself instead of taking the already-read string: the edge
+// would vanish on the frames the helper returns early, and no bounds
+// assertion and no "the cell says X" assertion would notice, because
+// both pass just as well when the whole tree repainted.
+func TestTooltipLiveTextRepaintsTheTipAlone(t *testing.T) {
+	tip, _, _, page := tipPage(30)
+	c := gooey.NewComposer(page, 30, 4)
+	c.Frame()
+	hoverAt(c, 3, 0)
+	c.Frame() // the tip appears
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d components, want 0", painted)
+	}
+
+	scheduled := 0
+	c.OnInvalidate(func() { scheduled++ })
+	tip.Text.Set("writes the FILE")
+	if scheduled == 0 {
+		t.Fatal("a live text change scheduled no frame — the tip's subscription carrier is broken")
+	}
+	_, painted := c.Frame()
+	if painted != 1 {
+		t.Fatalf("a live tooltip text change painted %d components, want 1 (the tip)", painted)
+	}
+	if got := row(c.Cells(), 1); !strings.Contains(got, " writes the FILE ") {
+		t.Fatalf("row 1 = %q, want the tip repainted with the new text", got)
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d components, want 0", painted)
+	}
+}
+
 // A page with no AdornmentLayer shows nothing — degraded, not broken.
 func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 	host := &Text{Content: Str("save")}

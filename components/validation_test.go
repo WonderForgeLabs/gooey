@@ -235,6 +235,99 @@ func TestMarkerWithoutLayerShowsNothing(t *testing.T) {
 	}
 }
 
+// A marker page with NO TextBox: the host is an inert Text and the
+// Error is the marker's own handle, so the damage counts below are the
+// marker's alone — no field repainting alongside it, no validator, no
+// gated button.
+func markerPage(w int) (*prop.Property[string], *ValidationMarker, *Canvas) {
+	errP := prop.NewSource("")
+	host := &Text{Content: Str("name")}
+	host.LayoutProps().Left, host.LayoutProps().Top = 0, 0
+	m := &ValidationMarker{Error: errP}
+	host.Attach(m)
+	filler := &Text{Content: Str(strings.Repeat("#", w))}
+	filler.LayoutProps().Top = 1
+	layer := &AdornmentLayer{}
+	return errP, m, &Canvas{Children: []gooey.Component{host, filler, layer}}
+}
+
+// THE pin for the read-before-early-return discipline in
+// markerPopup.Render. While the error is empty the popup is arranged to
+// a zero rect and its Render returns having painted nothing — and the
+// ONLY reason the very first failing edit ever reaches the screen is
+// that the read happened above that return, on every one of those
+// no-op frames. Move the read below the guard (or into a banner helper
+// that Gets after its own bounds check) and this frame paints 0: no
+// error, no panic, a marker that is simply deaf forever.
+func TestMarkerEmptyToMessageSchedulesItsOwnFrame(t *testing.T) {
+	errP, m, page := markerPage(30)
+	c := gooey.NewComposer(page, 30, 4)
+	c.Frame()
+	if m.IsShown() {
+		t.Fatal("an empty error should show no message")
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d, want 0", painted)
+	}
+
+	// The invalidation is the half a damage count cannot see: c.Frame()
+	// composes whether or not anything asked for it, so "it repaints" is
+	// satisfied by the layout sweep noticing the rect grew. Only
+	// OnInvalidate can distinguish a marker that was SUBSCRIBED from one
+	// whose appear was rescued by the bounds sweep — in a real App.Run
+	// the unsubscribed one never gets a frame composed at all.
+	scheduled := 0
+	c.OnInvalidate(func() { scheduled++ })
+	errP.Set("required")
+	if scheduled == 0 {
+		t.Fatal("the first error scheduled no frame — the marker's subscription carrier is broken")
+	}
+
+	_, painted := c.Frame()
+	// Exactly ONE: appearing is zero rect → a rect, which is paint damage
+	// on the marker's own node and nothing else. The filler underneath is
+	// covered, not vacated, so it stays clean — the same appear cost the
+	// tooltip and the toast pin. (The 5 in TestValidationLoopDamage is a
+	// RESIZE, where cells are also given back.)
+	if painted != 1 {
+		t.Fatalf("empty→message painted %d components, want 1 (the marker alone)", painted)
+	}
+	if !m.IsShown() {
+		t.Fatal("the marker is not shown after the error appeared")
+	}
+	if got := row(c.Cells(), 1); !strings.Contains(got, " required ") {
+		t.Fatalf("row 1 = %q, want the floating message", got)
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d, want 0", painted)
+	}
+}
+
+// A message that changes without resizing repaints the marker and
+// NOTHING else — the live-text half of the same subscription, pinned
+// clear of the TextBox that carries it in the real form.
+func TestMarkerLiveMessageRepaintsTheMarkerAlone(t *testing.T) {
+	errP, _, page := markerPage(30)
+	c := gooey.NewComposer(page, 30, 4)
+	errP.Set("required")
+	c.Frame()
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d, want 0", painted)
+	}
+
+	errP.Set("REQUIRED") // same rune count: same rect, nothing to restore
+	_, painted := c.Frame()
+	if painted != 1 {
+		t.Fatalf("a live message change painted %d components, want 1 (the marker)", painted)
+	}
+	if got := row(c.Cells(), 1); !strings.Contains(got, " REQUIRED ") {
+		t.Fatalf("row 1 = %q, want the marker repainted with the new message", got)
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Fatalf("settled frame painted %d, want 0", painted)
+	}
+}
+
 // The marker adopts the host TextBox's Error handle when it has none of
 // its own — the property is named once in the common form.
 func TestMarkerAdoptsHostError(t *testing.T) {

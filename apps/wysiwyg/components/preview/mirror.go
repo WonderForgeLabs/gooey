@@ -2,6 +2,7 @@ package preview
 
 import (
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -71,14 +72,18 @@ func (m *Mirror) Render(f *gooey.Frame) {
 		if d > 0 {
 			st.Dim = true
 		}
-		top := "╭" + repeat("─", w-2) + "╮"
-		bot := "╰" + repeat("─", w-2) + "╯"
-		f.Cells.SetString(x, y, top, st)
-		f.Cells.SetString(x, y+h-1, bot, st)
-		for row := y + 1; row < y+h-1; row++ {
-			f.Cells.SetString(x, row, "│", st)
-			f.Cells.SetString(x+w-1, row, "│", st)
-		}
+		// Concentric is the LOOP; each ring is an ordinary box, so the
+		// ring itself is the shared helper.
+		//
+		// The `w < 2 || h < 2` break above is NOT the helper's
+		// degenerate guard written twice. That guard fires at zero or
+		// below; this one fires at one, where the helper would happily
+		// paint — and a one-cell-wide "ring" is four corners landing on
+		// the same column, which reads as a stray `╯`, not as depth. It
+		// also has to BREAK rather than skip: every later iteration is
+		// inset further, so a ring that does not fit proves no smaller
+		// one will either.
+		components.DrawBoxRunes(f.Cells, gooey.Rect{X: x, Y: y, W: w, H: h}, st)
 	}
 	// A label in the middle, so the joke lands rather than looking like
 	// a rendering fault.
@@ -86,15 +91,4 @@ func (m *Mirror) Render(f *gooey.Frame) {
 	if b.W > len(label)+2 && b.H > 2 {
 		f.Cells.SetString(b.X+(b.W-len(label))/2, b.Y+b.H/2, label, m.style)
 	}
-}
-
-func repeat(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	out := make([]byte, 0, len(s)*n)
-	for i := 0; i < n; i++ {
-		out = append(out, s...)
-	}
-	return string(out)
 }
