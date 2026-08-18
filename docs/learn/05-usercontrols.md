@@ -84,6 +84,8 @@ a silently blank control.
 
 ## Step 2: Declare the card's contract
 
+`<x:Property>` landed in [PR #84](https://github.com/WonderForgeLabs/gooey/pull/84) (Epic [#7](https://github.com/WonderForgeLabs/gooey/issues/7)); see [the decision record](../specs/2026-08-10-markup-declared-properties.md) for the rationale behind the three-way resolution rule below.
+
 Declare the surface with `<x:Property>` — direct children of the root,
 under the `x:` language-services namespace:
 
@@ -333,9 +335,12 @@ error, because declarations own the public surface.
   you add `<x:Property>` declarations (step 2).
 - A declared `Default` materializes a fresh per-instance source, so it
   **resets on hot reload**; durable state belongs in the app's
-  viewmodel, handed in through a bound attribute.
+  viewmodel, handed in through a bound attribute. Tracked by
+  [#50](https://github.com/WonderForgeLabs/gooey/issues/50).
 - No styles with setters, so a control cannot be restyled from outside
-  beyond passing a style name in.
+  beyond passing a style name in. Tracked by
+  [#56](https://github.com/WonderForgeLabs/gooey/issues/56) (Epic
+  [#54](https://github.com/WonderForgeLabs/gooey/issues/54)).
 
 ## Next steps
 

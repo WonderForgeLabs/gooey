@@ -1,6 +1,6 @@
 # Validation core: validators as computeds (issue #97, epic #161)
 
-**Status:** executed.
+**Status:** executed, landed in [PR #172](https://github.com/WonderForgeLabs/gooey/pull/172).
 
 **Date:** 2026-08-10
 

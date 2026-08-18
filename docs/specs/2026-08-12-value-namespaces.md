@@ -1,6 +1,6 @@
 # Value namespaces: the pull half of the mechanism (executed)
 
-Status: implemented 2026-08-12. Owner: `markup/values.go`,
+Status: implemented 2026-08-12, landed in [PR #231](https://github.com/WonderForgeLabs/gooey/pull/231). Owner: `markup/values.go`,
 `markup/scan.go`, `handlers/env`, `handlers/str` — all root module.
 Builds on the pack distribution doctrine
 (`2026-08-10-pack-distribution.md`) and the handler-namespace record

@@ -1,0 +1,21 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- The right-hand pane of beat 2.5, on its own so it can be rebuilt
+       without disturbing anything else.
+
+       When vim writes counter.gooey, the running pane has to come back
+       from disk — and the obvious way to do that, re-patching the whole
+       Stage, also destroys the Terminal next to it: the guest is killed
+       and vim reopens, losing the cursor, the undo history and whatever
+       the presenter was halfway through typing. Live is the smallest
+       subtree that contains the Include and not the editor.
+
+       Keep this identical to the fragment in NARRATION.md beat 2.5. It
+       is a second copy of four lines, which is the price of being able
+       to rebuild them; the file they resolve to has no second copy at
+       all, which is the point the slide is making. -->
+  <VStack Name="Live" Grid.Col="1">
+    <Counter Label="…and that file, running"
+             Count="{{.Count}}"
+             Bump="{{.Bump}}"/>
+  </VStack>
+</Gooey>

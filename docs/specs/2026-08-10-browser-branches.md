@@ -1,6 +1,6 @@
 # Demo browser: worktree/branch sources (issue #131)
 
-**Status:** executed.
+**Status:** executed ([PR #134](https://github.com/WonderForgeLabs/gooey/pull/134)).
 
 **Date:** 2026-08-10
 

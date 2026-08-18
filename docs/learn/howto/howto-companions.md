@@ -212,6 +212,32 @@ you were about to look at is a bad neighbor. The worker is the
 opposite case — it holds nothing, so owning its lifetime costs
 nothing. That asymmetry is the rule of thumb.
 
+## Declaring one in markup instead
+
+Everything above is the Go tier. There is also a markup-declared
+`<Companion>` element — a page can name a child-process service directly,
+with no Go code:
+
+```xml
+<Companion Name="worker" Path="python3" Dir="worker" Log="worker.log"
+           Error="{{.WorkerError}}" Exited="{{.Quit}}">
+  <Companion.Args><Arg>worker.py</Arg></Companion.Args>
+</Companion>
+```
+
+Its lifetime is scoped to the tree that declares it — it starts and stops
+with composition, not with `Run` — and `StopTimeout` is a per-element
+attribute rather than an app-wide option. The rule of thumb: **if the
+tree's construction depends on the service, declare it in Go** (this
+page); if the running UI merely uses it, declare it in markup. It also
+carries a real security consequence: `<Companion>` names a binary
+directly, so it is the one capability *not* covered by the usual
+handler-namespace safety story, and it is disabled with
+`GOOEY_MARKUP_COMPANIONS=0` for any app that hands markup to untrusted
+sources. Full attribute table, XML example and the security callout:
+[markup-reference.md § Companion](../../markup-reference.md#companion);
+design record: [markup companions spec](../../specs/2026-08-10-markup-companions.md).
+
 ## Working examples
 
 Each is one flag away from the multi-shell deployment it replaces:
@@ -232,6 +258,10 @@ Each is one flag away from the multi-shell deployment it replaces:
 
 - [Companions spec](../../specs/2026-08-10-companions.md) — failure
   semantics table and the design reasoning.
+- [Markup companions spec](../../specs/2026-08-10-markup-companions.md)
+  and [markup-reference.md § Companion](../../markup-reference.md#companion)
+  — the `<Companion>` element, for when the running UI merely uses a
+  service rather than depending on it to build.
 - [Tutorial 9: Temporal end-to-end](../09-temporal.md) — every demo
   there rides on this.
 - [How-to: work off the UI goroutine](howto-async.md) — how a

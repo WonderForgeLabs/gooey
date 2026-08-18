@@ -1,0 +1,65 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <!-- Composition happens here, not in Go. A Text's content interpolates
+       literals and bindings into one computed with the right damage, so
+       "3 / 29" is markup's job and the viewmodel only supplies 3 and 29.
+
+       The key bindings and the Timer are attached to the Border rather
+       than to the Grid on purpose: this page has no focusable component,
+       so nothing ever puts the focused chain through an inner container,
+       and a binding scoped to the Grid would silently never fire. -->
+  <Border Title="{{.Part}}" Style="panel">
+    <Grid Rows="Auto,Auto,*,Auto,Auto" Margin="2,1">
+
+      <Text Name="Headline" Grid.Row="0" Style="headline">{{.BeatTitle}}</Text>
+
+      <!-- Everything the camera must never see is Collapsed rather than
+           blanked: a Collapsed row in an Auto track reserves no height,
+           so presentation mode is not a slide with three empty lines. -->
+      <Text Name="Meta" Grid.Row="1" Style="cue" Visibility="{{.Prompter}}">{{.Voice}}   ·   beat {{.BeatID}}   ·   slide {{.SlideName}}   ·   hold {{.Hold}}</Text>
+
+      <!-- The stage. Every slide lands here, patched in through
+           control.Service — the same call patch_markup makes over MCP.
+           Keep this fragment identical to stage.gooey: the deck opens
+           without patching on the strength of that. -->
+      <VStack Name="Stage" Grid.Row="2">
+        <Text Name="Body" Style="body" Margin="0,1">{{.Body}}</Text>
+      </VStack>
+
+      <!-- The bar is wrapped in an HStack so it takes its preferred
+           width; dropped straight into the Grid row it stretches to the
+           whole track and reads as a page loader. OVER is its own
+           element with its own visibility rather than a suffix spliced
+           into the label. -->
+      <HStack Grid.Row="3" Gap="2" Visibility="{{.Prompter}}">
+        <ProgressBar Name="Beat" Value="{{.Progress}}" Label="{{.Now}} / {{.Target}}" BarWidth="30"/>
+        <Text Name="Over" Style="warn" Visibility="{{.Over}}">OVER</Text>
+        <Text Name="Status" Style="dim">{{.Status}}</Text>
+      </HStack>
+
+      <HStack Grid.Row="4" Gap="3">
+        <Text Name="Position" Style="dim">{{.Slide}} / {{.Total}}</Text>
+        <Text Name="Keys" Style="dim" Visibility="{{.Prompter}}">n/p or ←/→ move · r replay · ctrl+r rescript · s hush · t prompter · a auto · q quit</Text>
+      </HStack>
+
+    </Grid>
+
+    <Timer Interval="1s" Tick="{{.Tick}}"/>
+
+    <!-- Not space. A slide can embed a real Button, and a focused
+         Button consumes space before a root binding sees it — so a
+         next-slide key bound to space would work on most slides and
+         silently press a button on the others. -->
+    <KeyBinding Gesture="right"  Command="{{.Next}}"/>
+    <KeyBinding Gesture="n"      Command="{{.Next}}"/>
+    <KeyBinding Gesture="p"      Command="{{.Prev}}"/>
+    <KeyBinding Gesture="left"   Command="{{.Prev}}"/>
+    <KeyBinding Gesture="home"   Command="{{.First}}"/>
+    <KeyBinding Gesture="end"    Command="{{.Last}}"/>
+    <KeyBinding Gesture="r"      Command="{{.Replay}}"/>
+    <KeyBinding Gesture="ctrl+r" Command="{{.Reload}}"/>
+    <KeyBinding Gesture="s"      Command="{{.Hush}}"/>
+    <KeyBinding Gesture="t"      Command="{{.TogglePrompter}}"/>
+    <KeyBinding Gesture="a"      Command="{{.ToggleAuto}}"/>
+    <KeyBinding Gesture="q"      Command="{{.Quit}}"/>
+  </Border>
+</Gooey>

@@ -139,3 +139,40 @@ func TestDecodeStream(t *testing.T) {
 		}
 	}
 }
+
+// A control byte is `key & 0x1f`, so the inverse is `c | 0x40`. The old
+// decoder used `'a' + c - 1`, which agrees for ctrl+a..ctrl+z and then
+// runs off the end of the alphabet: ctrl+] arrived as ctrl+}, and a
+// binding on it never fired. Nothing caught it because the key WAS
+// decoded and dispatched — it just matched nothing.
+//
+// The pairing with ParseGesture is the real assertion here. A gesture
+// string and the bytes the terminal sends for that gesture must produce
+// the same KeyEvent, or a binding written in markup is unreachable from
+// a keyboard.
+func TestControlBytesAboveZDecodeToTheirRealKeys(t *testing.T) {
+	for _, tc := range []struct {
+		gesture string
+		b       byte
+	}{
+		{"ctrl+a", 0x01},
+		{"ctrl+z", 0x1a},
+		{"ctrl+\\", 0x1c},
+		{"ctrl+]", 0x1d},
+		{"ctrl+^", 0x1e},
+		{"ctrl+_", 0x1f},
+	} {
+		want, err := ParseGesture(tc.gesture)
+		if err != nil {
+			t.Fatalf("ParseGesture(%q): %v", tc.gesture, err)
+		}
+		ev, n, ok := Decode([]byte{tc.b}, true)
+		if !ok || n != 1 {
+			t.Fatalf("Decode(%#x) = %v, %d, %v", tc.b, ev, n, ok)
+		}
+		if ev.Key != want {
+			t.Errorf("Decode(%#x) = %+v, but ParseGesture(%q) = %+v — a markup binding on %s is unreachable",
+				tc.b, ev.Key, tc.gesture, want, tc.gesture)
+		}
+	}
+}

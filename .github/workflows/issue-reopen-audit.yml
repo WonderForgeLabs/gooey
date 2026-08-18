@@ -171,6 +171,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
+          lfs: true
           fetch-depth: 1
 
       # Step 1's scheduled sweep needs a 24h-ago cutoff. Deriving it in the

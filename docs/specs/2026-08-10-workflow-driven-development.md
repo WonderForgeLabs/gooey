@@ -6,6 +6,8 @@
 
 ## What shipped
 
+Landed in [PR #180](https://github.com/WonderForgeLabs/gooey/pull/180), with nine review findings fixed in the follow-up [PR #186](https://github.com/WonderForgeLabs/gooey/pull/186).
+
 Three interactive workflow scripts in `.claude/workflows/`, registered
 by `meta.name` so `Workflow({ name: ... })` resolves them:
 

@@ -50,7 +50,9 @@ app.OnSwap(func(gooey.Component) {
 ```
 
 `OnSwap` fires for the initial attach as well as every reload, so this is
-the only place that resolves the handle.
+the only place that resolves the handle. Automating this re-find by
+`Name` is tracked in
+[#51](https://github.com/WonderForgeLabs/gooey/issues/51).
 
 ## Why state survives
 
@@ -61,11 +63,15 @@ value.
 
 Focus does not survive automatically — a new tree focuses its first focus
 stop. To restore it, remember which one had focus and call
-`app.Composer().Focus().SetFocus(w)` from an `OnSwap` hook.
+`app.Composer().Focus().SetFocus(w)` from an `OnSwap` hook. Automatic
+restore is tracked in
+[#52](https://github.com/WonderForgeLabs/gooey/issues/52).
 
 ## Behavior worth knowing
 
-- **Polling, not inotify.** Both watchers poll ModTimes every 300 ms.
+- **Polling, not inotify.** Both watchers poll ModTimes every 300 ms
+  ([#53](https://github.com/WonderForgeLabs/gooey/issues/53) tracks
+  replacing this with filesystem notifications).
 - **A broken edit is harmless.** Parse or build errors skip the reload
   and leave the running tree up. Fix and save again.
 - **Ask for the error.** By default a failed reload is silent, which is

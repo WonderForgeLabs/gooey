@@ -225,7 +225,7 @@ no gooey types, so it cannot drift when the provider contract does.
 
 ## Executed (2026-08-10)
 
-Landed as designed. The record of fact:
+Landed as designed, in [PR #155](https://github.com/WonderForgeLabs/gooey/pull/155). The record of fact:
 
 - `packs/temporal-visibility/` — standalone module, `package visibility`:
   `Activities` (client + namespace), `New`/`WithNamespace`,
@@ -283,6 +283,8 @@ Landed as designed. The record of fact:
 ---
 
 ## Executed, phase 2 (2026-08-10): the ops dashboard and the scalar convenience layer
+
+Landed in [PR #168](https://github.com/WonderForgeLabs/gooey/pull/168).
 
 The dashboard is `handlers/temporal/cmd/temporalops` (viewmodel in
 `internal/ops`, markup embedded as `ops.gooey`); the query-bar design

@@ -319,9 +319,13 @@ and it doubles as the disable switch, exactly like a `Button`.
 
 **[`Segmented`](../markup-reference.md#segmented)** — the rocker past
 two positions. `Options` is a pipe-separated literal or a bound
-`[]string`; `Selected` binds the index, clamped on read. The same
-arrow rule holds at both ends of the list, so a keyboard user can
-never dead-end inside it; `home`/`end` jump, space and enter cycle.
+`[]string`; `Selected` binds the index, clamped on read. Unlike
+Toggle's rocker rule, an own-axis arrow at either end **is consumed**
+and CYCLES the selection back around by default — `Wrap="false"` turns
+that off, and only then does the end-of-travel arrow bubble out like
+Toggle's. Either way a keyboard user never dead-ends: the cross-axis
+arrow is always left unhandled for spatial navigation. `home`/`end`
+jump, space and enter cycle.
 
 **[`ButtonBar`](../markup-reference.md#buttonbar)** — already carrying
 the buttons in step 1. More than an `HStack` twice over: `Uniform`

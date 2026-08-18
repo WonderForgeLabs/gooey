@@ -199,7 +199,8 @@ what makes that property a repaint trigger. Tutorial 6 builds on this.
 
 ## Current limitations
 
-- No value converters and no format strings in the binding DSL.
+- No value converters and no format strings in the binding DSL
+  (tracked in [#99](https://github.com/WonderForgeLabs/gooey/issues/99)).
 - No two-way binding syntax in markup. Two-way is component code: the component
   reads the property in `Render` and calls `Set` when the user acts —
   tutorial 4's checkbox and tutorial 6's stepper both do this.

@@ -25,19 +25,23 @@ again on top. Two exemptions keep the damage counts tight: a chrome-only
 container never forces its own descendants (its chrome never covers
 their cells — the same contract that lets containers skip pre-clearing),
 and a `Decorator` is never forced from below (it owns no cells to
-restore).
+restore). The pass and both exemptions landed in
+[PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)
+([#26](https://github.com/WonderForgeLabs/gooey/issues/26)).
 
 ## Dismissal is the reverse half
 
 The forward pass can only force nodes *later* in z-order than a painter
 — and an overlay is the last node, so when it goes away, nothing after
-it can fix the hole. `Composer.restoreUnder` is the missing half: when a
-rect **leaves the screen**, the sweep clears the vacated cells and
-force-dirties every still-visible node intersecting them, and the
-ordinary paint loop lays those down again in z-order. A dismissed menu,
-toast, or tooltip repaints **exactly what it was covering**, in the same
-frame. That covers all three vanish paths: a visibility flip, a
-departure in a `Dynamic` re-sync (a toast dismissing), and a bounds move
+it can fix the hole. `Composer.restoreUnder`
+([PR #93](https://github.com/WonderForgeLabs/gooey/pull/93)) is the
+missing half: when a rect **leaves the screen**, the sweep clears the
+vacated cells and force-dirties every still-visible node intersecting
+them, and the ordinary paint loop lays those down again in z-order. A
+dismissed menu, toast, or tooltip repaints **exactly what it was
+covering**, in the same frame. That covers all three vanish paths: a
+visibility flip, a departure in a `Dynamic` re-sync (a toast dismissing),
+and a bounds move
 (a dropdown sliding to the next title is an overlay *moving*).
 
 Note what the vanished overlay itself does: nothing. Erasure is a sweep,
@@ -49,7 +53,10 @@ rect and force-repaints the node at its new one.
 ## An open overlay owns the input
 
 Two conventions ride along with the z-hosting, both visible in the
-`MenuBar` and packaged into the [`Popup` primitive](../howto/howto-popup.md):
+`MenuBar` and packaged into the [`Popup` primitive](../howto/howto-popup.md)
+— four hand-rolled copies extracted into one in
+[PR #143](https://github.com/WonderForgeLabs/gooey/pull/143)
+([#96](https://github.com/WonderForgeLabs/gooey/issues/96)):
 
 - **Held pointer capture while open.** A dropdown hangs outside its
   owner's bounds, where hit-testing never finds it, so the owner takes
@@ -63,16 +70,20 @@ Two conventions ride along with the z-hosting, both visible in the
 One trap for page-spanning hosts: hit-testing treats every bounded
 container as opaque, so a full-page `ToastHost` declared last would eat
 every click on the page. Hosts like it implement `HitTestTransparent` —
-the host opts out of hit-testing while its toasts stay hittable.
+the host opts out of hit-testing while its toasts stay hittable —
+introduced with the adornment layer in
+[PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).
 
 ## Where to see it
 
 `cmd/toolkit` is the whole story on one page (menu over content,
 toasts, tooltips; dismissing any of them restores the exact screen), and
 `cmd/browser`'s source picker is the recipe reused in an app. Both are
-walked through in [demos.md](../../demos.md); toolkit's pty test is
-what pins the guarantee — esc on an open menu restores the exact screen,
-and a toast leaves no scar.
+walked through in [demos.md](../../demos.md);
+`TestDemoOverlaysDropAndRestore` (`cmd/toolkit/toolkit_test.go`) is what
+pins the guarantee — it composes the shipped page and byte-compares the
+screen before and after, so esc on an open menu restores the exact
+screen, and a toast leaves no scar.
 
 Depth: [architecture.md — the Composer](../../architecture.md#the-composer);
 decision records in

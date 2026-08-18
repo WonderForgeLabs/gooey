@@ -1,0 +1,11 @@
+<Gooey xmlns="wonderforge.io/gooey/2026">
+  <Border Title="counter" Style="panel">
+    <VStack Gap="1" Margin="2,1">
+      <Text Style="headline">{{.Label}}</Text>
+      <Text Style="body">count {{.Count}}</Text>
+      <Button Content="+1" Click="{{.Bump}}"/>
+      <Text Style="dim">nothing in here polls, and nothing
+in here was told when to redraw.</Text>
+    </VStack>
+  </Border>
+</Gooey>

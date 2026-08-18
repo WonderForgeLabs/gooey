@@ -235,6 +235,8 @@ implicit capture, and click synthesis.
 
 ## Beyond the basics
 
+Everything below landed in [PR #86](https://github.com/WonderForgeLabs/gooey/pull/86) (Epic [#31](https://github.com/WonderForgeLabs/gooey/issues/31)).
+
 - **Conditional commands.** `gooey.NewCommand(save).When(dirty)` attaches
   a `CanExecute` condition that is an ordinary bool property. A Button
   bound to it paints dim and refuses activation while the condition is
@@ -257,6 +259,8 @@ implicit capture, and click synthesis.
 - Triple click, and any selection gesture beyond a word.
 - System-clipboard integration (OSC 52); cut and copy stay inside the
   process.
+
+Both are tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106), which also explains why OSC 52 is a deliberate security decision rather than an oversight.
 
 ## Next steps
 

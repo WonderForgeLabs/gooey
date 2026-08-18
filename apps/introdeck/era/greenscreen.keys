@@ -1,0 +1,13 @@
+# The oldest model there is: you type a command, you press return, it
+# prints. Nothing on the screen is a widget, nothing is "inside"
+# anything, and the text scrolls up and off the top like a receipt.
+#
+# Delays are relative and deliberately human — a demo that types at
+# machine speed reads as a recording, which is exactly what this is not.
+2.0  date\n
+2.2  echo hello\n
+2.0  ls era\n
+2.6  echo "text goes in.  text comes out."\n
+3.0  wc -l counter.gooey\n
+2.8  echo "no windows.  no mouse.  no buttons."\n
+3.4  clear\n

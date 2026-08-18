@@ -87,8 +87,10 @@ load-time error; an empty attribute is not — it just means no command.
 
 ## Disable a binding with a condition
 
-The `Command` field is typed `gooey.Action`, and one implementation
-carries a `CanExecute` condition: `gooey.NewCommand(run).When(cond)`,
+([#33](https://github.com/WonderForgeLabs/gooey/issues/33) landed this
+mechanism.) The `Command` field is typed `gooey.Action`, and one
+implementation carries a `CanExecute` condition:
+`gooey.NewCommand(run).When(cond)`,
 where `cond` is an ordinary `*prop.Property[bool]` — a computed is the
 point:
 
