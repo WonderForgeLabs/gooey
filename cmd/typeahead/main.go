@@ -82,7 +82,7 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	enc, forced, err := demomain.EncoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor("-mode", *mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

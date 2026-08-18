@@ -3,6 +3,7 @@ package demomain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
@@ -88,7 +89,7 @@ func TestEncoderForAliases(t *testing.T) {
 		{mode: "cells", enc: nil, forced: true},
 		{mode: "nonsense", bad: true},
 	} {
-		enc, forced, err := EncoderFor(tc.mode)
+		enc, forced, err := EncoderFor("-mode", tc.mode)
 		if tc.bad {
 			if err == nil {
 				t.Errorf("EncoderFor(%q): want an error", tc.mode)
@@ -105,14 +106,54 @@ func TestEncoderForAliases(t *testing.T) {
 	}
 }
 
-// TestGraphicsOptionsCount is a shape check, not a behaviour one: the
-// probe path is one option and the forced path is two, and the second of
-// those is the assumed cell size without which sixel emits an empty image.
+// TestGraphicsOptionsCount is a shape check, not a behaviour one: one
+// option on each path.
+//
+// The forced path used to be two, the second a hand-carried
+// `WithCaps{CellW: 10, CellH: 20}`. That is App.caps' rule, and this was
+// a second copy of it with nothing holding the two equal — identical
+// while both said 10x20, drift the day either moved (#322).
+//
+// The rule itself is NOT asserted here, and deliberately so: this package
+// cannot observe it (`options` is unexported, and there is no public caps
+// accessor), and it is already pinned where it lives, by
+// TestPinnedProtocolGetsACellSize in graphicsopt_test.go — including the
+// `{"halfblock pinned", WithGraphics(nil), 0}` case, which is why a
+// forced halfblock now reports `cell 0x0` rather than a 10x20 nothing
+// measured. Asserting a count here and the rule there is the split that
+// keeps each claim next to the code that can be wrong about it.
 func TestGraphicsOptionsCount(t *testing.T) {
 	if got := len(GraphicsOptions(nil, false)); got != 1 {
 		t.Errorf("unforced: %d options, want 1 (the probe)", got)
 	}
-	if got := len(GraphicsOptions(graphics.Sixel{}, true)); got != 2 {
-		t.Errorf("forced: %d options, want 2 (encoder + caps)", got)
+	if got := len(GraphicsOptions(graphics.Sixel{}, true)); got != 1 {
+		t.Errorf("forced: %d options, want 1 (the encoder; App.caps supplies the metrics)", got)
+	}
+}
+
+// TestEncoderForErrorNamesTheCallersFlag pins the reason EncoderFor takes
+// a flag name at all. The message hardcoded `-mode`, so cmd/colors —
+// whose flag is `--graphics` — rejected a bad value by naming a flag that
+// binary does not have (#322).
+//
+// Checked per caller spelling rather than once, because "it contains the
+// string I passed" is also true of a function that ignores the argument
+// and happens to hardcode the same word.
+func TestEncoderForErrorNamesTheCallersFlag(t *testing.T) {
+	for _, flagName := range []string{"-mode", "--graphics"} {
+		_, _, err := EncoderFor(flagName, "nonsense")
+		if err == nil {
+			t.Fatalf("EncoderFor(%q, \"nonsense\"): want an error", flagName)
+		}
+		if !strings.Contains(err.Error(), flagName) {
+			t.Errorf("EncoderFor(%q, ...) error %q does not name the caller's flag, "+
+				"so a demo reports a flag it does not have", flagName, err)
+		}
+	}
+	// The discriminating half: the OTHER spelling must be absent, or a
+	// message naming both flags would satisfy the check above.
+	_, _, err := EncoderFor("--graphics", "nonsense")
+	if err != nil && strings.Contains(err.Error(), "-mode ") {
+		t.Errorf("the --graphics error still mentions -mode: %v", err)
 	}
 }

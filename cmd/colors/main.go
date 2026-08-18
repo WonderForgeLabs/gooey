@@ -82,7 +82,7 @@ func main() {
 	// component's contract — the choice is the terminal's, not the
 	// author's); the flag exists to force a protocol on, or off with
 	// "cells", for recordings and side-by-side comparison.
-	gfx, gfxForced, err := demomain.EncoderFor(*gfxFlag)
+	gfx, gfxForced, err := demomain.EncoderFor("--graphics", *gfxFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
