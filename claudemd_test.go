@@ -289,19 +289,60 @@ func missingFrom(got, want []string) []string {
 // under `apps/`, the doc names `apps/gitui` and `apps/wysiwyg`, and the
 // namespace list never learned the word — so the guard covered none of
 // the modules the doc actually names (#316).
+// The oracle is git's INDEX, not discoverModules. That distinction is the
+// whole test: `moduleNamespaces` derives half its set from
+// `discoverModules`, so auditing it with `discoverModules` would re-derive
+// the same answer by the same method and compare it against itself. Such a
+// test cannot fail, and a test that cannot fail is the exact defect this
+// one is about.
+//
+// git knows the tracked go.mod files by a completely separate mechanism,
+// which is the same two-source cross-check ci.yml's `discover` job runs
+// against its own walk — and it makes this falsifiable in both directions
+// that matter: drop the union from `moduleNamespaces` and `apps` goes
+// missing; break `discoverModules`' pruning and git still sees the module
+// the walk lost.
 func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 	ns := moduleNamespaces(t)
-	for _, mod := range discoverModules(t) {
-		dir, _, nested := strings.Cut(mod, "/")
-		if !nested {
-			continue // a top-level module has no namespace to cover
+
+	out, err := exec.Command("git", "ls-files", "--", ":(glob)**/go.mod").Output()
+	if err != nil {
+		t.Fatalf("listing tracked go.mod files: %v", err)
+	}
+
+	checked := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
-		if !ns[dir] {
-			t.Errorf("module %q lives under namespace %q, which the "+
-				"deleted-module guard does not know — so every %s/* "+
-				"reference in %s goes unchecked and the guard stays green "+
+		// The MODULE's directory, then its first segment. Cutting the raw
+		// `git ls-files` path at the first "/" is wrong in a way that looks
+		// right: `grpc/go.mod` would yield "grpc" as a namespace, when grpc
+		// is a top-level module with no namespace at all. The guard's rule
+		// is the one to match — a nested module is exactly `namespace/name`,
+		// i.e. a two-segment directory.
+		modDir := path.Dir(line)
+		if modDir == "." {
+			continue // the root go.mod
+		}
+		parts := strings.Split(modDir, "/")
+		if len(parts) < 2 {
+			continue // a top-level module (grpc, mcp, paint) — no namespace
+		}
+		checked++
+		if !ns[parts[0]] {
+			t.Errorf("git tracks %q, so namespace %q has a live module — but the "+
+				"deleted-module guard does not know that namespace, so every "+
+				"%s/* reference in %s goes unchecked and the guard stays green "+
 				"while the doc points readers at nothing.",
-				mod, dir, dir, claudeMD)
+				line, parts[0], parts[0], claudeMD)
 		}
+	}
+
+	// Without this the test passes by checking nothing the day the pathspec
+	// stops matching — the vacuous-green failure it exists to prevent.
+	if checked == 0 {
+		t.Fatal("git listed no nested go.mod at all; the pathspec is wrong, not the tree")
 	}
 }
