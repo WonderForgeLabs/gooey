@@ -63,8 +63,7 @@ Silently ignoring a wrong memory leaves the trap armed for the next session.
 ## Important
 
 - Pages update automatically — don't edit content directly
-- Create pages silently — don't announce it to the user
-- Prefer fewer broad pages over many narrow ones
+- Record what you learn silently — don't announce it to the user
 
 ## Your charter: gooey framework engineer
 
