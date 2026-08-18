@@ -4,7 +4,13 @@ use (
 	.
 	./apps/dynamic-activities
 	./apps/gitui
+	./apps/introdeck
+	./apps/introtarget
 	./apps/kanban
+	./apps/scene
+	./apps/soundboard
+	./apps/store
+	./apps/synth
 	./apps/wysiwyg
 	./grpc
 	./handlers/exec
