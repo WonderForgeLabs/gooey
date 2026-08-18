@@ -92,9 +92,20 @@ jobs:
           # position: the list is sorted, and `apps/…` sorts before
           # `go.mod`, so testing mods[0] rejected a perfectly good tree
           # (found by running this script against the worktree).
-          if [ "${#mods[@]}" -lt 2 ] || ! grep -qxF 'go.mod' "$tmp/modules-found"; then
+          #
+          # TWO conditions, reported separately (#263). They used to share
+          # one `||` and one message that always said "no root go.mod",
+          # including in the case this guard actually exists to catch —
+          # root present, the walk finding too few. Someone debugging a
+          # broken `find` was sent looking for a file sitting right there.
+          if ! grep -qxF 'go.mod' "$tmp/modules-found"; then
             printf '%s\n' "${mods[@]}"
-            echo "::error::discovery found ${#mods[@]} module(s) and no root go.mod — the checkout or the walk is broken"
+            echo "::error::discovery found no root go.mod among ${#mods[@]} module(s) — the checkout is broken, or the walk never reached the repo root"
+            exit 1
+          fi
+          if [ "${#mods[@]}" -lt 2 ]; then
+            printf '%s\n' "${mods[@]}"
+            echo "::error::discovery found the root go.mod and nothing else (${#mods[@]} module(s)) — the walk or its pruning is broken, since this repo has nested modules"
             exit 1
           fi
 
