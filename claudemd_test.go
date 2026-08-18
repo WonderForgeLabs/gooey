@@ -38,11 +38,38 @@ const claudeMD = "CLAUDE.md"
 // for staleness by this secondary test, while
 // TestCLAUDEMDVerifyLoopReachesEveryNestedModule, the primary anti-drift
 // guard, discovers it with no list at all.
-var moduleNamespaces = map[string]bool{
-	"handlers": true,
-	"packs":    true,
-	"imagefmt": true,
-	"examples": true,
+func moduleNamespaces(t *testing.T) map[string]bool {
+	t.Helper()
+
+	// The literal half. Every entry here is a namespace that must stay
+	// checked even when the tree contains no module under it any more —
+	// which is exactly when the doc is most likely to be pointing at a
+	// module somebody just deleted. A DERIVED-only set would drop the
+	// namespace at that moment and go green on the very case this guard
+	// exists to catch, so these cannot simply be replaced by the walk.
+	//
+	// `examples` is such an entry rather than an oversight: no module has
+	// lived under an `examples/` directory since the 2026-08-15 rename
+	// (`docs/learn/examples/` has no go.mod), and it stays so that a
+	// surviving `examples/foo` reference in the doc is still reported.
+	ns := map[string]bool{
+		"handlers": true,
+		"packs":    true,
+		"imagefmt": true,
+		"examples": true,
+	}
+
+	// The derived half, unioned on top. This is what makes a namespace
+	// covered the day its first module lands, instead of the day somebody
+	// remembers to edit this list. `apps` went uncovered for exactly that
+	// reason — the rename created the namespace, the doc started naming
+	// modules in it, and the literal list was never touched (#316).
+	for _, mod := range discoverModules(t) {
+		if dir, _, nested := strings.Cut(mod, "/"); nested {
+			ns[dir] = true
+		}
+	}
+	return ns
 }
 
 // discoverModules walks the tree for nested modules the way the doc's loop
@@ -178,6 +205,7 @@ func TestCLAUDEMDNamesNoDeletedModule(t *testing.T) {
 		t.Fatalf("reading %s: %v", claudeMD, err)
 	}
 
+	namespaces := moduleNamespaces(t)
 	backticked := regexp.MustCompile("`([a-z][a-z0-9]*(?:/[a-z0-9][a-z0-9._-]*)+)`")
 	seen := map[string]bool{}
 	for _, m := range backticked.FindAllStringSubmatch(string(b), -1) {
@@ -186,7 +214,7 @@ func TestCLAUDEMDNamesNoDeletedModule(t *testing.T) {
 		// something else — `apps/gitui/gitui` is the binary that module
 		// builds, and the Traps section names it on purpose.
 		parts := strings.Split(ref, "/")
-		if len(parts) != 2 || !moduleNamespaces[parts[0]] || seen[ref] {
+		if len(parts) != 2 || !namespaces[parts[0]] || seen[ref] {
 			continue
 		}
 		// Only whole directory paths name a module; `prop/prop.go:33` and
@@ -249,4 +277,31 @@ func missingFrom(got, want []string) []string {
 		}
 	}
 	return missing
+}
+
+// TestModuleNamespacesCoversEveryLiveNamespace is the guard on the guard.
+// TestCLAUDEMDNamesNoDeletedModule can only check a reference whose first
+// path segment is a known namespace, so a namespace it has never heard of
+// makes it vacuous for every module underneath — and vacuous in the GREEN
+// direction, which is the one nobody investigates.
+//
+// That is not hypothetical. The 2026-08-15 rename moved the demo tree
+// under `apps/`, the doc names `apps/gitui` and `apps/wysiwyg`, and the
+// namespace list never learned the word — so the guard covered none of
+// the modules the doc actually names (#316).
+func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
+	ns := moduleNamespaces(t)
+	for _, mod := range discoverModules(t) {
+		dir, _, nested := strings.Cut(mod, "/")
+		if !nested {
+			continue // a top-level module has no namespace to cover
+		}
+		if !ns[dir] {
+			t.Errorf("module %q lives under namespace %q, which the "+
+				"deleted-module guard does not know — so every %s/* "+
+				"reference in %s goes unchecked and the guard stays green "+
+				"while the doc points readers at nothing.",
+				mod, dir, dir, claudeMD)
+		}
+	}
 }
