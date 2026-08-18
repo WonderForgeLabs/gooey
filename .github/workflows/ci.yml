@@ -519,9 +519,22 @@ jobs:
       # clients. Leaving a copy here would have made grpc the one module
       # this file still named.
 
+      # `--break-system-packages` is load-bearing on the self-hosted pools
+      # and was not needed on ubuntu-latest, which is the whole story: the
+      # runner image's Python is Debian-managed, so pip refuses to touch
+      # the system environment and exits 1 with PEP 668's
+      # "externally-managed-environment". Nothing is actually broken by
+      # overriding it — the container is destroyed at the end of the job,
+      # so there is no system Python here to protect, which is exactly the
+      # case the flag exists for.
+      #
+      # A venv would be the answer on a real machine, and is deliberately
+      # NOT used: Debian ships `venv` in a separate python3-venv package
+      # that this image is not known to carry, so it would trade a
+      # diagnosed failure for an undiagnosed one.
       - name: Python client smoke
         run: |
-          python3 -m pip install ./clients/python
+          python3 -m pip install --break-system-packages ./clients/python
           python3 -m unittest discover -s clients/python/tests -v
 
       - name: TypeScript clients typecheck
