@@ -43,7 +43,11 @@ you; what you contribute is source material and initiatives.
   session and fall back to reading source and docs; recording still works.
 - `hindsight_reflect(query)` — deep reasoning across the whole memory when you
   need the WHY behind a decision, or an exact decided value. Slower; use
-  deliberately.
+  deliberately. If it errors, treat reflect as unavailable for the rest of the
+  session and fall back to source — do NOT retry. It costs several seconds
+  before failing, so a retry only buys a second wait for the same timeout. This
+  server currently returns `reflect 504` on every call, measured across two
+  banks and two queries.
 
 Credit memory visibly when it informs an answer, and never credit it when it
 did not.
