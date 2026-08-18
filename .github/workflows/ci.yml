@@ -256,11 +256,37 @@ jobs:
         with:
           lfs: true
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: '**/go.sum'
+      # NO actions/setup-go. It installs the go.mod version and puts it on
+      # PATH, which looks right and is not: the runner image ships its own
+      # Go and exports GOROOT, and the `go` driver honours $GOROOT over its
+      # own location. So the 1.25.6 driver reached into the image's 1.26.6
+      # toolchain and every build died with
+      #
+      #   compile: version "go1.26.6" does not match go tool version "go1.25.6"
+      #
+      # on all 25 modules at once — green on ubuntu-latest, red on the pools,
+      # which is exactly the class of breakage moving runners introduces.
+      # forge's self-hosted Go jobs do not use setup-go either, for this
+      # reason ("Same runner image, so go/kustomize/helm are all present").
+      #
+      # Using the image's Go means the version is no longer pinned by
+      # go.mod, so it is CHECKED instead — see the step below. Losing the
+      # pin silently is the trade this refuses to make.
+      - name: Check the image's Go satisfies go.mod
+        run: |
+          set -u
+          have=$(go env GOVERSION)          # e.g. go1.26.6
+          want=$(go mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
+          echo "image toolchain: $have"
+          echo "go.mod requires: go$want"
+          # `go` refuses to build a module whose `go` directive is newer than
+          # the toolchain, so this only has to catch the case the toolchain
+          # would otherwise handle by silently downloading — and to make an
+          # image DOWNGRADE loud rather than a puzzling compile error.
+          printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C || {
+            echo "::error::runner image ships $have but go.mod requires go$want"
+            exit 1
+          }
 
       - name: Vet and test every ${{ matrix.mode }} module
         env:
@@ -369,10 +395,37 @@ jobs:
         with:
           lfs: true
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+      # NO actions/setup-go. It installs the go.mod version and puts it on
+      # PATH, which looks right and is not: the runner image ships its own
+      # Go and exports GOROOT, and the `go` driver honours $GOROOT over its
+      # own location. So the 1.25.6 driver reached into the image's 1.26.6
+      # toolchain and every build died with
+      #
+      #   compile: version "go1.26.6" does not match go tool version "go1.25.6"
+      #
+      # on all 25 modules at once — green on ubuntu-latest, red on the pools,
+      # which is exactly the class of breakage moving runners introduces.
+      # forge's self-hosted Go jobs do not use setup-go either, for this
+      # reason ("Same runner image, so go/kustomize/helm are all present").
+      #
+      # Using the image's Go means the version is no longer pinned by
+      # go.mod, so it is CHECKED instead — see the step below. Losing the
+      # pin silently is the trade this refuses to make.
+      - name: Check the image's Go satisfies go.mod
+        run: |
+          set -u
+          have=$(go env GOVERSION)          # e.g. go1.26.6
+          want=$(go mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
+          echo "image toolchain: $have"
+          echo "go.mod requires: go$want"
+          # `go` refuses to build a module whose `go` directive is newer than
+          # the toolchain, so this only has to catch the case the toolchain
+          # would otherwise handle by silently downloading — and to make an
+          # image DOWNGRADE loud rather than a puzzling compile error.
+          printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C || {
+            echo "::error::runner image ships $have but go.mod requires go$want"
+            exit 1
+          }
 
       - name: Proto lint
         run: go run github.com/bufbuild/buf/cmd/buf@v1.72.0 lint proto
