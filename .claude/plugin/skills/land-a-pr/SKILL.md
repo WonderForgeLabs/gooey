@@ -47,13 +47,19 @@ is the second net.
 
 ## The gate, as it actually behaves
 
-Run `gh pr checks <N>` and expect roughly: one `discover` job, three matrix
-legs named for their TIER and the number of modules in it — `vet (N
-modules)`, `test (N modules)`, `race (N modules)` — then `modules`,
-`contract`, `image`, plus `review / pr-review`, `review / merge-gate` and
-the `review-with-tracking` mirror. The counts are rendered from discovery
-at run time, so do not memorise them; they move whenever a module is
-added.
+Run `gh pr checks <N>` and expect roughly: one `discover` job, one matrix
+leg per NON-EMPTY tier, named for the tier and the number of modules in it
+— `vet (N modules)`, `test (N modules)`, `race (N modules)` — then
+`modules`, `contract`, `image`, plus `review / pr-review`,
+`review / merge-gate` and the `review-with-tracking` mirror.
+
+"One per non-empty tier" rather than "three" on purpose. `discover` builds
+the legs with `group_by(.mode)`, which cannot emit a tier nothing landed
+in, so three is today's count and not a structural guarantee — delete
+every `apps/*` module and the `vet` leg stops existing. The module counts
+move the same way, whenever a module is added. Nothing pins this file
+against `ci.yml`, so a number written here would go stale silently; read
+the run.
 
 A leg is a batch, so a red `race (N modules)` does not tell you WHICH
 module broke — the leg names them in its `::error::` annotations and step
