@@ -267,7 +267,7 @@ The walkthrough is the demo's whole claim in one recording: **the same
 board, driven from both sides**. A person types "Record the board" and
 "Ship the GIF" into the input and presses enter, and each lands in Todo.
 Then nobody touches the keyboard — an agent speaks to the board's own
-MCP endpoint (`http://127.0.0.1:7778/mcp`, shown in the mcp tab), calls
+MCP endpoint — the one the mcp tab is showing — and calls
 `set_value NewTitle` and `invoke_command AddTask`, and **"filed by an
 agent" appears in Todo**; a second call, `invoke_command TodoMoveRight`,
 carries "Write kanban demo" across into Doing. `ctrl+t` then flips the
