@@ -285,3 +285,168 @@ func parseLegs(t *testing.T, s string) []leg {
 	}
 	return out
 }
+
+// writeModule drops a minimal module at root/name with the given `go`
+// directive, for the workflow-step tests below.
+func writeModule(t *testing.T, root, name, goDirective string) {
+	t.Helper()
+
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(name)
+	files := map[string]string{
+		"go.mod":     "module example.com/" + base + "\n\ngo " + goDirective + "\n",
+		base + ".go": "package " + base + "\n",
+	}
+	for f, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestCIToolchainCheckFailsOnlyTheTooNewModule pins the step that replaced
+// actions/setup-go.
+//
+// Dropping setup-go means go.mod no longer PINS the toolchain, so this step
+// is the only thing left checking it — and it is order-sensitive in a way
+// that reads fine either way round: `sort -V -C` over (want, have) accepts
+// an image at least as new, and the same two lines swapped accepts an image
+// at most as new. Both are one line of shell, both look plausible, and the
+// wrong one passes every run on a tree where the two versions are equal —
+// which is every module in this repo today.
+//
+// So it is checked by running it against a module the image CANNOT build
+// and one it can, which is the only way the direction becomes observable.
+func TestCIToolchainCheckFailsOnlyTheTooNewModule(t *testing.T) {
+	script := runBlockOf(t, readFileString(t, ciWorkflow),
+		"Check the image's Go satisfies every module in this leg")
+
+	root := t.TempDir()
+	// Deliberately far below and far above any toolchain that could be
+	// running this test, so neither arm depends on which Go the machine has.
+	writeModule(t, root, "oldenough", "1.16.0")
+	writeModule(t, root, "fromthefuture", "1.99.0")
+
+	run := func(mods string) (string, error) {
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "MODE=test", "MODULES="+mods, "GOFLAGS=")
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	// The passing direction. Reverse the comparison and this arm fails,
+	// which is what makes running it worthwhile.
+	if out, err := run("oldenough"); err != nil {
+		t.Errorf("a module requiring go1.16.0 was rejected by a newer toolchain — "+
+			"the version comparison is inverted:\n%s", out)
+	}
+
+	// The failing direction, with a satisfiable module alongside so the test
+	// also shows the step is not simply rejecting everything.
+	out, err := run("oldenough fromthefuture")
+	if err == nil {
+		t.Fatalf("a module requiring go1.99.0 was accepted:\n%s", out)
+	}
+	if !strings.Contains(out, "::error::fromthefuture") {
+		t.Errorf("the step failed without naming the module that caused it. It "+
+			"runs per module precisely so the answer is not \"something in this "+
+			"tier\":\n%s", out)
+	}
+	if strings.Contains(out, "::error::oldenough") {
+		t.Errorf("the step named a module the toolchain can build:\n%s", out)
+	}
+}
+
+// TestCIDiscoveryFloorNamesTheConditionThatFailed pins #263's split. The
+// two conditions used to share one message that always said "no root
+// go.mod", including in the case the guard exists to catch. A single `||`
+// is an easy thing to restore and both messages are plausible English, so
+// the only way to know which one fires is to fire them.
+func TestCIDiscoveryFloorNamesTheConditionThatFailed(t *testing.T) {
+	script := runBlockOf(t, readFileString(t, ciWorkflow), "Discover modules")
+
+	// The step cross-checks its walk against `git ls-files`, so the fixture
+	// has to be a real index, not merely files on disk.
+	newRepo := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		for _, args := range [][]string{
+			{"init", "-q"},
+			{"config", "user.email", "ci@example.com"},
+			{"config", "user.name", "ci"},
+		} {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		return dir
+	}
+	stage := func(t *testing.T, dir string) {
+		t.Helper()
+		cmd := exec.Command("git", "add", "-A")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git add: %v\n%s", err, out)
+		}
+	}
+	run := func(t *testing.T, dir string) (string, error) {
+		t.Helper()
+		tmp := filepath.Join(dir, ".rt")
+		if err := os.MkdirAll(tmp, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"RUNNER_TEMP="+tmp,
+			"GITHUB_OUTPUT="+filepath.Join(dir, ".out"),
+			"GITHUB_STEP_SUMMARY="+filepath.Join(dir, ".sum"),
+		)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	t.Run("no root go.mod", func(t *testing.T) {
+		dir := newRepo(t)
+		writeModule(t, dir, "pkgs/one", "1.25.6")
+		stage(t, dir)
+
+		out, err := run(t, dir)
+		if err == nil {
+			t.Fatalf("discovery accepted a tree with no root go.mod:\n%s", out)
+		}
+		if !strings.Contains(out, "no root go.mod") {
+			t.Errorf("the message does not name the missing root:\n%s", out)
+		}
+	})
+
+	t.Run("root only", func(t *testing.T) {
+		dir := newRepo(t)
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"),
+			[]byte("module example.com/root\n\ngo 1.25.6\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		stage(t, dir)
+
+		out, err := run(t, dir)
+		if err == nil {
+			t.Fatalf("discovery accepted a tree with only the root module:\n%s", out)
+		}
+		// #263 exactly: this case must NOT claim the root is missing.
+		if strings.Contains(out, "no root go.mod") {
+			t.Errorf("the root go.mod is present and the failure still blames its "+
+				"absence — which sends whoever is debugging a broken walk looking "+
+				"for a file that is right there:\n%s", out)
+		}
+		if !strings.Contains(out, "and nothing else") {
+			t.Errorf("the message does not say the walk found nothing beyond the "+
+				"root:\n%s", out)
+		}
+	})
+}
