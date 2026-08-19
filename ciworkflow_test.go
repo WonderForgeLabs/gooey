@@ -1,14 +1,18 @@
 package gooey
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // CLAUDE.md's verify loop is pinned to the real module set by
@@ -282,4 +286,254 @@ func uniqSorted(xs []string) []string {
 		}
 	}
 	return out
+}
+
+// ciWorkflowYAML is the slice of the workflow these tests read structurally
+// rather than by regex. Same reasoning as lfscheckout_test.go's parser: the
+// shapes a line-scanner copes with are the ones this repo happens to write
+// today.
+type ciWorkflowYAML struct {
+	Jobs map[string]struct {
+		Name  string `yaml:"name"`
+		Steps []struct {
+			Name             string `yaml:"name"`
+			Run              string `yaml:"run"`
+			WorkingDirectory string `yaml:"working-directory"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
+
+func parseCIWorkflow(t *testing.T) ciWorkflowYAML {
+	t.Helper()
+
+	var wf ciWorkflowYAML
+	if err := yaml.Unmarshal([]byte(readFileString(t, ciWorkflow)), &wf); err != nil {
+		t.Fatalf("%s does not parse as YAML: %v", ciWorkflow, err)
+	}
+	return wf
+}
+
+// discoverScript is the `Discover modules` step's own shell body. Running
+// the workflow's script is the whole point of the tests below — one that
+// re-implements the classification tests the re-implementation.
+func discoverScript(t *testing.T, wf ciWorkflowYAML) string {
+	t.Helper()
+
+	for _, s := range wf.Jobs["discover"].Steps {
+		if s.Name == "Discover modules" {
+			return s.Run
+		}
+	}
+	t.Fatalf("%s has no `Discover modules` step in its `discover` job; every "+
+		"test that runs it would pass vacuously", ciWorkflow)
+	return ""
+}
+
+// execScript runs a step body in dir with the runner variables it expects,
+// and returns what it wrote to $GITHUB_OUTPUT, everything it printed, and
+// whether it succeeded. The error is RETURNED rather than fataled because
+// half the assertions here are about how the script fails.
+func execScript(t *testing.T, dir, script string) (map[string]string, string, error) {
+	t.Helper()
+
+	env := t.TempDir()
+	out := filepath.Join(env, "output")
+	if err := os.WriteFile(out, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The script under test is this repo's own committed workflow, and
+	// running it AS WRITTEN — same shell, same flags GitHub uses — is the
+	// property being checked. Paraphrasing it into argv would test the
+	// paraphrase.
+	cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"RUNNER_TEMP="+env,
+		"GITHUB_OUTPUT="+out,
+		"GITHUB_STEP_SUMMARY="+filepath.Join(env, "summary"),
+	)
+	b, err := cmd.CombinedOutput()
+
+	got := map[string]string{}
+	for _, line := range strings.Split(readFileString(t, out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			got[k] = v
+		}
+	}
+	return got, string(b), err
+}
+
+// runScript is execScript for the cases that expect it to work.
+func runScript(t *testing.T, script string) map[string]string {
+	t.Helper()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, log, err := execScript(t, cwd, script)
+	if err != nil {
+		t.Fatalf("the workflow's own script failed here: %v\n%s", err, log)
+	}
+	return got
+}
+
+// The root module comes out of the walk as `.`, and a leg named for it
+// rendered as `. (test)` — a bare dot in the Actions UI and in
+// `gh pr checks`, beside `grpc (race)` and `apps/gitui (vet)` (#263).
+//
+// Two halves, and the second is the one that makes this a test rather than
+// a restatement. Computing a readable label proves nothing if the job's
+// `name:` still interpolates `matrix.module`; and swapping the name over to
+// `matrix.label` while the STEPS also follow it would run every leg in a
+// directory called `root`, which does not exist. So: the label must be
+// display-only, and it must actually reach the display.
+func TestCIRootLegIsNamedRatherThanADot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the discovery step is a POSIX shell script over find/git/jq")
+	}
+	for _, bin := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s is not on PATH; this test runs the workflow's own script", bin)
+		}
+	}
+
+	wf := parseCIWorkflow(t)
+	script := discoverScript(t, wf)
+
+	var legs []struct {
+		Module string `json:"module"`
+		Mode   string `json:"mode"`
+		Label  string `json:"label"`
+	}
+	raw := runScript(t, script)["matrix"]
+	if err := json.Unmarshal([]byte(raw), &legs); err != nil {
+		t.Fatalf("the matrix the step emitted is not the JSON this test expects: %v\n%s", err, raw)
+	}
+	if len(legs) == 0 {
+		t.Fatal("the step emitted an empty matrix; every assertion below would be vacuous")
+	}
+
+	roots := 0
+	for _, leg := range legs {
+		switch {
+		case leg.Label == "":
+			t.Errorf("module %q has no label, so its leg renders as ` (%s)`", leg.Module, leg.Mode)
+		case leg.Module == ".":
+			roots++
+			if leg.Label != "root" {
+				t.Errorf("the root module's leg is labelled %q, want %q — a leg nobody "+
+					"can read is a leg nobody checks (#263)", leg.Label, "root")
+			}
+		case leg.Label != leg.Module:
+			t.Errorf("module %q is labelled %q; only the root gets a display name, "+
+				"because renaming any other leg hides which module failed", leg.Module, leg.Label)
+		}
+	}
+	if roots != 1 {
+		t.Errorf("the matrix has %d leg(s) for the root module, want exactly 1", roots)
+	}
+
+	// The display half. `name:` must consume the label…
+	if name := wf.Jobs["test"].Name; !strings.Contains(name, "matrix.label") {
+		t.Errorf("the test job's name is %q; it must interpolate matrix.label, or the "+
+			"label above is computed and never shown", name)
+	}
+	// …and every step must still consume the path, or the leg runs in a
+	// directory named `root` that does not exist.
+	steps := 0
+	for _, s := range wf.Jobs["test"].Steps {
+		if s.WorkingDirectory == "" {
+			continue
+		}
+		steps++
+		if !strings.Contains(s.WorkingDirectory, "matrix.module") {
+			t.Errorf("step %q runs in %q; the label is a display name and the leg must "+
+				"still work in matrix.module", s.Name, s.WorkingDirectory)
+		}
+	}
+	if steps == 0 {
+		t.Error("no step in the test job declares a working-directory, so nothing " +
+			"pins the label to display use only")
+	}
+}
+
+// The floor guard checks two things — that the root go.mod is present, and
+// that something else is too — and reported both with one message naming
+// only the first. The case it exists to catch is root-present-but-nothing-
+// else, so the message sent a reader hunting for a file sitting right there
+// (#263).
+//
+// Both arms are exercised against a real, synthetic repo rather than by
+// reading the message out of the YAML: a test that greps for two strings
+// passes just as well when neither branch can be reached.
+func TestCIDiscoveryFloorNamesTheConditionThatFailed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the discovery step is a POSIX shell script over find/git/jq")
+	}
+	for _, bin := range []string{"bash", "jq", "git", "diff"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s is not on PATH; this test runs the workflow's own script", bin)
+		}
+	}
+	script := discoverScript(t, parseCIWorkflow(t))
+
+	for _, tc := range []struct {
+		name    string
+		modules []string
+		want    string
+	}{
+		{
+			name:    "no root go.mod",
+			modules: []string{"sub/go.mod", "other/go.mod"},
+			want:    "no root go.mod among",
+		},
+		{
+			name:    "root and nothing else",
+			modules: []string{"go.mod"},
+			want:    "and nothing else",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := gitRepoWith(t, tc.modules)
+			_, log, err := execScript(t, dir, script)
+			if err == nil {
+				t.Fatalf("discovery accepted %v; the floor guard did not fire at all\n%s",
+					tc.modules, log)
+			}
+			if !strings.Contains(log, tc.want) {
+				t.Errorf("discovery rejected %v with a message that never says %q — "+
+					"the two conditions are reported as one, which is the bug (#263):\n%s",
+					tc.modules, tc.want, log)
+			}
+		})
+	}
+}
+
+// gitRepoWith builds a repo holding exactly these go.mod files, TRACKED,
+// because the step cross-checks its walk against `git ls-files` and a
+// disagreement fails for a different reason than the one under test.
+func gitRepoWith(t *testing.T, mods []string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, b)
+		}
+	}
+	git("init", "-q")
+	for _, m := range mods {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(m)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, m), []byte("module x\n\ngo 1.25\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "--", m)
+	}
+	return dir
 }

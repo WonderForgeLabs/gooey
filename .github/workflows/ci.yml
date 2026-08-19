@@ -90,9 +90,20 @@ jobs:
           # position: the list is sorted, and `apps/…` sorts before
           # `go.mod`, so testing mods[0] rejected a perfectly good tree
           # (found by running this script against the worktree).
-          if [ "${#mods[@]}" -lt 2 ] || ! grep -qxF 'go.mod' "$tmp/modules-found"; then
+          #
+          # Reported as two conditions because it IS two, and one message
+          # for both sends the reader after the wrong thing: the case this
+          # guard exists to catch is root-present-but-nothing-else, and
+          # blaming a missing root go.mod puts them hunting for a file
+          # that is right there (#263).
+          if ! grep -qxF 'go.mod' "$tmp/modules-found"; then
             printf '%s\n' "${mods[@]}"
-            echo "::error::discovery found ${#mods[@]} module(s) and no root go.mod — the checkout or the walk is broken"
+            echo "::error::discovery found no root go.mod among ${#mods[@]} module(s) — the checkout is broken, or the walk never reached the repo root"
+            exit 1
+          fi
+          if [ "${#mods[@]}" -lt 2 ]; then
+            printf '%s\n' "${mods[@]}"
+            echo "::error::discovery found the root go.mod and nothing else (${#mods[@]} module(s)) — the walk or its pruning is broken, since this repo has nested modules"
             exit 1
           fi
 
@@ -151,10 +162,21 @@ jobs:
               handlers/*|packs/*|mcp|grpc) mode='race' ;;
               *)                           mode='test' ;;
             esac
-            printf '%s\t%s\n' "$m" "$mode"
+            # `label` is a DISPLAY name and nothing else — the leg still
+            # runs in `$m`. The root module comes out of the walk as `.`,
+            # which renders in the Actions UI and in `gh pr checks` as
+            # `. (test)`: a bare dot beside `grpc (race)` and
+            # `apps/gitui (vet)`. #261's whole argument is that a module
+            # nobody can see is a module nobody checks, and a leg nobody
+            # can READ is the same defect one step later (#263).
+            case "$m" in
+              .) label='root' ;;
+              *) label=$m     ;;
+            esac
+            printf '%s\t%s\t%s\n' "$m" "$mode" "$label"
           done > "$tmp/modules-tiered"
 
-          matrix=$(jq -Rnc '[inputs | split("\t") | {module: .[0], mode: .[1]}]' < "$tmp/modules-tiered")
+          matrix=$(jq -Rnc '[inputs | split("\t") | {module: .[0], mode: .[1], label: .[2]}]' < "$tmp/modules-tiered")
           legs=$(jq length <<<"$matrix")
           # The JSON must describe every discovered module or this job is
           # lying about its own coverage — the failure mode being fixed,
@@ -183,7 +205,7 @@ jobs:
   # its tests, so it strictly subsumes build as an error detector.
   test:
     needs: discover
-    name: ${{ matrix.module }} (${{ matrix.mode }})
+    name: ${{ matrix.label }} (${{ matrix.mode }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
