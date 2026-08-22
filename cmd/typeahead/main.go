@@ -82,7 +82,7 @@ func main() {
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for a quit key")
 	flag.Parse()
 
-	enc, forced, err := demomain.EncoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor("-mode", *mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -96,7 +96,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		caps := term.Caps{Cols: 96, Rows: 30, CellW: 10, CellH: 20, Color: render.TrueColor}
+		// The one-shot path builds no App, so App.caps never runs and the
+		// cell size has to be stated here. Stated with the CONSTANTS the
+		// rule is defined by, though — cmd/pixels' equivalent already does,
+		// and a bare 10x20 beside it is the duplicated magic number #322
+		// exists to remove wearing a different hat.
+		caps := term.Caps{Cols: 96, Rows: 30, CellW: term.DefaultCellW, CellH: term.DefaultCellH, Color: render.TrueColor}
 		gooey.Compose(root, caps, enc).Flush(os.Stdout)
 		fmt.Println()
 		return

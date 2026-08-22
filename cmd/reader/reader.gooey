@@ -1,9 +1,11 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
   <Grid Rows="*,Auto">
-    <Grid Grid.Row="0" Cols="26,1*,2*">
+    <Grid Grid.Row="0" Cols="26,1*">
       <FeedList   Grid.Col="0" Feeds="{{.Feeds}}"     Selected="{{.SelFeed}}"  SelectionChanged="{{.ResetStory}}" Title="feeds"/>
-      <StoryList  Grid.Col="1" Stories="{{.Stories}}" Selected="{{.SelStory}}" Read="{{.Read}}" Open="{{.OpenStory}}" Title="stories"/>
-      <ReaderPane Grid.Col="2" Story="{{.Current}}"   Title="reader"/>
+        <Grid Grid.Row="0" Grid.Col="1" Rows="*,*">
+            <StoryList Grid.Row="0" Stories="{{.Stories}}" Selected="{{.SelStory}}" Read="{{.Read}}" Open="{{.OpenStory}}" Title="stories"/>
+            <ReaderPane Grid.Row="1" Story="{{.Current}}"   Title="reader"/>
+        </Grid>
     </Grid>
 
     <!-- Two elements share the bottom row, swapped by Visibility: the
