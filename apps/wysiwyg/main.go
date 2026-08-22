@@ -242,7 +242,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/mcp"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 func main() {
@@ -286,9 +285,13 @@ func main() {
 		if err != nil {
 			gooey.Exit(err)
 		}
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
+		// Just the protocol. "A forced protocol still needs a cell size"
+		// was a hand-written 10x20 here; App.caps owns that rule now and
+		// backfills term.DefaultCellW/H for a pinned non-nil encoder,
+		// having already defaulted Color to term.DetectColorDepth() — so
+		// the Caps this used to pass is exactly what it now computes
+		// (#322, TestPinnedProtocolNeedsNoHandWrittenCaps).
+		opts = append(opts, gooey.WithGraphics(enc))
 	}
 
 	root := editorFS()
