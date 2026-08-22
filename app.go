@@ -195,9 +195,24 @@ func WithQuitKeys(keys ...input.KeyEvent) Option {
 }
 
 // WithShutdown registers a graceful-shutdown hook run when SIGINT or
-// SIGTERM arrives, bounded by timeout. It runs on the UI goroutine with
-// the terminal still up, so it may touch properties; it must not block
-// forever, and past the timeout the app exits regardless.
+// SIGTERM arrives, bounded by timeout. Past the timeout the app exits
+// regardless — the hook is abandoned where it stands, still running.
+//
+// That bound is why the hook does NOT run on the UI goroutine, and the
+// consequence is the part worth reading twice: like any other background
+// work, it may not Get or Set a property. It reaches the graph through
+// App.Post, and the runtime drains those posts and paints one final
+// frame before the loop ends, so a farewell posted here does appear.
+//
+// Post and return; do not post and wait. The UI goroutine is parked
+// until the hook returns or the timeout fires, so nothing it posts can
+// run before then — a hook that blocks on its own post deadlocks until
+// the timeout unsticks it, and then the app exits without the work.
+//
+// Past the timeout the hook is on its own: quit, teardown and the
+// terminal restore proceed concurrently with it. A Post from there is
+// safe but pointless — the last drain has already happened — and any
+// other reach into the app is a race against its own shutdown.
 func WithShutdown(fn func(context.Context) error, timeout time.Duration) Option {
 	return func(o *options) { o.shutdown, o.shutTO = fn, timeout }
 }
@@ -461,9 +476,25 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 // gracefulExit runs the app's shutdown hook, bounded, and ends the loop.
-// The terminal is still up while the hook runs, so it may set properties
-// and even paint a farewell; what it may not do is outlast its timeout,
+// The terminal is still up while the hook runs, so a farewell it posts
+// is still paintable; what the hook may not do is outlast its timeout,
 // because whoever sent the signal has already stated their intent.
+//
+// The hook runs on its OWN goroutine, and it has to: the bound is a hard
+// one, so a hook that never returns must be abandoned, and there is no
+// abandoning a call made inline. That is the whole reason it may not
+// touch the property graph directly — see WithShutdown — and the reason
+// for the drain-and-paint below. Post is the hook's only legal route to
+// the graph, and a Post nothing ever drains is a farewell that never
+// happens: this function is the last place the UI goroutine is still
+// looking, because Quit stops the loop before it reaches another frame.
+//
+// Draining exactly once, here, is deliberate. It applies what the hook
+// posted while it was running, and a Set during that drain re-arms
+// needsFrame through the Composer's invalidate hook, so the frame that
+// follows paints precisely what the hook changed. Work posted BY that
+// drain does not get its own round — a shutdown path that could be
+// extended by the thing it is shutting down is not bounded.
 //
 // The signal is recorded so Run can report it: a program killed by a
 // signal should not exit 0, and applying the exit code is the caller's
@@ -484,6 +515,10 @@ func (a *App) gracefulExit(sig os.Signal) {
 			a.fail(err)
 		case <-ctx.Done():
 			a.fail(ctx.Err())
+		}
+		a.disp.Drain()
+		if a.needsFrame {
+			a.frame()
 		}
 	}
 	a.Quit()
