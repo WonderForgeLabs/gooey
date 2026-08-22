@@ -337,23 +337,40 @@ func quotedKeys(m map[string]bool) string {
 //
 // It is Xamarin's platform-specific XAML, applied to the axis that
 // actually varies in a terminal. A component's own tier check is binary —
-// pixels or cells (buttonchrome.go, colorpicker.go, image.go, panel.go all
-// ask `f.Graphics == nil || f.CellW <= 0 || f.CellH <= 0`) — and that is
-// the right shape for a component, because what changes between protocols
-// is not what the component IS. It is what the terminal can be asked for:
-//
-// All three conditions are load-bearing, and this sentence used to name
-// image.go while image.go asked only the first (issue #251): an encoder
-// scales to cols*CellW × rows*CellH, so a protocol pinned without
-// capabilities behind it asks for an image of zero pixels — and taking
-// the pixel branch is what stops halfblock from painting the cells
-// underneath, so the failure is a blank rectangle with no error anywhere.
+// pixels or cells, `f.Graphics == nil || f.CellW <= 0 || f.CellH <= 0` —
+// and that is the right shape for a component, because what changes
+// between protocols is not what the component IS. It is what the terminal
+// can be asked for, and that is where the protocols actually differ:
 //
 //   - sixel has NO ALPHA and 256 registers, so a translucent shadow is
 //     simply not expressible; a transparent pixel is one with no register;
 //   - kitty has real alpha AND image identity (graphics.IDEncoder), so a
 //     placement can be moved or deleted without resending pixels;
 //   - cells has neither, and every pixel component falls back to runes.
+//
+// All three conditions in that check are load-bearing: an encoder scales
+// to cols*CellW × rows*CellH, so a protocol pinned without capabilities
+// behind it asks for an image of zero pixels — and taking the pixel
+// branch is what stops halfblock from painting the cells underneath, so
+// the failure is a blank rectangle with no error anywhere.
+//
+// This paragraph used to end by NAMING the components that follow the
+// rule, and the census went stale twice in two directions (#260): first
+// listing image.go as compliant while image.go asked only the first
+// condition (#251), then correcting the conditions while keeping the
+// list, which promptly missed paint/shapes (#258). It was wrong a third
+// way nobody caught, because a list invites you to check membership
+// rather than content: two of the four files it named do not write that
+// expression at all, they write its De Morgan dual, and a third reaches
+// the cell size through locals. Derive it instead —
+//
+//	git grep -n -e 'Graphics == nil' -e 'Graphics != nil' -- '*.go'
+//
+// — and read what you get rather than counting it. Not every hit is a
+// tier decision: Composer.placementOps asks Graphics alone and is right
+// to, because it decides whether placements exist at all rather than
+// which tier to paint. That exception is why this is a grep for a reader
+// and not an assertion in a test.
 //
 // A layout that wants to spend those differently — a denser grid where
 // chrome is cheap, a plainer one where it is not — says so in a FILE

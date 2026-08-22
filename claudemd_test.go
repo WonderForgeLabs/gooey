@@ -38,11 +38,38 @@ const claudeMD = "CLAUDE.md"
 // for staleness by this secondary test, while
 // TestCLAUDEMDVerifyLoopReachesEveryNestedModule, the primary anti-drift
 // guard, discovers it with no list at all.
-var moduleNamespaces = map[string]bool{
-	"handlers": true,
-	"packs":    true,
-	"imagefmt": true,
-	"examples": true,
+func moduleNamespaces(t *testing.T) map[string]bool {
+	t.Helper()
+
+	// The literal half. Every entry here is a namespace that must stay
+	// checked even when the tree contains no module under it any more —
+	// which is exactly when the doc is most likely to be pointing at a
+	// module somebody just deleted. A DERIVED-only set would drop the
+	// namespace at that moment and go green on the very case this guard
+	// exists to catch, so these cannot simply be replaced by the walk.
+	//
+	// `examples` is such an entry rather than an oversight: no module has
+	// lived under an `examples/` directory since the 2026-08-15 rename
+	// (`docs/learn/examples/` has no go.mod), and it stays so that a
+	// surviving `examples/foo` reference in the doc is still reported.
+	ns := map[string]bool{
+		"handlers": true,
+		"packs":    true,
+		"imagefmt": true,
+		"examples": true,
+	}
+
+	// The derived half, unioned on top. This is what makes a namespace
+	// covered the day its first module lands, instead of the day somebody
+	// remembers to edit this list. `apps` went uncovered for exactly that
+	// reason — the rename created the namespace, the doc started naming
+	// modules in it, and the literal list was never touched (#316).
+	for _, mod := range discoverModules(t) {
+		if dir, _, nested := strings.Cut(mod, "/"); nested {
+			ns[dir] = true
+		}
+	}
+	return ns
 }
 
 // discoverModules walks the tree for nested modules the way the doc's loop
@@ -178,6 +205,7 @@ func TestCLAUDEMDNamesNoDeletedModule(t *testing.T) {
 		t.Fatalf("reading %s: %v", claudeMD, err)
 	}
 
+	namespaces := moduleNamespaces(t)
 	backticked := regexp.MustCompile("`([a-z][a-z0-9]*(?:/[a-z0-9][a-z0-9._-]*)+)`")
 	seen := map[string]bool{}
 	for _, m := range backticked.FindAllStringSubmatch(string(b), -1) {
@@ -186,7 +214,7 @@ func TestCLAUDEMDNamesNoDeletedModule(t *testing.T) {
 		// something else — `apps/gitui/gitui` is the binary that module
 		// builds, and the Traps section names it on purpose.
 		parts := strings.Split(ref, "/")
-		if len(parts) != 2 || !moduleNamespaces[parts[0]] || seen[ref] {
+		if len(parts) != 2 || !namespaces[parts[0]] || seen[ref] {
 			continue
 		}
 		// Only whole directory paths name a module; `prop/prop.go:33` and
@@ -249,4 +277,72 @@ func missingFrom(got, want []string) []string {
 		}
 	}
 	return missing
+}
+
+// TestModuleNamespacesCoversEveryLiveNamespace is the guard on the guard.
+// TestCLAUDEMDNamesNoDeletedModule can only check a reference whose first
+// path segment is a known namespace, so a namespace it has never heard of
+// makes it vacuous for every module underneath — and vacuous in the GREEN
+// direction, which is the one nobody investigates.
+//
+// That is not hypothetical. The 2026-08-15 rename moved the demo tree
+// under `apps/`, the doc names `apps/gitui` and `apps/wysiwyg`, and the
+// namespace list never learned the word — so the guard covered none of
+// the modules the doc actually names (#316).
+// The oracle is git's INDEX, not discoverModules. That distinction is the
+// whole test: `moduleNamespaces` derives half its set from
+// `discoverModules`, so auditing it with `discoverModules` would re-derive
+// the same answer by the same method and compare it against itself. Such a
+// test cannot fail, and a test that cannot fail is the exact defect this
+// one is about.
+//
+// git knows the tracked go.mod files by a completely separate mechanism,
+// which is the same two-source cross-check ci.yml's `discover` job runs
+// against its own walk — and it makes this falsifiable in both directions
+// that matter: drop the union from `moduleNamespaces` and `apps` goes
+// missing; break `discoverModules`' pruning and git still sees the module
+// the walk lost.
+func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
+	ns := moduleNamespaces(t)
+
+	out, err := exec.Command("git", "ls-files", "--", ":(glob)**/go.mod").Output()
+	if err != nil {
+		t.Fatalf("listing tracked go.mod files: %v", err)
+	}
+
+	checked := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// The MODULE's directory, then its first segment. Cutting the raw
+		// `git ls-files` path at the first "/" is wrong in a way that looks
+		// right: `grpc/go.mod` would yield "grpc" as a namespace, when grpc
+		// is a top-level module with no namespace at all. The guard's rule
+		// is the one to match — a nested module is exactly `namespace/name`,
+		// i.e. a two-segment directory.
+		modDir := path.Dir(line)
+		if modDir == "." {
+			continue // the root go.mod
+		}
+		parts := strings.Split(modDir, "/")
+		if len(parts) < 2 {
+			continue // a top-level module (grpc, mcp, paint) — no namespace
+		}
+		checked++
+		if !ns[parts[0]] {
+			t.Errorf("git tracks %q, so namespace %q has a live module — but the "+
+				"deleted-module guard does not know that namespace, so every "+
+				"%s/* reference in %s goes unchecked and the guard stays green "+
+				"while the doc points readers at nothing.",
+				line, parts[0], parts[0], claudeMD)
+		}
+	}
+
+	// Without this the test passes by checking nothing the day the pathspec
+	// stops matching — the vacuous-green failure it exists to prevent.
+	if checked == 0 {
+		t.Fatal("git listed no nested go.mod at all; the pathspec is wrong, not the tree")
+	}
 }
