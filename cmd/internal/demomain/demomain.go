@@ -25,7 +25,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/graphics"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // MarkupDir returns the directory holding demo cmd/<name>'s markup, where
@@ -81,7 +80,14 @@ func exists(dir, page string) bool {
 // those demos' package docs and --help output. Neither name is wrong for
 // the demo that chose it, so both are accepted here rather than breaking
 // either one's documented flag.
-func EncoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
+//
+// flagName is the flag the CALLER spells, written the way that demo
+// documents it ("-mode", "--graphics"), and it exists only for the error
+// text. The message used to hardcode `-mode`, so cmd/colors — whose flag
+// is `--graphics` — rejected a bad value by naming a flag that binary does
+// not have (#322). The same reasoning as the two spellings above: the
+// error belongs to the demo the user actually ran.
+func EncoderFor(flagName, mode string) (enc graphics.Encoder, forced bool, err error) {
 	switch mode {
 	case "":
 		return nil, false, nil // capabilities decide
@@ -94,24 +100,29 @@ func EncoderFor(mode string) (enc graphics.Encoder, forced bool, err error) {
 	case "halfblock", "cells":
 		return nil, true, nil
 	}
-	return nil, false, fmt.Errorf("unknown -mode %q: want kitty, sixel, iterm2, or halfblock (also spelled cells)", mode)
+	return nil, false, fmt.Errorf("unknown %s %q: want kitty, sixel, iterm2, or halfblock (also spelled cells)", flagName, mode)
 }
 
 // GraphicsOptions returns the App options implied by an EncoderFor
 // result. Callers append their own — cmd/pixels adds WithoutMouse — but
 // the graphics half is identical in every demo that has the flag.
 //
-// The assumed cell size is the part worth knowing. Forcing a protocol
-// skips the probe, and the probe is the only thing that can measure a
-// cell in pixels; sixel scales its output by that size, and a zero CellW
-// emits an empty image while Image skips the halfblock path entirely — a
-// black screen with no error. So a forced mode assumes a common 10x20.
+// The cell size a forced protocol needs is deliberately NOT set here.
+// `App.caps` owns that rule now (app.go): it defaults a pinned protocol's
+// metrics to term.DefaultCellW/H, and its doc block names these very
+// demos as the reason it exists. This function used to carry its own
+// 10x20 as well, which was the same rule in two places with nothing
+// keeping them equal — behaviour identical while both said 10x20, and
+// drift the day either changed (#322).
+//
+// One behavioural consequence, and it is the intended one: under a
+// halfblock/cells mode the encoder is nil, `App.pixelPlane` reports no
+// pixel plane, and no metrics are invented — so a demo that prints its
+// caps reports `cell 0x0`, the honest "nothing measured the terminal"
+// answer, instead of a 10x20 nothing measured.
 func GraphicsOptions(enc graphics.Encoder, forced bool) []gooey.Option {
 	if !forced {
 		return []gooey.Option{gooey.WithCapabilityProbe()}
 	}
-	return []gooey.Option{
-		gooey.WithGraphics(enc),
-		gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}),
-	}
+	return []gooey.Option{gooey.WithGraphics(enc)}
 }

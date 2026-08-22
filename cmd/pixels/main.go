@@ -66,7 +66,7 @@ func main() {
 	if want == "" {
 		want = *mode
 	}
-	enc, forced, err := demomain.EncoderFor(want)
+	enc, forced, err := demomain.EncoderFor("-mode", want)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -87,11 +87,18 @@ func main() {
 		return
 	}
 
-	// Probe, or pin the protocol along with the cell size a pinned one
-	// still needs — sixel scales by it, and a zero CellW emits a
-	// well-formed image of no pixels. That pair is identical in every
-	// demo with a --mode flag, so it lives in demomain; the only thing
-	// this demo adds is WithoutMouse.
+	// Probe, or pin the protocol. Just the protocol: "a pinned one still
+	// needs a cell size" was a hand-written 10×20 here and in two other
+	// demos, and App.caps owns that rule now — it defaults a pinned
+	// protocol's metrics, so nothing here has to know sixel scales by
+	// them (#322). What is left is identical in every demo with a --mode
+	// flag, so it lives in demomain; the only thing this demo adds is
+	// WithoutMouse.
+	//
+	// Under --mode=halfblock the encoder is nil, which is not a pixel
+	// plane at all, so no metrics are invented and the status line below
+	// reports `cell 0×0` — the honest answer when nothing measured the
+	// terminal.
 	opts := append([]gooey.Option{gooey.WithoutMouse()}, demomain.GraphicsOptions(enc, forced)...)
 
 	app := gooey.NewApp(markup.Page(dir, pageFile, ctx), opts...)

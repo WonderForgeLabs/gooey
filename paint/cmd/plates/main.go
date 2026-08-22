@@ -41,7 +41,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/paint/shapes"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/WonderForgeLabs/gooey/term"
 )
 
 const sceneCount = 3
@@ -88,14 +87,16 @@ func main() {
 
 	opts := []gooey.Option{gooey.WithoutMouse()}
 	if forced {
-		// A forced protocol still needs a cell size, and only a probe can
-		// know it. Passing one is not optional: an encoder with CellW at
-		// zero makes paint.Canvas refuse a canvas of nothing and the
-		// figures vanish with no error anywhere (issue #251 is the same
-		// bug reached from components.Image).
-		opts = append(opts,
-			gooey.WithGraphics(enc),
-			gooey.WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()}))
+		// A forced protocol still needs a cell size — an encoder with
+		// CellW at zero makes paint.Canvas refuse a canvas of nothing and
+		// the figures vanish with no error anywhere (issue #251 is the
+		// same bug reached from components.Image). What changed is WHERE
+		// that rule lives: App.caps backfills term.DefaultCellW/H for a
+		// pinned non-nil encoder, over a Color it has already defaulted
+		// to term.DetectColorDepth(), so the hand-written 10x20 Caps this
+		// used to pass is exactly what App.caps now computes (#322,
+		// TestPinnedProtocolNeedsNoHandWrittenCaps).
+		opts = append(opts, gooey.WithGraphics(enc))
 	} else {
 		opts = append(opts, gooey.WithCapabilityProbe())
 	}

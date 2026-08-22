@@ -112,7 +112,7 @@ func main() {
 	mode := flag.String("mode", "", "force graphics mode: kitty|sixel|iterm2|cells")
 	hold := flag.Duration("hold", 0, "exit after this duration instead of waiting for q")
 	flag.Parse()
-	enc, forced, err := demomain.EncoderFor(*mode)
+	enc, forced, err := demomain.EncoderFor("-mode", *mode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -389,10 +389,12 @@ func main() {
 	// pill in box runes instead. Both are correct; the caption says
 	// which one you are looking at.
 	//
-	// Pinning is all it takes: probe, or pin the protocol and the cell
-	// size the chrome is generated at. That pair is identical in every
-	// demo with a -mode flag, so it is demomain.GraphicsOptions rather
-	// than an option list spelled out here.
+	// Pinning is all it takes: probe, or pin the protocol. The cell size
+	// the chrome is generated at used to be pinned alongside it here;
+	// App.caps supplies it now, so this demo no longer carries its own
+	// copy of that rule (#322). What is left is identical in every demo
+	// with a -mode flag, so it is demomain.GraphicsOptions rather than an
+	// option list spelled out here.
 	app = gooey.NewApp(markup.Page(fsys, "toolkit.gooey", ctx), demomain.GraphicsOptions(enc, forced)...)
 	if *hold > 0 {
 		app.Every(*hold, app.Quit)
