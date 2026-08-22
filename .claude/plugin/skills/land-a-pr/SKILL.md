@@ -47,11 +47,24 @@ is the second net.
 
 ## The gate, as it actually behaves
 
-Run `gh pr checks <N>` and expect roughly: one `discover` job, one matrix leg
-per module named after it (`. (test)`, `mcp (race)`, `paint (test)`,
-`examples/wysiwyg (vet)`, …), `modules`, `contract`, `image`, plus
-`review / pr-review`, `review / merge-gate` and the `review-with-tracking`
-mirror.
+Run `gh pr checks <N>` and expect roughly: one `discover` job, one matrix
+leg per NON-EMPTY tier, named for the tier and the number of modules in it
+— `vet (N modules)`, `test (N modules)`, `race (N modules)` — then
+`modules`, `contract`, `image`, plus `review / pr-review`,
+`review / merge-gate` and the `review-with-tracking` mirror.
+
+"One per non-empty tier" rather than "three" on purpose. `discover` builds
+the legs with `group_by(.mode)`, which cannot emit a tier nothing landed
+in, so three is today's count and not a structural guarantee — delete
+every `apps/*` module and the `vet` leg stops existing. The module counts
+move the same way, whenever a module is added. Nothing pins this file
+against `ci.yml`, so a number written here would go stale silently; read
+the run.
+
+A leg is a batch, so a red `race (N modules)` does not tell you WHICH
+module broke — the leg names them in its `::error::` annotations and step
+summary, and keeps going past its first failure so the list is complete.
+Read the annotations, not just the check name.
 
 **Do not learn the leg names from this file.** They are derived from the module
 discovery, so they change when the tree does:
@@ -108,12 +121,18 @@ forge's reusable workflows and inherit `forge-runners-default-vsphere`
 (ADR-048), so when the homelab ARC listener is down they queue forever rather
 than failing — a job pending a long time with no log is that, not your PR.
 
+`ci.yml`'s own jobs are self-hosted too, and that is recent — they were
+`ubuntu-latest` until the pools took them over. So a pending `race (N
+modules)` with no log now has the same ARC-listener diagnosis as the review
+bots, where it used to be impossible.
+
 But the `review-with-tracking` mirror is `ubuntu-latest` ("Trivially cheap
 mirror step"), and so are **both** jobs of the `claude-make-follow-up-issues`
 bot recommended above, `remove-label` included. Those are unaffected by the
 homelab entirely, so the "ARC listener is down" diagnosis is simply wrong for
 them. `issue-intake` and `issue-reopen-audit` use the `-small-` and `-agent-`
-pools, not `-default-`. Derive it rather than remembering it:
+pools, and `ci.yml` spreads across `-small-`, `-default-` and `-medium-`.
+Derive it rather than remembering it:
 
 ```sh
 grep -rn 'runs-on\|uses: WonderForgeLabs' .github/workflows/

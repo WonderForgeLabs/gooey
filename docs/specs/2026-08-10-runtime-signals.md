@@ -36,7 +36,7 @@ and no widget sees it: it means "stop", and it is honored.
 
 | Signal | What the App does |
 | --- | --- |
-| `SIGINT`, `SIGTERM` | Run the shutdown hook (bounded by its timeout, terminal still up), quit the loop, restore the terminal via the normal teardown. `Run` returns `*SignalError`; `gooey.Exit` turns that into exit code 128+n (130 for INT, 143 for TERM). |
+| `SIGINT`, `SIGTERM` | Run the shutdown hook (bounded by its timeout, terminal still up) **on its own goroutine** — the bound is hard, and a hook that outlasts it is abandoned where it stands, which no inline call could be. It therefore reaches the property graph only through `App.Post`; the runtime drains those posts once and paints one final frame before quitting, so a farewell posted there does appear. Then quit the loop and restore the terminal via the normal teardown. `Run` returns `*SignalError`; `gooey.Exit` turns that into exit code 128+n (130 for INT, 143 for TERM). |
 | `SIGWINCH` | Re-query the size, `Composer.Resize` (new buffer, whole tree dirtied), repaint. Layout already runs every frame, so the tree re-measures itself. |
 | `SIGTSTP` | The classic dance: full restore (decoder joined), `signal.Reset`, re-raise at ourselves — the process stops there. Resumes at the next line on `SIGCONT`: discard any still-pending stop, re-register, re-acquire the terminal, full repaint. **Declined** where a stop cannot be honored (see below). |
 | `SIGCONT` | No handler, by design. Resumption IS returning from the re-raise inside the `SIGTSTP` handler. |

@@ -41,15 +41,30 @@ with the terminal still up, then `Run` returns `*SignalError` and
 `gooey.Exit` applies the shell convention — quietly 130 for INT, 143 for
 TERM; other errors print and exit 1.
 
-Two things about that hook are not yet what its API doc promises, both
-tracked in [#315](https://github.com/WonderForgeLabs/gooey/issues/315).
-It does **not** run on the UI goroutine — `gracefulExit` spawns it and
-waits on a channel, so the normal path is ordered, but a hook that
-outlasts its timeout is abandoned and then runs concurrently with quit
-and teardown. And it cannot **paint a farewell**: `gracefulExit` ends by
-quitting, the loop re-tests its stop condition before the next frame, and
-teardown neither composes nor flushes — so a property set in the hook
-never reaches the screen unless the hook frames and flushes by hand.
+The hook does **not** run on the UI goroutine, and that is forced by the
+bound rather than incidental: `gracefulExit` spawns it and waits on a
+channel, because a hook that never returns has to be *abandoned*, and
+there is no abandoning a call made inline. So the hook is background
+work like any other and obeys the same rule — it may not `Get` or `Set`
+a property. It reaches the graph through `App.Post`.
+
+Those posts do land. After the hook returns (or its timeout fires),
+`gracefulExit` drains the dispatcher once and paints one more frame if
+anything it applied asked for one, *then* quits. That is the whole
+mechanism behind "paint a farewell": the drain is the last moment the UI
+goroutine is still looking, since `Quit` stops the loop before it reaches
+another frame and teardown neither composes nor flushes.
+
+One shape to avoid: **post and return, never post and wait.** The UI
+goroutine is parked inside `gracefulExit` until the hook returns, so
+nothing the hook posts can run while it is still running — a hook that
+blocks on its own post is stuck until the timeout unsticks it, and then
+the app exits without having done the work.
+
+[#315](https://github.com/WonderForgeLabs/gooey/issues/315) is where this
+was two contradictions between the API doc and the code; the doc on
+`WithShutdown` now states the contract above, and
+`TestShutdownHookPaintsItsFarewell` pins the drain-and-paint half of it.
 
 ## The rest of the signal table
 

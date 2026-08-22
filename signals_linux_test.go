@@ -99,6 +99,82 @@ func TestShutdownHookIsBounded(t *testing.T) {
 	}
 }
 
+// A shutdown hook's farewell has to reach the terminal, and that is a
+// claim about the run loop rather than about the hook: the hook runs on
+// its own goroutine, so the only legal way for it to touch the graph is
+// App.Post — and a Post is worth nothing if the loop has already stopped
+// selecting. Draining and painting once more after the hook returns is
+// what makes "paint a farewell" true instead of documentation.
+//
+// The hook posts and returns rather than posting and waiting. Waiting
+// would deadlock by construction: the UI goroutine is parked inside
+// gracefulExit until the hook returns, so it cannot run the post.
+func TestShutdownHookPaintsItsFarewell(t *testing.T) {
+	guard(t, syscall.SIGTERM)
+	text := prop.NewSource("hi")
+	tty := newTestTTY(t)
+	var app *App
+	app = NewApp(Tree(&label{text: text}),
+		WithTerminal(tty.open),
+		WithShutdown(func(context.Context) error {
+			app.Post(func() { text.Set("goodbye") })
+			return nil
+		}, time.Second))
+
+	done := start(t, app)
+	tty.waitForFrame(t)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("SIGTERM did not end the run")
+	}
+
+	// The raw stream, not the screen: by the time Run returns the app has
+	// left the alternate screen, so the farewell is in the bytes that were
+	// written, not in the final rendering of them.
+	if !tty.waitForBytes(t, "goodbye") {
+		t.Error("the shutdown hook's farewell never painted")
+	}
+}
+
+// The timeout arm is not the give-up arm. A hook that says what it is
+// doing and then hangs on the work has already earned the frame it
+// asked for, so the drain-and-paint has to sit after the select rather
+// than on its successful branch — otherwise the one case where a user
+// most wants to see a message is the one that silently discards it.
+func TestAbandonedShutdownHookStillPaintsWhatItPosted(t *testing.T) {
+	guard(t, syscall.SIGTERM)
+	text := prop.NewSource("hi")
+	tty := newTestTTY(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var app *App
+	app = NewApp(Tree(&label{text: text}),
+		WithTerminal(tty.open),
+		WithShutdown(func(context.Context) error {
+			app.Post(func() { text.Set("draining") })
+			<-release // never, within the test's lifetime
+			return nil
+		}, 200*time.Millisecond))
+
+	done := start(t, app)
+	tty.waitForFrame(t)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a hanging shutdown hook blocked the exit past its timeout")
+	}
+	if !tty.waitForBytes(t, "draining") {
+		t.Error("what the hook posted before hanging never painted")
+	}
+}
+
 // SIGWINCH is the capability this adds rather than the safety: before
 // it, a gooey app's size was fixed at construction.
 func TestSIGWINCHResizesTheComposition(t *testing.T) {

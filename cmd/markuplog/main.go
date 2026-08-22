@@ -166,9 +166,11 @@ func main() {
 			logdata.Count(), app.Frames(), reloads, lastErr))
 	})
 
-	if err := app.Run(context.Background()); err != nil {
-		gooey.Exit(err)
-	}
+	// Same shape as cmd/logview's ending on purpose. The two are the same
+	// app built both ways, and docs/learn/howto/howto-keybindings.md tells
+	// readers to diff them — so every line that differs for a reason other
+	// than Go-vs-markup is noise in the comparison they were told to make.
+	gooey.Exit(app.Run(context.Background()))
 }
 
 type logPane struct {
