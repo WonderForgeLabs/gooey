@@ -88,6 +88,45 @@ func scanBindings(content string) ([]bindingSeg, error) {
 	return segs, nil
 }
 
+// errSnippetRunes bounds how much of the document an unterminated-
+// expression error quotes back.
+//
+// Both error paths below quote from the opening `{{` to the end of the
+// remaining content, and they have to: neither knows where the mistake
+// ends, which is exactly what is wrong with the input. Uncapped, an
+// early stray brace in a large page put the rest of the FILE inside a
+// message somebody reads while staring at one attribute (#232).
+const errSnippetRunes = 60
+
+// errSnippet quotes at most one line and at most errSnippetRunes of s,
+// and says how much it dropped. The result is already quoted — callers
+// use %s, not %q, or the elision note lands inside the quotes and reads
+// as part of the document.
+//
+// Two cuts, because they catch different mistakes: the length bound is
+// for a run-on single line, and the newline bound is for the ordinary
+// case, where an unterminated expression is a one-line error and the
+// line it sits on is the whole of the useful context.
+//
+// Cutting on RUNES rather than bytes is not fussiness. A byte cap lands
+// mid-character often enough in a document with any non-ASCII in it, and
+// what it quotes back is a replacement glyph the author never wrote —
+// an error message that misreports the text it is complaining about.
+func errSnippet(s string) string {
+	full := []rune(s)
+	kept := full
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		kept = []rune(s[:i])
+	}
+	if len(kept) > errSnippetRunes {
+		kept = kept[:errSnippetRunes]
+	}
+	if len(kept) == len(full) {
+		return fmt.Sprintf("%q", string(kept))
+	}
+	return fmt.Sprintf("%q… (+%d more characters)", string(kept), len(full)-len(kept))
+}
+
 // closingBraces finds the "}}" that ends a brace expression opened at
 // from, skipping over backtick literals so a brace inside one does not
 // terminate the expression early.
@@ -97,7 +136,7 @@ func closingBraces(content string, from int) (int, error) {
 		case content[i] == '`':
 			j := strings.IndexByte(content[i+1:], '`')
 			if j < 0 {
-				return 0, fmt.Errorf("markup: %q: unterminated ` literal", content[from-2:])
+				return 0, fmt.Errorf("markup: %s: unterminated ` literal", errSnippet(content[from-2:]))
 			}
 			i += j + 2
 		case strings.HasPrefix(content[i:], "}}"):
@@ -106,7 +145,7 @@ func closingBraces(content string, from int) (int, error) {
 			i++
 		}
 	}
-	return 0, fmt.Errorf("markup: %q: unterminated {{ — a brace expression must be closed with }}", content[from-2:])
+	return 0, fmt.Errorf("markup: %s: unterminated {{ — a brace expression must be closed with }}", errSnippet(content[from-2:]))
 }
 
 // classifyBinding decides what one brace expression is, and refuses to
