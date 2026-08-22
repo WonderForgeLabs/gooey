@@ -77,7 +77,9 @@ differ by a character.
 
 ```sh
 # Every nested module — the same discovery ci.yml uses to build its
-# per-module matrix.
+# matrix. CI packs the result into one leg PER TIER rather than one per
+# module; the discovery below is the half the two files share, and
+# TestCIWorkflowAndCLAUDEMDShareOneDiscovery pins that, not the packing.
 #
 # The `case` below IS the -race tier, character for character the one in
 # ci.yml, and TestCIWorkflowRaceTierMatchesCLAUDEMD fails if they drift —
@@ -168,11 +170,21 @@ that assertion is only half made. `.github/workflows/ci.yml` is the
 authority on what CI runs.
 
 One gap CI leaves you to cover by hand, and one it no longer does. CI now
-discovers every module and gives each its own matrix leg, so a core API
-change that breaks `apps/gitui` or any other consumer turns that leg
-red by name — but examples are **vetted, not tested** there, so their own
-suites (`apps/wysiwyg` has a dozen) run only in the loop above. The
-root module's tests still do not run under `-race` in CI. The secondary
+discovers every module, so a core API change that breaks `apps/gitui` or
+any other consumer is caught by name — in the failing leg's `::error::`
+annotations and step summary, which list every module that failed, not in
+the check name. Legs are packed one per TIER (`vet`, `test`, `race`), so
+the check that goes red is the tier's — `race (N modules)` — and the
+module is named inside it, not by it. (The N is rendered from discovery
+at run time; it is deliberately not written down here, for the reason
+the Verify section gives about counts in prose.) Examples are **vetted, not tested** there, so their own suites
+(`apps/wysiwyg` has a dozen) run only in the loop above. The root
+module's tests still do not run under `-race` in CI.
+
+CI schedules on the org's self-hosted vSphere pools, not hosted runners —
+which is why the packing matters. Those pools are shared with production
+workloads and do not autoscale, so a leg per module meant 25 pods per
+push. `.github/workflows/ci.yml` carries the per-job tier reasoning. The secondary
 guard is narrower than it reads, too: `TestCLAUDEMDNamesNoDeletedModule`
 checks only namespaces in its own `moduleNamespaces` list, which predates
 the `apps/` move and does not include it — so an app module named here and

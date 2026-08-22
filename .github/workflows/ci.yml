@@ -40,7 +40,9 @@ jobs:
   # `TestCLAUDEMDVerifyLoopReachesEveryNestedModule` pins the doc the same
   # way, so the workflow and the doc cannot drift apart either.
   discover:
-    runs-on: ubuntu-latest
+    # find + git ls-files + jq, no build toolchain and no Docker — the
+    # shape forge-runners-small-vsphere's 2Gi tier exists for.
+    runs-on: forge-runners-small-vsphere
     outputs:
       matrix: ${{ steps.mods.outputs.matrix }}
       count: ${{ steps.mods.outputs.count }}
@@ -90,9 +92,20 @@ jobs:
           # position: the list is sorted, and `apps/…` sorts before
           # `go.mod`, so testing mods[0] rejected a perfectly good tree
           # (found by running this script against the worktree).
-          if [ "${#mods[@]}" -lt 2 ] || ! grep -qxF 'go.mod' "$tmp/modules-found"; then
+          #
+          # TWO conditions, reported separately (#263). They used to share
+          # one `||` and one message that always said "no root go.mod",
+          # including in the case this guard actually exists to catch —
+          # root present, the walk finding too few. Someone debugging a
+          # broken `find` was sent looking for a file sitting right there.
+          if ! grep -qxF 'go.mod' "$tmp/modules-found"; then
             printf '%s\n' "${mods[@]}"
-            echo "::error::discovery found ${#mods[@]} module(s) and no root go.mod — the checkout or the walk is broken"
+            echo "::error::discovery found no root go.mod among ${#mods[@]} module(s) — the checkout is broken, or the walk never reached the repo root"
+            exit 1
+          fi
+          if [ "${#mods[@]}" -lt 2 ]; then
+            printf '%s\n' "${mods[@]}"
+            echo "::error::discovery found the root go.mod and nothing else (${#mods[@]} module(s)) — the walk or its pruning is broken, since this repo has nested modules"
             exit 1
           fi
 
@@ -154,28 +167,71 @@ jobs:
             printf '%s\t%s\n' "$m" "$mode"
           done > "$tmp/modules-tiered"
 
-          matrix=$(jq -Rnc '[inputs | split("\t") | {module: .[0], mode: .[1]}]' < "$tmp/modules-tiered")
+          # ONE LEG PER TIER, not per module. The tiering above is
+          # unchanged and still per module — this only decides how the
+          # legs are PACKED, and packing is not coverage. `group_by`
+          # cannot invent a mode nobody tiered or drop one somebody did,
+          # so every discovered module lands in exactly one leg by
+          # construction; the check below is what proves that rather than
+          # asserting it.
+          matrix=$(jq -Rnc '
+            [inputs | split("\t") | {module: .[0], mode: .[1]}]
+            | group_by(.mode)
+            | map({
+                mode:    .[0].mode,
+                count:   length,
+                modules: (map(.module) | join(" "))
+              })
+            | sort_by(.mode)
+          ' < "$tmp/modules-tiered")
           legs=$(jq length <<<"$matrix")
-          # The JSON must describe every discovered module or this job is
+
+          # The legs must COVER every discovered module or this job is
           # lying about its own coverage — the failure mode being fixed,
-          # one level up.
-          if [ "$legs" != "${#mods[@]}" ]; then
-            echo "::error::built $legs matrix leg(s) from ${#mods[@]} discovered module(s)"
+          # one level up. Counting legs WAS that check while there was a
+          # leg per module; under packing it is not, because `legs` is 3
+          # whether the tiers hold every module or one. Sum the per-leg
+          # counts instead — that is the quantity that still has to match.
+          # `// 0` so an empty matrix reads as 0 and trips this, rather
+          # than comparing null against a number and passing.
+          covered=$(jq '[.[].count] | add // 0' <<<"$matrix")
+          if [ "$covered" != "${#mods[@]}" ]; then
+            echo "::error::$legs matrix leg(s) cover $covered of ${#mods[@]} discovered module(s)"
             exit 1
           fi
 
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "count=$legs" >> "$GITHUB_OUTPUT"
+          # MODULES, not legs. The `modules` gate reads this and requires
+          # >= 2; while legs == modules the two were interchangeable, and
+          # emitting `legs` here would now clear that floor with three
+          # legs covering nothing at all.
+          echo "count=${#mods[@]}" >> "$GITHUB_OUTPUT"
           {
-            echo "### $legs modules discovered"
+            echo "### ${#mods[@]} modules discovered across $legs leg(s)"
             echo
-            jq -r '.[] | "- `\(.module)` — \(.mode)"' <<<"$matrix"
+            jq -r '.[] | "- **\(.mode)** (\(.count)): \(.modules)"' <<<"$matrix"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # One leg per discovered module, so a failure names its own module
-  # instead of arriving as "the test job is red". `fail-fast: false`
-  # because the useful output of a broken core API change is the full list
-  # of modules it broke, not the first one alphabetically.
+  # One leg per TIER — vet, test, race — each looping the modules
+  # discovery put in that tier. It used to be a leg per module, which read
+  # better (`apps/gitui (vet)` red by name) and cost 25 runner slots per
+  # push to say it. On the shared, non-elastic vSphere pool this repo now
+  # schedules on, that is 25 pods competing with production for a job
+  # whose slowest leg is two minutes.
+  #
+  # What the per-module shape actually bought was FAILURE ATTRIBUTION, and
+  # that is kept rather than traded: the loop below records every failing
+  # module to a file and fails the leg with all of them named, so a core
+  # API change still reports the full list of consumers it broke — which
+  # is more than `fail-fast: false` gave, since that stopped each leg at
+  # its first red step. What is genuinely lost is the module name in the
+  # CHECK name; it moves into the annotation, the ::group:: and the step
+  # summary. No branch ruleset requires these checks by name today, which
+  # is what makes the rename safe.
+  #
+  # `fail-fast: false` still matters at the tier level: a broken race leg
+  # must not cancel the vet leg that would have named a different set of
+  # modules.
   #
   # No `go build ./...` anywhere, including the root, where it used to
   # run: a main package writes an executable into the tree (this repo has
@@ -183,36 +239,157 @@ jobs:
   # its tests, so it strictly subsumes build as an error detector.
   test:
     needs: discover
-    name: ${{ matrix.module }} (${{ matrix.mode }})
-    runs-on: ubuntu-latest
+    name: ${{ matrix.mode }} (${{ matrix.count }} modules)
+    # Go compiles here, so NOT forge-runners-small-vsphere: its 2Gi cap
+    # comes with a firm rule against yarn/dotnet/docker-build/Go-compile
+    # work, and the documented exception for a small Go module requires
+    # measuring that module rather than assuming it. Measured for this
+    # repo: a cold-cache `go test -race` on a packs/temporal-* module
+    # peaks at ~790 MiB across the process tree, which would fit — but
+    # the legs below run EVERY module in a tier, and the number that
+    # matters is the largest one, not the one that got measured.
+    # default-vsphere (4Gi) is the smallest tier that clears the rule.
+    # Not medium/heavy: those are the tightly-capped pools reserved for
+    # docker build/push and one-pod-per-node e2e work, and promoting into
+    # them buys memory this does not need at the cost of a far smaller
+    # pool.
+    runs-on: forge-runners-default-vsphere
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
+      # `lfs: true` on EVERY checkout, enforced by TestEveryCheckoutFetchesLFS.
+      # Repacking the legs must not drop it: without the objects the tracked
+      # binaries arrive as pointer text, and a test that reads one fails with
+      # a decode error rather than anything that names LFS.
       - uses: actions/checkout@v4
         with:
           lfs: true
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: '**/go.sum'
+      # NO actions/setup-go. It installs the go.mod version and puts it on
+      # PATH, which looks right and is not: the runner image ships its own
+      # Go and exports GOROOT, and the `go` driver honours $GOROOT over its
+      # own location. So the 1.25.6 driver reached into the image's 1.26.6
+      # toolchain and every build died with
+      #
+      #   compile: version "go1.26.6" does not match go tool version "go1.25.6"
+      #
+      # on all 25 modules at once — green on ubuntu-latest, red on the pools,
+      # which is exactly the class of breakage moving runners introduces.
+      # forge's self-hosted Go jobs do not use setup-go either, for this
+      # reason ("Same runner image, so go/kustomize/helm are all present").
+      #
+      # Using the image's Go means the version is no longer pinned by
+      # go.mod, so it is CHECKED instead — see the step below. Losing the
+      # pin silently is the trade this refuses to make.
+      # Checks every module THIS LEG will build, not just the root one.
+      # A root-only check reads as sufficient and is not: the loop below
+      # `cd`s into each module in the tier, and a nested module is free to
+      # declare a stricter `go` directive than root. Today every go.mod and
+      # go.work in the tree pins the same version, so the two are
+      # indistinguishable — which is exactly why the weaker one would sit
+      # here unnoticed until the day they diverge, and then report
+      # "compatible" while a module several tiers away fails with the
+      # toolchain error this step exists to pre-empt.
+      - name: Check the image's Go satisfies every module in this leg
+        env:
+          MODE: ${{ matrix.mode }}
+          MODULES: ${{ matrix.modules }}
+        run: |
+          set -u
+          have=$(go env GOVERSION)          # e.g. go1.26.6
+          echo "image toolchain: $have"
 
-      - name: Vet
-        working-directory: ${{ matrix.module }}
-        run: go vet ./...
+          # Same deliberate unquoted expansion + `set -f` pairing as the
+          # build step below; see the comment there.
+          set -f
+          bad=0
+          for m in $MODULES; do
+            want=$(go -C "$m" mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
+            if [ -z "$want" ]; then
+              echo "::error::$m — could not read a go directive from its go.mod"
+              bad=1
+              continue
+            fi
+            # `go` refuses outright to build a module whose `go` directive is
+            # newer than the toolchain. Saying so up front, naming the module,
+            # beats discovering it partway through a tier.
+            if printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C; then
+              echo "  ok  $m needs go$want"
+            else
+              echo "::error::$m requires go$want but the runner image ships $have"
+              bad=1
+            fi
+          done
+          [ "$bad" -eq 0 ] || exit 1
 
-      - name: Test
-        if: matrix.mode == 'test'
-        working-directory: ${{ matrix.module }}
-        run: go test ./...
+      - name: Vet and test every ${{ matrix.mode }} module
+        env:
+          MODE: ${{ matrix.mode }}
+          MODULES: ${{ matrix.modules }}
+        run: |
+          set -u
 
-      - name: Test (race)
-        if: matrix.mode == 'race'
-        working-directory: ${{ matrix.module }}
-        run: go test -race ./...
+          # Failures go to a FILE, and the file is read at the end. The
+          # loop body cannot fail the job on its own — `exit 1` in there
+          # would stop at the first broken module and throw away the rest
+          # of the list, which is the whole reason the per-module matrix
+          # existed. Same idiom, and same reasoning, as CLAUDE.md's verify
+          # loop. Unlike that one this runs in a fresh container with no
+          # other agent in it, so RUNNER_TEMP needs no mktemp collision
+          # guard.
+          fails="${RUNNER_TEMP:-/tmp}/ci-fails"
+          : > "$fails"
+
+          # `for m in $MODULES` is a DELIBERATE unquoted expansion — the
+          # matrix carries a space-joined list and word-splitting is how
+          # it is read back. `set -f` is the other half: without it the
+          # same expansion also glob-expands, so a module path containing
+          # a `*` would silently become whatever matched in the workdir.
+          # Nothing below needs globbing, so it stays off for the rest of
+          # the step.
+          set -f
+          for m in $MODULES; do
+            echo "::group::$m ($MODE)"
+
+            if ! ( cd "$m" && go vet ./... ); then
+              # Matches the old shape: a module that fails vet is not then
+              # tested, because the vet step ran first and the job stopped.
+              echo "::error::$m — go vet failed"
+              printf '%s\n' "$m" >> "$fails"
+              echo "::endgroup::"
+              continue
+            fi
+
+            case "$MODE" in
+              # apps/* are VETTED BUT NOT TESTED; discovery's tier switch
+              # is the authority on which modules those are.
+              vet)  ;;
+              test) ( cd "$m" && go test ./... ) ||
+                      { echo "::error::$m — go test failed"; printf '%s\n' "$m" >> "$fails"; } ;;
+              race) ( cd "$m" && go test -race ./... ) ||
+                      { echo "::error::$m — go test -race failed"; printf '%s\n' "$m" >> "$fails"; } ;;
+              # An unrecognised mode means discovery emitted a tier this
+              # step does not implement, which would otherwise VET the
+              # modules and silently skip their tests.
+              *)    echo "::error::unknown mode '$MODE' — discovery and this step disagree"
+                    exit 1 ;;
+            esac
+
+            echo "::endgroup::"
+          done
+
+          if [ -s "$fails" ]; then
+            echo "::error::$MODE leg failed for: $(tr '\n' ' ' < "$fails")"
+            {
+              echo "### $MODE — failed"
+              echo
+              sed 's/^/- `/; s/$/`/' "$fails"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "### $MODE — all modules passed" >> "$GITHUB_STEP_SUMMARY"
 
   # A matrix job with no legs is SKIPPED, not failed, and `needs:` treats
   # a skipped dependency as satisfied-but-not-successful in ways that are
@@ -222,7 +399,8 @@ jobs:
   modules:
     needs: [discover, test]
     if: always()
-    runs-on: ubuntu-latest
+    # Three `echo`s and a `case`. Nothing smaller than small exists.
+    runs-on: forge-runners-small-vsphere
     steps:
       - name: All discovered modules passed
         env:
@@ -233,7 +411,7 @@ jobs:
           echo "discover: $DISCOVER_RESULT ($MODULE_COUNT modules)"
           echo "test:     $TEST_RESULT"
           [ "$DISCOVER_RESULT" = success ] || { echo "::error::discovery did not succeed"; exit 1; }
-          [ "$TEST_RESULT" = success ] || { echo "::error::the per-module matrix did not succeed"; exit 1; }
+          [ "$TEST_RESULT" = success ] || { echo "::error::the per-tier matrix did not succeed"; exit 1; }
           case "$MODULE_COUNT" in
             ''|*[!0-9]*) echo "::error::discovery reported no module count"; exit 1 ;;
           esac
@@ -244,16 +422,45 @@ jobs:
   # against main, regenerate-and-diff drift check, then each committed
   # client actually compiles/passes its smoke test.
   contract:
-    runs-on: ubuntu-latest
+    # Compiles Go (buf via `go run`), then `npm ci` + `tsc` for two TS
+    # clients and the Python client's suite — three toolchains, so the
+    # same 4Gi tier the module legs use rather than small's 2Gi.
+    runs-on: forge-runners-default-vsphere
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+      # NO actions/setup-go. It installs the go.mod version and puts it on
+      # PATH, which looks right and is not: the runner image ships its own
+      # Go and exports GOROOT, and the `go` driver honours $GOROOT over its
+      # own location. So the 1.25.6 driver reached into the image's 1.26.6
+      # toolchain and every build died with
+      #
+      #   compile: version "go1.26.6" does not match go tool version "go1.25.6"
+      #
+      # on all 25 modules at once — green on ubuntu-latest, red on the pools,
+      # which is exactly the class of breakage moving runners introduces.
+      # forge's self-hosted Go jobs do not use setup-go either, for this
+      # reason ("Same runner image, so go/kustomize/helm are all present").
+      #
+      # Using the image's Go means the version is no longer pinned by
+      # go.mod, so it is CHECKED instead — see the step below. Losing the
+      # pin silently is the trade this refuses to make.
+      # `contract` only ever builds the ROOT module (buf via `go run`, then
+      # the generated clients), so unlike the test legs a root-only check is
+      # the whole truth here.
+      - name: Check the image's Go satisfies go.mod
+        run: |
+          set -u
+          have=$(go env GOVERSION)          # e.g. go1.26.6
+          want=$(go mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
+          echo "image toolchain: $have"
+          echo "go.mod requires: go$want"
+          printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C || {
+            echo "::error::runner image ships $have but go.mod requires go$want"
+            exit 1
+          }
 
       - name: Proto lint
         run: go run github.com/bufbuild/buf/cmd/buf@v1.72.0 lint proto
@@ -336,9 +543,22 @@ jobs:
       # clients. Leaving a copy here would have made grpc the one module
       # this file still named.
 
+      # `--break-system-packages` is load-bearing on the self-hosted pools
+      # and was not needed on ubuntu-latest, which is the whole story: the
+      # runner image's Python is Debian-managed, so pip refuses to touch
+      # the system environment and exits 1 with PEP 668's
+      # "externally-managed-environment". Nothing is actually broken by
+      # overriding it — the container is destroyed at the end of the job,
+      # so there is no system Python here to protect, which is exactly the
+      # case the flag exists for.
+      #
+      # A venv would be the answer on a real machine, and is deliberately
+      # NOT used: Debian ships `venv` in a separate python3-venv package
+      # that this image is not known to carry, so it would trade a
+      # diagnosed failure for an undiagnosed one.
       - name: Python client smoke
         run: |
-          python3 -m pip install ./clients/python
+          python3 -m pip install --break-system-packages ./clients/python
           python3 -m unittest discover -s clients/python/tests -v
 
       - name: TypeScript clients typecheck
@@ -355,7 +575,11 @@ jobs:
     # skipped dependency would let the image publish on a run that
     # compiled nothing.
     needs: modules
-    runs-on: ubuntu-latest
+    # docker build/push is exactly what forge-runners-medium-vsphere is
+    # the tier for. It is one of the two tightly-capped pools, which is
+    # affordable here because this is a single job — and buildx against
+    # the 4Gi default tier is the case those caps exist to keep off it.
+    runs-on: forge-runners-medium-vsphere
     permissions:
       contents: read
       packages: write

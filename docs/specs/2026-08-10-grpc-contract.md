@@ -439,8 +439,8 @@ tsconfig.json`, lockfiles committed). All static commands; buf always
 runs as `go run …buf@v1.72.0`.
 
 The `grpc` module's own vet/test used to run here too. It does not any
-more: `ci.yml` discovers every `go.mod` in the tree and gives each one
-a matrix leg (`grpc` still under `-race`), so `contract` is now purely
+more: `ci.yml` discovers every `go.mod` in the tree and covers each one
+in a matrix leg (`grpc` still under `-race`), so `contract` is now purely
 about the wire contract. Keeping a copy here would have made `grpc` the
 one module that file still named by hand.
 
