@@ -51,3 +51,65 @@ func TestPinnedProtocolGetsACellSize(t *testing.T) {
 		})
 	}
 }
+
+// Two hosts pinned a protocol and then hand-wrote the Caps that pinning
+// implies — apps/wysiwyg and paint/cmd/plates both passed
+// `WithCaps(term.Caps{CellW: 10, CellH: 20, Color: term.DetectColorDepth()})`
+// beside their `WithGraphics(enc)`. Dropping those is only safe if
+// App.caps computes the same thing. CellW is the half already pinned
+// above; this is the other half, the Color those hosts supplied by hand.
+//
+// The environment is neutralized first, and that is the whole reason this
+// test can fail at all. render.TrueColor is the ZERO value of ColorDepth,
+// so on any developer machine reporting COLORTERM=truecolor — this repo's
+// author's, and mine — `term.Caps{}.Color`, `DetectColorDepth()` and a
+// caps() that had stopped defaulting Color are three indistinguishable
+// zeros. Written without the Setenv block, this test passed under a
+// mutation that deleted the very default it exists to pin.
+func TestPinnedProtocolNeedsNoHandWrittenCaps(t *testing.T) {
+	depth256(t)
+	if term.DetectColorDepth() == 0 {
+		t.Fatal("the environment still reports the zero ColorDepth, so every " +
+			"assertion below would hold whether or not caps() defaults Color")
+	}
+	byHand := term.Caps{CellW: term.DefaultCellW, CellH: term.DefaultCellH, Color: term.DetectColorDepth()}
+
+	caps := func(opts ...Option) term.Caps {
+		t.Helper()
+		a := NewApp(Tree(&label{}), opts...)
+		a.cols, a.rows = 80, 24
+		return a.caps()
+	}
+
+	// Compared as whole structs, so a field added to term.Caps later
+	// cannot be silently dropped from the no-caps path.
+	got := caps(WithGraphics(graphics.Sixel{}))
+	want := caps(WithGraphics(graphics.Sixel{}), WithCaps(byHand))
+	if got != want {
+		t.Errorf("pinning a protocol alone gives %+v; spelling the caps out gives "+
+			"%+v. A host that drops its hand-written Caps must get the same "+
+			"composition, or #322 moved a rule and changed behaviour with it.", got, want)
+	}
+}
+
+// depth256 pins DetectColorDepth to a NON-ZERO answer by emptying every
+// variable its ladder consults (term/color.go: colorDepthFrom and
+// knownTrueColorTerminal) and then declaring a 256-color TERM.
+//
+// Enumerated rather than derived, which this repo normally refuses — but
+// the list is the ladder's own, three functions away in the same repo, and
+// the failure mode is loud: a variable missed here leaves DetectColorDepth
+// at TrueColor, which is zero, which the caller's own guard rejects.
+func depth256(t *testing.T) {
+	t.Helper()
+
+	for _, v := range []string{
+		"COLORTERM",
+		"WT_SESSION", "KITTY_WINDOW_ID", "ALACRITTY_SOCKET", "ALACRITTY_WINDOW_ID",
+		"KONSOLE_VERSION", "WEZTERM_EXECUTABLE", "GHOSTTY_RESOURCES_DIR",
+		"TERM_PROGRAM", "LC_TERMINAL", "VTE_VERSION",
+	} {
+		t.Setenv(v, "")
+	}
+	t.Setenv("TERM", "xterm-256color")
+}
