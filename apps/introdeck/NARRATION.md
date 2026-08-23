@@ -27,12 +27,16 @@ that boundary. If one is missing the island says so in red — visible, on scree
 before the take rather than during it:
 
 ```sh
-(cd ../intro       && go build -o intro .)
-(cd ../introtarget && go build -o introtarget .)
-(cd ../scene       && go build -o scene .)
-(cd ../soundboard  && go build -o soundboard .)
-(cd ../synth       && go build -o synth .)
+sh guests.sh
 ```
+
+That used to be five hand-written `go build` lines here, which is a list of
+the deck's guests kept somewhere other than the deck. It rotted exactly as
+those do: on one machine all four guests were missing and three slides would
+have opened red. `guests.sh` derives the set from the `Cmd=` attributes
+below, so a beat that hosts a new app is built without anyone editing this
+paragraph — and `intro` is deliberately NOT in it, because beat 3.2's
+`watchgo.sh` compiles that one itself, which is the whole point of the beat.
 
 Beat 3.2 and beat 3.5 both edit a **tracked** file — `apps/intro/main.go`
 and `counter.gooey` — because a copy would not be the program the beat claims to
@@ -245,7 +249,7 @@ agreed on was text.
        per frame, which is pinned by a damage-count test rather than
        claimed in a comment.
 
-       Build it first:  (cd ../scene && go build -o scene .) -->
+       Build it first:  sh guests.sh -->
   <Border Grid.Row="1" Title="scene · a gooey app, hosted inside a gooey app" Style="island">
     <Terminal Cmd="cd ../scene &amp;&amp; ./scene -fps 24"/>
   </Border>
@@ -293,7 +297,7 @@ presenting from. We'll get to that.
        on a terminal with sixel, halfblocks on one without, no branch in
        the program.
 
-       Build it first:  (cd ../soundboard && go build -o soundboard .) -->
+       Build it first:  sh guests.sh -->
   <Border Grid.Row="1" Title="soundboard · a gooey app, hosted" Style="island">
     <Terminal Cmd="cd ../soundboard &amp;&amp; ./soundboard -bpm 124"/>
   </Border>
@@ -339,7 +343,7 @@ half-blocks. The program doesn't know which.
        real FFT of the samples going to the speaker, not an animation
        of one.
 
-       Build it first:  (cd ../synth && go build -o synth .)
+       Build it first:  sh guests.sh
 
        Click the island to capture input, then z through m play;
        ctrl+alt+any key gives the keyboard back to the deck. -->
