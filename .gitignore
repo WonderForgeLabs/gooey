@@ -7,6 +7,11 @@ __pycache__/
 apps/kanban/worker/.venv/
 # same for the dynamic-activities companion (main.go auto-selects it too)
 apps/dynamic-activities/.venv/
+# The pre-rename paths, left on disk by the 2026-08-15 apps/ move
+# (docs/specs/2026-08-15-apps-rename.md). Nothing tracked lives under
+# examples/ any more, but the venvs the old layout built are still there
+# and a `git add -A` will stage every one of their 2707 files.
+examples/*/.venv/
 clients/ts/*/dist/
 clients/python/build/
 clients/python/dist/
