@@ -282,6 +282,17 @@ func (a *App) Frames() int { return a.frames }
 // many components actually repainted, not how many exist.
 func (a *App) PaintedLastFrame() int { return a.painted }
 
+// LayoutFault reports a component tree deeper than MaxLayoutDepth, or
+// nil. It is how a running app learns that a subtree was too deep to
+// walk — the case that used to be a stack overflow, which no app could
+// report because the process was already gone.
+func (a *App) LayoutFault() *LayoutFault {
+	if a.comp == nil {
+		return nil
+	}
+	return a.comp.LayoutFault()
+}
+
 // FlushBytes is what the most recent frame cost on the wire. It is the
 // other half of the damage number: PaintedLastFrame says how little was
 // recomposed, this says how little was sent.

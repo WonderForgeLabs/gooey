@@ -195,11 +195,15 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 	}
 	root.Measure(Size{caps.Cols, caps.Rows})
 	root.Arrange(Rect{0, 0, caps.Cols, caps.Rows})
-	renderTree(root, f)
+	renderTree(root, f, 0)
 	return f
 }
 
-func renderTree(w Component, f *Frame) {
+func renderTree(w Component, f *Frame, depth int) {
+	if depth > MaxLayoutDepth {
+		noteLayoutFaultAt("Render", w, depth)
+		return
+	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return // collapsed subtrees paint nothing at all
 	}
@@ -215,7 +219,7 @@ func renderTree(w Component, f *Frame) {
 	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			renderTree(ch, f)
+			renderTree(ch, f, depth+1)
 		}
 	}
 }
