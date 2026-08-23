@@ -15,12 +15,23 @@ type Adornment interface {
 	// must expose bounds (embed gooey.Base). An anchor that leaves the
 	// tree, turns non-visible, or loses its bounds takes the adornment
 	// down with it.
+	//
+	// A FREE adornment (one implementing gooey.PointerFollower) is never
+	// asked: it is placed against the pointer, so returning nil is the
+	// whole of its contribution here.
 	Anchor() gooey.Component
-	// Place returns the bounds the adornment wants, given the anchor's
-	// arranged bounds and the layer's own (the screen, when the layer is
-	// hosted at the root). Placement policy — flip-to-fit, clamping,
-	// which edge to hug — belongs to the adornment; the layer only asks.
-	Place(anchor, layer gooey.Rect) gooey.Rect
+	// Place returns the bounds the adornment wants, given the rect it is
+	// pinned to and the layer's own (the screen, when the layer is hosted
+	// at the root). Placement policy — flip-to-fit, clamping, which edge
+	// to hug — belongs to the adornment; the layer only asks.
+	//
+	// `against` is the ANCHOR's arranged bounds for an ordinary
+	// adornment, and the POINTER's 1x1 cell for one that implements
+	// gooey.PointerFollower. One method rather than two, because the
+	// policy is identical either way and PlacePopup already speaks rects:
+	// a tooltip that flips above its anchor and a ghost that flips above
+	// the pointer are the same three lines.
+	Place(against, layer gooey.Rect) gooey.Rect
 }
 
 // orphanable is how the layer tells an adornment it was dropped because
@@ -69,6 +80,35 @@ type PersistentAdornment interface {
 // adornments dropped in the same Arrange, and the restore pass repaints
 // what they covered. The reachability walk runs only while adornments
 // are up.
+//
+// FREE adornments skip all of that. A free adornment has no component
+// anchor at all: it implements gooey.PointerFollower and is placed
+// against the POINTER instead (issue #177). Drag ghosts, drop indicators, marquee rectangles and a
+// crosshair inside a Canvas all want this — they exist only for the
+// length of a gesture, and there is no component whose bounds describe
+// where they go.
+//
+// Two consequences, and both are the point:
+//
+//   - A free adornment is exempt from the anchor sweep ENTIRELY. Anchor
+//     is never called and never has to return anything real; nothing
+//     can orphan it, because there is no anchor to be gone. Its owner
+//     put it up and its owner takes it down — which is the same opt-out
+//     PersistentAdornment makes, one step further.
+//   - Its Place receives the pointer's 1x1 cell as `against`. That is
+//     why the parameter is a rect and not a component: PlacePopup and
+//     every hand-written Place already work on rects, so pointing at a
+//     cell and pointing at a component share one geometry vocabulary.
+//     A ghost offsets from it, a marquee spans from its own origin to
+//     it, a crosshair centres on it.
+//
+// Whether it is following right now is FollowsPointer's answer, asked
+// every frame. False — the gesture ended, the ghost is parked — arranges
+// it to a zero rect: still there, still subscribed, occupying and
+// painting nothing, and costing nothing per motion. See
+// gooey.PointerFollower for why that split is what bounds the wakeup
+// cost, and Composer.armPointer for what makes a motion schedule a frame
+// at all.
 type AdornmentLayer struct {
 	gooey.Base
 	adorns    []Adornment
@@ -138,9 +178,30 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 	if l.mgr != nil {
 		root = l.mgr.Root()
 	}
+	pointer, seen := gooey.Rect{}, false
+	if l.mgr != nil {
+		// A plain read: Arrange runs outside any evaluation, so this
+		// records no dependency and the layer's own node stays clean
+		// through a whole drag. The wake comes from the follower's
+		// observer, not from here.
+		pointer, seen = l.mgr.Pointer()
+	}
 	live := l.adorns[:0]
 	dropped := false
 	for _, a := range l.adorns {
+		// Free adornments first, and BEFORE Anchor is consulted: a
+		// pointer-followed adornment has no anchor, so every question
+		// below — bounds, reachability, orphaning — is one it cannot
+		// answer and must not be asked.
+		if p, free := a.(gooey.PointerFollower); free {
+			live = append(live, a)
+			if seen && p.FollowsPointer() {
+				gooey.ArrangeChild(a, a.Place(pointer, b))
+			} else {
+				gooey.ArrangeChild(a, gooey.Rect{})
+			}
+			continue
+		}
 		anchor := a.Anchor()
 		ab, ok := anchorBounds(anchor)
 		if !ok || (root != nil && !visiblyReachable(root, anchor)) {
