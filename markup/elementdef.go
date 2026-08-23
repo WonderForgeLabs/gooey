@@ -102,6 +102,13 @@ type ElementDef struct {
 	// element: the attributes, body, children and slots that make one
 	// worth looking at the moment it appears.
 	//
+	// Every element a palette can OFFER needs one, and that includes an
+	// element a host registers through Context.Elements rather than
+	// building in. TestEveryElementDeclaresASeed walks the builtin
+	// registry alone, so a registered element that declares no Seed goes
+	// red nowhere: the requirement reaches it, the enforcement does not,
+	// and holding up that half is the registering host's job.
+	//
 	// It is NOT AttrSpec.Default, and the difference is the whole reason
 	// this field exists. Default is the value equivalent to OMITTING an
 	// attribute — Width's is "0" — and TestDeclaredDefaultsRenderIdentically
