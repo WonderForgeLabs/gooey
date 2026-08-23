@@ -90,12 +90,12 @@ type ItemsView struct {
 	rows    []*itemRow
 	kids    []gooey.Component
 
-	// Wheel-velocity state: when the last notch arrived, which way it
-	// went, and how many have arrived back-to-back. Plain fields, not
-	// properties — a notch's bookkeeping must not be damage.
-	wheelAt  time.Time
-	wheelDir int
-	wheelRun int
+	// sc is the shared scroll model: the clamped offset, the compared Set,
+	// and the wheel-velocity tiers. The view keeps Scroll and Now as its
+	// public spelling and hands them down in scroller() — the fields are
+	// the API, this is the implementation. It is live even in SELECTION
+	// mode, where Offset stays nil and only WheelStep is used.
+	sc Scroller
 
 	structure       func()
 	pressedSelected bool
@@ -443,68 +443,31 @@ func (v *ItemsView) selection(n int) int {
 // Scroll offset rather than by a selection.
 func (v *ItemsView) scrolls() bool { return v.Selected == nil && v.Scroll != nil }
 
+// scroller hands the public fields down to the shared model before every
+// use. It is re-synced rather than assigned once because both fields are
+// exported: an app is free to re-point Scroll or install a fake clock
+// after the view is built, and a value captured at construction would
+// silently ignore it.
+func (v *ItemsView) scroller() *Scroller {
+	v.sc.Offset, v.sc.Now = v.Scroll, v.Now
+	return &v.sc
+}
+
 // offset is the clamped scroll offset. Like selection, what a Get here
 // means is decided by the call site.
-func (v *ItemsView) offset(n int) int {
-	return clamp(v.Scroll.Get(), 0, max(0, n-v.visible))
-}
+func (v *ItemsView) offset(n int) int { return v.scroller().At(n, v.visible) }
 
 // scrollBy moves the window and reports the gesture consumed. The Set is
 // compared so holding a key at either end stays damage-free.
-func (v *ItemsView) scrollBy(d, n int) bool {
-	if off := clamp(v.offset(n)+d, 0, max(0, n-v.visible)); off != v.Scroll.Get() {
-		v.Scroll.Set(off)
-	}
-	return true
-}
+func (v *ItemsView) scrollBy(d, n int) bool { return v.scroller().By(d, n, v.visible) }
 
 // ---- input ----
 
-// Wheel velocity. One notch is one row — the precision that lets a slow
-// wheel touch every item — until notches arrive fast enough to read as a
-// continuous gesture, at which point the step scales with the LIST, so a
-// flick crosses a big collection in a bounded number of notches instead
-// of the fixed lines-per-notch that made every flick overshoot to the
-// end. The tiers are entered by run length, not by one fast interval, so
-// the first notches of any gesture are always precise.
-const (
-	// wheelFastGap is the longest interval that still sustains a run;
-	// terminals deliver a flick's notches a few ms apart, a deliberate
-	// slow roll hundreds of ms apart.
-	wheelFastGap = 120 * time.Millisecond
-	// wheelFastRun and wheelFlickRun are the run lengths entering the
-	// fast (~5% of the list) and flick (~15%) tiers.
-	wheelFastRun  = 3
-	wheelFlickRun = 9
-)
-
-func (v *ItemsView) now() time.Time {
-	if v.Now != nil {
-		return v.Now()
-	}
-	return time.Now()
-}
-
 // wheelStep is how many rows this notch moves, given the recent event
-// rate. A pause longer than wheelFastGap or a change of direction resets
-// the run to the precise tier. The percentage tiers are floored (2 and 5
-// rows) so they outrun the base tier even on a short list.
-func (v *ItemsView) wheelStep(n, dir int) int {
-	t := v.now()
-	if dir == v.wheelDir && !v.wheelAt.IsZero() && t.Sub(v.wheelAt) <= wheelFastGap {
-		v.wheelRun++
-	} else {
-		v.wheelRun = 0
-	}
-	v.wheelAt, v.wheelDir = t, dir
-	switch {
-	case v.wheelRun >= wheelFlickRun:
-		return max(5, n*15/100)
-	case v.wheelRun >= wheelFastRun:
-		return max(2, n*5/100)
-	}
-	return 1
-}
+// rate. The velocity tiers themselves live on Scroller: a wheel notch
+// means the same thing over a list as it does over an article, and the
+// two panes must not drift apart in feel because the logic was copied.
+func (v *ItemsView) wheelStep(n, dir int) int { return v.scroller().WheelStep(n, dir) }
 
 func (v *ItemsView) HandleKey(ev input.KeyEvent) bool {
 	n := v.count()

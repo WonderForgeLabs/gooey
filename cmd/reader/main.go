@@ -16,8 +16,17 @@
 //	enter     open story (marks read)   a           add feed URL (writes feeds.opml)
 //	q         quit
 //
+// In the reader pane those same keys SCROLL the article rather than move
+// a cursor, with pgup/pgdn by a screen and home/end for the ends. The
+// pane keeps its own line layout and shows a window onto it; the offset
+// lives here on the page so that opening a story can rewind it. Why that
+// is a pane-local viewport rather than a framework scrolling container is
+// docs/specs/2026-08-23-scrolling.md.
+//
 // The mouse is additive, never required: click a pane to focus it, click
-// a row to select it, click it again to open it, wheel to move.
+// a row to select it, click it again to open it, wheel to move — and the
+// wheel scrolls the article in the reader, at the same velocity tiers
+// ItemsView uses, because both go through components.Scroller.
 package main
 
 import (
@@ -67,6 +76,10 @@ func main() {
 	inputMode := prop.NewSource(false)
 	draft := prop.NewSource("")
 	opened := prop.NewSource("") // link of the story opened in the reader
+	// The reader pane's scroll offset, in display lines from the top of
+	// the article. It lives on the PAGE because opening a story has to
+	// rewind it — see OpenStory below.
+	articleScroll := prop.NewSource(0)
 
 	stories := prop.NewComputed(func() []Story {
 		fs := feeds.Get()
@@ -116,8 +129,8 @@ func main() {
 		Values: map[string]any{
 			"Feeds": feeds, "SelFeed": selFeed,
 			"Stories": stories, "SelStory": selStory, "Read": read,
-			"Current": current,
-			"Draft":   draft, "Browsing": browsing, "Prompting": inputMode,
+			"Current": current, "ArticleScroll": articleScroll,
+			"Draft": draft, "Browsing": browsing, "Prompting": inputMode,
 			"Fetching": fetching,
 		},
 		Styles: map[string]render.Style{
@@ -192,6 +205,15 @@ func main() {
 		m[s.Link] = true
 		read.Set(m)
 		opened.Set(s.Link)
+		// Rewind the reader. Without this the second article opens at the
+		// first one's scroll position, which reads as a blank pane
+		// whenever the new article is shorter than the old offset.
+		// Compared before the Set: prop.Set does not compare, so opening
+		// an article while already at the top would otherwise cost the
+		// pane a repaint it does not need.
+		if articleScroll.Get() != 0 {
+			articleScroll.Set(0)
+		}
 		comp.Focus().SetFocus(readerBody)
 	})
 

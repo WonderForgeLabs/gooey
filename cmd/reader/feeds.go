@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Story struct {
@@ -206,7 +207,17 @@ func wrap(s string, w int) []string {
 			switch {
 			case line == "":
 				line = word
-			case len(line)+1+len(word) <= w:
+			// Rune counts, not len(). Byte length made every non-ASCII
+			// paragraph wrap early — a smart quote or a dash costs three
+			// bytes and one cell — which was invisible while the pane
+			// truncated at its own height and is not once you can scroll
+			// the whole article past it.
+			//
+			// Rune count is not DISPLAY WIDTH, and nothing in this repo
+			// is width-aware: a CJK or emoji rune occupies two cells and
+			// still counts as one here, so such a line overruns its
+			// column exactly as it does everywhere else in gooey.
+			case utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) <= w:
 				line += " " + word
 			default:
 				out = append(out, line)

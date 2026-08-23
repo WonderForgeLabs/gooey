@@ -60,6 +60,13 @@ control resolve against the control's values, never the page's.
 Read-state persistence, auto-refresh, nested OPML categories,
 article scrolling (truncate at pane height), opening links in browser —
 collected under epic [#64](https://github.com/WonderForgeLabs/gooey/issues/64)
+
+**Article scrolling has since shipped** (2026-08-23), so the entry above
+is history rather than current behaviour: the pane keeps its own line
+layout and shows a window onto it, driven by the keyboard and the wheel.
+The decision — pane-local viewport over a framework-level scroll model,
+and why a general scrolling container is not available in gooey — is
+[`2026-08-23-scrolling.md`](2026-08-23-scrolling.md).
 and tracked as [#65](https://github.com/WonderForgeLabs/gooey/issues/65)
 (persistence), [#66](https://github.com/WonderForgeLabs/gooey/issues/66)
 (auto-refresh), [#67](https://github.com/WonderForgeLabs/gooey/issues/67)
