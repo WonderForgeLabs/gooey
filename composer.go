@@ -42,9 +42,10 @@ import (
 // top. Two exemptions keep the damage counts tight: a chrome-only
 // container never forces its own descendants (its chrome never covers
 // their cells — that contract is why containers may skip pre-clearing),
-// and a Decorator is never forced from below (it owns no cells to
-// restore). This is what makes container backgrounds, hidden containers,
-// and overlapping Canvas children all repaint correctly.
+// and cell-less overlays are never forced from below. A Decorator is
+// re-applied after an underlying repaint; a CellPassthrough is not.
+// This is what makes container backgrounds, hidden containers, and
+// overlapping Canvas children all repaint correctly.
 //
 // The forward pass has a reverse half, restoreUnder: when a rect LEAVES
 // the screen (a component turned non-visible, departed in a re-sync, or
@@ -683,7 +684,7 @@ func (c *Composer) Frame() (*Frame, int) {
 		// over cells the restore pass just repainted (a Hidden overlay
 		// keeps its bounds but owns no pixels).
 		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 && paintable(n.w) {
-			if _, isDecorator := n.w.(Decorator); !isDecorator {
+			if !cellPassthrough(n.w) && !decoratesCells(n.w) {
 				for _, p := range c.over {
 					if !intersects(p.bounds, n.bounds) {
 						continue
@@ -832,8 +833,8 @@ func fillRect(b *render.Buffer, r Rect, s render.Style) {
 // Every still-visible node whose bounds intersect the vacated rect is
 // force-dirtied, and the ordinary paint loop then lays them down again
 // in z-order, with the forward pass keeping everything above them
-// honest. Decorators are skipped: they own no cells, so there is nothing
-// for the restore pass to put back.
+// honest. CellPassthrough nodes are skipped: they neither own nor
+// re-style cells, so there is nothing for the restore pass to put back.
 //
 // Runs outside any evaluation (from the sweeps), so the Sets here are
 // the same legality as the bounds sweep's.
@@ -845,13 +846,23 @@ func (c *Composer) restoreUnder(r Rect) {
 		if n.bounds.W <= 0 || n.bounds.H <= 0 || !paintable(n.w) {
 			continue
 		}
-		if _, isDecorator := n.w.(Decorator); isDecorator {
+		if cellPassthrough(n.w) {
 			continue
 		}
 		if intersects(r, n.bounds) {
 			n.rev.Set(n.rev.Get() + 1)
 		}
 	}
+}
+
+func decoratesCells(w Component) bool {
+	_, ok := w.(Decorator)
+	return ok
+}
+
+func cellPassthrough(w Component) bool {
+	_, ok := w.(CellPassthrough)
+	return ok
 }
 
 // clearStyle is what a node's rect clears TO: blank cells styled with the

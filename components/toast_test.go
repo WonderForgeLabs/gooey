@@ -7,6 +7,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -65,6 +66,30 @@ func TestToastDismissRestoresWhatWasBeneath(t *testing.T) {
 	}
 	if _, painted := c.Frame(); painted != 0 {
 		t.Fatalf("settled frame painted %d components, want 0", painted)
+	}
+}
+
+func TestToastDismissReappliesSelectedRowDecorator(t *testing.T) {
+	src := prop.NewSource(numbered(10))
+	sel := prop.NewSource(0)
+	v := &ItemsView{
+		Items:     Items(src, projectStory),
+		Selected:  sel,
+		Template:  titleTemplate,
+		Highlight: true,
+	}
+	host := &ToastHost{}
+	page := &Canvas{Children: []gooey.Component{v, host}}
+	c := gooey.NewComposer(page, 20, 5)
+	c.Frame()
+
+	toast := host.Show("saved")
+	c.Frame()
+	host.Dismiss(toast)
+	c.Frame()
+
+	if !c.Cells().At(0, 0).Style.Reverse {
+		t.Fatal("selected row lost its highlight after the toast was dismissed")
 	}
 }
 
