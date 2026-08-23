@@ -541,11 +541,20 @@ func frozenAncestor(n *paintNode) bool {
 // obligation off the author entirely: implement the interface, get the
 // wake.
 //
-// Called from build for new and reused nodes alike, AND late-armed from
-// Frame's sweep. The late arm is not belt-and-braces here the way it is
-// for visObs: NewComposer runs walkNodes BEFORE it builds the
-// FocusManager, so nodes present at construction genuinely cannot arm in
-// build and are picked up on the first Frame instead.
+// Called from build for NEW nodes only — the reused branch arms
+// armVisibility and armFrozen and deliberately not this — and late-armed
+// from Frame's sweep, which is where every other node gets it.
+//
+// That asymmetry is the design, not an omission, and Frame's sweep is
+// load-bearing rather than belt-and-braces the way it is for visObs:
+// NewComposer runs walkNodes BEFORE it builds the FocusManager, so
+// armPointer's `c.focus == nil` guard declines for every node present at
+// construction. They genuinely cannot arm in build and are picked up on
+// the first Frame instead.
+//
+// Adding the call to the reused branch would be harmless — the nil-ptrObs
+// guard above makes it idempotent — but it would also erase the reason
+// the sweep has to exist, which is the thing worth keeping.
 func (c *Composer) armPointer(n *paintNode) {
 	if n.ptrObs != nil {
 		return

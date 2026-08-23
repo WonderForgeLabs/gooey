@@ -99,8 +99,8 @@ and input routing. The built-in components — `Text`, `Button`,
 `Canvas`, `Tabs`, `StatusBar`, `ButtonBar`, and the overlays `MenuBar`,
 `ToastHost`, `Tooltip`, `AdornmentLayer` and `DragGhost` (the
 anchored-overlay mechanics are the Go-side `Popup` primitive, whose one
-full adopter is `MenuBar`) — live in `gooey/components`, which imports the root and is
-never imported by it. [docs/markup-reference.md](docs/markup-reference.md)
+full adopter is `MenuBar`) — live in `gooey/components`, which imports
+the root and is never imported by it. [docs/markup-reference.md](docs/markup-reference.md)
 is the catalog that stays current. Writing your own component means embedding
 `gooey.Base` and implementing `gooey.Component`; the built-ins have no
 privileges you do not. Under both sit `prop` (the property graph),
