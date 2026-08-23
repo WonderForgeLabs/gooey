@@ -1,26 +1,51 @@
 name: PR Review with Progress Tracking
 
-# ADR-048 shim: delegates the PR review + merge-gate logic to forge's workflow
-# of record, claude-code-review.reusable.yml. Only the `on:` triggers,
-# `concurrency`, the calling job's `permissions` ceiling, and the
-# `review-with-tracking` mirror job stay here — the mirror job exists because a
-# workflow_call's own jobs get two-segment check names, so the literal
-# required-status-check string has to live in the shim, not the reusable
-# workflow. Repo-specific review focus and tooling are passed as `with:`.
+# ADR-048 VENDORED COPY — DO NOT HAND-EDIT THE `jobs:` SECTION BELOW.
 #
-# Tracks forge's main branch directly, matching the other consumer repos in the
-# org. A repo-qualified ref (never a local `./` path) is load-bearing per the
-# ADR's trust model: a PR editing only this shim is caught by
-# claude-code-action's server-side workflow-validation guard, while a PR that
-# doesn't touch this file always gets forge main's current review logic.
+# gooey became a PUBLIC repository on 2026-08-22, and that is what put this
+# file here. GitHub Actions does not allow a public repo to call a
+# `workflow_call` reusable workflow hosted in a private repo
+# (WonderForgeLabs/forge is private) — a hard platform restriction, not a
+# config bug. `organization` is already the widest access level forge can
+# grant; the API rejects anything wider outright ("Only 'none' and
+# 'organization' access levels are allowed for this repository"). The failure
+# mode is worth recognising, because it names nothing: the run dies before a
+# single job is created, so there are zero jobs, no logs,
+# `referenced_workflows: []`, and only GitHub's generic "this run likely
+# failed because of a workflow file issue".
+#
+# So instead of a thin shim, this file is a rendered, self-contained copy of
+# forge's claude-code-review.reusable.yml `jobs:` section, with
+# `${{ inputs.X }}` substituted for this repo's literal override values by
+# scripts/ci/render-vendored-claude-workflow.py.
+#
+# forge's sync-public-consumer-workflows.yml re-renders and opens a PR here
+# automatically whenever claude-code-review.reusable.yml changes on forge's
+# main. Do not hand-edit the jobs: section below — edit
+# scripts/ci/public-consumers/gooey/review.config.json (overrides),
+# review.header.yml (this header), or review.extra-jobs.yml (the mirror job at
+# the bottom) in forge instead, and let the sync PR land.
+#
+# ── What is NOT rendered, and must not be ───────────────────────────────────
+# `review-with-tracking` at the bottom of this file is gooey's own job, not
+# forge's. It comes from review.extra-jobs.yml and is appended after the
+# rendered jobs. It is load-bearing twice over: it is the check name reserved
+# for a branch ruleset, and gooey's `reviewmirror_test.go` fails `go test
+# ./...` unless this workflow runs .github/scripts/assert-review-rendered.sh
+# (#198). Dropping it would not have shown up as a workflow problem — it would
+# have shown up as the root Go module going red.
+#
+# Its `needs:` names the reusable workflow's own jobs (pr-review, merge-gate),
+# NOT the `review` calling job the shim used to have — there is no calling job
+# in a vendored copy.
+#
+# ── Model overrides ─────────────────────────────────────────────────────────
+# The shim deliberately left review_model/gate_model unset so gooey would
+# inherit whatever forge keeps current. A vendored copy cannot inherit, so
+# they are pinned in review.config.json and a future model bump reaches gooey
+# through the sync PR instead of through `uses: @main`.
+#
 # See https://github.com/WonderForgeLabs/forge/blob/main/docs/ADR/048-org-wide-claude-bot-workflow-of-record.md
-#
-# This workflow is additive — it does not touch gooey's existing CI (ci.yml),
-# and nothing here is a required status check unless a branch ruleset is added
-# separately.
-#
-# Review/gate models are deliberately not overridden: gooey inherits the
-# reusable workflow's defaults, which forge keeps current.
 
 on:
   pull_request:
@@ -51,86 +76,791 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review:
-    # Ceiling for every permission the reusable workflow's jobs use — a
-    # workflow_call job can only narrow, never widen, the caller's grant.
-    # Under-granting silently 403s the affected step rather than failing loudly.
+  # The Claude code review. Split into its own job so it can be re-run
+  # independently of (or skipped entirely by) the gate job below — GitHub's
+  # "re-run this job" on the gate alone reuses this job's cached outputs
+  # instead of re-invoking Claude.
+  pr-review:
+    # GitHub withholds repository secrets from pull_request runs triggered by
+    # Dependabot (anti-exfiltration measure: a compromised dependency bump must
+    # not be able to read secrets via CI). claude_code_oauth_token therefore
+    # resolves empty on those runs and the action can only crash. Skip the
+    # review outright for Dependabot PRs — the gate below treats the skip as a
+    # pass, same as its existing workflow-edit skip path.
+    if: github.event_name == 'pull_request' && github.event.action != 'labeled' && github.event.action != 'unlabeled' && github.actor != 'dependabot[bot]'
+    # Runs a full claude-code-action agent (Node + git + gh + dotnet + tool
+    # sandbox), so it belongs on default-vsphere, NOT the small pool. #3030
+    # swept it onto forge-runners-small-vsphere with the other 'script-shaped'
+    # jobs, but small caps memory at a hard 2Gi and this job is exactly what
+    # this repo's workflows CLAUDE.md warns off that pool. Symptom when it
+    # exceeds the cap: the container is OOM-killed, so the step records a null
+    # conclusion with no logs retained and merge-gate then fails CLOSED on a
+    # review that never posted — a red required check with nothing to fix.
+    runs-on: forge-runners-default-vsphere
     permissions:
       contents: read
-      pull-requests: write # remove-label needs write; pr-review/merge-gate only read
+      pull-requests: read
+      id-token: write
+      # issues: write covers the claude-code-action review/progress-tracking comments
+      # on the default token. The Enforce merge gate step's sticky comment is posted
+      # via the homelab-runners-default App token instead (the default token's
+      # issue-comment write is capped by org policy and 403s) — see that step.
+      issues: write
+      actions: read
+    outputs:
+      # The Verify step below downgrades this to `failure` when the review
+      # reported success but posted no summary (and only when
+      # enforce_review_summary is on) — so the gate's existing
+      # "review did not complete" path reports a cause that can be acted on
+      # instead of the misleading "push a fix" message. Falls back to the raw
+      # review outcome whenever Verify did not run.
+      outcome: ${{ steps.verify.outputs.effective_outcome || steps.review.outcome }}
+      execution_file: ${{ steps.review.outputs.execution_file }}
+      summary_posted: ${{ steps.verify.outputs.posted }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: PR Review with Progress Tracking
+        id: review
+        # The review step must never red the job on its own — it has succeeded as long
+        # as it completed the review. Whether the PR is mergeable is decided by the
+        # merge-gate job below. continue-on-error keeps the job going so this job's
+        # outputs are always available (avoids auto-fix-ci re-runs of a review that
+        # merely found issues).
+        continue-on-error: true
+        uses: anthropics/claude-code-action@9d7150bc8a3dae8149739a88019d192b579ad90c # v1
+        env:
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: 'claude[bot],copilot[bot]'
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-sonnet-5"
+
+          # Enable progress tracking
+          track_progress: true
+
+          # Reuse ONE review comment per PR instead of posting a fresh one on every
+          # push. track_progress puts the action in tag mode, whose initial tracking
+          # comment is the same comment Claude later rewrites with the review summary
+          # — so with this on, each synchronize updates that comment in place rather
+          # than appending another. Only honored on `pull_request` events (which is
+          # all pr-review runs on) and only when the comment author is claude[bot],
+          # i.e. the action's own App token — do not pass a custom `github_token`
+          # here or stickiness silently degrades to a new comment per run.
+          use_sticky_comment: true
+
+          # Review instructions. The header and the Feedback Standards / Output
+          # sections are fixed (the merge-gate classification depends on them);
+          # only the focus areas vary per repo.
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            ## Review Process
+
+            Perform a comprehensive code review with the following focus areas:
+
+            1. **Framework Invariants**
+               - The cell plane (`render`) and pixel plane (`graphics`) stay separate
+                 planes, not alternative rendering backends — flag any reintroduced
+                 "rendering mode" abstraction
+               - Paint paths read state through `*prop.Property[T]` handles; direct
+                 field access on a paint path silently breaks dirty tracking
+               - Layout stays unconditional and cheap; repaint stays dirty-only
+
+            2. **Module Boundaries**
+               - The root `go.mod` carries a deliberately tiny set of DIRECT
+                 requirements. Read the file rather than recalling the set — a
+                 prompt that names them is a copy that drifts, and this one did:
+                 it said "only `golang.org/x/term`" while `golang.org/x/image`
+                 had been there all along, so a reviewer applying it literally
+                 flagged a legitimate import as a violation. Adding a direct
+                 requirement is a doctrine change
+                 (`docs/specs/2026-08-10-pack-distribution.md`), not a routine edit.
+               - Every directory with its own `go.mod` is a separate module, on
+                 purpose: heavy dependency graphs — the Temporal SDK's
+                 gRPC/protobuf, gojq, the MCP SDK's — must not reach the root
+                 module. DISCOVER them; do not work from a list. `CLAUDE.md`'s
+                 Verify section carries the discovery command and `ci.yml` builds
+                 its job matrix from that same command, so those two are the
+                 authority and this prompt is not.
+
+            3. **Go Correctness**
+               - Error handling and edge cases, especially around terminal state
+                 restoration (raw mode, alternate screen, cursor visibility) on
+                 every exit path including panics
+               - Goroutine lifecycle and data races in the input event stream
+               - Slice bounds and index arithmetic in buffer/cell code
+
+            4. **Testing**
+               - Adequate coverage for new components, properties, and markup elements
+               - Tests that exercise the dirty-tracking behavior, not just output
+               - The root `./...` stops at the module boundary, so every nested
+                 module needs its own run and a green root suite says nothing
+                 about them. `CLAUDE.md`'s verify loop is the authority on which
+                 modules get `-race` and why; naming a few here would be the same
+                 enumeration that let whole modules go untested behind green
+                 checks (#207)
+
+            5. **Documentation**
+               - `docs/architecture.md` quotes real code — flag quotes that drift
+                 from the source they claim to show
+               - New components or markup attributes reflected in
+                 `docs/markup-reference.md`; new demos in `docs/demos.md`
+
+            ## Feedback Standards
+
+            - Treat ALL feedback as important — never minimize findings with phrases like "minor observation", "nit", or "optional"
+            - Every piece of feedback must be clearly actionable
+
+            ## Output
+
+            Provide detailed inline comments on the PR for specific code issues.
+            Use a top-level summary comment listing all findings grouped by concern.
+
+            Begin that top-level summary comment with the following hidden marker,
+            exactly as written, as its very first line. The workflow uses it to tell
+            your review summary apart from other comments posted under the same
+            `claude[bot]` identity (the interactive `@claude` bot posts there too):
+
+            <!-- pr-review-summary -->
+
+            Do NOT create GitHub issues — use the `claude-make-follow-up-issues` label on the PR to trigger follow-up issue creation separately.
+
+      # A review that exits 0 having posted nothing is indistinguishable from a
+      # healthy review at the job level, and that is not hypothetical: on
+      # WonderForgeLabs/gooey#215, runs 31584712710 and 31654593833 both recorded
+      # this step as `success` (3m00s, `subtype: success`, `is_error: false`,
+      # num_turns 15, $1.74 billed) while the sticky comment was still the
+      # unfinished progress checklist — one box of eight ticked, no findings. The
+      # agent stopped early and reported success; the action faithfully relayed
+      # that. Only the gate noticed, via its LLM prompt ("if you cannot locate a
+      # review summary comment at all, return fail"), which is a judgement call
+      # standing in for a fact we can check directly. Same end-state the OOM note
+      # on this job describes: a red required check with nothing to fix.
+      #
+      # The early stop is intermittent and self-heals on a later run, which is
+      # what makes it so misleading — it reads as a network, size, or credential
+      # problem and is none of those.
+      #
+      # Detection is deliberately narrow: tag mode's in-progress comment opens
+      # with "Review in progress" and carries unticked task boxes, and a finished
+      # review has neither (verified against a known-bad and a known-good sticky
+      # on that PR). False-positive risk is a completed summary that happens to
+      # write an unticked checkbox in its findings prose — hence the detector
+      # only warns until `enforce_review_summary` is turned on.
+      #
+      # The marker check below adds a second precondition: the review agent has to
+      # actually emit the hidden marker it is asked for in the prompt. That is the
+      # thing to confirm against real PRs (watch for the "carries the
+      # review-summary marker" warning) BEFORE turning enforcement on — with it on,
+      # an agent that reviews correctly but drops the marker would red the gate.
+      - name: Verify the review posted a summary
+        id: verify
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          ENFORCE: 'false'
+        run: |
+          set -euo pipefail
+
+          # Only meaningful when the review claims to have succeeded — a review
+          # that already failed or was skipped needs no second opinion, and the
+          # gate handles those paths today.
+          if [ "$REVIEW_OUTCOME" != "success" ]; then
+            echo "Review outcome is '$REVIEW_OUTCOME'; nothing to verify."
+            echo "effective_outcome=$REVIEW_OUTCOME" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # THIS review's sticky comment, identified by the marker the review prompt
+          # above is instructed to emit — not merely "the most recent claude[bot]
+          # comment". The interactive @claude bot (claude-bot.reusable.yml) posts
+          # under the SAME claude[bot] identity from a different workflow, so a human
+          # invoking @claude while this review is in flight would otherwise have
+          # their unrelated reply read as the review summary.
+          #
+          # Bodies are written to files and only ever matched with grep -F/-q —
+          # never interpolated into a command.
+          SUMMARY_MARKER='<!-- pr-review-summary -->'
+
+          # --slurp is load-bearing: with --paginate alone, --jq is applied once PER
+          # PAGE, so `last` yields one body per page rather than one overall.
+          comments_file="$(mktemp)"
+          if ! gh api --paginate --slurp "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                 --jq '[.[][] | select(.user.login == "claude[bot]") | .body // ""]' \
+                 > "$comments_file" 2>/dev/null; then
+            echo "::warning::Could not read PR comments to verify the review summary; leaving the review outcome untouched."
+            echo "effective_outcome=$REVIEW_OUTCOME" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Content, not file size. `jq -r` — like `gh api --jq` before it — always
+          # terminates output with a newline, even for the empty string, so the file
+          # is never zero bytes and a `[ ! -s ]` test can never fire.
+          has_content() { grep -q '[^[:space:]]' "$1"; }
+
+          body_file="$(mktemp)"
+          jq -r --arg m "$SUMMARY_MARKER" \
+            'map(select(contains($m))) | last // ""' "$comments_file" > "$body_file"
+
+          # No marked comment: fall back to the newest claude[bot] comment purely so
+          # the reasons below can name what IS there (in-progress placeholder vs.
+          # nothing at all). An unmarked comment never counts as a summary — the
+          # missing marker is itself reported as a reason.
+          if has_content "$body_file"; then
+            marked=true
+          else
+            marked=false
+            jq -r 'last // ""' "$comments_file" > "$body_file"
+          fi
+
+          reason=""
+          if ! has_content "$body_file"; then
+            reason="no claude[bot] comment exists on this PR"
+          elif grep -qF 'Review in progress' "$body_file"; then
+            reason="the review comment is still tag mode's in-progress placeholder"
+          elif grep -qE '^[[:space:]]*-[[:space:]]\[[[:space:]]\]' "$body_file"; then
+            reason="the review comment still has unticked task boxes, so the review did not finish"
+          elif [ "$marked" != "true" ]; then
+            reason="no claude[bot] comment carries the review-summary marker, so the newest one is not this review's summary"
+          fi
+
+          if [ -z "$reason" ]; then
+            echo "Review summary present."
+            echo "posted=true" >> "$GITHUB_OUTPUT"
+            echo "effective_outcome=success" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "posted=false" >> "$GITHUB_OUTPUT"
+          if [ "$ENFORCE" = "true" ]; then
+            echo "::error::The review step reported success but posted no review summary — $reason. Treating the review as failed so the merge gate reports a cause that can be acted on. Re-run the review job."
+            echo "effective_outcome=failure" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "::warning::The review step reported success but posted no review summary — $reason. Not enforced (enforce_review_summary=false), so the merge gate decides as before; this warning is the signal that the silent-review failure just occurred."
+          echo "effective_outcome=$REVIEW_OUTCOME" >> "$GITHUB_OUTPUT"
+
+  # Merge gate: reads the review summary pr-review just posted (or, outside a
+  # fresh review, the latest existing review summary) and decides whether the
+  # PR is mergeable. A finding is "addressed" when it is fixed in the branch
+  # (so it no longer appears in the latest review summary) or tracked in an
+  # open `pr-feedback` issue for this PR. Emits a structured verdict the
+  # enforce step turns into the job's pass/fail.
+  #
+  # NOTE: a repo's required-status-check job (e.g. forge's literal
+  # `review-with-tracking` ruleset string) is the SHIM's mirror job, which
+  # `needs:` the workflow-call job and reflects its result — reusable-workflow
+  # check runs get two-segment names, so the required name cannot live here.
+  #
+  # A `do not merge` / `do-not-merge` label is a hard, deterministic block: the
+  # Enforce merge gate step checks for it first, ahead of every other path
+  # (including force-pass) — user intent always wins. Adding/removing it is one
+  # of the trigger label events below, purely so the check re-evaluates; there's
+  # no LLM judgment involved in the block itself. (Only reachable at all when
+  # the calling shim's own `on: pull_request: types:` includes `labeled` and
+  # `unlabeled` — a shim that doesn't forward those events simply never
+  # triggers this path, so existing consumers are unaffected unless they add
+  # `unlabeled` too.)
+  #
+  # `pr-review-force-green` is deliberately matched on `labeled` ONLY, never
+  # `unlabeled` — the `remove-label` job below auto-removes that label after
+  # processing, which fires its own `unlabeled` event. If that event matched
+  # here too, it would fall through to `mode=review` (no pr-review output
+  # backs it — that job skips both `labeled` and `unlabeled`) and fail closed
+  # on every successful force-pass. The do-not-merge labels genuinely need
+  # both directions (see `mode=recheck` below); this one only ever needs
+  # `labeled`.
+  #
+  # Four ways this job runs:
+  #   1. mode=review  — a real pull_request review event; needs pr-review to
+  #      have completed (or genuinely be skipped/failed — see Enforce below).
+  #   2. mode=label   — the `pr-review-force-green` label was applied; force
+  #      passes without asking Claude at all.
+  #   3. mode=recheck — the `do not merge` / `do-not-merge` label was added or
+  #      removed; re-evaluates classification (force_pass=false) against the
+  #      existing review, without spawning a fresh pr-review.
+  #   4. mode=dispatch — the shim's workflow_dispatch forwarded a pr_number
+  #      input; re-evaluates classification (force_pass=false) or force-passes
+  #      (force_pass=true), neither of which re-runs pr-review.
+  merge-gate:
+    needs: [pr-review]
+    # `!cancelled()` (not `always()`): still runs when pr-review was skipped
+    # (label/dispatch/recheck modes) or failed (the fail-closed path), but NOT
+    # in a run the shim's cancel-in-progress concurrency superseded — `always()`
+    # survives run cancellation, so a superseded run's gate would classify
+    # against a half-finished review and post a stale ❌ sticky comment before
+    # the superseding run's fresh review landed (#2840).
+    if: >
+      !cancelled() && (
+        (github.event_name == 'pull_request' && github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        (
+          github.event_name == 'pull_request' &&
+          github.event.action == 'labeled' &&
+          github.event.label.name == 'pr-review-force-green'
+        ) ||
+        (
+          github.event_name == 'pull_request' &&
+          (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+          (github.event.label.name == 'do not merge' || github.event.label.name == 'do-not-merge')
+        ) ||
+        github.event_name == 'workflow_dispatch'
+      )
+    # Runs claude-code-action (the classification agent), so it belongs on
+    # default-vsphere for the same reason as pr-review above — see that job's
+    # note. #3030 swept both onto the 2Gi small pool as 'script-shaped'.
+    runs-on: forge-runners-default-vsphere
+    permissions:
+      contents: read
+      # write (not read): the Enforce merge gate step calls `gh pr ready` /
+      # `gh pr merge --auto` when auto_graduate_on_pass is enabled.
+      pull-requests: write
       id-token: write
       issues: write
       actions: read
-    uses: WonderForgeLabs/forge/.github/workflows/claude-code-review.reusable.yml@main
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      WF_RUNNERS_APP_ID: ${{ secrets.WF_RUNNERS_APP_ID }}
-      WF_RUNNERS_APP_PRIVATE_KEY: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
-    with:
-      allowed_tools: 'Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)'
-      allowed_bots: 'claude[bot],copilot[bot]'
-      review_focus: |
-        1. **Framework Invariants**
-           - The cell plane (`render`) and pixel plane (`graphics`) stay separate
-             planes, not alternative rendering backends — flag any reintroduced
-             "rendering mode" abstraction
-           - Paint paths read state through `*prop.Property[T]` handles; direct
-             field access on a paint path silently breaks dirty tracking
-           - Layout stays unconditional and cheap; repaint stays dirty-only
+    # `secrets` isn't available in step `if:` conditions — bridge it through
+    # job-level `env:` (which does allow `secrets`) so the Generate app token
+    # step below can check it.
+    env:
+      HAS_WF_RUNNERS_APP: ${{ secrets.WF_RUNNERS_APP_ID != '' && secrets.WF_RUNNERS_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          lfs: true
 
-        2. **Module Boundaries**
-           - The root `go.mod` carries a deliberately tiny set of DIRECT
-             requirements. Read the file rather than recalling the set — a
-             prompt that names them is a copy that drifts, and this one did:
-             it said "only `golang.org/x/term`" while `golang.org/x/image`
-             had been there all along, so a reviewer applying it literally
-             flagged a legitimate import as a violation. Adding a direct
-             requirement is a doctrine change
-             (`docs/specs/2026-08-10-pack-distribution.md`), not a routine edit.
-           - Every directory with its own `go.mod` is a separate module, on
-             purpose: heavy dependency graphs — the Temporal SDK's
-             gRPC/protobuf, gojq, the MCP SDK's — must not reach the root
-             module. DISCOVER them; do not work from a list. `CLAUDE.md`'s
-             Verify section carries the discovery command and `ci.yml` builds
-             its job matrix from that same command, so those two are the
-             authority and this prompt is not.
+      # Inlined (not a checked-out script): this workflow runs in CONSUMER
+      # repos, whose checkout is the consumer's own tree — forge's scripts/
+      # directory does not exist there, so the logic must live in this file.
+      # Resolves which of four trigger shapes produced this run into a uniform
+      # pr_number/force_pass/reason/mode tuple.
+      - name: Resolve merge-gate context
+        id: ctx
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          PR_EVENT_NUMBER: ${{ github.event.pull_request.number }}
+          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          DISPATCH_FORCE_PASS: ${{ inputs.force_pass }}
+          DISPATCH_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
 
-        3. **Go Correctness**
-           - Error handling and edge cases, especially around terminal state
-             restoration (raw mode, alternate screen, cursor visibility) on
-             every exit path including panics
-           - Goroutine lifecycle and data races in the input event stream
-           - Slice bounds and index arithmetic in buffer/cell code
+          if [ "${EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            pr_number="${DISPATCH_PR_NUMBER:-}"
+            # workflow_call numbers default to 0 when the shim passed nothing.
+            [ "$pr_number" = "0" ] && pr_number=""
+            force_pass="${DISPATCH_FORCE_PASS:-false}"
+            reason="${DISPATCH_REASON:-}"
+            mode="dispatch"
+          elif [ "${EVENT_ACTION:-}" = "labeled" ] && [ "${LABEL_NAME:-}" = "pr-review-force-green" ]; then
+            pr_number="${PR_EVENT_NUMBER:-}"
+            force_pass="true"
+            reason="Force-passed via the pr-review-force-green label."
+            mode="label"
+          elif { [ "${EVENT_ACTION:-}" = "labeled" ] || [ "${EVENT_ACTION:-}" = "unlabeled" ]; } \
+            && { [ "${LABEL_NAME:-}" = "do not merge" ] || [ "${LABEL_NAME:-}" = "do-not-merge" ]; }; then
+            # Re-evaluate against the existing review/classification — no fresh
+            # pr-review run backs this event (labeled/unlabeled events skip that
+            # job), so Enforce must not require a fresh REVIEW_OUTCOME the way
+            # mode=review does.
+            pr_number="${PR_EVENT_NUMBER:-}"
+            force_pass="false"
+            reason=""
+            mode="recheck"
+          else
+            pr_number="${PR_EVENT_NUMBER:-}"
+            force_pass="false"
+            reason=""
+            mode="review"
+          fi
 
-        4. **Testing**
-           - Adequate coverage for new components, properties, and markup elements
-           - Tests that exercise the dirty-tracking behavior, not just output
-           - The root `./...` stops at the module boundary, so every nested
-             module needs its own run and a green root suite says nothing
-             about them. `CLAUDE.md`'s verify loop is the authority on which
-             modules get `-race` and why; naming a few here would be the same
-             enumeration that let whole modules go untested behind green
-             checks (#207)
+          if [ -z "$pr_number" ]; then
+            echo "::error::Could not resolve a PR number for this run (event=${EVENT_NAME:-}, action=${EVENT_ACTION:-})." >&2
+            exit 1
+          fi
 
-        5. **Documentation**
-           - `docs/architecture.md` quotes real code — flag quotes that drift
-             from the source they claim to show
-           - New components or markup attributes reflected in
-             `docs/markup-reference.md`; new demos in `docs/demos.md`
-      pr_number: ${{ inputs.pr_number || 0 }}
-      force_pass: ${{ inputs.force_pass || false }}
-      reason: ${{ inputs.reason || '' }}
-      # auto_graduate_on_pass left at its default (false): gooey does not
-      # auto-mark-ready or auto-merge PRs on a passing gate.
+          {
+            echo "pr_number=$pr_number"
+            echo "force_pass=$force_pass"
+            echo "reason=$reason"
+            echo "mode=$mode"
+          } >> "$GITHUB_OUTPUT"
 
-  # This job's name mirrors forge's required-status-check convention. gooey has
-  # no branch-protection rule requiring it today, but keeping the name stable
-  # means one can be added later without a rename.
+      # workflow_dispatch has no natural PR checkout ref (unlike a pull_request
+      # event, where the first checkout above already resolved the PR's merge
+      # ref). Re-checkout explicitly at the PR's head when dispatched.
+      - name: Checkout PR head (workflow_dispatch only)
+        if: steps.ctx.outputs.mode == 'dispatch'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          lfs: true
+          ref: refs/pull/${{ steps.ctx.outputs.pr_number }}/head
+
+      - name: Merge-gate classification
+        id: gate
+        # Same Dependabot exclusion as pr-review above: this step's own actor check
+        # would otherwise fail the job outright (no continue-on-error), pre-empting
+        # the Enforce merge gate step's dependabot pass path below.
+        #
+        # Also skipped when a do-not-merge label was just ADDED (mode=recheck on a
+        # `labeled` action): Enforce merge gate's do-not-merge check fails the gate
+        # unconditionally in that case regardless of the verdict, so running
+        # classification here would just be a wasted Claude call. Removal
+        # (`unlabeled`) still needs a real classification to determine whether the
+        # gate should now pass.
+        if: >-
+          !cancelled() && steps.ctx.outputs.force_pass != 'true' && github.actor != 'dependabot[bot]' &&
+          !(steps.ctx.outputs.mode == 'recheck' && github.event.action == 'labeled')
+        uses: anthropics/claude-code-action@9d7150bc8a3dae8149739a88019d192b579ad90c # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # allowed_bots must match pr-review's list (dependabot[bot] intentionally
+          # NOT listed — this step's `if:` above already excludes it; without any
+          # list here, ANY bot actor, not just Dependabot, hits claude-code-action's
+          # human-only default allowlist, since pr-review's list doesn't apply to
+          # this separate step).
+          allowed_bots: 'claude[bot],copilot[bot]'
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,LS,Bash(gh:*),Bash(jq:*)" --model "claude-sonnet-5"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"outstanding_findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"severity":{"type":"string"}},"required":["title"]}},"addressed_count":{"type":"integer"},"reason":{"type":"string"}},"required":["verdict","reason"]}'
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.ctx.outputs.pr_number }}
+
+            ## Task: Merge-gate classification
+
+            The previous step ran a comprehensive code review and posted a summary comment
+            on this PR. Decide whether the PR is ready to merge. It is ready ONLY when every
+            actionable finding from the LATEST review is already addressed — either fixed in
+            the branch (so it no longer appears in the latest review summary) or tracked in an
+            open `pr-feedback` GitHub issue for this PR.
+
+            ## Steps
+
+            1. Find the latest review summary written by the review bot:
+               - `gh api --paginate repos/${{ github.repository }}/issues/${{ steps.ctx.outputs.pr_number }}/comments`
+                 and pick the MOST RECENT comment authored by `claude[bot]` that is a
+                 code-review summary (it lists findings grouped by concern). Ignore
+                 progress-tracking checklist comments.
+               - Reviews are asked to open their summary with a hidden
+                 `<!-- pr-review-summary -->` marker. If any comment carries it, prefer
+                 the most recent one that does — `claude[bot]` is also the identity of
+                 the interactive `@claude` bot, whose replies are NOT review summaries.
+                 Older summaries predate the marker, so its absence rules nothing out.
+               - Also read review bodies:
+                 `gh api --paginate repos/${{ github.repository }}/pulls/${{ steps.ctx.outputs.pr_number }}/reviews`.
+            2. Extract every actionable finding from that latest summary. Treat ALL findings
+               as actionable — nits included; the review is instructed never to minimize them.
+            3. Fetch open follow-up issues for this PR:
+               `gh issue list --repo ${{ github.repository }} --state open --label pr-feedback --search "[PR #${{ steps.ctx.outputs.pr_number }} feedback]" --json number,title,body`
+            4. For each finding, mark it ADDRESSED if a matching open `pr-feedback` issue
+               covers it. A finding the latest review no longer lists is already fixed in the
+               branch and need not be considered.
+            5. If the latest review summary reports NO actionable findings, the verdict is `pass`.
+
+            ## Verdict
+
+            - `pass` only if EVERY actionable finding in the latest review summary is covered
+              by an open `pr-feedback` issue (or there are no findings at all).
+            - `fail` if ANY actionable finding is neither fixed nor tracked.
+            - If you cannot locate a review summary comment at all, return `fail` with a reason
+              that says so (fail closed).
+
+            Return the structured result: `verdict`, `outstanding_findings` (each a short
+            `title` + `severity`), `addressed_count`, and a one-paragraph `reason`.
+
+      # Mint a token from the homelab-runners-default GitHub App so the sticky
+      # merge-gate comment (and the force-pass audit comment) are posted by the
+      # App identity rather than the job's GITHUB_TOKEN. The default token's
+      # issue-comment write is capped by org policy (the POST 403s with
+      # "Resource not accessible by integration" even with issues:write
+      # declared); the App installation token is not subject to that cap.
+      - name: Generate app token
+        # Dependabot-triggered runs get no repository secrets (see pr-review above),
+        # so client-id/private-key resolve empty and this step can only fail. Skip it;
+        # same reason for skipping when the consumer repo has no WF Runners App
+        # secrets configured at all (most consumers today). Enforce merge gate
+        # falls back to github.token for its (best-effort) comment either way.
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && env.HAS_WF_RUNNERS_APP == 'true' }}
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WF_RUNNERS_APP_ID }}
+          private-key: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
+
+      # Deterministic decider: turns the review outcome + structured verdict (or a
+      # force-pass override) into the job's pass/fail. Fails closed if the review or
+      # the evaluator did not complete on the normal path. Values are passed via env
+      # (not inline interpolation) to avoid workflow injection.
+      # `!cancelled()` (not `always()`): must still run after a classification
+      # step failure (fail-closed), but never in a cancelled run — that's what
+      # posted the stale sticky comment (#2840).
+      - name: Enforce merge gate
+        if: ${{ !cancelled() }}
+        env:
+          MODE: ${{ steps.ctx.outputs.mode }}
+          FORCE_PASS: ${{ steps.ctx.outputs.force_pass }}
+          FORCE_REASON: ${{ steps.ctx.outputs.reason }}
+          ACTOR: ${{ github.actor }}
+          REVIEW_OUTCOME: ${{ needs.pr-review.outputs.outcome }}
+          REVIEW_EXECUTION: ${{ needs.pr-review.outputs.execution_file }}
+          SUMMARY_POSTED: ${{ needs.pr-review.outputs.summary_posted }}
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
+          VERDICT_JSON: ${{ steps.gate.outputs.structured_output }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.ctx.outputs.pr_number }}
+          AUTO_GRADUATE: 'false'
+        run: |
+          set -euo pipefail
+
+          # Sticky PR comment marker — lets us find and update our own comment across runs
+          # instead of spamming a new one each push. Best-effort: a comment-API failure
+          # degrades to a warning and never changes the gate verdict (the check result
+          # below is authoritative).
+          STICKY_MARKER="<!-- merge-gate-sticky -->"
+
+          sticky_id() {
+            gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+              --jq "[.[] | select(.body | startswith(\"$STICKY_MARKER\"))] | last | .id // empty" 2>/dev/null || true
+          }
+
+          # Upsert the sticky failure comment, then exit non-zero. $1 is the markdown body.
+          fail() {
+            local body id
+            body="$STICKY_MARKER
+          ### ❌ Merge gate failed
+
+          $1
+
+          _The gate re-evaluates on the next push._"
+            id="$(sticky_id)"
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null \
+                || echo "::warning::Failed to update sticky merge-gate comment."
+            else
+              gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null \
+                || echo "::warning::Failed to post sticky merge-gate comment."
+            fi
+            exit 1
+          }
+
+          # Upsert the sticky passing comment, then exit 0. $1 is the markdown body.
+          # $2 (default false) controls whether a NEW sticky comment is created when
+          # none exists yet — the normal (non-forced) pass path never creates one where
+          # none existed (no noise on PRs that never failed); the force-pass path does,
+          # since there's no future push that will otherwise surface the current state.
+          pass() {
+            local id body create_if_missing
+            create_if_missing="${2:-false}"
+            id="$(sticky_id)"
+            body="$STICKY_MARKER
+          ### ✅ Merge gate passing
+
+          $1"
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null \
+                || echo "::warning::Failed to update sticky merge-gate comment."
+            elif [ "$create_if_missing" = "true" ]; then
+              gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null \
+                || echo "::warning::Failed to post sticky merge-gate comment."
+            fi
+            exit 0
+          }
+
+          echo "Mode: $MODE"
+
+          # Do-not-merge label short-circuit — checked FIRST, ahead of force-pass, ahead
+          # of Dependabot handling, ahead of the classification verdict. Purely
+          # deterministic (a fresh `gh pr view` label read, no LLM involved): user intent
+          # always wins, so the label's presence blocks regardless of anything else.
+          DNM_LABEL="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels \
+            --jq '[.labels[].name] | map(select(. == "do not merge" or . == "do-not-merge"))[0] // empty' 2>/dev/null || true)"
+          if [ -n "$DNM_LABEL" ]; then
+            echo "::error::'$DNM_LABEL' label is present. Failing the merge gate until it is removed."
+            fail "The \`$DNM_LABEL\` label is on this PR. The merge gate stays red — and the PR will not be marked ready for review or auto-merged — until the label is removed. Removing it makes the gate re-evaluate immediately."
+          fi
+
+          if [ "$FORCE_PASS" = "true" ]; then
+            echo "::warning::Merge gate force-passed by @$ACTOR. Reason: ${FORCE_REASON:-none given}"
+            # Separate, permanent, never-edited comment — an audit log entry distinct
+            # from the sticky status comment (which a later real re-evaluation will
+            # overwrite). Best-effort: never blocks the force-pass itself.
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="🔓 **Merge gate force-passed** by @$ACTOR (mode: \`$MODE\`)
+
+          Reason: ${FORCE_REASON:-_none given_}" >/dev/null \
+              || echo "::warning::Failed to post the force-pass audit comment."
+            pass "Force-passed by @$ACTOR. Reason: ${FORCE_REASON:-_none given_}" true
+          fi
+
+          # Dependabot PRs: pr-review and Merge-gate classification were both skipped
+          # above (dependabot-triggered pull_request runs get no repository secrets,
+          # so those Claude steps could only fail). Pass automatically instead of
+          # failing closed on the now-empty REVIEW_OUTCOME/GATE_OUTCOME — the caller's
+          # own CI (lint/build/tests/freshness) still fully gates these PRs.
+          if [ "$MODE" = "review" ] && [ "$ACTOR" = "dependabot[bot]" ]; then
+            echo "Dependabot-authored PR: Claude review is skipped (no repository secrets on bot-triggered runs). The caller's own CI still enforces build/lint/tests."
+            pass "Claude review is skipped for Dependabot-authored PRs — GitHub withholds repository secrets from pull_request runs triggered by Dependabot, so the review/classification steps cannot authenticate. The caller's own CI checks (lint, build, tests, freshness) still fully gate this PR." false
+          fi
+
+          echo "Review step outcome:    ${REVIEW_OUTCOME:-n/a}"
+          echo "Review summary posted:  ${SUMMARY_POSTED:-n/a}"
+          echo "Gate evaluator outcome: $GATE_OUTCOME"
+
+          if [ "$MODE" = "review" ]; then
+            # A genuine review crash (continue-on-error records it as failure) blocks: we
+            # could not review, so we cannot clear the PR.
+            if [ "$REVIEW_OUTCOME" != "success" ]; then
+              # Name the silent-review case explicitly. Without this the sticky
+              # comment reads "did not complete successfully" and invites a fix
+              # push, when the actual remedy is re-running the review job.
+              detail=""
+              if [ "${SUMMARY_POSTED:-}" = "false" ]; then
+                detail=" The review step itself exited successfully but posted no review summary, so it was treated as failed — **re-run the review job** rather than pushing a fix."
+              fi
+              echo "::error::Code review did not complete successfully (outcome=$REVIEW_OUTCOME). Failing the merge gate; it re-runs on the next push."
+              fail "The code review step did not complete successfully (outcome \`$REVIEW_OUTCOME\`), so the PR could not be cleared. Failing closed.$detail"
+            fi
+
+            # claude-code-action SKIPS (exits success, but runs nothing and sets no
+            # execution_file) when the running workflow differs from the copy on the
+            # default branch — its server-side OIDC guard against a PR rewriting the
+            # review workflow to misuse secrets. The review genuinely could not run, so
+            # there is nothing to enforce: pass. Workflow edits are still gated by human
+            # review + branch protection, and this is what lets the PR that edits the
+            # shim (or this file) go green. A normal run always sets execution_file.
+            if [ -z "${REVIEW_EXECUTION:-}" ]; then
+              echo "Claude review action was skipped (no execution_file; workflow-validation guard). Merge gate not enforced on this run."
+              pass "The code review action was skipped (workflow-validation guard), so the merge gate was not enforced on this run." false
+            fi
+          fi
+
+          if [ "$GATE_OUTCOME" != "success" ]; then
+            echo "::error::Merge-gate evaluator did not complete (outcome=$GATE_OUTCOME). Failing closed."
+            fail "The merge-gate evaluator did not complete (outcome \`$GATE_OUTCOME\`). Failing closed."
+          fi
+
+          if [ -z "${VERDICT_JSON:-}" ]; then
+            echo "::error::Merge-gate evaluator produced no structured output. Failing closed."
+            fail "The merge-gate evaluator produced no structured output. Failing closed."
+          fi
+
+          VERDICT="$(printf '%s' "$VERDICT_JSON" | jq -r '.verdict')"
+          REASON="$(printf '%s' "$VERDICT_JSON" | jq -r '.reason // ""')"
+          FINDINGS="$(printf '%s' "$VERDICT_JSON" | jq -r '.outstanding_findings[]? | "- [\(.severity // "?")] \(.title)"' || true)"
+
+          echo "Verdict: $VERDICT"
+          echo "Reason:  $REASON"
+          echo "Outstanding findings:"
+          printf '%s\n' "$FINDINGS" | sed 's/^/  /' || true
+
+          if [ "$VERDICT" = "pass" ]; then
+            echo "All review findings are addressed (fixed in branch or tracked in a pr-feedback issue). Merge gate passes."
+
+            if [ "$AUTO_GRADUATE" != "true" ]; then
+              pass "All review findings are addressed (fixed in this branch or tracked in a \`pr-feedback\` issue)." false
+            fi
+
+            # Graduate the PR: by this point the do-not-merge label check above has
+            # already failed closed if that label were present, so reaching here means
+            # it is absent. Best-effort — a `gh` hiccup only warns, never flips an
+            # already-passing review back to red. This includes a shim that opts in
+            # to auto_graduate_on_pass without granting pull-requests: write in its
+            # ceiling: both calls below just 403 and degrade to a warning, same as any
+            # other `gh` failure — never a forge-side bug, just a misconfigured
+            # consumer shim. Fetch current draft/auto-merge state first so both calls
+            # are idempotent no-ops when there's nothing to change.
+            PR_STATE="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isDraft,autoMergeRequest 2>/dev/null || echo '{}')"
+            IS_DRAFT="$(printf '%s' "$PR_STATE" | jq -r '.isDraft // false')"
+            AUTOMERGE_ON="$(printf '%s' "$PR_STATE" | jq -r 'if .autoMergeRequest then "true" else "false" end')"
+
+            if [ "$IS_DRAFT" = "true" ]; then
+              gh pr ready "$PR_NUMBER" --repo "$REPO" || echo "::warning::Failed to mark PR ready for review."
+            fi
+            if [ "$AUTOMERGE_ON" != "true" ]; then
+              gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash || echo "::warning::Failed to enable auto-merge."
+            fi
+
+            pass "All review findings are addressed (fixed in this branch or tracked in a \`pr-feedback\` issue). Marked **ready for review** and enabled **auto-merge (squash)** — no \`do not merge\`/\`do-not-merge\` label on this PR." false
+          fi
+
+          echo "::error::Merge gate failed: review findings are neither fixed in this branch nor tracked in a pr-feedback issue. Push a fix, or apply the 'claude-make-follow-up-issues' label to file them — the gate re-evaluates on the next push."
+          fail "Review findings are neither fixed in this branch nor tracked in a pr-feedback issue.
+
+          **Why:** ${REASON:-_no reason provided_}
+
+          **Outstanding findings**
+          ${FINDINGS:-_none listed_}
+
+          Push a fix, or apply the \`claude-make-follow-up-issues\` label to file them as \`pr-feedback\` issues."
+
+  # One-shot trigger label cleanup, mirroring pr-follow-up-issues.yml's
+  # remove-label job — keeps the label meaningful as a single action rather
+  # than a persistent PR state.
+  remove-label:
+    needs: merge-gate
+    if: always() && github.event.action == 'labeled' && github.event.label.name == 'pr-review-force-green'
+    # Stays on the small pool deliberately, unlike pr-review/merge-gate above:
+    # this job is a single `gh` label-removal call with no agent, no Node and no
+    # build toolchain — exactly the script-shaped workload #3030 sized that pool
+    # for. Nothing here can approach the 2Gi cap.
+    runs-on: forge-runners-small-vsphere
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove trigger label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          LABEL: pr-review-force-green
+        run: |
+          # REST, not `gh pr edit` — see the "Removing a label" note in
+          # .github/workflows/CLAUDE.md. A 404 means the label is already gone
+          # (a re-run, or a concurrent removal), which is the desired end state;
+          # anything else is a real failure and must not be swallowed.
+          if ! err=$(gh api -X DELETE \
+            "repos/${REPO}/issues/${PR_NUMBER}/labels/${LABEL}" --silent 2>&1); then
+            if printf '%s' "$err" | grep -q 'HTTP 404'; then
+              echo "::notice::Label '${LABEL}' not present on PR #${PR_NUMBER}; nothing to remove."
+            else
+              echo "::error::Failed to remove '${LABEL}' from PR #${PR_NUMBER}: ${err}"
+              exit 1
+            fi
+          fi
+
+  # gooey's own job, appended after the rendered jobs — NOT part of forge's
+  # reusable workflow. Its name mirrors forge's required-status-check
+  # convention, so a branch ruleset can require it without a later rename.
   review-with-tracking:
-    needs: [review]
-    # `!cancelled()` (not `always()`): still reflects a failed or skipped
-    # `review` call, but doesn't red the check in a run that
-    # cancel-in-progress superseded.
+    # The shim this replaced depended on the single calling job that wrapped
+    # the whole reusable-workflow call. A vendored copy has no calling job —
+    # the reusable workflow's jobs ARE this workflow's jobs — so the
+    # dependency is on all three of them, and the step below reconstructs the
+    # aggregate result that calling job used to report.
+    #
+    # (Deliberately not naming that dependency in backticks: gooey's
+    # reviewprompt_test.go reads a backticked dotted token in this file as a
+    # repo path and fails when it does not resolve. It caught exactly that
+    # here — the guard works.)
+    needs: [pr-review, merge-gate, remove-label]
+    # `!cancelled()` (not `always()`): still reflects a failed or skipped call,
+    # but doesn't red the check in a run that cancel-in-progress superseded.
     if: ${{ !cancelled() }}
     # Trivially cheap mirror step — no reason to occupy a self-hosted runner.
     runs-on: ubuntu-latest
@@ -143,19 +873,20 @@ jobs:
       # judges it. That is a deliberate, bounded trade and not an oversight:
       # this check is NOT required to merge, so neutering the script buys a
       # PR nothing, and `reviewmirror_test.go` runs the script's suite inside
-      # `go test ./...` — a neutered script reds the `. (test)` leg, which is
-      # a check people actually read. IF this check is ever made required,
-      # that changes: source the script from the base branch instead, the way
-      # the `review` job pins forge's reusable workflow at @main for exactly
-      # this reason. Note the bootstrap that forces the order — the PR adding
-      # the script cannot be judged by a base-branch copy that does not yet
-      # exist.
+      # `go test ./...` — a neutered script reds the root module, which is a
+      # check people actually read. IF this check is ever made required, that
+      # changes: source the script from the base branch instead.
+      #
+      # Vendoring did not weaken this. It is the same trade the shim made —
+      # and note that vendoring does NOT newly expose the jobs above to
+      # PR edits either, because forge's sync PR is what writes this file and
+      # a hand-edit to it is drift the next sync overwrites.
       - uses: actions/checkout@v4
         with:
           lfs: true
           persist-credentials: false
       # Every value below is a trusted event field (a repo slug, an integer,
-      # and a job-result enum), but they go through env: rather than inline
+      # and job-result enums), but they go through env: rather than inline
       # ${{ }} regardless — an interpolation habit is only worth having if it
       # holds on the safe cases too.
       - name: Assert a rendered review exists for this head
@@ -163,31 +894,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number || inputs.pr_number }}
-          RESULT: ${{ needs.review.result }}
-        run: sh .github/scripts/assert-review-rendered.sh "$REPO" "$PR" "$RESULT"
-
-# The assertion lives in a script, not inline here, because inline YAML cannot
-# be run or tested — and this job's whole history is of passing while meaning
-# nothing (#198). `.github/scripts/assert-review-rendered_test.sh` is nine
-# cases with a near-miss twin for every positive, and `reviewmirror_test.go`
-# runs that suite as part of `go test ./...`, so neutering the script turns
-# the root module red rather than turning this check quietly green.
-#
-# `skipped` still counts as satisfiABLE, and that is load-bearing rather than
-# defensive: every internal job of the reusable workflow has its own `if:` that
-# legitimately skips on events this workflow shouldn't act on (e.g. an
-# unrelated label add/remove, which this shim forwards broadly so the
-# do-not-merge labels reach the gate). When every internal job skips, the
-# `review` call job's own result is `skipped`, not `success` — treating that as
-# a failure would fail the check on every unrelated label change.
-#
-# What changed is that `skipped` no longer counts as satisfIED on its own. It
-# means "no new review was needed", which is only true if an existing review
-# covers this head — so the script goes on to check that, and a label event on
-# a commit nothing has reviewed is now red instead of green.
-
-# When track_progress is enabled (in the reusable workflow):
-# - Creates a tracking comment with progress checkboxes
-# - Includes all PR context (comments, attachments, images)
-# - Updates progress as the review proceeds
-# - Marks as completed when done
+          PR_REVIEW: ${{ needs.pr-review.result }}
+          MERGE_GATE: ${{ needs.merge-gate.result }}
+          REMOVE_LABEL: ${{ needs.remove-label.result }}
+        run: |
+          set -eu
+          # Reconstruct a workflow_call caller job's `result` from the jobs it
+          # would have wrapped, because that is the value the assertion script
+          # is written against. GitHub's rule: failure if any called job
+          # failed, skipped if they ALL skipped, success otherwise.
+          #
+          # `cancelled` is folded into failure rather than ignored. It cannot
+          # arrive via cancel-in-progress — the `if: !cancelled()` above
+          # already suppresses the whole job in a superseded run — so a
+          # cancelled dependency here is a genuine mid-run abort, and
+          # "abandoned" must not read as "reviewed".
+          result=success
+          for r in "$PR_REVIEW" "$MERGE_GATE" "$REMOVE_LABEL"; do
+            case "$r" in
+              failure | cancelled) result=failure ;;
+            esac
+          done
+          if [ "$PR_REVIEW" = skipped ] && [ "$MERGE_GATE" = skipped ] && [ "$REMOVE_LABEL" = skipped ]; then
+            result=skipped
+          fi
+          echo "pr-review=$PR_REVIEW merge-gate=$MERGE_GATE remove-label=$REMOVE_LABEL -> $result"
+          sh .github/scripts/assert-review-rendered.sh "$REPO" "$PR" "$result"
