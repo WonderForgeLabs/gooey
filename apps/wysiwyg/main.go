@@ -481,7 +481,12 @@ func (ed *editor) bodySpec(elem string) *markup.BodySpec {
 	return nil
 }
 
-// takesBody is the boolean form, for the seeding path.
+// takesBody is the boolean form. Nothing on the seeding path calls it any
+// more — the seed itself decides whether an element carries a body, and
+// addSelected keys off n.Body rather than off the declaration. It stays
+// because body_test.go uses it to cross-check the two against each other:
+// a node with a body whose element declares none, or the reverse, is a
+// disagreement between the seed and the vocabulary.
 func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
 func (n *node) markup(indent string) string {
@@ -1481,6 +1486,24 @@ func (ed *editor) addSelected() {
 	// to be unique among siblings. A seed that carried one would collide
 	// with the second copy of itself.
 	n.Attrs["Name"] = name
+
+	// And so is the BODY, for a body-bearing element — but only the
+	// inserted element's OWN body, never its seed's children.
+	//
+	// A seed is one instance, so <Text>'s is the literal
+	// "<Text>Text</Text>": every palette-inserted copy reads the same
+	// word. Name will not do instead — it is the ADDRESS the outline and
+	// hitTest resolve by, and it never appears on the canvas. The body is
+	// the only thing DRAWN, so two of them sharing one make the elements
+	// indistinguishable in the one place the user is working.
+	//
+	// The guard is n.Body != "": an element whose seed gave it no body
+	// did not want one, and a container's inline children keep theirs
+	// (<VStack>'s One and Two, <Grid>'s A and B) because a seed names its
+	// children deliberately and they are taken verbatim.
+	if n.Body != "" {
+		n.Body = name
+	}
 
 	// Free geometry only where the PARENT gives it. Under a <Grid> or a
 	// <VStack> a Canvas.Left is silently discarded, which is the defect
