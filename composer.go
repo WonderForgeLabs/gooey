@@ -832,8 +832,8 @@ func fillRect(b *render.Buffer, r Rect, s render.Style) {
 // Every still-visible node whose bounds intersect the vacated rect is
 // force-dirtied, and the ordinary paint loop then lays them down again
 // in z-order, with the forward pass keeping everything above them
-// honest. Decorators are included: the cells they re-style are exactly
-// the ones being restored.
+// honest. Decorators are skipped: they own no cells, so there is nothing
+// for the restore pass to put back.
 //
 // Runs outside any evaluation (from the sweeps), so the Sets here are
 // the same legality as the bounds sweep's.
@@ -843,6 +843,9 @@ func (c *Composer) restoreUnder(r Rect) {
 	}
 	for _, n := range c.nodes {
 		if n.bounds.W <= 0 || n.bounds.H <= 0 || !paintable(n.w) {
+			continue
+		}
+		if _, isDecorator := n.w.(Decorator); isDecorator {
 			continue
 		}
 		if intersects(r, n.bounds) {

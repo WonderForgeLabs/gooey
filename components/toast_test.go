@@ -55,12 +55,10 @@ func TestToastDismissRestoresWhatWasBeneath(t *testing.T) {
 
 	host.Dismiss(toast)
 	_, painted := c.Frame()
-	// The restore pass forces everything the vacated rect intersects:
-	// the covered content leaf plus the two chrome-less containers
-	// (Canvas and host) whose bounds span it — a container's forced
-	// evaluation paints no cells, but it is counted, honestly.
-	if painted != 3 {
-		t.Fatalf("dismissing painted %d components, want 3 (restored leaf + 2 swept containers)", painted)
+	// Transparent containers own no cells, so only the covered content leaf
+	// is restored. The toast itself has already left the composition.
+	if painted != 1 {
+		t.Fatalf("dismissing painted %d components, want 1 (restored leaf)", painted)
 	}
 	if got := row(c.Cells(), 0); got != strings.Repeat("#", 30) {
 		t.Fatalf("row 0 after dismiss = %q — the vacated cells did not restore", got)

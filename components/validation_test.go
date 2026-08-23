@@ -95,12 +95,12 @@ func TestValidationLoopDamage(t *testing.T) {
 	// "a": required → at least 3 characters. Still invalid: the button
 	// must not repaint. The message RESIZED, so beyond TextBox + marker
 	// the frame restores beneath the float's old rect — the restored
-	// filler leaf and the swept containers (Canvas, layer), the same
+	// filler leaf; transparent containers own no cells, the same
 	// moved-overlay cost the tooltip dismissal pins.
 	typeRune(c, 'a')
 	_, painted := c.Frame()
-	if painted != 5 {
-		t.Fatalf("invalid→invalid resize painted %d components, want 5 (TextBox + marker + restored filler + 2 swept containers, and NO button)", painted)
+	if painted != 3 {
+		t.Fatalf("invalid→invalid resize painted %d components, want 3 (TextBox + marker + restored filler, and NO button)", painted)
 	}
 	if got := row(c.Cells(), 1); !strings.Contains(got, " at least 3 characters ") {
 		t.Fatalf("row 1 = %q, want the Len message", got)
@@ -114,12 +114,12 @@ func TestValidationLoopDamage(t *testing.T) {
 		t.Fatalf("same-message edit painted %d components, want 2 (TextBox + marker)", painted)
 	}
 
-	// "c": the flip. The marker vacates its row (restored filler + the
-	// two swept containers), and the button repaints enabled — exactly
+	// "c": the flip. The marker vacates its row (restored filler), and
+	// the button repaints enabled — exactly
 	// once, this frame.
 	typeRune(c, 'c')
-	if _, painted := c.Frame(); painted != 6 {
-		t.Fatalf("the valid flip painted %d components, want 6 (TextBox + vacated marker + restored filler + 2 swept containers + the button, once)", painted)
+	if _, painted := c.Frame(); painted != 4 {
+		t.Fatalf("the valid flip painted %d components, want 4 (TextBox + vacated marker + restored filler + the button, once)", painted)
 	}
 	if got := row(c.Cells(), 1); !strings.Contains(got, "####") || strings.Contains(got, "at least") {
 		t.Fatalf("row 1 = %q, want the filler restored where the message floated", got)

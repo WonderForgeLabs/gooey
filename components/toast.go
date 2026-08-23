@@ -129,6 +129,10 @@ func (h *ToastHost) Arrange(b gooey.Rect) {
 // toasts own their cells.
 func (h *ToastHost) Render(*gooey.Frame) {}
 
+// DecoratesCells marks the transparent host as a no-cell container. Toasts
+// are separate child nodes and remain eligible for damage restoration.
+func (h *ToastHost) DecoratesCells() {}
+
 // HitTestTransparent: the host spans the whole page invisibly (the same
 // hosting shape as AdornmentLayer), so the pointer must pass through it
 // — a page with a toast layer would otherwise never receive a click.

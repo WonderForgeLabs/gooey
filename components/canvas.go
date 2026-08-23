@@ -85,3 +85,7 @@ func (c *Canvas) Arrange(b gooey.Rect) {
 }
 
 func (c *Canvas) Render(f *gooey.Frame) {} // containers paint only their own chrome; a Canvas has none
+
+// DecoratesCells marks the transparent canvas as a no-cell container for
+// both z-order force passes.
+func (c *Canvas) DecoratesCells() {}
