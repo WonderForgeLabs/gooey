@@ -88,6 +88,42 @@ func TestValidAttributesStillLoad(t *testing.T) {
 	}
 }
 
+func TestNamespacedAttributesAreLoadErrors(t *testing.T) {
+	cases := []struct {
+		name, src, want string
+	}{
+		{
+			name: "standard XML namespace",
+			src:  `<Gooey><Text xml:Style="accent">x</Text></Gooey>`,
+			want: "xml:Style",
+		},
+		{
+			name: "undeclared prefix",
+			src:  `<Gooey><Text zz:Style="accent">x</Text></Gooey>`,
+			want: "{zz}Style",
+		},
+		{
+			name: "declared namespace",
+			src:  `<Gooey xmlns:custom="example.com/custom"><Text custom:Style="accent">x</Text></Gooey>`,
+			want: "{example.com/custom}Style",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Build([]byte(tc.src), &Context{})
+			if err == nil {
+				t.Fatal("namespaced attribute loaded successfully")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not identify %q", err, tc.want)
+			}
+			if !strings.Contains(err.Error(), "namespaced attributes are not supported") {
+				t.Errorf("error %q does not explain the namespace restriction", err)
+			}
+		})
+	}
+}
+
 // TestRejectionSkipsWhatItCannotKnow is the honesty rule applied to
 // enforcement. A registered Go builder interprets attributes however it
 // likes and an opaque element's vocabulary was never enumerable, so
