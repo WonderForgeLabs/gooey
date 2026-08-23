@@ -133,6 +133,16 @@ func TestNamespacedAttributesAreLoadErrors(t *testing.T) {
 	}
 }
 
+func TestNamespaceDeclarationsKeepValidMarkupLoadable(t *testing.T) {
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026" xmlns:x="wonderforge.io/gooey/x">
+  <x:Property Name="Title" Type="string"/>
+  <Text>ok</Text>
+</Gooey>`
+	if _, err := Build([]byte(src), &Context{}); err != nil {
+		t.Fatalf("valid namespace declarations were rejected: %v", err)
+	}
+}
+
 // TestRejectionSkipsWhatItCannotKnow is the honesty rule applied to
 // enforcement. A registered Go builder interprets attributes however it
 // likes and an opaque element's vocabulary was never enumerable, so
