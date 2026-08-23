@@ -62,10 +62,12 @@ type Screen struct {
 	decDone   chan struct{}
 	decLeaked bool
 
-	// decErr is why the decoder stopped, or nil if it stopped because
-	// teardown closed the tty under it. Written by the decoder goroutine
-	// and read by whoever is watching DecoderDone; see DecoderErr for
-	// the ordering that makes that safe without a lock.
+	// decErr is the read error that stopped the decoder. Nil only while
+	// one is still running (or was never started); a decoder has exactly
+	// one exit path and it always records a non-nil error, teardown
+	// included. Written by the decoder goroutine and read by whoever is
+	// watching DecoderDone; see DecoderErr for the ordering that makes
+	// that safe without a lock.
 	decErr error
 }
 
@@ -273,8 +275,21 @@ func (s *Screen) DecoderLeaked() bool { return s.decLeaked }
 // right behaviour in a select for both cases.
 func (s *Screen) DecoderDone() <-chan struct{} { return s.decDone }
 
-// DecoderErr is why the decoder stopped: nil if it stopped because
-// teardown closed the tty under it, non-nil if the terminal failed.
+// DecoderErr is the read error that stopped the decoder. Once
+// DecoderDone has fired it is ALWAYS non-nil — the decoder's single exit
+// path records the failing read before it closes the chunk channel that
+// lets DecodeEvents return, so there is no way to reach a fired
+// DecoderDone with a nil error here.
+//
+// That includes a clean teardown, which is not a special case but the
+// ordinary one: Restore closes the tty precisely to cancel the pending
+// read, and the read reports that. So the discriminator is the KIND of
+// error, not its presence — errors.Is(err, os.ErrClosed) is the teardown
+// this Screen asked for, and anything else is a terminal that failed
+// under a decoder nobody told to stop.
+//
+// Nil, therefore, means only that no decoder has exited: none was ever
+// started, or one is still running and this was read too early.
 //
 // Read it only after DecoderDone has fired. That is not a lock-free
 // hopeful convention but an ordering the decoder establishes: it assigns

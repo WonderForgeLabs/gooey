@@ -119,7 +119,15 @@ func TestRecoverableErrorsDoNotEndInput(t *testing.T) {
 // A clean teardown must NOT look like a failure, or the tripwire above
 // fires on every normal exit and gets ignored — the way a stale
 // known-bad list gets ignored, and for the same reason.
-func TestCleanTeardownReportsNoDecoderError(t *testing.T) {
+//
+// It is distinguishable by the KIND of error, not by the absence of one.
+// Restore closes the tty precisely to cancel the pending read, so the
+// read reports that close: DecoderErr is non-nil here and wraps
+// os.ErrClosed. Asserting nil would be asserting that no decoder ever
+// ran. That non-nil half is load-bearing beyond this package — App.deaf
+// wraps DecoderErr unconditionally because DecoderDone cannot fire
+// before it is set, and this is what holds that up.
+func TestCleanTeardownIsDistinguishableFromFailure(t *testing.T) {
 	_, slave := openPTY(t)
 	s := FromFile(slave)
 	s.Events(16)
@@ -128,8 +136,13 @@ func TestCleanTeardownReportsNoDecoderError(t *testing.T) {
 	if s.DecoderLeaked() {
 		t.Fatal("Restore did not join the decoder")
 	}
-	if err := s.DecoderErr(); err != nil && !errors.Is(err, os.ErrClosed) {
-		t.Errorf("DecoderErr = %v after a clean Restore; a normal teardown "+
-			"must not be reported as a terminal failure", err)
+	err := s.DecoderErr()
+	if err == nil {
+		t.Fatal("DecoderErr = nil after the decoder exited; the decoder has one exit " +
+			"path and it always records a cause, so nil here means it never ran")
+	}
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("DecoderErr = %v after a clean Restore, want an os.ErrClosed-class error; "+
+			"a normal teardown must not be reported as a terminal failure", err)
 	}
 }
