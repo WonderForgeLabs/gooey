@@ -1,25 +1,37 @@
 name: Claude Code
 
-# ADR-048 shim: delegates all @claude bot logic to forge's workflow of record,
-# claude-bot.reusable.yml. Only the `on:` triggers, the @claude `if:` gate, and
-# job `permissions` stay in this repo; per-repo customizations (allowed tools,
-# standing instructions) are passed as `with:` overrides.
+# ADR-048 VENDORED COPY — DO NOT HAND-EDIT THE `jobs:` SECTION BELOW.
 #
-# Tracks forge's main branch directly, matching the other consumer repos in the
-# org (project-ops, claude-plugins), so gooey always runs the current reusable
-# workflow logic without a manual pin bump. A repo-qualified ref — never a
-# local `./` path — is load-bearing per the ADR's trust model: a PR that edits
-# only this shim is caught by claude-code-action's server-side
-# workflow-validation guard instead of changing what runs on its own event.
+# gooey became a PUBLIC repository on 2026-08-22. GitHub Actions does not
+# allow a public repo to call a `workflow_call` reusable workflow hosted in a
+# private repo (WonderForgeLabs/forge is private) — a hard platform
+# restriction, not a config bug, and `organization` is already the widest
+# access level forge can grant. So instead of a thin shim, this file is a
+# rendered, self-contained copy of forge's claude-bot.reusable.yml `jobs:`
+# section, with `${{ inputs.X }}` substituted for this repo's literal
+# override values by scripts/ci/render-vendored-claude-workflow.py.
+#
+# forge's sync-public-consumer-workflows.yml re-renders and opens a PR here
+# automatically whenever claude-bot.reusable.yml changes on forge's main. Do
+# not hand-edit the jobs: section below — edit
+# scripts/ci/public-consumers/gooey/bot.config.json (overrides) or
+# bot.header.yml (this header) in forge instead, and let the sync PR land.
+#
+# The @claude trigger gate that used to sit on the shim's calling job is now
+# injected onto the `claude:` job itself (bot.config.json's `job_if`). There
+# is no calling job in a vendored copy to hold it, and without it the bot
+# would answer every issue and comment in the repo.
+#
+# Model and max_turns were deliberately left unset on the shim so gooey would
+# inherit whatever forge's update-claude-models.yml keeps current. A vendored
+# copy cannot inherit, so both are pinned in bot.config.json and a future
+# model bump reaches gooey through the sync PR instead.
+#
+# The rendered jobs run on the org's self-hosted vSphere runner pool (runner
+# group "Default"), which accepts public repositories as of 2026-08-22 —
+# before that, gooey's jobs queued forever against it with no error.
+#
 # See https://github.com/WonderForgeLabs/forge/blob/main/docs/ADR/048-org-wide-claude-bot-workflow-of-record.md
-#
-# The reusable workflow runs on the org's self-hosted vSphere runner pool
-# (runner group "Default", visibility=all, so gooey can schedule on it) and
-# mints a WF Runners App token from the org-level App secrets, which grants
-# @claude workflows:write.
-#
-# Model is deliberately not overridden — gooey inherits the reusable
-# workflow's default, which forge's update-claude-models.yml keeps current.
 
 on:
   issue_comment:
@@ -38,76 +50,159 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: forge-runners-default-vsphere
+    # Must be granted by the shim's calling job — a called workflow can only
+    # narrow, never widen, the caller's token permissions.
     permissions:
       contents: write # Enable creating commits and pushing changes
       pull-requests: write # Enable creating and modifying PRs
       issues: write # Enable creating and modifying issues
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
-    uses: WonderForgeLabs/forge/.github/workflows/claude-bot.reusable.yml@main
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      WF_RUNNERS_APP_ID: ${{ secrets.WF_RUNNERS_APP_ID }}
-      WF_RUNNERS_APP_PRIVATE_KEY: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
-    with:
-      # Go toolchain instead of forge's dotnet/bun/npm/k8s spread. The
-      # reusable workflow's .NET setup step self-gates on Directory.Packages.props,
-      # which gooey doesn't have, so it no-ops here.
-      allowed_tools: 'Edit,MultiEdit,Write,Read,Glob,Grep,LS,mcp__github__issue_write,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(curl:*)'
-      allowed_bots: 'claude[bot]'
-      # CAUTION (from the reusable workflow's input docs): the action's
-      # claude_args parser strips any line whose first non-whitespace character
-      # is '#', even inside quotes — use **bold** pseudo-headings, not Markdown
-      # headings, in this block.
-      extra_system_prompt: |
-        **About This Repository**
-        gooey is an XAML-like TUI framework for Go: components are persistent
-        objects in a retained tree, every visual property is a lazy
-        dirty-tracking `*prop.Property[T]`, and markup builds that same tree
-        from XML.
+    # `secrets` isn't available in step `if:` conditions — bridge it through
+    # job-level `env:` (which does allow `secrets`) so the Generate app token
+    # step below can check it.
+    env:
+      HAS_WF_RUNNERS_APP: ${{ secrets.WF_RUNNERS_APP_ID != '' && secrets.WF_RUNNERS_APP_PRIVATE_KEY != '' }}
+    steps:
+      # Mint a token from the WF Runners GitHub App so the agent runs with
+      # `workflows: write` — claude-code-action's own OIDC token lacks it, which
+      # is why @claude previously had to delegate workflow edits to @copilot.
+      # @claude is already restricted to write-access actors, so this stays
+      # least-privilege. Skipped when the consumer repo has no WF Runners App
+      # secrets configured (create-github-app-token hard-fails on an empty
+      # client-id/private-key, so this must not run unconditionally) — the bot
+      # still runs, just without workflows: write, same as before adoption.
+      - name: Generate app token
+        id: app-token
+        if: env.HAS_WF_RUNNERS_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WF_RUNNERS_APP_ID }}
+          private-key: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
 
-        **Module Layout**
-        - Root module `github.com/WonderForgeLabs/gooey` (Go 1.25)
-        - Every directory with its own `go.mod` is a SEPARATE module on
-          purpose, so a heavy dependency graph — the Temporal SDK's
-          gRPC/protobuf, gojq, the MCP SDK's — never enters the core
-          framework's. There are many more than any list here would name, and
-          this paragraph used to name three of them as though that were all.
-          DISCOVER them instead: `CLAUDE.md`'s Verify section carries the
-          command, `ci.yml` builds its job matrix from that same command, and
-          those two are the authority.
-        - Nested modules are excluded from the root `./...`, so a green root
-          run says NOTHING about them. `CLAUDE.md`'s verify loop is also the
-          authority on which get `-race`.
-        - The root `go.mod`'s direct requirements are deliberately few — read
-          the file rather than recalling them, and treat adding one as a
-          decision to check with a human, not a routine edit.
-        - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
-          `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
-          control, `input/` routed event stream, `markup/` XML to component tree,
-          `cmd/` demo apps, `apps/` the larger applications, `docs/`
-          architecture and learn tutorials.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          lfs: true
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
-        **Architectural Invariants**
-        - One cell renderer and N graphics protocols — the cell plane and the
-          pixel plane are separate planes, not alternative backends. Do not
-          reintroduce a "rendering mode" abstraction.
-        - Property reads during paint are what register a component's dependency
-          on that property; a change dirties exactly the components that read it.
-          Don't bypass the property graph with direct field access on paint paths.
-        - Core gooey takes no new third-party dependencies without an explicit
-          decision — check with a human before adding one to the root go.mod.
+      # Self-gating, not a consumer input: lets Claude run `dotnet` commands
+      # (already in the default allowed_tools) on .NET consumers (forge,
+      # forgery) without adding SDK-install latency to consumers that aren't
+      # .NET repos (project-ops, claude-plugins). Keyed on the presence of
+      # Directory.Packages.props (this org's centralized-NuGet-versions
+      # convention) rather than a workflow_call input, so every consumer runs
+      # the identical step - it just no-ops where the file doesn't exist.
+      # cache-dependency-path is intentionally hardcoded: setup-dotnet's
+      # restoreCache throws if the path matches no file, so this must stay
+      # behind the same hashFiles() gate as the step itself.
+      - name: Setup .NET
+        if: hashFiles('Directory.Packages.props') != ''
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: Directory.Packages.props
 
-        **Verification**
-        Before claiming work is done, run `go vet ./...` and `go test ./...`
-        from the repo root, plus a run per nested module — discovered, not
-        recalled — when one is touched.
+      # Compose claude_args in bash (not inline ${{ }} interpolation) so the
+      # extra_system_prompt is shell-quoted correctly — embedded single quotes
+      # in a repo's standing instructions must not break the action's
+      # shell-quote parsing of claude_args.
+      #
+      # Deliberately inline, not a scripts/ci/ script: this workflow runs in
+      # CONSUMER repos, whose checkout is the consumer's own tree — forge's
+      # scripts/ directory does not exist there, so any logic this workflow
+      # needs must live in this file.
+      - name: Compose claude_args
+        id: args
+        env:
+          MODEL: 'claude-sonnet-5'
+          ALLOWED_TOOLS: 'Edit,MultiEdit,Write,Read,Glob,Grep,LS,mcp__github__issue_write,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(curl:*)'
+          MAX_TURNS: '50'
+          EXTRA_SYSTEM_PROMPT: |
+            **About This Repository**
+            gooey is an XAML-like TUI framework for Go: components are persistent
+            objects in a retained tree, every visual property is a lazy
+            dirty-tracking `*prop.Property[T]`, and markup builds that same tree
+            from XML.
 
-        Use `go vet ./...` for the whole-repo compile check and NOT
-        `go build ./...`. `go build ./...` writes an executable into the repo
-        root for every main package, `.gitignore` does not cover all of them,
-        and several have been committed that way; `CLAUDE.md`'s Traps section
-        is the record. When binaries are genuinely wanted,
-        `go build -o /tmp/gooey-bin/ ./...` leaves the tree clean.
+            **Module Layout**
+            - Root module `github.com/WonderForgeLabs/gooey` (Go 1.25)
+            - Every directory with its own `go.mod` is a SEPARATE module on
+              purpose, so a heavy dependency graph — the Temporal SDK's
+              gRPC/protobuf, gojq, the MCP SDK's — never enters the core
+              framework's. There are many more than any list here would name, and
+              this paragraph used to name three of them as though that were all.
+              DISCOVER them instead: `CLAUDE.md`'s Verify section carries the
+              command, `ci.yml` builds its job matrix from that same command, and
+              those two are the authority.
+            - Nested modules are excluded from the root `./...`, so a green root
+              run says NOTHING about them. `CLAUDE.md`'s verify loop is also the
+              authority on which get `-race`.
+            - The root `go.mod`'s direct requirements are deliberately few — read
+              the file rather than recalling them, and treat adding one as a
+              decision to check with a human, not a routine edit.
+            - `prop/` lazy property graph, `render/` cell plane (Buffer/Style/Flush),
+              `graphics/` pixel plane (terminal graphics protocols), `term/` terminal
+              control, `input/` routed event stream, `markup/` XML to component tree,
+              `cmd/` demo apps, `apps/` the larger applications, `docs/`
+              architecture and learn tutorials.
 
-        Report real output — never assert a command passed without running it.
+            **Architectural Invariants**
+            - One cell renderer and N graphics protocols — the cell plane and the
+              pixel plane are separate planes, not alternative backends. Do not
+              reintroduce a "rendering mode" abstraction.
+            - Property reads during paint are what register a component's dependency
+              on that property; a change dirties exactly the components that read it.
+              Don't bypass the property graph with direct field access on paint paths.
+            - Core gooey takes no new third-party dependencies without an explicit
+              decision — check with a human before adding one to the root go.mod.
+
+            **Verification**
+            Before claiming work is done, run `go vet ./...` and `go test ./...`
+            from the repo root, plus a run per nested module — discovered, not
+            recalled — when one is touched.
+
+            Use `go vet ./...` for the whole-repo compile check and NOT
+            `go build ./...`. `go build ./...` writes an executable into the repo
+            root for every main package, `.gitignore` does not cover all of them,
+            and several have been committed that way; `CLAUDE.md`'s Traps section
+            is the record. When binaries are genuinely wanted,
+            `go build -o /tmp/gooey-bin/ ./...` leaves the tree clean.
+
+            Report real output — never assert a command passed without running it.
+        run: |
+          set -euo pipefail
+          # Random per-run heredoc delimiter so no extra_system_prompt content
+          # can ever collide with the GITHUB_OUTPUT terminator line.
+          delim="WF_CLAUDE_ARGS_$(openssl rand -hex 16)"
+          {
+            echo "value<<${delim}"
+            echo "--max-turns ${MAX_TURNS} --allowedTools \"${ALLOWED_TOOLS}\" --model \"${MODEL}\""
+            if [ -n "$EXTRA_SYSTEM_PROMPT" ]; then
+              printf -- "--append-system-prompt '%s'\n" "${EXTRA_SYSTEM_PROMPT//\'/\'\\\'\'}"
+            fi
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@9d7150bc8a3dae8149739a88019d192b579ad90c # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Deliberately NOT `|| github.token` (unlike the checkout step above):
+          # an empty github_token here leaves claude-code-action's own OIDC
+          # token exchange in play, which is what performs the server-side
+          # workflow-validation (anti-exfil) check and merges
+          # additional_permissions. Falling back to a real github.token would
+          # short-circuit straight to that token, silently skipping both.
+          github_token: ${{ steps.app-token.outputs.token }}
+          allowed_bots: 'claude[bot]'
+
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
+
+          claude_args: ${{ steps.args.outputs.value }}
