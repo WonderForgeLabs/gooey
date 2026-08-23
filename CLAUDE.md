@@ -24,7 +24,14 @@ Two consequences that are easy to trip over:
   published version. That is what makes a core API change break
   `apps/gitui` in your working tree instead of at the next tag — a feature
   here, but it means `go test` in a nested module is no longer testing that
-  module against what it *requires*.
+  module against what it *requires*. That require is read for the first time
+  OUTSIDE this repo, by somebody's `go get`, so
+  `TestNestedModulesRequireAResolvableCoreVersion` reads it in here instead: a
+  nested module must require core at a published commit, never the `v0.0.0`
+  placeholder, which no proxy can serve. The `replace … => ../..` beside it
+  does not save you — a replace in a *dependency's* go.mod is ignored by
+  whoever depends on it, and applies only here, where the workspace has
+  already made it redundant.
 - **`GOPROXY=off` does not prove vendoring works.** It blocks downloads
   while the local module cache still satisfies everything, so a tree that
   would fail on a clean machine passes for you. The discriminating checks

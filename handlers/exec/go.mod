@@ -13,7 +13,7 @@ module github.com/WonderForgeLabs/gooey/handlers/exec
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0
+	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
 	github.com/itchyny/gojq v0.12.17
 )
 
