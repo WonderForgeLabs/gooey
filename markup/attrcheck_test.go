@@ -90,22 +90,31 @@ func TestValidAttributesStillLoad(t *testing.T) {
 
 func TestNamespacedAttributesAreLoadErrors(t *testing.T) {
 	cases := []struct {
-		name, src, want string
+		name, src, want, reason string
 	}{
 		{
-			name: "standard XML namespace",
-			src:  `<Gooey><Text xml:Style="accent">x</Text></Gooey>`,
-			want: "xml:Style",
+			name:   "standard XML namespace",
+			src:    `<Gooey><Text xml:Style="accent">x</Text></Gooey>`,
+			want:   "xml:Style",
+			reason: "namespaced attributes are not supported",
 		},
 		{
-			name: "undeclared prefix",
-			src:  `<Gooey><Text zz:Style="accent">x</Text></Gooey>`,
-			want: "{zz}Style",
+			name:   "undeclared prefix",
+			src:    `<Gooey><Text zz:Style="accent">x</Text></Gooey>`,
+			want:   "{zz}Style",
+			reason: "namespaced attributes are not supported",
 		},
 		{
-			name: "declared namespace",
-			src:  `<Gooey xmlns:custom="example.com/custom"><Text custom:Style="accent">x</Text></Gooey>`,
-			want: "{example.com/custom}Style",
+			name:   "declared namespace",
+			src:    `<Gooey xmlns:custom="example.com/custom"><Text custom:Style="accent">x</Text></Gooey>`,
+			want:   "{example.com/custom}Style",
+			reason: "namespaced attributes are not supported",
+		},
+		{
+			name:   "empty namespace binding",
+			src:    `<Gooey xmlns:zz=""><Text zz:Style="accent">x</Text></Gooey>`,
+			want:   `namespace prefix "zz" cannot be empty`,
+			reason: `namespace prefix "zz" cannot be empty`,
 		},
 	}
 	for _, tc := range cases {
@@ -117,7 +126,7 @@ func TestNamespacedAttributesAreLoadErrors(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error %q does not identify %q", err, tc.want)
 			}
-			if !strings.Contains(err.Error(), "namespaced attributes are not supported") {
+			if !strings.Contains(err.Error(), tc.reason) {
 				t.Errorf("error %q does not explain the namespace restriction", err)
 			}
 		})

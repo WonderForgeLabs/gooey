@@ -575,6 +575,11 @@ func parse(src []byte) (Element, map[string]string, error) {
 		case xml.StartElement:
 			e := Element{Name: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" && a.Value == "" {
+					return Element{}, nil, fmt.Errorf("markup: <%s xmlns:%s=\"\">: namespace prefix %q cannot be empty", t.Name.Local, a.Name.Local, a.Name.Local)
+				}
+			}
+			for _, a := range t.Attr {
 				if a.Name.Space == "xmlns" {
 					ns[a.Name.Local] = a.Value
 					continue
