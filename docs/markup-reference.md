@@ -881,6 +881,8 @@ Unknown attributes are a **load error**, as they now are on every element: a mis
 
 **Args and env are property elements.** `Args="worker.py --queue my-queue"` is lossy the moment an argument contains a space, and XML attributes have already spent both quote characters. One `<Arg>` per argument, document order preserved, no escaping; `<Var>` names are literal and `<Var>` values bind like any other text attribute. Both are consumed as data, so they never enter the visual tree. There is no shell anywhere — `Path` plus the `<Arg>` list is an argv, and nothing re-parses it.
 
+**An `<Arg>` body is whitespace-significant.** `<Arg>` takes its argument from its body, so it follows the same rule as `<Text>` (see [Text](#text)): a one-line body is kept verbatim, leading and trailing spaces included. `<Arg>  --lead</Arg>` passes `"  --lead"`, not `"--lead"`. That is deliberate — an argv token is exactly the kind of literal a loader must not quietly rewrite — but it means a stray space inside the tags reaches the child process. A body that wraps across lines is unindented and joined, as everywhere else.
+
 **Bindings in `<Arg>` and `<Var Value>` are snapshots**, read once when the child starts. Changing the property afterwards does not restart the child — an argv is a value a process was launched with, not one it observes. This is what lets a declaration depend on something only Go knows (an MCP endpoint that is not knowable until the listener is bound): the app puts it in a property, the document binds it.
 
 **Paths are document-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at:
