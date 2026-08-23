@@ -15,13 +15,20 @@
 # runs as a prebuilt binary" means, and it is read off the deck's own
 # content. Add a beat that hosts a new app and this builds it unasked.
 #
-# Two things it deliberately does NOT match, and both are the reason the
-# rule keys on go.mod rather than on the shape of the path:
+# Two things it deliberately does NOT match, both filtered by the shape of
+# the path rather than by the go.mod check below:
 #
-#   - `./watchgo.sh ../intro main.go intro` — watchgo.sh is not a module,
-#     and it builds `intro` itself on every change, which is the point of
-#     beat 3.2. Pre-building it here would be a second, staler copy.
+#   - `./watchgo.sh ../intro main.go intro` — the name character class has
+#     no `.`, so `watchgo.sh` never survives the sed above to be considered
+#     a guest at all. (It is also not a module, and it builds `intro`
+#     itself on every change — the point of beat 3.2 — so pre-building it
+#     here would be a second, staler copy.)
 #   - `../intro/main.go` in the vim command — an argument, not a binary.
+#
+# The go.mod check below is therefore a guard, not the filter that excludes
+# those two: every token that survives the sed today already has a go.mod.
+# It earns its keep if a future beat adds an extension-less non-module
+# token (say `./run`), which the path shape would happily accept.
 #
 # TestGuestScriptBuildsEveryGuestTheDeckRuns pins this script's answer
 # against an independent walk of NARRATION.md, so the two cannot drift.

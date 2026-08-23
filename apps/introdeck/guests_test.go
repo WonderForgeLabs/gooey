@@ -36,9 +36,11 @@ var guestToken = regexp.MustCompile(`^(?:\.\./([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)|
 // guestsFromNarration reads the deck's content and returns the sibling
 // MODULES it runs as prebuilt binaries.
 //
-// Keying on go.mod rather than on the shape of the path is what excludes
-// `./watchgo.sh` — a script, not a module — without naming it here. A
-// denylist would be the thing this test exists to delete.
+// `./watchgo.sh` is excluded by the shape of the path, not by the go.mod
+// check: guestToken's name class has no `.`, so the token never matches.
+// The go.mod check is a guard for an extension-less non-module token (say
+// `./run`) that the path shape would accept. Neither is a denylist — that
+// would be the thing this test exists to delete.
 func guestsFromNarration(t *testing.T) []string {
 	t.Helper()
 
