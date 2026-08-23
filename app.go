@@ -2,6 +2,7 @@ package gooey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,11 @@ type App struct {
 	comp   *Composer
 	disp   *Dispatcher
 	events <-chan input.Event
+	// decDone fires if the decoder dies while the app is still running.
+	// Held separately from screen because the run loop selects on it,
+	// and release() nils it out — a nil channel never fires, which is
+	// what keeps a torn-down screen from ending the loop twice.
+	decDone <-chan struct{}
 
 	cols, rows int
 	needsFrame bool
@@ -470,6 +476,15 @@ func (a *App) Run(ctx context.Context) error {
 			a.disp.Drain()
 		case ev := <-a.events:
 			a.handle(ev)
+		case <-a.decDone:
+			// The decoder died with the terminal still ours. Ending the
+			// loop is the only honest option: DecodeEvents does not
+			// close the events channel on its way out, so the case
+			// above would simply never fire again and this app would
+			// run forever, painting perfectly and answering no key.
+			// Exiting says so; staying up hides it.
+			a.fail(a.deaf())
+			return a.exitErr()
 		}
 	}
 	return a.exitErr()
@@ -527,6 +542,22 @@ func (a *App) gracefulExit(sig os.Signal) {
 // exitErr is why the loop ended. A dead companion outranks a signal:
 // where both happened, the signal is usually the shell reacting to the
 // same failure, and the companion is the fact that explains it.
+// deaf is the error for a decoder that stopped while the app still owned
+// the terminal — the app can still paint, but no keystroke will ever
+// reach it again.
+//
+// It names the terminal rather than the decoder because that is what the
+// user can act on, and it carries the read error when there is one. A
+// nil DecoderErr here means the goroutine returned without a failing
+// read, which is a bug in this package rather than in the terminal, and
+// the message says so instead of inventing a cause.
+func (a *App) deaf() error {
+	if err := a.screen.DecoderErr(); err != nil {
+		return fmt.Errorf("terminal input stopped: %w", err)
+	}
+	return errors.New("terminal input stopped: the decoder exited while the app still held the terminal")
+}
+
 func (a *App) exitErr() error {
 	if a.compErr != nil {
 		return a.compErr
@@ -697,6 +728,7 @@ func (a *App) acquire() error {
 	}
 	a.screen = s
 	a.events = s.Events(a.opt.eventBuf)
+	a.decDone = s.DecoderDone()
 	a.resized(cols, rows)
 	// The screen we just took is not the screen we last flushed to. Raw
 	// enters the alternate screen, which comes back BLANK — after a
@@ -723,7 +755,7 @@ func (a *App) release() {
 	if a.screen.DecoderLeaked() {
 		a.leaked = true
 	}
-	a.screen, a.events = nil, nil
+	a.screen, a.events, a.decDone = nil, nil, nil
 }
 
 // The viewport hook is how control-plane acts reach resized without it

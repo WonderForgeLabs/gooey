@@ -61,6 +61,12 @@ type Screen struct {
 	evs       chan input.Event
 	decDone   chan struct{}
 	decLeaked bool
+
+	// decErr is why the decoder stopped, or nil if it stopped because
+	// teardown closed the tty under it. Written by the decoder goroutine
+	// and read by whoever is watching DecoderDone; see DecoderErr for
+	// the ordering that makes that safe without a lock.
+	decErr error
 }
 
 func Open() (*Screen, error) {
@@ -250,6 +256,34 @@ func (s *Screen) Restore() {
 // the input decoder to exit. False after a clean teardown, and after a
 // teardown of a Screen that never started one.
 func (s *Screen) DecoderLeaked() bool { return s.decLeaked }
+
+// DecoderDone is closed when the input decoder goroutine has exited, and
+// is the tripwire for the failure DecoderLeaked cannot see.
+//
+// The two are duals. DecoderLeaked asks "did the decoder outlive the
+// terminal?" and is checked at teardown. This asks "did the terminal
+// outlive the decoder?" and has to be watched WHILE THE APP RUNS,
+// because nothing else reveals it: DecodeEvents does not close the
+// events channel on its way out, so a run loop selecting on that channel
+// simply blocks on it forever. The app stays alive and keeps painting —
+// every frame correct, every keystroke ignored.
+//
+// Nil for a Screen with no decoder, and nil again after Restore has
+// joined one. A receive on a nil channel blocks forever, which is the
+// right behaviour in a select for both cases.
+func (s *Screen) DecoderDone() <-chan struct{} { return s.decDone }
+
+// DecoderErr is why the decoder stopped: nil if it stopped because
+// teardown closed the tty under it, non-nil if the terminal failed.
+//
+// Read it only after DecoderDone has fired. That is not a lock-free
+// hopeful convention but an ordering the decoder establishes: it assigns
+// the field before closing its chunk channel, which precedes
+// DecodeEvents returning, which precedes the close of decDone. Observing
+// that close therefore happens-after the write, so the plain read is
+// ordered — and the -race tier proves it, since a caller who reads this
+// without waiting is a genuine data race the detector will name.
+func (s *Screen) DecoderErr() error { return s.decErr }
 
 // Detect probes the terminal for graphics capabilities. It must run on a
 // real tty. Strategy: send a Kitty graphics query, a cell-size query
