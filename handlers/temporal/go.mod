@@ -12,7 +12,7 @@ module github.com/WonderForgeLabs/gooey/handlers/temporal
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0
+	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
 	github.com/WonderForgeLabs/gooey/packs/temporal-visibility v0.0.0
 	go.temporal.io/api v1.63.4
 	go.temporal.io/sdk v1.47.0
