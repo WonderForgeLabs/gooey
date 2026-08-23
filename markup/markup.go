@@ -582,6 +582,22 @@ func parse(src []byte) (Element, map[string]string, error) {
 				if a.Name.Space == "" && a.Name.Local == "xmlns" {
 					continue // the default namespace is decorative versioning
 				}
+				if a.Name.Space != "" {
+					// A namespaced attribute arrives with its namespace thrown
+					// away once it reaches Attrs, which cannot tell
+					// xml:Style from Style — so it would be honoured under a
+					// name the author did not write. No element vocabulary
+					// is namespaced today; reject at load time instead of
+					// flattening it. encoding/xml reports the xml: prefix as
+					// its W3C URI whether or not xmlns:xml was declared, so
+					// discriminate on the URI, not the string "xml".
+					prefix := a.Name.Space
+					if prefix == "http://www.w3.org/XML/1998/namespace" {
+						prefix = "xml"
+					}
+					return Element{}, nil, fmt.Errorf("markup: <%s %s:%s=%q>: namespaced attributes are not supported; no attribute vocabulary takes a namespace",
+						t.Name.Local, prefix, a.Name.Local, a.Value)
+				}
 				e.Attrs[a.Name.Local] = a.Value
 			}
 			stack = append(stack, &e)
