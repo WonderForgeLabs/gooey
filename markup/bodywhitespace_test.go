@@ -216,6 +216,47 @@ func TestAnArgBodyFollowsTheSameRule(t *testing.T) {
 	}
 }
 
+// The seeds are the other half of this file's blast radius, and the two
+// features landed together. Every ElementDef.Seed is markup a palette
+// INSERTS, several of them with one-line bodies (<Text>Text</Text>, the
+// <Border>/<VStack>/<HStack> children) — and a one-line body is now
+// verbatim, so a stray space inside a seed's tags is a stray space on
+// the user's canvas.
+//
+// TestEverySeededElementLoadsAndOccupiesSpace does not catch that: an
+// element with a leading space still loads and still occupies space.
+// This asks the question that one cannot, and it asks it by DERIVING
+// the answer from the seeds rather than from a list of which seeds have
+// bodies. If it ever fails, fix the SEED — the rule is doing its job.
+func TestNoSeedBodyCarriesIncidentalWhitespace(t *testing.T) {
+	var checked int
+	for _, spec := range (&Context{}).Catalog() {
+		if strings.TrimSpace(spec.Seed) == "" {
+			continue
+		}
+		root, _, err := parse([]byte(spec.Seed))
+		if err != nil {
+			t.Errorf("<%s> seed does not parse: %v", spec.Name, err)
+			continue
+		}
+		var walk func(Element)
+		walk = func(e Element) {
+			checked++
+			if got, want := bodyText(e.Text), strings.TrimSpace(e.Text); got != want {
+				t.Errorf("<%s> seed: the body of <%s> is %q, which the whitespace rule keeps verbatim as %q; "+
+					"a palette would insert that space onto the user's canvas", spec.Name, e.Name, e.Text, got)
+			}
+			for _, k := range e.Children {
+				walk(k)
+			}
+		}
+		walk(root)
+	}
+	if checked == 0 {
+		t.Fatal("no seed was examined, so this test can no longer discriminate")
+	}
+}
+
 // The declaration must not outlive the behaviour. BodySpec.Doc asserted
 // "Trimmed, so leading and trailing spaces cannot be expressed" as
 // settled fact, and that string is what the wysiwyg palette shows a

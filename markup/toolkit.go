@@ -275,3 +275,14 @@ func bodyText(raw string) string {
 	}
 	return raw
 }
+
+// BodyText is bodyText for consumers outside this package — an editor
+// that round-trips a body, or a nested module whose element declares a
+// BodySpec of its own.
+//
+// It is exported for the same reason ParseThickness is: the alternative
+// is every such consumer restating the rule, and a restatement drifts
+// silently. apps/wysiwyg is the first of them, and if it trimmed for
+// itself its idea of <Text>Text</Text> would differ from the loader's
+// for exactly the bodies whose whitespace is deliberate.
+func BodyText(raw string) string { return bodyText(raw) }
