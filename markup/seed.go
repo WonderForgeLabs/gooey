@@ -46,8 +46,9 @@ import (
 // PlaceholderFor returns a zero-ish source property for a declared
 // GoType, for seeding a binding nobody has wired yet.
 //
-// The switch IS the type check — the same mechanism Bound uses, and the
-// reason none of this needs reflection. It lives here rather than in a
+// The TABLE is the type check — keyed by the declared GoType spelling,
+// the same string-not-reflection mechanism Bound uses, and the reason
+// none of this needs reflection. It lives here rather than in a
 // palette because AttrSpec.GoType is declared here: a type this cannot
 // answer for is a gap in the vocabulary, and
 // TestEverySeededElementLoadsAndOccupiesSpace fails on it. In the editor
@@ -61,26 +62,41 @@ import (
 // Nil for a type with no placeholder, which callers must treat as an
 // error rather than as an empty binding.
 func PlaceholderFor(goType string) any {
-	switch goType {
-	case "string":
-		return prop.NewSource("")
-	case "int":
-		return prop.NewSource(0)
-	case "bool":
-		return prop.NewSource(false)
-	case "float64":
-		return prop.NewSource(0.0)
-	case "[]float64":
-		return prop.NewSource([]float64{1, 2, 3, 2})
-	case "[]string":
-		return prop.NewSource([]string{"one", "two"})
-	case "render.Color":
-		return prop.NewSource(render.RGB(120, 200, 140))
-	case "image.Image":
-		// A real image, because components.Image scales its source and a
-		// nil one is a nil dereference during paint rather than a blank
-		// rectangle. Small and opaque: it exists to occupy the element's
-		// cells, not to be looked at.
+	if f, ok := placeholders[goType]; ok {
+		return f()
+	}
+	return nil
+}
+
+// placeholders is the ONE table. PlaceholderFor looks up in it and
+// PlaceholderTypes returns its keys, so the two cannot disagree — a
+// switch beside a hand-written list of the same type names is a mirror
+// nothing pins, and the drift is silent: the only symptom is the error
+// at the bottom of `placeholder` naming fewer types than exist, sending
+// an author to write a literal for something already supported.
+//
+// FACTORIES, not values. Each call must hand back a FRESH source: two
+// seeded elements sharing one property is the same defect the
+// {{.Name_Attr}} rename exists to prevent, and it is silent in the same
+// way, because both documents load and one checkbox simply ticks the
+// other.
+var placeholders = map[string]func() any{
+	"string":  func() any { return prop.NewSource("") },
+	"int":     func() any { return prop.NewSource(0) },
+	"bool":    func() any { return prop.NewSource(false) },
+	"float64": func() any { return prop.NewSource(0.0) },
+	// Collection types get a couple of entries and Color a visible one:
+	// a Sparkline bound to an empty slice and a Segmented bound to no
+	// options are both technically seeded and both render as nothing,
+	// which is the failure this exists to prevent.
+	"[]float64":    func() any { return prop.NewSource([]float64{1, 2, 3, 2}) },
+	"[]string":     func() any { return prop.NewSource([]string{"one", "two"}) },
+	"render.Color": func() any { return prop.NewSource(render.RGB(120, 200, 140)) },
+	// A real image, because components.Image scales its source and a nil
+	// one is a nil dereference during paint rather than a blank
+	// rectangle. Small and opaque: it exists to occupy the element's
+	// cells, not to be looked at.
+	"image.Image": func() any {
 		img := image.NewRGBA(image.Rect(0, 0, 8, 8))
 		for y := 0; y < 8; y++ {
 			for x := 0; x < 8; x++ {
@@ -88,20 +104,23 @@ func PlaceholderFor(goType string) any {
 			}
 		}
 		return prop.NewSource[image.Image](img)
-	case "components.ItemSource":
+	},
+	"components.ItemSource": func() any {
 		return prop.NewSource(components.ItemsOf([]string{"one", "two"},
 			func(s string) map[string]any { return map[string]any{"Label": s} }))
-	}
-	return nil
+	},
 }
 
 // PlaceholderTypes lists the GoTypes PlaceholderFor answers for, sorted.
 // For a test that wants to report the whole gap rather than the first
 // one it hits.
+//
+// Derived from the table rather than written out, so adding a type is
+// one edit in one place.
 func PlaceholderTypes() []string {
-	out := []string{
-		"[]float64", "[]string", "bool", "components.ItemSource",
-		"float64", "image.Image", "int", "render.Color", "string",
+	out := make([]string, 0, len(placeholders))
+	for k := range placeholders {
+		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out

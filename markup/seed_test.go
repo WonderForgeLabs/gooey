@@ -273,9 +273,32 @@ func rootAttrs(seed string) string {
 // have. The rule bites on the OUTERMOST element, whose parent is
 // whatever the user dropped it into.
 func TestNoSeedCarriesAParentDependentAttribute(t *testing.T) {
+	// DERIVED from the registry, never listed here. A written list is a
+	// sample taken once: it named Canvas.Left/Top and Grid.Row/Col, so a
+	// new attached property — or a new parent contributing any — was
+	// unguarded the day it was added, and nothing went red to say so.
+	// AttrSpec.Name for an attached property is ALREADY qualified —
+	// "Canvas.Left", not "Left" — so the parent must not be prepended
+	// again. Doing so yields "Canvas.Canvas.Left", which matches nothing
+	// and leaves this test passing while checking for a string no seed
+	// can contain. It went green that way on the first attempt here.
+	var attached []string
+	for _, p := range AttachedParents() {
+		for _, a := range AttachedAttrs(p) {
+			attached = append(attached, a.Name)
+		}
+	}
+	// The sweep must not be able to pass by finding nothing. A registry
+	// that contributed no attached properties would make every subtest
+	// below vacuous while still reporting green.
+	if len(attached) == 0 {
+		t.Fatal("no attached properties in the registry, so this test cannot fail; " +
+			"either AttachedParents/AttachedAttrs regressed or the vocabulary lost them")
+	}
+
 	for _, d := range seedable(t) {
 		root := rootAttrs(d.Seed)
-		for _, bad := range []string{"Canvas.Left", "Canvas.Top", "Grid.Row", "Grid.Col"} {
+		for _, bad := range attached {
 			if strings.Contains(root, bad+"=") {
 				t.Errorf("<%s>'s seed sets %s, which is only meaningful under one "+
 					"parent and is silently discarded under any other. Geometry is "+
