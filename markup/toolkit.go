@@ -214,3 +214,64 @@ func slotChild(e Element, ctx *Context) (gooey.Component, error) {
 	}
 	return build(e.Children[0], ctx)
 }
+
+// bodyText applies the whitespace rule for an element's BODY — the
+// content written between its tags rather than in an attribute. It is
+// the one place that rule lives; every builder whose content is its
+// body calls this instead of trimming for itself.
+//
+// The rule: a body the author wrote on ONE line is taken VERBATIM; a
+// body wrapped across lines is trimmed.
+//
+//	<Text>    Hello</Text>   ->  "    Hello"
+//	<Text>
+//	  Hello
+//	</Text>                  ->  "Hello"
+//
+// Every body used to go through strings.TrimSpace, which made leading
+// and trailing spaces INEXPRESSIBLE. An author drawing ASCII art
+// watched every line slide to column 0 with no error to say why, and
+// the only way out was abandoning bodies for a <Canvas> with an
+// explicit Canvas.Left per line. Twelve <Text> bodies already in this
+// repo were quietly losing an indent they had asked for — the detail
+// lists in handlers/temporal/internal/wizard/ui/stage-*.gooey, written
+// as <Text>  ticket: {{.Ticket}}</Text> and rendered flush left.
+//
+// This needs no opt-in attribute, and the reason is the part worth
+// internalising: INDENTING THE DOCUMENT DOES NOT PUT WHITESPACE INSIDE
+// A BODY. The file's indentation lands before the start tag, not after
+// it, so a <Text> nested ten levels deep still reports exactly "Hello"
+// for <Text>Hello</Text>. The only thing that injects leading
+// whitespace into a body is the author breaking the body onto its own
+// line — and that case is distinguishable because it contains a
+// NEWLINE. The discriminator was in the data all along; TrimSpace threw
+// it away.
+//
+// So a newline means "this whitespace is source formatting" and its
+// absence means "this whitespace is content". Two consequences that are
+// choices rather than accidents:
+//
+//   - A one-line body of nothing but spaces is CONTENT. <Text> </Text>
+//     is a deliberate one-cell spacer and now paints one styled blank
+//     where it used to paint no cell at all.
+//   - Trailing whitespace on a one-line body is kept, for the same
+//     reason whitespace in the middle of one is kept: the author typed
+//     it, and a run of text padded out to a column is a real thing to
+//     want. Nothing here can tell a deliberate trailing space from a
+//     sloppy one, so it does not guess.
+//
+// What this deliberately does NOT do is dedent a wrapped body, so a
+// MULTI-LINE body still cannot carry leading whitespace — unchanged
+// from before, not a regression introduced here. No such body exists in
+// the tree, and inventing a dedent rule for a case with no users would
+// be guessing; xml:space="preserve" is the standard spelling if it is
+// ever wanted, and nothing above forecloses it.
+//
+// Testing '\n' alone is sufficient: encoding/xml normalises CR and CRLF
+// to LF in character data, as the XML spec requires.
+func bodyText(raw string) string {
+	if strings.ContainsRune(raw, '\n') {
+		return strings.TrimSpace(raw)
+	}
+	return raw
+}

@@ -138,7 +138,18 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 
 ### Text
 
-A text block. The content is the element's text, with surrounding whitespace trimmed. Content may be a pure literal, a pure binding, or a mix (see the binding DSL below).
+A text block. The content is the element's text — written between the tags, not in an attribute. Content may be a pure literal, a pure binding, or a mix (see the binding DSL below).
+
+**Whitespace in a body is significant on one line and trimmed across lines.** Written on a single line the body is taken exactly as typed, so `<Text>    Hello</Text>` renders four leading spaces and `<Text> </Text>` is a one-cell spacer. Wrapped across lines, the surrounding whitespace is source formatting and is stripped:
+
+```xml
+<Text>    indented four</Text>   <!-- renders "    indented four" -->
+<Text>
+  wrapped for readability        <!-- renders "wrapped for readability" -->
+</Text>
+```
+
+Indenting the document does *not* indent a body — the file's indentation lands before the start tag, so a `<Text>` nested ten levels deep still renders `Hello` for `<Text>Hello</Text>`. That is what lets the one-line form be verbatim without an opt-in attribute. The one thing you cannot express is leading whitespace on a body wrapped across *several* lines; write one `<Text>` per line, or use `Canvas.Left`.
 
 | Attribute | Meaning |
 |---|---|

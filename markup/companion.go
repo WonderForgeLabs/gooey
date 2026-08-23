@@ -295,7 +295,11 @@ func companionArgs(e Element, ctx *Context) ([]*prop.Property[string], error) {
 		if len(c.Children) > 0 {
 			return nil, fmt.Errorf("markup: <Arg> takes no children")
 		}
-		h, err := literalOrBound(strings.TrimSpace(c.Text), ctx)
+		// bodyText, not TrimSpace: <Arg> is the other element whose
+		// content is its body, and an argv token is exactly the kind of
+		// literal a loader must not quietly rewrite. Sharing the rule is
+		// also what keeps there from being two of them.
+		h, err := literalOrBound(bodyText(c.Text), ctx)
 		if err != nil {
 			return nil, err
 		}
