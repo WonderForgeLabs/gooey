@@ -329,7 +329,19 @@ var defBorder = &ElementDef{
 // discriminable in a static frame and declaring a Default would be an
 // unfalsifiable claim.
 var defFrozen = &ElementDef{
-	Name:  "Frozen",
+	Name: "Frozen",
+	// SHARED WITH <Image>, and that is a stated compromise rather than an
+	// oversight. Every name in the vendored codicon set is already claimed
+	// by another element, and this pane landed after the rule that every
+	// builtin must declare one (#287) — so the choice was a shared name or
+	// a blank toolbox row.
+	//
+	// file-media is the semantically exact one: a frozen region renders
+	// and does not act, which is what component.go's own comment calls
+	// "click a button and it sits there like a picture". The toolbox will
+	// show <Frozen> and <Image> with the same glyph until a lock codicon
+	// is vendored, which is the real fix and is not this PR's.
+	Icon:  "file-media",
 	Seed:  "<Frozen><Text>frozen</Text></Frozen>",
 	Proto: &components.Frozen{},
 	Known: true,
