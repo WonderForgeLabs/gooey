@@ -68,9 +68,14 @@
 //
 //	q, ctrl+c        quit
 //	d                DESIGN ↔ LIVE
+//	t                flip the theme — today, the toolbox icons' tint
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	ctrl+k, ctrl+j   move the selection up / down among its siblings
+//	ctrl+h           PROMOTE — lift the selection out to its grandparent
+//	ctrl+l           DEMOTE — nest the selection into the sibling above it
+//	ctrl+d           duplicate the selection, and select the copy
 //
 // # Selecting
 //
@@ -186,6 +191,11 @@
 // invents a home for design-time state — no attribute, no comment, no
 // property element.
 //
+// The keyboard reaches all four of these without the pointer: ctrl+k and
+// ctrl+j reorder among siblings, ctrl+h promotes, ctrl+l demotes, and
+// ctrl+d duplicates. See move.go and duplicate.go; wysiwyg.gooey holds
+// the bindings, and the # Keys table above is the whole surface.
+//
 // The pointer is a second way in, never the only one. ctrl+n and ctrl+p
 // remain the whole gesture from the keyboard, which is not politeness:
 // mouse reports cannot be injected through a recording pty at all, so a
@@ -224,6 +234,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"image/color"
 	"io"
 	"io/fs"
 	"os"
@@ -236,6 +247,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/activitybar"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/panel"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
+	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/toolbox"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
 	gooeygrpc "github.com/WonderForgeLabs/gooey/grpc"
@@ -297,6 +309,12 @@ func main() {
 
 	root := editorFS()
 	ed := newEditor(root)
+	// A missing or malformed icon is a STARTUP failure naming the file.
+	// It cannot be reported from a Render, and a toolbox that silently
+	// lost its icons is the least diagnosable outcome available.
+	if ed.iconErr != nil {
+		gooey.Exit(ed.iconErr)
+	}
 	pageSrc := func() []byte {
 		b, _ := fs.ReadFile(root, PageFile)
 		return b
@@ -650,6 +668,32 @@ type editor struct {
 	palette    []markup.ElementSpec
 	paletteSel *prop.Property[int]
 	attrSel    *prop.Property[int]
+	// themeDark is the theme switch, and iconTint is derived from it.
+	//
+	// A BOOL AND A COMPUTED rather than one colour property, because the
+	// two say different things and the difference is the point of the
+	// acceptance test. themeDark is what a user flips; iconTint is what
+	// the icons read. Nothing else in the editor reads either, so a flip
+	// dirties exactly the icon handles and through them exactly the
+	// <Image> in each realized palette row — see
+	// TestThemeFlipRepaintsOnlyTheToolboxIcons, which counts them.
+	//
+	// A colour baked into a raster at load would have been simpler and
+	// silently wrong: the icons would keep their first tint forever and
+	// nothing in the framework reports a picture that stopped changing.
+	themeDark *prop.Property[bool]
+	iconTint  *prop.Property[color.Color]
+	// icons resolves the icon NAMES the catalog declares into the tinted
+	// pictures the palette binds. The names are markup.ElementSpec.Icon;
+	// the assets, the rasterizer and the colour all live app-side, which
+	// is what keeps imagefmt/svg out of core's dependency graph.
+	icons *toolbox.Icons
+	// iconErr is a load-time asset failure, reported by main rather than
+	// here: newEditor is called by a dozen tests and growing an error
+	// return would rewrite all of them for a condition none of them can
+	// hit. A paint cannot report a missing icon, so this is the only
+	// place the failure can be stated.
+	iconErr error
 	// activitySel is which icon on the rail is lit. It is an ordinary
 	// source property like any other selection — the rail happens to be
 	// drawn in pixels, which changes how it is painted and nothing about
@@ -846,6 +890,26 @@ func newEditor(fsys fs.FS) *editor {
 		return ModeLive
 	})
 
+	// THE THEME, and the icon tint derived from it.
+	//
+	// Built before the palette's projection because that projection hands
+	// out icon handles, and a handle created against a nil tint would
+	// rasterize `currentColor` unsubstituted — which oksvg answers with
+	// `param mismatch`, not a black glyph. The failure is loud, but it
+	// would be loud at PAINT time, where nothing can report it.
+	//
+	// The Get is inside the computed, which is what subscribes it. Read
+	// out here and closed over, the tint would be fixed for the life of
+	// the process and the theme switch would silently do nothing.
+	ed.themeDark = prop.NewSource(true)
+	ed.iconTint = prop.NewComputed(func() color.Color {
+		if ed.themeDark.Get() {
+			return iconOnDark
+		}
+		return iconOnLight
+	})
+	ed.icons = toolbox.New(fsys, ed.iconTint)
+
 	// The list sources are built BEFORE the context, because
 	// Context.Values captures each handle BY VALUE: a property created
 	// after the map is populated leaves nil in the map, the bindings
@@ -859,6 +923,24 @@ func newEditor(fsys fs.FS) *editor {
 				"Name":  e.Name,
 				"Attrs": describeAttrs(e),
 				"Kids":  string(e.Children.Mode),
+				// THE ICON, straight off the catalog entry. An element
+				// that declares none gets a nil handle, which ItemsView's
+				// projection case tolerates and <Image> renders as
+				// nothing — the honest answer, and the same rule
+				// AttrsKnown follows: an absence must not be dressed up
+				// as a default.
+				//
+				// The HANDLE is cached per name, so this projection hands
+				// back the same property on every revision and the row's
+				// picture stays damage-free by pointer compare rather
+				// than by the raster cache happening to return the same
+				// image.
+				"Icon": ed.icons.For(e.Icon),
+				// The selection marker's content. A template's context is
+				// the ITEM and nothing else, so a constant every row
+				// needs has to arrive as a projected value — the same
+				// reason cmd/typeahead projects its "Bar".
+				"Bar": "▌",
 			}
 		})
 	})
@@ -937,11 +1019,17 @@ func newEditor(fsys fs.FS) *editor {
 			"FitMsg":       ed.fitMsg,
 			"ModeText":     ed.modeText,
 			"ToggleMode":   gooey.Command(func() { ed.toggleMode() }),
+			"ToggleTheme":  gooey.Command(func() { ed.themeDark.Set(!ed.themeDark.Get()) }),
 			"Add":          gooey.Command(func() { ed.addSelected() }),
 			"Delete":       gooey.Command(func() { ed.deleteSelected() }),
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
 			"PrevEl":       gooey.Command(func() { ed.selectNext(-1) }),
 			"SelectParent": gooey.Command(func() { ed.selectParent() }),
+			"MoveUp":       gooey.Command(func() { ed.moveSelected(-1) }),
+			"MoveDown":     gooey.Command(func() { ed.moveSelected(1) }),
+			"Promote":      gooey.Command(func() { ed.promoteSelected() }),
+			"Demote":       gooey.Command(func() { ed.demoteSelected() }),
+			"Duplicate":    gooey.Command(func() { ed.duplicateSelected() }),
 			"ToCanvas":     gooey.Command(func() { ed.retype("Canvas") }),
 			"ToVStack":     gooey.Command(func() { ed.retype("VStack") }),
 			"BeginEdit":    gooey.Command(func() { ed.beginEdit() }),
@@ -1072,8 +1160,37 @@ func newEditor(fsys fs.FS) *editor {
 		ed.palette = append(ed.palette, e)
 	}
 
+	// THE LOAD-TIME GATE for every icon the palette will draw, in BOTH
+	// tints the theme switches between.
+	//
+	// Preloading only the current tint would leave the other theme's
+	// first raster to happen inside a paint, and a Render has nowhere to
+	// put an error: a broken asset would show up as a column of blanks
+	// after the user pressed the theme key, with nothing on any surface
+	// to explain it. Rasterizing both here turns that into a startup
+	// failure naming the file.
+	names := make([]string, 0, len(ed.palette))
+	for _, e := range ed.palette {
+		names = append(names, e.Icon)
+	}
+	ed.iconErr = ed.icons.Preload(names, iconOnDark, iconOnLight)
+
 	return ed
 }
+
+// The two icon tints, and they are the ONLY thing the theme switch
+// changes today. Naming them for the ground they sit on rather than for
+// the theme ("light"/"dark") is deliberate: an icon on a dark panel is a
+// light icon, and a name that says which is which survives somebody
+// adding a third theme.
+//
+// Colours rather than render.Style, because the rasterizer substitutes a
+// colour into the SVG before it draws — the tint is part of the source,
+// not something applied to the pixels afterwards. See svg.IconSet.At.
+var (
+	iconOnDark  = color.RGBA{0xc8, 0xcd, 0xdc, 0xff}
+	iconOnLight = color.RGBA{0x3a, 0x3f, 0x4c, 0xff}
+)
 
 // describeAttrs is the palette's honesty column, and the reason the
 // catalog splits AttrsKnown from Origin. "no attributes" and "attributes
@@ -1474,7 +1591,18 @@ func (ed *editor) addSelected() {
 	// INTO the selected container, not always at the root. See addTarget
 	// for the leaf case, which is the one that would fail silently.
 	into := ed.addTarget()
-	name := fmt.Sprintf("%s%d", spec.Name, len(into.Kids)+1)
+	// The name comes from what is IN USE, never from a count. Counting
+	// children re-issues a live name as soon as one is deleted from the
+	// middle: three adds then a delete then an add produced two
+	// <Text Name="Text3">, and the document still built, so nothing said
+	// so. Name is what markup.Find resolves against, which makes the
+	// second one unaddressable rather than merely untidy.
+	//
+	// Against ed.root, not `into`: uniqueness has to hold across the whole
+	// document because that is the scope markup.Find searches. Scoping it
+	// to the insertion parent would let two siblings-of-different-parents
+	// collide, which is the same bug in a smaller box.
+	name := uniqueName(ed.root, spec.Name)
 
 	n, err := ed.seed(spec, name)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -55,18 +56,40 @@ func TestToastDismissRestoresWhatWasBeneath(t *testing.T) {
 
 	host.Dismiss(toast)
 	_, painted := c.Frame()
-	// The restore pass forces everything the vacated rect intersects:
-	// the covered content leaf plus the two chrome-less containers
-	// (Canvas and host) whose bounds span it — a container's forced
-	// evaluation paints no cells, but it is counted, honestly.
-	if painted != 3 {
-		t.Fatalf("dismissing painted %d components, want 3 (restored leaf + 2 swept containers)", painted)
+	// Transparent containers own no cells, so only the covered content leaf
+	// is restored. The toast itself has already left the composition.
+	if painted != 1 {
+		t.Fatalf("dismissing painted %d components, want 1 (restored leaf)", painted)
 	}
 	if got := row(c.Cells(), 0); got != strings.Repeat("#", 30) {
 		t.Fatalf("row 0 after dismiss = %q — the vacated cells did not restore", got)
 	}
 	if _, painted := c.Frame(); painted != 0 {
 		t.Fatalf("settled frame painted %d components, want 0", painted)
+	}
+}
+
+func TestToastDismissReappliesSelectedRowDecorator(t *testing.T) {
+	src := prop.NewSource(numbered(10))
+	sel := prop.NewSource(0)
+	v := &ItemsView{
+		Items:     Items(src, projectStory),
+		Selected:  sel,
+		Template:  titleTemplate,
+		Highlight: true,
+	}
+	host := &ToastHost{}
+	page := &Canvas{Children: []gooey.Component{v, host}}
+	c := gooey.NewComposer(page, 20, 5)
+	c.Frame()
+
+	toast := host.Show("saved")
+	c.Frame()
+	host.Dismiss(toast)
+	c.Frame()
+
+	if !c.Cells().At(0, 0).Style.Reverse {
+		t.Fatal("selected row lost its highlight after the toast was dismissed")
 	}
 }
 

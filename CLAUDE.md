@@ -219,14 +219,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:608`, in
+deliberately outside any evaluation context (`composer.go:651`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:380`).
+separate observer for that (`Composer.armVisibility`, `composer.go:418`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:284`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:295`), so reading a property while painting *is* the damage
+(`composer.go:302`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:333`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -234,14 +234,33 @@ change repaints exactly the components that read it.
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
 (`component.go:38`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
-(`layout.go:138`) and `ArrangeChild` (`layout.go:182`) apply the
+(`layout.go:283`) and `ArrangeChild` (`layout.go:340`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
 four. A component calling `Base.Arrange(b)` on *itself* is fine and common.
-`MeasureChild` has no depth cap, so a constructible markup cycle dies by
-stack overflow rather than a load error ([#216](https://github.com/WonderForgeLabs/gooey/issues/216)).
+A cycle no longer kills the process, and the fix is bigger than the issue
+that asked for it. [#216](https://github.com/WonderForgeLabs/gooey/issues/216)
+asked for a depth cap on `MeasureChild`; capping that alone would have left
+the very crash it was filed for, because `Composer.build` runs BEFORE layout
+exists and dies on the **heap**, with no fatal error and no trace. Seven
+walks over `ChildComponents()` recurse in this package and all seven are
+bounded now — Compose and Focus by identity (they already key a map by
+component), Measure/Arrange/HitTest/Focusable/Render by depth against
+`MaxLayoutDepth` (512, which is 73x the deepest tree this repo has ever laid
+out). A control that includes itself is a **load** error naming the loop.
+Nothing panics: read the report with `Composer.LayoutFault()` /
+`App.LayoutFault()`.
+
+Four walks OUTSIDE this package are still unbounded — `components/adorn.go`,
+`components/buttonbar.go`, `control/markup.go`, `control/snapshot.go`. They
+are safe only because a cyclic tree can no longer *become* a live
+composition, and would still hang on one handed to them directly. That these
+were eleven sites of one missing idea — the framework has no single
+"walk the children" seam — is
+[#375](https://github.com/WonderForgeLabs/gooey/issues/375); the decision
+record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:298-335`; the design record is the container-backgrounds and
+(`composer.go:336-373`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -271,7 +290,7 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 **One ordered `input.Event` stream.** Keys and SGR mouse reports arrive
 interleaved on one wire and stay on one channel (`input/mouse.go:52`),
 because two channels could reorder them. `FocusManager.Dispatch`
-(`input.go:687`) routes a key in phases, and it **tunnels before it
+(`input.go:701`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends
 dispatch. Then the bubble, focused → ancestors, **three steps per level**
@@ -281,8 +300,8 @@ middle step's position is load-bearing and silently breakable: swapping it
 past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
-arrow fall through to focus navigation (`FocusDir`, `input.go:799`).
-`DispatchMouse` (`mouse.go:161`) bubbles the same way from the
+arrow fall through to focus navigation (`FocusDir`, `input.go:813`).
+`DispatchMouse` (`mouse.go:169`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
@@ -295,7 +314,7 @@ tunnel is [#34](https://github.com/WonderForgeLabs/gooey/issues/34)).
 **UI-goroutine confinement, via the Dispatcher.** Properties are unlocked
 by design, so nothing off the main loop may `Get` or `Set`. Async work
 posts a closure (`Dispatcher.Post`, safe anywhere) and the loop runs it
-(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:451`. A
+(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:477`. A
 `Startable` gets `post` as the *only* legal route to the graph, and nothing
 in the framework will catch a violation.
 
@@ -398,7 +417,7 @@ needs justifying rather than updating.
 `gooey.Command(...)` or `gooey.NewCommand(...).When(canProp)`. Never test
 one with `!= nil`; use `gooey.CanExecute(a)` (`input.go:49`), which is
 nil-tolerant and also consults `CanExecute()`. A disabled binding keeps
-bubbling rather than being consumed (`input.go:700` — the `CanExecute`
+bubbling rather than being consumed (`input.go:714` — the `CanExecute`
 conjunct simply falls through to the next binding, then the next
 ancestor).
 
@@ -418,7 +437,7 @@ seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
 them, and `App.Every` shipped the signal-no-join defect in the runtime
 itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
-delegated it too (`app.go:364`). A `Startable` that still hand-rolls its
+delegated it too (`app.go:376`). A `Startable` that still hand-rolls its
 own `done`/`stopped` pair is a claim that neither shape fits —
 `Companion.Start` (`components/companion.go:133`) is the one legitimate
 case, joining a subprocess `Wait()` rather than a ticker.

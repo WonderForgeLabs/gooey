@@ -98,6 +98,29 @@ type ElementDef struct {
 	// set so it cannot quietly grow.
 	DynamicAttrs string
 
+	// Icon NAMES an icon for this element in the host's icon set. It is
+	// a name — no directory, no extension, no colour — and that is the
+	// whole reason the field can exist here at all.
+	//
+	// Rasterizing an SVG needs oksvg and rasterx, which live in
+	// imagefmt/svg, which is a SEPARATE MODULE precisely so the core
+	// graph stays free of them. A field holding an image.Image, a
+	// decoder, or an fs.FS would drag that decision back into this
+	// package and make every docs/learn example that imports markup
+	// inherit a vector renderer. A string drags in nothing: core states
+	// WHAT THE ELEMENT IS, and the host decides what it looks like.
+	//
+	// The indirection is the same one KindStyle already uses. A style
+	// attribute carries a name the app's style table resolves; an app
+	// that swaps its palette swaps the table, not the markup. An icon
+	// name resolves against whatever set the host loaded — Codicons in
+	// apps/wysiwyg, something else elsewhere — so an element is not
+	// pinned to one icon vendor by a field in this file.
+	//
+	// Empty means the element declares no icon, which a consumer must
+	// render as "no icon" rather than substituting one silently: the
+	// same honesty rule AttrsKnown carries for attributes.
+	Icon string
 	// Seed is the markup a palette inserts for a NEW instance of this
 	// element: the attributes, body, children and slots that make one
 	// worth looking at the moment it appears.
@@ -206,6 +229,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Slots:      append([]SlotSpec(nil), d.Slots...),
 		Body:       body,
 		Children:   d.Children,
+		Icon:       d.Icon,
 		Seed:       d.Seed,
 		NonVisual:  nonVisual,
 		Focusable:  focusable,

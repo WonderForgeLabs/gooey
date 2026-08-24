@@ -85,3 +85,10 @@ func (c *Canvas) Arrange(b gooey.Rect) {
 }
 
 func (c *Canvas) Render(f *gooey.Frame) {} // containers paint only their own chrome; a Canvas has none
+
+// PassesCellsThrough marks the transparent canvas as a no-cell container
+// for both z-order force passes. It is the TYPE's claim about Render,
+// which owns nothing; a Canvas carrying a Background is filled by the
+// framework and the Composer's instance check (cellPassthrough) declines
+// the exemption for it.
+func (c *Canvas) PassesCellsThrough() {}

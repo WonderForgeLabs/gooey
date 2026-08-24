@@ -2,7 +2,15 @@
 #
 # Run from the REPO ROOT (out paths are cwd-relative):
 #
-#   go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+#   go tool buf generate --template proto/buf.gen.yaml
+#
+# buf is a `tool` directive in the root go.mod and is vendored with the
+# rest of the tree, so that command needs no version suffix and no module
+# proxy — the version lives in go.mod, checksummed in go.sum, in ONE
+# place. It used to be spelled `go run …/buf@v1.72.0` here and three more
+# times in ci.yml, four literals free to drift apart; `go run pkg@version`
+# is also the one invocation form that ignores go.mod, and therefore
+# vendor/, which cost the `contract` job 391 seconds a run.
 #
 # All plugins are buf REMOTE plugins, pinned by version: regeneration
 # needs buf and network, nothing else — no protoc, no pip, no npm. The
