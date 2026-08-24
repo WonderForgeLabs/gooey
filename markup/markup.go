@@ -1069,6 +1069,35 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				continue
 			}
 			it := components.MenuItem{Text: ic.Attrs["Text"]}
+			// Text may name a binding, and it resolves to a STATIC string
+			// at load. That is the whole contract, and the error below is
+			// what keeps it from being a trap.
+			//
+			// The motivating case is a label the app has to compute and
+			// the markup cannot know: "$EDITOR (nvim)" — the resolved
+			// program rather than the variable's name. Without this there
+			// is no way for an application to label a menu item at all.
+			//
+			// A PROPERTY HANDLE IS REFUSED rather than sampled.
+			// MenuItem.Text is a plain string field read while painting,
+			// so a handle resolved here would be read once, frozen, and
+			// silently stop tracking — the bound label that never
+			// updates. Refusing says so at load, where it can be fixed.
+			if raw := ic.Attrs["Text"]; bindRe.MatchString(raw) {
+				v, err := ctx.BindingValue(raw)
+				if err != nil {
+					return nil, fmt.Errorf("markup: <MenuItem Text=%q>: %w", raw, err)
+				}
+				s, ok := v.(string)
+				if !ok {
+					return nil, fmt.Errorf(
+						"markup: <MenuItem Text=%q> is %T; a menu item's Text is a static "+
+							"string resolved at load, so it must bind a plain string — a "+
+							"property handle would be sampled once and never update again",
+						raw, v)
+				}
+				it.Text = s
+			}
 			if it.Text == "" {
 				return nil, fmt.Errorf("markup: <MenuItem> needs Text (or Separator=\"true\")")
 			}
@@ -1078,6 +1107,20 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 					return nil, fmt.Errorf("markup: <MenuItem Gesture=%q>: %w", g, err)
 				}
 				it.Gesture = ev.String()
+			}
+			// Checked makes the item a check item, and it BINDS: the
+			// resolved handle is the same one the accelerator's
+			// KeyBinding writes, so the check and the key are one state
+			// rendered twice rather than two states kept in step. A
+			// literal is refused — there is no such thing as a check
+			// item whose box can never change.
+			if raw, ok := ic.Attrs["Checked"]; ok && raw != "" {
+				if !bindRe.MatchString(raw) {
+					return nil, fmt.Errorf("markup: <MenuItem Checked=%q>: Checked must bind a bool handle ({{.Name}}); a literal check can never change", raw)
+				}
+				if it.Checked, err = Bound[bool](ic, ctx, "Checked"); err != nil {
+					return nil, fmt.Errorf("markup: <MenuItem Text=%q Checked=%q>: %w", it.Text, raw, err)
+				}
 			}
 			cmd, err := ctx.Command(ic.Attrs["Command"])
 			if err != nil {
