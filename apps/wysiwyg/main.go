@@ -76,6 +76,16 @@
 //	ctrl+h           PROMOTE — lift the selection out to its grandparent
 //	ctrl+l           DEMOTE — nest the selection into the sibling above it
 //	ctrl+d           duplicate the selection, and select the copy
+//	ctrl+z, ctrl+y   undo / redo, bounded by -history
+//
+// CTRL+Z IS NOT SUSPEND HERE, and taking it costs no suspend. term.MakeRaw
+// clears ISIG, so while the app holds the terminal the tty driver makes no
+// SIGTSTP from it — the byte arrives and input.Decode turns it into an
+// ordinary key nothing was binding. App.Suspend and the SIGTSTP dance in
+// signals_unix.go are untouched, and an external `kill -TSTP` still
+// suspends the editor. Redo is ctrl+y and deliberately NOT also
+// ctrl+shift+z, which parses to the identical event as ctrl+z. See
+// undo.go.
 //
 // # Selecting
 //
@@ -291,7 +301,17 @@ func main() {
 	// Save is greyed, which is the honest empty state rather than an
 	// editor that silently has nowhere to write.
 	wsDir := flag.String("workspace", "", "open this directory as the workspace; empty starts with no folder")
+	// Every undo step holds a whole copy of the document and an editing
+	// session has no length limit, so the stack needs a ceiling or it
+	// grows for as long as the editor is open. 0 turns undo off; a
+	// negative depth is an error rather than a silent clamp, because
+	// -history -1 is someone reaching for "unlimited" and unlimited is
+	// the thing the bound exists to refuse.
+	histMax := flag.Int("history", DefaultHistoryLimit, "how many undo steps to keep; 0 disables ctrl+z")
 	flag.Parse()
+	if *histMax < 0 {
+		gooey.Exit(fmt.Errorf("wysiwyg: -history %d: want a depth of 0 or more; there is no unlimited", *histMax))
+	}
 
 	opts := []gooey.Option{}
 	switch *gfx {
@@ -321,6 +341,8 @@ func main() {
 	if ed.iconErr != nil {
 		gooey.Exit(ed.iconErr)
 	}
+	// Before the first rebuild, which is what establishes the baseline.
+	ed.setHistoryLimit(*histMax)
 	pageSrc := func() []byte {
 		b, _ := fs.ReadFile(root, PageFile)
 		return b
@@ -935,6 +957,12 @@ type editor struct {
 	wsFiles  *prop.Property[components.ItemSource]
 	openPath *prop.Property[string]
 
+	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
+	// recorded from rebuild rather than from each mutator, so a mutation
+	// added later is undoable without opting in — see undo.go, which owns
+	// everything about it including its lazy construction.
+	hist *history
+
 	// mu guards lost, which the stream reader writes and the UI reads.
 	mu      sync.Mutex
 	lost    error
@@ -1237,6 +1265,16 @@ func newEditor(fsys fs.FS) *editor {
 			// one would go on copying a dead page's addresses.
 			"CopyGrpc": gooey.Command(func() { ed.copyEndpoint("grpc") }),
 			"CopyMCP":  gooey.Command(func() { ed.copyEndpoint("mcp") }),
+			// PLAIN Commands rather than .When(canUndo): a disabled
+			// Action keeps bubbling rather than being consumed
+			// (input.go), so a gated ctrl+z at the bottom of the stack
+			// would simply fall through and do nothing — which is the
+			// one behaviour undo must not have, because a keystroke that
+			// silently does nothing is indistinguishable from a broken
+			// editor. Handling the empty case inside undo/redo is what
+			// lets it say "nothing to undo" instead.
+			"Undo": gooey.Command(func() { ed.undo() }),
+			"Redo": gooey.Command(func() { ed.redo() }),
 		},
 		Styles: map[string]render.Style{
 			"dim":  {Fg: render.RGB(140, 140, 150)},
@@ -1712,6 +1750,14 @@ func parentIn(at, n *node) *node {
 // ---- edits ----
 
 func (ed *editor) rebuild() {
+	// UNDO IS RECORDED HERE, and this is the only place it is recorded.
+	// Every mutator ends in a rebuild — it has to, or the preview, the
+	// outline, the CODE tab and the build status all go stale — so
+	// deriving the history at this one choke point means a mutation added
+	// later is undoable without its author knowing undo exists. See
+	// undo.go for why it is a hook rather than a wrapper each caller must
+	// remember, and for why it must run BEFORE the remote branch below.
+	ed.recordHistory()
 	// Tick FIRST, so every derived list recomputes even if the build
 	// below fails and returns early.
 	ed.rev.Set(ed.rev.Get() + 1)

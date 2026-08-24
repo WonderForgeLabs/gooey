@@ -96,6 +96,25 @@
     <KeyBinding Gesture="ctrl+g" Command="{{.CopyGrpc}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.CopyMCP}}"/>
 
+    <!-- UNDO AND REDO, over the document model.
+
+         CTRL+Z IS FREE TO TAKE HERE, and that is checked rather than
+         assumed: term.MakeRaw clears ISIG, so while a gooey app holds
+         the terminal the tty driver generates no SIGTSTP from it — the
+         byte 0x1a arrives like any other and input.Decode makes an
+         ordinary ctrl+z KeyEvent out of it. Nothing in this app bound it
+         before, so it was being dropped. App.Suspend and the SIGTSTP
+         dance in signals_unix.go are both untouched; a `kill -TSTP` from
+         outside still suspends the editor exactly as it did.
+
+         REDO IS ctrl+y AND NOT ALSO ctrl+shift+z. A terminal cannot
+         report shift on a printable character, so ctrl+shift+z is the
+         SAME byte as ctrl+z and the decoder lower-cases it on purpose.
+         A ctrl+shift+z binding would parse, look like a feature, and be
+         unfireable. See undo.go. -->
+    <KeyBinding Gesture="ctrl+z" Command="{{.Undo}}"/>
+    <KeyBinding Gesture="ctrl+y" Command="{{.Redo}}"/>
+
     <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
          one invented here: "To select the parent of a current selection in
          the designer, press the ESC key" is the WPF designer's own
