@@ -106,11 +106,27 @@ every real tree that it cannot reject a document that works today.
 
 `LayoutFault` records the phase, the component, and the depth; the walk
 stops and everything above it lays out and paints normally. Read it with
-`Composer.LayoutFault()` or `App.LayoutFault()`. The Composer keeps the
-**first** fault, not the latest: a cyclic tree trips Compose, then Focus,
-then Measure, then Arrange every frame, so "latest" would report whichever
-walk ran last, and the earliest walk is the closest report to the
-structural mistake.
+`Composer.LayoutFault()` or `App.LayoutFault()` on the damage-tracked
+path, and `Frame.LayoutFault()` on the one-shot `Compose`. The Composer
+keeps the **first** fault, not the latest: a cyclic tree trips Compose,
+then Focus, then Measure, then Arrange every frame, so "latest" would
+report whichever walk ran last, and the earliest walk is the closest
+report to the structural mistake.
+
+`Frame.LayoutFault` is not symmetry for its own sake — it exists because
+`layoutFault` is package-level state and somebody has to drain it.
+`Composer` does, twice: at construction, so a cycle in the tree it is
+*built* with is readable before the first frame, and again in `Frame`.
+`Compose` originally drained nowhere while its `Measure`, `Arrange` and
+`renderTree` could each record one, so a cyclic tree composed once left
+the fault in the global and **the next Composer picked it up at
+construction** — a clean tree reporting a fault that named a component
+from a tree it had never seen. `Compose` now brackets the pass: it takes
+on the way in, discarding anything an earlier pass stranded, and on the
+way out, into the frame it returns. Draining without exposing would have
+plugged the leak and silently made a one-shot compose of a cyclic tree
+indistinguishable from a clean one, which is why the accessor is the
+other half of that fix rather than a convenience.
 
 ## Still unbounded
 

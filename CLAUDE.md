@@ -314,7 +314,7 @@ tunnel is [#34](https://github.com/WonderForgeLabs/gooey/issues/34)).
 **UI-goroutine confinement, via the Dispatcher.** Properties are unlocked
 by design, so nothing off the main loop may `Get` or `Set`. Async work
 posts a closure (`Dispatcher.Post`, safe anywhere) and the loop runs it
-(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:462`. A
+(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:477`. A
 `Startable` gets `post` as the *only* legal route to the graph, and nothing
 in the framework will catch a violation.
 
@@ -437,7 +437,7 @@ seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
 them, and `App.Every` shipped the signal-no-join defect in the runtime
 itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
-delegated it too (`app.go:375`). A `Startable` that still hand-rolls its
+delegated it too (`app.go:376`). A `Startable` that still hand-rolls its
 own `done`/`stopped` pair is a claim that neither shape fits —
 `Companion.Start` (`components/companion.go:133`) is the one legitimate
 case, joining a subprocess `Wait()` rather than a ticker.
