@@ -306,9 +306,28 @@ jobs:
           set -f
           bad=0
           for m in $MODULES; do
+            # The root module comes out of discovery as `.`, and `.` is not
+            # a name. It used to render as `. (test)` in the check list;
+            # packing the legs by tier removed that check but not the
+            # problem, because the module name moved into exactly these
+            # annotations, the ::group:: below and the step summary (#263).
+            #
+            # `name` is DISPLAY ONLY. Every `cd`, every `go -C`, every path
+            # stays `$m` — a leg that ran in a directory called `root`
+            # would be looking for one that does not exist.
+            #
+            # This `case` is duplicated in the leg loop below, and
+            # TestCIRootIsNamedWhereverAModuleIsNamed holds the two
+            # byte-identical. Two copies of one rule with nothing keeping
+            # them equal is how the enumeration this repo just deleted from
+            # markup.go managed to go stale three separate ways.
+            case "$m" in
+              .) name='root' ;;
+              *) name=$m     ;;
+            esac
             want=$(go -C "$m" mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
             if [ -z "$want" ]; then
-              echo "::error::$m — could not read a go directive from its go.mod"
+              echo "::error::$name — could not read a go directive from its go.mod"
               bad=1
               continue
             fi
@@ -316,9 +335,9 @@ jobs:
             # newer than the toolchain. Saying so up front, naming the module,
             # beats discovering it partway through a tier.
             if printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C; then
-              echo "  ok  $m needs go$want"
+              echo "  ok  $name needs go$want"
             else
-              echo "::error::$m requires go$want but the runner image ships $have"
+              echo "::error::$name requires go$want but the runner image ships $have"
               bad=1
             fi
           done
@@ -351,13 +370,20 @@ jobs:
           # the step.
           set -f
           for m in $MODULES; do
-            echo "::group::$m ($MODE)"
+            # Display only; see the identical `case` in the toolchain step
+            # above, which carries the reasoning and is pinned equal to
+            # this one by TestCIRootIsNamedWhereverAModuleIsNamed.
+            case "$m" in
+              .) name='root' ;;
+              *) name=$m     ;;
+            esac
+            echo "::group::$name ($MODE)"
 
             if ! ( cd "$m" && go vet ./... ); then
               # Matches the old shape: a module that fails vet is not then
               # tested, because the vet step ran first and the job stopped.
-              echo "::error::$m — go vet failed"
-              printf '%s\n' "$m" >> "$fails"
+              echo "::error::$name — go vet failed"
+              printf '%s\n' "$name" >> "$fails"
               echo "::endgroup::"
               continue
             fi
@@ -367,9 +393,9 @@ jobs:
               # is the authority on which modules those are.
               vet)  ;;
               test) ( cd "$m" && go test ./... ) ||
-                      { echo "::error::$m — go test failed"; printf '%s\n' "$m" >> "$fails"; } ;;
+                      { echo "::error::$name — go test failed"; printf '%s\n' "$name" >> "$fails"; } ;;
               race) ( cd "$m" && go test -race ./... ) ||
-                      { echo "::error::$m — go test -race failed"; printf '%s\n' "$m" >> "$fails"; } ;;
+                      { echo "::error::$name — go test -race failed"; printf '%s\n' "$name" >> "$fails"; } ;;
               # An unrecognised mode means discovery emitted a tier this
               # step does not implement, which would otherwise VET the
               # modules and silently skip their tests.
