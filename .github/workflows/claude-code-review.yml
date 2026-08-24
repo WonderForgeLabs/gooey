@@ -117,12 +117,52 @@ jobs:
       outcome: ${{ steps.verify.outputs.effective_outcome || steps.review.outcome }}
       execution_file: ${{ steps.review.outputs.execution_file }}
       summary_posted: ${{ steps.verify.outputs.posted }}
+    # `secrets` is not available in a step-level `if`, so hoist the presence
+    # check to job-level `env` — same reason and shape as merge-gate below.
+    env:
+      HAS_WF_RUNNERS_APP: ${{ secrets.WF_RUNNERS_APP_ID != '' && secrets.WF_RUNNERS_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
           lfs: true
+
+      # Same App-token fallback as merge-gate: the default token's issue-comment
+      # write is capped by org policy, so prefer the App identity and degrade to
+      # github.token where the App is not installed. Snapshot/restore below are
+      # best-effort and never fail the job, so a 403 on the fallback costs the
+      # preservation, not the review.
+      - name: Generate app token
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && env.HAS_WF_RUNNERS_APP == 'true' }}
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WF_RUNNERS_APP_ID }}
+          private-key: ${{ secrets.WF_RUNNERS_APP_PRIVATE_KEY }}
+
+      # Snapshot the sticky comment BEFORE claude-code-action can overwrite it.
+      # In tag mode the action rewrites that comment to a progress checklist the
+      # moment it starts, and to an error stub if it dies — so by the time the
+      # review step ends the previous review is already gone. Capturing here is
+      # what makes the restore below possible at all. See #3339.
+      - name: Snapshot the existing review comment
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: |
+          # Vendored consumers (gooey, claude-plugins) run this jobs: block against
+          # THEIR checkout, which has no scripts/ci/ from forge — see #3342. Skip
+          # loudly rather than failing their review job over a helper they do not
+          # have; forge itself always has it.
+          if [ ! -x ./scripts/ci/preserve-review-comment.sh ]; then
+            echo "::warning::preserve-review-comment.sh not present in this repo; a failed review run can still destroy the previous review comment (#3339, tracked for consumers in #3342)."
+            exit 0
+          fi
+          ./scripts/ci/preserve-review-comment.sh capture \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --state "${{ runner.temp }}/review-comment-snapshot.json"
 
       - name: PR Review with Progress Tracking
         id: review
@@ -132,7 +172,7 @@ jobs:
         # outputs are always available (avoids auto-fix-ci re-runs of a review that
         # merely found issues).
         continue-on-error: true
-        uses: anthropics/claude-code-action@dcb57747bfceeaa1fa72638cae52295d1d853d4a # v1.0.199
+        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
         env:
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
         with:
@@ -232,6 +272,39 @@ jobs:
 
             Do NOT create GitHub issues — use the `claude-make-follow-up-issues` label on the PR to trigger follow-up issue creation separately.
 
+      # Undo the destruction a failed run just caused. claude-code-action writes
+      # its error stub into the same sticky comment that held the completed
+      # review, preserving the old body nowhere — 19 confirmed reviews destroyed
+      # across forge and gooey, 16 unrecoverable (#3339). This puts the snapshot
+      # back, so a failed run leaves the PR as it would have been had that run
+      # never triggered.
+      #
+      # This cannot let a stale review clear the gate: merge-gate fails closed on
+      # `REVIEW_OUTCOME != success` before it reads any comment. The restored
+      # body is for humans; the verdict is already decided.
+      #
+      # `always()` rather than `failure()`: the review step is continue-on-error,
+      # so the job is still green here and `failure()` would never fire. The
+      # script itself no-ops unless the comment is actually the error stub.
+      - name: Restore the previous review if this run destroyed it
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: |
+          # Vendored consumers (gooey, claude-plugins) run this jobs: block against
+          # THEIR checkout, which has no scripts/ci/ from forge — see #3342. Skip
+          # loudly rather than failing their review job over a helper they do not
+          # have; forge itself always has it.
+          if [ ! -x ./scripts/ci/preserve-review-comment.sh ]; then
+            echo "::warning::preserve-review-comment.sh not present in this repo; a failed review run can still destroy the previous review comment (#3339, tracked for consumers in #3342)."
+            exit 0
+          fi
+          ./scripts/ci/preserve-review-comment.sh restore \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --state "${{ runner.temp }}/review-comment-snapshot.json" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       # A review that exits 0 having posted nothing is indistinguishable from a
       # healthy review at the job level, and that is not hypothetical: on
       # WonderForgeLabs/gooey#215, runs 31584712710 and 31654593833 both recorded
@@ -292,13 +365,34 @@ jobs:
           # never interpolated into a command.
           SUMMARY_MARKER='<!-- pr-review-summary -->'
 
-          # --slurp is load-bearing: with --paginate alone, --jq is applied once PER
-          # PAGE, so `last` yields one body per page rather than one overall.
+          # --slurp is load-bearing: with --paginate alone the filter is applied
+          # once PER PAGE, so `last` yields one body per page rather than one
+          # overall.
+          #
+          # It must pipe to REAL jq, never gh's --jq. `gh api --slurp --jq` is
+          # rejected outright by gh:
+          #
+          #   the `--slurp` option is not supported with `--jq` or `--template`
+          #
+          # so the two together fail on EVERY run, not intermittently. This step
+          # shipped with that combination and consequently never read a single
+          # comment — it took the fail-open branch below 100% of the time, and
+          # silently, because the cause went to /dev/null. It was observed on
+          # #2991 (07:45:52Z) and mistaken for a transient API blip.
+          #
+          # Two consequences worth knowing: `enforce_review_summary` could never
+          # have worked (this branch exits before ENFORCE is consulted), and the
+          # "carries the review-summary marker" warning the comment above tells
+          # you to watch for could never fire — so the evidence needed to decide
+          # on enforcement was unobtainable from the workflow itself.
           comments_file="$(mktemp)"
-          if ! gh api --paginate --slurp "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-                 --jq '[.[][] | select(.user.login == "claude[bot]") | .body // ""]' \
-                 > "$comments_file" 2>/dev/null; then
-            echo "::warning::Could not read PR comments to verify the review summary; leaving the review outcome untouched."
+          read_err="$(mktemp)"
+          if ! gh api --paginate --slurp "repos/${REPO}/issues/${PR_NUMBER}/comments" 2>"$read_err" \
+                 | jq '[.[][] | select(.user.login == "claude[bot]") | .body // ""]' \
+                 > "$comments_file" 2>>"$read_err"; then
+            # Report the cause. Swallowing it is what let a permanently broken
+            # command read as an intermittent one for as long as it did.
+            echo "::warning::Could not read PR comments to verify the review summary; leaving the review outcome untouched. Cause: $(tr '\n' ' ' < "$read_err" | head -c 400)"
             echo "effective_outcome=$REVIEW_OUTCOME" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -525,7 +619,7 @@ jobs:
         if: >-
           !cancelled() && steps.ctx.outputs.force_pass != 'true' && github.actor != 'dependabot[bot]' &&
           !(steps.ctx.outputs.mode == 'recheck' && github.event.action == 'labeled')
-        uses: anthropics/claude-code-action@dcb57747bfceeaa1fa72638cae52295d1d853d4a # v1.0.199
+        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally

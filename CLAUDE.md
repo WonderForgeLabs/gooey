@@ -48,6 +48,16 @@ strips the vendored modules' own `go.mod` files, which is why the module
 discovery below still finds exactly the tree's own modules and needs no
 `vendor` prune.
 
+**`tool` directives go in `tools/`, never in a module somebody imports.** A
+`tool` directive records the tool's whole dependency graph as `// indirect`
+requires of the go.mod holding it, and MVS hands those to every consumer of
+that module — buf in the root go.mod obliged anyone importing gooey to buf,
+Docker's CLI, quic-go, cel-go and ~90 more, and forced upgrades of whatever
+they shared with them. `tools/` is in `go.work`, so it still vendors into the
+one root `vendor/` and `go tool` still resolves offline; it just has no
+importable packages. `TestToolDirectivesStayOffTheImportableModules` keeps it
+that way, and `tools/doc.go` carries the reasoning.
+
 **How many modules are vendored is deliberately not written here** — derive
 it, for the reason the Verify section gives about counts in prose. And
 `vendor/modules.txt` will mislead you if you count it the obvious way:
