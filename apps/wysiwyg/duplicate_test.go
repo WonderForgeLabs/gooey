@@ -122,3 +122,61 @@ func TestUniqueNameSkipsWhatIsInUseRatherThanCounting(t *testing.T) {
 			"collides the moment something is promoted", got)
 	}
 }
+
+// TestNamesInUseSeesInsideSlots.
+//
+// A slot — <ItemsView.ItemTemplate> — serializes into the same document
+// and is resolved by the same markup.Find, so a Name in there is taken.
+// namesInUse walked only Kids, which made "unique per document" quietly
+// mean "unique per document, excluding slots": uniqueName would hand out
+// a name a slot already claims, and the collision builds green.
+func TestNamesInUseSeesInsideSlots(t *testing.T) {
+	root := &node{Elem: "Canvas", Kids: []*node{
+		{Elem: "ItemsView", Attrs: map[string]string{"Name": "List"}, Slots: map[string]*node{
+			"ItemTemplate": {Elem: "Text", Attrs: map[string]string{"Name": "Text1"}},
+		}},
+	}}
+	if !namesInUse(root)["Text1"] {
+		t.Error("namesInUse missed Text1 inside an ItemTemplate slot")
+	}
+	if got := uniqueName(root, "Text"); got != "Text2" {
+		t.Errorf("uniqueName returned %q with Text1 living in a slot, want \"Text2\": "+
+			"a namer blind to slots re-issues a name the document already resolves", got)
+	}
+}
+
+// TestDuplicateCarriesSlotsRatherThanDroppingThem.
+//
+// The catalog can mark a slot REQUIRED, and the toolbox seeds one on the
+// way in, so a copy that dropped Slots serialized as a bare <ItemsView/>
+// — a duplicate that silently deleted half of what it copied, and left a
+// document that no longer satisfies the element's own contract.
+func TestDuplicateCarriesSlotsRatherThanDroppingThem(t *testing.T) {
+	used := map[string]bool{"List": true, "Text1": true}
+	orig := &node{Elem: "ItemsView", Attrs: map[string]string{"Name": "List"}, Slots: map[string]*node{
+		"ItemTemplate": {Elem: "Text", Body: "row", Attrs: map[string]string{"Name": "Text1"}},
+	}}
+
+	c := clone(orig, used)
+
+	sl, ok := c.Slots["ItemTemplate"]
+	if !ok {
+		t.Fatalf("the copy has no ItemTemplate slot: clone dropped it, so the copy "+
+			"serialises as <%s/> and no longer satisfies the element's required slot", c.Elem)
+	}
+	if sl == orig.Slots["ItemTemplate"] {
+		t.Error("the copy's slot is the SAME node as the original's: a shallow copy " +
+			"means editing one edits both")
+	}
+	if sl.Body != "row" {
+		t.Errorf("the copy's slot lost its body: got %q", sl.Body)
+	}
+	// Renamed, for the same reason every other copied node is.
+	if sl.Attrs["Name"] == "Text1" {
+		t.Error("the copy's slot kept Name=\"Text1\": two nodes answer to one address " +
+			"and markup.Find resolves the wrong one")
+	}
+	if sl.Attrs["Name"] == "" {
+		t.Error("the copy's slot lost its Name entirely; it should have been renamed, not dropped")
+	}
+}

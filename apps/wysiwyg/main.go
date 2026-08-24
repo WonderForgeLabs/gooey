@@ -71,6 +71,10 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	ctrl+k, ctrl+j   move the selection up / down among its siblings
+//	ctrl+h           PROMOTE — lift the selection out to its grandparent
+//	ctrl+l           DEMOTE — nest the selection into the sibling above it
+//	ctrl+d           duplicate the selection, and select the copy
 //
 // # Selecting
 //
@@ -185,6 +189,11 @@
 // records it as Canvas.Left/Top on the element itself. Nothing here
 // invents a home for design-time state — no attribute, no comment, no
 // property element.
+//
+// The keyboard reaches all four of these without the pointer: ctrl+k and
+// ctrl+j reorder among siblings, ctrl+h promotes, ctrl+l demotes, and
+// ctrl+d duplicates. See move.go and duplicate.go; wysiwyg.gooey holds
+// the bindings, and the # Keys table above is the whole surface.
 //
 // The pointer is a second way in, never the only one. ctrl+n and ctrl+p
 // remain the whole gesture from the keyboard, which is not politeness:

@@ -20,6 +20,13 @@ import "fmt"
 // within the page for Find to resolve it, and the editor moves nodes
 // between parents, so a name that was free in one container must not
 // become a collision by being promoted into another.
+//
+// SLOTS ARE PART OF THE DOCUMENT. <ItemsView.ItemTemplate> and its
+// subtree serialize into the same page and are resolved by the same
+// markup.Find, so a Name in there is as taken as one in Kids. Walking
+// only Kids made "unique per document" mean "unique per document,
+// excluding slots" — a silent collision waiting for slot content to
+// become selectable, which node.Slots' own comment says is expected.
 func namesInUse(root *node) map[string]bool {
 	used := map[string]bool{}
 	var walk func(*node)
@@ -32,6 +39,9 @@ func namesInUse(root *node) map[string]bool {
 		}
 		for _, k := range n.Kids {
 			walk(k)
+		}
+		for _, sl := range n.Slots {
+			walk(sl)
 		}
 	}
 	walk(root)
@@ -73,6 +83,18 @@ func clone(n *node, used map[string]bool) *node {
 	}
 	for _, k := range n.Kids {
 		c.Kids = append(c.Kids, clone(k, used))
+	}
+	// Slots come with it. They are structured attributes, and the
+	// catalog can mark one REQUIRED — <ItemsView> seeds an ItemTemplate
+	// on the way in — so a copy that dropped them serialized as
+	// <ItemsView/> and produced a document that no longer satisfies the
+	// element's own contract. That is a duplicate that silently deletes
+	// half of what it copied.
+	for k, sl := range n.Slots {
+		if c.Slots == nil {
+			c.Slots = map[string]*node{}
+		}
+		c.Slots[k] = clone(sl, used)
 	}
 	return c
 }
