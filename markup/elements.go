@@ -63,6 +63,7 @@ func init() {
 
 var defText = &ElementDef{
 	Name:  "Text",
+	Seed:  "<Text>Text</Text>",
 	Proto: &components.Text{},
 	Known: true,
 	Doc:   "A run of text. The content is the element's body, not an attribute.",
@@ -109,6 +110,7 @@ var defText = &ElementDef{
 
 var defButton = &ElementDef{
 	Name:  "Button",
+	Seed:  "<Button Content=\"Button\" Click=\"{{.Click}}\"/>",
 	Proto: &components.Button{},
 	Known: true,
 	Doc:   "A clickable button. Its label is Content; nested text is ignored.",
@@ -173,6 +175,7 @@ var defButton = &ElementDef{
 // TakesLayout rather than by this list.
 var defCompanion = &ElementDef{
 	Name:  "Companion",
+	Seed:  "<Companion Name=\"job\" Path=\"true\" Exited=\"{{.Exited}}\"/>",
 	Proto: &components.Companion{},
 	Known: true,
 	Doc:   "Runs a child process for the life of the page. It names a binary: read companion.go before changing it.",
@@ -204,6 +207,7 @@ var defCompanion = &ElementDef{
 // is red if that ever happens.
 var defValidate = &ElementDef{
 	Name:         "Validate",
+	Seed:         "<Validate Required=\"true\"/>",
 	Proto:        &Validate{},
 	Known:        true,
 	Open:         true,
@@ -257,6 +261,7 @@ var defTab = &ElementDef{
 
 var defBorder = &ElementDef{
 	Name:  "Border",
+	Seed:  "<Border Title=\"Border\"><Text>content</Text></Border>",
 	Proto: &components.Border{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -304,6 +309,7 @@ var defBorder = &ElementDef{
 
 var defGrid = &ElementDef{
 	Name:  "Grid",
+	Seed:  "<Grid Rows=\"1,1\" Cols=\"1*,1*\"><Text Grid.Row=\"0\" Grid.Col=\"0\">A</Text><Text Grid.Row=\"1\" Grid.Col=\"1\">B</Text></Grid>",
 	Proto: &components.Grid{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -339,6 +345,7 @@ var defGrid = &ElementDef{
 
 var defVStack = &ElementDef{
 	Name:  "VStack",
+	Seed:  "<VStack><Text>One</Text><Text>Two</Text></VStack>",
 	Proto: &components.VStack{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -366,6 +373,7 @@ var defVStack = &ElementDef{
 
 var defHStack = &ElementDef{
 	Name:  "HStack",
+	Seed:  "<HStack Gap=\"1\"><Text>One</Text><Text>Two</Text></HStack>",
 	Proto: &components.HStack{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -393,6 +401,7 @@ var defHStack = &ElementDef{
 
 var defCanvas = &ElementDef{
 	Name:  "Canvas",
+	Seed:  "<Canvas Width=\"24\" Height=\"6\"><Text Canvas.Left=\"1\" Canvas.Top=\"1\">Canvas</Text></Canvas>",
 	Proto: &components.Canvas{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -420,6 +429,7 @@ var defCanvas = &ElementDef{
 
 var defItemsView = &ElementDef{
 	Name:  "ItemsView",
+	Seed:  "<ItemsView Items=\"{{.Items}}\" Selected=\"{{.Selected}}\"><ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate></ItemsView>",
 	Proto: &components.ItemsView{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -441,6 +451,7 @@ var defItemsView = &ElementDef{
 
 var defCheckbox = &ElementDef{
 	Name:  "Checkbox",
+	Seed:  "<Checkbox Label=\"Checkbox\" Checked=\"{{.Checked}}\"/>",
 	Proto: &components.Checkbox{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -475,6 +486,7 @@ var defCheckbox = &ElementDef{
 
 var defGauge = &ElementDef{
 	Name:  "Gauge",
+	Seed:  "<Gauge Value=\"{{.Value}}\"/>",
 	Proto: &components.Gauge{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -511,6 +523,7 @@ var defGauge = &ElementDef{
 
 var defSparkline = &ElementDef{
 	Name:  "Sparkline",
+	Seed:  "<Sparkline Values=\"{{.Values}}\"/>",
 	Proto: &components.Sparkline{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -539,6 +552,7 @@ var defSparkline = &ElementDef{
 
 var defTextBox = &ElementDef{
 	Name:  "TextBox",
+	Seed:  "<TextBox Text=\"{{.Text}}\"/>",
 	Proto: &components.TextBox{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -637,6 +651,7 @@ var defTextBox = &ElementDef{
 
 var defColorPicker = &ElementDef{
 	Name:  "ColorPicker",
+	Seed:  "<ColorPicker Value=\"{{.Value}}\"/>",
 	Proto: &components.ColorPicker{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -654,6 +669,7 @@ var defColorPicker = &ElementDef{
 
 var defProgressBar = &ElementDef{
 	Name:  "ProgressBar",
+	Seed:  "<ProgressBar Value=\"{{.Value}}\"/>",
 	Proto: &components.ProgressBar{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -699,6 +715,7 @@ var defProgressBar = &ElementDef{
 
 var defSpinner = &ElementDef{
 	Name:  "Spinner",
+	Seed:  "<Spinner/>",
 	Proto: &components.Spinner{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -742,6 +759,7 @@ var defSpinner = &ElementDef{
 
 var defToggle = &ElementDef{
 	Name:  "Toggle",
+	Seed:  "<Toggle Label=\"Toggle\" Checked=\"{{.Checked}}\"/>",
 	Proto: &components.Toggle{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -776,6 +794,7 @@ var defToggle = &ElementDef{
 
 var defSegmented = &ElementDef{
 	Name:  "Segmented",
+	Seed:  "<Segmented Options=\"One,Two\" Selected=\"{{.Selected}}\"/>",
 	Proto: &components.Segmented{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -837,6 +856,7 @@ var defSegmented = &ElementDef{
 
 var defStatusBar = &ElementDef{
 	Name:         "StatusBar",
+	Seed:         "<StatusBar Left=\"left\" Center=\"center\" Right=\"right\"/>",
 	DynamicAttrs: "the three slots are consumed by ranging over statusSections, so no read names a literal",
 	Proto:        &components.StatusBar{},
 	Known:        true,
@@ -858,6 +878,7 @@ var defStatusBar = &ElementDef{
 
 var defTabs = &ElementDef{
 	Name:  "Tabs",
+	Seed:  "<Tabs><Tab Header=\"One\"><Text>First</Text></Tab><Tab Header=\"Two\"><Text>Second</Text></Tab></Tabs>",
 	Proto: &components.Tabs{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -874,6 +895,7 @@ var defTabs = &ElementDef{
 
 var defButtonBar = &ElementDef{
 	Name:  "ButtonBar",
+	Seed:  "<ButtonBar><Button Content=\"One\"/><Button Content=\"Two\"/></ButtonBar>",
 	Proto: &components.ButtonBar{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -899,6 +921,7 @@ var defButtonBar = &ElementDef{
 
 var defMenuBar = &ElementDef{
 	Name:  "MenuBar",
+	Seed:  "<MenuBar><Menu Title=\"File\"><MenuItem Text=\"Open\"/></Menu></MenuBar>",
 	Proto: &components.MenuBar{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -913,6 +936,7 @@ var defMenuBar = &ElementDef{
 
 var defToastHost = &ElementDef{
 	Name:  "ToastHost",
+	Seed:  "<ToastHost Width=\"18\" Height=\"3\"/>",
 	Proto: &components.ToastHost{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -942,6 +966,7 @@ var defToastHost = &ElementDef{
 
 var defAdornmentLayer = &ElementDef{
 	Name:     "AdornmentLayer",
+	Seed:     "<AdornmentLayer Width=\"18\" Height=\"3\"/>",
 	Proto:    &components.AdornmentLayer{},
 	Known:    true,
 	Children: ChildSpec{Mode: ModeNone},
@@ -955,6 +980,7 @@ var defAdornmentLayer = &ElementDef{
 
 var defTooltip = &ElementDef{
 	Name:  "Tooltip",
+	Seed:  "<Tooltip Text=\"Tooltip\"/>",
 	Proto: &components.Tooltip{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -996,6 +1022,7 @@ var defTooltip = &ElementDef{
 
 var defValidationMarker = &ElementDef{
 	Name:  "ValidationMarker",
+	Seed:  "<ValidationMarker Error=\"{{.Error}}\"/>",
 	Proto: &components.ValidationMarker{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -1028,6 +1055,7 @@ var defValidationMarker = &ElementDef{
 
 var defKeyBinding = &ElementDef{
 	Name:  "KeyBinding",
+	Seed:  "<KeyBinding Gesture=\"ctrl+k\" Command=\"{{.Command}}\"/>",
 	Proto: &gooey.KeyBinding{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -1050,6 +1078,7 @@ var defKeyBinding = &ElementDef{
 
 var defTimer = &ElementDef{
 	Name:  "Timer",
+	Seed:  "<Timer Interval=\"1s\" Tick=\"{{.Tick}}\"/>",
 	Proto: &components.Timer{},
 	Known: true,
 	Attrs: []AttrSpec{
@@ -1090,6 +1119,7 @@ var defTimer = &ElementDef{
 
 var defTypeAhead = &ElementDef{
 	Name:  "TypeAhead",
+	Seed:  "<TypeAhead Key=\"f\"/>",
 	Proto: &components.TypeAhead{},
 	Known: true,
 	Doc:   "Windows Explorer's type-ahead find on a list: typing selects the first item whose Key value has that prefix.",
@@ -1135,6 +1165,7 @@ var defTypeAhead = &ElementDef{
 
 var defImage = &ElementDef{
 	Name:  "Image",
+	Seed:  "<Image Src=\"{{.Src}}\" Cols=\"8\" Rows=\"4\"/>",
 	Proto: &components.Image{},
 	Known: true,
 	Attrs: []AttrSpec{
