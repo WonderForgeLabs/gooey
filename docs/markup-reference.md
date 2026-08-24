@@ -138,7 +138,18 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 
 ### Text
 
-A text block. The content is the element's text, with surrounding whitespace trimmed. Content may be a pure literal, a pure binding, or a mix (see the binding DSL below).
+A text block. The content is the element's text — written between the tags, not in an attribute. Content may be a pure literal, a pure binding, or a mix (see the binding DSL below).
+
+**Whitespace in a body is significant on one line and trimmed across lines.** Written on a single line the body is taken exactly as typed, so `<Text>    Hello</Text>` renders four leading spaces and `<Text> </Text>` is a one-cell spacer. Wrapped across lines, the surrounding whitespace is source formatting and is stripped:
+
+```xml
+<Text>    indented four</Text>   <!-- renders "    indented four" -->
+<Text>
+  wrapped for readability        <!-- renders "wrapped for readability" -->
+</Text>
+```
+
+Indenting the document does *not* indent a body — the file's indentation lands before the start tag, so a `<Text>` nested ten levels deep still renders `Hello` for `<Text>Hello</Text>`. That is what lets the one-line form be verbatim without an opt-in attribute. The one thing you cannot express is leading whitespace on a body wrapped across *several* lines; write one `<Text>` per line, or use `Canvas.Left`.
 
 | Attribute | Meaning |
 |---|---|
@@ -528,6 +539,8 @@ Auto-dismiss follows the Timer discipline: the goroutine posts the dismissal to 
 
 Declare it as the **last child of the root**, spanning the page — the same hosting rule as `ToastHost` (declare it after the ToastHost and tooltips paint above toasts too). It takes no children and no attributes beyond `Name`: adornments attach themselves at runtime (a `Tooltip` finds the layer on its own), and code adds custom adorners through `Add`/`Remove`. The layer paints nothing, is transparent to the pointer, and re-anchors every adornment each frame, so a moved or resized target drags its adornments along and a target that leaves the tree or turns non-visible takes them down.
 
+**Free adornments are the exception to that last clause.** An adornment implementing `gooey.PointerFollower` is positioned against the **pointer** rather than a component: it has no anchor, so nothing can take it down but its owner, and its `Place` receives the pointer's 1x1 cell. That is what makes drag ghosts, drop indicators, marquee rectangles and crosshairs expressible ([#177](https://github.com/WonderForgeLabs/gooey/issues/177), [spec](specs/2026-08-23-free-adornments.md)). There is no markup element for one — a free adornment is raised and dismissed inside a gesture, from code — and `components.DragGhost` is the shipped example. Pointer motion costs nothing while nothing is following; see [concepts/overlays.md](learn/concepts/overlays.md).
+
 ### Tooltip
 
 `components.Tooltip` — hover help on any element, from pure markup. Two forms:
@@ -869,6 +882,8 @@ Unknown attributes are a **load error**, as they now are on every element: a mis
 **Output never reaches the terminal.** A child writing to the inherited stdout paints over the UI's bottom rows in raw mode with bytes the framework cannot repair, so the default is the null device and `Log` takes a *path*. There is no `Log="stdout"` and no way to spell one.
 
 **Args and env are property elements.** `Args="worker.py --queue my-queue"` is lossy the moment an argument contains a space, and XML attributes have already spent both quote characters. One `<Arg>` per argument, document order preserved, no escaping; `<Var>` names are literal and `<Var>` values bind like any other text attribute. Both are consumed as data, so they never enter the visual tree. There is no shell anywhere — `Path` plus the `<Arg>` list is an argv, and nothing re-parses it.
+
+**An `<Arg>` body is whitespace-significant.** `<Arg>` takes its argument from its body, so it follows the same rule as `<Text>` (see [Text](#text)): a one-line body is kept verbatim, leading and trailing spaces included. `<Arg>  --lead</Arg>` passes `"  --lead"`, not `"--lead"`. That is deliberate — an argv token is exactly the kind of literal a loader must not quietly rewrite — but it means a stray space inside the tags reaches the child process. A body that wraps across lines is unindented and joined, as everywhere else.
 
 **Bindings in `<Arg>` and `<Var Value>` are snapshots**, read once when the child starts. Changing the property afterwards does not restart the child — an argv is a value a process was launched with, not one it observes. This is what lets a declaration depend on something only Go knows (an MCP endpoint that is not knowable until the listener is bound): the app puts it in a property, the document binds it.
 

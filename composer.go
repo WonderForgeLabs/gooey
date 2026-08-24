@@ -111,6 +111,16 @@ type paintNode struct {
 	frozenObs *prop.Property[bool]
 	frozen    bool
 
+	// ptrObs is the same two-part shape applied to PointerFollower, and
+	// it exists only for a component that implements it: a computed whose
+	// evaluation CALLS FollowsPointer and, only when the answer is true,
+	// reads the pointer. Both halves are subscriptions by the ordinary
+	// call-site rule, and the short-circuit between them is the feature —
+	// it is what makes a parked follower cost nothing per motion while a
+	// following one wakes a frame per cell. Like visObs and frozenObs it
+	// is not a paint node: it never renders and never counts as damage.
+	ptrObs *prop.Property[int]
+
 	// The pixel plane, per node: what this component recorded the last
 	// time it painted, and what the terminal is currently showing for it.
 	places []graphics.Placement
@@ -358,6 +368,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 	c.nodeOf[w] = n
 	c.armVisibility(n)
 	c.armFrozen(n)
+	c.armPointer(n)
 	if d, ok := w.(Dynamic); ok {
 		d.SetStructureHook(c.structureChanged)
 	}
@@ -503,6 +514,71 @@ func frozenAncestor(n *paintNode) bool {
 	return false
 }
 
+// armPointer is armVisibility's and armFrozen's third sibling, and it is
+// what turns a pointer-followed position from something the app has to
+// remember to invalidate into something the framework wakes on its own.
+//
+// The evaluation is two reads and the ORDER IS THE DESIGN. It calls
+// FollowsPointer first, unconditionally — so whatever the component reads
+// to decide (a `dragging` bool, a mode property) becomes a dependency of
+// this observer, and STARTING to follow schedules the frame that
+// re-evaluates this and subscribes to the rest. Only then, and only while
+// the answer is true, does it read the pointer. That short-circuit is the
+// bounded-wakeup guarantee in one line: ?1003h delivers a motion report
+// per cell crossed, and a parked follower has no edge from the pointer, so
+// those reports invalidate nothing, schedule nothing and paint nothing.
+// Swapping the two reads, or hoisting the pointer read above the branch,
+// still compiles and still passes every placement test — it just silently
+// buys a frame per cell for the life of the app.
+//
+// Not a paint node, deliberately: the alternative was to have the layer or
+// the follower read the pointer from its own Render, which would have made
+// the wake a REPAINT. On the layer that is a full-page damage rect per
+// motion (the exact bug DecoratesCells was added to remove); on the
+// follower it works, but it is a rule the author has to remember, and a
+// forgotten read is a component that goes silently deaf — the failure mode
+// this framework has the most scar tissue about. The observer takes the
+// obligation off the author entirely: implement the interface, get the
+// wake.
+//
+// Called from build for NEW nodes only — the reused branch arms
+// armVisibility and armFrozen and deliberately not this — and late-armed
+// from Frame's sweep, which is where every other node gets it.
+//
+// That asymmetry is the design, not an omission, and Frame's sweep is
+// load-bearing rather than belt-and-braces the way it is for visObs:
+// NewComposer runs walkNodes BEFORE it builds the FocusManager, so
+// armPointer's `c.focus == nil` guard declines for every node present at
+// construction. They genuinely cannot arm in build and are picked up on
+// the first Frame instead.
+//
+// Adding the call to the reused branch would be harmless — the nil-ptrObs
+// guard above makes it idempotent — but it would also erase the reason
+// the sweep has to exist, which is the thing worth keeping.
+func (c *Composer) armPointer(n *paintNode) {
+	if n.ptrObs != nil {
+		return
+	}
+	if _, ok := n.w.(PointerFollower); !ok {
+		return
+	}
+	if c.focus == nil {
+		return
+	}
+	n.ptrObs = prop.NewComputed(func() int {
+		if p, ok := n.w.(PointerFollower); ok && p.FollowsPointer() {
+			c.focus.Pointer()
+		}
+		return 0
+	})
+	n.ptrObs.OnInvalidate(func() {
+		if c.invalid != nil {
+			c.invalid()
+		}
+	})
+	n.ptrObs.Get() // arm: record the dependencies
+}
+
 // structureChanged is the hook handed to every Dynamic container. It only
 // raises a flag: the sync itself has to happen at a defined point in the
 // frame (after layout, before painting), and the caller is typically in
@@ -591,6 +667,11 @@ func (c *Composer) Frame() (*Frame, int) {
 			n.visObs.Get()
 		} else {
 			c.armVisibility(n)
+		}
+		if n.ptrObs != nil {
+			n.ptrObs.Get()
+		} else {
+			c.armPointer(n)
 		}
 		if n.frozenObs != nil {
 			if f := n.frozenObs.Get(); f != n.frozen {

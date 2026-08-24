@@ -200,4 +200,9 @@ next one, validation markers, should confirm the interface before it
 calcifies), `docs/learn` chapter + example GIF for the epic's
 acceptance criteria, and pointer-anchored placement (context menus want
 a Place anchored at the pointer, not at a component) — tracked as
-[#177](https://github.com/WonderForgeLabs/gooey/issues/177).
+[#177](https://github.com/WonderForgeLabs/gooey/issues/177) — and
+**since executed**: a free adornment implements
+`gooey.PointerFollower`, is exempt from the anchor sweep entirely, and
+has `Place` called with the pointer's 1x1 cell instead of an anchor's
+bounds. `components.DragGhost` is its first customer. See
+[2026-08-23-free-adornments.md](2026-08-23-free-adornments.md).
