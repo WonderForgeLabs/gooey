@@ -474,6 +474,12 @@ const (
 	// see mapNodes. Not a property of the parent; a property of how far
 	// the inversion could descend.
 	DragUnmapped = "unmapped"
+	// DragStale is the document not building AT ALL. The designer is
+	// still showing the last version that did, so there are elements on
+	// screen that look pressable and correspond to nothing the editor can
+	// address — see rebuild, which drops docRoot up front and returns on
+	// the error without restoring it.
+	DragStale = "stale preview"
 )
 
 // dragKind reports why an element can or cannot be dragged.
@@ -483,6 +489,15 @@ const (
 // children an offset, a <Grid> gives them a cell, and a stack gives them
 // nothing but their order.
 func (ed *editor) dragKind(n *node) string {
+	// FIRST, because it explains the nil that would otherwise be reported
+	// as DragNone. With docRoot nil every press resolves to no node at
+	// all, so "nothing is selected: press an element to move it" is what
+	// the user was told — while pressing an element, repeatedly. The
+	// selection is not the problem and saying it is sends them looking in
+	// the wrong place.
+	if ed.docRoot == nil {
+		return DragStale
+	}
 	if n == nil || ed.isSurface(n) {
 		return DragNone
 	}
@@ -525,6 +540,9 @@ func (ed *editor) dragSummary(n *node, kind string) string {
 	case DragUnmapped:
 		return nodeLabel(n) + " has no component this editor can address: the built " +
 			"tree stopped corresponding to the document above it"
+	case DragStale:
+		return "the document does not build, so the designer is showing the last " +
+			"version that did: nothing on it can be selected until the error above is fixed"
 	}
 	return ""
 }
