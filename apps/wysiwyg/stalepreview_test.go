@@ -110,18 +110,24 @@ func TestAStalePreviewSaysSoRatherThanBlamingTheSelection(t *testing.T) {
 	}
 }
 
-// TestThePaletteRefusesAChildTheContainerCannotHold is the insert that
-// created the state at all, and it is two keystrokes.
+// TestThePaletteRefusesAnInsertTheDocumentCannotBuild is the transactional
+// guard, and its subject MOVED when tabs became authorable.
 //
-// <Tabs> declares ChildSpec{ModeRestricted, Only: ["Tab"]}, and <Tab> is
-// filtered OUT of the palette (it is a pseudo-element that <Tabs> parses
-// itself). So with a <Tabs> selected, every entry in the palette is an
-// illegal child — and adding one used to break the whole document rather
-// than the one gesture.
+// It used to use <Tabs> + <Text>, because that combination was
+// unsatisfiable: <Tabs> declares Only:["Tab"] and <Tab> is not in the
+// palette, so nothing could be added to a <Tabs> at all. addplan.go
+// closed that — the insert is now wrapped in the one child the container
+// declares — so <Tabs> is the wrong fixture for a refusal and the test
+// would have kept passing for the wrong reason had it only been made to
+// compile.
 //
-// The check is a trial build rather than a table, because the rule lives
-// inside the container's own builder and a copy here would drift from it.
-func TestThePaletteRefusesAChildTheContainerCannotHold(t *testing.T) {
+// <Border> is the case that remains: ModeOne, already holding its child.
+// The catalog cannot say the slot is taken — the mode says "exactly one",
+// not "one is left" — so canHold answers yes, the insert is TRIED, and
+// the trial build is what refuses. That is the design: permissive where
+// the catalog is silent, because a refusal that names both elements costs
+// less than an insert silently relocated.
+func TestThePaletteRefusesAnInsertTheDocumentCannotBuild(t *testing.T) {
 	ed, _ := buildPage(t)
 	ed.paletteSel.Set(paletteIndex(t, ed, "Text"))
 
@@ -139,30 +145,29 @@ func TestThePaletteRefusesAChildTheContainerCannotHold(t *testing.T) {
 		t.Fatal("a legal insert left the document not building")
 	}
 
-	// Now the arm that must refuse.
-	tabs := &node{Elem: "Tabs", Attrs: map[string]string{"Name": "Tabs1"}}
-	tabs.Kids = append(tabs.Kids, &node{
-		Elem:  "Tab",
-		Attrs: map[string]string{"Header": "One"},
-		Kids:  []*node{{Elem: "Text", Body: "First"}},
-	})
-	ed.doc().Kids = append(ed.doc().Kids, tabs)
+	// Now the arm that must refuse: a <Border> whose one slot is taken.
+	border := &node{
+		Elem:  "Border",
+		Attrs: map[string]string{"Name": "B", "Canvas.Left": "0", "Canvas.Top": "12"},
+		Kids:  []*node{{Elem: "Text", Body: "taken", Attrs: map[string]string{"Name": "Inner"}}},
+	}
+	ed.doc().Kids = append(ed.doc().Kids, border)
 	ed.rebuild()
 	if ed.docRoot == nil {
-		t.Fatalf("the <Tabs> fixture does not build: %q", ed.status.Get())
+		t.Fatalf("the <Border> fixture does not build: %q", ed.status.Get())
 	}
 
-	ed.sel = tabs
-	if got := ed.addTarget(); got != tabs {
-		t.Fatalf("with the <Tabs> selected an Add targets %s; this test is only "+
-			"about what happens when it targets the <Tabs> itself", nodeLabel(got))
+	ed.sel = border
+	if got := ed.addTarget("Text"); got != border {
+		t.Fatalf("with the <Border> selected an Add targets %s; this test is only "+
+			"about what happens when it targets the <Border> itself", nodeLabel(got))
 	}
-	kids := len(tabs.Kids)
+	kids := len(border.Kids)
 	ed.addSelected()
 
-	if len(tabs.Kids) != kids {
-		t.Errorf("the <Tabs> took %d children, was %d: an element it cannot hold "+
-			"was written into the document anyway", len(tabs.Kids), kids)
+	if len(border.Kids) != kids {
+		t.Errorf("the <Border> took %d children, was %d: an element it cannot hold "+
+			"was written into the document anyway", len(border.Kids), kids)
 	}
 	if ed.docRoot == nil {
 		t.Error("the refused insert left docRoot nil — which is the state that " +
@@ -170,7 +175,7 @@ func TestThePaletteRefusesAChildTheContainerCannotHold(t *testing.T) {
 			"tree stays on screen looking pressable")
 	}
 	msg := ed.status.Get()
-	if !strings.Contains(msg, "<Text>") || !strings.Contains(msg, "<Tabs>") {
+	if !strings.Contains(msg, "<Text>") || !strings.Contains(msg, "<Border>") {
 		t.Errorf("the refusal says %q; it has to name BOTH the element and the "+
 			"container, because \"that doesn't go there\" without saying what "+
 			"decides it is the same dead end one step later", msg)
