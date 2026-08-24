@@ -115,13 +115,20 @@ func isFrozen(w Component) bool {
 }
 
 // Decorator is implemented by components whose Render owns no cells of
-// its own: it re-styles cells that earlier siblings painted (ItemsView's
-// row highlight). The Composer's z-ordered repaint pass does not force
-// one when a component below it repaints — with no cells of its own on
-// screen it has nothing to restore, and a live decorator re-applies
-// through its own dependencies, which is the contract that makes it a
-// decorator in the first place.
+// its own but re-styles cells that earlier siblings painted (ItemsView's
+// row highlight). It must be re-applied after an underlying repaint.
 type Decorator interface{ DecoratesCells() }
+
+// CellPassthrough is implemented by transparent containers whose Render
+// neither owns nor re-styles cells. Their paint nodes never need to be
+// restored when an overlay leaves a region.
+//
+// The claim is about the TYPE's Render; the Composer still checks the
+// INSTANCE, because a container that declares a Background is filled by
+// the framework and owns its bounds however empty its Render is. A
+// Canvas implements this and is a passthrough only while it has no
+// colour — see cellPassthrough in composer.go.
+type CellPassthrough interface{ PassesCellsThrough() }
 
 // backgroundProp returns w's declared background handle, or nil when w
 // declares none.

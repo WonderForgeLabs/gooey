@@ -42,9 +42,12 @@ import (
 // top. Two exemptions keep the damage counts tight: a chrome-only
 // container never forces its own descendants (its chrome never covers
 // their cells — that contract is why containers may skip pre-clearing),
-// and a Decorator is never forced from below (it owns no cells to
-// restore). This is what makes container backgrounds, hidden containers,
-// and overlapping Canvas children all repaint correctly.
+// and cell-less overlays are never forced from below. A Decorator is
+// re-applied after an underlying repaint; a CellPassthrough is not — and
+// "cell-less" is asked of the instance, since a container carrying a
+// declared Background is filled by the framework and owns its bounds.
+// This is what makes container backgrounds, hidden containers, and
+// overlapping Canvas children all repaint correctly.
 //
 // The forward pass has a reverse half, restoreUnder: when a rect LEAVES
 // the screen (a component turned non-visible, departed in a re-sync, or
@@ -818,7 +821,7 @@ func (c *Composer) Frame() (*Frame, int) {
 		// over cells the restore pass just repainted (a Hidden overlay
 		// keeps its bounds but owns no pixels).
 		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 && paintable(n.w) {
-			if _, isDecorator := n.w.(Decorator); !isDecorator {
+			if !cellPassthrough(n.w) && !decoratesCells(n.w) {
 				for _, p := range c.over {
 					if !intersects(p.bounds, n.bounds) {
 						continue
@@ -967,8 +970,8 @@ func fillRect(b *render.Buffer, r Rect, s render.Style) {
 // Every still-visible node whose bounds intersect the vacated rect is
 // force-dirtied, and the ordinary paint loop then lays them down again
 // in z-order, with the forward pass keeping everything above them
-// honest. Decorators are included: the cells they re-style are exactly
-// the ones being restored.
+// honest. CellPassthrough nodes are skipped: they neither own nor
+// re-style cells, so there is nothing for the restore pass to put back.
 //
 // Runs outside any evaluation (from the sweeps), so the Sets here are
 // the same legality as the bounds sweep's.
@@ -980,10 +983,43 @@ func (c *Composer) restoreUnder(r Rect) {
 		if n.bounds.W <= 0 || n.bounds.H <= 0 || !paintable(n.w) {
 			continue
 		}
+		if cellPassthrough(n.w) {
+			continue
+		}
 		if intersects(r, n.bounds) {
 			n.rev.Set(n.rev.Get() + 1)
 		}
 	}
+}
+
+func decoratesCells(w Component) bool {
+	_, ok := w.(Decorator)
+	return ok
+}
+
+// cellPassthrough reports whether w's paint node puts nothing on the
+// cell plane — the test both z-order passes use to skip a node that has
+// nothing to restore and nothing to be restored.
+//
+// Declaring the interface is necessary but NOT sufficient, and the
+// difference is not academic: a container that also declares a
+// Background is FILLED by its own paint node (the backgroundProp branch
+// in build, which is also what marks it `covered`), so it owns every
+// cell in its bounds. Canvas is exactly that shape — a transparent
+// positioning surface until an author gives it a colour — so the
+// question has to be put to the INSTANCE, not to the type.
+//
+// Skipping a filled container leaves a permanent scar. An overlay that
+// is its SIBLING clears to the nearest ancestor's background, which is
+// not the filled container's, and with the container exempt from
+// restoreUnder nothing repaints the vacated cells at all — zero
+// components painted, the fill gone for good.
+// TestCellPassthroughStopsAtADeclaredBackground pins it.
+func cellPassthrough(w Component) bool {
+	if _, ok := w.(CellPassthrough); !ok {
+		return false
+	}
+	return backgroundProp(w) == nil
 }
 
 // clearStyle is what a node's rect clears TO: blank cells styled with the

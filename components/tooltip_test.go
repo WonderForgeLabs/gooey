@@ -57,6 +57,14 @@ func TestTooltipAppearPaintsThePopupAlone(t *testing.T) {
 // Hover-out dismisses, and the vacated cells restore from what was
 // beneath — the composer's restore pass through the Dynamic-departure
 // path, at the same pinned cost a toast dismissal has on this shape.
+//
+// That cost is ONE component: the filler leaf the popup was covering,
+// which is the only node under the vacated rect that owns cells. The
+// Canvas and the AdornmentLayer both span the page and paint nothing,
+// and since #361 restoreUnder skips a cell-less container — it has no
+// cells to put back — so neither is swept. The screen comparison below
+// is the check that keeps that honest: drop a container that DID own
+// cells and the scar shows up there, not in the count.
 func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	tip, _, _, page := tipPage(30)
 	c := gooey.NewComposer(page, 30, 4)
@@ -70,8 +78,8 @@ func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	if tip.IsShown() {
 		t.Fatal("the tooltip is still shown after hover-out")
 	}
-	if painted != 3 {
-		t.Fatalf("dismissing painted %d components, want 3 (restored leaf + 2 swept containers)", painted)
+	if painted != 1 {
+		t.Fatalf("dismissing painted %d components, want 1 (the restored leaf; the cell-less Canvas and layer are not swept)", painted)
 	}
 	if got := screen(c, 30, 4); got != before {
 		t.Fatalf("hover-out left a scar.\nbefore:\n%s\nafter:\n%s", before, got)
