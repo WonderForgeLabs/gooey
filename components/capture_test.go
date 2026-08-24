@@ -198,17 +198,28 @@ func TestDoubleClickCount(t *testing.T) {
 	if got := counts(a); len(got) != 2 || got[0] != 1 || got[1] != 2 {
 		t.Fatalf("two quick clicks gave counts %v, want [1 2]", got)
 	}
-	// A third inside the interval starts over rather than reporting 3.
+	// A third inside the interval is a TRIPLE click. This assertion used
+	// to require the sequence to restart at 1 here, which was the
+	// deliberate ceiling while there was no triple-click consumer; the
+	// ceiling still exists, it is just at gooey.MaxClickCount now.
 	now = now.Add(100 * time.Millisecond)
 	click(a)
-	if got := counts(a); len(got) != 3 || got[2] != 1 {
-		t.Fatalf("a third click gave counts %v, want the sequence to restart at 1", got)
+	if got := counts(a); len(got) != 3 || got[2] != 3 {
+		t.Fatalf("a third click gave counts %v, want [1 2 3]", got)
+	}
+	// The FOURTH is where the sequence restarts, for the reason the
+	// third used to: reporting a number nothing understands is worse
+	// than starting fresh.
+	now = now.Add(100 * time.Millisecond)
+	click(a)
+	if got := counts(a); len(got) != 4 || got[3] != 1 {
+		t.Fatalf("a fourth rapid click gave counts %v, want it to restart at 1", got)
 	}
 	// Too slow, and on a different component: both restart the count.
 	now = now.Add(time.Second)
 	click(a)
-	if got := counts(a); got[3] != 1 {
-		t.Errorf("a click past the interval counted %d, want 1", got[3])
+	if got := counts(a); got[4] != 1 {
+		t.Errorf("a click past the interval counted %d, want 1", got[4])
 	}
 	now = now.Add(10 * time.Millisecond)
 	click(b)

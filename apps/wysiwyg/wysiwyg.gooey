@@ -54,6 +54,60 @@
     <KeyBinding Gesture="ctrl+l" Command="{{.Demote}}"/>
     <KeyBinding Gesture="ctrl+d" Command="{{.Duplicate}}"/>
 
+    <!-- COPY / CUT / PASTE. See clipboard.go for why these are three
+         gestures and not four: `y` writes BOTH clipboards (the subtree
+         internally, its markup to the terminal via OSC 52), because
+         there is no version of "copy" where the user wants one and not
+         the other, and no way to ask them which.
+
+         There is deliberately NO key that READS the system clipboard.
+         OSC 52 reads are refused by most terminals, so such a key would
+         do nothing and have no way to say so. Markup pastes IN through
+         the terminal's own paste key, which arrives as one
+         input.EventPaste because bracketed paste is on — see
+         input/paste.go.
+
+         `ctrl+x` rather than bare `x`, which is already Delete. The
+         distinction is real and worth a modifier: delete drops the
+         subtree, cut keeps it. -->
+    <KeyBinding Gesture="y" Command="{{.Copy}}"/>
+    <KeyBinding Gesture="ctrl+x" Command="{{.Cut}}"/>
+    <KeyBinding Gesture="p" Command="{{.Paste}}"/>
+
+    <!-- THE CONTROL-PLANE ADDRESSES, from the keyboard. The status bar's
+         chips are clickable, but mouse reports cannot be injected through
+         a recording pty, so a click-only affordance is one that can never
+         be captured or verified — every feature here stays keyboard-
+         operable for the same reason esc-selects-parent does.
+
+         ctrl+g is grpc and ctrl+t is the MCP URL (t for tools). ctrl+u
+         and ctrl+e were the first choices and both collided with the
+         dock work — nothing reports a duplicate gesture, the loser just
+         never fires. The MENU has no global key at all: it opens with a
+         bare `m` while the strip is focused, which keeps a context menu
+         out of a page-wide budget that is nearly spent. NOT ctrl+m for
+         MCP, however obvious: that byte is 0x0d, indistinguishable from
+         Enter on the wire. See statusaddr.go for the other two decode
+         traps (F-keys never decode; ctrl+shift+X collapses to ctrl+X).
+
+         On the ROOT with the others, and for the same reason: a binding
+         only fires while the focused chain passes through its host. See
+         copyEndpoint in statusaddr.go. -->
+    <KeyBinding Gesture="ctrl+g" Command="{{.CopyGrpc}}"/>
+    <KeyBinding Gesture="ctrl+t" Command="{{.CopyMCP}}"/>
+
+    <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
+         one invented here: "To select the parent of a current selection in
+         the designer, press the ESC key" is the WPF designer's own
+         documentation, and Blend inherits it. It is the way back OUT of a
+         container a double-click drilled into, and without it a shallow-
+         first designer is a one-way door.
+
+         It is the keyboard's whole share of the drill gesture. Everything
+         here has to stay keyboard-operable because mouse reports cannot be
+         injected through a recording pty at all, so a double-click that
+         could only be undone with another double-click could never be
+         captured. -->
     <KeyBinding Gesture="esc" Command="{{.SelectParent}}"/>
     <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
     <!-- The theme switch, and today it moves exactly one thing: the
@@ -474,7 +528,17 @@
     </DockHost>
 
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"
-               Left="{{.Status}}" Center="{{.ModeText}}" Right="{{.Serving}}"/>
+               Left="{{.Status}}" Center="{{.ModeText}}">
+      <!-- Right is a SLOT, not the Right="{{.Serving}}" attribute it was:
+           the addresses are one clickable chip each, so a click can land
+           on one of them instead of on a twenty-character string. Each
+           chip keeps its own paint node, which is what makes a copy flash
+           repaint that chip and leave the mode indicator and the build
+           status alone. See statusaddr.go — including why the strip falls
+           back to the plain {{.Serving}} text when no endpoint came up,
+           so the "no control plane" message is unchanged. -->
+      <StatusBar.Right><ServeAddrs/></StatusBar.Right>
+    </StatusBar>
 
     <!-- THE MENUS, declared LAST for z-order and placed on row 0 by
          Grid.Row — the two are independent, which is exactly what an

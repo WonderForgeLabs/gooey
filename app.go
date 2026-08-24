@@ -124,6 +124,7 @@ func (s staticTree) Watch(func()) func()       { return func() {} }
 
 type options struct {
 	mouse    bool
+	paste    bool
 	probe    bool
 	caps     *term.Caps
 	size     *[2]int
@@ -150,6 +151,21 @@ type Option func(*options)
 // ordinary events — but a program that shells out constantly, or one
 // whose terminal mangles motion reports, can decline.
 func WithoutMouse() Option { return func(o *options) { o.mouse = false } }
+
+// WithoutPaste leaves bracketed paste (DECSET 2004) off.
+//
+// The mode is on by default, and that default is the safe direction:
+// WITHOUT it a paste is indistinguishable from typing, so a multi-line
+// paste arrives as a burst in which every newline is Enter — which in
+// most apps here means "activate". With it, a paste is one
+// input.EventPaste routed by FocusManager.DispatchPaste.
+//
+// The one cost of the default is worth stating: an app that enables the
+// mode and implements PasteHandler nowhere DROPS pastes it would
+// previously have received as keystrokes. TextBox implements it, so the
+// common case is covered; an app that hand-rolls a text field and wants
+// the old keystroke behaviour turns the mode off here.
+func WithoutPaste() Option { return func(o *options) { o.paste = false } }
 
 // WithCapabilityProbe runs term.Screen.Detect at startup: a real query
 // to the terminal for graphics protocol support and cell pixel size.
@@ -255,6 +271,7 @@ func NewApp(content Content, opts ...Option) *App {
 		content: content,
 		opt: options{
 			mouse:      true,
+			paste:      true,
 			quitKeys:   []input.KeyEvent{{Key: input.KeyRune, Rune: 'c', Mods: input.ModCtrl}},
 			eventBuf:   64,
 			compGrace:  defaultCompanionGrace,
@@ -761,6 +778,9 @@ func (a *App) acquire() error {
 	}
 	if a.opt.mouse {
 		s.EnableMouse()
+	}
+	if a.opt.paste {
+		s.EnablePaste()
 	}
 	a.screen = s
 	a.events = s.Events(a.opt.eventBuf)
