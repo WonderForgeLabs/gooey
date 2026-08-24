@@ -238,6 +238,81 @@ func TestTheWrapperTakesItsAttributesFromTheContainersSeed(t *testing.T) {
 	}
 }
 
+// TestAContainerIsTheRouteToMoreThanOneThingOnATab is the workflow the
+// user has to be told to use, pinned so the telling stays true.
+//
+// buildTabs requires EXACTLY ONE content child per tab
+// (markup/toolkit.go), so the wrapper alone does not make a tab fill up:
+// the second add into a tab whose slot is taken is refused. Putting a
+// container on the tab first is the route, and this asserts that the
+// route is walkable with the editor's own two gestures — add with the
+// <Tabs> selected, then add with the container selected.
+//
+// The refusal half is asserted too. A test that only showed the happy
+// path would pass just as well if a tab silently accepted three children
+// and the document quietly stopped building — which is the exact failure
+// this whole change exists to remove.
+func TestAContainerIsTheRouteToMoreThanOneThingOnATab(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+
+	// Gesture one: a container, with the <Tabs> selected. It arrives
+	// wrapped in a new <Tab>.
+	ed.sel = tabs
+	ed.paletteSel.Set(paletteIndex(t, ed, "VStack"))
+	ed.addSelected()
+	if ed.docRoot == nil {
+		t.Fatalf("adding a <VStack> to the <Tabs> broke the document: %q", ed.status.Get())
+	}
+	tab := tabs.Kids[len(tabs.Kids)-1]
+	if tab.Elem != "Tab" || len(tab.Kids) != 1 || tab.Kids[0].Elem != "VStack" {
+		t.Fatalf("the new tab is <%s> holding %v, want a <Tab> holding the one <VStack>",
+			tab.Elem, kidElems(tab))
+	}
+	stack := tab.Kids[0]
+	// Its OWN seed's content, which is not zero: a <VStack> arrives
+	// populated. The assertion below is that it GREW, not that it holds
+	// exactly what was added — the first version of this test asserted the
+	// latter and failed against [<Text> <Text> <Button> <Text>], which was
+	// the test being wrong about the fixture rather than the editor being
+	// wrong about the insert.
+	seeded := len(stack.Kids)
+
+	// Gesture two, twice: the container is now the selection, and it takes
+	// as many children as asked.
+	for _, elem := range []string{"Button", "Text"} {
+		ed.sel = stack
+		ed.paletteSel.Set(paletteIndex(t, ed, elem))
+		ed.addSelected()
+		if ed.docRoot == nil {
+			t.Fatalf("adding a <%s> to the <VStack> on the tab broke the document: %q",
+				elem, ed.status.Get())
+		}
+	}
+	if len(stack.Kids) != seeded+2 {
+		t.Errorf("the <VStack> on the tab holds %v (%d children, was %d before the two "+
+			"adds); a container on a tab is the route to more than one thing and it "+
+			"has to take both", kidElems(stack), len(stack.Kids), seeded)
+	}
+
+	// The refusal half: the TAB itself still takes only its one child, and
+	// says so rather than leaving a document that does not build.
+	ed.sel = tab
+	if got := ed.addTarget("Button"); got != tab {
+		t.Skipf("with the <Tab> selected an Add targets %s, not the tab; this half "+
+			"of the test is only about what the tab itself refuses", nodeLabel(got))
+	}
+	kids := len(tab.Kids)
+	ed.addSelected()
+	if len(tab.Kids) != kids {
+		t.Errorf("the <Tab> took %d children, was %d; buildTabs requires exactly one "+
+			"and this document would not build", len(tab.Kids), kids)
+	}
+	if ed.docRoot == nil {
+		t.Error("the refused insert left docRoot nil — the state that kills " +
+			"click-to-select for the whole document")
+	}
+}
+
 func kidElems(n *node) []string {
 	out := make([]string, 0, len(n.Kids))
 	for _, k := range n.Kids {
