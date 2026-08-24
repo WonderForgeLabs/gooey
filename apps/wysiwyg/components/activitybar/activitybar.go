@@ -130,6 +130,28 @@ var (
 func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
 	return &markup.ElementDef{
 		Name: "ActivityBar",
+		// BOTH dimensions are load-bearing here, and Width is the one
+		// that is easy to leave out. The rail is a Segmented wrapping an
+		// Image, so its Measure delegates to the picture — and
+		// components.Image measures getInt(Cols) x getInt(Rows), which
+		// is 0x0 when neither is set. This rail never sets them: it is
+		// drawn at railW PIXELS and takes its CELL size from whatever
+		// holds it. In wysiwyg.gooey that is a Grid track (Cols="4,…")
+		// plus Height="8", so the rail has never needed to state its own
+		// size and its Measure has always returned zero.
+		//
+		// On a Canvas there is no track to inherit from, so a seed
+		// without both is a rail that measures 0x0 — invisible AND
+		// unselectable, because hitTest never returns a zero-size
+		// component. You could add it and then have no way to click it
+		// in order to give it the size that would make it appear. The
+		// numbers are the app's own geometry rather than invented ones.
+		//
+		// Registered elements are outside markup's own
+		// TestEveryElementDeclaresASeed — that walks the builtin
+		// registry — so this one is pinned by the editor's
+		// TestEveryPaletteEntryLoadsAndOccupiesSpace instead.
+		Seed: `<ActivityBar Sel="{{.Sel}}" Width="4" Height="8"/>`,
 		// The rail IS an Image — one sixel band, not one per icon — and
 		// the proto is what the catalog derives the behavioural axes
 		// from. Focusable is true through the Segmented inside it, but

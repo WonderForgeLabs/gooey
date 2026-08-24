@@ -7,6 +7,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -205,7 +206,18 @@ func readerPaneControl(fsys fs.FS, built func(gooey.Component)) markup.Builder {
 		if err != nil {
 			return nil, err
 		}
+		// The scroll offset crosses the control boundary like Story does,
+		// and it belongs to the PAGE rather than to this control for one
+		// reason: opening a story has to put the reader back at the top,
+		// and the command that opens it lives out there. A pane-private
+		// offset would leave the second article opened at the first
+		// article's scroll position.
+		scroll, err := attr[int](e, parent, "Scroll")
+		if err != nil {
+			return nil, err
+		}
 		body := &articleBody{story: story}
+		body.scroll.Offset = scroll
 		built(body)
 		return &markup.Context{
 			Values: map[string]any{"Title": paneTitle(e.Attrs["Title"], body.IsFocused)},
@@ -216,46 +228,168 @@ func readerPaneControl(fsys fs.FS, built func(gooey.Component)) markup.Builder {
 	})
 }
 
-// articleBody is a focus stop with no keys of its own: everything it
-// does not handle bubbles to the page bindings.
+// articleBody is the reader's scrolling article pane, and it is a
+// PANE-LOCAL viewport: it owns its own line layout and shows a window
+// onto it. Why it is not an ItemsView — the framework's other viewport —
+// is the subject of docs/specs/2026-08-23-scrolling.md, and the short
+// version is that an ItemsView window is built on a uniform row height
+// discovered from row 0, while an article's line count is a function of
+// this pane's own width, which nothing in the framework can tell a
+// projection. What it does share with ItemsView is the scroll MODEL:
+// components.Scroller owns the clamp, the compared Set and the wheel
+// velocity, so the two panes behave identically under the same gesture.
+//
+// Everything it does not handle still bubbles to the page bindings, so
+// q/esc/a keep working while the reader has focus.
 type articleBody struct {
 	gooey.Base
 	gooey.FocusState
-	story *prop.Property[*Story]
+	story  *prop.Property[*Story]
+	scroll components.Scroller
+
+	// The last wrap, and the two things it depended on. See lines.
+	wrapStory *Story
+	wrapWidth int
+	wrapped   []articleLine
+}
+
+// articleLine is one laid-out display line: text already wrapped to the
+// pane width, and the style it is painted in.
+type articleLine struct {
+	text  string
+	style render.Style
+}
+
+// lines is the pane's VIEWPORT MODEL — the flat list of display lines a
+// scroll offset indexes into. It is rebuilt on demand rather than cached
+// because it depends on exactly two things, the story and the pane's own
+// width, and both are already in hand wherever it is called.
+//
+// Which call site calls it decides what the story Get MEANS, as
+// everywhere in gooey: from Render it subscribes the pane to the story,
+// from a key handler it is a plain read.
+func (w *articleBody) lines(width int) []articleLine {
+	// The Get stays ABOVE the cache check, and that placement is the
+	// whole correctness argument for caching here at all. Called from
+	// Render this Get IS the pane's subscription to the story, so a
+	// cache that returned early before reaching it would drop the
+	// dependency on exactly the frames that hit — and the pane would go
+	// deaf to the story changing, with no error and no panic, just a
+	// stale article. Reaching the Get is cheap; wrapping is what is not.
+	s := w.story.Get()
+	if s == nil {
+		return nil
+	}
+	// Pointer identity is a sound key, not a convenient one. `current`
+	// (main.go) is a computed that returns &s for a per-iteration copy,
+	// so it hands back a FRESH pointer every time it re-evaluates, and
+	// it re-evaluates exactly when the story or the selection changes.
+	// Same pointer therefore implies same content; changed content
+	// implies a new pointer. Nothing writes through a *Story after the
+	// computed makes it.
+	if s == w.wrapStory && width == w.wrapWidth {
+		return w.wrapped
+	}
+	out := make([]articleLine, 0, 16)
+	for _, ln := range wrap(s.Title, width) {
+		out = append(out, articleLine{ln, accent})
+	}
+	meta := s.Published
+	if s.Author != "" {
+		meta += "  " + s.Author
+	}
+	out = append(out, articleLine{clipTo(meta, width), dim})
+	out = append(out, articleLine{clipTo(s.Link, width), dim})
+	out = append(out, articleLine{"", render.Style{}})
+	for _, ln := range wrap(s.Body, width) {
+		out = append(out, articleLine{ln, render.Style{}})
+	}
+	w.wrapStory, w.wrapWidth, w.wrapped = s, width, out
+	return out
+}
+
+// extent is the two numbers every scroll decision needs: how many lines
+// the article has at the current width, and how many of them fit.
+func (w *articleBody) extent() (lines, viewport int) {
+	b := w.Bounds()
+	return len(w.lines(b.W)), b.H
 }
 
 func (w *articleBody) Measure(avail gooey.Size) gooey.Size { return avail }
 
 func (w *articleBody) Render(f *gooey.Frame) {
 	b := w.Bounds()
-	s := w.story.Get()
-	if s == nil {
+	lines := w.lines(b.W)
+	if len(lines) == 0 {
+		// The offset is deliberately NOT read on this path, and that is a
+		// dropped dependency on purpose.
+		//
+		// The usual hazard — a component going deaf to a property because
+		// the Get behind an early return never ran — needs the property to
+		// be VISIBLE while the component stays clean. Here it cannot be:
+		// with no article open there is nothing an offset could move. The
+		// empty state ends only when the story changes, and the story IS a
+		// dependency of this node, so the frame that brings an article back
+		// reads the offset again on the way past.
+		//
+		// Reading it here would not prevent a stale cell; it would only
+		// charge the pane a repaint every time something scrolled an empty
+		// reader. TestScrollingAnEmptyReaderIsDamageFree pins the cheap
+		// behaviour and TestOffsetSetWhileEmptyStillApplies pins that
+		// nothing goes stale for it.
 		f.Cells.SetString(b.X, b.Y, "select a story and press enter", dim)
 		return
 	}
-	y := b.Y
-	for _, ln := range wrap(s.Title, b.W) {
-		if y >= b.Y+b.H {
-			return
-		}
-		f.Cells.SetString(b.X, y, ln, accent)
-		y++
+	off := w.scroll.At(len(lines), b.H)
+	for i := 0; i < b.H && off+i < len(lines); i++ {
+		ln := lines[off+i]
+		f.Cells.SetString(b.X, b.Y+i, clipTo(ln.text, b.W), ln.style)
 	}
-	meta := s.Published
-	if s.Author != "" {
-		meta += "  " + s.Author
+}
+
+// HandleKey is the document anchor: offset 0 is the FIRST line, so k/up
+// decreases it and j/down increases it. That is the exact opposite of
+// ItemsView's scroll mode, which anchors to the tail so that offset 0
+// follows appends — the difference Scroller deliberately leaves to its
+// host rather than hiding behind a flag.
+func (w *articleBody) HandleKey(ev input.KeyEvent) bool {
+	n, h := w.extent()
+	if n == 0 {
+		return false
 	}
-	f.Cells.SetString(b.X, y, clipTo(meta, b.W), dim)
-	y++
-	f.Cells.SetString(b.X, y, clipTo(s.Link, b.W), dim)
-	y += 2
-	for _, ln := range wrap(s.Body, b.W) {
-		if y >= b.Y+b.H {
-			return
-		}
-		f.Cells.SetString(b.X, y, ln, render.Style{})
-		y++
+	page := max(1, h)
+	switch ev {
+	case input.Rune('j'), input.Named(input.KeyDown):
+		return w.scroll.By(+1, n, h)
+	case input.Rune('k'), input.Named(input.KeyUp):
+		return w.scroll.By(-1, n, h)
+	case input.Named(input.KeyPageDown):
+		return w.scroll.By(+page, n, h)
+	case input.Named(input.KeyPageUp):
+		return w.scroll.By(-page, n, h)
+	case input.Named(input.KeyHome):
+		return w.scroll.By(-n, n, h)
+	case input.Named(input.KeyEnd):
+		return w.scroll.By(+n, n, h)
 	}
+	return false
+}
+
+// HandleMouse is the wheel half of the same gesture vocabulary. dir is
+// the direction the OFFSET moves, which is all Scroller uses it for — it
+// only needs to notice a reversal to reset the velocity run.
+func (w *articleBody) HandleMouse(ev input.MouseEvent) bool {
+	n, h := w.extent()
+	if n == 0 {
+		return false
+	}
+	switch ev.Kind {
+	case input.WheelUp:
+		return w.scroll.By(-w.scroll.WheelStep(n, -1), n, h)
+	case input.WheelDown:
+		return w.scroll.By(+w.scroll.WheelStep(n, +1), n, h)
+	}
+	return false
 }
 
 func clampIdx(i, n int) int { return max(0, min(i, n-1)) }

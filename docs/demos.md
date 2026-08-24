@@ -86,10 +86,12 @@ Three UserControl panes share one input system — tab cycles focus, live networ
 
 The walkthrough: reader launches and four default feeds fetch live over the network, filling in with story counts (Lobsters (25), The Go Blog (10), Cloudflare Blog (20)). 'j' selects Lobsters in the feeds pane (initial focus), tab moves focus to the stories pane — the filled-dot focus indicator appears in its title. 'jj' plus enter opens a story and the reader pane fills with title, date, link, and body. Tab back to feeds, 'a' opens the add-feed input, and `https://xkcd.com/atom.xml` is typed character by character. Enter fetches the new feed: xkcd.com (4) appears in the feed list and `feeds.opml` is written. 'q' quits; the shell echoes `feeds.opml` showing all 5 outline entries including xkcd.com.
 
-- Run: `go run ./cmd/reader`
-- Keys: `tab` cycle pane, `j`/`k` move, `enter` open story, `a` add feed, `q` quit
+A long article scrolls rather than truncating at the pane height: with the reader pane focused, `j`/`k` and the arrows move a line, `pgup`/`pgdn` a screen, `home`/`end` jump to either end, and the mouse wheel scrolls with velocity. The pane holds its own line layout and shows a window onto it — gooey has no clip rect, so a viewport is virtualized rather than clipped ([`2026-08-23-scrolling.md`](specs/2026-08-23-scrolling.md)). **The recording above predates this**, so it shows the article truncated; the keys below are the current behaviour.
 
-Exercises multi-UserControl composition: three `.gooey` controls with their own contexts, data crossing boundaries only through attribute bindings, and the framework's input system — focus stops, per-pane key handling, and `<KeyBinding>`s declared in markup bound to viewmodel commands.
+- Run: `go run ./cmd/reader`
+- Keys: `tab` cycle pane, `j`/`k` move (and scroll the article), `enter` open story, `pgup`/`pgdn`/`home`/`end` and the wheel scroll the article, `a` add feed, `q` quit
+
+Exercises multi-UserControl composition: three `.gooey` controls with their own contexts, data crossing boundaries only through attribute bindings, and the framework's input system — focus stops, per-pane key handling, and `<KeyBinding>`s declared in markup bound to viewmodel commands. The article pane adds the other half of that input story: a leaf that handles its own keys and wheel, and lets everything it does not consume bubble to the page bindings, so `q`/`esc`/`a` keep working while it has focus.
 
 ## state
 

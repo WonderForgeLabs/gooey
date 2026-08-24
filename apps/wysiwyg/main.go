@@ -224,6 +224,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -480,7 +481,12 @@ func (ed *editor) bodySpec(elem string) *markup.BodySpec {
 	return nil
 }
 
-// takesBody is the boolean form, for the seeding path.
+// takesBody is the boolean form. Nothing on the seeding path calls it any
+// more — the seed itself decides whether an element carries a body, and
+// addSelected keys off n.Body rather than off the declaration. It stays
+// because body_test.go uses it to cross-check the two against each other:
+// a node with a body whose element declares none, or the reverse, is a
+// disagreement between the seed and the vocabulary.
 func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
 func (n *node) markup(indent string) string {
@@ -527,6 +533,95 @@ func (n *node) markup(indent string) string {
 	}
 	b.WriteString(indent + "</" + n.Elem + ">\n")
 	return b.String()
+}
+
+// nodeOf parses a seed's markup into the editor's document model.
+//
+// markup.Seeded answers "what should a NEW <X> be" in MARKUP, because
+// the answer has to cover more than attributes — an empty <VStack>
+// measures nothing whatever its attributes say. The editor's model is a
+// node tree, so something has to bridge the two, and this is the
+// smallest thing that can: the inverse of node.markup, over the subset
+// of XML a seed can contain.
+//
+// It is deliberately strict. A seed is markup this repo authored, so
+// anything surprising in one is a bug in the seed and must surface as
+// an error the palette can show — not as a node tree that quietly
+// dropped half of it, which is the failure mode the whole catalog
+// effort exists to delete.
+func nodeOf(src string) (*node, error) {
+	dec := xml.NewDecoder(strings.NewReader(src))
+	var stack []*node
+	var root *node
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("seed does not parse: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			n := &node{Elem: t.Name.Local, Attrs: map[string]string{}}
+			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+					continue
+				}
+				// The namespace is dropped by the same key-by-Local
+				// rule markup's own parser uses; a seed has no
+				// prefixed attributes, and one appearing would be the
+				// bug worth failing on.
+				if a.Name.Space != "" {
+					return nil, fmt.Errorf("seed attribute %q is namespaced; seeds are plain markup", a.Name.Local)
+				}
+				n.Attrs[a.Name.Local] = a.Value
+			}
+			stack = append(stack, n)
+		case xml.CharData:
+			if len(stack) > 0 {
+				stack[len(stack)-1].Body += string(t)
+			}
+		case xml.EndElement:
+			if len(stack) == 0 {
+				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
+			}
+			n := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			// The SAME body rule the loader applies, called through the
+			// package that owns it rather than restated here. A seed's
+			// one-line body is verbatim, so restating this as a
+			// TrimSpace would make the editor's idea of <Text>Text</Text>
+			// differ from the loader's — silently, and only for bodies
+			// with incidental whitespace.
+			n.Body = markup.BodyText(n.Body)
+			if len(stack) == 0 {
+				root = n
+				continue
+			}
+			p := stack[len(stack)-1]
+			// A dotted name is a property element — <ItemsView.ItemTemplate>
+			// — which is a structured attribute, not a child.
+			if owner, slot, ok := strings.Cut(n.Elem, "."); ok {
+				if owner != p.Elem {
+					return nil, fmt.Errorf("seed has <%s> inside <%s>", n.Elem, p.Elem)
+				}
+				if p.Slots == nil {
+					p.Slots = map[string]*node{}
+				}
+				if len(n.Kids) != 1 {
+					return nil, fmt.Errorf("seed slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
+				}
+				p.Slots[slot] = n.Kids[0]
+				continue
+			}
+			p.Kids = append(p.Kids, n)
+		}
+	}
+	if root == nil {
+		return nil, fmt.Errorf("seed has no root element")
+	}
+	return root, nil
 }
 
 // ---- the editor ----
@@ -945,16 +1040,17 @@ func newEditor(fsys fs.FS) *editor {
 		//
 		// The bug this fixes was reported from the running editor:
 		// clicking ActivityBar emitted <ActivityBar Name="ActivityBar1"/>
-		// and the insert failed to load with "needs Sel=". seedRequired
-		// walks AttrsFor(spec, …) looking for Required attributes to
-		// seed, and a Builder registration contributes no Attrs at all —
-		// Catalog gives it AttrsKnown false, because a Builder is a func
-		// and not a schema. So the palette offered an element it could
-		// not produce valid markup for.
+		// and the insert failed to load with "needs Sel=". Seeding reads
+		// the spec, and a Builder registration contributes no Attrs at
+		// all — Catalog gives it AttrsKnown false, because a Builder is
+		// a func and not a schema. So the palette offered an element it
+		// could not produce valid markup for.
 		//
-		// With the declaration in hand seedRequired sees
-		// {Required, BindsBinding, GoType:"int"}, grows the viewmodel a
-		// prop.NewSource(0), and writes Sel="{{.ActivityBar1_Sel}}".
+		// With the declaration in hand the element also carries a Seed,
+		// and markup.Seeded turns Sel's {Required, BindsBinding,
+		// GoType:"int"} into a prop.NewSource(0) registered under
+		// ActivityBar1_Sel with Sel="{{.ActivityBar1_Sel}}" written into
+		// the markup. See editor.seed.
 		//
 		// <Panel> stays a Builder deliberately: its only attribute is a
 		// Style name it reads by hand, nothing about it is required, and
@@ -1378,45 +1474,37 @@ func (ed *editor) addSelected() {
 	// INTO the selected container, not always at the root. See addTarget
 	// for the leaf case, which is the one that would fail silently.
 	into := ed.addTarget()
-	n := &node{Elem: spec.Name, Attrs: map[string]string{
-		"Name": fmt.Sprintf("%s%d", spec.Name, len(into.Kids)+1),
-	}}
-	// An element whose content is its body is seeded with one, and the
-	// seed is its Name so two of them are told apart on the canvas. This
-	// is not cosmetic: without a body a <Text> measures zero, which means
-	// it does not appear, cannot be clicked, and cannot be selected in
-	// order to be given the body that would fix it. The palette must not
-	// add something the editor cannot then edit.
-	if ed.takesBody(spec.Name) {
-		n.Body = n.Attrs["Name"]
+	name := fmt.Sprintf("%s%d", spec.Name, len(into.Kids)+1)
+
+	n, err := ed.seed(spec, name)
+	if err != nil {
+		ed.status.Set("✗ " + err.Error())
+		return
 	}
-	ed.seedRequired(spec, n)
-	for _, sl := range spec.Slots {
-		if !sl.Required {
-			continue
-		}
-		if n.Slots == nil {
-			n.Slots = map[string]*node{}
-		}
-		n.Slots[sl.Name] = &node{Elem: "Text", Attrs: map[string]string{}}
+	// The Name is the editor's, never the seed's: it is the ADDRESS the
+	// outline, the property grid and hitTest all resolve by, and it has
+	// to be unique among siblings. A seed that carried one would collide
+	// with the second copy of itself.
+	n.Attrs["Name"] = name
+
+	// And so is the BODY, for a body-bearing element — but only the
+	// inserted element's OWN body, never its seed's children.
+	//
+	// A seed is one instance, so <Text>'s is the literal
+	// "<Text>Text</Text>": every palette-inserted copy reads the same
+	// word. Name will not do instead — it is the ADDRESS the outline and
+	// hitTest resolve by, and it never appears on the canvas. The body is
+	// the only thing DRAWN, so two of them sharing one make the elements
+	// indistinguishable in the one place the user is working.
+	//
+	// The guard is n.Body != "": an element whose seed gave it no body
+	// did not want one, and a container's inline children keep theirs
+	// (<VStack>'s One and Two, <Grid>'s A and B) because a seed names its
+	// children deliberately and they are taken verbatim.
+	if n.Body != "" {
+		n.Body = name
 	}
-	// A couple of shapes the catalog still cannot express: <Border>
-	// needs exactly one child, and <Tabs> needs a <Tab>. Children.Mode
-	// says ModeOne and ModeRestricted respectively, so the information
-	// IS there — turning it into a default subtree is editor work, not a
-	// catalog gap.
-	switch spec.Children.Mode {
-	case markup.ModeOne:
-		n.Kids = append(n.Kids, &node{Elem: "Text", Attrs: map[string]string{}})
-	case markup.ModeRestricted:
-		for _, only := range spec.Children.Only {
-			n.Kids = append(n.Kids, &node{
-				Elem:  only,
-				Attrs: map[string]string{"Header": "tab"},
-				Kids:  []*node{{Elem: "Text", Attrs: map[string]string{}}},
-			})
-		}
-	}
+
 	// Free geometry only where the PARENT gives it. Under a <Grid> or a
 	// <VStack> a Canvas.Left is silently discarded, which is the defect
 	// the catalog work exists to delete.
@@ -1475,78 +1563,53 @@ func (ed *editor) holdsChildren(elem string) bool {
 	return false
 }
 
-// seedRequired gives every required attribute a value, which is what
-// makes "click a palette entry" produce markup that actually loads.
+// seed turns a palette entry into the node the canvas will hold, and
+// registers whatever bindings that node needs in order to load.
 //
-// This is the axis the catalog was missing until an editor tried to use
-// it. "What can I set on this element" turns out to be half the
-// question: eleven elements produced markup that would not build when
-// added bare, because a binding-only attribute with no value fails at
-// bind time. AttrSpec.Required is the other half.
+// It used to be three tables in THIS FILE, none of them per element, and
+// each was wrong in a way that only showed up as an element the user
+// could not add:
 //
-// A required BINDING needs somewhere to bind to, so the editor grows the
-// viewmodel — the in-process equivalent of register_properties. The Go
-// type comes from AttrSpec.GoType, dispatched by a switch on the type's
-// spelling: a string compared against known names, not reflection.
-func (ed *editor) seedRequired(spec markup.ElementSpec, n *node) {
-	for _, a := range markup.AttrsFor(spec, ed.addTarget().Elem) {
-		if !a.Required {
-			continue
-		}
-		if a.Binds == markup.BindsLiteral {
-			n.Attrs[a.Name] = literalFor(a)
-			continue
-		}
-		name := fmt.Sprintf("%s_%s", n.Attrs["Name"], a.Name)
-		if h := newHandle(a.GoType); h != nil {
-			ed.ctx.Values[name] = h
-			n.Attrs[a.Name] = "{{." + name + "}}"
-			continue
-		}
-		// No handle for this type: say so rather than emit a binding
-		// that cannot resolve.
-		ed.status.Set("✗ no placeholder for " + a.GoType)
+//   - literalFor guessed a value per KIND, with `default: "x"` — which
+//     is where "x" came from as the value of every required string;
+//   - newHandle switched on GoType and had NO image.Image arm, so
+//     <Image> printed "✗ no placeholder for image.Image" and did
+//     nothing at all;
+//   - a switch on Children.Mode hardcoded Header="tab" for every
+//     restricted child, because it was written for <Tabs> — so
+//     <MenuBar>'s <Menu>, which wants Title, would not load.
+//
+// All three are now markup.Seeded, which answers per element and answers
+// in MARKUP, because the answer has to cover more than attributes: an
+// empty <VStack> measures 0x0 whatever its attributes say, and a 0x0
+// element is invisible AND unselectable. The editor's remaining job is
+// the two things Seeded cannot know — the address, and the geometry,
+// both of which belong to whoever is doing the inserting.
+func (ed *editor) seed(spec markup.ElementSpec, name string) (*node, error) {
+	if strings.TrimSpace(spec.Seed) == "" {
+		// A Components-registered Builder is a func: its attributes and
+		// its shape are both unknowable, so the bare element is the only
+		// honest seed. Saying that here — rather than letting Seeded's
+		// error reach the user — keeps "we know nothing about this
+		// element" distinct from "this element's seed is broken".
+		return &node{Elem: spec.Name, Attrs: map[string]string{}}, nil
 	}
-}
-
-// newHandle makes a zero-valued source property for a declared GoType.
-// The switch is the whole type check — the same mechanism markup.Bound
-// uses, and the reason none of this needs reflection.
-func newHandle(goType string) any {
-	switch goType {
-	case "string":
-		return prop.NewSource("")
-	case "int":
-		return prop.NewSource(0)
-	case "bool":
-		return prop.NewSource(false)
-	case "[]float64":
-		return prop.NewSource([]float64{1, 2, 3, 2})
-	case "[]string":
-		return prop.NewSource([]string{"one", "two"})
-	case "render.Color":
-		return prop.NewSource(render.RGB(120, 200, 140))
-	case "components.ItemSource":
-		return prop.NewSource(components.ItemsOf([]string{"one", "two"},
-			func(s string) map[string]any { return map[string]any{"Label": s} }))
+	src, values, err := markup.Seeded(spec, name)
+	if err != nil {
+		return nil, err
 	}
-	return nil
-}
-
-func literalFor(a markup.AttrSpec) string {
-	switch a.Kind {
-	case markup.KindDuration:
-		return "600ms"
-	case markup.KindInt:
-		return "1"
-	case markup.KindBool:
-		return "true"
-	case markup.KindEnum:
-		if len(a.Enum) > 0 {
-			return a.Enum[0]
-		}
+	n, err := nodeOf(src)
+	if err != nil {
+		return nil, fmt.Errorf("<%s>: %w", spec.Name, err)
 	}
-	return "x"
+	// The editor grows its viewmodel to match — the in-process
+	// equivalent of register_properties. ctx.Values and docCtx.Values
+	// are the SAME map (see newEditor), so this is one registration and
+	// not a choice between two.
+	for k, v := range values {
+		ed.ctx.Values[k] = v
+	}
+	return n, nil
 }
 
 // deleteSelected removes the selected node from whatever holds it.

@@ -201,9 +201,12 @@ type SlotSpec struct {
 // bindText, so {{.Title}} in the body is a live binding, and an editor
 // that assumed literal-only would silently downgrade it to text.
 //
-// Note for anyone rendering a body editor: the content is TRIMMED
-// (elements.go:91 calls strings.TrimSpace), so leading and trailing
-// whitespace cannot be expressed in markup at all.
+// Note for anyone rendering a body editor: a body is whitespace-
+// significant on ONE line and trimmed when wrapped across lines — see
+// bodyText (toolkit.go) for the rule and why it needs no opt-in. So a
+// body editor must round-trip leading and trailing spaces rather than
+// trimming its own field, and writing a one-line body back as an
+// indented multi-line one silently changes what it says.
 type BodySpec struct {
 	Kind   Kind
 	Binds  Binds
