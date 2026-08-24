@@ -36,6 +36,14 @@
     <KeyBinding Gesture="x" Command="{{.Delete}}"/>
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
+    <!-- MOVE. ctrl+ letters rather than arrows: an unclaimed arrow falls
+         through to focus navigation, so binding a bare arrow here would
+         take tab-order movement away from the panes. -->
+    <KeyBinding Gesture="ctrl+k" Command="{{.MoveUp}}"/>
+    <KeyBinding Gesture="ctrl+j" Command="{{.MoveDown}}"/>
+    <KeyBinding Gesture="ctrl+h" Command="{{.Promote}}"/>
+    <KeyBinding Gesture="ctrl+l" Command="{{.Demote}}"/>
+    <KeyBinding Gesture="ctrl+d" Command="{{.Duplicate}}"/>
 
     <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
          one invented here: "To select the parent of a current selection in
@@ -63,6 +71,14 @@
          reaches. A "d" typed into the PROPERTIES TextBox is consumed by
          that TextBox's own HandleKey levels earlier and never arrives. -->
     <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
+    <!-- The theme switch, and today it moves exactly one thing: the
+         tint the toolbox's icons are rasterized in. That is a small
+         effect with a precise contract — the flip repaints the icons
+         and NOTHING else, which
+         TestThemeFlipRepaintsOnlyTheToolboxIcons counts rather than
+         eyeballs. A theme that repainted the tree would be a theme that
+         had quietly stopped being a property. -->
+    <KeyBinding Gesture="t" Command="{{.ToggleTheme}}"/>
 
     <!-- Drawn in PIXELS, not cells: an icon is a shape, and a terminal
          draws shapes badly out of box-drawing characters. Invisible to
@@ -140,12 +156,49 @@
         <HStack Gap="1" Height="1">
           <Text Style="sel">COMPONENT</Text>
         </HStack>
-        <ItemsView Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
+        <!-- Named so a test can reach THIS list rather than guessing
+             which of the shell's ItemsViews is the toolbox. -->
+        <ItemsView Name="Toolbox" Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
                    Activate="{{.Add}}">
           <ItemsView.ItemTemplate>
-            <HStack Gap="1">
-              <Text>{{.Name}}</Text>
-            </HStack>
+            <!-- THREE COLUMNS: selection marker, icon, name.
+                 A Grid rather than an HStack because the marker and the
+                 icon need FIXED rects that do not move when the name
+                 changes width — an icon that shifts column as you scroll
+                 reads as a rendering fault.
+
+                 Rows="1" IS LOAD-BEARING. A Grid with no declared rows
+                 is one row that takes everything it is offered, so the
+                 template measured 29 cells tall and ItemsView realized a
+                 SINGLE row for the whole list — a toolbox showing one
+                 component, with no error anywhere. The old HStack
+                 template measured 1 because a Text does; a Grid does
+                 not. -->
+            <Grid Rows="1" Cols="1,2,*">
+              <!-- Selection, drawn by the template. Mentioning _selected
+                   is what stands the house highlight down, and that is
+                   required rather than a preference: the house highlight
+                   re-styles the cells a row painted, and over pixel
+                   content that is either invisible (a protocol paints
+                   ABOVE the cells) or a photo-negative of the icon
+                   (halfblock, where the picture IS the cells).
+                   cmd/typeahead's album covers reached the same
+                   conclusion.
+
+                   The marker's rect is disjoint from the icon's, so a
+                   selection hop repaints two Texts and touches no
+                   picture. -->
+              <Text Grid.Col="0" Style="sel" Visibility="{{._selected}}">{{.Bar}}</Text>
+              <!-- The icon the CATALOG declares, tinted from a bound
+                   handle. Two cells wide and one tall: on a common 10x20
+                   cell that is the 20px square toolbox.IconPx
+                   rasterizes. An element that declares no icon binds a
+                   nil handle and this renders nothing — the honest
+                   answer for a registered component whose definition
+                   says nothing about how it looks. -->
+              <Image Grid.Col="1" Src="{{.Icon}}" Cols="2" Rows="1"/>
+              <Text Grid.Col="2" Margin="1,0,0,0">{{.Name}}</Text>
+            </Grid>
           </ItemsView.ItemTemplate>
         </ItemsView>
       </VStack>

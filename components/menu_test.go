@@ -446,6 +446,14 @@ func TestMenuMnemonicUnderlines(t *testing.T) {
 // The pin for the composer half of this wave, from the Canvas side: a
 // later sibling (the overlay) turning Hidden must repaint what it was
 // covering — the inverse of TestCanvasOverlapRepaintRepaintsTheOccluderAbove.
+//
+// ONE component repaints, and it is the whole set of nodes here that own
+// cells: the leaf that was underneath. The Canvas declares no
+// Background, so its paint node fills nothing and its Render owns no
+// cells; since #361 restoreUnder skips a cell-less container the same
+// way the forward z-pass always did. The row assertion below is what
+// makes that safe to assert — a container dropped from the sweep must
+// still leave the screen correct.
 func TestHidingAnOverlayRestoresWhatWasBeneath(t *testing.T) {
 	under := &Text{Content: Str("UNDERNEATH")}
 	over := &Text{Content: Str("XXXX")}
@@ -458,8 +466,8 @@ func TestHidingAnOverlayRestoresWhatWasBeneath(t *testing.T) {
 
 	over.LayoutProps().Visibility = gooey.Hidden
 	_, painted := c.Frame()
-	if painted != 2 {
-		t.Fatalf("hiding the overlay painted %d components, want 2 (restored leaf + swept canvas)", painted)
+	if painted != 1 {
+		t.Fatalf("hiding the overlay painted %d components, want 1 (the restored leaf; the cell-less Canvas is not swept)", painted)
 	}
 	if got := row(c.Cells(), 0); got != "UNDERNEATH" {
 		t.Fatalf("row 0 after hiding = %q — the occluded content did not restore", got)

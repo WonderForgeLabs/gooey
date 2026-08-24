@@ -213,6 +213,22 @@ type Context struct {
 	// markup-declared resources", and every lookup then falls through to
 	// Styles — which is why every existing document loads unchanged.
 	res resourceEnv
+	// controls is the chain of markup controls currently being
+	// instantiated, outermost first — the ANCESTRY of the element being
+	// built, not a set of everything seen. A control appearing twice in
+	// it is a cycle (control.go), and a cycle here is a stack overflow at
+	// LOAD time, before layout ever runs.
+	//
+	// It lives on the Context rather than in a package variable because
+	// markup.Load is not confined to the UI goroutine — a file watcher
+	// can load a document on its own goroutine — so shared mutable state
+	// here would be a data race, and two concurrent loads would see each
+	// other's ancestry.
+	//
+	// Ancestry, not history, is what makes sibling reuse legal: two
+	// <Card/> elements side by side each extend their own copy, so
+	// neither sees the other.
+	controls []string
 }
 
 // document is one parsed markup file: its namespace table, the
@@ -575,12 +591,20 @@ func parse(src []byte) (Element, map[string]string, error) {
 		case xml.StartElement:
 			e := Element{Name: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" && a.Value == "" {
+					return Element{}, nil, fmt.Errorf("markup: <%s xmlns:%s=\"\">: namespace prefix %q cannot be empty", t.Name.Local, a.Name.Local, a.Name.Local)
+				}
+			}
+			for _, a := range t.Attr {
 				if a.Name.Space == "xmlns" {
 					ns[a.Name.Local] = a.Value
 					continue
 				}
 				if a.Name.Space == "" && a.Name.Local == "xmlns" {
 					continue // the default namespace is decorative versioning
+				}
+				if a.Name.Space != "" {
+					return Element{}, nil, namespacedAttrError(t.Name.Local, a)
 				}
 				e.Attrs[a.Name.Local] = a.Value
 			}
@@ -615,6 +639,16 @@ func parse(src []byte) (Element, map[string]string, error) {
 		return Element{}, nil, fmt.Errorf("markup: no root element")
 	}
 	return *root, ns, nil
+}
+
+func namespacedAttrError(element string, attr xml.Attr) error {
+	name := attr.Name.Local
+	if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+		name = "xml:" + name
+	} else {
+		name = "{" + attr.Name.Space + "}" + name
+	}
+	return fmt.Errorf("markup: <%s %s=%q>: namespaced attributes are not supported; use an unprefixed attribute", element, name, attr.Value)
 }
 
 // attachProp files a dotted element as a property of its parent. The

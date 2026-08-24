@@ -42,9 +42,12 @@ import (
 // top. Two exemptions keep the damage counts tight: a chrome-only
 // container never forces its own descendants (its chrome never covers
 // their cells — that contract is why containers may skip pre-clearing),
-// and a Decorator is never forced from below (it owns no cells to
-// restore). This is what makes container backgrounds, hidden containers,
-// and overlapping Canvas children all repaint correctly.
+// and cell-less overlays are never forced from below. A Decorator is
+// re-applied after an underlying repaint; a CellPassthrough is not — and
+// "cell-less" is asked of the instance, since a container carrying a
+// declared Background is filled by the framework and owns its bounds.
+// This is what makes container backgrounds, hidden containers, and
+// overlapping Canvas children all repaint correctly.
 //
 // The forward pass has a reverse half, restoreUnder: when a rect LEAVES
 // the screen (a component turned non-visible, departed in a re-sync, or
@@ -80,6 +83,19 @@ type Composer struct {
 	startable []Startable          // discovered during the walk, started by Start
 	disp      *Dispatcher          // remembered by Start, so a re-sync can start new arrivals
 	stops     map[Startable]func() // one per started element, run by Close
+
+	// fault is the FIRST walk that refused this tree, and it is sticky on
+	// purpose: the frame that hit it is over by the time anyone can ask,
+	// and a cycle repeats every frame anyway.
+	//
+	// First rather than latest, for two reasons. It is deterministic — a
+	// cyclic tree trips Compose, then Focus, then Measure, then Arrange
+	// in that order every frame, so "latest" would report whichever walk
+	// happened to run last and change if the frame's internals were
+	// reordered. And the first walk to meet a cycle is the most
+	// actionable: Compose runs before layout exists, so it is the closest
+	// report to the structural mistake that caused it.
+	fault *LayoutFault
 }
 
 type paintNode struct {
@@ -238,6 +254,11 @@ func (c *Composer) walkNodes() {
 	c.nodes = c.nodes[:0]
 	c.startable = c.startable[:0]
 	c.build(c.root, prev, nil)
+	// Taken here as well as in Frame, so a cycle in the tree a Composer is
+	// CONSTRUCTED with is readable before the first frame is asked for.
+	if f := TakeLayoutFault(); f != nil && c.fault == nil {
+		c.fault = f
+	}
 
 	for w, n := range prev {
 		if _, kept := c.nodeOf[w]; !kept {
@@ -292,6 +313,26 @@ func (c *Composer) walkNodes() {
 }
 
 func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *paintNode) {
+	// A cycle reaches the STRUCTURAL walk before it ever reaches layout,
+	// and it is worse here than a stack overflow: build/collect/build
+	// allocates a paintNode and three property nodes per level, so a
+	// cyclic tree does not die, it grows — the process wedges eating
+	// memory, with no fatal error and no trace to read. MeasureChild's
+	// depth cap cannot help, because NewComposer walks the tree before
+	// Measure is called even once.
+	//
+	// The test here is identity, not depth, because identity is EXACT and
+	// this map makes it free. nodeOf gives each component exactly one
+	// paint node — that is the damage model's central assumption, not an
+	// implementation detail — so a component reached twice in one walk is
+	// either a cycle or the same instance placed in two parents, and
+	// neither can be composed. Catching it on the second visit also means
+	// a cycle costs two nodes rather than the 512 a depth bound would
+	// allocate before noticing.
+	if _, seen := c.nodeOf[w]; seen {
+		noteIdentityFault("Compose", w)
+		return
+	}
 	if n, ok := prev[w]; ok {
 		n.parent = parent // a re-sync may have moved the subtree
 		c.nodes = append(c.nodes, n)
@@ -644,6 +685,11 @@ func (c *Composer) stopAll() {
 // paint node goes dirty.
 func (c *Composer) OnInvalidate(fn func()) { c.invalid = fn }
 
+// LayoutFault reports the deepest-tree breach seen by any layout pass so
+// far, or nil. Non-nil means some subtree was too deep to walk and was
+// left unlaid — the frame is still valid, just missing that part.
+func (c *Composer) LayoutFault() *LayoutFault { return c.fault }
+
 // Frame lays out, repaints dirty components only, and reports how many
 // components painted.
 func (c *Composer) Frame() (*Frame, int) {
@@ -688,8 +734,19 @@ func (c *Composer) Frame() (*Frame, int) {
 	}
 	// Unconditional layout, outside any eval context: reads here are
 	// not recorded as dependencies.
+	//
+	// There is deliberately no `layoutDepth = 0` reset here. It looks
+	// like prudent belt-and-braces and is dead code: MeasureChild and
+	// ArrangeChild decrement with a defer, and a deferred call runs
+	// during panic unwinding too, so the counter is already balanced on
+	// every path out — including the one a reset would supposedly cover.
+	// No edit to the reset can fail a test, which is the definition of a
+	// line that should not be here.
 	c.root.Measure(Size{c.cols, c.rows})
 	c.root.Arrange(Rect{0, 0, c.cols, c.rows})
+	if f := TakeLayoutFault(); f != nil && c.fault == nil {
+		c.fault = f
+	}
 	// A Dynamic container decides which children exist while it is being
 	// arranged, so the sync lands here: after layout, before the bounds
 	// sweep (which then gives new nodes their first remembered bounds) and
@@ -764,7 +821,7 @@ func (c *Composer) Frame() (*Frame, int) {
 		// over cells the restore pass just repainted (a Hidden overlay
 		// keeps its bounds but owns no pixels).
 		if n.stamp != c.frameSeq && n.bounds.W > 0 && n.bounds.H > 0 && paintable(n.w) {
-			if _, isDecorator := n.w.(Decorator); !isDecorator {
+			if !cellPassthrough(n.w) && !decoratesCells(n.w) {
 				for _, p := range c.over {
 					if !intersects(p.bounds, n.bounds) {
 						continue
@@ -913,8 +970,8 @@ func fillRect(b *render.Buffer, r Rect, s render.Style) {
 // Every still-visible node whose bounds intersect the vacated rect is
 // force-dirtied, and the ordinary paint loop then lays them down again
 // in z-order, with the forward pass keeping everything above them
-// honest. Decorators are included: the cells they re-style are exactly
-// the ones being restored.
+// honest. CellPassthrough nodes are skipped: they neither own nor
+// re-style cells, so there is nothing for the restore pass to put back.
 //
 // Runs outside any evaluation (from the sweeps), so the Sets here are
 // the same legality as the bounds sweep's.
@@ -926,10 +983,43 @@ func (c *Composer) restoreUnder(r Rect) {
 		if n.bounds.W <= 0 || n.bounds.H <= 0 || !paintable(n.w) {
 			continue
 		}
+		if cellPassthrough(n.w) {
+			continue
+		}
 		if intersects(r, n.bounds) {
 			n.rev.Set(n.rev.Get() + 1)
 		}
 	}
+}
+
+func decoratesCells(w Component) bool {
+	_, ok := w.(Decorator)
+	return ok
+}
+
+// cellPassthrough reports whether w's paint node puts nothing on the
+// cell plane — the test both z-order passes use to skip a node that has
+// nothing to restore and nothing to be restored.
+//
+// Declaring the interface is necessary but NOT sufficient, and the
+// difference is not academic: a container that also declares a
+// Background is FILLED by its own paint node (the backgroundProp branch
+// in build, which is also what marks it `covered`), so it owns every
+// cell in its bounds. Canvas is exactly that shape — a transparent
+// positioning surface until an author gives it a colour — so the
+// question has to be put to the INSTANCE, not to the type.
+//
+// Skipping a filled container leaves a permanent scar. An overlay that
+// is its SIBLING clears to the nearest ancestor's background, which is
+// not the filled container's, and with the container exempt from
+// restoreUnder nothing repaints the vacated cells at all — zero
+// components painted, the fill gone for good.
+// TestCellPassthroughStopsAtADeclaredBackground pins it.
+func cellPassthrough(w Component) bool {
+	if _, ok := w.(CellPassthrough); !ok {
+		return false
+	}
+	return backgroundProp(w) == nil
 }
 
 // clearStyle is what a node's rect clears TO: blank cells styled with the

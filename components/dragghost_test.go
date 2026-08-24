@@ -176,23 +176,24 @@ func TestDragGhostFollowsThePointerByItsOffset(t *testing.T) {
 }
 
 // THE PER-MOTION DAMAGE PIN. One cell of pointer motion during a drag
-// repaints FOUR components, and every one of them is named here because
-// a bare number is what lets a regression hide:
+// repaints TWO components, and both are named here because a bare
+// number is what lets a regression hide:
 //
+//	{0 3 30 1} the filler row the ghost just uncovered, restored
 //	{6 3 9 1}  the ghost, at its new rect — the only real paint
-//	{0 3 30 1} the filler row it just uncovered, restored
-//	{0 0 30 5} the Canvas, and
-//	{0 0 30 5} the AdornmentLayer
 //
-// The last two are full-page rects that paint NO cells: restoreUnder
-// forces every paintable node intersecting the vacated rect, with no
-// exemption for a chrome-only container or a Decorator, so both
-// ancestors are swept. That is pre-existing composer behaviour, not
-// something free adornments introduced — it is the same shape as the
-// tooltip's pinned dismissal (restored leaf + 2 swept containers) — and
-// it costs nothing on the wire, which the byte pin below is here to
-// keep true. If this number moves, find out which rect appeared; do not
-// raise the ceiling.
+// Those two are exactly the nodes on this page that own cells, which is
+// what the count is pinned to. It used to be FOUR: the page-spanning
+// Canvas and AdornmentLayer were swept as well, two full-page rects
+// that paint NO cells, because restoreUnder force-dirtied every
+// paintable node intersecting the vacated rect with no exemption for a
+// cell-less container — the exemption the forward z-pass already had.
+// Both now carry gooey.CellPassthrough and are skipped on both passes
+// (#361): a node that owns no cells has nothing to restore. The tooltip
+// dismissal moved by the same rule on the same shape (the restored leaf
+// alone). It cost nothing on the wire either way, which the byte pin
+// below is here to keep true. If this number moves, find out which rect
+// appeared; do not raise the ceiling.
 func TestDragMotionRepaintsTheGhostAndWhatItUncovered(t *testing.T) {
 	ghost, _, page := ghostPage(30, 5)
 	c := gooey.NewComposer(page, 30, 5)
@@ -206,12 +207,11 @@ func TestDragMotionRepaintsTheGhostAndWhatItUncovered(t *testing.T) {
 
 	c.HandleMouse(motion(5, 2))
 	_, painted := c.Frame()
-	if painted != 4 {
-		t.Fatalf("one cell of drag motion painted %d components, want 4 "+
-			"(ghost + uncovered row + Canvas + layer); damage was %v", painted, c.Damage())
+	if painted != 2 {
+		t.Fatalf("one cell of drag motion painted %d components, want 2 "+
+			"(uncovered row + ghost); damage was %v", painted, c.Damage())
 	}
-	want := []gooey.Rect{{X: 0, Y: 0, W: 30, H: 5}, {X: 0, Y: 3, W: 30, H: 1},
-		{X: 0, Y: 0, W: 30, H: 5}, {X: 6, Y: 3, W: 9, H: 1}}
+	want := []gooey.Rect{{X: 0, Y: 3, W: 30, H: 1}, {X: 6, Y: 3, W: 9, H: 1}}
 	got := c.Damage()
 	if len(got) != len(want) {
 		t.Fatalf("damage %v, want %v", got, want)

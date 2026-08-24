@@ -937,7 +937,7 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1120`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1158`) is:
 
 | Handle | Plain value | Rendered as |
 |---|---|---|

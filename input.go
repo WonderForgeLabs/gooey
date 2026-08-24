@@ -461,6 +461,20 @@ func (m *FocusManager) evictFrozen() {
 // The frozen component itself is not frozen; its subtree is. So w's own
 // registrations use the INCOMING flag, and children get frozen || w.
 func (m *FocusManager) walk(w, parent Component, frozen bool) {
+	// Same guard, same reason, same freeness as Composer.build: this is a
+	// SECOND unbounded walk over ChildComponents, it runs in the same
+	// frame as that one (Composer.Frame calls Resync right after
+	// walkNodes), and a cycle killed it by stack overflow inside
+	// m.parent's own mapassign. The map it would corrupt is the map that
+	// detects it, so the check costs nothing that was not already paid.
+	//
+	// Before the write, not after: Resync walks the root with ITSELF as
+	// parent, so the entry m.parent[root] = root exists from the first
+	// line onward and a check placed after it would fault on every tree.
+	if _, seen := m.parent[w]; seen {
+		noteIdentityFault("Focus", w)
+		return
+	}
 	m.parent[w] = parent
 	if f, ok := w.(Focusable); ok && f.AcceptsFocus() && !frozen {
 		m.order = append(m.order, w)

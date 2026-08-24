@@ -234,7 +234,7 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 // owns its cells.
 func (l *AdornmentLayer) Render(*gooey.Frame) {}
 
-// DecoratesCells exempts the layer from the z-ordered force-from-below:
+// PassesCellsThrough exempts the layer from the z-ordered force-from-below:
 // its Render owns no cells, so "repaint what sits above this painter"
 // has nothing to restore here — the adornments themselves are separate
 // nodes and are forced normally. Without this, the full-page layer was
@@ -242,7 +242,7 @@ func (l *AdornmentLayer) Render(*gooey.Frame) {}
 // time any covered leaf under it painted — every keystroke into a
 // TextBox, on any page hosting the layer. Found by the validation
 // marker's damage pins, the layer's second customer.
-func (l *AdornmentLayer) DecoratesCells() {}
+func (l *AdornmentLayer) PassesCellsThrough() {}
 
 // HitTestTransparent: the layer spans the whole page invisibly; the
 // pointer must pass through it to the content beneath, or hosting the

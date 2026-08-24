@@ -49,6 +49,18 @@ func Include(fsys fs.FS, name string) Builder {
 	return control(fsys, name, nil, true)
 }
 
+// indexOf returns where name first appears in chain, or -1. The chain is
+// an ancestry, so it is short — a slice scan beats a map, and allocates
+// nothing on the path every load takes.
+func indexOf(chain []string, name string) int {
+	for i, c := range chain {
+		if c == name {
+			return i
+		}
+	}
+	return -1
+}
+
 // control is the shared instantiation path for both control tiers.
 //
 // Order is the contract (see docs/specs/2026-08-10-markup-declared-
@@ -59,6 +71,23 @@ func Include(fsys fs.FS, name string) Builder {
 // system rejects double registration.
 func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*Context, error), passThrough bool) Builder {
 	return func(e Element, parent *Context) (gooey.Component, error) {
+		// A control that is its own ancestor never stops instantiating:
+		// card.gooey containing <Card/> made loadDocument → build →
+		// control → loadDocument recurse until the process died with
+		// "fatal error: stack overflow", at LOAD time, before a single
+		// frame composed. This is the half of issue #216 that is decidable
+		// statically, so it is decided statically: a load error naming the
+		// loop, in the one place both control tiers pass through.
+		//
+		// The wysiwyg editor is why this is not a theoretical document. It
+		// lets a user create card.gooey and drop <Card/> into it, which
+		// makes the crash reachable by two ordinary actions — and a crash
+		// skips Screen.Restore, so it costs the user their unsaved work and
+		// their terminal modes.
+		if i := indexOf(parent.controls, name); i >= 0 {
+			return nil, fmt.Errorf("markup: control %s includes itself: %s — a control cannot be its own ancestor, because instantiating it never terminates",
+				name, strings.Join(append(append([]string{}, parent.controls[i:]...), name), " → "))
+		}
 		// Variant-resolved like a page: a control specializes on the pixel
 		// protocol by shipping card.sixel.gooey beside card.gooey, and the
 		// instantiation site is unchanged either way.
@@ -158,6 +187,22 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// bindings get: the file that names the asset is the file the
 		// path is relative to.
 		child.fsys = fsys
+		// Extend the ancestry, and force the copy: the three-index slice
+		// caps the parent's slice at its own length, so append always
+		// allocates rather than writing into the parent's backing array.
+		//
+		// Be precise about why, because the obvious reason is wrong. Two
+		// sibling <Card/> elements CANNOT corrupt each other by sharing an
+		// array: the walk is depth-first and single-goroutine, so the
+		// first sibling's whole subtree is built before the second
+		// appends over the slot. The real hazard is a context that
+		// OUTLIVES its build — itemsview.go captures one and builds rows
+		// from it later — where a sibling appending in the meantime would
+		// rewrite ancestry the retained context still points at.
+		//
+		// No test in this package discriminates this line; it guards a
+		// deferred-build path, not the load path the cycle tests take.
+		child.controls = append(parent.controls[:len(parent.controls):len(parent.controls)], name)
 		w, err := doc.build(child)
 		if err != nil {
 			return nil, err

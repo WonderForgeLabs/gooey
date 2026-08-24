@@ -159,7 +159,19 @@ func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
 		// type, which is what a catalog describes.
 		Proto: &components.Image{},
 		Known: true,
-		Doc:   "A vertical icon rail. The picture is derived from the selection.",
+		// A REGISTERED element carrying an icon, which is the half of
+		// markup.ElementDef.Icon that a builtin cannot demonstrate. A
+		// palette showing icons for gooey's own elements and blanks for
+		// the host's would be describing the build rather than the app —
+		// the same failure AttrsKnown exists to prevent one field over.
+		//
+		// The name is resolved by whoever renders it, against their own
+		// asset directory. Nothing here knows the file, the size or the
+		// colour, and the rail does not need to: its OWN icons are a
+		// different set entirely (icons/ next to this file), because
+		// they are the rail's content rather than its portrait.
+		Icon: "layout-activitybar-left",
+		Doc:  "A vertical icon rail. The picture is derived from the selection.",
 		Attrs: []markup.AttrSpec{
 			// Required AND binding-only, which is exactly what
 			// selProperty enforces at load — a literal would be a rail

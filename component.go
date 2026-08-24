@@ -115,13 +115,20 @@ func isFrozen(w Component) bool {
 }
 
 // Decorator is implemented by components whose Render owns no cells of
-// its own: it re-styles cells that earlier siblings painted (ItemsView's
-// row highlight). The Composer's z-ordered repaint pass does not force
-// one when a component below it repaints — with no cells of its own on
-// screen it has nothing to restore, and a live decorator re-applies
-// through its own dependencies, which is the contract that makes it a
-// decorator in the first place.
+// its own but re-styles cells that earlier siblings painted (ItemsView's
+// row highlight). It must be re-applied after an underlying repaint.
 type Decorator interface{ DecoratesCells() }
+
+// CellPassthrough is implemented by transparent containers whose Render
+// neither owns nor re-styles cells. Their paint nodes never need to be
+// restored when an overlay leaves a region.
+//
+// The claim is about the TYPE's Render; the Composer still checks the
+// INSTANCE, because a container that declares a Background is filled by
+// the framework and owns its bounds however empty its Render is. A
+// Canvas implements this and is a passthrough only while it has no
+// colour — see cellPassthrough in composer.go.
+type CellPassthrough interface{ PassesCellsThrough() }
 
 // backgroundProp returns w's declared background handle, or nil when w
 // declares none.
@@ -155,6 +162,10 @@ type Frame struct {
 	// placement recorded during Render is filed under the component that
 	// recorded it. See Place.
 	sink func(graphics.Placement)
+	// fault is whatever layout breach this frame's own compose hit, set
+	// by Compose. Nil on a Composer-built frame, which carries its fault
+	// on the Composer instead. See Frame.LayoutFault.
+	fault *LayoutFault
 }
 
 // Depth is the color depth this frame will be flushed at.
@@ -183,9 +194,34 @@ func (f *Frame) Place(p graphics.Placement) {
 // Placements is this frame's pixel plane in paint order.
 func (f *Frame) Placements() []graphics.Placement { return f.placements }
 
+// LayoutFault reports a breach seen while composing THIS frame, or nil.
+// It is the one-shot path's equivalent of Composer.LayoutFault: without
+// it Compose had nowhere to put a fault, which is why it used to leave
+// one in the package global for somebody else to find.
+//
+// Non-nil means some subtree was too deep to walk and was left unlaid.
+// The frame is still valid, just missing that part.
+func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
+
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
+//
+// It BRACKETS the pass with TakeLayoutFault, and both halves are load
+// bearing because layoutFault is package-level state.
+//
+// Taking on the way IN discards anything an earlier pass left behind, so
+// the fault this Frame reports is this compose's own rather than one
+// inherited from a tree it never saw.
+//
+// Taking on the way OUT is what stops the leak in the other direction.
+// Measure, Arrange and renderTree can each record a fault; before this,
+// none of them was drained here, so a cyclic tree composed once left the
+// fault sitting in the global — and the next Composer picked it up at
+// CONSTRUCTION (composer.go, where the same Take runs so a cycle is
+// readable before the first frame). A clean tree then reported a fault
+// naming a component from an unrelated one.
 func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
+	TakeLayoutFault()
 	f := &Frame{
 		Cells:    render.NewBuffer(caps.Cols, caps.Rows),
 		Graphics: enc,
@@ -195,11 +231,16 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 	}
 	root.Measure(Size{caps.Cols, caps.Rows})
 	root.Arrange(Rect{0, 0, caps.Cols, caps.Rows})
-	renderTree(root, f)
+	renderTree(root, f, 0)
+	f.fault = TakeLayoutFault()
 	return f
 }
 
-func renderTree(w Component, f *Frame) {
+func renderTree(w Component, f *Frame, depth int) {
+	if depth > MaxLayoutDepth {
+		noteLayoutFaultAt("Render", w, depth)
+		return
+	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return // collapsed subtrees paint nothing at all
 	}
@@ -215,7 +256,7 @@ func renderTree(w Component, f *Frame) {
 	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			renderTree(ch, f)
+			renderTree(ch, f, depth+1)
 		}
 	}
 }
