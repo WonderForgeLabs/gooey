@@ -575,12 +575,20 @@ func parse(src []byte) (Element, map[string]string, error) {
 		case xml.StartElement:
 			e := Element{Name: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" && a.Value == "" {
+					return Element{}, nil, fmt.Errorf("markup: <%s xmlns:%s=\"\">: namespace prefix %q cannot be empty", t.Name.Local, a.Name.Local, a.Name.Local)
+				}
+			}
+			for _, a := range t.Attr {
 				if a.Name.Space == "xmlns" {
 					ns[a.Name.Local] = a.Value
 					continue
 				}
 				if a.Name.Space == "" && a.Name.Local == "xmlns" {
 					continue // the default namespace is decorative versioning
+				}
+				if a.Name.Space != "" {
+					return Element{}, nil, namespacedAttrError(t.Name.Local, a)
 				}
 				e.Attrs[a.Name.Local] = a.Value
 			}
@@ -615,6 +623,16 @@ func parse(src []byte) (Element, map[string]string, error) {
 		return Element{}, nil, fmt.Errorf("markup: no root element")
 	}
 	return *root, ns, nil
+}
+
+func namespacedAttrError(element string, attr xml.Attr) error {
+	name := attr.Name.Local
+	if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+		name = "xml:" + name
+	} else {
+		name = "{" + attr.Name.Space + "}" + name
+	}
+	return fmt.Errorf("markup: <%s %s=%q>: namespaced attributes are not supported; use an unprefixed attribute", element, name, attr.Value)
 }
 
 // attachProp files a dotted element as a property of its parent. The
