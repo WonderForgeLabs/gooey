@@ -58,6 +58,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // dragState is the gesture in flight. Zero value means no drag.
@@ -273,22 +274,47 @@ func (ed *editor) Release(x, y int) bool {
 	if l == nil {
 		return true
 	}
-	// The attribute names are the ATTACHED properties of the parent, which
-	// is the same thing that decided the kind — Canvas.Left under a
-	// <Canvas>, Grid.Row under a <Grid>. Writing the wrong pair is the
-	// silent-discard defect the catalog work exists to delete, so the
-	// switch is on the kind rather than on the element name a second time.
-	if d.kind == DragCell {
-		d.node.Attrs["Grid.Row"] = strconv.Itoa(l.Row)
-		d.node.Attrs["Grid.Col"] = strconv.Itoa(l.Col)
-	} else {
-		d.node.Attrs["Canvas.Left"] = strconv.Itoa(l.Left)
-		d.node.Attrs["Canvas.Top"] = strconv.Itoa(l.Top)
+	// The attribute names are the ATTACHED properties of the parent, and
+	// they are ASKED FOR BY ROLE rather than spelled here. Writing the
+	// wrong pair is the silent-discard defect the catalog work exists to
+	// delete, and "Grid.Row" written as a literal in an editor is that
+	// defect one rename away: applyLayout's missing default arm discards
+	// an unrecognised attached attribute without a word.
+	//
+	// This was the SECOND copy of the taxonomy — dragKind decided the
+	// kind from the element name, and this decided the names from the
+	// kind. Both now come from the one declaration.
+	g := ed.grantOf(ed.parentOf(d.node).Elem)
+	writes := map[markup.Role]int{}
+	switch d.kind {
+	case DragCell:
+		writes[markup.RoleRow], writes[markup.RoleCol] = l.Row, l.Col
+	default:
+		writes[markup.RoleX], writes[markup.RoleY] = l.Left, l.Top
+	}
+	lost := ""
+	for role, v := range writes {
+		name := g.Attr(role)
+		if name == "" {
+			// The gesture began because the grant said this role
+			// existed, so an empty name here means the document changed
+			// under the drag. Dropping the write is what already
+			// happened silently; saying so is the change.
+			lost = string(role)
+			continue
+		}
+		d.node.Attrs[name] = strconv.Itoa(v)
 	}
 	ed.rebuild()
 	// After the rebuild the status line says "✓ builds" again, which is
-	// what clears any refusal a previous press left there.
-	ed.sayDrag("")
+	// what clears any refusal a previous press left there — unless the
+	// move could not be recorded, in which case the refusal is the news.
+	if lost != "" {
+		ed.sayDrag("<" + d.node.Elem + "> moved, but its parent grants no " + lost +
+			" to write it to — the move was not saved")
+	} else {
+		ed.sayDrag("")
+	}
 	return true
 }
 
@@ -375,6 +401,14 @@ func (ed *editor) gridCells(parent *node, comp gooey.Component) [][]gooey.Rect {
 	if g == nil {
 		return nil
 	}
+	return ed.cellsThrough(g, comp)
+}
+
+// cellsThrough is gridCells once the grid and the probe subject are
+// known. Split out so the design-time overlay can probe with a subject
+// of its own choosing — the grid's first child, or a scratch component
+// when the grid is empty, which is the case a guide is most needed for.
+func (ed *editor) cellsThrough(g *components.Grid, comp gooey.Component) [][]gooey.Rect {
 	b := g.Bounds()
 	if b.W <= 0 || b.H <= 0 {
 		return nil
@@ -467,9 +501,21 @@ const (
 	DragFree = "free"
 	// DragCell is a child of a <Grid>: Grid.Row/Grid.Col, snapped.
 	DragCell = "re-cell"
-	// DragOrder is a child of a <VStack> or an <HStack>: no geometry at
-	// all, position IS the index, so a drag means reorder. Deferred.
+	// DragOrder is a child of a <VStack>, an <HStack> or any other
+	// element granting markup.GrantOrder: no geometry at all, position
+	// IS the index, so a drag means reorder.
 	DragOrder = "reorder"
+	// DragFixed is a child of a container that grants NOTHING — a
+	// <Border>, a <ScrollView>, anything holding one child it places
+	// itself.
+	//
+	// This used to be folded into DragOrder, because dragKind's default
+	// arm returned reorder for everything that was not a Canvas or a
+	// Grid. That was wrong in a way no test could see: it told the user
+	// a border's child could be reordered among siblings it does not
+	// have. The catalog distinguishes the two — GrantOrder is declared,
+	// GrantNone is the zero value — so the editor can now say which.
+	DragFixed = "placed by its parent"
 	// DragUnmapped is a node the built tree could not be paired with —
 	// see mapNodes. Not a property of the parent; a property of how far
 	// the inversion could descend.
@@ -484,10 +530,16 @@ const (
 
 // dragKind reports why an element can or cannot be dragged.
 //
-// FREE GEOMETRY IS A PROPERTY OF THE PARENT, not of the element, and the
-// three container answers are the whole rule: a <Canvas> gives its
-// children an offset, a <Grid> gives them a cell, and a stack gives them
-// nothing but their order.
+// GEOMETRY IS A PROPERTY OF THE PARENT, not of the element, and the
+// answer now comes from the parent's DECLARATION rather than from its
+// name: a markup.GrantOffset parent gives its children an offset, a
+// GrantCell parent gives them a cell, GrantOrder gives them nothing but
+// their order, and GrantNone places them itself.
+//
+// The mapping below is this editor's whole knowledge of layout models.
+// Adding a container to gooey does not touch it; adding a new
+// markup.GrantKind does, and the compiler will not say so — which is
+// what TestEveryGrantKindHasADragKind is for.
 func (ed *editor) dragKind(n *node) string {
 	// FIRST, because it explains the nil that would otherwise be reported
 	// as DragNone. With docRoot nil every press resolves to no node at
@@ -505,13 +557,21 @@ func (ed *editor) dragKind(n *node) string {
 	if p == nil || ed.isSurface(p) {
 		return DragRoot
 	}
-	switch p.Elem {
-	case "Canvas":
+	return dragKindFor(ed.grantOf(p.Elem).Kind)
+}
+
+// dragKindFor is the grant-to-gesture mapping on its own, so a test can
+// walk every declared GrantKind without building a document for each.
+func dragKindFor(g markup.GrantKind) string {
+	switch g {
+	case markup.GrantOffset:
 		return DragFree
-	case "Grid":
+	case markup.GrantCell:
 		return DragCell
+	case markup.GrantOrder:
+		return DragOrder
 	}
-	return DragOrder
+	return DragFixed
 }
 
 // dragSummary is the sentence a refused drag puts on screen.

@@ -171,7 +171,21 @@ type AttrSpec struct {
 	// element's, and differs only for an OPEN element: <Validate>'s rule
 	// attributes are builtin ones plus whatever Context.Rules adds.
 	Origin Origin
-	Doc    string
+
+	// Role is what an ATTACHED attribute means, independent of what it
+	// is called. Empty for every attribute that is not attached.
+	//
+	// It exists because a visual editor manipulates geometry by MEANING
+	// — "put this element in the next column" — while markup carries
+	// only names, and the two are not the same vocabulary. Without it an
+	// editor has to know that a cell's column is spelled "Grid.Col",
+	// which is exactly the element-name knowledge Grant exists to move
+	// out of editors. With it the editor asks the parent's grant for
+	// RoleCol and writes whatever name comes back, so a third-party
+	// container spelling it "Table.Column" needs no editor change.
+	Role Role
+
+	Doc string
 }
 
 // SlotSpec is one property element — a structured attribute whose value
@@ -265,6 +279,15 @@ type ElementSpec struct {
 	// that as an absence rather than substituting a default, for the
 	// same reason AttrsKnown false is not "no attributes".
 	Icon string
+	// Grants is the geometry this element confers ON ITS CHILDREN — see
+	// Grant. Read it to answer "what does it mean to move an element
+	// inside this one?" without knowing the element's name.
+	//
+	// Children describes what may go IN; Grants describes what happens
+	// to it once it is there. The two are independent: <Border> takes a
+	// child and grants nothing, <VStack> takes many and grants only
+	// order.
+	Grants Grant
 	// Seed is the markup a palette should insert for a new instance of
 	// this element — see ElementDef.Seed for the contract. Empty for an
 	// element nobody has seeded, which TestEverySeededElementLoadsAnd
@@ -312,28 +335,179 @@ var universalAttrs = []AttrSpec{
 	{Name: "Width", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
 }
 
-// attachedAttrs are contributed BY A PARENT to its children, keyed by
-// the parent's element name. The dotted prefix IS the parent name —
-// that is markup's own syntax, not a convention invented here — and
-// applyLayout reads each one by its full dotted spelling.
+// GrantKind is the geometry a container confers on its CHILDREN — the
+// layout model you are designing in when an element sits inside it.
 //
-// Canvas.Left is meaningful on a child of a <Canvas> and nowhere else,
-// where applyLayout's missing default arm discards it in silence. That
-// silence is the defect this whole catalog exists to remove, so the
-// scoping has to be expressible rather than flattened into one list.
-var attachedAttrs = map[string][]AttrSpec{
-	"Canvas": {
-		{Name: "Canvas.Left", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-		{Name: "Canvas.Top", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-	},
-	"Grid": {
-		// A zero span means one track (layout.go:47), so "0" — not "1" —
-		// is the value that reproduces omission.
-		{Name: "Grid.Col", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-		{Name: "Grid.ColSpan", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-		{Name: "Grid.Row", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-		{Name: "Grid.RowSpan", Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
-	},
+// This is a property of the PARENT and never of the element itself. A
+// <Text> has no opinion about whether it is positioned by an offset, by
+// a cell, or by its index; the container it is in decides, and moving
+// that element to a different container changes the answer without
+// touching the element at all.
+//
+// The taxonomy was discovered in an editor before it was named here.
+// apps/wysiwyg's dragKind switched on the literal strings "Canvas" and
+// "Grid" and treated everything else as order — a correct rule keyed on
+// the wrong thing, because an editor that knows element NAMES cannot be
+// extended by an app registering a container of its own. Naming it on
+// the definition makes the editor's question "what does this parent
+// grant?" rather than "is this parent one of the two I know?".
+type GrantKind string
+
+const (
+	// GrantNone is the zero value: this element confers no geometry.
+	//
+	// It is NOT the same statement as "this element has no children". A
+	// <Border> holds exactly one child and positions it itself, so the
+	// child has no geometry to edit — which an editor must report as
+	// "the border places this", not as "you may reorder it".
+	GrantNone GrantKind = ""
+
+	// GrantOffset is free geometry: each child carries an X and a Y and
+	// goes exactly where it is put. <Canvas>. This is the model a
+	// direct-manipulation drag is trivial in, and it was the only one
+	// gooey's designer could edit.
+	GrantOffset GrantKind = "offset"
+
+	// GrantCell is addressed geometry: each child carries a cell, and
+	// possibly a span, and the CONTAINER computes the rectangle.
+	// <Grid>. A drag snaps, and the editor cannot know where the cells
+	// are without asking the layout — see apps/wysiwyg's gridCells,
+	// which probes them through the real Grid.Arrange for exactly this
+	// reason.
+	GrantCell GrantKind = "cell"
+
+	// GrantOrder is implicit geometry: a child has no positional
+	// attribute at all, because its POSITION IS ITS INDEX among its
+	// siblings. <VStack>, <HStack>, <ButtonBar>.
+	//
+	// The absence of attached attributes is the defining feature rather
+	// than an omission, and it is why Grant.Attached is empty here: an
+	// editor moving an element in this model edits the DOCUMENT ORDER,
+	// not a value.
+	GrantOrder GrantKind = "order"
+)
+
+// Role is the MEANING of an attribute, so an editor can manipulate
+// geometry without knowing any attribute's name. See AttrSpec.Role.
+//
+// Two families, distinguished by whose attribute carries them:
+//
+//   - the CHILD's attached attributes — RoleX through RoleColSpan —
+//     which say where one child sits, and live on Grant.Attached;
+//   - the CONTAINER's own attributes — RoleRowTracks, RoleColTracks —
+//     which say what the cells ARE, and live on the element's Attrs.
+//
+// The second family is what lets an editor draw and edit a grid's
+// structure. Without it, showing "Auto / 1* / 20" against the tracks
+// they produce would mean knowing that a Grid spells them "Rows" and
+// "Cols", which is the element-name knowledge this whole contract
+// removes.
+type Role string
+
+const (
+	RoleNone Role = ""
+	// RoleX and RoleY are a GrantOffset child's position.
+	RoleX Role = "x"
+	RoleY Role = "y"
+	// RoleRow, RoleCol and their spans are a GrantCell child's cell.
+	RoleRow     Role = "row"
+	RoleCol     Role = "col"
+	RoleRowSpan Role = "rowspan"
+	RoleColSpan Role = "colspan"
+	// RoleRowTracks and RoleColTracks are the CONTAINER's own
+	// attributes declaring its track structure — the thing a child's
+	// RoleRow indexes into.
+	RoleRowTracks Role = "rowtracks"
+	RoleColTracks Role = "coltracks"
+)
+
+// AttrByRole is the name of e's OWN attribute carrying a role, or "" if
+// it declares none. The container-side counterpart to Grant.Attr.
+func AttrByRole(e ElementSpec, r Role) string {
+	if r == RoleNone {
+		return ""
+	}
+	for _, a := range e.Attrs {
+		if a.Role == r {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+// Grant is what an element confers on its children: which layout model
+// they are positioned by, and the attached attributes that carry it.
+//
+// Attached lives HERE, on the granting element's own definition, rather
+// than in a map keyed by parent name — which is what it was. That map
+// was the side table the colocation doctrine in ElementDef warns about,
+// and it had already drifted the way that doctrine predicts: it was the
+// only mention of Grid.RowSpan anywhere, three hundred lines from the
+// <Grid> literal and connected to it by nothing, so an element with
+// attached properties had two unrelated places to remember.
+type Grant struct {
+	// Kind is the layout model. GrantNone means this element positions
+	// its children itself, or has none.
+	Kind GrantKind
+
+	// Attached are the attributes this parent contributes to each of its
+	// children — Grid.Row from a <Grid>, Canvas.Left from a <Canvas>.
+	//
+	// These are the reason the catalog cannot be a flat attribute list
+	// per element: their validity depends on the PARENT, not on the
+	// element carrying them. Canvas.Left is meaningful on a child of a
+	// <Canvas> and meaningless anywhere else, where applyLayout's
+	// missing default arm discards it in silence — the very defect this
+	// catalog exists to fix. A consumer that offers Canvas.Left on a
+	// child of a <VStack> is promising positioning that will never
+	// happen.
+	//
+	// The dotted prefix IS the parent name — that is markup's own
+	// syntax, not a convention invented here — and applyLayout reads
+	// each one by its full dotted spelling.
+	Attached []AttrSpec
+}
+
+// Attr is the name of the attached attribute carrying a role, or "" if
+// this grant does not carry it.
+//
+// THIS is the call an editor makes instead of writing "Grid.Row", and
+// the empty answer is a real one that must be handled: asking a
+// GrantOrder parent for RoleX is a legitimate question whose answer is
+// "there isn't one".
+func (g Grant) Attr(r Role) string {
+	if r == RoleNone {
+		return ""
+	}
+	for _, a := range g.Attached {
+		if a.Role == r {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+// Roles is every role this grant carries, sorted, for a consumer that
+// wants to enumerate rather than ask.
+func (g Grant) Roles() []Role {
+	out := make([]Role, 0, len(g.Attached))
+	for _, a := range g.Attached {
+		if a.Role != RoleNone {
+			out = append(out, a.Role)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// grantOf is the registry lookup behind AttachedAttrs and AttrsFor.
+// Builtins only — a Context-registered element is reachable through
+// Context.Catalog, whose ElementSpec carries the same Grant.
+func grantOf(element string) Grant {
+	if d := elementDefs[element]; d != nil {
+		return d.Grants
+	}
+	return Grant{}
 }
 
 // The property-grid categories. They are Visual Studio's, minus the ones
@@ -403,7 +577,7 @@ func UniversalAttrs() []AttrSpec {
 // A consumer that offers Canvas.Left on a child of a <VStack> is
 // promising positioning that will never happen.
 func AttachedAttrs(parent string) []AttrSpec {
-	src := attachedAttrs[parent]
+	src := grantOf(parent).Attached
 	out := make([]AttrSpec, len(src))
 	copy(out, src)
 	return out
@@ -412,12 +586,24 @@ func AttachedAttrs(parent string) []AttrSpec {
 // AttachedParents lists the elements that contribute attached
 // properties, sorted.
 func AttachedParents() []string {
-	out := make([]string, 0, len(attachedAttrs))
-	for p := range attachedAttrs {
-		out = append(out, p)
+	out := []string{}
+	for _, d := range definedElements() {
+		if len(d.Grants.Attached) > 0 {
+			out = append(out, d.Name)
+		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// GrantOf is the layout model an element confers on its children, by
+// element name. Builtins only; a consumer with a Context should read
+// ElementSpec.Grants off Context.Catalog instead, which also answers for
+// elements the host registered.
+func GrantOf(element string) Grant {
+	g := grantOf(element)
+	g.Attached = append([]AttrSpec(nil), g.Attached...)
+	return g
 }
 
 // AttrsFor is the whole answer to "what may I set on this element, here"
@@ -432,7 +618,7 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {
 		out = append(out, universalAttrs...)
-		out = append(out, attachedAttrs[parent]...)
+		out = append(out, grantOf(parent).Attached...)
 	} else {
 		// Name is universal even where the layout surface is not: every
 		// element can be addressed.

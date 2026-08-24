@@ -128,23 +128,59 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map
 	// unknown attributes are still rejected at the root like anywhere
 	// else.
 	if parentName == "Gooey" || parentName == "" {
-		for _, attrs := range attachedAttrs {
-			for _, a := range attrs {
+		for _, d := range ctx.granting() {
+			for _, a := range d.Grants.Attached {
 				allowed[a.Name] = true
 			}
 		}
 		return allowed, attached
 	}
-	for parent, attrs := range attachedAttrs {
-		for _, a := range attrs {
-			if parent == parentName {
+	for _, d := range ctx.granting() {
+		for _, a := range d.Grants.Attached {
+			if d.Name == parentName {
 				allowed[a.Name] = true
 				continue
 			}
-			attached[a.Name] = parent
+			attached[a.Name] = d.Name
 		}
 	}
 	return allowed, attached
+}
+
+// granting is every element in scope that contributes attached
+// attributes — the builtins, plus whatever the host registered.
+//
+// Host-registered elements are included, and that direction is safe:
+// a container that declares a Grant can only ADD names to `allowed`,
+// so this accepts markup that was previously rejected and can never
+// reject markup that previously loaded. Leaving them out would mean a
+// host could declare Table.Column in its catalog, watch a palette offer
+// it, and then have the loader refuse the result — the catalog lying
+// about the target, which is the defect the catalog exists to remove.
+func (ctx *Context) granting() []*ElementDef {
+	// Registered first, and the shadowing runs in that direction:
+	// buildComponent consults Context.Elements BEFORE the builtins, so
+	// for a name declared in both, the registered definition is the one
+	// that actually builds — and therefore the one whose grant is real.
+	// Taking the builtin's grant here would validate against a
+	// vocabulary the build never uses.
+	out := make([]*ElementDef, 0, len(elementDefs)+len(ctx.Elements))
+	shadowed := map[string]bool{}
+	for name, d := range ctx.Elements {
+		if d == nil {
+			continue
+		}
+		shadowed[name] = true
+		if len(d.Grants.Attached) > 0 {
+			out = append(out, d)
+		}
+	}
+	for _, d := range definedElements() {
+		if len(d.Grants.Attached) > 0 && !shadowed[d.Name] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // spec finds the catalog entry for an element name in this context.

@@ -41,7 +41,27 @@ type Pane struct {
 
 	// designer is the design-surface gesture set. See BindDesigner.
 	designer Designer
+
+	// overlay is the design-time layout guide, painted OVER the
+	// previewed tree. Nil until BindOverlay.
+	overlay *Overlay
 }
+
+// BindOverlay installs the design-time layout overlay.
+//
+// It becomes Pane's SECOND child, and the ordering is the entire reason
+// it is a child rather than something Pane.Render draws: the composer
+// paints depth-first pre-order, so a later sibling paints after the
+// document subtree, and anything Pane drew itself would go underneath
+// and be erased by the tree's own pre-clears. See overlay.go's file
+// comment.
+func (p *Pane) BindOverlay(o *Overlay) { p.overlay = o }
+
+// Overlay is the bound layout guide, or nil. Exported for the tests that
+// need to assert against its arranged bounds — an overlay covering
+// nothing cannot eat a click, so a hit-test assertion has to be able to
+// prove it was covering something first.
+func (p *Pane) Overlay() *Overlay { return p.overlay }
 
 // Designer is the editor's half of the design-surface gestures: what a
 // press, a drag and a release MEAN, which is document knowledge this
@@ -216,11 +236,21 @@ func (p *Pane) SetStructureHook(h func()) { p.hook = h }
 // hook would leave the composer's paint nodes describing the old tree.
 func (p *Pane) Child() gooey.Component { return p.child }
 
+// ChildComponents is the previewed tree, then the overlay.
+//
+// THE ORDER IS THE Z-ORDER and may not be swapped: the composer walks
+// depth-first pre-order, so the overlay paints last and therefore on
+// top. Putting it first would paint the guides under the document and
+// the document's own pre-clears would erase them.
 func (p *Pane) ChildComponents() []gooey.Component {
-	if p.child == nil {
-		return nil
+	var out []gooey.Component
+	if p.child != nil {
+		out = append(out, p.child)
 	}
-	return []gooey.Component{p.child}
+	if p.overlay != nil {
+		out = append(out, p.overlay)
+	}
+	return out
 }
 
 // Swap replaces the previewed tree. Called on the UI goroutine, from a
@@ -241,14 +271,31 @@ func (p *Pane) Measure(avail gooey.Size) gooey.Size {
 
 func (p *Pane) Arrange(b gooey.Rect) {
 	p.Base.Arrange(b)
-	if p.child == nil {
-		return
+	if p.child != nil {
+		gooey.ArrangeChild(p.child, gooey.Rect{
+			X: b.X, Y: b.Y,
+			W: min(p.size.W, b.W),
+			H: min(p.size.H, b.H),
+		})
 	}
-	gooey.ArrangeChild(p.child, gooey.Rect{
-		X: b.X, Y: b.Y,
-		W: min(p.size.W, b.W),
-		H: min(p.size.H, b.H),
-	})
+	if p.overlay != nil {
+		// ARRANGED LAST, AFTER THE DOCUMENT, and the order is
+		// load-bearing twice over.
+		//
+		// Overlay.Arrange re-probes the grid it describes, so the
+		// subtree must already have its final bounds or the guide would
+		// describe the PREVIOUS frame's layout — visible as a grid whose
+		// drawn cells lag a keystroke behind the track spec that
+		// produced them.
+		//
+		// It also gets the pane's WHOLE rect rather than the child's:
+		// its bounds are what the composer uses for damage bookkeeping
+		// and for the z-ordered "who sits above whom" test, and the
+		// gutters are drawn OUTSIDE the grid, so the child's rect would
+		// be too small and those cells would be written by a paint that
+		// no damage rect claims.
+		gooey.ArrangeChild(p.overlay, b)
+	}
 }
 
 // Render paints nothing: a container paints only its own chrome, and this
