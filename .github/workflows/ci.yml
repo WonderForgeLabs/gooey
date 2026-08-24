@@ -448,7 +448,7 @@ jobs:
   # against main, regenerate-and-diff drift check, then each committed
   # client actually compiles/passes its smoke test.
   contract:
-    # Compiles Go (buf via `go run`), then `npm ci` + `tsc` for two TS
+    # Compiles Go (buf via `go tool`), then `npm ci` + `tsc` for two TS
     # clients and the Python client's suite — three toolchains, so the
     # same 4Gi tier the module legs use rather than small's 2Gi.
     runs-on: forge-runners-default-vsphere
@@ -473,7 +473,7 @@ jobs:
       # Using the image's Go means the version is no longer pinned by
       # go.mod, so it is CHECKED instead — see the step below. Losing the
       # pin silently is the trade this refuses to make.
-      # `contract` only ever builds the ROOT module (buf via `go run`, then
+      # `contract` only ever builds the ROOT module (buf via `go tool`, then
       # the generated clients), so unlike the test legs a root-only check is
       # the whole truth here.
       - name: Check the image's Go satisfies go.mod
@@ -488,8 +488,41 @@ jobs:
             exit 1
           }
 
+      # buf runs as `go tool buf`, NOT `go run …/buf@v1.72.0`, and the
+      # difference is the whole reason this job used to take nine minutes.
+      #
+      # From `go help run`: when the first argument has a version suffix,
+      # `go run` "builds the program in module-aware mode, IGNORING the
+      # go.mod file in the current directory or any parent directory". No
+      # go.mod in scope means no `vendor/` in scope — so the one repo that
+      # vendors its entire tree at the root (CLAUDE.md, "One workspace, one
+      # vendor directory") went to the module proxy anyway for buf and its
+      # ~60 transitive modules, on a runner whose GOMODCACHE starts empty.
+      # Measured on run 32689721083: `Proto lint` 391s of a 526s job, with
+      # the two buf steps AFTER it at 24s and 3s — they were fast because
+      # the first one had already paid for the whole acquisition. None of
+      # the 391s was linting.
+      #
+      # `go tool buf` reads the `tool` directive in the root go.mod (Go
+      # 1.24+; go.mod is well past that), so it resolves through the main
+      # module and therefore through `vendor/`. Verified rather than
+      # assumed: with an EMPTY GOMODCACHE and GOPROXY=off — the check
+      # CLAUDE.md insists on, because GOPROXY=off alone still reads your
+      # warm cache — `go tool buf --version` builds and prints 1.72.0.
+      #
+      # Second thing it buys: the version stops being three string literals
+      # here plus a fourth in proto/buf.gen.yaml's header, free to drift
+      # apart. It is one `require` in go.mod, checksummed in go.sum.
+      #
+      # What this does NOT do is make `contract` network-free, and it would
+      # be easy to read it that way. proto/buf.gen.yaml's plugins are buf
+      # REMOTE plugins that execute on buf's hosted service, so `Generated
+      # code drift` still needs buf.build reachable; so do the two `npm ci`
+      # runs and `pip install` below. This removes the Go half's proxy
+      # dependency — which is the half that has been hanging on the Nexus
+      # mirror's HTTP 523s — not the job's.
       - name: Proto lint
-        run: go run github.com/bufbuild/buf/cmd/buf@v1.72.0 lint proto
+        run: go tool buf lint proto
 
       # Fetch main into a neutral local branch so the comparison works
       # both on PRs (against the target) and on pushes to main itself
@@ -497,7 +530,7 @@ jobs:
       - name: Proto breaking against main
         run: |
           git fetch origin main:refs/heads/ci-buf-breaking-base
-          go run github.com/bufbuild/buf/cmd/buf@v1.72.0 breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
+          go tool buf breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
 
       # Committed generated code must be exactly what the pinned plugins
       # produce, and ONLY that — the diff below is scoped to the `out:`
@@ -541,7 +574,7 @@ jobs:
       # itself against an independent parse of proto/buf.gen.yaml.
       - name: Generated code drift
         run: |
-          go run github.com/bufbuild/buf/cmd/buf@v1.72.0 generate --template proto/buf.gen.yaml
+          go tool buf generate --template proto/buf.gen.yaml
 
           # `out:` lines only: some leading whitespace then the literal
           # key, so a comment (`#` right after the indent) never matches,
