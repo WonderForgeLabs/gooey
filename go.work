@@ -26,4 +26,5 @@ use (
 	./packs/temporal-visibility
 	./packs/temporal-workflow
 	./paint
+	./tools
 )
