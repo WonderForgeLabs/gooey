@@ -1,9 +1,16 @@
 package main
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/toolbox"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
@@ -243,5 +250,96 @@ func TestTheHouseHighlightIsStoodDownOverTheIcons(t *testing.T) {
 	}
 	if list.Highlight {
 		t.Fatal("the house highlight is on over pixel content: the row template no longer mentions _selected")
+	}
+}
+
+// TestShippedIconsAreDistinctAssets.
+//
+// Two elements drawing the SAME glyph defeats the point of the column: a
+// designer scanning the palette reads shapes, not the word beside them.
+//
+// THE DIRECTORY, NOT ed.palette, and that is the whole reason this test
+// can see anything. The wysiwyg toolbox filters <Tab> out of its list
+// (main.go), so a duplicate involving Tab's icon is invisible to any
+// check that walks the realized palette — which is exactly how
+// browser.svg and window.svg sat identical without a test noticing. The
+// filter is one app's editorial choice; the catalog and its assets are
+// the shared surface, so the assets are what get hashed.
+//
+// upstreamAliases is the one fact this check cannot derive. Codicons
+// ships `browser` as an ALIAS of `window`: the two files are
+// byte-identical in microsoft/vscode-codicons itself — fetched from
+// src/icons/ and compared, both f2ed5124abc7b6231c7fd47a4f516369 — so the
+// duplication here is faithful and the LICENSE's "unmodified on disk"
+// claim holds. Recording it as an allowance rather than deleting a file
+// keeps File()'s convention (a catalog name IS a filename) working for
+// both names. Any pair NOT listed here is a curation mistake: a file
+// copied from the wrong source glyph.
+func TestShippedIconsAreDistinctAssets(t *testing.T) {
+	upstreamAliases := map[string]string{"browser": "window"}
+	canonical := func(name string) string {
+		if a, ok := upstreamAliases[name]; ok {
+			return a
+		}
+		return name
+	}
+
+	entries, err := os.ReadDir(toolbox.Dir)
+	if err != nil {
+		t.Fatalf("the icon directory does not read: %v", err)
+	}
+
+	byDigest := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".svg" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(toolbox.Dir, e.Name()))
+		if err != nil {
+			t.Errorf("%s does not read: %v", e.Name(), err)
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".svg")
+		d := fmt.Sprintf("%x", sha256.Sum256(b))
+		byDigest[d] = append(byDigest[d], name)
+	}
+	if len(byDigest) == 0 {
+		t.Fatal("no .svg assets found; this test cannot see a regression")
+	}
+
+	for _, names := range byDigest {
+		distinct := map[string]bool{}
+		for _, n := range names {
+			distinct[canonical(n)] = true
+		}
+		if len(distinct) > 1 {
+			sort.Strings(names)
+			t.Errorf("icons %v are byte-identical assets, so any two elements declaring them are "+
+				"indistinguishable in the palette. Either one was copied from the wrong upstream "+
+				"glyph — re-fetch it from microsoft/vscode-codicons src/icons/ — or they are a "+
+				"genuine upstream alias, in which case add the pair to upstreamAliases above with "+
+				"the comparison written down.", names)
+		}
+	}
+}
+
+// TestEveryDeclaredIconHasAnAsset covers the other direction, and it
+// covers the WHOLE catalog rather than the toolbox's filtered view — for
+// the same reason as above: an element the wysiwyg palette happens to
+// hide still declares an icon that another consumer of
+// markup.BuiltinElements will ask for.
+func TestEveryDeclaredIconHasAnAsset(t *testing.T) {
+	var declared int
+	for _, e := range markup.BuiltinElements() {
+		if e.Icon == "" {
+			continue
+		}
+		declared++
+		if _, err := os.Stat(filepath.Join(toolbox.Dir, toolbox.File(e.Icon))); err != nil {
+			t.Errorf("<%s> declares icon %q but no asset resolves: %v", e.Name, e.Icon, err)
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no builtin element declares an icon; this test cannot see a regression")
 	}
 }
