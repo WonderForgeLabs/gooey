@@ -252,6 +252,12 @@ type ElementSpec struct {
 	// and NOT the same statement as Children.Mode == ModeLeaf.
 	Body     *BodySpec
 	Children ChildSpec
+	// Seed is the markup a palette should insert for a new instance of
+	// this element — see ElementDef.Seed for the contract. Empty for an
+	// element nobody has seeded, which TestEverySeededElementLoadsAnd
+	// OccupiesSpace treats as a failure rather than as a third state:
+	// an unseeded element is one a user can add and then not see.
+	Seed string
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.
 	NonVisual bool
