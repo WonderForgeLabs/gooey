@@ -1,0 +1,138 @@
+name: Good First Issue Claim
+
+# Two first-time contributors independently fixed #351 two hours apart,
+# because a `good first issue` had no assignee and no way for either of
+# them to signal they had started. Neither could have known. That is a
+# hole in how the tracker is run, not a mistake by either contributor.
+#
+# This closes it with the smallest thing that works:
+#   - when `good first issue` (or `help wanted`) is applied, say out loud
+#     how to claim it;
+#   - when someone comments `/claim`, assign them — or, if it is already
+#     taken, say so BEFORE they write any code, and point them somewhere
+#     else.
+#
+# Deliberately not Claude-driven: this must be instant and boringly
+# reliable. A newcomer waiting on a model to decide whether they may start
+# is worse than no mechanism at all.
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+concurrency:
+  # Serialise per issue so two `/claim` comments racing cannot both win.
+  group: claim-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    # Fires when the label goes on. `github.event.label` is only present on
+    # a `labeled` event, so this cannot fire from a comment.
+    if: >-
+      github.event_name == 'issues' &&
+      (github.event.label.name == 'good first issue' || github.event.label.name == 'help wanted')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the claim convention (once)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+          MARKER: '<!-- gfi-claim-announce -->'
+        run: |
+          set -euo pipefail
+          # Idempotent: `labeled` fires again if the label is removed and
+          # re-added, and nobody needs the same notice twice.
+          if gh api "repos/$REPO/issues/$NUM/comments" --paginate --jq '.[].body' \
+              | grep -qF "$MARKER"; then
+            echo "already announced on #$NUM"; exit 0
+          fi
+          assignee=$(gh api "repos/$REPO/issues/$NUM" --jq '.assignees[0].login // ""')
+          if [ -n "$assignee" ]; then
+            echo "#$NUM is already assigned to $assignee; not announcing"; exit 0
+          fi
+          {
+            printf '%s\n' "$MARKER"
+            printf '**This one is up for grabs — comment `/claim` and it'"'"'s yours.**\n\n'
+            printf 'A bot will assign you within a minute or two. Once it does, everyone else\n'
+            printf 'can see it is taken, so nobody spends their evening on a fix that was\n'
+            printf 'already in flight.\n\n'
+            printf 'No need to ask permission or explain your plan first. Claim it, take your\n'
+            printf 'time, and open a draft PR whenever you want eyes on it — a work-in-progress\n'
+            printf 'question is welcome and costs you nothing.\n\n'
+            printf 'If you claim it and life happens, just say so and we will unassign it.\n'
+            printf 'There is no penalty for that, and it is much better than the issue sitting\n'
+            printf 'silently claimed. If it goes quiet for a couple of weeks we will gently ask\n'
+            printf 'before freeing it up.\n\n'
+            printf 'New here? See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md). Welcome. 👋\n'
+          } > /tmp/body.md
+          gh issue comment "$NUM" --repo "$REPO" --body-file /tmp/body.md
+
+  claim:
+    # `/claim` on its own line, in a comment on an ISSUE (not a PR).
+    if: >-
+      github.event_name == 'issue_comment' &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(github.event.comment.body, '/claim')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign the claimant, or say who has it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+          WHO: ${{ github.event.comment.user.login }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          # Require /claim to start a line, so quoting someone else's
+          # comment ("they said /claim") does not steal an issue.
+          if ! printf '%s' "$BODY" | grep -qE '^[[:space:]]*/claim[[:space:]]*$'; then
+            echo "no bare /claim line; ignoring"; exit 0
+          fi
+
+          current=$(gh api "repos/$REPO/issues/$NUM" --jq '.assignees[0].login // ""')
+
+          if [ "$current" = "$WHO" ]; then
+            echo "$WHO already holds #$NUM"; exit 0
+          fi
+
+          if [ -n "$current" ]; then
+            # Taken. Say so immediately — the whole point is that they find
+            # out BEFORE writing code, not after opening a duplicate PR.
+            others=$(gh issue list --repo "$REPO" \
+                       --label 'good first issue' --state open --no-assignee \
+                       --limit 5 --json number,title \
+                       --jq '.[] | "- #\(.number) \(.title)"' || true)
+            {
+              printf '@%s — thank you for offering! This one is already claimed by @%s, so I have not reassigned it.\n\n' "$WHO" "$current"
+              printf 'Flagging it now rather than after you had written the code.\n\n'
+              if [ -n "$others" ]; then
+                printf 'Unclaimed and ready if you want one:\n\n%s\n\n' "$others"
+              else
+                printf 'Nothing else is unclaimed this minute — but say the word and we will find you something.\n\n'
+              fi
+              printf 'And if @%s turns out not to be working on it, we can hand it over. Just ask. 👋\n' "$current"
+            } > /tmp/taken.md
+            gh issue comment "$NUM" --repo "$REPO" --body-file /tmp/taken.md
+            exit 0
+          fi
+
+          # Free: assign. A non-member cannot always be assigned (GitHub
+          # only allows assignees with read access), so fall back to a
+          # visible "claimed" comment rather than failing the run — the
+          # comment is what other contributors actually read.
+          if gh issue edit "$NUM" --repo "$REPO" --add-assignee "$WHO" 2>/dev/null; then
+            gh issue comment "$NUM" --repo "$REPO" --body \
+              "@$WHO has claimed this — it's yours. 🎉 Take your time, and open a draft PR whenever you'd like eyes on it. If you need to hand it back, just say so; no penalty."
+          else
+            gh issue comment "$NUM" --repo "$REPO" --body \
+              "@$WHO has claimed this — it's yours. 🎉 (GitHub will not let me set you as assignee until you have repo read access, so this comment is the record. It counts.) Take your time, and open a draft PR whenever you'd like eyes on it."
+          fi
