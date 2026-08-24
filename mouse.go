@@ -96,9 +96,17 @@ type PointerFollower interface{ FollowsPointer() bool }
 // (they paint on top). Collapsed subtrees, zero-size components, and
 // HitTestTransparent components are not hit. The walk allocates nothing —
 // it runs on every motion event.
-func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y) }
+func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y, 0) }
 
-func hitTest(w Component, x, y int) Component {
+// depth is threaded rather than counted in a package variable because
+// this walk returns early from the middle of a loop on every hit — the
+// deferred-decrement trick MeasureChild uses would cost a defer per
+// component per mouse move, and a parameter costs an increment.
+func hitTest(w Component, x, y, depth int) Component {
+	if depth > MaxLayoutDepth {
+		noteLayoutFaultAt("HitTest", w, depth)
+		return nil
+	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return nil
 	}
@@ -121,7 +129,7 @@ func hitTest(w Component, x, y int) Component {
 		// stay green while it broke.
 		kids := c.ChildComponents()
 		for i := len(kids) - 1; i >= 0; i-- {
-			if hit := hitTest(kids[i], x, y); hit != nil {
+			if hit := hitTest(kids[i], x, y, depth+1); hit != nil {
 				return hit
 			}
 		}
@@ -373,10 +381,14 @@ func (m *FocusManager) focusTargetFor(w Component) Component {
 			return n
 		}
 	}
-	return firstFocusable(w)
+	return firstFocusable(w, 0)
 }
 
-func firstFocusable(w Component) Component {
+func firstFocusable(w Component, depth int) Component {
+	if depth > MaxLayoutDepth {
+		noteLayoutFaultAt("Focusable", w, depth)
+		return nil
+	}
 	if w == nil {
 		return nil
 	}
@@ -388,7 +400,7 @@ func firstFocusable(w Component) Component {
 	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			if hit := firstFocusable(ch); hit != nil {
+			if hit := firstFocusable(ch, depth+1); hit != nil {
 				return hit
 			}
 		}

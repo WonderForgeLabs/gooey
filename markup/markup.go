@@ -213,6 +213,22 @@ type Context struct {
 	// markup-declared resources", and every lookup then falls through to
 	// Styles — which is why every existing document loads unchanged.
 	res resourceEnv
+	// controls is the chain of markup controls currently being
+	// instantiated, outermost first — the ANCESTRY of the element being
+	// built, not a set of everything seen. A control appearing twice in
+	// it is a cycle (control.go), and a cycle here is a stack overflow at
+	// LOAD time, before layout ever runs.
+	//
+	// It lives on the Context rather than in a package variable because
+	// markup.Load is not confined to the UI goroutine — a file watcher
+	// can load a document on its own goroutine — so shared mutable state
+	// here would be a data race, and two concurrent loads would see each
+	// other's ancestry.
+	//
+	// Ancestry, not history, is what makes sibling reuse legal: two
+	// <Card/> elements side by side each extend their own copy, so
+	// neither sees the other.
+	controls []string
 }
 
 // document is one parsed markup file: its namespace table, the
