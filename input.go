@@ -321,7 +321,7 @@ func NewFocusManager(root Component) *FocusManager {
 		DoubleClickInterval: DefaultDoubleClickInterval,
 		Now:                 time.Now,
 	}
-	m.walk(root, nil, false)
+	m.walk(root, nil, AllowAll)
 	for _, w := range m.order {
 		if t, ok := w.(FocusTarget); ok {
 			t.SetFocused(false) // components outlive tree rebuilds
@@ -360,7 +360,7 @@ func (m *FocusManager) Resync() {
 	m.bindings = map[Component][]*KeyBinding{}
 	m.watchers = m.watchers[:0]
 	m.mnemonics = m.mnemonics[:0]
-	m.walk(m.root, nil, false)
+	m.walk(m.root, nil, AllowAll)
 	for _, hw := range m.watchers {
 		hw.over = wasOver[hw.w]
 	}
@@ -421,11 +421,17 @@ func (m *FocusManager) Resync() {
 // deliberate: the host never received the press, so giving it the release
 // would synthesize a click nobody made. It is the same call the liveness
 // check makes for a captor that vanished mid-drag.
+//
+// Each eviction now names the CATEGORY it is evicting from, and the four
+// are deliberately not the same one. A subtree that keeps AllowHover
+// while withholding AllowPointer must keep its hover where the pointer
+// is and still lose the drag — with one category for all four, the
+// stricter one would have evicted the state the looser one still owns.
 func (m *FocusManager) evictFrozen() {
-	if h := m.frozenHostFor(m.hover); h != m.hover {
+	if h := m.frozenHostFor(m.hover, AllowHover); h != m.hover {
 		m.setHover(h)
 	}
-	if m.captor != nil && m.frozenHostFor(m.captor) != m.captor {
+	if m.captor != nil && m.frozenHostFor(m.captor, AllowPointer) != m.captor {
 		m.captor, m.held = nil, false
 	}
 	// m.prev and m.lastClick are memories of a component, not live
@@ -443,24 +449,32 @@ func (m *FocusManager) evictFrozen() {
 	//
 	// m.lastClick goes with its counter: a double-click is two presses on
 	// the same component, and the second one can no longer land there.
-	if m.prev != nil && m.frozenHostFor(m.prev) != m.prev {
+	if m.prev != nil && m.frozenHostFor(m.prev, AllowFocus) != m.prev {
 		m.prev = nil
 	}
-	if m.lastClick != nil && m.frozenHostFor(m.lastClick) != m.lastClick {
+	if m.lastClick != nil && m.frozenHostFor(m.lastClick, AllowPointer) != m.lastClick {
 		m.lastClick, m.clicks = nil, 0
 	}
 }
 
-// walk builds the input tree. frozen is true inside a Frozen subtree, and
-// what it turns off is exactly the registrations that make a component
-// TARGETABLE — focus stops, scoped KeyBindings, mnemonics, hover
-// watchers. Structure is still recorded: m.parent feeds capture and hover
-// liveness, depth/ancestor, and the retarget below, and FocusHost wiring
-// is a seam a component needs whether or not anything can reach it.
+// walk builds the input tree. allow is what the enclosing frozen subtrees
+// still permit — AllowAll outside any of them — and what it turns off is
+// exactly the registrations that make a component TARGETABLE: focus
+// stops, scoped KeyBindings, mnemonics, hover watchers. Structure is
+// still recorded: m.parent feeds capture and hover liveness,
+// depth/ancestor, and the retarget below, and FocusHost wiring is a seam
+// a component needs whether or not anything can reach it.
+//
+// Each registration below now names the CATEGORY it belongs to, which is
+// the whole difference between this and the bool it replaced: a subtree
+// can withhold focus and still fire its mnemonics, or take clicks and no
+// keys. With every host answering AllowNone — the bool `Frozen() == true`
+// — every test below is false exactly where `!frozen` was.
 //
 // The frozen component itself is not frozen; its subtree is. So w's own
-// registrations use the INCOMING flag, and children get frozen || w.
-func (m *FocusManager) walk(w, parent Component, frozen bool) {
+// registrations use the INCOMING set, and children get it intersected
+// with w's own.
+func (m *FocusManager) walk(w, parent Component, allow Allow) {
 	// Same guard, same reason, same freeness as Composer.build: this is a
 	// SECOND unbounded walk over ChildComponents, it runs in the same
 	// frame as that one (Composer.Frame calls Resync right after
@@ -476,7 +490,7 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 		return
 	}
 	m.parent[w] = parent
-	if f, ok := w.(Focusable); ok && f.AcceptsFocus() && !frozen {
+	if f, ok := w.(Focusable); ok && f.AcceptsFocus() && allow.Has(AllowFocus) {
 		m.order = append(m.order, w)
 	}
 	if h, ok := w.(FocusHost); ok {
@@ -491,14 +505,18 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 	// this skip is the guarantee, not defence in depth — without it,
 	// alt+g runs the Click of a Button the user is only looking at.
 	// TestAMnemonicInsideAFrozenSubtreeDoesNotFire is the pin, and it is
-	// the only test that fails when this line loses its !frozen.
-	if _, ok := w.(MnemonicHandler); ok && !frozen {
+	// the only test that fails when this line loses its category test.
+	//
+	// It is also why AllowMnemonics is a category of its own that does NOT
+	// imply AllowFocus: page-scoped dispatch is exactly what makes a
+	// mnemonic reachable inside a subtree with no focus stops at all.
+	if _, ok := w.(MnemonicHandler); ok && allow.Has(AllowMnemonics) {
 		m.mnemonics = append(m.mnemonics, w)
 	}
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
 			m.parent[at] = w
-			if kb, ok := at.(*KeyBinding); ok && !frozen {
+			if kb, ok := at.(*KeyBinding); ok && allow.Has(AllowBindings) {
 				// A scoped KeyBinding is a SECOND route to a component,
 				// independent of HandleKey — Dispatch interleaves each
 				// level's bindings with that level's handler.
@@ -530,34 +548,42 @@ func (m *FocusManager) walk(w, parent Component, frozen bool) {
 			// retargeted to the frozen host (mouse.go:176), so
 			// within(hw.host, hit) is false for every host inside the
 			// subtree whether or not this registration happened.
-			// Measured: deleting this !frozen leaves the whole repository
-			// green, and so does deleting the retarget; only removing both
-			// fails TestAHoverWatcherInsideAFrozenSubtreeNeverEnters, which
-			// is why that test pins the guarantee rather than either door.
-			if hw, ok := at.(HoverWatcher); ok && !frozen {
+			// Measured: deleting this category test leaves the whole
+			// repository green, and so does deleting the retarget; only
+			// removing both fails
+			// TestAHoverWatcherInsideAFrozenSubtreeNeverEnters, which is
+			// why that test pins the guarantee rather than either door.
+			if hw, ok := at.(HoverWatcher); ok && allow.Has(AllowHover) {
 				m.watchers = append(m.watchers, &hoverWatch{host: w, w: hw})
 			}
 		}
 	}
 	if c, ok := w.(Container); ok {
-		kidsFrozen := frozen || isFrozen(w)
+		kidsAllow := allow.Intersect(frozenAllow(w))
 		for _, ch := range c.ChildComponents() {
-			m.walk(ch, w, kidsFrozen)
+			m.walk(ch, w, kidsAllow)
 		}
 	}
 }
 
-// frozenHostFor is the component that owns events aimed at w: the
-// OUTERMOST Frozen ancestor at or above it, or w itself when there is
-// none.
+// frozenHostFor is the component that owns events of category cat aimed
+// at w: the OUTERMOST ancestor that withholds cat, or w itself when none
+// does.
 //
 // Outermost rather than nearest, because a frozen host nested inside
 // another frozen subtree cannot act either — handing it the event would
-// be routing to something that is itself supposed to be a picture.
-func (m *FocusManager) frozenHostFor(w Component) Component {
+// be routing to something that is itself supposed to be a picture. With a
+// set that argument gets sharper rather than weaker: a host that permits
+// Pointer inside a container that does not must not receive the click,
+// and testing each ancestor for the SAME category is what says so.
+//
+// Passing the category is what makes one retarget serve doors that are
+// now independent — the pointer, hover, and each class of key — where the
+// bool could only ever answer for all of them at once.
+func (m *FocusManager) frozenHostFor(w Component, cat Allow) Component {
 	target := w
 	for n := w; n != nil; n = m.parent[n] {
-		if isFrozen(n) && n != w {
+		if n != w && !frozenAllow(n).Has(cat) {
 			target = n
 		}
 	}
@@ -716,6 +742,22 @@ func (m *FocusManager) Dispatch(ev input.KeyEvent) bool {
 	if start == nil {
 		start = m.root
 	}
+	// The key-class gate, and it is DispatchMouse's retarget applied to
+	// the other wire: a frozen subtree that permits some key classes and
+	// not others owns the keystrokes it did not permit, exactly as it owns
+	// the clicks it did not permit. Retargeting start to the host is what
+	// says so — the tunnel below stops descending at the host, the bubble
+	// starts there, and everything above it still sees the key, which is
+	// what keeps a page-level quit binding working while the picture is
+	// only refusing letters.
+	//
+	// This is a no-op for every host that answers the bool: with focus
+	// withheld, nothing inside is ever m.Focused() in the first place.
+	// It starts mattering the moment a host allows AllowFocus and then
+	// withholds a class — <Frozen Allow="Nav"> being the shape a design
+	// surface uses to let arrows walk a selection without letting the
+	// selected TextBox be typed into.
+	start = m.frozenHostFor(start, AllowFor(ev))
 	for d := m.depth(start); d >= 0; d-- {
 		if h, ok := m.ancestor(start, d).(PreviewKeyHandler); ok && h.PreviewKey(ev) {
 			return true

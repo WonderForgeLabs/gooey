@@ -38,6 +38,44 @@ type Component interface {
 // its own paint node.
 type Container interface{ ChildComponents() []Component }
 
+// ChildSetter is the write half of Container: a container that can have
+// one of its children REPLACED in place, at the same index
+// ChildComponents reported it at.
+//
+// It exists because control.PatchMarkup has to put a rebuilt subtree back
+// where the old one was, and until this interface that was a closed type
+// switch over six concrete types in the control package. The cost of the
+// switch was not that it was ugly — it was that it made "may a component
+// sit between a container and a named element?" a question only the
+// control package could answer, and its answer was no. Any container the
+// framework did not ship, or an app's own wrapper, or a design surface's
+// decorator around the selected element, broke patching for EVERYTHING
+// inside it. apps/wysiwyg/decorate_probe_test.go measured that.
+//
+// The contract has one rule, and it is the rule the type switch used to
+// get by construction:
+//
+//	The index passed to SetChild is an index into the slice
+//	ChildComponents returned. A container whose ChildComponents BUILDS a
+//	list — interleaving chrome, filtering by visibility, wrapping rows —
+//	must not implement this interface, because its walk index is not an
+//	address it can write back to.
+//
+// That is why this is opt-in rather than a method on Container. Refusing
+// is a legitimate implementation: a container that does not implement
+// ChildSetter simply cannot be patched through, which is exactly the
+// behaviour every non-listed container had before, and the caller gets a
+// load-time refusal naming the type rather than a silently misplaced
+// child.
+//
+// SetChild reports whether the write happened. False means the index was
+// out of range — the composition changed under the caller — and callers
+// must treat it as a refusal rather than ignoring it.
+type ChildSetter interface {
+	Container
+	SetChild(i int, w Component) bool
+}
+
 // HasBackground is implemented by containers that declare a background
 // fill. The fill itself is the framework's job — the Composer (and the
 // one-shot Compose) paints the container's bounds with the color before
@@ -63,6 +101,15 @@ type HasBackground interface {
 // anything. Keys, scoped KeyBindings, mnemonics, clicks, drags, the
 // wheel, hover watchers and focus all stop at the frozen component, and
 // nothing Startable below it is started.
+//
+// THIS BOOL IS NOW A PROJECTION, not the framework's primary question.
+// "Renders but does not act" is all-or-nothing, and a design surface
+// needs "frozen except X" — so the framework asks FrozenAllows for an
+// Allow SET, and an implementer of this interface alone answers the two
+// endpoints of that lattice: AllowNone for true, AllowAll for false. Every
+// existing implementation keeps working unchanged, and the sentence below
+// about the observer applies verbatim to whichever method the component
+// implements.
 //
 // The motivating case is a UI builder's design surface: click a button
 // and it sits there like a picture. A read-only preview and a disabled
@@ -109,11 +156,57 @@ type HasBackground interface {
 // Composer.InvalidateStructure by hand.
 type Frozen interface{ Frozen() bool }
 
-// isFrozen reports whether w freezes its subtree.
-func isFrozen(w Component) bool {
-	f, ok := w.(Frozen)
-	return ok && f.Frozen()
+// FrozenAllows is Frozen's widened form: instead of "does the subtree
+// act", it answers "WHAT still acts" — see Allow.
+//
+// It embeds Frozen rather than replacing it, so the two answers cannot
+// disagree: an implementer states its base case with Frozen() and its
+// exceptions with FrozenAllow(), and frozenAllow below is the one place
+// that combines them.
+//
+// Both methods are called from inside Composer.armFrozen's computed, so
+// the subscription rule that made a bool Frozen() observable applies to
+// the allow set with nothing added: whatever FrozenAllow() reads to
+// decide becomes a dependency of the observer, and a Set on it schedules
+// a frame whose sweep sees the new SET and re-syncs on any change — not
+// only on the true/false flip.
+type FrozenAllows interface {
+	Frozen
+	// FrozenAllow is consulted only when Frozen() is true; a component
+	// that is not frozen already allows everything.
+	FrozenAllow() Allow
 }
+
+// frozenAllow is what w permits inside its subtree: AllowAll for anything
+// that does not freeze, and otherwise the host's own set.
+//
+// BOTH READS ARE HOISTED, unconditionally, above the decision. That is
+// not style: this function runs inside armFrozen's computed, so a Get
+// behind an early return drops out of the dependency set on the frames
+// where it does not execute (see prop's recordRead, and CLAUDE.md's
+// "Dependencies are recorded by the Get that actually runs"). Reading
+// FrozenAllow() only when Frozen() came back true would leave the
+// observer deaf to a change in the allow set on exactly the frames where
+// the answer is about to start mattering.
+func frozenAllow(w Component) Allow {
+	if fa, ok := w.(FrozenAllows); ok {
+		allowed := fa.FrozenAllow()
+		frozen := fa.Frozen()
+		if !frozen {
+			return AllowAll
+		}
+		return allowed
+	}
+	if f, ok := w.(Frozen); ok && f.Frozen() {
+		return AllowNone
+	}
+	return AllowAll
+}
+
+// isFrozen reports whether w freezes its subtree AT ALL. It is the bool
+// projection of frozenAllow, kept because "is anything withheld here" is
+// still the right question for a caller that does not care which door.
+func isFrozen(w Component) bool { return frozenAllow(w) != AllowAll }
 
 // Decorator is implemented by components whose Render owns no cells of
 // its own but re-styles cells that earlier siblings painted (ItemsView's

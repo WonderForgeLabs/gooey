@@ -200,9 +200,14 @@ at load, so `err != nil` proves almost nothing about which mechanism caught it.
 
 Two structural facts that constrain designs:
 
-- **Nothing may sit between a container and a named element.** `childSlot` is a
-  closed type switch; any interposed component makes the element unpatchable and
-  breaks `PatchMarkup`. This rules out per-element decorators and middleware.
+- **A container between a container and a named element must implement
+  `gooey.ChildSetter`.** `control.childSlot` asks for that interface — it used to
+  be a closed type switch over six concrete containers, which made every other
+  container break `PatchMarkup` for its whole subtree. Implementing it is one
+  method, and the rule it carries is that the index `ChildComponents` reports
+  must be an address you can write back to: a container that BUILDS its child
+  list (ItemsView's realized rows, Tabs' header-plus-page) must not implement it,
+  and patching through one stays refused by name.
 - **`PatchMarkup` redirects focus, it does not destroy it.** The caret resets to
   0, and a kept `Name` whose element type changed turns subsequent keystrokes
   into commands.

@@ -118,14 +118,20 @@ type paintNode struct {
 
 	// frozenObs is the same two-part shape applied to Frozen, and it
 	// exists only for a component that implements it: a computed whose
-	// evaluation CALLS Frozen(), so whatever properties the host reads to
-	// decide become this observer's dependencies by the ordinary call-site
-	// rule. Like visObs it is not a paint node — it never renders and never
-	// counts as damage — and its OnInvalidate only schedules a frame.
-	// frozen is the answer as of the last sweep; the sweep comparing the
-	// two is what raises structDirty.
-	frozenObs *prop.Property[bool]
-	frozen    bool
+	// evaluation CALLS Frozen() (and FrozenAllow(), where the component
+	// has one), so whatever properties the host reads to decide become
+	// this observer's dependencies by the ordinary call-site rule. Like
+	// visObs it is not a paint node — it never renders and never counts as
+	// damage — and its OnInvalidate only schedules a frame. allow is the
+	// answer as of the last sweep; the sweep comparing the two is what
+	// raises structDirty.
+	//
+	// The observed type is Allow rather than bool because the question is
+	// now "what still acts" rather than "does it act" — and Allow being a
+	// comparable bitmask is what keeps the sweep's != a single comparison,
+	// exactly as it was for the bool.
+	frozenObs *prop.Property[Allow]
+	allow     Allow
 
 	// ptrObs is the same two-part shape applied to PointerFollower, and
 	// it exists only for a component that implements it: a computed whose
@@ -480,13 +486,27 @@ func (c *Composer) armVisibility(n *paintNode) {
 // and prop.Set does not compare values, so that mirror would re-dirty the
 // composition on every no-op write.
 //
+// WIDENING THE ANSWER TO A SET CHANGED NOTHING HERE, and that is the
+// point worth recording. frozenAllow calls Frozen() and, where the
+// component has one, FrozenAllow() — both from inside this computed — so
+// a host whose allow set is `parseAllow(p.Get())` subscribes to p by the
+// same call-site rule that a bool `p.Get()` did. Had the allow set been
+// handed over as a *prop.Property[Allow] for the framework to watch, or
+// as a slice the framework diffed, the subscription would have come from
+// the DECLARATION rather than from the read, and a host whose permissions
+// are derived from two properties would have had to maintain a mirror
+// source — the same defect this design already rejected for the bool.
+//
 // The observer only ever SCHEDULES a frame. It deliberately does not raise
 // structDirty itself: an invalidation says "something Frozen() read
 // changed", not "the answer changed", and a re-sync that walks the tree,
 // stops and restarts Startables and rebuilds the focus order is far too
 // expensive to run for an answer that came back the same. Frame's sweep
-// compares against n.frozen and raises the flag only on a real flip —
+// compares against n.allow and raises the flag only on a real change —
 // exactly the division of labour between visObs and the visibility sweep.
+// With a set, "a real change" is any change to the SET and not only the
+// frozen/not flip, because a subtree that starts allowing Hover really
+// does need its watcher registrations rebuilt.
 //
 // Arming lives here rather than in the FocusManager, which is the other
 // consumer, because the FocusManager owns neither an invalidate hook nor
@@ -504,13 +524,13 @@ func (c *Composer) armFrozen(n *paintNode) {
 	if _, ok := n.w.(Frozen); !ok {
 		return
 	}
-	n.frozenObs = prop.NewComputed(func() bool { return isFrozen(n.w) })
+	n.frozenObs = prop.NewComputed(func() Allow { return frozenAllow(n.w) })
 	n.frozenObs.OnInvalidate(func() {
 		if c.invalid != nil {
 			c.invalid()
 		}
 	})
-	n.frozen = n.frozenObs.Get() // arm: record the dependency and seed the sweep
+	n.allow = n.frozenObs.Get() // arm: record the dependency and seed the sweep
 }
 
 // collect gathers the lifetime-bearing parts of one component and
@@ -519,27 +539,29 @@ func (c *Composer) armFrozen(n *paintNode) {
 // is the same walk the FocusManager makes for bindings — collected here
 // so the Composer, which owns the composition's lifetime, also owns the
 // lifetime of anything running inside it.
-// Nothing inside a Frozen subtree is started. That is the widest part of
-// freezing and the one with a safety argument rather than a UX one:
-// Companion.Start spawns a child process, so a frozen tree that still
-// started its Startables would launch a subprocess the moment a design
-// surface was handed one — an effect outside this process, from an
-// editing gesture, outliving the editor that caused it. Declining to
-// start a subtree is this walk's existing responsibility taking a new
-// input, not a new mechanism.
+// Nothing inside a Frozen subtree is started unless it says AllowStart.
+// That is the widest part of freezing and the one with a safety argument
+// rather than a UX one: Companion.Start spawns a child process, so a
+// frozen tree that still started its Startables would launch a subprocess
+// the moment a design surface was handed one — an effect outside this
+// process, from an editing gesture, outliving the editor that caused it.
+// Declining to start a subtree is this walk's existing responsibility
+// taking a new input, not a new mechanism. AllowStart is the one category
+// nothing else implies, precisely because of that argument: a host asking
+// for a live clock inside its picture has to say so by name.
 func (c *Composer) collect(w Component, prev map[Component]*paintNode, n *paintNode) {
 	// The frozen COMPONENT is not itself frozen — its subtree is — so the
 	// test is on ancestors. A design surface's own gestures keep working
 	// while nothing it contains does.
-	frozen := frozenAncestor(n)
+	starts := ancestorAllow(n).Has(AllowStart)
 	if a, ok := w.(Attacher); ok {
 		for _, at := range a.Attachments() {
-			if s, ok := at.(Startable); ok && !frozen {
+			if s, ok := at.(Startable); ok && starts {
 				c.startable = append(c.startable, s)
 			}
 		}
 	}
-	if s, ok := w.(Startable); ok && !frozen {
+	if s, ok := w.(Startable); ok && starts {
 		c.startable = append(c.startable, s)
 	}
 	if ct, ok := w.(Container); ok {
@@ -549,21 +571,30 @@ func (c *Composer) collect(w Component, prev map[Component]*paintNode, n *paintN
 	}
 }
 
-// frozenAncestor reports whether any STRICT ancestor of n freezes its
-// subtree. The paint-node chain is walked rather than a flag threaded
-// through build/collect: Startables are rare and trees are a dozen levels
-// deep, and a parameter would have to be kept correct through the reused
-// node path as well, where n.parent is reassigned on every re-sync.
-func frozenAncestor(n *paintNode) bool {
+// ancestorAllow is what n's STRICT ancestors between them permit: the
+// intersection of every frozen ancestor's allow set, AllowAll when there
+// is none.
+//
+// Intersection rather than "the outermost one wins" because with a set
+// those are different answers, and intersection is the one that cannot be
+// used to escape: a frozen host nested inside a stricter one must not be
+// able to hand out permission its container withheld. It degenerates to
+// the old boolean behaviour exactly — AllowNone intersected with anything
+// is AllowNone.
+//
+// The paint-node chain is walked rather than a flag threaded through
+// build/collect: Startables are rare and trees are a dozen levels deep,
+// and a parameter would have to be kept correct through the reused node
+// path as well, where n.parent is reassigned on every re-sync.
+func ancestorAllow(n *paintNode) Allow {
+	allow := AllowAll
 	if n == nil {
-		return false
+		return allow
 	}
 	for p := n.parent; p != nil; p = p.parent {
-		if isFrozen(p.w) {
-			return true
-		}
+		allow = allow.Intersect(frozenAllow(p.w))
 	}
-	return false
+	return allow
 }
 
 // armPointer is armVisibility's and armFrozen's third sibling, and it is
@@ -731,14 +762,23 @@ func (c *Composer) Frame() (*Frame, int) {
 			c.armPointer(n)
 		}
 		if n.frozenObs != nil {
-			if f := n.frozenObs.Get(); f != n.frozen {
-				// A flip is a STRUCTURAL change, because what it changes is
+			if a := n.frozenObs.Get(); a != n.allow {
+				// A change is a STRUCTURAL change, because what it changes is
 				// what the tree's shape means: walkNodes re-derives the
-				// Startable set through frozenAncestor, and Resync re-derives
+				// Startable set through ancestorAllow, and Resync re-derives
 				// the focus order, the scoped bindings, the mnemonics and the
 				// hover watchers. Both already run off this flag for a
 				// Dynamic container, and neither needed a new input.
-				n.frozen = f
+				//
+				// ANY change to the set, not only the frozen/not flip: a
+				// subtree that goes from AllowNone to AllowHover has the same
+				// picture and a different set of registrations, so comparing
+				// only isFrozen() here would leave the watchers stale. The
+				// cost of being conservative is a re-sync for a change that
+				// happens not to move any registration — a key class, say —
+				// and that is the right side to err on, because the sweep
+				// cannot know which categories a walk consults.
+				n.allow = a
 				c.structureChanged()
 			}
 		}
