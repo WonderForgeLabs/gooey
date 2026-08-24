@@ -36,6 +36,14 @@
     <KeyBinding Gesture="x" Command="{{.Delete}}"/>
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
+    <!-- MOVE. ctrl+ letters rather than arrows: an unclaimed arrow falls
+         through to focus navigation, so binding a bare arrow here would
+         take tab-order movement away from the panes. -->
+    <KeyBinding Gesture="ctrl+k" Command="{{.MoveUp}}"/>
+    <KeyBinding Gesture="ctrl+j" Command="{{.MoveDown}}"/>
+    <KeyBinding Gesture="ctrl+h" Command="{{.Promote}}"/>
+    <KeyBinding Gesture="ctrl+l" Command="{{.Demote}}"/>
+    <KeyBinding Gesture="ctrl+d" Command="{{.Duplicate}}"/>
 
     <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
          one invented here: "To select the parent of a current selection in

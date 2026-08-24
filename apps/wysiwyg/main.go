@@ -72,6 +72,10 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	ctrl+k, ctrl+j   move the selection up / down among its siblings
+//	ctrl+h           PROMOTE — lift the selection out to its grandparent
+//	ctrl+l           DEMOTE — nest the selection into the sibling above it
+//	ctrl+d           duplicate the selection, and select the copy
 //
 // # Selecting
 //
@@ -186,6 +190,11 @@
 // records it as Canvas.Left/Top on the element itself. Nothing here
 // invents a home for design-time state — no attribute, no comment, no
 // property element.
+//
+// The keyboard reaches all four of these without the pointer: ctrl+k and
+// ctrl+j reorder among siblings, ctrl+h promotes, ctrl+l demotes, and
+// ctrl+d duplicates. See move.go and duplicate.go; wysiwyg.gooey holds
+// the bindings, and the # Keys table above is the whole surface.
 //
 // The pointer is a second way in, never the only one. ctrl+n and ctrl+p
 // remain the whole gesture from the keyboard, which is not politeness:
@@ -1016,6 +1025,11 @@ func newEditor(fsys fs.FS) *editor {
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
 			"PrevEl":       gooey.Command(func() { ed.selectNext(-1) }),
 			"SelectParent": gooey.Command(func() { ed.selectParent() }),
+			"MoveUp":       gooey.Command(func() { ed.moveSelected(-1) }),
+			"MoveDown":     gooey.Command(func() { ed.moveSelected(1) }),
+			"Promote":      gooey.Command(func() { ed.promoteSelected() }),
+			"Demote":       gooey.Command(func() { ed.demoteSelected() }),
+			"Duplicate":    gooey.Command(func() { ed.duplicateSelected() }),
 			"ToCanvas":     gooey.Command(func() { ed.retype("Canvas") }),
 			"ToVStack":     gooey.Command(func() { ed.retype("VStack") }),
 			"BeginEdit":    gooey.Command(func() { ed.beginEdit() }),
@@ -1577,7 +1591,18 @@ func (ed *editor) addSelected() {
 	// INTO the selected container, not always at the root. See addTarget
 	// for the leaf case, which is the one that would fail silently.
 	into := ed.addTarget()
-	name := fmt.Sprintf("%s%d", spec.Name, len(into.Kids)+1)
+	// The name comes from what is IN USE, never from a count. Counting
+	// children re-issues a live name as soon as one is deleted from the
+	// middle: three adds then a delete then an add produced two
+	// <Text Name="Text3">, and the document still built, so nothing said
+	// so. Name is what markup.Find resolves against, which makes the
+	// second one unaddressable rather than merely untidy.
+	//
+	// Against ed.root, not `into`: uniqueness has to hold across the whole
+	// document because that is the scope markup.Find searches. Scoping it
+	// to the insertion parent would let two siblings-of-different-parents
+	// collide, which is the same bug in a smaller box.
+	name := uniqueName(ed.root, spec.Name)
 
 	n, err := ed.seed(spec, name)
 	if err != nil {
