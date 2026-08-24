@@ -63,6 +63,7 @@ func init() {
 
 var defText = &ElementDef{
 	Name:  "Text",
+	Icon:  "symbol-string",
 	Seed:  "<Text>Text</Text>",
 	Proto: &components.Text{},
 	Known: true,
@@ -110,6 +111,7 @@ var defText = &ElementDef{
 
 var defButton = &ElementDef{
 	Name:  "Button",
+	Icon:  "primitive-square",
 	Seed:  "<Button Content=\"Button\" Click=\"{{.Click}}\"/>",
 	Proto: &components.Button{},
 	Known: true,
@@ -175,6 +177,7 @@ var defButton = &ElementDef{
 // TakesLayout rather than by this list.
 var defCompanion = &ElementDef{
 	Name:  "Companion",
+	Icon:  "terminal",
 	Seed:  "<Companion Name=\"job\" Path=\"true\" Exited=\"{{.Exited}}\"/>",
 	Proto: &components.Companion{},
 	Known: true,
@@ -207,6 +210,7 @@ var defCompanion = &ElementDef{
 // is red if that ever happens.
 var defValidate = &ElementDef{
 	Name:         "Validate",
+	Icon:         "checklist",
 	Seed:         "<Validate Required=\"true\"/>",
 	Proto:        &Validate{},
 	Known:        true,
@@ -251,6 +255,7 @@ func validateBuiltinAttrs() []AttrSpec {
 
 var defTab = &ElementDef{
 	Name:     "Tab",
+	Icon:     "browser",
 	Known:    false,
 	Opaque:   "a pseudo-element: <Tabs> parses a <Tab>'s Header and content itself, so this definition exists only to reject one used anywhere else",
 	Children: ChildSpec{Mode: ModeUnknown},
@@ -261,6 +266,7 @@ var defTab = &ElementDef{
 
 var defBorder = &ElementDef{
 	Name:  "Border",
+	Icon:  "window",
 	Seed:  "<Border Title=\"Border\"><Text>content</Text></Border>",
 	Proto: &components.Border{},
 	Known: true,
@@ -309,6 +315,7 @@ var defBorder = &ElementDef{
 
 var defGrid = &ElementDef{
 	Name:  "Grid",
+	Icon:  "table",
 	Seed:  "<Grid Rows=\"1,1\" Cols=\"1*,1*\"><Text Grid.Row=\"0\" Grid.Col=\"0\">A</Text><Text Grid.Row=\"1\" Grid.Col=\"1\">B</Text></Grid>",
 	Proto: &components.Grid{},
 	Known: true,
@@ -345,6 +352,7 @@ var defGrid = &ElementDef{
 
 var defVStack = &ElementDef{
 	Name:  "VStack",
+	Icon:  "split-horizontal",
 	Seed:  "<VStack><Text>One</Text><Text>Two</Text></VStack>",
 	Proto: &components.VStack{},
 	Known: true,
@@ -373,6 +381,7 @@ var defVStack = &ElementDef{
 
 var defHStack = &ElementDef{
 	Name:  "HStack",
+	Icon:  "split-vertical",
 	Seed:  "<HStack Gap=\"1\"><Text>One</Text><Text>Two</Text></HStack>",
 	Proto: &components.HStack{},
 	Known: true,
@@ -401,6 +410,7 @@ var defHStack = &ElementDef{
 
 var defCanvas = &ElementDef{
 	Name:  "Canvas",
+	Icon:  "symbol-ruler",
 	Seed:  "<Canvas Width=\"24\" Height=\"6\"><Text Canvas.Left=\"1\" Canvas.Top=\"1\">Canvas</Text></Canvas>",
 	Proto: &components.Canvas{},
 	Known: true,
@@ -429,6 +439,7 @@ var defCanvas = &ElementDef{
 
 var defItemsView = &ElementDef{
 	Name:  "ItemsView",
+	Icon:  "list-unordered",
 	Seed:  "<ItemsView Items=\"{{.Items}}\" Selected=\"{{.Selected}}\"><ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate></ItemsView>",
 	Proto: &components.ItemsView{},
 	Known: true,
@@ -451,6 +462,7 @@ var defItemsView = &ElementDef{
 
 var defCheckbox = &ElementDef{
 	Name:  "Checkbox",
+	Icon:  "check",
 	Seed:  "<Checkbox Label=\"Checkbox\" Checked=\"{{.Checked}}\"/>",
 	Proto: &components.Checkbox{},
 	Known: true,
@@ -486,6 +498,7 @@ var defCheckbox = &ElementDef{
 
 var defGauge = &ElementDef{
 	Name:  "Gauge",
+	Icon:  "dashboard",
 	Seed:  "<Gauge Value=\"{{.Value}}\"/>",
 	Proto: &components.Gauge{},
 	Known: true,
@@ -523,6 +536,7 @@ var defGauge = &ElementDef{
 
 var defSparkline = &ElementDef{
 	Name:  "Sparkline",
+	Icon:  "graph-line",
 	Seed:  "<Sparkline Values=\"{{.Values}}\"/>",
 	Proto: &components.Sparkline{},
 	Known: true,
@@ -552,6 +566,7 @@ var defSparkline = &ElementDef{
 
 var defTextBox = &ElementDef{
 	Name:  "TextBox",
+	Icon:  "edit",
 	Seed:  "<TextBox Text=\"{{.Text}}\"/>",
 	Proto: &components.TextBox{},
 	Known: true,
@@ -651,6 +666,7 @@ var defTextBox = &ElementDef{
 
 var defColorPicker = &ElementDef{
 	Name:  "ColorPicker",
+	Icon:  "symbol-color",
 	Seed:  "<ColorPicker Value=\"{{.Value}}\"/>",
 	Proto: &components.ColorPicker{},
 	Known: true,
@@ -669,6 +685,7 @@ var defColorPicker = &ElementDef{
 
 var defProgressBar = &ElementDef{
 	Name:  "ProgressBar",
+	Icon:  "loading",
 	Seed:  "<ProgressBar Value=\"{{.Value}}\"/>",
 	Proto: &components.ProgressBar{},
 	Known: true,
@@ -715,6 +732,7 @@ var defProgressBar = &ElementDef{
 
 var defSpinner = &ElementDef{
 	Name:  "Spinner",
+	Icon:  "sync",
 	Seed:  "<Spinner/>",
 	Proto: &components.Spinner{},
 	Known: true,
@@ -759,6 +777,7 @@ var defSpinner = &ElementDef{
 
 var defToggle = &ElementDef{
 	Name:  "Toggle",
+	Icon:  "arrow-swap",
 	Seed:  "<Toggle Label=\"Toggle\" Checked=\"{{.Checked}}\"/>",
 	Proto: &components.Toggle{},
 	Known: true,
@@ -794,6 +813,7 @@ var defToggle = &ElementDef{
 
 var defSegmented = &ElementDef{
 	Name:  "Segmented",
+	Icon:  "list-selection",
 	Seed:  "<Segmented Options=\"One,Two\" Selected=\"{{.Selected}}\"/>",
 	Proto: &components.Segmented{},
 	Known: true,
@@ -856,6 +876,7 @@ var defSegmented = &ElementDef{
 
 var defStatusBar = &ElementDef{
 	Name:         "StatusBar",
+	Icon:         "layout-statusbar",
 	Seed:         "<StatusBar Left=\"left\" Center=\"center\" Right=\"right\"/>",
 	DynamicAttrs: "the three slots are consumed by ranging over statusSections, so no read names a literal",
 	Proto:        &components.StatusBar{},
@@ -878,6 +899,7 @@ var defStatusBar = &ElementDef{
 
 var defTabs = &ElementDef{
 	Name:  "Tabs",
+	Icon:  "multiple-windows",
 	Seed:  "<Tabs><Tab Header=\"One\"><Text>First</Text></Tab><Tab Header=\"Two\"><Text>Second</Text></Tab></Tabs>",
 	Proto: &components.Tabs{},
 	Known: true,
@@ -895,6 +917,7 @@ var defTabs = &ElementDef{
 
 var defButtonBar = &ElementDef{
 	Name:  "ButtonBar",
+	Icon:  "tools",
 	Seed:  "<ButtonBar><Button Content=\"One\"/><Button Content=\"Two\"/></ButtonBar>",
 	Proto: &components.ButtonBar{},
 	Known: true,
@@ -921,6 +944,7 @@ var defButtonBar = &ElementDef{
 
 var defMenuBar = &ElementDef{
 	Name:  "MenuBar",
+	Icon:  "layout-menubar",
 	Seed:  "<MenuBar><Menu Title=\"File\"><MenuItem Text=\"Open\"/></Menu></MenuBar>",
 	Proto: &components.MenuBar{},
 	Known: true,
@@ -936,6 +960,7 @@ var defMenuBar = &ElementDef{
 
 var defToastHost = &ElementDef{
 	Name:  "ToastHost",
+	Icon:  "bell",
 	Seed:  "<ToastHost Width=\"18\" Height=\"3\"/>",
 	Proto: &components.ToastHost{},
 	Known: true,
@@ -966,6 +991,7 @@ var defToastHost = &ElementDef{
 
 var defAdornmentLayer = &ElementDef{
 	Name:     "AdornmentLayer",
+	Icon:     "layers",
 	Seed:     "<AdornmentLayer Width=\"18\" Height=\"3\"/>",
 	Proto:    &components.AdornmentLayer{},
 	Known:    true,
@@ -980,6 +1006,7 @@ var defAdornmentLayer = &ElementDef{
 
 var defTooltip = &ElementDef{
 	Name:  "Tooltip",
+	Icon:  "comment",
 	Seed:  "<Tooltip Text=\"Tooltip\"/>",
 	Proto: &components.Tooltip{},
 	Known: true,
@@ -1022,6 +1049,7 @@ var defTooltip = &ElementDef{
 
 var defValidationMarker = &ElementDef{
 	Name:  "ValidationMarker",
+	Icon:  "warning",
 	Seed:  "<ValidationMarker Error=\"{{.Error}}\"/>",
 	Proto: &components.ValidationMarker{},
 	Known: true,
@@ -1055,6 +1083,7 @@ var defValidationMarker = &ElementDef{
 
 var defKeyBinding = &ElementDef{
 	Name:  "KeyBinding",
+	Icon:  "record-keys",
 	Seed:  "<KeyBinding Gesture=\"ctrl+k\" Command=\"{{.Command}}\"/>",
 	Proto: &gooey.KeyBinding{},
 	Known: true,
@@ -1078,6 +1107,7 @@ var defKeyBinding = &ElementDef{
 
 var defTimer = &ElementDef{
 	Name:  "Timer",
+	Icon:  "watch",
 	Seed:  "<Timer Interval=\"1s\" Tick=\"{{.Tick}}\"/>",
 	Proto: &components.Timer{},
 	Known: true,
@@ -1119,6 +1149,7 @@ var defTimer = &ElementDef{
 
 var defTypeAhead = &ElementDef{
 	Name:  "TypeAhead",
+	Icon:  "search",
 	Seed:  "<TypeAhead Key=\"f\"/>",
 	Proto: &components.TypeAhead{},
 	Known: true,
@@ -1165,6 +1196,7 @@ var defTypeAhead = &ElementDef{
 
 var defImage = &ElementDef{
 	Name:  "Image",
+	Icon:  "file-media",
 	Seed:  "<Image Src=\"{{.Src}}\" Cols=\"8\" Rows=\"4\"/>",
 	Proto: &components.Image{},
 	Known: true,

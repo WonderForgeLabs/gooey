@@ -255,6 +255,16 @@ type ElementSpec struct {
 	// and NOT the same statement as Children.Mode == ModeLeaf.
 	Body     *BodySpec
 	Children ChildSpec
+	// Icon names an icon for this element in the CONSUMER's icon set —
+	// no directory, no extension, no colour. See ElementDef.Icon for
+	// why it is a name rather than a picture: rasterizing one needs the
+	// nested imagefmt/svg module, and a field that carried an image
+	// would put a vector renderer in core's dependency graph.
+	//
+	// Empty means the element declares no icon. A palette must render
+	// that as an absence rather than substituting a default, for the
+	// same reason AttrsKnown false is not "no attributes".
+	Icon string
 	// Seed is the markup a palette should insert for a new instance of
 	// this element — see ElementDef.Seed for the contract. Empty for an
 	// element nobody has seeded, which TestEverySeededElementLoadsAnd

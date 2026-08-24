@@ -1,0 +1,21 @@
+These SVG files are Codicons, Visual Studio Code's icon set.
+
+    Source:    https://github.com/microsoft/vscode-codicons
+    Copyright: (c) Microsoft Corporation
+    License:   CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+
+Fetched from src/icons/ in that repository, unmodified on disk. The
+activitybar package substitutes the documents' fill="currentColor" for a
+concrete colour before rasterizing, which is a render-time substitution
+and not a change to these files.
+
+browser.svg and window.svg are byte-identical, and that is upstream's
+doing rather than a bad copy here: Codicons ships `browser` as an alias
+of `window`, and both src/icons/ files hash to
+f2ed5124abc7b6231c7fd47a4f516369. Both names are kept because a catalog
+name IS a filename here. TestShippedIconsAreDistinctAssets hashes this
+directory and carries that pair as its one recorded allowance, so a
+genuinely mis-copied glyph still reddens.
+
+CC BY 4.0 permits use and modification, commercial included, and requires
+attribution — which is what this file is. Keep it beside the icons.
