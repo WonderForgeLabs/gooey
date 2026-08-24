@@ -4,7 +4,7 @@
       <FeedList   Grid.Col="0" Feeds="{{.Feeds}}"     Selected="{{.SelFeed}}"  SelectionChanged="{{.ResetStory}}" Title="feeds"/>
         <Grid Grid.Row="0" Grid.Col="1" Rows="*,*">
             <StoryList Grid.Row="0" Stories="{{.Stories}}" Selected="{{.SelStory}}" Read="{{.Read}}" Open="{{.OpenStory}}" Title="stories"/>
-            <ReaderPane Grid.Row="1" Story="{{.Current}}"   Title="reader"/>
+            <ReaderPane Grid.Row="1" Story="{{.Current}}"   Scroll="{{.ArticleScroll}}" Title="reader"/>
         </Grid>
     </Grid>
 
