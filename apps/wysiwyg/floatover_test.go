@@ -165,7 +165,7 @@ func TestTheEditorFollowsTheSelection(t *testing.T) {
 // it, so the assertion has to be about geometry.
 func TestTheEditorIsNeverAZeroSizedInput(t *testing.T) {
 	ed, c, p := propsPane(t)
-	tb := theTextBox(t, c.Root())
+	tb := theTextBox(t, ed)
 	ed.sel = ed.doc().Kids[1]
 	ed.rebuild()
 	c.Frame()
@@ -206,7 +206,7 @@ func TestTheEditorIsNeverAZeroSizedInput(t *testing.T) {
 // that opens the editor, before any frame has run.
 func TestClosingTakesTheEditorOutOfTheTabOrder(t *testing.T) {
 	ed, c, p := propsPane(t)
-	tb := theTextBox(t, c.Root())
+	tb := theTextBox(t, ed)
 	fm := c.Focus()
 
 	fm.SetFocus(p.list)
@@ -997,7 +997,7 @@ func TestTheStepperMovesANumberWithoutATextBox(t *testing.T) {
 	if p.Mode() != editStepper {
 		t.Fatalf("Width opened %v, want the stepper", p.Mode())
 	}
-	tb := theTextBox(t, c.Root())
+	tb := theTextBox(t, ed)
 	if b := tb.Bounds(); b.W > 0 && b.H > 0 {
 		t.Errorf("the stepper put a caret at %+v; a number does not need a text box", b)
 	}
