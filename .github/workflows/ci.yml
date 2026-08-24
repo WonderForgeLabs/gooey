@@ -473,23 +473,39 @@ jobs:
       # Using the image's Go means the version is no longer pinned by
       # go.mod, so it is CHECKED instead — see the step below. Losing the
       # pin silently is the trade this refuses to make.
-      # `contract` only ever builds the ROOT module (buf via `go tool`, then
-      # the generated clients), so unlike the test legs a root-only check is
-      # the whole truth here.
-      - name: Check the image's Go satisfies go.mod
+      # TWO modules, not one. `contract` builds the root module (the
+      # generated clients) and `tools` (buf, whose `tool` directive lives
+      # there so that importing gooey does not oblige you to buf's
+      # dependency graph — see tools/doc.go). `tools` declares the higher
+      # `go` directive of the two, so a root-only check here would report
+      # "compatible" and then fail in the buf build with the toolchain
+      # error this step exists to pre-empt.
+      - name: Check the image's Go satisfies both modules
         run: |
           set -u
           have=$(go env GOVERSION)          # e.g. go1.26.6
-          want=$(go mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
           echo "image toolchain: $have"
-          echo "go.mod requires: go$want"
-          printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C || {
-            echo "::error::runner image ships $have but go.mod requires go$want"
-            exit 1
-          }
 
-      # buf runs as `go tool buf`, NOT `go run …/buf@v1.72.0`, and the
-      # difference is the whole reason this job used to take nine minutes.
+          bad=0
+          for m in . tools; do
+            want=$(go -C "$m" mod edit -json | sed -n 's/.*"Go": "\([^"]*\)".*/\1/p')
+            if [ -z "$want" ]; then
+              echo "::error::$m — could not read a go directive from its go.mod"
+              bad=1
+              continue
+            fi
+            if printf '%s\n%s\n' "$want" "${have#go}" | sort -V -C; then
+              echo "  ok  $m needs go$want"
+            else
+              echo "::error::$m requires go$want but the runner image ships $have"
+              bad=1
+            fi
+          done
+          [ "$bad" -eq 0 ] || exit 1
+
+      # buf comes from a `tool` directive, NOT from `go run …/buf@v1.72.0`,
+      # and the difference is the whole reason this job used to take nine
+      # minutes.
       #
       # From `go help run`: when the first argument has a version suffix,
       # `go run` "builds the program in module-aware mode, IGNORING the
@@ -503,12 +519,33 @@ jobs:
       # the first one had already paid for the whole acquisition. None of
       # the 391s was linting.
       #
-      # `go tool buf` reads the `tool` directive in the root go.mod (Go
-      # 1.24+; go.mod is well past that), so it resolves through the main
-      # module and therefore through `vendor/`. Verified rather than
+      # `go tool buf` reads a `tool` directive, so it resolves through the
+      # main module and therefore through `vendor/`. Verified rather than
       # assumed: with an EMPTY GOMODCACHE and GOPROXY=off — the check
       # CLAUDE.md insists on, because GOPROXY=off alone still reads your
-      # warm cache — `go tool buf --version` builds and prints 1.72.0.
+      # warm cache — it builds and prints 1.72.0.
+      #
+      # The directive lives in `tools`, NOT the root module, and that is
+      # load-bearing rather than tidiness: a `tool` directive drags the
+      # tool's whole dependency graph into the go.mod holding it as
+      # `// indirect` requires, and MVS hands those to every consumer of
+      # that module. In the root go.mod it meant importing gooey obliged
+      # you to buf, Docker's CLI, quic-go, cel-go and ~90 more, and forced
+      # upgrades of anything you shared with them. tools/doc.go carries
+      # the full reasoning; `TestToolDirectivesStayOffTheImportableModules`
+      # is what keeps it from drifting back.
+      #
+      # So buf is BUILT from `tools` and then RUN from the repo root,
+      # rather than invoked as `go -C tools tool buf`. cwd is the reason:
+      # `buf generate` resolves proto/buf.gen.yaml's `out:` paths against
+      # the working directory, so running it from tools/ would write every
+      # generated client into tools/. Building the binary keeps all three
+      # invocations below exactly where they were, paths unchanged.
+      - name: Build buf from the tools module
+        run: |
+          set -u
+          go -C tools build -o "$RUNNER_TEMP/buf" github.com/bufbuild/buf/cmd/buf
+          "$RUNNER_TEMP/buf" --version
       #
       # Second thing it buys: the version stops being three string literals
       # here plus a fourth in proto/buf.gen.yaml's header, free to drift
@@ -522,7 +559,8 @@ jobs:
       # dependency — which is the half that has been hanging on the Nexus
       # mirror's HTTP 523s — not the job's.
       - name: Proto lint
-        run: go tool buf lint proto
+        run: |
+          "$RUNNER_TEMP/buf" lint proto
 
       # Fetch main into a neutral local branch so the comparison works
       # both on PRs (against the target) and on pushes to main itself
@@ -530,7 +568,7 @@ jobs:
       - name: Proto breaking against main
         run: |
           git fetch origin main:refs/heads/ci-buf-breaking-base
-          go tool buf breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
+          "$RUNNER_TEMP/buf" breaking proto --against '.git#branch=ci-buf-breaking-base,subdir=proto'
 
       # Committed generated code must be exactly what the pinned plugins
       # produce, and ONLY that — the diff below is scoped to the `out:`
@@ -574,7 +612,7 @@ jobs:
       # itself against an independent parse of proto/buf.gen.yaml.
       - name: Generated code drift
         run: |
-          go tool buf generate --template proto/buf.gen.yaml
+          "$RUNNER_TEMP/buf" generate --template proto/buf.gen.yaml
 
           # `out:` lines only: some leading whitespace then the literal
           # key, so a comment (`#` right after the indent) never matches,
