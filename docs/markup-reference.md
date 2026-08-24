@@ -528,6 +528,8 @@ Auto-dismiss follows the Timer discipline: the goroutine posts the dismissal to 
 
 Declare it as the **last child of the root**, spanning the page — the same hosting rule as `ToastHost` (declare it after the ToastHost and tooltips paint above toasts too). It takes no children and no attributes beyond `Name`: adornments attach themselves at runtime (a `Tooltip` finds the layer on its own), and code adds custom adorners through `Add`/`Remove`. The layer paints nothing, is transparent to the pointer, and re-anchors every adornment each frame, so a moved or resized target drags its adornments along and a target that leaves the tree or turns non-visible takes them down.
 
+**Free adornments are the exception to that last clause.** An adornment implementing `gooey.PointerFollower` is positioned against the **pointer** rather than a component: it has no anchor, so nothing can take it down but its owner, and its `Place` receives the pointer's 1x1 cell. That is what makes drag ghosts, drop indicators, marquee rectangles and crosshairs expressible ([#177](https://github.com/WonderForgeLabs/gooey/issues/177), [spec](specs/2026-08-23-free-adornments.md)). There is no markup element for one — a free adornment is raised and dismissed inside a gesture, from code — and `components.DragGhost` is the shipped example. Pointer motion costs nothing while nothing is following; see [concepts/overlays.md](learn/concepts/overlays.md).
+
 ### Tooltip
 
 `components.Tooltip` — hover help on any element, from pure markup. Two forms:
