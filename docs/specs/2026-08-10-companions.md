@@ -102,21 +102,32 @@ prints on the way out is readable. Mechanically it is defer order in
 | a companion exits inside the grace window | before the screen | same | `*CompanionError{Phase: PhaseStart}` |
 | a companion exits with an error mid-run | running | quit the loop | `*CompanionError{Phase: PhaseRun, Err: …}` |
 | a companion exits **zero** mid-run | running | quit the loop | `*CompanionError{Phase: PhaseRun, Err: nil}` |
+| the terminal's input decoder dies | running | quit the loop | `terminal input stopped: <decoder error>` |
 | quit key, `Quit()`, cancelled ctx, SIGINT/SIGTERM | teardown | cancel, wait (bounded) | `nil` or `*SignalError` |
 | a companion ignores its cancelled context | teardown | give up after `WithCompanionStopTimeout` (10s), set `CompanionLeaked()` | unchanged |
 | panic | teardown | restore terminal, stop companions, re-panic | (panics) |
 | `Suspend` | during | **nothing** — companions keep running | — |
 
-Two rows deserve their reasons.
+Three rows deserve their reasons.
 
 **A clean exit mid-run is a failure.** A service that decides it is
 finished while its app is still on screen has failed at being a service,
 silently, which is worse than crashing. `CompanionError` with a nil
 `Err` is not a contradiction; it is that event, named.
 
-**A dead companion outranks a signal** in `exitErr`. Where both happened,
-the signal is usually the shell reacting to the same underlying failure,
-and the companion is the fact that explains it.
+**A dead decoder is a failure, not a quiet app.** When terminal input
+stops there is nothing left to drive the UI, so an App that kept running
+would be on screen and permanently deaf — the one outcome worse than
+exiting, because the user cannot even quit. `Run` returns the decoder's
+error wrapped as `terminal input stopped: …` rather than `nil`, since
+`nil` is how a caller decides nothing went wrong.
+
+**A dead companion outranks a dead decoder, which outranks a signal.**
+`exitErr` returns the first non-nil of `compErr`, `termErr`, `exitSig`,
+and the order is the causal one: where more than one happened, the signal
+is usually the shell reacting to the same underlying failure, and a
+decoder that died because the terminal went away is downstream of
+whatever took it away. The companion is the fact that explains the rest.
 
 **Nothing restarts.** A companion is a service, not a job. Supervision
 policy — backoff, restart limits, health checks — is a real design space
