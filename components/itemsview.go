@@ -338,6 +338,43 @@ func sameRows(a, b []*itemRow) bool {
 	return true
 }
 
+// RowBounds is where item i is currently arranged, and whether it is
+// realized at all — the seam an EDITOR OVER A CELL needs. A property
+// grid does not make its rows focusable (the view is one focus stop, by
+// design); it paints them and floats an edit control over the selected
+// one, which is what Visual Studio's grid does and what an in-cell caret
+// means here. That overlay has to be placed somewhere, and the only
+// component that knows where a row landed is this one.
+//
+// Realization is windowed, so the answer is false for an item outside
+// the visible window — it has no rect, rather than a zero one, and the
+// caller must not paint an editor at 0,0 for a row that scrolled away.
+//
+// A row arranged to NOTHING reports false for the same reason, and the
+// case that reaches it is WIDTH: window() floors the visible count by
+// rowH, so a realized row always has its full height, but a view
+// arranged with W:0 realizes its rows and places them at W:0. That is
+// the shape of the bug this seam sits next to — a pane where a greedy
+// list left a sibling arranged at zero size, every unit working
+// perfectly and nothing on screen — so it is checked rather than
+// assumed. (A test written against a zero-HEIGHT view proves nothing:
+// window() realizes no rows at all, so there is nothing to ask about.)
+//
+// This is a LAYOUT question and the reads inside it are plain reads: an
+// owner calls it from its own Arrange, outside any evaluation, so no
+// dependency is recorded. Calling it from a Render would subscribe to
+// nothing useful either way — a row's bounds are not a property.
+func (v *ItemsView) RowBounds(i int) (gooey.Rect, bool) {
+	for _, r := range v.rows {
+		if r.index != i {
+			continue
+		}
+		b := r.Bounds()
+		return b, b.W > 0 && b.H > 0
+	}
+	return gooey.Rect{}, false
+}
+
 func (v *ItemsView) place(b gooey.Rect) {
 	y := b.Y
 	for _, r := range v.rows {

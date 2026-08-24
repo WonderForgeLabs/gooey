@@ -781,6 +781,13 @@ type editor struct {
 	// something to invalidate on.
 	rev *prop.Property[int]
 
+	// props is the PROPERTIES pane's editing surface — the thing that
+	// floats an editor over the selected inspector row. It is set when
+	// the page is built (newValueEditor registers itself here), so it is
+	// nil for an editor that has never mounted a page and every caller
+	// checks. See properties.go.
+	props *valueEditor
+
 	// fsys is where the page and every pane's markup is read from.
 	fsys fs.FS
 	// art is the panel frame cache, ONE per app: it is keyed by size and
@@ -1040,6 +1047,12 @@ func newEditor(fsys fs.FS) *editor {
 			return map[string]any{
 				"Mark": mark, "Name": name, "Kind": r.kind,
 				"Legal": r.legal, "Value": r.value,
+				// The EDITOR AFFORDANCE, derived from the Kind through
+				// the per-Kind table in editors.go and never listed
+				// here: "…" for a value you cannot type correctly from
+				// memory, "▾" for a finite list, "⇕" for a number, and
+				// a bang for a Kind nobody gave an editor.
+				"More": rowAffordance(r),
 			}
 		})
 	})
@@ -1152,6 +1165,10 @@ func newEditor(fsys fs.FS) *editor {
 		},
 		Components: map[string]markup.Builder{
 			"Preview": preview.Builder(ed.pv),
+			// The PROPERTIES pane's editing surface. It wraps the
+			// inspector list and floats a per-Kind editor over the
+			// selected row; see properties.go.
+			"ValueEditor": ValueEditorBuilder(ed),
 			// One Art per app: the frame cache is keyed by size and colour,
 			// so panes of the same size share a raster.
 			"Panel": panel.Builder(ed.art),
@@ -1389,61 +1406,6 @@ func isModified(a markup.AttrSpec, value string) bool {
 		return false
 	}
 	return value != a.Default
-}
-
-// valueSet is the per-Kind editor, expressed as data rather than as a
-// widget: the finite list of values an attribute may take, or nil where
-// it is free text.
-//
-// Every list comes from the RUNNING app, which is the point. A style
-// list that was a hardcoded table would offer names the app does not
-// have and omit the ones it does; asking Context.Styles cannot. Three of
-// the four introspection questions meet here — the catalog says what the
-// attribute is, Context.Styles says which styles exist, Context.Values
-// says which commands do — and a property grid is those three answers in
-// rows.
-//
-// The dispatch is a switch on a string Kind. No reflection, and the same
-// mechanism markup.Bound uses.
-func (ed *editor) valueSet(a markup.AttrSpec) []string {
-	switch a.Kind {
-	case markup.KindEnum:
-		return a.Enum
-	case markup.KindBool:
-		return []string{"true", "false"}
-	case markup.KindStyle:
-		return sortedKeys(ed.docCtx.Styles)
-	case markup.KindCommand:
-		return ed.commandBindings()
-	}
-	return nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// commandBindings is every bindable name that is actually an Action,
-// spelled the way it has to be written in markup. A Click= offered a
-// name that is not a command would produce a load error from a list the
-// editor itself supplied.
-//
-// gooey.Action is an interface, so this is a type assertion — the test
-// the framework already applies to the same values, not reflection.
-func (ed *editor) commandBindings() []string {
-	var out []string
-	for name, v := range ed.docCtx.Values {
-		if _, ok := v.(gooey.Action); ok {
-			out = append(out, "{{."+name+"}}")
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // cycle is the list enter walks for a row: the legal values, preceded by
@@ -2039,83 +2001,29 @@ func (ed *editor) selectedRow() (attrRow, bool) {
 // beginEdit is enter on a row, and it DISPATCHES BY KIND — which is what
 // "behave like the Visual Studio property grid" decomposes into.
 //
-// A row with a finite value set advances to the next one and commits.
-// Typing "Center" into a field that accepts four literals is the
-// terminal impersonating a text editor for something that is a choice,
-// and it is how a typo becomes a load error instead of an impossibility.
-// Everything else loads the text input as before.
-//
-// The text path stays reachable for every row through `e`
-// (editSelectedAsText), because a cycling editor must not be the only
-// way in: KindStyle and KindCommand are BindsEither, so the finite list
-// is the common case and not the whole grammar.
+// The dispatch itself, and every editor it opens, live in properties.go
+// and editors.go. What stays here is the binding: <ItemsView Activate=>
+// resolves {{.BeginEdit}} to this, and this hands the row to the pane's
+// editing surface, which floats the right editor OVER the row rather
+// than loading it into a text box in a fixed track at the bottom of the
+// panel — the arrangement this replaced, where the value you were
+// editing appeared some forty rows from the row you had selected.
 func (ed *editor) beginEdit() {
-	r, ok := ed.selectedRow()
-	if !ok {
+	if ed.props == nil {
 		return
 	}
-	if len(r.cycle()) > 0 {
-		ed.cycleValue(r)
-		return
-	}
-	ed.editAsText(r)
+	ed.props.Open()
 }
 
-// editSelectedAsText is the escape hatch: the raw value in the text
-// input, whatever the Kind.
+// editSelectedAsText is the escape hatch: the raw value in a caret
+// editor, whatever the Kind. A per-Kind editor must not be the only way
+// in — KindStyle and KindCommand are BindsEither, so their finite lists
+// are the common case and not the whole grammar.
 func (ed *editor) editSelectedAsText() {
-	if r, ok := ed.selectedRow(); ok {
-		ed.editAsText(r)
-	}
-}
-
-func (ed *editor) editAsText(r attrRow) {
-	ed.editName.Set(r.name)
-	ed.editValue.Set(r.value)
-	ed.describe(r)
-}
-
-// cycleValue advances a finite-valued attribute to its next value and
-// commits immediately. There is nothing to confirm: every member of the
-// cycle came from the catalog or the live context, so all of them build.
-func (ed *editor) cycleValue(r attrRow) {
-	_, _, target := ed.target()
-	if target == nil {
+	if ed.props == nil {
 		return
 	}
-	vals := r.cycle()
-	next := vals[0]
-	for i, v := range vals {
-		if v == r.value {
-			next = vals[(i+1)%len(vals)]
-			break
-		}
-	}
-	// The same body route commitEdit takes, and for the same reason: the
-	// body is a FIELD, so "" clears it by assignment rather than by
-	// delete, and writing it into Attrs would put a "(text)" attribute
-	// into the markup that no element declares.
-	//
-	// Unreachable today — the body row is built without values, so
-	// cycle() returns nil and the caller never gets here — but nothing
-	// states that as a rule, and the row already carries the flag. A
-	// BodySpec with a finite value set would land the write in the wrong
-	// place with no error.
-	if r.body {
-		target.Body = next
-	} else if next == "" {
-		delete(target.Attrs, r.name)
-	} else {
-		target.Attrs[r.name] = next
-	}
-	// Keep the text input pointed at the row being cycled, so `e` and the
-	// input agree with what the list is showing.
-	ed.editName.Set(r.name)
-	ed.editValue.Set(next)
-	ed.rebuild()
-	if r2, ok := ed.selectedRow(); ok {
-		ed.describe(r2)
-	}
+	ed.props.OpenAsText()
 }
 
 // describe fills the description pane: Doc where the catalog has prose,
@@ -2148,29 +2056,18 @@ func (ed *editor) describe(r attrRow) {
 	ed.editDoc.Set(head)
 }
 
+// commitEdit is what the caret editor's Changed binding runs: every
+// keystroke in the floated TextBox writes the attribute, so the document
+// follows the key rather than waiting for enter.
+//
+// It routes through valueEditor.Write, which is the pane's ONE mutation
+// seam — the target is re-resolved rather than cached (undo replaces the
+// node tree wholesale, so a captured pointer dangles) and the write ends
+// in ed.rebuild(), which is the choke point undo, the preview, the
+// outline and the CODE tab all hang off.
 func (ed *editor) commitEdit() {
-	name := ed.editName.Get()
-	if name == "" {
+	if ed.props == nil {
 		return
 	}
-	_, _, target := ed.target()
-	if target == nil {
-		return
-	}
-	v := ed.editValue.Get()
-	// The body is a field, not a map entry, so "" clears it by assignment
-	// rather than by delete — and it must be matched on the row's flag
-	// route, not on the name alone, or an element that ever grows a real
-	// attribute spelled like BodyRowName would write to the wrong place.
-	if r, ok := ed.selectedRow(); ok && r.body && r.name == name {
-		target.Body = v
-		ed.rebuild()
-		return
-	}
-	if v == "" {
-		delete(target.Attrs, name)
-	} else {
-		target.Attrs[name] = v
-	}
-	ed.rebuild()
+	ed.props.Write(ed.editValue.Get())
 }
