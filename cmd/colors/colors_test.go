@@ -151,17 +151,26 @@ func variant(t *testing.T, fsys fstest.MapFS, name, old, new string) string {
 // The three arms separate the two causes, because the shipped number alone
 // cannot tell them apart:
 //
-//	shipped                      14 — every component on the page
+//	shipped                      13 — every component on the page but one
 //	Border style unbound          9 — the components that actually read accent
 //	Border accent-bound, no Bg   10 — those nine, plus the Border itself
 //
 // So nine components read the accent, and the tenth is the Border that
-// wears it. The remaining four repaint for a reason that has nothing to do
+// wears it. The remaining three repaint for a reason that has nothing to do
 // with the property graph: a container that repaints AND carries a
 // declared Background fills its bounds and is marked `covered`, which
 // forces its whole subtree to repaint above it in the same frame
 // (composer.go:263-299). Dropping either half of that pair — the binding
 // or the Background — takes the page off the full-tree path.
+//
+// The page holds FOURTEEN paint nodes and the covered Border reaches all
+// of them, so "wholly" used to mean fourteen. The one that no longer
+// repaints is the <Canvas>: it declares no Background, so its paint node
+// fills nothing and its Render owns no cells, and since #361 a cell-less
+// container is exempt from the force-from-below (gooey.CellPassthrough)
+// on both z-order passes. Its children are forced individually and still
+// repaint — the exemption stops at the node that owns nothing, which is
+// why this arm moved by exactly one and the other two did not move at all.
 //
 // This is not a bug and the page is not changed to avoid it: an
 // accent-colored frame around a filled surface is what the demo is for.
@@ -179,7 +188,7 @@ func TestAccentRepaintsTheWholePageAndWhy(t *testing.T) {
 		page string
 		want int
 	}{
-		{"the shipped page repaints wholly", "colors.gooey", 14},
+		{"the shipped page repaints wholly", "colors.gooey", 13},
 		{"only nine components read the accent", unbound, 9},
 		{"without a Background the subtree is not forced", noBg, 10},
 	} {
