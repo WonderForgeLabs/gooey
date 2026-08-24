@@ -246,6 +246,11 @@ type articleBody struct {
 	gooey.FocusState
 	story  *prop.Property[*Story]
 	scroll components.Scroller
+
+	// The last wrap, and the two things it depended on. See lines.
+	wrapStory *Story
+	wrapWidth int
+	wrapped   []articleLine
 }
 
 // articleLine is one laid-out display line: text already wrapped to the
@@ -264,9 +269,26 @@ type articleLine struct {
 // everywhere in gooey: from Render it subscribes the pane to the story,
 // from a key handler it is a plain read.
 func (w *articleBody) lines(width int) []articleLine {
+	// The Get stays ABOVE the cache check, and that placement is the
+	// whole correctness argument for caching here at all. Called from
+	// Render this Get IS the pane's subscription to the story, so a
+	// cache that returned early before reaching it would drop the
+	// dependency on exactly the frames that hit — and the pane would go
+	// deaf to the story changing, with no error and no panic, just a
+	// stale article. Reaching the Get is cheap; wrapping is what is not.
 	s := w.story.Get()
 	if s == nil {
 		return nil
+	}
+	// Pointer identity is a sound key, not a convenient one. `current`
+	// (main.go) is a computed that returns &s for a per-iteration copy,
+	// so it hands back a FRESH pointer every time it re-evaluates, and
+	// it re-evaluates exactly when the story or the selection changes.
+	// Same pointer therefore implies same content; changed content
+	// implies a new pointer. Nothing writes through a *Story after the
+	// computed makes it.
+	if s == w.wrapStory && width == w.wrapWidth {
+		return w.wrapped
 	}
 	out := make([]articleLine, 0, 16)
 	for _, ln := range wrap(s.Title, width) {
@@ -282,6 +304,7 @@ func (w *articleBody) lines(width int) []articleLine {
 	for _, ln := range wrap(s.Body, width) {
 		out = append(out, articleLine{ln, render.Style{}})
 	}
+	w.wrapStory, w.wrapWidth, w.wrapped = s, width, out
 	return out
 }
 
