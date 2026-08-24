@@ -43,7 +43,9 @@ import (
 // container never forces its own descendants (its chrome never covers
 // their cells — that contract is why containers may skip pre-clearing),
 // and cell-less overlays are never forced from below. A Decorator is
-// re-applied after an underlying repaint; a CellPassthrough is not.
+// re-applied after an underlying repaint; a CellPassthrough is not — and
+// "cell-less" is asked of the instance, since a container carrying a
+// declared Background is filled by the framework and owns its bounds.
 // This is what makes container backgrounds, hidden containers, and
 // overlapping Canvas children all repaint correctly.
 //
@@ -941,9 +943,29 @@ func decoratesCells(w Component) bool {
 	return ok
 }
 
+// cellPassthrough reports whether w's paint node puts nothing on the
+// cell plane — the test both z-order passes use to skip a node that has
+// nothing to restore and nothing to be restored.
+//
+// Declaring the interface is necessary but NOT sufficient, and the
+// difference is not academic: a container that also declares a
+// Background is FILLED by its own paint node (the backgroundProp branch
+// in build, which is also what marks it `covered`), so it owns every
+// cell in its bounds. Canvas is exactly that shape — a transparent
+// positioning surface until an author gives it a colour — so the
+// question has to be put to the INSTANCE, not to the type.
+//
+// Skipping a filled container leaves a permanent scar. An overlay that
+// is its SIBLING clears to the nearest ancestor's background, which is
+// not the filled container's, and with the container exempt from
+// restoreUnder nothing repaints the vacated cells at all — zero
+// components painted, the fill gone for good.
+// TestCellPassthroughStopsAtADeclaredBackground pins it.
 func cellPassthrough(w Component) bool {
-	_, ok := w.(CellPassthrough)
-	return ok
+	if _, ok := w.(CellPassthrough); !ok {
+		return false
+	}
+	return backgroundProp(w) == nil
 }
 
 // clearStyle is what a node's rect clears TO: blank cells styled with the

@@ -122,6 +122,12 @@ type Decorator interface{ DecoratesCells() }
 // CellPassthrough is implemented by transparent containers whose Render
 // neither owns nor re-styles cells. Their paint nodes never need to be
 // restored when an overlay leaves a region.
+//
+// The claim is about the TYPE's Render; the Composer still checks the
+// INSTANCE, because a container that declares a Background is filled by
+// the framework and owns its bounds however empty its Render is. A
+// Canvas implements this and is a passthrough only while it has no
+// colour — see cellPassthrough in composer.go.
 type CellPassthrough interface{ PassesCellsThrough() }
 
 // backgroundProp returns w's declared background handle, or nil when w
