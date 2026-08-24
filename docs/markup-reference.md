@@ -1272,7 +1272,7 @@ A builder resolves its own attributes through the same four functions the built-
 
 A `Builder` is a func, and a func is opaque. An element registered through `Context.Components` therefore contributes **a name and nothing else**: `Catalog()` reports it as `AttrsKnown: false`, and — the half that costs you — attribute checking declines on it entirely, so a typo is accepted, ignored, and reported nowhere.
 
-`Context.Elements` takes the same `*markup.ElementDef` the built-ins use, so a host component gets the built-in experience: catalog description, `Required`/`GoType` a palette can seed from, and unknown-attribute errors with near-miss suggestions.
+`Context.Elements` takes the same `*markup.ElementDef` the built-ins use, so a host component gets the built-in experience: catalog description, a `Seed` a palette inserts, and unknown-attribute errors with near-miss suggestions.
 
 ```go
 Elements: map[string]*markup.ElementDef{
@@ -1283,10 +1283,19 @@ Elements: map[string]*markup.ElementDef{
             GoType: "int", Required: true, Origin: markup.OriginRegistered,
         }},
         Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+        Seed:     `<ActivityBar Sel="{{.Sel}}"/>`,
         Build:    myBuilder,
     },
 }
 ```
+
+**`Seed` is what a palette inserts**, and a registered element owes one just as a built-in does. It is markup, not an inference: what a new instance should look like has to cover more than attributes, because an empty `<VStack>` measures nothing whatever its attributes say — and an element that measures 0×0 is invisible on a canvas and unselectable, so a user cannot fix it by hand.
+
+Refer to a bind-only attribute by its **bare** name — `{{.Sel}}`. `markup.Seeded` rewrites that to `{{.<instance>_Sel}}` and returns a placeholder value to register under the same key, which is what stops two instances sharing one property. `markup.PlaceholderFor` supplies the value per declared `GoType`; a type it cannot answer for is a gap you close by writing a literal in the seed or by teaching that table.
+
+Two rules a seed must follow, both enforced by tests: a container's seed names its children **inline** and they are taken verbatim rather than re-seeded, and a seed may not carry parent-dependent attributes such as `Canvas.Left` or `Grid.Row` — those are the inserter's job and are silently discarded under any other parent.
+
+One gap worth knowing: `TestEveryElementDeclaresASeed` walks the **built-in** registry alone, so a registered element with no `Seed` is not caught by it. The failure is a palette entry a user can add and then not see.
 
 Resolution order is `Elements`, then `Components`, then the built-in registry, then the `Includes` convention. A name present in **both** maps is a load error rather than a silent winner — which one won would otherwise depend on the order two `if`s happen to be written in, and the loser's registration would be dead code nobody can see.
 

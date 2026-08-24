@@ -98,6 +98,53 @@ type ElementDef struct {
 	// set so it cannot quietly grow.
 	DynamicAttrs string
 
+	// Seed is the markup a palette inserts for a NEW instance of this
+	// element: the attributes, body, children and slots that make one
+	// worth looking at the moment it appears.
+	//
+	// Every element a palette can OFFER needs one, and that includes an
+	// element a host registers through Context.Elements rather than
+	// building in. TestEveryElementDeclaresASeed walks the builtin
+	// registry alone, so a registered element that declares no Seed goes
+	// red nowhere: the requirement reaches it, the enforcement does not,
+	// and holding up that half is the registering host's job.
+	//
+	// It is NOT AttrSpec.Default, and the difference is the whole reason
+	// this field exists. Default is the value equivalent to OMITTING an
+	// attribute — Width's is "0" — and TestDeclaredDefaultsRenderIdentically
+	// ToOmission enforces exactly that. Seeding from it produces a
+	// component of zero size, which is the bug: four elements were added
+	// to a canvas measuring 0x0, invisible and therefore unselectable,
+	// and two would not load at all.
+	//
+	// Markup rather than a struct because the answer has to cover more
+	// than attributes. An empty <VStack> measures nothing no matter what
+	// its attributes say — it needs CHILDREN — and <MenuBar> needs a
+	// <Menu Title="…">. Those are expressible here in the one notation
+	// this package already parses, validates and reports load errors for,
+	// so a seed that cannot build is a test failure rather than a red
+	// island in somebody's editor.
+	//
+	// Two rules a seed must follow, both checked:
+	//
+	//   - A container's seed names its children INLINE, and those are
+	//     taken verbatim: the <Text> inside <VStack>'s seed is not
+	//     re-seeded from <Text>'s own seed. The parent's seed wins at kid
+	//     level, because a seed is one instance and not a recipe applied
+	//     recursively — recursion here would make <Border>'s seed grow a
+	//     Text that grew a body that grew, and there is no fixed point.
+	//
+	//   - It may NOT carry parent-dependent attributes. Canvas.Left and
+	//     Canvas.Top are legal only under a <Canvas> and are silently
+	//     discarded anywhere else, so they are the inserting editor's job
+	//     — it knows the real target, and AttrsFor(spec, parent) is the
+	//     function that answers it.
+	//
+	// A bind-only attribute cannot be seeded from here at all: markup
+	// carries a {{.Path}}, never the live *prop.Property[T] behind it.
+	// Those name a placeholder the inserter registers; see PlaceholderFor.
+	Seed string
+
 	// Doc is one line about the element.
 	Doc string
 
@@ -159,6 +206,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Slots:      append([]SlotSpec(nil), d.Slots...),
 		Body:       body,
 		Children:   d.Children,
+		Seed:       d.Seed,
 		NonVisual:  nonVisual,
 		Focusable:  focusable,
 		Attaches:   attaches,

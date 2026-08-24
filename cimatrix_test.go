@@ -450,3 +450,110 @@ func TestCIDiscoveryFloorNamesTheConditionThatFailed(t *testing.T) {
 		}
 	})
 }
+
+// rootLabelCase is the display-name mapping, and it must appear in BOTH
+// loops of the `test` job. Anchored on the whole block rather than on
+// `name='root'` alone: a half-applied version — the case present, the
+// echoes still interpolating `$m` — is the failure this is guarding, and a
+// substring match would pass on it.
+var rootLabelCase = "case \"$m\" in\n.) name='root' ;;\n*) name=$m     ;;\nesac"
+
+// Packing the legs by tier did not fix #263 nit 2, it MOVED it. The check
+// name used to read `. (test)`; ci.yml's own comment says the module name
+// now lives "in the annotation, the ::group:: and the step summary", and
+// the root module reaches all three as `.`.
+//
+// The annotations are the sharp end — they surface on the PR without
+// anyone opening the log, which is exactly the property the check name had
+// and the reason nit 2 was worth filing.
+func TestCIRootIsNamedWhereverAModuleIsNamed(t *testing.T) {
+	body := readFileString(t, ciWorkflow)
+
+	// Both loops, and the same rule in both. Two copies of one rule with
+	// nothing holding them equal is how markup.go's tier census went stale
+	// three separate ways; this is the cheap version of not repeating it.
+	steps := []string{
+		"Check the image's Go satisfies every module in this leg",
+		"Vet and test every ${{ matrix.mode }} module",
+	}
+	for _, step := range steps {
+		got := runBlockOf(t, body, step)
+		if !strings.Contains(unindent(got), rootLabelCase) {
+			t.Errorf("step %q does not map the root module to a display name.\n"+
+				"Want this block verbatim:\n%s\n\nThe root module arrives as `.`, "+
+				"and `.` is not a name in an annotation any more than it was in a "+
+				"check name (#263).", step, rootLabelCase)
+		}
+		// Display only: the leg still has to work in the real path.
+		if strings.Contains(got, `cd "$name"`) || strings.Contains(got, `go -C "$name"`) {
+			t.Errorf("step %q uses the DISPLAY name as a path; a leg that ran in a "+
+				"directory called `root` would be looking for one that does not exist", step)
+		}
+	}
+
+	// And the mapping actually reaches the output. One broken module at
+	// `.`, one working module beside it, so the assertion below is not
+	// satisfiable by a loop that labels everything `root`.
+	script := runBlockOf(t, body, "Vet and test every ${{ matrix.mode }} module")
+	root := t.TempDir()
+	write := func(path, s string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/root\n\ngo 1.25.6\n")
+	write("bad.go", "package root\n\nfunc B() int { return \"not an int\" }\n")
+	write("delta/go.mod", "module example.com/delta\n\ngo 1.25.6\n")
+	write("delta/delta.go", "package delta\n\nfunc D() int { return 1 }\n")
+
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"MODE=test",
+		"MODULES=. delta",
+		"RUNNER_TEMP="+root,
+		"GITHUB_STEP_SUMMARY="+filepath.Join(root, "summary"),
+		"GOFLAGS=", // the repo's -mod=vendor must not follow us here
+	)
+	out, err := cmd.CombinedOutput()
+	got := string(out)
+	if err == nil {
+		t.Fatalf("the leg passed with a module that does not compile:\n%s", got)
+	}
+
+	for _, want := range []string{"::group::root (test)", "::error::root", "leg failed for: root"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the leg never printed %q — the root module is still reaching "+
+				"the output as `.`:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "::error::.") || strings.Contains(got, "::group::. ") {
+		t.Errorf("the leg still names the root module `.`:\n%s", got)
+	}
+	// Discrimination: only the root is renamed. Relabelling every module
+	// would satisfy every assertion above and lose the failing module's
+	// identity, which is the whole point of the annotations.
+	if strings.Contains(got, "::error::delta") {
+		t.Errorf("the leg named delta, which compiles and passes:\n%s", got)
+	}
+	if !strings.Contains(got, "::group::delta (test)") {
+		t.Errorf("delta lost its own path in the group header; only `.` gets a "+
+			"display name:\n%s", got)
+	}
+}
+
+// unindent left-trims every line, so how deeply a block is nested inside
+// ci.yml is not part of what is compared. The two loops sit at the same
+// depth today; pinning that as well would make this test fail on a
+// reindent, which is not the rule it is holding.
+func unindent(s string) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		out = append(out, strings.TrimLeft(l, " "))
+	}
+	return strings.Join(out, "\n")
+}
