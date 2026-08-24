@@ -74,6 +74,63 @@ the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).
 
+## An overlay pinned to the pointer, not the tree
+
+An adornment is normally positioned against another *component's*
+arranged bounds. A drag ghost, a drop indicator, a marquee rectangle or a
+crosshair has no such component: it belongs to a gesture. Those are
+**free** adornments — they implement `gooey.PointerFollower`, which
+exempts them from the layer's anchor sweep entirely and makes
+`Place` receive the pointer's 1x1 cell instead of an anchor's bounds
+([#177](https://github.com/WonderForgeLabs/gooey/issues/177),
+[spec](../../specs/2026-08-23-free-adornments.md)).
+
+```go
+// in the press handler, having decided this gesture is a drag
+ghost.Label.Set("3 files")
+ghost.Show(mgr)
+// in the release handler
+ghost.Hide()
+```
+
+**The interesting part is what a motion costs.** `term.EnableMouse` sets
+`?1003h` any-motion tracking, so the terminal reports a motion event per
+cell the pointer crosses — for the whole life of the app, whether or not
+anything cares. If following the pointer meant repainting on every
+report, hosting one ghost would cost a frame per cell forever.
+
+It does not, and the reason is the ordinary call-site rule. The pointer
+lives on the `FocusManager` as plain fields plus a revision property, and
+`FocusManager.Pointer()` reads that revision before returning them — so
+asking from a layout pass is a plain read and asking from inside an
+evaluation is a subscription. The Composer arms one observer per
+follower (`armPointer`, the same shape as the bound-`Visibility` and
+`Frozen` observers) whose evaluation calls `FollowsPointer()` and reads
+the pointer **only if the answer is true**. An observer is not a paint
+node: it schedules a frame and counts as no damage.
+
+So the cost falls out of the graph rather than being managed:
+
+- nothing following → nothing subscribes → a motion report invalidates
+  nothing and **schedules no frame at all**;
+- a ghost in the layer but parked (`FollowsPointer()` false) → same, and
+  it is arranged to a zero rect;
+- a ghost actually following → one cell of motion repaints the ghost and
+  restores what it uncovered, and nothing else paints a cell.
+
+`components/dragghost_test.go` pins all three, and the zero rows assert
+the **invalidation** count rather than the painted count — calling
+`Frame()` by hand is the harness performing the very scheduling under
+test, so "0 painted" would also hold if the frame were scheduled and
+merely found nothing dirty.
+
+This is deliberately *not* a cursor. Nothing portable hides the
+emulator's own pointer, so a glyph drawn under it would double-image and
+quantize to cells; `DragGhost` offsets down and right by default and
+clamps at the screen edge rather than flipping sides. Cursor *shape* — a
+best-effort `Cursor="Hand"` attached property — is the separate
+[#178](https://github.com/WonderForgeLabs/gooey/issues/178).
+
 ## Where to see it
 
 `cmd/toolkit` is the whole story on one page (menu over content,

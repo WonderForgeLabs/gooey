@@ -2,8 +2,10 @@ package markup
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -323,5 +325,118 @@ func TestRegisteredValuesListsGrants(t *testing.T) {
 		if u == valueURI {
 			t.Fatal("revoking the grant left the URI registered")
 		}
+	}
+}
+
+// An unterminated brace expression cannot know where it ends, so both
+// error paths quote from the opening `{{` to the end of the remaining
+// content. Uncapped, an early stray brace in a large page put the rest of
+// the file into a message read while staring at one attribute (#232).
+//
+// The discriminating case is the SHORT one: a cap that always elides
+// would satisfy every "the message is bounded" assertion and would have
+// made the common error worse, not better.
+func TestUnterminatedExpressionQuotesABoundedSnippet(t *testing.T) {
+	const limit = errSnippetRunes
+
+	for _, tc := range []struct {
+		name    string
+		in      string
+		want    string // must appear
+		absent  string // must not
+		elision bool
+	}{
+		{
+			name:    "short enough to quote whole",
+			in:      "{{.Name",
+			want:    `"{{.Name"`,
+			absent:  "more characters",
+			elision: false,
+		},
+		{
+			name:    "run-on line is cut at the rune cap",
+			in:      "{{" + strings.Repeat("x", 500) + "TAIL",
+			want:    "(+" + strconv.Itoa(2+500+4-limit) + " more characters)",
+			absent:  "TAIL",
+			elision: true,
+		},
+		{
+			name:    "the rest of the document is not quoted",
+			in:      "{{.Name\nSECRET REST OF FILE",
+			want:    `"{{.Name"`,
+			absent:  "SECRET",
+			elision: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := errSnippet(tc.in)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("errSnippet(…) = %s, which does not contain %s", got, tc.want)
+			}
+			if strings.Contains(got, tc.absent) {
+				t.Errorf("errSnippet(…) = %s, which still contains %q", got, tc.absent)
+			}
+			if elided := strings.Contains(got, "more characters"); elided != tc.elision {
+				t.Errorf("errSnippet(…) = %s; elided=%v, want %v", got, elided, tc.elision)
+			}
+		})
+	}
+}
+
+// The cap counts runes, and cutting on bytes instead would quote a
+// replacement glyph the author never typed — an error message that
+// misreports the text it is complaining about. Every rune here is three
+// bytes, so a byte cap lands mid-character by construction.
+func TestBoundedSnippetDoesNotSplitARune(t *testing.T) {
+	got := errSnippet("{{" + strings.Repeat("日", 200))
+	if !utf8.ValidString(got) {
+		t.Fatalf("errSnippet produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("errSnippet(…) = %s — it cut a multi-byte character in half", got)
+	}
+	// The quoted body is exactly the cap, so the cut is on runes and not
+	// on the bytes that happen to reach the same offset.
+	quoted, rest, ok := strings.Cut(got, "… (+")
+	if !ok {
+		t.Fatalf("errSnippet(…) = %s, which never elided; the cap did not fire", got)
+	}
+	body, err := strconv.Unquote(quoted)
+	if err != nil {
+		t.Fatalf("errSnippet's quoted half %q does not unquote: %v", quoted, err)
+	}
+	if n := utf8.RuneCountInString(body); n != errSnippetRunes {
+		t.Errorf("quoted %d rune(s), want %d (the byte cap would give %d)",
+			n, errSnippetRunes, errSnippetRunes/3)
+	}
+	if want := strconv.Itoa(2 + 200 - errSnippetRunes); !strings.HasPrefix(rest, want+" ") {
+		t.Errorf("elided count in %s is not %s — it is counting bytes, not characters", got, want)
+	}
+}
+
+// Both call sites, end to end through the loader, because the cap is
+// worth nothing if only one path uses it.
+func TestUnterminatedLoadErrorsAreBounded(t *testing.T) {
+	tail := "NEEDLE"
+	for _, tc := range []struct{ name, body, kind string }{
+		{"unterminated braces", "<Text>{{.Name " + strings.Repeat("y", 400) + tail + "</Text>", "unterminated {{"},
+		{"unterminated literal", "<Text>{{v:Echo `oops " + strings.Repeat("y", 400) + tail + "</Text>", "unterminated ` literal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withValues(t, &echoProvider{})
+			_, err := loadValue(t, tc.body, map[string]any{"Name": prop.NewSource("n")})
+			if err == nil {
+				t.Fatal("loaded clean; this should be a load error")
+			}
+			if !strings.Contains(err.Error(), tc.kind) {
+				t.Fatalf("error %q is not the one under test", err)
+			}
+			if strings.Contains(err.Error(), tail) {
+				t.Errorf("the load error still reaches the end of the document:\n%s", err)
+			}
+			if !strings.Contains(err.Error(), "more characters") {
+				t.Errorf("the load error was not capped at all:\n%s", err)
+			}
+		})
 	}
 }

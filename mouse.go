@@ -63,6 +63,34 @@ func (h *HoverState) hover() *prop.Property[bool] {
 // adornments (a tooltip's popup) are transparent for the same reason.
 type HitTestTransparent interface{ HitTestTransparent() bool }
 
+// PointerFollower is implemented by a component whose arranged position
+// comes from the POINTER rather than from its place in the tree: a drag
+// ghost, a drop indicator, a marquee rectangle, a crosshair. It is the
+// free-position half of the adornment layer (issue #177) — an adornment
+// that implements it is exempt from the layer's anchor sweep entirely
+// (there is no anchor to be gone) and has Place called with the
+// pointer's cell instead of an anchor's bounds.
+//
+// The METHOD is what decides whether the component is following RIGHT
+// NOW; implementing the interface at all is what makes it free. The two
+// are deliberately different questions, because the wakeup cost lives
+// on the first one and the lifetime on the second: ?1003h reports a
+// motion event per cell crossed, so a component that follows for the
+// length of a gesture must stop costing anything the moment the gesture
+// ends, without having to leave the layer to do it. A parked follower —
+// in the layer, FollowsPointer() false — is arranged to a zero rect and
+// costs exactly nothing per motion.
+//
+// The Composer arms an observer for every component that implements
+// this (Composer.armPointer, the armFrozen shape): the observer CALLS
+// FollowsPointer, so whatever the implementation reads to decide becomes
+// its dependency by the ordinary call-site rule, and only while the
+// answer is true does it also read the pointer. That is what makes the
+// wake self-scoping, and it is why nothing here asks the author to
+// remember to read the pointer from Render. The observer is not a paint
+// node: it schedules a frame and counts as no damage.
+type PointerFollower interface{ FollowsPointer() bool }
+
 // HitTest returns the deepest component whose arranged bounds contain the
 // cell, children before ancestors and later siblings before earlier ones
 // (they paint on top). Collapsed subtrees, zero-size components, and
@@ -182,6 +210,12 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// HitTest itself still returns the deepest component — see the comment
 	// there. This is dispatch; that is a query.
 	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y))
+	// Every kind carries a position, so every kind updates it — a drag
+	// ghost raised inside a press handler must find the pointer already
+	// where the press was, not one motion event later. MouseTarget
+	// deliberately does not do this: it is a query, and a query moves
+	// nothing.
+	m.notePointer(ev.X, ev.Y)
 
 	switch ev.Kind {
 	case input.MousePress:
@@ -376,6 +410,51 @@ func firstFocusable(w Component, depth int) Component {
 
 // Hovered returns the component the pointer is currently over.
 func (m *FocusManager) Hovered() Component { return m.hover }
+
+// Pointer is the cell the pointer was last seen at, as a 1x1 rect, and
+// whether one has ever been reported (false before the first mouse
+// event, and forever in an app that never enabled the mouse).
+//
+// The CALL SITE decides what asking means, as everywhere else: read from
+// inside an evaluation — a Render, a PointerFollower observer — it is a
+// subscription, and the next motion that changes the cell schedules a
+// frame. Read from Measure, Arrange or an event handler it is a plain
+// question and records nothing, which is what lets AdornmentLayer.Arrange
+// place a ghost against it every frame without ever creating a
+// dependency on it.
+//
+// The rect is 1x1 rather than a bare X/Y so that placement policy is
+// shared with anchored adornments: PlacePopup and every hand-written
+// Place take a rect, so pointing at a cell and pointing at a component
+// go through the same geometry.
+func (m *FocusManager) Pointer() (Rect, bool) {
+	m.pointerRev().Get()
+	return Rect{X: m.ptrX, Y: m.ptrY, W: 1, H: 1}, m.ptrSeen
+}
+
+// pointerRev is the revision property, created on first use. A source
+// property with no dependents is free to Set — invalidate() walks an
+// empty dependent set — which is the whole zero-cost story: with nothing
+// following the pointer, a motion event allocates nothing, dirties
+// nothing, and schedules no frame.
+func (m *FocusManager) pointerRev() *prop.Property[int] {
+	if m.ptrRev == nil {
+		m.ptrRev = prop.NewSource(0)
+	}
+	return m.ptrRev
+}
+
+// notePointer records where a pointer event landed. Guarded on the CELL
+// because prop.Set does not compare values: an emulator may re-report
+// the same cell (a press and its release, sub-cell motion under a pixel
+// -reporting mode), and each of those would otherwise be a frame.
+func (m *FocusManager) notePointer(x, y int) {
+	if m.ptrSeen && m.ptrX == x && m.ptrY == y {
+		return
+	}
+	m.ptrX, m.ptrY, m.ptrSeen = x, y, true
+	m.pointerRev().Set(m.pointerRev().Get() + 1)
+}
 
 // setHover moves the hover flag to the nearest HoverTarget at or above
 // the hit component, so hover composes: a Border can highlight while the

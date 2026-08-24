@@ -51,6 +51,11 @@ type App struct {
 	comp   *Composer
 	disp   *Dispatcher
 	events <-chan input.Event
+	// decDone fires if the decoder dies while the app is still running.
+	// Held separately from screen because the run loop selects on it,
+	// and release() nils it out — a nil channel never fires, which is
+	// what keeps a torn-down screen from ending the loop twice.
+	decDone <-chan struct{}
 
 	cols, rows int
 	needsFrame bool
@@ -66,8 +71,14 @@ type App struct {
 	quit     chan struct{}
 	quitOnce sync.Once
 
-	sig       signalHandle
-	exitSig   os.Signal
+	sig     signalHandle
+	exitSig os.Signal
+	// termErr is why terminal input stopped, when it did. It is the
+	// decoder-death cause promoted to a RETURN value: handing it to the
+	// optional onError hook alone would drop it for every host that
+	// never installed one, and Run would report a deaf terminal exactly
+	// the way it reports a clean Quit — with nil.
+	termErr   error
 	leaked    bool
 	suspended bool
 
@@ -415,12 +426,19 @@ func (a *App) fail(err error) {
 }
 
 // Run owns the terminal for the duration and returns when the app quits,
-// ctx is cancelled, or a signal ends it. An App runs once: Quit is
-// permanent, so a second Run would return immediately.
+// ctx is cancelled, a signal ends it, or the terminal stops delivering
+// input. An App runs once: Quit is permanent, so a second Run would
+// return immediately.
 //
 // It returns *SignalError when SIGINT or SIGTERM ended the run — the
 // caller decides the exit code from it (gooey.Exit implements the usual
 // 128+n convention). Quit and ctx cancellation return nil.
+//
+// It returns a "terminal input stopped" error, wrapping the read that
+// failed, when the input decoder died while this app still held the
+// terminal. Nil is reserved for the ends a caller asked for, so that
+// exit does NOT need WithErrorHandler to be visible: an app going deaf
+// is a failure, and a caller checking Run's error is told about it.
 //
 // A panic anywhere under Run restores the terminal FIRST and then
 // re-panics with the original value, so the stack trace prints onto a
@@ -481,6 +499,20 @@ func (a *App) Run(ctx context.Context) error {
 			a.disp.Drain()
 		case ev := <-a.events:
 			a.handle(ev)
+		case <-a.decDone:
+			// The decoder died with the terminal still ours. Ending the
+			// loop is the only honest option: DecodeEvents does not
+			// close the events channel on its way out, so the case
+			// above would simply never fire again and this app would
+			// run forever, painting perfectly and answering no key.
+			// Exiting says so; staying up hides it.
+			//
+			// Recorded before it is reported: fail() is the optional
+			// error hook and drops the error by default, so the field
+			// is what makes Run's own return value say what happened.
+			a.termErr = a.deaf()
+			a.fail(a.termErr)
+			return a.exitErr()
 		}
 	}
 	return a.exitErr()
@@ -535,12 +567,36 @@ func (a *App) gracefulExit(sig os.Signal) {
 	a.Quit()
 }
 
-// exitErr is why the loop ended. A dead companion outranks a signal:
-// where both happened, the signal is usually the shell reacting to the
-// same failure, and the companion is the fact that explains it.
+// deaf is the error for a decoder that stopped while the app still owned
+// the terminal — the app can still paint, but no keystroke will ever
+// reach it again.
+//
+// It names the terminal rather than the decoder because that is what the
+// user can act on, and it wraps the read error that ended the decoder.
+// There is always one: term.DecoderErr is non-nil by the time
+// DecoderDone can fire, which is the only way this is reached — the
+// decoder records the failing read before closing the chunk channel that
+// lets the goroutine return (see term.Screen.DecoderErr).
+func (a *App) deaf() error {
+	return fmt.Errorf("terminal input stopped: %w", a.screen.DecoderErr())
+}
+
+// exitErr is why the loop ended, and the order is a ranking. A dead
+// companion outranks the rest: where several happened, the signal is
+// usually the shell reacting to the same failure and the companion is
+// the fact that explains it. A deaf terminal outranks a signal for that
+// same reason — a tty that stopped reading is often what provoked the
+// SIGHUP, not the other way round.
+//
+// Nil means the run ended the way a caller asked for it to: Quit, or a
+// cancelled ctx. Nothing else may return nil, because nil is how a
+// caller decides nothing went wrong.
 func (a *App) exitErr() error {
 	if a.compErr != nil {
 		return a.compErr
+	}
+	if a.termErr != nil {
+		return a.termErr
 	}
 	if a.exitSig != nil {
 		return &SignalError{Signal: a.exitSig}
@@ -708,6 +764,7 @@ func (a *App) acquire() error {
 	}
 	a.screen = s
 	a.events = s.Events(a.opt.eventBuf)
+	a.decDone = s.DecoderDone()
 	a.resized(cols, rows)
 	// The screen we just took is not the screen we last flushed to. Raw
 	// enters the alternate screen, which comes back BLANK — after a
@@ -734,7 +791,7 @@ func (a *App) release() {
 	if a.screen.DecoderLeaked() {
 		a.leaked = true
 	}
-	a.screen, a.events = nil, nil
+	a.screen, a.events, a.decDone = nil, nil, nil
 }
 
 // The viewport hook is how control-plane acts reach resized without it

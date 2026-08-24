@@ -277,6 +277,18 @@ type FocusManager struct {
 
 	hover Component // current hover target, nil when the pointer is nowhere
 
+	// Where the pointer last was, in cells, and whether it has ever been
+	// reported. Plain fields plus a REVISION property, the split the
+	// framework already uses for bounds: the value is read from layout
+	// (a plain read, recording nothing) while the revision is what makes
+	// a motion schedulable by anything that actually cares. ptrRev is
+	// created lazily — a keyboard-only app never allocates it — and is
+	// bumped only when the CELL changes, because prop.Set does not
+	// compare values and an emulator is free to re-report the same cell.
+	ptrX, ptrY int
+	ptrSeen    bool
+	ptrRev     *prop.Property[int]
+
 	// Pointer capture. captor owns every pointer event while it is set;
 	// held is true when it was taken by CaptureMouse rather than by a
 	// press, which is what decides whether a release gives it back.
