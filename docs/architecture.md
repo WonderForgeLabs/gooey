@@ -435,9 +435,23 @@ own methods in the FrameworkElement behavior — the "sandwich":
   `Start`/`Center`/`End` use the cached desired size and position it
   inside the slot. Only then does `w.Arrange` run with the final rect.
 
-`MeasureChild` has no depth cap, so a markup cycle that can be
-constructed dies by stack overflow rather than by a load error
-([#216](https://github.com/WonderForgeLabs/gooey/issues/216), open).
+`MeasureChild` and `ArrangeChild` stop at `MaxLayoutDepth` (512) and
+record a `LayoutFault` instead of recursing further, so a constructible
+markup cycle costs one frame rather than the process
+([#216](https://github.com/WonderForgeLabs/gooey/issues/216)). Layout is
+only two of the seven walks over `ChildComponents` that a cycle used to
+kill, and the first to die was `Composer.build`, which runs *before*
+layout exists and wedges the heap rather than the stack — so capping
+here alone would have turned the original crash into a hang. Compose and
+Focus detect the repeat by identity (they already key a map by
+component); Measure, Arrange, HitTest, Focusable and Render count depth.
+A control that includes itself is caught earlier still, as a load error
+naming the loop. Nothing panics: read the report with
+`Composer.LayoutFault()`, `App.LayoutFault()`, or `Frame.LayoutFault()`
+on the one-shot path. The record is
+[`docs/specs/2026-08-23-layout-cycle-bounds.md`](specs/2026-08-23-layout-cycle-bounds.md),
+and the four walks outside the root package that remain unbounded are
+[#375](https://github.com/WonderForgeLabs/gooey/issues/375).
 
 `Layout` itself is the FrameworkElement property set — margin
 (`Thickness`, in cells), explicit size, `HAlign`/`VAlign`, and
