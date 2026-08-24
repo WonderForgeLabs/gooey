@@ -414,8 +414,8 @@ func TestTheEditorsOwnComponentsAreDocumentVocabulary(t *testing.T) {
 
 // ActivityBar declares its surface, and the palette is why that matters:
 // clicking it used to emit <ActivityBar Name="ActivityBar1"/>, which
-// fails to load because the rail requires a bound Sel=. seedRequired can
-// only seed what the catalog describes.
+// fails to load because the rail requires a bound Sel=. Seeding can only
+// seed what the catalog describes.
 //
 // Mutation: register ActivityBar through Components instead of Elements
 // and this fails at the Required check — Catalog gives a Builder
@@ -439,7 +439,7 @@ func TestTheToolboxCanDescribeActivityBarsRequiredAttribute(t *testing.T) {
 		if a.Name != "Sel" {
 			continue
 		}
-		// These three are exactly what seedRequired consumes: Required
+		// These three are exactly what markup.Seeded consumes: Required
 		// decides whether to seed, Binds whether to write a binding
 		// rather than a literal, GoType which handle to create.
 		if !a.Required || a.Binds != markup.BindsBinding || a.GoType != "int" {

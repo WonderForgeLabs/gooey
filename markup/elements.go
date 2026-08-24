@@ -76,7 +76,7 @@ var defText = &ElementDef{
 	// a {{.Path}} binding are both legal there, exactly as on Tooltip.
 	Body: &BodySpec{
 		Kind: KindText, Binds: BindsEither, GoType: "string",
-		Doc: "The run of text. Trimmed, so leading and trailing spaces cannot be expressed.",
+		Doc: "The run of text. On one line it is verbatim, so leading and trailing spaces count; wrapped across lines it is trimmed.",
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -96,7 +96,7 @@ var defText = &ElementDef{
 			})
 		}
 		t := &components.Text{Style: style}
-		content := strings.TrimSpace(e.Text)
+		content := bodyText(e.Text)
 		if src, err := bindText(content, ctx); err != nil {
 			return nil, err
 		} else if src != nil {
