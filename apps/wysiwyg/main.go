@@ -1758,6 +1758,30 @@ func (ed *editor) rebuild() {
 	// undo.go for why it is a hook rather than a wrapper each caller must
 	// remember, and for why it must run BEFORE the remote branch below.
 	ed.recordHistory()
+	// A REBUILD RETIRES THE DRAG HINT, because the hint describes a
+	// GESTURE and the document has just moved on from it.
+	//
+	// statusText prefers a non-empty hint over a healthy build status
+	// (only a "✗" outranks it), so a hint nothing ever cleared buries
+	// "✓ builds" for the rest of the session. undo/redo made that
+	// reachable without a drag: they end in sayDrag("undone: …"), and on
+	// a plain edit afterwards the bar still read "undone: …" while the
+	// build status it was covering had changed underneath. Found in
+	// review of #392.
+	//
+	// SAFE AT THIS END OF THE CALL because every sayDrag in the editor
+	// comes AFTER its rebuild, not before — checked at each site, not
+	// assumed: the drag release (drag.go), every track verb (which
+	// announces via sayTrack after writeTracks), and undo/redo itself,
+	// whose restore() rebuilds and then says. A hint set after this line
+	// survives; one left over from a previous gesture does not.
+	//
+	// Guarded because prop.Set does not compare: setting "" over "" would
+	// invalidate the status bar's dependents on every edit, which is the
+	// same repaint sayDrag guards against at its own call site.
+	if ed.dragHint != nil && ed.dragHint.Get() != "" {
+		ed.dragHint.Set("")
+	}
 	// Tick FIRST, so every derived list recomputes even if the build
 	// below fails and returns early.
 	ed.rev.Set(ed.rev.Get() + 1)

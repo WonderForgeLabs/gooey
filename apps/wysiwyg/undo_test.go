@@ -166,6 +166,30 @@ func TestUndoCoversEveryMutatorTheEditorHas(t *testing.T) {
 			ed.editValue.Set("edited")
 			ed.commitEdit()
 		}},
+		// THE THREE CLIPBOARD MUTATORS. The PR description called them
+		// undoable and nothing pinned it — clipboard_test.go exercises
+		// what they DO, this table is the only place that asserts the
+		// document comes back. Added on review of #392.
+		//
+		// They are worth having here rather than trusting the choke
+		// point: "every mutator ends in rebuild()" is the claim undo
+		// derives from, and the way it fails is a mutator that quietly
+		// does not. A table entry is what turns that from a convention
+		// into a check.
+		{"cut", func(ed *editor) {
+			ed.sel = ed.doc().Kids[0]
+			ed.cutSelected()
+		}},
+		{"paste", func(ed *editor) {
+			ed.sel = ed.doc().Kids[0]
+			ed.copySelected() // seeds the clipboard; copy alone is not an edit
+			ed.sel = ed.doc()
+			ed.pasteClip()
+		}},
+		{"duplicate", func(ed *editor) {
+			ed.sel = ed.doc().Kids[0]
+			ed.duplicateSelected()
+		}},
 		{"applyEdit (the labelled form other slices use)", func(ed *editor) {
 			ed.applyEdit("paste", func() {
 				ed.doc().Kids = append(ed.doc().Kids, &node{
@@ -1348,5 +1372,75 @@ func TestRemoteModeRecordsHistoryAndNotTheIslandRename(t *testing.T) {
 	ed.undo()
 	if got := docState(ed); got != before {
 		t.Errorf("ctrl+z in remote mode gave\n%s\nwant\n%s", got, before)
+	}
+}
+
+// TestUndoDoesNotBuryTheBuildStatusForever is a bug the status bar hides
+// BY WORKING AS DESIGNED.
+//
+// statusText prefers a non-empty drag hint over a healthy build status —
+// only a "✗" outranks it — which is right, because a hint is news about
+// the gesture you just made. It goes wrong the moment nothing retires
+// the hint: undo and redo end in sayDrag("undone: …") with no drag ever
+// involved, so the bar kept reading "undone: …" through every later
+// edit, reporting a gesture two edits ago as the current state.
+//
+// All three arms, because the fix is a CLEAR and a clear is easy to
+// over-apply: the hint the current gesture just set must survive (or
+// undo is silent), the stale one must not, and an error must still
+// outrank both.
+func TestUndoDoesNotBuryTheBuildStatusForever(t *testing.T) {
+	ed, c := undoFixture(t)
+
+	// A mutation to undo.
+	ed.doc().Kids = append(ed.doc().Kids, &node{
+		Elem: "Text", Body: "cccc",
+		Attrs: map[string]string{"Name": "C", "Canvas.Left": "1", "Canvas.Top": "11"},
+	})
+	ed.rebuild()
+	settle(t, c)
+	if !ed.CanUndo() {
+		t.Fatal("the edit recorded no history, so there is nothing to undo")
+	}
+
+	// ARM ONE — the hint undo itself sets MUST survive its own rebuild.
+	// A gesture that changes the screen without saying so is
+	// indistinguishable from one that did nothing.
+	ed.undo()
+	if got := ed.dragHint.Get(); got == "" {
+		t.Fatal("undo said nothing: the hint it sets was cleared by its own " +
+			"rebuild, so the gesture is silent")
+	}
+	if got := ed.statusText.Get(); !strings.Contains(got, "undone") {
+		t.Errorf("the status bar shows %q right after an undo; the undo is the news", got)
+	}
+
+	// ARM TWO — the next edit retires it. This is the bug: before the fix
+	// the bar still read "undone: …" here, for the rest of the session.
+	ed.doc().Kids = append(ed.doc().Kids, &node{
+		Elem: "Text", Body: "dddd",
+		Attrs: map[string]string{"Name": "D", "Canvas.Left": "1", "Canvas.Top": "16"},
+	})
+	ed.rebuild()
+	settle(t, c)
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the second edit does not build: %s", ed.status.Get())
+	}
+	if got := ed.dragHint.Get(); got != "" {
+		t.Errorf("after a later edit the drag hint is still %q: nothing retires "+
+			"it, so it covers the build status from here on", got)
+	}
+	if got := ed.statusText.Get(); strings.Contains(got, "undone") {
+		t.Errorf("the status bar still shows %q after a later edit; it is "+
+			"reporting a gesture two edits ago as the current state", got)
+	}
+
+	// ARM THREE — an ERROR still outranks a hint. The clear must not have
+	// disturbed the ordering statusText exists for.
+	ed.sayDrag("a hint")
+	ed.status.Set("✗ markup: something is wrong")
+	if got := ed.statusText.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("the status bar shows %q while the document does not build; the "+
+			"error is what explains everything else", got)
 	}
 }
