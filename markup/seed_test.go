@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 )
@@ -116,7 +117,17 @@ func loadOnSomeHost(src string, values map[string]any) error {
 
 	var errs []string
 	for _, h := range hosts {
-		ctx := &Context{Values: vals, Dispatcher: gooey.NewDispatcher()}
+		// Includes, and therefore ctx.assets(), is not decoration. A
+		// palette always has a file system — markup.Load supplies one —
+		// so a harness building from raw bytes is testing a situation no
+		// palette occupies. <FileWatcher> is the element that notices:
+		// it refuses to load without an FS ON PURPOSE, because a watcher
+		// quietly watching nothing is the defect it exists to remove.
+		// Without this the seed test would report that refusal as a bad
+		// seed. Nothing is read from the FS here — watchPaths validates
+		// path SHAPE and never stats — so an empty one is enough, and
+		// every other element sees no change.
+		ctx := &Context{Values: vals, Dispatcher: gooey.NewDispatcher(), Includes: fstest.MapFS{}}
 		_, err := Build([]byte(`<Gooey>`+h.open+src+h.close+`</Gooey>`), ctx)
 		if err == nil {
 			return nil
