@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Naming, and duplicating a configured subtree.
 //
@@ -120,8 +123,29 @@ func (ed *editor) duplicateSelected() bool {
 		return false
 	}
 	c := clone(ed.sel, namesInUse(ed.root))
+	// TRANSACTIONAL, and here there is NO catalog gate to lean on — unlike
+	// promote and demote, the copy goes in beside the original, so whatever
+	// the parent is, it demonstrably already holds one of these and canHold
+	// can only answer yes.
+	//
+	// That is exactly why it is not sufficient. A parent taking EXACTLY ONE
+	// child is overfilled by the copy: ctrl+d on the <Text> inside a
+	// <Tab Header="One"> produced two, which is a load error ("needs exactly
+	// one content child, got 2"), left docRoot nil, and still returned true.
+	// The count, not the vocabulary, is what fails — so the build is the
+	// only thing that can decide it. Issue #403.
+	prev := ed.sel
 	insertAt(p, i+1, c)
 	ed.sel = c
 	ed.rebuild()
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		unlink(p, c)
+		ed.sel = prev
+		ed.rebuild()
+		ed.status.Set("✗ <" + prev.Elem + "> cannot be duplicated inside <" + p.Elem +
+			">: " + refused)
+		return false
+	}
 	return true
 }
