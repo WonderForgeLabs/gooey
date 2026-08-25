@@ -870,6 +870,18 @@ func newEditor(fsys fs.FS) *editor {
 	// bar would go deaf to the build status with no error anywhere.
 	ed.statusText = prop.NewComputed(func() string {
 		hint, build := ed.dragHint.Get(), ed.status.Get()
+		// AN ERROR OUTRANKS A HINT, and the ordering is the whole point
+		// rather than a preference. The hint is set BY THE PRESS, so a
+		// user whose document has stopped building presses an element,
+		// gets no selection, and that failed press installs a hint which
+		// displaces the one line explaining why — the diagnostic is
+		// destroyed by the act of hitting the problem. It cost an hour of
+		// "i can't select any components on canvas" against a status bar
+		// that had held `✗ markup: <Tabs> children must be <Tab>
+		// elements` the entire time and never showed it once.
+		if strings.HasPrefix(build, "✗") {
+			return build
+		}
 		if hint != "" {
 			return hint
 		}
@@ -1640,9 +1652,39 @@ func (ed *editor) addSelected() {
 		n.Attrs["Canvas.Left"] = "2"
 		n.Attrs["Canvas.Top"] = fmt.Sprint(len(into.Kids)*2 + 1)
 	}
+	// TRANSACTIONAL, and the loader is what decides. A container's legal
+	// children are enforced INSIDE its builder — `<Tabs> children must be
+	// <Tab> elements` is a line in components/tabs.go, not a field on an
+	// ElementDef — so there is nothing declarative here to consult, and any
+	// table this file kept would be a second copy drifting from the first.
+	// Building the candidate document asks the only authority there is.
+	//
+	// Refusing MATTERS because the failure is not local to the insert. A
+	// rebuild that errors leaves docRoot nil (see rebuild), which kills
+	// click-to-select for the WHOLE document while the previous tree stays
+	// on screen looking pressable — and the offending node is then
+	// reachable by no gesture at all, because ctrl+n walks siblings and
+	// only a click descends. One palette press into the wrong container
+	// stranded a live editor exactly that way.
+	prev := ed.sel
 	into.Kids = append(into.Kids, n)
 	ed.sel = n
 	ed.rebuild()
+	// docRoot is the signal rather than a second Build: it is what rebuild
+	// sets on success and leaves nil on failure, so this reads the outcome
+	// of the build that already ran. Remote mode returns before ever
+	// setting it, and there the target app is the authority, not this one.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		into.Kids = into.Kids[:len(into.Kids)-1]
+		ed.sel = prev
+		ed.rebuild()
+		// AFTER the second rebuild, which sets the status to "✓ builds":
+		// the document is whole again, and the sentence explaining what
+		// was refused has to survive it saying so.
+		ed.status.Set("✗ <" + spec.Name + "> does not go inside <" + into.Elem +
+			">: " + refused)
+	}
 }
 
 // addTarget is the node a palette click appends INTO, and the leaf case
