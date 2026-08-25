@@ -217,7 +217,23 @@ func (ed *editor) pasteClip() {
 // that belong to another instance — and solving them twice is how the
 // two would come to disagree.
 func (ed *editor) insertSubtree(n *node, verb string) {
-	into := ed.addTarget()
+	// The PLAN, not just its landing node, and for the element actually
+	// being pasted. Both halves matter and neither is cosmetic.
+	//
+	// The element, because where an insert may land depends on what it is:
+	// planAdd climbs until something can hold THIS element. Passing the
+	// pasted node's own name is what makes "paste a <Tab> with a <Tabs>
+	// selected" land in the tabs rather than climbing past them.
+	//
+	// The wrap, because a container can accept an element only through one
+	// of its own declared children — <Tabs> takes <Tab> and nothing else.
+	// Appending straight into plan.into there writes an illegal child, the
+	// rebuild fails, docRoot goes nil, and click-to-select dies for the
+	// WHOLE document while the previous tree stays on screen looking
+	// pressable. That is the exact failure addplan.go exists to close for
+	// the palette; paste reaches the same container by the other gesture.
+	plan := ed.planAdd(n.Elem)
+	into := plan.into
 	renamed := ed.renameInto(n)
 	if err := ed.rebindInto(n, renamed); err != nil {
 		ed.status.Set("✗ " + err.Error())
@@ -233,7 +249,18 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 			n.Attrs["Canvas.Top"] = fmt.Sprint(len(into.Kids)*2 + 1)
 		}
 	}
-	into.Kids = append(into.Kids, n)
+	// The scaffolding, when the plan says the container needs it. The
+	// SELECTION stays on the pasted node rather than the wrapper, the same
+	// rule addSelected follows: the user pasted a <Button>, so the
+	// properties grid must show the button and not the <Tab> that had to
+	// exist to hold it.
+	add := n
+	if plan.wrap != "" {
+		w := ed.wrapperNode(into.Elem, plan.wrap)
+		w.Kids = []*node{n}
+		add = w
+	}
+	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	// Mutate, then rebuild — the mutation seam every other edit in this
 	// editor uses (addSelected, deleteSelected, retype, commitEdit), and

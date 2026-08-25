@@ -624,3 +624,87 @@ func TestSlotInteriorsAreNotSelectableWhichIsWhatMakesParentInSafe(t *testing.T)
 		}
 	}
 }
+
+// TestPastingIntoATabsWrapsTheNodeInATab is the paste half of the hole
+// addplan.go closed for the palette.
+//
+// The two gestures reach the same illegal insert by different routes, and
+// fixing one did not fix the other: addSelected consults planAdd and
+// builds the wrapper, while insertSubtree called addTarget and appended
+// straight into the landing node. Pasting anything but a <Tab> into a
+// <Tabs> therefore wrote a child the container declares it does not take,
+// the rebuild failed, docRoot went nil, and click-to-select died for the
+// whole document.
+//
+// Neither branch could see this on its own — clipboard.go and addplan.go
+// arrived from different PRs and never shared a tree until the merge.
+func TestPastingIntoATabsWrapsTheNodeInATab(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	src := tabs.Kids[0].Kids[0]
+	if src.Elem != "Text" {
+		t.Fatalf("fixture changed: the tab holds a <%s>, expected the <Text>", src.Elem)
+	}
+	ed.sel = src
+	ed.copySelected()
+
+	ed.sel = tabs
+	before := len(tabs.Kids)
+	ed.pasteClip()
+
+	if len(tabs.Kids) != before+1 {
+		t.Fatalf("the <Tabs> has %d children, was %d: the paste did not land in it (status %q)",
+			len(tabs.Kids), before, ed.status.Get())
+	}
+	added := tabs.Kids[len(tabs.Kids)-1]
+	if added.Elem != "Tab" {
+		t.Fatalf("the <Tabs> took a <%s> directly; it declares Only:[\"Tab\"] and this "+
+			"document would not build", added.Elem)
+	}
+	if len(added.Kids) != 1 || added.Kids[0].Elem != "Text" {
+		t.Fatalf("the new <Tab> holds %d children (%v), want the one <Text> that was pasted",
+			len(added.Kids), kidElems(added))
+	}
+	// The selection is the PASTED node, not the scaffolding — the same rule
+	// addSelected follows, for the same reason: the properties grid must
+	// show what the user pasted.
+	if ed.sel != added.Kids[0] {
+		t.Errorf("after the paste the selection is %s, want the pasted <Text>", nodeLabel(ed.sel))
+	}
+	// The point of all of it: the document still builds.
+	if ed.docRoot == nil {
+		t.Errorf("the document stopped building after the paste: %s", ed.status.Get())
+	}
+	if s := ed.status.Get(); strings.HasPrefix(s, "\u2717") {
+		t.Errorf("after a paste the build failed: %s", s)
+	}
+}
+
+// TestPastingATabIntoATabsDoesNotWrapItInAnother is the must-say-NO arm.
+// A wrapper that always wraps is as wrong as one that never does, and only
+// this arm can tell the two apart: the pasted element IS the permitted
+// child, so there is nothing to build around it.
+func TestPastingATabIntoATabsDoesNotWrapItInAnother(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	ed.sel = tabs.Kids[0]
+	ed.copySelected()
+
+	ed.sel = tabs
+	before := len(tabs.Kids)
+	ed.pasteClip()
+
+	if len(tabs.Kids) != before+1 {
+		t.Fatalf("the <Tabs> has %d children, was %d (status %q)",
+			len(tabs.Kids), before, ed.status.Get())
+	}
+	added := tabs.Kids[len(tabs.Kids)-1]
+	if added.Elem != "Tab" {
+		t.Fatalf("pasted a <Tab> and got a <%s>", added.Elem)
+	}
+	if len(added.Kids) == 1 && added.Kids[0].Elem == "Tab" {
+		t.Fatalf("the pasted <Tab> was wrapped in another <Tab>: the wrapper fired where " +
+			"the element was already the permitted child")
+	}
+	if ed.docRoot == nil {
+		t.Errorf("the document stopped building after the paste: %s", ed.status.Get())
+	}
+}
