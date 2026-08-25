@@ -9,6 +9,7 @@
 package gooey
 
 import (
+	"image"
 	"io"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
@@ -184,11 +185,57 @@ func (f *Frame) Depth() render.ColorDepth { return f.Caps.Color }
 // the flush say "this component's images changed" and leave the rest
 // alone — the same per-component damage rule the cell plane follows.
 func (f *Frame) Place(p graphics.Placement) {
+	// CLIPPED AGAINST THE SAME RECT AS THE CELLS (#357). A clip that
+	// bounded text and not pictures would be worse than none, because it
+	// would look like it works right up until a component with an image
+	// overflows — and a sixel or kitty image is composited by the
+	// terminal, so no cell-plane check can catch it.
+	p, ok := clipPlacement(p, f.Cells.ClipRect())
+	if !ok {
+		return
+	}
 	if f.sink != nil {
 		f.sink(p)
 		return
 	}
 	f.placements = append(f.placements, p)
+}
+
+// clipPlacement trims a placement to the visible cells and crops its
+// image to match, reporting false when nothing of it survives.
+//
+// Cropping rather than dropping a partly-visible image is what makes a
+// viewport possible at all: a row scrolling off the top of a pane should
+// lose its top half, not vanish. The image was rasterized for exactly
+// Cols x Rows cells, so cells map to pixels by a plain ratio.
+//
+// An image that cannot be cropped is DROPPED rather than placed whole.
+// Losing a picture is visible and local; letting it composite over a
+// neighbour is the silent corruption this is here to prevent.
+func clipPlacement(p graphics.Placement, clip render.Rect) (graphics.Placement, bool) {
+	x0, y0 := max(p.Col, clip.X), max(p.Row, clip.Y)
+	x1, y1 := min(p.Col+p.Cols, clip.X+clip.W), min(p.Row+p.Rows, clip.Y+clip.H)
+	if x0 >= x1 || y0 >= y1 {
+		return p, false
+	}
+	if x0 == p.Col && y0 == p.Row && x1 == p.Col+p.Cols && y1 == p.Row+p.Rows {
+		return p, true // wholly inside: the common case, untouched
+	}
+	sub, ok := p.Img.(interface {
+		SubImage(image.Rectangle) image.Image
+	})
+	if !ok || p.Cols <= 0 || p.Rows <= 0 {
+		return p, false
+	}
+	b := p.Img.Bounds()
+	pxW, pxH := b.Dx(), b.Dy()
+	crop := image.Rect(
+		b.Min.X+(x0-p.Col)*pxW/p.Cols, b.Min.Y+(y0-p.Row)*pxH/p.Rows,
+		b.Min.X+(x1-p.Col)*pxW/p.Cols, b.Min.Y+(y1-p.Row)*pxH/p.Rows,
+	)
+	p.Img = sub.SubImage(crop.Intersect(b))
+	p.Col, p.Row, p.Cols, p.Rows = x0, y0, x1-x0, y1-y0
+	return p, true
 }
 
 // Placements is this frame's pixel plane in paint order.

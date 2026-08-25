@@ -165,8 +165,13 @@ func (f *Flusher) dirty(b *Buffer, x, y int) bool {
 }
 
 func (f *Flusher) remember(b *Buffer) {
+	// NewBuffer, not a literal: a hand-built Buffer has an empty clip and
+	// would discard every Set. This one is only ever written by the copy
+	// below, so it would have survived — but leaving the second
+	// constructor in the tree is how the next hand-built buffer gets
+	// written and silently paints nothing.
 	if f.prev == nil || f.prev.W != b.W || f.prev.H != b.H {
-		f.prev = &Buffer{W: b.W, H: b.H, Cells: make([]Cell, len(b.Cells))}
+		f.prev = NewBuffer(b.W, b.H)
 	}
 	copy(f.prev.Cells, b.Cells)
 }

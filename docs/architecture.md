@@ -72,8 +72,35 @@ type Cell struct {
 type Buffer struct {
     W, H  int
     Cells []Cell
+
+    cx0, cy0, cx1, cy1 int // the clip: what Set will accept
 }
 ```
+
+**Writes are clipped to the painting component.** The Composer brackets
+every `Render` with `Buffer.Clip`/`Unclip` — the same place it installs
+the graphics sink, and for the same reason: both answer "which component
+is painting right now". A write outside that rect is dropped.
+
+This is not a rendering nicety, it is a correctness rule, because of how
+damage tracking works. Cells beyond a component's rect belong to
+neighbours whose paint nodes did not invalidate, so those cells are
+*clean* and nothing will ever repaint over a stray write. It survives
+until something unrelated dirties the victim — seen from the far end as
+"stray characters in a pane that never fixes itself".
+
+It is framework-wide rather than opt-in because it is free: the clip is
+kept inside the buffer by `Clip`, so `Set` tests the clip *instead of*
+the buffer rather than as well as it — the same four comparisons that
+already bounded every write. `Clip` intersects rather than replaces, so
+nesting can only narrow and a component cannot widen its way out.
+
+`Frame.Place` clips the pixel plane against the same rect, cropping a
+partly-visible image rather than dropping it. Clipping text but not
+pictures would be worse than no clipping at all: a sixel or kitty image
+is composited by the terminal, so no cell-plane check can catch one that
+overhangs, and the gap would only show up once a component with an image
+overflowed. See `docs/specs/2026-08-25-clipping.md`.
 
 `render.Style` carries 24-bit `Fg`/`Bg` colors (zero value means
 "terminal default") plus bold/underline/reverse. `render.Flush` walks

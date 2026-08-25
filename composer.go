@@ -392,9 +392,20 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		outer := c.frame.sink
 		n.places = n.places[:0]
 		c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
+		// The clip is bracketed exactly like the sink, and for the same
+		// reason: both are "which component is painting right now", and a
+		// Render that evaluates another node would otherwise leave the
+		// wrong answer installed. Saved and restored rather than reset to
+		// the screen, so a nested evaluation cannot widen past its host.
+		//
+		// This is what makes a component unable to write a neighbour's
+		// cells (#357). It bounds the CELL plane; Frame.Place bounds the
+		// pixel plane against the same rect.
+		prevClip := c.frame.Cells.Clip(render.Rect(n.bounds))
 		if paintable(w) {
 			w.Render(c.frame)
 		}
+		c.frame.Cells.Unclip(prevClip)
 		c.frame.sink = outer
 		c.painted++
 		n.stamp = c.frameSeq
