@@ -126,14 +126,26 @@ func TestEveryKindTheVocabularyActuallyUSESHasAnEditor(t *testing.T) {
 // to open something. Two editors sharing a glyph would say "these behave
 // alike" about a colour picker and a dropdown, and editNone sharing one
 // with a real editor would hide the gap the table exists to expose.
-func TestEveryEditorHasAnAffordanceAndTheGlyphsAreDistinct(t *testing.T) {
+func TestEveryEditorHasAnAffordanceAndSharedGlyphsAgreeOnFloating(t *testing.T) {
 	byGlyph := map[string][]editorKind{}
 	for _, e := range editors {
 		byGlyph[e.affordance()] = append(byGlyph[e.affordance()], e)
 	}
 	for glyph, es := range byGlyph {
-		if glyph == "" {
-			t.Errorf("editors %v render no affordance at all", es)
+		// TrimSpace, not == "": the caret arm returns a SPACE, so the
+		// empty-string test could never fire for any member of editors
+		// and this loop reported success having checked nothing.
+		//
+		// The caret editors are the deliberate exception — a caret IS
+		// the affordance, and a glyph beside it would claim something
+		// else opens. Every other kind must show one.
+		if strings.TrimSpace(glyph) != "" {
+			continue
+		}
+		for _, e := range es {
+			if e != editCaret && e != editRename {
+				t.Errorf("editor %v renders no affordance at all", e)
+			}
 		}
 	}
 	// A floating editor and an inline one must not look the same.

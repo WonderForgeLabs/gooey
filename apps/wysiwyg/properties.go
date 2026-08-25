@@ -128,7 +128,28 @@ type valueEditor struct {
 	// (an undo restores a deep copy, so every pointer differs), which is
 	// the same failure by another route and wants the same answer: the
 	// editor is stale, retire it.
+	//
+	// row is the SAME guard one level down, and it is needed because the
+	// element is not the only thing that can move out from under an open
+	// editor. The overlay's POSITION comes from the row index — Arrange
+	// reads ed.attrSel — while its WRITE TARGET is the attribute name
+	// captured here at open. Those diverge whenever the selection moves
+	// within the same element, and the caret modes make that reachable
+	// with the mouse: they return from Open before pop.Open(nil), so
+	// they never capture the pointer, so a press on another attribute row
+	// is consumed by the ItemsView, which moves attrSel — and the
+	// outside-press dismissal that closes every floated mode never runs.
+	// Measured before the fix: open the caret on a <Button>'s Content,
+	// click the Chrome row, type — the box visibly relocates onto Chrome
+	// and the keystroke is written to Content.
+	//
+	// Cancel inherits it too, because currentValue reads whichever row is
+	// selected NOW, so esc would compare against the wrong row's value.
 	on *node
+	// row is the attribute row index the editor opened on, -1 when
+	// closed. Read the paragraph above for why identity alone is not
+	// enough.
+	row int
 	// undo is the value the row held when the editor opened, for esc.
 	undo string
 	// tracks is the working copy for the KindGridLens editor.
@@ -181,7 +202,7 @@ func newValueEditor(ed *editor, list *components.ItemsView, text *components.Tex
 	attach []gooey.Component) *valueEditor {
 
 	p := &valueEditor{
-		ed: ed, list: list, text: text, attach: attach,
+		ed: ed, list: list, text: text, attach: attach, row: -1,
 		mode: prop.NewSource(int(editNone)),
 		pick: prop.NewSource(0),
 		col:  prop.NewSource(render.RGB(128, 128, 128)),
@@ -604,7 +625,7 @@ func (p *valueEditor) Open() {
 		return
 	}
 	p.name, p.body, p.undo, p.chord = r.name, r.body, r.value, ""
-	p.on = p.ed.sel
+	p.on, p.row = p.ed.sel, p.ed.attrSel.Get()
 	p.ed.editName.Set(r.name)
 	p.ed.editValue.Set(r.value)
 	p.ed.describe(r)
@@ -653,7 +674,7 @@ func (p *valueEditor) OpenAsText() {
 		return
 	}
 	p.name, p.body, p.undo, p.chord = r.name, r.body, r.value, ""
-	p.on = p.ed.sel
+	p.on, p.row = p.ed.sel, p.ed.attrSel.Get()
 	p.ed.editName.Set(r.name)
 	p.ed.editValue.Set(r.value)
 	p.ed.describe(r)
@@ -669,7 +690,12 @@ func (p *valueEditor) OpenAsText() {
 // not looking. Identity only; p.on is never dereferenced.
 //
 // A plain read, safe from layout as well as from an event handler.
-func (p *valueEditor) stale() bool { return p.on != nil && p.ed.sel != p.on }
+func (p *valueEditor) stale() bool {
+	if p.on == nil {
+		return false
+	}
+	return p.ed.sel != p.on || p.ed.attrSel.Get() != p.row
+}
 
 // retire abandons a stale editor: close it, and FORGET the pending edit
 // rather than committing or restoring it.
@@ -682,14 +708,15 @@ func (p *valueEditor) stale() bool { return p.on != nil && p.ed.sel != p.on }
 // answer, and the document keeps whatever was already committed to the
 // original element.
 func (p *valueEditor) retire() {
-	p.on = nil
+	p.on, p.row = nil, -1
 	p.name, p.body, p.undo, p.chord = "", false, "", ""
 	p.Close()
 }
 
 // Close retires the editor and hands the keyboard back to the list.
 func (p *valueEditor) Close() {
-	p.on = nil
+	p.on, p.row = nil, -1
+	p.name, p.body = "", false
 	if p.Mode() == editNone {
 		return
 	}

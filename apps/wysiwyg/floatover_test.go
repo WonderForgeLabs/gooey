@@ -901,11 +901,6 @@ func TestTheLastTrackCannotBeRemoved(t *testing.T) {
 // input.KeyEvent.String and input.ParseGesture round-trip, so what is
 // captured is what the loader will parse — which is the whole reason to
 // capture rather than to ask the user to spell "ctrl+shift+pageup".
-// TestTheGestureEditorCapturesTheChordItWasGiven.
-//
-// input.KeyEvent.String and input.ParseGesture round-trip, so what is
-// captured is what the loader will parse — which is the whole reason to
-// capture rather than to ask the user to spell "ctrl+shift+pageup".
 //
 // IT CANNOT BE DRIVEN THROUGH `enter` ON A ROW TODAY, and the reason is
 // worth writing down rather than working around: the only two elements in
