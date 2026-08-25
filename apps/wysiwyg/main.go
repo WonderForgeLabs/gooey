@@ -1600,9 +1600,13 @@ func (ed *editor) addSelected() {
 		return
 	}
 	spec := ed.palette[i]
-	// INTO the selected container, not always at the root. See addTarget
-	// for the leaf case, which is the one that would fail silently.
-	into := ed.addTarget()
+	// WHERE IT LANDS AND WHAT WRAPS IT, both from the catalog. See
+	// addplan.go — the climb is what stops an insert silently relocating
+	// to the document root, and the wrap is what makes "add a <Button>
+	// with a <Tabs> selected" mean a new tab holding the button rather
+	// than an illegal child that stops the document building.
+	plan := ed.planAdd(spec.Name)
+	into := plan.into
 	// The name comes from what is IN USE, never from a count. Counting
 	// children re-issues a live name as soon as one is deleted from the
 	// middle: three adds then a delete then an add produced two
@@ -1667,7 +1671,26 @@ func (ed *editor) addSelected() {
 	// only a click descends. One palette press into the wrong container
 	// stranded a live editor exactly that way.
 	prev := ed.sel
-	into.Kids = append(into.Kids, n)
+	// The wrapper, when the container takes the element only through one
+	// of its own declared children. The SELECTION stays on what the user
+	// asked for, not on the scaffolding: they picked a <Button>, so the
+	// properties grid must show the button and not the <Tab> that had to
+	// exist to hold it.
+	add := n
+	if plan.wrap != "" {
+		// wrapperNode, NOT ed.seed. A pseudo-element declares no Seed of
+		// its own — <Tabs> parses <Tab> itself, so <Tab> has no builder
+		// and nothing to seed from — and seeding it produced a bare
+		// <Tab/>, which markup.Build refuses with `<Tab> needs a Header`.
+		// The transactional revert below then caught that and reported it
+		// as the USER's insert being illegal, which it was not. The
+		// attributes come from the container's own seed instead; see
+		// wrapperNode.
+		w := ed.wrapperNode(into.Elem, plan.wrap)
+		w.Kids = []*node{n}
+		add = w
+	}
+	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	ed.rebuild()
 	// docRoot is the signal rather than a second Build: it is what rebuild
@@ -1687,38 +1710,25 @@ func (ed *editor) addSelected() {
 	}
 }
 
-// addTarget is the node a palette click appends INTO, and the leaf case
-// is the dangerous one.
+// holdsChildren asks whether an element may contain children at all. An
+// element the palette does not describe is treated as a leaf — the safe
+// answer, because the cost of being wrong the other way is a silent drop:
+// a leaf discards children with no error at load and nothing at runtime,
+// so a Button added while a <Text> is selected would simply not exist.
 //
-// The chain is: the selected node if it can hold children, else its
-// PARENT, else the user's root. Appending into a LEAF must never happen —
-// a leaf element discards children with no error at load and nothing at
-// runtime, so a Button added while a <Text> is selected would simply not
-// exist. For a direct-manipulation editor that is the worst possible
-// failure: the user clicks, nothing appears, and there is no diagnostic
-// anywhere to explain it.
+// PREFER canHold (addplan.go) FOR ANY NEW CALLER. This function answers a
+// coarser question and gets two things wrong for a restricted container:
+// it never consults ChildSpec.Only, so it says yes to putting a <Text> in
+// a <Tabs>; and it scans ed.palette rather than the catalog, so an
+// element the palette filters out — <Tab> is exactly that — is
+// unknowable to it. The doc comment that used to sit above this one
+// described `addTarget`, which moved to addplan.go and now climbs and
+// wraps rather than checking one node and its parent; the explanation
+// lives in that file's header.
 //
-// ChildSpec.Mode is the right question to ask here, and it is worth
-// noting the asymmetry with the BODY question, where Mode was the WRONG
-// derivation: Mode says what may nest inside an element, which is exactly
-// "can this hold children". It says nothing about whether content arrives
-// as a body, which is what BodySpec is for.
-func (ed *editor) addTarget() *node {
-	if n := ed.sel; n != nil && !ed.isSurface(n) {
-		if ed.holdsChildren(n.Elem) {
-			return n
-		}
-		if p := ed.parentOf(n); p != nil && !ed.isSurface(p) {
-			return p
-		}
-	}
-	return ed.doc()
-}
-
-// holdsChildren asks the catalog whether an element may contain children
-// at all. An element the palette does not describe is treated as a leaf —
-// the safe answer, because the cost of being wrong the other way is a
-// silent drop.
+// It remains because the FIT check (fit.go) asks the coarse question
+// legitimately — "could this element ever nest anything" — where Only
+// does not enter into it.
 func (ed *editor) holdsChildren(elem string) bool {
 	for _, e := range ed.palette {
 		if e.Name != elem {
