@@ -103,12 +103,14 @@ prints on the way out is readable. Mechanically it is defer order in
 | a companion exits with an error mid-run | running | quit the loop | `*CompanionError{Phase: PhaseRun, Err: …}` |
 | a companion exits **zero** mid-run | running | quit the loop | `*CompanionError{Phase: PhaseRun, Err: nil}` |
 | the terminal's input decoder dies | running | quit the loop | `terminal input stopped: <decoder error>` |
+| the input decoder **lives and goes deaf** | running | **nothing — it cannot see this** | never returns |
 | quit key, `Quit()`, cancelled ctx, SIGINT/SIGTERM | teardown | cancel, wait (bounded) | `nil` or `*SignalError` |
 | a companion ignores its cancelled context | teardown | give up after `WithCompanionStopTimeout` (10s), set `CompanionLeaked()` | unchanged |
 | panic | teardown | restore terminal, stop companions, re-panic | (panics) |
 | `Suspend` | during | **nothing** — companions keep running | — |
 
-Three rows deserve their reasons.
+Several of these rows deserve their reasons — the count is deliberately
+not given, because this section has already grown one.
 
 **A clean exit mid-run is a failure.** A service that decides it is
 finished while its app is still on screen has failed at being a service,
@@ -121,6 +123,31 @@ would be on screen and permanently deaf — the one outcome worse than
 exiting, because the user cannot even quit. `Run` returns the decoder's
 error wrapped as `terminal input stopped: …` rather than `nil`, since
 `nil` is how a caller decides nothing went wrong.
+
+**A LIVE decoder is the row this table could not express, until it had
+to.** Every other row is an event something signals. A decoder that goes
+deaf signals nothing, by construction: `Run` selects on `a.decDone`, and
+`decDone` closes when the decode goroutine *returns*. A goroutine still
+looping over a terminal it is still reading has not returned, so there is
+no channel to select on, no error to wrap, and no `Run` return to name
+here — which is why the fourth column says "never returns" rather than
+naming a value. The app paints, the terminal reads, and every keystroke
+is dropped between them.
+
+That is not hypothetical. `input.Decode` could answer "incomplete, feed
+me more bytes" for a buffer no further byte would ever complete, and the
+drain loop believed it — one `Esc` arriving in the same read as a mouse
+report stranded the buffer permanently (#406). The reasoning above says a
+deaf app is the outcome worse than exiting; this is that outcome reached
+from the other side, and the detection argument for the dead decoder
+gives no cover against it.
+
+What closes it is not a tripwire but an invariant, because a tripwire
+needs someone to trip it: when `idle` is true, `Decode` always consumes a
+byte or produces an event, so the drain loop cannot be told to wait for a
+byte that is not coming. `CompanionLeaked()` and `DecoderLeaked` have
+watchdogs precisely because their failures are observable; this one is
+not, so it is designed out instead of watched for.
 
 **A dead companion outranks a dead decoder, which outranks a signal.**
 `exitErr` returns the first non-nil of `compErr`, `termErr`, `exitSig`,
