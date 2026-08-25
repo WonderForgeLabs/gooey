@@ -179,7 +179,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude[bot],copilot[bot]'
           claude_args: |
-            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-sonnet-5"
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-opus-5"
 
           # Enable progress tracking
           track_progress: true
@@ -677,6 +677,154 @@ jobs:
             Return the structured result: `verdict`, `outstanding_findings` (each a short
             `title` + `severity`), `addressed_count`, and a one-paragraph `reason`.
 
+      # A merge-gate evaluator that is REFUSED (rather than failing) returns in ~1s
+      # with is_error=true, num_turns=1 and total_cost_usd=0, and emits no structured
+      # output. That is a rate-limit/quota refusal, not a verdict — and failing closed
+      # on it throws away the review that just ran immediately before it, which on this
+      # repo costs ~$2 and ~5 minutes of agent time (measured: PR #3211, pr-review 28
+      # turns / 298s / $1.97 at 04:10, gate refused in 1.1s at $0 at 04:26).
+      #
+      # Distinguishing the refusal from a real failure matters because the two want
+      # opposite responses. A real failure wants a code change. A refusal wants the
+      # SAME review re-classified once the window clears — which re-running the
+      # `merge-gate` check alone does for free, since `needs.pr-review.outputs` is
+      # preserved across a job re-run. Pushing a commit instead re-runs `pr-review`
+      # too and pays for the whole review a second time for no new information.
+      #
+      # This step only CLASSIFIES the refusal and backs off; the gate still fails
+      # closed if the retry does not produce a verdict.
+      - name: Detect a transient evaluator refusal
+        id: gate_triage
+        if: ${{ !cancelled() }}
+        env:
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
+          VERDICT_JSON: ${{ steps.gate.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.gate.outputs.execution_file }}
+          GATE_RETRY_BACKOFF_SECONDS: '90'
+        run: |
+          set -euo pipefail
+
+          # A verdict was produced: nothing to retry, whatever the step outcome.
+          if [ -n "${VERDICT_JSON:-}" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+            echo "The evaluator produced a verdict; no retry needed."
+            exit 0
+          fi
+
+          # Skipped (force-pass, Dependabot, do-not-merge-added) — not a refusal.
+          if [ "$GATE_OUTCOME" = "skipped" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+            echo "Classification was skipped for this run; no retry needed."
+            exit 0
+          fi
+
+          # No execution file at all means the SDK never ran (the npm-mirror 404
+          # class, forge#3341) or the workflow-validation guard skipped the action.
+          # Neither is a quota refusal and neither is fixed by waiting.
+          if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE:-/nonexistent}" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No evaluator execution file; the action never produced a result. Not a quota refusal, so not retrying."
+            exit 0
+          fi
+
+          # The refusal signature. Read from the LAST result record.
+          refusal="$(jq -rs '
+            [ .[] | .. | objects | select(.type? == "result") ] | last
+            | if . == null then "unknown"
+              elif (.is_error == true and (.num_turns // 0) <= 1 and (.total_cost_usd // 0) == 0)
+              then "refused" else "real" end
+          ' "$EXECUTION_FILE" 2>/dev/null || echo unknown)"
+
+          if [ "$refusal" != "refused" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+            echo "Evaluator failed for a non-transient reason (classified: $refusal). Failing closed without a retry."
+            exit 0
+          fi
+
+          echo "retry=true" >> "$GITHUB_OUTPUT"
+          echo "::warning::The merge-gate evaluator was refused without doing any work (1 turn, \$0) — a rate-limit/quota refusal, not a verdict. Backing off ${GATE_RETRY_BACKOFF_SECONDS}s and re-classifying the review that already completed."
+          sleep "${GATE_RETRY_BACKOFF_SECONDS}"
+        # Kept as a named knob rather than a literal: the useful value depends on
+        # how long the quota window is, which is not a property of this workflow.
+        # One bounded retry only — if the window is long (forge#3319 measured ~1.5h)
+        # no in-job backoff can outlast it, and the gate must fail closed rather
+        # than hold a runner hostage.
+
+
+      - name: Merge-gate classification (retry after a transient refusal)
+        id: gate_retry
+        # Same Dependabot exclusion as pr-review above: this step's own actor check
+        # would otherwise fail the job outright (no continue-on-error), pre-empting
+        # the Enforce merge gate step's dependabot pass path below.
+        #
+        # Also skipped when a do-not-merge label was just ADDED (mode=recheck on a
+        # `labeled` action): Enforce merge gate's do-not-merge check fails the gate
+        # unconditionally in that case regardless of the verdict, so running
+        # classification here would just be a wasted Claude call. Removal
+        # (`unlabeled`) still needs a real classification to determine whether the
+        # gate should now pass.
+        # Only on the transient-refusal path detected above. Everything else —
+        # a real verdict, a genuine evaluator failure, a skip — is left alone, so
+        # this can never turn a fail-closed into a second chance at passing.
+        if: ${{ !cancelled() && steps.gate_triage.outputs.retry == 'true' }}
+        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # allowed_bots must match pr-review's list (dependabot[bot] intentionally
+          # NOT listed — this step's `if:` above already excludes it; without any
+          # list here, ANY bot actor, not just Dependabot, hits claude-code-action's
+          # human-only default allowlist, since pr-review's list doesn't apply to
+          # this separate step).
+          allowed_bots: 'claude[bot],copilot[bot]'
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,LS,Bash(gh:*),Bash(jq:*)" --model "claude-sonnet-5"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"outstanding_findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"severity":{"type":"string"}},"required":["title"]}},"addressed_count":{"type":"integer"},"reason":{"type":"string"}},"required":["verdict","reason"]}'
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.ctx.outputs.pr_number }}
+
+            ## Task: Merge-gate classification
+
+            The previous step ran a comprehensive code review and posted a summary comment
+            on this PR. Decide whether the PR is ready to merge. It is ready ONLY when every
+            actionable finding from the LATEST review is already addressed — either fixed in
+            the branch (so it no longer appears in the latest review summary) or tracked in an
+            open `pr-feedback` GitHub issue for this PR.
+
+            ## Steps
+
+            1. Find the latest review summary written by the review bot:
+               - `gh api --paginate repos/${{ github.repository }}/issues/${{ steps.ctx.outputs.pr_number }}/comments`
+                 and pick the MOST RECENT comment authored by `claude[bot]` that is a
+                 code-review summary (it lists findings grouped by concern). Ignore
+                 progress-tracking checklist comments.
+               - Reviews are asked to open their summary with a hidden
+                 `<!-- pr-review-summary -->` marker. If any comment carries it, prefer
+                 the most recent one that does — `claude[bot]` is also the identity of
+                 the interactive `@claude` bot, whose replies are NOT review summaries.
+                 Older summaries predate the marker, so its absence rules nothing out.
+               - Also read review bodies:
+                 `gh api --paginate repos/${{ github.repository }}/pulls/${{ steps.ctx.outputs.pr_number }}/reviews`.
+            2. Extract every actionable finding from that latest summary. Treat ALL findings
+               as actionable — nits included; the review is instructed never to minimize them.
+            3. Fetch open follow-up issues for this PR:
+               `gh issue list --repo ${{ github.repository }} --state open --label pr-feedback --search "[PR #${{ steps.ctx.outputs.pr_number }} feedback]" --json number,title,body`
+            4. For each finding, mark it ADDRESSED if a matching open `pr-feedback` issue
+               covers it. A finding the latest review no longer lists is already fixed in the
+               branch and need not be considered.
+            5. If the latest review summary reports NO actionable findings, the verdict is `pass`.
+
+            ## Verdict
+
+            - `pass` only if EVERY actionable finding in the latest review summary is covered
+              by an open `pr-feedback` issue (or there are no findings at all).
+            - `fail` if ANY actionable finding is neither fixed nor tracked.
+            - If you cannot locate a review summary comment at all, return `fail` with a reason
+              that says so (fail closed).
+
+            Return the structured result: `verdict`, `outstanding_findings` (each a short
+            `title` + `severity`), `addressed_count`, and a one-paragraph `reason`.
+
       # Mint a token from the homelab-runners-default GitHub App so the sticky
       # merge-gate comment (and the force-pass audit comment) are posted by the
       # App identity rather than the job's GITHUB_TOKEN. The default token's
@@ -713,8 +861,12 @@ jobs:
           REVIEW_OUTCOME: ${{ needs.pr-review.outputs.outcome }}
           REVIEW_EXECUTION: ${{ needs.pr-review.outputs.execution_file }}
           SUMMARY_POSTED: ${{ needs.pr-review.outputs.summary_posted }}
-          GATE_OUTCOME: ${{ steps.gate.outcome }}
-          VERDICT_JSON: ${{ steps.gate.outputs.structured_output }}
+          # Whichever attempt produced a verdict. `||` is safe: an unset output is
+          # falsy, and a skipped retry leaves both of its values empty — so with no
+          # retry these evaluate exactly as they did before.
+          GATE_OUTCOME: ${{ steps.gate_retry.outcome == 'skipped' && steps.gate.outcome || steps.gate_retry.outcome }}
+          VERDICT_JSON: ${{ steps.gate.outputs.structured_output || steps.gate_retry.outputs.structured_output }}
+          GATE_WAS_REFUSED: ${{ steps.gate_triage.outputs.retry }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.ctx.outputs.pr_number }}
@@ -843,14 +995,23 @@ jobs:
             fi
           fi
 
+          # A push is the RIGHT advice for a real evaluator failure and the WRONG
+          # advice for a refusal: it re-runs pr-review too, paying for the whole
+          # review again to learn nothing new. Re-running just this check reuses the
+          # completed review, since needs.pr-review.outputs survives a job re-run.
+          retry_hint=""
+          if [ "${GATE_WAS_REFUSED:-}" = "true" ]; then
+            retry_hint=" The evaluator was REFUSED without doing any work (1 turn, \$0) rather than reaching a verdict, and the retry did not clear it — a rate-limit/quota window, not a problem with this PR. Re-run the \`review / merge-gate\` check on its own once it clears; that reuses the review that already completed. Do NOT push a no-op commit to retrigger it, which pays for the full review a second time."
+          fi
+
           if [ "$GATE_OUTCOME" != "success" ]; then
             echo "::error::Merge-gate evaluator did not complete (outcome=$GATE_OUTCOME). Failing closed."
-            fail "The merge-gate evaluator did not complete (outcome \`$GATE_OUTCOME\`). Failing closed."
+            fail "The merge-gate evaluator did not complete (outcome \`$GATE_OUTCOME\`). Failing closed.$retry_hint"
           fi
 
           if [ -z "${VERDICT_JSON:-}" ]; then
             echo "::error::Merge-gate evaluator produced no structured output. Failing closed."
-            fail "The merge-gate evaluator produced no structured output. Failing closed."
+            fail "The merge-gate evaluator produced no structured output. Failing closed.$retry_hint"
           fi
 
           VERDICT="$(printf '%s' "$VERDICT_JSON" | jq -r '.verdict')"
