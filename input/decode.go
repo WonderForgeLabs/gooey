@@ -91,11 +91,32 @@ func decodeEsc(b []byte, idle bool) (Event, int, bool) {
 	default:
 		// ESC + key in the same read is alt+key.
 		ev, n, ok := Decode(b[1:], idle)
-		if !ok || !ev.IsKey() {
-			return ev, 0, false
+		if ok && ev.IsKey() {
+			ev.Key.Mods |= ModAlt
+			return ev, n + 1, true
 		}
-		ev.Key.Mods |= ModAlt
-		return ev, n + 1, true
+		// Anything else means the ESC was NOT a prefix, and the only
+		// answer that keeps the decoder alive is to consume it alone.
+		//
+		// Returning (0, false) here — which is what this did — is the
+		// drain loop's "incomplete, wait for more bytes" signal, and for
+		// a sequence that is already complete no further byte can ever
+		// resolve it. The buffer strands, every later keystroke is
+		// appended behind it, and the app paints on forever without
+		// taking another key: no error, no exit, no tripwire. Two
+		// ordinary inputs reached it. ESC before a MOUSE report decodes
+		// perfectly and fails `IsKey`; ESC before an undecodable byte or
+		// a known-shape-but-unmapped CSI reports !ok having consumed
+		// bytes.
+		//
+		// Consuming ONLY the ESC — rather than swallowing what follows —
+		// is what makes the mouse report arrive as itself on the next
+		// pass, so "press Escape, then click" delivers both events
+		// instead of losing the click.
+		if n == 0 && !ok && !idle {
+			return Event{}, 0, false // genuinely truncated: more may come
+		}
+		return KeyOf(Named(KeyEsc)), 1, true
 	}
 }
 
