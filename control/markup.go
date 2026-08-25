@@ -303,9 +303,13 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	if s.scoped() && old == root {
 		return nil, deniedf("element %q is the composition root; patching it replaces the whole page, which no island grant can authorize", name)
 	}
-	var put func(gooey.Component)
+	var put func(gooey.Component) bool
+	// Held for the refusal message below, which needs to name the
+	// container that declined; `parent` itself is scoped to this block.
+	var putParent gooey.Component
 	if old != root {
 		parent, index := findParent(root, old)
+		putParent = parent
 		if parent == nil {
 			return nil, invalidf("element %q is not a visual child in the live tree; PatchMarkup replaces elements a container lays out", name)
 		}
@@ -376,7 +380,15 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	if old == root {
 		s.host.Swap(fresh)
 	} else {
-		put(fresh)
+		// The refusal path ChildSetter documents. Reaching it means the
+		// container declined a write whose index this call already
+		// validated — the composition moved under us, or a third-party
+		// container refuses for a reason of its own. Either way the tree
+		// is unchanged, so reporting success would leave the caller
+		// believing a patch landed that is not on screen.
+		if !put(fresh) {
+			return nil, invalidf("element %q could not be written back into its %T parent: the container refused the write, so the tree is unchanged", name, putParent)
+		}
 		c.InvalidateStructure()
 	}
 	return namesOf(s.bind.Named), nil
@@ -431,7 +443,15 @@ func findParent(w gooey.Component, target gooey.Component) (gooey.Component, int
 // The range check is made HERE, before anything is built, by asking the
 // container what it currently holds — which is why an out-of-range index
 // is a refusal with an error rather than a silently dropped write.
-func childSlot(parent gooey.Component, i int) func(gooey.Component) {
+// The returned setter PROPAGATES SetChild's bool. It used to drop it,
+// which made the interface's own contract unenforceable from here:
+// ChildSetter documents that false is a refusal and "callers must treat
+// it as a refusal rather than ignoring it", and this was the caller. A
+// container refusing for any reason other than the index check below —
+// and the interface is open, so a third-party container may have
+// reasons of its own — would have had PatchMarkup report success while
+// changing nothing on screen. Caught in review.
+func childSlot(parent gooey.Component, i int) func(gooey.Component) bool {
 	cs, ok := parent.(gooey.ChildSetter)
 	if !ok {
 		return nil
@@ -439,7 +459,7 @@ func childSlot(parent gooey.Component, i int) func(gooey.Component) {
 	if i < 0 || i >= len(cs.ChildComponents()) {
 		return nil
 	}
-	return func(w gooey.Component) { cs.SetChild(i, w) }
+	return func(w gooey.Component) bool { return cs.SetChild(i, w) }
 }
 
 // collectSubtree marks target and everything reachable from it —
