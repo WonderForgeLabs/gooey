@@ -1710,26 +1710,25 @@ func (ed *editor) addSelected() {
 	}
 }
 
-// addTarget is the node a palette click appends INTO, and the leaf case
-// is the dangerous one.
+// holdsChildren asks whether an element may contain children at all. An
+// element the palette does not describe is treated as a leaf — the safe
+// answer, because the cost of being wrong the other way is a silent drop:
+// a leaf discards children with no error at load and nothing at runtime,
+// so a Button added while a <Text> is selected would simply not exist.
 //
-// The chain is: the selected node if it can hold children, else its
-// PARENT, else the user's root. Appending into a LEAF must never happen —
-// a leaf element discards children with no error at load and nothing at
-// runtime, so a Button added while a <Text> is selected would simply not
-// exist. For a direct-manipulation editor that is the worst possible
-// failure: the user clicks, nothing appears, and there is no diagnostic
-// anywhere to explain it.
+// PREFER canHold (addplan.go) FOR ANY NEW CALLER. This function answers a
+// coarser question and gets two things wrong for a restricted container:
+// it never consults ChildSpec.Only, so it says yes to putting a <Text> in
+// a <Tabs>; and it scans ed.palette rather than the catalog, so an
+// element the palette filters out — <Tab> is exactly that — is
+// unknowable to it. The doc comment that used to sit above this one
+// described `addTarget`, which moved to addplan.go and now climbs and
+// wraps rather than checking one node and its parent; the explanation
+// lives in that file's header.
 //
-// ChildSpec.Mode is the right question to ask here, and it is worth
-// noting the asymmetry with the BODY question, where Mode was the WRONG
-// derivation: Mode says what may nest inside an element, which is exactly
-// "can this hold children". It says nothing about whether content arrives
-// as a body, which is what BodySpec is for.
-// holdsChildren asks the catalog whether an element may contain children
-// at all. An element the palette does not describe is treated as a leaf —
-// the safe answer, because the cost of being wrong the other way is a
-// silent drop.
+// It remains because the FIT check (fit.go) asks the coarse question
+// legitimately — "could this element ever nest anything" — where Only
+// does not enter into it.
 func (ed *editor) holdsChildren(elem string) bool {
 	for _, e := range ed.palette {
 		if e.Name != elem {

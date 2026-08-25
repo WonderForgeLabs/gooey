@@ -121,9 +121,18 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 // the container's own example is the only source for that which is not a
 // table in this file naming "Header".
 //
-// The seed's CHILDREN are dropped: the wrapper exists to hold what the
-// user asked for, and keeping the example's content would silently add an
-// element nobody chose.
+// The seed's CONTENT is dropped — both halves of it. Kids and Body are
+// the same category of thing, the seed author's worked example, and the
+// wrapper exists to hold what the user asked for; keeping either would
+// silently add content nobody chose. Only the ATTRIBUTES carry over,
+// because those are what make the wrapper legal rather than what fills
+// it.
+//
+// Body was copied here until a review caught it. It was dormant — the one
+// single-candidate restricted container today is <Tabs>, and its example
+// <Tab> carries a <Text> CHILD rather than body text of its own — but
+// nothing enforced that, so a future wrapper element seeded with body
+// text would have reintroduced exactly the bug dropping Kids prevents.
 //
 // KNOWN LIMIT, stated rather than hidden: every wrapper built this way
 // carries the same attribute values, so a second added tab repeats the
@@ -149,7 +158,7 @@ func (ed *editor) wrapperNode(parent, wrap string) *node {
 		for name, v := range k.Attrs {
 			attrs[name] = v
 		}
-		return &node{Elem: wrap, Attrs: attrs, Body: k.Body}
+		return &node{Elem: wrap, Attrs: attrs}
 	}
 	return bare
 }

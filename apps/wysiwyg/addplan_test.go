@@ -313,6 +313,85 @@ func TestAContainerIsTheRouteToMoreThanOneThingOnATab(t *testing.T) {
 	}
 }
 
+// TestDemotingIntoARestrictedContainerIsRefusedAndReverted is the OTHER
+// gesture that reached the same crash, and it had no test at all.
+//
+// addSelected was made transactional and taught to read ChildSpec.Only;
+// demoteSelected (ctrl+l) was not. It gated on holdsChildren — which
+// never consults Only — and then returned true unconditionally: no
+// docRoot check, no revert, no message. So demoting anything into a
+// <Tabs> wrote a direct illegal child and left docRoot nil, which kills
+// click-to-select for the whole document while the last good tree stays
+// on screen looking pressable. Same crash, different key.
+//
+// Both arms are here. A demote that refused everything would satisfy the
+// refusal half and be useless.
+func TestDemotingIntoARestrictedContainerIsRefusedAndReverted(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+
+	// The must-DEMOTE arm first, so the refusal below proves something.
+	// A <VStack> holds anything, so a <Button> after it demotes in.
+	stack := &node{Elem: "VStack", Attrs: map[string]string{"Name": "Stack1"}}
+	btn := &node{Elem: "Button", Attrs: map[string]string{"Name": "Btn1", "Content": "go"}}
+	ed.doc().Kids = append(ed.doc().Kids, stack, btn)
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("the demote fixture does not build: %q", ed.status.Get())
+	}
+	ed.sel = btn
+	if !ed.demoteSelected() {
+		t.Fatalf("demoting a <Button> into a <VStack> was refused (%q); the "+
+			"refusal below proves nothing if demote never works", ed.status.Get())
+	}
+	if len(stack.Kids) != 1 || stack.Kids[0] != btn {
+		t.Fatalf("the <VStack> holds %v, want the demoted <Button>", kidElems(stack))
+	}
+
+	// Now the arm that must refuse: a <Tabs> takes only <Tab>.
+	victim := &node{Elem: "Text", Body: "x", Attrs: map[string]string{"Name": "Victim"}}
+	kids := ed.doc().Kids
+	at := -1
+	for i, k := range kids {
+		if k == tabs {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Fatal("the <Tabs> is not a child of the document root")
+	}
+	insertAt(ed.doc(), at+1, victim)
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("placing the victim broke the document: %q", ed.status.Get())
+	}
+
+	before := len(tabs.Kids)
+	ed.sel = victim
+	moved := ed.demoteSelected()
+
+	if moved {
+		t.Error("demoting a <Text> into a <Tabs> reported success; <Tabs> " +
+			"declares Only:[\"Tab\"] and this document does not build")
+	}
+	if len(tabs.Kids) != before {
+		t.Errorf("the <Tabs> took %d children, was %d: an illegal child was "+
+			"written into the document", len(tabs.Kids), before)
+	}
+	if ed.docRoot == nil {
+		t.Error("the refused demote left docRoot nil — the state that kills " +
+			"click-to-select for the whole document while the previous tree " +
+			"stays on screen looking pressable")
+	}
+	// The node must be back where it was, not lost. unlink happened before
+	// the trial build, so a revert that forgot it would silently delete the
+	// user's element.
+	if indexIn(ed.doc(), victim) < 0 {
+		t.Error("the refused demote lost the node: it was unlinked for the " +
+			"trial and never put back")
+	}
+}
+
 func kidElems(n *node) []string {
 	out := make([]string, 0, len(n.Kids))
 	for _, k := range n.Kids {
