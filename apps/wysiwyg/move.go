@@ -115,11 +115,40 @@ func (ed *editor) promoteSelected() bool {
 		return false
 	}
 	n := ed.sel
-	if unlink(p, n) < 0 {
+	// The gate demoteSelected already has, pointed the other way. A
+	// grandparent is no more obliged to take the child than a sibling is:
+	// <Tabs> declares Only:["Tab"], so promoting a <Text> out of its <Tab>
+	// lands it directly in the <Tabs>, which the loader refuses.
+	if !ed.canHold(g.Elem, n.Elem) {
+		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + g.Elem + ">")
+		return false
+	}
+	at := unlink(p, n)
+	if at < 0 {
 		return false
 	}
 	insertAt(g, indexIn(g, p)+1, n)
 	ed.rebuild()
+	// TRANSACTIONAL, and here the revert carries MORE than it does for a
+	// demote. A promote breaks two containers at once: the grandparent may
+	// refuse the child, and the parent the child LEFT can become illegal by
+	// losing it — emptying a <Tab Header="One"> is itself a load error
+	// ("needs exactly one content child, got 0"). So a catalog gate alone
+	// cannot decide this move even in principle, and the build has to.
+	//
+	// This used to `return true` unconditionally, reporting success while
+	// leaving docRoot nil — which kills click-to-select for the WHOLE
+	// document while the last good tree stays on screen looking pressable.
+	// Issue #403.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		unlink(g, n)
+		insertAt(p, at, n)
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> cannot be promoted out of <" + p.Elem +
+			">: " + refused)
+		return false
+	}
 	return true
 }
 
