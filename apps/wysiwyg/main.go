@@ -690,6 +690,16 @@ func nodeOf(src string) (*node, error) {
 // ---- the editor ----
 
 type editor struct {
+	// The grid-overlay probe memo. guideProbes/guideHits are counters
+	// rather than debug cruft: "the overlay costs nothing on an idle
+	// frame" is a claim about how often probeUncached RUNS, and a damage
+	// count cannot see it — a re-probe that produces the same rects
+	// repaints nothing and is invisible to every effect-level
+	// instrument. TestTheGuideProbeIsNotRepeatedOnAnIdleFrame reads them.
+	guideKey    string
+	guideCells  [][]gooey.Rect
+	guideProbes int
+	guideHits   int
 	// ctx builds the EDITOR; docCtx is the vocabulary the DOCUMENT is
 	// authored in. See newEditor for why they are separate.
 	ctx    *markup.Context

@@ -288,12 +288,25 @@ func (p *Pane) Arrange(b gooey.Rect) {
 		// drawn cells lag a keystroke behind the track spec that
 		// produced them.
 		//
-		// It also gets the pane's WHOLE rect rather than the child's:
-		// its bounds are what the composer uses for damage bookkeeping
-		// and for the z-ordered "who sits above whom" test, and the
-		// gutters are drawn OUTSIDE the grid, so the child's rect would
-		// be too small and those cells would be written by a paint that
-		// no damage rect claims.
+		// It also gets the pane's WHOLE rect rather than the child's,
+		// and this is a CEILING, not the overlay's final size: its
+		// bounds are what the composer uses for damage bookkeeping and
+		// for the z-ordered "who sits above whom" test, so it has to be
+		// free to claim any region the guide might need. Overlay.Arrange
+		// then narrows itself to the guide — grid plus gutters — or to
+		// zero when there is no grid in scope, which is what makes the
+		// common case cost nothing.
+		//
+		// This comment used to justify the whole rect by saying the
+		// gutters are drawn OUTSIDE the grid. They are not: overlay.go's
+		// drawGutters says they are INSIDE the grid's own bounds, and
+		// docs/specs/2026-08-23-layout-grants.md records "outside" as the
+		// framing that was tried and rejected — drawn outside, a grid at
+		// the top-left of the preview scribbles its structure over the
+		// editor's own pane border. The behaviour here was right and the
+		// reason attached to it was the discarded one, which is worse
+		// than no reason: it sends the next reader to reconcile two files
+		// that do not disagree.
 		gooey.ArrangeChild(p.overlay, b)
 	}
 }

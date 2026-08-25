@@ -430,9 +430,23 @@ func TestTheOverlayCostsNothingWhenThereIsNoGridInScope(t *testing.T) {
 	}
 }
 
-// TestChangingATrackRepaintsTheOverlayExactlyOnce. The converse pin: the
-// overlay must not be so frugal that it stops updating.
-func TestChangingATrackRepaintsTheOverlayExactlyOnce(t *testing.T) {
+// TestChangingATrackMovesTheProbedCells. The converse pin: the overlay
+// must not be so frugal that it stops updating.
+//
+// RENAMED from ...RepaintsTheOverlayExactlyOnce, which promised a damage
+// count this body never takes — it discards both of Frame()'s returns and
+// never reads Damage(). CLAUDE.md is explicit that a geometry assertion
+// "passes just as well when the entire tree repainted", so the old name
+// claimed the one thing the test could not see. Caught in review.
+//
+// The name was not fixed by ADDING the count, because "exactly once" is
+// not true here and the test below says why: the composer's z-order pass
+// force-repaints everything above a rect that just painted, and the
+// overlay sits above the whole grid, so a track edit repaints it for free
+// whether or not it is subscribed. The repaint claim is pinned by
+// TestMovingTheTrackCursorRedrawsTheHighlight, whose gesture changes
+// nothing beneath the overlay; this one pins the model.
+func TestChangingATrackMovesTheProbedCells(t *testing.T) {
 	ed, c, _ := gridPage(t)
 	pressRune(c, ']')
 	c.Frame()
@@ -672,5 +686,71 @@ func TestTheOverlayNeverBlanksTheGrid(t *testing.T) {
 	if got := f.Cells.At(b.X, b.Y).Rune; got != 'a' {
 		t.Errorf("the child's first cell reads %q, want 'a' — the overlay pre-cleared "+
 			"over the previewed tree", got)
+	}
+}
+
+// TestTheGuideProbeIsNotRepeatedOnAnIdleFrame pins the memo, and it needs
+// its own counter because NO EFFECT-LEVEL INSTRUMENT CAN SEE THIS.
+//
+// A repeated probe produces identical cell rects, so the guide is
+// unchanged, so nothing repaints — a damage count, a cell assertion and a
+// FlushBytes diff are all blind to it by construction. Wasted work is
+// effect-free; that is exactly why it survives review. The only witness
+// is how often the measurement RAN.
+//
+// What it cost: probeUncached calls Grid.Arrange once per cell and each
+// of those re-arranges every child, and Overlay.Arrange calls it from
+// Arrange, which Composer.Frame runs unconditionally. So a selected grid
+// paid rows×cols sub-tree layouts every frame, with no bound on the track
+// count. Found in review of #390; the drag path it borrows from runs the
+// same probe once per GESTURE and says so in its own comment.
+func TestTheGuideProbeIsNotRepeatedOnAnIdleFrame(t *testing.T) {
+	ed, c, _ := gridPage(t)
+
+	// Baseline from a COLD memo. Clearing the cached cells as well as the
+	// counters is what makes the next call a real measurement: the
+	// fixture's own frame already warmed it, so resetting the counters
+	// alone left the first assertion reading a cache hit and expecting a
+	// probe. (That the fixture warms it at all is the mechanism working —
+	// but a test has to start from a known state, not a lucky one.)
+	ed.guideProbes, ed.guideHits = 0, 0
+	ed.guideKey, ed.guideCells = "", nil
+	if got := ed.buildGuide(); got == nil {
+		t.Fatal("no guide for the selected grid; this test would pin nothing")
+	}
+	if ed.guideProbes != 1 {
+		t.Fatalf("the first guide took %d probes, want exactly 1", ed.guideProbes)
+	}
+
+	// THE ASSERTION: nothing changed, so the next frames must reuse the
+	// measurement rather than repeat it.
+	for i := 0; i < 5; i++ {
+		c.Frame()
+		ed.buildGuide()
+	}
+	if ed.guideProbes != 1 {
+		t.Errorf("five idle frames took %d probes, want the original 1: the "+
+			"overlay is re-measuring a grid nothing touched, and no damage "+
+			"count can see it because the rects come out identical",
+			ed.guideProbes)
+	}
+	if ed.guideHits == 0 {
+		t.Error("the memo recorded no hits, so the calls above may have been " +
+			"skipped for some other reason — this test would pass with no " +
+			"cache at all")
+	}
+
+	// The must-RE-PROBE arm. A memo that never invalidates is worse than
+	// none: it pins a stale overlay over a grid that moved. Editing a
+	// track changes the grid's track list, which is in the key.
+	before := ed.guideProbes
+	ed.doc().Attrs["Rows"] = "3,3,3"
+	ed.rebuild()
+	c.Frame()
+	ed.buildGuide()
+	if ed.guideProbes == before {
+		t.Errorf("after a track edit the probe count is still %d: the guide "+
+			"is cached against tracks that changed, so the overlay would be "+
+			"drawn over the grid's old geometry", ed.guideProbes)
 	}
 }

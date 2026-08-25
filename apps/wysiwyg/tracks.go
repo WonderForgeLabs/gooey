@@ -19,6 +19,7 @@ package main
 // registering a <Table> that grants cells gets this editor for free.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -147,6 +148,57 @@ func (ed *editor) buildGuide() *preview.Guide {
 // because the composer's tree walk happened before this — and the
 // restore is unconditional.
 func (ed *editor) probeCells(g *components.Grid) [][]gooey.Rect {
+	if key, ok := ed.probeKey(g); ok && key == ed.guideKey && ed.guideCells != nil {
+		ed.guideHits++
+		return ed.guideCells
+	} else if ok {
+		ed.guideKey = key
+	}
+	ed.guideProbes++
+	cells := ed.probeUncached(g)
+	ed.guideCells = cells
+	return cells
+}
+
+// probeKey identifies the layout inputs a cell rect derives from, so an
+// unchanged grid costs a string compare instead of rows×cols re-layouts.
+//
+// WHY A MEMO AT ALL. probeUncached calls Grid.Arrange once PER CELL, and
+// each of those re-arranges every child of the grid. The drag path that
+// first needed this runs it once per GESTURE and says so; the overlay
+// calls it from Arrange, which Composer.Frame runs unconditionally every
+// frame. So a selected 12×8 grid paid ~97 full sub-tree layouts per
+// frame, forever, with no bound on the track count. Caught in review of
+// this PR.
+//
+// WHAT THE KEY HAS TO CONTAIN, and the part that is easy to get wrong: a
+// cell rect is a function of the grid's bounds and its track lists — and
+// ALSO of its children, because an Auto track sizes to content. Keying on
+// bounds and tracks alone would miss a child growing inside an Auto row
+// and pin a stale guide over it. The children's own bounds are the
+// cheap observable that moves when any of that changes, so they are in
+// the key: O(children) to compare, against O(rows×cols) sub-tree layouts
+// to recompute.
+//
+// It returns false when it cannot describe the inputs, and a false key
+// means DO NOT CACHE rather than "cache under an empty key" — the
+// failure that would otherwise show up as an overlay frozen over a grid
+// that moved.
+func (ed *editor) probeKey(g *components.Grid) (string, bool) {
+	b := g.Bounds()
+	if b.W <= 0 || b.H <= 0 {
+		return "", false
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%v|%v|%v|", b, g.Rows, g.Cols)
+	for _, c := range g.Children {
+		fmt.Fprintf(&sb, "%v,", boundsOf(c))
+	}
+	return sb.String(), true
+}
+
+// probeUncached is the measurement itself, unchanged.
+func (ed *editor) probeUncached(g *components.Grid) [][]gooey.Rect {
 	if len(g.Children) > 0 {
 		return ed.cellsThrough(g, g.Children[0])
 	}

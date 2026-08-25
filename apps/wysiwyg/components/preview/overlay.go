@@ -12,11 +12,11 @@ package preview
 // Pane.Render would be the obvious seam and it is the wrong one, for a
 // reason that is invisible until it goes wrong on screen.
 //
-// The composer paints in Z-ORDER, depth-first PRE-order (composer.go:671)
+// The composer paints in Z-ORDER, depth-first PRE-order (Composer.paint's z-order pass)
 // — a container paints BEFORE its children. Anything Pane.Render drew
 // would go down first and the previewed tree would paint over it; worse,
 // every leaf in that tree PRE-CLEARS its bounds to the nearest ancestor's
-// background (composer.go:298), so the tree would not merely cover the
+// background (Composer.build's pre-clear, `clearStyle`), so the tree would not merely cover the
 // guides, it would erase them. The result is guide lines that survive
 // only in the gaps between elements, which reads as a rendering bug.
 //
@@ -27,7 +27,7 @@ package preview
 // # Why it does not wipe what it sits on top of
 //
 // A component covering the previewed tree is exactly the thing that
-// would blank it. The three-case pre-clear rule (composer.go:298-335)
+// would blank it. The three-case pre-clear rule (in Composer.build, keyed on `covered`)
 // turns on ONE question — is this a gooey.Container? — and a LEAF fills
 // its whole rect before painting. This implements ChildComponents and
 // returns nil, which makes it a chrome-only container: it pre-clears
@@ -118,7 +118,8 @@ type Overlay struct {
 	// tree, and it runs layout, whose Gets would be recorded as
 	// dependencies of this overlay's paint node because a Get inside an
 	// evaluating computed subscribes. Layout deliberately runs outside
-	// any evaluation context (composer.go:608) for exactly that reason,
+	// any evaluation context (see Composer.Frame, and composer.go's package
+	// comment) for exactly that reason,
 	// and Arrange is on that side of the line.
 	guide func() *Guide
 
@@ -215,7 +216,7 @@ func (o *Overlay) Measure(avail gooey.Size) gooey.Size { return gooey.Size{} }
 // The bounds are what the composer uses for damage. When they change —
 // and going from "describing a grid" to "describing nothing" is a
 // change to zero — the sweep clears the old rect and force-repaints
-// every node beneath it (composer.go:625, restoreUnder). At pane size
+// every node beneath it (Composer.restoreUnder). At pane size
 // that is the entire document on every mode flip and every selection
 // that leaves a grid. At guide size it is the grid and its gutters,
 // which is precisely the region whose appearance actually changed.
@@ -231,7 +232,7 @@ func (o *Overlay) Arrange(b gooey.Rect) {
 	if !sameGuide(o.cur, next) {
 		// Legal here for the same reason the composer's own bounds and
 		// visibility sweeps may Set: layout runs OUTSIDE any evaluation
-		// (composer.go:608), so this is a plain write, not a write from
+		// (Composer.Frame), so this is a plain write, not a write from
 		// inside a computed. The paint loop later in the same frame
 		// picks the node up, so the guide is drawn on the frame it
 		// changed rather than one behind.
