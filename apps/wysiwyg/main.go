@@ -835,7 +835,6 @@ type editor struct {
 	// after the map is populated leaves nil in the map.
 	dock    *dockModel
 	ws      *workspace
-	recent  []string
 	pathBox gooey.Component
 
 	// region is WHICH THING THE EDITOR AREA SHOWS, and codeView is which

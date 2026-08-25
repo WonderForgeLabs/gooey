@@ -760,10 +760,22 @@ func (d *dockModel) Cycle(delta int) {
 	d.active.Set(((d.active.Get()+delta)%n + n) % n)
 }
 
-// Move docks p into s and puts it last among its new slot-mates. A move
-// to the slot it is already in is not a no-op at the model level — it
-// still re-orders — but Set does not compare values anyway, so guarding
-// it here is what keeps a redundant drop from costing a repaint.
+// Move docks p into s and puts it last among its new slot-mates.
+//
+// Dropping a pane into the slot it is already in returns early, and that
+// guard is about BEHAVIOUR, not cost: without it the reorder below would
+// run, find the highest order among its slot-mates and put the pane after
+// them, so releasing a drag where it started would visibly send the pane
+// to the bottom of its own slot.
+//
+// The early return still calls touch(), and that is load-bearing rather
+// than an oversight. dockHost.Render reads d.rev and paints the drag
+// indicator from h.drag; h.drag is cleared by a plain field write on the
+// release path, which is outside the property graph and schedules
+// nothing. So this touch is the only thing that asks for the frame that
+// ERASES the indicator. Make this branch a true no-op and a same-slot
+// drop leaves "move X → left" on screen until something unrelated
+// repaints.
 func (d *dockModel) Move(p *dockPane, s dockSlot) {
 	if p == nil {
 		return

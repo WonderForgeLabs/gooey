@@ -417,7 +417,6 @@ func (ed *editor) setWorkspace(dir string) {
 		ed.status.Set("✗ " + ws.err)
 	} else {
 		ed.status.Set("✓ " + ws.label + " (" + strconv.Itoa(len(ws.files)) + " files)")
-		ed.recordRecent(ws.dir)
 	}
 	ed.wsLabel.Set(ws.label)
 	ed.openPath.Set("")
@@ -437,25 +436,21 @@ func (ed *editor) refreshWorkspace() {
 	ed.wsRev.Set(ed.wsRev.Get() + 1)
 }
 
-// maxRecent is how many folders the File menu offers. The list is
-// SESSION-ONLY and is written to no file anywhere.
+// There is deliberately no recent-folders list here.
 //
-// That is a decision, not a gap. Persisting it means inventing a place
-// for editor state to live, and the two obvious places are both wrong:
-// beside the user's .gooey files, where it would be picked up by the very
-// workspace scan above and offered as a document to edit, or in a
-// dotfile this project has never agreed on. Design state — which file is
-// open, the dock layout, which panes are pinned — has no home in this
-// editor today, and inventing one silently is how a format nobody chose
-// becomes a format nobody can change.
-const maxRecent = 5
-
-func (ed *editor) recordRecent(dir string) {
-	out := []string{dir}
-	for _, d := range ed.recent {
-		if d != dir && len(out) < maxRecent {
-			out = append(out, d)
-		}
-	}
-	ed.recent = out
-}
+// One was written — a capped, session-only ring fed from setWorkspace —
+// and removed in review, because nothing read it: no File menu item and
+// no other surface consumed it, so it was state the editor maintained
+// and could not show. Its comment claimed it was "how many folders the
+// File menu offers", which sent a reader looking for a menu that has
+// never existed.
+//
+// The reason it stayed unfinished is worth keeping, because it is the
+// part that has not changed. Offering recent folders means persisting
+// them, and the two obvious homes are both wrong: beside the user's
+// .gooey files, where the workspace scan above would pick the file up and
+// offer it as a document to edit, or in a dotfile this project has never
+// agreed on. Design state — which file is open, the dock layout, which
+// panes are pinned — has no home in this editor today, and inventing one
+// silently is how a format nobody chose becomes a format nobody can
+// change. Decide that first; the list is a few lines once it is decided.

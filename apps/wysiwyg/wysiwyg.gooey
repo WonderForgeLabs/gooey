@@ -97,8 +97,8 @@
          one. ctrl+w hides — the pane stops showing and KEEPS ITS SIZE
          and its subtree, which is gooey.Hidden. ctrl+r collapses — the
          pane shrinks to its header row and its slot-mates take the
-         space. alt+p pins, which changes nothing on its own and decides
-         what ctrl+f spares.
+         space. ctrl+alt+p pins, which changes nothing on its own and
+         decides what ctrl+f spares.
 
          Both of those gestures MOVED, and the two comments below say why
          — read them rather than this line, which is the summary. This
@@ -108,14 +108,30 @@
          keymap two ways to one. -->
     <KeyBinding Gesture="ctrl+w" Command="{{.TogglePane}}"/>
     <KeyBinding Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
-    <!-- alt+p, NOT ctrl+k. ctrl+k is MoveUp — the designer's move gesture,
+    <!-- ctrl+alt+p, and it has now dodged TWO collisions of different
+         kinds. Not ctrl+k: that is MoveUp, the designer's move gesture,
          which landed in #373 while this pane was held. Two KeyBindings on
          one gesture at the same host is not a load error: both are scoped
          to the root, dispatch offers them in order, and the loser simply
          never fires. So the collision would have shipped as "pin silently
          stopped working", with nothing red anywhere. The designer's
-         gesture is the one already in users' hands, so pin moved. -->
-    <KeyBinding Gesture="alt+p" Command="{{.PinPane}}"/>
+         gesture is the one already in users' hands, so pin moved.
+
+         And not the plain alt+p it moved to either, which was worse,
+         because the loser was not this binding. p is the _Project menu's
+         mnemonic, and FocusManager.Dispatch runs the WHOLE KeyBinding
+         bubble before it offers a key to any MnemonicHandler — a
+         root-scoped binding is in every focused chain, so alt+p would
+         have pinned a pane and the Project menu could never be opened
+         from the keyboard again. The rule was already written six lines
+         below this one, against alt+e; it just was not applied here.
+
+         ctrl+alt+p is outside mnemonic territory by construction rather
+         than by luck: MenuBar.HandleMnemonic tests `ev.Mods !=
+         input.ModAlt` — exact equality — so ModCtrl|ModAlt never reaches
+         a title. It also keeps p for "pin", and matches the
+         ctrl+alt+left/right the pane family already uses. -->
+    <KeyBinding Gesture="ctrl+alt+p" Command="{{.PinPane}}"/>
     <!-- ctrl+f, not the ctrl+u this originally used: the status bar's
          endpoint chips took ctrl+u for "copy the MCP URL". Two root
          KeyBindings on one gesture is a SILENT bug — dispatch takes the
@@ -498,7 +514,7 @@
         <MenuItem Text="Ne_xt Pane" Gesture="ctrl+alt+right" Command="{{.NextPane}}"/>
         <MenuItem Text="_Hide Pane" Gesture="ctrl+w" Command="{{.TogglePane}}"/>
         <MenuItem Text="Co_llapse Pane" Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
-        <MenuItem Text="_Pin Pane" Gesture="alt+p" Command="{{.PinPane}}"/>
+        <MenuItem Text="_Pin Pane" Gesture="ctrl+alt+p" Command="{{.PinPane}}"/>
         <MenuItem Text="Hide _Unpinned" Gesture="ctrl+f" Command="{{.HideUnpinned}}"/>
         <MenuItem Text="Show _All Panes" Gesture="ctrl+a" Command="{{.ShowAllPanes}}"/>
       </Menu>
