@@ -341,9 +341,21 @@ func TestEveryPullRequestWorkflowCollapsesSupersededRuns(t *testing.T) {
 				"    cancel-in-progress: ${{ github.event_name == 'pull_request' }}", f)
 			continue
 		}
-		if !strings.Contains(block, "group:") {
+		switch group := groupExpr(block); {
+		case group == "":
 			t.Errorf("%s has a `concurrency:` block with no `group:`; there is nothing to "+
 				"collapse runs against", f)
+		case !perPullRequestGroup.MatchString(group):
+			t.Errorf("%s groups on `%s`, which does not identify one pull request.\n\n"+
+				"A group has to be BOTH stable across pushes to the same PR and distinct "+
+				"between two PRs, or cancelling on it does the wrong thing in one "+
+				"direction or the other. A constant (`group: ci`) is stable but not "+
+				"distinct, so a push to one PR cancels every other PR's run — strictly "+
+				"worse than having no stanza at all. Keying on `github.sha` or "+
+				"`github.run_id` is distinct but not stable: it changes on every push, "+
+				"so nothing is ever superseded and the stanza is decoration.\n\n"+
+				"Name one of github.event.pull_request.number, github.head_ref, "+
+				"github.ref.", f, strings.TrimSpace(group))
 		}
 		if !cancelsInProgress.MatchString(block) {
 			t.Errorf("%s declares a concurrency group but does not cancel on it.\n\n"+
@@ -404,4 +416,33 @@ func concurrencyBlock(body string) string {
 		return strings.Join(lines[start:i], "\n")
 	}
 	return strings.Join(lines[start:], "\n")
+}
+
+// perPullRequestGroup matches the expressions that identify one pull
+// request: stable across pushes to it, distinct between two of them.
+// Cancelling on anything else is wrong in one direction or the other, and
+// both wrong answers pass every other assertion in this test.
+//
+// `github.sha` and `github.run_id` are deliberately absent. They vary per
+// push, so a group keyed on either never collides with itself and never
+// supersedes anything — the stanza parses, reads correctly, and does
+// nothing. They are legitimate in the FALLBACK arm of an `||`, which is
+// how a workflow that also runs on push keeps its main and tag runs from
+// cancelling one another; that arm is unreachable on a pull request,
+// where the left side is always set.
+var perPullRequestGroup = regexp.MustCompile(`github\.(event\.pull_request\.number|head_ref|ref_name|ref)\b`)
+
+// groupExpr returns the value of `group:` inside a concurrency block, or
+// "" if there is none.
+func groupExpr(block string) string {
+	for _, ln := range strings.Split(block, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(t, "group:"); ok {
+			return rest
+		}
+	}
+	return ""
 }
