@@ -97,8 +97,15 @@
          one. ctrl+w hides — the pane stops showing and KEEPS ITS SIZE
          and its subtree, which is gooey.Hidden. ctrl+r collapses — the
          pane shrinks to its header row and its slot-mates take the
-         space. ctrl+k pins, which changes nothing on its own and decides
-         what ctrl+u spares. -->
+         space. alt+p pins, which changes nothing on its own and decides
+         what ctrl+f spares.
+
+         Both of those gestures MOVED, and the two comments below say why
+         — read them rather than this line, which is the summary. This
+         one named ctrl+k and ctrl+u until a review caught it: the
+         collision notes were updated and the summary six lines above
+         them was not, so the file's own comments disagreed about the
+         keymap two ways to one. -->
     <KeyBinding Gesture="ctrl+w" Command="{{.TogglePane}}"/>
     <KeyBinding Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
     <!-- alt+p, NOT ctrl+k. ctrl+k is MoveUp — the designer's move gesture,
@@ -177,7 +184,7 @@
       </DockPane>
 
       <!-- TOOLS — the palette and the rail's other views. Declared
-           UNPINNED so ctrl+u has something to demonstrate on: pin is a
+           UNPINNED so ctrl+f has something to demonstrate on: pin is a
            claim about what survives "get everything out of my way", and
            a dock where every pane is pinned cannot show what pin means. -->
       <DockPane Id="tools" Title="TOOLS" Slot="Left" Size="34" Pinned="false">

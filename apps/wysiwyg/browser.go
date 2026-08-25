@@ -45,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -237,20 +238,8 @@ func (w *workspace) scan() {
 	}
 	sort.Strings(w.files)
 	if len(w.files) >= maxWorkspaceFiles {
-		w.err = "showing the first " + itoa(maxWorkspaceFiles) + " files; narrow the folder"
+		w.err = "showing the first " + strconv.Itoa(maxWorkspaceFiles) + " files; narrow the folder"
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 
 // ranked is the file list filtered and re-ranked by the query — the fzf
@@ -370,7 +359,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// the seed strings, which have no envelope.
 	if n.Elem == "Gooey" {
 		if len(n.Kids) != 1 {
-			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + itoa(len(n.Kids)))
+			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
 			return
 		}
 		n = n.Kids[0]
@@ -427,7 +416,7 @@ func (ed *editor) setWorkspace(dir string) {
 	if ws.err != "" {
 		ed.status.Set("✗ " + ws.err)
 	} else {
-		ed.status.Set("✓ " + ws.label + " (" + itoa(len(ws.files)) + " files)")
+		ed.status.Set("✓ " + ws.label + " (" + strconv.Itoa(len(ws.files)) + " files)")
 		ed.recordRecent(ws.dir)
 	}
 	ed.wsLabel.Set(ws.label)
@@ -444,7 +433,7 @@ func (ed *editor) refreshWorkspace() {
 		return
 	}
 	ed.ws.scan()
-	ed.status.Set("✓ " + ed.ws.label + " (" + itoa(len(ed.ws.files)) + " files)")
+	ed.status.Set("✓ " + ed.ws.label + " (" + strconv.Itoa(len(ed.ws.files)) + " files)")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)
 }
 

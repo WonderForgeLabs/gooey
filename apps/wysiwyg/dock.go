@@ -250,11 +250,14 @@ func (p *dockPane) bindBody(c gooey.Component) {
 	})
 }
 
-// extent is how much of its slot's axis this pane asks for, in the
-// slot's units. A collapsed pane wants its header and nothing more; every
-// other pane — INCLUDING A HIDDEN ONE — wants a full share. That is the
-// "keeps its size" half of the hide rule, and it is why hiding a pane
-// leaves a gap rather than reflowing its neighbours.
+// collapsedNow reads the pane's collapsed state.
+//
+// A method rather than a bare p.collapsed.Get() at each call site because
+// place() asks twice per pane and the Get is what records the layout's
+// dependency — one name makes it greppable when a pane stops re-laying
+// out. The prose that used to sit here described an `extent` function
+// that does not exist; the sizing rule it explained lives inline in
+// place(), and moved there.
 func (p *dockPane) collapsedNow() bool { return p.collapsed.Get() }
 
 func (p *dockPane) Measure(avail gooey.Size) gooey.Size {
@@ -561,6 +564,12 @@ func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
 	if !vertical {
 		total = r.W
 	}
+	// HOW MUCH OF THE SLOT'S AXIS EACH PANE ASKS FOR. A collapsed pane
+	// wants its header and nothing more; every other pane — INCLUDING A
+	// HIDDEN ONE — wants a full share. That is the "keeps its size" half
+	// of the hide rule, and it is why hiding a pane leaves a gap rather
+	// than reflowing its neighbours: hidden is not a third size, it is
+	// the same size not drawn.
 	fixed, flex := 0, 0
 	for _, p := range panes {
 		if p.collapsedNow() {

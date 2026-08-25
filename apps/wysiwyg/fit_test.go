@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -440,7 +441,7 @@ func TestTheCrampedMessageSaysBothSizes(t *testing.T) {
 		t.Fatal("no message at a size below the minimum")
 	}
 	for _, want := range []int{have.Cols, have.Rows, usable.Cols, usable.Rows} {
-		if !strings.Contains(msg, itoa(want)) {
+		if !strings.Contains(msg, strconv.Itoa(want)) {
 			t.Errorf("the message must name %d; got:\n%s", want, msg)
 		}
 	}
