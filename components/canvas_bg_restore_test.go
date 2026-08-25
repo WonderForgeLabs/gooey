@@ -64,3 +64,25 @@ func TestCellPassthroughHoldsForAnUncolouredCanvas(t *testing.T) {
 		t.Fatalf("row 0 after hiding = %q, want the occluded text restored", got)
 	}
 }
+
+func TestCellPassthroughForwardPreservesOverlappingBackground(t *testing.T) {
+	red := render.RGB(200, 0, 0)
+	blue := render.RGB(0, 0, 200)
+	green := render.RGB(0, 200, 0)
+	aBg := prop.NewSource(red)
+	b := &Canvas{Background: prop.NewSource(blue)}
+	a := &Canvas{Background: aBg}
+	gooey.LayoutOf(b).Left = 5
+	page := &Canvas{Children: []gooey.Component{a, b}}
+	c := gooey.NewComposer(page, 20, 3)
+	c.Frame()
+
+	aBg.Set(green)
+	_, painted := c.Frame()
+	if painted != 2 {
+		t.Fatalf("repainting the lower background painted %d components, want 2 (both overlapping backgrounds)", painted)
+	}
+	if got := c.Cells().At(10, 0).Style.Bg; got != blue {
+		t.Fatalf("overlap background = %v, want blue %v — the forward pass did not restore the later sibling", got, blue)
+	}
+}
