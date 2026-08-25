@@ -60,6 +60,41 @@ var backtickPath = regexp.MustCompile("`([A-Za-z_.][A-Za-z0-9_.-]*(?:/[A-Za-z0-9
 // file's location claims are covered).
 var authorities = []string{"CLAUDE.md", "ci.yml"}
 
+// expressionBody finds the inside of every `${{ … }}` in a file, with
+// quoted string literals stripped out.
+//
+// It is how a backticked GitHub Actions context reference is told apart
+// from a repo path, and the point is that it DERIVES the answer from the
+// file rather than carrying a list. `needs.pr-review.outputs` matches the
+// path extractor exactly the way `go.mod` does — a dotted, slash-free,
+// backticked token — so the extractor cannot separate them, and the
+// prompts are workflow files, so such references belong there.
+//
+// A list of GitHub's context names would work today and is the thing
+// #212 is about: hand-maintained, correct when written, silently wrong
+// later. What a file does with a token is checkable instead. If the file
+// evaluates it as an expression, it is an expression.
+//
+// Quoted literals are stripped because that is the hole the naive
+// version leaves: `hashFiles('examples/gitui/go.sum')` would excuse a
+// stale path merely for appearing inside an expression, which is the
+// exact drift this test exists to catch (both `examples/gitui` and
+// `examples/kanbandemo` really did go stale that way across #238/#268).
+// Only an UNQUOTED operand counts.
+var (
+	expressionBody = regexp.MustCompile(`\$\{\{(.*?)\}\}`)
+	quotedLiteral  = regexp.MustCompile(`'[^']*'|"[^"]*"`)
+)
+
+func isExpressionRef(token, body string) bool {
+	for _, m := range expressionBody.FindAllStringSubmatch(body, -1) {
+		if strings.Contains(quotedLiteral.ReplaceAllString(m[1], " "), token) {
+			return true
+		}
+	}
+	return false
+}
+
 // forbidsGoBuild recognises a line that mentions `go build ./...` in order
 // to PROHIBIT it. `\bNOT\b` and not `strings.Contains(…, "NOT")`, because
 // the latter is satisfied by NOTE, NOTHING, ANNOTATION and DENOTES.
@@ -80,6 +115,8 @@ func TestReviewPromptsNameOnlyPathsThatExist(t *testing.T) {
 				continue // golang.org/x/term — a module path, not a repo path
 			case !hasSlash && !strings.Contains(p, "."):
 				continue // `skipped`, `review`, `permissions` — prose, not a file
+			case isExpressionRef(p, body):
+				continue // the file evaluates it as ${{ … }} — an expression, not a path
 			}
 			checked++
 			seen[p] = true
@@ -180,6 +217,38 @@ func TestReviewPromptsDoNotTeachGoBuildDotDotDot(t *testing.T) {
 				"that way, so the prompt was instructing agents to do the thing the "+
 				"repo's own trap list exists to stop. Use `go vet ./...`.",
 				f, strings.TrimSpace(line))
+		}
+	}
+}
+
+// The exclusion above is a guard that can only ever say "skip", so the
+// case that matters is the one where it must NOT: a stale path is
+// excused the moment the rule is too loose, and nothing downstream would
+// notice, because being excused looks exactly like being correct.
+func TestExpressionRefsAreToldApartFromPaths(t *testing.T) {
+	const body = "\n" +
+		"      # re-running the `merge-gate` check is free, since `needs.pr-review.outputs` survives\n" +
+		"        env:\n" +
+		"          REVIEW_OUTCOME: ${{ needs.pr-review.outputs.outcome }}\n" +
+		"          CACHE_KEY: ${{ hashFiles('examples/gitui/go.sum') }}\n" +
+		"          MODE: ${{ matrix.mode }}\n"
+	for _, c := range []struct {
+		token string
+		want  bool
+		why   string
+	}{
+		{"needs.pr-review.outputs", true,
+			"the file evaluates it unquoted in ${{ … }}, so it is an expression"},
+		{"matrix.mode", true,
+			"same, and with a single dot — the rule must not depend on segment count"},
+		{"examples/gitui/go.sum", false,
+			"it appears ONLY inside a quoted literal. Excusing it is how a stale path " +
+				"survives a rename (#238, #268) with the test still green"},
+		{"CLAUDE.md", false,
+			"named nowhere as an expression, so it stays a path and stays checked"},
+	} {
+		if got := isExpressionRef(c.token, body); got != c.want {
+			t.Errorf("isExpressionRef(%q) = %v, want %v — %s", c.token, got, c.want, c.why)
 		}
 	}
 }
