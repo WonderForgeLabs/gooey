@@ -539,3 +539,71 @@ func TestADockPaneNeedsAnId(t *testing.T) {
 		t.Fatal("<DockPane> without an Id loaded")
 	}
 }
+
+// A same-slot drop takes dockModel.Move's guarded path, and that branch
+// has to do two opposite things at once — which is why it gets its own
+// test rather than another arm on the one above.
+//
+// It must NOT reorder. Releasing a drag where it started is the gesture
+// a user makes to cancel one, and without the guard the reorder below it
+// would find the highest order among the pane's slot-mates and put it
+// after them: the pane would visibly jump to the bottom of its own slot
+// for doing nothing.
+//
+// It must STILL schedule a frame. dockHost.Render reads dock.rev and
+// paints the drag indicator from h.drag, and the release path clears
+// h.drag with a plain field write — outside the property graph, so it
+// schedules nothing on its own. Move's touch() is the only thing that
+// asks for the frame that ERASES "move EXPLORER → left". Make this
+// branch a true no-op and that text stays on screen until something
+// unrelated repaints.
+//
+// OnInvalidate is the instrument, not a damage count: the failure being
+// guarded is a MISSING SCHEDULE, and a count of repainted components
+// cannot see one — it reports zero and looks exactly like a correct
+// no-op. The test above says the same thing about the read in Render.
+//
+// EXPLORER is the subject because it is FIRST in the left slot, sharing
+// it with TOOLS. A pane already last in its slot would be unmoved by the
+// reorder anyway, so the no-reorder half would pass against a Move with
+// the guard deleted — an unfireable assertion, which is the trap the
+// reorder arm above documents.
+func TestASameSlotDropDoesNotReorderButStillSchedulesAFrame(t *testing.T) {
+	ed, c := dockFixture(t)
+
+	explorer := pane(t, ed, "explorer")
+	tools := pane(t, ed, "tools")
+	if dockSlot(explorer.slot.Get()) != dockSlot(tools.slot.Get()) {
+		t.Fatal("EXPLORER and TOOLS no longer share a slot; this test cannot tell a " +
+			"guarded no-op from a reorder that had nothing to move")
+	}
+	if explorer.order.Get() >= tools.order.Get() {
+		t.Fatalf("EXPLORER (order %d) is not ahead of TOOLS (order %d), so a missing "+
+			"guard would not move it and this test would pass vacuously",
+			explorer.order.Get(), tools.order.Get())
+	}
+	before := explorer.order.Get()
+
+	invalidated := 0
+	c.OnInvalidate(func() { invalidated++ })
+	c.Frame()
+	if invalidated != 0 {
+		t.Fatalf("the idle composition scheduled %d frames; this test cannot attribute "+
+			"anything to the drop", invalidated)
+	}
+
+	ed.dock.Move(explorer, dockSlot(explorer.slot.Get()))
+
+	if got := explorer.order.Get(); got != before {
+		t.Errorf("dropping EXPLORER into the slot it is already in moved it from order %d "+
+			"to %d. Releasing a drag where it started must not reorder — that is what the "+
+			"early return in dockModel.Move is for", before, got)
+	}
+	if invalidated == 0 {
+		t.Error("a same-slot drop scheduled NO frame. dockHost.Render paints the drag " +
+			"indicator from h.drag, which the release path clears with a plain field " +
+			"write — outside the property graph, so it schedules nothing. Move's touch() " +
+			"is the only thing that asks for the frame that erases the indicator, and " +
+			"without it the drag text stays on screen after the drop")
+	}
+}
