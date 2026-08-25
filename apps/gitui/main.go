@@ -172,7 +172,23 @@ func projectCommit(c commitRow) map[string]any {
 	return map[string]any{"Hash": c.Hash, "Subject": c.Subject, "Author": c.Author}
 }
 
-func main() {
+// ui owns the one thing the markup context cannot be built without: the
+// App. Two of the grants below close over it — Quit calls it, and the
+// <Refresh> builder posts an initial run through it DURING the build —
+// so it cannot simply be passed by value, and main cannot construct the
+// App before the context that the App's own content needs.
+//
+// Holding it in a struct is what breaks that knot: the closures read the
+// field when they run, main fills it in between building the context and
+// building the page, and a test can perform the same two steps in the
+// same order. Before this, the context was a local inside main and the
+// page had no way to be built except by running the app.
+type ui struct{ app *gooey.App }
+
+// context builds the capability grant and the viewmodel, and returns the
+// markup context gitui.gooey binds against. u.app must be set before the
+// page is built, not before this returns.
+func (u *ui) context() (*markup.Context, error) {
 	// --- the capability grant: the whole API surface markup gets ---
 	//
 	// Four names, each pinned to the `git` the PATH resolves at startup
@@ -192,7 +208,7 @@ func main() {
 		{Name: "git-branch", Path: "git", Args: []string{"branch", "--show-current"}},
 	})
 	if err != nil {
-		gooey.Exit(err)
+		return nil, err
 	}
 	markup.RegisterHandlers(exechandlers.URI, provider)
 
@@ -245,8 +261,6 @@ func main() {
 	changedCount := prop.NewComputed(func() int { return len(files.Get()) })
 	commitCount := prop.NewComputed(func() int { return len(commits.Get()) })
 
-	var app *gooey.App
-
 	ctx := &markup.Context{
 		Values: map[string]any{
 			// into targets — sys:Run deliveries land here.
@@ -268,7 +282,7 @@ func main() {
 			"ChangedCount": format.Count(changedCount),
 			"CommitCount":  format.Count(commitCount),
 
-			"Quit": gooey.Command(func() { app.Quit() }),
+			"Quit": gooey.Command(func() { u.app.Quit() }),
 		},
 		Styles: map[string]render.Style{
 			"panel":  {Fg: render.RGB(120, 90, 220)},
@@ -307,10 +321,19 @@ func main() {
 						c.Run()
 					}
 				})
-				app.Post(all.Run)
+				u.app.Post(all.Run)
 				return &gooey.KeyBinding{Gesture: gesture, Command: all}, nil
 			},
 		},
+	}
+	return ctx, nil
+}
+
+func main() {
+	u := &ui{}
+	ctx, err := u.context()
+	if err != nil {
+		gooey.Exit(err)
 	}
 
 	// Find the markup beside the source under `go run .`, beside the
@@ -323,13 +346,13 @@ func main() {
 		dir = filepath.Dir(exe)
 	}
 
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "gitui.gooey", ctx))
+	u.app = gooey.NewApp(markup.Page(os.DirFS(dir), "gitui.gooey", ctx))
 	// Deliveries are Set on the UI goroutine — the Dispatcher is how
 	// they get there, and a document using handler namespaces fails to
 	// load without one. The App drains its own, so hand that one over.
-	ctx.Dispatcher = app.Dispatcher()
+	ctx.Dispatcher = u.app.Dispatcher()
 
-	if err := app.Run(context.Background()); err != nil {
+	if err := u.app.Run(context.Background()); err != nil {
 		gooey.Exit(err)
 	}
 }
