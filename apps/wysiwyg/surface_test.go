@@ -131,7 +131,7 @@ func TestAddingIntoALeafGoesToItsParentInstead(t *testing.T) {
 	}
 	ed.setSelection(leaf)
 	before := len(ed.doc().Kids)
-	if got := ed.addTarget(); got != ed.doc() {
+	if got := ed.addTarget("Button"); got != ed.doc() {
 		t.Fatalf("with a leaf selected the add target is <%s>, want the user's root: a child "+
 			"appended into a leaf is discarded with no error anywhere", got.Elem)
 	}
@@ -170,7 +170,7 @@ func TestAddingIntoAContainerGoesInside(t *testing.T) {
 	}
 
 	ed.setSelection(box)
-	if got := ed.addTarget(); got != box {
+	if got := ed.addTarget("Text"); got != box {
 		t.Fatalf("with a container selected the add target is <%s>, want the container", got.Elem)
 	}
 	n, _ := addFromPalette(t, ed, "Text")

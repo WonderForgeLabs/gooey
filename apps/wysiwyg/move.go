@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 // Moving a node that already exists.
 //
 // The editor could add and delete, and nothing in between: repositioning
@@ -127,10 +129,14 @@ func (ed *editor) promoteSelected() bool {
 // when there is no preceding one would move the element in the direction
 // the user did not ask for.
 //
-// holdsChildren is load-bearing rather than defensive. A leaf silently
+// The gate is load-bearing rather than defensive. A leaf silently
 // DISCARDS children — the markup still saves and still builds — so
 // nesting into a <Text> would make the node disappear from the document
 // with nothing anywhere to report it.
+//
+// canHold, NOT holdsChildren, and the difference is a bug this used to
+// have: holdsChildren never consults ChildSpec.Only, so it said yes to
+// demoting anything into a <Tabs>, which takes only <Tab>.
 func (ed *editor) demoteSelected() bool {
 	p := ed.movable()
 	if p == nil {
@@ -141,12 +147,35 @@ func (ed *editor) demoteSelected() bool {
 		return false
 	}
 	host := p.Kids[i-1]
-	if !ed.holdsChildren(host.Elem) {
+	if !ed.canHold(host.Elem, ed.sel.Elem) {
 		return false
 	}
 	n := ed.sel
-	unlink(p, n)
+	// TRANSACTIONAL, for the same reason addSelected is (addplan.go). The
+	// gate above is necessary and not sufficient: canHold is deliberately
+	// permissive where the catalog cannot answer — ModeOne cannot know its
+	// slot is already taken, ModeUnknown knows nothing — so the build is
+	// the real decision, and a demote that breaks the document has to put
+	// it back.
+	//
+	// This used to gate on holdsChildren and then `return true`
+	// unconditionally: no docRoot check, no revert, no message. Demoting
+	// into a <Tabs> wrote a direct illegal child and left docRoot nil,
+	// which kills click-to-select for the WHOLE document while the last
+	// good tree stays on screen looking pressable — the exact failure
+	// addSelected was made transactional to stop, reachable by a different
+	// gesture. Found in review of the PR that fixed the other half.
+	at := unlink(p, n)
 	host.Kids = append(host.Kids, n)
 	ed.rebuild()
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		host.Kids = host.Kids[:len(host.Kids)-1]
+		insertAt(p, at, n)
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + host.Elem +
+			">: " + refused)
+		return false
+	}
 	return true
 }
