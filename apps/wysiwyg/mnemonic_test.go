@@ -92,6 +92,14 @@ func TestEveryMenuTitleStillOpensByItsMnemonic(t *testing.T) {
 // implied by the test above: two titles wearing the same letter both
 // "open a menu", so every assertion up there passes while one of them can
 // never be reached — titleWithAccel returns the first match.
+//
+// Nothing in the shipped page collides, so this guard only ever says
+// "fine" and could guard nothing without anyone noticing. To make it
+// fire, retitle one menu so its accelerator duplicates another's —
+// `_View` to `_Fiew` collides with `_File` — and it reports the pair.
+// Checked that way rather than assumed: a sibling test on #406 passed
+// with the very fix it claimed to guard reverted, because the direction
+// where it must say NO was never run.
 func TestMenuTitleMnemonicsAreDistinct(t *testing.T) {
 	ed, _ := buildPage(t)
 	bar := theMenuBar(t, ed)
