@@ -82,13 +82,71 @@ var authorities = []string{"CLAUDE.md", "ci.yml"}
 // `examples/kanbandemo` really did go stale that way across #238/#268).
 // Only an UNQUOTED operand counts.
 var (
-	expressionBody = regexp.MustCompile(`\$\{\{(.*?)\}\}`)
+	// (?s) so `.` spans newlines. Both prompt files fold expressions
+	// across lines inside `if:` and `run:` block scalars, and without the
+	// flag those bodies are invisible to this extractor — which fails
+	// CLOSED, reproducing the exact red this test exists to remove, one
+	// YAML style over.
+	expressionBody = regexp.MustCompile(`(?s)\$\{\{(.*?)\}\}`)
 	quotedLiteral  = regexp.MustCompile(`'[^']*'|"[^"]*"`)
 )
 
+// identByte reports whether c can sit inside a single expression operand.
+// The set is deliberately wider than an identifier: `.` and `-` are in it
+// because `needs.pr-review.outputs` is ONE operand, and the point of the
+// boundary test is to refuse a match that starts or ends inside one.
+func identByte(c byte) bool {
+	return c == '.' || c == '-' || c == '_' ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+}
+
+// operandRef reports whether token appears in body as a whole operand or
+// as a leading segment of one.
+//
+// The leading-segment case is load-bearing rather than sloppy: the
+// backticked prose says `needs.pr-review.outputs` while the expression
+// evaluates `needs.pr-review.outputs.outcome`, so exact equality would
+// miss the very token this test was written for. What it must NOT accept
+// is a match at an arbitrary offset — against that same body, plain
+// substring matching also excuses `review.outputs`, `outputs.outcome`
+// and `s.pr-review.o`, none of which is an operand anyone wrote.
+func operandRef(body, token string) bool {
+	for i := 0; i+len(token) <= len(body); {
+		j := strings.Index(body[i:], token)
+		if j < 0 {
+			return false
+		}
+		st := i + j
+		en := st + len(token)
+		startsClean := st == 0 || !identByte(body[st-1])
+		// A trailing `.` is the leading-segment case; anything else that
+		// could continue an operand is a match inside one.
+		endsClean := en == len(body) || body[en] == '.' || !identByte(body[en])
+		if startsClean && endsClean {
+			return true
+		}
+		i = st + 1
+	}
+	return false
+}
+
 func isExpressionRef(token, body string) bool {
+	// A SLASH SETTLES IT STRUCTURALLY, before any body is examined.
+	// GitHub's expression grammar has no arithmetic operators, so `/`
+	// cannot appear unquoted inside `${{ … }}` — a slash-bearing token
+	// can only reach an expression body through a string literal.
+	//
+	// That makes this a derived, complete discriminator for exactly the
+	// class this test exists to catch: `examples/gitui` and
+	// `examples/kanbandemo` are the paths that really went stale across
+	// #238/#268, and they are slash-bearing. Leaving them to the
+	// quote-stripper meant any hole in it reopened the hole in the test;
+	// here they are unexcusable by construction.
+	if strings.Contains(token, "/") {
+		return false
+	}
 	for _, m := range expressionBody.FindAllStringSubmatch(body, -1) {
-		if strings.Contains(quotedLiteral.ReplaceAllString(m[1], " "), token) {
+		if operandRef(quotedLiteral.ReplaceAllString(m[1], " "), token) {
 			return true
 		}
 	}
@@ -102,6 +160,7 @@ var forbidsGoBuild = regexp.MustCompile(`\bNOT\b`)
 
 func TestReviewPromptsNameOnlyPathsThatExist(t *testing.T) {
 	seen := map[string]bool{}
+	slashChecked := 0
 	for _, f := range promptFiles {
 		body := readFileString(t, f)
 		checked := 0
@@ -119,6 +178,9 @@ func TestReviewPromptsNameOnlyPathsThatExist(t *testing.T) {
 				continue // the file evaluates it as ${{ … }} — an expression, not a path
 			}
 			checked++
+			if hasSlash {
+				slashChecked++
+			}
 			seen[p] = true
 			if !existsInRepo(p) {
 				t.Errorf("%s names `%s`, which does not exist.\n\n"+
@@ -136,6 +198,27 @@ func TestReviewPromptsNameOnlyPathsThatExist(t *testing.T) {
 			t.Errorf("%s: no repo paths were checked at all — the extractor matched nothing, "+
 				"so this test proved nothing about the file.", f)
 		}
+	}
+
+	// A SLASH-BEARING PATH MUST STILL BE CHECKED SOMEWHERE. The vacuity
+	// guard above catches an extractor that stopped matching anything;
+	// this catches an EXCLUSION that grew until it excused a whole class.
+	// The class is the one that really broke — `examples/gitui` and
+	// `examples/kanbandemo` across #238/#268 — and `authorities` cannot
+	// stand in for it, because both authorities are slash-free: an
+	// exclusion that swallowed every path with a `/` in it would leave
+	// those two alone and stay green.
+	//
+	// ACROSS the corpus rather than per file, and that is measured rather
+	// than assumed. claude.yml contains exactly two slash-bearing tokens,
+	// `./...` and `github.com/WonderForgeLabs/gooey`, and BOTH are
+	// correctly excluded — one a package pattern, one a module path. A
+	// per-file floor would therefore assert something untrue of that file
+	// and fail for a reason that has nothing to do with the exclusion.
+	if slashChecked == 0 {
+		t.Error("no path containing a `/` survived to be checked in any prompt file — " +
+			"an exclusion has grown to cover the whole class of path that went stale " +
+			"in #238/#268, and nothing else in this test would notice.")
 	}
 
 	// Non-vacuity is not coverage. These two are what the prompts point AT
@@ -231,7 +314,24 @@ func TestExpressionRefsAreToldApartFromPaths(t *testing.T) {
 		"        env:\n" +
 		"          REVIEW_OUTCOME: ${{ needs.pr-review.outputs.outcome }}\n" +
 		"          CACHE_KEY: ${{ hashFiles('examples/gitui/go.sum') }}\n" +
-		"          MODE: ${{ matrix.mode }}\n"
+		"          DOC_KEY: ${{ hashFiles('CLAUDE.md') }}\n" +
+		"          MODE: ${{ matrix.mode }}\n" +
+		// Slash-bearing and UNQUOTED, which GitHub's grammar cannot
+		// actually produce — that is exactly why it belongs here. It is
+		// the one input the quote-stripper cannot reject, so it is what
+		// makes the structural slash rule observable on its own.
+		"          BAD: ${{ docs/architecture.md }}\n"
+	// A FOLDED expression, which is how both prompt files really write
+	// their `if:` conditions. Without (?s) the extractor cannot see this
+	// body at all and the exclusion fails closed.
+	const folded = "        if: >-\n          ${{ github.event_name == 'push' &&\n" +
+		"              needs.pr-review.outputs.outcome == 'success' }}\n"
+	if !isExpressionRef("needs.pr-review.outputs", folded) {
+		t.Error("a multi-line ${{ … }} is invisible to expressionBody: a folded condition " +
+			"is ordinary YAML here, and missing it turns this test red for the exact " +
+			"reason it was written to stop")
+	}
+
 	for _, c := range []struct {
 		token string
 		want  bool
@@ -245,7 +345,20 @@ func TestExpressionRefsAreToldApartFromPaths(t *testing.T) {
 			"it appears ONLY inside a quoted literal. Excusing it is how a stale path " +
 				"survives a rename (#238, #268) with the test still green"},
 		{"CLAUDE.md", false,
-			"named nowhere as an expression, so it stays a path and stays checked"},
+			"slash-free and QUOTED — the one shape only the quote-stripper can reject, " +
+				"since the structural slash rule has nothing to bite on"},
+		{"docs/architecture.md", false,
+			"slash-bearing and UNQUOTED — the mirror case, which only the structural " +
+				"slash rule can reject, since there is no quote to strip"},
+		{"steps.x.outputs.docs/architecture.md", false,
+			"a slash cannot appear unquoted in an expression, so a slash-bearing token " +
+				"is never an operand however it looks"},
+		{"review.outputs", false,
+			"a mid-operand substring of needs.pr-review.outputs — nobody wrote this token"},
+		{"outputs.outcome", false,
+			"a suffix of the same operand, and equally not one"},
+		{"s.pr-review.o", false,
+			"an arbitrary offset inside the operand"},
 	} {
 		if got := isExpressionRef(c.token, body); got != c.want {
 			t.Errorf("isExpressionRef(%q) = %v, want %v — %s", c.token, got, c.want, c.why)
