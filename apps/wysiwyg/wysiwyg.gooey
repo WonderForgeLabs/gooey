@@ -266,7 +266,7 @@
          draws shapes badly out of box-drawing characters. Invisible to
          screen_text, which reads the cell plane. -->
     <ActivityBar Name="ActivityBar" Grid.Row="1" Grid.Col="0" Sel="{{.ActivitySel}}"
-                 Height="8" VAlign="Start" Margin="0,0,1,0"/>
+                 Margin="0,0,1,0"/>
 
     <DockHost Name="Dock" Grid.Row="1" Grid.Col="1" Style="dim">
 
