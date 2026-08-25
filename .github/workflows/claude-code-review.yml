@@ -179,7 +179,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude[bot],copilot[bot]'
           claude_args: |
-            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-sonnet-5"
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-opus-5"
 
           # Enable progress tracking
           track_progress: true
