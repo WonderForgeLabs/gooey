@@ -80,7 +80,12 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 		for len(pend) > 0 {
 			ev, n, ok := input.Decode(pend, idle)
 			if n == 0 && !ok {
-				return // incomplete: wait for more bytes
+				// Incomplete: wait for more bytes. Safe to return only
+				// because input.Decode guarantees it never answers this
+				// way when idle is true — see its doc comment. If that
+				// guarantee breaks, pend is stranded here forever and
+				// the app goes permanently deaf while still painting.
+				return
 			}
 			pend = pend[n:]
 			if ok {

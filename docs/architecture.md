@@ -771,7 +771,13 @@ an *undecoded* report does not merely lose the event, it injects
 phantom keystrokes (a wheel notch arrives as `a`, a click as a space)
 that reach the app as real commands. Its tri-state return (`ok`, consumed count)
 distinguishes "incomplete, feed me more bytes" from "complete but
-unmapped, skip it". `term.DecodeEvents` adds the only two things that
+unmapped, skip it". The third state is the one whose violation is
+silent: under `idle` there are no more bytes to feed, so `Decode`
+guarantees it never answers "incomplete" then — it always consumes a
+byte or produces an event. A decoder that broke that guarantee would
+strand its buffer and go permanently deaf while still painting, which
+is the failure `App.Run`'s decoder-death watch cannot see, because the
+goroutine never returns. `term.DecodeEvents` adds the only two things that
 are genuinely I/O: reading the tty in a goroutine, and the 40 ms
 `EscTimeout` that settles the classic ambiguity — a lone ESC and the
 first byte of an escape sequence are the same byte, and only the absence

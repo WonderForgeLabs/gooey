@@ -17,6 +17,23 @@ import (
 // a CSI sequence are the same byte. Callers pass idle = true only when
 // no further bytes arrived within the escape timeout, at which point a
 // dangling ESC really was the Esc key.
+//
+// LIVENESS, and it is a contract rather than an observation: when idle
+// is true, Decode always consumes at least one byte or produces an
+// event. Never (0, false).
+//
+// That case is the drain loop's ONLY "wait for more bytes" signal (see
+// term.DecodeEvents), and under idle no further byte is coming — so a
+// sequence that still reports incomplete can never be resolved. The
+// buffer strands, every later keystroke is appended behind it, and the
+// app paints on forever without taking another key. No error, no exit,
+// no tripwire: App.Run watches for a decoder that DIED, and this one is
+// alive.
+//
+// It costs nothing to preserve and is silent to break, so the guarantee
+// is asserted exhaustively rather than trusted — decodeidle_test.go
+// checks every 1- and 2-byte input. If you are changing a `return` in
+// decodeCSI, decodeEsc or decodeX10Mouse, that test is the one to run.
 func Decode(b []byte, idle bool) (Event, int, bool) {
 	if len(b) == 0 {
 		return Event{}, 0, false
