@@ -21,8 +21,13 @@ func (t *Text) Measure(avail gooey.Size) gooey.Size {
 	lines := strings.Split(getStr(t.Content), "\n")
 	w := 0
 	for _, l := range lines {
-		if len([]rune(l)) > w {
-			w = len([]rune(l))
+		// DISPLAY COLUMNS, not runes. A rune count under-reports any line
+		// holding a CJK character or emoji, so layout allocated too few
+		// columns and the Text overran its neighbour — with no error,
+		// because the cells it wrote were exactly the ones it meant to
+		// write (#358).
+		if n := render.StringWidth(l); n > w {
+			w = n
 		}
 	}
 	return gooey.Size{W: min(w, avail.W), H: min(len(lines), avail.H)}

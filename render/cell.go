@@ -2,6 +2,8 @@
 // cells and the ANSI diff/flush path that puts them on screen.
 package render
 
+import "github.com/rivo/uniseg"
+
 // Color is a 24-bit RGB color. Zero value means "terminal default".
 type Color struct {
 	R, G, B uint8
@@ -108,10 +110,60 @@ func (b *Buffer) At(x, y int) Cell {
 	return b.Cells[y*b.W+x]
 }
 
-// SetString writes a string starting at (x,y), clipped to the buffer.
+// Continuation is the Rune held by the cell a wide glyph's SECOND column
+// covers. It is not drawn — the terminal already advanced two columns
+// when it drew the glyph in the cell before — and it exists so that a
+// buffer column keeps meaning a terminal column.
+//
+// A negative rune because every value a caller could legitimately write
+// is non-negative, so this cannot collide with content. It is emphatically
+// not a space: a space would erase the right half of the glyph.
+const Continuation rune = -1
+
+// SetString writes a string starting at (x,y), clipped to the buffer, and
+// advances by each glyph's DISPLAY WIDTH rather than one cell per rune.
+//
+// The invariant it maintains is that cell index equals terminal column
+// (see width.go). A double-width glyph takes the cell it is written to
+// AND marks the next one Continuation, so the text after it starts at the
+// column layout actually allocated. Before this, a wide glyph consumed
+// one cell and two columns, and everything to its right was displaced —
+// invisibly, because the cells were exactly what we asked for (#358).
+//
+// By grapheme cluster, not by rune: a flag is two regional indicators and
+// two columns, and a ZWJ sequence many runes and two columns. Iterating
+// runes would write each piece to its own cell and measure the whole
+// thing wrong.
 func (b *Buffer) SetString(x, y int, str string, s Style) {
-	for _, r := range str {
-		b.Set(x, y, r, s)
+	for len(str) > 0 {
+		cluster, rest, w, _ := uniseg.FirstGraphemeClusterInString(str, -1)
+		str = rest
+		if x >= b.W {
+			return
+		}
+		// The cluster's first rune is what lands in the cell; a cell
+		// holds one rune by construction, so combining marks beyond the
+		// first are dropped rather than silently displacing the row.
+		// That is a narrowing, not a regression — the old loop gave each
+		// mark its own cell and its own column.
+		r := []rune(cluster)
+		if len(r) == 0 {
+			continue
+		}
+		if w >= 2 {
+			// No room for the second half: drawing it would overflow the
+			// line and put the glyph's tail in column 0 of the next row
+			// on a terminal with autowrap. A space is the honest answer.
+			if x+1 >= b.W {
+				b.Set(x, y, ' ', s)
+				return
+			}
+			b.Set(x, y, r[0], s)
+			b.Set(x+1, y, Continuation, s)
+			x += 2
+			continue
+		}
+		b.Set(x, y, r[0], s)
 		x++
 	}
 }

@@ -191,6 +191,14 @@ type emitter struct {
 func (e *emitter) run(dst []byte, b *Buffer, x0, x1, y int, depth ColorDepth) []byte {
 	for x := x0; x < x1; x++ {
 		c := b.Cells[y*b.W+x]
+		// The right half of a wide glyph. The terminal advanced two
+		// columns when it drew the cell before this one, so its cursor is
+		// already past here; emitting anything would overwrite the glyph
+		// with its own tail. Skipping keeps cell index and column aligned,
+		// which is what lets cup(x, y) below stay plain arithmetic.
+		if c.Rune == Continuation {
+			continue
+		}
 		if !e.styleSet || c.Style != e.cur {
 			dst = append(dst, sgr(c.Style, depth)...)
 			e.cur, e.styleSet = c.Style, true

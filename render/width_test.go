@@ -2,52 +2,61 @@ package render
 
 import "testing"
 
-// The point of the model, stated as a test: a CELL assertion cannot see
-// this bug, and that is not a gap in the assertions but a property of
-// what they compare against.
+// The fix and the instrument that proves it, in one test.
 //
-// The buffer holds exactly the runes we asked it to hold. Every existing
-// style of check in this repo — At(x,y).Rune, a row read back as a
-// string, a damage rect — agrees the write was correct, because it was.
-// The corruption happens one layer down, when a terminal advances two
-// columns for a glyph the buffer allocated one cell to.
+// Before #358 a cell assertion COULD NOT SEE this bug, and that was not a
+// gap in the assertions but a property of what they compare against: the
+// buffer held exactly the runes we asked for, and the corruption happened
+// one layer down when the terminal advanced two columns for a glyph given
+// one cell.
 //
-// So this test asserts BOTH halves: the cells are right, and the row is
-// nonetheless displaced. If either half stopped holding, the model would
-// be measuring something other than the bug.
-func TestACellAssertionCannotSeeADisplacedRow(t *testing.T) {
+// Both halves are still asserted, because the second is what keeps the
+// first honest. Half one is the new cell layout; half two builds the OLD
+// layout by hand and requires the model to still call it displaced. A
+// model that had quietly stopped detecting anything would pass half one
+// on its own.
+func TestAWideGlyphClaimsItsSecondColumn(t *testing.T) {
 	b := NewBuffer(6, 1)
 	b.SetString(0, 0, "世界ab", Style{})
 
-	// HALF ONE — the buffer is exactly right, by the only means the repo
-	// currently has of asking.
-	for i, want := range []rune{'世', '界', 'a', 'b'} {
+	// HALF ONE — a wide glyph now OWNS the column it covers, so the row
+	// is four columns of content in four cells, not four runes in four
+	// cells. The continuations are the fix made visible.
+	for i, want := range []rune{'世', Continuation, '界', Continuation} {
 		if got := b.At(i, 0).Rune; got != want {
-			t.Fatalf("cell %d holds %q, want %q — the premise of this test is that "+
-				"the CELLS are correct, and they are not, so it is measuring "+
-				"something else", i, got, want)
+			t.Fatalf("cell %d holds %q, want %q — a wide glyph must claim the cell "+
+				"its second column covers", i, got, want)
 		}
 	}
-
-	// HALF TWO — and the terminal will not draw it there.
-	x, by, ok := Displaced(b, 0)
-	if !ok {
-		t.Fatal("the model reports the row is faithful. Either RuneWidth stopped " +
-			"treating 世 as two columns, or the cell layer learned about width — " +
-			"if the latter, this test has done its job and the invariant test " +
-			"below is the one to keep")
+	// And 'a' lands where layout would put it: column 4, not column 2.
+	if got := b.At(4, 0).Rune; got != 'a' {
+		t.Fatalf("cell 4 holds %q, want 'a' — the text after two wide glyphs "+
+			"belongs at column 4", got)
 	}
-	// The FIRST displaced cell is the one after the first wide glyph, and
-	// the shift is one column per wide glyph passed. Asserted exactly,
-	// because "something moved" would pass for a model that reported
-	// every row displaced.
+
+	// HALF TWO — and the model can still see a row that IS displaced,
+	// which is what makes half one worth asserting. Built by hand with
+	// Set, because SetString will no longer produce one: this is the
+	// shape the cell plane had before the fix, and any code path that
+	// writes runes without consulting width recreates it.
+	bad := NewBuffer(6, 1)
+	for i, r := range []rune{'世', '界', 'a', 'b'} {
+		bad.Set(i, 0, r, Style{})
+	}
+	x, by, ok := Displaced(bad, 0)
+	if !ok {
+		t.Fatal("the model reports a hand-built one-rune-per-cell row as faithful. " +
+			"It cannot then be trusted to report a real one, and the invariant " +
+			"test below would be passing vacuously")
+	}
+	// Asserted exactly, because "something moved" would also pass for a
+	// model that called every row displaced.
 	if x != 1 || by != 1 {
 		t.Errorf("first displacement at cell %d by %d columns, want cell 1 by 1 — "+
 			"cell 1 is the first thing after 世, which occupies columns 0 and 1",
 			x, by)
 	}
-	// By the end of the row the accumulated shift is one per wide glyph.
-	if got := TerminalColumns(b, 0)[2]; got != 4 {
+	if got := TerminalColumns(bad, 0)[2]; got != 4 {
 		t.Errorf("cell 2 ('a') lands in terminal column %d, want 4 — two wide "+
 			"glyphs ahead of it, each taking two columns", got)
 	}
@@ -61,11 +70,6 @@ func TestACellAssertionCannotSeeADisplacedRow(t *testing.T) {
 // displaced and the damaged cells are CLEAN — nobody invalidated them —
 // so nothing ever repaints over the mess.
 func TestABufferColumnIsATerminalColumn(t *testing.T) {
-	t.Skip("#358: the cell layer is not width-aware yet — SetString advances one " +
-		"cell per rune and Text.Measure counts runes. This test is the " +
-		"acceptance criterion for that issue and should be un-skipped by the " +
-		"commit that fixes it, not edited to match current behaviour.")
-
 	b := NewBuffer(6, 1)
 	b.SetString(0, 0, "世界ab", Style{})
 

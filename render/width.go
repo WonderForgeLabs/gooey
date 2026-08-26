@@ -71,7 +71,14 @@ func TerminalColumns(b *Buffer, y int) []int {
 	col := 0
 	for x := range b.W {
 		cols[x] = col
-		w := RuneWidth(b.At(x, y).Rune)
+		r := b.At(x, y).Rune
+		if r == Continuation {
+			// Draws nothing and advances nothing: the glyph in the cell
+			// before already claimed this column. Flooring this at 1 the
+			// way an ordinary cell is floored would double-count it.
+			continue
+		}
+		w := RuneWidth(r)
 		// A zero-width cell still occupies a cell, and advancing by 0
 		// would map two cells to one column and report a displacement
 		// that does not exist. The cell layer's floor is one column;
@@ -108,6 +115,12 @@ func TerminalWidth(b *Buffer, y int) int {
 // is that everything after one glyph shifted.
 func Displaced(b *Buffer, y int) (x, by int, ok bool) {
 	for i, c := range TerminalColumns(b, y) {
+		// A continuation cell draws nothing, so it has no column of its
+		// own to be displaced from. Its recorded column is where the
+		// terminal's cursor sits mid-glyph, which is legitimately not i.
+		if b.At(i, y).Rune == Continuation {
+			continue
+		}
 		if c != i {
 			return i, c - i, true
 		}
