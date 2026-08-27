@@ -10,7 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 type Story struct {
@@ -190,7 +191,8 @@ func htmlToText(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// wrap breaks text into lines of at most w runes, preserving paragraphs.
+// wrap breaks text into lines of at most w display COLUMNS, preserving
+// paragraphs.
 func wrap(s string, w int) []string {
 	if w < 4 {
 		w = 4
@@ -207,17 +209,23 @@ func wrap(s string, w int) []string {
 			switch {
 			case line == "":
 				line = word
-			// Rune counts, not len(). Byte length made every non-ASCII
-			// paragraph wrap early — a smart quote or a dash costs three
-			// bytes and one cell — which was invisible while the pane
-			// truncated at its own height and is not once you can scroll
-			// the whole article past it.
+			// COLUMNS, which is the third answer this line has had and
+			// the first correct one.
 			//
-			// Rune count is not DISPLAY WIDTH, and nothing in this repo
-			// is width-aware: a CJK or emoji rune occupies two cells and
-			// still counts as one here, so such a line overruns its
-			// column exactly as it does everywhere else in gooey.
-			case utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) <= w:
+			// len() came first and made every non-ASCII paragraph wrap
+			// early — a smart quote costs three bytes and one cell.
+			// Rune counts fixed that and were still wrong the other way:
+			// a CJK or emoji rune is one rune and TWO cells, so a line
+			// of them overran its column by up to its own length. This
+			// is a feed reader, so the text is arbitrary prose off the
+			// internet — the one place in this repo guaranteed to meet
+			// both cases.
+			//
+			// The note that used to sit here said "nothing in this repo
+			// is width-aware". That stopped being true in #358;
+			// render.StringWidth counts by grapheme cluster, so a flag
+			// emoji measures two columns rather than two runes.
+			case render.StringWidth(line)+1+render.StringWidth(word) <= w:
 				line += " " + word
 			default:
 				out = append(out, line)

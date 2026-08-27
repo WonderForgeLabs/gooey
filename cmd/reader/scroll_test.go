@@ -234,18 +234,61 @@ func TestArticleRewrapsWithPaneWidth(t *testing.T) {
 	}
 }
 
-// wrap measures in runes, not bytes. Byte length made every non-ASCII
+// wrap does not measure in BYTES. Byte length made every non-ASCII
 // paragraph wrap early — invisible while the pane truncated, plainly
 // wrong once the whole article can be scrolled past.
 //
-// Rune count is NOT display width: a 2-cell rune still counts as one
-// here, exactly as everywhere else in this repo.
-func TestWrapCountsRunesNotBytes(t *testing.T) {
-	// Six 3-byte runes per word, two words: 13 runes with the space, so
-	// both fit a 13-wide column and neither fits by byte count.
+// This case uses runes that are multi-byte and ONE column, so it pins
+// the byte half alone; the column half is
+// TestWrapCountsColumnsNotRunes below. Two tests rather than one because
+// a single case cannot distinguish the two failure directions: bytes
+// wrap too early, runes too late.
+func TestWrapDoesNotCountBytes(t *testing.T) {
+	// Six 2-byte runes per word, two words: 13 columns with the space,
+	// so both fit a 13-wide column and neither fits by byte count.
 	const word = "ααααα" + "α"
 	got := wrap(word+" "+word, 13)
 	if len(got) != 1 {
 		t.Fatalf("wrap split %q into %d lines at width 13, want 1 — it is counting bytes", word+" "+word, len(got))
+	}
+}
+
+// And it does not measure in RUNES either, which is the opposite error
+// and the one that survived the byte fix.
+//
+// A feed reader renders arbitrary prose off the internet, so this is the
+// place in the repo most likely to meet a CJK character or an emoji for
+// real. A rune count lets such a line overrun its column by up to its
+// own length, and nothing downstream clips it (#357), so it lands on
+// whatever is painted beside it.
+func TestWrapCountsColumnsNotRunes(t *testing.T) {
+	// Four wide glyphs per word: 4 runes and 8 COLUMNS each. Two words
+	// plus a space are 17 columns but only 9 runes — so a rune-counting
+	// wrap keeps them on one line at width 12 and a column-counting one
+	// splits them.
+	const word = "世界世界"
+	got := wrap(word+" "+word, 12)
+	if len(got) != 2 {
+		t.Fatalf("wrap put %q on %d line(s) at width 12, want 2 — %q is 8 columns, "+
+			"so two of them plus a space need 17 and cannot share a 12-column "+
+			"row. Counting runes gives 9 and wrongly fits them",
+			word+" "+word, len(got), word)
+	}
+	// And each produced line must actually fit.
+	for i, l := range got {
+		if n := render.StringWidth(l); n > 12 {
+			t.Errorf("line %d is %d columns wide in a 12-column pane: %q", i, n, l)
+		}
+	}
+}
+
+// The width budget is respected for ordinary prose too — the control, so
+// a regression to rune counting cannot hide behind the wide cases and so
+// the ASCII path stays covered.
+func TestWrapKeepsAsciiWithinItsWidth(t *testing.T) {
+	for _, l := range wrap("the quick brown fox jumps over the lazy dog", 12) {
+		if n := render.StringWidth(l); n > 12 {
+			t.Errorf("line %q is %d columns, over the 12-column budget", l, n)
+		}
 	}
 }
