@@ -446,7 +446,7 @@ func (v *ItemsView) Render(f *gooey.Frame) {
 	}
 	if v.err != nil {
 		b := v.Bounds()
-		f.Cells.SetString(b.X, b.Y, clipRunes("template: "+v.err.Error(), b.W),
+		f.Cells.SetString(b.X, b.Y, clipCols("template: "+v.err.Error(), b.W),
 			render.Style{Fg: render.RGB(240, 90, 90)})
 	}
 }

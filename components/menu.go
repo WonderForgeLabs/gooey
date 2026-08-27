@@ -285,7 +285,7 @@ func (m *MenuBar) Render(f *gooey.Frame) {
 			}
 		}
 		text, _, pos := splitMnemonic(menu.Title)
-		f.Cells.SetString(x, b.Y, clipRunes(" "+text+" ", b.X+b.W-x), ts)
+		f.Cells.SetString(x, b.Y, clipCols(" "+text+" ", b.X+b.W-x), ts)
 		// The accelerator letter is ALWAYS underlined — a terminal cannot
 		// see a held ALT (no key-up events), so "show while ALT is down"
 		// is not implementable, and always-on is the honest convention.
@@ -644,7 +644,7 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		if n := inner - len([]rune(line)); n > 0 {
 			line += spaces(n)
 		}
-		f.Cells.SetString(b.X+1, y, clipRunes(line, inner), is)
+		f.Cells.SetString(b.X+1, y, clipCols(line, inner), is)
 		// Same convention as the bar: the accelerator letter is always
 		// underlined. Typing it activates the item while the menu is open.
 		// The underline offset is measured from the LEAD, not assumed to

@@ -136,10 +136,10 @@ func (s *Spinner) Render(f *gooey.Frame) {
 		return
 	}
 	st := getSty(s.Style)
-	f.Cells.SetString(b.X, b.Y, clipRunes(s.Glyph(), b.W), st)
+	f.Cells.SetString(b.X, b.Y, clipCols(s.Glyph(), b.W), st)
 	if label := getStr(s.Label); label != "" {
 		if x := b.X + 2; x < b.X+b.W {
-			f.Cells.SetString(x, b.Y, clipRunes(label, b.X+b.W-x), st)
+			f.Cells.SetString(x, b.Y, clipCols(label, b.X+b.W-x), st)
 		}
 	}
 }

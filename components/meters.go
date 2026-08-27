@@ -97,5 +97,5 @@ func renderFillMeter(f *gooey.Frame, x, y, w, v int, fillSt, emptySt render.Styl
 // w cells — w <= 0 writes nothing, which is the whole guard a caller with
 // no room left needs.
 func renderMeterReadout(f *gooey.Frame, x, y, w, v int, st render.Style) {
-	f.Cells.SetString(x, y, clipRunes(fmt.Sprintf(" %3d%%", v), w), st)
+	f.Cells.SetString(x, y, clipCols(fmt.Sprintf(" %3d%%", v), w), st)
 }

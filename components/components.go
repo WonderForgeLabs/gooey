@@ -27,6 +27,8 @@
 package components
 
 import (
+	"github.com/rivo/uniseg"
+
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -103,15 +105,41 @@ func collapsed(w gooey.Component) bool {
 	return l != nil && l.Visibility == gooey.Collapsed
 }
 
-func clipRunes(s string, w int) string {
+// clipCols truncates s to w display COLUMNS.
+//
+// Every one of its callers passes a column budget — b.W, or b.X+b.W-x,
+// or a Border's inner width — so columns were always the contract. The
+// implementation counted RUNES, which is the same number only for ASCII:
+// clipCols("世界ab", 3) returned "世界a", five columns into a three-column
+// slot, and the overrun landed on whatever was painted next (#358). gooey
+// has no clipping at the frame level (#357), so nothing downstream caught
+// it.
+//
+// Renamed rather than fixed in place. A name that says runes over a body
+// that counts columns is how the next caller reintroduces the bug, and
+// the compiler makes the rename exhaustive.
+//
+// A wide glyph is never split: if the next cluster would exceed the
+// budget, clipping stops before it. That can leave one column unused —
+// correct, since half a glyph is not a thing a terminal can draw.
+func clipCols(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= w {
+	if render.StringWidth(s) <= w {
 		return s
 	}
-	return string(r[:w])
+	out, used, rest := make([]byte, 0, len(s)), 0, s
+	for len(rest) > 0 {
+		cluster, next, cw, _ := uniseg.FirstGraphemeClusterInString(rest, -1)
+		if used+cw > w {
+			break
+		}
+		out = append(out, cluster...)
+		used += cw
+		rest = next
+	}
+	return string(out)
 }
 
 // paintBanner paints the one-row banner the three overlays share — the
@@ -138,14 +166,21 @@ func clipRunes(s string, w int) string {
 // is asked for rather than assumed.
 //
 // Fill THEN write, which is the tooltip's and the marker's order rather
-// than the toast's write-then-pad. On today's buffer the two are
-// observationally identical — render.Buffer.SetString advances exactly
-// one cell per rune and clipRunes clips by rune count, so "pad from the
-// unclipped rune length to the right edge" covers precisely the cells
-// the write did not — but the equivalence is a coincidence of that
-// arithmetic, and it is the write-then-pad form that has to be re-derived
-// whenever the clip rule or the cell advance changes. Filling first makes
-// "the whole rectangle carries the banner style" true by construction.
+// than the toast's write-then-pad.
+//
+// This note used to say the two were observationally identical, because
+// SetString advanced exactly one cell per rune and the clip counted
+// runes, so "pad from the unclipped rune length to the right edge"
+// covered precisely the cells the write did not — and it warned that the
+// equivalence was a coincidence of that arithmetic, to be re-derived
+// whenever the clip rule or the cell advance changed.
+//
+// BOTH changed, in #358. SetString now advances by display width and
+// clipCols clips by columns, so the rune-length pad would leave a wide
+// glyph's second column unstyled and stop short of the right edge. The
+// warning was right and filling first is what made it a non-event:
+// "the whole rectangle carries the banner style" is true by
+// construction, not by arithmetic that has to keep agreeing.
 func paintBanner(f *gooey.Frame, b gooey.Rect, msg string, st, def render.Style) render.Style {
 	if st == (render.Style{}) {
 		st = def
@@ -153,7 +188,7 @@ func paintBanner(f *gooey.Frame, b gooey.Rect, msg string, st, def render.Style)
 	for x := b.X; x < b.X+b.W; x++ {
 		f.Cells.Set(x, b.Y, ' ', st)
 	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(" "+msg+" ", b.W), st)
+	f.Cells.SetString(b.X, b.Y, clipCols(" "+msg+" ", b.W), st)
 	return st
 }
 

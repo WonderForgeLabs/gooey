@@ -106,7 +106,7 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 		if v.focused {
 			st.Reverse = true
 		}
-		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipCols(b.label(), b.Bounds().W), st)
 		b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
 		return
 	}
@@ -119,7 +119,7 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 	if v.pressed {
 		st.Reverse, st.Bold = true, true
 	}
-	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipCols(b.label(), b.Bounds().W), st)
 	b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
 }
 

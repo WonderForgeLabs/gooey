@@ -39,6 +39,6 @@ func (t *Text) Render(f *gooey.Frame) {
 		if i >= t.Bounds().H {
 			break
 		}
-		f.Cells.SetString(t.Bounds().X, t.Bounds().Y+i, clipRunes(line, t.Bounds().W), style)
+		f.Cells.SetString(t.Bounds().X, t.Bounds().Y+i, clipCols(line, t.Bounds().W), style)
 	}
 }

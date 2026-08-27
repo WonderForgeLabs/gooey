@@ -227,11 +227,14 @@ func TestToastCarriesTheHostStyle(t *testing.T) {
 // padded case (message shorter than the row) and the clipped case
 // (message longer than the row it was given). The toast used to reach
 // that by writing the string first and padding from the UNCLIPPED rune
-// length — arithmetic that happens to land on the same cells as filling
-// first, only because render.Buffer advances exactly one cell per rune
-// and clipRunes clips by rune count. The shared paintBanner fills first,
-// so the property holds by construction rather than by that coincidence;
-// this test is what would notice if either form stopped covering the row.
+// length — arithmetic that landed on the same cells as filling first only
+// because the buffer advanced one cell per rune and the clip counted
+// runes. #358 changed both: SetString advances by display width and
+// clipCols clips by columns, so that pad would now stop short of the
+// right edge on any row holding a wide glyph. The shared paintBanner
+// fills first, so the property holds by construction rather than by a
+// coincidence that has since expired; this test is what would notice if
+// either form stopped covering the row.
 func TestToastBannerCoversItsWholeRow(t *testing.T) {
 	host, page, _ := toastPage(12, 4)
 	c := gooey.NewComposer(page, 12, 4)

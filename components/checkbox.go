@@ -51,7 +51,7 @@ func (c *Checkbox) Render(f *gooey.Frame) {
 	if b.W <= 0 || b.H <= 0 {
 		return
 	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(box+label, b.W), st)
+	f.Cells.SetString(b.X, b.Y, clipCols(box+label, b.W), st)
 }
 
 // IsChecked reads the bound state, tolerating an unbound Checkbox (a

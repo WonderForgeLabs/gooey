@@ -158,7 +158,7 @@ func (t *TextBox) Render(f *gooey.Frame) {
 		return
 	}
 	accent := getSty(t.AccentStyle)
-	prompt := clipRunes(getStr(t.Prompt), b.W)
+	prompt := clipCols(getStr(t.Prompt), b.W)
 	runes := t.value()
 	caret := t.Caret()
 	lo, hi, selected := t.Selection()
@@ -526,7 +526,11 @@ func (t *TextBox) HandleMouseMove(ev input.MouseEvent) bool {
 // indexAt maps a screen column to a rune index, through the prompt and
 // the current horizontal scroll.
 func (t *TextBox) indexAt(x int) int {
-	promptW := len([]rune(clipRunes(getStr(t.Prompt), t.Bounds().W)))
+	// COLUMNS, not runes: this offsets the caret past the prompt, so a
+	// prompt holding a wide glyph put the caret one cell left of the
+	// text it belongs to — the same rune-vs-column confusion clipCols
+	// was renamed for, one line further on.
+	promptW := render.StringWidth(clipCols(getStr(t.Prompt), t.Bounds().W))
 	return clamp(t.scroll+x-t.Bounds().X-promptW, 0, len(t.value()))
 }
 

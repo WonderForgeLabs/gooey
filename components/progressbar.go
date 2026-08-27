@@ -110,7 +110,7 @@ func (p *ProgressBar) Render(f *gooey.Frame) {
 	label := getStr(p.Label)
 	x := b.X
 	if label != "" {
-		f.Cells.SetString(x, b.Y, clipRunes(label, b.W), styleDim)
+		f.Cells.SetString(x, b.Y, clipCols(label, b.W), styleDim)
 		x += len([]rune(label))
 	}
 	if p.busy() {

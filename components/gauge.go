@@ -45,7 +45,7 @@ func (g *Gauge) Render(f *gooey.Frame) {
 	// so the track reads as one meter.
 	barW := b.W - len([]rune(label)) - meterReadout - 1
 	x := b.X
-	f.Cells.SetString(x, b.Y, clipRunes(label, b.W), styleDim)
+	f.Cells.SetString(x, b.Y, clipCols(label, b.W), styleDim)
 	x += len([]rune(label))
 	x += renderFillMeter(f, x, b.Y, barW, v, st, st)
 	renderMeterReadout(f, x, b.Y, b.X+b.W-x, v, st)
