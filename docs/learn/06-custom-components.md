@@ -84,7 +84,12 @@ the right answer for a bar.
 **Paint into `Bounds()`, never at absolute coordinates.** `Arrange` has
 already placed you; `f.Cells.Set`/`SetString` clip at the buffer edge,
 but painting outside your own bounds will collide with siblings that the
-Composer considers clean.
+Composer considers clean. The buffer edge is the wrong edge to rely on:
+your bounds are almost always narrower, and a wide glyph makes the two
+diverge by more than one cell. Fit text with `render.ClipCols(s, b.W)`
+and measure it with `render.StringWidth` — see
+[the custom-draw how-to](howto/howto-custom-draw.md) for why runes are
+not columns.
 
 **`m.value.Get()` is the whole damage declaration.** The Composer runs
 `Render` inside this component's paint node, so every property read during

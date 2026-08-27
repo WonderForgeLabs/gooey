@@ -101,9 +101,7 @@ func ClipCols(s string, w int) string {
 func RowText(b *Buffer, y int) string {
 	var sb strings.Builder
 	for x := 0; x < b.W; x++ {
-		if r := b.At(x, y).Rune; r != Continuation {
-			sb.WriteRune(r)
-		}
+		sb.WriteString(b.At(x, y).Text())
 	}
 	return sb.String()
 }
@@ -127,14 +125,13 @@ func TerminalColumns(b *Buffer, y int) []int {
 	col := 0
 	for x := range b.W {
 		cols[x] = col
-		r := b.At(x, y).Rune
-		if r == Continuation {
+		if b.At(x, y).Rune == Continuation {
 			// Draws nothing and advances nothing: the glyph in the cell
 			// before already claimed this column. Flooring this at 1 the
 			// way an ordinary cell is floored would double-count it.
 			continue
 		}
-		w := RuneWidth(r)
+		w := b.At(x, y).Width()
 		// A zero-width cell still occupies a cell, and advancing by 0
 		// would map two cells to one column and report a displacement
 		// that does not exist. The cell layer's floor is one column;
@@ -155,8 +152,14 @@ func TerminalWidth(b *Buffer, y int) int {
 		return 0
 	}
 	last := cols[len(cols)-1]
-	w := RuneWidth(b.At(b.W-1, y).Rune)
-	if w < 1 {
+	// The last cell's own advance, through Cell.Width so a trailing
+	// Continuation contributes 0. Flooring RuneWidth here counted one
+	// column for it — RuneWidth(Continuation) is 1, since string(rune(-1))
+	// is U+FFFD — and so a row ENDING in a wide glyph measured one column
+	// over. That is invisible in a fixture ending in ASCII, which is
+	// exactly what the acceptance test used.
+	w := b.At(b.W-1, y).Width()
+	if w < 1 && b.At(b.W-1, y).Rune != Continuation {
 		w = 1
 	}
 	return last + w

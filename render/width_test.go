@@ -35,13 +35,22 @@ func TestAWideGlyphClaimsItsSecondColumn(t *testing.T) {
 	}
 
 	// HALF TWO — and the model can still see a row that IS displaced,
-	// which is what makes half one worth asserting. Built by hand with
-	// Set, because SetString will no longer produce one: this is the
-	// shape the cell plane had before the fix, and any code path that
-	// writes runes without consulting width recreates it.
+	// which is what makes half one worth asserting.
+	//
+	// Built by assigning Cells directly, because NEITHER writer will
+	// produce one any more: SetString reserves the columns a glyph
+	// covers, and Set repairs the seam when a write lands on half of
+	// one. That is the point of both, and it makes the raw slice the
+	// only way to obtain this row.
+	//
+	// Which is not a contrivance — it is precisely what an external
+	// cell-copy loop does. components/itemsview.go:873 and
+	// apps/introdeck/terminal.go:255 both copy cell by cell and can clip
+	// mid-glyph, so this shape stays reachable from real code and the
+	// model has to keep reporting it.
 	bad := NewBuffer(6, 1)
 	for i, r := range []rune{'世', '界', 'a', 'b'} {
-		bad.Set(i, 0, r, Style{})
+		bad.Cells[i] = Cell{Rune: r}
 	}
 	x, by, ok := Displaced(bad, 0)
 	if !ok {
@@ -70,16 +79,40 @@ func TestAWideGlyphClaimsItsSecondColumn(t *testing.T) {
 // displaced and the damaged cells are CLEAN — nobody invalidated them —
 // so nothing ever repaints over the mess.
 func TestABufferColumnIsATerminalColumn(t *testing.T) {
-	b := NewBuffer(6, 1)
-	b.SetString(0, 0, "世界ab", Style{})
+	// THE FIXTURE LIST IS THE TEST. "世界ab" alone passed against two real
+	// defects because of what it happens not to contain: it ends in
+	// ASCII, so a trailing Continuation never reached TerminalWidth's
+	// last-cell arithmetic, and it holds no VS16 cluster, so a cell that
+	// reserves by the cluster's width and draws by its first rune's never
+	// arose. Both were found by review, not here. Every shape that can
+	// break the invariant belongs in this list.
+	for _, c := range []struct {
+		in  string
+		w   int
+		why string
+	}{
+		{"世界ab", 6, "the original: wide glyphs then ASCII"},
+		{"ab世界", 6, "ENDING in a wide glyph, so the last cell is a Continuation"},
+		{"世", 2, "nothing but a wide glyph"},
+		{"⚠️x", 4, "VS16 emoji presentation: two columns carried by the " +
+			"SECOND rune of the cluster"},
+		{"🏳️‍🌈x", 4, "a ZWJ sequence — four runes, two columns"},
+		{"éx", 3, "a combining mark: one column, and it must not claim two"},
+		{"abcd", 4, "the ASCII control"},
+	} {
+		b := NewBuffer(c.w, 1)
+		b.SetString(0, 0, c.in, Style{})
 
-	if x, by, ok := Displaced(b, 0); ok {
-		t.Errorf("cell %d is drawn %d columns right of where the buffer puts it; "+
-			"a wide glyph must consume the cells it covers", x, by)
-	}
-	if got := TerminalWidth(b, 0); got != b.W {
-		t.Errorf("row occupies %d terminal columns for a %d-cell buffer — the "+
-			"overflow is pushed off the right edge", got, b.W)
+		if x, by, ok := Displaced(b, 0); ok {
+			t.Errorf("%q (%s): cell %d is drawn %d columns right of where the "+
+				"buffer puts it; a wide glyph must consume the cells it covers",
+				c.in, c.why, x, by)
+		}
+		if got := TerminalWidth(b, 0); got != b.W {
+			t.Errorf("%q (%s): row occupies %d terminal columns for a %d-cell "+
+				"buffer — the overflow is pushed off the right edge",
+				c.in, c.why, got, b.W)
+		}
 	}
 }
 
