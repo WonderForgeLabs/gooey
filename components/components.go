@@ -27,8 +27,6 @@
 package components
 
 import (
-	"github.com/rivo/uniseg"
-
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -105,42 +103,16 @@ func collapsed(w gooey.Component) bool {
 	return l != nil && l.Visibility == gooey.Collapsed
 }
 
-// clipCols truncates s to w display COLUMNS.
+// clipCols truncates s to w display COLUMNS. It is render.ClipCols under
+// a short local name, kept because ~25 paint sites read better without
+// the package qualifier.
 //
-// Every one of its callers passes a column budget — b.W, or b.X+b.W-x,
-// or a Border's inner width — so columns were always the contract. The
-// implementation counted RUNES, which is the same number only for ASCII:
-// clipCols("世界ab", 3) returned "世界a", five columns into a three-column
-// slot, and the overrun landed on whatever was painted next (#358). gooey
-// has no clipping at the frame level (#357), so nothing downstream caught
-// it.
-//
-// Renamed rather than fixed in place. A name that says runes over a body
-// that counts columns is how the next caller reintroduces the bug, and
-// the compiler makes the rename exhaustive.
-//
-// A wide glyph is never split: if the next cluster would exceed the
-// budget, clipping stops before it. That can leave one column unused —
-// correct, since half a glyph is not a thing a terminal can draw.
-func clipCols(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if render.StringWidth(s) <= w {
-		return s
-	}
-	out, used, rest := make([]byte, 0, len(s)), 0, s
-	for len(rest) > 0 {
-		cluster, next, cw, _ := uniseg.FirstGraphemeClusterInString(rest, -1)
-		if used+cw > w {
-			break
-		}
-		out = append(out, cluster...)
-		used += cw
-		rest = next
-	}
-	return string(out)
-}
+// It used to be clipRunes, truncating to w RUNES while every caller
+// passed a column budget — b.W, b.X+b.W-x, a Border's inner width. For
+// ASCII those are the same number; for anything else clipRunes("世界ab", 3)
+// returned five columns into a three-column slot, and with no clipping at
+// the frame level (#357) the overrun landed on whatever was painted next.
+func clipCols(s string, w int) string { return render.ClipCols(s, w) }
 
 // paintBanner paints the one-row banner the three overlays share — the
 // tooltip's tip, the validation marker's floating message, and a toast:

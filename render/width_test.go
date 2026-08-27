@@ -132,3 +132,42 @@ func TestRuneAndStringWidth(t *testing.T) {
 		t.Errorf("RuneWidth('a') = %d, want 1", got)
 	}
 }
+
+// ClipCols is exported because two packages need the same clipping rule
+// (components for its paint sites, cmd/browser for markdown), and a
+// second hand-rolled cluster loop is how the two quietly disagree. Its
+// own package tests it directly rather than leaving it to the callers'
+// suites, since it is now API.
+func TestClipColsNeverSplitsAWideGlyph(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		w    int
+		want string
+		why  string
+	}{
+		{"世界ab", 3, "世", "界 would reach column 4, past the budget — so the odd column stays empty"},
+		{"世界ab", 4, "世界", "two glyphs fit exactly"},
+		{"世界ab", 5, "世界a", "and the ascii tail fills the odd column"},
+		{"abcd", 2, "ab", "the ascii case, where columns and runes agree"},
+		{"世界", 9, "世界", "a budget wider than the string returns it whole"},
+		{"世界", 0, "", "a zero budget draws nothing"},
+		{"世界", -1, "", "and so does a negative one, which a caller reaches by " +
+			"subtracting a margin from a rect narrower than it"},
+	} {
+		if got := ClipCols(c.in, c.w); got != c.want {
+			t.Errorf("ClipCols(%q, %d) = %q, want %q — %s", c.in, c.w, got, c.want, c.why)
+		}
+	}
+}
+
+// The property behind the table: whatever the input, the result fits.
+// A table can only assert the cases someone thought of.
+func TestClipColsAlwaysFitsItsBudget(t *testing.T) {
+	for _, s := range []string{"世界ab", "a世b界c", "🇺🇸ab", "héllo", "", "  "} {
+		for w := 0; w <= 12; w++ {
+			if got := StringWidth(ClipCols(s, w)); got > w {
+				t.Errorf("ClipCols(%q, %d) is %d columns wide", s, w, got)
+			}
+		}
+	}
+}

@@ -52,6 +52,36 @@ func RuneWidth(r rune) int {
 // grapheme cluster so that multi-rune glyphs are measured as drawn.
 func StringWidth(s string) int { return uniseg.StringWidth(s) }
 
+// ClipCols truncates s to w display COLUMNS, never splitting a wide
+// glyph: if the next grapheme cluster would exceed the budget, clipping
+// stops before it. That can leave one column unused, which is correct —
+// half a glyph is not something a terminal can draw.
+//
+// Here rather than in each caller because it was about to be written
+// twice. components had a private copy for its ~25 paint sites and
+// cmd/browser needed the same rule for markdown; a second hand-rolled
+// cluster loop is how the two quietly disagree at the joins. A duplicated
+// local patch is the signal that an invariant belongs one level up.
+func ClipCols(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if StringWidth(s) <= w {
+		return s
+	}
+	out, used, rest := make([]byte, 0, len(s)), 0, s
+	for len(rest) > 0 {
+		cluster, next, cw, _ := uniseg.FirstGraphemeClusterInString(rest, -1)
+		if used+cw > w {
+			break
+		}
+		out = append(out, cluster...)
+		used += cw
+		rest = next
+	}
+	return string(out)
+}
+
 // TerminalColumns maps each cell of row y to the display column a
 // terminal will start drawing it in. Result[i] is where cell i lands.
 //

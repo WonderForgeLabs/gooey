@@ -307,7 +307,7 @@ func wrapSpans(spans []mdSpan, w int, first, cont []mdSpan) []mdLine {
 		}
 		cw := 0
 		for _, wd := range words[i:j] {
-			cw += runeLen(wd.text)
+			cw += colWidth(wd.text)
 		}
 		if placed && lw+1+cw > w {
 			out = append(out, line)
@@ -320,7 +320,7 @@ func wrapSpans(spans []mdSpan, w int, first, cont []mdSpan) []mdLine {
 		}
 		for _, wd := range words[i:j] {
 			line = append(line, mdSpan{text: wd.text, style: wd.style})
-			lw += runeLen(wd.text)
+			lw += colWidth(wd.text)
 		}
 		placed = true
 		i = j
@@ -331,15 +331,32 @@ func wrapSpans(spans []mdSpan, w int, first, cont []mdSpan) []mdLine {
 func spanWidth(spans []mdSpan) int {
 	n := 0
 	for _, sp := range spans {
-		n += runeLen(sp.text)
+		n += colWidth(sp.text)
 	}
 	return n
 }
 
-func runeLen(s string) int { return len([]rune(s)) }
+// colWidth is the one place this file decides how wide a string is, and
+// it answers in display COLUMNS.
+//
+// It was runeLen, and the rename is the point rather than a tidy-up: the
+// wrapper it feeds is documented as filling "lines of w columns", so the
+// old name recorded the bug — a name asserting one unit under a comment
+// promising another. A README is arbitrary prose from whoever wrote the
+// demo, so an emoji in a heading is an ordinary input here, not an
+// exotic one.
+func colWidth(s string) int { return render.StringWidth(s) }
 
 // drawLines paints styled lines into a rect, clipping rather than
 // wrapping — wrapping already happened, at the width this rect has.
+//
+// Through SetString, one span at a time, rather than the rune-at-a-time
+// Cells.Set loop that used to be here. That loop advanced one column per
+// rune, which is the whole of #358 in four lines: a wide glyph was
+// written into one cell with the NEXT rune in the cell its second column
+// covers, and because the marker that suppresses the overwritten cell is
+// laid by SetString, this path could not have produced one. Clipping is
+// by column for the same reason.
 func drawLines(f *gooey.Frame, x, y, w, h int, lines []mdLine) {
 	for i, ln := range lines {
 		if i >= h {
@@ -347,13 +364,12 @@ func drawLines(f *gooey.Frame, x, y, w, h int, lines []mdLine) {
 		}
 		cx := x
 		for _, sp := range ln {
-			for _, r := range sp.text {
-				if cx >= x+w {
-					break
-				}
-				f.Cells.Set(cx, y+i, r, sp.style)
-				cx++
+			if cx >= x+w {
+				break
 			}
+			vis := render.ClipCols(sp.text, x+w-cx)
+			f.Cells.SetString(cx, y+i, vis, sp.style)
+			cx += render.StringWidth(vis)
 		}
 	}
 }
