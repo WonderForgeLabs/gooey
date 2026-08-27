@@ -66,7 +66,7 @@ func (t *Toggle) label() string { return getStr(t.Label) }
 func (t *Toggle) Measure(avail gooey.Size) gooey.Size {
 	w := toggleTrackW
 	if l := t.label(); l != "" {
-		w += 1 + len([]rune(l))
+		w += 1 + render.StringWidth(l)
 	}
 	return gooey.Size{W: min(w, avail.W), H: min(1, avail.H)}
 }
@@ -307,7 +307,7 @@ func (s *Segmented) Index() int {
 
 // segWidth is a segment's cell span: the option padded with a space each
 // side, which is also what makes it a comfortable click target.
-func segWidth(opt string) int { return len([]rune(opt)) + 2 }
+func segWidth(opt string) int { return render.StringWidth(opt) + 2 }
 
 func (s *Segmented) Measure(avail gooey.Size) gooey.Size {
 	if s.Child != nil {

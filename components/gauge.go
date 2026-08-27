@@ -43,10 +43,17 @@ func (g *Gauge) Render(f *gooey.Frame) {
 	// trailing " 100%" readout; whatever is left is bar. A Gauge colors
 	// its empty half with the value's own style rather than dimming it,
 	// so the track reads as one meter.
-	barW := b.W - len([]rune(label)) - meterReadout - 1
+	// Written and measured as the SAME string. This used to paint
+	// clipCols(label, b.W) and then advance by len([]rune(label)) — the
+	// unclipped one — so a label wider than the gauge moved the bar off
+	// the right of its own bounds, and a label with any wide glyph in it
+	// moved the bar left of where the text actually ended.
+	shown := clipCols(label, b.W)
+	shownW := render.StringWidth(shown)
+	barW := b.W - shownW - meterReadout - 1
 	x := b.X
-	f.Cells.SetString(x, b.Y, clipCols(label, b.W), styleDim)
-	x += len([]rune(label))
+	f.Cells.SetString(x, b.Y, shown, styleDim)
+	x += shownW
 	x += renderFillMeter(f, x, b.Y, barW, v, st, st)
 	renderMeterReadout(f, x, b.Y, b.X+b.W-x, v, st)
 }

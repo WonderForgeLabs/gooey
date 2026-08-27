@@ -166,7 +166,7 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	x := b.X
 	if prompt != "" {
 		f.Cells.SetString(x, b.Y, prompt, accent)
-		x += len([]rune(prompt))
+		x += render.StringWidth(prompt)
 	}
 	avail := b.X + b.W - x
 	if avail <= 0 {

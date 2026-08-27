@@ -147,7 +147,7 @@ func (p *markerPopup) size() gooey.Size {
 	if msg == "" {
 		return gooey.Size{}
 	}
-	return gooey.Size{W: len([]rune(msg)) + 2, H: 1}
+	return gooey.Size{W: render.StringWidth(msg) + 2, H: 1}
 }
 
 func (p *markerPopup) Measure(avail gooey.Size) gooey.Size {

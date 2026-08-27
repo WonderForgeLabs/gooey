@@ -125,7 +125,7 @@ func (s *Spinner) step() {
 func (s *Spinner) Measure(avail gooey.Size) gooey.Size {
 	w := 1
 	if label := getStr(s.Label); label != "" {
-		w += 1 + len([]rune(label))
+		w += 1 + render.StringWidth(label)
 	}
 	return gooey.Size{W: min(w, avail.W), H: min(1, avail.H)}
 }

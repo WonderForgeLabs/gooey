@@ -336,15 +336,15 @@ func (b *Button) pillLabel(f *gooey.Frame, st render.Style) {
 	r := b.Bounds()
 	inner := r.W - 2
 	text, _, pos := b.display()
-	f.Cells.SetString(r.X+1, r.Y+1, centerRunes(text, inner), st)
+	f.Cells.SetString(r.X+1, r.Y+1, centerCols(text, inner), st)
 	if pos < 0 {
 		return
 	}
 	pad := 0
-	if l := len([]rune(text)); l < inner {
+	if l := render.StringWidth(text); l < inner {
 		pad = (inner - l) / 2
 	}
-	if x := r.X + 1 + pad + pos; x < r.X+1+inner {
+	if x := r.X + 1 + pad + mnemonicCol(text, pos); x < r.X+1+inner {
 		st.Underline = true
 		f.Cells.Set(x, r.Y+1, []rune(text)[pos], st)
 	}
@@ -383,24 +383,38 @@ func (b *Button) renderPillCells(f *gooey.Frame, v buttonVisual) {
 	b.pillLabel(f, label)
 }
 
-// centerRunes pads s into exactly w cells, centred, clipping when it
-// does not fit.
-func centerRunes(s string, w int) string {
+// centerCols pads s into exactly w CELLS, centred, clipping when it does
+// not fit.
+//
+// It was centerRunes, and its doc comment already said "cells" while its
+// body counted runes — the pill label of a button with a wide glyph in
+// it was centred by the wrong number and then written one cell per
+// column anyway, so it sat off-centre AND overran the pill.
+//
+// The result is exactly w columns unless clipping stopped one short of a
+// wide glyph, which is a column no glyph could have filled; the trailing
+// pad closes it.
+func centerCols(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	rs := []rune(s)
-	if len(rs) >= w {
-		return string(rs[:w])
+	n := render.StringWidth(s)
+	if n >= w {
+		// Clipping can stop one column short of the budget, when the
+		// next glyph is two wide and only one column is left. Pad that
+		// column: the contract is EXACTLY w cells, and a caller writes
+		// the result into a fixed slot whose remainder would otherwise
+		// keep whatever was under it.
+		out := render.ClipCols(s, w)
+		if pad := w - render.StringWidth(out); pad > 0 {
+			out += spaces(pad)
+		}
+		return out
 	}
-	left := (w - len(rs)) / 2
-	out := make([]rune, 0, w)
-	for i := 0; i < left; i++ {
-		out = append(out, ' ')
+	left := (w - n) / 2
+	out := spaces(left) + s
+	if pad := w - left - n; pad > 0 {
+		out += spaces(pad)
 	}
-	out = append(out, rs...)
-	for len(out) < w {
-		out = append(out, ' ')
-	}
-	return string(out)
+	return out
 }
