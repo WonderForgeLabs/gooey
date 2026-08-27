@@ -348,12 +348,14 @@ func sliceRunsFrom(runs []colorRun, offset int) []colorRun {
 	return out
 }
 
-// runeLen is the total rune width of a row's content, unscrolled — used
-// to clamp how far ScrollLogRight can go.
-func runeLen(runs []colorRun) int {
+// colWidth is the total COLUMN width of a row's content, unscrolled —
+// used to clamp how far ScrollLogRight can go. It was runeLen, and the
+// horizontal scroll it clamps is measured in cells, so a log line
+// holding any wide glyph stopped short of its own end.
+func colWidth(runs []colorRun) int {
 	n := 0
 	for _, r := range runs {
-		n += len([]rune(r.Text))
+		n += render.StringWidth(r.Text)
 	}
 	return n
 }
@@ -793,7 +795,7 @@ func (u *ui) context() *markup.Context {
 		// scrolling into blank space.
 		limit := 0
 		for _, r := range logRows.Get() {
-			if n := runeLen(r.Runs) - 1; n > limit {
+			if n := colWidth(r.Runs) - 1; n > limit {
 				limit = n
 			}
 		}

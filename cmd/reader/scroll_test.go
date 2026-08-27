@@ -57,12 +57,13 @@ func pane(t *testing.T, s *Story) (*articleBody, *prop.Property[int], *gooey.Com
 }
 
 // row reads one screen row back as a string, trailing blanks trimmed.
-func row(cells *render.Buffer, y int) string {
-	var b strings.Builder
-	for x := 0; x < cells.W; x++ {
-		b.WriteRune(cells.At(x, y).Rune)
-	}
-	return strings.TrimRight(b.String(), " ")
+// row is the row as a terminal would read it, trailing blanks trimmed.
+// The readback itself is render.RowText, which is where the
+// continuation markers get skipped: building the string here cell by
+// cell rendered them as literal runes, so no fixture in this package
+// could hold a wide glyph and be asserted on.
+func row(b *render.Buffer, y int) string {
+	return strings.TrimRight(render.RowText(b, y), " ")
 }
 
 // The headline acceptance: the article does not stop at the pane's

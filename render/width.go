@@ -1,6 +1,10 @@
 package render
 
-import "github.com/rivo/uniseg"
+import (
+	"strings"
+
+	"github.com/rivo/uniseg"
+)
 
 // Display width, and the gap between what this buffer holds and what a
 // terminal will draw from it. See issue #358.
@@ -80,6 +84,28 @@ func ClipCols(s string, w int) string {
 		rest = next
 	}
 	return string(out)
+}
+
+// RowText is what row y would READ AS on a terminal: the runes of the
+// row with the continuation markers left out, since a marker is not a
+// character the terminal ever received — it is this buffer's record that
+// the cell before it covers two columns.
+//
+// Written for the test helpers, which is not a hedge about its place
+// here. Six packages had their own `row(b, y)` building a string cell by
+// cell, and every one of them rendered Continuation as a literal rune,
+// so an assertion about a row holding a wide glyph read back
+// "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
+// readback that cannot express what the writer produces makes the whole
+// class of wide-glyph bugs unassertable.
+func RowText(b *Buffer, y int) string {
+	var sb strings.Builder
+	for x := 0; x < b.W; x++ {
+		if r := b.At(x, y).Rune; r != Continuation {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }
 
 // TerminalColumns maps each cell of row y to the display column a

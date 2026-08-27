@@ -47,6 +47,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // URI is the namespace URI markup declares to reach this provider.
@@ -182,26 +183,35 @@ func width(c *markup.Call, fn string, f func(string, int) string) (*prop.Propert
 	return prop.NewComputed(func() string { return f(a.String(), n) }), nil
 }
 
-// pad right-pads to n runes, counting runes rather than bytes because
-// the terminal counts cells and a multibyte name would otherwise pad
-// short. Text already at or over the width is returned unchanged —
-// padding never truncates; Truncate does that.
+// pad right-pads to n CELLS. Text already at or over the width is
+// returned unchanged — padding never truncates; Truncate does that.
+//
+// This counted bytes once, then runes, and the comment explaining the
+// rune version gave the reason for the column version: "the terminal
+// counts cells". It does, and a rune is not one — a CJK name padded to
+// 12 runes is 24 cells and pushes the column beside it off the row.
 func pad(s string, n int) string {
-	if d := n - len([]rune(s)); d > 0 {
+	if d := n - render.StringWidth(s); d > 0 {
 		return s + strings.Repeat(" ", d)
 	}
 	return s
 }
 
-// truncate cuts to n runes, spending the last one on the ellipsis when
+// truncate cuts to n CELLS, spending the last one on the ellipsis when
 // it actually cuts, so the result is never wider than n.
+//
+// It can come back one cell SHORT of n, when the cut falls in the middle
+// of a two-cell glyph and the ellipsis cannot fill the gap alone. That
+// is the honest answer: the alternative is emitting half a glyph.
+//
+// width() rejects n < 1 at load time, so the n-1 below is never
+// negative.
 func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
+	if render.StringWidth(s) <= n {
 		return s
 	}
 	if n == 1 {
 		return Ellipsis
 	}
-	return string(r[:n-1]) + Ellipsis
+	return render.ClipCols(s, n-1) + Ellipsis
 }

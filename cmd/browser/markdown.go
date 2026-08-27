@@ -112,7 +112,7 @@ func renderMarkdown(src string, w int, st mdStyles) []mdLine {
 			body = strings.Join(append([]string{body}, continuation(lines, &i)...), " ")
 			pad := strings.Repeat(" ", indent)
 			first := []mdSpan{{text: pad, style: st.text}, {text: marker + " ", style: st.bullet}}
-			cont := []mdSpan{{text: pad + strings.Repeat(" ", len([]rune(marker))+1), style: st.text}}
+			cont := []mdSpan{{text: pad + strings.Repeat(" ", colWidth(marker)+1), style: st.text}}
 			out = append(out, wrapSpans(mdInline(body, st.text, st), w, first, cont)...)
 			continue
 		}

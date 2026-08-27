@@ -15,6 +15,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 func pickerSources() []source {
@@ -42,13 +43,11 @@ func pickerPage(chosen *source) (*sourcePicker, *demoList, gooey.Component) {
 	return picker, list, grid
 }
 
-func bufRow(c *gooey.Composer, y int) string {
-	var sb strings.Builder
-	for x := 0; x < 80; x++ {
-		sb.WriteRune(c.Cells().At(x, y).Rune)
-	}
-	return sb.String()
-}
+// bufRow is the row as a terminal would read it. It goes through
+// render.RowText so the continuation marker behind a wide glyph is left
+// out — built cell by cell, a row holding one read back as "世�" and
+// no assertion could name what it saw.
+func bufRow(c *gooey.Composer, y int) string { return render.RowText(c.Cells(), y) }
 
 func TestPickerOpenPaintsTheOverlay(t *testing.T) {
 	picker, list, page := pickerPage(nil)
@@ -241,4 +240,41 @@ func TestSourceRowsGroupAndMark(t *testing.T) {
 	if got := rows[4].text("/repo"); !strings.Contains(got, "old-branch — an older take") {
 		t.Fatalf("branch row = %q, want name and subject", got)
 	}
+}
+
+// A worktree row paints in two pieces — the name at full strength, then
+// the dimmed subject after it — and the second piece starts where the
+// first ended. Those were two different strings: clip(name, b.W-3) was
+// written and the UNCLIPPED name's rune count was stepped over, so the
+// separator landed inside the name it was meant to follow.
+//
+// The name here is 8 columns and 4 runes, so a rune advance puts " — "
+// four columns early, on top of the last two glyphs.
+func TestWorktreeSubjectStartsWhereTheNameEnds(t *testing.T) {
+	const name = "世界世界"
+	picker, _, page := pickerPage(nil)
+	c := gooey.NewComposer(page, 80, 24)
+	c.Frame()
+	picker.Open([]source{
+		{Name: "main", Branch: "main", Root: "/repo", Launch: true, Head: "tip of main"},
+		{Name: name, Branch: "wide", Root: "/wt", Head: "an older take"},
+	}, "/repo")
+	c.Frame()
+
+	want := name + " — an older take"
+	for y := 0; y < 24; y++ {
+		if strings.Contains(bufRow(c, y), want) {
+			return
+		}
+	}
+	// Report the rows that hold any of the name, which is where the
+	// truncated version shows up.
+	var saw []string
+	for y := 0; y < 24; y++ {
+		if r := bufRow(c, y); strings.Contains(r, "世") {
+			saw = append(saw, strings.TrimRight(r, " "))
+		}
+	}
+	t.Errorf("no row reads %q — the subject must begin one column past the "+
+		"end of the name. Rows holding the name: %q", want, saw)
 }

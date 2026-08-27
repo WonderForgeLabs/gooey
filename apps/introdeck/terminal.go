@@ -299,7 +299,7 @@ func (t *Terminal) Render(f *gooey.Frame) {
 		// getting nothing, and then finding that ctrl+alt+q worked has
 		// been taught the gesture by accident rather than by the label.
 		hint := " click to capture input · ctrl+alt+any key to release "
-		x := b.X + (b.W-len([]rune(hint)))/2
+		x := b.X + (b.W-render.StringWidth(hint))/2
 		if x < b.X {
 			x = b.X
 		}

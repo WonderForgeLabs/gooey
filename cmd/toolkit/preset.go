@@ -66,7 +66,7 @@ func (p *colorPreset) SetFocusManager(fm *gooey.FocusManager) { p.pop.SetFocusMa
 func (p *colorPreset) width() int {
 	w := 0
 	for _, c := range presets {
-		if n := len([]rune(c.name)); n > w {
+		if n := render.StringWidth(c.name); n > w {
 			w = n
 		}
 	}
