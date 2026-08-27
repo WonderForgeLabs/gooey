@@ -405,6 +405,30 @@ and the component goes deaf to that property — no error, no panic, just a
 stale cell. Hoist `Get`s above early returns and OR the results afterward.
 Damage-count tests catch this; nothing else does.
 
+**Every width is a COLUMN count, and `len([]rune(s))` is not one.** A
+`Measure`'s W, a popup's self-sizing width, a menu title's span, a paint
+cursor's advance — all cells. A CJK character or an emoji is one rune and
+TWO cells, so a rune count asks layout for a box narrower than its own
+text, and nothing clips at the frame level ([#357](https://github.com/WonderForgeLabs/gooey/issues/357))
+to catch the overflow. Measure with `render.StringWidth`, clip with
+`render.ClipCols` (which stops BEFORE a glyph that would overrun, so it
+may return a column short — half a glyph is not drawable), and write
+through `Buffer.SetString`, which lays the `render.Continuation` marker in
+the second column. `Buffer.Set` in a per-rune loop does not, and a cursor
+advanced one-per-rune writes the next glyph into a cell the previous one
+already covers.
+
+This is the invariant whose violation is loudest in consequence and
+quietest in the suite: ~35 sites counted runes across
+[#358](https://github.com/WonderForgeLabs/gooey/issues/358) with
+everything green, because every fixture in the repo was ASCII, *and*
+because six packages' `row(b, y)` test helpers rendered the continuation
+marker as a literal rune — so no fixture could hold a wide glyph and be
+asserted on. Read a row back with `render.RowText`. To pin one of these,
+use two strings of the same COLUMN width and different rune counts
+(`"世界"` against `"abcd"`) and assert they measure alike; an ASCII
+fixture agrees with itself under either rule and passes against the bug.
+
 **A damage-count assertion is the only pin for a repaint claim.**
 `Composer.Frame()` returns `(*Frame, int)` where the int is how many
 components repainted; `App.PaintedLastFrame()` is the same number on the
