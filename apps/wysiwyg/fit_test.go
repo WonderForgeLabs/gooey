@@ -18,19 +18,29 @@ import (
 // right design — the numbers came from the markup, so editing Rows= moved
 // them and they could not drift.
 //
-// The page is now empty, pending the canvas-first rebuild, so there are no
-// tracks to read. Those four tests are in git at b41aa2a and they are not
-// obsolete; they are waiting for a shell. Rewriting them against a Grid
-// built in the test would have kept the file green while deleting the
-// only thing they asserted — that the SHIPPED layout has a minimum and
-// says so — and a test that cannot fail for the reason it names is worse
-// than an absent one.
+// The page was empty when this was written, pending the canvas-first
+// rebuild, so there were no tracks to read. Those four tests were in git
+// at b41aa2a and were not obsolete; they were waiting for a shell.
+// Rewriting them against a Grid built in the test would have kept the
+// file green while deleting the only thing they asserted — that the
+// SHIPPED layout has a minimum and says so — and a test that cannot fail
+// for the reason it names is worse than an absent one.
 //
-// WHAT THE NEW SHELL OWES THIS FILE: the same four assertions, pointed at
-// whatever it declares. fit.go's machinery is untouched and still derives
-// both minimums from live track definitions; watchFit already no-ops when
-// no element is named Shell, which is why the empty page costs nothing at
-// runtime.
+// THE DEBT IS COLLECTED. The shell arrived, and the four assertions are
+// in fitshell_test.go, pointed at what it actually declares.
+//
+// The paragraph that used to end this header is worth keeping as a
+// warning rather than deleting, because it was the whole failure:
+//
+//	"watchFit already no-ops when no element is named Shell, which is
+//	 why the empty page costs nothing at runtime."
+//
+// True, and it quietly became the bug. The new shell declared Name="Page"
+// while watchFit went on looking up "Shell", so the no-op that cost
+// nothing against an empty page cost the entire feature against a real
+// one — for its whole life, with nothing red (#355). A note explaining
+// why an absence is harmless is load-bearing exactly until the absence
+// ends, and nothing tells you when that happened.
 //
 // The one test below survives because it never read the page.
 

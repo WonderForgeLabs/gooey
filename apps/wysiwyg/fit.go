@@ -98,6 +98,79 @@ func trackMinimum(axis string, defs []components.GridLen) (hard, usable int, err
 	return hard, usable, nil
 }
 
+// ShellName is the element watchFit resolves to read the shell's tracks,
+// and it is a CONTRACT WITH THE MARKUP: wysiwyg.gooey must declare a
+// <Grid> under this name.
+//
+// It was the string literal "Shell" while the page declared Name="Page",
+// so the lookup failed on every frame and the fit watcher never ran once
+// against the shipped page (#355). Naming the constant does not prevent
+// that on its own — a constant can be wrong just as quietly as a literal
+// — so TestTheFitWatcherResolvesTheShippedShell is the actual guard, and
+// it reads the shipped page rather than a Grid built in the test.
+const ShellName = "Page"
+
+// fitAt reports whether the shell fits at a given terminal size, along
+// with the usable minimum it was judged against.
+//
+// Split out of watchFit so the answer can be asked for a size, which is
+// what lets a test drive it against the SHIPPED page. The bug this file
+// carried was not a wrong number — it was zero executions — and a
+// watcher whose body is only reachable through App.Size() cannot be
+// asserted to have run.
+func (ed *editor) fitAt(cols, rows int) (fits bool, usable fitSize, err error) {
+	shell, err := markup.Find[*components.Grid](ed.ctx, ShellName)
+	if err != nil {
+		return false, fitSize{}, fmt.Errorf(
+			"the page declares no <Grid Name=%q>, so the fit check cannot read "+
+				"its tracks: %w", ShellName, err)
+	}
+	if _, usable, err = minimumFor(shell); err != nil {
+		return false, fitSize{}, err
+	}
+	// The swap fires at the USABLE minimum, not the hard one. Between
+	// them the layout is technically valid and shows two empty borders,
+	// which is not a thing worth showing anybody.
+	return cols >= usable.Cols && rows >= usable.Rows, usable, nil
+}
+
+// applyFit is the watcher's body: publish the answer for one size.
+//
+// Both Sets are GUARDED. prop.Set does not compare values, so setting
+// them unconditionally every frame would invalidate every dependent on
+// every frame and turn a cheap size check into a permanent full repaint.
+func (ed *editor) applyFit(cols, rows int) {
+	fits, usable, err := ed.fitAt(cols, rows)
+	if err != nil {
+		// LOUDLY, in the place the user is already looking, rather than
+		// the silent return this used to take.
+		//
+		// The silent return was justified as "not built yet; the first
+		// frame settles it" — a sentence true of frame 1 and false of
+		// every frame after. It was not even true of frame 1:
+		// App.Run builds the content (app.go:473) before it runs any
+		// BeforeFrame hook (app.go:614), so there is no frame in which
+		// the page is unbuilt. A permanent no-op was wearing a
+		// transient's comment, and the comment spent the attention that
+		// would have found it.
+		//
+		// Not gooey.Exit: that is os.Exit, which skips App.Run's
+		// deferred teardown and would leave the terminal in raw mode.
+		if msg := "\u2717 " + err.Error(); msg != ed.status.Get() {
+			ed.status.Set(msg)
+		}
+		return
+	}
+	if fits != ed.fits.Get() {
+		ed.fits.Set(fits)
+	}
+	if !fits {
+		if want := cramMsg(fitSize{cols, rows}, usable); want != ed.fitMsg.Get() {
+			ed.fitMsg.Set(want)
+		}
+	}
+}
+
 // watchFit swaps the shell for a legible message whenever the terminal is
 // too small to lay it out, and back when it grows again.
 //
@@ -105,36 +178,13 @@ func trackMinimum(axis string, defs []components.GridLen) (hard, usable int, err
 // App.Size() is only updated by resized() on a SIGWINCH, so there is no
 // property to observe and a per-frame read is the honest way to notice.
 //
-// Both Sets are GUARDED. prop.Set does not compare values, so setting
-// them unconditionally every frame would invalidate every dependent on
-// every frame and turn a cheap size check into a permanent full repaint.
+// The shell is resolved per frame rather than captured once: a hot reload
+// rebuilds the page, and markup.Page clears ctx.Named on every rebuild
+// precisely so a stale handle cannot be handed out (markup/page.go:36).
 func (ed *editor) watchFit(app *gooey.App) {
 	app.BeforeFrame(func() {
-		shell, err := markup.Find[*components.Grid](ed.ctx, "Shell")
-		if err != nil {
-			return // not built yet; the first frame settles it
-		}
-		_, usable, err := minimumFor(shell)
-		if err != nil {
-			// Say it once, in the place the user is already looking.
-			if msg := "\u2717 " + err.Error(); msg != ed.status.Get() {
-				ed.status.Set(msg)
-			}
-			return
-		}
 		cols, rows := app.Size()
-		// The swap fires at the USABLE minimum, not the hard one. Between
-		// them the layout is technically valid and shows two empty
-		// borders, which is not a thing worth showing anybody.
-		fits := cols >= usable.Cols && rows >= usable.Rows
-		if fits != ed.fits.Get() {
-			ed.fits.Set(fits)
-		}
-		if !fits {
-			if want := cramMsg(fitSize{cols, rows}, usable); want != ed.fitMsg.Get() {
-				ed.fitMsg.Set(want)
-			}
-		}
+		ed.applyFit(cols, rows)
 	})
 }
 
