@@ -17,6 +17,23 @@ import (
 // a CSI sequence are the same byte. Callers pass idle = true only when
 // no further bytes arrived within the escape timeout, at which point a
 // dangling ESC really was the Esc key.
+//
+// LIVENESS, and it is a contract rather than an observation: when idle
+// is true, Decode always consumes at least one byte or produces an
+// event. Never (0, false).
+//
+// That case is the drain loop's ONLY "wait for more bytes" signal (see
+// term.DecodeEvents), and under idle no further byte is coming — so a
+// sequence that still reports incomplete can never be resolved. The
+// buffer strands, every later keystroke is appended behind it, and the
+// app paints on forever without taking another key. No error, no exit,
+// no tripwire: App.Run watches for a decoder that DIED, and this one is
+// alive.
+//
+// It costs nothing to preserve and is silent to break, so the guarantee
+// is asserted exhaustively rather than trusted — decodeidle_test.go
+// checks every 1- and 2-byte input. If you are changing a `return` in
+// decodeCSI, decodeEsc or decodeX10Mouse, that test is the one to run.
 func Decode(b []byte, idle bool) (Event, int, bool) {
 	if len(b) == 0 {
 		return Event{}, 0, false
@@ -91,11 +108,32 @@ func decodeEsc(b []byte, idle bool) (Event, int, bool) {
 	default:
 		// ESC + key in the same read is alt+key.
 		ev, n, ok := Decode(b[1:], idle)
-		if !ok || !ev.IsKey() {
-			return ev, 0, false
+		if ok && ev.IsKey() {
+			ev.Key.Mods |= ModAlt
+			return ev, n + 1, true
 		}
-		ev.Key.Mods |= ModAlt
-		return ev, n + 1, true
+		// Anything else means the ESC was NOT a prefix, and the only
+		// answer that keeps the decoder alive is to consume it alone.
+		//
+		// Returning (0, false) here — which is what this did — is the
+		// drain loop's "incomplete, wait for more bytes" signal, and for
+		// a sequence that is already complete no further byte can ever
+		// resolve it. The buffer strands, every later keystroke is
+		// appended behind it, and the app paints on forever without
+		// taking another key: no error, no exit, no tripwire. Two
+		// ordinary inputs reached it. ESC before a MOUSE report decodes
+		// perfectly and fails `IsKey`; ESC before an undecodable byte or
+		// a known-shape-but-unmapped CSI reports !ok having consumed
+		// bytes.
+		//
+		// Consuming ONLY the ESC — rather than swallowing what follows —
+		// is what makes the mouse report arrive as itself on the next
+		// pass, so "press Escape, then click" delivers both events
+		// instead of losing the click.
+		if n == 0 && !ok && !idle {
+			return Event{}, 0, false // genuinely truncated: more may come
+		}
+		return KeyOf(Named(KeyEsc)), 1, true
 	}
 }
 
