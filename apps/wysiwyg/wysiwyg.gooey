@@ -367,50 +367,62 @@
                an adornment row follows: a row that must exist has to be
                declared, because a container with a greedy sibling will not
                leave it anything. -->
-          <Grid Rows="1,1*,1,2" Cols="1*">
+          <!-- TWO TRACKS NOW, NOT FOUR, AND THE EDITOR IS IN NEITHER.
+               The list still gets the only star track, for the reason the
+               comment above gives — a greedy ItemsView beside a plain sibling
+               leaves that sibling nothing, which is how the old input came to
+               be arranged at W:0 H:0 below the panel. What changed is that the
+               editor is no longer a sibling competing for rows: <ValueEditor>
+               occupies the SAME cell as the list and places its overlays by
+               explicit geometry, over the row they belong to. There is no
+               track to lose. -->
+          <Grid Rows="1,1*,2" Cols="1*">
             <!-- Same rule as the toolbox: these widths are the row template's
                  widths. The lead column is one cell wide and unlabelled because
-                 its header would be the glyph itself. -->
+                 its header would be the glyph itself, and the one beside TYPE
+                 carries the editor affordance — Visual Studio's "…" and "▾". -->
             <HStack Grid.Row="0" Gap="1">
               <Text Width="1" Style="sel"> </Text>
               <Text Width="13" Style="sel">ATTRIBUTE</Text>
               <Text Width="8" Style="sel">TYPE</Text>
+              <Text Width="1" Style="sel"> </Text>
               <Text Style="sel">VALUE</Text>
             </HStack>
-            <ItemsView Grid.Row="1" Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
-                       Activate="{{.BeginEdit}}">
+            <!-- THE EDITING SURFACE. It takes exactly two children: the list
+                 it floats over, and the TextBox its caret editor uses. Both
+                 stay here rather than being built in Go because both carry
+                 bindings, and a binding written in Go is a binding nobody can
+                 see from the page. What the component supplies is the geometry
+                 and the keyboard — the parts markup cannot say. -->
+            <ValueEditor Grid.Row="1">
               <!-- Mark is the modified-from-default column: "•" where the
-                   document's value differs from the declared default. Rows
-                   arrive grouped by markup.CategoryOf. -->
-              <ItemsView.ItemTemplate>
-                <HStack Gap="1">
-                  <Text Width="1" Style="sel">{{.Mark}}</Text>
-                  <Text Width="13">{{.Name}}</Text>
-                  <Text Width="8" Style="dim">{{.Kind}}</Text>
-                  <Text Style="ok">{{.Value}}</Text>
-                </HStack>
-              </ItemsView.ItemTemplate>
-            </ItemsView>
-            <!-- THE EDITOR. Enter on a row above loads its name and value here;
-                 enter here commits. A finite-valued attribute cycles instead of
-                 opening this, so the input is for the values only prose can
-                 give. -->
-            <!-- A GRID, NOT AN HSTACK, for the same reason the pane is one: the
-                 TextBox measures greedily on the cross axis too. In an HStack it
-                 reported a width of 134 inside a 44-cell pane and was arranged
-                 straight through the panel border and off the right of the
-                 screen. Cols="16,1*" gives the label a fixed track and hands
-                 the input exactly what is left. Grid has no Gap — the track
-                 width carries it — and 16 is where the TYPE column starts
-                 above, so the input lines up with the column it edits. -->
-            <Grid Grid.Row="2" Rows="1" Cols="16,1*">
-              <Text Grid.Row="0" Grid.Col="0" Style="sel">{{.EditName}}</Text>
-              <TextBox Grid.Row="0" Grid.Col="1" Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
-            </Grid>
+                   document's value differs from the declared default. More is
+                   the editor affordance, derived from the attribute's Kind
+                   through the per-Kind table in editors.go. Rows arrive
+                   grouped by markup.CategoryOf. -->
+              <ItemsView Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
+                         Activate="{{.BeginEdit}}">
+                <ItemsView.ItemTemplate>
+                  <HStack Gap="1">
+                    <Text Width="1" Style="sel">{{.Mark}}</Text>
+                    <Text Width="13">{{.Name}}</Text>
+                    <Text Width="8" Style="dim">{{.Kind}}</Text>
+                    <Text Width="1" Style="warn">{{.More}}</Text>
+                    <Text Style="ok">{{.Value}}</Text>
+                  </HStack>
+                </ItemsView.ItemTemplate>
+              </ItemsView>
+              <!-- THE CARET EDITOR, floated over the selected row's value
+                   cell. Changed fires on every keystroke, so the document
+                   follows the key rather than waiting for enter — which is
+                   what makes editing a Grid track spec beside a drawn grid
+                   worth doing at all. -->
+              <TextBox Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
+            </ValueEditor>
             <!-- The description line. The catalog's Doc is empty on most
                  attributes today, so the editor sends legal values instead and
                  will send prose the moment Doc is populated. -->
-            <Text Grid.Row="3" Style="dim">{{.EditDoc}}</Text>
+            <Text Grid.Row="2" Style="dim">{{.EditDoc}}</Text>
           </Grid>
         </Panel>
       </DockPane>

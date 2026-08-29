@@ -82,9 +82,29 @@ func theTextBox(t *testing.T, ed *editor) *components.TextBox {
 
 // TestTheAttributeEditorIsOnScreenAndUsable is the direct pin for the
 // reported bug. Every clause failed before the fix.
+//
+// It now opens the editor first, and that is the whole shape of the
+// change the float-over rework made: the input is no longer a permanent
+// fixture in a track at the bottom of the pane, it is an overlay that
+// exists while you are editing. Every clause below is the one that was
+// asserted before — non-zero, fully on a 150x44 screen, inside the
+// PROPERTIES region, focusable — plus the one that could not be asked of
+// a fixed row: that it landed ON the row the user selected.
 func TestTheAttributeEditorIsOnScreenAndUsable(t *testing.T) {
-	ed, _, _ := shellTree(t)
+	// theTextBox takes the EDITOR, not the root: the dock shell gave the
+	// Explorer pane two TextBoxes of its own, so "the only TextBox on the
+	// page" stopped identifying anything and the helper now scopes to the
+	// named PROPERTIES region. That is orthogonal to what this test is
+	// about, which is the overlay below.
+	ed, _, comp := shellTree(t)
 	tb := theTextBox(t, ed)
+
+	ed.attrSel.Set(0)
+	ed.beginEdit() // row 0 is Name, KindIdentity, a caret editor
+	comp.Frame()
+	if ed.props.Mode() != editRename {
+		t.Fatalf("enter on the Name row opened %v, want the caret editor", ed.props.Mode())
+	}
 	b := tb.Bounds()
 
 	if b.W <= 0 || b.H <= 0 {
@@ -111,6 +131,14 @@ func TestTheAttributeEditorIsOnScreenAndUsable(t *testing.T) {
 	}
 	if !tb.AcceptsFocus() {
 		t.Error("the attribute editor does not accept focus")
+	}
+	// AND ON THE ROW. The clause the fixed bottom track could never
+	// satisfy: the value you are editing has to appear where you are
+	// looking, not forty rows away.
+	anchor := ed.props.AnchorBounds()
+	if b.Y != anchor.Y {
+		t.Errorf("the editor is on row y=%d and the selected row is at y=%d; "+
+			"an editor that is not on its row is the arrangement this replaced", b.Y, anchor.Y)
 	}
 }
 

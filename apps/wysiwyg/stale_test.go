@@ -98,14 +98,18 @@ func TestTheLivenessGuardLeavesAnOrdinaryDragAlone(t *testing.T) {
 	}
 }
 
-// FINDING 1: cycleValue's missing body route.
+// FINDING 1: the body route through the pane's mutation seam.
 //
 // The body is a FIELD on the node, not a map entry. commitEdit has
-// always known that; cycleValue wrote target.Attrs unconditionally. It
-// could not fire today only because the body row is built without
-// values, so cycle() returns nil — an accident of construction that
+// always known that; the cycling editor that preceded the float-over one
+// wrote target.Attrs unconditionally. It could not fire only because the
+// body row was built without values — an accident of construction that
 // nothing declared, one BodySpec value set away from writing a "(text)"
 // attribute into the markup that no element declares.
+//
+// The pane now has ONE seam (valueEditor.Write) rather than two writers,
+// so the claim is asserted against it: whatever opens an editor, a row
+// carrying the body flag lands on the field.
 func TestCyclingTheBodyRowWritesTheBodyNotAnAttribute(t *testing.T) {
 	ed, _ := designPage(t)
 	// Attrs is populated, not nil, so the guard is what fails the test
@@ -118,10 +122,10 @@ func TestCyclingTheBodyRowWritesTheBodyNotAnAttribute(t *testing.T) {
 	target := ed.doc().Kids[0]
 	ed.sel = target
 
-	// The row the inspector builds for a body, given values it does not
-	// have today. This is the future call that the guard exists for.
-	r := attrRow{name: BodyRowName, body: true, value: "one", values: []string{"one", "two"}, req: true}
-	ed.cycleValue(r)
+	// The seam pointed at a body row, which is what any of the per-Kind
+	// editors does the moment one is opened on the body.
+	ed.props.name, ed.props.body = BodyRowName, true
+	ed.props.Write("two")
 
 	if got := target.Attrs[BodyRowName]; got != "" {
 		t.Errorf("%s was written into Attrs as %q; it is not an attribute and no element declares it", BodyRowName, got)
