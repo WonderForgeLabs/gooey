@@ -47,8 +47,8 @@ func TestClipColsHoldsItsContract(t *testing.T) {
 	inputs := []string{
 		"", "a", "abcdef",
 		"世界", "a世b", "世a界b",
-		"éxyz",                    // decomposed: two runes, one column
-		"⚠️!", "🏳️‍🌈ab",             // variation selector, ZWJ sequence
+		"éxyz",          // decomposed: two runes, one column
+		"⚠️!", "🏳️‍🌈ab", // variation selector, ZWJ sequence
 		strings.Repeat("界", 8),
 		"1️⃣2️⃣3️⃣",
 	}

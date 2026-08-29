@@ -20,7 +20,7 @@ func TestSetStringBlanksTheVisibleHalfOfAStraddlingGlyph(t *testing.T) {
 	b := NewBuffer(6, 1)
 	b.Clear()
 	b.SetString(0, 0, "ZZZZZZ", Style{}) // the previous frame
-	b.SetString(-1, 0, "世ab", Style{})  // 世 spans columns -1 and 0
+	b.SetString(-1, 0, "世ab", Style{})   // 世 spans columns -1 and 0
 
 	if got := b.At(0, 0).Rune; got != ' ' {
 		t.Errorf("column 0 holds %q, want a space — it is the second half "+
