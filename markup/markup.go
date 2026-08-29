@@ -513,6 +513,14 @@ func Find[T gooey.Component](ctx *Context, name string) (T, error) {
 // The name is resolved through Context.Variant first, so a page with a
 // protocol-specific sibling gets it and one without is unaffected.
 func Load(fsys fs.FS, name string, ctx *Context) (gooey.Component, error) {
+	// Before anything is parsed: a registered element whose map key and
+	// Name disagree makes the grant vocabulary ambiguous, and the
+	// ambiguity resolves by map order. Saying so here costs one pass
+	// over a small map and turns a nondeterministic wrong answer into a
+	// sentence naming the offending key.
+	if err := ctx.checkElementNames(); err != nil {
+		return nil, err
+	}
 	name = resolveVariant(fsys, name, ctx.Variant)
 	doc, err := loadDocument(fsys, name)
 	if err != nil {

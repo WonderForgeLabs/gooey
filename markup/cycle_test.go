@@ -106,3 +106,67 @@ func TestDeepLegalControlNestingStillLoads(t *testing.T) {
 		t.Fatalf("three nested distinct controls failed to load: %v", err)
 	}
 }
+
+// A REGISTERED ELEMENT'S KEY AND Name MUST AGREE.
+//
+// granting() shadows builtins by the Context.Elements map KEY but tests
+// the builtin list with `shadowed[d.Name]`, and its caller matches
+// `d.Name == parentName`. Context.Catalog has the same split. So a def
+// registered under one name and calling itself another is read three
+// different ways in one package.
+//
+// The concrete damage: Elements["Table"] = &ElementDef{Name: "Grid"}
+// leaves the builtin <Grid> UNSHADOWED, so both it and the host def sit
+// in granting()'s output, both granting Grid.Row, and `attached` keeps
+// whichever the map yielded last. That is a wrong answer that changes
+// between runs.
+//
+// There is no reading under which the two should differ — buildComponent
+// looks up by the key, so a def whose Name is something else can never
+// match the element it is registered under and its grant silently never
+// applies. Hence a load error rather than picking a winner.
+func TestARegisteredElementKeyMustMatchItsName(t *testing.T) {
+	page := `<Gooey><Grid Rows="1*" Cols="1*"><Text>hi</Text></Grid></Gooey>`
+	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+
+	// The mismatch is refused, and the message names the offending KEY
+	// so the host can find it.
+	bad := &Context{Elements: map[string]*ElementDef{
+		"Table": {Name: "Grid", Grants: Grant{Attached: []AttrSpec{{Name: "Grid.Row"}}}},
+	}}
+	_, err := Load(fsys, "p.gooey", bad)
+	if err == nil {
+		t.Fatal("a Context registering Elements[\"Table\"] with Name \"Grid\" loaded " +
+			"without complaint — the builtin <Grid> is left unshadowed and both defs " +
+			"grant Grid.Row, so which one wins is map order")
+	}
+	for _, want := range []string{"Table", "Grid"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error is %q — it does not name %q, so the host cannot tell "+
+				"which registration is wrong", err, want)
+		}
+	}
+
+	// THE GUARD MUST ALSO SAY YES. A check that only rejects is
+	// indistinguishable from one that rejects everything, and this one
+	// runs on every Load.
+	good := &Context{Elements: map[string]*ElementDef{
+		"Table": {Name: "Table", Grants: Grant{Attached: []AttrSpec{{Name: "Table.R"}}}},
+	}}
+	if _, err := Load(fsys, "p.gooey", good); err != nil {
+		t.Errorf("a Context whose key and Name agree failed to load: %v", err)
+	}
+
+	// And the overwhelmingly common case — no registered elements at
+	// all — is untouched.
+	if _, err := Load(fsys, "p.gooey", &Context{}); err != nil {
+		t.Errorf("an empty Context failed to load: %v", err)
+	}
+
+	// A nil def is skipped rather than dereferenced: granting() already
+	// tolerates one, so the guard must not be the thing that panics.
+	nilDef := &Context{Elements: map[string]*ElementDef{"Table": nil}}
+	if _, err := Load(fsys, "p.gooey", nilDef); err != nil {
+		t.Errorf("a Context holding a nil ElementDef failed to load: %v", err)
+	}
+}

@@ -213,3 +213,86 @@ func TestTheEditorNamesNoContainerElement(t *testing.T) {
 			"nothing — the walk is broken, not the file")
 	}
 }
+
+// A LOST WRITE NAMES EVERY ROLE IT LOST, IN A FIXED ORDER.
+//
+// Release used to collect the pending writes in a `map[markup.Role]int`
+// and range over it. Go randomises that order, which cost determinism
+// twice over: the two `d.node.Attrs` writes landed in an arbitrary
+// order, and `lost` was built by assignment rather than append, so it
+// kept whichever role the runtime happened to visit LAST. The same drag
+// on the same document reported "Row" on one run and "Col" on the next,
+// and losing BOTH roles was indistinguishable from losing one.
+//
+// The failure mode is the reason this is worth a test rather than a
+// tidy-up: a message that varies run to run cannot be asserted, so the
+// sentence users read was the one thing here nothing could pin.
+//
+// Reproducing a lost write means doing what the code's own comment says
+// causes it — the document changing under the gesture. The drag begins
+// against a parent that grants the cell roles, and the parent is
+// swapped for one that grants nothing before the release.
+func TestALostWriteNamesEveryRoleInAFixedOrder(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.docCtx.Elements["Table"] = grantingTable()
+	ed.loadPalette()
+
+	ed.doc().Elem = "Table"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Text", Body: "aaaa", Attrs: map[string]string{"Name": "A", "Table.R": "0", "Table.C": "0"}},
+	}
+	ed.rebuild()
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("the <Table> fixture does not build: %s", got)
+	}
+	c.Frame()
+
+	n := ed.doc().Kids[0]
+	comp := ed.componentFor(n)
+	if comp == nil {
+		t.Fatal("the child under <Table> was not built")
+	}
+	b := comp.(interface{ Bounds() gooey.Rect }).Bounds()
+	if b.W == 0 {
+		t.Fatal("the child under <Table> was never arranged")
+	}
+
+	press(c, b.X, b.Y)
+	if !ed.drag.active() {
+		t.Fatal("a press on a child of a granting container began no drag")
+	}
+	motion(c, b.X+9, b.Y+3)
+
+	// The document changes under the gesture: the parent is no longer a
+	// granting container, so BOTH roles resolve to an empty attribute
+	// name at release.
+	ed.doc().Elem = "Canvas"
+	delete(ed.docCtx.Elements, "Table")
+	release(c, b.X+9, b.Y+3)
+
+	msg := ed.dragHint.Get()
+	if msg == "" {
+		t.Fatal("a drag that could write neither role reported nothing — " +
+			"dropping the write silently is the defect this message exists to remove")
+	}
+	// BOTH roles, not one. With the map the loop overwrote `lost`, so
+	// exactly one name survived and this assertion fails whichever one
+	// the runtime picked.
+	for _, role := range []markup.Role{markup.RoleRow, markup.RoleCol} {
+		if !strings.Contains(msg, string(role)) {
+			t.Errorf("the lost-write message is %q — it does not name %q. Both roles "+
+				"were lost, and a message naming one of them makes losing both look "+
+				"identical to losing one", msg, role)
+		}
+	}
+	// And in a FIXED order, which is what makes the sentence assertable
+	// at all. RoleRow is written before RoleCol at the switch, so the
+	// message must follow the switch rather than map iteration.
+	if i, j := strings.Index(msg, string(markup.RoleRow)),
+		strings.Index(msg, string(markup.RoleCol)); i > j {
+		t.Errorf("the message is %q — it names %q before %q. The order comes from the "+
+			"switch, not from map iteration, so it must not vary between runs",
+			msg, markup.RoleCol, markup.RoleRow)
+	}
+}

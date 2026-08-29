@@ -183,6 +183,46 @@ func (ctx *Context) granting() []*ElementDef {
 	return out
 }
 
+// checkElementNames rejects a registered element whose map KEY and
+// ElementDef.Name disagree.
+//
+// THE TWO ARE USED AS IF THEY WERE ONE and nothing made them be. The
+// shadowing above is keyed on the map key, the builtin loop tests
+// `shadowed[d.Name]`, and granting()'s caller matches `d.Name ==
+// parentName`. Register `Elements["Table"] = &ElementDef{Name: "Grid"}`
+// and every one of those reads a different string: the builtin <Grid>
+// is NOT shadowed, so it and the host def both land in the list, both
+// granting Grid.Row, and `attached[a.Name]` resolves to whichever the
+// map yielded last. Context.Catalog has the identical split.
+//
+// The mismatch is a host bug in every case — buildComponent looks up
+// Context.Elements BY THE KEY, so a def whose Name is something else
+// can never match the element it is registered under, and its grant
+// silently never applies. There is no reading under which the two
+// should differ, which is why this rejects rather than picking one.
+//
+// It is a LOAD error, in keeping with the rule that everything
+// resolvable fails at load rather than as a surprise on click.
+func (ctx *Context) checkElementNames() error {
+	names := make([]string, 0, len(ctx.Elements))
+	for name, d := range ctx.Elements {
+		if d == nil || d.Name == "" || d.Name == name {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names) // a map range would name an arbitrary one first
+	n := names[0]
+	return fmt.Errorf(
+		"markup: Context.Elements[%q] declares Name %q — the key and the Name must "+
+			"agree, because elements are looked up by the key and their grants are "+
+			"matched by the Name, so a mismatch registers a vocabulary nothing can "+
+			"reach", n, ctx.Elements[n].Name)
+}
+
 // spec finds the catalog entry for an element name in this context.
 //
 // The order mirrors buildComponent's, and it has to: a spec describing a

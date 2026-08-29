@@ -1000,11 +1000,21 @@ func newEditor(fsys fs.FS) *editor {
 	// construction keeps the property and its two readers in one place.
 	ed.pv.BindDesignMode(ed.design)
 
-	// The design-time layout overlay. It is handed the two revisions its
-	// paint node must subscribe to — rev for "the document or the
-	// selection changed", guideRev for "the track cursor moved" — because
-	// everything it draws is derived from plain Go state that the
-	// property graph cannot see on its own.
+	// The design-time layout overlay, handed two things: the function
+	// that builds the guide, and the design-mode property that gates the
+	// whole thing off in LIVE mode.
+	//
+	// It is handed NO revision. Everything the overlay draws is derived
+	// from plain Go state the property graph cannot see, so a Render
+	// that only called the guide function would record no dependency and
+	// go permanently deaf. The overlay solves that itself: it owns a
+	// `rev` and bumps it from Arrange, but ONLY when the guide actually
+	// changed — see the comment on Overlay.rev in
+	// components/preview/overlay.go, which explains why the comparison
+	// is what makes the frame terminate rather than an optimisation.
+	//
+	// That is the more interesting design and it belongs there rather
+	// than here, because the caller cannot get it wrong.
 	ed.pv.BindOverlay(preview.NewOverlay(ed.buildGuide, ed.design))
 
 	// The status bar's centre, and it is the only cue the user gets that

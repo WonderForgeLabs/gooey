@@ -55,6 +55,7 @@ package main
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -285,32 +286,48 @@ func (ed *editor) Release(x, y int) bool {
 	// kind from the element name, and this decided the names from the
 	// kind. Both now come from the one declaration.
 	g := ed.grantOf(ed.parentOf(d.node).Elem)
-	writes := map[markup.Role]int{}
+	// AN ORDERED PAIR, NOT A MAP. Both roles are known and fixed at the
+	// switch, so a map buys nothing and costs determinism twice: Go
+	// randomises range order, so the two `d.node.Attrs` writes landed in
+	// an arbitrary order, and a `lost` built by overwriting kept
+	// whichever role the runtime happened to visit last. The same drag
+	// on the same document could report either role, which makes the
+	// sentence untestable and the diff noisy.
+	type roleWrite struct {
+		role markup.Role
+		v    int
+	}
+	var writes [2]roleWrite
 	switch d.kind {
 	case DragCell:
-		writes[markup.RoleRow], writes[markup.RoleCol] = l.Row, l.Col
+		writes = [2]roleWrite{{markup.RoleRow, l.Row}, {markup.RoleCol, l.Col}}
 	default:
-		writes[markup.RoleX], writes[markup.RoleY] = l.Left, l.Top
+		writes = [2]roleWrite{{markup.RoleX, l.Left}, {markup.RoleY, l.Top}}
 	}
-	lost := ""
-	for role, v := range writes {
-		name := g.Attr(role)
+	var lost []string
+	for _, w := range writes {
+		name := g.Attr(w.role)
 		if name == "" {
 			// The gesture began because the grant said this role
 			// existed, so an empty name here means the document changed
 			// under the drag. Dropping the write is what already
 			// happened silently; saying so is the change.
-			lost = string(role)
+			//
+			// EVERY missing role is named, not just one: losing both is
+			// a different failure from losing one, and a message that
+			// reports a single role makes them look identical.
+			lost = append(lost, string(w.role))
 			continue
 		}
-		d.node.Attrs[name] = strconv.Itoa(v)
+		d.node.Attrs[name] = strconv.Itoa(w.v)
 	}
 	ed.rebuild()
 	// After the rebuild the status line says "✓ builds" again, which is
 	// what clears any refusal a previous press left there — unless the
 	// move could not be recorded, in which case the refusal is the news.
-	if lost != "" {
-		ed.sayDrag("<" + d.node.Elem + "> moved, but its parent grants no " + lost +
+	if len(lost) > 0 {
+		ed.sayDrag("<" + d.node.Elem + "> moved, but its parent grants no " +
+			strings.Join(lost, " or ") +
 			" to write it to — the move was not saved")
 	} else {
 		ed.sayDrag("")
