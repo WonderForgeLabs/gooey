@@ -331,3 +331,79 @@ func TestMoveWithNothingSelectedIsARefusal(t *testing.T) {
 		t.Error("a move with nothing selected reported a change")
 	}
 }
+
+// TestPromoteRefusesAGrandparentThatWillNotTakeTheChild is the gate arm of
+// issue #403. <Tabs> declares Only:["Tab"], so a <Text> promoted out of its
+// <Tab> would land directly in the <Tabs> — a child the loader refuses.
+//
+// The old code did it anyway AND returned true, so the caller was told the
+// move succeeded while docRoot went nil and click-to-select died for the
+// whole document.
+func TestPromoteRefusesAGrandparentThatWillNotTakeTheChild(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	tab := tabs.Kids[0]
+	text := tab.Kids[0]
+	ed.sel = text
+
+	if ed.promoteSelected() {
+		t.Errorf("promoting a <Text> out of its <Tab> reported SUCCESS; <Tabs> declares " +
+			"Only:[\"Tab\"] and cannot take it")
+	}
+	if got := kidElems(tabs); len(tabs.Kids) != 1 || tabs.Kids[0] != tab {
+		t.Errorf("the <Tabs> now holds %v, want the single untouched <Tab>", got)
+	}
+	if len(tab.Kids) != 1 || tab.Kids[0] != text {
+		t.Errorf("the <Tab> lost its child to a refused promote: %v", kidElems(tab))
+	}
+	if ed.docRoot == nil {
+		t.Errorf("a REFUSED promote still broke the document: %s", ed.status.Get())
+	}
+	if s := ed.status.Get(); !strings.Contains(s, "Text") || !strings.Contains(s, "Tabs") {
+		t.Errorf("status %q names neither the child nor the container it was refused by", s)
+	}
+}
+
+// TestAPromoteThatEmptiesItsParentIsReverted is the arm a catalog gate
+// cannot cover, and it is why the transactional half is not redundant with
+// canHold.
+//
+// Here the grandparent DOES accept the child — <Tab> takes one content
+// child, and canHold is deliberately permissive for ModeOne because it
+// cannot know the slot is taken. The document still fails to build, for the
+// opposite reason: the <Tab> ends up with two children. A gate reading only
+// "may this container hold this element" answers yes and is still wrong.
+func TestAPromoteThatEmptiesItsParentIsReverted(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	tab := tabs.Kids[0]
+	inner := &node{
+		Elem:  "VStack",
+		Attrs: map[string]string{"Name": "Inner"},
+		Kids:  []*node{{Elem: "Text", Body: "Deep", Attrs: map[string]string{"Name": "Deep"}}},
+	}
+	tab.Kids = []*node{inner}
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("fixture does not build before the promote: %s", ed.status.Get())
+	}
+	deep := inner.Kids[0]
+	ed.sel = deep
+
+	if ed.promoteSelected() {
+		t.Errorf("promoting into a <Tab> that already holds its one content child " +
+			"reported success")
+	}
+	// REVERTED, not merely refused: the node is back where it started and
+	// the document builds again. A refusal that left the tree mutated would
+	// pass a `return false` assertion and still have destroyed the document.
+	if len(inner.Kids) != 1 || inner.Kids[0] != deep {
+		t.Errorf("the <VStack> holds %v after the revert, want its original <Text>",
+			kidElems(inner))
+	}
+	if len(tab.Kids) != 1 || tab.Kids[0] != inner {
+		t.Errorf("the <Tab> holds %v after the revert, want the single <VStack>",
+			kidElems(tab))
+	}
+	if ed.docRoot == nil {
+		t.Errorf("the document did not build again after the revert: %s", ed.status.Get())
+	}
+}

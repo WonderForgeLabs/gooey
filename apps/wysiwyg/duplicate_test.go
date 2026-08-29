@@ -180,3 +180,61 @@ func TestDuplicateCarriesSlotsRatherThanDroppingThem(t *testing.T) {
 		t.Error("the copy's slot lost its Name entirely; it should have been renamed, not dropped")
 	}
 }
+
+// TestDuplicateIsRevertedWhenTheCopyOverfillsTheParent is the arm no catalog
+// gate could ever cover.
+//
+// The copy lands beside the original, so the parent provably accepts this
+// element and canHold can only say yes. What fails is the COUNT: a
+// <Tab Header="One"> takes exactly one content child, and the duplicate makes
+// two. Before the fix this left docRoot nil — click-to-select dead for the
+// whole document — and returned true.
+func TestDuplicateIsRevertedWhenTheCopyOverfillsTheParent(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	tab := tabs.Kids[0]
+	text := tab.Kids[0]
+	ed.sel = text
+
+	if ed.duplicateSelected() {
+		t.Errorf("duplicating the one content child of a <Tab> reported success")
+	}
+	if len(tab.Kids) != 1 || tab.Kids[0] != text {
+		t.Errorf("the <Tab> holds %v after the revert, want its single original <Text>",
+			kidElems(tab))
+	}
+	// The SELECTION comes back too. duplicateSelected moves it to the copy
+	// as its whole point, so a revert that left it on a node no longer in
+	// the document would leave every following edit addressing a ghost.
+	if ed.sel != text {
+		t.Errorf("after the revert the selection is %s, want the original <Text>",
+			nodeLabel(ed.sel))
+	}
+	if ed.docRoot == nil {
+		t.Errorf("the document did not build again after the revert: %s", ed.status.Get())
+	}
+	if s := ed.status.Get(); !strings.HasPrefix(s, "✗") {
+		t.Errorf("a refused duplicate left status %q, want a ✗ message saying why", s)
+	}
+}
+
+// TestDuplicateStillWorksWhereTheParentHasRoom is the must-say-YES arm. A
+// revert that fired on every duplicate would pass the test above and break
+// the feature.
+func TestDuplicateStillWorksWhereTheParentHasRoom(t *testing.T) {
+	ed, tabs := tabsFixture(t)
+	ed.sel = tabs.Kids[0]
+	before := len(tabs.Kids)
+
+	if !ed.duplicateSelected() {
+		t.Fatalf("duplicating a <Tab> inside a <Tabs> was refused: %s", ed.status.Get())
+	}
+	if len(tabs.Kids) != before+1 {
+		t.Errorf("the <Tabs> holds %d children, want %d", len(tabs.Kids), before+1)
+	}
+	if ed.sel == nil || ed.sel == tabs.Kids[0] {
+		t.Errorf("the selection did not move to the copy")
+	}
+	if ed.docRoot == nil {
+		t.Errorf("a legal duplicate broke the document: %s", ed.status.Get())
+	}
+}
