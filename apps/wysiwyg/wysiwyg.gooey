@@ -161,6 +161,34 @@
     <KeyBinding Gesture="ctrl+o" Command="{{.OpenFolder}}"/>
     <KeyBinding Gesture="ctrl+s" Command="{{.Save}}"/>
 
+    <!-- GRID STRUCTURE, from the keyboard.
+
+         A <Grid> renders as nothing at all, so laying out inside one used
+         to mean editing Rows="1,1" against a preview that showed neither
+         rows nor columns. The design-time overlay draws the cells and puts
+         each track's spec in the gutter beside the space it produces;
+         these are the verbs that change it.
+
+         EVERY ONE OF THEM IS A KEY and not only a divider you can drag,
+         and that is a testability requirement rather than politeness:
+         mouse reports cannot be injected through a recording pty, so a
+         resize that only existed as a drag could never be verified in a
+         capture.
+
+         [ and ] walk the cursor over every track — columns, then rows,
+         then off — so one pair of keys covers both axes and dismissing
+         needs no third key. The rest act on the track under the cursor.
+         Bare letters are safe for the same reason q, x and d are: these
+         bindings are on the ROOT, and a letter typed into a TextBox is
+         consumed by that TextBox levels earlier. -->
+    <KeyBinding Gesture="]" Command="{{.NextTrack}}"/>
+    <KeyBinding Gesture="[" Command="{{.PrevTrack}}"/>
+    <KeyBinding Gesture="=" Command="{{.GrowTrack}}"/>
+    <KeyBinding Gesture="-" Command="{{.ShrinkTrack}}"/>
+    <KeyBinding Gesture="g" Command="{{.CycleTrack}}"/>
+    <KeyBinding Gesture="a" Command="{{.AddTrack}}"/>
+    <KeyBinding Gesture="r" Command="{{.RemoveTrack}}"/>
+
     <!-- Drawn in PIXELS, not cells: an icon is a shape, and a terminal
          draws shapes badly out of box-drawing characters. Invisible to
          screen_text, which reads the cell plane. -->

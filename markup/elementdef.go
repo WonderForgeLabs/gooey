@@ -61,6 +61,25 @@ type ElementDef struct {
 	// Children is what may nest inside.
 	Children ChildSpec
 
+	// Grants is what this element confers ON ITS CHILDREN: the layout
+	// model they are positioned by, and the attached attributes that
+	// carry it. See Grant.
+	//
+	// DECLARED, not derived, and the reason is the same one that makes
+	// Attrs declared: only the author of the arm knows. The Build
+	// function above hands its children to a components.Grid, and
+	// nothing about that type says the markup spelling of a cell is
+	// "Grid.Row" — the spelling is a fact about this element's
+	// vocabulary, which is what this file is for. A marker interface on
+	// the component could carry the KIND, but not the names, and half a
+	// contract in a second place is the drift this literal exists to
+	// prevent.
+	//
+	// TestEveryMultiChildElementDeclaresAGrant makes the omission loud:
+	// a new ModeMany container with no grant fails the suite rather than
+	// silently telling every editor that its children may be reordered.
+	Grants Grant
+
 	// Body declares that this element's content is its XML BODY rather
 	// than an attribute — see BodySpec. Nil for everything that reads
 	// its content from e.Attrs, which is all but one builtin.
@@ -230,12 +249,19 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Body:       body,
 		Children:   d.Children,
 		Icon:       d.Icon,
-		Seed:       d.Seed,
-		NonVisual:  nonVisual,
-		Focusable:  focusable,
-		Attaches:   attaches,
-		HasLayout:  hasLayout,
-		Doc:        d.Doc,
+		Grants: Grant{
+			Kind: d.Grants.Kind,
+			// Copied for the same reason Attrs and Slots are: a spec is
+			// handed out, and a caller must not be able to reach back
+			// through it and edit the registry's own definition.
+			Attached: append([]AttrSpec(nil), d.Grants.Attached...),
+		},
+		Seed:      d.Seed,
+		NonVisual: nonVisual,
+		Focusable: focusable,
+		Attaches:  attaches,
+		HasLayout: hasLayout,
+		Doc:       d.Doc,
 	}
 }
 

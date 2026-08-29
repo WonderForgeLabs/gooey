@@ -528,6 +528,30 @@ func (ed *editor) bodySpec(elem string) *markup.BodySpec {
 // disagreement between the seed and the vocabulary.
 func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
+// grantOf is the catalog's answer to "what geometry does this element
+// give its children", and it is the ONLY thing in this editor that
+// decides what dragging means.
+//
+// THIS USED TO BE `switch p.Elem { case "Canvas": ...; case "Grid": ... }`
+// in dragKind, with everything else falling through to "reorder". The
+// rule was right and the key was wrong: an editor that knows the two
+// container names it was written against cannot be extended by an app
+// that registers a container of its own, and gooey's whole markup story
+// is that a host adds elements. Reading it from the same catalog the
+// palette is built from means a third-party <Table> declaring
+// GrantCell is designable here with no change to this file.
+//
+// Read from ed.palette rather than a fresh Catalog() call, for the same
+// reason bodySpec does: the palette IS the document's vocabulary.
+func (ed *editor) grantOf(elem string) markup.Grant {
+	for _, e := range ed.palette {
+		if e.Name == elem {
+			return e.Grants
+		}
+	}
+	return markup.Grant{}
+}
+
 func (n *node) markup(indent string) string {
 	var b strings.Builder
 	b.WriteString(indent + "<" + n.Elem)
@@ -666,6 +690,16 @@ func nodeOf(src string) (*node, error) {
 // ---- the editor ----
 
 type editor struct {
+	// The grid-overlay probe memo. guideProbes/guideHits are counters
+	// rather than debug cruft: "the overlay costs nothing on an idle
+	// frame" is a claim about how often probeUncached RUNS, and a damage
+	// count cannot see it — a re-probe that produces the same rects
+	// repaints nothing and is invisible to every effect-level
+	// instrument. TestTheGuideProbeIsNotRepeatedOnAnIdleFrame reads them.
+	guideKey    string
+	guideCells  [][]gooey.Rect
+	guideProbes int
+	guideHits   int
 	// ctx builds the EDITOR; docCtx is the vocabulary the DOCUMENT is
 	// authored in. See newEditor for why they are separate.
 	ctx    *markup.Context
@@ -824,6 +858,15 @@ type editor struct {
 	drag         dragState
 	invalidateFn func()
 
+	// cursor is the track the grid-structure verbs act on.
+	//
+	// Plain Go state, like the document itself — which is why moving it
+	// needs an explicit App.Invalidate (see setCursor) exactly as
+	// writing Layout.Left does. The overlay notices the change by
+	// recomputing its guide during the frame that call schedules; it
+	// does not subscribe to this.
+	cursor trackCursor
+
 	// serving names the control-plane endpoints this editor is listening
 	// on, in the order they came up; serveInfo is the same thing bound
 	// into the page. With no UI left, the address you would drive the
@@ -956,6 +999,23 @@ func newEditor(fsys fs.FS) *editor {
 	// The pane is the frozen host. Binding it here rather than at its
 	// construction keeps the property and its two readers in one place.
 	ed.pv.BindDesignMode(ed.design)
+
+	// The design-time layout overlay, handed two things: the function
+	// that builds the guide, and the design-mode property that gates the
+	// whole thing off in LIVE mode.
+	//
+	// It is handed NO revision. Everything the overlay draws is derived
+	// from plain Go state the property graph cannot see, so a Render
+	// that only called the guide function would record no dependency and
+	// go permanently deaf. The overlay solves that itself: it owns a
+	// `rev` and bumps it from Arrange, but ONLY when the guide actually
+	// changed — see the comment on Overlay.rev in
+	// components/preview/overlay.go, which explains why the comparison
+	// is what makes the frame terminate rather than an optimisation.
+	//
+	// That is the more interesting design and it belongs there rather
+	// than here, because the caller cannot get it wrong.
+	ed.pv.BindOverlay(preview.NewOverlay(ed.buildGuide, ed.design))
 
 	// The status bar's centre, and it is the only cue the user gets that
 	// clicking the designer will or will not do anything. A mode with no
@@ -1096,19 +1156,30 @@ func newEditor(fsys fs.FS) *editor {
 			"Source":       ed.source,
 			// The COMPUTED, not the source: the page asks for one string
 			// and the editor has two writers for it. See statusText.
-			"Status":       ed.statusText,
-			"EditName":     ed.editName,
-			"EditValue":    ed.editValue,
-			"EditDoc":      ed.editDoc,
-			"TreeText":     ed.treeText,
-			"ActivitySel":  ed.activitySel,
-			"Serving":      ed.serveInfo,
-			"Fits":         ed.fits,
-			"Cramped":      ed.cramped,
-			"FitMsg":       ed.fitMsg,
-			"ModeText":     ed.modeText,
-			"ToggleMode":   gooey.Command(func() { ed.toggleMode() }),
-			"ToggleTheme":  gooey.Command(func() { ed.themeDark.Set(!ed.themeDark.Get()) }),
+			"Status":      ed.statusText,
+			"EditName":    ed.editName,
+			"EditValue":   ed.editValue,
+			"EditDoc":     ed.editDoc,
+			"TreeText":    ed.treeText,
+			"ActivitySel": ed.activitySel,
+			"Serving":     ed.serveInfo,
+			"Fits":        ed.fits,
+			"Cramped":     ed.cramped,
+			"FitMsg":      ed.fitMsg,
+			"ModeText":    ed.modeText,
+			"ToggleMode":  gooey.Command(func() { ed.toggleMode() }),
+			"ToggleTheme": gooey.Command(func() { ed.themeDark.Set(!ed.themeDark.Get()) }),
+			// The grid-structure verbs. Every one of them is a KEY, not
+			// only a pointer gesture, because mouse input cannot be
+			// injected through a recording pty — a pointer-only feature
+			// cannot be verified in a capture at all.
+			"NextTrack":    gooey.Command(func() { ed.cycleTrackCursor(1) }),
+			"PrevTrack":    gooey.Command(func() { ed.cycleTrackCursor(-1) }),
+			"GrowTrack":    gooey.Command(func() { ed.resizeTrack(1) }),
+			"ShrinkTrack":  gooey.Command(func() { ed.resizeTrack(-1) }),
+			"CycleTrack":   gooey.Command(func() { ed.cycleTrackKind() }),
+			"AddTrack":     gooey.Command(func() { ed.addTrack() }),
+			"RemoveTrack":  gooey.Command(func() { ed.removeTrack() }),
 			"Add":          gooey.Command(func() { ed.addSelected() }),
 			"Delete":       gooey.Command(func() { ed.deleteSelected() }),
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
@@ -1264,9 +1335,23 @@ func newEditor(fsys fs.FS) *editor {
 		ed.ctx.Values[k] = v
 	}
 
+	ed.loadPalette()
+
+	return ed
+}
+
+// loadPalette derives the palette from the document context's catalog.
+//
+// Extracted from newEditor so it can be re-run after the vocabulary
+// changes. Nothing in the shipped editor changes it yet — but the
+// palette is now the source of the drag taxonomy as well as of the add
+// list (see grantOf), so "what containers exist" and "what designing in
+// them means" are one refresh rather than two.
+func (ed *editor) loadPalette() {
 	// The palette IS the catalog. Only elements that can appear in a
 	// container are offered; the non-visual ones are attachments and
 	// belong to a different gesture than "add a child".
+	ed.palette = ed.palette[:0]
 	for _, e := range ed.docCtx.Catalog() {
 		if e.NonVisual || e.Name == "Tab" {
 			continue
@@ -1283,13 +1368,18 @@ func newEditor(fsys fs.FS) *editor {
 	// after the user pressed the theme key, with nothing on any surface
 	// to explain it. Rasterizing both here turns that into a startup
 	// failure naming the file.
+	//
+	// It sits INSIDE loadPalette rather than in newEditor, which is where
+	// it was before the palette became reloadable, and the move is
+	// load-bearing rather than tidy: what it preloads is THIS palette's
+	// icons, so a reload that added an element would leave that element's
+	// row blank until something else happened to rasterize it. Preloading
+	// where the list is derived keeps the two in step by construction.
 	names := make([]string, 0, len(ed.palette))
 	for _, e := range ed.palette {
 		names = append(names, e.Icon)
 	}
 	ed.iconErr = ed.icons.Preload(names, iconOnDark, iconOnLight)
-
-	return ed
 }
 
 // The two icon tints, and they are the ONLY thing the theme switch

@@ -128,23 +128,99 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map
 	// unknown attributes are still rejected at the root like anywhere
 	// else.
 	if parentName == "Gooey" || parentName == "" {
-		for _, attrs := range attachedAttrs {
-			for _, a := range attrs {
+		for _, d := range ctx.granting() {
+			for _, a := range d.Grants.Attached {
 				allowed[a.Name] = true
 			}
 		}
 		return allowed, attached
 	}
-	for parent, attrs := range attachedAttrs {
-		for _, a := range attrs {
-			if parent == parentName {
+	for _, d := range ctx.granting() {
+		for _, a := range d.Grants.Attached {
+			if d.Name == parentName {
 				allowed[a.Name] = true
 				continue
 			}
-			attached[a.Name] = parent
+			attached[a.Name] = d.Name
 		}
 	}
 	return allowed, attached
+}
+
+// granting is every element in scope that contributes attached
+// attributes — the builtins, plus whatever the host registered.
+//
+// Host-registered elements are included, and that direction is safe:
+// a container that declares a Grant can only ADD names to `allowed`,
+// so this accepts markup that was previously rejected and can never
+// reject markup that previously loaded. Leaving them out would mean a
+// host could declare Table.Column in its catalog, watch a palette offer
+// it, and then have the loader refuse the result — the catalog lying
+// about the target, which is the defect the catalog exists to remove.
+func (ctx *Context) granting() []*ElementDef {
+	// Registered first, and the shadowing runs in that direction:
+	// buildComponent consults Context.Elements BEFORE the builtins, so
+	// for a name declared in both, the registered definition is the one
+	// that actually builds — and therefore the one whose grant is real.
+	// Taking the builtin's grant here would validate against a
+	// vocabulary the build never uses.
+	out := make([]*ElementDef, 0, len(elementDefs)+len(ctx.Elements))
+	shadowed := map[string]bool{}
+	for name, d := range ctx.Elements {
+		if d == nil {
+			continue
+		}
+		shadowed[name] = true
+		if len(d.Grants.Attached) > 0 {
+			out = append(out, d)
+		}
+	}
+	for _, d := range definedElements() {
+		if len(d.Grants.Attached) > 0 && !shadowed[d.Name] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// checkElementNames rejects a registered element whose map KEY and
+// ElementDef.Name disagree.
+//
+// THE TWO ARE USED AS IF THEY WERE ONE and nothing made them be. The
+// shadowing above is keyed on the map key, the builtin loop tests
+// `shadowed[d.Name]`, and granting()'s caller matches `d.Name ==
+// parentName`. Register `Elements["Table"] = &ElementDef{Name: "Grid"}`
+// and every one of those reads a different string: the builtin <Grid>
+// is NOT shadowed, so it and the host def both land in the list, both
+// granting Grid.Row, and `attached[a.Name]` resolves to whichever the
+// map yielded last. Context.Catalog has the identical split.
+//
+// The mismatch is a host bug in every case — buildComponent looks up
+// Context.Elements BY THE KEY, so a def whose Name is something else
+// can never match the element it is registered under, and its grant
+// silently never applies. There is no reading under which the two
+// should differ, which is why this rejects rather than picking one.
+//
+// It is a LOAD error, in keeping with the rule that everything
+// resolvable fails at load rather than as a surprise on click.
+func (ctx *Context) checkElementNames() error {
+	names := make([]string, 0, len(ctx.Elements))
+	for name, d := range ctx.Elements {
+		if d == nil || d.Name == "" || d.Name == name {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names) // a map range would name an arbitrary one first
+	n := names[0]
+	return fmt.Errorf(
+		"markup: Context.Elements[%q] declares Name %q — the key and the Name must "+
+			"agree, because elements are looked up by the key and their grants are "+
+			"matched by the Name, so a mismatch registers a vocabulary nothing can "+
+			"reach", n, ctx.Elements[n].Name)
 }
 
 // spec finds the catalog entry for an element name in this context.

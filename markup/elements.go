@@ -406,10 +406,21 @@ var defGrid = &ElementDef{
 	Known: true,
 	Attrs: []AttrSpec{
 		{Name: "Background", Kind: KindColor, Binds: BindsEither, Origin: OriginBuiltin},
-		{Name: "Cols", Kind: KindGridLens, Binds: BindsLiteral, Origin: OriginBuiltin},
-		{Name: "Rows", Kind: KindGridLens, Binds: BindsLiteral, Origin: OriginBuiltin},
+		{Name: "Cols", Role: RoleColTracks, Kind: KindGridLens, Binds: BindsLiteral, Origin: OriginBuiltin},
+		{Name: "Rows", Role: RoleRowTracks, Kind: KindGridLens, Binds: BindsLiteral, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeMany},
+	Grants: Grant{
+		Kind: GrantCell,
+		Attached: []AttrSpec{
+			// A zero span means one track (layout.go:47), so "0" — not
+			// "1" — is the value that reproduces omission.
+			{Name: "Grid.Col", Role: RoleCol, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+			{Name: "Grid.ColSpan", Role: RoleColSpan, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+			{Name: "Grid.Row", Role: RoleRow, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+			{Name: "Grid.RowSpan", Role: RoleRowSpan, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+		},
+	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		rows, err := components.ParseGridLens(e.Attrs["Rows"])
 		if err != nil {
@@ -446,6 +457,7 @@ var defVStack = &ElementDef{
 		{Name: "Gap", Kind: KindInt, Binds: BindsLiteral, Default: "0", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeMany},
+	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		gap, _ := strconv.Atoi(e.Attrs["Gap"])
 		kids, attach, err := buildChildren(e, ctx)
@@ -475,6 +487,7 @@ var defHStack = &ElementDef{
 		{Name: "Gap", Kind: KindInt, Binds: BindsLiteral, Default: "0", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeMany},
+	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		gap, _ := strconv.Atoi(e.Attrs["Gap"])
 		kids, attach, err := buildChildren(e, ctx)
@@ -503,6 +516,13 @@ var defCanvas = &ElementDef{
 		{Name: "Background", Kind: KindColor, Binds: BindsEither, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeMany},
+	Grants: Grant{
+		Kind: GrantOffset,
+		Attached: []AttrSpec{
+			{Name: "Canvas.Left", Role: RoleX, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+			{Name: "Canvas.Top", Role: RoleY, Kind: KindInt, Binds: BindsLiteral, Default: "0", Category: CategoryLayout, Origin: OriginBuiltin},
+		},
+	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		// Children carry their own Canvas.Left/Canvas.Top, parsed into
 		// Layout by applyLayout like any other attached property.
@@ -1036,6 +1056,7 @@ var defButtonBar = &ElementDef{
 		{Name: "Uniform", Kind: KindBool, Binds: BindsLiteral, Default: "false", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeMany},
+	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {

@@ -872,10 +872,10 @@ func cellLine(f *gooey.Frame, x, y, w int) string {
 	return strings.TrimRight(sb.String(), " ")
 }
 
-// TestTheLastTrackCannotBeRemoved. components.Grid defaults a missing
+// TestTheLastTrackCannotBeRemovedThroughThePropertyEditor. components.Grid defaults a missing
 // definition to a single star track, so removing the last one would be a
 // no-op the user reads as a broken key.
-func TestTheLastTrackCannotBeRemoved(t *testing.T) {
+func TestTheLastTrackCannotBeRemovedThroughThePropertyEditor(t *testing.T) {
 	ed, c, p := propsPane(t)
 	ed.doc().Kids = append(ed.doc().Kids, &node{
 		Elem:  "Grid",
