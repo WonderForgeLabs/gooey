@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -375,5 +376,76 @@ func TestCenterColsCentresByColumn(t *testing.T) {
 				"EXACT width and a caller writes it into a fixed slot",
 				c.in, c.w, n, c.w)
 		}
+	}
+}
+
+// paintedCols is the rightmost column any row of b actually puts ink in.
+// For a dropdown that is the popup's right edge, which is what its
+// measured width decides.
+func paintedCols(b *render.Buffer) int {
+	last := -1
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			if t := b.At(x, y).Text(); t != "" && t != " " && x > last {
+				last = x
+			}
+		}
+	}
+	return last
+}
+
+// rowHolding returns the first row of b whose text contains sub, or "".
+func rowHolding(b *render.Buffer, sub string) string {
+	for y := 0; y < b.H; y++ {
+		if r := render.RowText(b, y); strings.Contains(r, sub) {
+			return r
+		}
+	}
+	return ""
+}
+
+// The dropdown's WIDTH — the half TestMenuMnemonicUnderlinesAtAColumn
+// cannot see. That test pins where the accelerator lands; this one pins
+// how many cells the popup claimed in the first place.
+//
+// `iw` in Menu.width (menu.go) is measured from the item labels, so
+// counting runes sizes a CJK menu short by exactly the cells the wide
+// glyphs added — and the label is then clipped by its own width. The
+// mnemonic test stays green through that, because an underline at the
+// right column of a too-narrow popup is still at the right column.
+//
+// This is also the assertion that pins the ide-shell merge: Menu.lead()
+// added a check column to the same expression, and `lead` is a cell
+// count while the label needed a column measure. Only one of the two
+// halves had a test before this.
+func TestDropdownSizesToItsLabelsInColumns(t *testing.T) {
+	paint := func(item string) *render.Buffer {
+		bar := &MenuBar{Menus: []Menu{{
+			Title: "M",
+			Items: []MenuItem{{Text: item, Action: gooey.Command(func() {})}},
+		}}}
+		c := gooey.NewComposer(&Canvas{Children: []gooey.Component{bar}}, 40, 8)
+		c.Frame()
+		c.Focus().SetFocus(bar)
+		c.Frame()
+		c.HandleKey(input.Named(input.KeyEnter))
+		c.Frame()
+		return c.Cells()
+	}
+	// Four columns in both arms; two runes in one, four in the other.
+	wide, narrow := paint(wideLabel), paint(narrowLabel)
+
+	if w, n := paintedCols(wide), paintedCols(narrow); w != n {
+		t.Errorf("the dropdown holding a 4-column CJK label spans to column %d, "+
+			"the 4-column ASCII one to %d — the popup is measured from its item "+
+			"labels, so a rune count sizes it short by exactly the cells the wide "+
+			"glyphs added", w, n)
+	}
+
+	// And the shortfall is not absorbed by clipping the label instead.
+	if row := rowHolding(wide, "世"); !strings.Contains(row, "世界") {
+		t.Errorf("the dropdown row reads %q, want it to contain %q — a popup "+
+			"measured in runes is too narrow for its own label and clips it",
+			row, "世界")
 	}
 }
