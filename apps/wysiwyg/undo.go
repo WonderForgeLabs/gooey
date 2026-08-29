@@ -62,31 +62,44 @@ import "strconv"
 //
 // In a terminal ctrl+z is normally the SUSP character and the tty driver
 // turns it into SIGTSTP. Not while a gooey app is up: term.Screen.Raw
-// calls term.MakeRaw, which clears ISIG
-// (vendor/golang.org/x/term/term_unix.go:34), so the driver generates no
+// calls term.MakeRaw, which clears ISIG, so the driver generates no
 // signal from it. The byte 0x1a lands on the tty like any other and
-// input.Decode (input/decode.go:33) turns it into an ordinary
-// ctrl+z KeyEvent — which, before this file, no gooey app bound and every
-// gooey app therefore dropped.
+// input.Decode turns it into an ordinary ctrl+z KeyEvent — which, before
+// this file, no gooey app bound and every gooey app therefore dropped.
 //
-// So binding it takes nothing away. App.Suspend (app.go:816) is a
-// PROGRAMMATIC hand-off and is not reached by any keystroke, and
-// App.onStop's SIGTSTP dance (signals_unix.go:70) still runs for a
-// signal delivered from outside — `kill -TSTP`, or a shell's `stop`.
-// Both are untouched by this file.
+// So binding it takes nothing away. gooey.App.Suspend is a PROGRAMMATIC
+// hand-off and is not reached by any keystroke, and App.onStop's SIGTSTP
+// dance still runs for a signal delivered from outside — `kill -TSTP`,
+// or a shell's `stop`. Both are untouched by this file.
+//
+// SYMBOLS RATHER THAN file:line, deliberately. This paragraph carried
+// five line references and four of them had drifted to point at
+// unrelated code, which is the failure mode a line number has: it stays
+// resolvable after an insert, so it never reads as broken, it just
+// quietly means something else. Review of #392 caught one of the four.
 //
 // REDO IS ctrl+y AND NOT ALSO ctrl+shift+z, and that is a fact about
 // terminals rather than a preference. Shift is not reportable on a
 // printable character — the terminal sends the shifted rune instead — so
 // ctrl+shift+z arrives as the SAME byte 0x1a as ctrl+z, and the decoder
 // lower-cases it deliberately ("ctrl+a, not ctrl+A: the shift is not
-// real", input/decode.go:49). input.ParseGesture("ctrl+shift+z") parses
-// happily and yields an event with ModShift set that no decode ever
-// produces, so the binding would be UNFIREABLE: a line in the markup
-// that looks like a feature, that every test asserting "the binding
-// exists" would pass, and that can never run.
-// TestCtrlShiftZIsUnfireableSoItIsNotBound is what keeps someone from
-// adding it back as a kindness.
+// real", in input.Decode).
+//
+// So a second binding on it would not be a second gesture. ParseGesture
+// folds a shift on a printable into the rune and then lower-cases it
+// again for ctrl, so "ctrl+shift+z" and "ctrl+z" parse to the SAME
+// KeyEvent — and two KeyBindings on one gesture is the silent case: one
+// of them simply never fires, and which one is a fact about tree order
+// that no reader of the markup can see. A "kindness" binding for redo
+// would therefore be live enough to shadow UNDO.
+//
+// This paragraph used to say the binding was UNFIREABLE — that
+// ParseGesture yields a ModShift event no decode produces. It does not;
+// it yields plain ctrl+z. The conclusion (do not bind it) survives, the
+// reason does not, and the reason was the part that told you what would
+// go wrong. TestCtrlShiftZIsUnfireableSoItIsNotBound is what the header
+// claimed all along and the package never had; it now exists, and it
+// pins the aliasing rather than the absence.
 
 // DefaultHistoryLimit is how many undo steps are kept when -history is
 // not given.
@@ -300,7 +313,17 @@ func (h *history) record(root *node, sel []int, hasSel bool) {
 		// rollback. Without this, the history would hold an entry whose
 		// undo changes nothing visible, and the user would press ctrl+z
 		// and watch nothing happen.
+		//
+		// POPPING THE STEP MUST ALSO END THE RUN, and those are two
+		// different pieces of state. The key is what the NEXT edit
+		// coalesces against; leave it set and that edit merges into a
+		// run whose step is no longer on the stack, so it records
+		// nothing and ctrl+z answers "nothing to undo" over a document
+		// the user just changed. The label goes back to the popped
+		// state's for the same reason — it named an edit that no
+		// longer exists, and it is what the next undo would report.
 		if n := len(h.undo); n > 0 && h.undo[n-1].root.equal(root) {
+			h.base.key, h.base.label = "", h.undo[n-1].label
 			h.undo[n-1] = snapshot{}
 			h.undo = h.undo[:n-1]
 		}

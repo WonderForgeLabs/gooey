@@ -1782,6 +1782,28 @@ func (ed *editor) rebuild() {
 	if ed.dragHint != nil && ed.dragHint.Get() != "" {
 		ed.dragHint.Set("")
 	}
+	// AND RE-ESTABLISHED IF IT WAS A MODE RATHER THAN AN EVENT. The line
+	// above retires a hint that described a GESTURE, which is right; the
+	// track cursor's line is not one. It states which track is picked and
+	// what -/=/g/a/r will do to it, and that stays true for exactly as
+	// long as the cursor is on — so retiring it leaves the gutter
+	// highlighting a track the bar no longer names and the verbs
+	// unlisted, with the mode still live.
+	//
+	// The reason this looked safe is that every track verb announces
+	// through sayTrack AFTER its writeTracks, so the clear was always
+	// overwritten on those paths. It is any other edit — an add, a
+	// rename, an undo — that lands here and stops. Found in review
+	// of #392.
+	//
+	// Re-derived from ed.cursor rather than saved and restored around
+	// the clear: the document may have just lost the track the cursor
+	// pointed at, and sayTrack is where that is already handled.
+	if ed.cursor.on {
+		if n := ed.gridNode(); n != nil {
+			ed.sayTrack(n)
+		}
+	}
 	// Tick FIRST, so every derived list recomputes even if the build
 	// below fails and returns early.
 	ed.rev.Set(ed.rev.Get() + 1)

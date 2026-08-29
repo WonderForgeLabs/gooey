@@ -171,18 +171,27 @@ func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
 		// that is easy to leave out. The rail is a Segmented wrapping an
 		// Image, so its Measure delegates to the picture — and
 		// components.Image measures getInt(Cols) x getInt(Rows), which
-		// is 0x0 when neither is set. This rail never sets them: it is
-		// drawn at railW PIXELS and takes its CELL size from whatever
-		// holds it. In wysiwyg.gooey that is a Grid track (Cols="4,…")
-		// plus Height="8", so the rail has never needed to state its own
-		// size and its Measure has always returned zero.
+		// is 0x0 when neither is set. This rail sets neither: it is
+		// drawn at railW PIXELS, so its own Measure returns zero and its
+		// cell size has to come from somewhere else.
 		//
-		// On a Canvas there is no track to inherit from, so a seed
-		// without both is a rail that measures 0x0 — invisible AND
-		// unselectable, because hitTest never returns a zero-size
+		// That somewhere is the LAYOUT, and it is the builder above that
+		// puts it there — l.Width/l.Height from RailCells, which
+		// MeasureChild applies as an override. The markup does not, and
+		// no longer needs to: the element carries neither a Height nor a
+		// sized Grid track, which is what RailCells was extracted to
+		// make true. (It said so here for a while after it had stopped
+		// being true, naming a Cols="4,…" track and a Height="8" the
+		// page had already dropped. Found in review of #392.)
+		//
+		// The SEED still has to state both, because a palette insert
+		// lands on a Canvas where there is no builder-set layout to
+		// inherit — and a rail that measures 0x0 is invisible AND
+		// unselectable, since hitTest never returns a zero-size
 		// component. You could add it and then have no way to click it
-		// in order to give it the size that would make it appear. The
-		// numbers are the app's own geometry rather than invented ones.
+		// in order to give it the size that would make it appear.
+		// seedFor derives the numbers from the same RailCells rather
+		// than repeating them.
 		//
 		// Registered elements are outside markup's own
 		// TestEveryElementDeclaresASeed — that walks the builtin
@@ -242,6 +251,16 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 		if err := r.Preload(); err != nil {
 			return nil, err
 		}
+		// WHY A Segmented AT ALL. The Image is a PICTURE — no focus, no
+		// keys, no hit-testing — so on its own the rail was
+		// unselectable, which was the bug. components.Segmented already
+		// had every part of the behaviour: bound int selection, clamped,
+		// wrapping arrows, wheel notches, click-to-segment, focus stop.
+		// It gained a Vertical axis and a Child so the picture could be
+		// this rail instead of drawn labels. Writing a second strip here
+		// would have been a third copy of that behaviour in the repo —
+		// Tabs re-implements it too.
+		//
 		// The strip is built BEFORE the picture, because the picture
 		// depends on the strip's focus. Src is assigned after.
 		seg := &components.Segmented{
@@ -306,15 +325,6 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 			// the type is the framework's and this is how it is spelled.
 			Background: prop.NewSource(Ground()),
 		}, nil
-		// The Image is a PICTURE — no focus, no keys, no hit-testing — so
-		// on its own the rail was unselectable, which was the bug.
-		//
-		// The behaviour comes from components.Segmented, which already had
-		// all of it: bound int selection, clamped, wrapping arrows, wheel
-		// notches, click-to-segment, focus stop. It gained a Vertical axis
-		// and a Child so the picture could be this rail instead of drawn
-		// labels. Writing a second strip here would have been a third copy
-		// of that behaviour in the repo — Tabs re-implements it too.
 	}
 }
 

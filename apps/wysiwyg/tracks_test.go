@@ -754,3 +754,53 @@ func TestTheGuideProbeIsNotRepeatedOnAnIdleFrame(t *testing.T) {
 			"drawn over the grid's old geometry", ed.guideProbes)
 	}
 }
+
+// TestTheTrackLineSurvivesAnUnrelatedEdit separates the two kinds of
+// thing the status bar's hint carries, which rebuild was treating as
+// one.
+//
+// A refused drag is an EVENT: it happened, it is reported once, and the
+// next edit rightly retires it — that is what the clear at the top of
+// rebuild is for. The track line is a MODE: it says which track the
+// cursor is on and what the keys do, and it is true for exactly as long
+// as the cursor is on. Clearing it on the next rebuild leaves the
+// gutter highlighting a track the bar no longer names, with the verbs
+// that operate on it unlisted — the mode is still live and the only
+// thing telling the user so is gone.
+//
+// The edit here is deliberately NOT a track verb. Those re-announce
+// through sayTrack on their own way out, which is why the clear looked
+// safe: every path anyone checked set the hint again after rebuilding.
+// It is any OTHER edit that exposes it.
+func TestTheTrackLineSurvivesAnUnrelatedEdit(t *testing.T) {
+	ed, c, _ := gridPage(t)
+
+	if !pressRune(c, ']') {
+		t.Fatal("] was not consumed; the NextTrack binding is not on the page")
+	}
+	c.Frame()
+	line := ed.dragHint.Get()
+	if line == "" {
+		t.Fatal("] left the status bar empty, so there is no mode line to lose")
+	}
+
+	// An ordinary document edit, through the labelled path any slice of
+	// the editor uses.
+	ed.applyEdit("add", func() {
+		ed.doc().Kids = append(ed.doc().Kids, &node{
+			Elem: "Text", Body: "bb",
+			Attrs: map[string]string{"Name": "B", "Grid.Row": "1", "Grid.Col": "1"},
+		})
+	})
+	c.Frame()
+
+	if !ed.cursor.on {
+		t.Fatal("the edit dismissed the track cursor; this test is about a " +
+			"cursor that is still on")
+	}
+	if got := ed.dragHint.Get(); got != line {
+		t.Errorf("after an unrelated edit the status bar reads %q, want the "+
+			"track line %q — the cursor is still on column %d",
+			got, line, ed.cursor.index)
+	}
+}
