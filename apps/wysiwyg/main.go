@@ -1642,7 +1642,14 @@ func (ed *editor) attrRows() []attrRow {
 			body:  true,
 		})
 	}
-	for _, a := range markup.AttrsFor(spec, parent) {
+	// THE PARENT'S GRANT, resolved in the PALETTE. markup.AttrsFor takes a
+	// parent NAME and resolves it in the builtin registry, which answers
+	// "no attached attributes" for a container the host registered — so
+	// the drag wrote Table.R onto a child and the properties grid had no
+	// row for it, in the same editor. ed.grantOf reads the palette, which
+	// IS the document's vocabulary, so the inspector and the drag now ask
+	// one question. Found in review of #390 (issue #418).
+	for _, a := range ed.grantOf(parent).AttrsFor(spec) {
 		v := target.Attrs[a.Name]
 		rows = append(rows, attrRow{
 			name:     a.Name,
@@ -2160,11 +2167,18 @@ func (ed *editor) retype(elem string) {
 		// Attributes the new parent does not contribute are removed
 		// rather than left to be ignored. Leaving them is what the old
 		// loader did, and it is the defect this whole change deletes.
-		for _, p := range markup.AttachedParents() {
-			if p == elem {
+		//
+		// OVER THE PALETTE, for the reason attrRows reads it:
+		// markup.AttachedParents lists BUILTINS, so a child retyped out
+		// of a third-party container kept that container's attributes,
+		// which the new parent discards in silence — the exact defect
+		// this loop exists to delete, surviving for every element the
+		// host registered.
+		for _, e := range ed.palette {
+			if e.Name == elem {
 				continue
 			}
-			for _, a := range markup.AttachedAttrs(p) {
+			for _, a := range e.Grants.Attached {
 				delete(k.Attrs, a.Name)
 			}
 		}

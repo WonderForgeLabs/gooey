@@ -208,6 +208,84 @@ func TestAThirdPartyContainerIsDesignableWithNoEditorChange(t *testing.T) {
 	}
 }
 
+// TestAThirdPartyContainerAttachesAttributesTheInspectorCanEdit is the
+// other end of the same gesture, and it was the half that did not work.
+//
+// The drag above WRITES Table.R and Table.C. The inspector went through
+// markup.AttrsFor(spec, parentName), which resolves the parent in the
+// BUILTIN registry only — so for a host-registered container it joined
+// in nothing, and the two attributes the drag had just written were
+// invisible in the properties grid and could not be typed by hand. A
+// value present in the document and absent from the editor that wrote it
+// is worse than an unsupported container: the user sees the element
+// move, then finds no trace of what moved it.
+//
+// The retype cleanup had the same blind spot from the other side, via
+// markup.AttachedParents(): a child moved out of a third-party container
+// kept that container's attached attributes, which the new parent
+// discards in silence. Both are asserted here because they are one
+// defect — the editor asking the builtin registry a question about the
+// document's vocabulary. Found in review of #390 (issue #418).
+func TestAThirdPartyContainerAttachesAttributesTheInspectorCanEdit(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.docCtx.Elements["Table"] = grantingTable()
+	ed.loadPalette()
+
+	ed.doc().Elem = "Table"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Text", Body: "aaaa", Attrs: map[string]string{
+			"Name": "A", "Table.R": "1", "Table.C": "1"}},
+	}
+	ed.rebuild()
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("the <Table> fixture does not build: %s", got)
+	}
+	c.Frame()
+
+	ed.sel = ed.doc().Kids[0]
+	rows := map[string]string{}
+	for _, r := range ed.attrRows() {
+		rows[r.name] = r.value
+	}
+	if len(rows) == 0 {
+		t.Fatal("the inspector returned no rows at all, so nothing below discriminates")
+	}
+	for _, a := range []struct{ name, want string }{{"Table.R", "1"}, {"Table.C", "1"}} {
+		got, ok := rows[a.name]
+		if !ok {
+			t.Errorf("the properties grid does not offer %s on a child of a <Table>, "+
+				"which grants it — the drag writes that attribute and the inspector "+
+				"cannot show or edit it. AttrsFor resolves the parent in the builtin "+
+				"registry, and <Table> is registered on the Context", a.name)
+			continue
+		}
+		if got != a.want {
+			t.Errorf("%s reads %q in the properties grid, the document says %q",
+				a.name, got, a.want)
+		}
+	}
+	// The converse, so the join is scoped rather than unconditional: a
+	// <Canvas>'s attached attributes are meaningless under a <Table>.
+	for _, wrong := range []string{"Canvas.Left", "Grid.Row"} {
+		if _, ok := rows[wrong]; ok {
+			t.Errorf("the properties grid offers %s under a <Table>, which grants no "+
+				"such attribute — applyLayout discards it in silence", wrong)
+		}
+	}
+
+	// RETYPE, the other builtins-only lookup. Moving the container to a
+	// <VStack> must strip what <Table> attached.
+	ed.retype("VStack")
+	for _, gone := range []string{"Table.R", "Table.C"} {
+		if v, ok := ed.doc().Kids[0].Attrs[gone]; ok {
+			t.Errorf("retyping <Table> to <VStack> left %s=%q on the child. "+
+				"AttachedParents lists builtins only, so a third-party container's "+
+				"attributes survive a move to a parent that ignores them", gone, v)
+		}
+	}
+}
+
 // TestTheEditorNamesNoContainerElement is the structural half, and it is
 // what stops the taxonomy growing a second copy again.
 //
