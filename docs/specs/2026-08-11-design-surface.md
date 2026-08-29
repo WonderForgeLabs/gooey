@@ -398,6 +398,20 @@ The probe is kept as the pin. It asserts a limitation, so it will fail
 the day `childSlot` stops being closed — which would be the fix, not a
 regression.
 
+> **RESOLVED, 2026-08-23.** `childSlot` is no longer a closed type switch:
+> it asks for `gooey.ChildSetter` (`SetChild(i int, w Component) bool`,
+> `component.go`), the six containers implement it in
+> `components/childset.go`, and `control/` no longer imports `components`
+> at all. The general constraint above is therefore narrower than it
+> reads: a component may sit between a container and a named element
+> **provided it implements `ChildSetter`** — one method, whose contract is
+> that the index `ChildComponents` reported is an address it can write
+> back to. A container that BUILDS its child list still must not implement
+> it, and patching through one is still refused, now by naming the
+> interface rather than by naming six types. The probe was converted from
+> pinning the limitation to pinning the fix, with a second arm keeping the
+> refusal honest.
+
 ### What this does not kill
 
 Middleware as an idea survives; `Decorate` as a per-element wrapper does
@@ -406,6 +420,13 @@ a `ChildSlotter` interface containers implement, so `control/` stops
 enumerating them — would unblock decorators generally and is worth
 considering on its own merits. It is a change in `control/` and
 `components/`, so it is a proposal for their owner, not a task here.
+
+> **DONE, 2026-08-23**, under the name `gooey.ChildSetter` and living in
+> the core package rather than in `control/` — the interface has to be
+> implementable by a container that has never heard of the control plane.
+> `Decorate` as a per-element wrapper is therefore unblocked as far as
+> patching is concerned; whether it is a good idea is still this
+> document's other arguments' question.
 
 And the design surface **does not need it either way**. The frozen host
 is *one node at the root of the surface*, above everything named in the

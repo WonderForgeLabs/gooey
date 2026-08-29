@@ -86,6 +86,64 @@ Draws a rounded box around exactly one visual child (KeyBindings do not count ag
 
 (from `cmd/reader/readerpane.gooey`)
 
+### Frozen
+
+Wraps exactly one visual child in a region that **renders but does not act**. The picture is live; the behaviour is not. Descendants lay out, paint and keep their own paint nodes — damage granularity is untouched — and they are simply never the target of anything.
+
+| Attribute | Meaning |
+|---|---|
+| `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
+| `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
+
+```xml
+<Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
+  <VStack>…the document being edited…</VStack>
+</Frozen>
+```
+
+#### The `Allow` vocabulary
+
+Categories compose by **union**: naming more permits strictly more. Nesting **intersects** — a `<Frozen>` inside a stricter one cannot hand out permission its container withheld.
+
+| Category | What still acts |
+|---|---|
+| `Focus` | Descendants are focus stops again: tab, shift+tab, arrow navigation and `SetFocus` reach them |
+| `Alpha` `Numeric` `Punct` `Space` | Which unmodified printable keys reach a focused descendant |
+| `Nav` | tab, arrows, home/end, page up/down |
+| `Edit` | enter, backspace, delete |
+| `Escape` | esc |
+| `Chords` | anything held with ctrl or alt |
+| `Bindings` | scoped `<KeyBinding>`s attached inside fire |
+| `Mnemonics` | mnemonics declared inside fire |
+| `Pointer` | press, release, click, motion, capture and the wheel reach descendants |
+| `Hover` | hover state and `HoverWatcher`s track descendants |
+| `Start` | `Startable`s inside are started |
+
+Groups, spelled the same way: `Text` (= `Alpha Numeric Punct Space`), `Keys` (every key class), `Mouse` (= `Pointer Hover`), `All`, `None`.
+
+Two rules are built into the **constants** rather than applied by a pass, so no order of composition can defeat them:
+
+- **every key class, and `Bindings`, carries `Focus`.** A key that reaches nothing is not an allowance: with no focus stops, nothing inside can be focused and no key routes there. Writing `Allow="Alpha"` therefore grants focus too.
+- **`Mnemonics`, `Pointer`, `Hover` and `Start` do not.** None of the four is routed through focus — a mnemonic is offered to every handler in the tree regardless of what holds focus — so each is reachable inside a subtree that is otherwise completely sealed.
+
+`Start` is the one category nothing implies. `Companion.Start` spawns a child process, so a grant that turned starting on as a side effect of wanting hover would launch a subprocess from an editing gesture; it must always be asked for by name.
+
+`Allow="All"` and no `<Frozen>` at all are the same thing, deliberately: "not frozen" is a member of the same lattice (`gooey.AllowAll`), which is what keeps one observed value per component instead of two that can disagree.
+
+#### Errors
+
+A **literal** `Allow` is checked at load time — `<Frozen Allow="Clicks">` fails to load, naming the vocabulary. A **bound** one cannot be, so it fails *closed*: an unparseable value becomes `None`, the strictest answer, and `components.Frozen.AllowError()` reports why.
+
+#### Changing the set at runtime
+
+`Composer.armFrozen` wraps the answer in a computed whose evaluation **calls** `Frozen()` and `FrozenAllow()`, so whatever those read becomes a dependency by the ordinary call-site rule. A `Set` schedules a frame, the per-frame sweep compares this frame's `gooey.Allow` against last frame's, and **any** change — not only the frozen/not flip — re-syncs the composition in the same frame, before anything paints. Freezing costs no repaint of its own.
+
+Compose the set in markup with [`handlers/sets`](../handlers/sets/README.md):
+
+```xml
+<Frozen Allow="{{sets:Concat `Hover` .Selected}}">
+```
+
 ### Grid
 
 The workhorse layout panel: children go into cells addressed by the attached `Grid.Row` / `Grid.Col` / `Grid.RowSpan` / `Grid.ColSpan` attributes on the children themselves.
@@ -1163,12 +1221,13 @@ The corollary is the usual trap, and it bites providers harder than pages: an ar
 | `gooey.dev/handlers/env` | `handlers/env` | `` Get `NAME` [`fallback`] `` — an allowlisted environment variable; `Names` — the sorted grant |
 | `gooey.dev/handlers/env` (writable grant) | `handlers/env` | `` Set `NAME` .Value `` / `` Unset `NAME` `` — handler side; writes the process environment **and** the source property, so readers repaint |
 | `gooey.dev/handlers/str` | `handlers/str` | `Upper`, `Lower`, `Trim` (1 arg); `` Replace .S `old` `new` ``; `` Join `sep` a b… ``; `` Default .S `fb` ``; `` Pad .S `n` ``, `` Truncate .S `n` `` (width is a load-time literal, counted in runes) |
+| `gooey.dev/handlers/sets` | `handlers/sets` | Set algebra over name sets, for attributes like `<Frozen Allow>`: `` Concat a b… `` (union); `` Without .Base `X` `` (difference); `` When .Cond `X` `` (conditional); `` Group `Text` `` (expands a `gooey.Allow` group); `` Has .Set `X` `` |
 
 The env registration is an **itemized allowlist**, `handlers/exec`'s posture rather than `handlers/fs`'s: the environment is where a process keeps its credentials next to its terminal type, so `envhandlers.New("USER", "HOME")` grants exactly those and an ungranted name is a load error naming the grant. There is deliberately no grant-everything constructor. The variable name is always a backtick literal — an allowlist checked at load time is the point.
 
 A provider is a typed factory — `NewValue(*markup.Call) (*prop.Property[string], error)` — with no reflection. The `Call` is the same struct handler providers receive, with `Target` left invalid, so a provider serving both sides can tell the positions apart.
 
-**Limits today:** value expressions only work in string positions (element content, `Content`, `Title`, `Label`, `Prompt`) — typed attributes such as `Visibility`, `Style` and `Background` resolve through a different path (issue #222). There is no nesting: ``{{str:Upper env:Get `USER`}}`` does not parse, and composition is issue #223's question, likely answered by #99's converter stages.
+**Limits today:** value expressions only work in string positions (element content, `Content`, `Title`, `Label`, `Prompt`, `Frozen`'s `Allow`) — typed attributes such as `Visibility`, `Style` and `Background` resolve through a different path (issue #222). `<Frozen Allow>` is a string position *on purpose*: carrying the category set as text is what lets `sets:Concat` compose it out of literals and bound paths with no new binding machinery, at the cost of an unknown name in a bound value being a fail-closed runtime answer rather than a load error. There is no nesting: ``{{str:Upper env:Get `USER`}}`` does not parse, and composition is issue #223's question, likely answered by #99's converter stages.
 
 Design record: [docs/specs/2026-08-12-value-namespaces.md](specs/2026-08-12-value-namespaces.md).
 

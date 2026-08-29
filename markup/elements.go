@@ -33,6 +33,7 @@ func init() {
 		defValidate,
 		defTab,
 		defBorder,
+		defFrozen,
 		defGrid,
 		defVStack,
 		defHStack,
@@ -312,6 +313,88 @@ var defBorder = &ElementDef{
 			return nil, err
 		}
 		return b, nil
+	},
+}
+
+// defFrozen puts freezing in markup. Until this element, a page could
+// only be made a picture by a Go type implementing gooey.Frozen — which
+// meant the feature built FOR a design surface was unreachable from the
+// markup a design surface edits.
+//
+// Neither attribute declares a Default, and that is the catalog's rule
+// rather than an omission: AttrSpec.Default claims "writing this is the
+// same as writing nothing" and TestDeclaredDefaultsRenderIdenticallyTo
+// Omission checks it by RENDERING. Freezing changes what the tree means,
+// not what it looks like, so no value of either attribute is
+// discriminable in a static frame and declaring a Default would be an
+// unfalsifiable claim.
+var defFrozen = &ElementDef{
+	Name: "Frozen",
+	// SHARED WITH <Image>, and that is a stated compromise rather than an
+	// oversight. Every name in the vendored codicon set is already claimed
+	// by another element, and this pane landed after the rule that every
+	// builtin must declare one (#287) — so the choice was a shared name or
+	// a blank toolbox row.
+	//
+	// file-media is the semantically exact one: a frozen region renders
+	// and does not act, which is what component.go's own comment calls
+	// "click a button and it sits there like a picture". The toolbox will
+	// show <Frozen> and <Image> with the same glyph until a lock codicon
+	// is vendored, which is the real fix and is not this PR's.
+	Icon:  "file-media",
+	Seed:  "<Frozen><Text>frozen</Text></Frozen>",
+	Proto: &components.Frozen{},
+	Known: true,
+	Doc:   "A region that renders but does not act. Allow names the interaction categories that still do.",
+	Attrs: []AttrSpec{
+		// Bind-only. A literal Active would be a constant, and a constant
+		// false is a <Frozen> that does nothing — which is a spelling the
+		// page should delete rather than write. Omitting it is how you say
+		// "always frozen".
+		{Name: "Active", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin},
+		{Name: "Allow", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+	},
+	Children: ChildSpec{Mode: ModeOne},
+	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		kids, attach, err := buildChildren(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(kids) != 1 {
+			return nil, fmt.Errorf("markup: <Frozen> needs exactly one child")
+		}
+		f := &components.Frozen{Child: kids[0]}
+		if raw := e.Attrs["Active"]; raw != "" {
+			active, err := Bound[bool](e, ctx, "Active")
+			if err != nil {
+				return nil, err
+			}
+			f.Active = active
+		}
+		if raw := e.Attrs["Allow"]; raw != "" {
+			// A LITERAL Allow is checked here, at load time, which is the
+			// bargain the rest of markup makes: everything resolvable
+			// resolves before the UI is live. An interpolated one cannot
+			// be — its value does not exist yet — so it is left to
+			// components.Frozen, which fails closed and reports through
+			// AllowError. Checking only what is checkable is the point;
+			// pretending the bound case is checkable would be worse than
+			// admitting it is not.
+			if !strings.Contains(raw, "{{") {
+				if _, err := gooey.ParseAllow(raw); err != nil {
+					return nil, fmt.Errorf("markup: <Frozen Allow=%q>: %w", raw, err)
+				}
+			}
+			allow, err := BoundText(e, ctx, "Allow")
+			if err != nil {
+				return nil, err
+			}
+			f.Allow = allow
+		}
+		if err := attachAll(e, f, attach); err != nil {
+			return nil, err
+		}
+		return f, nil
 	},
 }
 

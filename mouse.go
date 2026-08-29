@@ -209,7 +209,16 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	//
 	// HitTest itself still returns the deepest component — see the comment
 	// there. This is dispatch; that is a query.
-	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y))
+	//
+	// TWO retargets now, because AllowPointer and AllowHover are separate
+	// categories and a design surface wants exactly that split: the
+	// element under the pointer lights up, and clicking it does nothing.
+	// hit is what ROUTES, hov is what HOVERS, and they are equal for every
+	// host that answers the bool — AllowNone withholds both, so both walks
+	// stop at the same ancestor.
+	deepest := m.HitTest(ev.X, ev.Y)
+	hit := m.frozenHostFor(deepest, AllowPointer)
+	hov := m.frozenHostFor(deepest, AllowHover)
 	// Every kind carries a position, so every kind updates it — a drag
 	// ghost raised inside a press handler must find the pointer already
 	// where the press was, not one motion event later. MouseTarget
@@ -229,7 +238,7 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 		// suspend mid-drag) rather than the pointer being stuck forever.
 		if !m.held {
 			m.captor = nil
-			m.setHover(hit)
+			m.setHover(hov)
 			if w := m.focusTargetFor(hit); w != nil {
 				m.SetFocus(w)
 			}
@@ -252,13 +261,13 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 		// with where the pointer actually is.
 		if !m.held {
 			m.captor = nil
-			m.setHover(hit)
+			m.setHover(hov)
 		}
 		return handled
 
 	case input.MouseMove:
 		if m.captor == nil {
-			m.setHover(hit)
+			m.setHover(hov)
 		}
 		target := m.target(hit)
 		if m.tunnelMouse(target, ev) {
@@ -304,7 +313,7 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 //
 // UI-goroutine only, like every other query on this type.
 func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
-	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y))
+	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y), AllowPointer)
 	if ev.Kind == input.MousePress && !m.held {
 		return hit
 	}

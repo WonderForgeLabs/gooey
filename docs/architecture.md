@@ -37,7 +37,7 @@ clients through one settle-barriered door.
 | `control` | The in-process control-plane service every remote transport fronts (see [the control plane](#the-control-plane)) |
 | `format`, `imaging` | Display formatting (plain functions plus computed-property constructors, so a formatted string repaints itself); the image-decode registry (png/jpeg/gif/bmp/ico in core) |
 | `validate`, `settings` | The forms-validation vocabulary over the property graph, and external state — one flat JSON document of dotted keys — as ordinary bindable properties |
-| `handlers/net`, `handlers/fs`, `handlers/env`, `handlers/str` | The in-tree capability packs behind markup's namespaces: `net`/`fs` behind handler namespaces (push), `env`/`str` behind value namespaces (pull) |
+| `handlers/net`, `handlers/fs`, `handlers/env`, `handlers/str`, `handlers/sets` | The in-tree capability packs behind markup's namespaces: `net`/`fs` behind handler namespaces (push), `env`/`str`/`sets` behind value namespaces (pull) |
 | `handlers/exec`, `handlers/temporal`, `mcp`, `grpc`, `imagefmt/svg`, `paint`, `packs/*`, `apps/*` | Nested Go modules — heavy dependencies quarantined so `go build ./...` at the root never sees them: the exec and Temporal packs, the MCP and gRPC control-plane transports, SVG rasterization, `paint`'s 2D vector drawing (a graphics library rather than an SDK, but the same doctrine), the `packs/temporal-*` activity packs (one module per Temporal API domain), and the example apps that carry deps of their own. CLAUDE.md's discovery `find` is the authority on the set — the list here is a sample and will go stale |
 | `proto`, `clients` | The `gooey.control.v1` proto contract and the committed generated clients — Go under `grpc/gen`, Python and TypeScript under `clients/` |
 
@@ -729,6 +729,24 @@ over a plain bool field records no dependency and stays sampled. Design
 record:
 [specs/2026-08-14-frozen-observed.md](specs/2026-08-14-frozen-observed.md).
 
+The bool is now a **projection** of a wider answer. "Renders but does not
+act" is all-or-nothing, and a design surface needs *frozen except X* — so
+the framework asks `FrozenAllows` for a `gooey.Allow`, a comparable
+bitmask of interaction categories (focus, each class of key, scoped
+bindings, mnemonics, pointer, hover, Startables). `AllowAll` is a member
+of that lattice and means "not frozen", so `isFrozen` is exactly
+`allow != AllowAll` and there is still one observed value per component
+rather than two that can disagree. Nothing about the observer changed:
+`armFrozen`'s computed calls both methods, so a host whose permissions
+are derived from properties is subscribed by the same call-site rule, and
+the per-frame sweep compares `Allow` values — raising the structural flag
+on **any** change to the set, because a subtree that starts allowing
+hover really does need its watcher registrations rebuilt. Markup reaches
+it as `<Frozen Allow="…">` (`components/frozen.go`), and the set is
+composed with `handlers/sets`; the vocabulary and its two closure rules
+are in
+[markup-reference.md](markup-reference.md#the-allow-vocabulary).
+
 ### Start and Close: the composition owns its goroutines
 
 Some elements own a background goroutine — `Timer` (a non-visual
@@ -1289,8 +1307,10 @@ that display it, when and only when `.Name` changes. The registry is
 separate on purpose: `markup.RegisterValues` grants a document the
 capability to **read** a namespace, `markup.RegisterHandlers` the
 capability to **write** one, so a namespace offering both is registered
-twice and a host can grant either half. Two packs ship in-tree,
-`handlers/env` and `handlers/str`. Decision record:
+twice and a host can grant either half. Three packs ship in-tree:
+`handlers/env`, `handlers/str` and `handlers/sets` — the last one set
+algebra over name sets, which is how a page composes `<Frozen Allow>`.
+Decision record:
 [specs/2026-08-12-value-namespaces.md](specs/2026-08-12-value-namespaces.md).
 
 ### UserControl: context isolation and the attribute hand-off

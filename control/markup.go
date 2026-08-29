@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -304,15 +303,24 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	if s.scoped() && old == root {
 		return nil, deniedf("element %q is the composition root; patching it replaces the whole page, which no island grant can authorize", name)
 	}
-	var put func(gooey.Component)
+	var put func(gooey.Component) bool
+	// Held for the refusal message below, which needs to name the
+	// container that declined; `parent` itself is scoped to this block.
+	var putParent gooey.Component
 	if old != root {
 		parent, index := findParent(root, old)
+		putParent = parent
 		if parent == nil {
 			return nil, invalidf("element %q is not a visual child in the live tree; PatchMarkup replaces elements a container lays out", name)
 		}
 		put = childSlot(parent, index)
 		if put == nil {
-			return nil, invalidf("element %q sits inside a %T, which PatchMarkup cannot rewrite; supported parents are VStack, HStack, Grid, Canvas, ButtonBar and Border", name, parent)
+			// No list of supported parents in the text any more: the set is
+			// open — anything implementing gooey.ChildSetter — so naming six
+			// types here would be a closed enumeration outliving the switch
+			// it came from, and wrong the first time an app registers a
+			// container of its own.
+			return nil, invalidf("element %q sits inside a %T, which PatchMarkup cannot rewrite: its parent does not implement gooey.ChildSetter, which a container implements when the index ChildComponents reports is an address it can write back to", name, parent)
 		}
 	}
 
@@ -372,7 +380,15 @@ func (s *Service) PatchMarkup(name, source string) ([]string, error) {
 	if old == root {
 		s.host.Swap(fresh)
 	} else {
-		put(fresh)
+		// The refusal path ChildSetter documents. Reaching it means the
+		// container declined a write whose index this call already
+		// validated — the composition moved under us, or a third-party
+		// container refuses for a reason of its own. Either way the tree
+		// is unchanged, so reporting success would leave the caller
+		// believing a patch landed that is not on screen.
+		if !put(fresh) {
+			return nil, invalidf("element %q could not be written back into its %T parent: the container refused the write, so the tree is unchanged", name, putParent)
+		}
 		c.InvalidateStructure()
 	}
 	return namesOf(s.bind.Named), nil
@@ -400,28 +416,50 @@ func findParent(w gooey.Component, target gooey.Component) (gooey.Component, int
 	return nil, 0
 }
 
-// childSlot returns a setter for the i-th child of a container this
-// package knows how to rewrite, or nil. The type switch is the point:
-// these containers' child sets are public fields, so writing the slot
-// is ordinary Go — no reflection. For each of them ChildComponents
-// returns the field itself, so the walk index and the slice index agree
-// by construction.
-func childSlot(parent gooey.Component, i int) func(gooey.Component) {
-	switch p := parent.(type) {
-	case *components.VStack:
-		return func(w gooey.Component) { p.Children[i] = w }
-	case *components.HStack:
-		return func(w gooey.Component) { p.Children[i] = w }
-	case *components.Grid:
-		return func(w gooey.Component) { p.Children[i] = w }
-	case *components.Canvas:
-		return func(w gooey.Component) { p.Children[i] = w }
-	case *components.ButtonBar:
-		return func(w gooey.Component) { p.Children[i] = w }
-	case *components.Border:
-		return func(w gooey.Component) { p.Child = w }
+// childSlot returns a setter for the i-th child of a container that can
+// be rewritten, or nil.
+//
+// This WAS a closed type switch over the six concrete containers in
+// components/, and replacing it with gooey.ChildSetter is the whole point
+// of the change: the switch made "which containers may hold a named
+// element?" a question answered in this package, about types in another,
+// and its answer excluded every container gooey did not ship. Anything an
+// app wrote, and anything a design surface wanted to wrap an element in,
+// broke patching for the entire subtree beneath it — measured by
+// apps/wysiwyg/decorate_probe_test.go, which pinned the limitation before
+// this and pins its removal now.
+//
+// NO FALLBACK SWITCH REMAINS, and that is deliberate rather than an
+// oversight. A fallback would be a second answer to the same question,
+// reachable only for types that declined to answer it themselves, and the
+// two would be indistinguishable at the call site — a container could
+// then be patchable for reasons its own author never stated. The six
+// implement the interface (components/childset.go) and no type is special
+// here any more.
+//
+// Still no reflection: this is a type assertion against a two-method
+// interface, the same mechanism Container itself uses.
+//
+// The range check is made HERE, before anything is built, by asking the
+// container what it currently holds — which is why an out-of-range index
+// is a refusal with an error rather than a silently dropped write.
+// The returned setter PROPAGATES SetChild's bool. It used to drop it,
+// which made the interface's own contract unenforceable from here:
+// ChildSetter documents that false is a refusal and "callers must treat
+// it as a refusal rather than ignoring it", and this was the caller. A
+// container refusing for any reason other than the index check below —
+// and the interface is open, so a third-party container may have
+// reasons of its own — would have had PatchMarkup report success while
+// changing nothing on screen. Caught in review.
+func childSlot(parent gooey.Component, i int) func(gooey.Component) bool {
+	cs, ok := parent.(gooey.ChildSetter)
+	if !ok {
+		return nil
 	}
-	return nil
+	if i < 0 || i >= len(cs.ChildComponents()) {
+		return nil
+	}
+	return func(w gooey.Component) bool { return cs.SetChild(i, w) }
 }
 
 // collectSubtree marks target and everything reachable from it —

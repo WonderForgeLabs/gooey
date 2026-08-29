@@ -67,7 +67,7 @@ would need, and v1 refuses those outright.
 | | why not |
 |---|---|
 | **Named grants selected per session** (host registers several, guest picks one by name) | nothing stops guest A selecting guest B's grant, so it needs a secret, which needs auth — that is the capability handshake, explicitly deferred |
-| **A wrapper component around the island** | `childSlot` (`control/markup.go`) is a CLOSED six-arm type switch; anything interposed between a container and a named element makes that element unpatchable. This already killed the per-element decorator idea |
+| **A wrapper component around the island** | `childSlot` (`control/markup.go`) was a CLOSED six-arm type switch; anything interposed between a container and a named element made that element unpatchable. This already killed the per-element decorator idea. **Superseded 2026-08-23:** `childSlot` now asks for `gooey.ChildSetter`, so a wrapper that implements one method is patchable-through — the mechanical objection is gone, but the grant-model objections in the rows above are not, and they are what decide it |
 | **Enforcement in each transport** | MCP and gRPC would drift into two ideas of what an island is. The rule lives in `control.Service`, which both already call — "one path, one model" applies to the scope as much as to the verbs |
 | **Caching the island's component pointer at attach** | a swap or a hot reload reassigns every `Name=`; a cached pointer keeps pointing at a detached subtree while the guest believes it owns the visible one. The island resolves per call |
 
