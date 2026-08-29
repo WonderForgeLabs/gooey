@@ -243,6 +243,10 @@ func componentPath(root, w gooey.Component, acc []gooey.Component) ([]gooey.Comp
 // being renamed and survives its geometry living only in the editor.
 func (ed *editor) mapNodes(n *node, comp gooey.Component) {
 	ed.nodeOf[comp] = n
+	// BOTH DIRECTIONS AT ONE POINT, so they cannot drift: see compOf.
+	if ed.compOf != nil {
+		ed.compOf[n] = comp
+	}
 	kids := childComponents(comp)
 	if len(kids) != len(n.Kids) || !ed.pairsAgree(n, kids) {
 		return

@@ -1081,3 +1081,76 @@ func TestTheWalkStopsWhereTheTreeStopsCorresponding(t *testing.T) {
 			"to something the walk could not verify", nodeName(ed.sel))
 	}
 }
+
+// TestCompOfIsExactlyNodeOfInverted is the pin the inverse map needs.
+//
+// componentFor used to SEARCH nodeOf, so it could not disagree with it.
+// It reads compOf now, which is a second structure that can — and a
+// disagreement is not a crash: it is the drag, the guide and the
+// selection marker all landing on a different element than the one the
+// user is pointing at, silently, for as long as the two stay out of
+// step.
+//
+// So this asserts the relation rather than a lookup: every pair in
+// nodeOf appears inverted in compOf, and compOf holds nothing else. The
+// second half matters because an entry that OUTLIVES its node — a
+// rebuild that repopulated one map and not the other — is exactly the
+// stale pointer the editor's whole staleness discipline exists to
+// prevent, and it would answer confidently.
+func TestCompOfIsExactlyNodeOfInverted(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.doc().Kids = []*node{
+		{Elem: "VStack", Attrs: map[string]string{"Name": "V"}, Kids: []*node{
+			{Elem: "Text", Body: "aa", Attrs: map[string]string{"Name": "A"}},
+			{Elem: "Text", Body: "bb", Attrs: map[string]string{"Name": "B"}},
+		}},
+		{Elem: "Text", Body: "cc", Attrs: map[string]string{"Name": "C"}},
+	}
+	ed.rebuild()
+	c.Frame()
+
+	if len(ed.nodeOf) < 4 {
+		t.Fatalf("only %d components mapped; the fixture is too small to "+
+			"tell an inverted map from an empty one", len(ed.nodeOf))
+	}
+	if len(ed.compOf) != len(ed.nodeOf) {
+		t.Errorf("compOf holds %d entries and nodeOf %d — one walk wrote "+
+			"both, so they cannot differ in size without mapNodes being "+
+			"wrong", len(ed.compOf), len(ed.nodeOf))
+	}
+	for comp, n := range ed.nodeOf {
+		if got := ed.compOf[n]; got != comp {
+			t.Errorf("nodeOf maps %T to <%s>, but compOf maps <%s> back to "+
+				"%T — componentFor would answer with the wrong component",
+				comp, n.Elem, n.Elem, got)
+		}
+	}
+	for n := range ed.compOf {
+		if _, ok := ed.nodeOf[ed.compOf[n]]; !ok {
+			t.Errorf("compOf holds <%s>, whose component is not in nodeOf: "+
+				"a stale entry that survived a rebuild", n.Elem)
+		}
+	}
+
+	// And the accessor agrees with the search it replaced.
+	for comp, n := range ed.nodeOf {
+		if got := ed.componentFor(n); got != comp {
+			t.Errorf("componentFor(<%s>) returned %T, want %T",
+				n.Elem, got, comp)
+		}
+	}
+
+	// A rebuild must replace both, not add to them.
+	before := len(ed.compOf)
+	ed.doc().Kids = ed.doc().Kids[:1]
+	ed.rebuild()
+	c.Frame()
+	if len(ed.compOf) >= before {
+		t.Errorf("after removing a subtree compOf holds %d entries, was %d: "+
+			"the map is accumulating rather than being rebuilt", len(ed.compOf), before)
+	}
+	if len(ed.compOf) != len(ed.nodeOf) {
+		t.Errorf("after a rebuild compOf has %d entries and nodeOf %d",
+			len(ed.compOf), len(ed.nodeOf))
+	}
+}

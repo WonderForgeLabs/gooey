@@ -475,15 +475,17 @@ func boundsOf(c gooey.Component) gooey.Rect {
 	return gooey.Rect{}
 }
 
-// componentFor is nodeOf inverted for one node. Linear, and deliberately
-// so: it runs once per gesture rather than once per motion.
+// componentFor is nodeOf inverted for one node.
+//
+// It reads the inverse map mapNodes fills rather than scanning, and the
+// difference is not micro-optimisation: this used to be a linear walk
+// justified by "it runs once per gesture rather than once per motion",
+// which buildGuide had already made false — it calls this twice, from
+// Overlay.Arrange, on every frame a grid is in scope. A justification
+// that has quietly stopped holding is worse than none, because it is
+// the reason nobody looks again.
 func (ed *editor) componentFor(n *node) gooey.Component {
-	for c, m := range ed.nodeOf {
-		if m == n {
-			return c
-		}
-	}
-	return nil
+	return ed.compOf[n]
 }
 
 // hitTestOrNil is the framework query with the nil-binding case folded in.

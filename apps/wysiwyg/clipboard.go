@@ -244,9 +244,19 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// silently discarded. A pasted node keeps whatever position it was
 	// copied with when it lands on a Canvas, so a paste next to the
 	// original does not stack them exactly on top of each other.
-	if into.Elem == "Canvas" && n.Attrs != nil {
-		if _, ok := n.Attrs["Canvas.Left"]; ok {
-			n.Attrs["Canvas.Top"] = fmt.Sprint(len(into.Kids)*2 + 1)
+	//
+	// ASKED OF THE GRANT, not of the name. `into.Elem == "Canvas"` with
+	// both attributes spelled as literals covered exactly one container
+	// and would have gone on writing the old names if the catalog
+	// renamed either. The grant answers which container offsets its
+	// children AND what it calls the two axes, which is the same
+	// question the drag's Release asks. Found in review of #390.
+	if g := ed.grantOf(into.Elem); g.Kind == markup.GrantOffset && n.Attrs != nil {
+		x, y := g.Attr(markup.RoleX), g.Attr(markup.RoleY)
+		if x != "" && y != "" {
+			if _, ok := n.Attrs[x]; ok {
+				n.Attrs[y] = fmt.Sprint(len(into.Kids)*2 + 1)
+			}
 		}
 	}
 	// The scaffolding, when the plan says the container needs it. The
