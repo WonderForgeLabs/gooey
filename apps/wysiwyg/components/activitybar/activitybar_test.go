@@ -4,6 +4,8 @@ import (
 	"image"
 	"os"
 	"testing"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // The rail is drawn in pixels, and pixels are invisible to every
@@ -242,4 +244,31 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// The picture and the column behind it have to be the SAME colour, and
+// nothing about the types makes that so.
+//
+// The rail is now two surfaces: RailImage fills its own bounds with bg in
+// pixels, and the framework fills the column below it with Ground() in
+// cells. They meet at the last row of the picture. If those two values
+// drift apart the result is a horizontal seam partway down the rail —
+// visible, and invisible to every other test here, because the image
+// tests never see the cells and the cell test compares against Ground()
+// and so moves with it.
+//
+// Sampled at the bottom-right corner of the picture: past the last icon
+// slot's content and past markerW, so it is the picture's own ground and
+// not something drawn on it.
+func TestTheColumnGroundIsThePicturesOwnGround(t *testing.T) {
+	img := railFS().Rail(0, true)
+	b := img.Bounds()
+	r, g, bl := at(img, b.Max.X-1, b.Max.Y-1)
+
+	got, want := render.RGB(r, g, bl), Ground()
+	if got != want {
+		t.Errorf("the picture's ground is %+v and the column's is %+v — they meet "+
+			"at the last row of the picture, so a difference is a horizontal seam "+
+			"partway down the rail", got, want)
+	}
 }

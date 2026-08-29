@@ -35,7 +35,7 @@
        document order, and the dropdown must paint above the panes it
        covers; Grid.Row and element order are independent, which is what
        lets it be declared last and drawn first. -->
-  <Grid Name="Page" Rows="1,1*,1" Cols="4,1*">
+  <Grid Name="Page" Rows="1,1*,1" Cols="5,1*">
 
     <!-- KeyBindings live on the ROOT. A binding only fires while the
          focused chain passes through its host, so a page whose focus can
@@ -95,6 +95,25 @@
          copyEndpoint in statusaddr.go. -->
     <KeyBinding Gesture="ctrl+g" Command="{{.CopyGrpc}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.CopyMCP}}"/>
+
+    <!-- UNDO AND REDO, over the document model.
+
+         CTRL+Z IS FREE TO TAKE HERE, and that is checked rather than
+         assumed: term.MakeRaw clears ISIG, so while a gooey app holds
+         the terminal the tty driver generates no SIGTSTP from it — the
+         byte 0x1a arrives like any other and input.Decode makes an
+         ordinary ctrl+z KeyEvent out of it. Nothing in this app bound it
+         before, so it was being dropped. App.Suspend and the SIGTSTP
+         dance in signals_unix.go are both untouched; a `kill -TSTP` from
+         outside still suspends the editor exactly as it did.
+
+         REDO IS ctrl+y AND NOT ALSO ctrl+shift+z. A terminal cannot
+         report shift on a printable character, so ctrl+shift+z is the
+         SAME byte as ctrl+z and the decoder lower-cases it on purpose.
+         A ctrl+shift+z binding would parse, look like a feature, and be
+         unfireable. See undo.go. -->
+    <KeyBinding Gesture="ctrl+z" Command="{{.Undo}}"/>
+    <KeyBinding Gesture="ctrl+y" Command="{{.Redo}}"/>
 
     <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
          one invented here: "To select the parent of a current selection in
@@ -247,7 +266,7 @@
          draws shapes badly out of box-drawing characters. Invisible to
          screen_text, which reads the cell plane. -->
     <ActivityBar Name="ActivityBar" Grid.Row="1" Grid.Col="0" Sel="{{.ActivitySel}}"
-                 Height="8" VAlign="Start"/>
+                 Margin="0,0,1,0"/>
 
     <DockHost Name="Dock" Grid.Row="1" Grid.Col="1" Style="dim">
 

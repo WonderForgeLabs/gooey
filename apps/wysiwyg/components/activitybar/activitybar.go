@@ -45,6 +45,8 @@ import (
 	"github.com/WonderForgeLabs/gooey/imagefmt/svg"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // Dir is where the icon assets live, relative to the editor root.
@@ -81,6 +83,41 @@ const (
 	iconPx  = 24
 	markerW = 3
 )
+
+// RailCells is the picture's natural size in CELLS — one slot per icon,
+// converted at the nominal metrics the framework itself falls back to
+// (term.DefaultCellW/H, which App.caps backfills when the terminal
+// reports none).
+//
+// It exists because the picture's size and the rail's size stopped being
+// the same thing. components.Image places at Cols: r.W, Rows: r.H, so it
+// SCALES to whatever rect it is handed; a rail that fills its column
+// would smear four icons down forty rows. The column is a background and
+// the picture sits at the top of it, which means somebody has to say how
+// tall the picture is, in cells, away from any layout.
+//
+// Nominal rather than actual, deliberately. The real cell size is known
+// only to a live Screen, and this number is needed at BUILD time — so a
+// terminal with unusual metrics draws the rail at a slightly different
+// scale, which is the same approximation the markup's hand-written
+// Height="8" was already making, now derived rather than copied.
+func RailCells(nIcons int) (cols, rows int) {
+	return railW / term.DefaultCellW, nIcons * slotH / term.DefaultCellH
+}
+
+// Ground is the rail's own background as a CELL colour — the same value
+// the picture is drawn on, so the column below the icons continues it
+// rather than approximating it.
+//
+// Exported because the colour now has two consumers that must not drift:
+// the pixels inside RailImage and the cells the framework fills behind
+// it. A near-miss between those is a visible seam partway down the
+// column, and a test comparing cells against a literal copied from here
+// would go on passing through exactly the edit that introduced it.
+//
+// Alpha is dropped, which is right: bg is opaque, and a terminal cell
+// has no alpha channel to carry one.
+func Ground() render.Color { return render.RGB(bg.R, bg.G, bg.B) }
 
 var (
 	bg       = color.RGBA{0x1e, 0x1e, 0x24, 0xff} // the rail's own ground
@@ -151,7 +188,7 @@ func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
 		// TestEveryElementDeclaresASeed — that walks the builtin
 		// registry — so this one is pinned by the editor's
 		// TestEveryPaletteEntryLoadsAndOccupiesSpace instead.
-		Seed: `<ActivityBar Sel="{{.Sel}}" Width="4" Height="8"/>`,
+		Seed: seedFor(icons),
 		// The rail IS an Image — one sixel band, not one per icon — and
 		// the proto is what the catalog derives the behavioural axes
 		// from. Focusable is true through the Segmented inside it, but
@@ -226,6 +263,49 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 			return r.Rail(sel.Get(), seg.IsFocused())
 		})}
 		seg.Child = img
+
+		// THE PICTURE IS NOT THE COLUMN, and that is the whole shape of
+		// this. The rail must reach the status bar — an icon strip that
+		// stops eight rows down reads as a floating stripe rather than an
+		// edge of the window — but Image places at Cols: r.W, Rows: r.H,
+		// so handing it the full column scales four icons across forty
+		// rows. Full height and stretched is not the fix.
+		//
+		// So the picture keeps its own size and something else is tall.
+		// The VStack declares a Background, which makes it a
+		// gooey.HasBackground: the framework fills its bounds before the
+		// children go down, so the column below the icons carries the
+		// rail's own ground rather than the page's. That is the existing
+		// seam for exactly this — a container that owns a surface and
+		// paints no chrome — and it costs one paint node.
+		//
+		// The size lands on the Layout rather than on the markup because
+		// MeasureChild treats an explicit Height as an override, whereas
+		// the picture's own Measure returns 0x0: Image measures
+		// getInt(Cols) x getInt(Rows) and this rail sets neither, being
+		// drawn in pixels.
+		//
+		// Height alone is also what keeps the icons at the TOP, and no
+		// VAlign is set here on purpose. ArrangeChild's align sandwich
+		// reads `if l.VAlign != AlignStretch || l.Height > 0`, so a
+		// non-zero Height already takes the constrain branch and the
+		// default Stretch then matches no case in the switch — leaving
+		// the rect at the top of the slot. An AlignStart beside it would
+		// look load-bearing and be inert: mutating it out changes
+		// nothing, which is exactly the redundancy that makes the real
+		// mechanism untestable.
+		cols, rows := RailCells(len(icons))
+		l := gooey.LayoutOf(seg)
+		l.Width, l.Height = cols, rows
+
+		return &components.VStack{
+			Children: []gooey.Component{seg},
+			// A SOURCE, not a literal colour on a field: Background is a
+			// *prop.Property[render.Color] because clearing it at runtime
+			// has to erase the old fill. Nothing here ever sets it, but
+			// the type is the framework's and this is how it is spelled.
+			Background: prop.NewSource(Ground()),
+		}, nil
 		// The Image is a PICTURE — no focus, no keys, no hit-testing — so
 		// on its own the rail was unselectable, which was the bug.
 		//
@@ -235,8 +315,21 @@ func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 		// and a Child so the picture could be this rail instead of drawn
 		// labels. Writing a second strip here would have been a third copy
 		// of that behaviour in the repo — Tabs re-implements it too.
-		return seg, nil
 	}
+}
+
+// seedFor is the palette's insert, sized from the same function the
+// builder uses. It was two literals — Width="4" Height="8" — which were
+// correct and unowned: nothing related them to railW and slotH, so
+// adding a fifth icon left the seed one slot short with no test able to
+// say so. The reasoning for why BOTH dimensions must appear at all is on
+// Def, and it has not changed.
+func seedFor(icons []Icon) string {
+	if len(icons) == 0 {
+		icons = DefaultIcons
+	}
+	cols, rows := RailCells(len(icons))
+	return fmt.Sprintf(`<ActivityBar Sel="{{.Sel}}" Width="%d" Height="%d"/>`, cols, rows)
 }
 
 // Renderer holds the rasterized icons so the rail is not re-rendered from
