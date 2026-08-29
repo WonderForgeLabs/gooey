@@ -838,6 +838,34 @@ case ev := <-events:
 
 `cmd/cards` drives its whole data stream this way.
 
+### FileWatcher
+
+`components.FileWatcher` — `Timer`'s other half: a non-visual element that runs a command when a watched file or directory **changes**. Hosted as an attachment on its parent, never laid out or painted. Design record: [`docs/specs/2026-08-23-filewatcher.md`](specs/2026-08-23-filewatcher.md).
+
+```xml
+<FileWatcher Paths="{{.Sources}}" Changed="{{.Reload}}" Path="{{.Hit}}" Enabled="{{.Live}}"/>
+```
+
+| Attribute | Meaning |
+|---|---|
+| `Paths` | **Required.** A binding to a `*prop.Property[[]string]`, or a literal pipe-separated list (`Paths="notes.md \| assets"`). Paths resolve against the page's `fs.FS`, so they are slash-separated and unrooted; a literal that is not is a load error. Written empty is a load error, but a **bound** list that resolves empty is legal and inert. |
+| `Changed` | The command, resolved like `Click` — a binding or a bare handler name. |
+| `Path` | Optional binding to a `*prop.Property[string]`, `Set` to the path that caused this hit immediately before `Changed` runs. |
+| `Interval` | Optional poll period. Absent means `components.DefaultWatchInterval` (300 ms — the framework's own hot-reload rate). Unparseable or non-positive is a load error. |
+| `Enabled` | Optional binding to a `*prop.Property[bool]`, or a conditional (`Enabled="{{not .Paused}}"`). Absent means always enabled. |
+
+Three things about it are decisions rather than details.
+
+**A directory is not watched by its `ModTime`.** A directory's own mtime moves when an entry is added or removed and *not* when one is edited, so a `ModTime` comparison silently misses every edit — the exact failure a watcher exists to prevent. A path that resolves to a directory is fingerprinted from its entries (each name, size and mtime); a path that resolves to a file, from its own size and mtime; a path that resolves to nothing, as a distinct **absent** state, which is what makes "watch a file that does not exist yet" and "deleted and recreated" ordinary changes rather than special cases. The walk is one level deep — to follow a subtree, name its directories.
+
+**One hit per poll.** Coalescing is by state comparison over the poll window: however many watched paths changed however many times between two polls, `Changed` runs once, and `Path` names the first of them in `Paths` order. That is the structural advantage of polling — an editor's rename-and-replace save is two states inside one window and only the endpoints are compared, so it is one hit rather than three.
+
+**The baseline is taken inside `Start`, on the UI goroutine.** Everything true of the filesystem when the composition starts is the baseline and everything after it is a change, so there is no window in which a write races the launch and is swallowed. The same rule covers a path that joins a bound `Paths` list later: its current state is recorded silently rather than reported.
+
+Confinement follows `Timer` exactly. The poll goroutine never touches the property graph — it cannot even read `Paths`, which it asks the loop for — and `Enabled` is read at fire time, on the loop. Because `Enabled` gates the hit and not the poll, a change made while disabled advances the baseline and is dropped; re-enabling resumes and does not replay it. Lifetime belongs to the `Composer`: `Composer.Close()` stops **and joins** the goroutine, so a replaced tree cannot keep polling on behalf of a viewmodel nobody is showing.
+
+An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher over one is a natural no-op — the same page works in the dev tier (`os.DirFS` + watcher) and the release tier without changing.
+
 ### Companion
 
 `components.Companion` — a **child process** that runs for as long as the tree that declares it. Non-visual like `Timer` and `KeyBinding`: hosted as an attachment on its parent, never laid out or painted. It is the markup tier of `gooey.Companion`; the process machinery underneath is `gooey.CompanionCmd`, unchanged. Design record: [`docs/specs/2026-08-10-markup-companions.md`](specs/2026-08-10-markup-companions.md).
@@ -914,7 +942,7 @@ That is one tier down from `gooey.WithCompanions` / `App.AddCompanion`, which st
 
 ## Universal layout attributes
 
-Every **visual** element (all built-ins whose component embeds `gooey.Base`, and any well-behaved custom component) accepts the FrameworkElement attributes. They map onto the component's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container. The non-visual elements — `<KeyBinding>`, `<Timer>`, `<Tooltip>`, `<Validate>`, `<TypeAhead>`, `<ValidationMarker>`, `<Companion>` — **reject** them at load: they have no bounds to place, so `<Timer Width="4"/>` is an error rather than a silent no-op.
+Every **visual** element (all built-ins whose component embeds `gooey.Base`, and any well-behaved custom component) accepts the FrameworkElement attributes. They map onto the component's `Layout` and are honored by the shared measure/arrange sandwich, so they work identically inside any container. The non-visual elements — `<KeyBinding>`, `<Timer>`, `<FileWatcher>`, `<Tooltip>`, `<Validate>`, `<TypeAhead>`, `<ValidationMarker>`, `<Companion>` — **reject** them at load: they have no bounds to place, so `<Timer Width="4"/>` is an error rather than a silent no-op.
 
 | Attribute | Values | Meaning |
 |---|---|---|
@@ -1166,7 +1194,7 @@ A registered custom component is exempt from the second rule: its builder receiv
 
 ### The Behaviors slot
 
-`<X.Behaviors>` is the one property element **every** element accepts: MAUI's explicit spelling of the attachment slot. Its children must be non-visual attachments — `<Validate>`, `<Tooltip>`, `<KeyBinding>`, `<Timer>` — and they land in exactly the list bare non-visual children feed, so the two spellings are equivalent and may be mixed:
+`<X.Behaviors>` is the one property element **every** element accepts: MAUI's explicit spelling of the attachment slot. Its children must be non-visual attachments — `<Validate>`, `<Tooltip>`, `<KeyBinding>`, `<Timer>`, `<FileWatcher>` — and they land in exactly the list bare non-visual children feed, so the two spellings are equivalent and may be mixed:
 
 ```xml
 <TextBox Text="{{.Name}}">

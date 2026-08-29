@@ -2,6 +2,7 @@ package markup
 
 import (
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ func init() {
 		defValidationMarker,
 		defKeyBinding,
 		defTimer,
+		defFileWatcher,
 		defTypeAhead,
 		defImage,
 	)
@@ -1169,6 +1171,115 @@ var defTimer = &ElementDef{
 		}
 		return t, nil
 	},
+}
+
+var defFileWatcher = &ElementDef{
+	Name: "FileWatcher",
+	// Shared with <Timer> deliberately: the shipped set has no glyph for
+	// watching a file, and Doc below already frames this as Timer's other
+	// half. Worth a dedicated codicon if one is ever vendored.
+	Icon: "watch",
+	// Paths is Required, so the seed has to carry one — and it is a
+	// literal rather than a binding because a palette drop has no
+	// binding to offer yet, and Paths="" is the one value watchPaths
+	// rejects outright.
+	Seed:  "<FileWatcher Paths=\"notes.md\" Changed=\"{{.Changed}}\"/>",
+	Proto: &components.FileWatcher{},
+	Known: true,
+	Doc:   "Timer's other half: a command run when a watched file or directory changes.",
+	Attrs: []AttrSpec{
+		{Name: "Changed", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
+		{Name: "Enabled", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin},
+		{Name: "Interval", Kind: KindDuration, Binds: BindsLiteral, Origin: OriginBuiltin},
+		{Name: "Path", Kind: KindBinding, Binds: BindsBinding, GoType: "string", Origin: OriginBuiltin},
+		{Name: "Paths", Kind: KindBinding, Binds: BindsEither, GoType: "[]string", Required: true, Origin: OriginBuiltin},
+	},
+	Children: ChildSpec{Mode: ModeLeaf},
+	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		// Non-visual like Timer: buildChildren routes it to the parent
+		// as an attachment, and the Composer starts and stops it.
+		paths, err := watchPaths(e, ctx)
+		if err != nil {
+			return nil, err
+		}
+		// The fs.FS seam, and the reason it is an error rather than a
+		// silent no-op: a watcher that quietly watches nothing is the
+		// failure this component exists to remove. A tree built from
+		// bytes has no FS, so it has to say so at LOAD time.
+		fsys := ctx.assets()
+		if fsys == nil {
+			return nil, fmt.Errorf("markup: <FileWatcher Paths=%q>: no file system to watch — this tree was built from bytes; use markup.Load or set Context.Includes", e.Attrs["Paths"])
+		}
+		changed, err := ctx.Command(e.Attrs["Changed"])
+		if err != nil {
+			return nil, fmt.Errorf("markup: <FileWatcher Changed=%q>: %w", e.Attrs["Changed"], err)
+		}
+		w := &components.FileWatcher{FS: fsys, Paths: paths, Changed: changed}
+		// Interval is optional here where Timer's is required: a timer
+		// with no interval has no meaning, and a watcher with none has
+		// the framework's own 300ms hot-reload poll.
+		if raw := strings.TrimSpace(e.Attrs["Interval"]); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: %w", raw, err)
+			}
+			if d <= 0 {
+				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: must be positive", raw)
+			}
+			w.Interval = d
+		}
+		if suppliedAttr(e, "Path") {
+			if w.Path, err = Bound[string](e, ctx, "Path"); err != nil {
+				return nil, err
+			}
+		}
+		if suppliedAttr(e, "Enabled") {
+			if w.Enabled, err = Bound[bool](e, ctx, "Enabled"); err != nil {
+				return nil, err
+			}
+		}
+		return w, nil
+	},
+}
+
+// watchPaths resolves <FileWatcher Paths=…>, which takes either form:
+// a binding to the viewmodel's own []string handle, or a literal
+// pipe-separated list, which is what a fixed set of sources actually is
+// and does not deserve a property in the viewmodel. The separator is
+// optionList's, not Grid's comma, because a comma is a legal character
+// in a filename and a pipe is one nobody types on purpose.
+//
+// ZERO PATHS IS INERT, and only through the bound form. A list that
+// resolves empty at runtime is a page under construction and is legal,
+// which is what makes Paths="{{.MaybeEmpty}}" safe; Paths="" written
+// literally is a typo, and gets the same treatment Timer gives a
+// missing Interval.
+//
+// A literal is checked against fs.ValidPath here, at load. An fs.FS
+// path is slash-separated, unrooted and never contains "." or ".."
+// elements, so Paths="/etc/hosts" or Paths="../x" would fs.Stat as
+// ErrInvalid forever — which this component cannot distinguish from
+// "not there yet", so it would poll a path that can never exist and
+// report nothing. That is precisely the silent watcher, and it is
+// cheap to refuse. A BOUND list cannot be checked here and is not:
+// the same path arrives as the absent state, and the component's doc
+// says so.
+func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
+	raw := e.Attrs["Paths"]
+	if bindRe.MatchString(raw) {
+		return Bound[[]string](e, ctx, "Paths")
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf(`markup: <FileWatcher> needs Paths (e.g. Paths="notes.md|assets" or Paths="{{.Sources}}")`)
+	}
+	parts := strings.Split(raw, "|")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if !fs.ValidPath(parts[i]) {
+			return nil, fmt.Errorf("markup: <FileWatcher Paths=%q>: %q is not a path in this file system — fs.FS paths are slash-separated, unrooted, and have no \".\" or \"..\" elements", raw, parts[i])
+		}
+	}
+	return components.Strs(parts), nil
 }
 
 var defTypeAhead = &ElementDef{

@@ -117,6 +117,8 @@ func (d *Deck) values() map[string]any {
 		"TogglePrompter": gooey.Command(d.TogglePrompter),
 		"ToggleAuto":     gooey.Command(d.ToggleAuto),
 		"Tick":           gooey.Command(d.Tick),
+		"ReloadCounter":  gooey.Command(d.ReloadCounter),
+		"CounterLive":    d.counterLive,
 		"Quit":           gooey.Command(d.Quit),
 	}
 }

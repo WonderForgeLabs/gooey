@@ -45,6 +45,20 @@
 
     <Timer Interval="1s" Tick="{{.Tick}}"/>
 
+    <!-- The vim slide's other half. counter.gooey is edited in a real
+         vim on the left of beat 2.5 and rendered on the right, and a
+         save has to reach the running pane: markup.Page watches
+         deck.gooey, and that pane was patched into the Stage slot
+         rather than loaded from the page.
+
+         Enabled rather than an if inside the handler — the watcher
+         pauses on the same condition the gauges do, through the graph,
+         with nothing torn down. The interval matches the deck's tick
+         because that is the rate the poll ran at when this was four
+         lines of stamp comparison in deck.go. -->
+    <FileWatcher Paths="counter.gooey" Interval="1s"
+                 Changed="{{.ReloadCounter}}" Enabled="{{.CounterLive}}"/>
+
     <!-- Not space. A slide can embed a real Button, and a focused
          Button consumes space before a root binding sees it — so a
          next-slide key bound to space would work on most slides and

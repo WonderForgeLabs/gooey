@@ -56,14 +56,12 @@ type Deck struct {
 	count  *prop.Property[int]
 	source *prop.Property[string]
 
-	// counterStamp is the last-seen size+mtime of counter.gooey. The
-	// slide hosts a real vim editing that file, and a save has to reach
-	// the running pane — which a save cannot do on its own: markup.Page
-	// watches deck.gooey, and the right-hand pane was not loaded by the
-	// page, it was patched into the Stage slot. So the file is polled on
-	// the tick the deck already has, and a change forces a re-patch,
-	// which re-resolves the Include from disk.
-	counterStamp string
+	// counterLive gates the <FileWatcher> on counter.gooey: the file is
+	// only worth watching while the vim slide is up and the prompter is
+	// off. Declared as a computed rather than tested inside the handler
+	// so the pause is the graph's, not an if statement's — which is the
+	// whole reason FileWatcher takes Enabled as a bindable handle.
+	counterLive *prop.Property[bool]
 
 	// live is live.gooey, read once. It is the right-hand pane of that
 	// slide on its own, so the re-patch can leave the editor alone.
@@ -121,7 +119,7 @@ func NewDeck(dir fs.FS, beats []Beat, player *Player, wrap, start int) (*Deck, e
 	if err != nil {
 		return nil, err
 	}
-	return &Deck{
+	d := &Deck{
 		live:     string(live),
 		dir:      dir,
 		beats:    beats,
@@ -143,7 +141,14 @@ func NewDeck(dir fs.FS, beats []Beat, player *Player, wrap, start int) (*Deck, e
 		count:    prop.NewSource(0),
 		painted:  prop.NewSource(0),
 		source:   prop.NewSource(string(counter)),
-	}, nil
+	}
+	// Both Gets happen before the &&, so neither drops out of the
+	// dependency set on the frames the short-circuit would skip.
+	d.counterLive = prop.NewComputed(func() bool {
+		staged, prompting := d.beat().Staged(), d.prompter.Get()
+		return staged && !prompting
+	})
+	return d, nil
 }
 
 // beat is the current one. Reading rev here — rather than in each
@@ -208,22 +213,35 @@ func (d *Deck) Tick() {
 	// readers, and prop.Set does not compare, so setting them off-slide
 	// would repaint an off-screen component once a second for twenty
 	// minutes.
+	//
+	// counter.gooey used to be polled from here too, on this same tick.
+	// It is a <FileWatcher> in deck.gooey now, gated by the same
+	// condition through counterLive — which moved the stat off the UI
+	// goroutine and the stamp comparison out of this file entirely.
 	if b.Staged() && !d.prompter.Get() {
 		d.sample()
-		d.syncCounter()
 	}
 	if d.auto.Get() && b.Dur > 0 && e >= int((b.Dur+b.Hold).Seconds()) {
 		d.Advance(1)
 	}
 }
 
-// syncCounter is the other half of the vim slide.
+// ReloadCounter is the other half of the vim slide: what the
+// <FileWatcher> on counter.gooey runs when the presenter saves.
 //
 // The left pane is a real vim on a real pty, editing counter.gooey. When
-// it writes, nothing in the framework notices: markup.Page's watcher is
-// on deck.gooey, and the right-hand pane came from PatchMarkup, not from
-// the page. So the file is polled — once a second, on the tick the deck
-// already runs, and only while a staged slide is up.
+// it writes, nothing in the framework notices on its own: markup.Page's
+// watcher is on deck.gooey, and the right-hand pane came from
+// PatchMarkup, not from the page. So the file is watched — declared in
+// deck.gooey beside the Timer, gated by counterLive.
+//
+// This function used to open with a stat, a size+mtime stamp, a
+// comparison against the last one and a first-sample guard, because it
+// ran off the deck's own tick and had to work out for itself whether
+// anything had happened. All four are the component's now, and the
+// baseline-versus-first-edit distinction that the guard existed for is
+// FileWatcher's baseline rule: everything true when the composition
+// starts is the baseline.
 //
 // It patches Live and not Stage, and that distinction is the whole
 // reason Live exists. Re-patching the Stage rebuilds the Terminal too:
@@ -234,20 +252,7 @@ func (d *Deck) Tick() {
 // The source is live.gooey, unchanged every time. That is fine and is
 // the point — what changed is the file the <Counter/> inside it resolves
 // to, one level down, and a fresh build re-reads it from the same fs.FS.
-func (d *Deck) syncCounter() {
-	st, err := fs.Stat(d.dir, "counter.gooey")
-	if err != nil {
-		return
-	}
-	stamp := itoa(int(st.Size())) + "@" + st.ModTime().String()
-	if stamp == d.counterStamp {
-		return
-	}
-	first := d.counterStamp == ""
-	d.counterStamp = stamp
-	if first {
-		return // the opening sample, not an edit
-	}
+func (d *Deck) ReloadCounter() {
 	if b, err := fs.ReadFile(d.dir, "counter.gooey"); err == nil {
 		d.source.Set(string(b))
 	}

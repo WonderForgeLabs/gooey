@@ -148,7 +148,7 @@ func TestCatalogChildModesDistinguishNoneFromAttachments(t *testing.T) {
 // facts appear nowhere in the switch; they are interface satisfaction,
 // resolved at generate time so no reflection is needed at runtime.
 func TestCatalogRecordsTheBehaviouralAxes(t *testing.T) {
-	nonVisual := map[string]bool{"Timer": true, "Tooltip": true, "Companion": true, "ValidationMarker": true}
+	nonVisual := map[string]bool{"Timer": true, "FileWatcher": true, "Tooltip": true, "Companion": true, "ValidationMarker": true}
 	focusable := map[string]bool{"Button": true, "TextBox": true, "Tabs": true, "ItemsView": true, "Checkbox": true}
 	for _, e := range BuiltinElements() {
 		if nonVisual[e.Name] && !e.NonVisual {
