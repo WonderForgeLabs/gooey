@@ -145,7 +145,9 @@ func crop(img image.Image, x, y, w, h int) image.Image {
 	if w < 1 || h < 1 {
 		return image.NewRGBA(image.Rect(0, 0, 1, 1))
 	}
-	type subImager interface{ SubImage(image.Rectangle) image.Image }
+	type subImager interface {
+		SubImage(image.Rectangle) image.Image
+	}
 	if si, ok := img.(subImager); ok {
 		b := img.Bounds()
 		return si.SubImage(image.Rect(b.Min.X+x, b.Min.Y+y, b.Min.X+x+w, b.Min.Y+y+h))

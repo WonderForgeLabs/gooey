@@ -74,6 +74,66 @@ jobs:
         with:
           lfs: true
 
+      # Formatting had NO gate anywhere (#360). `go vet` does not check it,
+      # so paint/paint.go sat unformatted from the day it was added — seen
+      # by three separate agents, each of whom correctly declined to fix it
+      # in passing, because a formatting hunk arriving on an unrelated
+      # feature branch is a merge conflict for whoever owns that module.
+      # A defect everyone has a good reason not to touch is a stable one.
+      #
+      # It lives HERE, in discover, rather than in its own job or in the
+      # matrix, for three reasons: discover already walks the tree with the
+      # exact pruning this needs; it is the one job that runs once, early,
+      # on the cheap tier; and `modules` — a REQUIRED check — asserts
+      # `DISCOVER_RESULT = success`, so failing here has teeth without
+      # adding a job or touching the ruleset. Failing before the matrix
+      # also avoids spending the expensive tiers on a tree that will not be
+      # accepted.
+      - name: gofmt
+        run: |
+          set -u
+
+          # ONE walk, not one per module, and that is deliberate rather
+          # than a shortcut. gofmt is purely syntactic — no build, no
+          # package loading, no module context — so a single walk covers
+          # every module at once AND catches a .go file that belongs to no
+          # module at all, which iterating go.mod files structurally
+          # cannot. #360 asked for the module discovery to be reused; this
+          # is the property that ask was after, reached more completely.
+          #
+          # Pruning matches the module walk below deliberately: dot-dirs at
+          # EVERY depth (.claude/worktrees/ holds whole checkouts, a
+          # gitignored .venv vendors Go files) plus vendor/, whose
+          # third-party sources are formatted by whatever gofmt their
+          # authors ran and are none of our business.
+          tmp=${RUNNER_TEMP:-/tmp}
+          find . -mindepth 1 \( -name '.?*' -o -name vendor \) -prune \
+            -o -name '*.go' -print | sort > "$tmp/go-files"
+
+          # An empty walk is the same bug in a new costume, exactly as it
+          # is for the matrix below: gofmt over nothing reports nothing and
+          # the step goes green having checked no file. A floor turns that
+          # silence into a failure.
+          n=$(wc -l < "$tmp/go-files")
+          if [ "$n" -lt 100 ]; then
+            echo "::error::the walk found only $n .go files — the prune broke, not the tree"
+            exit 1
+          fi
+
+          # `gofmt -l` EXITS 0 whether or not it lists a file. Reading $?
+          # here is the classic way to ship a gate that cannot fail; the
+          # output being empty is the check, so test the FILE, not the
+          # status.
+          xargs gofmt -l < "$tmp/go-files" > "$tmp/unformatted"
+          if [ -s "$tmp/unformatted" ]; then
+            while IFS= read -r f; do
+              echo "::error file=${f#./}::not gofmt'd — run: gofmt -w ${f#./}"
+            done < "$tmp/unformatted"
+            echo "::error::$(wc -l < "$tmp/unformatted") file(s) are not gofmt'd; see the annotations above"
+            exit 1
+          fi
+          echo "gofmt clean across $n .go files"
+
       - name: Discover modules
         id: mods
         run: |
