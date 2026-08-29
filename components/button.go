@@ -71,11 +71,11 @@ func (b *Button) Measure(avail gooey.Size) gooey.Size {
 		// a page does not re-flow because the probe found a protocol.
 		t, _, _ := b.display()
 		return gooey.Size{
-			W: min(len([]rune(t))+4, avail.W),
+			W: min(render.StringWidth(t)+4, avail.W),
 			H: min(pillRows, avail.H),
 		}
 	}
-	return gooey.Size{W: min(len([]rune(b.label())), avail.W), H: min(1, avail.H)}
+	return gooey.Size{W: min(render.StringWidth(b.label()), avail.W), H: min(1, avail.H)}
 }
 
 func (b *Button) Render(f *gooey.Frame) {
@@ -106,7 +106,7 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 		if v.focused {
 			st.Reverse = true
 		}
-		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+		f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipCols(b.label(), b.Bounds().W), st)
 		b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
 		return
 	}
@@ -119,7 +119,7 @@ func (b *Button) renderLabel(f *gooey.Frame, v buttonVisual) {
 	if v.pressed {
 		st.Reverse, st.Bold = true, true
 	}
-	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipRunes(b.label(), b.Bounds().W), st)
+	f.Cells.SetString(b.Bounds().X, b.Bounds().Y, clipCols(b.label(), b.Bounds().W), st)
 	b.underlineAccel(f, st, b.Bounds().X+2, b.Bounds().Y)
 }
 
@@ -132,7 +132,7 @@ func (b *Button) underlineAccel(f *gooey.Frame, st render.Style, x0, y int) {
 	if pos < 0 {
 		return
 	}
-	x := x0 + pos
+	x := x0 + mnemonicCol(text, pos)
 	bd := b.Bounds()
 	if x < bd.X || x >= bd.X+bd.W {
 		return

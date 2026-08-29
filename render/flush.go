@@ -2,7 +2,6 @@ package render
 
 import (
 	"strconv"
-	"unicode/utf8"
 )
 
 // Rect is a rectangle of cells, in cell coordinates.
@@ -142,9 +141,24 @@ func (f *Flusher) diff(dst []byte, b *Buffer, depth ColorDepth, e *emitter) []by
 					break
 				}
 			}
-			dst = append(dst, cup(x, y)...)
-			dst = e.run(dst, b, x, end, y, depth)
-			f.touched = append(f.touched, Rect{x, y, end - x, 1})
+			// A span may not START on a continuation cell. run skips
+			// those without emitting anything, so the cursor placed by
+			// cup(x, y) would still be at x when the NEXT cell is
+			// written — landing every cell of the run one column early,
+			// on top of the wide glyph whose tail we skipped. Widen
+			// leftward to the lead instead, and repaint the glyph.
+			//
+			// Reached through Flusher.Damage, documented at flush.go:56
+			// as the sixel/iTerm2 removal path, so the pixel plane
+			// triggers this in ordinary operation rather than only on a
+			// cell-level diff.
+			span := x
+			if b.Cells[y*b.W+span].Rune == Continuation && span > 0 {
+				span--
+			}
+			dst = append(dst, cup(span, y)...)
+			dst = e.run(dst, b, span, end, y, depth)
+			f.touched = append(f.touched, Rect{span, y, end - span, 1})
 			x = end
 		}
 	}
@@ -191,11 +205,19 @@ type emitter struct {
 func (e *emitter) run(dst []byte, b *Buffer, x0, x1, y int, depth ColorDepth) []byte {
 	for x := x0; x < x1; x++ {
 		c := b.Cells[y*b.W+x]
+		// The right half of a wide glyph. The terminal advanced two
+		// columns when it drew the cell before this one, so its cursor is
+		// already past here; emitting anything would overwrite the glyph
+		// with its own tail. Skipping keeps cell index and column aligned,
+		// which is what lets cup(x, y) below stay plain arithmetic.
+		if c.Rune == Continuation {
+			continue
+		}
 		if !e.styleSet || c.Style != e.cur {
 			dst = append(dst, sgr(c.Style, depth)...)
 			e.cur, e.styleSet = c.Style, true
 		}
-		dst = utf8.AppendRune(dst, c.Rune)
+		dst = append(dst, c.Text()...)
 		e.wrote = true
 	}
 	return dst

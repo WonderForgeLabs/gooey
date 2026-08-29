@@ -86,7 +86,7 @@ func DrawBoxTitle(cells *render.Buffer, r gooey.Rect, title string, style render
 	if cells == nil || title == "" || r.H <= 0 {
 		return
 	}
-	t := clipRunes(title, r.W-6)
+	t := clipCols(title, r.W-6)
 	if t == "" {
 		return
 	}

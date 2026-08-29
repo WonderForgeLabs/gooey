@@ -918,16 +918,11 @@ func (w *demoBody) Render(f *gooey.Frame) {
 	}
 }
 
-func clip(s string, w int) string {
-	r := []rune(s)
-	if len(r) <= w {
-		return s
-	}
-	if w < 0 {
-		return ""
-	}
-	return string(r[:w])
-}
+// clip truncates to w display COLUMNS. Every caller passes a column
+// budget — b.W, b.W-3, b.X+b.W-1-x — so counting runes here let a line
+// of wide glyphs claim up to twice its slot, and nothing downstream
+// clips it (#357).
+func clip(s string, w int) string { return render.ClipCols(s, w) }
 
 func wrapLine(s string, w int) []string {
 	if w < 4 {
@@ -943,7 +938,9 @@ func wrapLine(s string, w int) []string {
 		switch {
 		case line == "":
 			line = word
-		case len([]rune(line))+1+len([]rune(word)) <= w:
+		// COLUMNS. This is the Go-doc-comment path, so it meets
+		// whatever an author wrote in their prose.
+		case render.StringWidth(line)+1+render.StringWidth(word) <= w:
 			line += " " + word
 		default:
 			out = append(out, line)

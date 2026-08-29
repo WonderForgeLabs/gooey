@@ -193,10 +193,10 @@ func (m *MenuBar) titleSpan(i int) (x, w int) {
 	x = m.Bounds().X
 	for j := 0; j < i; j++ {
 		t, _, _ := splitMnemonic(m.Menus[j].Title)
-		x += len([]rune(t)) + 2
+		x += render.StringWidth(t) + 2
 	}
 	t, _, _ := splitMnemonic(m.Menus[i].Title)
-	return x, len([]rune(t)) + 2
+	return x, render.StringWidth(t) + 2
 }
 
 func (m *MenuBar) titleAt(x, y int) (int, bool) {
@@ -229,10 +229,11 @@ func (m *MenuBar) popupRect() gooey.Rect {
 		// border (2) + the lead column + one trailing cell. The lead is
 		// read from the menu rather than assumed to be 1, or a menu with
 		// check items sizes itself three cells too narrow and clips every
-		// label it holds.
-		iw := len([]rune(text)) + lead + 3
+		// label it holds. The text is measured in COLUMNS, so a CJK or
+		// emoji label sizes to the cells it will actually occupy.
+		iw := render.StringWidth(text) + lead + 3
 		if it.Gesture != "" {
-			iw += len([]rune(it.Gesture)) + 2
+			iw += render.StringWidth(it.Gesture) + 2
 		}
 		if iw > w {
 			w = iw
@@ -285,17 +286,24 @@ func (m *MenuBar) Render(f *gooey.Frame) {
 			}
 		}
 		text, _, pos := splitMnemonic(menu.Title)
-		f.Cells.SetString(x, b.Y, clipRunes(" "+text+" ", b.X+b.W-x), ts)
+		f.Cells.SetString(x, b.Y, clipCols(" "+text+" ", b.X+b.W-x), ts)
 		// The accelerator letter is ALWAYS underlined — a terminal cannot
 		// see a held ALT (no key-up events), so "show while ALT is down"
 		// is not implementable, and always-on is the honest convention.
 		// Static per title: no property, no extra damage.
-		if ax := x + 1 + pos; pos >= 0 && ax < b.X+b.W {
-			as := ts
-			as.Underline = true
-			f.Cells.Set(ax, b.Y, []rune(text)[pos], as)
+		if pos >= 0 {
+			// The column, not the rune index — see mnemonicCol. Split
+			// out of the one-line `if ax := …; pos >= 0 && …` it used
+			// to be, because computing the column means slicing
+			// []rune(text)[:pos], which panics on the pos < 0 that the
+			// second half of that condition was there to reject.
+			if ax := x + 1 + mnemonicCol(text, pos); ax < b.X+b.W {
+				as := ts
+				as.Underline = true
+				f.Cells.Set(ax, b.Y, []rune(text)[pos], as)
+			}
 		}
-		x += len([]rune(text)) + 2
+		x += render.StringWidth(text) + 2
 		if x >= b.X+b.W {
 			break
 		}
@@ -635,23 +643,30 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		lead := menu.checkBox(it)
 		line := lead + text
 		if it.Gesture != "" {
-			pad := inner - len([]rune(line)) - len([]rune(it.Gesture)) - 1
+			pad := inner - render.StringWidth(line) - render.StringWidth(it.Gesture) - 1
 			if pad < 1 {
 				pad = 1
 			}
 			line += spaces(pad) + it.Gesture + " "
 		}
-		if n := inner - len([]rune(line)); n > 0 {
+		if n := inner - render.StringWidth(line); n > 0 {
 			line += spaces(n)
 		}
-		f.Cells.SetString(b.X+1, y, clipRunes(line, inner), is)
+		f.Cells.SetString(b.X+1, y, clipCols(line, inner), is)
 		// Same convention as the bar: the accelerator letter is always
 		// underlined. Typing it activates the item while the menu is open.
 		// The underline offset is measured from the LEAD, not assumed to
 		// be one cell in: with a check column the accelerator letter is
 		// three cells further right, and underlining the old position
 		// would put the rule under the check box.
-		if at := len([]rune(lead)) + pos; pos >= 0 && at < inner {
+		//
+		// Both halves are COLUMNS, not runes. The lead is measured
+		// because a check glyph may be wide, and the offset within the
+		// text is mnemonicCol rather than pos because everything left of
+		// the accelerator may be. With a one-cell lead this is the same
+		// b.X+2+mc the width-only version painted, which is why the two
+		// agree everywhere ASCII.
+		if at := render.StringWidth(lead) + mnemonicCol(text, pos); pos >= 0 && at < inner {
 			as := is
 			as.Underline = true
 			f.Cells.Set(b.X+1+at, y, []rune(text)[pos], as)

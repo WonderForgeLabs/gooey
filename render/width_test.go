@@ -1,0 +1,206 @@
+package render
+
+import "testing"
+
+// The fix and the instrument that proves it, in one test.
+//
+// Before #358 a cell assertion COULD NOT SEE this bug, and that was not a
+// gap in the assertions but a property of what they compare against: the
+// buffer held exactly the runes we asked for, and the corruption happened
+// one layer down when the terminal advanced two columns for a glyph given
+// one cell.
+//
+// Both halves are still asserted, because the second is what keeps the
+// first honest. Half one is the new cell layout; half two builds the OLD
+// layout by hand and requires the model to still call it displaced. A
+// model that had quietly stopped detecting anything would pass half one
+// on its own.
+func TestAWideGlyphClaimsItsSecondColumn(t *testing.T) {
+	b := NewBuffer(6, 1)
+	b.SetString(0, 0, "世界ab", Style{})
+
+	// HALF ONE — a wide glyph now OWNS the column it covers, so the row
+	// is four columns of content in four cells, not four runes in four
+	// cells. The continuations are the fix made visible.
+	for i, want := range []rune{'世', Continuation, '界', Continuation} {
+		if got := b.At(i, 0).Rune; got != want {
+			t.Fatalf("cell %d holds %q, want %q — a wide glyph must claim the cell "+
+				"its second column covers", i, got, want)
+		}
+	}
+	// And 'a' lands where layout would put it: column 4, not column 2.
+	if got := b.At(4, 0).Rune; got != 'a' {
+		t.Fatalf("cell 4 holds %q, want 'a' — the text after two wide glyphs "+
+			"belongs at column 4", got)
+	}
+
+	// HALF TWO — and the model can still see a row that IS displaced,
+	// which is what makes half one worth asserting.
+	//
+	// Built by assigning Cells directly, because NEITHER writer will
+	// produce one any more: SetString reserves the columns a glyph
+	// covers, and Set repairs the seam when a write lands on half of
+	// one. That is the point of both, and it makes the raw slice the
+	// only way to obtain this row.
+	//
+	// Which is not a contrivance — it is precisely what an external
+	// cell-copy loop does. components/itemsview.go:873 and
+	// apps/introdeck/terminal.go:255 both copy cell by cell and can clip
+	// mid-glyph, so this shape stays reachable from real code and the
+	// model has to keep reporting it.
+	bad := NewBuffer(6, 1)
+	for i, r := range []rune{'世', '界', 'a', 'b'} {
+		bad.Cells[i] = Cell{Rune: r}
+	}
+	x, by, ok := Displaced(bad, 0)
+	if !ok {
+		t.Fatal("the model reports a hand-built one-rune-per-cell row as faithful. " +
+			"It cannot then be trusted to report a real one, and the invariant " +
+			"test below would be passing vacuously")
+	}
+	// Asserted exactly, because "something moved" would also pass for a
+	// model that called every row displaced.
+	if x != 1 || by != 1 {
+		t.Errorf("first displacement at cell %d by %d columns, want cell 1 by 1 — "+
+			"cell 1 is the first thing after 世, which occupies columns 0 and 1",
+			x, by)
+	}
+	if got := TerminalColumns(bad, 0)[2]; got != 4 {
+		t.Errorf("cell 2 ('a') lands in terminal column %d, want 4 — two wide "+
+			"glyphs ahead of it, each taking two columns", got)
+	}
+}
+
+// The invariant the fix has to establish, and the direct pin for #358.
+//
+// A buffer column should BE a terminal column. Where that holds, a
+// component arranged at column i paints at column i and layout means what
+// it says; where it does not, everything rightward of a wide glyph is
+// displaced and the damaged cells are CLEAN — nobody invalidated them —
+// so nothing ever repaints over the mess.
+func TestABufferColumnIsATerminalColumn(t *testing.T) {
+	// THE FIXTURE LIST IS THE TEST. "世界ab" alone passed against two real
+	// defects because of what it happens not to contain: it ends in
+	// ASCII, so a trailing Continuation never reached TerminalWidth's
+	// last-cell arithmetic, and it holds no VS16 cluster, so a cell that
+	// reserves by the cluster's width and draws by its first rune's never
+	// arose. Both were found by review, not here. Every shape that can
+	// break the invariant belongs in this list.
+	for _, c := range []struct {
+		in  string
+		w   int
+		why string
+	}{
+		{"世界ab", 6, "the original: wide glyphs then ASCII"},
+		{"ab世界", 6, "ENDING in a wide glyph, so the last cell is a Continuation"},
+		{"世", 2, "nothing but a wide glyph"},
+		{"⚠️x", 4, "VS16 emoji presentation: two columns carried by the " +
+			"SECOND rune of the cluster"},
+		{"🏳️‍🌈x", 4, "a ZWJ sequence — four runes, two columns"},
+		{"éx", 3, "a combining mark: one column, and it must not claim two"},
+		{"abcd", 4, "the ASCII control"},
+	} {
+		b := NewBuffer(c.w, 1)
+		b.SetString(0, 0, c.in, Style{})
+
+		if x, by, ok := Displaced(b, 0); ok {
+			t.Errorf("%q (%s): cell %d is drawn %d columns right of where the "+
+				"buffer puts it; a wide glyph must consume the cells it covers",
+				c.in, c.why, x, by)
+		}
+		if got := TerminalWidth(b, 0); got != b.W {
+			t.Errorf("%q (%s): row occupies %d terminal columns for a %d-cell "+
+				"buffer — the overflow is pushed off the right edge",
+				c.in, c.why, got, b.W)
+		}
+	}
+}
+
+// The model must not cry wolf. An ASCII row is faithful, and a model that
+// reported otherwise would make the test above vacuous by always firing.
+func TestAnAsciiRowIsFaithful(t *testing.T) {
+	b := NewBuffer(6, 1)
+	b.SetString(0, 0, "abcdef", Style{})
+
+	if x, by, ok := Displaced(b, 0); ok {
+		t.Errorf("an all-ASCII row reported cell %d displaced by %d; the model "+
+			"fires on rows that are correct, so it cannot be trusted on rows "+
+			"that are not", x, by)
+	}
+	if got := TerminalWidth(b, 0); got != 6 {
+		t.Errorf("TerminalWidth = %d, want 6", got)
+	}
+}
+
+// Width itself, at the boundaries rather than the centre — one case per
+// class, because a table that got wide runes right and combining marks
+// wrong would still pass a test built only from CJK.
+func TestRuneAndStringWidth(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want int
+		why  string
+	}{
+		{"a", 1, "ASCII"},
+		{"世", 2, "East Asian Wide"},
+		{"→", 1, "an arrow is narrow despite being non-ASCII"},
+		{"é", 1, "e plus a combining acute is one column, not two"},
+		{"🇯🇵", 2, "a flag is TWO regional indicators and two columns — the case " +
+			"go-runewidth would have needed a separate clustering answer for"},
+		{"👍", 2, "emoji presentation"},
+	} {
+		if got := StringWidth(c.in); got != c.want {
+			t.Errorf("StringWidth(%q) = %d, want %d — %s", c.in, got, c.want, c.why)
+		}
+	}
+
+	// RuneWidth is the per-rune question and deliberately answers the
+	// flag differently: each regional indicator is one column alone.
+	// Pinned so the difference is a decision on the record rather than a
+	// surprise at the first multi-rune glyph.
+	if got := RuneWidth('世'); got != 2 {
+		t.Errorf("RuneWidth('世') = %d, want 2", got)
+	}
+	if got := RuneWidth('a'); got != 1 {
+		t.Errorf("RuneWidth('a') = %d, want 1", got)
+	}
+}
+
+// ClipCols is exported because two packages need the same clipping rule
+// (components for its paint sites, cmd/browser for markdown), and a
+// second hand-rolled cluster loop is how the two quietly disagree. Its
+// own package tests it directly rather than leaving it to the callers'
+// suites, since it is now API.
+func TestClipColsNeverSplitsAWideGlyph(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		w    int
+		want string
+		why  string
+	}{
+		{"世界ab", 3, "世", "界 would reach column 4, past the budget — so the odd column stays empty"},
+		{"世界ab", 4, "世界", "two glyphs fit exactly"},
+		{"世界ab", 5, "世界a", "and the ascii tail fills the odd column"},
+		{"abcd", 2, "ab", "the ascii case, where columns and runes agree"},
+		{"世界", 9, "世界", "a budget wider than the string returns it whole"},
+		{"世界", 0, "", "a zero budget draws nothing"},
+		{"世界", -1, "", "and so does a negative one, which a caller reaches by " +
+			"subtracting a margin from a rect narrower than it"},
+	} {
+		if got := ClipCols(c.in, c.w); got != c.want {
+			t.Errorf("ClipCols(%q, %d) = %q, want %q — %s", c.in, c.w, got, c.want, c.why)
+		}
+	}
+}
+
+// The property behind the table: whatever the input, the result fits.
+// A table can only assert the cases someone thought of.
+func TestClipColsAlwaysFitsItsBudget(t *testing.T) {
+	for _, s := range []string{"世界ab", "a世b界c", "🇺🇸ab", "héllo", "", "  "} {
+		for w := 0; w <= 12; w++ {
+			if got := StringWidth(ClipCols(s, w)); got > w {
+				t.Errorf("ClipCols(%q, %d) is %d columns wide", s, w, got)
+			}
+		}
+	}
+}

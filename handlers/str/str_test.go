@@ -11,13 +11,11 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-func row(b *render.Buffer, y int) string {
-	var sb strings.Builder
-	for x := 0; x < b.W; x++ {
-		sb.WriteRune(b.At(x, y).Rune)
-	}
-	return sb.String()
-}
+// row is the row as a terminal would read it — see render.RowText,
+// which is where the continuation markers get skipped. Building the
+// string here cell by cell rendered them as literal runes, which made
+// any fixture holding a wide glyph unassertable.
+func row(b *render.Buffer, y int) string { return render.RowText(b, y) }
 
 func grant(t *testing.T) {
 	t.Helper()
@@ -78,15 +76,53 @@ func TestFunctions(t *testing.T) {
 	}
 }
 
-// Runes, not bytes: a terminal counts cells, and padding by byte length
-// would leave a multibyte name short.
-func TestPadAndTruncateCountRunes(t *testing.T) {
+// Not bytes: padding by byte length leaves a multibyte name short. These
+// runes are multi-byte and ONE column each, so this case pins the byte
+// half alone.
+//
+// It was called TestPadAndTruncateCountRunes, which was the reason given
+// for the fix that made them count runes — "a terminal counts cells".
+// The reason was right and the unit was not, and the name went on
+// asserting the wrong one; see the column half below.
+func TestPadAndTruncateDoNotCountBytes(t *testing.T) {
 	grant(t)
 	if got := paint(t, "[{{str:Pad `héllo` `7`}}]", nil, 20); got != "[héllo  ]" {
 		t.Fatalf("Pad got %q", got)
 	}
 	if got := paint(t, "{{str:Truncate `héllo` `3`}}", nil, 20); got != "hé…" {
 		t.Fatalf("Truncate got %q", got)
+	}
+}
+
+// And not runes either, which is the opposite error and the one that
+// survived the byte fix. Both functions are documented in terms of what
+// a terminal does — pad fills to a width, truncate is "never wider than
+// n" — and a CJK rune is one rune and TWO cells, so a name padded to 12
+// runes was 24 cells wide and pushed the column beside it off the row.
+func TestPadAndTruncateCountColumns(t *testing.T) {
+	grant(t)
+	// 世界 is 2 runes and 4 columns, so padding to 6 adds TWO spaces, not
+	// four. A rune count writes "世界    " — 8 columns in a 6-column slot.
+	if got := paint(t, "[{{str:Pad `世界` `6`}}]", nil, 20); got != "[世界  ]" {
+		t.Fatalf("Pad got %q, want %q — 世界 is 4 columns, so 6 leaves room for 2 spaces",
+			got, "[世界  ]")
+	}
+	// Truncate to 5 columns: the ellipsis takes one, leaving 4, which is
+	// exactly two glyphs.
+	if got := paint(t, "{{str:Truncate `世界世界` `5`}}", nil, 20); got != "世界…" {
+		t.Fatalf("Truncate got %q, want %q", got, "世界…")
+	}
+	// And the short case, where the cut falls INSIDE a glyph: 3 columns
+	// leaves 2 for text, and 世 fills them exactly.
+	if got := paint(t, "{{str:Truncate `世界世界` `3`}}", nil, 20); got != "世…" {
+		t.Fatalf("Truncate got %q, want %q", got, "世…")
+	}
+	// The odd budget is the honest-short case: 4 columns leaves 3 for
+	// text, 世 takes 2, and 界 cannot fit in the remaining 1 — so the
+	// result is 3 columns rather than 4. Half a glyph is not drawable.
+	if got := paint(t, "{{str:Truncate `世界世界` `4`}}", nil, 20); got != "世…" {
+		t.Fatalf("Truncate got %q, want %q — the leftover column stays empty "+
+			"rather than carrying half of 界", got, "世…")
 	}
 }
 

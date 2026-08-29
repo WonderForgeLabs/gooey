@@ -2,6 +2,8 @@
 // cells and the ANSI diff/flush path that puts them on screen.
 package render
 
+import "github.com/rivo/uniseg"
+
 // Color is a 24-bit RGB color. Zero value means "terminal default".
 type Color struct {
 	R, G, B uint8
@@ -19,8 +21,50 @@ type Style struct {
 }
 
 type Cell struct {
-	Rune  rune
-	Style Style
+	Rune rune
+	// Cluster is the WHOLE grapheme cluster when it is more than one
+	// rune — "e\u0301", "\u26a0\ufe0f", a ZWJ emoji sequence — and empty
+	// otherwise, which is the overwhelmingly common case.
+	//
+	// It exists because the width and the content have to come from the
+	// same thing. Storing only the cluster's first rune reserved cells by
+	// the CLUSTER's width and drew a glyph of the FIRST RUNE's width:
+	// "\u26a0\ufe0f" is two columns, U+26A0 alone is one, so the row was
+	// displaced in the opposite direction from the bug #358 exists to
+	// fix. The same truncation silently dropped every combining mark —
+	// decomposed "e\u0301" painted as "e".
+	//
+	// A string keeps Cell comparable, so == still works and every
+	// Cell{Rune: 'x'} literal still means what it did.
+	Cluster string
+	Style   Style
+}
+
+// Text is what the terminal receives for this cell: the full cluster when
+// there is one, nothing at all for a continuation (the glyph before it
+// already drew this column), and the plain rune otherwise.
+func (c Cell) Text() string {
+	if c.Rune == Continuation {
+		return ""
+	}
+	if c.Cluster != "" {
+		return c.Cluster
+	}
+	return string(c.Rune)
+}
+
+// Width is how many columns a terminal advances for this cell.
+//
+// Zero for a continuation, which is the rule TerminalColumns spells out
+// and the one that is easy to get wrong from the outside: RuneWidth of
+// the Continuation sentinel is 1, because string(rune(-1)) is U+FFFD.
+// Asking the cell rather than its rune is what keeps that from being
+// re-derived — and mis-derived — at every call site.
+func (c Cell) Width() int {
+	if c.Rune == Continuation {
+		return 0
+	}
+	return StringWidth(c.Text())
 }
 
 // Buffer is a W×H grid of cells — one frame of the cell plane.
@@ -99,6 +143,53 @@ func (b *Buffer) Set(x, y int, r rune, s Style) {
 		return
 	}
 	b.Cells[y*b.W+x] = Cell{Rune: r, Style: s}
+	// A single-cell write can break a two-cell glyph from either side,
+	// and both halves of the break are silent. See healSeam.
+	b.healSeam(x, y)
+	b.healSeam(x+1, y)
+}
+
+// healSeam restores the one invariant that makes a wide glyph safe to
+// overpaint: the cell at x is a Continuation EXACTLY WHEN the cell before
+// it is a wide lead. Either half alone is a corrupt row.
+//
+// This matters because the framework's paint model is overpainting —
+// flush.go:25 says it outright: "components overpaint each other,
+// containers deliberately do not clear their bounds, and a leaf's
+// pre-clear touches cells no damage counter knows about". With one rune
+// per cell that model was closed under any single write. With wide glyphs
+// it is not: writing over a lead leaves an orphan Continuation, which the
+// flusher skips forever, so that column can never be repainted; writing
+// over a Continuation leaves a lead whose glyph displaces everything
+// after it on the row.
+//
+// The surviving half becomes a space rather than being left alone,
+// because a space is the only value that both draws correctly and
+// occupies exactly the one column the cell owns.
+func (b *Buffer) healSeam(x, y int) {
+	if y < 0 || y >= b.H || x < 0 || x >= b.W {
+		return
+	}
+	i := y*b.W + x
+	lead := x > 0 && b.Cells[i-1].Width() >= 2
+	cont := b.Cells[i].Rune == Continuation
+	switch {
+	case lead && !cont:
+		b.Cells[i-1] = Cell{Rune: ' ', Style: b.Cells[i-1].Style}
+	case cont && !lead:
+		b.Cells[i] = Cell{Rune: ' ', Style: b.Cells[i].Style}
+	}
+}
+
+// put writes a cell without repairing seams — for SetString, which writes
+// whole pairs itself and repairs only the two edges of its run. Going
+// through Set would make the Continuation it writes at x+1 look like an
+// overpaint of the lead it wrote at x one call earlier.
+func (b *Buffer) put(x, y int, c Cell) {
+	if x < 0 || y < 0 || x >= b.W || y >= b.H {
+		return
+	}
+	b.Cells[y*b.W+x] = c
 }
 
 func (b *Buffer) At(x, y int) Cell {
@@ -108,10 +199,83 @@ func (b *Buffer) At(x, y int) Cell {
 	return b.Cells[y*b.W+x]
 }
 
-// SetString writes a string starting at (x,y), clipped to the buffer.
+// Continuation is the Rune held by the cell a wide glyph's SECOND column
+// covers. It is not drawn — the terminal already advanced two columns
+// when it drew the glyph in the cell before — and it exists so that a
+// buffer column keeps meaning a terminal column.
+//
+// A negative rune because every value a caller could legitimately write
+// is non-negative, so this cannot collide with content. It is emphatically
+// not a space: a space would erase the right half of the glyph.
+const Continuation rune = -1
+
+// SetString writes a string starting at (x,y), clipped to the buffer, and
+// advances by each glyph's DISPLAY WIDTH rather than one cell per rune.
+//
+// The invariant it maintains is that cell index equals terminal column
+// (see width.go). A double-width glyph takes the cell it is written to
+// AND marks the next one Continuation, so the text after it starts at the
+// column layout actually allocated. Before this, a wide glyph consumed
+// one cell and two columns, and everything to its right was displaced —
+// invisibly, because the cells were exactly what we asked for (#358).
+//
+// By grapheme cluster, not by rune: a flag is two regional indicators and
+// two columns, and a ZWJ sequence many runes and two columns. Iterating
+// runes would write each piece to its own cell and measure the whole
+// thing wrong.
 func (b *Buffer) SetString(x, y int, str string, s Style) {
-	for _, r := range str {
-		b.Set(x, y, r, s)
+	if y < 0 || y >= b.H {
+		return
+	}
+	start := x
+	// uniseg's contract is -1 on the first call and the returned state
+	// thereafter. Passing -1 every time re-derives the break state from
+	// scratch at each cluster; probing flags, ZWJ families and the
+	// rainbow flag found no divergence, but threading it is one line and
+	// removes the question.
+	state := -1
+	for len(str) > 0 {
+		var cluster string
+		var w int
+		cluster, str, w, state = uniseg.FirstGraphemeClusterInString(str, state)
+		if cluster == "" {
+			continue
+		}
+		if x >= b.W {
+			break
+		}
+		// Clip on the LEFT as well as the right. Set bounds-checks, so
+		// before this the lead of a straddling glyph was swallowed and
+		// its Continuation still landed in cell 0 — an orphan marking a
+		// column the flusher then skips forever. Skipping by the
+		// cluster's width keeps the columns of what follows correct.
+		if x < 0 {
+			x += max(w, 1)
+			continue
+		}
+		c := Cell{Rune: []rune(cluster)[0], Style: s}
+		if len([]rune(cluster)) > 1 {
+			c.Cluster = cluster
+		}
+		if w >= 2 {
+			// No room for the second half: drawing it would overflow the
+			// line and put the glyph's tail in column 0 of the next row
+			// on a terminal with autowrap. A space is the honest answer.
+			if x+1 >= b.W {
+				b.put(x, y, Cell{Rune: ' ', Style: s})
+				x++
+				break
+			}
+			b.put(x, y, c)
+			b.put(x+1, y, Cell{Rune: Continuation, Style: s})
+			x += 2
+			continue
+		}
+		b.put(x, y, c)
 		x++
 	}
+	// Only the two edges of the run can have broken a pair; everything
+	// between them this call wrote itself.
+	b.healSeam(start, y)
+	b.healSeam(x, y)
 }

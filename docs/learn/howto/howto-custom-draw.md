@@ -45,6 +45,33 @@ b := w.Bounds() // gooey.Rect{X, Y, W, H}, set during Arrange
 f.Cells.SetString(b.X, b.Y, "top-left of ME", st)
 ```
 
+## A wide glyph occupies two cells
+
+A CJK character or an emoji is **two columns**, and the terminal advances
+by two when it draws one. So `SetString` gives it two cells: the glyph in
+the first, and `render.Continuation` — a sentinel rune, never drawn — in
+the second. That keeps cell index equal to terminal column, which is what
+makes `Bounds()` mean anything ([#358](https://github.com/WonderForgeLabs/gooey/issues/358)).
+
+Three consequences for a custom `Render`:
+
+- **Measure in columns, not runes.** `len([]rune(s))` is not a width.
+  Use `render.StringWidth(s)`, and `render.ClipCols(s, w)` to fit a
+  string into `w` cells — it stops *before* a glyph that would overrun,
+  so it can return one column short. That is deliberate; half a glyph is
+  not something a terminal can draw.
+- **Advance by what you wrote, not by what you were given.** After
+  `f.Cells.SetString(x, y, shown, st)`, the next column is
+  `x + render.StringWidth(shown)`. If `shown` came from `ClipCols`, the
+  original string's length is the wrong number.
+- **Copying cells is the one sharp edge.** `Set` and `SetString` repair a
+  glyph you overpaint half of, so ordinary drawing is safe. A loop that
+  assigns `Buffer.Cells` directly does not get that, and clipping such a
+  copy mid-glyph leaves either an orphan continuation (a column nothing
+  can ever repaint) or a lead that shifts the rest of the row. If you
+  copy cells, copy pairs — and `render.Displaced(b, y)` will tell you
+  whether a row survived.
+
 The style is the full per-cell surface:
 
 ```go

@@ -1,6 +1,10 @@
 package components
 
-import "unicode"
+import (
+	"unicode"
+
+	"github.com/WonderForgeLabs/gooey/render"
+)
 
 // The mnemonic marker is one convention shared by every component that
 // takes an accelerator in its text — MenuBar titles and items, Button
@@ -62,4 +66,28 @@ func splitExplicitMnemonic(s string) (text string, accel rune, pos int, ok bool)
 		out = append(out, in[i])
 	}
 	return string(out), accel, pos, pos >= 0
+}
+
+// mnemonicCol converts a mnemonic's RUNE index into the COLUMN offset of
+// the cell it is painted in.
+//
+// splitMnemonic reports pos as an index into []rune(text) — it has to,
+// because that is how the caller indexes back into the text to re-style
+// the letter. Four painters then used that number directly as a column
+// offset from where the text starts, which is only the same number while
+// every rune before the accelerator is one column wide. Put a CJK
+// character or an emoji earlier in the label and the underline drifts
+// left of the letter it names, by one column per wide glyph.
+//
+// Here rather than four times over: it is one idea, and a local copy in
+// each painter is how they come to disagree.
+func mnemonicCol(text string, pos int) int {
+	if pos <= 0 {
+		return 0
+	}
+	r := []rune(text)
+	if pos > len(r) {
+		pos = len(r)
+	}
+	return render.StringWidth(string(r[:pos]))
 }

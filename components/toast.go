@@ -149,7 +149,7 @@ type Toast struct {
 	Style render.Style
 }
 
-func (t *Toast) width() int { return len([]rune(t.Text)) + 2 }
+func (t *Toast) width() int { return render.StringWidth(t.Text) + 2 }
 
 func (t *Toast) Measure(avail gooey.Size) gooey.Size {
 	return gooey.Size{W: min(t.width(), avail.W), H: min(1, avail.H)}

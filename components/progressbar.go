@@ -110,8 +110,11 @@ func (p *ProgressBar) Render(f *gooey.Frame) {
 	label := getStr(p.Label)
 	x := b.X
 	if label != "" {
-		f.Cells.SetString(x, b.Y, clipRunes(label, b.W), styleDim)
-		x += len([]rune(label))
+		// The written string and the advance are the same value; see
+		// the same fix in gauge.go.
+		shown := clipCols(label, b.W)
+		f.Cells.SetString(x, b.Y, shown, styleDim)
+		x += render.StringWidth(shown)
 	}
 	if p.busy() {
 		p.renderBusy(f, x, b.Y, b.X+b.W-x)

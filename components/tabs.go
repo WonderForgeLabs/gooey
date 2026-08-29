@@ -208,7 +208,7 @@ func (t *Tabs) Render(f *gooey.Frame) {
 			break
 		}
 		h := t.header(i)
-		f.Cells.SetString(x, b.Y, clipRunes(" "+h+" ", b.X+b.W-x), st)
+		f.Cells.SetString(x, b.Y, clipCols(" "+h+" ", b.X+b.W-x), st)
 		x += segWidth(h)
 	}
 	// The focused-strip markers, same as Segmented: the selected header

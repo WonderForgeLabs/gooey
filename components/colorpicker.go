@@ -176,7 +176,7 @@ func (p *ColorPicker) Render(f *gooey.Frame) {
 				labelSt.Reverse = true
 			}
 		}
-		f.Cells.SetString(b.X, y, clipRunes("RGB"[ch:ch+1]+" ", b.W), labelSt)
+		f.Cells.SetString(b.X, y, clipCols("RGB"[ch:ch+1]+" ", b.W), labelSt)
 
 		p.renderBar(f, b.X+pickerLabelW, y, barW, cur, ch, v, depth)
 		if pixel && barW > 0 {
@@ -184,7 +184,7 @@ func (p *ColorPicker) Render(f *gooey.Frame) {
 		}
 
 		if x := b.X + pickerLabelW + barW; x < b.X+b.W {
-			f.Cells.SetString(x, y, clipRunes(fmt.Sprintf("%4d", v), b.X+b.W-x), styleDim)
+			f.Cells.SetString(x, y, clipCols(fmt.Sprintf("%4d", v), b.X+b.W-x), styleDim)
 		}
 	}
 
@@ -259,7 +259,7 @@ func (p *ColorPicker) renderReadout(f *gooey.Frame, x, y, w int, cur render.Colo
 		label = " " + p.Hex()
 	}
 	if tx := x + swatchW; tx < x+w {
-		f.Cells.SetString(tx, y, clipRunes(label, x+w-tx), render.Style{Bold: true})
+		f.Cells.SetString(tx, y, clipCols(label, x+w-tx), render.Style{Bold: true})
 	}
 }
 

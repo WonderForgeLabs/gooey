@@ -98,8 +98,8 @@ func TestFenceIsVerbatimAndUnwrapped(t *testing.T) {
 		t.Fatalf("fence produced %d lines, want 1: %q", len(fenced), fenced)
 	}
 	// Clipped to the pane, never wrapped onto a second line.
-	if runeLen(fenced[0]) > 24 {
-		t.Fatalf("fence line %d wide in a 24 column pane: %q", runeLen(fenced[0]), fenced[0])
+	if colWidth(fenced[0]) > 24 {
+		t.Fatalf("fence line %d wide in a 24 column pane: %q", colWidth(fenced[0]), fenced[0])
 	}
 	if !strings.HasPrefix(fenced[0], "  go run") {
 		t.Fatalf("fence body not indented verbatim: %q", fenced[0])
@@ -173,7 +173,7 @@ func TestParagraphsJoinThenWrap(t *testing.T) {
 	src := "one two three\nfour five six\nseven eight\n"
 	lines := text(renderMarkdown(src, 20, markdownStyles()))
 	for _, ln := range lines {
-		if runeLen(ln) > 20 {
+		if colWidth(ln) > 20 {
 			t.Fatalf("line over width: %q", ln)
 		}
 	}

@@ -202,9 +202,9 @@ func (p *tipPopup) text() string {
 }
 
 func (p *tipPopup) width() int {
-	w := len([]rune(p.text())) + 2
+	w := render.StringWidth(p.text()) + 2
 	if g := p.tip.gestureHint(); g != "" {
-		w += len([]rune(g)) + 2
+		w += render.StringWidth(g) + 2
 	}
 	return w
 }
@@ -231,7 +231,7 @@ func (p *tipPopup) Render(f *gooey.Frame) {
 		hs := st
 		hs.Dim = true
 		hint := g + " "
-		if hx := b.X + b.W - len([]rune(hint)); hx > b.X {
+		if hx := b.X + b.W - render.StringWidth(hint); hx > b.X {
 			f.Cells.SetString(hx, b.Y, hint, hs)
 		}
 	}

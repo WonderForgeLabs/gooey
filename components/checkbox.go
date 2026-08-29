@@ -26,7 +26,7 @@ type Checkbox struct {
 func (c *Checkbox) label() string { return getStr(c.Label) }
 
 func (c *Checkbox) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(4+len([]rune(c.label())), avail.W), H: min(1, avail.H)}
+	return gooey.Size{W: min(4+render.StringWidth(c.label()), avail.W), H: min(1, avail.H)}
 }
 
 func (c *Checkbox) Render(f *gooey.Frame) {
@@ -51,7 +51,7 @@ func (c *Checkbox) Render(f *gooey.Frame) {
 	if b.W <= 0 || b.H <= 0 {
 		return
 	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(box+label, b.W), st)
+	f.Cells.SetString(b.X, b.Y, clipCols(box+label, b.W), st)
 }
 
 // IsChecked reads the bound state, tolerating an unbound Checkbox (a

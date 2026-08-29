@@ -9,12 +9,13 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
+// row is the row as a terminal would read it, trailing blanks trimmed.
+// The readback itself is render.RowText, which is where the
+// continuation markers get skipped: building the string here cell by
+// cell rendered them as literal runes, so no fixture in this package
+// could hold a wide glyph and be asserted on.
 func row(b *render.Buffer, y int) string {
-	var sb strings.Builder
-	for x := 0; x < b.W; x++ {
-		sb.WriteRune(b.At(x, y).Rune)
-	}
-	return strings.TrimRight(sb.String(), " ")
+	return strings.TrimRight(render.RowText(b, y), " ")
 }
 
 func TestComposerDamageIsPerComponent(t *testing.T) {

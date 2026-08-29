@@ -64,7 +64,7 @@ type stepper struct {
 }
 
 func (s *stepper) Measure(avail gooey.Size) gooey.Size {
-	return gooey.Size{W: min(len([]rune(s.label.Get()))+10, avail.W), H: min(1, avail.H)}
+	return gooey.Size{W: min(render.StringWidth(s.label.Get())+10, avail.W), H: min(1, avail.H)}
 }
 
 func (s *stepper) Render(f *gooey.Frame) {

@@ -66,7 +66,7 @@ func (t *Toggle) label() string { return getStr(t.Label) }
 func (t *Toggle) Measure(avail gooey.Size) gooey.Size {
 	w := toggleTrackW
 	if l := t.label(); l != "" {
-		w += 1 + len([]rune(l))
+		w += 1 + render.StringWidth(l)
 	}
 	return gooey.Size{W: min(w, avail.W), H: min(1, avail.H)}
 }
@@ -113,10 +113,10 @@ func (t *Toggle) Render(f *gooey.Frame) {
 // paint writes the track (in knob style) and the label (in text style).
 func (t *Toggle) paint(f *gooey.Frame, track string, text, knob render.Style) {
 	b := t.Bounds()
-	f.Cells.SetString(b.X, b.Y, clipRunes(track, b.W), knob)
+	f.Cells.SetString(b.X, b.Y, clipCols(track, b.W), knob)
 	if l := t.label(); l != "" {
 		if x := b.X + toggleTrackW + 1; x < b.X+b.W {
-			f.Cells.SetString(x, b.Y, clipRunes(l, b.X+b.W-x), text)
+			f.Cells.SetString(x, b.Y, clipCols(l, b.X+b.W-x), text)
 		}
 	}
 }
@@ -307,7 +307,7 @@ func (s *Segmented) Index() int {
 
 // segWidth is a segment's cell span: the option padded with a space each
 // side, which is also what makes it a comfortable click target.
-func segWidth(opt string) int { return len([]rune(opt)) + 2 }
+func segWidth(opt string) int { return render.StringWidth(opt) + 2 }
 
 func (s *Segmented) Measure(avail gooey.Size) gooey.Size {
 	if s.Child != nil {
@@ -396,7 +396,7 @@ func (s *Segmented) Render(f *gooey.Frame) {
 		if x >= b.X+b.W {
 			break
 		}
-		f.Cells.SetString(x, b.Y, clipRunes(" "+o+" ", b.X+b.W-x), st)
+		f.Cells.SetString(x, b.Y, clipCols(" "+o+" ", b.X+b.W-x), st)
 		x += w
 	}
 	// A focused control that is not showing a reverse-video cursor
@@ -433,7 +433,7 @@ func (s *Segmented) renderVertical(f *gooey.Frame) {
 		if !off && s.IsHovered() {
 			st.Underline = true
 		}
-		f.Cells.SetString(b.X, y, clipRunes(" "+o+" ", b.W), st)
+		f.Cells.SetString(b.X, y, clipCols(" "+o+" ", b.W), st)
 	}
 	// The focus cue is the selected row's leading marker rather than the
 	// horizontal tier's end arrows: a stacked strip has no ends to mark.

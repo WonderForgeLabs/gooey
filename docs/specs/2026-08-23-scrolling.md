@@ -193,6 +193,13 @@ to `ItemsView` and its uniform row height.
   gooey, so it overruns its column here exactly as it does elsewhere, and
   cell assertions cannot see it.
 
+  > **Superseded by [#358](https://github.com/WonderForgeLabs/gooey/issues/358).**
+  > The paragraph above was true when written and is not now: `render.SetString`
+  > advances by display width, `Text.Measure` and this `wrap` count columns, and
+  > `render.Displaced` is the assertion that *can* see it. Left standing rather
+  > than rewritten, because a decision record should say what was true when the
+  > decision was taken.
+
 ## Rejected alternatives
 
 - **A general `<ScrollViewer>`.** Needs clipping. See above; it is an

@@ -101,7 +101,7 @@ func (g *DragGhost) text() string {
 	return g.Label.Get()
 }
 
-func (g *DragGhost) width() int { return len([]rune(g.text())) + 2 }
+func (g *DragGhost) width() int { return render.StringWidth(g.text()) + 2 }
 
 func (g *DragGhost) Measure(avail gooey.Size) gooey.Size {
 	return gooey.Size{W: min(g.width(), avail.W), H: min(1, avail.H)}

@@ -136,9 +136,9 @@ func (p *sourcePicker) Arrange(r gooey.Rect) {
 
 func (p *sourcePicker) popupRect(page gooey.Rect) gooey.Rect {
 	rows := sourceRows(p.srcsP.Get())
-	w := len([]rune(" sources ")) + 4
+	w := render.StringWidth(" sources ") + 4
 	for _, row := range rows {
-		if rw := len([]rune(row.text(p.curID))) + 4; rw > w {
+		if rw := render.StringWidth(row.text(p.curID)) + 4; rw > w {
 			w = rw
 		}
 	}
@@ -359,9 +359,13 @@ func (p *sourcePicker) drawPopup(f *gooey.Frame, b gooey.Rect) {
 			continue
 		}
 		name, subject, cut := strings.Cut(label, " — ")
-		f.Cells.SetString(b.X+2, b.Y+1+y, clip(name, b.W-3), st)
+		// Written and measured as the same string: this used to paint
+		// clip(name, b.W-3) and then advance past the UNCLIPPED name,
+		// so a long name pushed its subject off the right edge.
+		shown := clip(name, b.W-3)
+		f.Cells.SetString(b.X+2, b.Y+1+y, shown, st)
 		if cut {
-			if x := b.X + 2 + len([]rune(name)); x < b.X+b.W-1 {
+			if x := b.X + 2 + render.StringWidth(shown); x < b.X+b.W-1 {
 				f.Cells.SetString(x, b.Y+1+y, clip(" — "+subject, b.X+b.W-1-x), dim)
 			}
 		}

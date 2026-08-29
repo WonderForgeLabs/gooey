@@ -24,7 +24,7 @@ func (o *toyOwner) popup() *Popup {
 	if o.pop == nil {
 		o.pop = NewPopup(o, func(f *gooey.Frame, b gooey.Rect) {
 			for y := b.Y; y < b.Y+b.H; y++ {
-				f.Cells.SetString(b.X, y, clipRunes("POPUP!", b.W), render.Style{Reverse: true})
+				f.Cells.SetString(b.X, y, clipCols("POPUP!", b.W), render.Style{Reverse: true})
 			}
 		})
 		o.pop.Modal = true

@@ -103,16 +103,16 @@ func collapsed(w gooey.Component) bool {
 	return l != nil && l.Visibility == gooey.Collapsed
 }
 
-func clipRunes(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= w {
-		return s
-	}
-	return string(r[:w])
-}
+// clipCols truncates s to w display COLUMNS. It is render.ClipCols under
+// a short local name, kept because ~25 paint sites read better without
+// the package qualifier.
+//
+// It used to be clipRunes, truncating to w RUNES while every caller
+// passed a column budget — b.W, b.X+b.W-x, a Border's inner width. For
+// ASCII those are the same number; for anything else clipRunes("世界ab", 3)
+// returned five columns into a three-column slot, and with no clipping at
+// the frame level (#357) the overrun landed on whatever was painted next.
+func clipCols(s string, w int) string { return render.ClipCols(s, w) }
 
 // paintBanner paints the one-row banner the three overlays share — the
 // tooltip's tip, the validation marker's floating message, and a toast:
@@ -138,14 +138,21 @@ func clipRunes(s string, w int) string {
 // is asked for rather than assumed.
 //
 // Fill THEN write, which is the tooltip's and the marker's order rather
-// than the toast's write-then-pad. On today's buffer the two are
-// observationally identical — render.Buffer.SetString advances exactly
-// one cell per rune and clipRunes clips by rune count, so "pad from the
-// unclipped rune length to the right edge" covers precisely the cells
-// the write did not — but the equivalence is a coincidence of that
-// arithmetic, and it is the write-then-pad form that has to be re-derived
-// whenever the clip rule or the cell advance changes. Filling first makes
-// "the whole rectangle carries the banner style" true by construction.
+// than the toast's write-then-pad.
+//
+// This note used to say the two were observationally identical, because
+// SetString advanced exactly one cell per rune and the clip counted
+// runes, so "pad from the unclipped rune length to the right edge"
+// covered precisely the cells the write did not — and it warned that the
+// equivalence was a coincidence of that arithmetic, to be re-derived
+// whenever the clip rule or the cell advance changed.
+//
+// BOTH changed, in #358. SetString now advances by display width and
+// clipCols clips by columns, so the rune-length pad would leave a wide
+// glyph's second column unstyled and stop short of the right edge. The
+// warning was right and filling first is what made it a non-event:
+// "the whole rectangle carries the banner style" is true by
+// construction, not by arithmetic that has to keep agreeing.
 func paintBanner(f *gooey.Frame, b gooey.Rect, msg string, st, def render.Style) render.Style {
 	if st == (render.Style{}) {
 		st = def
@@ -153,7 +160,7 @@ func paintBanner(f *gooey.Frame, b gooey.Rect, msg string, st, def render.Style)
 	for x := b.X; x < b.X+b.W; x++ {
 		f.Cells.Set(x, b.Y, ' ', st)
 	}
-	f.Cells.SetString(b.X, b.Y, clipRunes(" "+msg+" ", b.W), st)
+	f.Cells.SetString(b.X, b.Y, clipCols(" "+msg+" ", b.W), st)
 	return st
 }
 
