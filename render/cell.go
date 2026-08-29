@@ -83,6 +83,19 @@ func (c Cell) Width() int {
 	if c.Rune == Continuation {
 		return 0
 	}
+	// ASCII FAST PATH. A printable ASCII rune is one column and cannot
+	// carry a combining mark on its own, so the segmenter has nothing to
+	// decide — and this is the overwhelmingly common cell. Worth having
+	// because Set now asks TWICE per write, once for itself and once
+	// through healSeam, on a path that runs for every character painted.
+	//
+	// Guarded on Cluster being empty as well as on the rune: a cell whose
+	// cluster is "é" holds an ASCII lead and is not what Text()
+	// returns. Control characters and DEL fall through rather than being
+	// assumed, since their width is a terminal's business.
+	if c.Cluster == "" && c.Rune >= 0x20 && c.Rune < 0x7f {
+		return 1
+	}
 	return StringWidth(c.Text())
 }
 
@@ -337,6 +350,18 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 		// column the flusher then skips forever. Skipping by the
 		// cluster's width keeps the columns of what follows correct.
 		if x < 0 {
+			// A cluster STRADDLING the left edge still covers columns
+			// this string is responsible for, and cannot draw in them —
+			// half a glyph is not something a terminal renders. Skipping
+			// them outright left whatever was underneath, so a line
+			// scrolled one column right showed the previous frame's
+			// character in the gap and nothing ever repainted it.
+			//
+			// x is negative here, so x+w is exactly the count of visible
+			// columns the cluster reaches into. Found in review of #413.
+			for c := 0; c < x+max(w, 1); c++ {
+				b.put(c, y, Cell{Rune: ' ', Style: s})
+			}
 			x += max(w, 1)
 			continue
 		}

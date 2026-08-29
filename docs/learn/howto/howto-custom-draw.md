@@ -64,13 +64,23 @@ Three consequences for a custom `Render`:
   `f.Cells.SetString(x, y, shown, st)`, the next column is
   `x + render.StringWidth(shown)`. If `shown` came from `ClipCols`, the
   original string's length is the wrong number.
-- **Copying cells is the one sharp edge.** `Set` and `SetString` repair a
-  glyph you overpaint half of, so ordinary drawing is safe. A loop that
-  assigns `Buffer.Cells` directly does not get that, and clipping such a
-  copy mid-glyph leaves either an orphan continuation (a column nothing
-  can ever repaint) or a lead that shifts the rest of the row. If you
-  copy cells, copy pairs — and `render.Displaced(b, y)` will tell you
-  whether a row survived.
+- **Restyling a cell is `SetCell`, not `Set`.** To change only a style —
+  a selection highlight, an accelerator underline — read the cell, set
+  the style, and hand the whole cell back:
+  `b.SetCell(x, y, b.At(x, y).WithStyle(st))`. Going through
+  `Set(x, y, c.Rune, c.Style)` looks equivalent and is not: `Set` takes a
+  *rune*, so a cell holding a grapheme cluster comes back as its first
+  rune alone — `"⚠️"` narrows to a one-column `"⚠"` and a decomposed
+  `"é"` loses its accent. The row then shifts under the highlight and
+  repairs itself when the highlight moves away.
+- **Assigning `Buffer.Cells` directly is the one sharp edge.** `Set`,
+  `SetString` and `SetCell` all repair a glyph you overpaint half of, so
+  ordinary drawing is safe. A loop that writes the slice does not get
+  that, and clipping such a copy mid-glyph leaves either an orphan
+  continuation (a column nothing can ever repaint) or a lead that shifts
+  the rest of the row. If you copy cells, copy pairs — and
+  `render.Displaced(b, y)` will tell you whether a row survived,
+  including the case of a wide lead left in the final column.
 
 The style is the full per-cell surface:
 

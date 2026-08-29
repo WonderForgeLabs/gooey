@@ -1,11 +1,13 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 func altKey(r rune) input.KeyEvent {
@@ -143,6 +145,45 @@ func TestButtonMnemonicRendersStrippedAndUnderlined(t *testing.T) {
 	}
 	if w := btn.Measure(gooey.Size{W: 80, H: 1}).W; w != len("[ Save ]") {
 		t.Fatalf("measured width %d counts the marker; want %d", w, len("[ Save ]"))
+	}
+}
+
+// TestAnAcceleratorKeepsItsClusterWhenUnderlined pins that underlining
+// a letter is not a reason for the letter to change.
+//
+// The four painters re-derived the accelerator as []rune(text)[pos] and
+// handed that single rune to Buffer.Set. A cell holding a grapheme
+// CLUSTER cannot survive that: a decomposed "é" is 'e' followed by a
+// combining acute, so the label painted "é" and the underline painted a
+// bare "e" over it — the accent disappeared the moment the accelerator
+// was drawn, which is always.
+//
+// A DECOMPOSED character on purpose. The precomposed U+00E9 is a single
+// rune and survives the lossy spelling, so a fixture using it would
+// have passed against the code this replaces.
+func TestAnAcceleratorKeepsItsClusterWhenUnderlined(t *testing.T) {
+	const acute = "é" // one cluster, two runes, one column
+
+	btn := &Button{
+		Content: prop.NewSource("_" + acute + "dit"),
+		Click:   gooey.Command(func() {}),
+	}
+	c := gooey.NewComposer(btn, 30, 3)
+	t.Cleanup(c.Close)
+	f, _ := c.Frame()
+
+	// "[ édit ]": the accelerator sits at x=2.
+	cell := f.Cells.At(2, 0)
+	if !cell.Style.Underline {
+		t.Fatal("the accelerator cell is not underlined")
+	}
+	if got := cell.Text(); got != acute {
+		t.Errorf("the underlined cell draws %q, want %q — the combining "+
+			"mark was dropped when the underline was painted", got, acute)
+	}
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "[ "+acute+"dit ]") {
+		t.Errorf("the row reads %q, want it to start with %q",
+			got, "[ "+acute+"dit ]")
 	}
 }
 

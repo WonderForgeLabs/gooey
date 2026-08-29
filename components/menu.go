@@ -298,9 +298,7 @@ func (m *MenuBar) Render(f *gooey.Frame) {
 			// []rune(text)[:pos], which panics on the pos < 0 that the
 			// second half of that condition was there to reject.
 			if ax := x + 1 + mnemonicCol(text, pos); ax < b.X+b.W {
-				as := ts
-				as.Underline = true
-				f.Cells.Set(ax, b.Y, []rune(text)[pos], as)
+				underlineAt(f, ax, b.Y, ts)
 			}
 		}
 		x += render.StringWidth(text) + 2
@@ -667,9 +665,7 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		// b.X+2+mc the width-only version painted, which is why the two
 		// agree everywhere ASCII.
 		if at := render.StringWidth(lead) + mnemonicCol(text, pos); pos >= 0 && at < inner {
-			as := is
-			as.Underline = true
-			f.Cells.Set(b.X+1+at, y, []rune(text)[pos], as)
+			underlineAt(f, b.X+1+at, y, is)
 		}
 	}
 }

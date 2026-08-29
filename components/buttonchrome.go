@@ -345,8 +345,7 @@ func (b *Button) pillLabel(f *gooey.Frame, st render.Style) {
 		pad = (inner - l) / 2
 	}
 	if x := r.X + 1 + pad + mnemonicCol(text, pos); x < r.X+1+inner {
-		st.Underline = true
-		f.Cells.Set(x, r.Y+1, []rune(text)[pos], st)
+		underlineAt(f, x, r.Y+1, st)
 	}
 }
 

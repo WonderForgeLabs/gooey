@@ -137,8 +137,7 @@ func (b *Button) underlineAccel(f *gooey.Frame, st render.Style, x0, y int) {
 	if x < bd.X || x >= bd.X+bd.W {
 		return
 	}
-	st.Underline = true
-	f.Cells.Set(x, y, []rune(text)[pos], st)
+	underlineAt(f, x, y, st)
 }
 
 // IsPressed reports whether the pointer is currently down on this

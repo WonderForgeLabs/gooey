@@ -70,20 +70,34 @@ func ClipCols(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if StringWidth(s) <= w {
-		return s
-	}
+	// ONE PASS, and the segmenter's state carried across it.
+	//
+	// This used to pre-scan with StringWidth and then walk the string
+	// again, re-deriving the break state from scratch at every cluster
+	// by passing -1. Both are the shape SetString was changed away from:
+	// the pre-scan segments the whole string to answer a question the
+	// walk answers on its way past, and a discarded state asks uniseg to
+	// re-decide a boundary it had just decided. Threading it is one
+	// variable and removes the question of whether the two agree.
+	//
+	// The early return for a string that fits survives as a cheap exit
+	// from the loop rather than a second traversal in front of it: when
+	// nothing was dropped, the original string is returned untouched, so
+	// the common case still allocates nothing. Found in review of #413.
 	out, used, rest := make([]byte, 0, len(s)), 0, s
+	state := -1
 	for len(rest) > 0 {
-		cluster, next, cw, _ := uniseg.FirstGraphemeClusterInString(rest, -1)
+		var cluster string
+		var cw int
+		cluster, rest, cw, state = uniseg.FirstGraphemeClusterInString(rest, state)
 		if used+cw > w {
-			break
+			// Something was dropped, so out is the answer.
+			return string(out)
 		}
 		out = append(out, cluster...)
 		used += cw
-		rest = next
 	}
-	return string(out)
+	return s
 }
 
 // RowText is what row y would READ AS on a terminal: the runes of the
@@ -183,6 +197,26 @@ func Displaced(b *Buffer, y int) (x, by int, ok bool) {
 		if c != i {
 			return i, c - i, true
 		}
+	}
+	// A WIDE LEAD IN THE LAST COLUMN IS A DISPLACEMENT NOTHING ABOVE CAN
+	// SEE. Every cell is at its own index — there is no cell after it to
+	// have been pushed — but the glyph needs a column the buffer does
+	// not have, so the terminal either wraps it to column 0 of the next
+	// row or drops it. Either way the row is not what the buffer says.
+	//
+	// The loop cannot catch it because displacement is defined against
+	// the NEXT cell, and here the overflow runs off the end. Measuring
+	// the row's own width is what turns "one cell short" into a number:
+	// TerminalWidth already reports 4 for a 3-wide buffer holding a
+	// wide lead at column 2.
+	//
+	// Only reachable by assigning Cells directly now — Set and SetString
+	// both write a space rather than a lead they cannot complete — which
+	// is exactly why the model has to be able to say so. A sharp edge the
+	// instruments cannot see is not documented, it is hidden. Found in
+	// review of #413.
+	if w := TerminalWidth(b, y); w > b.W {
+		return b.W - 1, w - b.W, true
 	}
 	return 0, 0, false
 }

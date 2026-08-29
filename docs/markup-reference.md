@@ -1220,7 +1220,7 @@ The corollary is the usual trap, and it bites providers harder than pages: an ar
 |---|---|---|
 | `gooey.dev/handlers/env` | `handlers/env` | `` Get `NAME` [`fallback`] `` — an allowlisted environment variable; `Names` — the sorted grant |
 | `gooey.dev/handlers/env` (writable grant) | `handlers/env` | `` Set `NAME` .Value `` / `` Unset `NAME` `` — handler side; writes the process environment **and** the source property, so readers repaint |
-| `gooey.dev/handlers/str` | `handlers/str` | `Upper`, `Lower`, `Trim` (1 arg); `` Replace .S `old` `new` ``; `` Join `sep` a b… ``; `` Default .S `fb` ``; `` Pad .S `n` ``, `` Truncate .S `n` `` (width is a load-time literal, counted in runes) |
+| `gooey.dev/handlers/str` | `handlers/str` | `Upper`, `Lower`, `Trim` (1 arg); `` Replace .S `old` `new` ``; `` Join `sep` a b… ``; `` Default .S `fb` ``; `` Pad .S `n` ``, `` Truncate .S `n` `` (width is a load-time literal, counted in COLUMNS — a CJK or emoji character costs the two cells it occupies, not one) |
 | `gooey.dev/handlers/sets` | `handlers/sets` | Set algebra over name sets, for attributes like `<Frozen Allow>`: `` Concat a b… `` (union); `` Without .Base `X` `` (difference); `` When .Cond `X` `` (conditional); `` Group `Text` `` (expands a `gooey.Allow` group); `` Has .Set `X` `` |
 
 The env registration is an **itemized allowlist**, `handlers/exec`'s posture rather than `handlers/fs`'s: the environment is where a process keeps its credentials next to its terminal type, so `envhandlers.New("USER", "HOME")` grants exactly those and an ungranted name is a load error naming the grant. There is deliberately no grant-everything constructor. The variable name is always a backtick literal — an allowlist checked at load time is the point.

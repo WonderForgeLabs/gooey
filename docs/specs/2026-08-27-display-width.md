@@ -45,10 +45,21 @@ draws correctly and occupies exactly the one column the cell owns.
 
 This is enforced in `Buffer`, not in callers, because the callers are
 every `Render` in the repo. It is deliberately **not** enforced against
-direct `Buffer.Cells` assignment — a cell-copy loop
-(`components/itemsview.go:873`, `apps/introdeck/terminal.go:255`) can
-still clip mid-glyph. That is the remaining sharp edge, and
+direct `Buffer.Cells` assignment, which is the remaining sharp edge, and
 `render.Displaced` is how you find out.
+
+This paragraph originally named `components/itemsview.go` and
+`apps/introdeck/terminal.go` as examples of it, and they were not. Both
+went through `Buffer.Set`, so both got the repair; what they lost was
+the cell's `Cluster`, which `Set` cannot carry because it takes a rune.
+That is a different defect with a different fix — `Cell.WithStyle` and
+`Buffer.SetCell`, added in review of #413 — and naming the wrong
+criterion sent a reader looking for a `Cells[i] =` that was not there
+while the real hazard sat in plain sight. **Restyling a cell is
+`SetCell`, not `Set`**; direct `Cells` assignment is the only thing left
+outside the repair. (Sites are named without line numbers on purpose: a
+`file.go:NN` stays resolvable after an insert and quietly means
+something else.)
 
 ## Width and content must come from the same thing
 
