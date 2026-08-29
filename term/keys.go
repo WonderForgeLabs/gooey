@@ -81,10 +81,12 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 			ev, n, ok := input.Decode(pend, idle)
 			if n == 0 && !ok {
 				// Incomplete: wait for more bytes. Safe to return only
-				// because input.Decode guarantees it never answers this
-				// way when idle is true — see its doc comment. If that
-				// guarantee breaks, pend is stranded here forever and
-				// the app goes permanently deaf while still painting.
+				// because input.Decode answers this way under idle for
+				// ONE input — an incomplete bracketed paste, where the
+				// terminal is mid-write and the next byte resolves it.
+				// See input.Decode's doc comment. For anything else,
+				// pend would strand here forever and the app would go
+				// permanently deaf while still painting.
 				return
 			}
 			pend = pend[n:]

@@ -19,21 +19,38 @@ import (
 // dangling ESC really was the Esc key.
 //
 // LIVENESS, and it is a contract rather than an observation: when idle
-// is true, Decode always consumes at least one byte or produces an
-// event. Never (0, false).
+// is true, Decode consumes at least one byte or produces an event —
+// never (0, false) — EXCEPT for an incomplete bracketed paste, which is
+// the one place the ambiguity idle settles does not exist. See
+// splitPasteMarker and decodePaste for why, and read the exception as
+// the narrow thing it is: ESC [ 2 0 0 ~ and its prefixes from the third
+// byte on, nothing else.
 //
-// That case is the drain loop's ONLY "wait for more bytes" signal (see
-// term.DecodeEvents), and under idle no further byte is coming — so a
-// sequence that still reports incomplete can never be resolved. The
-// buffer strands, every later keystroke is appended behind it, and the
-// app paints on forever without taking another key. No error, no exit,
-// no tripwire: App.Run watches for a decoder that DIED, and this one is
-// alive.
+// Stating the exception rather than the absolute matters more than it
+// looks. This comment used to say "Never (0, false)" flat, while
+// decodePaste had ALREADY departed from it and said so in its own
+// doc — so the contract read as universal, the counter-example lived
+// one file away, and the exhaustive test below could not see the
+// difference because it only checks 1- and 2-byte inputs. A reader
+// arriving at the paste code with this sentence in mind would have
+// "restored" the guarantee and reintroduced the bug.
 //
-// It costs nothing to preserve and is silent to break, so the guarantee
-// is asserted exhaustively rather than trusted — decodeidle_test.go
-// checks every 1- and 2-byte input. If you are changing a `return` in
-// decodeCSI, decodeEsc or decodeX10Mouse, that test is the one to run.
+// The reason the rule holds everywhere else: (0, false) is the drain
+// loop's ONLY "wait for more bytes" signal (see term.DecodeEvents), and
+// under idle no further byte is coming — so a sequence that still
+// reports incomplete can never be resolved. The buffer strands, every
+// later keystroke is appended behind it, and the app paints on forever
+// without taking another key. No error, no exit, no tripwire: App.Run
+// watches for a decoder that DIED, and this one is alive. What makes the
+// paste exception safe is that the terminal is mid-write: the rest of
+// the marker and its payload are already on the wire, and any later byte
+// resolves the buffer either way.
+//
+// It costs nothing to preserve and is silent to break, so the rule is
+// asserted exhaustively rather than trusted — decodeidle_test.go checks
+// every 1- and 2-byte input, which is also exactly the range the paste
+// exception stays out of. If you are changing a `return` in decodeCSI,
+// decodeEsc or decodeX10Mouse, that test is the one to run.
 func Decode(b []byte, idle bool) (Event, int, bool) {
 	if len(b) == 0 {
 		return Event{}, 0, false
@@ -145,6 +162,21 @@ func decodeCSI(b []byte, idle bool) (Event, int, bool) {
 		i++
 	}
 	if i >= len(b) {
+		// A SPLIT PASTE MARKER IS NOT THE ESC KEY, and the general rule
+		// below cannot tell the difference on its own.
+		//
+		// decodePaste already refuses to let idle resolve an open
+		// bracket, for the reason written out there. But the bracket
+		// itself is six bytes and straddles a read just as readily, and
+		// this arm ran first: every prefix of it became Esc, consuming
+		// one byte and leaving "[200~" to arrive as five ordinary keys
+		// with the entire payload behind them as keystrokes. A 40ms
+		// stall inside six bytes is all it takes, and what the user gets
+		// is the burst that mode 2004 exists to prevent. Found in the
+		// review of #391 (issue #419).
+		if idle && splitPasteMarker(b) {
+			return Event{}, 0, false
+		}
 		if idle {
 			return KeyOf(Named(KeyEsc)), 1, true // truncated sequence: it was Esc
 		}
