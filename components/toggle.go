@@ -233,6 +233,28 @@ type Segmented struct {
 	Child gooey.Component
 	Count int
 
+	// Hovered is the index the pointer is over, and -1 when it is
+	// outside. Written by the control, read by whoever wants it.
+	//
+	// gooey.HoverState — which this also embeds — answers "is the pointer
+	// on me", one bool for the whole strip. That is the right answer for
+	// a Button and useless for a rail of four wordless icons, where the
+	// only affordance that can say what a slot does is a tooltip and a
+	// tooltip needs to know WHICH slot (#398).
+	//
+	// The control already knew: segmentAt has always mapped a point to an
+	// index, and was consulted only on click. Hover is the one gesture
+	// where "which segment" is precisely the question — deliberately
+	// unlike the WHEEL, which is a next/previous gesture over the strip
+	// as a whole and asks nothing about position (see HandleMouse).
+	//
+	// It does NOT solve anchoring. A Tooltip attached to the Segmented
+	// still anchors against the whole strip, so on a tall vertical rail
+	// the tip can appear a long way from the icon under the pointer. That
+	// wants per-segment attachments, which is a larger change this does
+	// not preclude.
+	Hovered *prop.Property[int]
+
 	// Wrap decides what an arrow does at the end of travel: with it on,
 	// down at the last segment returns to the first. NIL MEANS ON — see
 	// wraps() for why the field is a pointer and why on is the default.
@@ -536,6 +558,61 @@ func (s *Segmented) HandleMouse(ev input.MouseEvent) bool {
 func (s *Segmented) inBounds(x, y int) bool {
 	b := s.Bounds()
 	return x >= b.X && x < b.X+b.W && y >= b.Y && y < b.Y+b.H
+}
+
+// hovered is the lazily-created index property, so a caller that never
+// asks pays nothing and one that binds a handle in gets theirs used.
+func (s *Segmented) hovered() *prop.Property[int] {
+	if s.Hovered == nil {
+		s.Hovered = prop.NewSource(-1)
+	}
+	return s.Hovered
+}
+
+// setHoveredIndex publishes the index, GUARDED. prop.Set does not compare
+// values, so an unguarded write here would invalidate every dependent on
+// every motion event — and motion is the highest-frequency event there
+// is, so this is the one place where "it is only a Set" is most wrong.
+func (s *Segmented) setHoveredIndex(i int) {
+	if p := s.hovered(); p.Get() != i {
+		p.Set(i)
+	}
+}
+
+// SetHovered extends HoverState's with the index half: the pointer
+// leaving the strip has to clear the index, and the LEAVE EDGE IS THE
+// ONLY PLACE IT CAN BE DONE.
+//
+// Motion cannot do it. FocusManager.setHover (mouse.go:473) drives this
+// on the hit, so when the pointer moves from this strip onto a sibling,
+// the motion event routes to the sibling and this control never hears
+// another one — its index would stay pointing at whichever segment the
+// pointer left by, forever.
+func (s *Segmented) SetHovered(v bool) {
+	s.HoverState.SetHovered(v)
+	if !v {
+		s.setHoveredIndex(-1)
+	}
+}
+
+// HandleMouseMove tracks which segment the pointer is over.
+//
+// It returns FALSE always: motion here is observed, never consumed.
+// Consuming it would stop the event bubbling to ancestors
+// (mouse.go:267), which is what a drag, a marquee or an outer hover
+// watcher is listening for — a control that reports its own hover has no
+// business ending someone else's gesture.
+func (s *Segmented) HandleMouseMove(ev input.MouseEvent) bool {
+	if s.disabled() {
+		s.setHoveredIndex(-1)
+		return false
+	}
+	if i, ok := s.segmentAt(ev.X, ev.Y); ok {
+		s.setHoveredIndex(i)
+	} else {
+		s.setHoveredIndex(-1)
+	}
+	return false
 }
 
 // segmentAt maps a point to an option index.
