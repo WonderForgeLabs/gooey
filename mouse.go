@@ -334,14 +334,28 @@ func (m *FocusManager) target(hit Component) Component {
 	return hit
 }
 
-// clickCount advances the click sequence for w. A click elsewhere or one
-// that came too late starts over, and so does the third click of a rapid
-// run — there is no triple click this pass, and reporting a 3 that
-// nothing understands would be worse than starting fresh.
+// MaxClickCount is the highest count a click sequence reports. Three:
+// single, double, triple. A FOURTH rapid click starts a new sequence at
+// 1 rather than reporting 4, for the reason the original two-click
+// version gave for stopping at 2 — reporting a number nothing
+// understands is worse than starting fresh — and because "select
+// progressively more" has no fourth step to offer.
+const MaxClickCount = 3
+
+// clickCount advances the click sequence for w. A click elsewhere, or
+// one that came too late, starts over; so does the click after the last
+// one the sequence can express.
+//
+// Each click must land on the SAME component and inside
+// DoubleClickInterval of the one before it — the interval is measured
+// click-to-click, not from the start of the run, so a slow third click
+// begins a new sequence rather than completing a triple. That is what
+// makes the gesture a rhythm rather than a race against a deadline that
+// started two clicks ago.
 func (m *FocusManager) clickCount(w Component) int {
 	now := m.now()
-	if w == m.lastClick && m.clicks == 1 && now.Sub(m.lastClickAt) <= m.DoubleClickInterval {
-		m.clicks = 2
+	if w == m.lastClick && m.clicks < MaxClickCount && now.Sub(m.lastClickAt) <= m.DoubleClickInterval {
+		m.clicks++
 	} else {
 		m.clicks = 1
 	}

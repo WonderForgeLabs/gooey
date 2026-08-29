@@ -226,6 +226,11 @@ func (s *Server) originGuard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden origin", http.StatusForbidden)
 			return
 		}
+		// Counted AFTER the guard, so a cross-origin probe that was
+		// refused is not reported to a host as a client using the app.
+		// A number that counts attacks alongside clients is not a
+		// number anyone can act on.
+		s.countRequest()
 		next.ServeHTTP(w, r)
 	})
 }

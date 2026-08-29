@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -336,21 +337,85 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		}
 		return true
 	case ev == ctrlRune('v'):
-		text := KillBuffer()
-		if text == "" {
+		if !t.insertText(KillBuffer()) {
 			return true
 		}
-		if _, _, ok := t.Selection(); ok {
-			t.deleteSelection()
-		}
-		caret, runes := t.Caret(), t.value()
-		ins := []rune(text)
-		next := append(append(append([]rune{}, runes[:caret]...), ins...), runes[caret:]...)
-		t.setText(next, caret+len(ins))
 	default:
 		return false
 	}
 	return true
+}
+
+// insertText replaces the selection with text and puts the caret after
+// it. False means nothing was inserted, which is not an error — an empty
+// kill buffer and an empty paste are both "no text", and the key is
+// still consumed by the caller.
+//
+// Extracted from the ctrl+v arm rather than restated in HandlePaste. The
+// two differ only in where the text came from, and a second copy of the
+// splice would be a place for the caret arithmetic to drift.
+func (t *TextBox) insertText(text string) bool {
+	if text == "" {
+		return false
+	}
+	if _, _, ok := t.Selection(); ok {
+		t.deleteSelection()
+	}
+	caret, runes := t.Caret(), t.value()
+	ins := []rune(text)
+	next := append(append(append([]rune{}, runes[:caret]...), ins...), runes[caret:]...)
+	t.setText(next, caret+len(ins))
+	return true
+}
+
+// HandlePaste inserts a bracketed paste at the caret.
+//
+// This exists because bracketed paste is ON by default (gooey.App), and
+// the mode CHANGES what a paste into a text field looks like: without it
+// the payload arrives as keystrokes and lands one rune at a time, with
+// it the payload arrives as one event that nothing would otherwise
+// consume. Implementing this is what keeps enabling the mode from
+// silently breaking every text field in the tree.
+//
+// The payload's newlines and control bytes are STRIPPED, not inserted.
+// A TextBox is one line — it has no way to show a second — so inserting
+// a "\n" would put a rune in the value that the box cannot render and
+// that a Changed handler would then hand to whatever consumes the text.
+// Tabs become a space for the same reason. This is the policy
+// PasteHandler's doc says a consumer is forced to have; the alternative
+// is not "no policy", it is "insert control characters silently".
+func (t *TextBox) HandlePaste(ev input.PasteEvent) bool {
+	if t.Text == nil {
+		return false
+	}
+	if !t.insertText(oneLine(ev.Text)) {
+		// Consumed anyway. A paste of nothing into a focused text field
+		// is not a gesture for an ancestor to reinterpret.
+		return true
+	}
+	if gooey.CanExecute(t.Changed) {
+		t.Changed.Run()
+	}
+	return true
+}
+
+// oneLine flattens a payload for a single-line field: newlines and tabs
+// become spaces, every other control character is dropped.
+func oneLine(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case r < 0x20 || r == 0x7f:
+			// Dropped. A NUL or a DEL in a value is invisible on screen
+			// and travels into whatever reads the text.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // ctrlRune is the event a terminal sends for ctrl+letter.
@@ -432,7 +497,14 @@ func (t *TextBox) HandleMouse(ev input.MouseEvent) bool {
 		t.setAnchor(i)
 		return true
 	case input.MouseClick:
-		if ev.Count >= 2 {
+		// Progressive selection, the convention every text field shares:
+		// double selects the word under the caret, triple selects the
+		// line. Tested with >= so the ceiling can rise again without
+		// this silently falling back to single-click behaviour.
+		switch {
+		case ev.Count >= 3:
+			t.selectLine()
+		case ev.Count == 2:
 			t.selectWord()
 		}
 		return true
@@ -477,6 +549,32 @@ func (t *TextBox) selectWord() {
 	}
 	t.setAnchor(lo)
 	t.setCaret(hi)
+}
+
+// selectLine selects the whole value.
+//
+// A TextBox is one line by construction — HandlePaste flattens newlines
+// to spaces precisely so a second line cannot get into the value — so
+// "the line" and "everything" are the same range here, and saying
+// selectLine rather than selectAll keeps the name honest about which
+// concept it implements. A multi-line editor implementing this
+// interface would bound it to the line around the caret and nothing
+// above would change.
+//
+// There is deliberately NO empty-value guard here, unlike selectWord,
+// and the difference is worth stating because the symmetry is
+// misleading. selectWord's guard prevents a PANIC — it indexes
+// runes[clamp(caret, 0, len(runes)-1)], which is runes[-1] on an empty
+// value. Nothing here indexes anything: on an empty value this sets the
+// anchor and the caret both to 0, and Selection() reports an anchor
+// equal to the caret as "no selection" (see its doc), so the result is
+// already correct. A guard would be code that cannot change an
+// observable outcome, and a mutation run removing it stayed green in
+// every test — which is the evidence it was not doing anything, not a
+// gap in the tests.
+func (t *TextBox) selectLine() {
+	t.setAnchor(0)
+	t.setCaret(len(t.value()))
 }
 
 // ---- word boundaries ----

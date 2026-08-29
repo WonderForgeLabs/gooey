@@ -323,6 +323,10 @@ type broadcaster struct {
 	host SessionHost
 	done <-chan struct{}
 
+	// onSessions is the host's notification that the live count changed.
+	// Read-only after construction, so it needs no lock.
+	onSessions func(int)
+
 	mu       sync.Mutex
 	sessions map[*session]bool
 
@@ -332,25 +336,58 @@ type broadcaster struct {
 	sized      bool
 }
 
-func newBroadcaster(svc *control.Service, host SessionHost) *broadcaster {
+func newBroadcaster(svc *control.Service, host SessionHost, onSessions func(int)) *broadcaster {
 	return &broadcaster{
-		svc:      svc,
-		host:     host,
-		done:     host.Done(),
-		sessions: map[*session]bool{},
+		svc:        svc,
+		host:       host,
+		done:       host.Done(),
+		onSessions: onSessions,
+		sessions:   map[*session]bool{},
 	}
+}
+
+// count is the live session count, taken under the same mutex that
+// guards the set. It exists so a host can display "is anything attached"
+// without being handed the set itself — a caller holding *session values
+// could read them off the UI goroutine, which is the confinement the
+// whole broadcaster is arranged around.
+func (b *broadcaster) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.sessions)
 }
 
 func (b *broadcaster) add(ss *session) {
 	b.mu.Lock()
 	b.sessions[ss] = true
+	n := len(b.sessions)
 	b.mu.Unlock()
+	b.notify(n)
 }
 
 func (b *broadcaster) remove(ss *session) {
 	b.mu.Lock()
 	delete(b.sessions, ss)
+	n := len(b.sessions)
 	b.mu.Unlock()
+	b.notify(n)
+}
+
+// notify reports a changed count, OUTSIDE the lock.
+//
+// Outside deliberately: the callback is the host's code and may do
+// anything, including a Dispatcher.Post that blocks briefly on a full
+// queue. Calling it under b.mu would put arbitrary host code inside the
+// lock that afterFrame takes on the UI goroutine every frame, which is a
+// deadlock waiting for a slow host.
+//
+// The count is captured while the lock is held and passed by value, so
+// what a callback receives is a real count that existed, not a re-read
+// that another goroutine may have moved in between.
+func (b *broadcaster) notify(n int) {
+	if b.onSessions != nil {
+		b.onSessions(n)
+	}
 }
 
 func (b *broadcaster) snapshot() []*session {

@@ -333,6 +333,7 @@ func main() {
 	ed.app = app
 	ed.ctx.Dispatcher = app.Dispatcher()
 	ed.watchFit(app)
+	ed.bindClipboard(app)
 	// Click-to-select. The composer is resolved per press rather than
 	// captured: a hot reload of the page builds a new one.
 	ed.bindPicking(func(x, y int) gooey.Component {
@@ -353,12 +354,18 @@ func main() {
 	// a listener; the session hooks are posted to the UI goroutine and
 	// run when the loop reaches them.
 	if *serveAddr != "" {
+		// The watch exists BEFORE Serve because OnSessions has to be in
+		// the Options, and Serve's accept goroutine can fire it before
+		// Serve has returned. It marshals every notification with
+		// app.Post — see servelink.go for why that is unconditional.
+		grpcWatch := newLinkWatch(ed.link("grpc"))
 		gsrv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
-			Addr:    *serveAddr,
-			Context: ed.ctx,
-			Doc:     pageSrc,
-			Name:    "gooey-wysiwyg",
-			Version: "1",
+			Addr:       *serveAddr,
+			Context:    ed.ctx,
+			Doc:        pageSrc,
+			Name:       "gooey-wysiwyg",
+			Version:    "1",
+			OnSessions: grpcWatch.onSessions,
 		})
 		if err != nil {
 			gooey.Exit(err)
@@ -366,22 +373,29 @@ func main() {
 		// Close joins rather than merely signalling.
 		defer gsrv.Close()
 		ed.serving = append(ed.serving, "grpc "+gsrv.Addr())
+		grpcWatch.bindSessions(app.Post, gsrv)
 	}
 	if *mcpAddr != "" {
 		// No Doc here: mcp.Options has no equivalent — the declared-schema
 		// path is the gRPC server's, and swap_markup builds against
 		// Context instead.
+		// bindStateless, not bindSessions: this endpoint is stateless by
+		// design and has TWO states, serving or not. servelink.go says
+		// why inventing a third means inventing a fact.
+		mcpWatch := newLinkWatch(ed.link("mcp"))
 		msrv, err := mcp.Serve(app, mcp.Options{
-			Addr:    *mcpAddr,
-			Context: ed.ctx,
-			Name:    "gooey-wysiwyg",
-			Version: "1",
+			Addr:       *mcpAddr,
+			Context:    ed.ctx,
+			Name:       "gooey-wysiwyg",
+			Version:    "1",
+			OnServeEnd: mcpWatch.onServeEnd,
 		})
 		if err != nil {
 			gooey.Exit(err)
 		}
 		defer msrv.Close()
 		ed.serving = append(ed.serving, "mcp "+msrv.URL())
+		mcpWatch.bindStateless(app.Post, msrv)
 	}
 	if len(ed.serving) > 0 {
 		// Joined with SPACES, not a newline. This lands in a one-row status
@@ -874,6 +888,20 @@ type editor struct {
 	serving   []string
 	serveInfo *prop.Property[string]
 
+	// links is each endpoint's CONNECTION state, keyed by the label the
+	// status bar shows. It lives on the editor rather than on the strip
+	// because a hot reload builds a new strip against servers that never
+	// restarted — see servelink.go, which owns the whole of this. Use
+	// ed.link(label) rather than the map.
+	links map[string]*endpointLink
+
+	// addrs is the status bar's clickable endpoint strip, set by the
+	// <ServeAddrs/> builder each time the page is built — a hot reload
+	// makes a new one, so the global gestures resolve it per press
+	// rather than capturing it. Nil until the page has been built, and
+	// nil for good when no endpoint came up (see serveAddrsBuilder).
+	addrs *addrStrip
+
 	// remote, when set, means the editor is driving ANOTHER app: the
 	// document is patched into that app's island instead of previewed
 	// in this process. Nil is local mode.
@@ -911,6 +939,10 @@ type editor struct {
 	mu      sync.Mutex
 	lost    error
 	swapped bool
+
+	// clip is the component clipboard: a DEEP COPY of a copied subtree,
+	// never a pointer into the document. See clipboard.go.
+	clip clipboard
 }
 
 // newEditor takes the editor's root FS because the panes are markup on
@@ -1196,6 +1228,15 @@ func newEditor(fsys fs.FS) *editor {
 			"EditText":     gooey.Command(func() { ed.editSelectedAsText() }),
 			"CommitEdit":   gooey.Command(func() { ed.commitEdit() }),
 			"Quit":         gooey.Command(func() { ed.app.Quit() }),
+			"Copy":         gooey.Command(func() { ed.copySelected() }),
+			"Cut":          gooey.Command(func() { ed.cutSelected() }),
+			"Paste":        gooey.Command(func() { ed.pasteClip() }),
+			// The control-plane addresses, copyable from the keyboard.
+			// Resolved through ed.addrs at PRESS time rather than
+			// captured: a hot reload builds a new strip, and a captured
+			// one would go on copying a dead page's addresses.
+			"CopyGrpc": gooey.Command(func() { ed.copyEndpoint("grpc") }),
+			"CopyMCP":  gooey.Command(func() { ed.copyEndpoint("mcp") }),
 		},
 		Styles: map[string]render.Style{
 			"dim":  {Fg: render.RGB(140, 140, 150)},
@@ -1243,6 +1284,8 @@ func newEditor(fsys fs.FS) *editor {
 			// One Art per app: the frame cache is keyed by size and colour,
 			// so panes of the same size share a raster.
 			"Panel": panel.Builder(ed.art),
+			// The status bar's endpoint strip — chrome, so ctx only.
+			"ServeAddrs": serveAddrsBuilder(ed),
 		},
 	}
 
@@ -1638,6 +1681,22 @@ func (ed *editor) isSurface(n *node) bool { return n == ed.root }
 // that is not in this document.
 func (ed *editor) parentOf(n *node) *node { return parentIn(ed.root, n) }
 
+// parentIn walks KIDS ONLY, never Slots — so a node inside a property
+// element (<ItemsView.ItemTemplate>) has no findable parent.
+//
+// That is safe, and it is safe for one specific reason rather than by
+// luck: such a node cannot become the selection. mapNodes, outline and
+// selectNext all walk Kids alone too, so nothing puts a slot interior in
+// ed.nodeOf, in the outline, or under ctrl+n.
+//
+// Do NOT "fix" this in isolation. Teaching it about Slots on its own
+// makes things worse: deleteSelected searches p.Kids and would still
+// find nothing (silently doing nothing, exactly as now), and addTarget
+// would start returning a slot OWNER as an append target, so a palette
+// click would push a child into an element whose content is a slot. The
+// three learn about slots together or not at all.
+// TestSlotInteriorsAreNotSelectableWhichIsWhatMakesParentInSafe pins the
+// precondition and says so when it breaks.
 func parentIn(at, n *node) *node {
 	for _, k := range at.Kids {
 		if k == n {

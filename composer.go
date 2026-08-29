@@ -220,12 +220,22 @@ func (c *Composer) Root() Component { return c.root }
 // this buffer every frame.
 func (c *Composer) Cells() *render.Buffer { return c.frame.Cells }
 
-// Handle routes one input event — key or mouse — through the tree.
+// Handle routes one input event — key, mouse or paste — through the tree.
 func (c *Composer) Handle(ev input.Event) bool {
-	if ev.IsMouse() {
+	// Routed on Kind, exhaustively, rather than as "mouse or else a
+	// key". The default arm used to be the key arm, so a kind this
+	// switch did not know about was dispatched as ev.Key — a zero
+	// KeyEvent, which is a KeyRune of rune 0: a plausible-looking key
+	// that matches nothing, consumes nothing and reports nothing. A
+	// paste arriving that way would have been silently swallowed.
+	switch ev.Kind {
+	case input.EventMouse:
 		return c.focus.DispatchMouse(ev.Mouse)
+	case input.EventPaste:
+		return c.focus.DispatchPaste(ev.Paste)
+	default:
+		return c.focus.Dispatch(ev.Key)
 	}
-	return c.focus.Dispatch(ev.Key)
 }
 
 // HandleKey routes a key event through the tree. See FocusManager.Dispatch.

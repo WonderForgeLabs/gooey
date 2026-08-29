@@ -1,8 +1,10 @@
 package grpc
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -84,6 +86,22 @@ type Options struct {
 	// islands are two Serve calls on two loopback ports, which is what
 	// lets them drive one app concurrently without interfering.
 	Grant *control.Grant
+	// OnSessions is called with the live session count every time it
+	// changes — a client attaching or detaching — so a host can show
+	// whether anything is driving it without polling. nil disables it.
+	//
+	// IT RUNS ON AN ARBITRARY GOROUTINE, and the asymmetry is the trap:
+	// a session JOINS on the UI goroutine (register goes through
+	// Bridge.Do) and LEAVES on its own stream goroutine (unregister is a
+	// plain defer). So an implementation that touches the property graph
+	// directly works for every connect and races on every disconnect —
+	// it passes a test that only attaches, and corrupts the graph in
+	// production. Marshal with Dispatcher.Post unconditionally; never
+	// branch on "am I already on the UI goroutine".
+	//
+	// It is called with the lock released, so it may block; a callback
+	// that blocks forever stalls the session that fired it.
+	OnSessions func(n int)
 }
 
 // Server is a gooey app exposed over gRPC.
@@ -96,6 +114,14 @@ type Server struct {
 
 	ln net.Listener
 	gs *grpcgo.Server
+
+	// serveMu guards the accept loop's outcome, which the goroutine
+	// started by Serve writes and any caller of Serving/ServeError
+	// reads.
+	serveMu   sync.Mutex
+	serveEnd  bool
+	serveErr  error
+	serveDone bool // Serve was called at all, i.e. we own a listener
 }
 
 // New builds a server without listening, for tests and for hosts that
@@ -117,7 +143,7 @@ func New(host Host, opts Options) (*Server, error) {
 	controlv1.RegisterSessionServiceServer(s.gs, &sessionServer{s: s})
 
 	if sh, ok := host.(SessionHost); ok {
-		s.bc = newBroadcaster(s.svc, sh)
+		s.bc = newBroadcaster(s.svc, sh, opts.OnSessions)
 		// The echo hook makes the service report the input it injects —
 		// remote input echoes exactly as terminal input does. Set before
 		// anything can call the service, on this goroutine, so no race.
@@ -155,8 +181,87 @@ func Serve(host Host, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("gooey/grpc: listen %s: %w", addr, err)
 	}
 	s.ln = ln
-	go s.gs.Serve(ln)
+	// Under the mutex even though Serve returns before any caller can
+	// reach Serving(): this package is in the -race tier precisely
+	// because "nobody could call it yet" is an argument, not a
+	// guarantee, and an unsynchronised write paired with a locked read
+	// is still a race the detector will (correctly) fail on.
+	s.serveMu.Lock()
+	s.serveDone = true
+	s.serveMu.Unlock()
+	// The accept loop's OUTCOME is captured rather than dropped on the
+	// floor. grpc-go's Serve returns nil after Stop, so a non-nil error
+	// here is a listener that DIED while the app kept running — the one
+	// reachable "not listening" state, since a bind failure is reported
+	// by Serve itself before this point and never reaches the UI at all.
+	// Until this was captured, an app whose control plane had gone away
+	// went on displaying its address, and the only symptom was that
+	// clients stopped being able to connect to a port the status bar
+	// still advertised.
+	go func() {
+		err := s.gs.Serve(ln)
+		// ErrServerStopped is a CLEAN shutdown, not a failure, and this
+		// normalisation is not defensive — it fixes a real race that a
+		// mutation run exposed. grpc-go's Serve returns nil when Stop
+		// interrupts a running accept loop, but ErrServerStopped when
+		// Stop lands BEFORE the loop starts; this goroutine is launched
+		// asynchronously, so a fast Close (a test, a short-lived app)
+		// hits the second case. Without this, an ordinary shutdown
+		// sometimes lights a failure indicator and sometimes does not —
+		// intermittently, which is the worst way for it to be wrong.
+		if errors.Is(err, grpcgo.ErrServerStopped) {
+			err = nil
+		}
+		s.serveMu.Lock()
+		s.serveEnd, s.serveErr = true, err
+		s.serveMu.Unlock()
+		// opts is written once in New and never again, so reading the
+		// callback needs no lock — and taking one here would be a claim
+		// that opts is mutable, which is the kind of misleading
+		// synchronisation that outlives the person who added it.
+		cb := s.opts.OnSessions
+		// The count is zero once the loop is gone: every stream it was
+		// carrying is finished. Reported through the same callback so a
+		// host that only listens for counts still sees the endpoint go
+		// quiet, rather than holding the last count forever.
+		if cb != nil {
+			cb(0)
+		}
+	}()
 	return s, nil
+}
+
+// Sessions is the number of clients currently attached.
+//
+// Taken under the broadcaster's own mutex. Zero for a server built with
+// New rather than Serve, and for a host that is not a SessionHost —
+// neither can carry a session, so zero is the true answer rather than a
+// missing one.
+func (s *Server) Sessions() int {
+	if s.bc == nil {
+		return 0
+	}
+	return s.bc.count()
+}
+
+// Serving reports whether the accept loop is still up.
+//
+// False before Serve is called, and false once the loop has returned for
+// any reason including Close. A host showing an endpoint's address
+// should show this too: an address whose listener is gone is an
+// instruction to connect somewhere that will refuse.
+func (s *Server) Serving() bool {
+	s.serveMu.Lock()
+	defer s.serveMu.Unlock()
+	return s.serveDone && !s.serveEnd
+}
+
+// ServeError is why the accept loop stopped, or nil if it has not
+// stopped or stopped cleanly (Close).
+func (s *Server) ServeError() error {
+	s.serveMu.Lock()
+	defer s.serveMu.Unlock()
+	return s.serveErr
 }
 
 // Addr is the address the server is listening on, empty if it was built

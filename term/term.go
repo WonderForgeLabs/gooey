@@ -173,6 +173,27 @@ func (s *Screen) DisableMouse() {
 	fmt.Fprint(s.tty, "\x1b[?1006l\x1b[?1003l\x1b[?1000l")
 }
 
+// EnablePaste turns on bracketed paste (DECSET 2004), which makes the
+// terminal wrap pasted bytes in ESC [ 200 ~ and ESC [ 201 ~ so a paste
+// can be told apart from typing. input.Decode turns that into one
+// input.EventPaste; see input/paste.go for why it must be one event.
+//
+// Explicit for the same reason EnableMouse is: it changes what bytes
+// appear on the tty, and an app that does not decode them would see the
+// brackets as garbage keystrokes. A Screen never turns it on by itself.
+// (gooey.App DOES call it by default — see WithoutPaste for why that
+// default runs the other way from the one here.)
+//
+// Without it there is no defect message and no error — a multi-line
+// paste simply arrives as keystrokes, and every newline in it is Enter.
+func (s *Screen) EnablePaste() {
+	fmt.Fprint(s.tty, "\x1b[?2004h")
+}
+
+func (s *Screen) DisablePaste() {
+	fmt.Fprint(s.tty, "\x1b[?2004l")
+}
+
 // Events starts the input decoder on this Screen's tty and returns the
 // channel it delivers on. The Screen owns the goroutine from here: it is
 // stopped and JOINED by Restore.
@@ -229,8 +250,13 @@ func (s *Screen) joinDecoder() bool {
 // Restore leaves the alternate screen, restores the tty state, closes the
 // tty and waits for the decoder to die.
 //
-// It disables mouse reporting unconditionally — leaving a terminal in
-// tracking mode after exit is the one unrecoverable mistake here.
+// It disables mouse reporting AND bracketed paste unconditionally —
+// leaving a terminal in either mode after exit is the one unrecoverable
+// mistake here. Unconditionally, rather than "if we enabled it", because
+// the cost of the redundant escape is nothing and the cost of a missed
+// one is a shell in which every paste is preceded by a literal
+// "[200~": the user's next command line is corrupted by an app that has
+// already exited, with nothing on screen to connect the two.
 //
 // The ORDER is the contract. Escapes and termios state have to be put
 // back while the fd is still open; Close comes next and is what cancels
@@ -245,6 +271,7 @@ func (s *Screen) joinDecoder() bool {
 // tripwire.
 func (s *Screen) Restore() {
 	s.DisableMouse()
+	s.DisablePaste()
 	fmt.Fprint(s.tty, "\x1b[?25h\x1b[?1049l\x1b[0m")
 	if s.oldState != nil {
 		s.control(func(fd int) error { return term.Restore(fd, s.oldState) })

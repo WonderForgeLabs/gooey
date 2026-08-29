@@ -163,12 +163,39 @@ func Seeded(spec ElementSpec, name string) (string, map[string]any, error) {
 		if h == nil {
 			continue
 		}
-		key := name + "_" + a.Name
+		key := SeedKey(name, a.Name)
 		src = strings.ReplaceAll(src, ref, "{{."+key+"}}")
 		values[key] = h
 	}
 	return src, values, nil
 }
+
+// SeedKey is the per-instance binding key for an element's attribute:
+// the naming convention Seeded rewrites a bare {{.Attr}} into, spelled
+// once so nobody restates it.
+//
+// It is exported because Seeded is not the only inserter. A designer
+// PASTING a copied subtree faces the same problem from the other end —
+// it holds keys that are already per-instance and has to re-key them for
+// the new instance — and it cannot call Seeded, which starts from a
+// spec's Seed markup rather than from an existing element. Two callers
+// spelling "name + _ + attr" for themselves is the drift this package
+// keeps deleting: the day the separator changes, one of them keeps
+// working and the other silently binds to a key nothing registers.
+func SeedKey(name, attr string) string { return name + "_" + attr }
+
+// SeedPlaceholder is the value a seed's {{.Attr}} needs registering
+// under, or nil (with no error) for an attribute that needs none.
+//
+// Exported for the same reason SeedKey is: a paste has to register a
+// value for every key it re-keys, and the rule for WHICH attributes need
+// one — bind-only attributes and commands, by two different routes — is
+// not obvious enough to restate. In particular a command's placeholder
+// is a real gooey.Action rather than an empty attribute, so a pasted
+// <KeyBinding> is a key that does nothing YET rather than one that is
+// inert; a caller that reached for PlaceholderFor alone would get nil
+// for KindCommand and quietly drop the binding.
+func SeedPlaceholder(spec ElementSpec, a AttrSpec) (any, error) { return placeholder(spec, a) }
 
 // placeholder is the value a seed's {{.Attr}} needs registering under.
 // Nil (with no error) for an attribute that needs none.

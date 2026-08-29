@@ -161,6 +161,22 @@ func decodeCSI(b []byte, idle bool) (Event, int, bool) {
 		}
 		return Event{}, n, false
 	}
+	// Bracketed paste. The opening bracket has to be caught HERE, before
+	// the key mapping, because CSI 200 ~ is shaped exactly like a key
+	// sequence and would otherwise be dropped as an unmapped one — and
+	// its payload would then arrive as the burst of keystrokes that mode
+	// 2004 exists to prevent.
+	if final == '~' && (params == "200" || params == "201") {
+		if params == "200" {
+			return decodePaste(b[n:], n)
+		}
+		// A closing bracket with no opening one. Complete, meaningless,
+		// and skipped — the n>0/!ok case this decoder already has a
+		// contract for. It happens for real: the mode is enabled and
+		// disabled around a suspend, and a paste that straddled the
+		// window can leave its tail behind.
+		return Event{}, n, false
+	}
 	if params == "" && final == 'M' {
 		m, consumed, ok := decodeX10Mouse(b, idle)
 		if consumed == 0 {

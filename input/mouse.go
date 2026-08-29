@@ -25,11 +25,18 @@ const (
 
 // MouseEvent is one pointer report in 0-based cell coordinates.
 //
-// Count is meaningful only on MouseClick, where it is 1 for a single
-// click and 2 for a double click — the dispatcher counts clicks that
-// land on the same component inside its double-click interval. There is
-// no triple click: a third click inside the interval starts a new
-// sequence at 1, so nothing ever reports a count above 2.
+// Count is meaningful only on MouseClick: 1 for a single click, 2 for a
+// double, 3 for a triple. The dispatcher counts clicks that land on the
+// same component with no more than its double-click interval between
+// consecutive ones. Three is the ceiling
+// (gooey.MaxClickCount) — a fourth rapid click starts a new sequence at
+// 1, so nothing ever reports a count above 3.
+//
+// A handler should test `>=` rather than `==` unless it specifically
+// means "exactly a double": every consumer in this repo that wanted
+// "double or better" was already written as `ev.Count >= 2`, which is
+// why raising the ceiling did not change what a triple click does to an
+// ItemsView row or to the wysiwyg designer's drill-in.
 type MouseEvent struct {
 	Kind   MouseKind
 	Button MouseButton
@@ -44,15 +51,30 @@ type EventKind uint8
 const (
 	EventKey EventKind = iota
 	EventMouse
+	// EventPaste is a bracketed paste: one event carrying the whole
+	// payload. It is on THIS stream, and not on one of its own, for the
+	// same reason mouse reports are — the terminal interleaves it with
+	// the keys around it on a single wire, so a second channel could
+	// deliver a paste before the keystroke that preceded it. See
+	// paste.go.
+	EventPaste
 )
 
-// Event is one input event. Keys and mouse reports arrive interleaved on
-// the same wire, so they stay on one ordered stream rather than two
-// channels that could reorder relative to each other.
+// Event is one input event. Keys, mouse reports and pastes arrive
+// interleaved on the same wire, so they stay on one ordered stream
+// rather than channels that could reorder relative to each other.
+//
+// Exactly one of Key, Mouse and Paste is meaningful, and Kind says
+// which. Reading the wrong one gets a zero value rather than an error,
+// which is why every consumer routes on Kind (or on IsKey/IsMouse/
+// IsPaste) FIRST: a paste read as ev.Key is a KeyRune of rune 0, which
+// is a perfectly plausible-looking key that matches no binding and is
+// dispatched to the focused component as nothing at all.
 type Event struct {
 	Kind  EventKind
 	Key   KeyEvent
 	Mouse MouseEvent
+	Paste PasteEvent
 }
 
 func KeyOf(k KeyEvent) Event     { return Event{Kind: EventKey, Key: k} }

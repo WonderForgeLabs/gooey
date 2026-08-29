@@ -66,11 +66,13 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/WonderForgeLabs/gooey/control"
@@ -116,6 +118,17 @@ type Options struct {
 	// gRPC cannot drift into two different ideas of what an island is.
 	// One path, one model applies to the scope as much as to the verbs.
 	Grant *control.Grant
+	// OnServeEnd is called once, when the accept loop returns — nil for
+	// a clean Close, non-nil for a listener that died. It is how a host
+	// learns that the URL it is displaying has stopped being real.
+	//
+	// IT RUNS ON THE SERVE GOROUTINE, never the UI one, so an
+	// implementation that touches the property graph must marshal with
+	// Dispatcher.Post. There is deliberately no per-request callback:
+	// this endpoint is stateless, so a request is not a connection, and
+	// a callback per request would invite exactly the live-client
+	// indicator that state.go explains cannot exist here.
+	OnServeEnd func(error)
 }
 
 // Server is a gooey app exposed over MCP.
@@ -139,6 +152,12 @@ type Server struct {
 
 	ln   net.Listener
 	http *http.Server
+
+	// state is the accept loop's outcome and requests the cumulative
+	// count of requests served. Neither is a session count; state.go
+	// explains at length why this server cannot have one.
+	state    serveState
+	requests atomic.Int64
 }
 
 // New builds a server without listening. The zero-network path: tests
@@ -178,7 +197,23 @@ func Serve(host Host, opts Options) (*Server, error) {
 	}
 	s.ln = ln
 	s.http = &http.Server{Handler: s.Handler()}
-	go s.http.Serve(ln)
+	s.state.start()
+	// The accept loop's OUTCOME is captured rather than discarded.
+	// ErrServerClosed is a clean shutdown and is normalised away, so a
+	// non-nil ServeError means the listener died while the app carried
+	// on — until this was captured, an app whose MCP endpoint had gone
+	// went on advertising a URL that would refuse every connection, with
+	// nothing anywhere to say so.
+	go func() {
+		err := s.http.Serve(ln)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		s.state.end(err)
+		if opts.OnServeEnd != nil {
+			opts.OnServeEnd(err)
+		}
+	}()
 	return s, nil
 }
 
