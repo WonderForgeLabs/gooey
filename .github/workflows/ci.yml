@@ -6,6 +6,29 @@ on:
     tags: ['v*']
   pull_request:
 
+concurrency:
+  # A second push to a pull request makes the first run's result
+  # unusable: required checks are matched against the PR's HEAD SHA, so
+  # an older run can only ever produce rows for a commit nobody is going
+  # to merge. Without this stanza it still ran to completion, and on a
+  # pool of ephemeral VMs that is not free — it holds a runner the newer
+  # run is queued behind.
+  #
+  # Measured on 2026-08-25, before this existed: `land/ide-shell` alone
+  # had FOUR CI runs queued simultaneously, three of them for superseded
+  # commits, against a pool serving three or four jobs at a time. Two
+  # legs of an unrelated PR sat 45 minutes without ever being assigned a
+  # runner and were then cancelled. Nothing was broken and no runner had
+  # died — there was simply several times more work queued than anyone
+  # had asked for, and the symptom reads exactly like a dead pool.
+  #
+  # Pushes to main and to tags group by SHA, which is unique, so they
+  # neither cancel nor queue behind one another: every commit that lands
+  # has to be tested on its own, and a release tag must never lose its
+  # image build to a newer one.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

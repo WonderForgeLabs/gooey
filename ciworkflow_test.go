@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -282,4 +283,166 @@ func uniqSorted(xs []string) []string {
 		}
 	}
 	return out
+}
+
+// Every workflow that runs on a pull request must collapse superseded
+// runs, and ci.yml — by far the most expensive one — spent its whole life
+// without doing so.
+//
+// The failure mode is worth stating precisely, because it does not look
+// like itself. A run for a commit that is no longer the PR's head cannot
+// satisfy that PR: required checks are matched against the head SHA. It
+// runs anyway, to completion, occupying a runner the newer run is queued
+// behind. Push three times to one branch and four full runs are in the
+// queue, three of them producing rows nobody can merge on.
+//
+// What that looks like from outside is a dead runner pool. Jobs sit for
+// tens of minutes with `runner_name` empty and are eventually cancelled,
+// which is the same signature a scaled-to-zero pool produces — and the
+// two have opposite remedies. On 2026-08-25 that cost real time before
+// somebody counted the queue: the pool was healthy the whole time, having
+// served 23 distinct ephemeral runners in the hour it appeared to be
+// down. There was simply several times more work queued than had been
+// asked for.
+//
+// So the guard is on the CONFIGURATION, not on any observed timing. It
+// checks the property that has to hold — a pull-request workflow declares
+// a concurrency group AND actually cancels on it. A group with
+// `cancel-in-progress: false` is not a weaker version of this; it is
+// worse, because superseded runs then queue in front of the live one
+// instead of standing aside.
+func TestEveryPullRequestWorkflowCollapsesSupersededRuns(t *testing.T) {
+	files, err := filepath.Glob(".github/workflows/*.yml")
+	if err != nil {
+		t.Fatalf("globbing workflows: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no workflows found; this test would pass vacuously")
+	}
+
+	checked := 0
+	for _, f := range files {
+		body := readFileString(t, f)
+		if !prTriggered.MatchString(body) {
+			continue
+		}
+		checked++
+
+		block := concurrencyBlock(body)
+		if block == "" {
+			t.Errorf("%s runs on pull_request but declares no top-level `concurrency:`.\n\n"+
+				"Every push to the branch then queues a WHOLE additional run, and the "+
+				"superseded ones still execute even though their results can never "+
+				"satisfy the PR — required checks are matched against the head SHA. On a "+
+				"pool of ephemeral runners the queue this builds is indistinguishable "+
+				"from the pool being dead. Add:\n\n"+
+				"  concurrency:\n"+
+				"    group: <workflow>-${{ github.event.pull_request.number || github.sha }}\n"+
+				"    cancel-in-progress: ${{ github.event_name == 'pull_request' }}", f)
+			continue
+		}
+		switch group := groupExpr(block); {
+		case group == "":
+			t.Errorf("%s has a `concurrency:` block with no `group:`; there is nothing to "+
+				"collapse runs against", f)
+		case !perPullRequestGroup.MatchString(group):
+			t.Errorf("%s groups on `%s`, which does not identify one pull request.\n\n"+
+				"A group has to be BOTH stable across pushes to the same PR and distinct "+
+				"between two PRs, or cancelling on it does the wrong thing in one "+
+				"direction or the other. A constant (`group: ci`) is stable but not "+
+				"distinct, so a push to one PR cancels every other PR's run — strictly "+
+				"worse than having no stanza at all. Keying on `github.sha` or "+
+				"`github.run_id` is distinct but not stable: it changes on every push, "+
+				"so nothing is ever superseded and the stanza is decoration.\n\n"+
+				"Name one of github.event.pull_request.number, github.head_ref, "+
+				"github.ref.", f, strings.TrimSpace(group))
+		}
+		if !cancelsInProgress.MatchString(block) {
+			t.Errorf("%s declares a concurrency group but does not cancel on it.\n\n"+
+				"`cancel-in-progress: false` is not a milder form of this fix, it is the "+
+				"opposite one: superseded runs then QUEUE IN FRONT of the run for the "+
+				"commit you actually pushed, so the newest result arrives last.\n\n"+
+				"block was:\n%s", f, block)
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("no workflow appears to run on pull_request, so this test checked " +
+			"nothing. Either the trigger spelling changed or prTriggered is wrong — " +
+			"either way the guard is off, not satisfied.")
+	}
+	t.Logf("checked %d pull-request workflows", checked)
+}
+
+// prTriggered matches the `pull_request:` / `pull_request_target:` key
+// nested under `on:`. Anchored to an INDENTED line so it cannot match a
+// job named after the trigger, and so the word appearing inside an
+// `if: github.event_name == 'pull_request'` expression is not mistaken
+// for the trigger itself.
+var prTriggered = regexp.MustCompile(`(?m)^[ \t]+pull_request(_target)?:[ \t]*$`)
+
+// cancelsInProgress accepts either the literal `true` or an expression,
+// and rejects only the literal `false`. An expression is the correct
+// spelling for a workflow that also runs on push: cancelling there would
+// drop a commit that has already landed.
+var cancelsInProgress = regexp.MustCompile(`(?m)^[ \t]+cancel-in-progress:[ \t]*(true|\$\{\{)`)
+
+// concurrencyBlock returns the top-level `concurrency:` mapping, or "" if
+// the file has none. Top-level keys sit at column zero, so the block runs
+// until the next such key; blank lines and comments do not end it.
+//
+// Read textually on purpose. The root module has exactly two direct
+// requirements (docs/specs/2026-08-10-pack-distribution.md), so pulling in
+// a YAML parser to check one key would be a doctrine change to satisfy a
+// test — and every other assertion in this file already reads the workflow
+// as text.
+func concurrencyBlock(body string) string {
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, "concurrency:") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	for i := start + 1; i < len(lines); i++ {
+		ln := lines[i]
+		if ln == "" || strings.HasPrefix(ln, " ") || strings.HasPrefix(ln, "\t") {
+			continue
+		}
+		return strings.Join(lines[start:i], "\n")
+	}
+	return strings.Join(lines[start:], "\n")
+}
+
+// perPullRequestGroup matches the expressions that identify one pull
+// request: stable across pushes to it, distinct between two of them.
+// Cancelling on anything else is wrong in one direction or the other, and
+// both wrong answers pass every other assertion in this test.
+//
+// `github.sha` and `github.run_id` are deliberately absent. They vary per
+// push, so a group keyed on either never collides with itself and never
+// supersedes anything — the stanza parses, reads correctly, and does
+// nothing. They are legitimate in the FALLBACK arm of an `||`, which is
+// how a workflow that also runs on push keeps its main and tag runs from
+// cancelling one another; that arm is unreachable on a pull request,
+// where the left side is always set.
+var perPullRequestGroup = regexp.MustCompile(`github\.(event\.pull_request\.number|head_ref|ref_name|ref)\b`)
+
+// groupExpr returns the value of `group:` inside a concurrency block, or
+// "" if there is none.
+func groupExpr(block string) string {
+	for _, ln := range strings.Split(block, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(t, "group:"); ok {
+			return rest
+		}
+	}
+	return ""
 }
