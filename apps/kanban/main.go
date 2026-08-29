@@ -461,6 +461,199 @@ func main() {
 	grpcAddr := flag.String("grpc", "127.0.0.1:0", "bind address for the gRPC control plane; port 0 picks a free port; empty disables it. UNAUTHENTICATED — a non-loopback address exposes it")
 	flag.Parse()
 
+	u := &ui{}
+	ctx := u.context()
+
+	// "." under `go run .`, the executable's own directory otherwise —
+	// the framework's answer, so this app and the worker launcher below
+	// agree about where this demo's files are.
+	dir := gooey.SourceDir("kanban.gooey")
+
+	// Includes is what lets AGENT-AUTHORED markup load assets. A page
+	// loaded by markup.Page resolves <Image Src="x.png"> against the FS
+	// it came from, but swap_markup and patch_markup build from BYTES —
+	// that tree has no source FS at all, and falls back to Includes
+	// (markup.Context.assets). Without this line an agent can restructure
+	// this page freely and still cannot put a picture on it, which is a
+	// confusing hole to hit from the outside: the markup is valid and the
+	// error names a file system rather than the image.
+	ctx.Includes = os.DirFS(dir)
+
+	u.app = gooey.NewApp(markup.Page(os.DirFS(dir), "kanban.gooey", ctx))
+
+	// appendLogEntry is the only thing mcpTrafficLogger calls. It runs on
+	// whatever net/http goroutine served the request, so it may not touch
+	// logEntries directly (properties are UI-goroutine-confined) —
+	// app.Post marshals the append onto the loop, same as any other async
+	// source per the framework's Dispatcher. Pretty-printing happens here,
+	// once, at capture time, rather than being redone on every repaint.
+	appendLogEntry := func(direction, text string) {
+		u.app.Post(func() {
+			lines, isJSON := prettyJSONLines(text)
+			if !isJSON {
+				flat := strings.ReplaceAll(text, "\n", " ")
+				if n := len(flat); n > logDisplayTruncate {
+					flat = fmt.Sprintf("%s...(%d more bytes)", flat[:logDisplayTruncate], n-logDisplayTruncate)
+				}
+				lines = []string{flat}
+			}
+			entry := logEntry{Time: time.Now(), Dir: direction, Text: text, Lines: lines, IsJSON: isJSON}
+			cur := u.logEntries.Get()
+			next := append(append([]logEntry{}, cur...), entry)
+			// Row cap, not message cap (see maxLogRows): drop the oldest
+			// whole messages until the flattened row count fits.
+			rows := 0
+			for _, e := range next {
+				rows += 1 + len(e.Lines)
+			}
+			for rows > maxLogRows && len(next) > 1 {
+				rows -= 1 + len(next[0].Lines)
+				next = next[1:]
+			}
+			u.logEntries.Set(next)
+		})
+	}
+
+	if *withWorker && *addr == "" {
+		gooey.Exit(fmt.Errorf("kanban: -with-worker needs the MCP endpoint it pushes markup into; do not pass -mcp \"\""))
+	}
+
+	if *addr != "" {
+		// -mcp is used as given. This endpoint has no authentication and
+		// an MCP client can do anything the keyboard can, so a
+		// non-loopback address exposes an unauthenticated control handle
+		// on this terminal; that is the operator's choice.
+		//
+		// mcp.New builds the server without listening — unlike the
+		// mcp.Serve convenience this demo used before — so this app can
+		// own the net.Listener and http.Server and wrap srv.Handler()
+		// with mcpTrafficLogger before anything is served. That
+		// wrapping is the only reason for the switch.
+		srv, err := mcp.New(u.app, mcp.Options{
+			Context: ctx,
+			Name:    "gooey-kanban",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		ln, err := net.Listen("tcp", *addr)
+		if err != nil {
+			gooey.Exit(fmt.Errorf("kanban: listen %s: %w", *addr, err))
+		}
+		// srv.URL()/srv.Addr() read a listener mcp.New never sets (only
+		// mcp.Serve does), so the endpoint this app actually bound is
+		// built from ln instead.
+		mcpURL := "http://" + ln.Addr().String() + "/mcp"
+		httpSrv := &http.Server{Handler: mcpTrafficLogger(srv.Handler(), appendLogEntry)}
+		go httpSrv.Serve(ln)
+		defer httpSrv.Close()
+		helpText := "MCP endpoint: " + mcpURL + "\n\n" +
+			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string),\n" +
+			"                               ActiveTab (int, 0=mcp 1=log)\n" +
+			"tools/call invoke_command   — {\"name\": \"AddTask\"} (after set_value NewTitle), or TodoMoveRight/DoingMoveLeft/\n" +
+			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove/ToggleTab/\n" +
+			"                               ScrollLogLeft/ScrollLogRight (moves LogHScroll, the log panel's horizontal window)\n" +
+			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"ActiveTab\", \"value\": 1}\n" +
+			"tools/call focus/send_keys  — {\"name\": \"NewTitle\"} then {\"text\": \"buy milk\"}; or focus a list, then keys: [\"down\"]\n" +
+			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, PanelTabs,\n" +
+			"                               LogPanel, and each column's buttons\n\n" +
+			"tab: ctrl+t (or click the mcp / log headers; ctrl+pgup/pgdn while this panel has focus) switches between this help\n" +
+			"text and a live log of every raw MCP request/response this server has handled — including the call reading this."
+
+		if *withWorker {
+			// The whole worker, as a description: gooey.PythonCompanion
+			// owns the interpreter choice (an explicit -worker-python
+			// wins, otherwise worker/.venv/bin/python beats bare python3,
+			// because that venv is where temporalio and
+			// claude-agent-sdk are and a worker that cannot import them
+			// exits — taking this app with it), the truncating log, and
+			// the log's lifetime, which ends after the child is gone
+			// rather than at a defer here.
+			//
+			// Dir is worker/ under kanban's own source directory, not
+			// whatever cwd this binary happened to launch from — SourceDir
+			// resolved that split above.
+			//
+			// Env rides on top of the parent's full environment, so an
+			// ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN /
+			// TEMPORAL_ADDRESS already exported in this shell reaches the
+			// worker; the two entries here point it at this app's MCP
+			// endpoint and at a task queue distinct from the generic one
+			// other demos default to.
+			worker := gooey.PythonWorker{
+				Name:   "temporal-worker",
+				Dir:    filepath.Join(dir, "worker"),
+				Script: "worker.py",
+				Python: *workerPython,
+				Log:    "kanban-worker.log",
+				Env: []string{
+					"GOOEY_MCP_URL=" + mcpURL,
+					"TEMPORAL_TASK_QUEUE=" + *workerTaskQueue,
+				},
+			}
+			u.app.AddCompanion(gooey.PythonCompanion(worker))
+
+			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + worker.LogPath() + "\n" +
+				"trigger it from apps/kanban/worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
+				" python trigger.py GenerateUI \"some topic\""
+		}
+		u.help.Set(helpText)
+	} else {
+		u.help.Set("started with -mcp \"\": no server is listening")
+	}
+
+	if *grpcAddr != "" {
+		// Options.Context is not optional: without it the service has no
+		// binding context, so ValidateMarkup and the declared-schema
+		// path lose the very thing a remote editor validates against.
+		// Name/Version surface in every session's Welcome, which is how
+		// an attached client identifies what it is driving.
+		gsrv, err := gooeygrpc.Serve(u.app, gooeygrpc.Options{
+			Addr:    *grpcAddr,
+			Context: ctx,
+			Name:    "gooey-kanban",
+			Version: "1",
+		})
+		if err != nil {
+			gooey.Exit(err)
+		}
+		// Close joins rather than merely signalling — the framework rule
+		// that a stop must wait, not just ask.
+		defer gsrv.Close()
+		u.help.Set(u.help.Get() + "\n\ngRPC control plane: " + gsrv.Addr() + "  (gooey.control.v1)\n" +
+			"attach the markup editor:  cd apps/wysiwyg && go run . -attach " + gsrv.Addr() + " -island Help")
+	}
+
+	if err := u.app.Run(context.Background()); err != nil {
+		gooey.Exit(err)
+	}
+}
+
+// ui owns the App, because the Quit grant closes over it and the App
+// cannot be constructed before the context its own content needs.
+// Holding it in a struct breaks that knot: the closure reads the field
+// when it runs, main fills it in between building the context and
+// building the page, and a test can take the same two steps in the same
+// order. Before this the context was a local inside main, so the only
+// way to build the page was to run the app.
+//
+// Deliberately flag-free — main owns the flags, and everything they
+// configure (the MCP and gRPC listeners, the worker companion) is wired
+// up AFTER the page exists. That is what lets a test build the page
+// without binding a port or launching a subprocess.
+type ui struct {
+	app *gooey.App
+
+	// The two viewmodel handles main keeps writing after the page is
+	// built: the MCP traffic logger appends entries from a net/http
+	// goroutine, and the resolved listener addresses land in help once
+	// the ports are known. Everything else in context() is reachable
+	// only through the markup.
+	logEntries *prop.Property[[]logEntry]
+	help       *prop.Property[string]
+}
+
+func (u *ui) context() *markup.Context {
 	// --- board state: three plain slices, nothing fancier. Moving a card
 	// is "remove from one slice, append to another, Set both" — the
 	// ItemsView on each side repaints because Items() reads the slice
@@ -551,7 +744,8 @@ func main() {
 	// --- log tab: every MCP request/response, captured by
 	// mcpTrafficLogger (below) through appendLogEntry, flattened into
 	// displayed rows by logRows/logItems below.
-	logEntries := prop.NewSource([]logEntry{})
+	u.logEntries = prop.NewSource([]logEntry{})
+	logEntries := u.logEntries
 	logScroll := prop.NewSource(0)  // vertical: rows back from the tail
 	logHScroll := prop.NewSource(0) // horizontal: runes scrolled into a row
 
@@ -609,13 +803,12 @@ func main() {
 		}
 	})
 
-	help := prop.NewSource("")
+	u.help = prop.NewSource("")
+	help := u.help
 
 	panelStyle := render.Style{Fg: render.RGB(120, 90, 220)}
 	accentStyle := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
 	dimStyle := render.Style{Fg: render.RGB(140, 140, 150)}
-
-	var app *gooey.App
 
 	ctx := &markup.Context{
 		Values: map[string]any{
@@ -642,7 +835,7 @@ func main() {
 			"DoneRemove":   remove(done, doneSel),
 
 			"Help": help,
-			"Quit": gooey.Command(func() { app.Quit() }),
+			"Quit": gooey.Command(func() { u.app.Quit() }),
 
 			"ActiveTab":  activeTab,
 			"ToggleTab":  toggleTab,
@@ -703,168 +896,5 @@ func main() {
 			},
 		},
 	}
-
-	// "." under `go run .`, the executable's own directory otherwise —
-	// the framework's answer, so this app and the worker launcher below
-	// agree about where this demo's files are.
-	dir := gooey.SourceDir("kanban.gooey")
-
-	// Includes is what lets AGENT-AUTHORED markup load assets. A page
-	// loaded by markup.Page resolves <Image Src="x.png"> against the FS
-	// it came from, but swap_markup and patch_markup build from BYTES —
-	// that tree has no source FS at all, and falls back to Includes
-	// (markup.Context.assets). Without this line an agent can restructure
-	// this page freely and still cannot put a picture on it, which is a
-	// confusing hole to hit from the outside: the markup is valid and the
-	// error names a file system rather than the image.
-	ctx.Includes = os.DirFS(dir)
-
-	app = gooey.NewApp(markup.Page(os.DirFS(dir), "kanban.gooey", ctx))
-
-	// appendLogEntry is the only thing mcpTrafficLogger calls. It runs on
-	// whatever net/http goroutine served the request, so it may not touch
-	// logEntries directly (properties are UI-goroutine-confined) —
-	// app.Post marshals the append onto the loop, same as any other async
-	// source per the framework's Dispatcher. Pretty-printing happens here,
-	// once, at capture time, rather than being redone on every repaint.
-	appendLogEntry := func(direction, text string) {
-		app.Post(func() {
-			lines, isJSON := prettyJSONLines(text)
-			if !isJSON {
-				flat := strings.ReplaceAll(text, "\n", " ")
-				if n := len(flat); n > logDisplayTruncate {
-					flat = fmt.Sprintf("%s...(%d more bytes)", flat[:logDisplayTruncate], n-logDisplayTruncate)
-				}
-				lines = []string{flat}
-			}
-			entry := logEntry{Time: time.Now(), Dir: direction, Text: text, Lines: lines, IsJSON: isJSON}
-			cur := logEntries.Get()
-			next := append(append([]logEntry{}, cur...), entry)
-			// Row cap, not message cap (see maxLogRows): drop the oldest
-			// whole messages until the flattened row count fits.
-			rows := 0
-			for _, e := range next {
-				rows += 1 + len(e.Lines)
-			}
-			for rows > maxLogRows && len(next) > 1 {
-				rows -= 1 + len(next[0].Lines)
-				next = next[1:]
-			}
-			logEntries.Set(next)
-		})
-	}
-
-	if *withWorker && *addr == "" {
-		gooey.Exit(fmt.Errorf("kanban: -with-worker needs the MCP endpoint it pushes markup into; do not pass -mcp \"\""))
-	}
-
-	if *addr != "" {
-		// -mcp is used as given. This endpoint has no authentication and
-		// an MCP client can do anything the keyboard can, so a
-		// non-loopback address exposes an unauthenticated control handle
-		// on this terminal; that is the operator's choice.
-		//
-		// mcp.New builds the server without listening — unlike the
-		// mcp.Serve convenience this demo used before — so this app can
-		// own the net.Listener and http.Server and wrap srv.Handler()
-		// with mcpTrafficLogger before anything is served. That
-		// wrapping is the only reason for the switch.
-		srv, err := mcp.New(app, mcp.Options{
-			Context: ctx,
-			Name:    "gooey-kanban",
-		})
-		if err != nil {
-			gooey.Exit(err)
-		}
-		ln, err := net.Listen("tcp", *addr)
-		if err != nil {
-			gooey.Exit(fmt.Errorf("kanban: listen %s: %w", *addr, err))
-		}
-		// srv.URL()/srv.Addr() read a listener mcp.New never sets (only
-		// mcp.Serve does), so the endpoint this app actually bound is
-		// built from ln instead.
-		mcpURL := "http://" + ln.Addr().String() + "/mcp"
-		httpSrv := &http.Server{Handler: mcpTrafficLogger(srv.Handler(), appendLogEntry)}
-		go httpSrv.Serve(ln)
-		defer httpSrv.Close()
-		helpText := "MCP endpoint: " + mcpURL + "\n\n" +
-			"tools/call list_values      — TodoItems/DoingItems/DoneItems (lists), TodoSel/DoingSel/DoneSel (int), NewTitle (string),\n" +
-			"                               ActiveTab (int, 0=mcp 1=log)\n" +
-			"tools/call invoke_command   — {\"name\": \"AddTask\"} (after set_value NewTitle), or TodoMoveRight/DoingMoveLeft/\n" +
-			"                               DoingMoveRight/DoneMoveLeft/TodoRemove/DoingRemove/DoneRemove/ToggleTab/\n" +
-			"                               ScrollLogLeft/ScrollLogRight (moves LogHScroll, the log panel's horizontal window)\n" +
-			"tools/call set_value        — {\"name\": \"NewTitle\", \"value\": \"typed by an agent\"} or {\"name\": \"ActiveTab\", \"value\": 1}\n" +
-			"tools/call focus/send_keys  — {\"name\": \"NewTitle\"} then {\"text\": \"buy milk\"}; or focus a list, then keys: [\"down\"]\n" +
-			"tools/call tree_snapshot    — Name= identities: NewTitle, AddBtn, TodoList, DoingList, DoneList, PanelTabs,\n" +
-			"                               LogPanel, and each column's buttons\n\n" +
-			"tab: ctrl+t (or click the mcp / log headers; ctrl+pgup/pgdn while this panel has focus) switches between this help\n" +
-			"text and a live log of every raw MCP request/response this server has handled — including the call reading this."
-
-		if *withWorker {
-			// The whole worker, as a description: gooey.PythonCompanion
-			// owns the interpreter choice (an explicit -worker-python
-			// wins, otherwise worker/.venv/bin/python beats bare python3,
-			// because that venv is where temporalio and
-			// claude-agent-sdk are and a worker that cannot import them
-			// exits — taking this app with it), the truncating log, and
-			// the log's lifetime, which ends after the child is gone
-			// rather than at a defer here.
-			//
-			// Dir is worker/ under kanban's own source directory, not
-			// whatever cwd this binary happened to launch from — SourceDir
-			// resolved that split above.
-			//
-			// Env rides on top of the parent's full environment, so an
-			// ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN /
-			// TEMPORAL_ADDRESS already exported in this shell reaches the
-			// worker; the two entries here point it at this app's MCP
-			// endpoint and at a task queue distinct from the generic one
-			// other demos default to.
-			worker := gooey.PythonWorker{
-				Name:   "temporal-worker",
-				Dir:    filepath.Join(dir, "worker"),
-				Script: "worker.py",
-				Python: *workerPython,
-				Log:    "kanban-worker.log",
-				Env: []string{
-					"GOOEY_MCP_URL=" + mcpURL,
-					"TEMPORAL_TASK_QUEUE=" + *workerTaskQueue,
-				},
-			}
-			app.AddCompanion(gooey.PythonCompanion(worker))
-
-			helpText += "\n\nworker companion: running on task queue " + *workerTaskQueue + "; log at " + worker.LogPath() + "\n" +
-				"trigger it from apps/kanban/worker: TEMPORAL_TASK_QUEUE=" + *workerTaskQueue +
-				" python trigger.py GenerateUI \"some topic\""
-		}
-		help.Set(helpText)
-	} else {
-		help.Set("started with -mcp \"\": no server is listening")
-	}
-
-	if *grpcAddr != "" {
-		// Options.Context is not optional: without it the service has no
-		// binding context, so ValidateMarkup and the declared-schema
-		// path lose the very thing a remote editor validates against.
-		// Name/Version surface in every session's Welcome, which is how
-		// an attached client identifies what it is driving.
-		gsrv, err := gooeygrpc.Serve(app, gooeygrpc.Options{
-			Addr:    *grpcAddr,
-			Context: ctx,
-			Name:    "gooey-kanban",
-			Version: "1",
-		})
-		if err != nil {
-			gooey.Exit(err)
-		}
-		// Close joins rather than merely signalling — the framework rule
-		// that a stop must wait, not just ask.
-		defer gsrv.Close()
-		help.Set(help.Get() + "\n\ngRPC control plane: " + gsrv.Addr() + "  (gooey.control.v1)\n" +
-			"attach the markup editor:  cd apps/wysiwyg && go run . -attach " + gsrv.Addr() + " -island Help")
-	}
-
-	if err := app.Run(context.Background()); err != nil {
-		gooey.Exit(err)
-	}
+	return ctx
 }
