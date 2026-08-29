@@ -1038,6 +1038,12 @@ var defTabs = &ElementDef{
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Tab"}},
+	// GrantOrder: a tab's position IS its index in the strip, and
+	// reordering tabs is one of the things an editor is for. Declaring
+	// nothing here read as GrantNone — "placed by its parent, nothing to
+	// edit" — which the designer showed as DragFixed. Found in review of
+	// #390 (issue #418).
+	Grants: Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		tb, err := buildTabs(e, ctx)
 		return tb, err
@@ -1082,6 +1088,10 @@ var defMenuBar = &ElementDef{
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Menu", "MenuItem"}},
+	// GrantOrder, for the reason <Tabs> carries it: a menu's position on
+	// the bar is its index among its siblings, and nothing else about it
+	// is geometry.
+	Grants: Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		bar, err := buildMenuBar(e, ctx)
 		return bar, err

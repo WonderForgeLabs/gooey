@@ -410,3 +410,45 @@ func TestALostWriteNamesEveryRoleInAFixedOrder(t *testing.T) {
 			msg, markup.RoleCol, markup.RoleRow)
 	}
 }
+
+// TestATabReordersRatherThanReadingAsFixed is the end of the finding at
+// the editor, where it was visible: a press on a <Tab> selected it and
+// then refused the gesture with "placed by its parent".
+//
+// <Tabs> is ModeRestricted, and both grant contracts in markup gated on
+// ModeMany, so the omission that produced DragFixed was invisible to the
+// suite written to catch exactly it. The fix is in the catalog — <Tabs>
+// declares GrantOrder now — and this asserts the consequence rather than
+// the declaration, because dragKind is what the gesture actually reads.
+//
+// Asserted against DragFixed BY NAME as well as against DragOrder: the
+// two failures are different bugs. A DragFixed here is the original
+// defect returning; anything else is the grant-to-gesture mapping.
+func TestATabReordersRatherThanReadingAsFixed(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.doc().Elem = "Tabs"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Tab", Attrs: map[string]string{"Header": "One"},
+			Kids: []*node{{Elem: "Text", Body: "first"}}},
+		{Elem: "Tab", Attrs: map[string]string{"Header": "Two"},
+			Kids: []*node{{Elem: "Text", Body: "second"}}},
+	}
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the <Tabs> fixture does not build: %s", ed.status.Get())
+	}
+	c.Frame()
+
+	got := ed.dragKind(ed.doc().Kids[1])
+	if got == DragFixed {
+		t.Fatalf("a <Tab> reads as DragFixed (%q), which is what the designer says "+
+			"when there is nothing to edit — and tabs reorder. <Tabs> declares no "+
+			"Grant, so the catalog is telling every editor its children have no "+
+			"geometry", got)
+	}
+	if got != DragOrder {
+		t.Errorf("a <Tab> reads as %q, want %q — position in the strip is the "+
+			"child's index", got, DragOrder)
+	}
+}

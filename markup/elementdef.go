@@ -213,6 +213,43 @@ func (d *ElementDef) axes() (nonVisual, focusable, attaches, hasLayout bool) {
 	return
 }
 
+// holdsSeveralChildren reports whether this element positions more than
+// one visual child — the question both grant contracts actually ask, and
+// which ModeMany answered for only two thirds of the elements that do
+// it.
+//
+// ModeRestricted WAS READ AS "not a container", and it is not: <Tabs>
+// and <MenuBar> restrict their children to a NAME rather than to a
+// count, and each holds as many as the markup gives it. Gating on
+// ModeMany alone made a <Tab> read as DragFixed — "placed by its parent,
+// nothing to edit" — in an editor whose whole job includes reordering
+// tabs. Found in review of #390 (issue #418).
+//
+// DERIVED FROM Proto, for the reason the axes above are. The fact that
+// separates <Tabs> from <Companion> — also ModeRestricted, and whose
+// <Arg>/<Var> children are process arguments with no geometry at all —
+// is whether the framework walks the children AS COMPONENTS.
+// gooey.Container is that question and the type already answers it.
+// Naming the two containers here instead would put a third copy of the
+// vocabulary beside a registry that has it, and the copy is the one that
+// goes stale: the next restricted container would be silently
+// undesignable with the suite still green.
+//
+// It cannot be answered from Children.Only either. Neither <Menu> nor
+// <MenuItem> has an ElementDef — <MenuBar> parses them itself — so
+// "every name is a defined element" would classify <MenuBar> as holding
+// nothing visual, which is the same bug in a different place.
+func (d *ElementDef) holdsSeveralChildren() bool {
+	switch d.Children.Mode {
+	case ModeMany:
+		return true
+	case ModeRestricted:
+		_, ok := d.Proto.(gooey.Container)
+		return ok
+	}
+	return false
+}
+
 // spec renders the declaration as the catalog entry consumers read.
 func (d *ElementDef) spec() ElementSpec { return d.specAs(OriginBuiltin) }
 
