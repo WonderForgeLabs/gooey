@@ -50,8 +50,16 @@ const (
 	// editRename is editCaret's twin for KindIdentity. Name is the
 	// ADDRESS, not a value — markup.KindIdentity's own doc says a
 	// consumer "must decide what a rename means rather than defaulting
-	// to a text box" — so the decision is made HERE, visibly, and the
-	// editor warns instead of pretending it is Content.
+	// to a text box" — so the decision is made HERE, visibly: it IS a
+	// text box, and opening one puts a warning in the status bar saying
+	// what a rename costs.
+	//
+	// The warning is the ONLY thing that distinguishes it from
+	// editCaret; every other branch treats the two together, which is
+	// correct and is why the constant is easy to hollow out. It was:
+	// this comment claimed the warning for a while before anything
+	// emitted one. TestRenamingWarnsThatTheNameIsAnAddress is what
+	// keeps the claim and the code together now.
 	editRename
 	// editStepper is an inline spinner for KindInt. No popup: a number
 	// does not need a surface, it needs ◂ and ▸.

@@ -120,12 +120,21 @@ func TestEveryKindTheVocabularyActuallyUSESHasAnEditor(t *testing.T) {
 	t.Logf("attributes examined: %d, distinct Kinds in use: %d", checked, len(seen))
 }
 
-// TestEveryEditorHasAnAffordanceAndTheGlyphsAreDistinct.
+// TestEveryEditorHasAnAffordanceAndSharedGlyphsAgreeOnFloating.
 //
 // The affordance column is the user's only warning that enter is about
-// to open something. Two editors sharing a glyph would say "these behave
-// alike" about a colour picker and a dropdown, and editNone sharing one
-// with a real editor would hide the gap the table exists to expose.
+// to open something, so every editor has to show one — except the caret
+// pair, where the caret IS the affordance and a glyph beside it would
+// claim something else opens.
+//
+// SHARING a glyph is allowed; DISAGREEING about what it does is not.
+// This header used to name a distinctness test and say that two editors
+// sharing a glyph would be wrong, which the rename had already stopped
+// being true — the check is that editors sharing one agree on whether
+// they float a surface, because that is the part the user has to
+// predict. A doc comment describing the test's previous assertion is
+// the same defect as a test name outrunning its assertion, pointed
+// backwards. Found in review of #388.
 func TestEveryEditorHasAnAffordanceAndSharedGlyphsAgreeOnFloating(t *testing.T) {
 	byGlyph := map[string][]editorKind{}
 	for _, e := range editors {
@@ -328,5 +337,58 @@ func TestBindingPickerOffersOnlyHandlesOfTheDeclaredType(t *testing.T) {
 		if contains(offered, c) {
 			t.Errorf("%s is a command and was also offered for a string binding", c)
 		}
+	}
+}
+
+// TestRenamingWarnsThatTheNameIsAnAddress holds editRename's doc and its
+// behaviour together.
+//
+// editRename is editCaret's twin, and every branch in the editor treats
+// the two identically — correctly, because a rename IS a text box. The
+// warning is the only thing that makes the constant carry any weight,
+// and the constant's doc claimed it before anything emitted one. A
+// distinct enum value whose distinction is nowhere in the code is a
+// decision that reads as made and is not, which is worse than not
+// having the constant.
+//
+// It also asserts editCaret stays QUIET. Warning on every caret would
+// satisfy the first half and destroy the point: a message that appears
+// for everything says nothing about renaming.
+func TestRenamingWarnsThatTheNameIsAnAddress(t *testing.T) {
+	ed, c, p := propsPane(t)
+	ed.sel = ed.doc().Kids[1]
+	ed.rebuild()
+	c.Frame()
+
+	// Row 0 is Name — KindIdentity, so editRename.
+	ed.attrSel.Set(0)
+	ed.status.Set("")
+	ed.beginEdit()
+	c.Frame()
+
+	if p.Mode() != editRename {
+		t.Fatalf("enter on the Name row opened %v, want editRename", p.Mode())
+	}
+	warn := ed.status.Get()
+	if !strings.Contains(warn, "ADDRESS") {
+		t.Errorf("opening a rename left the status at %q; editors.go says "+
+			"it warns that the name is the element's address", warn)
+	}
+	p.Cancel()
+	c.Frame()
+
+	// An ordinary caret editor must not warn.
+	i := rowAt(t, ed, c, "Content")
+	ed.attrSel.Set(i)
+	ed.status.Set("")
+	ed.beginEdit()
+	c.Frame()
+
+	if p.Mode() != editCaret {
+		t.Fatalf("enter on the Content row opened %v, want editCaret", p.Mode())
+	}
+	if got := ed.status.Get(); strings.Contains(got, "ADDRESS") {
+		t.Errorf("an ordinary caret editor warned too (%q) — a message "+
+			"that appears for every edit says nothing about renaming", got)
 	}
 }

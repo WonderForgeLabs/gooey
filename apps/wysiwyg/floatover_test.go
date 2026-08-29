@@ -1038,3 +1038,72 @@ func TestAKindWithNoEditorSaysSoRatherThanDoingNothing(t *testing.T) {
 			"than watch enter do nothing", s)
 	}
 }
+
+// TestAPressInsideTheEditorDoesNotStrandIt pins the one invariant the
+// editor's two halves have to keep: the popup is open exactly when the
+// mode is not editNone.
+//
+// HandleMouse closed the editor on a press OUTSIDE the float and handed
+// everything else to Popup.HandleMouse — which dismisses on ANY press,
+// inside or out. So a press inside tore the halves apart: the surface
+// vanished and p.mode stayed set. PreviewKey gates on the mode alone, so
+// the invisible editor went on swallowing esc, enter and every arrow,
+// and the only way out was to click somewhere else and hope. The stale()
+// escape hatch does not cover it either — the row is still there, so
+// nothing looks wrong to it.
+//
+// Asserting the INVARIANT rather than "the editor stays open" is the
+// point: either half alone can be made to pass by breaking the other.
+func TestAPressInsideTheEditorDoesNotStrandIt(t *testing.T) {
+	ed, c, p := propsPane(t)
+	fm := c.Focus()
+	ed.sel = ed.doc().Kids[1]
+	ed.rebuild()
+	c.Frame()
+
+	rowAt(t, ed, c, "Chrome")
+	fm.SetFocus(p.list)
+	c.Frame()
+	ed.beginEdit()
+	c.Frame()
+
+	if p.Mode() == editNone || !p.pop.IsOpen() {
+		t.Fatalf("the fixture did not open an editor: mode=%v popup=%v",
+			p.Mode(), p.pop.IsOpen())
+	}
+
+	b := p.FloatBounds()
+	if b.W <= 0 || b.H <= 0 {
+		t.Fatalf("the float has no bounds (%+v), so there is no inside to press", b)
+	}
+	inside := input.MouseEvent{
+		Kind: input.MousePress,
+		X:    b.X + b.W/2,
+		Y:    b.Y + b.H/2,
+	}
+	p.HandleMouse(inside)
+	c.Frame()
+
+	if got, open := p.Mode() != editNone, p.pop.IsOpen(); got != open {
+		t.Fatalf("after a press inside the editor, mode-open=%v but "+
+			"popup-open=%v — the two halves disagree, so the editor is "+
+			"either invisible and still eating keys or visible and deaf",
+			got, open)
+	}
+
+	// And concretely: it is still usable, not stranded shut.
+	if p.Mode() == editNone {
+		t.Error("a press inside the editor closed it; a click on the " +
+			"surface you are editing in is not a dismissal")
+	}
+	// esc must still be the way out, from the editor rather than the page.
+	sel := ed.sel
+	fm.Dispatch(input.Named(input.KeyEsc))
+	if p.Mode() != editNone {
+		t.Error("esc did not close the editor after a press inside it")
+	}
+	if ed.sel != sel {
+		t.Error("esc selected the parent, so the editor was not the one " +
+			"holding the key")
+	}
+}
