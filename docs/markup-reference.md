@@ -113,7 +113,7 @@ Categories compose by **union**: naming more permits strictly more. Nesting **in
 | `Edit` | enter, backspace, delete |
 | `Escape` | esc |
 | `Chords` | anything held with ctrl or alt |
-| `Bindings` | scoped `<KeyBinding>`s attached inside fire |
+| `Bindings` | scoped `<KeyBinding>`s attached inside are REGISTERED — **combine with the class of the key they bind**, see below |
 | `Mnemonics` | mnemonics declared inside fire |
 | `Pointer` | press, release, click, motion, capture and the wheel reach descendants |
 | `Hover` | hover state and `HoverWatcher`s track descendants |
@@ -125,6 +125,20 @@ Two rules are built into the **constants** rather than applied by a pass, so no 
 
 - **every key class, and `Bindings`, carries `Focus`.** A key that reaches nothing is not an allowance: with no focus stops, nothing inside can be focused and no key routes there. Writing `Allow="Alpha"` therefore grants focus too.
 - **`Mnemonics`, `Pointer`, `Hover` and `Start` do not.** None of the four is routed through focus — a mnemonic is offered to every handler in the tree regardless of what holds focus — so each is reachable inside a subtree that is otherwise completely sealed.
+
+**`Bindings` on its own admits nothing, and this is the one composition that catches people.** It decides whether a scoped `<KeyBinding>` inside is registered; it does not decide whether a keystroke can travel to it. Dispatch begins at the outermost ancestor that withholds the pressed key's class, so a `<Frozen Allow="Bindings">` withholds every class, the walk starts *at* the `<Frozen>`, and a binding attached below it is never visited — registered, correct, and unreachable. Grant the class too:
+
+```xml
+<!-- ctrl+s inside a read-only preview -->
+<Frozen Allow="Bindings Chords">
+  <KeyBinding Gesture="ctrl+s" Command="{{.Save}}"/>
+  ...
+</Frozen>
+```
+
+`TestAllowBindingsAloneFiresNothing` in `markup/frozenallow_test.go` pins it.
+
+**A bound `Allow` that fails to parse fails CLOSED and says nothing.** A literal one is checked at load time, so a typo in the markup is a load error naming the attribute. An interpolated one cannot be — its value does not exist yet — so `components.Frozen` parses it at runtime, answers `None` on failure, and records why in `AllowError()`. Nothing reads that today, so the symptom is a subtree that has silently stopped responding: [#424](https://github.com/WonderForgeLabs/gooey/issues/424).
 
 `Start` is the one category nothing implies. `Companion.Start` spawns a child process, so a grant that turned starting on as a side effect of wanting hover would launch a subprocess from an editing gesture; it must always be asked for by name.
 

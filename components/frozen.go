@@ -129,7 +129,28 @@ func (f *Frozen) FrozenAllow() gooey.Allow {
 // AllowError is the parse failure behind a fail-closed set, or nil.
 //
 // It reports what FrozenAllow last saw, so it is meaningful only after a
-// frame has evaluated the observer. It exists because a bound Allow whose
-// value is a typo would otherwise seal a subtree with no explanation
-// anywhere — a host, a test or a design surface can read this and say so.
+// frame has evaluated the observer.
+//
+// EXACTLY ONE CASE REACHES HERE, and saying which matters more than the
+// accessor does. A LITERAL Allow is parsed at load time by the <Frozen>
+// builder (markup/elements.go), so a typo in the markup is a load error
+// naming the attribute — loud, and never silent. Only a BOUND Allow can
+// fail at runtime, because its value does not exist until the app
+// supplies it, and that is the case this exists for.
+//
+// NOTHING IN THIS REPO READS IT, which is a real gap and is why it is
+// written down rather than implied: a bound Allow whose value is a typo
+// seals its subtree, correctly and permanently, with no message anywhere
+// — the symptom is a pane that has simply stopped responding. A host can
+// read this and say so, and a test does; the framework has no channel of
+// its own to report a runtime COMPONENT fault through. Its one such
+// channel, gooey.LayoutFault, is specifically about tree walks, and
+// widening it to mean "any runtime fault" would make the type answer for
+// two unrelated questions. Choosing that channel is a design decision
+// rather than a fix, so it is tracked separately; see the issue linked
+// from the Frozen section of docs/markup-reference.md.
+//
+// Until then the fail-closed half is the guarantee — an unparseable set
+// never grants anything — and TestAFailedAllowParseFailsClosed is what
+// holds it.
 func (f *Frozen) AllowError() error { return f.cachedErr }

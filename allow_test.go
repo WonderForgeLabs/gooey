@@ -1,6 +1,8 @@
 package gooey
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -198,8 +200,23 @@ func TestFrozenAllowProjectsTheBoolInterface(t *testing.T) {
 	if got := frozenAllow(&plainLeaf{}); got != AllowAll {
 		t.Errorf("a component that does not implement Frozen answered %q, want All", got)
 	}
-	if !isFrozen(&boolFrozen{v: true}) || isFrozen(&boolFrozen{v: false}) || isFrozen(&plainLeaf{}) {
-		t.Error("isFrozen is no longer the bool projection of frozenAllow")
+	// The projection itself, spelled out rather than delegated to a
+	// helper. There used to be an isFrozen(w) — `frozenAllow(w) !=
+	// AllowAll` — whose only caller was this line: a function that
+	// exists to be asserted equal to its own body proves nothing and
+	// reads as API. The CLAIM is worth keeping, so it is written here.
+	for _, tc := range []struct {
+		name   string
+		w      Component
+		frozen bool
+	}{
+		{"Frozen()==true", &boolFrozen{v: true}, true},
+		{"Frozen()==false", &boolFrozen{v: false}, false},
+		{"no Frozen at all", &plainLeaf{}, false},
+	} {
+		if got := frozenAllow(tc.w) != AllowAll; got != tc.frozen {
+			t.Errorf("%s: withholds-anything = %v, want %v", tc.name, got, tc.frozen)
+		}
 	}
 	// A set host that is not Active answers AllowAll however permissive
 	// its set is — the "not frozen" endpoint is reachable from either
@@ -257,5 +274,70 @@ func TestFrozenAllowReadsBothMethodsEvenWhenInactive(t *testing.T) {
 	if h.reads != 1 {
 		t.Errorf("frozenAllow called FrozenAllow() %d times on an inactive host, want 1: "+
 			"a read behind the branch is a dropped dependency", h.reads)
+	}
+}
+
+// TestAllowForClassifiesEveryDeclaredKey derives the list of keys from
+// the file that declares them, rather than agreeing with a list written
+// beside the switch.
+//
+// AllowFor used to end in `return AllowPunct`, and its test walked the
+// same hand-written set of keys the switch did — so the two agreed by
+// construction and neither could see a key that was in neither. An
+// input.Key added later (a function key, insert, a keypad) would have
+// been silently classified as punctuation, which is the category a
+// text-entry surface is most likely to have granted: a frozen preview
+// that let typing through would have let the new key through too, and
+// nothing would go red about it.
+//
+// So the source is the authority. Adding a Key to input/key.go now
+// fails here until somebody decides what class it belongs to.
+func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
+	src, err := os.ReadFile("input/key.go")
+	if err != nil {
+		t.Fatalf("cannot read the Key declarations: %v", err)
+	}
+	// The iota block: `KeyRune Key = iota`, then one bare name per line.
+	decl := regexp.MustCompile(`(?m)^\t(Key[A-Z]\w*)`)
+	var names []string
+	for _, m := range decl.FindAllStringSubmatch(string(src), -1) {
+		names = append(names, m[1])
+	}
+	// Discrimination: a regex that stopped matching would leave this
+	// empty and the loop below would check nothing. The floor is well
+	// under the real count so it does not become a second number to
+	// maintain.
+	if len(names) < 10 {
+		t.Fatalf("only %d Key constants parsed out of input/key.go (%v); "+
+			"the declarations moved and this test is checking nothing",
+			len(names), names)
+	}
+
+	// The constants are an iota block starting at KeyRune, so the i'th
+	// name is input.Key(i). Taken from the ORDER in the source for the
+	// same reason as the names: a map written here would be the hand
+	// list again.
+	for i, name := range names {
+		ev := input.KeyEvent{Key: input.Key(i)}
+		if input.Key(i) == input.KeyRune {
+			ev.Rune = 'a' // KeyRune is classified by its rune
+		}
+		if _, ok := allowForKey(ev); !ok {
+			t.Errorf("input.%s reaches no arm of AllowFor, so it falls "+
+				"through to AllowNone and cannot pass any Frozen surface. "+
+				"Give it a class in allow.go.", name)
+		}
+	}
+
+	// And the fallback must still BE a fallback: a key past the end of
+	// the block is unknown, and an unknown key must not ride in on a
+	// permission the author granted for something else.
+	unknown := input.KeyEvent{Key: input.Key(len(names) + 50)}
+	if got, ok := allowForKey(unknown); ok {
+		t.Errorf("an undeclared Key was classified as %v; the fallback is "+
+			"supposed to fail closed", got)
+	}
+	if got := AllowFor(unknown); got != AllowNone {
+		t.Errorf("AllowFor gave an undeclared Key %v, want AllowNone", got)
 	}
 }

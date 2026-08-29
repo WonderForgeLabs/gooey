@@ -783,7 +783,8 @@ func (c *Composer) Frame() (*Frame, int) {
 				// ANY change to the set, not only the frozen/not flip: a
 				// subtree that goes from AllowNone to AllowHover has the same
 				// picture and a different set of registrations, so comparing
-				// only isFrozen() here would leave the watchers stale. The
+				// only "is anything withheld" here would leave the watchers
+				// stale. The
 				// cost of being conservative is a re-sync for a change that
 				// happens not to move any registration — a key class, say —
 				// and that is the right side to err on, because the sweep

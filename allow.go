@@ -335,28 +335,58 @@ func SortAllowNames(names []string) {
 // chord — terminals cannot report it on printable characters at all, and
 // shift+tab is navigation.
 func AllowFor(ev input.KeyEvent) Allow {
+	if a, ok := allowForKey(ev); ok {
+		return a
+	}
+	// AN input.Key NOBODY CLASSIFIED FAILS CLOSED, and the split above is
+	// what lets a test see that happening.
+	//
+	// This used to be a `return AllowPunct` at the bottom of the switch,
+	// which is not a fallback so much as a guess: a Key added to
+	// input/key.go later — a function key, insert, a keypad — would
+	// silently join the category a text-entry surface is most likely to
+	// have granted, and nothing anywhere would go red. The classification
+	// list was hand-written and its test walked the same hand-written
+	// list, so the two agreed by construction and neither could notice a
+	// Key that was in neither.
+	//
+	// AllowNone rather than AllowPunct because the honest answer to "what
+	// is this key" is "unknown", and an unknown key must not be admitted
+	// by a permission the author granted for something else. It is also
+	// the visible failure: a new Key stops working under Frozen rather
+	// than working in the wrong category, so the first person to try it
+	// finds out. TestAllowForClassifiesEveryDeclaredKey makes that a
+	// build-time answer instead. Found in review of #389.
+	return AllowNone
+}
+
+// allowForKey is AllowFor's classification, with ok reporting whether an
+// explicit arm answered. Separated so a test can assert that every
+// declared input.Key has one, rather than that every key in a list
+// written beside the switch has one.
+func allowForKey(ev input.KeyEvent) (Allow, bool) {
 	if ev.Has(input.ModCtrl) || ev.Has(input.ModAlt) {
-		return AllowChords
+		return AllowChords, true
 	}
 	switch ev.Key {
 	case input.KeyRune:
 		switch {
 		case ev.Rune == ' ':
-			return AllowSpace
+			return AllowSpace, true
 		case unicode.IsLetter(ev.Rune):
-			return AllowAlpha
+			return AllowAlpha, true
 		case unicode.IsDigit(ev.Rune):
-			return AllowNumeric
+			return AllowNumeric, true
 		default:
-			return AllowPunct
+			return AllowPunct, true
 		}
 	case input.KeyTab, input.KeyUp, input.KeyDown, input.KeyLeft, input.KeyRight,
 		input.KeyHome, input.KeyEnd, input.KeyPageUp, input.KeyPageDown:
-		return AllowNav
+		return AllowNav, true
 	case input.KeyEnter, input.KeyBackspace, input.KeyDelete:
-		return AllowEdit
+		return AllowEdit, true
 	case input.KeyEsc:
-		return AllowEscape
+		return AllowEscape, true
 	}
-	return AllowPunct
+	return AllowNone, false
 }

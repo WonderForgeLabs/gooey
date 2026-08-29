@@ -20,6 +20,16 @@ import "github.com/WonderForgeLabs/gooey"
 // it back would land a patched subtree in the wrong slot — or in a
 // throwaway list that the next Measure rebuilds. They refuse by not
 // implementing, and control.PatchMarkup reports the refusal by type name.
+//
+// BOTH HALVES ARE TESTED, which for a while they were not: this comment
+// was the whole enforcement, so a container that grew a SetChild became
+// silently patchable into the wrong slot and nothing went red.
+// TestEveryChildSetterAddressesTheListTheFrameworkWalked writes through
+// each implementer and reads back through ChildComponents — the two
+// doors PatchMarkup uses — so a container that stopped returning its own
+// field fails; TestContainersThatBuildTheirListRefuseToBeChildSetters
+// holds the absences above, and holds them by TYPE, so renaming one
+// stops the test compiling rather than quietly emptying it.
 func setChildAt(kids []gooey.Component, i int, w gooey.Component) bool {
 	if i < 0 || i >= len(kids) {
 		return false
