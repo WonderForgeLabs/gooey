@@ -53,6 +53,25 @@ func (c Cell) Text() string {
 	return string(c.Rune)
 }
 
+// WithStyle is this cell's CONTENT under a different style.
+//
+// It exists because restyling is a read-modify-write and the obvious
+// spelling of it loses information. `c := buf.At(x, y); c.Style.Reverse =
+// on; buf.Set(x, y, c.Rune, c.Style)` drops c.Cluster, so a cell holding
+// "⚠️" comes back as bare U+26A0 — one column where the buffer
+// had reserved two, which displaces the row in the direction #358 exists
+// to prevent. Selection highlighting is exactly this shape, so the glyph
+// narrows the moment a row is selected and repairs itself when it is not.
+//
+// Four call sites had written it the lossy way (ItemsView's highlight,
+// introdeck's terminal twice, the wysiwyg overlay's mark restore). That
+// they were four copies of one missing operation is why this is a method
+// rather than a fix in each of them. Found in review of #413.
+func (c Cell) WithStyle(s Style) Cell {
+	c.Style = s
+	return c
+}
+
 // Width is how many columns a terminal advances for this cell.
 //
 // Zero for a continuation, which is the rule TerminalColumns spells out
@@ -142,9 +161,77 @@ func (b *Buffer) Set(x, y int, r rune, s Style) {
 	if x < b.cx0 || y < b.cy0 || x >= b.cx1 || y >= b.cy1 {
 		return
 	}
-	b.Cells[y*b.W+x] = Cell{Rune: r, Style: s}
+	// A WIDE RUNE OWNS TWO COLUMNS, so Set has to write both of them.
+	//
+	// Writing only the lead left a wide cell with no Continuation beside
+	// it, which is precisely the broken pair healSeam exists to repair —
+	// so healSeam blanked the glyph one line after it was written, and
+	// Set could not put a CJK or emoji rune on the screen at all. Every
+	// caller that reaches for the single-rune form got a space: TextBox
+	// drawing its own runes, cmd/finder, the mnemonic underline
+	// painters. Found in review of #413, after the healSeam it collides
+	// with had already landed.
+	c := Cell{Rune: r, Style: s}
+	if c.Width() >= 2 {
+		// The second column has to be inside the CLIP, not merely
+		// inside the buffer. Outside it the cell belongs to a
+		// neighbour whose paint node is clean — the stray-write defect
+		// this function drops writes to avoid — and a lead without its
+		// tail displaces the rest of the row either way. A space is the
+		// honest answer, and the one SetString already gives at the
+		// right edge.
+		if x+1 >= b.cx1 {
+			b.Cells[y*b.W+x] = Cell{Rune: ' ', Style: s}
+			b.healSeam(x, y)
+			b.healSeam(x+1, y)
+			return
+		}
+		b.Cells[y*b.W+x] = c
+		b.Cells[y*b.W+x+1] = Cell{Rune: Continuation, Style: s}
+		// The pair this call wrote is whole by construction; only the
+		// cells on either side of it can have been broken by it.
+		b.healSeam(x, y)
+		b.healSeam(x+2, y)
+		return
+	}
+	b.Cells[y*b.W+x] = c
 	// A single-cell write can break a two-cell glyph from either side,
 	// and both halves of the break are silent. See healSeam.
+	b.healSeam(x, y)
+	b.healSeam(x+1, y)
+}
+
+// SetCell writes a whole cell — cluster and all — under exactly the clip
+// and seam rules Set uses.
+//
+// Set takes a rune, which is the right argument for painting text and the
+// wrong one for moving a cell that already exists: a cluster cannot be
+// spelled as a rune, so every restyle through Set silently truncated one.
+// See WithStyle for what that costs.
+func (b *Buffer) SetCell(x, y int, c Cell) {
+	if x < b.cx0 || y < b.cy0 || x >= b.cx1 || y >= b.cy1 {
+		return
+	}
+	// A Continuation is written only as the tail of the pair its lead
+	// writes; accepting one on its own would place the orphan healSeam
+	// exists to remove.
+	if c.Rune == Continuation {
+		return
+	}
+	if c.Width() >= 2 {
+		if x+1 >= b.cx1 {
+			b.Cells[y*b.W+x] = Cell{Rune: ' ', Style: c.Style}
+			b.healSeam(x, y)
+			b.healSeam(x+1, y)
+			return
+		}
+		b.Cells[y*b.W+x] = c
+		b.Cells[y*b.W+x+1] = Cell{Rune: Continuation, Style: c.Style}
+		b.healSeam(x, y)
+		b.healSeam(x+2, y)
+		return
+	}
+	b.Cells[y*b.W+x] = c
 	b.healSeam(x, y)
 	b.healSeam(x+1, y)
 }

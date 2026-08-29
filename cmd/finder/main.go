@@ -35,6 +35,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
+	"github.com/rivo/uniseg"
 )
 
 type match struct {
@@ -235,17 +236,50 @@ func (w *matchLine) Render(f *gooey.Frame) {
 	b := w.Bounds()
 	hit := render.Style{Fg: render.RGB(255, 170, 60), Bold: true}
 	idxs := w.hits.Get()
-	k := 0
-	for i, r := range w.path.Get() {
-		if i >= b.W-1 {
+
+	// THREE INDEX SPACES MET IN THIS LOOP AND NONE OF THEM WAS THE ONE
+	// IT NEEDED. fuzzy reports BYTE offsets into the path; a cell is
+	// addressed by COLUMN; and the thing that occupies columns is a
+	// grapheme CLUSTER, which is neither. The loop ranged over the
+	// string — giving byte offsets — compared them to fuzzy's, and then
+	// passed them to Set as columns.
+	//
+	// On an ASCII path all three coincide, which is why it looked right
+	// for as long as it did. On any other path a two-byte character
+	// pushed everything after it two columns right, leaving a gap the
+	// row never fills, and the highlight landed on whatever happened to
+	// sit at that byte number. Found in review of #413.
+	//
+	// Walking clusters keeps the three apart: off is the byte cursor,
+	// which is the space fuzzy's offsets live in; col is the column
+	// cursor, which is the space cells live in.
+	path := w.path.Get()
+	col, k, state := 0, 0, -1
+	for off := 0; off < len(path); {
+		cluster, _, cw, s := uniseg.FirstGraphemeClusterInString(path[off:], state)
+		state = s
+		if cluster == "" {
 			break
 		}
+		// Stop BEFORE a glyph that would not fit whole. Half a wide
+		// character is not something a terminal can draw.
+		if col+cw > b.W-1 {
+			break
+		}
+		// A match landing anywhere inside the cluster highlights the
+		// whole cluster: a character cannot be half-matched, and fuzzy
+		// can only ever point at one of its bytes.
+		for k < len(idxs) && idxs[k] < off {
+			k++
+		}
 		st := render.Style{}
-		if k < len(idxs) && idxs[k] == i {
+		if k < len(idxs) && idxs[k] < off+len(cluster) {
 			st = hit
 			k++
 		}
-		f.Cells.Set(b.X+i, b.Y, r, st)
+		f.Cells.SetString(b.X+col, b.Y, cluster, st)
+		col += cw
+		off += len(cluster)
 	}
 }
 
@@ -291,14 +325,12 @@ func (w *previewPane) Render(f *gooey.Frame) {
 }
 
 func clip(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	r := []rune(strings.ReplaceAll(s, "\t", "    "))
-	if len(r) > w {
-		r = r[:w]
-	}
-	return string(r)
+	// COLUMNS, not runes. w is a width in cells, so counting runes
+	// against it over-fills a line holding CJK or emoji — and cuts a
+	// two-column glyph in half at the boundary. render.ClipCols is the
+	// one implementation of that rule; a second hand-rolled cluster
+	// loop here is how the two would quietly disagree.
+	return render.ClipCols(strings.ReplaceAll(s, "\t", "    "), w)
 }
 
 // ---- processing ----

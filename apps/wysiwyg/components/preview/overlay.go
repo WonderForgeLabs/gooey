@@ -494,7 +494,7 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
 		if f.Cells.At(m.x, m.y).Rune == m.wrote {
-			f.Cells.Set(m.x, m.y, m.prev.Rune, m.prev.Style)
+			f.Cells.SetCell(m.x, m.y, m.prev)
 		}
 	}
 	o.marks = o.marks[:0]
