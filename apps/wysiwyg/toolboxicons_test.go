@@ -51,8 +51,36 @@ func toolboxImages(t *testing.T, ed *editor) []*components.Image {
 	return out
 }
 
+// shellTallEnoughToStraddleAnIconlessRow composes the shell at a height
+// that realizes a palette window containing BOTH an element that declares
+// an icon and one that does not.
+//
+// THE HEIGHT IS NOT A TASTE. The two tests below are each written in two
+// arms — a declared icon must draw, an undeclared one must not — and an
+// ItemsView realizes only the rows that fit. At shellTree's 44 the tools
+// pane realized 11 rows and every one of them declared an icon, so the
+// absence arm of both tests was vacuous. They said so and failed rather
+// than passing on half a check, which is the only reason this was noticed
+// at all: the dock shell gives that pane fewer rows than the fixed <Grid>
+// it replaced, and nothing about the icon wiring had changed.
+//
+// 56 is the first height past ALL THREE icon-less entries (<LogPane>,
+// <Panel>, <Preview>, at palette indices 13/15/16) rather than the first
+// past the nearest one, so a palette that grows by an entry or two does
+// not silently walk the window back off the end. The tests keep their own
+// straddle guards, so if it ever does they fail here again instead of
+// quietly checking one arm.
+func shellTallEnoughToStraddleAnIconlessRow(t *testing.T) (*editor, gooey.Component, *gooey.Composer) {
+	t.Helper()
+	ed, root := buildPage(t)
+	comp := gooey.NewComposer(root, 150, 56)
+	t.Cleanup(comp.Close)
+	comp.Frame()
+	return ed, root, comp
+}
+
 func TestPaletteRowsCarryTheDeclaredIcon(t *testing.T) {
-	ed, _, _ := shellTree(t)
+	ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
 
 	imgs := toolboxImages(t, ed)
 	if len(imgs) == 0 {
@@ -161,7 +189,7 @@ func TestAnElementWithNoDeclaredIconGetsNoPicture(t *testing.T) {
 }
 
 func TestThemeFlipRepaintsOnlyTheToolboxIcons(t *testing.T) {
-	ed, _, comp := shellTree(t)
+	ed, _, comp := shellTallEnoughToStraddleAnIconlessRow(t)
 
 	// Settle first. A count taken on a frame that still had work
 	// outstanding measures the backlog, not the flip.

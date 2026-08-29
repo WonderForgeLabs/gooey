@@ -24,10 +24,28 @@ import (
 // Without a marker the first letter is the implicit accelerator. "__"
 // renders a literal underscore; only the first marker counts. While the
 // menu is open, typing an item's accelerator activates it.
+// Checked, when non-nil, makes the item a CHECK ITEM: it renders
+// "[x] Text" or "[ ] Text" and the box is read while the dropdown
+// paints, so the check is a paint dependency like any other. That is
+// what lets an accelerator and a menu item show one state instead of
+// two — the key binding Sets the property, the menu renders the same
+// property, and there is no third place for them to disagree.
+//
+// It is deliberately NOT an Action side effect and NOT a bool field.
+// A bool field would be plain Go state: the dropdown reads it while
+// painting, records no dependency, and a flip from a key binding while
+// the menu is open would leave the old box on screen with nothing to
+// notice. The handle is what makes the read a subscription.
+//
+// Checking is not toggling. The item's Action still owns what the
+// activation DOES; Checked only says what the box shows. An item whose
+// Action does not write the property it displays is a lie the framework
+// cannot catch, so write the toggle once and point both at it.
 type MenuItem struct {
 	Text      string
 	Gesture   string
 	Action    gooey.Action
+	Checked   *prop.Property[bool]
 	Separator bool
 }
 
@@ -37,6 +55,38 @@ type MenuItem struct {
 type Menu struct {
 	Title string
 	Items []MenuItem
+}
+
+// lead is the width of the column before an item's text: 4 cells
+// ("[x] ") for a menu holding any check item, 1 (a plain space) for one
+// holding none.
+//
+// It is a property of the MENU and not of the item, which is what makes
+// a menu with one check item align its plain items with it instead of
+// stepping them one cell left. Real menus do this; a menu that does not
+// reads as broken.
+func (m Menu) lead() int {
+	for _, it := range m.Items {
+		if it.Checked != nil {
+			return 4
+		}
+	}
+	return 1
+}
+
+// checkBox is the item's leading column. The spelling is Checkbox's —
+// "[x]" and "[ ]" — reused rather than reinvented so a check means the
+// same thing everywhere in the framework, and ASCII so it survives a pty
+// transcript, which is the only way a menu gets verified at all.
+func (m Menu) checkBox(it MenuItem) string {
+	w := m.lead()
+	if it.Checked == nil {
+		return spaces(w)
+	}
+	if it.Checked.Get() {
+		return "[x] "
+	}
+	return "[ ] "
 }
 
 // MenuBar is the top menu row: titles across one line, and a dropdown
@@ -173,9 +223,14 @@ func (m *MenuBar) popupRect() gooey.Rect {
 	menu := m.Menus[i]
 	tx, _ := m.titleSpan(i)
 	w := 4 // border + padding
+	lead := menu.lead()
 	for _, it := range menu.Items {
 		text, _, _ := splitMnemonic(it.Text)
-		iw := len([]rune(text)) + 4
+		// border (2) + the lead column + one trailing cell. The lead is
+		// read from the menu rather than assumed to be 1, or a menu with
+		// check items sizes itself three cells too narrow and clips every
+		// label it holds.
+		iw := len([]rune(text)) + lead + 3
 		if it.Gesture != "" {
 			iw += len([]rune(it.Gesture)) + 2
 		}
@@ -572,7 +627,13 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 			is.Reverse = true
 		}
 		text, _, pos := splitMnemonic(it.Text)
-		line := " " + text
+		// The check box is read HERE, inside the dropdown's own paint
+		// node, so the handle becomes a dependency of exactly this node:
+		// toggling a check while the menu is open repaints the dropdown
+		// and nothing else, and toggling it while the menu is closed
+		// repaints nothing at all.
+		lead := menu.checkBox(it)
+		line := lead + text
 		if it.Gesture != "" {
 			pad := inner - len([]rune(line)) - len([]rune(it.Gesture)) - 1
 			if pad < 1 {
@@ -586,10 +647,14 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		f.Cells.SetString(b.X+1, y, clipRunes(line, inner), is)
 		// Same convention as the bar: the accelerator letter is always
 		// underlined. Typing it activates the item while the menu is open.
-		if pos >= 0 && 1+pos < inner {
+		// The underline offset is measured from the LEAD, not assumed to
+		// be one cell in: with a check column the accelerator letter is
+		// three cells further right, and underlining the old position
+		// would put the rule under the check box.
+		if at := len([]rune(lead)) + pos; pos >= 0 && at < inner {
 			as := is
 			as.Underline = true
-			f.Cells.Set(b.X+2+pos, y, []rune(text)[pos], as)
+			f.Cells.Set(b.X+1+at, y, []rune(text)[pos], as)
 		}
 	}
 }
