@@ -819,6 +819,17 @@ var defSegmented = &ElementDef{
 	Known: true,
 	Attrs: []AttrSpec{
 		{Name: "Changed", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
+		// Hovered is an OUTPUT: the control writes the index the pointer
+		// is over, and -1 when it is outside. Bind a handle in to read
+		// it — the usual case is a Tooltip whose Text is a computed over
+		// it, since a rail of wordless icons has no other way to say what
+		// a slot does (#398).
+		//
+		// BindsBinding, like Selected: a literal is meaningless for a
+		// value the control assigns, and accepting one would silently
+		// discard every write.
+		{Name: "Hovered", Kind: KindBinding, Binds: BindsBinding, GoType: "int", Origin: OriginBuiltin,
+			Doc: "The segment index under the pointer, -1 when outside. Written by the control."},
 		{Name: "Options", Kind: KindBinding, Binds: BindsEither, GoType: "[]string", Required: true, Origin: OriginBuiltin},
 		{Name: "Selected", Kind: KindBinding, Binds: BindsBinding, GoType: "int", Required: true, Origin: OriginBuiltin},
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
@@ -854,6 +865,19 @@ var defSegmented = &ElementDef{
 		}
 		sg := &components.Segmented{
 			Options: options, Selected: selected, Changed: changed, Style: style,
+		}
+		// Optional, unlike Selected: a strip nobody asks the hover of
+		// should not require the page to declare a property for it. The
+		// control lazily makes its own when the field is nil.
+		// suppliedAttr, not bare key presence: an attribute written empty
+		// must read as OMITTED, or Hovered="" would take the bound path
+		// and fail on an empty path rather than being ignored.
+		if suppliedAttr(e, "Hovered") {
+			hovered, err := Bound[int](e, ctx, "Hovered")
+			if err != nil {
+				return nil, err
+			}
+			sg.Hovered = hovered
 		}
 		// Only an explicit Wrap="false" turns cycling off. Absent means nil
 		// means on, so the attribute is never written for the default —

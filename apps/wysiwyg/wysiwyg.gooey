@@ -1,32 +1,41 @@
 <Gooey xmlns="wonderforge.io/gooey/2026">
-  <!-- The shell, VS Code's arrangement.
+  <!-- The IDE shell.
 
-       ┌──┬───────────┬──────────────────┬────────────┐
-       │A │ SIDE BAR  │  EDITOR AREA     │ PROPERTIES │
-       │c │           │  (the designer)  │            │
+       ┌──────────────────────────────────────────────┐
+       │ MENU BAR  File  Project  View                │
+       ├──┬───────────┬──────────────────┬────────────┤
+       │A │ LEFT SLOT │  CENTER SLOT     │ RIGHT SLOT │
+       │c │           │  (design | code) │            │
        │t ├───────────┴──────────────────┴────────────┤
-       │  │ PANEL                                     │
+       │  │ BOTTOM SLOT                               │
        ├──┴───────────────────────────────────────────┤
        │ STATUS BAR                                   │
        └──────────────────────────────────────────────┘
 
-       EVERY REGION NOW HOLDS REAL ELEMENTS, bound to the editor's own
-       state. Nothing here is a placeholder and nothing is an embedded Go
-       string: the toolbox is a live view of the registered vocabulary, the
-       properties grid a live view of AttrsFor(selection), and both arrive
-       through the same bindings the deleted panes used — the panes were
-       the old UI, the bindings were never the problem.
+       THE FOUR PANES ARE NO LONGER IN FOUR GRID CELLS, and that is the
+       whole change. A `<Grid Cols="4,38,1*,46">` puts each pane in a
+       fixed track, and a track list is not state: `[]GridLen` is a plain
+       field read during Arrange, so nothing observes it and nothing can
+       move a pane without rewriting this file. Every dock operation a
+       user expects — move this to the other side, collapse it, get it
+       out of the way — was an edit to that attribute string.
 
-       Every region carries a Name, which is the working method rather
-       than documentation: each is a patch_markup address, so a region can
-       be replaced in the running editor without touching the others. This
-       file and the live app are the same thing seen twice — Page watches
-       it, so a save here rebuilds.
+       So the client area is one `<DockHost>` and the panes DECLARE where
+       they start rather than where they live. Slot, order, size, pinned,
+       collapsed and hidden are model state from the first frame on; the
+       markup seeds it and the keyboard moves it. See dock.go.
 
-       The activity bar's track is 4 cells because the rail is drawn 40
-       pixels wide and a cell is commonly 10 across. That is the one place
-       in this file where a number comes from the pixel plane. -->
-  <Grid Name="Page" Rows="1*,10,1" Cols="4,38,1*,46">
+       WHAT IS STILL A GRID, and correctly: the three rows around the
+       dock. The menu bar, the client area and the status bar do not
+       move, so a declared track list is exactly right for them. The rule
+       is not "grids are bad", it is "a track list cannot express a
+       layout the user rearranges".
+
+       THE MENU BAR IS THE LAST CHILD, on purpose. Z-order in gooey IS
+       document order, and the dropdown must paint above the panes it
+       covers; Grid.Row and element order are independent, which is what
+       lets it be declared last and drawn first. -->
+  <Grid Name="Page" Rows="1,1*,1" Cols="4,1*">
 
     <!-- KeyBindings live on the ROOT. A binding only fires while the
          focused chain passes through its host, so a page whose focus can
@@ -45,31 +54,7 @@
     <KeyBinding Gesture="ctrl+l" Command="{{.Demote}}"/>
     <KeyBinding Gesture="ctrl+d" Command="{{.Duplicate}}"/>
 
-    <!-- ESC SELECTS THE PARENT, which is Microsoft's spelling rather than
-         one invented here: "To select the parent of a current selection in
-         the designer, press the ESC key" is the WPF designer's own
-         documentation, and Blend inherits it. It is the way back OUT of a
-         container a double-click drilled into, and without it a shallow-
-         first designer is a one-way door.
-
-         It is the keyboard's whole share of the drill gesture. Everything
-         here has to stay keyboard-operable because mouse reports cannot be
-         injected through a recording pty at all, so a double-click that
-         could only be undone with another double-click could never be
-         captured. -->
     <KeyBinding Gesture="esc" Command="{{.SelectParent}}"/>
-
-    <!-- DESIGN ↔ LIVE. The designer is a gooey.Frozen host, so this one
-         gesture decides whether the document is a picture or a working UI,
-         and the re-route lands in the frame this key schedules — the
-         document's focus stops, mnemonics, hover watchers and Startables
-         all appear and disappear with it.
-
-         A BARE LETTER IS SAFE HERE for the same reason q and x already
-         are: Dispatch bubbles from the FOCUSED component upwards, and
-         these bindings are on the root, which is the last level it
-         reaches. A "d" typed into the PROPERTIES TextBox is consumed by
-         that TextBox's own HandleKey levels earlier and never arrives. -->
     <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
     <!-- The theme switch, and today it moves exactly one thing: the
          tint the toolbox's icons are rasterized in. That is a small
@@ -80,264 +65,460 @@
          had quietly stopped being a property. -->
     <KeyBinding Gesture="t" Command="{{.ToggleTheme}}"/>
 
+    <!-- THE DOCK GESTURES, and every one of them exists because a
+         pointer-only dock cannot be verified AT ALL: mouse reports
+         cannot be injected through a recording pty, so a pane that can
+         only be moved by dragging is a pane no test can move.
+
+         The mouse path is real too — press a pane header and drag — but
+         it is the second implementation of these same six model methods,
+         never the only one. -->
+
+    <!-- Which pane the dock gestures act on. -->
+    <KeyBinding Gesture="ctrl+alt+right" Command="{{.NextPane}}"/>
+    <KeyBinding Gesture="ctrl+alt+left" Command="{{.PrevPane}}"/>
+
+    <!-- DRAG TO POSITION, from the keyboard: dock the active pane into
+         the slot the arrow points at. ctrl+up is the CENTRE rather than
+         a fourth edge, because the centre is the slot the others crowd
+         and it needs a way back. -->
+    <KeyBinding Gesture="ctrl+left" Command="{{.DockLeft}}"/>
+    <KeyBinding Gesture="ctrl+right" Command="{{.DockRight}}"/>
+    <KeyBinding Gesture="ctrl+up" Command="{{.DockCenter}}"/>
+    <KeyBinding Gesture="ctrl+down" Command="{{.DockBottom}}"/>
+
+    <!-- Order within a slot, and the slot's size. -->
+    <KeyBinding Gesture="alt+up" Command="{{.PaneUp}}"/>
+    <KeyBinding Gesture="alt+down" Command="{{.PaneDown}}"/>
+    <KeyBinding Gesture="shift+up" Command="{{.Grow}}"/>
+    <KeyBinding Gesture="shift+down" Command="{{.Shrink}}"/>
+
+    <!-- HIDE, COLLAPSE and PIN are three operations, not three names for
+         one. ctrl+w hides — the pane stops showing and KEEPS ITS SIZE
+         and its subtree, which is gooey.Hidden. ctrl+r collapses — the
+         pane shrinks to its header row and its slot-mates take the
+         space. ctrl+alt+p pins, which changes nothing on its own and
+         decides what ctrl+f spares.
+
+         Both of those gestures MOVED, and the two comments below say why
+         — read them rather than this line, which is the summary. This
+         one named ctrl+k and ctrl+u until a review caught it: the
+         collision notes were updated and the summary six lines above
+         them was not, so the file's own comments disagreed about the
+         keymap two ways to one. -->
+    <KeyBinding Gesture="ctrl+w" Command="{{.TogglePane}}"/>
+    <KeyBinding Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
+    <!-- ctrl+alt+p, and it has now dodged TWO collisions of different
+         kinds. Not ctrl+k: that is MoveUp, the designer's move gesture,
+         which landed in #373 while this pane was held. Two KeyBindings on
+         one gesture at the same host is not a load error: both are scoped
+         to the root, dispatch offers them in order, and the loser simply
+         never fires. So the collision would have shipped as "pin silently
+         stopped working", with nothing red anywhere. The designer's
+         gesture is the one already in users' hands, so pin moved.
+
+         And not the plain alt+p it moved to either, which was worse,
+         because the loser was not this binding. p is the _Project menu's
+         mnemonic, and FocusManager.Dispatch runs the WHOLE KeyBinding
+         bubble before it offers a key to any MnemonicHandler — a
+         root-scoped binding is in every focused chain, so alt+p would
+         have pinned a pane and the Project menu could never be opened
+         from the keyboard again. The rule was already written six lines
+         below this one, against alt+e; it just was not applied here.
+
+         ctrl+alt+p is outside mnemonic territory by construction rather
+         than by luck: MenuBar.HandleMnemonic tests `ev.Mods !=
+         input.ModAlt` — exact equality — so ModCtrl|ModAlt never reaches
+         a title. It also keeps p for "pin", and matches the
+         ctrl+alt+left/right the pane family already uses. -->
+    <KeyBinding Gesture="ctrl+alt+p" Command="{{.PinPane}}"/>
+    <!-- ctrl+f, not the ctrl+u this originally used: the status bar's
+         endpoint chips took ctrl+u for "copy the MCP URL". Two root
+         KeyBindings on one gesture is a SILENT bug — dispatch takes the
+         first and the second never fires, with no error anywhere — so
+         the collision is resolved here rather than left to be noticed.
+         VS Code calls the equivalent Zen Mode; f is for focus. -->
+    <KeyBinding Gesture="ctrl+f" Command="{{.HideUnpinned}}"/>
+    <KeyBinding Gesture="ctrl+a" Command="{{.ShowAllPanes}}"/>
+
+    <!-- THE REGION SWAP. ctrl+backslash and NOT the ctrl+backtick this
+         was specified with, and the difference is not cosmetic: the
+         decoder maps control bytes through `c | 0x40`, which covers
+         @ A-Z [ \ ] ^ _ and never reaches 0x60, so a ctrl+backtick
+         binding PARSES and can never be delivered. input/decode.go calls
+         it out by name as an old bug. A dead binding shown as a menu
+         hint would be the editor lying about its own keyboard, so the
+         nearest key that actually arrives is used instead. -->
+    <KeyBinding Gesture="ctrl+\" Command="{{.SwapRegion}}"/>
+    <KeyBinding Gesture="ctrl+b" Command="{{.UseBuiltin}}"/>
+    <!-- alt+e, not ctrl+e, for the same collision: ctrl+e is the endpoint
+         menu. alt+<letter> is MenuBar mnemonic territory, but only for
+         letters a menu TITLE wears — File, Project, View take f/p/v — and
+         a KeyBinding outranks a mnemonic in dispatch order regardless. -->
+    <KeyBinding Gesture="alt+e" Command="{{.UseEditor}}"/>
+
+    <!-- The workspace. -->
+    <KeyBinding Gesture="ctrl+o" Command="{{.OpenFolder}}"/>
+    <KeyBinding Gesture="ctrl+s" Command="{{.Save}}"/>
+
     <!-- Drawn in PIXELS, not cells: an icon is a shape, and a terminal
          draws shapes badly out of box-drawing characters. Invisible to
-         screen_text, which reads the cell plane — see the package comment
-         for what that costs and how it is tested instead. -->
-    <ActivityBar Name="ActivityBar" Grid.Row="0" Grid.Col="0" Sel="{{.ActivitySel}}"
+         screen_text, which reads the cell plane. -->
+    <ActivityBar Name="ActivityBar" Grid.Row="1" Grid.Col="0" Sel="{{.ActivitySel}}"
                  Height="8" VAlign="Start"/>
 
-    <!-- THE SIDE BAR — and it now DOES something when you click the rail.
-         Until this, the rail moved a selection that nothing read: whichever
-         icon you picked, the side bar showed the toolbox. An activity rail
-         whose only effect is on its own marker is a control that lies.
+    <DockHost Name="Dock" Grid.Row="1" Grid.Col="1" Style="dim">
 
-         <Tabs Selected="{{.ActivitySel}}"> is the whole mechanism, and no Go
-         was needed for it. Tabs binds Selected to an int; ActivityBar writes
-         that same int. Two components sharing one property is the framework's
-         normal way to connect them — the rail does not know the side bar
-         exists and does not need to.
+      <!-- EXPLORER — the workspace. A folder you open, not a file the
+           binary started with.
 
-         THE HEADER STRIP IS DRAWN, and it earns its row. Tabs always
-         renders its headers — there is no markup way to suppress them — so
-         the choice is what they should say rather than whether they appear.
-         They are the only WORDS for these four views: the rail is wordless
-         by construction, four icons and a marker, and an icon rail with no
-         labels anywhere is a guessing game. So the strip is the rail's
-         legend, not a second selector competing with it.
-
-         The names are SHORT because the track is 38 cells and the full
-         words did not fit — the first attempt rendered "PROBL" and read as
-         broken. Four short headers plus separators come to 32 of the 34
-         interior cells.
-
-         ORDER IS THE CONTRACT: these four must stay in the same order as
-         activitybar.DefaultIcons — designer, toolbox, markup, problems —
-         because the rail and this strip share one int and nothing checks
-         the correspondence. That is the fragile thing about doing it this
-         way, and it is the first place to look if clicking an icon shows
-         the wrong view.
-
-         Panel's chrome is pixel line art sliced into a ring, so the interior
-         stays on the cell plane where text belongs; it falls back to the same
-         shape in box-drawing runes where there is no pixel protocol. -->
-    <Panel Name="SideBar" Grid.Row="0" Grid.Col="1" Style="dim">
-      <Tabs Selected="{{.ActivitySel}}">
-
-      <!-- 0 — DESIGNER. The rail's first icon. There is nothing to put in a
-           side bar for it: the designer IS the editor area, and duplicating
-           its content here would be two views of one thing competing for the
-           selection. So this states that, rather than showing an empty box
-           that reads as a failure to load. -->
-      <Tab Header="DESIGN">
-        <Text Style="dim">The designer is the centre pane.</Text>
-      </Tab>
-
-      <!-- 1 — TOOLBOX, the rail's default. -->
-      <Tab Header="TOOLS">
-      <VStack>
-        <!-- ONE COLUMN: the component's name.
-             "COMPONENT", not "ELEMENT" — the toolbox lists things you place,
-             and what you place is a component; "element" is the markup
-             spelling of it, which is the designer's business and not the
-             user's.
-
-             THE ATTRS AND CHILDREN COLUMNS ARE GONE. They carried real
-             catalog facts — the attribute count, "? unknown" for a
-             registered builder whose schema cannot be enumerated, and the
-             child mode — but a toolbox is a place to pick a component from,
-             not a table to read. Those facts have a better home in the
-             PROPERTIES pane, which is about the one component you selected
-             and has room to say it in words. The honesty rule they existed
-             to make visible still holds in the model and is still pinned by
-             TestPaletteComesFromTheCatalog; what changed is where the UI
-             shows it, and that debt is real until the properties pane
-             carries it. -->
-        <HStack Gap="1" Height="1">
-          <Text Style="sel">COMPONENT</Text>
-        </HStack>
-        <!-- Named so a test can reach THIS list rather than guessing
-             which of the shell's ItemsViews is the toolbox. -->
-        <ItemsView Name="Toolbox" Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
-                   Activate="{{.Add}}">
-          <ItemsView.ItemTemplate>
-            <!-- THREE COLUMNS: selection marker, icon, name.
-                 A Grid rather than an HStack because the marker and the
-                 icon need FIXED rects that do not move when the name
-                 changes width — an icon that shifts column as you scroll
-                 reads as a rendering fault.
-
-                 Rows="1" IS LOAD-BEARING. A Grid with no declared rows
-                 is one row that takes everything it is offered, so the
-                 template measured 29 cells tall and ItemsView realized a
-                 SINGLE row for the whole list — a toolbox showing one
-                 component, with no error anywhere. The old HStack
-                 template measured 1 because a Text does; a Grid does
-                 not. -->
-            <Grid Rows="1" Cols="1,2,*">
-              <!-- Selection, drawn by the template. Mentioning _selected
-                   is what stands the house highlight down, and that is
-                   required rather than a preference: the house highlight
-                   re-styles the cells a row painted, and over pixel
-                   content that is either invisible (a protocol paints
-                   ABOVE the cells) or a photo-negative of the icon
-                   (halfblock, where the picture IS the cells).
-                   cmd/typeahead's album covers reached the same
-                   conclusion.
-
-                   The marker's rect is disjoint from the icon's, so a
-                   selection hop repaints two Texts and touches no
-                   picture. -->
-              <Text Grid.Col="0" Style="sel" Visibility="{{._selected}}">{{.Bar}}</Text>
-              <!-- The icon the CATALOG declares, tinted from a bound
-                   handle. Two cells wide and one tall: on a common 10x20
-                   cell that is the 20px square toolbox.IconPx
-                   rasterizes. An element that declares no icon binds a
-                   nil handle and this renders nothing — the honest
-                   answer for a registered component whose definition
-                   says nothing about how it looks. -->
-              <Image Grid.Col="1" Src="{{.Icon}}" Cols="2" Rows="1"/>
-              <Text Grid.Col="2" Margin="1,0,0,0">{{.Name}}</Text>
-            </Grid>
-          </ItemsView.ItemTemplate>
-        </ItemsView>
-      </VStack>
-      </Tab>
-
-      <!-- 2 — MARKUP. The document as text, which is the same string the
-           OUTPUT tab shows. Deliberately the same binding rather than a
-           second copy of the serializer: two views of one document that
-           could disagree would be worse than one view. -->
-      <Tab Header="CODE">
-        <Text Style="dim">{{.Source}}</Text>
-      </Tab>
-
-      <!-- 3 — PROBLEMS. FitMsg is what the fit watcher says about the
-           current terminal size, and it is empty when everything fits —
-           which is why the tab reads as blank most of the time. That is the
-           honest state and not a missing view. -->
-      <Tab Header="ISSUES">
-        <Text Style="dim">{{.FitMsg}}</Text>
-      </Tab>
-
-      </Tabs>
-    </Panel>
-
-    <!-- The designer. It HOSTS rather than displays — the one region that
-         owns a live component tree — which is why it is the piece the
-         canvas grows out of rather than one pane among four.
-
-         FRAMED BY THE SAME <Panel> AS EVERY OTHER REGION. <Preview> carries
-         no chrome of its own by design: when it wrapped itself in a Border
-         the designer was the one region outlined by a different mechanism
-         than its neighbours — box-drawing runes beside pixel line art — in
-         a shell whose whole point is that the frames match. Chrome belongs
-         to the container, so it is written here. -->
-    <Panel Name="EditorArea" Grid.Row="0" Grid.Col="2" Title="DESIGNER" Pad="1">
-      <Preview Name="Island"/>
-    </Panel>
-
-    <!-- PROPERTIES. Real elements bound to the editor's own state, not a
-         placeholder: AttrItems is a computed over AttrsFor(selected), so
-         this grid re-rows itself when the selection moves and repaints
-         nothing else.
-
-         THE TEXTBOX LIVES HERE, and that is a structural claim rather than
-         a layout choice. The designer's subtree is discarded and rebuilt on
-         every edit, and a caret is component-local state, so an input
-         inside it would lose the caret mid-word. This region is a SIBLING
-         of EditorArea, which is what keeps that from happening. -->
-    <Panel Name="Properties" Grid.Row="0" Grid.Col="3" Title="PROPERTIES" Style="dim">
-      <!-- A GRID WITH DECLARED TRACKS, NOT A VSTACK — and this is a bug fix,
-           not a preference.
-           As a VStack this pane could not be edited at all. A VStack sizes
-           each child by what it measures, ItemsView measures greedily, and
-           so the list took all 41 rows and the edit row underneath it was
-           arranged at W:0 H:0 on a row past the bottom of the panel. The
-           mechanism worked perfectly — a keystroke dispatched to that
-           TextBox did change the attribute — but the input was invisible and
-           unclickable, so "I can't modify values" was exactly right.
-           Only the LIST is elastic. Everything else is a fixed track that
-           gets its rows before the star is resolved, which is the same rule
-           an adornment row follows: a row that must exist has to be
-           declared, because a container with a greedy sibling will not
-           leave it anything. -->
-      <Grid Rows="1,1*,1,2" Cols="1*">
-        <!-- Same rule as the toolbox: these widths are the row template's
-             widths. The lead column is one cell wide and unlabelled because
-             its header would be the glyph itself. -->
-        <HStack Grid.Row="0" Gap="1">
-          <Text Width="1" Style="sel"> </Text>
-          <Text Width="13" Style="sel">ATTRIBUTE</Text>
-          <Text Width="8" Style="sel">TYPE</Text>
-          <Text Style="sel">VALUE</Text>
-        </HStack>
-        <ItemsView Grid.Row="1" Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
-                   Activate="{{.BeginEdit}}">
-          <!-- Mark is the modified-from-default column: "•" where the
-               document's value differs from the declared default. Rows
-               arrive grouped by markup.CategoryOf. -->
-          <ItemsView.ItemTemplate>
-            <HStack Gap="1">
-              <Text Width="1" Style="sel">{{.Mark}}</Text>
-              <Text Width="13">{{.Name}}</Text>
-              <Text Width="8" Style="dim">{{.Kind}}</Text>
-              <Text Style="ok">{{.Value}}</Text>
-            </HStack>
-          </ItemsView.ItemTemplate>
-        </ItemsView>
-        <!-- THE EDITOR. Enter on a row above loads its name and value here;
-             enter here commits. A finite-valued attribute cycles instead of
-             opening this, so the input is for the values only prose can
-             give. -->
-        <!-- A GRID, NOT AN HSTACK, for the same reason the pane is one: the
-             TextBox measures greedily on the cross axis too. In an HStack it
-             reported a width of 134 inside a 44-cell pane and was arranged
-             straight through the panel border and off the right of the
-             screen. Cols="16,1*" gives the label a fixed track and hands
-             the input exactly what is left. Grid has no Gap — the track
-             width carries it — and 16 is where the TYPE column starts
-             above, so the input lines up with the column it edits. -->
-        <Grid Grid.Row="2" Rows="1" Cols="16,1*">
-          <Text Grid.Row="0" Grid.Col="0" Style="sel">{{.EditName}}</Text>
-          <TextBox Grid.Row="0" Grid.Col="1" Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
+           The query box and the list are the FZF SHAPE, and that is a
+           deliberate choice against the other one. <TypeAhead> is the
+           existing attachment and it is prefix-only by design — the
+           type-ahead decision record (docs/specs/2026-08-11-type-ahead-search.md)
+           rejects fuzzy inside it on behaviour grounds and names the
+           query-box-plus-reranked-list as the OTHER design, a separate
+           control rather than a mode. This is that control: it FILTERS
+           and RE-RANKS, where TypeAhead moves a selection and never
+           hides a row. -->
+      <DockPane Id="explorer" Title="EXPLORER" Slot="Left" Size="34">
+        <Grid Rows="1,1,1*" Cols="1*">
+          <!-- The folder box. There is no modal dialog in this editor, so
+               "open folder" focuses a permanent row rather than summoning
+               a window that would have to be invented first. -->
+          <TextBox Name="PathBox" Grid.Row="0" Text="{{.WsPath}}" Changed="{{.CommitPath}}"/>
+          <TextBox Grid.Row="1" Text="{{.WsQuery}}"/>
+          <ItemsView Grid.Row="2" Items="{{.WsFiles}}" Selected="{{.WsSel}}"
+                     Activate="{{.OpenFile}}">
+            <ItemsView.ItemTemplate>
+              <HStack Gap="1">
+                <Text>{{.Name}}</Text>
+              </HStack>
+            </ItemsView.ItemTemplate>
+          </ItemsView>
         </Grid>
-        <!-- The description line. The catalog's Doc is empty on most
-             attributes today, so the editor sends legal values instead and
-             will send prose the moment Doc is populated. -->
-        <Text Grid.Row="3" Style="dim">{{.EditDoc}}</Text>
-      </Grid>
-    </Panel>
+      </DockPane>
 
-    <!-- THE BOTTOM PANEL, VS Code's: one region, several views, a tab strip
-         choosing between them.
+      <!-- TOOLS — the palette and the rail's other views. Declared
+           UNPINNED so ctrl+f has something to demonstrate on: pin is a
+           claim about what survives "get everything out of my way", and
+           a dock where every pane is pinned cannot show what pin means. -->
+      <DockPane Id="tools" Title="TOOLS" Slot="Left" Size="34" Pinned="false">
+        <Panel Name="SideBar" Style="dim">
+          <Tabs Selected="{{.ActivitySel}}">
 
-         TWO TABS, NOT FOUR. VS Code ships PROBLEMS / OUTPUT / DEBUG CONSOLE
-         / TERMINAL; only the first two have anything real behind them here,
-         and a tab that opens onto a blank pane is a worse lie than a
-         missing tab. The strip grows when there is something to put in it.
+          <!-- 0 — DESIGNER. The rail's first icon. There is nothing to put in a
+               side bar for it: the designer IS the editor area, and duplicating
+               its content here would be two views of one thing competing for the
+               selection. So this states that, rather than showing an empty box
+               that reads as a failure to load. -->
+          <Tab Header="DESIGN">
+            <Text Style="dim">The designer is the centre pane.</Text>
+          </Tab>
 
-         <Tabs> is the existing component, not a new one — the same strip
-         behaviour the activity rail turned out to be an instance of. -->
-    <Panel Name="Output" Grid.Row="1" Grid.Col="0" Grid.ColSpan="4" Style="dim">
-      <Tabs Name="PanelTabs">
-        <!-- PROBLEMS is first, as it is in VS Code: FitMsg is what the fit
-             watcher says about the current terminal size, which is the one
-             diagnostic this editor produces about itself. -->
-        <Tab Header="PROBLEMS">
-          <Text Style="dim">{{.FitMsg}}</Text>
-        </Tab>
-        <Tab Header="OUTPUT">
+          <!-- 1 — TOOLBOX, the rail's default. -->
+          <Tab Header="TOOLS">
+          <VStack>
+            <!-- ONE COLUMN: the component's name.
+                 "COMPONENT", not "ELEMENT" — the toolbox lists things you place,
+                 and what you place is a component; "element" is the markup
+                 spelling of it, which is the designer's business and not the
+                 user's.
+
+                 THE ATTRS AND CHILDREN COLUMNS ARE GONE. They carried real
+                 catalog facts — the attribute count, "? unknown" for a
+                 registered builder whose schema cannot be enumerated, and the
+                 child mode — but a toolbox is a place to pick a component from,
+                 not a table to read. Those facts have a better home in the
+                 PROPERTIES pane, which is about the one component you selected
+                 and has room to say it in words. The honesty rule they existed
+                 to make visible still holds in the model and is still pinned by
+                 TestPaletteComesFromTheCatalog; what changed is where the UI
+                 shows it, and that debt is real until the properties pane
+                 carries it. -->
+            <HStack Gap="1" Height="1">
+              <Text Style="sel">COMPONENT</Text>
+            </HStack>
+            <ItemsView Name="Toolbox" Items="{{.PaletteItems}}" Selected="{{.PaletteSel}}"
+                       Activate="{{.Add}}">
+              <ItemsView.ItemTemplate>
+                <!-- THREE COLUMNS: selection marker, icon, name.
+                     A Grid rather than an HStack because the marker and the
+                     icon need FIXED rects that do not move when the name
+                     changes width — an icon that shifts column as you scroll
+                     reads as a rendering fault.
+
+                     Rows="1" IS LOAD-BEARING. A Grid with no declared rows
+                     is one row that takes everything it is offered, so the
+                     template measured 29 cells tall and ItemsView realized a
+                     SINGLE row for the whole list — a toolbox showing one
+                     component, with no error anywhere. The old HStack
+                     template measured 1 because a Text does; a Grid does
+                     not. -->
+                <Grid Rows="1" Cols="1,2,*">
+                  <!-- Selection, drawn by the template. Mentioning _selected
+                       is what stands the house highlight down, and that is
+                       required rather than a preference: the house highlight
+                       re-styles the cells a row painted, and over pixel
+                       content that is either invisible (a protocol paints
+                       ABOVE the cells) or a photo-negative of the icon
+                       (halfblock, where the picture IS the cells).
+                       cmd/typeahead's album covers reached the same
+                       conclusion.
+
+                       The marker's rect is disjoint from the icon's, so a
+                       selection hop repaints two Texts and touches no
+                       picture. -->
+                  <Text Grid.Col="0" Style="sel" Visibility="{{._selected}}">{{.Bar}}</Text>
+                  <!-- The icon the CATALOG declares, tinted from a bound
+                       handle. Two cells wide and one tall: on a common 10x20
+                       cell that is the 20px square toolbox.IconPx
+                       rasterizes. An element that declares no icon binds a
+                       nil handle and this renders nothing — the honest
+                       answer for a registered component whose definition
+                       says nothing about how it looks. -->
+                  <Image Grid.Col="1" Src="{{.Icon}}" Cols="2" Rows="1"/>
+                  <Text Grid.Col="2" Margin="1,0,0,0">{{.Name}}</Text>
+                </Grid>
+              </ItemsView.ItemTemplate>
+            </ItemsView>
+          </VStack>
+          </Tab>
+
+          <!-- 2 — MARKUP. The document as text, which is the same string the
+               OUTPUT tab shows. Deliberately the same binding rather than a
+               second copy of the serializer: two views of one document that
+               could disagree would be worse than one view. -->
+          <Tab Header="CODE">
+            <Text Style="dim">{{.Source}}</Text>
+          </Tab>
+
+          <!-- 3 — PROBLEMS. FitMsg is what the fit watcher says about the
+               current terminal size, and it is empty when everything fits —
+               which is why the tab reads as blank most of the time. That is the
+               honest state and not a missing view. -->
+          <Tab Header="ISSUES">
+            <Text Style="dim">{{.FitMsg}}</Text>
+          </Tab>
+
+          </Tabs>
+        </Panel>
+      </DockPane>
+
+      <!-- THE EDITOR REGION, and this is the region swap.
+
+           Code is NOT a panel sharing the bottom strip with diagnostics.
+           It is THE SAME REGION showing something else, which is why
+           both children sit in one Grid cell with opposite Visibility
+           bindings rather than in two cells side by side. Exactly one is
+           Visible; the other is Collapsed and occupies nothing.
+
+           DesignChecked and CodeChecked are COMPUTEDS over one source
+           property, ed.region — so the two can never both be on, and the
+           menu's check marks, this swap and ctrl+backslash are three
+           renderings of one state rather than three states.
+
+           THE MULTI-LINE EDITOR THIS FRAMEWORK DOES NOT HAVE: <TextBox>
+           is single-line, and there is no multi-line text component in
+           components/ at all. So the CODE region is READ-ONLY — a <Text>
+           showing the same serialisation the OUTPUT tab shows. That is
+           stated rather than disguised: the region swap, the menus, the
+           check state and the accelerators are all real and all work;
+           what is missing is the ability to TYPE into the code view, and
+           the honest route to it today is $EDITOR, which is why that
+           item exists and actually launches. -->
+      <DockPane Id="editor" Title="EDITOR" Slot="Center">
+        <!-- TWO CHILDREN, OVERLAID, and no wrapper between them and the
+             pane. A <DockPane> arranges every child into the same body
+             rect, so the two views share one region by construction —
+             which is what "the same region showing something else"
+             means — and exactly one is Visible because the two bindings
+             are complementary computeds over one property.
+
+             The wrapper <Grid Rows="1*" Cols="1*"> that used to sit here
+             was removed for a MEASURED reason, not a tidiness one: a
+             drag motion in the designer repaints the ancestor chain
+             above the moved element (Composer.restoreUnder force-repaints
+             what the vacated rect uncovered), so one extra level between
+             the dock and the design surface cost one extra component
+             repainted on every single pointer report. It was the
+             difference between 9 and drag_test.go's ceiling of 8. -->
+        <Panel Name="EditorArea" Pad="1" Visibility="{{.DesignChecked}}">
+          <Preview Name="Island"/>
+        </Panel>
+        <Panel Name="CodeArea" Pad="1" Visibility="{{.CodeChecked}}">
           <Text Style="dim">{{.Source}}</Text>
-        </Tab>
-      </Tabs>
-    </Panel>
+        </Panel>
+      </DockPane>
 
-    <!-- The centre section is the DESIGN/LIVE indicator. StatusBar's three
-         sections are components with their own paint nodes, so the mode
-         flip repaints this one and leaves the build status and the control
-         plane addresses either side of it alone. -->
+      <DockPane Id="properties" Title="PROPERTIES" Slot="Right" Size="46">
+        <Panel Name="Properties" Style="dim">
+          <!-- A GRID WITH DECLARED TRACKS, NOT A VSTACK — and this is a bug fix,
+               not a preference.
+               As a VStack this pane could not be edited at all. A VStack sizes
+               each child by what it measures, ItemsView measures greedily, and
+               so the list took all 41 rows and the edit row underneath it was
+               arranged at W:0 H:0 on a row past the bottom of the panel. The
+               mechanism worked perfectly — a keystroke dispatched to that
+               TextBox did change the attribute — but the input was invisible and
+               unclickable, so "I can't modify values" was exactly right.
+               Only the LIST is elastic. Everything else is a fixed track that
+               gets its rows before the star is resolved, which is the same rule
+               an adornment row follows: a row that must exist has to be
+               declared, because a container with a greedy sibling will not
+               leave it anything. -->
+          <Grid Rows="1,1*,1,2" Cols="1*">
+            <!-- Same rule as the toolbox: these widths are the row template's
+                 widths. The lead column is one cell wide and unlabelled because
+                 its header would be the glyph itself. -->
+            <HStack Grid.Row="0" Gap="1">
+              <Text Width="1" Style="sel"> </Text>
+              <Text Width="13" Style="sel">ATTRIBUTE</Text>
+              <Text Width="8" Style="sel">TYPE</Text>
+              <Text Style="sel">VALUE</Text>
+            </HStack>
+            <ItemsView Grid.Row="1" Items="{{.AttrItems}}" Selected="{{.AttrSel}}"
+                       Activate="{{.BeginEdit}}">
+              <!-- Mark is the modified-from-default column: "•" where the
+                   document's value differs from the declared default. Rows
+                   arrive grouped by markup.CategoryOf. -->
+              <ItemsView.ItemTemplate>
+                <HStack Gap="1">
+                  <Text Width="1" Style="sel">{{.Mark}}</Text>
+                  <Text Width="13">{{.Name}}</Text>
+                  <Text Width="8" Style="dim">{{.Kind}}</Text>
+                  <Text Style="ok">{{.Value}}</Text>
+                </HStack>
+              </ItemsView.ItemTemplate>
+            </ItemsView>
+            <!-- THE EDITOR. Enter on a row above loads its name and value here;
+                 enter here commits. A finite-valued attribute cycles instead of
+                 opening this, so the input is for the values only prose can
+                 give. -->
+            <!-- A GRID, NOT AN HSTACK, for the same reason the pane is one: the
+                 TextBox measures greedily on the cross axis too. In an HStack it
+                 reported a width of 134 inside a 44-cell pane and was arranged
+                 straight through the panel border and off the right of the
+                 screen. Cols="16,1*" gives the label a fixed track and hands
+                 the input exactly what is left. Grid has no Gap — the track
+                 width carries it — and 16 is where the TYPE column starts
+                 above, so the input lines up with the column it edits. -->
+            <Grid Grid.Row="2" Rows="1" Cols="16,1*">
+              <Text Grid.Row="0" Grid.Col="0" Style="sel">{{.EditName}}</Text>
+              <TextBox Grid.Row="0" Grid.Col="1" Text="{{.EditValue}}" Changed="{{.CommitEdit}}"/>
+            </Grid>
+            <!-- The description line. The catalog's Doc is empty on most
+                 attributes today, so the editor sends legal values instead and
+                 will send prose the moment Doc is populated. -->
+            <Text Grid.Row="3" Style="dim">{{.EditDoc}}</Text>
+          </Grid>
+        </Panel>
+      </DockPane>
+
+      <DockPane Id="panel" Title="PANEL" Slot="Bottom" Size="10" Pinned="false">
+        <Panel Name="Output" Style="dim">
+          <Tabs Name="PanelTabs">
+            <!-- PROBLEMS is first, as it is in VS Code: FitMsg is what the fit
+                 watcher says about the current terminal size, which is the one
+                 diagnostic this editor produces about itself. -->
+            <Tab Header="PROBLEMS">
+              <Text Style="dim">{{.FitMsg}}</Text>
+            </Tab>
+            <Tab Header="OUTPUT">
+              <Text Style="dim">{{.Source}}</Text>
+            </Tab>
+          </Tabs>
+        </Panel>
+      </DockPane>
+
+    </DockHost>
+
     <StatusBar Name="StatusBar" Grid.Row="2" Grid.Col="0" Grid.ColSpan="4"
                Left="{{.Status}}" Center="{{.ModeText}}" Right="{{.Serving}}"/>
+
+    <!-- THE MENUS, declared LAST for z-order and placed on row 0 by
+         Grid.Row — the two are independent, which is exactly what an
+         overlay needs.
+
+         VIEW → CODE IS FLATTENED, and that is a framework limit stated
+         rather than worked around: components.Menu is ONE level (Menu →
+         []MenuItem) and buildMenuBar rejects anything but <MenuItem>
+         inside a <Menu>, so "View → Code → [x] Built in" becomes a
+         labelled group between separators. Inventing nesting here would
+         mean inventing it in the framework first.
+
+         EVERY Checked= BINDS A COMPUTED over one source property, and
+         every Command= is the SAME gooey.Action value the matching
+         KeyBinding above resolves. That is what makes "the accelerator
+         toggles the same state the check shows" true by construction:
+         there is one state and one action, rendered and reachable twice.
+
+         The Gesture= strings are DISPLAY HINTS — showing one does not
+         bind it — so each is the canonical spelling of the KeyBinding
+         that does, and markup validates them through input.ParseGesture
+         at load. -->
+    <MenuBar Name="Menus" Grid.Row="0" Grid.Col="0" Grid.ColSpan="2" Style="dim">
+
+      <Menu Title="_File">
+        <MenuItem Text="_Open Folder…" Gesture="ctrl+o" Command="{{.OpenFolder}}"/>
+        <MenuItem Text="Open _File" Command="{{.OpenFile}}"/>
+        <MenuItem Separator="true"/>
+        <!-- SAVE IS REAL, and it serialises the DOCUMENT MODEL rather
+             than the live tree. That is the hazard rather than a
+             preference: the tree on screen is what markup.Build made of
+             the document PLUS whatever patch_markup put there, and
+             writing the tree would save those patches into the user's
+             file as if they had authored them.
+
+             It is CONDITIONAL, not always-on. gooey.NewCommand(..).When
+             makes the item dim until a file from a real directory is
+             open, and MenuBar reads CanExecute while painting — so it
+             un-dims the moment one is, with no event anywhere. A greyed
+             Save is honest; one that silently does nothing is not. -->
+        <MenuItem Text="_Save" Gesture="ctrl+s" Command="{{.Save}}"/>
+        <MenuItem Separator="true"/>
+        <MenuItem Text="E_xit" Gesture="q" Command="{{.Quit}}"/>
+      </Menu>
+
+      <Menu Title="_Project">
+        <!-- REFRESH IS EXPLICIT because there is NO directory watcher,
+             and that is a decision recorded in browser.go: Content.Watch
+             reports only THAT the source changed, never the new tree,
+             because the rebuild has to happen on the UI goroutine — and
+             a workspace makes building it on the watcher's goroutine the
+             easy mistake. A snapshot you can see and refresh beats a
+             watcher that silently misses the write racing its own
+             baseline. -->
+        <MenuItem Text="_Refresh Files" Command="{{.Refresh}}"/>
+        <MenuItem Separator="true"/>
+        <MenuItem Text="_Close Folder" Command="{{.CloseFolder}}"/>
+      </Menu>
+
+      <Menu Title="_View">
+        <!-- THE REGION, as a radio pair over one property. -->
+        <MenuItem Text="_Design" Checked="{{.DesignChecked}}" Command="{{.ShowDesign}}"/>
+        <MenuItem Text="_Code" Gesture="ctrl+\" Checked="{{.CodeChecked}}" Command="{{.ShowCode}}"/>
+        <MenuItem Separator="true"/>
+        <!-- CODE → which viewer. The specified submenu, flattened.
+
+             "$EDITOR" alone tells you nothing about what will open, so
+             the label carries the RESOLVED program — "$EDITOR (nvim)" —
+             and reads "$EDITOR (unset)" when the variable is empty. The
+             item is also disabled in that case, and when there is no
+             file for it to open, so the menu dims it rather than
+             offering a key that fails. -->
+        <MenuItem Text="_Built in" Gesture="ctrl+b" Checked="{{.BuiltinChecked}}" Command="{{.UseBuiltin}}"/>
+        <MenuItem Text="{{.EditorItemText}}" Gesture="alt+e" Checked="{{.EditorChecked}}" Command="{{.UseEditor}}"/>
+        <MenuItem Separator="true"/>
+        <!-- THE DOCK, from the menu. Same actions as the KeyBindings. -->
+        <MenuItem Text="Ne_xt Pane" Gesture="ctrl+alt+right" Command="{{.NextPane}}"/>
+        <MenuItem Text="_Hide Pane" Gesture="ctrl+w" Command="{{.TogglePane}}"/>
+        <MenuItem Text="Co_llapse Pane" Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
+        <MenuItem Text="_Pin Pane" Gesture="ctrl+alt+p" Command="{{.PinPane}}"/>
+        <MenuItem Text="Hide _Unpinned" Gesture="ctrl+f" Command="{{.HideUnpinned}}"/>
+        <MenuItem Text="Show _All Panes" Gesture="ctrl+a" Command="{{.ShowAllPanes}}"/>
+      </Menu>
+
+    </MenuBar>
   </Grid>
 </Gooey>

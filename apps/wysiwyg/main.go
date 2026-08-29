@@ -285,6 +285,12 @@ func main() {
 	// supports it without saying so, and then the cell size has to be
 	// assumed, because only a probe could have known it.
 	gfx := flag.String("graphics", "", `force a pixel protocol: "sixel", "kitty", "iterm2", or "cells" for the halfblock fallback; empty probes`)
+	// THE WORKSPACE IS A DIRECTORY, VS Code's model, and it is a flag
+	// rather than a positional so that starting with no folder open stays
+	// the default. Empty means no workspace: the Explorer pane says so and
+	// Save is greyed, which is the honest empty state rather than an
+	// editor that silently has nowhere to write.
+	wsDir := flag.String("workspace", "", "open this directory as the workspace; empty starts with no folder")
 	flag.Parse()
 
 	opts := []gooey.Option{}
@@ -400,6 +406,21 @@ func main() {
 			gooey.Exit(err)
 		}
 		defer ed.remote.r.Close()
+	}
+	// The folder box is resolved by NAME from the built page rather than
+	// held from construction: markup.Page WATCHES, so a save to the .gooey
+	// builds a new tree and the component held from the first build is
+	// stale. Re-resolving on every swap keeps ctrl+o pointing at the box
+	// that is actually on screen.
+	bindPathBox := func() {
+		if b, err := markup.Find[*components.TextBox](ed.ctx, "PathBox"); err == nil {
+			ed.pathBox = b
+		}
+	}
+	bindPathBox()
+	app.OnSwap(func(gooey.Component) { bindPathBox() })
+	if *wsDir != "" {
+		ed.setWorkspace(*wsDir)
 	}
 	ed.rebuild()
 	if err := app.Run(context.Background()); err != nil {
@@ -808,6 +829,34 @@ type editor struct {
 	// in this process. Nil is local mode.
 	remote *remoteTarget
 
+	// THE IDE SHELL — dock, workspace, and the region swap. See dock.go,
+	// browser.go and menus.go; only the handles live here, because
+	// Context.Values captures each one BY VALUE and a property created
+	// after the map is populated leaves nil in the map.
+	dock    *dockModel
+	ws      *workspace
+	pathBox gooey.Component
+
+	// region is WHICH THING THE EDITOR AREA SHOWS, and codeView is which
+	// code viewer it uses when that thing is code. Two questions, two
+	// properties — but each is ONE property with several renderings, not
+	// several properties kept in step. See menus.go.
+	region   *prop.Property[int]
+	codeView *prop.Property[int]
+
+	builtinChecked *prop.Property[bool]
+	editorChecked  *prop.Property[bool]
+	designChecked  *prop.Property[bool]
+	codeChecked    *prop.Property[bool]
+
+	wsLabel  *prop.Property[string]
+	wsPath   *prop.Property[string]
+	wsQuery  *prop.Property[string]
+	wsSel    *prop.Property[int]
+	wsRev    *prop.Property[int]
+	wsFiles  *prop.Property[components.ItemSource]
+	openPath *prop.Property[string]
+
 	// mu guards lost, which the stream reader writes and the UI reads.
 	mu      sync.Mutex
 	lost    error
@@ -854,6 +903,15 @@ func newEditor(fsys fs.FS) *editor {
 		rev:         prop.NewSource(0),
 		serveInfo:   prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
 		pv:          &preview.Pane{},
+		dock:        newDockModel(),
+		region:      prop.NewSource(regionDesign),
+		codeView:    prop.NewSource(codeBuiltin),
+		wsLabel:     prop.NewSource(""),
+		wsPath:      prop.NewSource(""),
+		wsQuery:     prop.NewSource(""),
+		wsSel:       prop.NewSource(0),
+		wsRev:       prop.NewSource(0),
+		openPath:    prop.NewSource(""),
 	}
 
 	// Set after the literal because it points INTO it: the selection is a
@@ -986,6 +1044,12 @@ func newEditor(fsys fs.FS) *editor {
 		})
 	})
 
+	// The workspace list source, built here for the same reason the other
+	// two are: Context.Values captures handles BY VALUE, so a property
+	// created after the map is populated resolves to nothing and the pane
+	// renders empty with no error anywhere.
+	ed.wsFiles = prop.NewComputed(func() components.ItemSource { return ed.browserItems() })
+
 	// A registered component with NO schema, on purpose. Its palette row
 	// must read differently from an element that simply takes no
 	// attributes — that distinction is the catalog's central honesty
@@ -1079,6 +1143,12 @@ func newEditor(fsys fs.FS) *editor {
 		// the difference is load-bearing rather than tidy.
 		Elements: map[string]*markup.ElementDef{
 			"ActivityBar": activitybar.Def(ed.fsys, nil),
+			// <DockHost> is EDITOR CHROME and is registered here only,
+			// never on docCtx — for the same reason <Preview> is. A
+			// document that could build the dock host would contain the
+			// thing laying it out, and Measure would recurse until the
+			// stack overflowed.
+			"DockHost": dockDef(ed.dock),
 		},
 		Components: map[string]markup.Builder{
 			"Preview": preview.Builder(ed.pv),
@@ -1160,6 +1230,21 @@ func newEditor(fsys fs.FS) *editor {
 		Elements: map[string]*markup.ElementDef{
 			"ActivityBar": activitybar.Def(ed.fsys, nil),
 		},
+	}
+
+	// The IDE shell's bindings, merged into the SAME map docCtx already
+	// shares by reference — so a document authored here binds the same
+	// names, exactly as it does for every other value. Merged rather than
+	// written into the literal because they are built from ed's own
+	// handles, several of which are computeds over the fields above.
+	//
+	// A collision is a BUG, not a last-writer-wins: two bindings under one
+	// name means one of them is unreachable and nothing would say which.
+	for k, v := range ed.menuValues() {
+		if _, dup := ed.ctx.Values[k]; dup {
+			panic("wysiwyg: duplicate binding name " + k)
+		}
+		ed.ctx.Values[k] = v
 	}
 
 	// The palette IS the catalog. Only elements that can appear in a

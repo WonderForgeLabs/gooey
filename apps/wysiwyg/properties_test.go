@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/panel"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // The PROPERTIES pane is where a value is actually changed, and these are
@@ -46,16 +48,34 @@ func walkTree(root gooey.Component, fn func(gooey.Component)) {
 	}
 }
 
-func theTextBox(t *testing.T, root gooey.Component) *components.TextBox {
+// theTextBox is the attribute editor's input: the one TextBox INSIDE the
+// PROPERTIES region.
+//
+// It used to be "the one TextBox in the whole shell", which was true
+// exactly as long as the shell had one. The Explorer pane now has two of
+// its own (the folder box and the fuzzy query), so uniqueness across the
+// page stopped identifying anything and these tests failed with a count
+// rather than a fault.
+//
+// Scoping to the named region is the fix that does not rot: it keeps
+// asserting what these tests are about — where the editor is and whether
+// it works — and it stays true however many inputs the rest of the shell
+// grows. It also keeps the "exactly one" check, which is still the real
+// invariant, in the place where it is still real.
+func theTextBox(t *testing.T, ed *editor) *components.TextBox {
 	t.Helper()
+	region, err := markup.Find[*panel.Pane](ed.ctx, "Properties")
+	if err != nil {
+		t.Fatalf("no PROPERTIES region in the shell: %v", err)
+	}
 	var found []*components.TextBox
-	walkTree(root, func(c gooey.Component) {
+	walkTree(region, func(c gooey.Component) {
 		if tb, ok := c.(*components.TextBox); ok {
 			found = append(found, tb)
 		}
 	})
 	if len(found) != 1 {
-		t.Fatalf("the shell has %d TextBoxes; these tests assume the one in PROPERTIES", len(found))
+		t.Fatalf("the PROPERTIES region has %d TextBoxes; these tests assume its single attribute editor", len(found))
 	}
 	return found[0]
 }
@@ -63,8 +83,8 @@ func theTextBox(t *testing.T, root gooey.Component) *components.TextBox {
 // TestTheAttributeEditorIsOnScreenAndUsable is the direct pin for the
 // reported bug. Every clause failed before the fix.
 func TestTheAttributeEditorIsOnScreenAndUsable(t *testing.T) {
-	_, root, _ := shellTree(t)
-	tb := theTextBox(t, root)
+	ed, _, _ := shellTree(t)
+	tb := theTextBox(t, ed)
 	b := tb.Bounds()
 
 	if b.W <= 0 || b.H <= 0 {
@@ -76,8 +96,16 @@ func TestTheAttributeEditorIsOnScreenAndUsable(t *testing.T) {
 	if b.X < 0 || b.Y < 0 || b.X+b.W > 150 || b.Y+b.H > 44 {
 		t.Errorf("the attribute editor at %+v is not fully on a 150x44 screen", b)
 	}
-	// Inside the PROPERTIES region specifically: Grid.Col=3 of a
-	// Cols="4,38,1*,46" page, so columns 104..149.
+	// Inside the PROPERTIES region specifically. The number survives the
+	// dock rewrite, but it is now derived from a different arrangement
+	// and is worth restating: a 150-cell screen is a 4-cell activity
+	// rail plus a 146-cell dock, whose RIGHT SLOT takes the largest Size
+	// its panes declare (46), so PROPERTIES occupies columns 104..149 —
+	// exactly where the old Cols="4,38,1*,46" track put it.
+	//
+	// It is a START-OF-DAY assertion either way: the whole point of the
+	// dock is that the user can move this pane, and after a ctrl+left it
+	// is legitimately at x=4. Nothing here moves it.
 	if b.X < 104 {
 		t.Errorf("the attribute editor at x=%d is left of the PROPERTIES region; it has escaped its pane", b.X)
 	}
@@ -89,8 +117,8 @@ func TestTheAttributeEditorIsOnScreenAndUsable(t *testing.T) {
 // TestTheAttributeEditorIsAFocusStop — reachable by keyboard, which is the
 // only way it is reachable at all under a recording pty.
 func TestTheAttributeEditorIsAFocusStop(t *testing.T) {
-	_, root, comp := shellTree(t)
-	tb := theTextBox(t, root)
+	ed, _, comp := shellTree(t)
+	tb := theTextBox(t, ed)
 	for _, c := range comp.Focus().Order() {
 		if c == tb {
 			return
@@ -105,8 +133,8 @@ func TestTheAttributeEditorIsAFocusStop(t *testing.T) {
 // including the page-root KeyBindings it has to get past. `x` is bound to
 // Delete on the root, which makes it the interesting character to type.
 func TestTypingIntoTheEditorChangesTheAttribute(t *testing.T) {
-	ed, root, comp := shellTree(t)
-	tb := theTextBox(t, root)
+	ed, _, comp := shellTree(t)
+	tb := theTextBox(t, ed)
 	fm := comp.Focus()
 
 	// Point the editor at the selected component's Name.
@@ -155,7 +183,7 @@ func TestTypingIntoTheEditorChangesTheAttribute(t *testing.T) {
 // is component-local. An input inside the island would reset its caret to 0
 // on every keystroke, so the user's next character lands mid-word.
 func TestEditorInputsAreSiblingsOfThePreview(t *testing.T) {
-	_, root, _ := shellTree(t)
+	ed, root, _ := shellTree(t)
 	island := findPreview(root)
 	if island == nil {
 		t.Fatal("the shell does not mount the designer")
@@ -172,5 +200,5 @@ func TestEditorInputsAreSiblingsOfThePreview(t *testing.T) {
 	// And the assertion is only meaningful while there IS an input to
 	// misplace — the reason the retired version would have passed
 	// vacuously. This is the discrimination half.
-	theTextBox(t, root)
+	theTextBox(t, ed)
 }
