@@ -1154,3 +1154,85 @@ func TestCompOfIsExactlyNodeOfInverted(t *testing.T) {
 			len(ed.compOf), len(ed.nodeOf))
 	}
 }
+
+// TestATripleClickDrillsOneLevelPerClickPastTheFirst pins what a THIRD
+// rapid click does, which is the thing nothing asserted and a comment in
+// input/mouse.go asserted wrongly.
+//
+// The drill fires on `count >= 2` and moves the scope down one level
+// each time it fires. Under a click ceiling of 2 a rapid third click
+// restarted the sequence at 1 and drilled nothing; under a ceiling of 3
+// it reports 3 and drills again. So raising the ceiling DID change this
+// gesture — a triple click selects two levels down where it used to
+// select one — while input.MouseEvent's doc said it had not. Found in
+// the review of #391 (issue #419).
+//
+// The behaviour is kept rather than clamped, because "one level per
+// click past the first" is the same composition a repeated double-click
+// already has, and clamping would make the third click of a fast triple
+// mean nothing at all. What is fixed is the claim; this is what stops it
+// drifting again.
+//
+// THE SINGLE AND DOUBLE ARMS ARE THE DISCRIMINATOR. Without them a drill
+// that went straight to the deepest hit on any click would satisfy the
+// triple assertion alone.
+func TestATripleClickDrillsOneLevelPerClickPastTheFirst(t *testing.T) {
+	ed, c := designerPage(t)
+	ed.doc().Kids = []*node{
+		{Elem: "Border", Attrs: map[string]string{"Name": "B1", "Canvas.Left": "0", "Canvas.Top": "0"},
+			Kids: []*node{{Elem: "Border", Attrs: map[string]string{"Name": "B2"},
+				Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Deep", "Width": "6", "Height": "1"}}}}}},
+	}
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the fixture document does not build: %s", ed.status.Get())
+	}
+	c.Frame()
+
+	outer := ed.doc().Kids[0]
+	mid := outer.Kids[0]
+	deep := mid.Kids[0]
+	b := ed.docCtx.Named["Deep"].(interface{ Bounds() gooey.Rect }).Bounds()
+	if b.W == 0 {
+		t.Fatalf("the inner <Text> was never arranged (%v)", b)
+	}
+
+	advance := clickClock(c)
+	for _, tc := range []struct {
+		clicks int
+		want   *node
+		what   string
+	}{
+		{1, outer, "the outermost, because a single click does not drill"},
+		{2, mid, "one level down"},
+		{3, deep, "two levels down — one per click past the first"},
+	} {
+		advance(time.Second) // a new gesture, not a continuation
+		ed.setSelection(nil)
+		for i := 0; i < tc.clicks; i++ {
+			singleClick(c, b.X, b.Y)
+		}
+		if ed.sel != tc.want {
+			t.Errorf("%d rapid clicks selected %s, want %s (%s)",
+				tc.clicks, nodeName(ed.sel), nodeName(tc.want), tc.what)
+		}
+	}
+
+	// A FOURTH restarts the sequence at 1, which the ceiling guarantees,
+	// so it drills nothing further — and it does NOT pop back out
+	// either. The drill scope followed the selection down, so a count-1
+	// click re-selects the outermost node WITHIN THAT SCOPE, which is
+	// where the third click already left it. Two levels is therefore the
+	// deepest a single burst reaches however long it goes on, and the
+	// way back up is Escape rather than more clicking.
+	advance(time.Second)
+	ed.setSelection(nil)
+	for i := 0; i < 6; i++ {
+		singleClick(c, b.X, b.Y)
+	}
+	if ed.sel != deep {
+		t.Errorf("six rapid clicks selected %s, want the same two-levels-down node a "+
+			"triple reaches: past the ceiling the count restarts at 1, and a count-1 "+
+			"click re-selects inside the scope the drill moved to", nodeName(ed.sel))
+	}
+}

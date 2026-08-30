@@ -34,9 +34,23 @@ const (
 //
 // A handler should test `>=` rather than `==` unless it specifically
 // means "exactly a double": every consumer in this repo that wanted
-// "double or better" was already written as `ev.Count >= 2`, which is
-// why raising the ceiling did not change what a triple click does to an
-// ItemsView row or to the wysiwyg designer's drill-in.
+// "double or better" was already written as `ev.Count >= 2`.
+//
+// THAT IS NOT THE SAME AS "nothing changed", which is what this comment
+// used to claim, naming the wysiwyg designer's drill-in as an example.
+// It changed there. The drill runs on `count >= 2` and moves the scope
+// down one level each time it fires, so under a ceiling of 2 a rapid
+// third click restarted the sequence at 1 and drilled nothing, and under
+// a ceiling of 3 it reports 3 and drills again: a triple click now
+// selects two levels down where it used to select one. That is coherent
+// — one level per click past the first, which is the composition
+// nodeAtDepth documents — and it is a behaviour change that a sentence
+// promising none would have hidden. Found in the review of #391 (issue
+// #419); pinned by TestATripleClickDrillsOneLevelPerClickPastTheFirst.
+//
+// The lesson is the general one: a `>=` consumer is INSENSITIVE to the
+// ceiling only if it acts once per gesture. One that acts per event,
+// as a drill does, sees every count the ceiling allows.
 type MouseEvent struct {
 	Kind   MouseKind
 	Button MouseButton

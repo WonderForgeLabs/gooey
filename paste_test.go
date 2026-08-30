@@ -1,6 +1,10 @@
 package gooey_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -203,5 +207,94 @@ func TestTextBoxConsumesAPasteAndFlattensIt(t *testing.T) {
 	// than inserted invisibly into the value.
 	if got := text.Get(); got != "one two three" {
 		t.Errorf("value = %q, want %q", got, "one two three")
+	}
+}
+
+// declaredEventKinds counts the EventKind constants the input package
+// declares, by parsing them rather than by keeping a number here.
+//
+// DERIVED FOR THE USUAL REASON: a number written beside the thing it
+// counts agrees with nothing. The test below needs a kind that does NOT
+// exist, and "one past the last declared" is the only spelling of that
+// which stays true when a kind is added — which is the moment the test
+// exists for.
+func declaredEventKinds(t *testing.T) int {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join("input", "mouse.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing input/mouse.go: %v", err)
+	}
+	n := 0
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		block := false
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			// The type appears on the iota line only, so the whole block
+			// belongs to EventKind once its first spec names it.
+			if id, ok := vs.Type.(*ast.Ident); ok && id.Name == "EventKind" {
+				block = true
+			}
+			if block {
+				n += len(vs.Names)
+			}
+		}
+	}
+	if n < 3 {
+		t.Fatalf("found %d EventKind constants in input/mouse.go, want at least the "+
+			"three that exist — the parse is broken, not the vocabulary", n)
+	}
+	return n
+}
+
+// TestAnUnknownEventKindIsNotDispatchedAsAKey is the guard on Composer.Handle's
+// switch, and it is the assertion its comment already claimed.
+//
+// The switch routes mouse and paste and had `default` fall through to
+// Dispatch(ev.Key) — so a kind it did not know about arrived as a ZERO
+// KeyEvent, which is a KeyRune of rune 0: a plausible-looking key that
+// matches nothing and reports nothing. That is precisely how a paste was
+// swallowed before EventPaste got an arm, and the comment describing
+// that fix sat directly above the arm that kept it possible. Found in
+// the review of #391 (issue #419).
+//
+// The unknown kind is DERIVED as one past the last declared, so adding a
+// fourth kind without an arm in Handle fails here instead of silently
+// becoming rune 0.
+func TestAnUnknownEventKindIsNotDispatchedAsAKey(t *testing.T) {
+	leaf := &pasteKeySpy{}
+	root := &pasteBox{kids: []gooey.Component{leaf}}
+	c := gooey.NewComposer(root, 20, 4)
+	c.Frame()
+	c.Focus().SetFocus(leaf)
+
+	// The floor: a real key still reaches the component, so a "nothing
+	// arrived" result below means the routing refused it rather than the
+	// fixture being deaf.
+	if !c.Handle(input.KeyOf(input.Named(input.KeyEnter))) {
+		t.Fatal("a key event was not consumed, so this fixture proves nothing")
+	}
+	if leaf.keys != 1 {
+		t.Fatalf("HandleKey ran %d times for one key event, want 1", leaf.keys)
+	}
+
+	unknown := input.EventKind(declaredEventKinds(t))
+	if got := c.Handle(input.Event{Kind: unknown}); got {
+		t.Errorf("Handle reported an unknown event kind %d as consumed", unknown)
+	}
+	if leaf.keys != 1 {
+		t.Errorf("an unknown event kind reached HandleKey as %+v — the default arm is "+
+			"still the key arm, so the kind arrived as a zero KeyEvent (a KeyRune of "+
+			"rune 0) that matches nothing and reports nothing", leaf.lastKey)
+	}
+	if leaf.pastes != 0 {
+		t.Errorf("an unknown event kind reached HandlePaste %d times", leaf.pastes)
 	}
 }

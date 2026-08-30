@@ -223,18 +223,36 @@ func (c *Composer) Cells() *render.Buffer { return c.frame.Cells }
 // Handle routes one input event — key, mouse or paste — through the tree.
 func (c *Composer) Handle(ev input.Event) bool {
 	// Routed on Kind, exhaustively, rather than as "mouse or else a
-	// key". The default arm used to be the key arm, so a kind this
-	// switch did not know about was dispatched as ev.Key — a zero
-	// KeyEvent, which is a KeyRune of rune 0: a plausible-looking key
-	// that matches nothing, consumes nothing and reports nothing. A
-	// paste arriving that way would have been silently swallowed.
+	// key" — and EventKey has its OWN arm, which is the half this
+	// comment claimed and the code did not do.
+	//
+	// The default arm WAS the key arm, so a kind this switch did not
+	// know about was dispatched as ev.Key: a zero KeyEvent, which is a
+	// KeyRune of rune 0 — a plausible-looking key that matches nothing,
+	// consumes nothing and reports nothing. That is exactly how a paste
+	// would have been silently swallowed before EventPaste got its arm,
+	// and leaving `default` pointing at Dispatch kept the trap armed for
+	// whatever kind is added next. The comment describing the fix was
+	// itself the thing that made the omission invisible. Found in the
+	// review of #391 (issue #419).
+	//
+	// An unknown kind is REFUSED rather than guessed. There is no
+	// runtime fault channel for a component-level surprise here —
+	// LayoutFault answers a different question and widening it would
+	// make one type answer two — so the honest report is "nobody
+	// handled this", which is what a caller already knows how to read.
+	// TestAnUnknownEventKindIsNotDispatchedAsAKey derives the kinds from
+	// the input package rather than listing them, so an added kind with
+	// no arm here fails rather than falls through.
 	switch ev.Kind {
+	case input.EventKey:
+		return c.focus.Dispatch(ev.Key)
 	case input.EventMouse:
 		return c.focus.DispatchMouse(ev.Mouse)
 	case input.EventPaste:
 		return c.focus.DispatchPaste(ev.Paste)
 	default:
-		return c.focus.Dispatch(ev.Key)
+		return false
 	}
 }
 
