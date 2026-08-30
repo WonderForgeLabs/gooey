@@ -472,12 +472,20 @@
                    truncated pane from a short file — the two look
                    identical.
 
-                   Not an oversight and not cheap to fix: the framework
-                   has no clipping and no viewport, so this needs the
-                   pane-local viewport in
-                   docs/specs/2026-08-23-scrolling.md (issue #67), which
-                   is real work and correctly out of scope for the cheap
-                   version. -->
+                   Not an oversight and not cheap to fix. CLIPPING is not
+                   what is missing — every component has been clipped to
+                   its own bounds since #409 landed on 2026-08-25, and
+                   that is precisely why the overflow is invisible rather
+                   than spilling over the pane below it. What is missing
+                   is a VIEWPORT: something that decides WHICH lines the
+                   fixed cell shows. That is the pane-local viewport in
+                   docs/specs/2026-08-23-scrolling.md (issue #67), real
+                   work and correctly out of scope for the cheap version.
+
+                   The distinction is worth keeping straight, because a
+                   reader who believes there is no clipping will look for
+                   the wrong bug: they will expect to SEE the extra lines
+                   somewhere. -->
               <!-- NO Style, and that is deliberate rather than an omission.
                    dim is what this page uses for secondary chrome — hints,
                    the fit message, the "designer is the centre pane" note —

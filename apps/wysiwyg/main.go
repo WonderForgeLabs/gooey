@@ -1029,11 +1029,6 @@ type editor struct {
 	clip clipboard
 }
 
-// newEditor takes the editor's root FS because the panes are markup on
-// disk, not markup compiled in. One FS for the page and every control:
-// os.DirFS in development, so editing a pane's .gooey hot reloads it, and
-// the same line takes an embed.FS for a release build. That seam is the
-// whole reason markup loading is an fs.FS rather than a path.
 // emptyDocsBody names WHICH empty this is, and that it has to is a fix
 // from the review of PR #426. The pane keyed its message off an empty
 // list alone, so three unrelated states — no docs/ tree anywhere, a
@@ -1049,21 +1044,23 @@ type editor struct {
 // one string and that string is the page you selected. That wants a
 // status line, which the docs tab does not have yet.
 //
-// A METHOD rather than a func field assigned during construction: the
-// field version was read from inside docsBody's closure, which is lazy,
-// so it happened to work only because nothing evaluated the computed
-// before the assignment ran. That is the same accident-of-ordering this
-// PR's review found in docsItems, and there is no reason to keep a
-// second one.
+// A PLAIN FUNCTION TAKING WHAT IT NEEDS, and it has been three shapes
+// across two review rounds because each one was wrong in a way the next
+// exposed. A func field assigned during construction came first, and it
+// worked only because docsBody's closure is lazy and nothing evaluated
+// the computed before the assignment ran — the same accident-of-ordering
+// the review found in docsItems. A method fixed that and introduced the
+// next one: it read ed.docsRoot and ed.docsSkipped from inside an
+// evaluating computed, so the dependency set depended on which branch of
+// docsBody had run. Taking both as arguments settles it, because now
+// every property read belongs to docsBody and is hoisted above its
+// branch. See docsBody.
+//
 // TWO STATES, not three. A "Select a page." case sat below these until
 // the review of #426: it could only be entered with a non-empty list,
 // and docsBody now CLAMPS such an index to a real page rather than
 // asking for a message, so nothing could reach it. A branch nothing can
 // enter is a claim about behaviour that never happens.
-// A PLAIN FUNCTION taking what it needs, not a method reading the
-// editor: every property read belongs to the computed that calls it, and
-// hoisted to the top of that computed, so the dependency set does not
-// depend on which branch ran. See docsBody.
 func emptyDocsBody(root fs.FS, skipped int) string {
 	skipnote := ""
 	if skipped > 0 {
@@ -1079,6 +1076,11 @@ func emptyDocsBody(root fs.FS, skipped int) string {
 	return "The docs/ directory beside the editor holds no markdown pages." + skipnote
 }
 
+// newEditor takes the editor's root FS because the panes are markup on
+// disk, not markup compiled in. One FS for the page and every control:
+// os.DirFS in development, so editing a pane's .gooey hot reloads it, and
+// the same line takes an embed.FS for a release build. That seam is the
+// whole reason markup loading is an fs.FS rather than a path.
 func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
 		fsys: fsys,
