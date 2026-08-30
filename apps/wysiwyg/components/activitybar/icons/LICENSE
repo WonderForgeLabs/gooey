@@ -4,7 +4,22 @@ These SVG files are Codicons, Visual Studio Code's icon set.
     Copyright: (c) Microsoft Corporation
     License:   CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
 
-Fetched from src/icons/ in that repository, unmodified on disk. The
+Fetched from src/icons/ in that repository, unmodified on disk. EVERY
+FILE HERE KEEPS ITS UPSTREAM NAME, which is what makes that sentence
+checkable rather than a claim: each one is src/icons/<same name>.svg and
+is byte-identical to it. Verify with
+
+    curl -s https://raw.githubusercontent.com/microsoft/vscode-codicons/\
+main/src/icons/<name>.svg | diff - <name>.svg
+
+The review of PR #426 is why this paragraph is this specific. book.svg
+arrived hand-drawn, and the blanket "fetched, unmodified" above it was
+then false for one of five files — a licensing statement is the wrong
+place for an approximation, and the machine-generated coordinate
+precision of its neighbours made the odd one out visible on sight. It
+was replaced with the real Codicon rather than the claim being narrowed.
+
+The
 activitybar package substitutes the documents' fill="currentColor" for a
 concrete colour before rasterizing, which is a render-time substitution
 and not a change to these files.
