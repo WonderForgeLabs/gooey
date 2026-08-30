@@ -686,7 +686,7 @@ Keys:
 
 Mouse: a click places the caret, dragging selects (the drag survives leaving the field, because the press captures the pointer), and a double click selects the word under it.
 
-Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard; reaching that means OSC 52, which is a decision to make on purpose rather than a side effect of adding cut and paste — tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106).
+Cut and copy use a kill buffer shared by every TextBox in the process — `components.KillBuffer` / `components.SetKillBuffer`. It is deliberately not the system clipboard. Reaching that means OSC 52, which the framework does have — `Screen.SetClipboard`, used by the wysiwyg editor — but wiring a text field to it is a decision on purpose rather than a side effect of adding cut and paste, and OSC 52 is write-only for reasons `term.ClipboardCaveat` sets out.
 
 The field scrolls horizontally to keep the caret visible in either direction, and the caret and the selection anchor are source properties, so moving the caret repaints only this component.
 

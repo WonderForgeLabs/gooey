@@ -105,8 +105,16 @@ graph already is one.
 
 ## Current limits
 
-No triple click, no drag threshold, and no system clipboard — `TextBox`
-cut and copy use a process-local kill buffer. Triple-click and OSC 52 are
-tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106).
+No drag threshold — a drag starts on the first motion after a press, so
+build any slop tolerance yourself.
+
+`TextBox` cut and copy use a process-local kill buffer, not the system
+clipboard. The clipboard mechanism itself exists — `Screen.SetClipboard`
+writes OSC 52, and the wysiwyg editor uses it — and it is write-only by
+design, because reads are refused by most terminals
+(`term.ClipboardCaveat` says what can and cannot be acknowledged).
+
+Clicks count to three: `gooey.MaxClickCount` is the ceiling and a fourth
+rapid click starts a new sequence.
 
 Depth: [architecture.md — the input system](../../architecture.md#the-input-system).
