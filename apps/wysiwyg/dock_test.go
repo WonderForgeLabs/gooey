@@ -607,3 +607,86 @@ func TestASameSlotDropDoesNotReorderButStillSchedulesAFrame(t *testing.T) {
 			"without it the drag text stays on screen after the drop")
 	}
 }
+
+// TestCollapsingTheBottomStripGivesItsRowsBack is issue #431, reported
+// against a running editor as "collapsing the bottom panel doesn't
+// collapse everything, it just hides its contents".
+//
+// COLLAPSE IS A DIRECTION, and the bottom strip is the one slot where
+// that direction is not the one it stacks in. Left, right and centre
+// stack top-to-bottom, so shortening a pane to headerH shortens it along
+// the axis it shares with its neighbours and they take the room. The
+// bottom strip stacks LEFT TO RIGHT, so the same arithmetic spent
+// headerH on the pane's WIDTH — one column, title gone, a bare chevron
+// left — while the strip kept every row of its declared Size, because
+// nothing had asked its height to change.
+//
+// The assertion is about GEOMETRY on both axes, and it has to be. The
+// symptom the user saw is the strip's height; the tell that named the
+// cause is the pane's width, and a test that checked only the height
+// would pass against a fix that shrank the strip and left the pane one
+// column wide.
+//
+// It is deliberately relative — grew BY (Size - headerH), rather than a
+// row number — so it stays true when a pane above it changes size.
+func TestCollapsingTheBottomStripGivesItsRowsBack(t *testing.T) {
+	ed, c := dockFixture(t)
+	panel := pane(t, ed, "panel")
+	centre := pane(t, ed, "editor")
+
+	was, wasCentre := panel.Bounds(), centre.Bounds()
+	if was.W <= 0 || was.H <= 0 {
+		t.Fatalf("the PANEL pane is %+v before anything happened", was)
+	}
+	f, _ := c.Frame()
+	if !strings.Contains(rowText(f, was.Y, was.X, was.W), panel.Title) {
+		t.Fatalf("the PANEL header does not read %q before collapsing; "+
+			"this test's width assertion would mean nothing", panel.Title)
+	}
+
+	ed.dock.ToggleCollapsed(panel)
+	settle(t, c)
+
+	got, gotCentre := panel.Bounds(), centre.Bounds()
+
+	// THE HEIGHT — the reported symptom. The strip is the pane's declared
+	// Size tall and must fall to one header row.
+	if got.H != headerH {
+		t.Errorf("the collapsed bottom strip is %d rows tall, want %d — its rows "+
+			"are still off the editor, which is the bug as reported", got.H, headerH)
+	}
+	// THE WIDTH — the tell. A pane in a horizontal strip collapses along
+	// the OTHER axis, so it keeps every column it had.
+	if got.W != was.W {
+		t.Errorf("collapsing narrowed the pane from %d columns to %d. In a strip that "+
+			"stacks left to right, headerH is the wrong axis to spend: the header has "+
+			"no room left for its title and the user is looking at a lone chevron",
+			was.W, got.W)
+	}
+	// AND SOMEBODY GOT THE ROOM. Reclaiming space is the whole purpose of
+	// collapse; a strip that shrank while the centre stayed put would
+	// have moved the rows nowhere.
+	if grew := gotCentre.H - wasCentre.H; grew != was.H-headerH {
+		t.Errorf("the centre pane grew by %d rows and the strip gave up %d; the "+
+			"space a collapse reclaims has to go to the neighbours",
+			grew, was.H-headerH)
+	}
+
+	// AND THE DROP GEOMETRY AGREES. slotAt resolves a drag's destination
+	// from the same extents layout used, and its own comment says so —
+	// "the answer comes from the host's bounds and the resolved extents".
+	// Reading the DECLARED size there instead would leave a band nine
+	// rows deep that looks like the centre pane and answers "bottom", so
+	// a pane dropped in the editor area docks to a strip that is not
+	// under the pointer. One row above the collapsed strip is the
+	// discriminating point: it is inside the old band and outside the
+	// real one.
+	host := panel.host
+	hb := host.Bounds()
+	if got := host.slotAt(hb.X+hb.W/2, hb.Y+hb.H-headerH-1); got != dockCenter {
+		t.Errorf("the row just above the collapsed strip resolves to the %s slot, "+
+			"want %s; the drop geometry is still reading the strip's declared "+
+			"size rather than the height it was laid out at",
+			slotName(got), slotName(dockCenter))
+	}
+}
