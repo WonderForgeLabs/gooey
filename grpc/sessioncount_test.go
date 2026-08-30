@@ -522,3 +522,138 @@ func TestNoCountSurvivesTheAcceptLoop(t *testing.T) {
 		}
 	}
 }
+
+// TestAnAttachDoesNotWaitOnAnotherSessionsCallback is the deadlock the
+// review of PR #425 found in that PR's own ordering fix.
+//
+// The fix delivered the callback under notifyMu. register runs on the UI
+// goroutine and calls add, which calls notify — so an attach blocked on
+// notifyMu while a detach, on a stream goroutine, sat inside host code
+// that Options.OnSessions explicitly permits to block. The UI goroutine
+// waiting on an arbitrary host callback is not a stall, it is a deadlock
+// as soon as that callback wants anything the run loop must perform.
+//
+// Two clients is enough, which is exactly the scenario the ordering fix
+// was written for — so the fix's own motivating case was the case that
+// hung.
+//
+// The assertion is a TIMEOUT, which is the only shape available: the
+// claim is that a call returns without waiting for something else, and
+// nothing observable distinguishes "returned promptly" from "returned"
+// except the clock. The window is deliberately generous; against the
+// reviewed code the attach does not complete at all until the detach's
+// callback is released, so the test fails by the full three seconds
+// rather than by a millisecond of scheduling noise.
+func TestAnAttachDoesNotWaitOnAnotherSessionsCallback(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+	var once sync.Once
+
+	// ONE harness for both broadcasters. gooey's evaluation stack and
+	// layout-fault slot are PROCESS-global, so two live testApps race by
+	// construction and -race reports it inside NewComposer and
+	// prop.Get — nothing to do with the code under test, but it turns
+	// this test red for a reason that has no bearing on its claim.
+	host := newHarness(t).app
+
+	b := newBroadcaster(nil, host, func(int) {
+		// Only the FIRST delivery blocks: it stands for a host callback
+		// that is waiting on something slow.
+		once.Do(func() {
+			entered <- struct{}{}
+			<-release
+		})
+	})
+
+	first, second := &session{}, &session{}
+	b.mu.Lock()
+	b.sessions[first] = true
+	b.mu.Unlock()
+
+	// The detach, on its own goroutine, wedged inside host code.
+	go b.remove(first)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the host callback was never entered, so the test never reached " +
+			"the state it exists to probe")
+	}
+
+	// The attach, standing in for the UI goroutine. It must not wait on
+	// the callback above.
+	done := make(chan struct{})
+	go func() { b.add(second); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("an attach blocked while another session's host callback was " +
+			"running. register runs on the UI goroutine, and Options.OnSessions " +
+			"permits the callback to block, so this is the UI thread waiting on " +
+			"arbitrary host code — a deadlock the moment that code wants anything " +
+			"the run loop must do")
+	}
+	close(release)
+
+	// And the ordering guarantee still holds afterwards: the count the
+	// host is left with is the newest one, not the one that was in
+	// flight. Without this the test would pass for a notify that simply
+	// dropped everything it could not deliver immediately.
+	var mu sync.Mutex
+	var seen []int
+	b2 := newBroadcaster(nil, host, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	a, c := &session{}, &session{}
+	b2.add(a)
+	b2.add(c)
+	b2.remove(a)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 || seen[len(seen)-1] != 1 {
+		t.Errorf("the host was left with %v; the last value must be the newest "+
+			"count, which is 1 after two attaches and one detach", seen)
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] == seen[i-1] {
+			t.Errorf("the host was told %d twice in a row (%v) — a coalescing "+
+				"mailbox must not replay a value it already delivered", seen[i], seen)
+		}
+	}
+}
+
+// TestTheMailboxNeverDeliversAnOlderCountThanOneWaiting pins the half of
+// the deposit check that reads redundant and is not. notified only
+// advances when a value is DELIVERED, so a change that arrives while a
+// newer one is still sitting in the mailbox passes the `seq <= notified`
+// test — and would overwrite it, leaving the host on the older count for
+// good. The guard against a trailing 1 after a 2 has to compare against
+// what is waiting, not only against what has gone out.
+func TestTheMailboxNeverDeliversAnOlderCountThanOneWaiting(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	b.notifyMu.Lock()
+	b.delivering = true // pretend a delivery is in flight
+	b.notifyMu.Unlock()
+
+	b.notify(2, 10, false) // deposited, nobody carries it
+	b.notify(1, 5, false)  // older than the deposit, must not replace it
+
+	b.notifyMu.Lock()
+	gotN, gotSeq := b.pendN, b.pendSeq
+	b.delivering = false
+	b.notifyMu.Unlock()
+	if gotN != 2 || gotSeq != 10 {
+		t.Errorf("the mailbox holds count %d at seq %d after an OLDER change "+
+			"arrived behind a newer one; the host would be left on %d, which is "+
+			"the trailing-lie the sequence number exists to prevent", gotN, gotSeq, gotN)
+	}
+	_ = seen
+}

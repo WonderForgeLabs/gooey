@@ -334,13 +334,19 @@ type broadcaster struct {
 	// lock without letting two callers cross — see notify.
 	seq uint64
 
-	// notifyMu serialises the callback and guards notified. It is taken
-	// only while mu is NOT held; a path that took both would put host
-	// code back inside the lock afterFrame takes every frame.
+	// notifyMu guards the MAILBOX below and nothing else. It is taken
+	// only while mu is NOT held, and — the part the review of PR #425
+	// had to restore — it is never held across the host callback.
 	notifyMu sync.Mutex
 	notified uint64
 	// shut latches the endpoint being gone. See notify.
 	shut bool
+	// The mailbox: the newest undelivered count, and whether some
+	// goroutine is already carrying it to the host. See notify.
+	pending    bool
+	pendN      int
+	pendSeq    uint64
+	delivering bool
 
 	// UI-goroutine-only state.
 	frame      uint64
@@ -433,38 +439,85 @@ func (b *broadcaster) next() uint64 {
 // in the review of #391 (issue #419).
 //
 // seq is assigned under b.mu at the moment the set changed, so it is a
-// total order over the changes themselves. Delivery takes notifyMu — a
-// DIFFERENT lock, never held with b.mu — and drops anything older than
-// what has already gone out. The host therefore never sees the count go
-// backwards, and the last callback it receives is the newest change,
-// which is the only property a count display needs. An intermediate
-// value can be skipped; that is the trade, and it is the right way
-// round: a missed 1 between 0 and 2 costs nothing, a trailing 1 after a
-// 2 is a lie that persists.
+// total order over the changes themselves. The host therefore never sees
+// the count go backwards, and the last callback it receives is the
+// newest change, which is the only property a count display needs. An
+// intermediate value can be skipped; that is the trade, and it is the
+// right way round: a missed 1 between 0 and 2 costs nothing, a trailing
+// 1 after a 2 is a lie that persists.
+//
+// # Why this is a mailbox and not a second mutex
+//
+// The first fix for the crossing held notifyMu across b.onSessions, and
+// the review of PR #425 caught that it rebuilt the very hazard the
+// paragraph above rules out — one lock further along. register runs ON
+// THE UI GOROUTINE (see sessionServer.register, inside s.s.ui.Do) and
+// calls add, which calls this. So an attach made the UI goroutine block
+// on notifyMu while a detach, on some stream goroutine, sat inside a
+// host callback that Options.OnSessions explicitly permits to block. Two
+// clients at once was enough, which is the exact scenario the ordering
+// fix was written for. A stall, not a slowdown: a host whose callback
+// waits on anything the run loop must perform deadlocks outright.
+//
+// SO NO LOCK IS HELD ACROSS THE CALLBACK, and ordering survives without
+// one. Each caller deposits the newest count under notifyMu and leaves.
+// Whichever caller finds no delivery in flight becomes the deliverer and
+// drains the mailbox, releasing the lock around every call out. A caller
+// that arrives while someone is delivering does not wait — its value is
+// in the mailbox and the deliverer will carry it — so the worst an
+// attach can cost the UI goroutine is the O(1) deposit.
+//
+// The residual, stated rather than hidden: the DELIVERER runs host code
+// on its own goroutine, and that may be the UI goroutine when an attach
+// is the change that starts a drain. That is exactly what happened
+// before any of this — register called the callback directly — so it is
+// the pre-existing contract, not a new cost, and Options.OnSessions
+// documents it. What is gone is a goroutine blocking on a LOCK held by
+// host code it has nothing to do with.
 func (b *broadcaster) notify(n int, seq uint64, final bool) {
 	if b.onSessions == nil {
 		return
 	}
 	b.notifyMu.Lock()
-	defer b.notifyMu.Unlock()
 	// THE LATCH, ahead of the ordering check, because it answers a
 	// different question. seq orders changes against each other; shut
 	// says there is nothing left to order — the accept loop is gone, so
 	// every stream it carried is finished and no later count can be
 	// true, however recent its number.
 	if b.shut {
+		b.notifyMu.Unlock()
 		return
 	}
-	if final {
-		b.shut, b.notified = true, seq
-		b.onSessions(0)
+	switch {
+	case final:
+		// The zero outranks anything waiting, however recent.
+		b.shut, b.pending, b.pendN, b.pendSeq = true, true, 0, seq
+	case seq <= b.notified || (b.pending && seq <= b.pendSeq):
+		// Older than what has gone out, OR older than what is already
+		// waiting to go out. The second half is not redundant: notified
+		// only advances at delivery, so without it a slow change could
+		// overwrite a newer one sitting in the mailbox and the host
+		// would see the count go backwards after all.
+		b.notifyMu.Unlock()
+		return
+	default:
+		b.pending, b.pendN, b.pendSeq = true, n, seq
+	}
+	if b.delivering {
+		b.notifyMu.Unlock() // someone else is already carrying it
 		return
 	}
-	if seq <= b.notified {
-		return
+	b.delivering = true
+	for b.pending {
+		n, seq := b.pendN, b.pendSeq
+		b.pending = false
+		b.notified = seq
+		b.notifyMu.Unlock()
+		b.onSessions(n)
+		b.notifyMu.Lock()
 	}
-	b.notified = seq
-	b.onSessions(n)
+	b.delivering = false
+	b.notifyMu.Unlock()
 }
 
 func (b *broadcaster) snapshot() []*session {

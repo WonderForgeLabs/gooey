@@ -86,9 +86,31 @@ type Options struct {
 	// islands are two Serve calls on two loopback ports, which is what
 	// lets them drive one app concurrently without interfering.
 	Grant *control.Grant
-	// OnSessions is called with the live session count every time it
-	// changes — a client attaching or detaching — so a host can show
-	// whether anything is driving it without polling. nil disables it.
+	// OnSessions reports the live session count — a client attaching or
+	// detaching — so a host can show whether anything is driving it
+	// without polling. nil disables it.
+	//
+	// # The delivery contract, which is COALESCING and not every-change
+	//
+	// LAST VALUE WINS AND INTERMEDIATES MAY BE SKIPPED. Changes are
+	// numbered at the moment the session set changes, and a change older
+	// than one already delivered — or than one already waiting to be
+	// delivered — is dropped rather than queued. So the count never goes
+	// backwards, and the last value you are given is the newest one; you
+	// are not given every value in between. That is the right way round
+	// for the thing this exists to drive: a missed 1 between 0 and 2
+	// costs nothing, a trailing 1 after a 2 is a lie that persists until
+	// the next connect. Do not count callbacks, and do not treat the
+	// sequence as an event log.
+	//
+	// ZERO IS TERMINAL. Once the accept loop returns, the endpoint is
+	// gone and you are told 0; no later count is delivered, however
+	// recent, because past that point no count can be true.
+	//
+	// This paragraph used to say "every time it changes". It stopped
+	// being true when the crossing fix landed, and the review of PR #425
+	// caught the exported doc still promising the old contract while the
+	// unexported notify documented the new one.
 	//
 	// IT RUNS ON AN ARBITRARY GOROUTINE, and the asymmetry is the trap:
 	// a session JOINS on the UI goroutine (register goes through
@@ -99,8 +121,17 @@ type Options struct {
 	// production. Marshal with Dispatcher.Post unconditionally; never
 	// branch on "am I already on the UI goroutine".
 	//
-	// It is called with the lock released, so it may block; a callback
-	// that blocks forever stalls the session that fired it.
+	// NO LOCK IS HELD WHILE IT RUNS, so it may block — but be clear on
+	// what blocking costs, because it is not confined to the session that
+	// fired it. The caller that delivers also drains anything deposited
+	// while it was inside your callback, so a slow callback delays every
+	// later notification; and since an attach is delivered by the UI
+	// goroutine (register runs there), a callback that waits on anything
+	// the run loop must perform deadlocks the app rather than slowing it.
+	// Other sessions are not blocked — they deposit and return — which is
+	// the guarantee the mailbox in notify exists to provide.
+	//
+	// If you have real work to do, post it and return.
 	OnSessions func(n int)
 }
 

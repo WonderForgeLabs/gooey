@@ -39,10 +39,16 @@ import (
 // # The lattice, and where "not frozen" lives in it
 //
 // AllowAll is a member of this lattice and means "not frozen": a
-// component that does not implement Frozen answers AllowAll, and
-// isFrozen is exactly `allow != AllowAll`. That is what keeps ONE
-// observed value per node instead of two that can disagree — the bool
-// interface is now a projection of the set, not a parallel fact.
+// component that does not implement Frozen answers AllowAll, so "is this
+// frozen" is the question `allow != AllowAll` rather than a second
+// stored fact. That is what keeps ONE observed value per node instead of
+// two that can disagree — the bool interface is a projection of the set,
+// not a parallel fact.
+//
+// (This paragraph, and the AllowAll constant's own comment, both named an
+// isFrozen helper that this PR deleted. The review caught them; the
+// predicate they described is still exactly right, so only the name of
+// the thing computing it has gone.)
 //
 // # Composition is union, and the exported constants are CLOSED
 //
@@ -90,6 +96,27 @@ const (
 	bitPointer
 	bitHover
 	bitStart
+
+	// bitUnknown is the class of a key NOBODY CLASSIFIED, and it is
+	// deliberately unreachable by name: no exported constant exposes it
+	// and no allowNames/allowGroups entry parses to it, so no markup
+	// author and no host can grant it.
+	//
+	// It has to be a real bit INSIDE AllowAll's range rather than
+	// AllowNone, and that is the whole fix. Has is set containment —
+	// `a&cat == cat` — so Has(AllowNone) is vacuously true for EVERY set
+	// including AllowNone itself. An unclassified key asking permission
+	// as AllowNone was therefore permitted by a fully sealed
+	// <Frozen Allow="None">: frozenHostFor never retargeted and the key
+	// went straight to the focused descendant. The fallback documented
+	// as failing closed was the one thing in the file that failed OPEN.
+	//
+	// A bit below bitLast is in AllowAll, so an unclassified key still
+	// reaches a focused component in a tree with no Frozen in it — which
+	// is the behaviour outside a seal and must not change. It is in no
+	// grantable name, so every frozen host withholds it. Found in the
+	// review of PR #425.
+	bitUnknown
 
 	bitLast // not a category: the end marker AllowAll derives from
 )
@@ -147,9 +174,14 @@ const (
 	AllowKeys = AllowText | AllowNav | AllowEdit | AllowEscape | AllowChords
 	// AllowMouse is the pointer and the hover that goes with it.
 	AllowMouse = AllowPointer | AllowHover
-	// AllowAll is not frozen at all. isFrozen is `allow != AllowAll`, so
-	// <Frozen Allow="All"> and no <Frozen> at all mean the same thing —
-	// which is correct, and is why the two are one value rather than two.
+	// AllowAll is not frozen at all: frozenAllow returns it for a
+	// component with no Frozen surface, so <Frozen Allow="All"> and no
+	// <Frozen> at all produce the same value — which is correct, and is
+	// why the two are one value rather than two.
+	//
+	// (This used to say "isFrozen is `allow != AllowAll`". This PR
+	// deleted isFrozen; the review caught the comment still explaining
+	// the lattice through it.)
 	AllowAll = bitLast - 1
 )
 
@@ -256,6 +288,21 @@ func (a Allow) String() string {
 	if a == AllowNone {
 		return "None"
 	}
+	// AllowAll renders as "All" for the same reason AllowNone renders as
+	// "None": it is not expressible as a union of the primitive names.
+	// AllowAll is every bit below bitLast, and one of those — bitUnknown,
+	// the class of a key nobody classified — is deliberately nameless, so
+	// joining the names would produce a string that parses back to a
+	// SMALLER set. The strings would look identical and the sets would
+	// differ, which is the worst shape a round-trip bug can take.
+	//
+	// This is not the "second spelling" the Names comment rules out. The
+	// group names it declines to emit (Text, Keys, Mouse) are alternative
+	// renderings of sets the primitives already express exactly; "All" is
+	// the only rendering of this one.
+	if a == AllowAll {
+		return "All"
+	}
 	return strings.Join(a.Names(), " ")
 }
 
@@ -350,14 +397,23 @@ func AllowFor(ev input.KeyEvent) Allow {
 	// list, so the two agreed by construction and neither could notice a
 	// Key that was in neither.
 	//
-	// AllowNone rather than AllowPunct because the honest answer to "what
-	// is this key" is "unknown", and an unknown key must not be admitted
-	// by a permission the author granted for something else. It is also
-	// the visible failure: a new Key stops working under Frozen rather
-	// than working in the wrong category, so the first person to try it
-	// finds out. TestAllowForClassifiesEveryDeclaredKey makes that a
-	// build-time answer instead. Found in review of #389.
-	return AllowNone
+	// bitUnknown rather than AllowPunct because the honest answer to
+	// "what is this key" is "unknown", and an unknown key must not be
+	// admitted by a permission the author granted for something else. It
+	// is also the visible failure: a new Key stops working under Frozen
+	// rather than working in the wrong category, so the first person to
+	// try it finds out. TestAllowForClassifiesEveryDeclaredKey makes that
+	// a build-time answer instead. Found in review of #389.
+	//
+	// IT RETURNED AllowNone UNTIL THE REVIEW OF PR #425, which made this
+	// entire comment describe the opposite of what the code did: Has is
+	// containment, so Has(AllowNone) is true for every set, and the
+	// unclassified key was admitted through every seal rather than
+	// refused by all of them. See bitUnknown. The lesson is narrower than
+	// "check your fallbacks": a sentinel that is the ZERO VALUE of a set
+	// type is indistinguishable from "no requirement", so it cannot mean
+	// "denied" in any containment test.
+	return bitUnknown
 }
 
 // allowForKey is AllowFor's classification, with ok reporting whether an

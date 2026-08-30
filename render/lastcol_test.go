@@ -194,3 +194,106 @@ func TestTheTwoWritersAgreeUnderAClip(t *testing.T) {
 		}
 	}
 }
+
+// TestAPairStraddlingTheClipEdgeIsRepaired is the case PR #425's own
+// healSeam comment called unreachable, and the review of that PR showed
+// it is merely unreached BY THE TESTS.
+//
+// The comment argued no writer leaves a lead in its own last column, and
+// that is true — of a NARROWER writer beside us. It says nothing about an
+// ENCLOSING paint: an ancestor container, an AdornmentLayer, a ToastHost,
+// whose own clip legitimately spans both columns of a wide glyph that a
+// descendant's narrower clip then cuts through. Nothing in the four clip
+// tests added by that PR set up pre-existing content outside the clip,
+// which is the only reason they were green.
+func TestAPairStraddlingTheClipEdgeIsRepaired(t *testing.T) {
+	// --- the left edge: the descendant writes over the TAIL ------------
+	b := NewBuffer(10, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+	b.SetString(4, 0, "世", Style{}) // columns 4 and 5
+
+	b.Clip(Rect{X: 5, Y: 0, W: 5, H: 1})
+	b.Set(5, 0, 'a', Style{}) // legal: column 5 is ours
+
+	if got := TerminalWidth(b, 0); got != 10 {
+		t.Errorf("the row occupies %d terminal columns on a 10-wide buffer. The "+
+			"ancestor's wide lead at column 4 lost its tail to a legal write at "+
+			"column 5, and a lead with no continuation displaces every glyph "+
+			"after it for the rest of the row: %q", got, RowText(b, 0))
+	}
+	if x, by, ok := Displaced(b, 0); ok {
+		t.Errorf("cell %d is displaced by %d columns — the row no longer says "+
+			"what the screen will show", x, by)
+	}
+
+	// --- the right edge: the descendant writes over the LEAD -----------
+	b = NewBuffer(10, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+	b.SetString(4, 0, "世", Style{})
+
+	b.Clip(Rect{X: 0, Y: 0, W: 5, H: 1})
+	b.Set(4, 0, 'b', Style{}) // legal: column 4 is ours, column 5 is not
+
+	if b.At(5, 0).Rune == Continuation {
+		t.Errorf("column 5 kept a Continuation whose lead was overwritten. The "+
+			"flusher skips continuation cells, so that column can never be "+
+			"repainted by anything: %q", RowText(b, 0))
+	}
+	if got := TerminalWidth(b, 0); got != 10 {
+		t.Errorf("the row occupies %d terminal columns, want 10: %q",
+			got, RowText(b, 0))
+	}
+}
+
+// TestAnINTACTGlyphAtTheSeamIsLeftAlone is the bound on the exception,
+// and the first version of this test could not fail.
+//
+// That version wrote into a narrow clip over a row of dots and checked
+// the dots outside it survived. It passed against a healSeam with NO
+// clip test at all, because healSeam is inherently local — it is only
+// ever called at the two or three columns around a write, so no bound on
+// it can be exercised by cells further away than that. The assertion was
+// true, unfireable, and therefore worth nothing.
+//
+// What the exception actually needs bounding is not DISTANCE but CAUSE:
+// a repair at the seam may blank the broken half of a pair we just
+// severed, and must not touch a neighbour's cell that is still whole. So
+// the fixture puts an INTACT wide glyph immediately outside each edge —
+// the case where healSeam must look, find nothing wrong, and do nothing.
+func TestAnINTACTGlyphAtTheSeamIsLeftAlone(t *testing.T) {
+	b := NewBuffer(12, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 12, H: 1})
+	for x := 0; x < 12; x++ {
+		b.Set(x, 0, '.', Style{})
+	}
+	b.SetString(2, 0, "世", Style{}) // columns 2-3, whole, left of the clip
+	b.SetString(8, 0, "界", Style{}) // columns 8-9, whole, right of the clip
+	before := RowText(b, 0)
+
+	// The descendant owns columns 4..7 and writes all of them.
+	b.Clip(Rect{X: 4, Y: 0, W: 4, H: 1})
+	for x := 4; x < 8; x++ {
+		b.Set(x, 0, 'x', Style{})
+	}
+
+	if got := b.At(2, 0).Rune; got != '世' {
+		t.Errorf("the intact glyph at columns 2-3 became %q. It straddles nothing "+
+			"the descendant wrote — healSeam must look at the seam and do nothing "+
+			"when the pair it finds is whole. Row was %q, now %q",
+			got, before, RowText(b, 0))
+	}
+	if b.At(3, 0).Rune != Continuation {
+		t.Errorf("the tail at column 3 was blanked, orphaning the lead beside it — "+
+			"the repair created the corruption it exists to remove: %q", RowText(b, 0))
+	}
+	if got := b.At(8, 0).Rune; got != '界' {
+		t.Errorf("the intact glyph at columns 8-9 became %q: %q", got, RowText(b, 0))
+	}
+	if b.At(9, 0).Rune != Continuation {
+		t.Errorf("the tail at column 9 was blanked: %q", RowText(b, 0))
+	}
+	if got := TerminalWidth(b, 0); got != 12 {
+		t.Errorf("the row occupies %d terminal columns, want 12: %q",
+			got, RowText(b, 0))
+	}
+}

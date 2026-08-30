@@ -97,9 +97,20 @@ import "strconv"
 // ParseGesture yields a ModShift event no decode produces. It does not;
 // it yields plain ctrl+z. The conclusion (do not bind it) survives, the
 // reason does not, and the reason was the part that told you what would
-// go wrong. TestCtrlShiftZIsUnfireableSoItIsNotBound is what the header
-// claimed all along and the package never had; it now exists, and it
-// pins the aliasing rather than the absence.
+// go wrong. TestCtrlShiftZIsAnALIASForCtrlZAndSoIsNotBoundToRedo pins the
+// aliasing rather than the absence, and also checks that ctrl+y IS bound
+// — a test that only asserted the missing string would pass for a page
+// binding nothing at all.
+//
+// This header used to name a DIFFERENT test and call it one "the package
+// never had". It had it. The review of PR #425 caught a second copy
+// being written beside the first, under a name its own comment admitted
+// was wrong, and the copy was the weaker of the two — it hardcoded the
+// page filename where the original reads the PageFile constant. Worth
+// recording as a method failure rather than a slip: the claim "this
+// package has never had it" is an ABSENCE, and absences are the one
+// class of claim that cannot be established by reading the code you are
+// writing. One grep would have answered it.
 
 // DefaultHistoryLimit is how many undo steps are kept when -history is
 // not given.

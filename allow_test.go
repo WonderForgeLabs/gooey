@@ -353,8 +353,8 @@ func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
 		}
 		if _, ok := allowForKey(ev); !ok {
 			t.Errorf("input.%s reaches no arm of AllowFor, so it falls "+
-				"through to AllowNone and cannot pass any Frozen surface. "+
-				"Give it a class in allow.go.", name)
+				"through to the unknown class and is withheld by every "+
+				"Frozen surface. Give it a class in allow.go.", name)
 		}
 	}
 
@@ -366,8 +366,32 @@ func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
 		t.Errorf("an undeclared Key was classified as %v; the fallback is "+
 			"supposed to fail closed", got)
 	}
-	if got := AllowFor(unknown); got != AllowNone {
-		t.Errorf("AllowFor gave an undeclared Key %v, want AllowNone", got)
+	// The fallback is asserted by its PROPERTY, not by its value. Naming
+	// the constant would have passed just as well when the constant was
+	// AllowNone, which is exactly how the fail-open survived: AllowNone
+	// is the zero value of a set, and Has is containment, so every set
+	// permitted it — including the fully sealed one.
+	fallback := AllowFor(unknown)
+	if AllowNone.Has(fallback) {
+		t.Errorf("a fully sealed Frozen permits the unclassified class %v. Has is "+
+			"containment, so a fallback of AllowNone is permitted by EVERY set and "+
+			"the key it stands for reaches the focused descendant inside a seal — "+
+			"the fallback documented as failing closed failing open", fallback)
+	}
+	for _, name := range AllowNames() {
+		if name == "All" {
+			continue // "All" means not frozen; see bitUnknown
+		}
+		granted, err := ParseAllow(name)
+		if err != nil {
+			t.Fatalf("ParseAllow(%q): %v", name, err)
+		}
+		if granted.Has(fallback) {
+			t.Errorf("Allow=%q permits an unclassified key. No name in the "+
+				"vocabulary may grant the unknown class — that is the only thing "+
+				"keeping a Key added to input/key.go later from riding in on a "+
+				"permission its author granted for something else", name)
+		}
 	}
 }
 
@@ -419,4 +443,55 @@ func declaredKeyConstants(t *testing.T) []string {
 	t.Fatal("no `const ( … Key = iota )` block found in input/key.go — the " +
 		"declarations moved and nothing below is checking the real enum")
 	return nil
+}
+
+// TestAnUnclassifiedKeyCannotEnterASealedSubtree is the same claim as the
+// fallback assertions above, taken at the BOUNDARY rather than the
+// centre. Those check what AllowFor returns and what a name grants; this
+// checks the only thing anybody cares about — where the key is delivered.
+//
+// It is the difference that mattered. AllowFor returned AllowNone and
+// every unit-level statement about it was true; the routing was still
+// wrong, because Has is containment and Has(AllowNone) is vacuously true
+// for every set. A test that named the constant agreed with the code and
+// with the comment, and all three were wrong together.
+func TestAnUnclassifiedKeyCannotEnterASealedSubtree(t *testing.T) {
+	// host is <Frozen Allow="None">, child is the focused descendant.
+	host := &boolFrozen{v: true}
+	child := &plainLeaf{}
+	m := &FocusManager{parent: map[Component]Component{
+		child: host,
+		host:  nil,
+	}}
+
+	// A Key past the end of input/key.go's iota block: classified by
+	// nothing, which is the case the fallback exists for.
+	unknown := input.KeyEvent{Key: input.Key(200)}
+	if _, ok := allowForKey(unknown); ok {
+		t.Fatal("the probe key is classified, so it cannot exercise the fallback")
+	}
+
+	if got := m.frozenHostFor(child, AllowFor(unknown)); got != Component(host) {
+		t.Errorf("an unclassified key inside <Frozen Allow=\"None\"> was delivered " +
+			"to the focused descendant instead of being withheld by the host. A " +
+			"fully sealed subtree admitted a key no permission in the vocabulary " +
+			"names — the seal is not a seal for anything AllowFor has not heard of")
+	}
+
+	// The other half, and the reason bitUnknown is a bit inside AllowAll
+	// rather than outside it: with no Frozen anywhere, an unclassified
+	// key must still reach the focused component. A fallback that no set
+	// permits at all would break every unclassified key everywhere, which
+	// trades a silent hole for a silent outage.
+	plainParent := &plainLeaf{}
+	m2 := &FocusManager{parent: map[Component]Component{
+		child:       plainParent,
+		plainParent: nil,
+	}}
+	if got := m2.frozenHostFor(child, AllowFor(unknown)); got != Component(child) {
+		t.Errorf("with no Frozen in the tree an unclassified key was retargeted "+
+			"away from the focused component to %T — outside a seal there is "+
+			"nothing to withhold it, and a fallback no set permits would silently "+
+			"disable every key added to input/key.go from now on", got)
+	}
 }
