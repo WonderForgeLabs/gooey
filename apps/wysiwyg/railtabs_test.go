@@ -26,11 +26,19 @@ const railSelBinding = "{{.ActivitySel}}"
 // else: a sixth icon, or a reordering of either side, opens a tab
 // nobody can reach or reaches a tab nobody named, silently.
 //
-// Counting is the assertion the coupling actually supports. The two
-// vocabularies are not one — the rail says "designer", the tab says
-// "DESIGN" — so a name comparison would be a second spelling to keep in
-// sync rather than a check. Found in review of #426.
-func TestTheRailAndTheSideBarAgreeOnHowManySlotsThereAre(t *testing.T) {
+// COUNTING ALONE IS NOT ENOUGH, and the first version of this test did
+// exactly that — while its own comment said "a reordering of either side
+// is silent". Swapping two tabs keeps the count and breaks every slot
+// between them, so the assertion missed the failure it described. Caught
+// in review of #426, which is the review of this test.
+//
+// Order needs a spelling both sides can be checked against, and the two
+// vocabularies are not one: the rail says "designer", the tab header
+// says "DESIGN". railOrder below is that mapping, RECORDED — it is the
+// one place the correspondence is written down at all, which is what
+// makes it worth having rather than a third copy. Changing a slot means
+// changing it here, and that is the point: the edit is the review.
+func TestTheRailAndTheSideBarAgreeSlotForSlot(t *testing.T) {
 	src, err := os.ReadFile("wysiwyg.gooey")
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +48,7 @@ func TestTheRailAndTheSideBarAgreeOnHowManySlotsThereAre(t *testing.T) {
 	depth := 0
 	inTabs := -1 // the depth of the ActivitySel-bound <Tabs>, or -1
 	found := 0
-	tabs := 0
+	var headers []string
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -61,7 +69,7 @@ func TestTheRailAndTheSideBarAgreeOnHowManySlotsThereAre(t *testing.T) {
 			// nesting, so a bare name match would count whatever those
 			// contain.
 			case e.Name.Local == "Tab" && inTabs >= 0 && depth == inTabs+1:
-				tabs++
+				headers = append(headers, attr(e, "Header"))
 			}
 		case xml.EndElement:
 			if inTabs == depth {
@@ -76,12 +84,44 @@ func TestTheRailAndTheSideBarAgreeOnHowManySlotsThereAre(t *testing.T) {
 			"the children of that one element and cannot mean anything otherwise",
 			found, railSelBinding)
 	}
-	if want := len(activitybar.DefaultIcons); tabs != want {
-		t.Errorf("the rail declares %d slots and the side bar declares %d tabs "+
+	if want := len(activitybar.DefaultIcons); len(headers) != want {
+		t.Fatalf("the rail declares %d slots and the side bar declares %d tabs "+
 			"bound to the same selection. They are matched by INDEX, so the "+
-			"extra one on either side is unreachable: %v",
-			want, tabs, activitybar.DefaultIcons)
+			"extra one on either side is unreachable: rail %v, tabs %v",
+			want, len(headers), activitybar.DefaultIcons, headers)
 	}
+	if len(railOrder) != len(activitybar.DefaultIcons) {
+		t.Fatalf("railOrder maps %d slots and the rail declares %d; the mapping "+
+			"has to be updated in the same change as the rail",
+			len(railOrder), len(activitybar.DefaultIcons))
+	}
+	for i, ic := range activitybar.DefaultIcons {
+		want, ok := railOrder[ic.Name]
+		if !ok {
+			t.Errorf("rail slot %d is %q, which railOrder does not map to a tab "+
+				"header", i, ic.Name)
+			continue
+		}
+		if headers[i] != want {
+			t.Errorf("rail slot %d is %q, which selects tab %d — but tab %d is "+
+				"%q and %q wants %q. The rail and the side bar are matched by "+
+				"index, so this slot opens the wrong pane",
+				i, ic.Name, i, i, headers[i], ic.Name, want)
+		}
+	}
+}
+
+// railOrder is the correspondence between a rail slot and the side bar
+// tab it selects, and it exists because nothing else in the tree writes
+// it down. The rail names what a slot MEANS ("toolbox") and the tab
+// header names what it SHOWS ("TOOLS"); they are matched by position and
+// by nothing else.
+var railOrder = map[string]string{
+	"designer": "DESIGN",
+	"toolbox":  "TOOLS",
+	"markup":   "CODE",
+	"problems": "ISSUES",
+	"docs":     "DOCS",
 }
 
 func attr(e xml.StartElement, name string) string {
