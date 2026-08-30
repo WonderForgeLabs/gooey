@@ -462,6 +462,67 @@ func TestTheChevronCellCollapses(t *testing.T) {
 	}
 }
 
+// TestCollapsingTheBottomStripGivesItsRowsBack is #431, and it is two
+// failures wearing one symptom: "collapsing the bottom panel doesn't
+// collapse everything, it just hides its contents."
+//
+// TestHideIsNotCollapse above covers the same operation on PROPERTIES and
+// passes throughout, because PROPERTIES is in a VERTICAL slot — its
+// height is its share of the stacking axis, which is where place() spent
+// the header row. The bottom strip stacks sideways, and there the same
+// arithmetic bought:
+//
+//   - a pane one COLUMN wide (headerH is a row count, applied to X), so
+//     the header rendered as a bare chevron with its title clipped off;
+//   - a strip that kept every row of its declared Size, because
+//     slotExtent never looked at the collapsed flag at all.
+//
+// So the assertions are the two axes separately. The width one is what a
+// test written from the doctrine sentence alone would not think to make.
+func TestCollapsingTheBottomStripGivesItsRowsBack(t *testing.T) {
+	ed, c := dockFixture(t)
+	panel := pane(t, ed, "panel")
+	editor := pane(t, ed, "editor")
+
+	before, editorBefore := panel.Bounds(), editor.Bounds()
+	if before.H <= headerH {
+		t.Fatalf("the PANEL strip is %d rows before anything happened; this test "+
+			"needs it open to have anything to reclaim", before.H)
+	}
+
+	ed.dock.ToggleCollapsed(panel)
+	settle(t, c)
+	got, editorAfter := panel.Bounds(), editor.Bounds()
+
+	// THE ROWS COME BACK. This is the reported symptom, and it is a claim
+	// about the pane ABOVE: reclaimed space nobody receives is the same
+	// blank strip from the user's side.
+	if got.H != headerH {
+		t.Errorf("the collapsed strip is %d rows tall, want %d", got.H, headerH)
+	}
+	if grew := editorAfter.H - editorBefore.H; grew != before.H-headerH {
+		t.Errorf("collapsing a %d-row strip gave the editor %d more rows, want %d — "+
+			"the strip's height is its slot's extent, and a slot that ignores "+
+			"collapse keeps every row of its declared Size", before.H, grew, before.H-headerH)
+	}
+
+	// AND THE WIDTH IS UNTOUCHED. headerH is a number of ROWS; a strip
+	// that stacks sideways spends its stacking axis in COLUMNS, and
+	// spending one row's worth there leaves a one-cell pane.
+	if got.W != before.W {
+		t.Errorf("the collapsed strip is %d columns wide and was %d; collapse is "+
+			"a height, and a pane %d cells wide cannot show its own title",
+			got.W, before.W, got.W)
+	}
+	// Which is the user-visible half, so assert it on the cell plane too
+	// rather than trusting the rect: the title has to still be readable.
+	f, _ := c.Frame()
+	if row := rowText(f, got.Y, got.X, got.W); !strings.Contains(row, panel.Title) {
+		t.Errorf("the collapsed header row reads %q and does not contain %q; the "+
+			"pane has shrunk to its chevron", row, panel.Title)
+	}
+}
+
 // TestEveryDockActionHasAKey is the pin for the rule the whole feature is
 // shaped by: mouse reports cannot be injected through a recording pty, so
 // a dock operation reachable only by pointer is one no test can perform

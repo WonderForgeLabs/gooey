@@ -32,9 +32,18 @@ package main
 //     Collapsed, which would drop the pane out of layout and take the
 //     column width with it.
 //
-//   - COLLAPSED — the pane shows its HEADER ROW and nothing else, and its
-//     extent along the slot's axis shrinks to that one row so its
-//     neighbours get the space. This is the operation that reclaims room.
+//   - COLLAPSED — the pane shows its HEADER ROW and nothing else, and a
+//     row's worth of height is all it keeps, so the space goes back. This
+//     is the operation that reclaims room.
+//
+//     WHOSE height that is depends on which way the slot stacks, and
+//     reading this as "shrinks along the slot's axis" is what shipped
+//     #431: in the vertical slots a pane's height is its share of the
+//     stacking axis and place() shrinks it there, but the bottom strip
+//     stacks SIDEWAYS, so a pane's height is the strip's own extent and
+//     the shrink belongs to slotExtent. Applying the row count sideways
+//     made the pane one column wide instead — title clipped to nothing,
+//     strip still ten rows tall.
 //
 //   - UNPINNED — nothing on its own. Pin is a claim about what survives
 //     `HideUnpinned` (View → Hide unpinned, the "get everything out of my
@@ -409,15 +418,58 @@ func (d *dockModel) slotPanes(s dockSlot) []*dockPane {
 // its panes asks for, and zero for an empty slot — which is what makes a
 // slot that everything was dragged out of disappear rather than leave a
 // blank stripe.
+//
+// COLLAPSE ALWAYS SHRINKS A HEIGHT, and that is the fact this function
+// used to miss. A header is one ROW, so "header and nothing else" is a
+// statement about the pane's vertical size no matter which way its slot
+// stacks — but WHOSE number that is depends on the slot:
+//
+//   - left, right, centre stack DOWNWARD, so a pane's height is its share
+//     of the stacking axis. place() shrinks it there, per pane, and this
+//     extent — a width — is rightly untouched: a collapsed pane still
+//     renders its title horizontally and needs the columns.
+//   - the bottom strip stacks SIDEWAYS, so a pane's height IS the slot's
+//     extent, which is this number. Ignoring the flag here kept all ten
+//     of PANEL's declared rows off the editor whether it was collapsed or
+//     not — the reported symptom, "collapsing the bottom panel doesn't
+//     collapse everything, it just hides its contents" (#431).
+//
+// ALL of them, not any: a strip with one pane collapsed and one open
+// cannot shrink, because the open one still needs its rows and they share
+// the height. That is inherent to stacking sideways, and "all collapsed
+// ⇒ header only" is the honest rule rather than a special case.
 func (d *dockModel) slotExtent(s dockSlot) int {
+	panes := d.slotPanes(s)
+	if !slotStacksVertically(s) && len(panes) > 0 {
+		allCollapsed := true
+		for _, p := range panes {
+			if !p.collapsedNow() {
+				allCollapsed = false
+				break
+			}
+		}
+		if allCollapsed {
+			return headerH
+		}
+	}
 	e := 0
-	for _, p := range d.slotPanes(s) {
+	for _, p := range panes {
 		if v := p.size.Get(); v > e {
 			e = v
 		}
 	}
 	return e
 }
+
+// slotStacksVertically reports which axis a slot's panes stack along:
+// down for left, right and centre, across for the bottom strip, which is
+// how a panel of tabs reads.
+//
+// It is the one bit place() and slotExtent() have to agree on, so it is
+// written down once rather than passed in twice. Getting it wrong is not
+// a compile error and not a failure in any test that predates #431 — it
+// is a pane one column wide, showing a chevron and no title.
+func slotStacksVertically(s dockSlot) bool { return s != dockBottom }
 
 // Minimum is the smallest terminal the DOCK needs, in cells, derived
 // entirely from what the panes DECLARE.
@@ -555,6 +607,14 @@ func (h *dockHost) layout(b gooey.Rect, arrange bool) {
 // The share rule: collapsed panes take their header row and no more,
 // everything left over is split evenly between the rest — hidden panes
 // INCLUDED, because a hidden pane keeps its size.
+//
+// AND THE SHARE RULE IS VERTICAL-ONLY, which the version before #431 did
+// not say and did not do. `headerH` is a number of ROWS; spending it
+// along a horizontal stacking axis makes a pane one COLUMN wide, which
+// is what the bottom strip did — the PANEL header collapsed to a bare
+// chevron with its title clipped away, and the strip kept every row it
+// had. Sideways, collapse is the slot's business (slotExtent), and every
+// pane here keeps its full share of the width.
 func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
 	panes := h.slotPanes(s)
 	if len(panes) == 0 {
@@ -570,9 +630,10 @@ func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
 	// of the hide rule, and it is why hiding a pane leaves a gap rather
 	// than reflowing its neighbours: hidden is not a third size, it is
 	// the same size not drawn.
+	shrinks := func(p *dockPane) bool { return vertical && p.collapsedNow() }
 	fixed, flex := 0, 0
 	for _, p := range panes {
-		if p.collapsedNow() {
+		if shrinks(p) {
 			fixed += headerH
 		} else {
 			flex++
@@ -590,7 +651,7 @@ func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
 	}
 	for _, p := range panes {
 		n := headerH
-		if !p.collapsedNow() {
+		if !shrinks(p) {
 			n = each
 			if extra > 0 {
 				n++
