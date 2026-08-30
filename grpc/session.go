@@ -329,6 +329,16 @@ type broadcaster struct {
 
 	mu       sync.Mutex
 	sessions map[*session]bool
+	// seq numbers every count change, assigned under mu at the moment
+	// the change happens. It is what lets notify deliver OUTSIDE the
+	// lock without letting two callers cross — see notify.
+	seq uint64
+
+	// notifyMu serialises the callback and guards notified. It is taken
+	// only while mu is NOT held; a path that took both would put host
+	// code back inside the lock afterFrame takes every frame.
+	notifyMu sync.Mutex
+	notified uint64
 
 	// UI-goroutine-only state.
 	frame      uint64
@@ -360,17 +370,41 @@ func (b *broadcaster) count() int {
 func (b *broadcaster) add(ss *session) {
 	b.mu.Lock()
 	b.sessions[ss] = true
-	n := len(b.sessions)
+	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n)
+	b.notify(n, seq)
 }
 
 func (b *broadcaster) remove(ss *session) {
 	b.mu.Lock()
 	delete(b.sessions, ss)
-	n := len(b.sessions)
+	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n)
+	b.notify(n, seq)
+}
+
+// closed reports the endpoint going quiet — the accept loop has
+// returned, so every stream it carried is finished and the count is
+// zero whatever the set says.
+//
+// It takes a sequence number like any other change, and that is the
+// point rather than tidiness: the forced zero used to be delivered by
+// the Serve goroutine straight to the host callback, bypassing this
+// type entirely, so a remove already in flight could land AFTER it and
+// leave the host holding a positive count for an endpoint that is gone.
+// Numbered here, the stale remove is dropped. Found in the review of
+// #391 (issue #419).
+func (b *broadcaster) closed() {
+	b.mu.Lock()
+	seq := b.next()
+	b.mu.Unlock()
+	b.notify(0, seq)
+}
+
+// next stamps a count change. Callers hold b.mu.
+func (b *broadcaster) next() uint64 {
+	b.seq++
+	return b.seq
 }
 
 // notify reports a changed count, OUTSIDE the lock.
@@ -381,13 +415,35 @@ func (b *broadcaster) remove(ss *session) {
 // lock that afterFrame takes on the UI goroutine every frame, which is a
 // deadlock waiting for a slow host.
 //
-// The count is captured while the lock is held and passed by value, so
-// what a callback receives is a real count that existed, not a re-read
-// that another goroutine may have moved in between.
-func (b *broadcaster) notify(n int) {
-	if b.onSessions != nil {
-		b.onSessions(n)
+// THAT IS ALSO WHAT LET TWO CALLERS CROSS. add and remove each captured
+// a real count and then raced to the callback, so a host could be told
+// 2 and then 1 while two clients were attached — and a host that renders
+// the last value it was given goes on showing the wrong one forever,
+// with nothing to correct it until the next connect or disconnect. The
+// count each callback received was true when it was taken, which is what
+// the old comment here claimed and why the defect reads as safe. Found
+// in the review of #391 (issue #419).
+//
+// seq is assigned under b.mu at the moment the set changed, so it is a
+// total order over the changes themselves. Delivery takes notifyMu — a
+// DIFFERENT lock, never held with b.mu — and drops anything older than
+// what has already gone out. The host therefore never sees the count go
+// backwards, and the last callback it receives is the newest change,
+// which is the only property a count display needs. An intermediate
+// value can be skipped; that is the trade, and it is the right way
+// round: a missed 1 between 0 and 2 costs nothing, a trailing 1 after a
+// 2 is a lie that persists.
+func (b *broadcaster) notify(n int, seq uint64) {
+	if b.onSessions == nil {
+		return
 	}
+	b.notifyMu.Lock()
+	defer b.notifyMu.Unlock()
+	if seq <= b.notified {
+		return
+	}
+	b.notified = seq
+	b.onSessions(n)
 }
 
 func (b *broadcaster) snapshot() []*session {

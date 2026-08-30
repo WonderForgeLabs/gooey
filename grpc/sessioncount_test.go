@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -259,5 +260,210 @@ func TestOnSessionsRunsOutsideTheLock(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the callback never returned; it cannot re-enter the server while the lock is held")
+	}
+}
+
+// TestOnSessionsNeverDeliversACountOutOfOrder is the ordering half of
+// the push contract, and it is a property no polling test can see.
+//
+// add and remove each captured a true count under the lock and then
+// called the host callback OUTSIDE it, which is correct — host code must
+// not run inside the mutex afterFrame takes every frame — but left the
+// two callers free to cross on the way out. A host told 2 and then 1
+// while two clients are attached goes on rendering 1 forever: nothing
+// re-sends the count until the next connect or disconnect, so a
+// transient reordering becomes a permanent lie. That is why the old
+// comment on notify reads as safe — every count delivered WAS true when
+// it was taken. Found in the review of #391 (issue #419).
+//
+// THE ASSERTION IS ONE-SIDED, and deliberately. A second delivery
+// arriving while the first callback is still in flight is PROOF that two
+// callers crossed; its absence over a generous window is what the fix
+// guarantees by construction. So a slow machine can only make this pass,
+// never fail spuriously — a failure here is real.
+func TestOnSessionsNeverDeliversACountOutOfOrder(t *testing.T) {
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		if n == 1 {
+			<-gate // hold the FIRST delivery inside the callback
+		}
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	read := func() []int {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]int(nil), seen...)
+	}
+
+	s1, s2 := &session{}, &session{}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); b.add(s1) }()
+
+	// Wait for each add to have MUTATED — observable through the same
+	// mutex the count is taken under — so the second one races the
+	// first's callback rather than its map write.
+	for b.count() != 1 {
+		runtime.Gosched()
+	}
+	go func() { defer wg.Done(); b.add(s2) }()
+	for b.count() != 2 {
+		runtime.Gosched()
+	}
+
+	// The first callback is parked on gate. Nothing may reach the host
+	// until it returns.
+	deadline := time.After(500 * time.Millisecond)
+	for waiting := true; waiting; {
+		select {
+		case <-deadline:
+			waiting = false
+		case <-time.After(5 * time.Millisecond):
+			if got := read(); len(got) > 0 {
+				close(gate)
+				wg.Wait()
+				t.Fatalf("the host was told %v while an earlier count was still being "+
+					"delivered — two callers crossed on the way out of the lock, and "+
+					"the value the host keeps is the older one", got)
+			}
+		}
+	}
+
+	close(gate)
+	wg.Wait()
+
+	got := read()
+	if len(got) == 0 {
+		t.Fatal("the host was never told anything, so nothing above discriminated")
+	}
+	if last := got[len(got)-1]; last != b.count() {
+		t.Errorf("the last count delivered was %d, the live count is %d (sequence %v) — "+
+			"a host that renders the last value it was given is now permanently wrong",
+			last, b.count(), got)
+	}
+}
+
+// TestTheForcedZeroOnShutdownOutranksALateRemove is finding five: the
+// same ordering hole reached from the other end.
+//
+// When the accept loop returns the server forces a zero, because every
+// stream it carried is finished and a host listening only for counts has
+// to see the endpoint go quiet. That zero went straight to the host
+// callback, bypassing the broadcaster — so a remove that had taken its
+// count but not yet delivered it could land afterwards and leave the
+// host showing a live client for an endpoint that no longer exists. Two
+// clients attached and one teardown lagging is all it takes. Found in
+// the review of #391 (issue #419).
+//
+// The lagging remove is INJECTED rather than raced for, because the race
+// is not reproducible on demand. What that pins is the property the race
+// depends on: whether the shutdown zero is ordered against the removes
+// at all. Delivered outside the broadcaster there is nothing to be
+// ordered against, and the stale count wins by arriving last.
+func TestTheForcedZeroOnShutdownOutranksALateRemove(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+
+	s1, s2 := &session{}, &session{}
+	b.add(s1)
+	b.add(s2)
+
+	// A teardown that has taken its count and not yet delivered it.
+	b.mu.Lock()
+	delete(b.sessions, s1)
+	staleN, staleSeq := len(b.sessions), b.next()
+	b.mu.Unlock()
+
+	b.closed()                 // the accept loop returns first
+	b.notify(staleN, staleSeq) // ...and the lagging remove arrives after
+
+	mu.Lock()
+	defer mu.Unlock()
+	if last := seen[len(seen)-1]; last != 0 {
+		t.Errorf("after the accept loop returned the host was last told %d "+
+			"(sequence %v) — the endpoint is gone and the host is showing a live "+
+			"client for it", last, seen)
+	}
+}
+
+// TestClosingTheServerNumbersItsZero is the other half of the same fix,
+// and the half that lives in the server rather than the broadcaster.
+//
+// The test above proves a NUMBERED zero outranks a lagging remove. This
+// proves the server's shutdown actually produces one, which is the part
+// a direct call to the host callback silently skipped: the count reached
+// the host, so every count assertion in this file stayed green, while
+// the ordering it should have taken part in did not exist.
+//
+// Asserted as GROWTH rather than against a total, so it does not encode
+// how many mutations an attach and a detach happen to make: the detach
+// contributes one change, the shutdown zero contributes another, and a
+// zero delivered outside the broadcaster contributes none.
+func TestClosingTheServerNumbersItsZero(t *testing.T) {
+	var mu sync.Mutex
+	var last int
+	vm, values := newVM()
+	app := newTestApp(t, testMarkup, values, nil)
+	h := attachHarness(t, app, vm, Options{
+		Name: "gooey-test", Version: "0",
+		OnSessions: func(n int) {
+			mu.Lock()
+			last = n
+			mu.Unlock()
+		},
+	})
+
+	a := attach(t, h, &controlv1.Subscription{})
+	a.recv()
+	waitCount(t, h.srv, "attached", h.srv.Sessions, 1)
+
+	b := h.srv.bc
+	b.mu.Lock()
+	before := b.seq
+	b.mu.Unlock()
+
+	// THE ASSERTION IS A WAIT, because the two changes land in either
+	// order and neither is observable on its own: Close stops the accept
+	// loop while the stream goroutine runs its deferred unregister
+	// independently, and each delivers a zero, so "the host was told 0"
+	// is reached by one of them alone. Waiting for the SEQUENCE to grow
+	// by two is the only edge that needs both. With the zero delivered
+	// straight to the callback it never arrives and this times out.
+	h.srv.Close()
+	deadline := time.After(3 * time.Second)
+	for {
+		b.mu.Lock()
+		after := b.seq
+		b.mu.Unlock()
+		if after >= before+2 {
+			break
+		}
+		select {
+		case <-deadline:
+			mu.Lock()
+			n := last
+			mu.Unlock()
+			t.Fatalf("the sequence went %d -> %d across a detach and a shutdown, want at "+
+				"least %d — the detach numbers one change and the shutdown zero must "+
+				"number another. A zero delivered straight to the callback numbers "+
+				"nothing, so a lagging remove has nothing to lose to. Last count %d",
+				before, after, before+2, n)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if last != 0 {
+		t.Errorf("the host was last told %d after the endpoint closed", last)
 	}
 }

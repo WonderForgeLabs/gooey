@@ -215,16 +215,30 @@ func Serve(host Host, opts Options) (*Server, error) {
 		s.serveMu.Lock()
 		s.serveEnd, s.serveErr = true, err
 		s.serveMu.Unlock()
+		// THROUGH THE BROADCASTER, not straight to the callback.
+		//
+		// The count is zero once the loop is gone: every stream it was
+		// carrying is finished, and a host that only listens for counts
+		// has to see the endpoint go quiet rather than hold the last
+		// count forever. Calling the callback here did that — and
+		// bypassed the ordering the broadcaster keeps, so a remove still
+		// in flight could land after this zero and leave the host
+		// showing a positive count for a dead endpoint. broadcaster.closed
+		// numbers the zero like any other change, which is what makes
+		// the late remove droppable. Found in the review of #391
+		// (issue #419).
+		//
 		// opts is written once in New and never again, so reading the
 		// callback needs no lock — and taking one here would be a claim
 		// that opts is mutable, which is the kind of misleading
-		// synchronisation that outlives the person who added it.
-		cb := s.opts.OnSessions
-		// The count is zero once the loop is gone: every stream it was
-		// carrying is finished. Reported through the same callback so a
-		// host that only listens for counts still sees the endpoint go
-		// quiet, rather than holding the last count forever.
-		if cb != nil {
+		// synchronisation that outlives the person who added it. The
+		// direct call survives for a host that is not a SessionHost:
+		// there is no broadcaster to order against, and no session
+		// either.
+		switch cb := s.opts.OnSessions; {
+		case s.bc != nil:
+			s.bc.closed()
+		case cb != nil:
 			cb(0)
 		}
 	}()
