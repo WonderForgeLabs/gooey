@@ -73,6 +73,15 @@ Three consequences for a custom `Render`:
   rune alone — `"⚠️"` narrows to a one-column `"⚠"` and a decomposed
   `"é"` loses its accent. The row then shifts under the highlight and
   repairs itself when the highlight moves away.
+
+  One caveat when you restyle a **span** this way: `SetCell` refuses a
+  cell whose rune is `render.Continuation`, because a continuation is
+  written only as the tail of the pair its lead writes. So the second
+  column of a wide glyph keeps its old style. Nothing looks wrong — the
+  flusher never emits a continuation's style, so the lead's covers both
+  columns — but the buffer stops matching the screen, which matters if
+  you later decide what to un-highlight by reading styles back. Drive
+  that from your own state, not from the plane.
 - **Assigning `Buffer.Cells` directly is the one sharp edge.** `Set`,
   `SetString` and `SetCell` all repair a glyph you overpaint half of, so
   ordinary drawing is safe. A loop that writes the slice does not get

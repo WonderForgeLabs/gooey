@@ -339,6 +339,8 @@ type broadcaster struct {
 	// code back inside the lock afterFrame takes every frame.
 	notifyMu sync.Mutex
 	notified uint64
+	// shut latches the endpoint being gone. See notify.
+	shut bool
 
 	// UI-goroutine-only state.
 	frame      uint64
@@ -372,7 +374,7 @@ func (b *broadcaster) add(ss *session) {
 	b.sessions[ss] = true
 	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n, seq)
+	b.notify(n, seq, false)
 }
 
 func (b *broadcaster) remove(ss *session) {
@@ -380,25 +382,31 @@ func (b *broadcaster) remove(ss *session) {
 	delete(b.sessions, ss)
 	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n, seq)
+	b.notify(n, seq, false)
 }
 
 // closed reports the endpoint going quiet — the accept loop has
 // returned, so every stream it carried is finished and the count is
 // zero whatever the set says.
 //
-// It takes a sequence number like any other change, and that is the
-// point rather than tidiness: the forced zero used to be delivered by
-// the Serve goroutine straight to the host callback, bypassing this
-// type entirely, so a remove already in flight could land AFTER it and
-// leave the host holding a positive count for an endpoint that is gone.
-// Numbered here, the stale remove is dropped. Found in the review of
-// #391 (issue #419).
+// IT LATCHES, and a sequence number alone was not enough. Numbering the
+// zero drops a remove that was already IN FLIGHT, which is what the
+// first version of this fixed; a remove that takes b.mu AFTERWARDS gets
+// a higher number and was delivered normally, so the host was told a
+// positive count for an endpoint that no longer exists. That ordering is
+// routine rather than exotic: grpc's Stop does not wait for handler
+// goroutines, so Attach's deferred unregister regularly runs after Serve
+// has returned. With two clients attached at shutdown the host saw 0 and
+// then 1, and a handler wedged in Send left it at 1 for good.
+//
+// So "zero whatever the set says" is enforced rather than asserted: past
+// this point notify refuses every later count. Found in the review of
+// #391 (issue #419), then in the review of that fix (PR #425).
 func (b *broadcaster) closed() {
 	b.mu.Lock()
 	seq := b.next()
 	b.mu.Unlock()
-	b.notify(0, seq)
+	b.notify(0, seq, true)
 }
 
 // next stamps a count change. Callers hold b.mu.
@@ -433,12 +441,25 @@ func (b *broadcaster) next() uint64 {
 // value can be skipped; that is the trade, and it is the right way
 // round: a missed 1 between 0 and 2 costs nothing, a trailing 1 after a
 // 2 is a lie that persists.
-func (b *broadcaster) notify(n int, seq uint64) {
+func (b *broadcaster) notify(n int, seq uint64, final bool) {
 	if b.onSessions == nil {
 		return
 	}
 	b.notifyMu.Lock()
 	defer b.notifyMu.Unlock()
+	// THE LATCH, ahead of the ordering check, because it answers a
+	// different question. seq orders changes against each other; shut
+	// says there is nothing left to order — the accept loop is gone, so
+	// every stream it carried is finished and no later count can be
+	// true, however recent its number.
+	if b.shut {
+		return
+	}
+	if final {
+		b.shut, b.notified = true, seq
+		b.onSessions(0)
+		return
+	}
 	if seq <= b.notified {
 		return
 	}

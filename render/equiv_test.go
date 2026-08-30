@@ -81,3 +81,47 @@ func TestClipColsHoldsItsContract(t *testing.T) {
 		}
 	}
 }
+
+// TestClipColsDoesNotAllocate is the assertion that would have caught
+// ClipCols' own comment being wrong, and it is a different instrument
+// from every other test in this file.
+//
+// TestClipColsHoldsItsContract asserts prefix, width and maximality —
+// all true of an implementation that allocates a scratch buffer on every
+// call, which is what the one-pass rewrite did while its comment said
+// the common case "allocates nothing". A behavioural test cannot see a
+// cost, so a claim about cost needs a measurement or it is prose.
+//
+// BOTH BRANCHES, because they were not equally wrong: the clipping path
+// has to build an answer at all, so a reader could reasonably expect an
+// allocation there, while the fits path returns the argument. Pinning
+// only the fits case would leave the clip case free to regress to a
+// buffer, and the whole point of the byte-offset form is that neither
+// needs one.
+//
+// AllocsPerRun rather than a benchmark: this is a contract, so it
+// belongs where a failure is red rather than where someone has to read a
+// number and decide.
+func TestClipColsDoesNotAllocate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    string
+		w    int
+	}{
+		{"fits", "the quick brown fox jumps over the lazy dog", 100},
+		{"clips", "the quick brown fox jumps over the lazy dog", 20},
+		{"clips at a wide glyph", "日本語テキストの見本です", 7},
+		{"fits with combining marks", "e\u0301cole nave\u0308", 20},
+		{"empty budget", "anything at all", 0},
+	} {
+		var got string
+		n := testing.AllocsPerRun(100, func() { got = ClipCols(tc.s, tc.w) })
+		if n != 0 {
+			t.Errorf("%s: ClipCols allocated %v times per call, want 0. Every accepted "+
+				"cluster is a contiguous prefix of the input, so the answer is a slice "+
+				"of it — a scratch buffer here runs once per string per paint",
+				tc.name, n)
+		}
+		_ = got
+	}
+}

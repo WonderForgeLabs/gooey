@@ -1,6 +1,9 @@
 package input
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The idle contract, and it is the decoder's liveness property rather
 // than a decoding detail.
@@ -85,4 +88,75 @@ func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 	} {
 		assertProgress(t, []byte(seq))
 	}
+}
+
+// TestTheIdleExceptionIsExactlyThePasteMarker is the UPPER bound on the
+// liveness exception, and until PR #425's review nothing asserted it.
+//
+// Decode's doc is careful that the (0, false)-under-idle exception is
+// "the narrow thing it is: ESC [ 2 0 0 ~ and its prefixes from the third
+// byte on, nothing else", and cites the exhaustive walk above as the
+// enforcement. But that walk covers 1- and 2-byte inputs — precisely the
+// range the exception stays OUT of, as the doc itself says. So the walk
+// proves the exception does not start too early and says nothing about
+// where it stops.
+//
+// That asymmetry is the dangerous one. Widening splitPasteMarker —
+// dropping its `len(s) < len(pasteStart)` clause, or matching on a
+// shorter prefix — reintroduces the stranded-buffer wedge that
+// input/decode.go spends forty lines warning about, and only the paste
+// tests would be in a position to notice, none of which look at what
+// happens to everything ELSE.
+//
+// The complement is what closes it: over every input beginning ESC [ up
+// to the marker's length, the ONLY ones allowed to answer (0, false)
+// under idle are strict prefixes of the two markers. Exhaustive over the
+// third byte and sampled thereafter, because the arm that can reach this
+// only fires while every byte since ESC [ is a parameter byte.
+func TestTheIdleExceptionIsExactlyThePasteMarker(t *testing.T) {
+	prefix := func(b []byte) bool {
+		s := string(b)
+		return len(s) < len(pasteStart) &&
+			(strings.HasPrefix(pasteStart, s) || strings.HasPrefix(pasteEnd, s))
+	}
+
+	waits, allowed := 0, 0
+	var walk func(b []byte)
+	walk = func(b []byte) {
+		if len(b) > len(pasteStart) {
+			return
+		}
+		_, n, ok := Decode(b, true)
+		if n == 0 && !ok {
+			waits++
+			if !prefix(b) {
+				t.Errorf("Decode(%q, idle=true) waits for more bytes, and %q is not a "+
+					"prefix of a paste marker. Under idle no further byte is coming, so "+
+					"the drain loop stops here and every later keystroke strands behind "+
+					"it — the wedge the exception was scoped to avoid", b, b)
+			} else {
+				allowed++
+			}
+		}
+		// Only parameter bytes keep decodeCSI in the arm that can wait,
+		// so those are the ones worth descending into. The terminator and
+		// everything else resolve and cannot strand.
+		for c := 0x30; c < 0x40; c++ {
+			walk(append(append([]byte(nil), b...), byte(c)))
+		}
+	}
+	walk([]byte{0x1b, '['})
+
+	// The floor, and it is the half that makes the loop mean something:
+	// if NOTHING waits, the exception has been removed rather than
+	// bounded, and every assertion above passes vacuously.
+	if allowed == 0 {
+		t.Fatal("no input waited for more bytes at all, so the paste exception is " +
+			"gone — a split marker now resolves to Esc and delivers its payload as " +
+			"keystrokes, which is the defect the exception exists to prevent")
+	}
+	if waits != allowed {
+		t.Errorf("%d inputs waited, %d of them legitimately", waits, allowed)
+	}
+	t.Logf("%d inputs wait under idle, all of them paste-marker prefixes", allowed)
 }

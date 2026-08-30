@@ -383,8 +383,8 @@ func TestTheForcedZeroOnShutdownOutranksALateRemove(t *testing.T) {
 	staleN, staleSeq := len(b.sessions), b.next()
 	b.mu.Unlock()
 
-	b.closed()                 // the accept loop returns first
-	b.notify(staleN, staleSeq) // ...and the lagging remove arrives after
+	b.closed()                        // the accept loop returns first
+	b.notify(staleN, staleSeq, false) // ...and the lagging remove arrives after
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -465,5 +465,60 @@ func TestClosingTheServerNumbersItsZero(t *testing.T) {
 	defer mu.Unlock()
 	if last != 0 {
 		t.Errorf("the host was last told %d after the endpoint closed", last)
+	}
+}
+
+// TestNoCountSurvivesTheAcceptLoop is the LATCH, and it is the finding
+// the first version of this fix did not cover.
+//
+// Numbering the shutdown zero drops a remove that was already in flight.
+// A remove that takes the lock AFTERWARDS gets a higher number, and was
+// delivered normally — so the host was told a positive count for an
+// endpoint that no longer exists, which is the same lie the numbering
+// was introduced to prevent, one ordering later.
+//
+// It is routine rather than exotic. grpc's Stop does not wait for
+// handler goroutines, so sessionServer.Attach's deferred unregister
+// regularly runs after Serve has returned and closed() has fired. With
+// two clients attached at shutdown the host saw 0 then 1, and a handler
+// wedged in Send left it at 1 permanently.
+//
+// Found in the review of PR #425 — the review OF the fix, which is the
+// second time that has been where the real defect was.
+func TestNoCountSurvivesTheAcceptLoop(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+
+	s1, s2 := &session{}, &session{}
+	b.add(s1)
+	b.add(s2)
+	b.closed()   // the accept loop returns with two still attached
+	b.remove(s1) // one handler unwinds after it — a HIGHER seq, not a stale one
+	b.remove(s2)
+	b.add(s1) // and something pathological: an attach after shutdown
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("the host was never told anything")
+	}
+	if last := seen[len(seen)-1]; last != 0 {
+		t.Errorf("after the accept loop returned the host was last told %d "+
+			"(sequence %v) — the endpoint is gone, so no later count can be true "+
+			"however recent its number", last, seen)
+	}
+	// Stronger, and the reason a "last value" check alone is not enough:
+	// nothing non-zero may be delivered AT ALL once the loop is gone, so
+	// a host that renders every count it is given never flickers a live
+	// client onto a dead endpoint.
+	for i, n := range seen {
+		if i >= 3 && n != 0 {
+			t.Errorf("count %d in %v arrived after the accept loop returned", n, seen)
+		}
 	}
 }

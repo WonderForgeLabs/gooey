@@ -1,8 +1,10 @@
 package gooey
 
 import (
-	"os"
-	"regexp"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -293,19 +295,46 @@ func TestFrozenAllowReadsBothMethodsEvenWhenInactive(t *testing.T) {
 // So the source is the authority. Adding a Key to input/key.go now
 // fails here until somebody decides what class it belongs to.
 func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
-	src, err := os.ReadFile("input/key.go")
-	if err != nil {
-		t.Fatalf("cannot read the Key declarations: %v", err)
-	}
-	// The iota block: `KeyRune Key = iota`, then one bare name per line.
-	decl := regexp.MustCompile(`(?m)^\t(Key[A-Z]\w*)`)
-	var names []string
-	for _, m := range decl.FindAllStringSubmatch(string(src), -1) {
-		names = append(names, m[1])
-	}
-	// Discrimination: a regex that stopped matching would leave this
-	// empty and the loop below would check nothing. The floor is well
-	// under the real count so it does not become a second number to
+	// PARSED, AND ANCHORED TO THE iota BLOCK, not matched by shape.
+	//
+	// This read the names with `(?m)^\t(Key[A-Z]\w*)`, which matches any
+	// tab-indented identifier starting with Key anywhere in the file —
+	// and the loop below maps the i'th name to input.Key(i). Today the
+	// file holds exactly the iota constants and nothing else that
+	// matches, so the mapping happens to be right. The ordinary
+	// companion to a key enum would end that quietly:
+	//
+	//	var keyNames = map[Key]string{
+	//		KeyEnter: "enter",
+	//		...
+	//	}
+	//
+	// Every match after the const block shifts the positional mapping,
+	// and the test starts asserting about the wrong Key values. The len
+	// floor below cannot notice — it only sees the list shrink.
+	//
+	// Checked rather than assumed, and what it does is worth recording:
+	// with such a map added, the OLD regex reported KeyEnter, KeyTab and
+	// KeyEsc as reaching no arm of AllowFor — three keys that are
+	// classified, named by a test that had walked off the end of the
+	// enum into the fallback. So the failure mode here is a MISLEADING
+	// RED rather than the silent green a shift usually buys, which is
+	// worse in its own way: it sends the reader to allow.go to fix three
+	// keys that were never broken.
+	//
+	// The regex survived this long by an accident of style. input/key.go
+	// already carries a companion table — `var keyNames = []struct{…}`,
+	// whose lines begin `\t{KeyEnter,` — and the leading brace is the
+	// only reason it never matched. A map literal, the more usual
+	// spelling, would have. Found in the review of PR #425.
+	//
+	// go/ast reads the block that actually defines the enum: the const
+	// declaration whose first spec is `… Key = iota`. Nothing outside it
+	// can be mistaken for a member.
+	names := declaredKeyConstants(t)
+	// Discrimination: a walk that stopped finding the block would leave
+	// this empty and the loop below would check nothing. The floor is
+	// well under the real count so it does not become a second number to
 	// maintain.
 	if len(names) < 10 {
 		t.Fatalf("only %d Key constants parsed out of input/key.go (%v); "+
@@ -340,4 +369,54 @@ func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
 	if got := AllowFor(unknown); got != AllowNone {
 		t.Errorf("AllowFor gave an undeclared Key %v, want AllowNone", got)
 	}
+}
+
+// declaredKeyConstants is the names of input.Key's iota block, in
+// declaration order, so the i'th is input.Key(i).
+//
+// It finds the block by its DEFINITION — a const declaration whose first
+// spec has type Key and value iota — rather than by what its lines look
+// like. See TestAllowForClassifiesEveryDeclaredKey for what the
+// shape-matching version got wrong.
+func declaredKeyConstants(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join("input", "key.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing input/key.go: %v", err)
+	}
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST || len(gd.Specs) == 0 {
+			continue
+		}
+		first, ok := gd.Specs[0].(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		id, ok := first.Type.(*ast.Ident)
+		if !ok || id.Name != "Key" {
+			continue
+		}
+		if len(first.Values) != 1 {
+			continue
+		}
+		if v, ok := first.Values[0].(*ast.Ident); !ok || v.Name != "iota" {
+			continue
+		}
+		var names []string
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, n := range vs.Names {
+				names = append(names, n.Name)
+			}
+		}
+		return names
+	}
+	t.Fatal("no `const ( … Key = iota )` block found in input/key.go — the " +
+		"declarations moved and nothing below is checking the real enum")
+	return nil
 }

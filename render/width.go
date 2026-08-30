@@ -82,19 +82,36 @@ func ClipCols(s string, w int) string {
 	//
 	// The early return for a string that fits survives as a cheap exit
 	// from the loop rather than a second traversal in front of it: when
-	// nothing was dropped, the original string is returned untouched, so
-	// the common case still allocates nothing. Found in review of #413.
-	out, used, rest := make([]byte, 0, len(s)), 0, s
+	// nothing was dropped, the original string is returned untouched.
+	// Found in review of #413.
+	//
+	// A BYTE OFFSET, NOT A BUFFER, and the difference is the whole
+	// reason this comment is trustworthy. The one-pass rewrite carried
+	// the accepted clusters in a make([]byte, 0, len(s)) declared in
+	// front of the loop, which ran on EVERY call — so the common case
+	// this paragraph calls free allocated once per string per paint,
+	// where the two-pass version it replaced allocated nothing. The
+	// comment was written about the traversal and read as if it were
+	// about the allocation.
+	//
+	// Nothing needed the buffer. Every accepted cluster is a contiguous
+	// prefix of s, so the offset past the last one IS the answer, and
+	// slicing is free in both branches. Measured with AllocsPerRun:
+	// 1 and 2 allocations before, 0 and 0 after — pinned by
+	// TestClipColsDoesNotAllocate, because a claim about allocation that
+	// nothing measures is how this one came to be wrong. Found in the
+	// review of PR #425.
+	cut, used, rest := 0, 0, s
 	state := -1
 	for len(rest) > 0 {
 		var cluster string
 		var cw int
 		cluster, rest, cw, state = uniseg.FirstGraphemeClusterInString(rest, state)
 		if used+cw > w {
-			// Something was dropped, so out is the answer.
-			return string(out)
+			// Something was dropped, so the prefix is the answer.
+			return s[:cut]
 		}
-		out = append(out, cluster...)
+		cut += len(cluster)
 		used += cw
 	}
 	return s

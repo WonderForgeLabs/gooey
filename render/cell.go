@@ -228,6 +228,19 @@ func (b *Buffer) SetCell(x, y int, c Cell) {
 	// A Continuation is written only as the tail of the pair its lead
 	// writes; accepting one on its own would place the orphan healSeam
 	// exists to remove.
+	//
+	// SO SetCell CANNOT ROUND-TRIP EVERY CELL At HANDS BACK, which is
+	// the one thing to know before using it to restyle a SPAN. Over a
+	// run of cells — `SetCell(x, y, At(x, y).WithStyle(st))` in a loop,
+	// which is what a row highlight does — the second column of every
+	// wide glyph is refused, so it keeps its old style.
+	//
+	// That is invisible in the output and real in the model. The flusher
+	// skips continuation cells (emitter.run), so their style is never
+	// emitted and the lead's covers both columns; what it costs is that
+	// the buffer no longer says what the screen shows, and a caller that
+	// un-highlights by comparing styles finds Reverse still set on cells
+	// it thought it had cleared. Found in the review of PR #425.
 	if c.Rune == Continuation {
 		return
 	}
@@ -267,11 +280,22 @@ func (b *Buffer) SetCell(x, y int, c Cell) {
 // because a space is the only value that both draws correctly and
 // occupies exactly the one column the cell owns.
 func (b *Buffer) healSeam(x, y int) {
-	if y < 0 || y >= b.H || x < 0 || x >= b.W {
+	// THE CLIP, not the buffer, for the same reason every writer below
+	// tests it: a repair outside this component's rect is still a write
+	// to a neighbour's cells, and the neighbour's node is clean so
+	// nothing repaints over it.
+	//
+	// The case that cannot then be repaired also cannot arise. It would
+	// need a neighbour to have left a wide LEAD in its own last column
+	// with the continuation past its clip — and Set, SetCell and
+	// SetString all refuse exactly that, writing a space instead. So the
+	// dangling half this declines to fix is unreachable rather than
+	// tolerated.
+	if y < b.cy0 || y >= b.cy1 || x < b.cx0 || x >= b.cx1 {
 		return
 	}
 	i := y*b.W + x
-	lead := x > 0 && b.Cells[i-1].Width() >= 2
+	lead := x > b.cx0 && b.Cells[i-1].Width() >= 2
 	cont := b.Cells[i].Rune == Continuation
 	switch {
 	case lead && !cont:
@@ -285,8 +309,20 @@ func (b *Buffer) healSeam(x, y int) {
 // whole pairs itself and repairs only the two edges of its run. Going
 // through Set would make the Continuation it writes at x+1 look like an
 // overpaint of the lead it wrote at x one call earlier.
+//
+// IT TESTS THE CLIP, and until PR #425 it tested only the buffer — so
+// SetString, the framework's primary text writer, wrote straight through
+// the rect Composer.build brackets every Render with. Two writers then
+// disagreed about one rule: Set and SetCell refused a wide glyph whose
+// second column fell outside the clip while SetString wrote it, leaving
+// a Continuation one column past the clip in a cell belonging to a clean
+// node that never repaints over it. The clip-blindness predated the PR;
+// what the PR added was the disagreement, and a new unclipped write in
+// the left-straddle branch below.
+//
+// Clip narrows only (see Clip), so testing it also tests the buffer.
 func (b *Buffer) put(x, y int, c Cell) {
-	if x < 0 || y < 0 || x >= b.W || y >= b.H {
+	if x < b.cx0 || y < b.cy0 || x >= b.cx1 || y >= b.cy1 {
 		return
 	}
 	b.Cells[y*b.W+x] = c
@@ -341,7 +377,7 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 		if cluster == "" {
 			continue
 		}
-		if x >= b.W {
+		if x >= b.cx1 {
 			break
 		}
 		// Clip on the LEFT as well as the right. Set bounds-checks, so
@@ -349,7 +385,7 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 		// its Continuation still landed in cell 0 — an orphan marking a
 		// column the flusher then skips forever. Skipping by the
 		// cluster's width keeps the columns of what follows correct.
-		if x < 0 {
+		if x < b.cx0 {
 			// A cluster STRADDLING the left edge still covers columns
 			// this string is responsible for, and cannot draw in them —
 			// half a glyph is not something a terminal renders. Skipping
@@ -357,9 +393,14 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 			// scrolled one column right showed the previous frame's
 			// character in the gap and nothing ever repainted it.
 			//
-			// x is negative here, so x+w is exactly the count of visible
-			// columns the cluster reaches into. Found in review of #413.
-			for c := 0; c < x+max(w, 1); c++ {
+			// The visible columns are those from the clip's left edge to
+			// where the cluster ends — cx0 rather than 0, because the
+			// left edge this string straddles is the component's, not
+			// the buffer's. Written before PR #425 as a bare 0, which
+			// blanked column 0 of the SCREEN whatever rect the caller
+			// was clipped to. Found in review of #413, then in the
+			// review of that fix.
+			for c := b.cx0; c < x+max(w, 1); c++ {
 				b.put(c, y, Cell{Rune: ' ', Style: s})
 			}
 			x += max(w, 1)
@@ -373,7 +414,11 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 			// No room for the second half: drawing it would overflow the
 			// line and put the glyph's tail in column 0 of the next row
 			// on a terminal with autowrap. A space is the honest answer.
-			if x+1 >= b.W {
+			//
+			// The CLIP, matching Set and SetCell. Against b.W the three
+			// writers disagreed wherever a component's rect was narrower
+			// than the screen, which is every component but the root.
+			if x+1 >= b.cx1 {
 				b.put(x, y, Cell{Rune: ' ', Style: s})
 				x++
 				break
