@@ -66,6 +66,51 @@ func StringWidth(s string) int { return uniseg.StringWidth(s) }
 // cmd/browser needed the same rule for markdown; a second hand-rolled
 // cluster loop is how the two quietly disagree at the joins. A duplicated
 // local patch is the signal that an invariant belongs one level up.
+// EachCluster walks s one grapheme cluster at a time, handing each its
+// byte offset and the terminal COLUMN it starts at. Returning false
+// stops the walk.
+//
+// It exists because the column arithmetic belongs here and was being
+// re-derived elsewhere: three bytes, one rune and one column are four
+// different numbers, and a caller that wants to place something
+// alongside text — a highlight, a caret, an underline — needs the
+// mapping between them. cmd/finder had its own copy of this loop, and
+// the bug it was written to fix (#413: a two-byte character pushing a
+// highlight two columns right) is exactly what a caller gets wrong when
+// it uses the byte offset as a column.
+//
+// THE SEGMENTER STATE IS THREADED, which is the part a hand-rolled copy
+// tends to drop: passing -1 on every call asks uniseg to re-decide a
+// boundary it has just decided, and two walks that disagree about a
+// boundary disagree about a width.
+//
+// ClipCols below deliberately KEEPS ITS OWN LOOP and is not a bug to be
+// tidied away. It runs on every paint and is pinned at zero allocations
+// by TestClipColsDoesNotAllocate; routing it through a callback puts a
+// closure over its two accumulators on that path, which is the exact
+// shape the comment inside it records getting wrong once already. It
+// also needs to tell "walked off the end" from "stopped early" — the
+// difference between returning s untouched and returning a prefix —
+// which a bool-returning callback does not express. Two loops, one
+// reason each.
+func EachCluster(s string, fn func(cluster string, off, col int) bool) {
+	off, col, state := 0, 0, -1
+	rest := s
+	for len(rest) > 0 {
+		var cluster string
+		var cw int
+		cluster, rest, cw, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		if cluster == "" {
+			return
+		}
+		if !fn(cluster, off, col) {
+			return
+		}
+		off += len(cluster)
+		col += cw
+	}
+}
+
 func ClipCols(s string, w int) string {
 	if w <= 0 {
 		return ""

@@ -503,8 +503,17 @@ func (b *broadcaster) notify(n int, seq uint64, final bool) {
 	default:
 		b.pending, b.pendN, b.pendSeq = true, n, seq
 	}
-	if b.delivering {
-		b.notifyMu.Unlock() // someone else is already carrying it
+	b.deliver()
+}
+
+// deliver carries the mailbox until it is empty. Called with notifyMu
+// HELD, and it always returns with the lock RELEASED.
+//
+// Split out of notify so the resume path below can re-enter it without a
+// second copy of the loop.
+func (b *broadcaster) deliver() {
+	if b.delivering || !b.pending {
+		b.notifyMu.Unlock() // someone else is carrying it, or there is nothing to carry
 		return
 	}
 	b.delivering = true
@@ -512,27 +521,42 @@ func (b *broadcaster) notify(n int, seq uint64, final bool) {
 	// here recovers. A panic unwinding past a plain `b.delivering = false`
 	// left the flag set for the life of the broadcaster: every later
 	// add/remove/close would deposit into the mailbox, see delivering,
-	// and return — so no count reached the host again, including the
-	// terminal zero. That is a worse residual than the direct-call
-	// version this replaced, whose whole selling point is that no caller
-	// is stuck behind host code.
+	// and return — so no count reached the host again.
 	//
 	// held tracks the lock across the callback, which runs with it
-	// RELEASED — so the unwind can arrive either way and the defer has
-	// to re-acquire before touching the flag.
-	//
-	// What the defer deliberately does NOT do is drain the rest of the
-	// mailbox: that would call host code again from inside a panic. A
-	// count deposited during the failed delivery waits for the next
-	// change instead, which is a delay rather than a permanent silence.
-	// Found in review of #425.
+	// RELEASED, so the unwind can arrive either way and the defer has to
+	// re-acquire before touching the flag.
 	held := true
 	defer func() {
 		if !held {
 			b.notifyMu.Lock()
 		}
 		b.delivering = false
+		leftover := b.pending
 		b.notifyMu.Unlock()
+
+		// A LEFTOVER HERE MEANS THE CALLBACK PANICKED — the normal path
+		// runs the loop until pending is false, so this is reachable
+		// only through an unwind.
+		//
+		// It has to be carried rather than left, and that is a
+		// correction to what this comment said one round ago. It claimed
+		// a count deposited during a failed delivery "waits for the next
+		// change", which is true of an ordinary count and FALSE of the
+		// one that matters: if closed() deposited the terminal zero
+		// while this delivery was in flight, b.shut is now latched, and
+		// the latch at the top of notify refuses every later caller — so
+		// nothing would ever carry it and the host would show a live
+		// connection for good. Permanent silence, not a delay.
+		//
+		// Resumed on its OWN goroutine, because here is inside a panic
+		// and calling host code again would replace the panic in flight
+		// with whatever the second call does. OnSessions is documented
+		// as running on an arbitrary goroutine, so that is the contract
+		// it already has. Found in review of #425.
+		if leftover {
+			go b.resume()
+		}
 	}()
 	for b.pending {
 		n, seq := b.pendN, b.pendSeq
@@ -544,6 +568,21 @@ func (b *broadcaster) notify(n int, seq uint64, final bool) {
 		b.notifyMu.Lock()
 		held = true
 	}
+}
+
+// resume carries a mailbox that a panicking callback left full. See
+// deliver's defer for why it is a goroutine.
+//
+// IT RECOVERS, which nothing else in this file does, and the bound is
+// what earns it: the panic that brought us here has already propagated
+// to whoever called notify, so this goroutine has no caller to carry a
+// second one to — an escape would take the process down over a host bug
+// that the first panic merely reported. One retry, then the count is
+// dropped, which is strictly better than the never it used to get.
+func (b *broadcaster) resume() {
+	defer func() { _ = recover() }()
+	b.notifyMu.Lock()
+	b.deliver()
 }
 
 func (b *broadcaster) snapshot() []*session {

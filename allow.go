@@ -288,11 +288,27 @@ func AllowNames() []string {
 func AllowGroups() map[string][]string {
 	out := make(map[string][]string, len(allowGroups))
 	for _, g := range allowGroups {
-		if names := g.cat.Names(); len(names) > 0 {
-			out[g.name] = names
+		// KEYED ON AllowNone, not on "the expansion came out empty",
+		// because the reasoning above is about AllowNone specifically
+		// and the code should say which rule it is applying. The len
+		// test below is a separate, weaker guard for a group nobody has
+		// written yet.
+		if g.cat == AllowNone {
+			out[g.name] = []string{g.name}
 			continue
 		}
-		out[g.name] = []string{g.name}
+		names := g.cat.Names()
+		if len(names) == 0 {
+			// A future group built entirely from nameless bits would
+			// render as the empty string, which markup reads as an
+			// attribute that was not written. The token is the same
+			// answer None gets and for the same reason;
+			// TestNoGroupRendersAsNothing is what would catch the
+			// alternative.
+			out[g.name] = []string{g.name}
+			continue
+		}
+		out[g.name] = names
 	}
 	return out
 }

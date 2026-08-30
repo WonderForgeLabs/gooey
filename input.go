@@ -740,13 +740,15 @@ func (m *FocusManager) reachable(w Component) bool {
 // Moving it past HandleKey still compiles and still passes most of the
 // suite — only TestAttachmentKeysPrecedeHost notices.
 //
-// Then the MNEMONICS get their turn: every
-// MnemonicHandler in the tree, in tree order, is offered what the
-// focused chain declined — accelerators are page-scoped, so they run
-// outside the chain, but after it, which is what keeps a KeyBinding on
-// the same gesture winning. Finally, if nothing consumed the event,
-// tab and shift+tab move focus and an unclaimed arrow navigates — which
-// means either can be overridden by binding or handling it.
+// Then the MNEMONICS get their turn: every MnemonicHandler in the tree,
+// in tree order, is offered what the focused chain declined —
+// accelerators are page-scoped, so they run outside the chain, but
+// after it, which is what keeps a KeyBinding on the same gesture
+// winning.
+//
+// Finally, if nothing consumed the event, tab and shift+tab move focus
+// and an unclaimed arrow navigates — which means either can be
+// overridden by binding or handling it.
 //
 // Bindings stay interleaved with handlers per level rather than running
 // as one pass after the bubble: a binding declared inside a control has

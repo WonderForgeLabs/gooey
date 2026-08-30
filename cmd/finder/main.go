@@ -35,7 +35,6 @@ import (
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
-	"github.com/rivo/uniseg"
 )
 
 type match struct {
@@ -253,18 +252,21 @@ func (w *matchLine) Render(f *gooey.Frame) {
 	// Walking clusters keeps the three apart: off is the byte cursor,
 	// which is the space fuzzy's offsets live in; col is the column
 	// cursor, which is the space cells live in.
+	//
+	// THE WALK IS render.EachCluster's, not a local one. This loop was
+	// hand-rolled here — segmenter state, byte cursor and column cursor
+	// all threaded by hand — beside a render package that already owns
+	// column arithmetic and already had the same loop inside ClipCols.
+	// Two copies of a walk is two places for the three numbers to drift,
+	// and drifting is the bug this code exists to fix. Found in review
+	// of #425.
 	path := w.path.Get()
-	col, k, state := 0, 0, -1
-	for off := 0; off < len(path); {
-		cluster, _, cw, s := uniseg.FirstGraphemeClusterInString(path[off:], state)
-		state = s
-		if cluster == "" {
-			break
-		}
+	k := 0
+	render.EachCluster(path, func(cluster string, off, col int) bool {
 		// Stop BEFORE a glyph that would not fit whole. Half a wide
 		// character is not something a terminal can draw.
-		if col+cw > b.W-1 {
-			break
+		if col+render.StringWidth(cluster) > b.W-1 {
+			return false
 		}
 		// A match landing anywhere inside the cluster highlights the
 		// whole cluster: a character cannot be half-matched, and fuzzy
@@ -278,9 +280,8 @@ func (w *matchLine) Render(f *gooey.Frame) {
 			k++
 		}
 		f.Cells.SetString(b.X+col, b.Y, cluster, st)
-		col += cw
-		off += len(cluster)
-	}
+		return true
+	})
 }
 
 // buildPreview is the markup builder for <Preview Lines="{{.Preview}}"/>.
