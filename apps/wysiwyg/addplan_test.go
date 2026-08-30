@@ -317,7 +317,7 @@ func TestAContainerIsTheRouteToMoreThanOneThingOnATab(t *testing.T) {
 // gesture that reached the same crash, and it had no test at all.
 //
 // addSelected was made transactional and taught to read ChildSpec.Only;
-// demoteSelected (ctrl+l) was not. It gated on holdsChildren — which
+// demoteSelected (alt+l) was not. It gated on holdsChildren — which
 // never consults Only — and then returned true unconditionally: no
 // docRoot check, no revert, no message. So demoting anything into a
 // <Tabs> wrote a direct illegal child and left docRoot nil, which kills

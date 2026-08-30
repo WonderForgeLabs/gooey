@@ -17,9 +17,9 @@ matter; modifier and named-key matching is case-insensitive.
 | Modifiers | `ctrl` / `control` / `c`, `alt` / `meta` / `option`, `shift` |
 | Named keys | `enter`, `tab`, `esc`, `backspace`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `space` |
 | Characters | any single rune: `j`, `q`, `/` |
-| The `+` key | `ctrl++` — the one case that needs spelling out |
+| The `+` key | `alt++` — the one case that needs spelling out |
 
-Two normalizations match what terminals actually send:
+Three normalizations match what terminals actually send:
 
 - `shift` on a printable character folds into the rune: `shift+j` is
   `J`, and the shift modifier is dropped. **`ModShift` only ever appears
@@ -27,8 +27,33 @@ Two normalizations match what terminals actually send:
   sends the shifted character.
 - `ctrl+<letter>` lowercases the letter, because control bytes decode to
   the lowercase rune. `ctrl+S` and `ctrl+s` are the same gesture.
+- `ctrl+@` becomes `ctrl+space`. `0x00` is the byte for both spellings,
+  and space is what people press.
 
 An unparseable gesture is a load-time error naming the offending token.
+
+**And so is a ctrl gesture the decoder cannot produce.** That is a
+different failure with the same remedy: the gesture parses perfectly and
+no terminal will ever send it, so the binding loads, dispatches forever,
+and never fires — no error, no warning, nothing at runtime to tell it
+apart from a key you never pressed. Those are refused at load time
+([#427](https://github.com/WonderForgeLabs/gooey/issues/427)), naming the
+cause:
+
+```
+input: gesture "ctrl+j" never fires: a terminal sends 0x0a for it, which decodes as enter
+```
+
+Two rules cover the whole refused set:
+
+- **`ctrl` reaches only `@`–`_` and `a`–`z`.** A control byte decodes as
+  `byte|0x40`, so the digits, most punctuation, the braces and
+  `` ctrl+` `` are unreachable by construction.
+- **`ctrl+h`, `ctrl+i`, `ctrl+j`, `ctrl+m` and `ctrl+[` are taken** by
+  backspace, tab, enter, enter and esc. Bind the named key instead.
+
+`alt+` is not affected — it is an ESC prefix rather than part of the
+byte, so `alt+j` and `alt+1` are both fine.
 
 ## Scope a binding by where you declare it
 

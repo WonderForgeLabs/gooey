@@ -204,8 +204,12 @@
     <KeyBinding Gesture="ctrl+w" Command="{{.TogglePane}}"/>
     <KeyBinding Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
     <!-- ctrl+alt+p, and it has now dodged TWO collisions of different
-         kinds. Not ctrl+k: that is MoveUp, the designer's move gesture,
-         which landed in #373 while this pane was held. Two KeyBindings on
+         kinds. Not ctrl+k: that WAS MoveUp, the designer's move gesture
+         that landed in #373 while this pane was held. MoveUp is alt+k
+         now (#427 moved the cluster off the gestures no terminal can
+         send), so the collision this paragraph dodged no longer exists —
+         it is kept because the REASONING is what matters here and it
+         still applies to whatever lands on ctrl+alt+p next. Two KeyBindings on
          one gesture at the same host is not a load error: both are scoped
          to the root, dispatch offers them in order, and the loser simply
          never fires. So the collision would have shipped as "pin silently

@@ -33,6 +33,23 @@ var deadCtrlGestures = []string{
 	"ctrl+{", "ctrl+|", "ctrl+}", "ctrl+~",
 }
 
+// namesTheCause is what the error has to say for the gestures whose byte
+// was taken by a NAMED key, and it is asserted rather than assumed
+// because it is the entire reason errUnproducible has two branches and
+// calls Decode a second time.
+//
+// Without these, swapping the two fmt.Errorf bodies — or dropping the
+// Decode call for one generic message — passes every other assertion in
+// this file. "ctrl+h is backspace" is the deliverable; "unproducible"
+// sends the reader back to the source.
+var namesTheCause = map[string]string{
+	"ctrl+h": "backspace",
+	"ctrl+i": "tab",
+	"ctrl+j": "enter",
+	"ctrl+m": "enter",
+	"ctrl+[": "esc",
+}
+
 // TestUnproducibleCtrlGesturesAreRejected is the issue's list, one
 // assertion per entry.
 //
@@ -40,6 +57,7 @@ var deadCtrlGestures = []string{
 // whose intent is unambiguous, so it normalises to ctrl+space rather
 // than failing. See TestCtrlAtNormalisesToCtrlSpace.
 func TestUnproducibleCtrlGesturesAreRejected(t *testing.T) {
+	named := map[string]bool{}
 	for _, g := range deadCtrlGestures {
 		ev, err := ParseGesture(g)
 		if err == nil {
@@ -47,11 +65,43 @@ func TestUnproducibleCtrlGesturesAreRejected(t *testing.T) {
 				"loads cleanly and never fires", g, ev)
 			continue
 		}
-		// The MESSAGE is the deliverable. "unproducible" sends the
-		// reader back to the source; naming the key that took the byte
-		// is what makes the fix obvious.
 		if !strings.Contains(err.Error(), strconv.Quote(g)) {
 			t.Errorf("ParseGesture(%q) errored without naming the gesture: %v", g, err)
+		}
+		if want, ok := namesTheCause[strings.ToLower(g)]; ok {
+			named[strings.ToLower(g)] = true
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ParseGesture(%q) = %q, which does not say the byte "+
+					"decodes as %s — the cause is the deliverable, not the verdict",
+					g, err, want)
+			}
+		}
+	}
+	// Every entry reached, rather than a count: ctrl+h and ctrl+H fold to
+	// one gesture and ctrl+[ has no upper-case spelling, so counting
+	// visits would encode that arithmetic instead of the claim.
+	for g := range namesTheCause {
+		if !named[g] {
+			t.Errorf("%q is not in the dead set, so nothing asserted that its "+
+				"error names the key that took its byte", g)
+		}
+	}
+}
+
+// TestAnAltPrefixDoesNotRescueADeadCtrlGesture pins the ModAlt mask in
+// errUnproducible from the REJECT side. TestALiveCtrlGestureStillParses
+// covers the accept side (ctrl+alt+p), and the mask is on the path of
+// shipped keys — the wysiwyg dock binds ctrl+alt+left, ctrl+alt+right
+// and ctrl+alt+p — so a mask that leaked either way would matter.
+//
+// alt is an ESC PREFIX rather than part of the byte, so it cannot make
+// an unreachable byte reachable: alt+ctrl+j is 0x1b 0x0a, and the 0x0a
+// is still enter.
+func TestAnAltPrefixDoesNotRescueADeadCtrlGesture(t *testing.T) {
+	for _, g := range []string{"alt+ctrl+j", "ctrl+alt+h", "alt+ctrl+1"} {
+		if ev, err := ParseGesture(g); err == nil {
+			t.Errorf("ParseGesture(%q) = %v; alt is an ESC prefix and does not "+
+				"change which byte the ctrl half needs", g, ev)
 		}
 	}
 }

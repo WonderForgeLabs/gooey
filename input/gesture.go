@@ -98,16 +98,19 @@ func ParseGesture(s string) (KeyEvent, error) {
 // printable carrying ModCtrl can only come from decode.go's c < 0x20
 // arm; the multi-byte sequences produce named keys, and alt is an ESC
 // prefix that this deliberately looks past (see errUnproducible).
-var producible = sync.OnceValue(func() map[KeyEvent]byte {
-	out := map[KeyEvent]byte{}
+var producible = sync.OnceValue(func() map[KeyEvent]struct{} {
+	out := map[KeyEvent]struct{}{}
 	for c := 0; c < 0x100; c++ {
 		ev, _, ok := Decode([]byte{byte(c)}, true)
 		if !ok || ev.Kind != EventKey {
 			continue
 		}
-		if _, seen := out[ev.Key]; !seen {
-			out[ev.Key] = byte(c)
-		}
+		// MEMBERSHIP is the whole contract — several bytes can decode to
+		// one event and the set does not care which. Keeping the byte as
+		// the value would have needed a first-wins guard to break that
+		// tie, over a value nothing reads: errUnproducible recomputes the
+		// byte from ctrlByte where it needs one for the message.
+		out[ev.Key] = struct{}{}
 	}
 	return out
 })
@@ -135,9 +138,15 @@ func ctrlByte(r rune) (byte, bool) {
 //
 // ALT IS MASKED OFF because it is an ESC PREFIX, not part of the byte:
 // alt+ctrl+p arrives as 0x1b 0x10, and the question this asks is only
-// about the 0x10. Named keys are not checked at all — ctrl+enter and
-// friends parse fine and are also mostly unreportable, which is the
-// reverse direction and still open (see #427).
+// about the 0x10. The dock's real bindings are alt-prefixed ctrl
+// gestures, so that mask is on the path of shipped keys.
+//
+// The KeyRune guard below is unreachable from ParseGesture today — the
+// named-key loop returns before the ctrl block that calls this — so it
+// is a guard for a future caller rather than a live branch. Named ctrl
+// gestures do NOT flow through here and get waved past: ctrl+enter and
+// friends are also mostly unreportable, and that reverse direction is
+// still open (see #427).
 func errUnproducible(ev KeyEvent, s string) error {
 	if ev.Key != KeyRune {
 		return nil
@@ -156,7 +165,14 @@ func errUnproducible(ev KeyEvent, s string) error {
 				"which decodes as %s", s, b, got.Key)
 		}
 	}
-	return fmt.Errorf("input: gesture %q never fires: no terminal can report it. ctrl "+
-		"reaches only @ through _ and a through z, because the control byte is "+
-		"decoded as byte|0x40", s)
+	// "gooey's decoder never produces it", NOT "no terminal can report
+	// it", which was false for two of the entries this branch answers:
+	// xterm really does send 0x7f for ctrl+? and 0x1f for ctrl+/. It is
+	// this decoder that reads those as backspace and ctrl+_, so the
+	// verdict holds and the earlier CAUSE did not — in a file whose
+	// whole thesis is that naming the cause is the deliverable. Found in
+	// review of #427's PR.
+	return fmt.Errorf("input: gesture %q never fires: gooey's decoder never produces "+
+		"it. ctrl reaches only @ through _ and a through z, because a control byte "+
+		"is decoded as byte|0x40", s)
 }
