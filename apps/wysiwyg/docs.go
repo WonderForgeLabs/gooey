@@ -128,7 +128,21 @@ func docsPages(fsys fs.FS) (pages []docPage, skipped int) {
 	if fsys == nil {
 		return nil, 0
 	}
-	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+	// WalkDir'S OWN RETURN IS DISCARDED, and it is discarded rather than
+	// counted because it is always nil. A trailing `if err != nil {
+	// skipped++ }` stood here until the review of #426, arguing that a
+	// root failure reaches the walker but never the callback. io/fs does
+	// the opposite: a failed Stat on the root calls fn(root, nil, err),
+	// so the callback DOES see it, counts it, and returns nil; a failed
+	// ReadDir calls fn a second time with a non-nil d, which returns
+	// SkipDir, which walkDir converts to nil. The callback returns only
+	// nil or SkipDir and both are swallowed.
+	//
+	// So the branch could not fire, and its comment was the worse half:
+	// a reader who trusted it would believe root failures arrive by a
+	// second road and would not think to test the first.
+	// TestAnUnreadableRootIsCountedOnce takes that road.
+	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			skipped++
 			// A directory that cannot be read is skipped rather than
@@ -145,12 +159,6 @@ func docsPages(fsys fs.FS) (pages []docPage, skipped int) {
 		pages = append(pages, docPage{Path: p, Label: p})
 		return nil
 	})
-	if err != nil {
-		// The callback above never returns a non-nil error, so this is
-		// the root itself being unreadable — WalkDir's own failure,
-		// which the callback never sees as a per-entry skip.
-		skipped++
-	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Path < pages[j].Path })
 	return pages, skipped
 }

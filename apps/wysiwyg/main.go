@@ -818,9 +818,16 @@ type editor struct {
 	// Going through a property means "the list changed" is expressible,
 	// and the only reason the tests' post-construction override worked
 	// was that nothing had evaluated the computed yet.
-	docsRoot    fs.FS
+	//
+	// docsRoot and docsSkipped are SOURCE PROPERTIES for the same reason,
+	// and the review of #426 found them sitting under that paragraph
+	// still plain: docsBody reads both, so a refresh that changed either
+	// without also writing docList would invalidate nothing. That every
+	// refresh happens to write all three today is a coupling nobody had
+	// written down, which is what the docsItems defect was made of.
+	docsRoot    *prop.Property[fs.FS]
 	docList     *prop.Property[[]docPage]
-	docsSkipped int
+	docsSkipped *prop.Property[int]
 	docsItems   *prop.Property[components.ItemSource]
 	docsSel     *prop.Property[int]
 	docsBody    *prop.Property[string]
@@ -1048,24 +1055,28 @@ type editor struct {
 // before the assignment ran. That is the same accident-of-ordering this
 // PR's review found in docsItems, and there is no reason to keep a
 // second one.
-func (ed *editor) emptyDocsBody(list []docPage) string {
+// TWO STATES, not three. A "Select a page." case sat below these until
+// the review of #426: it could only be entered with a non-empty list,
+// and docsBody now CLAMPS such an index to a real page rather than
+// asking for a message, so nothing could reach it. A branch nothing can
+// enter is a claim about behaviour that never happens.
+// A PLAIN FUNCTION taking what it needs, not a method reading the
+// editor: every property read belongs to the computed that calls it, and
+// hoisted to the top of that computed, so the dependency set does not
+// depend on which branch ran. See docsBody.
+func emptyDocsBody(root fs.FS, skipped int) string {
 	skipnote := ""
-	if ed.docsSkipped > 0 {
+	if skipped > 0 {
 		unit := "entries"
-		if ed.docsSkipped == 1 {
+		if skipped == 1 {
 			unit = "entry"
 		}
-		skipnote = fmt.Sprintf(" %d %s could not be read.", ed.docsSkipped, unit)
+		skipnote = fmt.Sprintf(" %d %s could not be read.", skipped, unit)
 	}
-	switch {
-	case ed.docsRoot == nil:
+	if root == nil {
 		return "No docs/ directory was found beside the editor." + skipnote
-	case len(list) == 0:
-		return "The docs/ directory beside the editor holds no markdown pages." + skipnote
-	case ed.docsSkipped > 0:
-		return "Select a page." + skipnote
 	}
-	return ""
+	return "The docs/ directory beside the editor holds no markdown pages." + skipnote
 }
 
 func newEditor(fsys fs.FS) *editor {
@@ -1207,10 +1218,11 @@ func newEditor(fsys fs.FS) *editor {
 	// THE DOCS TREE, resolved once. docsRoot is nil when there is none
 	// beside the editor, which is a legal state the pane says out loud
 	// rather than a startup failure — see docsFS.
-	ed.docsRoot = docsFS()
-	pages, skipped := docsPages(ed.docsRoot)
+	docsRootFS := docsFS()
+	pages, skipped := docsPages(docsRootFS)
+	ed.docsRoot = prop.NewSource(docsRootFS)
 	ed.docList = prop.NewSource(pages)
-	ed.docsSkipped = skipped
+	ed.docsSkipped = prop.NewSource(skipped)
 	ed.docsItems = prop.NewComputed(func() components.ItemSource {
 		return components.ItemsOf(ed.docList.Get(), func(d docPage) map[string]any {
 			return map[string]any{"Name": d.Label, "Bar": "▌"}
@@ -1244,12 +1256,32 @@ func newEditor(fsys fs.FS) *editor {
 	// forever. Re-reading costs one file read per selection change, which
 	// is the same order as the read the cache was saving.
 	ed.docsBody = prop.NewComputed(func() string {
+		// HOISTED, ALL FOUR, above every branch. A Get behind an early
+		// return drops out of the dependency set on the frames it does
+		// not run, and the pane goes deaf to that property with no error
+		// anywhere — the trap CLAUDE.md names and the one the two fields
+		// promoted above were already an instance of.
+		root := ed.docsRoot.Get()
 		list := ed.docList.Get()
 		i := ed.docsSel.Get()
-		if i < 0 || i >= len(list) {
-			return ed.emptyDocsBody(list)
+		skipped := ed.docsSkipped.Get()
+		if len(list) == 0 {
+			return emptyDocsBody(root, skipped)
 		}
-		return docBody(ed.docsRoot, list[i].Path)
+		// CLAMPED, the way ItemsView.selection clamps its own read
+		// (components/itemsview.go:472). The view and the pane read the
+		// same index and must agree about what it means: the view clamps
+		// and writes back only on a gesture, so a docList that refreshes
+		// SHORTER leaves the list highlighting a row while an
+		// out-of-range branch here rendered nothing — a blank pane that
+		// is indistinguishable from a page with nothing in it, which is
+		// the exact failure docBody's own comment argues against.
+		//
+		// A shorter list is not hypothetical: it is what docList was
+		// promoted to a source property to support. Found in review of
+		// #426.
+		i = min(max(i, 0), len(list)-1)
+		return docBody(root, list[i].Path)
 	})
 
 	ed.paletteItems = prop.NewComputed(func() components.ItemSource {

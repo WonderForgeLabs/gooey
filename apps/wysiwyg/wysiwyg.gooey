@@ -478,7 +478,18 @@
                    docs/specs/2026-08-23-scrolling.md (issue #67), which
                    is real work and correctly out of scope for the cheap
                    version. -->
-              <Text Grid.Row="1" Style="dim">{{.DocsBody}}</Text>
+              <!-- NO Style, and that is deliberate rather than an omission.
+                   dim is what this page uses for secondary chrome — hints,
+                   the fit message, the "designer is the centre pane" note —
+                   and a pane whose whole purpose is reading prose is not
+                   chrome. Reading architecture.md at reduced contrast works
+                   against the feature. Found in review of #426.
+
+                   The empty-state messages come back through this same
+                   <Text>, so they lose the dim too; one string cannot carry
+                   two styles, and the primary content is the one to get the
+                   readable one. -->
+              <Text Grid.Row="1">{{.DocsBody}}</Text>
             </Grid>
           </Tab>
 
