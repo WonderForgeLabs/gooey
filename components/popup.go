@@ -20,6 +20,7 @@ import (
 //     focus and pointer capture land on while the popup is open. The
 //     owner keeps everything domain-shaped: what the popup shows, where
 //     it goes, which gestures mean what.
+//
 //   - The SURFACE is the visible box: a leaf child the owner returns
 //     from ChildComponents LAST, and marked gooey.Overlay, whose
 //     pre-clear paints exactly the popup rectangle — the overlay
@@ -33,6 +34,7 @@ import (
 //     in the walk, so anything declared after the owner painted over an
 //     open popup and nothing put it back (#430). The marker is what
 //     hoists it out of document order entirely.
+//
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //
