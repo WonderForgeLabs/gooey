@@ -82,6 +82,15 @@ Three consequences for a custom `Render`:
   columns — but the buffer stops matching the screen, which matters if
   you later decide what to un-highlight by reading styles back. Drive
   that from your own state, not from the plane.
+
+  The mirror case used to cost you the **character**, not the style, and
+  is fixed: when your clip ends one column short of a wide glyph an
+  enclosing paint put down, `SetCell` once took its wide-*placement*
+  branch, found no room for the tail, and wrote a space. It now
+  recognises a style-only write over a pair that is already there and
+  restyles the lead in place. You do not have to do anything about it —
+  it is here because the failure was silent and the fix is worth knowing
+  about if you read the code.
 - **Assigning `Buffer.Cells` directly is the one sharp edge.** `Set`,
   `SetString` and `SetCell` all repair a glyph you overpaint half of, so
   ordinary drawing is safe. A loop that writes the slice does not get

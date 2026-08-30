@@ -496,24 +496,25 @@ func TestAnUnclassifiedKeyCannotEnterASealedSubtree(t *testing.T) {
 	}
 }
 
-// TestEveryGroupExpansionParsesBackToTheGroup is the round-trip
-// AllowGroups owes handlers/sets.
+// TestAGroupExpansionNeverGrantsMoreThanTheGroup is the safety rule
+// AllowGroups owes handlers/sets, and it is CONTAINMENT rather than
+// equality — which is the correction. sets:Group is served straight out
+// of that map, so an expansion parsing back to something WIDER than the
+// group is a permission granted by a spelling nobody chose.
 //
-// sets:Group is served straight out of that map, so an expansion that
-// does not parse back to its own group means two spellings of one
-// permission set silently disagree — <Frozen Allow="{sets:Group `All`}">
-// withholding a class that <Frozen Allow="All"> admits, which
-// docs/markup-reference.md says is identical to no <Frozen> at all.
+// Equality is the wrong assertion, and this test asserted it for one
+// round. "All" cannot round-trip: it contains bitUnknown, which is
+// deliberately nameless, so its names parse back to a set without it.
+// That is a NARROWING, the direction the whole design leans — an
+// unclassified key fails closed. Demanding equality made the opaque
+// token "All" look like the fix, and that token broke the name algebra
+// this map feeds: "everything except Start" came back as "All", which
+// grants Start.
 //
-// Written against Names(), this failed on exactly two groups, and they
-// are the two that are not unions of names at all: All contains
-// bitUnknown, which is deliberately nameless, so its primitives parse
-// back to a SMALLER set; None has no names, and the empty string is how
-// markup says an attribute was not written. The other three round-trip
-// through Names, which is why expanding that way looked right.
-//
-// Found in review of #425.
-func TestEveryGroupExpansionParsesBackToTheGroup(t *testing.T) {
+// So: never wider, and never EMPTY, because the empty string is how
+// markup says an attribute was not written and would read as no seal at
+// all. Those two are the contract.
+func TestAGroupExpansionNeverGrantsMoreThanTheGroup(t *testing.T) {
 	groups := AllowGroups()
 	if len(groups) == 0 {
 		t.Fatal("AllowGroups is empty — this test would pass vacuously")
@@ -535,10 +536,57 @@ func TestEveryGroupExpansionParsesBackToTheGroup(t *testing.T) {
 				name, strings.Join(names, " "), err)
 			continue
 		}
-		if got != want {
-			t.Errorf("group %q expands to %q, which parses back to %q — two "+
-				"spellings of one set that do not mean the same thing",
+		if got.Union(want) != want {
+			t.Errorf("group %q expands to %q, which parses to %q — WIDER than the "+
+				"group it names, so the expansion grants what the group does not",
 				name, strings.Join(names, " "), got)
 		}
+	}
+}
+
+// TestOnlyAllNarrowsUnderExpansion bounds that exception from the other
+// side. Containment alone is satisfied by a group expanding to "None",
+// so the narrowing has to be exactly the one the design argues for: the
+// nameless class, and only out of "All".
+func TestOnlyAllNarrowsUnderExpansion(t *testing.T) {
+	for name, names := range AllowGroups() {
+		want, _ := ParseAllow(name)
+		got, _ := ParseAllow(strings.Join(names, " "))
+		if got == want {
+			continue
+		}
+		if name != "All" {
+			t.Errorf("group %q expands to %q, which parses to %q rather than %q; "+
+				"only All is expected to narrow", name, strings.Join(names, " "), got, want)
+			continue
+		}
+		if lost := want &^ got; lost != bitUnknown {
+			t.Errorf("expanding All drops %v; the only bit it may drop is the "+
+				"nameless unclassified class", lost)
+		}
+	}
+}
+
+// TestAnUnclassifiedKeyStillDescribesItself: AllowFor hands back
+// bitUnknown for a key nobody classified, and Allow is a fmt.Stringer,
+// so a host logging the class it refused printed the EMPTY STRING — the
+// one rendering String's own doc forbids, in the one case where the
+// message is the entire point.
+//
+// The name must still be UNGRANTABLE, and that half is what makes this
+// more than cosmetic: rendering a value is not the same as accepting it.
+func TestAnUnclassifiedKeyStillDescribesItself(t *testing.T) {
+	a := AllowFor(input.KeyEvent{Key: input.Key(200)})
+	if a != bitUnknown {
+		t.Fatalf("an undeclared key classifies as %v, not the unclassified class — "+
+			"the fixture no longer reaches the case", a)
+	}
+	if got := a.String(); got == "" {
+		t.Error("the unclassified class renders as the empty string, which is how " +
+			"markup says an attribute was not written")
+	}
+	if _, err := ParseAllow(a.String()); err == nil {
+		t.Errorf("ParseAllow accepts %q, so the unclassified class became grantable "+
+			"by name — every frozen host must withhold it", a.String())
 	}
 }

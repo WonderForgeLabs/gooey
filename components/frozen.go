@@ -151,6 +151,7 @@ func (f *Frozen) FrozenAllow() gooey.Allow {
 // from the Frozen section of docs/markup-reference.md.
 //
 // Until then the fail-closed half is the guarantee — an unparseable set
-// never grants anything — and TestAFailedAllowParseFailsClosed is what
-// holds it.
+// never grants anything — and what holds it is
+// TestAnUnknownAllowCategoryInABindingFailsClosed, in
+// markup/frozenallow_test.go.
 func (f *Frozen) AllowError() error { return f.cachedErr }

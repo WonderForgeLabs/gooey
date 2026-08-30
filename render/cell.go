@@ -236,6 +236,28 @@ func (b *Buffer) SetCell(x, y int, c Cell) {
 		// the rest of the row either way. A space is the honest answer,
 		// and the one SetString already gives at the right edge.
 		if x+1 >= b.cx1 {
+			// A RESTYLE IS NOT A PLACEMENT, and answering one with a
+			// space deletes a character. docs/learn/howto/howto-custom-draw.md
+			// documents `b.SetCell(x, y, b.At(x, y).WithStyle(st))` as
+			// the way to restyle, and a row highlight runs it across a
+			// span — so a descendant clipped one column short of an
+			// enclosing paint's wide glyph erased it. That configuration
+			// is not exotic: it is the one healSeam's own comment below
+			// is written about.
+			//
+			// The pair is ALREADY on the screen here, so nothing needs
+			// placing and the tail needs no permission. Only the lead's
+			// style is written, which is inside the clip, and the tail is
+			// left untouched — its style never reaches the terminal
+			// anyway, because the flusher skips continuation cells and
+			// the lead's style covers both columns. Found in review of
+			// #425.
+			if i := y*b.W + x; b.Cells[i].Rune == c.Rune &&
+				b.Cells[i].Cluster == c.Cluster &&
+				x+1 < b.W && b.Cells[i+1].Rune == Continuation {
+				b.Cells[i].Style = c.Style
+				return
+			}
 			b.Cells[y*b.W+x] = Cell{Rune: ' ', Style: c.Style}
 			b.healSeam(x, y)
 			b.healSeam(x+1, y)

@@ -738,7 +738,9 @@ func (m *FocusManager) reachable(w Component) bool {
 // The middle step is easy to lose too: it was missing from this list
 // while attachedKey sat in the loop, and its POSITION is load-bearing.
 // Moving it past HandleKey still compiles and still passes most of the
-// suite — only TestAttachmentKeysPrecedeHost notices. Then the MNEMONICS get their turn: every
+// suite — only TestAttachmentKeysPrecedeHost notices.
+//
+// Then the MNEMONICS get their turn: every
 // MnemonicHandler in the tree, in tree order, is offered what the
 // focused chain declined — accelerators are page-scoped, so they run
 // outside the chain, but after it, which is what keeps a KeyBinding on

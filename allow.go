@@ -259,26 +259,40 @@ func AllowNames() []string {
 // handlers/sets serves sets:Group from this, so the expansion cannot
 // disagree with the constants.
 //
-// THE EXPANSION IS String's, NOT Names'. Two groups are not expressible
-// as a union of the primitive names, and Names quietly renders both as
-// something smaller:
+// AN EXPANSION MAY WITHHOLD, BUT IT MAY NEVER GRANT MORE, and the two
+// groups that are not plain unions of the primitives go opposite ways
+// under that rule. Both were wrong in a different direction across the
+// review rounds of #425, so the asymmetry is written out rather than
+// left to be re-derived:
 //
-//   - AllowAll contains bitUnknown, the class of a key nobody
-//     classified, which is deliberately nameless — so the 14 primitives
-//     parse back to a set that WITHHOLDS the unclassified class, and
-//     <Frozen Allow="{sets:Group `All`}"> would stop meaning what
-//     <Frozen Allow="All"> means;
-//   - AllowNone has no names at all, and the empty string is how markup
-//     says an attribute was NOT WRITTEN — the one spelling that must not
-//     look like a set.
+//   - "All" EXPANDS to its primitive names. AllowAll contains
+//     bitUnknown, the class of a key nobody classified, which is
+//     deliberately nameless, so those names parse back to a set that
+//     WITHHOLDS it. That is a narrowing, and narrowing is the safe
+//     direction — the same fail-closed the bit exists for. Emitting the
+//     token "All" instead looked tidier and broke the algebra this
+//     feeds: handlers/sets is a NAME set, so a difference over one
+//     opaque token removes nothing, and "everything except Start"
+//     evaluated back to "All" and GRANTED Start — a permission failing
+//     open, on the one category with a child-process argument behind it.
 //
-// String is already special-cased for exactly these two, with the
-// reasoning below; splitting its output is that rule applied at the
-// other consumer rather than restated here. Found in review of #425.
+//   - "None" DOES NOT EXPAND. AllowNone has no names, so its expansion
+//     is the empty string — which is how markup says an attribute was
+//     NOT WRITTEN, i.e. not frozen at all. That is the widest possible
+//     reading of the narrowest possible set. The token costs the algebra
+//     nothing: None is the identity for union and holds no primitive for
+//     a difference to remove.
+//
+// TestAGroupExpansionNeverGrantsMoreThanTheGroup holds the rule, and the
+// sets algebra over both spellings is covered in handlers/sets.
 func AllowGroups() map[string][]string {
 	out := make(map[string][]string, len(allowGroups))
 	for _, g := range allowGroups {
-		out[g.name] = strings.Fields(g.cat.String())
+		if names := g.cat.Names(); len(names) > 0 {
+			out[g.name] = names
+			continue
+		}
+		out[g.name] = []string{g.name}
 	}
 	return out
 }
@@ -320,8 +334,29 @@ func (a Allow) String() string {
 	if a == AllowAll {
 		return "All"
 	}
-	return strings.Join(a.Names(), " ")
+	out := a.Names()
+	// A RESIDUAL BIT STILL HAS TO SAY SOMETHING. bitUnknown is nameless
+	// on purpose — nothing may grant it — but AllowFor hands it back for
+	// an unclassified key, and Allow is a fmt.Stringer, so a host logging
+	// "this keystroke needs %s" printed the empty string. That is the one
+	// value the doc above says must never be produced, and it happened
+	// for the one case where the message IS the point: the class exists
+	// to make a new input.Key fail visibly.
+	//
+	// UnknownAllowName is not in allowNames, so allowByName still refuses
+	// it and ParseAllow still rejects it. The asymmetry is deliberate:
+	// the value can describe itself without becoming grantable. Found in
+	// review of #425.
+	if a&bitUnknown != 0 {
+		out = append(out, UnknownAllowName)
+	}
+	return strings.Join(out, " ")
 }
+
+// UnknownAllowName is how the unclassified class RENDERS. It is not a
+// name ParseAllow accepts — see String, and bitUnknown's own comment for
+// why nothing may grant it.
+const UnknownAllowName = "Unknown"
 
 // ParseAllow reads the text encoding: category names separated by spaces
 // or commas, in any order, unioned. Case-sensitive, because every other
