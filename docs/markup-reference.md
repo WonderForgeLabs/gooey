@@ -1610,7 +1610,7 @@ input: gesture "ctrl+j" never fires: a terminal sends 0x0a for it, which decodes
 Two rules produce the whole refused set, and both come from the decoder rather than from a list:
 
 - **`ctrl` reaches only `@` through `_` and `a` through `z`.** A control byte decodes as `byte|0x40`, so every digit, most punctuation, and the braces are unreachable by construction — `ctrl+1`, `ctrl+,`, `` ctrl+` `` and `ctrl+~` among them.
-- **Five of the letters are claimed by a named key first.** `ctrl+h` is backspace, `ctrl+i` is tab, `ctrl+j` and `ctrl+m` are enter, and `ctrl+[` is esc. Those are the right calls — people pressing backspace mean backspace — so bind the named key instead.
+- **Five spellings inside that range are claimed by a named key first.** `ctrl+h` is backspace, `ctrl+i` is tab, `ctrl+j` and `ctrl+m` are enter, and `ctrl+[` is esc — four letters and a bracket, not five letters. Those are the right calls, since people pressing backspace mean backspace, so bind the named key instead.
 
 `alt+` is unaffected: it is an ESC prefix rather than part of the byte, so `alt+j` and `alt+1` are fine. This is why the wysiwyg editor's move cluster is `alt+h/j/k/l` rather than the vim-shaped `ctrl+` spelling.
 

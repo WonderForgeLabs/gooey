@@ -144,9 +144,11 @@ func (s *Server) v1Tools() []*Tool {
 			Schema: object(map[string]any{
 				"text": prop_("string", "Literal text to type, one key event per character."),
 				"keys": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Gestures in markup syntax: tab, enter, esc, up, ctrl+s, shift+tab, space.",
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+					"description": "Gestures in markup syntax: tab, enter, esc, up, ctrl+s, shift+tab, space. " +
+						"A ctrl gesture no terminal can send is rejected rather than silently ignored: " +
+						"ctrl reaches only @-_ and a-z, and ctrl+h/i/j/m/[ are backspace/tab/enter/enter/esc.",
 				},
 			}),
 			Run: s.sendKeys,
