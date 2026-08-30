@@ -33,9 +33,14 @@ import (
 // one the terminal is showing; pixel placements are stored per paint node
 // and diffed the same way (placements.go).
 //
-// Z-order is document order: c.nodes is the tree in depth-first pre-order,
-// so children paint after (above) their parents and later siblings after
-// earlier ones. The paint loop keeps that order honest under partial
+// Z-order is document order IN TWO LAYERS. c.paint is the tree in
+// depth-first pre-order — so children paint after (above) their parents
+// and later siblings after earlier ones — with every Overlay subtree
+// lifted to the end, because a dropdown or a toast is not at a position
+// in the document, it is on top of it (orderPaint, and the Overlay
+// interface for why that had to stop being "declare it last").
+//
+// The paint loop keeps that order honest under partial
 // repaints: when a node paints, every LATER node whose bounds intersect
 // the painted rect is forced to repaint in the same frame — it was (or may
 // have been) painted over, and it is above, so it must go down again on
@@ -59,7 +64,14 @@ type Composer struct {
 	frame      *Frame
 	cols, rows int
 	nodes      []*paintNode
-	nodeOf     map[Component]*paintNode
+	// paint is c.nodes in PAINT order, which is document order with every
+	// Overlay subtree lifted to the end (see the Overlay interface and
+	// orderPaint). The two differ only when the tree holds an overlay, and
+	// the split is deliberate: c.nodes stays the STRUCTURE — what the
+	// sweeps, the re-sync and restoreUnder walk, none of which care about
+	// order — and paint is the one answer to "what is in front of what".
+	paint  []*paintNode
+	nodeOf map[Component]*paintNode
 	focus      *FocusManager
 	invalid    func()
 	painted    int
@@ -107,6 +119,14 @@ type paintNode struct {
 	parent  *paintNode // ancestor chain: background lookup and z-order exemptions
 	stamp   int        // frameSeq of the last frame this node painted in
 	covered bool       // last paint overwrote the node's whole rect (pre-clear or fill)
+
+	// overlay is whether this node paints in the overlay layer — because
+	// its component implements Overlay, or because an ancestor's does.
+	// Inherited rather than asked per node so an overlay's SUBTREE is
+	// lifted with it: an overlay that is a container would otherwise
+	// leave its children behind in the ordinary layer, painting under the
+	// very surface they belong to.
+	overlay bool
 
 	// visObs exists only for a component whose Layout binds Visibility:
 	// a computed whose evaluation reads the bound source (recording the
@@ -262,6 +282,35 @@ func (c *Composer) HandleKey(ev input.KeyEvent) bool { return c.focus.Dispatch(e
 // HandleMouse routes a pointer event. See FocusManager.DispatchMouse.
 func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.DispatchMouse(ev) }
 
+// orderPaint derives the paint order from the structural one: document
+// order, with every Overlay subtree lifted to the end.
+//
+// Two layers, each internally in document order, and the lift is GLOBAL
+// rather than within the overlay's parent. That is not a shortcut, it is
+// the requirement: a MenuBar three containers deep still has to drop its
+// menu over a dock that is a sibling of its great-grandparent, and
+// "above my own siblings" would put the dropdown under it. An overlay is
+// on top of the page, not on top of its neighbours.
+//
+// Membership is inherited down the tree rather than asked of each node,
+// which is what moves an overlay's whole SUBTREE with it. c.nodes is
+// depth-first pre-order, so a node's parent has already been visited and
+// its answer is ready — one pass, no ancestor walk.
+func (c *Composer) orderPaint() {
+	c.paint = c.paint[:0]
+	var over []*paintNode
+	for _, n := range c.nodes {
+		_, isOverlay := n.w.(Overlay)
+		n.overlay = isOverlay || (n.parent != nil && n.parent.overlay)
+		if n.overlay {
+			over = append(over, n)
+		} else {
+			c.paint = append(c.paint, n)
+		}
+	}
+	c.paint = append(c.paint, over...)
+}
+
 // walkNodes rebuilds the paint-node list from the current tree, REUSING
 // the node of every component that was already there. Reuse is the whole
 // point: a node carries the component's recorded dependencies and its
@@ -288,6 +337,7 @@ func (c *Composer) walkNodes() {
 	c.nodes = c.nodes[:0]
 	c.startable = c.startable[:0]
 	c.build(c.root, prev, nil)
+	c.orderPaint()
 	// Taken here as well as in Frame, so a cycle in the tree a Composer is
 	// CONSTRUCTED with is readable before the first frame is asked for.
 	if f := TakeLayoutFault(); f != nil && c.fault == nil {
@@ -895,7 +945,7 @@ func (c *Composer) Frame() (*Frame, int) {
 	// is already in c.over.
 	c.frameSeq++
 	c.over = c.over[:0]
-	for _, n := range c.nodes {
+	for _, n := range c.paint {
 		// A non-paintable node is never forced from below: it has nothing
 		// on screen to restore, and forcing it would run its pre-clear
 		// over cells the restore pass just repainted (a Hidden overlay
@@ -929,7 +979,7 @@ func (c *Composer) Frame() (*Frame, int) {
 	// incremental emission works off the per-node lists; this is for
 	// anyone holding the Frame — Frame.Flush, a test, a screenshot.
 	c.frame.placements = c.frame.placements[:0]
-	for _, n := range c.nodes {
+	for _, n := range c.paint {
 		c.frame.placements = append(c.frame.placements, n.places...)
 	}
 	return c.frame, c.painted

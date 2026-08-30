@@ -76,6 +76,45 @@ type ChildSetter interface {
 	SetChild(i int, w Component) bool
 }
 
+// Overlay is implemented by a component whose paint node belongs ABOVE
+// the page rather than at its place in document order. Its subtree comes
+// with it.
+//
+// Z-order is otherwise document order, and for everything that sits IN
+// the layout that is the right rule — later siblings are in front,
+// children are in front of their parents. An overlay is the case it
+// cannot express: a dropdown, a tooltip, a toast is not at a position in
+// the document, it is on top of it, and where its owner happens to be
+// declared has nothing to do with what it must cover.
+//
+// THE OLD ANSWER WAS "DECLARE IT LAST", and it was not an answer. A
+// popup surface is the last of its OWNER'S children, which buys being
+// above the owner's other children and nothing else: Frame's z-ordered
+// pass forces a repaint only of nodes LATER in c.nodes than a painter
+// beneath them, so the surface stayed on top exactly while its owner was
+// the last thing in the whole document. Put a component after the owner
+// that overlaps the dropdown — a Gauge beside a MenuBar on a design
+// canvas — and every frame in which that component repaints paints over
+// the open popup, with nothing able to put it back, because forcing only
+// ever runs forward. That is #430, and "the popup vanished" was the
+// report.
+//
+// A MARKER, not a predicate, and the empty method is the point. Making
+// it `Overlays() bool` would put the answer in a property somebody
+// writes at runtime, and a paint node's position is structural — the
+// framework would then need an observer to notice a flip and a re-sync
+// to act on it, which is the machinery Frozen needs and earns. Nothing
+// wants to become an overlay halfway through its life. A popup that is
+// closed is arranged to a zero rect and skipped by the bounds check, so
+// membership costs nothing while it is not showing.
+//
+// Overlays keep document order AMONG THEMSELVES. That is a real limit:
+// two overlapping popups paint in the order they were declared rather
+// than the order they were opened. Nothing in the tree needs the other
+// answer yet, and the machinery it would take — an open-order stack the
+// Composer maintains — is worth writing when something does.
+type Overlay interface{ OverlaysPage() }
+
 // HasBackground is implemented by containers that declare a background
 // fill. The fill itself is the framework's job — the Composer (and the
 // one-shot Compose) paints the container's bounds with the color before
