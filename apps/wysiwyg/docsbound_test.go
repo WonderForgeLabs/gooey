@@ -62,3 +62,45 @@ func TestClampLinesCutsOnALineBoundary(t *testing.T) {
 		t.Errorf("kept %q, want the first two whole lines", head)
 	}
 }
+
+// TestAPageOfExactlyTheBoundIsNotMarked is the boundary the two tests
+// above step over by construction — their arms are docsBodyMaxLines*3
+// and 3, so neither can see what happens AT n.
+//
+// The marker is a claim that content was cut. Claiming it when nothing
+// was cut is the inverse of the confusion the marker exists to prevent:
+// the reader goes looking for a continuation that does not exist. It is
+// latent for the repo's own docs today — the longest page is nowhere
+// near 400 lines — so it fires on whichever page reaches exactly the
+// bound, which is precisely the day nobody is looking.
+//
+// BYTE-IDENTICAL, not "contains no marker": the same defect also ate the
+// string's trailing newline, and an assertion on the marker alone passes
+// against that.
+func TestAPageOfExactlyTheBoundIsNotMarked(t *testing.T) {
+	for _, n := range []int{1, 2, docsBodyMaxLines} {
+		in := strings.Repeat("x\n", n)
+		if got := clampLines(in, n); got != in {
+			t.Errorf("clampLines(%d lines, n=%d) = %q, want it back unchanged — "+
+				"nothing followed the nth newline, so nothing was cut", n, n, got)
+		}
+	}
+}
+
+// TestClampLinesDoesNotUseZeroAsNotFound is the second half of the same
+// defect: cut doubled as an index and as a found-flag, so a string whose
+// first byte is a newline — a legitimate cut at 0 — was returned whole.
+//
+// Unreachable at docsBodyMaxLines, and pinned anyway, because the reason
+// it is unreachable is the value of one constant.
+func TestClampLinesDoesNotUseZeroAsNotFound(t *testing.T) {
+	const in = "\nabc\ndef\n"
+	got := clampLines(in, 1)
+	if got == in {
+		t.Fatalf("clampLines(%q, 1) returned it unclamped; a cut at index 0 is "+
+			"a real cut, not a not-found sentinel", in)
+	}
+	if head, _, ok := strings.Cut(got, "\n\n…"); !ok || head != "" {
+		t.Errorf("clampLines(%q, 1) = %q, want the empty first line plus the marker", in, got)
+	}
+}

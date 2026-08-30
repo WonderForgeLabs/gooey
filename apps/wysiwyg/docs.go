@@ -200,22 +200,40 @@ const docsBodyMaxLines = 400
 // the failure docBody's own comment refuses to ship elsewhere — and it
 // would be worse here, because this cut is invisible even to someone
 // scrolling, there being nothing to scroll with.
+//
+// WHICH MAKES A SPURIOUS MARKER THE WORSE FAILURE, and it is the one
+// this function shipped. The marker is a CLAIM that content was cut, so
+// a page of exactly n lines that gets it anyway sends the reader hunting
+// for text that does not exist — the inverse of the confusion the marker
+// exists to prevent. Two bugs, one line apart, both found in review of
+// #426:
+//
+//   - the loop broke on the nth '\n' without asking whether anything
+//     FOLLOWED it, so clampLines("x\nx\nx\n", 3) came back marked and
+//     one newline short;
+//   - cut doubled as an index and as a found-flag, so a string whose
+//     first byte is a newline — cut == 0, legitimately — was returned
+//     unclamped. Unreachable at n = 400 and the same defect regardless,
+//     which is why it now gets its own bool rather than a sentinel that
+//     collides with a real answer.
 func clampLines(s string, n int) string {
 	if n <= 0 {
 		return s
 	}
-	cut, lines := 0, 0
+	cut, lines, found := 0, 0, false
 	for i := 0; i < len(s); i++ {
 		if s[i] != '\n' {
 			continue
 		}
 		lines++
 		if lines == n {
-			cut = i
+			cut, found = i, true
 			break
 		}
 	}
-	if cut == 0 {
+	// Nothing after the nth newline is nothing cut, and the whole string
+	// is the answer — trailing newline included.
+	if !found || cut+1 >= len(s) {
 		return s
 	}
 	return s[:cut] + "\n\n\u2026 this page continues past what the pane measures " +

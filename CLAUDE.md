@@ -437,7 +437,7 @@ not save you here and reading it as a safety net is the trap: it stops
 the overflow reaching a NEIGHBOUR's cells, which is a different problem.
 The glyph is still lost, silently, inside your own rect — and the
 sentence this paragraph replaced said "nothing clips at the frame level",
-which stopped being true on 2026-08-25 and would send a reader looking
+which stopped being true on 2026-08-29 and would send a reader looking
 for the missing characters somewhere on screen. Measure with `render.StringWidth`, clip with
 `render.ClipCols` (which stops BEFORE a glyph that would overrun, so it
 may return a column short — half a glyph is not drawable), and write
