@@ -44,7 +44,16 @@ func ParseGesture(s string) (KeyEvent, error) {
 			return KeyEvent{}, fmt.Errorf("input: unknown modifier %q in gesture %q", m, s)
 		}
 	}
-	if key == "space" {
+	// EqualFold, not ==, and the difference was visible from the docs.
+	// "space" is the one named key that is not IN keyNames — it maps to a
+	// literal " " and never reaches the EqualFold loop below — so an exact
+	// match here made it the one named key that was case-sensitive:
+	// "Enter", "ESC" and "Tab" all parsed and "Space" did not, while
+	// docs/learn/howto/howto-keybindings.md said named-key matching is
+	// case-insensitive and listed space among them. Found in review of
+	// #428, which is the change that made ctrl+space a documented
+	// destination.
+	if strings.EqualFold(key, "space") {
 		key = " "
 	}
 	for _, n := range keyNames {

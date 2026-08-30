@@ -20,6 +20,39 @@ import (
 // absence was invisible because the comment claimed the set was two.
 var gestureAttr = regexp.MustCompile(`Gesture(?:="|:\s*"|\s*=\s*")([^"]*)"`)
 
+// AND THE MARKUP FORM HAS A SECOND QUOTE STYLE. The loader is
+// encoding/xml (markup/markup.go), whose tokenizer erases the quote
+// character before e.Attr is read — so `Gesture='ctrl+j'` is a perfectly
+// loadable binding, and a sweep that requires `"` on both sides cannot
+// see it. No file in the tree writes one today, which is exactly why it
+// was invisible: the same shape as the brace-skip hole the previous
+// round closed, a blind spot in the sweep shaped like the thing being
+// swept for. Found in review of #428.
+//
+// A SECOND PATTERN rather than an alternation inside the first, because
+// RE2 has no backreferences: one regexp cannot say "the closing quote
+// matches the opening one", and two capture groups cannot be told apart
+// from a legitimately empty value without dropping to submatch INDEXES.
+// Two patterns and a union is the version somebody can read.
+//
+// Go has no single-quoted string, so this form is markup-only and the
+// `:` and bare-`=` spellings are deliberately absent from it.
+var gestureAttrSingle = regexp.MustCompile(`Gesture\s*=\s*'([^']*)'`)
+
+// boundGestures is every gesture written in src, in any spelling the two
+// patterns above cover. The sweep and the matcher test both go through
+// here, so the test cannot pass against a sweep that reads something
+// else.
+func boundGestures(src string) []string {
+	var out []string
+	for _, re := range []*regexp.Regexp{gestureAttr, gestureAttrSingle} {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
 // TestEveryBoundGestureCanActuallyBeProduced is the sweep #427's
 // acceptance asks for, and it is the assertion that makes the parser's
 // new strictness safe rather than merely correct.
@@ -56,7 +89,20 @@ func TestEveryBoundGestureCanActuallyBeProduced(t *testing.T) {
 		// worktrees hold whole other checkouts of this repo, and reading
 		// one would sweep somebody else's branch. vendor/ is third-party.
 		if d.IsDir() {
-			if name := d.Name(); p != root && (strings.HasPrefix(name, ".") || name == "vendor") {
+			// testdata/ IS EXCLUDED FOR THE SAME REASON _test.go is, and
+			// deciding it now is the point. The exclusion below reasons
+			// that a test may bind a deliberately invalid gesture to
+			// exercise the error path; a load-error FIXTURE is that same
+			// test with its markup in a file, and go's own convention
+			// already says testdata is not shipped code. There are no
+			// .gooey fixtures under testdata today, so this changes the
+			// swept count by zero — which is exactly why it had to be
+			// decided in the comment rather than discovered by the first
+			// fixture that binds ctrl+j on purpose and fails this test
+			// with a message that reads like a real shipped defect.
+			// Found in review of #428.
+			if name := d.Name(); p != root &&
+				(strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -80,8 +126,7 @@ func TestEveryBoundGestureCanActuallyBeProduced(t *testing.T) {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
-		for _, m := range gestureAttr.FindAllStringSubmatch(string(b), -1) {
-			g := m[1]
+		for _, g := range boundGestures(string(b)) {
 			// ONLY a template expression is skipped, and only on the
 			// `{{` that starts one. Skipping every string containing a
 			// brace — which this did — put a hole in the sweep exactly
@@ -138,27 +183,43 @@ func TestTheGestureMatcherSeesEveryFormItClaims(t *testing.T) {
 		// A brace KEY, which the skip used to swallow along with the
 		// template expressions.
 		{"brace key", `<KeyBinding Gesture="ctrl+{"/>`, "ctrl+{"},
+		// SINGLE-QUOTED MARKUP, which encoding/xml accepts and the sweep
+		// could not see. Nothing in the tree writes one, so this case is
+		// the only thing that can fail — which is the point.
+		{"single-quoted attribute", `<KeyBinding Gesture='ctrl+j' Command="{{.Down}}"/>`, "ctrl+j"},
+		{"single-quoted, spaced", `<KeyBinding Gesture = 'alt+k'/>`, "alt+k"},
+		// A double-quoted value may contain an apostrophe and vice versa;
+		// neither pattern may steal the other's delimiter.
+		{"apostrophe inside double quotes", `<KeyBinding Gesture="ctrl+'"/>`, "ctrl+'"},
+		{"double quote inside single quotes", `<KeyBinding Gesture='ctrl+"'/>`, `ctrl+"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := gestureAttr.FindStringSubmatch(tc.src)
-			if m == nil {
-				t.Fatalf("the matcher does not see %s at all: %s", tc.name, tc.src)
+			got := boundGestures(tc.src)
+			if len(got) != 1 {
+				t.Fatalf("the matcher sees %d gestures in %s, want exactly 1: %q",
+					len(got), tc.name, got)
 			}
-			if m[1] != tc.want {
-				t.Errorf("matched %q, want %q", m[1], tc.want)
+			if got[0] != tc.want {
+				t.Errorf("matched %q, want %q", got[0], tc.want)
 			}
-			if strings.Contains(m[1], "{{") {
+			if strings.Contains(got[0], "{{") {
 				t.Errorf("matched a template expression %q, which is not a "+
-					"static gesture", m[1])
+					"static gesture", got[0])
 			}
 		})
 	}
 
 	// And the skip still drops a bound template expression, which is the
-	// one thing it is for.
-	m := gestureAttr.FindStringSubmatch(`<KeyBinding Gesture="{{.Key}}"/>`)
-	if m == nil || !strings.Contains(m[1], "{{") {
-		t.Fatal("a bound Gesture no longer looks like a template expression, so " +
-			"the sweep would try to parse one")
+	// one thing it is for — in BOTH quote styles, since either is a
+	// loadable way to write one.
+	for _, src := range []string{
+		`<KeyBinding Gesture="{{.Key}}"/>`,
+		`<KeyBinding Gesture='{{.Key}}'/>`,
+	} {
+		got := boundGestures(src)
+		if len(got) != 1 || !strings.Contains(got[0], "{{") {
+			t.Fatalf("a bound Gesture in %s no longer looks like a template "+
+				"expression (%q), so the sweep would try to parse one", src, got)
+		}
 	}
 }
