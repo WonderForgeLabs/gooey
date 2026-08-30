@@ -18,10 +18,15 @@ directory and carries that pair as its one recorded allowance, so a
 genuinely mis-copied glyph still reddens.
 
 VERIFIED 2026-08-30: every file here was fetched from src/icons/ on that
-repository's main branch and compared byte for byte. All 33 match. The
-recipe is in components/activitybar/icons/LICENSE, which carries the
-same claim for its five; running it there without running it here would
-verify the smaller half.
+repository's main branch and compared byte for byte, and every one
+matched. The recipe is in components/activitybar/icons/LICENSE, which
+carries the same claim for the icons beside it; running it there without
+running it here would verify the smaller half.
+
+Neither file writes down how many icons it covers. That is not laziness:
+a count in prose is a sample taken once, it goes stale the first time
+someone adds an SVG, and nothing here can go red when it does — see the
+same reasoning in the root CLAUDE.md.
 
 CC BY 4.0 permits use and modification, commercial included, and requires
 attribution — which is what this file is. Keep it beside the icons.

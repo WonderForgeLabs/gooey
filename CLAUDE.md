@@ -409,8 +409,15 @@ Damage-count tests catch this; nothing else does.
 `Measure`'s W, a popup's self-sizing width, a menu title's span, a paint
 cursor's advance — all cells. A CJK character or an emoji is one rune and
 TWO cells, so a rune count asks layout for a box narrower than its own
-text, and nothing clips at the frame level ([#357](https://github.com/WonderForgeLabs/gooey/issues/357))
-to catch the overflow. Measure with `render.StringWidth`, clip with
+text. Clipping ([#357](https://github.com/WonderForgeLabs/gooey/issues/357),
+landed in [PR #409](https://github.com/WonderForgeLabs/gooey/pull/409);
+`Composer.build` brackets every `Render` with `Cells.Clip(bounds)`) does
+not save you here and reading it as a safety net is the trap: it stops
+the overflow reaching a NEIGHBOUR's cells, which is a different problem.
+The glyph is still lost, silently, inside your own rect — and the
+sentence this paragraph replaced said "nothing clips at the frame level",
+which stopped being true on 2026-08-25 and would send a reader looking
+for the missing characters somewhere on screen. Measure with `render.StringWidth`, clip with
 `render.ClipCols` (which stops BEFORE a glyph that would overrun, so it
 may return a column short — half a glyph is not drawable), and write
 through `Buffer.SetString`, which lays the `render.Continuation` marker in
