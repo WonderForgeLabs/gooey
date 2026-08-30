@@ -224,6 +224,37 @@ type Decorator interface{ DecoratesCells() }
 // colour — see cellPassthrough in composer.go.
 type CellPassthrough interface{ PassesCellsThrough() }
 
+// Overlay is implemented by a component whose subtree paints ABOVE the
+// whole composition, wherever it sits in the document.
+//
+// Z-order is document order, which is right for everything that is
+// laid out and wrong for everything that hangs over. A popup surface is
+// the last child OF ITS OWNER — components/popup.go says so, "LAST,
+// because document order is z-order" — and that buys nothing once the
+// owner has a later sibling: Composer.Frame forces a repaint only of
+// nodes LATER in the walk than a painter, so an ItemsView declared after
+// a MenuBar paints over its open dropdown and nothing puts the dropdown
+// back. It survived this long because the shell's menu happens to hang
+// over chrome-only containers whose leaves stay clean; put the same bar
+// on a Canvas beside other elements and the dropdown is erased by the
+// next frame that touches them (#430).
+//
+// Composer.walkNodes therefore hoists every overlay subtree to the end
+// of the paint order, keeping relative order among them, so the tree
+// still decides which of two overlays is on top and the DOCUMENT no
+// longer decides whether an overlay is on top at all.
+//
+// A MARKER, not a z-index. The lattice this repo wants is "in the
+// document, or over it" — one bit, which cannot be given a wrong value.
+// An integer would immediately raise "what is 5 relative to 3" in a
+// framework with no answer to it.
+//
+// The interface is on the SURFACE, not on the owner: the owner is an
+// ordinary component that is laid out where it is written, and only the
+// box that hangs over floats. Implementing this on a component with
+// children hoists the whole subtree.
+type Overlay interface{ OverlaysComposition() }
+
 // backgroundProp returns w's declared background handle, or nil when w
 // declares none.
 func backgroundProp(w Component) *prop.Property[render.Color] {

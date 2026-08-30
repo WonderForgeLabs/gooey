@@ -1078,8 +1078,8 @@ state change repaints just the button.
 the `MenuBar` dropdown and the `Tooltip` — extracted once the framework
 had grown four hand-rolled copies. An *owner* component stays in the
 tree, keeps focus, and decides what the popup shows; the *surface* is a
-leaf child returned last from `ChildComponents` (document order is
-z-order, so last paints on top) whose pre-clear paints exactly the
+leaf child returned last from `ChildComponents` and marked
+`gooey.Overlay`, whose pre-clear paints exactly the
 popup rectangle; the `Popup` itself is the lifecycle — an open
 property, focus save/restore per the capture-at-open rules, held
 pointer capture so a press anywhere outside dismisses, and esc as the

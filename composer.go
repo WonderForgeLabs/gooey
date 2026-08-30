@@ -33,13 +33,23 @@ import (
 // one the terminal is showing; pixel placements are stored per paint node
 // and diffed the same way (placements.go).
 //
-// Z-order is document order: c.nodes is the tree in depth-first pre-order,
-// so children paint after (above) their parents and later siblings after
-// earlier ones. The paint loop keeps that order honest under partial
+// Z-order is document order, in TWO TIERS: c.nodes is the tree in
+// depth-first pre-order, so children paint after (above) their parents
+// and later siblings after earlier ones — and then walkNodes hoists every
+// Overlay subtree to the end, keeping their relative order (see
+// hoistOverlays). The paint loop keeps that order honest under partial
 // repaints: when a node paints, every LATER node whose bounds intersect
 // the painted rect is forced to repaint in the same frame — it was (or may
 // have been) painted over, and it is above, so it must go down again on
-// top. Two exemptions keep the damage counts tight: a chrome-only
+// top.
+//
+// The second tier exists because "document order" answers the wrong
+// question for something that hangs OVER the document. The forward pass
+// forces only nodes later in the walk, so a popup surface — the last
+// child of its owner and nothing more — was painted over by any element
+// declared after the owner, with nothing to put it back (#430). Being
+// last among your siblings makes you top of a subtree; the overlay tier
+// is what makes you top of the composition. Two exemptions keep the damage counts tight: a chrome-only
 // container never forces its own descendants (its chrome never covers
 // their cells — that contract is why containers may skip pre-clearing),
 // and cell-less overlays are never forced from below. A Decorator is
@@ -83,6 +93,12 @@ type Composer struct {
 	startable []Startable          // discovered during the walk, started by Start
 	disp      *Dispatcher          // remembered by Start, so a re-sync can start new arrivals
 	stops     map[Startable]func() // one per started element, run by Close
+
+	// floating is hoistOverlays' scratch: the Overlay subtrees pulled out
+	// of the walk order, held between the two halves of the partition.
+	// Reused rather than allocated, like `over` — walkNodes runs on every
+	// structural re-sync, and a realized ItemsView row is a re-sync.
+	floating []*paintNode
 
 	// fault is the FIRST walk that refused this tree, and it is sticky on
 	// purpose: the frame that hit it is over by the time anyone can ask,
@@ -270,6 +286,7 @@ func (c *Composer) walkNodes() {
 	c.nodes = c.nodes[:0]
 	c.startable = c.startable[:0]
 	c.build(c.root, prev, nil)
+	c.hoistOverlays()
 	// Taken here as well as in Frame, so a cycle in the tree a Composer is
 	// CONSTRUCTED with is readable before the first frame is asked for.
 	if f := TakeLayoutFault(); f != nil && c.fault == nil {
@@ -326,6 +343,67 @@ func (c *Composer) walkNodes() {
 			c.stops[s] = func() {}
 		}
 	}
+}
+
+// hoistOverlays moves every Overlay subtree to the end of the paint
+// order, in one stable partition.
+//
+// STABLE, and that is the whole design: the tree still says which of two
+// overlays is on top and which node inside one paints over which. What it
+// removes is the document deciding whether an overlay is on top AT ALL.
+// A sort would have needed a comparator, and the only honest one is
+// "keep them in the order they were walked" — which is what a partition
+// is.
+//
+// MEMBERSHIP IS INHERITED, not per-node: c.nodes is depth-first
+// pre-order, so an overlay's descendants follow it immediately and a
+// node is in an overlay subtree exactly when it or an ancestor is one.
+// Asking the parent chain would be O(depth) per node; walking in order
+// and remembering the overlay we are inside is O(1), and the pre-order
+// guarantee is what makes it correct — the same guarantee the paint loop
+// already stands on.
+//
+// Called from walkNodes and nowhere else, because the order only changes
+// when the tree does. The per-frame loops read c.nodes as it was left
+// here.
+func (c *Composer) hoistOverlays() {
+	// The common case by far: no overlay in the tree, nothing to move,
+	// and no second slice allocated for it.
+	any := false
+	for _, n := range c.nodes {
+		if _, ok := n.w.(Overlay); ok {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	c.floating = c.floating[:0]
+	// inside is the overlay whose subtree we are in, or nil. It ends when
+	// a node arrives that is not below it — which the pre-order guarantee
+	// makes exact, since a subtree is contiguous.
+	var inside *paintNode
+	// The grounded half is compacted IN PLACE over c.nodes: the standard
+	// filter idiom, and it is safe here for the standard reason — the
+	// write index never runs ahead of the read index.
+	kept := c.nodes[:0]
+	for _, n := range c.nodes {
+		if inside != nil && n != inside && !isAncestorOf(inside, n) {
+			inside = nil
+		}
+		if inside == nil {
+			if _, ok := n.w.(Overlay); ok {
+				inside = n
+			}
+		}
+		if inside != nil {
+			c.floating = append(c.floating, n)
+		} else {
+			kept = append(kept, n)
+		}
+	}
+	c.nodes = append(kept, c.floating...)
 }
 
 func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *paintNode) {

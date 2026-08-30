@@ -21,10 +21,18 @@ import (
 //     owner keeps everything domain-shaped: what the popup shows, where
 //     it goes, which gestures mean what.
 //   - The SURFACE is the visible box: a leaf child the owner returns
-//     from ChildComponents (LAST, because document order is z-order),
-//     whose pre-clear paints exactly the popup rectangle — the overlay
+//     from ChildComponents LAST, and marked gooey.Overlay, whose
+//     pre-clear paints exactly the popup rectangle — the overlay
 //     contract. The primitive owns the surface so it can guarantee the
 //     subscription rule below; the owner supplies only the draw func.
+//
+//     BOTH HALVES ARE LOAD-BEARING, and this used to claim only the
+//     first: "LAST, because document order is z-order". Last among its
+//     siblings puts the surface above its OWNER, which is not the same
+//     as above the composition — the paint loop forces only nodes later
+//     in the walk, so anything declared after the owner painted over an
+//     open popup and nothing put it back (#430). The marker is what
+//     hoists it out of document order entirely.
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //
@@ -220,6 +228,25 @@ type popupSurface struct {
 	pop  *Popup
 	draw func(*gooey.Frame, gooey.Rect)
 }
+
+// OverlaysComposition puts the surface on the composition's overlay
+// tier, which is what makes "the overlay contract" above true rather
+// than merely intended.
+//
+// Being the owner's LAST CHILD is not enough, and the doc comment at the
+// top of this file said it was. Z-order is document order and the paint
+// loop forces a repaint only of nodes LATER in it, so the surface is
+// above its owner and above nothing else: any element declared after the
+// owner paints over an open popup, and nothing puts it back. On a
+// designer canvas — a MenuBar beside a Gauge, an ItemsView and a Border —
+// the dropdown was erased by the next frame that touched any of them
+// (#430). It survived in the shell only because the panes the menu hangs
+// over are chrome-only containers whose leaves stay clean.
+//
+// On the SURFACE and not on Popup's owner: the owner is an ordinary
+// component and is laid out where it is written. Only the box that hangs
+// over floats.
+func (s *popupSurface) OverlaysComposition() {}
 
 func (s *popupSurface) Measure(avail gooey.Size) gooey.Size { return avail }
 
