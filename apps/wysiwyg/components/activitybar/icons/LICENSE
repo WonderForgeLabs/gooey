@@ -19,10 +19,19 @@ place for an approximation, and the machine-generated coordinate
 precision of its neighbours made the odd one out visible on sight. It
 was replaced with the real Codicon rather than the claim being narrowed.
 
-The
-activitybar package substitutes the documents' fill="currentColor" for a
-concrete colour before rasterizing, which is a render-time substitution
-and not a change to these files.
+THE RECIPE ABOVE HAS BEEN RUN, on 2026-08-30, against every file in this
+directory and every file in components/toolbox/icons. All 38 are
+byte-identical to src/icons/<same name>.svg on that repository's main
+branch. A recipe nobody has executed is a claim like any other, which is
+what the review of #426 said about the sentence it verifies — so the
+result is recorded here rather than left to the next reader. Re-run it
+after adding an icon; upstream's main branch moves, so a future
+mismatch is as likely to be an upstream edit as a bad copy, and the
+diff says which.
+
+The activitybar package substitutes the documents' fill="currentColor"
+for a concrete colour before rasterizing, which is a render-time
+substitution and not a change to these files.
 
 CC BY 4.0 permits use and modification, commercial included, and requires
 attribution — which is what this file is. Keep it beside the icons.

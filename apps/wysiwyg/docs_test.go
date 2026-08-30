@@ -33,18 +33,18 @@ func fakeDocs() fstest.MapFS {
 // The parameter is fs.FS RATHER THAN fstest.MapFS so a test can pass a
 // genuinely absent tree. fstest.MapFS(nil) stored in an fs.FS field is a
 // non-nil interface holding a nil map — the typed-nil trap — so with the
-// narrower type `ed.docsRoot == nil` is unreachable from here, and the
+// narrower type `docsRoot.Get() == nil` is unreachable from here, and the
 // "no docs/ at all" state could not be tested at all.
 func docsPage(t *testing.T, fsys fs.FS) (*editor, *gooey.Composer) {
 	t.Helper()
 	ed := newEditor(editorFS())
-	ed.docsRoot = fsys
+	ed.docsRoot.Set(fsys)
 	// Set rather than replace the property: the computeds read
 	// ed.docList.Get(), so writing through it is what a real refresh
 	// would do, and it invalidates them the way a refresh would.
 	pages, skipped := docsPages(fsys)
 	ed.docList.Set(pages)
-	ed.docsSkipped = skipped
+	ed.docsSkipped.Set(skipped)
 	src, err := os.ReadFile("wysiwyg.gooey")
 	if err != nil {
 		t.Fatal(err)
