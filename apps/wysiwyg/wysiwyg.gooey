@@ -460,7 +460,24 @@
                    component and #288 says ship the cheap version first —
                    a list plus preformatted text answers "where do the
                    docs come from at runtime" without committing to a
-                   renderer or the dependency one would cost. -->
+                   renderer or the dependency one would cost.
+
+                   AND THEREFORE THE PAGE DOES NOT SCROLL: the whole body
+                   goes into one <Text> in a fixed cell, so on a 48-row
+                   terminal roughly the first 38 lines of a page are
+                   reachable and the rest cannot be reached by any
+                   gesture. That is the consequence of the choice above
+                   and it is written here because a reader who hits the
+                   bottom of architecture.md has NO WAY TO TELL a
+                   truncated pane from a short file — the two look
+                   identical.
+
+                   Not an oversight and not cheap to fix: the framework
+                   has no clipping and no viewport, so this needs the
+                   pane-local viewport in
+                   docs/specs/2026-08-23-scrolling.md (issue #67), which
+                   is real work and correctly out of scope for the cheap
+                   version. -->
               <Text Grid.Row="1" Style="dim">{{.DocsBody}}</Text>
             </Grid>
           </Tab>

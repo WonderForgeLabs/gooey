@@ -804,18 +804,26 @@ type editor struct {
 	// docs.go, which also says why embedding is not the one-line change
 	// #288 assumed.
 	//
-	// docPages is the LIST, computed once from the tree rather than
-	// re-walked per frame: a Render that walked a directory would put
-	// filesystem latency inside a paint, and the tree does not change
-	// while the editor runs.
-	docsRoot  fs.FS
-	docList   []docPage
-	docsItems *prop.Property[components.ItemSource]
-	docsSel   *prop.Property[int]
-	docsBody  *prop.Property[string]
-	// docCache is read and written only from docsBody's evaluation,
-	// which the framework runs on the UI goroutine, so it needs no lock.
-	docCache map[string]string
+	// docList is the LIST, walked once rather than per frame: a Render
+	// that walked a directory would put filesystem latency inside a
+	// paint.
+	//
+	// IT IS A SOURCE PROPERTY, NOT A SLICE FIELD, and that is the fix for
+	// a defect the review of PR #426 found rather than a preference.
+	// docsItems closed over a plain field, so the computed read nothing
+	// observable — it cached on first evaluation and could never be
+	// invalidated by anything. Today the list is written once, which
+	// makes that invisible; the moment anything refreshes it (a watcher,
+	// a -workspace change) the pane would silently keep the old list.
+	// Going through a property means "the list changed" is expressible,
+	// and the only reason the tests' post-construction override worked
+	// was that nothing had evaluated the computed yet.
+	docsRoot    fs.FS
+	docList     *prop.Property[[]docPage]
+	docsSkipped int
+	docsItems   *prop.Property[components.ItemSource]
+	docsSel     *prop.Property[int]
+	docsBody    *prop.Property[string]
 
 	// Bindable surface.
 	paletteItems *prop.Property[components.ItemSource]
@@ -1019,6 +1027,47 @@ type editor struct {
 // os.DirFS in development, so editing a pane's .gooey hot reloads it, and
 // the same line takes an embed.FS for a release build. That seam is the
 // whole reason markup loading is an fs.FS rather than a path.
+// emptyDocsBody names WHICH empty this is, and that it has to is a fix
+// from the review of PR #426. The pane keyed its message off an empty
+// list alone, so three unrelated states — no docs/ tree anywhere, a
+// docs/ tree holding no markdown, and a docs/ tree that could not be
+// read — all told the reader the same thing, and for two of the three it
+// was false. The tree in front of them existed.
+//
+// The skipped count is the same fix seen from docsPages' end: it is the
+// difference between "there is nothing here" and "I could not look".
+//
+// One case is still NOT surfaced — a partially readable tree that DID
+// yield pages says nothing about the ones it lost, because the pane is
+// one string and that string is the page you selected. That wants a
+// status line, which the docs tab does not have yet.
+//
+// A METHOD rather than a func field assigned during construction: the
+// field version was read from inside docsBody's closure, which is lazy,
+// so it happened to work only because nothing evaluated the computed
+// before the assignment ran. That is the same accident-of-ordering this
+// PR's review found in docsItems, and there is no reason to keep a
+// second one.
+func (ed *editor) emptyDocsBody(list []docPage) string {
+	skipnote := ""
+	if ed.docsSkipped > 0 {
+		unit := "entries"
+		if ed.docsSkipped == 1 {
+			unit = "entry"
+		}
+		skipnote = fmt.Sprintf(" %d %s could not be read.", ed.docsSkipped, unit)
+	}
+	switch {
+	case ed.docsRoot == nil:
+		return "No docs/ directory was found beside the editor." + skipnote
+	case len(list) == 0:
+		return "The docs/ directory beside the editor holds no markdown pages." + skipnote
+	case ed.docsSkipped > 0:
+		return "Select a page." + skipnote
+	}
+	return ""
+}
+
 func newEditor(fsys fs.FS) *editor {
 	ed := &editor{
 		fsys: fsys,
@@ -1159,45 +1208,48 @@ func newEditor(fsys fs.FS) *editor {
 	// beside the editor, which is a legal state the pane says out loud
 	// rather than a startup failure — see docsFS.
 	ed.docsRoot = docsFS()
-	ed.docList = docsPages(ed.docsRoot)
+	pages, skipped := docsPages(ed.docsRoot)
+	ed.docList = prop.NewSource(pages)
+	ed.docsSkipped = skipped
 	ed.docsItems = prop.NewComputed(func() components.ItemSource {
-		return components.ItemsOf(ed.docList, func(d docPage) map[string]any {
+		return components.ItemsOf(ed.docList.Get(), func(d docPage) map[string]any {
 			return map[string]any{"Name": d.Label, "Bar": "▌"}
 		})
 	})
-	// docsBody READS THE FILE, inside an evaluation, through a cache.
+	// docsBody READS THE FILE INSIDE AN EVALUATION, which breaks "no I/O
+	// in a paint", and the review of PR #426 was right that the previous
+	// version of this comment defended it on the wrong axis.
 	//
-	// That is a deliberate departure from "no I/O in a paint", and it is
-	// the same shape svg.IconSet already uses for icons: lazy, cached by
-	// key, re-run only when its one dependency changes. What makes it
-	// safe here is the thing IconSet needed Preload for and this does
-	// not — a paint cannot REPORT an error, so IconSet has to fail at
-	// load time or show a blank. docBody has somewhere to put the
-	// failure: the pane's one string. A page deleted under the editor
-	// renders its own read error where the text would be, which is both
-	// the diagnosis and the only place a reader would look for it.
+	// It argued reportability — a paint cannot report an error, so
+	// svg.IconSet needs Preload while docBody has the pane's one string
+	// to put the failure in. That is true and it is not the objection.
+	// THE RULE EXISTS FOR LATENCY: this runs on the UI goroutine while a
+	// <Text> renders, so the read is synchronous inside the frame, and on
+	// a cold cache or a network filesystem selecting a page stalls the
+	// whole editor rather than just this pane.
 	//
-	// The alternative — reading every page at startup — costs the
-	// startup time and the memory of a tree nobody may open, to save a
-	// few kilobytes of read that only ever happens on a keystroke.
+	// Accepted here, deliberately and with the bound stated: the read is
+	// one local file of a few kilobytes, on a keystroke rather than per
+	// frame, and it happens off the render path for every other pane. The
+	// framework's answer if that stops holding is written down and is not
+	// this — do the read off the loop and Dispatcher.Post the result into
+	// a source property, which also needs a sequence number so a slow
+	// read of page A cannot land after a fast read of page B.
+	//
+	// THERE IS NO CACHE, and its absence is the point. One used to sit
+	// here keyed by path and never invalidated, which made the sentence
+	// above it false: "a page deleted under the editor renders its own
+	// read error" held only for a page never opened, and the common
+	// path — read a page, then edit or delete it — served the stale body
+	// forever. Re-reading costs one file read per selection change, which
+	// is the same order as the read the cache was saving.
 	ed.docsBody = prop.NewComputed(func() string {
+		list := ed.docList.Get()
 		i := ed.docsSel.Get()
-		if i < 0 || i >= len(ed.docList) {
-			if len(ed.docList) == 0 {
-				return "No docs/ directory was found beside the editor."
-			}
-			return ""
+		if i < 0 || i >= len(list) {
+			return ed.emptyDocsBody(list)
 		}
-		page := ed.docList[i]
-		if b, ok := ed.docCache[page.Path]; ok {
-			return b
-		}
-		b := docBody(ed.docsRoot, page.Path)
-		if ed.docCache == nil {
-			ed.docCache = map[string]string{}
-		}
-		ed.docCache[page.Path] = b
-		return b
+		return docBody(ed.docsRoot, list[i].Path)
 	})
 
 	ed.paletteItems = prop.NewComputed(func() components.ItemSource {
