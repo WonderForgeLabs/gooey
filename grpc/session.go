@@ -508,16 +508,42 @@ func (b *broadcaster) notify(n int, seq uint64, final bool) {
 		return
 	}
 	b.delivering = true
+	// RESTORED BY DEFER, because b.onSessions is host code and nothing
+	// here recovers. A panic unwinding past a plain `b.delivering = false`
+	// left the flag set for the life of the broadcaster: every later
+	// add/remove/close would deposit into the mailbox, see delivering,
+	// and return — so no count reached the host again, including the
+	// terminal zero. That is a worse residual than the direct-call
+	// version this replaced, whose whole selling point is that no caller
+	// is stuck behind host code.
+	//
+	// held tracks the lock across the callback, which runs with it
+	// RELEASED — so the unwind can arrive either way and the defer has
+	// to re-acquire before touching the flag.
+	//
+	// What the defer deliberately does NOT do is drain the rest of the
+	// mailbox: that would call host code again from inside a panic. A
+	// count deposited during the failed delivery waits for the next
+	// change instead, which is a delay rather than a permanent silence.
+	// Found in review of #425.
+	held := true
+	defer func() {
+		if !held {
+			b.notifyMu.Lock()
+		}
+		b.delivering = false
+		b.notifyMu.Unlock()
+	}()
 	for b.pending {
 		n, seq := b.pendN, b.pendSeq
 		b.pending = false
 		b.notified = seq
 		b.notifyMu.Unlock()
+		held = false
 		b.onSessions(n)
 		b.notifyMu.Lock()
+		held = true
 	}
-	b.delivering = false
-	b.notifyMu.Unlock()
 }
 
 func (b *broadcaster) snapshot() []*session {

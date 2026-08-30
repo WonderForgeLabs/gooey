@@ -255,13 +255,30 @@ func AllowNames() []string {
 	return out
 }
 
-// AllowGroups maps each group name to the primitive names it expands to.
+// AllowGroups maps each group name to the names it expands to.
 // handlers/sets serves sets:Group from this, so the expansion cannot
 // disagree with the constants.
+//
+// THE EXPANSION IS String's, NOT Names'. Two groups are not expressible
+// as a union of the primitive names, and Names quietly renders both as
+// something smaller:
+//
+//   - AllowAll contains bitUnknown, the class of a key nobody
+//     classified, which is deliberately nameless — so the 14 primitives
+//     parse back to a set that WITHHOLDS the unclassified class, and
+//     <Frozen Allow="{sets:Group `All`}"> would stop meaning what
+//     <Frozen Allow="All"> means;
+//   - AllowNone has no names at all, and the empty string is how markup
+//     says an attribute was NOT WRITTEN — the one spelling that must not
+//     look like a set.
+//
+// String is already special-cased for exactly these two, with the
+// reasoning below; splitting its output is that rule applied at the
+// other consumer rather than restated here. Found in review of #425.
 func AllowGroups() map[string][]string {
 	out := make(map[string][]string, len(allowGroups))
 	for _, g := range allowGroups {
-		out[g.name] = g.cat.Names()
+		out[g.name] = strings.Fields(g.cat.String())
 	}
 	return out
 }

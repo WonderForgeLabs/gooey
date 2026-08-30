@@ -243,6 +243,70 @@ func TestAPairStraddlingTheClipEdgeIsRepaired(t *testing.T) {
 		t.Errorf("the row occupies %d terminal columns, want 10: %q",
 			got, RowText(b, 0))
 	}
+
+	// --- the same two edges through SetString --------------------------
+	//
+	// The arms above reach the seam through Set, and that is the whole
+	// reason the left edge stayed green through the review of #425:
+	// SetString repairs its run's edges with healSeam(start) and
+	// healSeam(x), and healSeam refuses an x outside the clip — so the
+	// one writer with a dedicated left-STRADDLE branch was the one writer
+	// that never repaired the left seam it had just severed.
+	for _, tc := range []struct {
+		name  string
+		clip  Rect
+		write func(b *Buffer)
+	}{
+		// x LEFT of the clip: the straddle branch runs, blanks from cx0,
+		// and severs the ancestor's tail at column 5.
+		{"left, run starts outside the clip", Rect{X: 5, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(4, 0, "ab", Style{}) }},
+		// x AT the clip: the ordinary path, already green.
+		{"left, run starts at the clip", Rect{X: 5, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(5, 0, "ab", Style{}) }},
+		// the right edge: the run overwrites the LEAD and leaves the
+		// ancestor's continuation at column 5, outside the clip.
+		{"right, run ends at the clip", Rect{X: 0, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(4, 0, "b", Style{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBuffer(10, 1)
+			b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+			b.SetString(4, 0, "世", Style{}) // the ENCLOSING paint: columns 4 and 5
+
+			b.Clip(tc.clip)
+			tc.write(b)
+
+			if got := TerminalWidth(b, 0); got != 10 {
+				t.Errorf("the row occupies %d terminal columns on a 10-wide "+
+					"buffer — a half of the ancestor's wide pair survived the "+
+					"write that severed it, and it displaces every glyph after "+
+					"it for the rest of the row: %q", got, RowText(b, 0))
+			}
+			if x, by, ok := Displaced(b, 0); ok {
+				t.Errorf("cell %d is displaced by %d columns: %q",
+					x, by, RowText(b, 0))
+			}
+		})
+	}
+}
+
+// TestDisplacedToleratesANilBuffer holds the file's stated posture at the
+// one function that broke it.
+//
+// TerminalColumns and TerminalWidth both open with an explicit b == nil
+// guard, so nil is an answerable question here rather than a programming
+// error. Displaced's loop inherited that for free — TerminalColumns
+// answers nil, so the loop does not run — but the last-column check added
+// for #413 dereferences b.W after it, turning "the row is faithful" into
+// a segfault. Displaced is the instrument docs/learn/howto/howto-custom-draw.md
+// names twice, so a harness that renders without a frame took the whole
+// run down. Found in review of #425.
+func TestDisplacedToleratesANilBuffer(t *testing.T) {
+	x, by, bad := Displaced(nil, 0)
+	if bad || x != 0 || by != 0 {
+		t.Errorf("Displaced(nil, 0) = (%d, %d, %v), want (0, 0, false)", x, by, bad)
+	}
 }
 
 // TestAnINTACTGlyphAtTheSeamIsLeftAlone is the bound on the exception,

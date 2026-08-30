@@ -495,3 +495,50 @@ func TestAnUnclassifiedKeyCannotEnterASealedSubtree(t *testing.T) {
 			"disable every key added to input/key.go from now on", got)
 	}
 }
+
+// TestEveryGroupExpansionParsesBackToTheGroup is the round-trip
+// AllowGroups owes handlers/sets.
+//
+// sets:Group is served straight out of that map, so an expansion that
+// does not parse back to its own group means two spellings of one
+// permission set silently disagree — <Frozen Allow="{sets:Group `All`}">
+// withholding a class that <Frozen Allow="All"> admits, which
+// docs/markup-reference.md says is identical to no <Frozen> at all.
+//
+// Written against Names(), this failed on exactly two groups, and they
+// are the two that are not unions of names at all: All contains
+// bitUnknown, which is deliberately nameless, so its primitives parse
+// back to a SMALLER set; None has no names, and the empty string is how
+// markup says an attribute was not written. The other three round-trip
+// through Names, which is why expanding that way looked right.
+//
+// Found in review of #425.
+func TestEveryGroupExpansionParsesBackToTheGroup(t *testing.T) {
+	groups := AllowGroups()
+	if len(groups) == 0 {
+		t.Fatal("AllowGroups is empty — this test would pass vacuously")
+	}
+	for name, names := range groups {
+		want, err := ParseAllow(name)
+		if err != nil {
+			t.Fatalf("AllowGroups names a group %q that ParseAllow rejects: %v", name, err)
+		}
+		if len(names) == 0 {
+			t.Errorf("group %q expands to nothing; the empty string is how markup "+
+				"says an attribute was not written, so a set must never render as it",
+				name)
+			continue
+		}
+		got, err := ParseAllow(strings.Join(names, " "))
+		if err != nil {
+			t.Errorf("group %q expands to %q, which ParseAllow rejects: %v",
+				name, strings.Join(names, " "), err)
+			continue
+		}
+		if got != want {
+			t.Errorf("group %q expands to %q, which parses back to %q — two "+
+				"spellings of one set that do not mean the same thing",
+				name, strings.Join(names, " "), got)
+		}
+	}
+}

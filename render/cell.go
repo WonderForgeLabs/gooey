@@ -460,6 +460,24 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 	}
 	// Only the two edges of the run can have broken a pair; everything
 	// between them this call wrote itself.
-	b.healSeam(start, y)
+	//
+	// CLAMPED INTO THE CLIP, because healSeam returns immediately for an
+	// x outside it — so a run starting LEFT of cx0, which is exactly the
+	// straddle branch above, repaired nothing at all. It had just written
+	// over an enclosing paint's wide tail at cx0 and left the lead one
+	// column outside, which is the injury healSeam exists to blank: a
+	// lead with no tail displaces every glyph after it for the rest of
+	// the row.
+	//
+	// ONLY the left edge is clamped, because only the left edge can land
+	// outside: the loop breaks at x >= cx1 and the wide-glyph branch
+	// answers with a space rather than overshooting, so x ends at cx1 at
+	// the furthest — which healSeam accepts. Clamping the trailing call
+	// too would reach a seam this run never touched.
+	//
+	// TestAPairStraddlingTheClipEdgeIsRepaired reached the left edge
+	// through Set only, which is why it was green. Found in review of
+	// #425.
+	b.healSeam(max(start, b.cx0), y)
 	b.healSeam(x, y)
 }

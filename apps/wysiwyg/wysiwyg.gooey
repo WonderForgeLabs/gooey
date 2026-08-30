@@ -115,7 +115,7 @@
          is a DUPLICATE of the ctrl+z one above, and two bindings on one
          gesture means one of them silently never fires. Adding it as a
          kindness would put a live candidate in front of UNDO. See
-         undo.go and TestCtrlShiftZIsUnfireableSoItIsNotBound. -->
+         undo.go and TestCtrlShiftZIsAnALIASForCtrlZAndSoIsNotBoundToRedo. -->
     <KeyBinding Gesture="ctrl+z" Command="{{.Undo}}"/>
     <KeyBinding Gesture="ctrl+y" Command="{{.Redo}}"/>
 

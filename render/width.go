@@ -204,6 +204,15 @@ func TerminalWidth(b *Buffer, y int) int {
 // much: "the row is wrong" is not a useful failure message when the point
 // is that everything after one glyph shifted.
 func Displaced(b *Buffer, y int) (x, by int, ok bool) {
+	// NIL-TOLERANT, like TerminalColumns and TerminalWidth above it. The
+	// loop below is already safe — TerminalColumns answers nil, so it
+	// does not run — but the last-column check dereferences b.W, and a
+	// harness that renders without a frame would segfault on the one
+	// instrument the #358 docs tell every custom-Render author to reach
+	// for. Found in review of #425.
+	if b == nil {
+		return 0, 0, false
+	}
 	for i, c := range TerminalColumns(b, y) {
 		// A continuation cell draws nothing, so it has no column of its
 		// own to be displaced from. Its recorded column is where the
