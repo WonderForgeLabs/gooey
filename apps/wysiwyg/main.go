@@ -1243,12 +1243,27 @@ func newEditor(fsys fs.FS) *editor {
 	// whole editor rather than just this pane.
 	//
 	// Accepted here, deliberately and with the bound stated: the read is
-	// one local file of a few kilobytes, on a keystroke rather than per
-	// frame, and it happens off the render path for every other pane. The
-	// framework's answer if that stops holding is written down and is not
-	// this — do the read off the loop and Dispatcher.Post the result into
-	// a source property, which also needs a sequence number so a slow
-	// read of page A cannot land after a fast read of page B.
+	// one local file of a few kilobytes, on a selection change rather
+	// than per frame, and it happens off the render path for every other
+	// pane. The framework's answer if that stops holding is written down
+	// and is not this — do the read off the loop and Dispatcher.Post the
+	// result into a source property, which also needs a sequence number
+	// so a slow read of page A cannot land after a fast read of page B.
+	//
+	// THE READ IS NOT THE EXPENSIVE PART, and this comment used to imply
+	// it was by answering the whole objection with "on a keystroke rather
+	// than per frame". That is true of the read and false of what the
+	// string then costs. Layout is UNCONDITIONAL — Composer measures and
+	// arranges every frame, damage or no damage — so a <Text> holding a
+	// whole markdown file is re-measured on every frame for as long as
+	// the tab is open, not once per selection. markup-reference.md is
+	// ~1600 lines; the specs tree has a page longer still.
+	//
+	// docsBodyMaxLines is the bound, and it is a stopgap with the real
+	// fix named: a pane-local viewport (#67,
+	// docs/specs/2026-08-23-scrolling.md). Until then nothing below the
+	// clip is reachable by any gesture anyway, so measuring it buys the
+	// reader nothing and costs them every frame.
 	//
 	// THERE IS NO CACHE, and its absence is the point. One used to sit
 	// here keyed by path and never invalidated, which made the sentence
@@ -1283,7 +1298,7 @@ func newEditor(fsys fs.FS) *editor {
 		// promoted to a source property to support. Found in review of
 		// #426.
 		i = min(max(i, 0), len(list)-1)
-		return docBody(root, list[i].Path)
+		return clampLines(docBody(root, list[i].Path), docsBodyMaxLines)
 	})
 
 	ed.paletteItems = prop.NewComputed(func() components.ItemSource {

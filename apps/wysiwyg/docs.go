@@ -108,10 +108,21 @@ type docPage struct {
 
 // docsPages lists the markdown under fsys, depth-first in path order.
 //
-// SORTED BY PATH, which sorts by directory first and is what makes the
-// flat list readable without a tree widget: learn/ pages arrive together,
-// specs/ together, and the top-level pages come first because a shorter
-// path sorts before a longer one sharing its prefix.
+// SORTED BY PATH, which is a plain BYTE comparison and not a tree order.
+// What it buys is that everything under one directory arrives together —
+// learn/ pages consecutive, specs/ pages consecutive — which is what
+// makes a flat list readable without a tree widget.
+//
+// What it does NOT do is float the top-level pages to the front, and an
+// earlier version of this comment said it did, on the reasoning that a
+// shorter path sorts before a longer one sharing its prefix. There is no
+// shared prefix between `markup-reference.md` and `learn/…`: `l` sorts
+// before `m`, so in this repo's own docs tree the top-level pages land
+// at 0, 1, 2 and 34, with the whole of learn/ between them. The
+// fstest.MapFS fixture happened to agree with the wrong claim because
+// its top-level names all sort before its directory names, which is
+// exactly how a comment survives being false — the test that would have
+// caught it was built from the same misunderstanding.
 //
 // A nil FS gives an empty list rather than an error. See docsFS.
 //
@@ -161,6 +172,54 @@ func docsPages(fsys fs.FS) (pages []docPage, skipped int) {
 	})
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Path < pages[j].Path })
 	return pages, skipped
+}
+
+// docsBodyMaxLines bounds what the docs pane hands to its <Text>.
+//
+// Layout is UNCONDITIONAL: Composer measures and arranges every frame
+// whether anything is damaged or not, so a <Text> holding a whole
+// markdown file is re-measured every frame for as long as the tab is
+// open. The repo's own pages run to about 1700 lines.
+//
+// The number is not a display limit — the pane already shows only what
+// fits, because every component is clipped to its bounds (#409) — it is
+// a MEASURE limit, and the two differ only in cost. It is set far above
+// any terminal's height on purpose: a bound a real window could reach
+// would be a feature ("the page stops here") rather than an
+// optimisation, and this is meant to be invisible.
+//
+// The real fix is a pane-local viewport that measures only what it
+// shows: issue #67, docs/specs/2026-08-23-scrolling.md. Delete this when
+// that lands.
+const docsBodyMaxLines = 400
+
+// clampLines returns at most n lines of s, with a marker where it cut.
+//
+// The marker is not decoration. Without it a reader who reaches the
+// bottom of a long page cannot tell a truncated pane from a short file —
+// the failure docBody's own comment refuses to ship elsewhere — and it
+// would be worse here, because this cut is invisible even to someone
+// scrolling, there being nothing to scroll with.
+func clampLines(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	cut, lines := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\n' {
+			continue
+		}
+		lines++
+		if lines == n {
+			cut = i
+			break
+		}
+	}
+	if cut == 0 {
+		return s
+	}
+	return s[:cut] + "\n\n\u2026 this page continues past what the pane measures " +
+		"(see issue #67 for the viewport that will make the rest reachable)."
 }
 
 // docBody reads one page, returning the read error AS THE BODY.
