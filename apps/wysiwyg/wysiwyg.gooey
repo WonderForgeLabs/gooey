@@ -428,6 +428,43 @@
             <Text Style="dim">{{.FitMsg}}</Text>
           </Tab>
 
+          <!-- 4 — DOCS. The platform's own docs/ tree, inside the editor
+               (#288). The list and the page share the side bar because
+               the docs are a REFERENCE consulted while building, not a
+               thing you edit: putting the page in the centre region
+               would make reading the docs and seeing your design
+               mutually exclusive, which is the opposite of what a
+               reference is for.
+
+               Rows="8,*" rather than two equal halves: the list is for
+               finding a page and the page is for reading it, so the
+               reader gets whatever is left. -->
+          <Tab Header="DOCS">
+            <Grid Rows="8,*" Cols="*">
+              <ItemsView Grid.Row="0" Name="DocsList"
+                         Items="{{.DocsItems}}" Selected="{{.DocsSel}}">
+                <ItemsView.ItemTemplate>
+                  <!-- Same two-column shape the toolbox uses, and the
+                       same reason: mentioning _selected stands the house
+                       highlight down so the marker is the only thing
+                       that moves when the selection does. Two Texts, and
+                       a selection hop repaints exactly the two rows that
+                       changed. -->
+                  <Grid Rows="1" Cols="1,*">
+                    <Text Grid.Col="0" Style="sel" Visibility="{{._selected}}">{{.Bar}}</Text>
+                    <Text Grid.Col="1" Margin="1,0,0,0">{{.Name}}</Text>
+                  </Grid>
+                </ItemsView.ItemTemplate>
+              </ItemsView>
+              <!-- The page. A <Text>, because there is no Markdown
+                   component and #288 says ship the cheap version first —
+                   a list plus preformatted text answers "where do the
+                   docs come from at runtime" without committing to a
+                   renderer or the dependency one would cost. -->
+              <Text Grid.Row="1" Style="dim">{{.DocsBody}}</Text>
+            </Grid>
+          </Tab>
+
           </Tabs>
         </Panel>
       </DockPane>

@@ -799,6 +799,24 @@ type editor struct {
 	// how it is bound.
 	activitySel *prop.Property[int]
 
+	// The documentation tree, and the page being read. docsRoot is an
+	// fs.FS so dev and release differ only in what is passed here — see
+	// docs.go, which also says why embedding is not the one-line change
+	// #288 assumed.
+	//
+	// docPages is the LIST, computed once from the tree rather than
+	// re-walked per frame: a Render that walked a directory would put
+	// filesystem latency inside a paint, and the tree does not change
+	// while the editor runs.
+	docsRoot  fs.FS
+	docList   []docPage
+	docsItems *prop.Property[components.ItemSource]
+	docsSel   *prop.Property[int]
+	docsBody  *prop.Property[string]
+	// docCache is read and written only from docsBody's evaluation,
+	// which the framework runs on the UI goroutine, so it needs no lock.
+	docCache map[string]string
+
 	// Bindable surface.
 	paletteItems *prop.Property[components.ItemSource]
 	attrItems    *prop.Property[components.ItemSource]
@@ -1023,6 +1041,7 @@ func newEditor(fsys fs.FS) *editor {
 		paletteSel:  prop.NewSource(0),
 		attrSel:     prop.NewSource(0),
 		activitySel: prop.NewSource(1), // the toolbox, which is what the side bar shows
+		docsSel:     prop.NewSource(0),
 		source:      prop.NewSource(""),
 		status:      prop.NewSource(""),
 		dragHint:    prop.NewSource(""),
@@ -1136,6 +1155,51 @@ func newEditor(fsys fs.FS) *editor {
 	// resolve to nothing, and the palette renders empty with no error
 	// anywhere. Both computeds read ed.palette lazily, so it is fine
 	// that the palette itself is filled further down.
+	// THE DOCS TREE, resolved once. docsRoot is nil when there is none
+	// beside the editor, which is a legal state the pane says out loud
+	// rather than a startup failure — see docsFS.
+	ed.docsRoot = docsFS()
+	ed.docList = docsPages(ed.docsRoot)
+	ed.docsItems = prop.NewComputed(func() components.ItemSource {
+		return components.ItemsOf(ed.docList, func(d docPage) map[string]any {
+			return map[string]any{"Name": d.Label, "Bar": "▌"}
+		})
+	})
+	// docsBody READS THE FILE, inside an evaluation, through a cache.
+	//
+	// That is a deliberate departure from "no I/O in a paint", and it is
+	// the same shape svg.IconSet already uses for icons: lazy, cached by
+	// key, re-run only when its one dependency changes. What makes it
+	// safe here is the thing IconSet needed Preload for and this does
+	// not — a paint cannot REPORT an error, so IconSet has to fail at
+	// load time or show a blank. docBody has somewhere to put the
+	// failure: the pane's one string. A page deleted under the editor
+	// renders its own read error where the text would be, which is both
+	// the diagnosis and the only place a reader would look for it.
+	//
+	// The alternative — reading every page at startup — costs the
+	// startup time and the memory of a tree nobody may open, to save a
+	// few kilobytes of read that only ever happens on a keystroke.
+	ed.docsBody = prop.NewComputed(func() string {
+		i := ed.docsSel.Get()
+		if i < 0 || i >= len(ed.docList) {
+			if len(ed.docList) == 0 {
+				return "No docs/ directory was found beside the editor."
+			}
+			return ""
+		}
+		page := ed.docList[i]
+		if b, ok := ed.docCache[page.Path]; ok {
+			return b
+		}
+		b := docBody(ed.docsRoot, page.Path)
+		if ed.docCache == nil {
+			ed.docCache = map[string]string{}
+		}
+		ed.docCache[page.Path] = b
+		return b
+	})
+
 	ed.paletteItems = prop.NewComputed(func() components.ItemSource {
 		ed.rev.Get() // hoisted above everything: the dependency is the point
 		return components.ItemsOf(ed.palette, func(e markup.ElementSpec) map[string]any {
@@ -1245,6 +1309,9 @@ func newEditor(fsys fs.FS) *editor {
 			"EditDoc":     ed.editDoc,
 			"TreeText":    ed.treeText,
 			"ActivitySel": ed.activitySel,
+			"DocsItems":   ed.docsItems,
+			"DocsSel":     ed.docsSel,
+			"DocsBody":    ed.docsBody,
 			"Serving":     ed.serveInfo,
 			"Fits":        ed.fits,
 			"Cramped":     ed.cramped,

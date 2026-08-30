@@ -63,12 +63,20 @@ type Icon struct {
 
 // DefaultIcons is the editor's rail, in VS Code's order: what you are
 // building, what you can add to it, what it is made of, what is wrong
-// with it.
+// with it, and what explains it.
+//
+// THE FIFTH IS DOCS AND ITS ICON IS book.svg, NOT library.svg. The two
+// read alike and mean opposite things: library.svg is the TOOLBOX — what
+// you can place — and it already looks like books, which is exactly why
+// #288 opens by warning that this slot is easy to mistake for done.
+// Anyone adding documentation here should check which rail entry they
+// are looking at before concluding it exists.
 var DefaultIcons = []Icon{
 	{Name: "designer", File: "layout.svg"},
 	{Name: "toolbox", File: "library.svg"},
 	{Name: "markup", File: "code.svg"},
 	{Name: "problems", File: "warning.svg"},
+	{Name: "docs", File: "book.svg"},
 }
 
 // Geometry of the rail, in PIXELS. A terminal cell is commonly 10x20, so
