@@ -3,6 +3,7 @@ package input
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -66,6 +67,96 @@ func ParseGesture(s string) (KeyEvent, error) {
 	// the decoder normalizes to the lowercase letter.
 	if ev.Mods&ModCtrl != 0 {
 		ev.Rune = []rune(strings.ToLower(string(ev.Rune)))[0]
+		// ctrl+@ AND ctrl+space ARE THE SAME BYTE, 0x00, and the decoder
+		// answers space because space is what people press
+		// (decode.go's c == 0 arm). The parser used to leave the '@',
+		// which meant the two ends agreed about the byte and disagreed
+		// about the event — so a ctrl+@ binding was dead. Normalised
+		// rather than rejected: it is the one unproducible spelling
+		// whose intent is unambiguous.
+		if ev.Rune == '@' {
+			ev.Rune = ' '
+		}
+		if err := errUnproducible(ev, s); err != nil {
+			return KeyEvent{}, err
+		}
 	}
 	return ev, nil
+}
+
+// producible is every KeyEvent a single byte can decode to, keyed for
+// lookup and DERIVED FROM Decode rather than written down.
+//
+// A table here would be stale the first time an arm of decode.go moves,
+// which is exactly the failure this exists to catch: a gesture the
+// parser accepts and no decoder can emit loads cleanly, dispatches
+// forever, and never fires — no error, no warning, and nothing at
+// runtime that distinguishes it from a key you never pressed. Building
+// the set by asking the decoder means the two cannot drift.
+//
+// SINGLE BYTES ONLY, which is the whole domain of the question. A
+// printable carrying ModCtrl can only come from decode.go's c < 0x20
+// arm; the multi-byte sequences produce named keys, and alt is an ESC
+// prefix that this deliberately looks past (see errUnproducible).
+var producible = sync.OnceValue(func() map[KeyEvent]byte {
+	out := map[KeyEvent]byte{}
+	for c := 0; c < 0x100; c++ {
+		ev, _, ok := Decode([]byte{byte(c)}, true)
+		if !ok || ev.Kind != EventKey {
+			continue
+		}
+		if _, seen := out[ev.Key]; !seen {
+			out[ev.Key] = byte(c)
+		}
+	}
+	return out
+})
+
+// ctrlByte inverts decode.go's `r := rune(c | 0x40)`, answering which
+// control byte a terminal would send for ctrl+r — and false when there
+// is none, which is most of the printable range.
+//
+// It is the one hand-written direction here, so
+// TestCtrlByteInvertsTheDecoder checks it against Decode for every byte
+// below 0x20 rather than trusting it.
+func ctrlByte(r rune) (byte, bool) {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return byte(r-'a') + 1, true
+	case r >= '@' && r <= '_':
+		return byte(r - '@'), true
+	}
+	return 0, false
+}
+
+// errUnproducible rejects a ctrl gesture no decoder can emit, naming the
+// reason rather than the verdict: "ctrl+h is backspace" is actionable
+// where "unproducible" sends the reader back to the source.
+//
+// ALT IS MASKED OFF because it is an ESC PREFIX, not part of the byte:
+// alt+ctrl+p arrives as 0x1b 0x10, and the question this asks is only
+// about the 0x10. Named keys are not checked at all — ctrl+enter and
+// friends parse fine and are also mostly unreportable, which is the
+// reverse direction and still open (see #427).
+func errUnproducible(ev KeyEvent, s string) error {
+	if ev.Key != KeyRune {
+		return nil
+	}
+	probe := ev
+	probe.Mods &^= ModAlt
+	if _, ok := producible()[probe]; ok {
+		return nil
+	}
+	if b, ok := ctrlByte(probe.Rune); ok {
+		// The byte exists; something else claimed it. Those are the
+		// right calls — people pressing backspace mean backspace — but
+		// the parser did not know about them.
+		if got, _, ok := Decode([]byte{b}, true); ok && got.Kind == EventKey {
+			return fmt.Errorf("input: gesture %q never fires: a terminal sends %#02x for it, "+
+				"which decodes as %s", s, b, got.Key)
+		}
+	}
+	return fmt.Errorf("input: gesture %q never fires: no terminal can report it. ctrl "+
+		"reaches only @ through _ and a through z, because the control byte is "+
+		"decoded as byte|0x40", s)
 }

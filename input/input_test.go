@@ -20,7 +20,12 @@ func TestParseGesture(t *testing.T) {
 		{"esc", Named(KeyEsc)},
 		{"up", Named(KeyUp)},
 		{" pagedown ", Named(KeyPageDown)},
-		{"ctrl++", KeyEvent{Key: KeyRune, Rune: '+', Mods: ModCtrl}},
+		// '+' AS THE KEY, which is the one spelling the last-'+' split
+		// has to special-case. It was written as ctrl++ until #427, and
+		// no terminal can send that — the case exists to exercise the
+		// PARSER's split, so alt+ carries it just as well and is
+		// producible (alt is an ESC prefix, not part of the byte).
+		{"alt++", KeyEvent{Key: KeyRune, Rune: '+', Mods: ModAlt}},
 	}
 	for _, c := range cases {
 		got, err := ParseGesture(c.in)
