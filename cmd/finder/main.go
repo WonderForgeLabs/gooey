@@ -262,10 +262,15 @@ func (w *matchLine) Render(f *gooey.Frame) {
 	// of #425.
 	path := w.path.Get()
 	k := 0
-	render.EachCluster(path, func(cluster string, off, col int) bool {
+	render.EachCluster(path, func(cluster string, off, col, w int) bool {
 		// Stop BEFORE a glyph that would not fit whole. Half a wide
 		// character is not something a terminal can draw.
-		if col+render.StringWidth(cluster) > b.W-1 {
+		//
+		// w comes from the walk rather than from StringWidth(cluster):
+		// uniseg returns the width on the same call that finds the
+		// boundary, so re-measuring here segmented every cluster twice
+		// on the paint path. Fixed in review of #425.
+		if col+w > b.W-1 {
 			return false
 		}
 		// A match landing anywhere inside the cluster highlights the

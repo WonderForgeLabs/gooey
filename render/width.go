@@ -56,19 +56,9 @@ func RuneWidth(r rune) int {
 // grapheme cluster so that multi-rune glyphs are measured as drawn.
 func StringWidth(s string) int { return uniseg.StringWidth(s) }
 
-// ClipCols truncates s to w display COLUMNS, never splitting a wide
-// glyph: if the next grapheme cluster would exceed the budget, clipping
-// stops before it. That can leave one column unused, which is correct —
-// half a glyph is not something a terminal can draw.
-//
-// Here rather than in each caller because it was about to be written
-// twice. components had a private copy for its ~25 paint sites and
-// cmd/browser needed the same rule for markdown; a second hand-rolled
-// cluster loop is how the two quietly disagree at the joins. A duplicated
-// local patch is the signal that an invariant belongs one level up.
 // EachCluster walks s one grapheme cluster at a time, handing each its
-// byte offset and the terminal COLUMN it starts at. Returning false
-// stops the walk.
+// byte offset, the terminal COLUMN it starts at, and its own width in
+// columns. Returning false stops the walk.
 //
 // It exists because the column arithmetic belongs here and was being
 // re-derived elsewhere: three bytes, one rune and one column are four
@@ -78,6 +68,15 @@ func StringWidth(s string) int { return uniseg.StringWidth(s) }
 // the bug it was written to fix (#413: a two-byte character pushing a
 // highlight two columns right) is exactly what a caller gets wrong when
 // it uses the byte offset as a column.
+//
+// THE WIDTH IS HANDED OVER RATHER THAN RECOMPUTED, and the first version
+// of this function withheld it. uniseg returns the cluster's width on
+// the same call that finds its boundary, so keeping it private forced
+// the one caller that needed it — matchLine.Render, deciding whether a
+// glyph fits — to call StringWidth on every cluster and segment it a
+// second time, on the paint path. A signature that hides a number it
+// already has does not remove the work, it moves it somewhere slower.
+// Found in review of #425.
 //
 // THE SEGMENTER STATE IS THREADED, which is the part a hand-rolled copy
 // tends to drop: passing -1 on every call asks uniseg to re-decide a
@@ -93,7 +92,7 @@ func StringWidth(s string) int { return uniseg.StringWidth(s) }
 // difference between returning s untouched and returning a prefix —
 // which a bool-returning callback does not express. Two loops, one
 // reason each.
-func EachCluster(s string, fn func(cluster string, off, col int) bool) {
+func EachCluster(s string, fn func(cluster string, off, col, width int) bool) {
 	off, col, state := 0, 0, -1
 	rest := s
 	for len(rest) > 0 {
@@ -103,7 +102,7 @@ func EachCluster(s string, fn func(cluster string, off, col int) bool) {
 		if cluster == "" {
 			return
 		}
-		if !fn(cluster, off, col) {
+		if !fn(cluster, off, col, cw) {
 			return
 		}
 		off += len(cluster)
@@ -111,6 +110,21 @@ func EachCluster(s string, fn func(cluster string, off, col int) bool) {
 	}
 }
 
+// ClipCols truncates s to w display COLUMNS, never splitting a wide
+// glyph: if the next grapheme cluster would exceed the budget, clipping
+// stops before it. That can leave one column unused, which is correct —
+// half a glyph is not something a terminal can draw.
+//
+// Here rather than in each caller because it was about to be written
+// twice. components had a private copy for its ~25 paint sites and
+// cmd/browser needed the same rule for markdown; a second hand-rolled
+// cluster loop is how the two quietly disagree at the joins. A duplicated
+// local patch is the signal that an invariant belongs one level up.
+//
+// This doc comment used to sit ABOVE EachCluster's with no function
+// between them, so godoc read the pair as one block belonging to
+// EachCluster and ClipCols — the older and more used of the two — was
+// documented nowhere. Found in review of #425.
 func ClipCols(s string, w int) string {
 	if w <= 0 {
 		return ""

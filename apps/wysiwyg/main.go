@@ -11,9 +11,17 @@
 //     that takes no attributes. A registered component is deliberately
 //     present so that case is visible rather than theoretical.
 //
-//  2. The inspector comes from markup.AttrsFor(spec, parent) — never
+//  2. The inspector comes from ed.grantOf(parent).AttrsFor(spec) — never
 //     from spec.Attrs directly, which is a true statement about the
 //     element and a misleading answer to "what can I set here".
+//
+//     Through ed.grantOf and not markup.AttrsFor(spec, parent), which
+//     is the same question asked of the wrong table: the package-level
+//     form resolves the parent NAME in the builtin registry and answers
+//     "no attached attributes" for a container the host registered, so
+//     the drag wrote Table.R onto a child and the grid had no row for
+//     it. See attrRows. Fixed in #390 (issue #418) and described
+//     wrongly here until the review of #425.
 //
 //  3. Attached properties are scoped to the PARENT. Press `c` and `v` to
 //     retype the container between <Canvas> and <VStack> and watch
@@ -1611,9 +1619,16 @@ func (r attrRow) cycle() []string {
 	return append([]string{""}, r.values...)
 }
 
-// attrRows is claim 2 and claim 3 together: the inspector asks
-// AttrsFor(spec, parent), so the answer depends on what the element is
-// currently inside.
+// attrRows is claim 2 and claim 3 together: the inspector asks the
+// PARENT'S GRANT for the element's attributes, so the answer depends on
+// what the element is currently inside.
+//
+// ed.grantOf(parent).AttrsFor(spec), not markup.AttrsFor(spec, parent) —
+// the difference is the whole point of #418 and is spelled out at the
+// call site below. This comment named the old form for two rounds after
+// the code stopped using it, which is the failure mode a stale comment
+// has here specifically: it sends the reader to the function whose
+// wrong answer the change existed to stop taking.
 func (ed *editor) attrRows() []attrRow {
 	spec, parent, target := ed.target()
 	if target == nil {
