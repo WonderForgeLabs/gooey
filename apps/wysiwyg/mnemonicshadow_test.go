@@ -6,8 +6,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/input"
 )
 
 // TestNoRootKeyBindingShadowsAMenuTitleMnemonic is the guard for the
@@ -64,7 +66,13 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 	// a pane.
 	hostDepth := -1
 	mnemonics := map[rune]string{} // accelerator -> menu title
-	var altBindings []string
+	// src is kept alongside the letter purely so the failure can quote the
+	// spelling the page actually used — "meta+h" reads as a different
+	// thing from "alt+h" until you know they parse to the same event.
+	var altBindings []struct {
+		src string
+		r   rune
+	}
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -76,7 +84,12 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 		switch e := tok.(type) {
 		case xml.StartElement:
 			depth++
-			if depth == 2 && hostDepth == -1 && e.Name.Local != "Gooey" {
+			// depth is incremented BEFORE this runs, so <Gooey> is at
+			// depth 1 and the root component at depth 2. The condition
+			// used to also test `e.Name.Local != "Gooey"`, which can
+			// never be false here — a guard doing no work. Dropped in
+			// review of #428.
+			if depth == 2 && hostDepth == -1 {
 				hostDepth = depth
 			}
 			switch e.Name.Local {
@@ -95,11 +108,30 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 					continue // pane-scoped: not on every path
 				}
 				g := xmlAttr(e, "Gesture")
-				// RUNES, not bytes: alt+ü is one key and two bytes, and a
-				// byte-length test drops it from the sweep.
-				if rest, ok := strings.CutPrefix(g, "alt+"); ok && len([]rune(rest)) == 1 {
-					altBindings = append(altBindings, g)
+				// ASK THE PARSER, don't match the string. `alt+` as a
+				// prefix is a third copy of a rule the framework already
+				// owns, and it is wrong in five reachable ways:
+				// ParseGesture lower-cases modifiers and accepts meta and
+				// option as aliases, and folds shift into the rune — so
+				// "meta+h", "option+h", "Alt+h", "ALT+H" and "shift+alt+h"
+				// all parse to a ModAlt-only rune event that
+				// MenuBar.HandleMnemonic matches, and every one of them
+				// slipped past the prefix test as a perfectly loadable
+				// root binding.
+				//
+				// This is the same move that produced MenuMnemonic, and the
+				// docstring above already draws the lesson for the mnemonic
+				// half: a second copy of the rule is the defect, not the
+				// fix. The gesture half was still a local rule. Found in
+				// review of #428.
+				ev, err := input.ParseGesture(g)
+				if err != nil || ev.Key != input.KeyRune || ev.Mods != input.ModAlt {
+					continue // not a single-rune alt gesture: not mnemonic territory
 				}
+				altBindings = append(altBindings, struct {
+					src string
+					r   rune
+				}{g, unicode.ToLower(ev.Rune)})
 			}
 		case xml.EndElement:
 			if menuDepth == depth {
@@ -115,13 +147,13 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 			len(mnemonics), len(altBindings))
 	}
 
-	for _, g := range altBindings {
-		letter := []rune(strings.ToLower(strings.TrimPrefix(g, "alt+")))[0]
-		if title, clash := mnemonics[letter]; clash {
-			t.Errorf("a KeyBinding on %q collides with the %q menu's mnemonic. "+
-				"Dispatch offers bindings before mnemonics, so the binding wins "+
-				"and the menu silently stops opening — move one of them",
-				g, title)
+	for _, b := range altBindings {
+		if title, clash := mnemonics[b.r]; clash {
+			t.Errorf("a KeyBinding on %q collides with the %q menu's mnemonic "+
+				"(both are alt+%c once parsed). Dispatch offers bindings before "+
+				"mnemonics, so the binding wins and the menu silently stops "+
+				"opening — move one of them",
+				b.src, title, b.r)
 		}
 	}
 	t.Logf("checked %d root alt bindings against %d menu mnemonics",
@@ -168,6 +200,58 @@ func TestTheGuardReadsMnemonicsTheWayTheFrameworkDoes(t *testing.T) {
 	// the loop above passes against a function that always answers true.
 	if _, ok := components.MenuMnemonic("!!!"); ok {
 		t.Error("a title with no letter or digit claims an accelerator")
+	}
+}
+
+// TestTheGuardReadsGesturesTheWayTheFrameworkDoes is the same
+// discrimination applied to the OTHER half, and it is the half that was
+// still a local rule until the review of #428.
+//
+// The guard used to detect an alt gesture with strings.CutPrefix(g,
+// "alt+"). Every row below is a spelling that test rejected and that
+// MenuBar.HandleMnemonic accepts — a loadable root binding that would
+// beat a menu to its own letter with the guard staying green.
+//
+// The rows are not hypothetical spellings: ParseGesture lower-cases
+// modifiers, accepts meta and option as aliases of alt, and folds shift
+// into the rune, so each of these is a thing a page may legitimately
+// say.
+func TestTheGuardReadsGesturesTheWayTheFrameworkDoes(t *testing.T) {
+	for _, tc := range []struct {
+		gesture string
+		want    rune
+		missed  bool // did the old `alt+` prefix rule drop it?
+	}{
+		{"alt+h", 'h', false},
+		{"meta+h", 'h', true},
+		{"option+h", 'h', true},
+		{"Alt+h", 'h', true},
+		{"ALT+H", 'h', true},
+		{"shift+alt+h", 'h', true},
+	} {
+		ev, err := input.ParseGesture(tc.gesture)
+		if err != nil {
+			t.Errorf("ParseGesture(%q) failed: %v — the page could not have "+
+				"shipped this spelling, and the row is wrong", tc.gesture, err)
+			continue
+		}
+		if ev.Key != input.KeyRune || ev.Mods != input.ModAlt {
+			t.Errorf("ParseGesture(%q) = {Key:%v Mods:%v}, want a ModAlt-only "+
+				"rune. If this is right, the guard's filter is now too wide",
+				tc.gesture, ev.Key, ev.Mods)
+			continue
+		}
+		if got := unicode.ToLower(ev.Rune); got != tc.want {
+			t.Errorf("ParseGesture(%q) accelerates %q, want %q",
+				tc.gesture, got, tc.want)
+		}
+		// The claim that makes this test worth having: the old rule
+		// really did drop these.
+		if _, prefixed := strings.CutPrefix(tc.gesture, "alt+"); prefixed == tc.missed {
+			t.Errorf("%q: the superseded `alt+` prefix rule %s it, but the row "+
+				"says otherwise — the widening this test pins is mis-stated",
+				tc.gesture, map[bool]string{true: "dropped", false: "caught"}[tc.missed])
+		}
 	}
 }
 

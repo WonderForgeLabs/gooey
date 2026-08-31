@@ -57,8 +57,17 @@ func Named(k Key) KeyEvent { return KeyEvent{Key: k} }
 
 func (e KeyEvent) Has(m Mods) bool { return e.Mods&m != 0 }
 
-// String renders the event in gesture syntax, so String and
-// ParseGesture round-trip.
+// String renders the event in gesture syntax, so String and ParseGesture
+// round-trip FOR ANY EVENT A DECODER PRODUCES.
+//
+// The qualifier arrived with #427 and is not decoration. ParseGesture now
+// refuses the ctrl gestures no terminal can send, while String will still
+// render one from a hand-built value: KeyEvent{Key: KeyRune, Rune: 'j',
+// Mods: ModCtrl}.String() is "ctrl+j", which ParseGesture rejects. Every
+// caller in the tree starts from a decoded event — grpc/convert.go's
+// inputEventToProto and apps/wysiwyg/properties.go both do — so the
+// narrower claim is the one they need, and it is true. Narrowed in
+// review of #428.
 func (e KeyEvent) String() string {
 	var sb strings.Builder
 	if e.Mods&ModCtrl != 0 {

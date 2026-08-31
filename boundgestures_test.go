@@ -18,7 +18,17 @@ import (
 // (`Gesture="..."`), a struct field in a literal (`Gesture: "..."`), and
 // an assignment (`kb.Gesture = "..."`). The third was missing, and its
 // absence was invisible because the comment claimed the set was two.
-var gestureAttr = regexp.MustCompile(`Gesture(?:="|:\s*"|\s*=\s*")([^"]*)"`)
+//
+// \b ON THE LEFT, so `HintGesture="…"`, `DefaultGesture: "…"` and a doc
+// comment sampling `Gesture: "ctrl+j"` in a non-test .go file are not
+// swept as if they were shipped bindings. Nothing in the tree trips it
+// today, so this is latent rather than live — but the failure it would
+// produce is a red sweep naming a binding that does not exist, in a test
+// whose value is that red means something specific. The boundary costs
+// nothing, gestureAttrSingle already has \s* boundaries on the other
+// side, and apps/soundboard/board_test.go:41 already writes the bounded
+// form of the same idea. Added in review of #428.
+var gestureAttr = regexp.MustCompile(`\bGesture(?:="|:\s*"|\s*=\s*")([^"]*)"`)
 
 // AND THE MARKUP FORM HAS A SECOND QUOTE STYLE. The loader is
 // encoding/xml (markup/markup.go), whose tokenizer erases the quote
@@ -147,9 +157,18 @@ func TestEveryBoundGestureCanActuallyBeProduced(t *testing.T) {
 
 	// A floor, because a walk that found nothing would pass silently and
 	// this test's whole value is coverage.
-	if len(sites) < 50 {
-		t.Fatalf("the sweep found only %d bound gestures; the tree binds far more, "+
-			"so the walk or the pattern is wrong and a green result means nothing",
+	//
+	// WITHIN STRIKING DISTANCE OF THE REAL NUMBER, which is 264 at the
+	// time of writing. At 50 a walk that lost 80% of the tree also passed
+	// silently — and losing most of the tree is the likelier regression
+	// than losing all of it: someone tightens the prune, or WalkDir's
+	// root moves. 200 catches that while staying far enough below 264
+	// that adding or removing bindings does not turn this into a count
+	// maintained in prose. Raised in review of #428.
+	if len(sites) < 200 {
+		t.Fatalf("the sweep found only %d bound gestures; the tree binds far more "+
+			"(264 when this floor was set), so the walk or the pattern lost most "+
+			"of the tree and a green result means nothing",
 			len(sites))
 	}
 
