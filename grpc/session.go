@@ -577,8 +577,17 @@ func (b *broadcaster) deliver() {
 // what earns it: the panic that brought us here has already propagated
 // to whoever called notify, so this goroutine has no caller to carry a
 // second one to — an escape would take the process down over a host bug
-// that the first panic merely reported. One retry, then the count is
-// dropped, which is strictly better than the never it used to get.
+// that the first panic merely reported.
+//
+// THE BOUND IS PER UNWIND, NOT ONE IN TOTAL, and the earlier wording
+// here ("one retry, then the count is dropped") overstated it. This
+// calls deliver, whose own defer schedules `go b.resume()` again if the
+// retry ALSO unwinds leaving a leftover — so a host callback that
+// panics every time is retried every time. What bounds it is that each
+// pass consumes the pending flag: a further retry needs a further panic
+// with a further count deposited, so the chain is as long as the host's
+// misbehaviour and no longer. Not unbounded, and not one.
+// Corrected in review of #425.
 func (b *broadcaster) resume() {
 	defer func() { _ = recover() }()
 	b.notifyMu.Lock()

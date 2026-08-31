@@ -361,3 +361,45 @@ func TestAnINTACTGlyphAtTheSeamIsLeftAlone(t *testing.T) {
 			got, RowText(b, 0))
 	}
 }
+
+// TestARunWhollyLeftOfTheClipRepairsNoSeam pins the other half of the
+// asymmetry the comment beside SetString's heal calls rules out.
+//
+// The leading call is clamped into the clip so that a run STRADDLING the
+// left edge repairs the pair it just broke. But the clamp was
+// unconditional, and a run lying wholly left of the clip writes nothing
+// at all — so it aimed healSeam at cx0 on behalf of a run that touched
+// neither column cx0-1 nor cx0. Both belong to an enclosing paint, and
+// if that pair is already broken the descendant blanks a half of it.
+//
+// Pre-existing corruption is required for the effect to be visible,
+// which is why nothing caught it: the clip tests above all stage intact
+// pairs. Found in the review of the review of #425.
+func TestARunWhollyLeftOfTheClipRepairsNoSeam(t *testing.T) {
+	b := NewBuffer(10, 1)
+
+	// An enclosing paint's ALREADY-BROKEN pair at the seam: a wide lead
+	// in column 4 whose column 5 is not a Continuation. Staged on the
+	// cells directly because every writer in this file repairs the seam
+	// it touches, so there is no way to ask one of them for a pair that
+	// is still broken when the next component paints.
+	b.Cells[4] = Cell{Rune: '世'}
+	b.Cells[5] = Cell{Rune: 'x'}
+
+	// The descendant's clip starts at column 5; its run is columns 1-2.
+	// Wholly left, so nothing of it lands inside the clip.
+	b.Clip(Rect{X: 5, Y: 0, W: 5, H: 1})
+	b.SetString(1, 0, "ab", Style{})
+
+	if got := b.At(4, 0).Rune; got != '世' {
+		t.Errorf("column 4 is %q, want 世. A run confined to columns 1-2 "+
+			"repaired the seam at column 5 and blanked the lead beside it "+
+			"— a pair it never touched, in a paint it does not own. Row: %q",
+			got, RowText(b, 0))
+	}
+	if got := b.At(5, 0).Rune; got != 'x' {
+		t.Errorf("column 5 is %q, want x — the other half of the same pair "+
+			"was rewritten by a run that never reached it: %q",
+			got, RowText(b, 0))
+	}
+}

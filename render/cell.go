@@ -500,6 +500,23 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 	// TestAPairStraddlingTheClipEdgeIsRepaired reached the left edge
 	// through Set only, which is why it was green. Found in review of
 	// #425.
-	b.healSeam(max(start, b.cx0), y)
+	//
+	// AND ONLY WHEN THIS RUN WROTE INSIDE THE CLIP. A run lying wholly
+	// left of it — SetString(cx0-9, y, "ab") — wrote nothing, and the
+	// clamp then aims healSeam at cx0, whose pair (cx0-1, cx0) belongs
+	// entirely to an enclosing paint. Already broken, that pair gets a
+	// half blanked by a run that never touched either column: exactly
+	// the asymmetry the paragraph above rules out for the trailing
+	// call, on the leading one.
+	//
+	// `x > b.cx0` IS the test for "wrote something inside", not a proxy
+	// for it: every put below lands at a column >= cx0 and leaves x one
+	// past it, so x rests at or before cx0 precisely when the run ended
+	// before the clip began. Found in the review of the review of #425.
+	lead := start
+	if x > b.cx0 {
+		lead = max(start, b.cx0)
+	}
+	b.healSeam(lead, y)
 	b.healSeam(x, y)
 }
