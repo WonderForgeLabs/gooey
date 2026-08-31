@@ -129,7 +129,7 @@ func concat(c *markup.Call) (*prop.Property[string], error) {
 	return prop.NewComputed(func() string {
 		var all []string
 		for _, a := range args {
-			all = append(all, Split(a.String())...)
+			all = append(all, expandSet(a.String())...)
 		}
 		return Canonical(all)
 	}), nil
@@ -146,12 +146,12 @@ func without(c *markup.Call) (*prop.Property[string], error) {
 	return prop.NewComputed(func() string {
 		drop := map[string]bool{}
 		for _, a := range rest {
-			for _, n := range Split(a.String()) {
+			for _, n := range expandSet(a.String()) {
 				drop[n] = true
 			}
 		}
 		var out []string
-		for _, n := range Split(base.String()) {
+		for _, n := range expandSet(base.String()) {
 			if !drop[n] {
 				out = append(out, n)
 			}
@@ -179,7 +179,7 @@ func when(c *markup.Call) (*prop.Property[string], error) {
 		on := !falsey[strings.TrimSpace(strings.ToLower(cond.String()))]
 		var all []string
 		for _, a := range rest {
-			all = append(all, Split(a.String())...)
+			all = append(all, expandSet(a.String())...)
 		}
 		if !on {
 			return ""
@@ -224,7 +224,7 @@ func has(c *markup.Call) (*prop.Property[string], error) {
 	}
 	set, name := c.Args[0], c.Args[1]
 	return prop.NewComputed(func() string {
-		s, n := Split(set.String()), strings.TrimSpace(name.String())
+		s, n := expandSet(set.String()), strings.TrimSpace(name.String())
 		for _, e := range s {
 			if e == n {
 				return "true"
@@ -252,6 +252,50 @@ func GroupNames() []string {
 // same way, and gooey.ParseAllow does.
 func Split(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+}
+
+// expandSet reads a set the way the ALGEBRA must see it: Split, then
+// every group name replaced by the names it stands for.
+//
+// # Why the algebra cannot use Split directly
+//
+// A group name is one token that means several. Split is the ENCODING
+// contract — it mirrors gooey.ParseAllow and must keep doing so — but
+// arithmetic over unexpanded tokens is arithmetic over the wrong set,
+// and the failure is silent and open:
+//
+//	Without("All", "Start")  ->  Split("All") = ["All"]
+//	                         ->  "Start" != "All", so nothing is removed
+//	                         ->  "All"  ->  ParseAllow -> AllowAll ⊇ AllowStart
+//
+// A page that asked for "everything except Start" GRANTED Start, and
+// Start is the category with a child-process argument behind it. That
+// is the exact failure handlers/sets/README.md describes and that this
+// PR closed for `sets:Group "All"` by making AllowGroups expand — the
+// bare literal, which never passes through AllowGroups, was the half
+// left open. TestTheAlgebraHoldsOverEveryGroup iterates AllowGroups()
+// and so cannot see it.
+//
+// Expanding here rather than in Split is what keeps both true: a
+// consumer splitting an attribute this pack produced still splits it
+// the way ParseAllow does, and the operators still compute over the
+// set the names actually denote.
+//
+// A group whose expansion is itself (None, or a future group of
+// nameless bits — see gooey.AllowGroups) maps to itself, so this
+// terminates and leaves those tokens alone. Found in review of #425.
+func expandSet(s string) []string {
+	names := Split(s)
+	groups := gooey.AllowGroups()
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if g, ok := groups[n]; ok {
+			out = append(out, g...)
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // Canonical renders a set: deduplicated, ordered, single-space
