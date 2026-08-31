@@ -94,9 +94,22 @@ in the order they were declared rather than the order they were opened. Nothing
 in the tree needs the other answer yet, and the machinery — an open-order stack
 the Composer maintains — is worth writing when something does.
 
-Hit-testing is untouched. A popup takes held pointer capture while open
-(`Popup.Open`), which is what already routes presses to it regardless of where
-it sits in any order, so nothing about input needed to change with this.
+Hit-testing is untouched, and that is a gap rather than a non-event. A popup
+takes held pointer capture while open (`Popup.Open`), which routes presses to it
+regardless of where it sits in any order — so nothing about input needed to
+change *for the overlay this framework ships*.
+
+But `Overlay` is a public interface, and `FocusManager.HitTest` walks document
+order knowing nothing about it. **The marker moves paint, not input.** An
+overlay that does not take capture will paint above a later sibling while that
+sibling takes the press. `TestAnOverlayLiftsItsWholeSubtree` exists precisely to
+support container overlays the framework does not ship yet, so this is reachable
+by the first adopter rather than hypothetical.
+
+The interface's own doc comment says so, and `HitTest`'s comment no longer
+claims "later siblings paint on top" as its reason. Closing it properly means
+teaching the hit-test walk the same two layers — worth doing when a
+non-capturing overlay actually exists. Named in review of #437.
 
 ## Damage
 

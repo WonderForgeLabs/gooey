@@ -77,6 +77,16 @@ type Composer struct {
 	painted  int
 	frameSeq int          // stamps which frame a node last painted in
 	over     []*paintNode // nodes painted this frame, in z-order (reused)
+	// lifted is orderPaint's scratch: the overlay nodes held back while
+	// the ordinary layer is collected, appended after it. Reused for the
+	// same reason `over` is — walkNodes runs on every structural
+	// re-sync, which for a Dynamic list is per-frame while scrolling.
+	//
+	// NOT named `over`: that field two lines up means "painted this
+	// frame", a different set with a different lifetime, and a local
+	// shadowing it made a reader work out which one they were looking
+	// at. Found in review of #437.
+	lifted []*paintNode
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
@@ -298,17 +308,17 @@ func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.Dispat
 // its answer is ready — one pass, no ancestor walk.
 func (c *Composer) orderPaint() {
 	c.paint = c.paint[:0]
-	var over []*paintNode
+	c.lifted = c.lifted[:0]
 	for _, n := range c.nodes {
 		_, isOverlay := n.w.(Overlay)
 		n.overlay = isOverlay || (n.parent != nil && n.parent.overlay)
 		if n.overlay {
-			over = append(over, n)
+			c.lifted = append(c.lifted, n)
 		} else {
 			c.paint = append(c.paint, n)
 		}
 	}
-	c.paint = append(c.paint, over...)
+	c.paint = append(c.paint, c.lifted...)
 }
 
 // walkNodes rebuilds the paint-node list from the current tree, REUSING

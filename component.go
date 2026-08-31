@@ -113,6 +113,18 @@ type ChildSetter interface {
 // than the order they were opened. Nothing in the tree needs the other
 // answer yet, and the machinery it would take — an open-order stack the
 // Composer maintains — is worth writing when something does.
+//
+// IT MOVES PAINT, NOT INPUT. FocusManager.HitTest walks document order
+// and knows nothing about this marker, so a later sibling still takes a
+// press even where an overlay paints above it. Popup gets away with it
+// by holding pointer capture for as long as it is open, which routes
+// presses before the walk runs — but that is Popup's mechanism, not
+// something this interface provides.
+//
+// So an overlay that does NOT take capture is responsible for its own
+// routing. Implementing this alone will paint you on top and leave the
+// clicks to whoever is underneath. Stated in review of #437; the same
+// gap is named in docs/specs/2026-08-30-overlay-layer.md.
 type Overlay interface{ OverlaysPage() }
 
 // HasBackground is implemented by containers that declare a background

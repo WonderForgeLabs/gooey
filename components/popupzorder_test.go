@@ -50,12 +50,27 @@ func TestAnOpenPopupSurvivesALaterSiblingRepainting(t *testing.T) {
 	owner, content, page := zOrderPage()
 	c := gooey.NewComposer(page, 20, 5)
 	c.Focus().SetFocus(owner)
-	c.Frame()
+	// The first frame paints the whole tree, and the number is recorded
+	// here to give the pin below its margin: a fix that bought z-order
+	// by repainting everything would report FOUR on the sibling frame,
+	// not two, and every RowText assertion in this file would still be
+	// green. Four is what makes two mean something.
+	if _, all := c.Frame(); all != 4 {
+		t.Fatalf("the first frame painted %d components, want 4 — the "+
+			"fixture changed, and the damage pin below is calibrated "+
+			"against this number", all)
+	}
 
 	if !c.HandleKey(input.Named(input.KeyEnter)) {
 		t.Fatal("enter on the focused owner was not consumed")
 	}
-	c.Frame()
+	// ONE component painted to open the popup: the surface itself. The
+	// owner did not repaint, and neither did the sibling.
+	if _, opened := c.Frame(); opened != 1 {
+		t.Errorf("opening the popup repainted %d components, want 1 (the "+
+			"surface). Anything more means opening an overlay disturbs "+
+			"nodes it does not cover", opened)
+	}
 
 	// The popup is on screen. Without this the test could pass against a
 	// popup that never painted at all.
@@ -66,7 +81,27 @@ func TestAnOpenPopupSurvivesALaterSiblingRepainting(t *testing.T) {
 	// Now dirty ONLY the sibling declared after the owner. Nothing has
 	// touched the popup, so nothing should move it.
 	content.Set(strings.Repeat("%", 12))
-	c.Frame()
+	_, painted := c.Frame()
+
+	// THE PIN THE CELL ASSERTIONS CANNOT BE. Per CLAUDE.md, "a bounds
+	// assertion or a 'the cell says X' assertion passes just as well
+	// when the entire tree repainted, so it proves nothing about
+	// damage" — and the obvious wrong fix for this bug, force-repainting
+	// the whole tree every frame, satisfies every RowText check in this
+	// file. The count is what separates the two.
+	//
+	// TWO: the sibling that was dirtied, and the popup surface the
+	// z-ordered pass forces above it. Not one — the surface has to
+	// repaint or the sibling's new cells cover it. Not the node count —
+	// that is the regression this exists to catch. The PR body's "no
+	// damage count in the repo moved" is this number.
+	// Added in review of #437.
+	if painted != 2 {
+		t.Errorf("dirtying one sibling repainted %d components, want 2 "+
+			"(the sibling, and the popup surface forced above it). A "+
+			"larger number means z-order was bought by repainting more "+
+			"than the overlap requires", painted)
+	}
 
 	if got := render.RowText(c.Cells(), 1); !strings.HasPrefix(got, "POPUP!") {
 		t.Fatalf("row 1 = %q after a later sibling repainted. The popup is still "+
