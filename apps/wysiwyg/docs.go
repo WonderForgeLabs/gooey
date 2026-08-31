@@ -195,6 +195,24 @@ func docsPages(fsys fs.FS) (pages []docPage, skipped int) {
 // that lands.
 const docsBodyMaxLines = 400
 
+// docsBodyMaxBytes bounds the same cost in the units that actually pay
+// it, and it exists because the line cap alone does not.
+//
+// What StringWidth walks is BYTES, not lines. markup-reference.md
+// averages about 80 bytes a line, so a page clamped to 400 lines still
+// hands ~32 KB through the measure on every frame while nine rows are
+// visible. And the line cap is defeated outright by line LENGTH: it
+// counts newlines, so a page written one long line per paragraph —
+// docs/demos.md is exactly that shape — passes proportionally more work
+// through for the same line count.
+//
+// 32 KB is chosen to sit just above the largest page the repo actually
+// ships, so nothing in tree is truncated by it today: it is the bound
+// tracking its stated cost, not a new display limit. Same deletion note
+// as above — issue #67 removes the need for both.
+// Added in review of #426.
+const docsBodyMaxBytes = 32 << 10
+
 // clampLines returns at most n lines of s, with a marker where it cut.
 //
 // The marker is not decoration. Without it a reader who reaches the
@@ -223,8 +241,23 @@ func clampLines(s string, n int) string {
 		return s
 	}
 	cut, lines, found := 0, 0, false
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\n' {
+	// RANGED OVER RUNES, not indexed over bytes, and that is what makes
+	// the byte bound safe to apply: `i` is always a rune boundary here,
+	// so cutting at one cannot split a multi-byte character the way a
+	// bare s[:docsBodyMaxBytes] would.
+	for i, r := range s {
+		// THE BYTE BOUND, in the same pass. The line cap counts newlines
+		// and the cost counts bytes, so a page written one long line per
+		// paragraph — docs/demos.md's shape — passes the line cap
+		// untouched while handing proportionally more work to
+		// StringWidth on every frame. Checked first so a file with no
+		// newlines at all is still bounded; the line cap alone let that
+		// case through entirely.
+		if i >= docsBodyMaxBytes {
+			cut, found = i, true
+			break
+		}
+		if r != '\n' {
 			continue
 		}
 		lines++

@@ -179,9 +179,22 @@ func TestAnUnreadableSubtreeIsCountedRatherThanSwallowed(t *testing.T) {
 	ed, c := docsPage(t, errDirFS{FS: fstest.MapFS{}, bad: "."})
 	ed.activitySel.Set(4)
 	c.Frame()
-	if body := ed.docsBody.Get(); !strings.Contains(body, "could not be read") {
-		t.Errorf("an unreadable docs tree reports %q, want it to distinguish "+
-			"\"I could not look\" from \"there is nothing here\"", body)
+	body := ed.docsBody.Get()
+	if !strings.Contains(body, "unreadable") {
+		t.Errorf("an unreadable docs tree reports %q, want it to say so", body)
+	}
+	// AND IT MUST NOT ALSO CLAIM EMPTINESS, which is the half that
+	// shipped past this test. When the root itself cannot be read,
+	// docsPages returns (nil, 1) and the pane said "holds no markdown
+	// pages. 1 entry could not be read." — a claim the code cannot
+	// support, contradicted by the sentence after it. Asserting only
+	// that the skip note appeared could not see that. Tightened in
+	// review of #426.
+	if strings.Contains(body, "holds no markdown pages") {
+		t.Errorf("an unreadable docs tree reports %q — it claims the directory "+
+			"is EMPTY and then says it could not be read. Those are different "+
+			"states with different fixes, and this function exists to tell "+
+			"them apart", body)
 	}
 }
 

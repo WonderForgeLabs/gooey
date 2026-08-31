@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"unicode/utf8"
 )
 
 // TestALongPageIsBoundedBeforeItIsMeasured pins the measure limit.
@@ -102,5 +103,46 @@ func TestClampLinesDoesNotUseZeroAsNotFound(t *testing.T) {
 	}
 	if head, _, ok := strings.Cut(got, "\n\n…"); !ok || head != "" {
 		t.Errorf("clampLines(%q, 1) = %q, want the empty first line plus the marker", in, got)
+	}
+}
+
+// TestOneVeryLongLineIsBoundedToo is the case the line cap alone could
+// not reach.
+//
+// docsBodyMaxLines counts NEWLINES; the per-frame cost is StringWidth
+// over BYTES. A page written one long line per paragraph — docs/demos.md
+// is exactly that shape — passes a 400-line cap untouched at any size,
+// and a page with no newlines at all passed it however large it was.
+// Found in review of #426.
+func TestOneVeryLongLineIsBoundedToo(t *testing.T) {
+	// No newlines anywhere, well past the byte bound.
+	huge := strings.Repeat("x", docsBodyMaxBytes*2)
+	got := clampLines(huge, docsBodyMaxLines)
+	if len(got) >= len(huge) {
+		t.Errorf("a %d-byte page with no newline came back at %d bytes — the "+
+			"line cap counts newlines and found none, so nothing bounded the "+
+			"work StringWidth does every frame", len(huge), len(got))
+	}
+	if !strings.Contains(got, "continues past what the pane measures") {
+		t.Error("the clamped page carries no marker; a reader cannot tell it " +
+			"from a page that simply ends there")
+	}
+
+	// AND A MULTI-BYTE RUNE AT THE BOUNDARY SURVIVES INTACT. Cutting at
+	// a byte offset is what makes this bound possible and is also how it
+	// could corrupt the last character; ranging over runes is what keeps
+	// the cut on a boundary.
+	wide := strings.Repeat("世", docsBodyMaxBytes) // 3 bytes each
+	cut := clampLines(wide, docsBodyMaxLines)
+	if !utf8.ValidString(cut) {
+		t.Error("clamping a page of wide runes produced invalid UTF-8 — the " +
+			"cut landed inside a character")
+	}
+
+	// A page under both bounds is returned untouched, or the assertions
+	// above pass against a function that always clamps.
+	small := "one\ntwo\nthree\n"
+	if got := clampLines(small, docsBodyMaxLines); got != small {
+		t.Errorf("a short page was clamped to %q; both bounds are far above it", got)
 	}
 }

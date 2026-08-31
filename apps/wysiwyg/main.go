@@ -1073,7 +1073,30 @@ func emptyDocsBody(root fs.FS, skipped int) string {
 	if root == nil {
 		return "No docs/ directory was found beside the editor." + skipnote
 	}
-	return "The docs/ directory beside the editor holds no markdown pages." + skipnote
+	// UNREADABILITY LEADS, because with nothing read the emptiness is not
+	// a fact this function has. "holds no markdown pages" is a claim
+	// about what is there; when the walk skipped something — and when
+	// the ROOT itself was unreadable, docsPages returns (nil, 1) — the
+	// honest answer is that it could not look, and appending that after
+	// the claim made the pane say both:
+	//
+	//	The docs/ directory beside the editor holds no markdown pages.
+	//	1 entry could not be read.
+	//
+	// The first sentence is contradicted by the second, and this
+	// function's whole purpose is the difference between "there is
+	// nothing here" and "I could not look". docs_test.go asserted only
+	// that the skip note appeared, so the false half shipped past the
+	// test written for it. Found in review of #426.
+	if skipped > 0 {
+		unit, verb := "entries", "were"
+		if skipped == 1 {
+			unit, verb = "entry", "was"
+		}
+		return fmt.Sprintf("%d %s under the docs/ directory %s unreadable, "+
+			"so what it holds is unknown.", skipped, unit, verb)
+	}
+	return "The docs/ directory beside the editor holds no markdown pages."
 }
 
 // newEditor takes the editor's root FS because the panes are markup on
