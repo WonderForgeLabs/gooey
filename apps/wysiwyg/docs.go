@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // The platform-documentation tab: the repo's own docs/ tree, inside the
@@ -255,5 +257,77 @@ func docBody(fsys fs.FS, p string) string {
 	if err != nil {
 		return "cannot read " + p + ": " + err.Error()
 	}
-	return string(b)
+	return expandControls(string(b))
 }
+
+// docsTabWidth is where an expanded TAB lands. Eight is the terminal's
+// own default stop, so an indented code block reads here the way it
+// reads in a pager.
+const docsTabWidth = 8
+
+// expandControls makes arbitrary file bytes safe to put in a cell.
+//
+// THIS IS THE FIRST FEATURE IN THE TREE THAT PIPES A FILE INTO THE CELL
+// PLANE, and the plane does not sanitize. render.Buffer.SetString stores
+// a TAB in a cell as an ordinary rune, render.StringWidth counts it as
+// one column, and flush.go emits Cell.Text() verbatim — only
+// Continuation is filtered. So a tab-indented Go block in
+// docs/learn/01-first-app.md reached the terminal as a real TAB, the
+// terminal advanced its cursor to the next 8-column stop, and the rest
+// of the line drew OUTSIDE the pane's rect.
+//
+// The clip added by #409 bounds the cell plane, not the hardware cursor
+// — the distinction wysiwyg.gooey's own comment spends a paragraph
+// making, one level lower than it was aimed.
+//
+// And the damage model made it permanent rather than a smear: the
+// buffer believes those far columns were never written, so the
+// diff-based flush considers them clean and nothing repaints them until
+// something else dirties the row.
+//
+// EVERY C0 CONTROL, not only TAB, because the same hole admits whatever
+// a future page picks up and a stray \x1b would be an escape sequence
+// rather than text. \n survives — it is the line separator everything
+// downstream splits on. \r is dropped rather than substituted so a CRLF
+// checkout does not grow a visible mark per line.
+//
+// Found in review of #426.
+func expandControls(s string) string {
+	if !strings.ContainsFunc(s, isPaneControl) {
+		return s // the common case: no controls, no copy
+	}
+	var sb strings.Builder
+	sb.Grow(len(s))
+	col := 0
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			sb.WriteRune(r)
+			col = 0
+		case r == '\t':
+			// To the NEXT stop, which is what a tab means. A fixed run
+			// of spaces would drift every stop after the first.
+			n := docsTabWidth - col%docsTabWidth
+			sb.WriteString(strings.Repeat(" ", n))
+			col += n
+		case r == '\r':
+			// CRLF is ordinary in a checked-out tree and means nothing
+			// to a pane that splits on \n.
+		case isPaneControl(r):
+			sb.WriteRune('�')
+			col++
+		default:
+			sb.WriteRune(r)
+			// COLUMNS, not runes. The tab stop is a column position, and
+			// counting runes would put the stops in the wrong place for
+			// any page with a wide glyph in it — the exact rune-versus-
+			// column confusion #358 exists to remove.
+			col += render.StringWidth(string(r))
+		}
+	}
+	return sb.String()
+}
+
+// isPaneControl is the set expandControls rewrites: C0 and DEL, less the
+// newline the pane's own line splitting depends on.
+func isPaneControl(r rune) bool { return (r < 0x20 && r != '\n') || r == 0x7f }

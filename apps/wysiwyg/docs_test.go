@@ -460,3 +460,70 @@ func TestADocsPageMayHoldAWideGlyph(t *testing.T) {
 			"%q and no fixture in this package could contain one", "世\ufffd界\ufffd")
 	}
 }
+
+// TestNoControlCharacterFromADocsPageReachesTheCellPlane is the pin for
+// the one thing this feature does that nothing in the tree did before:
+// it puts ARBITRARY FILE BYTES into cells.
+//
+// A TAB is not hypothetical here. Every Go block in docs/learn/*.md is
+// tab-indented, so the shipped tree is full of them. render.Buffer
+// stores a TAB as an ordinary rune, StringWidth counts it as one
+// column, and flush.go emits Cell.Text() verbatim — so the terminal got
+// a real TAB, advanced its cursor to the next 8-column stop, and drew
+// the rest of the line OUTSIDE the pane. The clip bounds the cell
+// plane, not the hardware cursor.
+//
+// Worse than a smear: the buffer believes those far columns were never
+// written, so the diff-based flush treats them as clean and nothing
+// repaints them until something else dirties the row.
+//
+// Asserted on the PLANE rather than on expandControls' return value,
+// because the claim is about what reaches a cell — a unit test on the
+// helper would pass with the helper wired to nothing. Found in review
+// of #426.
+func TestNoControlCharacterFromADocsPageReachesTheCellPlane(t *testing.T) {
+	fsys := fakeDocs()
+	// A tab-indented Go block, exactly as docs/learn/01-first-app.md
+	// writes one, plus a control that is not a tab and a CRLF line.
+	fsys["tabs.md"] = &fstest.MapFile{
+		Data: []byte("# Tabs\n\tcontext\n\tfmt\nbell\x07here\r\n"),
+	}
+	ed, c := docsPage(t, fsys)
+	ed.activitySel.Set(4)
+	c.Frame()
+
+	var i int
+	for n, d := range ed.docList.Get() {
+		if d.Path == "tabs.md" {
+			i = n
+		}
+	}
+	ed.docsSel.Set(i)
+	f, _ := c.Frame()
+
+	b := f.Cells
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			r := b.At(x, y).Rune
+			// Continuation is the second column of a wide glyph, not a
+			// control — it is rune -1 and never reaches the terminal.
+			if r == render.Continuation {
+				continue
+			}
+			if (r < 0x20 && r != 0) || r == 0x7f {
+				t.Fatalf("cell (%d,%d) holds control character %q. A docs page put "+
+					"it on the plane, and flush.go emits Cell.Text() verbatim — so "+
+					"the terminal receives it, moves its cursor outside the pane's "+
+					"clip, and the damage model believes those columns are clean",
+					x, y, r)
+			}
+		}
+	}
+
+	// AND THE TEXT SURVIVED THE REWRITE, or the loop above passes against
+	// an expandControls that simply dropped everything it could not name.
+	if !onScreen(f, "context") {
+		t.Error("the tab-indented word is not on the plane; expanding a TAB " +
+			"must keep the text it was indenting")
+	}
+}
