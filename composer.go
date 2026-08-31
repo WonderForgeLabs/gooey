@@ -70,13 +70,13 @@ type Composer struct {
 	// the split is deliberate: c.nodes stays the STRUCTURE — what the
 	// sweeps, the re-sync and restoreUnder walk, none of which care about
 	// order — and paint is the one answer to "what is in front of what".
-	paint  []*paintNode
-	nodeOf map[Component]*paintNode
-	focus      *FocusManager
-	invalid    func()
-	painted    int
-	frameSeq   int          // stamps which frame a node last painted in
-	over       []*paintNode // nodes painted this frame, in z-order (reused)
+	paint    []*paintNode
+	nodeOf   map[Component]*paintNode
+	focus    *FocusManager
+	invalid  func()
+	painted  int
+	frameSeq int          // stamps which frame a node last painted in
+	over     []*paintNode // nodes painted this frame, in z-order (reused)
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
