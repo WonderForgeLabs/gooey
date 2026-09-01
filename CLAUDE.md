@@ -235,8 +235,8 @@ from a bound source without creating a dependency; the Composer arms a
 separate observer for that (`Composer.armVisibility`, `composer.go:418`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:302`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:333`), so reading a property while painting *is* the damage
+(`composer.go:349`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:380`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -270,7 +270,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:336-373`; the design record is the container-backgrounds and
+(`composer.go:383-420`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
