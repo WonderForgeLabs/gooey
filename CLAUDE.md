@@ -284,6 +284,27 @@ landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
   z-ordered pass force their subtree to repaint above them in the same
   frame.
 
+**Z-order is document order in TWO layers, and "declare it last" was never
+the second one.** `Composer.orderPaint` walks the tree in depth-first
+pre-order and lifts every `gooey.Overlay` subtree to the end; `c.nodes`
+stays the structure, `c.paint` is the answer to what is in front of what.
+The layer exists because forcing runs FORWARD ONLY — the paint loop can
+force a node later than a painter beneath it and has no way to reach one
+earlier — so "the surface is the last of its owner's children" bought
+being above the owner's *other* children and nothing else. Anything
+declared after the OWNER painted over an open popup and stayed there
+([#430](https://github.com/WonderForgeLabs/gooey/issues/430): a `MenuBar`
+on the designer canvas beside a `Gauge`, an `ItemsView` and a `Border` —
+the dropdown painted on the frame that opened it and the next repaint
+erased it). The lift is global rather than within the overlay's parent,
+because an owner three containers deep still drops its menu over a dock
+that is a sibling of its great-grandparent. `Overlay` is a MARKER with an
+empty method, not a predicate: a paint node's position is structural, and
+a bool would need the observer-and-re-sync machinery `Frozen` has. The
+four unbounded `ChildComponents` walks outside this package
+([#375](https://github.com/WonderForgeLabs/gooey/issues/375)) do not know
+about layers and never needed to — none of them paints.
+
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
 *become* the child context, with them they are type-checked against the

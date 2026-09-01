@@ -614,15 +614,18 @@ component.
 A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
-earlier), and the paint loop forces a repaint of every node above a rect
-somebody below just painted — the forcing is a `Set` between
-evaluations, never inside one, so the evaluation-only-reads discipline
-holds. The same pass makes overlapping `Canvas` children and
-runtime-hidden containers correct, and two exemptions keep the counts
-tight: a chrome-only container never forces its own descendants, and a
-`Decorator` (a component that owns no cells, like the ItemsView row
-highlight) is never forced from below. All of it landed as
-[PR #88](https://github.com/WonderForgeLabs/gooey/pull/88) (epic
+earlier) **in two layers**: the ordinary tree, and then every component
+implementing `gooey.Overlay` — a popup surface, and whatever grows one
+next — lifted to the end with its subtree, because a dropdown is not at
+a position in the document, it is on top of it. The paint loop forces a
+repaint of every node above a rect somebody below just painted — the
+forcing is a `Set` between evaluations, never inside one, so the
+evaluation-only-reads discipline holds. The same pass makes overlapping
+`Canvas` children and runtime-hidden containers correct, and two
+exemptions keep the counts tight: a chrome-only container never forces
+its own descendants, and a `Decorator` (a component that owns no cells,
+like the ItemsView row highlight) is never forced from below. All of it
+landed as [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88) (epic
 [#26](https://github.com/WonderForgeLabs/gooey/issues/26)), whose three
 children are the three cases:
 [#27](https://github.com/WonderForgeLabs/gooey/issues/27) the
@@ -1096,9 +1099,17 @@ state change repaints just the button.
 the `MenuBar` dropdown and the `Tooltip` — extracted once the framework
 had grown four hand-rolled copies. An *owner* component stays in the
 tree, keeps focus, and decides what the popup shows; the *surface* is a
-leaf child returned last from `ChildComponents` (document order is
-z-order, so last paints on top) whose pre-clear paints exactly the
-popup rectangle; the `Popup` itself is the lifecycle — an open
+leaf child returned last from `ChildComponents`, and — since
+[#430](https://github.com/WonderForgeLabs/gooey/issues/430) — one that
+implements `gooey.Overlay`, whose pre-clear paints exactly the popup
+rectangle. Being last among the owner's children was the whole story
+until it turned out not to be one: it buys being above the owner's
+*other* children, and nothing else. Forcing runs forward only, so a
+component declared after the *owner* painted over an open popup with
+nothing able to put it back — reported as a menu that vanished on a
+design canvas, where a `MenuBar` sits among a `Gauge`, an `ItemsView`
+and a `Border`. The `Overlay` marker is what actually puts the surface
+on top; the `Popup` itself is the lifecycle — an open
 property, focus save/restore per the capture-at-open rules, held
 pointer capture so a press anywhere outside dismisses, and esc as the
 key fall-through. It solves one subscription subtlety once, and it is

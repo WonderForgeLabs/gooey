@@ -92,10 +92,22 @@ type HitTestTransparent interface{ HitTestTransparent() bool }
 type PointerFollower interface{ FollowsPointer() bool }
 
 // HitTest returns the deepest component whose arranged bounds contain the
-// cell, children before ancestors and later siblings before earlier ones
-// (they paint on top). Collapsed subtrees, zero-size components, and
-// HitTestTransparent components are not hit. The walk allocates nothing —
-// it runs on every motion event.
+// cell, children before ancestors and later siblings before earlier ones.
+// Collapsed subtrees, zero-size components, and HitTestTransparent
+// components are not hit. The walk allocates nothing — it runs on every
+// motion event.
+//
+// THIS IS DOCUMENT ORDER, AND SINCE #437 IT IS NO LONGER PAINT ORDER.
+// The reason given here used to be "they paint on top", which an Overlay
+// makes false: the marker lifts a subtree to a second paint layer above
+// the whole page, and this walk does not know about it. A later sibling
+// therefore takes the press even where an overlay paints above it.
+//
+// It is not a defect for the overlay the framework ships — Popup holds
+// pointer capture for as long as it is open, so presses never reach this
+// walk — but Overlay is a public interface, and an overlay that does not
+// take capture is responsible for its own routing. See the Overlay
+// interface's comment. Corrected in review of #437.
 func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y, 0) }
 
 // depth is threaded rather than counted in a package variable because

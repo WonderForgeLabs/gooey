@@ -82,7 +82,25 @@ func (c *Composer) placementOps() (ops []placeOp, kept []shownPlacement) {
 	}
 	c.gonePlacements = c.gonePlacements[:0]
 
-	for _, n := range c.nodes {
+	// PAINT ORDER, not document order, and the two stopped being the same
+	// thing when Overlay arrived.
+	//
+	// For sixel and iterm2 — and for kitty placements of equal z — the
+	// order these ops are EMITTED is the order the terminal stacks them.
+	// Iterating c.nodes therefore left the pixel plane stacking in
+	// document order while the cell plane stacked in overlay order, and
+	// Frame's own republish (composer.go, "Republish the pixel plane in
+	// paint order") already used c.paint. So an overlay whose draw func
+	// calls Frame.Place — a popup surface's is app-supplied and may place
+	// an image — landed UNDER a later ordinary sibling's image on the
+	// live path and OVER it in the *Frame handed to Frame.Flush, a test
+	// or a screenshot. Frame.Flush's doc calls the two planes "a single
+	// frame"; this is what made them two.
+	//
+	// c.paint is a permutation of c.nodes — orderPaint partitions every
+	// node into it — so this visits each node exactly once, as before.
+	// Found in review of #437.
+	for _, n := range c.paint {
 		was := n.shown
 		now := make([]shownPlacement, 0, len(n.places))
 		for i, p := range n.places {

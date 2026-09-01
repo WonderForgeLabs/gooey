@@ -221,6 +221,14 @@ type popupSurface struct {
 	draw func(*gooey.Frame, gooey.Rect)
 }
 
+// OverlaysPage puts the surface in the overlay layer, which is what
+// actually makes it an overlay. Being the last of the owner's children
+// only ever bought being above the owner's OTHER children; anything
+// declared after the owner painted over the open popup and nothing could
+// put it back, because the z-ordered pass forces forward only. See
+// gooey.Overlay, and #430 for the report.
+func (s *popupSurface) OverlaysPage() {}
+
 func (s *popupSurface) Measure(avail gooey.Size) gooey.Size { return avail }
 
 func (s *popupSurface) Render(f *gooey.Frame) {
