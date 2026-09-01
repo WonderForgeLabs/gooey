@@ -28,7 +28,15 @@ import (
 // nothing, gestureAttrSingle already has \s* boundaries on the other
 // side, and apps/soundboard/board_test.go:41 already writes the bounded
 // form of the same idea. Added in review of #428.
-var gestureAttr = regexp.MustCompile(`\bGesture(?:="|:\s*"|\s*=\s*")([^"]*)"`)
+//
+// TWO ARMS, NOT THREE, and the comment above lists three SPELLINGS —
+// the two are not a map onto each other. `="` was fully subsumed by
+// `\s*=\s*"`, since `\s*` matches empty, so the attribute and the
+// assignment share one arm and the struct field has the other. The
+// behaviour is identical either way; a dead alternation next to a
+// three-item list just invites reading it as one-to-one. Simplified in
+// the re-review of #428.
+var gestureAttr = regexp.MustCompile(`\bGesture(?::\s*"|\s*=\s*")([^"]*)"`)
 
 // AND THE MARKUP FORM HAS A SECOND QUOTE STYLE. The loader is
 // encoding/xml (markup/markup.go), whose tokenizer erases the quote

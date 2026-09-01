@@ -237,3 +237,54 @@ func TestSplitExplicitMnemonic(t *testing.T) {
 		}
 	}
 }
+
+// TestMenuMnemonicIsPinnedWhereCIRunsIt covers the EXPORTED accelerator
+// rule, and it lives here rather than in apps/wysiwyg for one reason:
+// CLAUDE.md's Verify section says CI vets `apps/*` without running their
+// suites.
+//
+// MenuMnemonic is new root-module public surface. Its only tests were in
+// apps/wysiwyg — so the contract of an exported framework function was
+// green only in someone's local loop, and a change to splitMnemonic
+// would have reached CI unopposed. Found in the re-review of #428.
+//
+// The rows are the ones that separate this from a hand-written "the
+// character after the underscore": the marker-less fallback, an escaped
+// underscore, and a non-ASCII accelerator that byte indexing would cut
+// in half.
+func TestMenuMnemonicIsPinnedWhereCIRunsIt(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+		want  rune
+	}{
+		{"_File", 'f'},
+		{"E_xit", 'x'},
+		// NO MARKER: splitMnemonic falls back to the first letter or
+		// digit, because a menu bar without accelerators is broken
+		// furniture. This is the likelier spelling in a real page.
+		{"Help", 'h'},
+		// An ESCAPED underscore is a literal, so the accelerator falls
+		// back to the first letter rather than claiming '_'.
+		{"__Tools", 't'},
+		// NON-ASCII, where indexing bytes returns half a sequence.
+		{"_Über", 'ü'},
+		{"Über", 'ü'},
+		// A digit accelerates too.
+		{"3D", '3'},
+	} {
+		got, ok := MenuMnemonic(tc.title)
+		if !ok {
+			t.Errorf("MenuMnemonic(%q) reports no accelerator; the menu bar "+
+				"accelerates it with %q", tc.title, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("MenuMnemonic(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+	// And a title with nothing to accelerate really reports none, or the
+	// loop above passes against a function that always answers true.
+	if _, ok := MenuMnemonic("!!!"); ok {
+		t.Error("a title with no letter or digit claims an accelerator")
+	}
+}

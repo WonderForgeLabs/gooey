@@ -12,8 +12,8 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 )
 
-// TestNoRootKeyBindingShadowsAMenuTitleMnemonic is the guard for the
-// hazard the alt+ move cluster introduced.
+// TestNoKeyBindingShadowsAMenuTitleMnemonic is the guard for the hazard
+// the alt+ move cluster introduced.
 //
 // Dispatch offers a KeyBinding the event BEFORE the mnemonics get their
 // turn, and a binding on the page root is on every path — so a root
@@ -43,15 +43,26 @@ import (
 // the painter and the dispatcher use: a second copy of this rule is the
 // defect, not the fix.
 //
-// AND "ROOT-SCOPED" WAS NOT CHECKED. The <Menu> arm tracked depth to
-// reject submenus while the <KeyBinding> arm collected every binding in
-// the file. That is not the docstring's premise: a KeyBinding is scoped
-// by its HOST component and only fires while the focused chain passes
-// through it, so a pane-scoped alt+<letter> is not on every path and is
-// not a shadow. Every binding in the page is a root child today, so this
-// changes nothing now and stops a future pane-scoped binding being
-// reported as a collision it isn't.
-func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
+// AND THE GESTURE HALF WAS A LOCAL RULE TOO — see the KeyBinding arm.
+//
+// # And one blindness I added while removing another
+//
+// A round of this narrowed the sweep to root-scoped bindings, arguing
+// that "a pane-scoped alt+<letter> is not on every path and is not a
+// shadow". That is wrong, and the review of #428 caught it.
+//
+// Dispatch's own doc says the bubble matches "the KeyBindings attached
+// at each level" of the focused chain, and the mnemonics run only after
+// the whole chain has declined. So a binding on a PANE beats the menu
+// for as long as focus is inside that pane — which in this editor is
+// most of the time. It is a CONDITIONAL shadow, not the absence of one,
+// and conditional is the worse bug to chase: the menu opens until you
+// click the explorer, and then quietly stops.
+//
+// Both scopes are swept now, and the failure says which it found,
+// because "never opens" and "stops opening once you click there" send a
+// reader to different places.
+func TestNoKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 	src, err := os.ReadFile("wysiwyg.gooey")
 	if err != nil {
 		t.Fatal(err)
@@ -60,18 +71,28 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(string(src)))
 	depth := 0
 	menuDepth := -1
-	// hostDepth is the depth of the page's root COMPONENT — the single
-	// element inside <Gooey>. A KeyBinding one level below it is scoped
-	// to the root and therefore on every path; anything deeper belongs to
-	// a pane.
-	hostDepth := -1
 	mnemonics := map[rune]string{} // accelerator -> menu title
 	// src is kept alongside the letter purely so the failure can quote the
 	// spelling the page actually used — "meta+h" reads as a different
 	// thing from "alt+h" until you know they parse to the same event.
+	//
+	// root distinguishes the two shadow classes. A binding one level
+	// inside <Gooey> is on the root component and so on every path; a
+	// deeper one fires only while focus is in that subtree. Both beat the
+	// mnemonic — see the KeyBinding arm — but the failure should say
+	// which, because "the menu never opens" and "the menu stops opening
+	// once you click the explorer" are different bugs to chase.
+	//
+	// DEPTH 3 IS WRITTEN, not derived, and the review of #428 was right
+	// that the `hostDepth` variable it replaces only ever held -1 or 2:
+	// `depth != hostDepth+1` was `depth != 3` with extra steps, while its
+	// comment claimed a derivation from the file. <Gooey> is depth 1, the
+	// root component depth 2, so a binding on the root is depth 3.
+	const rootBindingDepth = 3
 	var altBindings []struct {
-		src string
-		r   rune
+		src  string
+		r    rune
+		root bool
 	}
 	for {
 		tok, err := dec.Token()
@@ -83,15 +104,10 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 		}
 		switch e := tok.(type) {
 		case xml.StartElement:
+			// INCREMENTED FIRST, so <Gooey> is depth 1, the root
+			// component depth 2, and a binding on the root depth 3 — see
+			// rootBindingDepth above.
 			depth++
-			// depth is incremented BEFORE this runs, so <Gooey> is at
-			// depth 1 and the root component at depth 2. The condition
-			// used to also test `e.Name.Local != "Gooey"`, which can
-			// never be false here — a guard doing no work. Dropped in
-			// review of #428.
-			if depth == 2 && hostDepth == -1 {
-				hostDepth = depth
-			}
 			switch e.Name.Local {
 			case "Menu":
 				// TOP-LEVEL menus only: a nested one is a submenu whose
@@ -104,9 +120,23 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 					}
 				}
 			case "KeyBinding":
-				if depth != hostDepth+1 {
-					continue // pane-scoped: not on every path
-				}
+				// EVERY DEPTH, and narrowing this to root-scoped
+				// bindings was a defect I introduced and the review of
+				// #428 caught.
+				//
+				// The reasoning I wrote for the narrowing — "a
+				// pane-scoped alt+<letter> is not on every path and is
+				// not a shadow" — is wrong. Dispatch's own doc
+				// (input.go, "It TUNNELS first") says the bubble matches
+				// "the KeyBindings attached at each level" of the
+				// focused chain, and only then do the mnemonics get
+				// their turn. So a binding on a PANE beats the menu for
+				// as long as focus is inside that pane, which in this
+				// editor is most of the time.
+				//
+				// It is a CONDITIONAL shadow rather than no shadow, and
+				// a conditional one is worse to debug: the menu opens
+				// until you click the explorer, and then stops.
 				g := xmlAttr(e, "Gesture")
 				// ASK THE PARSER, don't match the string. `alt+` as a
 				// prefix is a third copy of a rule the framework already
@@ -129,9 +159,10 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 					continue // not a single-rune alt gesture: not mnemonic territory
 				}
 				altBindings = append(altBindings, struct {
-					src string
-					r   rune
-				}{g, unicode.ToLower(ev.Rune)})
+					src  string
+					r    rune
+					root bool
+				}{g, unicode.ToLower(ev.Rune), depth == rootBindingDepth})
 			}
 		case xml.EndElement:
 			if menuDepth == depth {
@@ -142,21 +173,27 @@ func TestNoRootKeyBindingShadowsAMenuTitleMnemonic(t *testing.T) {
 	}
 
 	if len(mnemonics) == 0 || len(altBindings) == 0 {
-		t.Fatalf("found %d menu mnemonics and %d single-letter root alt bindings; "+
+		t.Fatalf("found %d menu mnemonics and %d single-letter alt bindings; "+
 			"with either at zero this test cannot fail and proves nothing",
 			len(mnemonics), len(altBindings))
 	}
 
 	for _, b := range altBindings {
 		if title, clash := mnemonics[b.r]; clash {
-			t.Errorf("a KeyBinding on %q collides with the %q menu's mnemonic "+
-				"(both are alt+%c once parsed). Dispatch offers bindings before "+
-				"mnemonics, so the binding wins and the menu silently stops "+
-				"opening — move one of them",
-				b.src, title, b.r)
+			scope := "a pane-scoped KeyBinding (it wins while focus is inside " +
+				"that subtree, so the menu stops opening once the user clicks there)"
+			if b.root {
+				scope = "a root-scoped KeyBinding (it is on every path, so the " +
+					"menu never opens at all)"
+			}
+			t.Errorf("%s on %q collides with the %q menu's mnemonic (both are "+
+				"alt+%c once parsed). Dispatch matches the bindings at each level "+
+				"of the focused chain BEFORE the mnemonics get their turn, so the "+
+				"binding wins — move one of them",
+				scope, b.src, title, b.r)
 		}
 	}
-	t.Logf("checked %d root alt bindings against %d menu mnemonics",
+	t.Logf("checked %d alt bindings (root and pane-scoped) against %d menu mnemonics",
 		len(altBindings), len(mnemonics))
 }
 
