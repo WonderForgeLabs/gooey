@@ -45,13 +45,31 @@
     <KeyBinding Gesture="x" Command="{{.Delete}}"/>
     <KeyBinding Gesture="ctrl+n" Command="{{.NextEl}}"/>
     <KeyBinding Gesture="ctrl+p" Command="{{.PrevEl}}"/>
-    <!-- MOVE. ctrl+ letters rather than arrows: an unclaimed arrow falls
-         through to focus navigation, so binding a bare arrow here would
-         take tab-order movement away from the panes. -->
-    <KeyBinding Gesture="ctrl+k" Command="{{.MoveUp}}"/>
-    <KeyBinding Gesture="ctrl+j" Command="{{.MoveDown}}"/>
-    <KeyBinding Gesture="ctrl+h" Command="{{.Promote}}"/>
-    <KeyBinding Gesture="ctrl+l" Command="{{.Demote}}"/>
+    <!-- MOVE, on hjkl. Not arrows: an unclaimed arrow falls through to
+         focus navigation, so binding a bare arrow here would take
+         tab-order movement away from the panes, and ctrl+arrow is the
+         dock cluster further down.
+
+         ALT, NOT CTRL, and that is a fix rather than a preference.
+         Half this cluster never fired: ctrl+h is the byte 0x08 and
+         ctrl+j is 0x0a, which the decoder reads as backspace and enter
+         — the right calls, since that is what people mean by those
+         keys, but it left MoveDown and Promote bound to gestures no
+         terminal can send. ctrl+k and ctrl+l worked, so the cluster was
+         half alive and looked whole. input.ParseGesture rejects the
+         dead spellings now (issue #427), which is what turned a silent
+         nothing into a load error; moving all four rather than the two
+         keeps hjkl one cluster.
+
+         alt+<letter> SHADOWS A MENU MNEMONIC, so check the menu bar
+         before adding to this list: a root KeyBinding is offered the
+         key before the mnemonics are, and the menu titles are File,
+         Project and View. A _Help menu would collide with alt+h and the
+         menu would be the one that lost. -->
+    <KeyBinding Gesture="alt+k" Command="{{.MoveUp}}"/>
+    <KeyBinding Gesture="alt+j" Command="{{.MoveDown}}"/>
+    <KeyBinding Gesture="alt+h" Command="{{.Promote}}"/>
+    <KeyBinding Gesture="alt+l" Command="{{.Demote}}"/>
     <KeyBinding Gesture="ctrl+d" Command="{{.Duplicate}}"/>
 
     <!-- COPY / CUT / PASTE. See clipboard.go for why these are three
@@ -186,8 +204,12 @@
     <KeyBinding Gesture="ctrl+w" Command="{{.TogglePane}}"/>
     <KeyBinding Gesture="ctrl+r" Command="{{.CollapsePane}}"/>
     <!-- ctrl+alt+p, and it has now dodged TWO collisions of different
-         kinds. Not ctrl+k: that is MoveUp, the designer's move gesture,
-         which landed in #373 while this pane was held. Two KeyBindings on
+         kinds. Not ctrl+k: that WAS MoveUp, the designer's move gesture
+         that landed in #373 while this pane was held. MoveUp is alt+k
+         now (#427 moved the cluster off the gestures no terminal can
+         send), so the collision this paragraph dodged no longer exists —
+         it is kept because the REASONING is what matters here and it
+         still applies to whatever lands on ctrl+alt+p next. Two KeyBindings on
          one gesture at the same host is not a load error: both are scoped
          to the root, dispatch offers them in order, and the loser simply
          never fires. So the collision would have shipped as "pin silently

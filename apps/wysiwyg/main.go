@@ -80,9 +80,9 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
-//	ctrl+k, ctrl+j   move the selection up / down among its siblings
-//	ctrl+h           PROMOTE — lift the selection out to its grandparent
-//	ctrl+l           DEMOTE — nest the selection into the sibling above it
+//	alt+k, alt+j     move the selection up / down among its siblings
+//	alt+h            PROMOTE — lift the selection out to its grandparent
+//	alt+l            DEMOTE — nest the selection into the sibling above it
 //	ctrl+d           duplicate the selection, and select the copy
 //	ctrl+z, ctrl+y   undo / redo, bounded by -history
 //
@@ -209,8 +209,8 @@
 // invents a home for design-time state — no attribute, no comment, no
 // property element.
 //
-// The keyboard reaches all four of these without the pointer: ctrl+k and
-// ctrl+j reorder among siblings, ctrl+h promotes, ctrl+l demotes, and
+// The keyboard reaches all four of these without the pointer: alt+k and
+// alt+j reorder among siblings, alt+h promotes, alt+l demotes, and
 // ctrl+d duplicates. See move.go and duplicate.go; wysiwyg.gooey holds
 // the bindings, and the # Keys table above is the whole surface.
 //

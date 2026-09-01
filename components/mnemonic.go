@@ -69,6 +69,33 @@ func splitExplicitMnemonic(s string) (text string, accel rune, pos int, ok bool)
 	return string(out), accel, pos, pos >= 0
 }
 
+// MenuMnemonic reports the accelerator a MENU title or item text claims,
+// lowercased, and whether it claims one at all. It is splitMnemonic's
+// answer with the text and the position dropped — the marker if there is
+// one, the first letter or digit otherwise.
+//
+// EXPORTED FOR THE COLLISION GUARDS, and that is the whole reason it
+// exists: a menu's accelerator is a page-global alt gesture, so anything
+// checking a keymap for a shadowed menu has to know which letter a title
+// claims. apps/wysiwyg's guard derived it locally and got it wrong in
+// three ways at once — it required an explicit marker, so every menu
+// relying on the fallback (the LIKELIER spelling, given the fallback
+// exists) was invisible to it; it read "__Tools" as claiming '_'; and it
+// indexed bytes, so "_Über" produced half a UTF-8 sequence. Found in
+// review of #428.
+//
+// A second implementation of this rule is the defect, not the fix: the
+// only correct copy is the one the painter and the dispatcher use, and
+// that is splitMnemonic. This is a window onto it, not a restatement.
+//
+// MENU-flavoured, and the name says so. Buttons take only an explicit
+// marker (see the doctrine at the top of this file), so a guard about
+// buttons wants a different answer and must not reach for this one.
+func MenuMnemonic(s string) (rune, bool) {
+	_, accel, pos := splitMnemonic(s)
+	return accel, pos >= 0
+}
+
 // mnemonicCol converts a mnemonic's RUNE index into the COLUMN offset of
 // the cell it is painted in.
 //

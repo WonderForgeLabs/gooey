@@ -831,6 +831,16 @@ of a follow-up within the timeout proves the user meant the Esc key.
 syntax (`"ctrl+s"`, `"shift+tab"`, `"j"`, `"esc"`) into a `KeyEvent`,
 and because `KeyEvent` is comparable, gesture matching is `==`.
 
+It also REFUSES a gesture the decoder cannot produce, which is a
+load-time contract rather than a parsing detail: `ctrl` only reaches
+`@`–`_` and `a`–`z`, and five spellings inside that range are already
+taken by named keys, so `ctrl+j` and 45 others used to parse cleanly and
+then never fire — a binding indistinguishable at runtime from a key
+nobody pressed. The producible set is derived by decoding every byte
+through `Decode` rather than written down, so the parser cannot drift
+from the decoder it answers for
+([#427](https://github.com/WonderForgeLabs/gooey/issues/427)).
+
 Mouse reporting is opt-in (`Screen.EnableMouse`, SGR mode 1006 plus
 button and any-motion tracking), not part of `Raw` — motion reports are
 just bytes on the tty, and an app that treats any byte as a keypress

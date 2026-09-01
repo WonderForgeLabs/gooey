@@ -295,23 +295,44 @@ func TestDemoteRefusesTheFirstChild(t *testing.T) {
 // A method nothing can reach is the same defect as a test nothing can
 // fail: the feature is present in the package and missing from the
 // editor.
+//
+// THE EVENT COMES FROM ParseGesture, and it did not until #427 — the
+// arms hand-built input.KeyEvent{KeyRune, 'j', ModCtrl}, which is a
+// value NO TERMINAL CAN SEND. 0x0a is the byte for ctrl+j and the
+// decoder reads it as enter, so the shipped binding had never fired
+// once while this test proved it was wired. The harness was doing the
+// thing under test: it manufactured the event the decoder refuses to
+// manufacture, and then agreed with itself.
+//
+// Building through ParseGesture closes that, because ParseGesture now
+// rejects an unproducible spelling — so an arm here cannot assert a
+// dead gesture fires without failing at construction.
 func TestTheMoveGesturesAreWiredAsShipped(t *testing.T) {
-	ctrl := func(r rune) input.Event {
-		return input.KeyOf(input.KeyEvent{Key: input.KeyRune, Rune: r, Mods: input.ModCtrl})
+	gesture := func(t *testing.T, g string) input.Event {
+		t.Helper()
+		ev, err := input.ParseGesture(g)
+		if err != nil {
+			t.Fatalf("the page binds %q and ParseGesture refuses it: %v", g, err)
+		}
+		return input.KeyOf(ev)
 	}
 	for _, tc := range []struct {
-		gesture input.Event
-		name    string
-		want    string
+		name string
+		want string // "" — consumed is the whole claim; nesting is tested above
 	}{
-		{ctrl('k'), "ctrl+k", "B,A,C"},
-		{ctrl('j'), "ctrl+j", "A,C,B"},
+		{"alt+k", "B,A,C"},
+		{"alt+j", "A,C,B"},
+		{"alt+h", ""},
+		{"alt+l", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ed, c := moveFixture(t)
 			ed.sel = ed.doc().Kids[1]
-			if !c.Handle(tc.gesture) {
+			if !c.Handle(gesture(t, tc.name)) {
 				t.Fatalf("%s was not consumed: the binding is not on the page", tc.name)
+			}
+			if tc.want == "" {
+				return
 			}
 			if got := kidNames(ed.doc()); got != tc.want {
 				t.Fatalf("order is %q after %s, want %q", got, tc.name, tc.want)

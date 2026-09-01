@@ -1593,11 +1593,28 @@ Keys:
 
 - Named keys: `enter`, `tab`, `esc`, `backspace`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, and `space`.
 - Any single rune: `j`, `q`, `/`, ...
-- The `+` key itself is the one case that needs spelling out: `ctrl++`.
+- The `+` key itself is the one case that needs spelling out: `alt++`.
 
 Examples from the demos: `q`, `esc`, `ctrl+c`, `enter`, `s`, `a`.
 
-Two normalizations reflect what the terminal actually sends: `shift` on a printable character folds into the rune (`shift+j` matches `J`, and the shift modifier is dropped), and `ctrl+<letter>` lowercases the letter (control bytes decode to the lowercase rune).
+Three normalizations reflect what the terminal actually sends: `shift` on a printable character folds into the rune (`shift+j` matches `J`, and the shift modifier is dropped), `ctrl+<letter>` lowercases the letter (control bytes decode to the lowercase rune), and `ctrl+@` becomes `ctrl+space` (`0x00` is the byte for both, and space is what people press).
+
+### A ctrl gesture the decoder cannot produce is a load error
+
+`ctrl` does not reach every printable character, and the ones it cannot reach used to parse cleanly and then never fire — no error, no warning, nothing at runtime to tell the binding apart from a key you never pressed. They are refused at load time now ([#427](https://github.com/WonderForgeLabs/gooey/issues/427)), with a message naming the cause:
+
+```
+input: gesture "ctrl+j" never fires: a terminal sends 0x0a for it, which decodes as enter
+```
+
+Two rules produce the whole refused set, and both come from the decoder rather than from a list:
+
+- **`ctrl` reaches only `@` through `_` and `a` through `z`.** A control byte decodes as `byte|0x40`, so every digit, most punctuation, and the braces are unreachable by construction — `ctrl+1`, `ctrl+,`, `` ctrl+` `` and `ctrl+~` among them.
+- **Five spellings inside that range are claimed by a named key first.** `ctrl+h` is backspace, `ctrl+i` is tab, `ctrl+j` and `ctrl+m` are enter, and `ctrl+[` is esc — four letters and a bracket, not five letters. Those are the right calls, since people pressing backspace mean backspace, so bind the named key instead.
+
+`alt+` on its own is unaffected: it is an ESC prefix rather than part of the byte, so `alt+j` and `alt+1` are fine. This is why the wysiwyg editor's move cluster is `alt+h/j/k/l` rather than the vim-shaped `ctrl+` spelling.
+
+It does not rescue a ctrl gesture, though. A `ctrl+alt+…` spelling is judged on its **ctrl half**, so `ctrl+alt+j` and `ctrl+alt+1` are refused exactly as `ctrl+j` and `ctrl+1` are, while `ctrl+alt+s` is accepted because `ctrl+s` is. Adding the prefix changes how the byte is delivered, not whether there is a byte to deliver.
 
 ## Designed, not yet implemented
 

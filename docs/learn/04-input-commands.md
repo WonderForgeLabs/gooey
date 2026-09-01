@@ -67,12 +67,19 @@ Modifier order does not matter and matching is case-insensitive.
 | Modifiers | `ctrl` / `control` / `c`, `alt` / `meta` / `option`, `shift` |
 | Named keys | `enter`, `tab`, `esc`, `backspace`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `space` |
 | Characters | any single rune: `j`, `q`, `/` |
-| The `+` key | spell it out: `ctrl++` |
+| The `+` key | spell it out: `alt++` |
 
-Two normalizations reflect what terminals actually send: `shift` on a
+Three normalizations reflect what terminals actually send: `shift` on a
 printable character folds into the rune (`shift+j` matches `J`, and the
-shift modifier is dropped), and `ctrl+<letter>` lowercases the letter,
-because control bytes decode to the lowercase rune.
+shift modifier is dropped), `ctrl+<letter>` lowercases the letter
+because control bytes decode to the lowercase rune, and `ctrl+@` becomes
+`ctrl+space` because `0x00` is the byte for both.
+
+A ctrl gesture the decoder cannot produce is refused at load time rather
+than silently never firing: `ctrl` reaches only `@`–`_` and `a`–`z`, and
+`ctrl+h`, `ctrl+i`, `ctrl+j`, `ctrl+m` and `ctrl+[` are already
+backspace, tab, enter, enter and esc. See
+[the keybindings how-to](howto/howto-keybindings.md) for the whole rule.
 
 ## Step 3: Scope a binding to a pane
 

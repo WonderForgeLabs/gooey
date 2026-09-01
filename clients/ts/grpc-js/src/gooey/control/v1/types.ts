@@ -543,6 +543,13 @@ export interface PointerEvent {
  * "tab", "shift+tab", "j". One spelling everywhere: the same strings
  * input.ParseGesture reads and KeyEvent.String writes.
  *
+ * A ctrl gesture no terminal can send is rejected rather than silently
+ * ignored: ctrl reaches only @-_ and a-z, and ctrl+h/i/j/m/[ are
+ * backspace/tab/enter/enter/esc. control.SendKeys is the one chokepoint
+ * for this field and the MCP send_keys tool alike, so a client that has
+ * been sending "ctrl+j" now gets InvalidArgument — send "enter", which
+ * is what the terminal would have delivered.
+ *
  * @generated from protobuf message gooey.control.v1.KeyEvent
  */
 export interface KeyEvent {
