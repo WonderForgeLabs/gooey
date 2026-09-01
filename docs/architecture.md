@@ -618,14 +618,14 @@ earlier) **in two layers**: the ordinary tree, and then every component
 implementing `gooey.Overlay` — a popup surface, and whatever grows one
 next — lifted to the end with its subtree, because a dropdown is not at
 a position in the document, it is on top of it. The paint loop forces a
-repaint of every node above a rect somebody below just painted — the forcing is a `Set` between
-evaluations, never inside one, so the evaluation-only-reads discipline
-holds. The same pass makes overlapping `Canvas` children and
-runtime-hidden containers correct, and two exemptions keep the counts
-tight: a chrome-only container never forces its own descendants, and a
-`Decorator` (a component that owns no cells, like the ItemsView row
-highlight) is never forced from below. All of it landed as
-[PR #88](https://github.com/WonderForgeLabs/gooey/pull/88) (epic
+repaint of every node above a rect somebody below just painted — the
+forcing is a `Set` between evaluations, never inside one, so the
+evaluation-only-reads discipline holds. The same pass makes overlapping
+`Canvas` children and runtime-hidden containers correct, and two
+exemptions keep the counts tight: a chrome-only container never forces
+its own descendants, and a `Decorator` (a component that owns no cells,
+like the ItemsView row highlight) is never forced from below. All of it
+landed as [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88) (epic
 [#26](https://github.com/WonderForgeLabs/gooey/issues/26)), whose three
 children are the three cases:
 [#27](https://github.com/WonderForgeLabs/gooey/issues/27) the
