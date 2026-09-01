@@ -1612,7 +1612,9 @@ Two rules produce the whole refused set, and both come from the decoder rather t
 - **`ctrl` reaches only `@` through `_` and `a` through `z`.** A control byte decodes as `byte|0x40`, so every digit, most punctuation, and the braces are unreachable by construction — `ctrl+1`, `ctrl+,`, `` ctrl+` `` and `ctrl+~` among them.
 - **Five spellings inside that range are claimed by a named key first.** `ctrl+h` is backspace, `ctrl+i` is tab, `ctrl+j` and `ctrl+m` are enter, and `ctrl+[` is esc — four letters and a bracket, not five letters. Those are the right calls, since people pressing backspace mean backspace, so bind the named key instead.
 
-`alt+` is unaffected: it is an ESC prefix rather than part of the byte, so `alt+j` and `alt+1` are fine. This is why the wysiwyg editor's move cluster is `alt+h/j/k/l` rather than the vim-shaped `ctrl+` spelling.
+`alt+` on its own is unaffected: it is an ESC prefix rather than part of the byte, so `alt+j` and `alt+1` are fine. This is why the wysiwyg editor's move cluster is `alt+h/j/k/l` rather than the vim-shaped `ctrl+` spelling.
+
+It does not rescue a ctrl gesture, though. A `ctrl+alt+…` spelling is judged on its **ctrl half**, so `ctrl+alt+j` and `ctrl+alt+1` are refused exactly as `ctrl+j` and `ctrl+1` are, while `ctrl+alt+s` is accepted because `ctrl+s` is. Adding the prefix changes how the byte is delivered, not whether there is a byte to deliver.
 
 ## Designed, not yet implemented
 

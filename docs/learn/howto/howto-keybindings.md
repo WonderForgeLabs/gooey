@@ -53,8 +53,14 @@ Two rules cover the whole refused set:
   backspace, tab, enter, enter and esc — four letters and a bracket.
   Bind the named key instead.
 
-`alt+` is not affected — it is an ESC prefix rather than part of the
-byte, so `alt+j` and `alt+1` are both fine.
+`alt+` on its own is not affected — it is an ESC prefix rather than part
+of the byte, so `alt+j` and `alt+1` are both fine.
+
+Adding it to a ctrl gesture does not rescue one, though: `ctrl+alt+…` is
+judged on its **ctrl half**, so `ctrl+alt+j` and `ctrl+alt+1` are refused
+exactly as `ctrl+j` and `ctrl+1` are, while `ctrl+alt+s` is fine because
+`ctrl+s` is. The alt prefix changes how the byte is delivered, not which
+byte there is to deliver.
 
 ## Scope a binding by where you declare it
 
