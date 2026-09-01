@@ -607,3 +607,170 @@ func TestASameSlotDropDoesNotReorderButStillSchedulesAFrame(t *testing.T) {
 			"without it the drag text stays on screen after the drop")
 	}
 }
+
+// TestCollapsingTheBottomStripGivesItsRowsBack is issue #431, reported
+// against a running editor as "collapsing the bottom panel doesn't
+// collapse everything, it just hides its contents".
+//
+// COLLAPSE IS A DIRECTION, and the bottom strip is the one slot where
+// that direction is not the one it stacks in. Left, right and centre
+// stack top-to-bottom, so shortening a pane to headerH shortens it along
+// the axis it shares with its neighbours and they take the room. The
+// bottom strip stacks LEFT TO RIGHT, so the same arithmetic spent
+// headerH on the pane's WIDTH — one column, title gone, a bare chevron
+// left — while the strip kept every row of its declared Size, because
+// nothing had asked its height to change.
+//
+// The assertion is about GEOMETRY on both axes, and it has to be. The
+// symptom the user saw is the strip's height; the tell that named the
+// cause is the pane's width, and a test that checked only the height
+// would pass against a fix that shrank the strip and left the pane one
+// column wide.
+//
+// It is deliberately relative — grew BY (Size - headerH), rather than a
+// row number — so it stays true when a pane above it changes size.
+func TestCollapsingTheBottomStripGivesItsRowsBack(t *testing.T) {
+	ed, c := dockFixture(t)
+	panel := pane(t, ed, "panel")
+	centre := pane(t, ed, "editor")
+
+	was, wasCentre := panel.Bounds(), centre.Bounds()
+	if was.W <= 0 || was.H <= 0 {
+		t.Fatalf("the PANEL pane is %+v before anything happened", was)
+	}
+	f, _ := c.Frame()
+	if !strings.Contains(rowText(f, was.Y, was.X, was.W), panel.Title) {
+		t.Fatalf("the PANEL header does not read %q before collapsing; "+
+			"this test's width assertion would mean nothing", panel.Title)
+	}
+
+	ed.dock.ToggleCollapsed(panel)
+	settle(t, c)
+
+	got, gotCentre := panel.Bounds(), centre.Bounds()
+
+	// THE HEIGHT — the reported symptom. The strip is the pane's declared
+	// Size tall and must fall to one header row.
+	if got.H != headerH {
+		t.Errorf("the collapsed bottom strip is %d rows tall, want %d — its rows "+
+			"are still off the editor, which is the bug as reported", got.H, headerH)
+	}
+	// THE WIDTH — the tell. A pane in a horizontal strip collapses along
+	// the OTHER axis, so it keeps every column it had.
+	if got.W != was.W {
+		t.Errorf("collapsing narrowed the pane from %d columns to %d. In a strip that "+
+			"stacks left to right, headerH is the wrong axis to spend: the header has "+
+			"no room left for its title and the user is looking at a lone chevron",
+			was.W, got.W)
+	}
+	// AND SOMEBODY GOT THE ROOM. Reclaiming space is the whole purpose of
+	// collapse; a strip that shrank while the centre stayed put would
+	// have moved the rows nowhere.
+	if grew := gotCentre.H - wasCentre.H; grew != was.H-headerH {
+		t.Errorf("the centre pane grew by %d rows and the strip gave up %d; the "+
+			"space a collapse reclaims has to go to the neighbours",
+			grew, was.H-headerH)
+	}
+
+	// AND THE DROP GEOMETRY AGREES. slotAt resolves a drag's destination
+	// from the same extents layout used, and its own comment says so —
+	// "the answer comes from the host's bounds and the resolved extents".
+	// Reading the DECLARED size there instead would leave a band nine
+	// rows deep that looks like the centre pane and answers "bottom", so
+	// a pane dropped in the editor area docks to a strip that is not
+	// under the pointer. One row above the collapsed strip is the
+	// discriminating point: it is inside the old band and outside the
+	// real one.
+	host := panel.host
+	hb := host.Bounds()
+	if got := host.slotAt(hb.X+hb.W/2, hb.Y+hb.H-headerH-1); got != dockCenter {
+		t.Errorf("the row just above the collapsed strip resolves to the %s slot, "+
+			"want %s; the drop geometry is still reading the strip's declared "+
+			"size rather than the height it was laid out at",
+			slotName(got), slotName(dockCenter))
+	}
+}
+
+// TestOneCollapsedPaneDoesNotShortenAStripThatStillHasAnOpenOne pins the
+// "ALL, not any" rule, which is the longest paragraph in laidOutExtent
+// and which nothing could previously fail against.
+//
+// The shipped page docks exactly ONE pane in Bottom, so "all collapsed"
+// and "any collapsed" are the same predicate everywhere the suite looks:
+// rewriting the loop to `if p.collapsedNow() { return headerH }` left the
+// whole suite green. The rule only has content when the strip holds two.
+//
+// It matters because a horizontal strip cannot be partly short. Shrinking
+// on ANY collapse would cut the strip to one row while a pane beside it
+// is still open, clipping everything that pane draws. Found in review of
+// #436.
+func TestOneCollapsedPaneDoesNotShortenAStripThatStillHasAnOpenOne(t *testing.T) {
+	ed, c := dockFixture(t)
+	panel := pane(t, ed, "panel")
+	second := pane(t, ed, "explorer")
+
+	// Two panes in Bottom, through the same path a drag-drop uses.
+	ed.dock.Move(second, dockBottom)
+	settle(t, c)
+
+	open := second.Bounds()
+	if open.H <= headerH {
+		t.Fatalf("the second bottom pane is %d rows tall before anything "+
+			"collapsed; this test cannot see a clip", open.H)
+	}
+
+	ed.dock.ToggleCollapsed(panel)
+	settle(t, c)
+
+	// THE RULE. One of the two is collapsed, so the strip stays as tall
+	// as the open one needs.
+	if got := second.Bounds().H; got != open.H {
+		t.Errorf("the still-open pane went from %d rows to %d when its "+
+			"NEIGHBOUR collapsed. laidOutExtent shortened the strip on "+
+			"`any collapsed` rather than `all`, and a horizontal strip "+
+			"cannot be partly short — whatever this pane draws below row "+
+			"%d is clipped", open.H, got, headerH)
+	}
+	if got := ed.dock.laidOutExtent(dockBottom); got != ed.dock.slotExtent(dockBottom) {
+		t.Errorf("laidOutExtent(bottom) = %d with one pane still open, want "+
+			"the slot's full extent %d",
+			got, ed.dock.slotExtent(dockBottom))
+	}
+
+	// AND THE OTHER SIDE OF THE RULE: collapse the second one too, and
+	// now the strip really is one header row. Without this the test above
+	// passes against a laidOutExtent that never shortens at all.
+	ed.dock.ToggleCollapsed(second)
+	settle(t, c)
+
+	if got := ed.dock.laidOutExtent(dockBottom); got != headerH {
+		t.Errorf("laidOutExtent(bottom) = %d with EVERY pane collapsed, want "+
+			"%d — the strip should now be a row of headers", got, headerH)
+	}
+}
+
+// TestLaidOutExtentAnswersInTheSlotsOwnUnits is the unit guard.
+//
+// laidOutExtent takes a general dockSlot and is exposed on both dockModel
+// and dockHost, but headerH is a ROW count and only dockBottom measures
+// rows. Before the review of #436 it answered 1 for a fully-collapsed
+// LEFT slot — a one-column rail, which is the very unit confusion the
+// function exists to remove, reintroduced inside the fix.
+func TestLaidOutExtentAnswersInTheSlotsOwnUnits(t *testing.T) {
+	ed, c := dockFixture(t)
+	side := pane(t, ed, "explorer")
+
+	ed.dock.Move(side, dockLeft)
+	settle(t, c)
+	ed.dock.ToggleCollapsed(side)
+	settle(t, c)
+
+	// Every pane in Left is collapsed. Collapse there is on the STACKING
+	// axis, which place owns — the slot's WIDTH is untouched.
+	if got, want := ed.dock.laidOutExtent(dockLeft), ed.dock.slotExtent(dockLeft); got != want {
+		t.Errorf("laidOutExtent(left) = %d with every left pane collapsed, want "+
+			"%d. The left slot measures COLUMNS and headerH is a row count, so "+
+			"this is a %d-column rail — the unit confusion the function was "+
+			"written to remove", got, want, got)
+	}
+}
