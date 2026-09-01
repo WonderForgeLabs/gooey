@@ -620,3 +620,59 @@ func TestInspectorRowsAreGroupedByCategory(t *testing.T) {
 		t.Fatalf("expected several categories on a <Button>, saw %v", seen)
 	}
 }
+
+// TestRetypingIntoAnOffsetParentSeedsThePositionItGrants pins the VALUES
+// a retype writes, which nothing did.
+//
+// The test above asserts which attributes a child is OFFERED after a
+// retype — that is attrRows, and it passes whether or not the seed ever
+// ran. The seed is what stops every child of a freshly-retyped <Canvas>
+// from stacking at the origin, and it was written as `if elem ==
+// "Canvas"` with both attribute names as literals, so it covered
+// exactly one container and would have kept writing "Canvas.Left" if
+// the catalog renamed it.
+//
+// Asking the GRANT is what generalises it, so this asserts against the
+// grant's own role names rather than against the strings — the same
+// question the drag's Release asks, which is the point: the seed and
+// the write must not disagree about where a position lives.
+func TestRetypingIntoAnOffsetParentSeedsThePositionItGrants(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.doc().Elem = "VStack"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Text", Body: "aa", Attrs: map[string]string{"Name": "A"}},
+		{Elem: "Text", Body: "bb", Attrs: map[string]string{"Name": "B"}},
+	}
+	ed.sel = ed.doc()
+	ed.rebuild()
+	c.Frame()
+
+	g := ed.grantOf("Canvas")
+	x, y := g.Attr(markup.RoleX), g.Attr(markup.RoleY)
+	if x == "" || y == "" {
+		t.Fatalf("<Canvas> grants no x/y roles (%+v), so this test cannot "+
+			"tell a working seed from a missing one", g)
+	}
+
+	ed.retype("Canvas")
+
+	for i, k := range ed.doc().Kids {
+		if k.Attrs[x] == "" || k.Attrs[y] == "" {
+			t.Errorf("child %d of the retyped <Canvas> has %s=%q %s=%q; "+
+				"without a seed every child lands stacked at the origin",
+				i, x, k.Attrs[x], y, k.Attrs[y])
+		}
+	}
+
+	// An existing position is NOT overwritten — a retype moves a child
+	// between parents, it does not reposition one that already said
+	// where it goes.
+	ed.retype("VStack")
+	ed.doc().Kids[0].Attrs[x] = "40"
+	ed.doc().Kids[0].Attrs[y] = "9"
+	ed.retype("Canvas")
+	if got := ed.doc().Kids[0].Attrs[x]; got != "40" {
+		t.Errorf("the seed overwrote an existing %s: %q, want \"40\"", x, got)
+	}
+}

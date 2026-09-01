@@ -242,7 +242,18 @@ func componentPath(root, w gooey.Component, acc []gooey.Component) ([]gooey.Comp
 // Name and neither is a position, so a node's identity here survives
 // being renamed and survives its geometry living only in the editor.
 func (ed *editor) mapNodes(n *node, comp gooey.Component) {
+	// BOTH DIRECTIONS AT ONE POINT, so they cannot drift: see compOf.
+	//
+	// Neither write is guarded, and the compOf one used to be. That
+	// guard could not fire — the two maps are made on consecutive lines
+	// (main.go) and cleared together, and the only caller is the line
+	// right after they are made — but worse, it could not have HELPED if
+	// it had: the nodeOf write above it dies on a nil map first. A guard
+	// that is reached only after the panic it would prevent is not a
+	// guard, it is a claim that the invariant is optional. Found in
+	// review of #425.
 	ed.nodeOf[comp] = n
+	ed.compOf[n] = comp
 	kids := childComponents(comp)
 	if len(kids) != len(n.Kids) || !ed.pairsAgree(n, kids) {
 		return

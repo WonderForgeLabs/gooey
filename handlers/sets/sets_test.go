@@ -81,6 +81,59 @@ func TestFunctions(t *testing.T) {
 	}
 }
 
+// TestABareGroupLiteralIsExpandedByTheAlgebra is the hole
+// TestTheAlgebraHoldsOverEveryGroup could not see, and it is a FAIL-OPEN
+// one.
+//
+// That test iterates gooey.AllowGroups(), so it exercises the group
+// through sets:Group — the spelling this PR fixed. But `All` is also a
+// name <Frozen Allow> understands, so the natural way to write
+// "everything except Start" is the bare literal, and that path never
+// touched AllowGroups:
+//
+//	Split("All") = ["All"]  ->  "Start" removes nothing  ->  "All"
+//	ParseAllow("All") = AllowAll, which CONTAINS AllowStart
+//
+// The page asked for everything-except-Start and got Start, which is the
+// category with a child-process argument behind it. handlers/sets's own
+// README describes exactly this failure; the bare spelling was the half
+// still open. Found in review of #425.
+func TestABareGroupLiteralIsExpandedByTheAlgebra(t *testing.T) {
+	grant(t)
+	vals := map[string]any{"Unused": prop.NewSource("")}
+
+	got := paint(t, "{{sets:Without `All` `Start`}}", vals, 120)
+	set, err := gooey.ParseAllow(got)
+	if err != nil {
+		t.Fatalf("the difference produced %q, which does not parse: %v", got, err)
+	}
+	start, err := gooey.ParseAllow("Start")
+	if err != nil {
+		t.Fatalf("Start does not parse: %v", err)
+	}
+	if set.Has(start) {
+		t.Errorf("sets:Without `All` `Start` = %q, which still GRANTS Start. "+
+			"The bare group literal was not expanded, so the difference "+
+			"compared \"Start\" against the single token \"All\", removed "+
+			"nothing, and evaluated back to the whole set", got)
+	}
+	if got == "All" {
+		t.Errorf("the difference came back as the opaque token %q — the "+
+			"algebra never saw inside it", got)
+	}
+
+	// AND THE UNION STILL MEANS THE SAME SET, or the expansion above
+	// bought correctness in the difference by breaking every other use.
+	if u := paint(t, "{{sets:Concat `All`}}", vals, 120); u == "" {
+		t.Error("sets:Concat `All` came back empty")
+	} else if a, err := gooey.ParseAllow(u); err != nil {
+		t.Errorf("sets:Concat `All` = %q, which does not parse: %v", u, err)
+	} else if !a.Has(start) {
+		t.Errorf("sets:Concat `All` = %q, which no longer contains Start — "+
+			"expanding the literal must not shrink the set it denotes", u)
+	}
+}
+
 // TestWhenIsFalseForAFalseBool is the row the truthiness rule exists for.
 // A bound bool renders as "false" through Arg.String, and "false" is not
 // empty — a rule of "non-empty means on" would have made every When on a

@@ -1,6 +1,7 @@
 package input
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -100,6 +101,78 @@ func TestUnterminatedPasteWaitsEvenWhenIdle(t *testing.T) {
 	}
 }
 
+// TestASplitOpeningMarkerIsNotTheEscapeKey is the other half of the
+// boundary above, and it was the half that did not hold.
+//
+// TestUnterminatedPasteWaitsEvenWhenIdle covers a COMPLETE bracket with
+// an incomplete payload. The bracket itself is six bytes and can also
+// straddle a read, and there the truncated-CSI rule ran first: every
+// prefix resolved to Esc, consuming one byte and leaving "[200~" to
+// decode as five ordinary keys with the whole payload behind it as
+// keystrokes. That is exactly the burst mode 2004 is turned on to
+// prevent, and it needs only a 40ms stall inside six bytes — an
+// ordinary event on a laggy link. Found in the review of #391 (issue
+// #419).
+//
+// THE CUT STARTS AT 3 ON PURPOSE. "\x1b" and "\x1b[" are genuinely
+// ambiguous with the Esc key, and no amount of context resolves them —
+// idle exists for exactly that ambiguity and must go on answering Esc.
+// From the third byte the buffer is ESC [ followed by digits, which
+// nothing but a CSI spells, so the only readings are a truncated key
+// sequence or a split marker. That boundary is also what keeps the
+// exhaustive 1- and 2-byte liveness check in decodeidle_test.go intact,
+// and the assertion below pins it from the other side.
+func TestASplitOpeningMarkerIsNotTheEscapeKey(t *testing.T) {
+	for cut := 1; cut < 3; cut++ {
+		ev, n, ok := Decode([]byte(pasteStart[:cut]), true)
+		if !ok || n != 1 || ev.Key.Key != KeyEsc {
+			t.Errorf("a %d-byte prefix of the paste marker decoded to (%+v, n=%d, ok=%v) "+
+				"— it is indistinguishable from the Esc key and must stay Esc",
+				cut, ev, n, ok)
+		}
+	}
+	for cut := 3; cut < len(pasteStart); cut++ {
+		ev, n, ok := Decode([]byte(pasteStart[:cut]), true)
+		if ok || n != 0 {
+			t.Errorf("the marker split after %d bytes (%q) decoded to (%+v, n=%d, ok=%v), "+
+				"want (_, 0, false) = wait for more. Resolving it delivers the paste "+
+				"as keystrokes", cut, pasteStart[:cut], ev, n, ok)
+		}
+	}
+
+	// The consequence, at the level the user meets it: the drain loop
+	// runs on the prefix, goes idle, and the rest arrives. One paste,
+	// and NOT a stray Esc followed by the payload as keys.
+	for cut := 3; cut < len(pasteStart); cut++ {
+		full := pasteStart + "rm -rf /\n" + pasteEnd
+		pend := []byte(full[:cut])
+		var got []Event
+		drain := func(idle bool) {
+			for len(pend) > 0 {
+				ev, n, ok := Decode(pend, idle)
+				if n == 0 && !ok {
+					return
+				}
+				pend = pend[n:]
+				if ok {
+					got = append(got, ev)
+				}
+			}
+		}
+		drain(false)
+		drain(true) // the escape timeout fires mid-marker
+		pend = append(pend, full[cut:]...)
+		drain(false)
+
+		if len(got) != 1 || !got[0].IsPaste() {
+			t.Fatalf("cut %d: got %d events %+v, want exactly one paste", cut, len(got), got)
+		}
+		if got[0].Paste.Text != "rm -rf /\n" {
+			t.Errorf("cut %d: payload %q", cut, got[0].Paste.Text)
+		}
+	}
+}
+
 func TestPasteArrivingInChunksDecodesOnce(t *testing.T) {
 	// The way it actually arrives: DecodeEvents reads 128 bytes at a
 	// time and appends to a pending buffer, calling Decode after each.
@@ -127,6 +200,61 @@ func TestPasteArrivingInChunksDecodesOnce(t *testing.T) {
 	if got[0].Paste.Text != body {
 		t.Errorf("payload length %d, want %d", len(got[0].Paste.Text), len(body))
 	}
+}
+
+// TestDrainingALargePasteDoesNotCopyItPerRead is a MEMORY assertion
+// rather than a timing one, on purpose.
+//
+// The defect was a full copy of the pending buffer on every read while a
+// paste was open — strings.Index(string(rest), …) — so a 1MB paste
+// arriving in 128-byte chunks allocated gigabytes and spent its time in
+// the collector while the decoder took no input. A wall-clock threshold
+// would pin that too, and would flake on a loaded shared runner; bytes
+// allocated is the same fact measured deterministically.
+//
+// The bound is generous and still catches the bug by three orders of
+// magnitude: draining the paste must allocate a small multiple of its
+// size, where the copy-per-read allocated roughly len/chunk times it.
+func TestDrainingALargePasteDoesNotCopyItPerRead(t *testing.T) {
+	const size = 1 << 20
+	body := strings.Repeat("abcdefgh", size/8)
+	full := []byte(pasteStart + body + pasteEnd)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	var pend []byte
+	var got []Event
+	for i := 0; i < len(full); i += 128 {
+		pend = append(pend, full[i:min(i+128, len(full))]...)
+		for len(pend) > 0 {
+			ev, n, ok := Decode(pend, false)
+			if n == 0 && !ok {
+				break
+			}
+			pend = pend[n:]
+			if ok {
+				got = append(got, ev)
+			}
+		}
+	}
+	runtime.ReadMemStats(&after)
+
+	if len(got) != 1 || !got[0].IsPaste() || len(got[0].Paste.Text) != size {
+		t.Fatalf("got %d events, want one paste of %d bytes", len(got), size)
+	}
+
+	// pend itself grows to the paste's size and the payload is copied out
+	// once, so a handful of multiples is the honest floor. The copy-per-
+	// read version allocated about 4GB here.
+	alloc := after.TotalAlloc - before.TotalAlloc
+	if limit := uint64(size) * 16; alloc > limit {
+		t.Errorf("draining a %dKB paste allocated %dMB, want under %dMB — the "+
+			"decoder is copying the pending buffer on every read",
+			size/1024, alloc>>20, limit>>20)
+	}
+	t.Logf("allocated %d bytes draining a %dKB paste", alloc, size/1024)
 }
 
 func TestStrayCloseBracketIsSkippedNotDelivered(t *testing.T) {

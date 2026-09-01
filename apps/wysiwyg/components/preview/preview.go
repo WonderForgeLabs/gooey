@@ -266,6 +266,29 @@ func (p *Pane) Measure(avail gooey.Size) gooey.Size {
 	if p.child != nil {
 		p.size = gooey.MeasureChild(p.child, avail)
 	}
+	// THE OVERLAY IS A LISTED CHILD, SO IT GOES THROUGH THE SANDWICH
+	// TOO. ChildComponents returns it, Arrange arranges it, and this
+	// measured only the document — which quietly opted the overlay out
+	// of the margin/size/align/visibility handling MeasureChild applies.
+	// The one with teeth is visibility: MeasureChild is where a child's
+	// Layout.Visibility is synced from a bound source, so a Collapsed
+	// overlay would have gone on being arranged and painted.
+	//
+	// Nothing sets that today — the overlay is constructed in Go, not
+	// declared in markup — which is exactly why it was easy to skip and
+	// why nothing failed. The rule is that a container never calls
+	// Measure/Arrange on a child itself and never skips them either; a
+	// child listed in one walk and absent from another is the shape that
+	// bites later.
+	//
+	// The result is discarded on purpose. Arrange hands the overlay the
+	// pane's WHOLE rect as a ceiling and it narrows itself to the guide,
+	// which is the reasoning written there; Overlay.Measure answers zero
+	// and costs nothing, so this is the sandwich rather than a size
+	// negotiation.
+	if p.overlay != nil {
+		gooey.MeasureChild(p.overlay, avail)
+	}
 	return avail
 }
 

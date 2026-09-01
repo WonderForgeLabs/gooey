@@ -154,15 +154,11 @@ type valueEditor struct {
 	undo string
 	// tracks is the working copy for the KindGridLens editor.
 	tracks []components.GridLen
-	// chord is the captured gesture, held so the surface can show what
-	// it caught in the frame it commits.
-	chord string
 	// anchor and float are where the row was and where the editor went,
 	// recorded in Arrange for the damage and geometry tests. Plain
 	// fields: layout bookkeeping must not be damage.
 	anchor gooey.Rect
 	float  gooey.Rect
-	placed bool
 }
 
 // ValueEditorBuilder registers <ValueEditor>. It takes exactly two
@@ -262,7 +258,6 @@ func (p *valueEditor) Arrange(b gooey.Rect) {
 	// records a dependency — the carrier is Render's read of mode.
 	mode := editorKind(p.mode.Get())
 	row, ok := p.list.RowBounds(p.ed.attrSel.Get())
-	p.placed = ok
 	// A stale editor is HIDDEN here and retired in PreviewKey/Write —
 	// hidden rather than closed because closing Sets a property, and
 	// layout must not write to the graph it is being laid out from.
@@ -546,11 +541,14 @@ func (p *valueEditor) drawTracks(f *gooey.Frame, b gooey.Rect, st render.Style) 
 
 func (p *valueEditor) drawGesture(f *gooey.Frame, b gooey.Rect, st render.Style) {
 	components.DrawBoxRunes(f.Cells, b, st)
-	body := " press the chord you want"
-	if p.chord != "" {
-		body = " " + p.chord
-	}
-	f.Cells.SetString(b.X+1, b.Y+1, pad(body, b.W-2), st)
+	// NO "here is what I caught" BRANCH, and there cannot be one.
+	// captureGesture writes the chord and Closes in the same event, so
+	// no frame is ever composed with a captured value to show — the
+	// field this used to read was set and cleared between renders and
+	// the branch was dead code that read as a feature. The committed
+	// chord is visible where it belongs, in the row. Found in review
+	// of #388.
+	f.Cells.SetString(b.X+1, b.Y+1, pad(" press the chord you want", b.W-2), st)
 	f.Cells.SetString(b.X+1, b.Y+2, pad(" esc cancels", b.W-2), p.ed.ctx.Styles["dim"])
 }
 
@@ -624,7 +622,7 @@ func (p *valueEditor) Open() {
 			"editors.go has no entry for it", r.kind, r.name))
 		return
 	}
-	p.name, p.body, p.undo, p.chord = r.name, r.body, r.value, ""
+	p.name, p.body, p.undo = r.name, r.body, r.value
 	p.on, p.row = p.ed.sel, p.ed.attrSel.Get()
 	p.ed.editName.Set(r.name)
 	p.ed.editValue.Set(r.value)
@@ -633,6 +631,25 @@ func (p *valueEditor) Open() {
 	switch e {
 	case editCaret, editRename:
 		p.mode.Set(int(e))
+		if e == editRename {
+			// THE WARNING editors.go PROMISES, which was not being
+			// emitted. editRename behaved identically to editCaret in
+			// all three places that branch on it, so the constant
+			// recorded a decision the code never made and its doc
+			// described a behaviour nothing implemented — the worst of
+			// the three states, because a reader believes it.
+			//
+			// markup.KindIdentity's own doc says a consumer "must decide
+			// what a rename means rather than defaulting to a text box".
+			// The decision here IS a text box, which is fine; saying so
+			// out loud is what separates a decision from an oversight,
+			// and the user is the one who needs to hear it because
+			// nothing else will tell them what the rename broke until
+			// the document fails to load. Found in review of #388.
+			p.ed.status.Set("⚠ " + r.name + " is this element's ADDRESS — " +
+				"renaming it breaks every binding, handler and Find that " +
+				"names the old one")
+		}
 		if p.mgr != nil {
 			p.mgr.SetFocus(p.text)
 			p.text.SetCaret(len([]rune(r.value)))
@@ -673,7 +690,7 @@ func (p *valueEditor) OpenAsText() {
 	if !ok {
 		return
 	}
-	p.name, p.body, p.undo, p.chord = r.name, r.body, r.value, ""
+	p.name, p.body, p.undo = r.name, r.body, r.value
 	p.on, p.row = p.ed.sel, p.ed.attrSel.Get()
 	p.ed.editName.Set(r.name)
 	p.ed.editValue.Set(r.value)
@@ -709,7 +726,7 @@ func (p *valueEditor) stale() bool {
 // original element.
 func (p *valueEditor) retire() {
 	p.on, p.row = nil, -1
-	p.name, p.body, p.undo, p.chord = "", false, "", ""
+	p.name, p.body, p.undo = "", false, ""
 	p.Close()
 }
 
@@ -1002,7 +1019,6 @@ func (p *valueEditor) captureGesture(ev input.KeyEvent) bool {
 		p.ed.status.Set("✗ that key has no gesture spelling: " + err.Error())
 		return true
 	}
-	p.chord = g
 	p.Write(g)
 	p.Close()
 	return true
@@ -1016,8 +1032,23 @@ func (p *valueEditor) HandleMouse(ev input.MouseEvent) bool {
 	if p.Mode() == editNone {
 		return false
 	}
-	if ev.Kind == input.MousePress && !inRect(p.float, ev.X, ev.Y) {
-		p.Close()
+	if ev.Kind == input.MousePress {
+		if !inRect(p.float, ev.X, ev.Y) {
+			p.Close()
+		}
+		// A PRESS INSIDE IS CONSUMED AND CHANGES NOTHING, and it must not
+		// reach Popup.HandleMouse, which dismisses on ANY press rather
+		// than only on one outside itself. Delegating it tore the
+		// editor's two halves apart: the popup closed, p.mode stayed
+		// set, and PreviewKey gates on the mode alone — so an invisible
+		// editor went on swallowing esc, enter and every arrow with
+		// nothing on screen to explain why. stale() does not cover it
+		// either, since the row is still exactly where it was.
+		//
+		// Consumed rather than passed through, because the rows keep
+		// their own hit-testing: a press that lands on one never reaches
+		// here, so anything that does hit the editor's chrome, and
+		// chrome is not a dismissal. Found in review of #388.
 		return true
 	}
 	return p.pop.HandleMouse(ev)

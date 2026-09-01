@@ -1061,10 +1061,18 @@ the captor is what makes a button pressed, dragged off, and dragged back
 still fire, while one released elsewhere does not. The click carries a
 **count**: a second click on the same component within
 `DoubleClickInterval` (400ms) arrives as `Count: 2`, which is what
-`ItemsView` activates on and what `TextBox` selects a word on. There is
-no triple click — a third click restarts the sequence at 1; that and
-OSC 52 clipboard are deferred deliberately, tracked in
-[#106](https://github.com/WonderForgeLabs/gooey/issues/106).
+`ItemsView` activates on and what `TextBox` selects a word on. A third
+click in the same run arrives as `Count: 3` and `TextBox` selects the
+line; `gooey.MaxClickCount` is the ceiling, so a FOURTH rapid click
+starts a new sequence at 1. Read a count with `>=` unless you mean
+"exactly a double" — and note that a handler acting once per EVENT
+rather than once per gesture (the wysiwyg drill-in is one) sees every
+count the ceiling allows.
+
+Putting text on the system clipboard is `Screen.SetClipboard` (OSC 52),
+which is write-only by design: reads are refused by most terminals and
+`term.ClipboardCaveat` says why. `TextBox` cut and copy still use a
+process-local kill buffer rather than the terminal's clipboard.
 
 Wheel events, like everything else, go to the captor while captured and
 to the component under the pointer otherwise — never to the focused one,

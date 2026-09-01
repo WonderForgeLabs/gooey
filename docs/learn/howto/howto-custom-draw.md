@@ -64,13 +64,41 @@ Three consequences for a custom `Render`:
   `f.Cells.SetString(x, y, shown, st)`, the next column is
   `x + render.StringWidth(shown)`. If `shown` came from `ClipCols`, the
   original string's length is the wrong number.
-- **Copying cells is the one sharp edge.** `Set` and `SetString` repair a
-  glyph you overpaint half of, so ordinary drawing is safe. A loop that
-  assigns `Buffer.Cells` directly does not get that, and clipping such a
-  copy mid-glyph leaves either an orphan continuation (a column nothing
-  can ever repaint) or a lead that shifts the rest of the row. If you
-  copy cells, copy pairs — and `render.Displaced(b, y)` will tell you
-  whether a row survived.
+- **Restyling a cell is `SetCell`, not `Set`.** To change only a style —
+  a selection highlight, an accelerator underline — read the cell, set
+  the style, and hand the whole cell back:
+  `b.SetCell(x, y, b.At(x, y).WithStyle(st))`. Going through
+  `Set(x, y, c.Rune, c.Style)` looks equivalent and is not: `Set` takes a
+  *rune*, so a cell holding a grapheme cluster comes back as its first
+  rune alone — `"⚠️"` narrows to a one-column `"⚠"` and a decomposed
+  `"é"` loses its accent. The row then shifts under the highlight and
+  repairs itself when the highlight moves away.
+
+  One caveat when you restyle a **span** this way: `SetCell` refuses a
+  cell whose rune is `render.Continuation`, because a continuation is
+  written only as the tail of the pair its lead writes. So the second
+  column of a wide glyph keeps its old style. Nothing looks wrong — the
+  flusher never emits a continuation's style, so the lead's covers both
+  columns — but the buffer stops matching the screen, which matters if
+  you later decide what to un-highlight by reading styles back. Drive
+  that from your own state, not from the plane.
+
+  The mirror case used to cost you the **character**, not the style, and
+  is fixed: when your clip ends one column short of a wide glyph an
+  enclosing paint put down, `SetCell` once took its wide-*placement*
+  branch, found no room for the tail, and wrote a space. It now
+  recognises a style-only write over a pair that is already there and
+  restyles the lead in place. You do not have to do anything about it —
+  it is here because the failure was silent and the fix is worth knowing
+  about if you read the code.
+- **Assigning `Buffer.Cells` directly is the one sharp edge.** `Set`,
+  `SetString` and `SetCell` all repair a glyph you overpaint half of, so
+  ordinary drawing is safe. A loop that writes the slice does not get
+  that, and clipping such a copy mid-glyph leaves either an orphan
+  continuation (a column nothing can ever repaint) or a lead that shifts
+  the rest of the row. If you copy cells, copy pairs — and
+  `render.Displaced(b, y)` will tell you whether a row survived,
+  including the case of a wide lead left in the final column.
 
 The style is the full per-cell surface:
 

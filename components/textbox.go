@@ -399,14 +399,31 @@ func (t *TextBox) HandlePaste(ev input.PasteEvent) bool {
 	return true
 }
 
-// oneLine flattens a payload for a single-line field: newlines and tabs
-// become spaces, every other control character is dropped.
+// oneLine flattens a payload for a single-line field: line breaks and
+// tabs become one space each, every other control character is dropped.
+//
+// ONE SPACE PER BREAK, AND A CRLF IS ONE BREAK. This ran per rune, and a
+// CRLF is two of them, so every line break from a Windows editor, a
+// browser textarea or an RDP clipboard came through as two spaces — the
+// common case, not the exotic one. Nothing reports it and the user
+// cannot see it: doubled spaces in a value read as whitespace they
+// typed. Found in the review of #391 (issue #419).
+//
+// The flag is what makes it "CR LF is one break" rather than "drop CR".
+// A lone carriage return is still a break and still one space, so a
+// classic-Mac payload and a payload that really contains a bare CR keep
+// their separators, and LF-then-CR stays the two breaks it is.
 func oneLine(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
+	prevCR := false
 	for _, r := range s {
 		switch {
-		case r == '\n' || r == '\r' || r == '\t':
+		case r == '\n':
+			if !prevCR {
+				b.WriteRune(' ')
+			}
+		case r == '\r' || r == '\t':
 			b.WriteRune(' ')
 		case r < 0x20 || r == 0x7f:
 			// Dropped. A NUL or a DEL in a value is invisible on screen
@@ -414,6 +431,7 @@ func oneLine(s string) string {
 		default:
 			b.WriteRune(r)
 		}
+		prevCR = r == '\r'
 	}
 	return b.String()
 }

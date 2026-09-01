@@ -124,10 +124,15 @@ is dropped by `Resync`, so a drag cannot outlive the thing being dragged.
 
 `MouseClick` carries a `Count`: 1 for a single click, 2 for a second
 click on the same component within `FocusManager.DoubleClickInterval`
-(400ms by default). There is no triple click — a third click restarts the
-sequence at 1
-([#106](https://github.com/WonderForgeLabs/gooey/issues/106) tracks
-whether/how to add it).
+(400ms by default), 3 for a third. `gooey.MaxClickCount` is the ceiling,
+so a fourth rapid click starts a new sequence at 1.
+
+Test with `>=` rather than `==` unless you specifically mean "exactly a
+double" — that is what lets the ceiling rise again without your handler
+silently falling back. The one thing to think about before you do: a
+handler that acts once per EVENT rather than once per gesture sees every
+count. A triple click delivers `2` and then `3`, so such a handler runs
+twice.
 
 ```go
 case input.MouseClick:
@@ -207,7 +212,6 @@ cannot show it, neither can a user without a pointer.
 
 - No drag-threshold synthesis — a drag starts on the first motion after a
   press, so build any slop tolerance on `HandleMouseMove` yourself.
-- No triple click.
 - Horizontal wheel reports are decoded but unmapped, and dropped.
 - Legacy X10 reports are decoded as well as SGR. This matters: an
   undecoded X10 report would degrade into phantom keystrokes, because its

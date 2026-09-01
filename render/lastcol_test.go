@@ -1,0 +1,405 @@
+package render
+
+import "testing"
+
+// TestAWideLeadInTheLastColumnIsReportedDisplaced closes the blind spot
+// in the model's own instrument.
+//
+// Displacement is defined against the NEXT cell — "this cell's terminal
+// column is not its index" — so a glyph that overflows the END of the
+// row has nothing after it to push, and the loop walked off the edge
+// reporting the row faithful. The row is not faithful: the terminal
+// either wraps the glyph to column 0 of the next line or drops it.
+//
+// This is the one case the docs call the remaining sharp edge, and an
+// instrument that cannot see it makes the documentation worse than
+// useless: a test asserting `!bad` passed on exactly the arrangement
+// the sharp edge describes.
+func TestAWideLeadInTheLastColumnIsReportedDisplaced(t *testing.T) {
+	b := NewBuffer(3, 1)
+	b.Clear()
+	// Direct assignment, because that is now the ONLY way to reach it —
+	// see the two tests below.
+	b.Cells[2] = Cell{Rune: '世'}
+
+	if got := TerminalWidth(b, 0); got != 4 {
+		t.Fatalf("the row measures %d columns on a 3-wide buffer, want 4 — "+
+			"the fixture does not overflow", got)
+	}
+	x, by, bad := Displaced(b, 0)
+	if !bad {
+		t.Fatal("Displaced calls the row faithful while its last glyph " +
+			"needs a column the buffer does not have")
+	}
+	if x != 2 || by != 1 {
+		t.Errorf("Displaced reports cell %d over by %d, want cell 2 over by 1",
+			x, by)
+	}
+}
+
+// TestNeitherWriterLeavesAWideLeadInTheLastColumn is the other half:
+// the sharp edge above must not be reachable through the public writers.
+// Both answer with a space, which is the only value that draws correctly
+// in the single column actually available.
+func TestNeitherWriterLeavesAWideLeadInTheLastColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(b *Buffer)
+	}{
+		{"Set", func(b *Buffer) { b.Set(2, 0, '世', Style{}) }},
+		{"SetString", func(b *Buffer) { b.SetString(2, 0, "世", Style{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBuffer(3, 1)
+			b.Clear()
+			tc.write(b)
+
+			if got := b.At(2, 0).Width(); got > 1 {
+				t.Errorf("the last column holds a %d-column glyph", got)
+			}
+			if _, _, bad := Displaced(b, 0); bad {
+				t.Error("the row overflows the buffer")
+			}
+		})
+	}
+}
+
+// TestEveryWriterHonoursTheClipNotJustTheBuffer is the divergence the
+// tests above could not see, because they clip to the whole buffer —
+// where cx1 == b.W and all three writers agree by coincidence.
+//
+// Composer.build brackets every Render with a Clip to that component's
+// rect (#357), so for every component but the root the clip is NARROWER
+// than the buffer. Set and SetCell tested it; SetString tested b.W and
+// wrote through put, which tested b.W too. A clipped SetString therefore
+// wrote over a neighbour's cells — whose paint node is clean, so nothing
+// ever repaints over the damage — and could leave a Continuation one
+// column past the clip, marking a cell the flusher skips forever.
+//
+// Found in the review of PR #425, which is also where the PR ADDED the
+// disagreement: teaching Set the clip rule while leaving SetString on
+// b.W is what made two writers answer one question differently.
+func TestEveryWriterHonoursTheClipNotJustTheBuffer(t *testing.T) {
+	// The clip is the middle of the row, so there is a neighbour on each
+	// side. Sentinels mark them: anything but '.' outside the clip is a
+	// write that escaped.
+	const w = 10
+	setup := func() *Buffer {
+		b := NewBuffer(w, 1)
+		for x := 0; x < w; x++ {
+			b.Cells[x] = Cell{Rune: '.'}
+		}
+		return b
+	}
+	// row renders the plane for a failure message with the continuation
+	// marker made visible: it is rune -1, which prints as the
+	// replacement character and reads like a decoding fault rather than
+	// like the deliberate sentinel it is.
+	row := func(b *Buffer) string {
+		out := []rune{}
+		for x := 0; x < w; x++ {
+			r := b.Cells[x].Rune
+			if r == Continuation {
+				r = '#'
+			}
+			out = append(out, r)
+		}
+		return string(out)
+	}
+
+	// Only the cells OUTSIDE the clip are asserted, because what a
+	// writer does inside its own rect is the other tests' business —
+	// this one is about the boundary.
+	for _, tc := range []struct {
+		name  string
+		clip  Rect
+		write func(b *Buffer)
+	}{
+		{
+			// The headline: a wide glyph whose lead is the clip's last
+			// column. Set answers with a space; SetString must too.
+			name:  "SetString wide glyph at the clip's right edge",
+			clip:  Rect{X: 2, Y: 0, W: 3, H: 1},
+			write: func(b *Buffer) { b.SetString(4, 0, "世", Style{}) },
+		},
+		{
+			name:  "Set wide glyph at the clip's right edge",
+			clip:  Rect{X: 2, Y: 0, W: 3, H: 1},
+			write: func(b *Buffer) { b.Set(4, 0, '世', Style{}) },
+		},
+		{
+			// A run that overruns the clip on the right.
+			name:  "SetString overruns the clip",
+			clip:  Rect{X: 2, Y: 0, W: 3, H: 1},
+			write: func(b *Buffer) { b.SetString(2, 0, "ABCDEFGH", Style{}) },
+		},
+		{
+			// And on the left: the straddle branch blanked column 0 of
+			// the SCREEN regardless of where the caller's clip started.
+			name:  "SetString straddling the clip's left edge",
+			clip:  Rect{X: 3, Y: 0, W: 4, H: 1},
+			write: func(b *Buffer) { b.SetString(1, 0, "ABCDEFGH", Style{}) },
+		},
+	} {
+		b := setup()
+		prev := b.Clip(tc.clip)
+		tc.write(b)
+		b.Unclip(prev)
+
+		got := row(b)
+		for x := 0; x < w; x++ {
+			inside := x >= tc.clip.X && x < tc.clip.X+tc.clip.W
+			if inside {
+				continue
+			}
+			if r := b.Cells[x].Rune; r != '.' {
+				t.Errorf("%s: column %d is outside the clip %v and holds %q — "+
+					"row %q. That cell belongs to a neighbour whose paint node is "+
+					"clean, so nothing will ever repaint over it",
+					tc.name, x, tc.clip, r, got)
+			}
+		}
+	}
+}
+
+// TestTheTwoWritersAgreeUnderAClip states the invariant directly: for
+// every column of a narrowed clip, writing a wide glyph through Set and
+// through SetString must leave the same row.
+//
+// The tests above check specific arrangements; this checks the RULE, and
+// it is the one that fails the moment the two implementations drift
+// again for a reason nobody anticipated.
+func TestTheTwoWritersAgreeUnderAClip(t *testing.T) {
+	const w = 10
+	clip := Rect{X: 2, Y: 0, W: 5, H: 1}
+	for x := 0; x < w; x++ {
+		a, bb := NewBuffer(w, 1), NewBuffer(w, 1)
+		a.Clear()
+		bb.Clear()
+
+		prev := a.Clip(clip)
+		a.Set(x, 0, '世', Style{})
+		a.Unclip(prev)
+
+		prev = bb.Clip(clip)
+		bb.SetString(x, 0, "世", Style{})
+		bb.Unclip(prev)
+
+		for c := 0; c < w; c++ {
+			if a.Cells[c] != bb.Cells[c] {
+				t.Errorf("writing a wide glyph at column %d under clip %v: Set left "+
+					"%+v at column %d, SetString left %+v — one rule, two answers",
+					x, clip, a.Cells[c], c, bb.Cells[c])
+			}
+		}
+	}
+}
+
+// TestAPairStraddlingTheClipEdgeIsRepaired is the case PR #425's own
+// healSeam comment called unreachable, and the review of that PR showed
+// it is merely unreached BY THE TESTS.
+//
+// The comment argued no writer leaves a lead in its own last column, and
+// that is true — of a NARROWER writer beside us. It says nothing about an
+// ENCLOSING paint: an ancestor container, an AdornmentLayer, a ToastHost,
+// whose own clip legitimately spans both columns of a wide glyph that a
+// descendant's narrower clip then cuts through. Nothing in the four clip
+// tests added by that PR set up pre-existing content outside the clip,
+// which is the only reason they were green.
+func TestAPairStraddlingTheClipEdgeIsRepaired(t *testing.T) {
+	// --- the left edge: the descendant writes over the TAIL ------------
+	b := NewBuffer(10, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+	b.SetString(4, 0, "世", Style{}) // columns 4 and 5
+
+	b.Clip(Rect{X: 5, Y: 0, W: 5, H: 1})
+	b.Set(5, 0, 'a', Style{}) // legal: column 5 is ours
+
+	if got := TerminalWidth(b, 0); got != 10 {
+		t.Errorf("the row occupies %d terminal columns on a 10-wide buffer. The "+
+			"ancestor's wide lead at column 4 lost its tail to a legal write at "+
+			"column 5, and a lead with no continuation displaces every glyph "+
+			"after it for the rest of the row: %q", got, RowText(b, 0))
+	}
+	if x, by, ok := Displaced(b, 0); ok {
+		t.Errorf("cell %d is displaced by %d columns — the row no longer says "+
+			"what the screen will show", x, by)
+	}
+
+	// --- the right edge: the descendant writes over the LEAD -----------
+	b = NewBuffer(10, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+	b.SetString(4, 0, "世", Style{})
+
+	b.Clip(Rect{X: 0, Y: 0, W: 5, H: 1})
+	b.Set(4, 0, 'b', Style{}) // legal: column 4 is ours, column 5 is not
+
+	if b.At(5, 0).Rune == Continuation {
+		t.Errorf("column 5 kept a Continuation whose lead was overwritten. The "+
+			"flusher skips continuation cells, so that column can never be "+
+			"repainted by anything: %q", RowText(b, 0))
+	}
+	if got := TerminalWidth(b, 0); got != 10 {
+		t.Errorf("the row occupies %d terminal columns, want 10: %q",
+			got, RowText(b, 0))
+	}
+
+	// --- the same two edges through SetString --------------------------
+	//
+	// The arms above reach the seam through Set, and that is the whole
+	// reason the left edge stayed green through the review of #425:
+	// SetString repairs its run's edges with healSeam(start) and
+	// healSeam(x), and healSeam refuses an x outside the clip — so the
+	// one writer with a dedicated left-STRADDLE branch was the one writer
+	// that never repaired the left seam it had just severed.
+	for _, tc := range []struct {
+		name  string
+		clip  Rect
+		write func(b *Buffer)
+	}{
+		// x LEFT of the clip: the straddle branch runs, blanks from cx0,
+		// and severs the ancestor's tail at column 5.
+		{"left, run starts outside the clip", Rect{X: 5, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(4, 0, "ab", Style{}) }},
+		// x AT the clip: the ordinary path, already green.
+		{"left, run starts at the clip", Rect{X: 5, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(5, 0, "ab", Style{}) }},
+		// the right edge: the run overwrites the LEAD and leaves the
+		// ancestor's continuation at column 5, outside the clip.
+		{"right, run ends at the clip", Rect{X: 0, Y: 0, W: 5, H: 1},
+			func(b *Buffer) { b.SetString(4, 0, "b", Style{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBuffer(10, 1)
+			b.Clip(Rect{X: 0, Y: 0, W: 10, H: 1})
+			b.SetString(4, 0, "世", Style{}) // the ENCLOSING paint: columns 4 and 5
+
+			b.Clip(tc.clip)
+			tc.write(b)
+
+			if got := TerminalWidth(b, 0); got != 10 {
+				t.Errorf("the row occupies %d terminal columns on a 10-wide "+
+					"buffer — a half of the ancestor's wide pair survived the "+
+					"write that severed it, and it displaces every glyph after "+
+					"it for the rest of the row: %q", got, RowText(b, 0))
+			}
+			if x, by, ok := Displaced(b, 0); ok {
+				t.Errorf("cell %d is displaced by %d columns: %q",
+					x, by, RowText(b, 0))
+			}
+		})
+	}
+}
+
+// TestDisplacedToleratesANilBuffer holds the file's stated posture at the
+// one function that broke it.
+//
+// TerminalColumns and TerminalWidth both open with an explicit b == nil
+// guard, so nil is an answerable question here rather than a programming
+// error. Displaced's loop inherited that for free — TerminalColumns
+// answers nil, so the loop does not run — but the last-column check added
+// for #413 dereferences b.W after it, turning "the row is faithful" into
+// a segfault. Displaced is the instrument docs/learn/howto/howto-custom-draw.md
+// names twice, so a harness that renders without a frame took the whole
+// run down. Found in review of #425.
+func TestDisplacedToleratesANilBuffer(t *testing.T) {
+	x, by, bad := Displaced(nil, 0)
+	if bad || x != 0 || by != 0 {
+		t.Errorf("Displaced(nil, 0) = (%d, %d, %v), want (0, 0, false)", x, by, bad)
+	}
+}
+
+// TestAnINTACTGlyphAtTheSeamIsLeftAlone is the bound on the exception,
+// and the first version of this test could not fail.
+//
+// That version wrote into a narrow clip over a row of dots and checked
+// the dots outside it survived. It passed against a healSeam with NO
+// clip test at all, because healSeam is inherently local — it is only
+// ever called at the two or three columns around a write, so no bound on
+// it can be exercised by cells further away than that. The assertion was
+// true, unfireable, and therefore worth nothing.
+//
+// What the exception actually needs bounding is not DISTANCE but CAUSE:
+// a repair at the seam may blank the broken half of a pair we just
+// severed, and must not touch a neighbour's cell that is still whole. So
+// the fixture puts an INTACT wide glyph immediately outside each edge —
+// the case where healSeam must look, find nothing wrong, and do nothing.
+func TestAnINTACTGlyphAtTheSeamIsLeftAlone(t *testing.T) {
+	b := NewBuffer(12, 1)
+	b.Clip(Rect{X: 0, Y: 0, W: 12, H: 1})
+	for x := 0; x < 12; x++ {
+		b.Set(x, 0, '.', Style{})
+	}
+	b.SetString(2, 0, "世", Style{}) // columns 2-3, whole, left of the clip
+	b.SetString(8, 0, "界", Style{}) // columns 8-9, whole, right of the clip
+	before := RowText(b, 0)
+
+	// The descendant owns columns 4..7 and writes all of them.
+	b.Clip(Rect{X: 4, Y: 0, W: 4, H: 1})
+	for x := 4; x < 8; x++ {
+		b.Set(x, 0, 'x', Style{})
+	}
+
+	if got := b.At(2, 0).Rune; got != '世' {
+		t.Errorf("the intact glyph at columns 2-3 became %q. It straddles nothing "+
+			"the descendant wrote — healSeam must look at the seam and do nothing "+
+			"when the pair it finds is whole. Row was %q, now %q",
+			got, before, RowText(b, 0))
+	}
+	if b.At(3, 0).Rune != Continuation {
+		t.Errorf("the tail at column 3 was blanked, orphaning the lead beside it — "+
+			"the repair created the corruption it exists to remove: %q", RowText(b, 0))
+	}
+	if got := b.At(8, 0).Rune; got != '界' {
+		t.Errorf("the intact glyph at columns 8-9 became %q: %q", got, RowText(b, 0))
+	}
+	if b.At(9, 0).Rune != Continuation {
+		t.Errorf("the tail at column 9 was blanked: %q", RowText(b, 0))
+	}
+	if got := TerminalWidth(b, 0); got != 12 {
+		t.Errorf("the row occupies %d terminal columns, want 12: %q",
+			got, RowText(b, 0))
+	}
+}
+
+// TestARunWhollyLeftOfTheClipRepairsNoSeam pins the other half of the
+// asymmetry the comment beside SetString's heal calls rules out.
+//
+// The leading call is clamped into the clip so that a run STRADDLING the
+// left edge repairs the pair it just broke. But the clamp was
+// unconditional, and a run lying wholly left of the clip writes nothing
+// at all — so it aimed healSeam at cx0 on behalf of a run that touched
+// neither column cx0-1 nor cx0. Both belong to an enclosing paint, and
+// if that pair is already broken the descendant blanks a half of it.
+//
+// Pre-existing corruption is required for the effect to be visible,
+// which is why nothing caught it: the clip tests above all stage intact
+// pairs. Found in the review of the review of #425.
+func TestARunWhollyLeftOfTheClipRepairsNoSeam(t *testing.T) {
+	b := NewBuffer(10, 1)
+
+	// An enclosing paint's ALREADY-BROKEN pair at the seam: a wide lead
+	// in column 4 whose column 5 is not a Continuation. Staged on the
+	// cells directly because every writer in this file repairs the seam
+	// it touches, so there is no way to ask one of them for a pair that
+	// is still broken when the next component paints.
+	b.Cells[4] = Cell{Rune: '世'}
+	b.Cells[5] = Cell{Rune: 'x'}
+
+	// The descendant's clip starts at column 5; its run is columns 1-2.
+	// Wholly left, so nothing of it lands inside the clip.
+	b.Clip(Rect{X: 5, Y: 0, W: 5, H: 1})
+	b.SetString(1, 0, "ab", Style{})
+
+	if got := b.At(4, 0).Rune; got != '世' {
+		t.Errorf("column 4 is %q, want 世. A run confined to columns 1-2 "+
+			"repaired the seam at column 5 and blanked the lead beside it "+
+			"— a pair it never touched, in a paint it does not own. Row: %q",
+			got, RowText(b, 0))
+	}
+	if got := b.At(5, 0).Rune; got != 'x' {
+		t.Errorf("column 5 is %q, want x — the other half of the same pair "+
+			"was rewritten by a run that never reached it: %q",
+			got, RowText(b, 0))
+	}
+}

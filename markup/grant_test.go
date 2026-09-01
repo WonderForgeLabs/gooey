@@ -42,17 +42,66 @@ func granters(t *testing.T) []*ElementDef {
 // grant has to fail the suite rather than ship quietly.
 func TestEveryMultiChildElementDeclaresAGrant(t *testing.T) {
 	for _, d := range definedElements() {
-		if d.Children.Mode != ModeMany {
+		if !d.holdsSeveralChildren() {
 			continue
 		}
 		if d.Grants.Kind == GrantNone {
-			t.Errorf("<%s> accepts many children (ModeMany) but declares no Grant, so the "+
-				"catalog tells every editor its children have no editable geometry. "+
-				"Declare Grants on its literal in elements.go: GrantOrder if position is "+
-				"the child's index, GrantOffset or GrantCell with the attached attributes "+
-				"if the child carries its own", d.Name)
+			t.Errorf("<%s> holds several visual children (Children.Mode %q, and its Proto "+
+				"is a gooey.Container) but declares no Grant, so the catalog tells every "+
+				"editor its children have no editable geometry. Declare Grants on its "+
+				"literal in elements.go: GrantOrder if position is the child's index, "+
+				"GrantOffset or GrantCell with the attached attributes if the child "+
+				"carries its own", d.Name, d.Children.Mode)
 		}
 	}
+}
+
+// TestARestrictedContainerIsCoveredByTheGrantContracts is the discrimination
+// floor under holdsSeveralChildren, and it is why the predicate is derived.
+//
+// Both contracts around it are LOOPS OVER A REGISTRY: if the predicate
+// went back to answering only for ModeMany, every restricted container
+// would simply be skipped and both tests would stay green while saying
+// nothing about it. A skipped element is indistinguishable from a
+// passing one at the loop, so the coverage has to be asserted here
+// rather than inferred from the suite.
+//
+// It asserts a POPULATION, not a name: at least one restricted container
+// and at least one restricted non-container must exist for the predicate
+// to be discriminating at all, and every restricted container must reach
+// the contracts. Deleting <Tabs> does not fail this; deleting the last
+// restricted container does, which is the point at which the predicate
+// stops being tested by anything.
+func TestARestrictedContainerIsCoveredByTheGrantContracts(t *testing.T) {
+	var containers, dataOnly []string
+	for _, d := range definedElements() {
+		if d.Children.Mode != ModeRestricted {
+			continue
+		}
+		if _, ok := d.Proto.(gooey.Container); ok {
+			containers = append(containers, d.Name)
+		} else {
+			dataOnly = append(dataOnly, d.Name)
+		}
+	}
+	if len(containers) == 0 || len(dataOnly) == 0 {
+		t.Fatalf("holdsSeveralChildren is not discriminating anything: %d restricted "+
+			"containers and %d restricted non-containers. Both sides have to exist "+
+			"for the ModeRestricted arm to be under test", len(containers), len(dataOnly))
+	}
+	for _, d := range definedElements() {
+		if d.Children.Mode != ModeRestricted {
+			continue
+		}
+		_, isContainer := d.Proto.(gooey.Container)
+		if got := d.holdsSeveralChildren(); got != isContainer {
+			t.Errorf("<%s> is ModeRestricted with Proto container=%v, but "+
+				"holdsSeveralChildren says %v — the grant contracts either skip a "+
+				"container that positions children or demand a grant from an element "+
+				"whose children are data", d.Name, isContainer, got)
+		}
+	}
+	t.Logf("restricted containers %v are covered; %v are data-only", containers, dataOnly)
 }
 
 // TestOnlyMultiChildElementsGrantGeometry is the converse, and it is
@@ -62,10 +111,11 @@ func TestEveryMultiChildElementDeclaresAGrant(t *testing.T) {
 // nothing to reorder.
 func TestOnlyMultiChildElementsGrantGeometry(t *testing.T) {
 	for _, d := range granters(t) {
-		if d.Children.Mode != ModeMany {
-			t.Errorf("<%s> declares Grants{Kind: %q} but its Children.Mode is %q, not "+
-				"ModeMany — an element that does not hold several children has no "+
-				"geometry to confer on them", d.Name, d.Grants.Kind, d.Children.Mode)
+		if !d.holdsSeveralChildren() {
+			t.Errorf("<%s> declares Grants{Kind: %q} but it does not hold several visual "+
+				"children (Children.Mode is %q) — an element that positions at most one "+
+				"child, or whose children are not components at all, has no geometry to "+
+				"confer on them", d.Name, d.Grants.Kind, d.Children.Mode)
 		}
 	}
 }

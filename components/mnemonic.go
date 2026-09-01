@@ -3,6 +3,7 @@ package components
 import (
 	"unicode"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -90,4 +91,23 @@ func mnemonicCol(text string, pos int) int {
 		pos = len(r)
 	}
 	return render.StringWidth(string(r[:pos]))
+}
+
+// underlineAt underlines the accelerator by RESTYLING the cell the label
+// already painted, rather than painting the character a second time.
+//
+// The four painters re-derived it as []rune(text)[pos] and handed that
+// to Buffer.Set, which loses everything a rune cannot carry: a cell
+// holding a grapheme CLUSTER — a decomposed "é", an emoji with a
+// variation selector — came back as its first rune alone, so a wide
+// accelerator narrowed to one column and a combining mark vanished.
+// Underlining an accelerator is not a reason for the letter to change.
+//
+// It also removes the last place a rune index and a column met. The
+// character is no longer re-derived at all, so there is nothing left to
+// index with the wrong number; mnemonicCol above owns the column and
+// this owns the style. Found in review of #413.
+func underlineAt(f *gooey.Frame, x, y int, st render.Style) {
+	st.Underline = true
+	f.Cells.SetCell(x, y, f.Cells.At(x, y).WithStyle(st))
 }

@@ -56,6 +56,60 @@ func RuneWidth(r rune) int {
 // grapheme cluster so that multi-rune glyphs are measured as drawn.
 func StringWidth(s string) int { return uniseg.StringWidth(s) }
 
+// EachCluster walks s one grapheme cluster at a time, handing each its
+// byte offset, the terminal COLUMN it starts at, and its own width in
+// columns. Returning false stops the walk.
+//
+// It exists because the column arithmetic belongs here and was being
+// re-derived elsewhere: three bytes, one rune and one column are four
+// different numbers, and a caller that wants to place something
+// alongside text — a highlight, a caret, an underline — needs the
+// mapping between them. cmd/finder had its own copy of this loop, and
+// the bug it was written to fix (#413: a two-byte character pushing a
+// highlight two columns right) is exactly what a caller gets wrong when
+// it uses the byte offset as a column.
+//
+// THE WIDTH IS HANDED OVER RATHER THAN RECOMPUTED, and the first version
+// of this function withheld it. uniseg returns the cluster's width on
+// the same call that finds its boundary, so keeping it private forced
+// the one caller that needed it — matchLine.Render, deciding whether a
+// glyph fits — to call StringWidth on every cluster and segment it a
+// second time, on the paint path. A signature that hides a number it
+// already has does not remove the work, it moves it somewhere slower.
+// Found in review of #425.
+//
+// THE SEGMENTER STATE IS THREADED, which is the part a hand-rolled copy
+// tends to drop: passing -1 on every call asks uniseg to re-decide a
+// boundary it has just decided, and two walks that disagree about a
+// boundary disagree about a width.
+//
+// ClipCols below deliberately KEEPS ITS OWN LOOP and is not a bug to be
+// tidied away. It runs on every paint and is pinned at zero allocations
+// by TestClipColsDoesNotAllocate; routing it through a callback puts a
+// closure over its two accumulators on that path, which is the exact
+// shape the comment inside it records getting wrong once already. It
+// also needs to tell "walked off the end" from "stopped early" — the
+// difference between returning s untouched and returning a prefix —
+// which a bool-returning callback does not express. Two loops, one
+// reason each.
+func EachCluster(s string, fn func(cluster string, off, col, width int) bool) {
+	off, col, state := 0, 0, -1
+	rest := s
+	for len(rest) > 0 {
+		var cluster string
+		var cw int
+		cluster, rest, cw, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		if cluster == "" {
+			return
+		}
+		if !fn(cluster, off, col, cw) {
+			return
+		}
+		off += len(cluster)
+		col += cw
+	}
+}
+
 // ClipCols truncates s to w display COLUMNS, never splitting a wide
 // glyph: if the next grapheme cluster would exceed the budget, clipping
 // stops before it. That can leave one column unused, which is correct —
@@ -66,24 +120,60 @@ func StringWidth(s string) int { return uniseg.StringWidth(s) }
 // cmd/browser needed the same rule for markdown; a second hand-rolled
 // cluster loop is how the two quietly disagree at the joins. A duplicated
 // local patch is the signal that an invariant belongs one level up.
+//
+// This doc comment used to sit ABOVE EachCluster's with no function
+// between them, so godoc read the pair as one block belonging to
+// EachCluster and ClipCols — the older and more used of the two — was
+// documented nowhere. Found in review of #425.
 func ClipCols(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if StringWidth(s) <= w {
-		return s
-	}
-	out, used, rest := make([]byte, 0, len(s)), 0, s
+	// ONE PASS, and the segmenter's state carried across it.
+	//
+	// This used to pre-scan with StringWidth and then walk the string
+	// again, re-deriving the break state from scratch at every cluster
+	// by passing -1. Both are the shape SetString was changed away from:
+	// the pre-scan segments the whole string to answer a question the
+	// walk answers on its way past, and a discarded state asks uniseg to
+	// re-decide a boundary it had just decided. Threading it is one
+	// variable and removes the question of whether the two agree.
+	//
+	// The early return for a string that fits survives as a cheap exit
+	// from the loop rather than a second traversal in front of it: when
+	// nothing was dropped, the original string is returned untouched.
+	// Found in review of #413.
+	//
+	// A BYTE OFFSET, NOT A BUFFER, and the difference is the whole
+	// reason this comment is trustworthy. The one-pass rewrite carried
+	// the accepted clusters in a make([]byte, 0, len(s)) declared in
+	// front of the loop, which ran on EVERY call — so the common case
+	// this paragraph calls free allocated once per string per paint,
+	// where the two-pass version it replaced allocated nothing. The
+	// comment was written about the traversal and read as if it were
+	// about the allocation.
+	//
+	// Nothing needed the buffer. Every accepted cluster is a contiguous
+	// prefix of s, so the offset past the last one IS the answer, and
+	// slicing is free in both branches. Measured with AllocsPerRun:
+	// 1 and 2 allocations before, 0 and 0 after — pinned by
+	// TestClipColsDoesNotAllocate, because a claim about allocation that
+	// nothing measures is how this one came to be wrong. Found in the
+	// review of PR #425.
+	cut, used, rest := 0, 0, s
+	state := -1
 	for len(rest) > 0 {
-		cluster, next, cw, _ := uniseg.FirstGraphemeClusterInString(rest, -1)
+		var cluster string
+		var cw int
+		cluster, rest, cw, state = uniseg.FirstGraphemeClusterInString(rest, state)
 		if used+cw > w {
-			break
+			// Something was dropped, so the prefix is the answer.
+			return s[:cut]
 		}
-		out = append(out, cluster...)
+		cut += len(cluster)
 		used += cw
-		rest = next
 	}
-	return string(out)
+	return s
 }
 
 // RowText is what row y would READ AS on a terminal: the runes of the
@@ -173,6 +263,15 @@ func TerminalWidth(b *Buffer, y int) int {
 // much: "the row is wrong" is not a useful failure message when the point
 // is that everything after one glyph shifted.
 func Displaced(b *Buffer, y int) (x, by int, ok bool) {
+	// NIL-TOLERANT, like TerminalColumns and TerminalWidth above it. The
+	// loop below is already safe — TerminalColumns answers nil, so it
+	// does not run — but the last-column check dereferences b.W, and a
+	// harness that renders without a frame would segfault on the one
+	// instrument the #358 docs tell every custom-Render author to reach
+	// for. Found in review of #425.
+	if b == nil {
+		return 0, 0, false
+	}
 	for i, c := range TerminalColumns(b, y) {
 		// A continuation cell draws nothing, so it has no column of its
 		// own to be displaced from. Its recorded column is where the
@@ -183,6 +282,26 @@ func Displaced(b *Buffer, y int) (x, by int, ok bool) {
 		if c != i {
 			return i, c - i, true
 		}
+	}
+	// A WIDE LEAD IN THE LAST COLUMN IS A DISPLACEMENT NOTHING ABOVE CAN
+	// SEE. Every cell is at its own index — there is no cell after it to
+	// have been pushed — but the glyph needs a column the buffer does
+	// not have, so the terminal either wraps it to column 0 of the next
+	// row or drops it. Either way the row is not what the buffer says.
+	//
+	// The loop cannot catch it because displacement is defined against
+	// the NEXT cell, and here the overflow runs off the end. Measuring
+	// the row's own width is what turns "one cell short" into a number:
+	// TerminalWidth already reports 4 for a 3-wide buffer holding a
+	// wide lead at column 2.
+	//
+	// Only reachable by assigning Cells directly now — Set and SetString
+	// both write a space rather than a lead they cannot complete — which
+	// is exactly why the model has to be able to say so. A sharp edge the
+	// instruments cannot see is not documented, it is hidden. Found in
+	// review of #413.
+	if w := TerminalWidth(b, y); w > b.W {
+		return b.W - 1, w - b.W, true
 	}
 	return 0, 0, false
 }

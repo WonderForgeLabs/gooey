@@ -1,12 +1,18 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/input"
 )
 
@@ -139,27 +145,50 @@ func TestCtrlZUndoesAnEditAndCtrlYRedoesIt(t *testing.T) {
 // changed, undo, assert it came back" rather than as per-mutator expected
 // values: the point is coverage of the seam, and a table of expected
 // markup would be a table of things to update whenever a seed changes.
-func TestUndoCoversEveryMutatorTheEditorHas(t *testing.T) {
-	cases := []struct {
-		name string
-		edit func(ed *editor)
-	}{
-		{"add", func(ed *editor) {
+// undoCase is one row of that table.
+//
+// mutator names the *editor method the row drives, and it is not
+// decoration: TestTheUndoTableNamesEveryMutatorInTheSource reads these
+// names back and fails when the package grows a mutator no row covers.
+// The test's name is a claim about ALL of them, and a hand-written
+// table cannot keep that claim true on its own — this is what makes the
+// next mutator someone adds go red here rather than quietly widening
+// the gap. It went five mutators wide before anyone noticed, which is
+// how the derivation came to be written.
+//
+// setup reshapes the document before the baseline is taken, for the
+// rows whose mutator refuses on the flat two-Text fixture: promote
+// needs a grandparent, demote a container to nest into, the track verbs
+// a <Grid>. It runs BEFORE `before` is captured and the history is
+// re-established after it, so a row's scaffolding is never part of the
+// edit it is testing.
+type undoCase struct {
+	name    string
+	mutator string
+	setup   func(ed *editor)
+	edit    func(ed *editor)
+}
+
+func undoCases(t *testing.T) []undoCase {
+	return []undoCase{
+		{name: "add", mutator: "addSelected", edit: func(ed *editor) {
 			// The palette's first entry, whatever it is.
 			ed.paletteSel.Set(0)
 			ed.sel = ed.doc()
 			ed.addSelected()
 		}},
-		{"delete", func(ed *editor) {
+		{name: "delete", mutator: "deleteSelected", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			ed.deleteSelected()
 		}},
-		{"retype", func(ed *editor) { ed.retype("VStack") }},
-		{"attribute edit", func(ed *editor) {
+		{name: "retype", mutator: "retype", edit: func(ed *editor) {
+			ed.retype("VStack")
+		}},
+		{name: "attribute edit", mutator: "Write", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			editAttr(t, ed, "Canvas.Left", "17")
 		}},
-		{"body edit", func(ed *editor) {
+		{name: "body edit", mutator: "commitEdit", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			ed.attrSel.Set(bodyRowIndex(t, ed))
 			ed.beginEdit()
@@ -176,33 +205,117 @@ func TestUndoCoversEveryMutatorTheEditorHas(t *testing.T) {
 		// derives from, and the way it fails is a mutator that quietly
 		// does not. A table entry is what turns that from a convention
 		// into a check.
-		{"cut", func(ed *editor) {
+		{name: "cut", mutator: "cutSelected", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			ed.cutSelected()
 		}},
-		{"paste", func(ed *editor) {
+		{name: "paste", mutator: "insertSubtree", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			ed.copySelected() // seeds the clipboard; copy alone is not an edit
 			ed.sel = ed.doc()
 			ed.pasteClip()
 		}},
-		{"duplicate", func(ed *editor) {
+		{name: "paste markup (the terminal's own paste key)",
+			mutator: "pasteMarkup", edit: func(ed *editor) {
+				ed.sel = ed.doc()
+				ed.pasteMarkup(`<Text Name="P">pasted</Text>`)
+			}},
+		{name: "duplicate", mutator: "duplicateSelected", edit: func(ed *editor) {
 			ed.sel = ed.doc().Kids[0]
 			ed.duplicateSelected()
 		}},
-		{"applyEdit (the labelled form other slices use)", func(ed *editor) {
-			ed.applyEdit("paste", func() {
-				ed.doc().Kids = append(ed.doc().Kids, &node{
-					Elem: "Text", Body: "pasted",
-					Attrs: map[string]string{"Name": "P"},
-				})
-			})
+		// THE THREE STRUCTURAL MOVES, and the reason they need setup.
+		// Each refuses on a document it cannot move within, and a row
+		// that silently refused would pass every assertion below except
+		// "the document changed" — which is exactly the guard that
+		// caught them being written wrong.
+		{name: "reorder", mutator: "moveSelected", edit: func(ed *editor) {
+			ed.sel = ed.doc().Kids[0]
+			ed.moveSelected(1)
 		}},
+		{name: "promote", mutator: "promoteSelected", setup: nestOneText,
+			edit: func(ed *editor) {
+				ed.sel = ed.doc().Kids[0].Kids[0]
+				ed.promoteSelected()
+			}},
+		{name: "demote", mutator: "demoteSelected", setup: containerThenText,
+			edit: func(ed *editor) {
+				ed.sel = ed.doc().Kids[1]
+				ed.demoteSelected()
+			}},
+		// The track verbs all write through writeTracks, so one row
+		// covers the seam for resize, cycle-kind, add and remove. The
+		// derivation names writeTracks for that reason: it is the
+		// method that reaches rebuild.
+		{name: "track resize", mutator: "writeTracks", setup: gridWithTracks,
+			edit: func(ed *editor) {
+				ed.setCursor(trackCursor{on: true, axis: preview.AxisCol})
+				ed.resizeTrack(1)
+			}},
+		{name: "applyEdit (the labelled form other slices use)",
+			mutator: "applyEdit", edit: func(ed *editor) {
+				ed.applyEdit("paste", func() {
+					ed.doc().Kids = append(ed.doc().Kids, &node{
+						Elem: "Text", Body: "pasted",
+						Attrs: map[string]string{"Name": "P"},
+					})
+				})
+			}},
 	}
+}
 
-	for _, tc := range cases {
+// nestOneText gives promoteSelected a grandparent to lift out to.
+func nestOneText(ed *editor) {
+	ed.doc().Kids = []*node{{
+		Elem:  "VStack",
+		Attrs: map[string]string{"Name": "V"},
+		Kids: []*node{{Elem: "Text", Body: "cccc",
+			Attrs: map[string]string{"Name": "C"}}},
+	}}
+}
+
+// containerThenText gives demoteSelected a preceding sibling that can
+// actually hold the selection — a <Text> cannot, and demote refuses.
+func containerThenText(ed *editor) {
+	ed.doc().Kids = []*node{
+		{Elem: "VStack", Attrs: map[string]string{"Name": "V"},
+			Kids: []*node{{Elem: "Text", Body: "cccc",
+				Attrs: map[string]string{"Name": "C"}}}},
+		{Elem: "Text", Body: "dddd", Attrs: map[string]string{"Name": "D"}},
+	}
+}
+
+// gridWithTracks makes the user's root a <Grid>, which is what the
+// track verbs require in scope.
+func gridWithTracks(ed *editor) {
+	ed.doc().Elem = "Grid"
+	ed.doc().Attrs = map[string]string{"Rows": "2,2", "Cols": "8,8"}
+	ed.doc().Kids = []*node{{Elem: "Text", Body: "aa",
+		Attrs: map[string]string{"Name": "A", "Grid.Row": "0", "Grid.Col": "0"}}}
+	ed.setSelection(ed.doc())
+}
+
+func TestUndoCoversEveryMutatorTheEditorHas(t *testing.T) {
+	for _, tc := range undoCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			ed, _ := undoFixture(t)
+			ed, c := undoFixture(t)
+			if tc.setup != nil {
+				tc.setup(ed)
+				// The scaffolding is not the edit under test, so the
+				// history is re-established over it exactly the way the
+				// fixture does over its own seed.
+				ed.hist = nil
+				ed.rebuild()
+				settle(t, c)
+				if !strings.HasPrefix(ed.status.Get(), "✓") {
+					t.Fatalf("the %s scaffolding does not build: %s",
+						tc.name, ed.status.Get())
+				}
+				if ed.CanUndo() {
+					t.Fatalf("the %s scaffolding left %d undo steps behind",
+						tc.name, len(ed.history().undo))
+				}
+			}
 			before := ed.doc().markup("")
 
 			tc.edit(ed)
@@ -1442,5 +1555,174 @@ func TestUndoDoesNotBuryTheBuildStatusForever(t *testing.T) {
 	if got := ed.statusText.Get(); !strings.HasPrefix(got, "✗") {
 		t.Errorf("the status bar shows %q while the document does not build; the "+
 			"error is what explains everything else", got)
+	}
+}
+
+// TestARunThatReturnsToItsStartDoesNotSwallowTheNextEdit pins the one
+// way a coalescing run can lose an edit outright.
+//
+// A run's exit condition and its entry condition are two different
+// pieces of state, and only one of them was being unwound. Coming back
+// to the value the run started from pops the step it pushed — right,
+// because there is nothing left to undo — but the baseline went on
+// carrying the run's KEY. The next edit to the same field then matched
+// that key, coalesced into a run whose step was no longer on the stack,
+// and became unreachable: ctrl+z answered "nothing to undo" over a
+// document the user had just changed.
+//
+// It takes three edits to reproduce and the middle one has to land
+// exactly on the starting value, which is why the table above cannot
+// see it — every case there is a single edit, and a single edit can
+// only be the step that gets pushed.
+func TestARunThatReturnsToItsStartDoesNotSwallowTheNextEdit(t *testing.T) {
+	ed, c := undoFixture(t)
+	ed.sel = ed.doc().Kids[0]
+	start := ed.doc().Kids[0].Attrs["Canvas.Left"]
+
+	editAttr(t, ed, "Canvas.Left", "17")
+	editAttr(t, ed, "Canvas.Left", start) // back where it began: no edit at all
+	if ed.CanUndo() {
+		t.Fatalf("a run that returned to its start left %d steps behind",
+			len(ed.history().undo))
+	}
+
+	editAttr(t, ed, "Canvas.Left", "42")
+	if got := ed.doc().Kids[0].Attrs["Canvas.Left"]; got != "42" {
+		t.Fatalf("the third edit did not land: Canvas.Left is %q", got)
+	}
+	if !ed.CanUndo() {
+		t.Fatal("the edit after a returned run recorded no history: " +
+			"ctrl+z cannot reach it")
+	}
+
+	settle(t, c)
+	if !ctrlZ(c) {
+		t.Fatal("ctrl+z was not consumed")
+	}
+	if got := ed.doc().Kids[0].Attrs["Canvas.Left"]; got != start {
+		t.Errorf("after ctrl+z Canvas.Left is %q, want the pre-edit %q", got, start)
+	}
+}
+
+// notATableMutator is every rebuild-reaching function that is
+// deliberately NOT a row of the undo table, with the reason it is not.
+//
+// It is an enumeration, and that is the point: it is the only kind that
+// cannot go stale silently, because the derivation below fails on any
+// name that is in neither this map nor the table. A new mutator is red
+// until somebody either covers it or writes down why it needs no cover.
+// "Why" is a sentence here rather than a bare name, because the failure
+// this whole file guards against is a mutator that looks covered.
+var notATableMutator = map[string]string{
+	"main": "the program's first build, before any document exists to edit",
+	"restore": "undo's own replay — recording it would make ctrl+z " +
+		"an undo step of its own",
+	"Release": "the drag, covered by TestOneDragRebuildsExactlyOnceAnd" +
+		"RecordsOneUndoStep, which pins the STEP COUNT over seven " +
+		"motions — an assertion a one-shot table row cannot make",
+	"openWorkspaceFile": "loads a different document, so there is no " +
+		"outgoing state in this one for undo to bring back",
+}
+
+// TestTheUndoTableNamesEveryMutatorInTheSource is what makes the table
+// above deserve its name.
+//
+// The table is hand-written and its name is a claim about ALL of them,
+// which is a claim a hand-written list cannot keep. It did not: review
+// of #392 found it silently five mutators short — moveSelected,
+// promoteSelected, demoteSelected, the track verbs and pasteMarkup had
+// no row, and nothing anywhere went red about it. Adding the rows fixes
+// today; deriving the set is what stops tomorrow.
+//
+// The seam it derives from is the same one undo derives from: a
+// document mutator is a function that reaches ed.rebuild(), because
+// that is where recordHistory runs. So this reads the package's own
+// source for the functions that do, rather than trusting a second list
+// to agree with the first.
+//
+// It also checks the other direction — that every name the table gives
+// is a function that EXISTS. That is not hypothetical either: undo.go's
+// own header named cycleValue, a symbol this package has never had, and
+// a comment cannot be compiled.
+func TestTheUndoTableNamesEveryMutatorInTheSource(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reaches := map[string]bool{} // func name -> reaches rebuild()
+	exists := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			exists[fn.Name.Name] = true
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if sel.Sel.Name == "rebuild" || sel.Sel.Name == "applyEdit" {
+					reaches[fn.Name.Name] = true
+				}
+				return true
+			})
+		}
+	}
+	if len(reaches) == 0 {
+		t.Fatal("the scan found no function reaching rebuild(), so it " +
+			"would pass for an editor with no undo at all")
+	}
+
+	covered := map[string]bool{}
+	for _, tc := range undoCases(t) {
+		if tc.mutator == "" {
+			t.Errorf("the %q row names no mutator, so nothing can check "+
+				"that it covers one", tc.name)
+			continue
+		}
+		if !exists[tc.mutator] {
+			t.Errorf("the %q row names mutator %q, which is not a function "+
+				"in this package", tc.name, tc.mutator)
+		}
+		covered[tc.mutator] = true
+	}
+
+	var missing []string
+	for name := range reaches {
+		if covered[name] || notATableMutator[name] != "" {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	sort.Strings(missing)
+	for _, name := range missing {
+		t.Errorf("%s reaches rebuild() — so it records history and ctrl+z "+
+			"is expected to undo it — but no row of undoCases covers it "+
+			"and notATableMutator gives no reason it needs none", name)
+	}
+
+	// A reason left behind for a function that no longer exists is the
+	// same defect pointed the other way: it reads as a considered
+	// exemption and covers nothing.
+	for name := range notATableMutator {
+		if !exists[name] {
+			t.Errorf("notATableMutator excuses %q, which is not a function "+
+				"in this package", name)
+		}
 	}
 }

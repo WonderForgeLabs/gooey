@@ -4,6 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,19 +25,60 @@ import (
 // The list is DERIVED from the framework's declared constants rather
 // than restated, so adding a kind there fails here.
 func TestEveryGrantKindHasADragKind(t *testing.T) {
-	for _, g := range []markup.GrantKind{
-		markup.GrantOffset, markup.GrantCell, markup.GrantOrder,
-	} {
+	// DERIVED, because the name is a claim about ALL of them and this
+	// used to enumerate three literals beside a switch that named the
+	// same three. The two agreed by construction, so a GrantKind added
+	// to markup would have fallen through to DragFixed — "placed by its
+	// parent" — and the container declaring it would have been
+	// undesignable with nothing saying so. That is the exact failure the
+	// test's name promises to catch.
+	//
+	// Read from the file that declares them, the same technique
+	// editors_test.go uses for markup.Kind and for the same reason: a
+	// slice written here is the hand list wearing a smaller hat.
+	kinds := declaredGrantKinds(t)
+	if len(kinds) < 3 {
+		t.Fatalf("only %d GrantKind constants parsed out of %s (%v); the "+
+			"declarations moved and this test is checking nothing",
+			len(kinds), grantCatalogPath, kinds)
+	}
+
+	for name, g := range kinds {
+		// GrantNone is the ONE that must map to DragFixed: no grant is
+		// exactly "the parent places this child".
+		if g == markup.GrantNone {
+			if got := dragKindFor(g); got != DragFixed {
+				t.Errorf("a GrantNone parent gives its child drag kind %q, want %q",
+					got, DragFixed)
+			}
+			continue
+		}
 		if got := dragKindFor(g); got == DragFixed {
-			t.Errorf("GrantKind %q falls through dragKindFor's switch to %q, so a "+
-				"container declaring it would not be designable and nothing would say so",
-				g, got)
+			t.Errorf("markup.%s (%q) falls through dragKindFor's switch to %q, "+
+				"so a container declaring it would not be designable and "+
+				"nothing would say so", name, g, got)
 		}
 	}
-	if got := dragKindFor(markup.GrantNone); got != DragFixed {
-		t.Errorf("a GrantNone parent gives its child drag kind %q, want %q",
-			got, DragFixed)
+}
+
+// grantCatalogPath and declaredGrantKinds read the GrantKind constants
+// out of the file that declares them. Relative because this module sits
+// two levels down and is always run from its own directory.
+const grantCatalogPath = "../../markup/catalog.go"
+
+var grantKindDecl = regexp.MustCompile(`(?m)^\t(Grant\w+)\s+GrantKind\s*=\s*"([^"]*)"`)
+
+func declaredGrantKinds(t *testing.T) map[string]markup.GrantKind {
+	t.Helper()
+	src, err := os.ReadFile(grantCatalogPath)
+	if err != nil {
+		t.Fatalf("cannot read the GrantKind declarations: %v", err)
 	}
+	out := map[string]markup.GrantKind{}
+	for _, m := range grantKindDecl.FindAllStringSubmatch(string(src), -1) {
+		out[m[1]] = markup.GrantKind(m[2])
+	}
+	return out
 }
 
 // TestGrantNoneReadsAsPlacedRatherThanReorderable.
@@ -164,6 +208,84 @@ func TestAThirdPartyContainerIsDesignableWithNoEditorChange(t *testing.T) {
 	}
 }
 
+// TestAThirdPartyContainerAttachesAttributesTheInspectorCanEdit is the
+// other end of the same gesture, and it was the half that did not work.
+//
+// The drag above WRITES Table.R and Table.C. The inspector went through
+// markup.AttrsFor(spec, parentName), which resolves the parent in the
+// BUILTIN registry only — so for a host-registered container it joined
+// in nothing, and the two attributes the drag had just written were
+// invisible in the properties grid and could not be typed by hand. A
+// value present in the document and absent from the editor that wrote it
+// is worse than an unsupported container: the user sees the element
+// move, then finds no trace of what moved it.
+//
+// The retype cleanup had the same blind spot from the other side, via
+// markup.AttachedParents(): a child moved out of a third-party container
+// kept that container's attached attributes, which the new parent
+// discards in silence. Both are asserted here because they are one
+// defect — the editor asking the builtin registry a question about the
+// document's vocabulary. Found in review of #390 (issue #418).
+func TestAThirdPartyContainerAttachesAttributesTheInspectorCanEdit(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.docCtx.Elements["Table"] = grantingTable()
+	ed.loadPalette()
+
+	ed.doc().Elem = "Table"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Text", Body: "aaaa", Attrs: map[string]string{
+			"Name": "A", "Table.R": "1", "Table.C": "1"}},
+	}
+	ed.rebuild()
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("the <Table> fixture does not build: %s", got)
+	}
+	c.Frame()
+
+	ed.sel = ed.doc().Kids[0]
+	rows := map[string]string{}
+	for _, r := range ed.attrRows() {
+		rows[r.name] = r.value
+	}
+	if len(rows) == 0 {
+		t.Fatal("the inspector returned no rows at all, so nothing below discriminates")
+	}
+	for _, a := range []struct{ name, want string }{{"Table.R", "1"}, {"Table.C", "1"}} {
+		got, ok := rows[a.name]
+		if !ok {
+			t.Errorf("the properties grid does not offer %s on a child of a <Table>, "+
+				"which grants it — the drag writes that attribute and the inspector "+
+				"cannot show or edit it. AttrsFor resolves the parent in the builtin "+
+				"registry, and <Table> is registered on the Context", a.name)
+			continue
+		}
+		if got != a.want {
+			t.Errorf("%s reads %q in the properties grid, the document says %q",
+				a.name, got, a.want)
+		}
+	}
+	// The converse, so the join is scoped rather than unconditional: a
+	// <Canvas>'s attached attributes are meaningless under a <Table>.
+	for _, wrong := range []string{"Canvas.Left", "Grid.Row"} {
+		if _, ok := rows[wrong]; ok {
+			t.Errorf("the properties grid offers %s under a <Table>, which grants no "+
+				"such attribute — applyLayout discards it in silence", wrong)
+		}
+	}
+
+	// RETYPE, the other builtins-only lookup. Moving the container to a
+	// <VStack> must strip what <Table> attached.
+	ed.retype("VStack")
+	for _, gone := range []string{"Table.R", "Table.C"} {
+		if v, ok := ed.doc().Kids[0].Attrs[gone]; ok {
+			t.Errorf("retyping <Table> to <VStack> left %s=%q on the child. "+
+				"AttachedParents lists builtins only, so a third-party container's "+
+				"attributes survive a move to a parent that ignores them", gone, v)
+		}
+	}
+}
+
 // TestTheEditorNamesNoContainerElement is the structural half, and it is
 // what stops the taxonomy growing a second copy again.
 //
@@ -184,34 +306,104 @@ func TestTheEditorNamesNoContainerElement(t *testing.T) {
 		"Grid.RowSpan": true, "Grid.ColSpan": true,
 	}
 
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "drag.go", nil, 0)
+	// EVERY NON-TEST FILE IN THE EDITOR, not just drag.go.
+	//
+	// It scanned one file while the PR it landed with claimed "nothing
+	// in the editor names <Grid>" — and main.go's retype was seeding
+	// positions with `if elem == "Canvas"` and the two attribute names
+	// as literals the whole time. A structural test that covers one
+	// file out of the package it makes a claim about is the same defect
+	// as a hand-written list: it agrees with itself. Found in review
+	// of #390.
+	//
+	// Discovered rather than listed, so a new file joins the claim by
+	// existing. Test files are excluded because they legitimately build
+	// documents out of <Canvas> and <Grid> — the fixtures are the
+	// vocabulary under test.
+	names, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("parsing drag.go: %v", err)
+		t.Fatal(err)
 	}
+	var files []string
+	for _, n := range names {
+		if !strings.HasSuffix(n, "_test.go") {
+			files = append(files, n)
+		}
+	}
+	if len(files) < 5 {
+		t.Fatalf("only %d non-test files found (%v); the glob is broken and "+
+			"this test is checking almost nothing", len(files), files)
+	}
+
+	fset := token.NewFileSet()
 	found := 0
-	ast.Inspect(f, func(n ast.Node) bool {
-		lit, ok := n.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			return true
-		}
-		found++
-		v, err := strconv.Unquote(lit.Value)
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			// TWO SHAPES, not every mention, and the distinction is the
+			// whole reason this can cover the package at all.
+			//
+			// The defect is DECIDING from a container's name or
+			// SPELLING its attributes: `into.Elem == "Canvas"` and
+			// `n.Attrs["Canvas.Left"]`. Naming an element as a VALUE is
+			// not that — the seed document is literally a <Canvas>, and
+			// a "convert to Canvas" menu command has to say which
+			// element it converts to. A test that banned the string
+			// outright would have to grow an exception list, which is
+			// the hand-maintained thing this test exists to replace.
+			switch e := n.(type) {
+			case *ast.BinaryExpr:
+				if e.Op != token.EQL && e.Op != token.NEQ {
+					return true
+				}
+				for _, side := range []ast.Expr{e.X, e.Y} {
+					if v, ok := bannedLit(side, banned, &found); ok {
+						t.Errorf("%s:%d decides from the element NAME: a "+
+							"comparison against %q. Ask "+
+							"ed.grantOf(elem).Kind instead — a "+
+							"host-registered container with the same grant "+
+							"gets nothing from this branch",
+							name, fset.Position(e.Pos()).Line, v)
+					}
+				}
+			case *ast.IndexExpr:
+				if v, ok := bannedLit(e.Index, banned, &found); ok {
+					t.Errorf("%s:%d spells a container's attribute: index %q. "+
+						"Ask grant.Attr(markup.RoleX/RoleY/RoleRow/RoleCol) "+
+						"— a rename in the catalog cannot reach a literal here",
+						name, fset.Position(e.Pos()).Line, v)
+				}
+			case *ast.BasicLit:
+				if e.Kind == token.STRING {
+					found++
+				}
+			}
 			return true
-		}
-		if banned[v] {
-			t.Errorf("drag.go:%d contains the string literal %q. Geometry comes from the "+
-				"parent's markup.Grant now — ask ed.grantOf(parent).Attr(role) rather than "+
-				"spelling a container's vocabulary in the editor",
-				fset.Position(lit.Pos()).Line, v)
-		}
-		return true
-	})
-	if found == 0 {
-		t.Fatal("no string literals found in drag.go at all, so this test asserts " +
-			"nothing — the walk is broken, not the file")
+		})
 	}
+	if found == 0 {
+		t.Fatal("no string literals found in the editor at all, so this test " +
+			"asserts nothing — the walk is broken, not the files")
+	}
+}
+
+// bannedLit reports whether e is a banned string literal, counting every
+// string literal it is offered so the caller can tell a clean package
+// from a broken walk.
+func bannedLit(e ast.Expr, banned map[string]bool, found *int) (string, bool) {
+	lit, ok := e.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	*found++
+	v, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return v, banned[v]
 }
 
 // A LOST WRITE NAMES EVERY ROLE IT LOST, IN A FIXED ORDER.
@@ -294,5 +486,47 @@ func TestALostWriteNamesEveryRoleInAFixedOrder(t *testing.T) {
 		t.Errorf("the message is %q — it names %q before %q. The order comes from the "+
 			"switch, not from map iteration, so it must not vary between runs",
 			msg, markup.RoleCol, markup.RoleRow)
+	}
+}
+
+// TestATabReordersRatherThanReadingAsFixed is the end of the finding at
+// the editor, where it was visible: a press on a <Tab> selected it and
+// then refused the gesture with "placed by its parent".
+//
+// <Tabs> is ModeRestricted, and both grant contracts in markup gated on
+// ModeMany, so the omission that produced DragFixed was invisible to the
+// suite written to catch exactly it. The fix is in the catalog — <Tabs>
+// declares GrantOrder now — and this asserts the consequence rather than
+// the declaration, because dragKind is what the gesture actually reads.
+//
+// Asserted against DragFixed BY NAME as well as against DragOrder: the
+// two failures are different bugs. A DragFixed here is the original
+// defect returning; anything else is the grant-to-gesture mapping.
+func TestATabReordersRatherThanReadingAsFixed(t *testing.T) {
+	ed, c, _ := designerPageCounting(t)
+	ed.doc().Elem = "Tabs"
+	ed.doc().Attrs = map[string]string{}
+	ed.doc().Kids = []*node{
+		{Elem: "Tab", Attrs: map[string]string{"Header": "One"},
+			Kids: []*node{{Elem: "Text", Body: "first"}}},
+		{Elem: "Tab", Attrs: map[string]string{"Header": "Two"},
+			Kids: []*node{{Elem: "Text", Body: "second"}}},
+	}
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the <Tabs> fixture does not build: %s", ed.status.Get())
+	}
+	c.Frame()
+
+	got := ed.dragKind(ed.doc().Kids[1])
+	if got == DragFixed {
+		t.Fatalf("a <Tab> reads as DragFixed (%q), which is what the designer says "+
+			"when there is nothing to edit — and tabs reorder. <Tabs> declares no "+
+			"Grant, so the catalog is telling every editor its children have no "+
+			"geometry", got)
+	}
+	if got != DragOrder {
+		t.Errorf("a <Tab> reads as %q, want %q — position in the strip is the "+
+			"child's index", got, DragOrder)
 	}
 }

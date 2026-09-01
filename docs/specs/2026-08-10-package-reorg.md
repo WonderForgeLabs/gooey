@@ -126,7 +126,11 @@ its focused/hovered nodes, so its JSON pane changed the same way.
 (`text.go`, `button.go`, `vstack.go`, …), with `Base`/`Attacher`
 extracted to root `base.go` and the shared helpers (`Str`, `Sty`,
 `clipRunes`, `clamp`, the collapse/gap predicates) in
-`components/components.go`. `docs/learn/06-custom-widgets.md`,
+`components/components.go`. (`clipRunes` is named as it stood on
+2026-08-10 and no longer exists: clipping by RUNES was the defect
+[#358](https://github.com/WonderForgeLabs/gooey/issues/358) fixed, and
+it is `render.ClipCols` now — one implementation, counting columns, for
+the ~25 paint sites that had shared the private one.) `docs/learn/06-custom-widgets.md`,
 `docs/learn/examples/06-custom-widgets/`, and
 `docs/learn/media/06-custom-widgets.png` all renamed to
 `…custom-components…`.

@@ -1,6 +1,9 @@
 package input
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 // Bracketed paste (DECSET 2004).
 //
@@ -66,8 +69,53 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 // worse, because it silently TRUNCATES a paste, and a user who pastes
 // 40KB of markup and gets 8KB of it has no way to tell. A wedge is at
 // least visible.
+// splitPasteMarker reports whether b is an incomplete bracket — a strict
+// prefix of one of the two markers, long enough to be nothing else.
+//
+// THE THREE-BYTE FLOOR IS THE WHOLE DESIGN. "\x1b" and "\x1b[" are
+// genuinely indistinguishable from the Esc key, which is the ambiguity
+// idle was introduced to settle, so they must go on answering Esc; from
+// the third byte the buffer is ESC [ followed by a digit, which nothing
+// but a CSI spells. That floor is also what keeps decodeidle_test.go's
+// exhaustive check over every 1- and 2-byte input true by construction
+// rather than by review.
+//
+// What waiting costs, stated as plainly as the wedge above: a genuinely
+// truncated CSI — an F9 whose "~" never arrives — is held instead of
+// being delivered as Esc. It is not stranded, because the next byte from
+// the terminal resolves it either way, and a sequence that stopped
+// mid-flight was never going to be the key the user pressed.
+func splitPasteMarker(b []byte) bool {
+	if len(b) < 3 {
+		return false
+	}
+	s := string(b)
+	return (strings.HasPrefix(pasteStart, s) || strings.HasPrefix(pasteEnd, s)) &&
+		len(s) < len(pasteStart)
+}
+
 func decodePaste(rest []byte, n int) (Event, int, bool) {
-	i := strings.Index(string(rest), pasteEnd)
+	// bytes.Index, NOT strings.Index(string(rest), …), and the
+	// conversion is the whole point rather than a style preference.
+	//
+	// This function is called once per read while a paste is open, on a
+	// buffer that has grown by the chunk each time, so the SEARCH is
+	// quadratic by construction — that is inherent to a stateless
+	// decoder and is not what this changes. What string(rest) added on
+	// top was a full COPY of the buffer per call: draining a 1MB paste
+	// allocated on the order of four gigabytes and spent most of its
+	// time in the collector. Measured on one machine, one call pattern:
+	// 64KB 14ms, 256KB 149ms, 1MB 2.3s before; 1.2ms, 15ms, 227ms after.
+	// The shape is unchanged and the constant is an order of magnitude
+	// smaller. Found in the review of #391 (issue #419), which reported
+	// the symptom as the decoder blocking for seconds on a large paste.
+	//
+	// The residual quadratic wants a decoder that remembers how far it
+	// has already searched, which is an API with state where this
+	// package deliberately has none. TestDrainingALargePasteDoesNotCopyItPerRead
+	// pins the copy, because the copy is the part that made a paste feel
+	// like a hang.
+	i := bytes.Index(rest, []byte(pasteEnd))
 	if i < 0 {
 		return Event{}, 0, false // incomplete: read more
 	}

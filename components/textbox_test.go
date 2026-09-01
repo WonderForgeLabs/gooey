@@ -212,3 +212,38 @@ func TestTextBoxWithoutTextIsInert(t *testing.T) {
 		t.Error("an unbound TextBox consumed a key")
 	}
 }
+
+// TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks is the Windows and
+// web-clipboard case, which is most of the pastes a single-line field
+// actually sees.
+//
+// oneLine turns a newline into a space so a multi-line payload does not
+// smuggle a line break into a one-line value. It did that per RUNE, and
+// a CRLF is TWO runes, so every line break from a Windows editor, a
+// browser textarea or an RDP clipboard arrived as two spaces. The value
+// is wrong in a way nothing reports and the user cannot see — trailing
+// and doubled spaces look like whitespace they typed. Found in the
+// review of #391 (issue #419).
+//
+// A LONE \r STAYS ONE SPACE, and that is the discriminating half: the
+// fix is "CR LF is one break", not "drop CR", so a classic-Mac payload
+// and a payload that really does contain a bare carriage return keep
+// their separator.
+func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"crlf", "one\r\ntwo", "one two"},
+		{"crlf twice", "a\r\nb\r\nc", "a b c"},
+		{"lone lf", "one\ntwo", "one two"},
+		{"lone cr", "one\rtwo", "one two"},
+		{"lf then cr is two breaks", "a\n\rb", "a  b"},
+		{"tab", "one\ttwo", "one two"},
+		{"blank line survives as two", "a\r\n\r\nb", "a  b"},
+		{"nul is dropped", "a\x00b", "ab"},
+	} {
+		tb, v := textBox(t, "")
+		tb.HandlePaste(input.PasteEvent{Text: tc.in})
+		if got := v.Get(); got != tc.want {
+			t.Errorf("%s: pasting %q gave %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

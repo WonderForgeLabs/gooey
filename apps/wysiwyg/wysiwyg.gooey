@@ -110,8 +110,12 @@
          REDO IS ctrl+y AND NOT ALSO ctrl+shift+z. A terminal cannot
          report shift on a printable character, so ctrl+shift+z is the
          SAME byte as ctrl+z and the decoder lower-cases it on purpose.
-         A ctrl+shift+z binding would parse, look like a feature, and be
-         unfireable. See undo.go. -->
+         ParseGesture folds the shift into the rune and ctrl lower-cases
+         it back, so a ctrl+shift+z binding is not a second gesture — it
+         is a DUPLICATE of the ctrl+z one above, and two bindings on one
+         gesture means one of them silently never fires. Adding it as a
+         kindness would put a live candidate in front of UNDO. See
+         undo.go and TestCtrlShiftZIsAnALIASForCtrlZAndSoIsNotBoundToRedo. -->
     <KeyBinding Gesture="ctrl+z" Command="{{.Undo}}"/>
     <KeyBinding Gesture="ctrl+y" Command="{{.Redo}}"/>
 

@@ -252,7 +252,7 @@ func (t *Terminal) Render(f *gooey.Frame) {
 				st.Dim = true
 				st.Bold = false
 			}
-			f.Cells.Set(b.X+x, b.Y+y, c.Rune, st)
+			f.Cells.SetCell(b.X+x, b.Y+y, c.WithStyle(st))
 		}
 	}
 	// The caret. gooey hides the terminal's real cursor for the whole
@@ -274,7 +274,7 @@ func (t *Terminal) Render(f *gooey.Frame) {
 			} else {
 				st.Underline, st.Dim = true, true
 			}
-			f.Cells.Set(b.X+cx, b.Y+cy, c.Rune, st)
+			f.Cells.SetCell(b.X+cx, b.Y+cy, c.WithStyle(st))
 		}
 	}
 	// After the blit, not before it: these go ON TOP of the guest's last

@@ -500,9 +500,46 @@ func (g Grant) Roles() []Role {
 	return out
 }
 
+// AttachedAttrs is what this grant contributes to a child, copied.
+//
+// This is the form a Context consumer must use. The package-level
+// AttachedAttrs takes a parent NAME and resolves it in the builtin
+// registry, so it answers "nothing" for a container the host registered
+// — an editor asking it about the document's own vocabulary gets a
+// confident wrong answer rather than an error. A caller that already
+// holds the parent's ElementSpec (from Context.Catalog) holds the grant
+// too, and should ask it directly. Found in review of #390 (issue #418).
+func (g Grant) AttachedAttrs() []AttrSpec {
+	out := make([]AttrSpec, len(g.Attached))
+	copy(out, g.Attached)
+	return out
+}
+
+// AttrsFor is the package-level AttrsFor with the parent already
+// resolved — the same join, reached without a registry lookup. See
+// AttachedAttrs above for why a Context consumer needs this form.
+func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
+	out := append([]AttrSpec(nil), e.Attrs...)
+	if TakesLayout(e) {
+		out = append(out, universalAttrs...)
+		out = append(out, g.Attached...)
+	} else {
+		// Name is universal even where the layout surface is not: every
+		// element can be addressed.
+		for _, a := range universalAttrs {
+			if a.Kind == KindIdentity {
+				out = append(out, a)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // grantOf is the registry lookup behind AttachedAttrs and AttrsFor.
 // Builtins only — a Context-registered element is reachable through
-// Context.Catalog, whose ElementSpec carries the same Grant.
+// Context.Catalog, whose ElementSpec carries the same Grant, and whose
+// Grant carries the two methods above.
 func grantOf(element string) Grant {
 	if d := elementDefs[element]; d != nil {
 		return d.Grants
@@ -577,10 +614,7 @@ func UniversalAttrs() []AttrSpec {
 // A consumer that offers Canvas.Left on a child of a <VStack> is
 // promising positioning that will never happen.
 func AttachedAttrs(parent string) []AttrSpec {
-	src := grantOf(parent).Attached
-	out := make([]AttrSpec, len(src))
-	copy(out, src)
-	return out
+	return grantOf(parent).AttachedAttrs()
 }
 
 // AttachedParents lists the elements that contribute attached
@@ -615,21 +649,7 @@ func GrantOf(element string) Grant {
 // directly: the per-element list alone is a true statement about the
 // element and a misleading answer to the question actually being asked.
 func AttrsFor(e ElementSpec, parent string) []AttrSpec {
-	out := append([]AttrSpec(nil), e.Attrs...)
-	if TakesLayout(e) {
-		out = append(out, universalAttrs...)
-		out = append(out, grantOf(parent).Attached...)
-	} else {
-		// Name is universal even where the layout surface is not: every
-		// element can be addressed.
-		for _, a := range universalAttrs {
-			if a.Kind == KindIdentity {
-				out = append(out, a)
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	return grantOf(parent).AttrsFor(e)
 }
 
 // TakesLayout reports whether an element actually accepts the universal

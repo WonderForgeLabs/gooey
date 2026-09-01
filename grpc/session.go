@@ -329,6 +329,24 @@ type broadcaster struct {
 
 	mu       sync.Mutex
 	sessions map[*session]bool
+	// seq numbers every count change, assigned under mu at the moment
+	// the change happens. It is what lets notify deliver OUTSIDE the
+	// lock without letting two callers cross — see notify.
+	seq uint64
+
+	// notifyMu guards the MAILBOX below and nothing else. It is taken
+	// only while mu is NOT held, and — the part the review of PR #425
+	// had to restore — it is never held across the host callback.
+	notifyMu sync.Mutex
+	notified uint64
+	// shut latches the endpoint being gone. See notify.
+	shut bool
+	// The mailbox: the newest undelivered count, and whether some
+	// goroutine is already carrying it to the host. See notify.
+	pending    bool
+	pendN      int
+	pendSeq    uint64
+	delivering bool
 
 	// UI-goroutine-only state.
 	frame      uint64
@@ -360,17 +378,47 @@ func (b *broadcaster) count() int {
 func (b *broadcaster) add(ss *session) {
 	b.mu.Lock()
 	b.sessions[ss] = true
-	n := len(b.sessions)
+	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n)
+	b.notify(n, seq, false)
 }
 
 func (b *broadcaster) remove(ss *session) {
 	b.mu.Lock()
 	delete(b.sessions, ss)
-	n := len(b.sessions)
+	n, seq := len(b.sessions), b.next()
 	b.mu.Unlock()
-	b.notify(n)
+	b.notify(n, seq, false)
+}
+
+// closed reports the endpoint going quiet — the accept loop has
+// returned, so every stream it carried is finished and the count is
+// zero whatever the set says.
+//
+// IT LATCHES, and a sequence number alone was not enough. Numbering the
+// zero drops a remove that was already IN FLIGHT, which is what the
+// first version of this fixed; a remove that takes b.mu AFTERWARDS gets
+// a higher number and was delivered normally, so the host was told a
+// positive count for an endpoint that no longer exists. That ordering is
+// routine rather than exotic: grpc's Stop does not wait for handler
+// goroutines, so Attach's deferred unregister regularly runs after Serve
+// has returned. With two clients attached at shutdown the host saw 0 and
+// then 1, and a handler wedged in Send left it at 1 for good.
+//
+// So "zero whatever the set says" is enforced rather than asserted: past
+// this point notify refuses every later count. Found in the review of
+// #391 (issue #419), then in the review of that fix (PR #425).
+func (b *broadcaster) closed() {
+	b.mu.Lock()
+	seq := b.next()
+	b.mu.Unlock()
+	b.notify(0, seq, true)
+}
+
+// next stamps a count change. Callers hold b.mu.
+func (b *broadcaster) next() uint64 {
+	b.seq++
+	return b.seq
 }
 
 // notify reports a changed count, OUTSIDE the lock.
@@ -381,13 +429,169 @@ func (b *broadcaster) remove(ss *session) {
 // lock that afterFrame takes on the UI goroutine every frame, which is a
 // deadlock waiting for a slow host.
 //
-// The count is captured while the lock is held and passed by value, so
-// what a callback receives is a real count that existed, not a re-read
-// that another goroutine may have moved in between.
-func (b *broadcaster) notify(n int) {
-	if b.onSessions != nil {
-		b.onSessions(n)
+// THAT IS ALSO WHAT LET TWO CALLERS CROSS. add and remove each captured
+// a real count and then raced to the callback, so a host could be told
+// 2 and then 1 while two clients were attached — and a host that renders
+// the last value it was given goes on showing the wrong one forever,
+// with nothing to correct it until the next connect or disconnect. The
+// count each callback received was true when it was taken, which is what
+// the old comment here claimed and why the defect reads as safe. Found
+// in the review of #391 (issue #419).
+//
+// seq is assigned under b.mu at the moment the set changed, so it is a
+// total order over the changes themselves. The host therefore never sees
+// the count go backwards, and the last callback it receives is the
+// newest change, which is the only property a count display needs. An
+// intermediate value can be skipped; that is the trade, and it is the
+// right way round: a missed 1 between 0 and 2 costs nothing, a trailing
+// 1 after a 2 is a lie that persists.
+//
+// # Why this is a mailbox and not a second mutex
+//
+// The first fix for the crossing held notifyMu across b.onSessions, and
+// the review of PR #425 caught that it rebuilt the very hazard the
+// paragraph above rules out — one lock further along. register runs ON
+// THE UI GOROUTINE (see sessionServer.register, inside s.s.ui.Do) and
+// calls add, which calls this. So an attach made the UI goroutine block
+// on notifyMu while a detach, on some stream goroutine, sat inside a
+// host callback that Options.OnSessions explicitly permits to block. Two
+// clients at once was enough, which is the exact scenario the ordering
+// fix was written for. A stall, not a slowdown: a host whose callback
+// waits on anything the run loop must perform deadlocks outright.
+//
+// SO NO LOCK IS HELD ACROSS THE CALLBACK, and ordering survives without
+// one. Each caller deposits the newest count under notifyMu and leaves.
+// Whichever caller finds no delivery in flight becomes the deliverer and
+// drains the mailbox, releasing the lock around every call out. A caller
+// that arrives while someone is delivering does not wait — its value is
+// in the mailbox and the deliverer will carry it — so the worst an
+// attach can cost the UI goroutine is the O(1) deposit.
+//
+// The residual, stated rather than hidden: the DELIVERER runs host code
+// on its own goroutine, and that may be the UI goroutine when an attach
+// is the change that starts a drain. That is exactly what happened
+// before any of this — register called the callback directly — so it is
+// the pre-existing contract, not a new cost, and Options.OnSessions
+// documents it. What is gone is a goroutine blocking on a LOCK held by
+// host code it has nothing to do with.
+func (b *broadcaster) notify(n int, seq uint64, final bool) {
+	if b.onSessions == nil {
+		return
 	}
+	b.notifyMu.Lock()
+	// THE LATCH, ahead of the ordering check, because it answers a
+	// different question. seq orders changes against each other; shut
+	// says there is nothing left to order — the accept loop is gone, so
+	// every stream it carried is finished and no later count can be
+	// true, however recent its number.
+	if b.shut {
+		b.notifyMu.Unlock()
+		return
+	}
+	switch {
+	case final:
+		// The zero outranks anything waiting, however recent.
+		b.shut, b.pending, b.pendN, b.pendSeq = true, true, 0, seq
+	case seq <= b.notified || (b.pending && seq <= b.pendSeq):
+		// Older than what has gone out, OR older than what is already
+		// waiting to go out. The second half is not redundant: notified
+		// only advances at delivery, so without it a slow change could
+		// overwrite a newer one sitting in the mailbox and the host
+		// would see the count go backwards after all.
+		b.notifyMu.Unlock()
+		return
+	default:
+		b.pending, b.pendN, b.pendSeq = true, n, seq
+	}
+	b.deliver()
+}
+
+// deliver carries the mailbox until it is empty. Called with notifyMu
+// HELD, and it always returns with the lock RELEASED.
+//
+// Split out of notify so the resume path below can re-enter it without a
+// second copy of the loop.
+func (b *broadcaster) deliver() {
+	if b.delivering || !b.pending {
+		b.notifyMu.Unlock() // someone else is carrying it, or there is nothing to carry
+		return
+	}
+	b.delivering = true
+	// RESTORED BY DEFER, because b.onSessions is host code and nothing
+	// here recovers. A panic unwinding past a plain `b.delivering = false`
+	// left the flag set for the life of the broadcaster: every later
+	// add/remove/close would deposit into the mailbox, see delivering,
+	// and return — so no count reached the host again.
+	//
+	// held tracks the lock across the callback, which runs with it
+	// RELEASED, so the unwind can arrive either way and the defer has to
+	// re-acquire before touching the flag.
+	held := true
+	defer func() {
+		if !held {
+			b.notifyMu.Lock()
+		}
+		b.delivering = false
+		leftover := b.pending
+		b.notifyMu.Unlock()
+
+		// A LEFTOVER HERE MEANS THE CALLBACK PANICKED — the normal path
+		// runs the loop until pending is false, so this is reachable
+		// only through an unwind.
+		//
+		// It has to be carried rather than left, and that is a
+		// correction to what this comment said one round ago. It claimed
+		// a count deposited during a failed delivery "waits for the next
+		// change", which is true of an ordinary count and FALSE of the
+		// one that matters: if closed() deposited the terminal zero
+		// while this delivery was in flight, b.shut is now latched, and
+		// the latch at the top of notify refuses every later caller — so
+		// nothing would ever carry it and the host would show a live
+		// connection for good. Permanent silence, not a delay.
+		//
+		// Resumed on its OWN goroutine, because here is inside a panic
+		// and calling host code again would replace the panic in flight
+		// with whatever the second call does. OnSessions is documented
+		// as running on an arbitrary goroutine, so that is the contract
+		// it already has. Found in review of #425.
+		if leftover {
+			go b.resume()
+		}
+	}()
+	for b.pending {
+		n, seq := b.pendN, b.pendSeq
+		b.pending = false
+		b.notified = seq
+		b.notifyMu.Unlock()
+		held = false
+		b.onSessions(n)
+		b.notifyMu.Lock()
+		held = true
+	}
+}
+
+// resume carries a mailbox that a panicking callback left full. See
+// deliver's defer for why it is a goroutine.
+//
+// IT RECOVERS, which nothing else in this file does, and the bound is
+// what earns it: the panic that brought us here has already propagated
+// to whoever called notify, so this goroutine has no caller to carry a
+// second one to — an escape would take the process down over a host bug
+// that the first panic merely reported.
+//
+// THE BOUND IS PER UNWIND, NOT ONE IN TOTAL, and the earlier wording
+// here ("one retry, then the count is dropped") overstated it. This
+// calls deliver, whose own defer schedules `go b.resume()` again if the
+// retry ALSO unwinds leaving a leftover — so a host callback that
+// panics every time is retried every time. What bounds it is that each
+// pass consumes the pending flag: a further retry needs a further panic
+// with a further count deposited, so the chain is as long as the host's
+// misbehaviour and no longer. Not unbounded, and not one.
+// Corrected in review of #425.
+func (b *broadcaster) resume() {
+	defer func() { _ = recover() }()
+	b.notifyMu.Lock()
+	b.deliver()
 }
 
 func (b *broadcaster) snapshot() []*session {

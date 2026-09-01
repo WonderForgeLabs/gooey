@@ -39,10 +39,16 @@ import (
 // # The lattice, and where "not frozen" lives in it
 //
 // AllowAll is a member of this lattice and means "not frozen": a
-// component that does not implement Frozen answers AllowAll, and
-// isFrozen is exactly `allow != AllowAll`. That is what keeps ONE
-// observed value per node instead of two that can disagree — the bool
-// interface is now a projection of the set, not a parallel fact.
+// component that does not implement Frozen answers AllowAll, so "is this
+// frozen" is the question `allow != AllowAll` rather than a second
+// stored fact. That is what keeps ONE observed value per node instead of
+// two that can disagree — the bool interface is a projection of the set,
+// not a parallel fact.
+//
+// (This paragraph, and the AllowAll constant's own comment, both named an
+// isFrozen helper that this PR deleted. The review caught them; the
+// predicate they described is still exactly right, so only the name of
+// the thing computing it has gone.)
 //
 // # Composition is union, and the exported constants are CLOSED
 //
@@ -90,6 +96,27 @@ const (
 	bitPointer
 	bitHover
 	bitStart
+
+	// bitUnknown is the class of a key NOBODY CLASSIFIED, and it is
+	// deliberately unreachable by name: no exported constant exposes it
+	// and no allowNames/allowGroups entry parses to it, so no markup
+	// author and no host can grant it.
+	//
+	// It has to be a real bit INSIDE AllowAll's range rather than
+	// AllowNone, and that is the whole fix. Has is set containment —
+	// `a&cat == cat` — so Has(AllowNone) is vacuously true for EVERY set
+	// including AllowNone itself. An unclassified key asking permission
+	// as AllowNone was therefore permitted by a fully sealed
+	// <Frozen Allow="None">: frozenHostFor never retargeted and the key
+	// went straight to the focused descendant. The fallback documented
+	// as failing closed was the one thing in the file that failed OPEN.
+	//
+	// A bit below bitLast is in AllowAll, so an unclassified key still
+	// reaches a focused component in a tree with no Frozen in it — which
+	// is the behaviour outside a seal and must not change. It is in no
+	// grantable name, so every frozen host withholds it. Found in the
+	// review of PR #425.
+	bitUnknown
 
 	bitLast // not a category: the end marker AllowAll derives from
 )
@@ -147,9 +174,14 @@ const (
 	AllowKeys = AllowText | AllowNav | AllowEdit | AllowEscape | AllowChords
 	// AllowMouse is the pointer and the hover that goes with it.
 	AllowMouse = AllowPointer | AllowHover
-	// AllowAll is not frozen at all. isFrozen is `allow != AllowAll`, so
-	// <Frozen Allow="All"> and no <Frozen> at all mean the same thing —
-	// which is correct, and is why the two are one value rather than two.
+	// AllowAll is not frozen at all: frozenAllow returns it for a
+	// component with no Frozen surface, so <Frozen Allow="All"> and no
+	// <Frozen> at all produce the same value — which is correct, and is
+	// why the two are one value rather than two.
+	//
+	// (This used to say "isFrozen is `allow != AllowAll`". This PR
+	// deleted isFrozen; the review caught the comment still explaining
+	// the lattice through it.)
 	AllowAll = bitLast - 1
 )
 
@@ -223,13 +255,60 @@ func AllowNames() []string {
 	return out
 }
 
-// AllowGroups maps each group name to the primitive names it expands to.
+// AllowGroups maps each group name to the names it expands to.
 // handlers/sets serves sets:Group from this, so the expansion cannot
 // disagree with the constants.
+//
+// AN EXPANSION MAY WITHHOLD, BUT IT MAY NEVER GRANT MORE, and the two
+// groups that are not plain unions of the primitives go opposite ways
+// under that rule. Both were wrong in a different direction across the
+// review rounds of #425, so the asymmetry is written out rather than
+// left to be re-derived:
+//
+//   - "All" EXPANDS to its primitive names. AllowAll contains
+//     bitUnknown, the class of a key nobody classified, which is
+//     deliberately nameless, so those names parse back to a set that
+//     WITHHOLDS it. That is a narrowing, and narrowing is the safe
+//     direction — the same fail-closed the bit exists for. Emitting the
+//     token "All" instead looked tidier and broke the algebra this
+//     feeds: handlers/sets is a NAME set, so a difference over one
+//     opaque token removes nothing, and "everything except Start"
+//     evaluated back to "All" and GRANTED Start — a permission failing
+//     open, on the one category with a child-process argument behind it.
+//
+//   - "None" DOES NOT EXPAND. AllowNone has no names, so its expansion
+//     is the empty string — which is how markup says an attribute was
+//     NOT WRITTEN, i.e. not frozen at all. That is the widest possible
+//     reading of the narrowest possible set. The token costs the algebra
+//     nothing: None is the identity for union and holds no primitive for
+//     a difference to remove.
+//
+// TestAGroupExpansionNeverGrantsMoreThanTheGroup holds the rule, and the
+// sets algebra over both spellings is covered in handlers/sets.
 func AllowGroups() map[string][]string {
 	out := make(map[string][]string, len(allowGroups))
 	for _, g := range allowGroups {
-		out[g.name] = g.cat.Names()
+		// KEYED ON AllowNone, not on "the expansion came out empty",
+		// because the reasoning above is about AllowNone specifically
+		// and the code should say which rule it is applying. The len
+		// test below is a separate, weaker guard for a group nobody has
+		// written yet.
+		if g.cat == AllowNone {
+			out[g.name] = []string{g.name}
+			continue
+		}
+		names := g.cat.Names()
+		if len(names) == 0 {
+			// A future group built entirely from nameless bits would
+			// render as the empty string, which markup reads as an
+			// attribute that was not written. The token is the same
+			// answer None gets and for the same reason;
+			// TestNoGroupRendersAsNothing is what would catch the
+			// alternative.
+			out[g.name] = []string{g.name}
+			continue
+		}
+		out[g.name] = names
 	}
 	return out
 }
@@ -256,8 +335,44 @@ func (a Allow) String() string {
 	if a == AllowNone {
 		return "None"
 	}
-	return strings.Join(a.Names(), " ")
+	// AllowAll renders as "All" for the same reason AllowNone renders as
+	// "None": it is not expressible as a union of the primitive names.
+	// AllowAll is every bit below bitLast, and one of those — bitUnknown,
+	// the class of a key nobody classified — is deliberately nameless, so
+	// joining the names would produce a string that parses back to a
+	// SMALLER set. The strings would look identical and the sets would
+	// differ, which is the worst shape a round-trip bug can take.
+	//
+	// This is not the "second spelling" the Names comment rules out. The
+	// group names it declines to emit (Text, Keys, Mouse) are alternative
+	// renderings of sets the primitives already express exactly; "All" is
+	// the only rendering of this one.
+	if a == AllowAll {
+		return "All"
+	}
+	out := a.Names()
+	// A RESIDUAL BIT STILL HAS TO SAY SOMETHING. bitUnknown is nameless
+	// on purpose — nothing may grant it — but AllowFor hands it back for
+	// an unclassified key, and Allow is a fmt.Stringer, so a host logging
+	// "this keystroke needs %s" printed the empty string. That is the one
+	// value the doc above says must never be produced, and it happened
+	// for the one case where the message IS the point: the class exists
+	// to make a new input.Key fail visibly.
+	//
+	// UnknownAllowName is not in allowNames, so allowByName still refuses
+	// it and ParseAllow still rejects it. The asymmetry is deliberate:
+	// the value can describe itself without becoming grantable. Found in
+	// review of #425.
+	if a&bitUnknown != 0 {
+		out = append(out, UnknownAllowName)
+	}
+	return strings.Join(out, " ")
 }
+
+// UnknownAllowName is how the unclassified class RENDERS. It is not a
+// name ParseAllow accepts — see String, and bitUnknown's own comment for
+// why nothing may grant it.
+const UnknownAllowName = "Unknown"
 
 // ParseAllow reads the text encoding: category names separated by spaces
 // or commas, in any order, unioned. Case-sensitive, because every other
@@ -335,28 +450,67 @@ func SortAllowNames(names []string) {
 // chord — terminals cannot report it on printable characters at all, and
 // shift+tab is navigation.
 func AllowFor(ev input.KeyEvent) Allow {
+	if a, ok := allowForKey(ev); ok {
+		return a
+	}
+	// AN input.Key NOBODY CLASSIFIED FAILS CLOSED, and the split above is
+	// what lets a test see that happening.
+	//
+	// This used to be a `return AllowPunct` at the bottom of the switch,
+	// which is not a fallback so much as a guess: a Key added to
+	// input/key.go later — a function key, insert, a keypad — would
+	// silently join the category a text-entry surface is most likely to
+	// have granted, and nothing anywhere would go red. The classification
+	// list was hand-written and its test walked the same hand-written
+	// list, so the two agreed by construction and neither could notice a
+	// Key that was in neither.
+	//
+	// bitUnknown rather than AllowPunct because the honest answer to
+	// "what is this key" is "unknown", and an unknown key must not be
+	// admitted by a permission the author granted for something else. It
+	// is also the visible failure: a new Key stops working under Frozen
+	// rather than working in the wrong category, so the first person to
+	// try it finds out. TestAllowForClassifiesEveryDeclaredKey makes that
+	// a build-time answer instead. Found in review of #389.
+	//
+	// IT RETURNED AllowNone UNTIL THE REVIEW OF PR #425, which made this
+	// entire comment describe the opposite of what the code did: Has is
+	// containment, so Has(AllowNone) is true for every set, and the
+	// unclassified key was admitted through every seal rather than
+	// refused by all of them. See bitUnknown. The lesson is narrower than
+	// "check your fallbacks": a sentinel that is the ZERO VALUE of a set
+	// type is indistinguishable from "no requirement", so it cannot mean
+	// "denied" in any containment test.
+	return bitUnknown
+}
+
+// allowForKey is AllowFor's classification, with ok reporting whether an
+// explicit arm answered. Separated so a test can assert that every
+// declared input.Key has one, rather than that every key in a list
+// written beside the switch has one.
+func allowForKey(ev input.KeyEvent) (Allow, bool) {
 	if ev.Has(input.ModCtrl) || ev.Has(input.ModAlt) {
-		return AllowChords
+		return AllowChords, true
 	}
 	switch ev.Key {
 	case input.KeyRune:
 		switch {
 		case ev.Rune == ' ':
-			return AllowSpace
+			return AllowSpace, true
 		case unicode.IsLetter(ev.Rune):
-			return AllowAlpha
+			return AllowAlpha, true
 		case unicode.IsDigit(ev.Rune):
-			return AllowNumeric
+			return AllowNumeric, true
 		default:
-			return AllowPunct
+			return AllowPunct, true
 		}
 	case input.KeyTab, input.KeyUp, input.KeyDown, input.KeyLeft, input.KeyRight,
 		input.KeyHome, input.KeyEnd, input.KeyPageUp, input.KeyPageDown:
-		return AllowNav
+		return AllowNav, true
 	case input.KeyEnter, input.KeyBackspace, input.KeyDelete:
-		return AllowEdit
+		return AllowEdit, true
 	case input.KeyEsc:
-		return AllowEscape
+		return AllowEscape, true
 	}
-	return AllowPunct
+	return AllowNone, false
 }

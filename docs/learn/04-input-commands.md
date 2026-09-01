@@ -254,13 +254,21 @@ Everything below landed in [PR #86](https://github.com/WonderForgeLabs/gooey/pul
   See the [markup reference](../markup-reference.md#textbox) for the full
   key table.
 
+`TextBox` selection is progressive, the convention every text field
+shares: a double click selects the word, a triple selects the line.
+
 ## Still missing
 
-- Triple click, and any selection gesture beyond a word.
-- System-clipboard integration (OSC 52); cut and copy stay inside the
-  process.
+- Any selection gesture beyond a line — no paragraph or document
+  selection, and no rectangular selection.
+- System-clipboard integration **inside `TextBox`**: cut and copy stay in
+  the process-local kill buffer. The mechanism exists —
+  `Screen.SetClipboard` writes OSC 52, and the wysiwyg editor uses it —
+  but the text field is not wired to it.
 
-Both are tracked in [#106](https://github.com/WonderForgeLabs/gooey/issues/106), which also explains why OSC 52 is a deliberate security decision rather than an oversight.
+OSC 52 is write-only on purpose rather than by omission:
+`term.ClipboardCaveat` explains what a terminal will and will not
+acknowledge, and reads are refused by most of them for good reasons.
 
 ## Next steps
 

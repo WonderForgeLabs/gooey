@@ -256,6 +256,31 @@ func TestAllowBindingsIsWhatRegistersAScopedBinding(t *testing.T) {
 	}
 }
 
+// TestAllowBindingsAloneFiresNothing is the arm the pair above leaves
+// out, and it is the one a reader of the reference table would get
+// wrong.
+//
+// That table said `Bindings` means "scoped <KeyBinding>s attached inside
+// fire", which is half of it: Bindings decides whether they are
+// REGISTERED. Whether one is ever REACHED is a different door.
+// Dispatch starts at frozenHostFor(focused, AllowFor(ev)), which hoists
+// the start of the bubble to the outermost ancestor that withholds the
+// key's class — so with every class withheld the walk begins AT the
+// <Frozen> and runs upward, and a binding attached below it is never
+// visited. Registered, correct, unreachable.
+//
+// So `Allow="Bindings"` on its own is not a weak grant, it is an inert
+// one: there is no keystroke it can ever admit. The composition it needs
+// is Bindings PLUS the class of the key it binds, which is what the two
+// arms above assert for chords.
+func TestAllowBindingsAloneFiresNothing(t *testing.T) {
+	if n := chordFires(t, `Allow="Bindings"`); n != 0 {
+		t.Errorf(`Allow="Bindings" fired the chord %d times. If this now `+
+			`works, the reference table's plain reading became true and `+
+			`the paragraph warning against it should go.`, n)
+	}
+}
+
 // ---- Mnemonics: page-scoped, so deliberately not implying Focus ----
 
 func mnemonicFires(t *testing.T, attrs string) (fired int, stops int) {

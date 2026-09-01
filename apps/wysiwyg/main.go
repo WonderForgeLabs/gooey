@@ -11,9 +11,17 @@
 //     that takes no attributes. A registered component is deliberately
 //     present so that case is visible rather than theoretical.
 //
-//  2. The inspector comes from markup.AttrsFor(spec, parent) — never
+//  2. The inspector comes from ed.grantOf(parent).AttrsFor(spec) — never
 //     from spec.Attrs directly, which is a true statement about the
 //     element and a misleading answer to "what can I set here".
+//
+//     Through ed.grantOf and not markup.AttrsFor(spec, parent), which
+//     is the same question asked of the wrong table: the package-level
+//     form resolves the parent NAME in the builtin registry and answers
+//     "no attached attributes" for a container the host registered, so
+//     the drag wrote Table.R onto a child and the grid had no row for
+//     it. See attrRows. Fixed in #390 (issue #418) and described
+//     wrongly here until the review of #425.
 //
 //  3. Attached properties are scoped to the PARENT. Press `c` and `v` to
 //     retype the container between <Canvas> and <VStack> and watch
@@ -886,6 +894,21 @@ type editor struct {
 	hitTest func(x, y int) gooey.Component
 	docRoot gooey.Component
 	nodeOf  map[gooey.Component]*node
+	// compOf is nodeOf INVERTED, built in the same walk rather than
+	// searched for afterwards.
+	//
+	// componentFor used to be a linear scan of nodeOf justified by "it
+	// runs once per gesture rather than once per motion", and that had
+	// stopped being true: buildGuide calls it TWICE and buildGuide runs
+	// from Overlay.Arrange, which is every frame a grid is in scope. Two
+	// O(n) scans per frame over every mapped component is not a cost
+	// worth carrying for a map the same walk could fill in.
+	//
+	// The pairing is one component per node by construction — mapNodes
+	// descends the two trees in lockstep and writes both directions at
+	// the same point — so the inverse cannot disagree with nodeOf
+	// without mapNodes being wrong about both.
+	compOf map[*node]gooey.Component
 
 	// drag is the move gesture in flight, and invalidateFn is what asks
 	// for the frame it needs — see drag.go. invalidateFn is injected for
@@ -1596,9 +1619,16 @@ func (r attrRow) cycle() []string {
 	return append([]string{""}, r.values...)
 }
 
-// attrRows is claim 2 and claim 3 together: the inspector asks
-// AttrsFor(spec, parent), so the answer depends on what the element is
-// currently inside.
+// attrRows is claim 2 and claim 3 together: the inspector asks the
+// PARENT'S GRANT for the element's attributes, so the answer depends on
+// what the element is currently inside.
+//
+// ed.grantOf(parent).AttrsFor(spec), not markup.AttrsFor(spec, parent) —
+// the difference is the whole point of #418 and is spelled out at the
+// call site below. This comment named the old form for two rounds after
+// the code stopped using it, which is the failure mode a stale comment
+// has here specifically: it sends the reader to the function whose
+// wrong answer the change existed to stop taking.
 func (ed *editor) attrRows() []attrRow {
 	spec, parent, target := ed.target()
 	if target == nil {
@@ -1627,7 +1657,14 @@ func (ed *editor) attrRows() []attrRow {
 			body:  true,
 		})
 	}
-	for _, a := range markup.AttrsFor(spec, parent) {
+	// THE PARENT'S GRANT, resolved in the PALETTE. markup.AttrsFor takes a
+	// parent NAME and resolves it in the builtin registry, which answers
+	// "no attached attributes" for a container the host registered — so
+	// the drag wrote Table.R onto a child and the properties grid had no
+	// row for it, in the same editor. ed.grantOf reads the palette, which
+	// IS the document's vocabulary, so the inspector and the drag now ask
+	// one question. Found in review of #390 (issue #418).
+	for _, a := range ed.grantOf(parent).AttrsFor(spec) {
 		v := target.Attrs[a.Name]
 		rows = append(rows, attrRow{
 			name:     a.Name,
@@ -1782,6 +1819,28 @@ func (ed *editor) rebuild() {
 	if ed.dragHint != nil && ed.dragHint.Get() != "" {
 		ed.dragHint.Set("")
 	}
+	// AND RE-ESTABLISHED IF IT WAS A MODE RATHER THAN AN EVENT. The line
+	// above retires a hint that described a GESTURE, which is right; the
+	// track cursor's line is not one. It states which track is picked and
+	// what -/=/g/a/r will do to it, and that stays true for exactly as
+	// long as the cursor is on — so retiring it leaves the gutter
+	// highlighting a track the bar no longer names and the verbs
+	// unlisted, with the mode still live.
+	//
+	// The reason this looked safe is that every track verb announces
+	// through sayTrack AFTER its writeTracks, so the clear was always
+	// overwritten on those paths. It is any other edit — an add, a
+	// rename, an undo — that lands here and stops. Found in review
+	// of #392.
+	//
+	// Re-derived from ed.cursor rather than saved and restored around
+	// the clear: the document may have just lost the track the cursor
+	// pointed at, and sayTrack is where that is already handled.
+	if ed.cursor.on {
+		if n := ed.gridNode(); n != nil {
+			ed.sayTrack(n)
+		}
+	}
 	// Tick FIRST, so every derived list recomputes even if the build
 	// below fails and returns early.
 	ed.rev.Set(ed.rev.Get() + 1)
@@ -1806,7 +1865,7 @@ func (ed *editor) rebuild() {
 	// Dropped up front, on every path: from here until the swap below
 	// succeeds there is no tree that corresponds to this document, and
 	// click-to-select must not map a press against one that does not.
-	ed.docRoot, ed.nodeOf = nil, nil
+	ed.docRoot, ed.nodeOf, ed.compOf = nil, nil, nil
 
 	if ed.remote != nil {
 		// Driving another app: the target's live binding context is the
@@ -1835,6 +1894,7 @@ func (ed *editor) rebuild() {
 	// stop lining up.
 	ed.docRoot = w
 	ed.nodeOf = map[gooey.Component]*node{}
+	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
 }
 
@@ -1918,9 +1978,15 @@ func (ed *editor) addSelected() {
 	// Free geometry only where the PARENT gives it. Under a <Grid> or a
 	// <VStack> a Canvas.Left is silently discarded, which is the defect
 	// the catalog work exists to delete.
-	if into.Elem == "Canvas" {
-		n.Attrs["Canvas.Left"] = "2"
-		n.Attrs["Canvas.Top"] = fmt.Sprint(len(into.Kids)*2 + 1)
+	// ASKED OF THE GRANT, for the reason retype and pasteClip now do:
+	// the name told you about one container and the two literals told
+	// you about one spelling of its axes, and neither survives a
+	// third-party container or a catalog rename.
+	if g := ed.grantOf(into.Elem); g.Kind == markup.GrantOffset {
+		if x, y := g.Attr(markup.RoleX), g.Attr(markup.RoleY); x != "" && y != "" {
+			n.Attrs[x] = "2"
+			n.Attrs[y] = fmt.Sprint(len(into.Kids)*2 + 1)
+		}
 	}
 	// TRANSACTIONAL, and the loader is what decides. A container's legal
 	// children are enforced INSIDE its builder — `<Tabs> children must be
@@ -2116,18 +2182,44 @@ func (ed *editor) retype(elem string) {
 		// Attributes the new parent does not contribute are removed
 		// rather than left to be ignored. Leaving them is what the old
 		// loader did, and it is the defect this whole change deletes.
-		for _, p := range markup.AttachedParents() {
-			if p == elem {
+		//
+		// OVER THE PALETTE, for the reason attrRows reads it:
+		// markup.AttachedParents lists BUILTINS, so a child retyped out
+		// of a third-party container kept that container's attributes,
+		// which the new parent discards in silence — the exact defect
+		// this loop exists to delete, surviving for every element the
+		// host registered.
+		for _, e := range ed.palette {
+			if e.Name == elem {
 				continue
 			}
-			for _, a := range markup.AttachedAttrs(p) {
+			for _, a := range e.Grants.Attached {
 				delete(k.Attrs, a.Name)
 			}
 		}
-		if elem == "Canvas" {
-			if _, ok := k.Attrs["Canvas.Left"]; !ok {
-				k.Attrs["Canvas.Left"] = "2"
-				k.Attrs["Canvas.Top"] = "1"
+		// SEEDED BY ROLE, not by name. This was `if elem == "Canvas"`
+		// writing "Canvas.Left" and "Canvas.Top" as literals, which
+		// hardcoded three things at once: which container offsets its
+		// children, and both attribute spellings. A host-registered
+		// container granting an offset got no seed at all — its children
+		// retyped into it landed stacked at the origin — and renaming
+		// either attribute in the catalog would have left this writing
+		// the old name with nothing to notice.
+		//
+		// The grant answers all three, and it is the SAME question the
+		// drag's Release asks through the same roles, so the seed and
+		// the write cannot disagree about where a child's position
+		// lives. Found in review of #390.
+		if g := ed.grantOf(elem); g.Kind == markup.GrantOffset {
+			x, y := g.Attr(markup.RoleX), g.Attr(markup.RoleY)
+			// Both or neither: a grant declaring one axis and not the
+			// other cannot place anything, and seeding half of it would
+			// write an attribute the loader then rejects for having no
+			// partner.
+			if x != "" && y != "" {
+				if _, ok := k.Attrs[x]; !ok {
+					k.Attrs[x], k.Attrs[y] = "2", "1"
+				}
 			}
 		}
 	}

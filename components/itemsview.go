@@ -907,7 +907,7 @@ func (h *rowHighlight) apply(f *gooey.Frame, on bool) {
 		for x := b.X; x < b.X+b.W; x++ {
 			c := f.Cells.At(x, y)
 			c.Style.Reverse = on
-			f.Cells.Set(x, y, c.Rune, c.Style)
+			f.Cells.SetCell(x, y, c)
 		}
 	}
 }

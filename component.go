@@ -203,11 +203,6 @@ func frozenAllow(w Component) Allow {
 	return AllowAll
 }
 
-// isFrozen reports whether w freezes its subtree AT ALL. It is the bool
-// projection of frozenAllow, kept because "is anything withheld here" is
-// still the right question for a caller that does not care which door.
-func isFrozen(w Component) bool { return frozenAllow(w) != AllowAll }
-
 // Decorator is implemented by components whose Render owns no cells of
 // its own but re-styles cells that earlier siblings painted (ItemsView's
 // row highlight). It must be re-applied after an underlying repaint.

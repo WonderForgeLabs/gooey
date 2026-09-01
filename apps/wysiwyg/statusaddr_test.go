@@ -1321,3 +1321,64 @@ func TestTheCaveatIsWiredToTheRealDetector(t *testing.T) {
 		t.Errorf("the strip reports caveat %q, the detector says %q", got, want)
 	}
 }
+
+// TestASqueezedChipPaintsItsDotAndNothingElse walks the widths where a
+// chip has fewer cells than its dot-space-text layout needs.
+//
+// The review of #391 (issue #419) reported this as a chip writing
+// OUTSIDE its bounds at one cell wide: Render's guard is `b.W <= 0`, and
+// the space goes to b.X+1. That does not reach the plane — Composer.build
+// clips every paint node to its own rect (#357) and refuses the cell,
+// and in the shipped strip a one-wide chip only ever falls at the right
+// edge of the row where the column is off-buffer as well. So there is
+// nothing to fix and nothing a bounds assertion could fail on.
+//
+// What the width DOES reach is the arithmetic: b.W-2 goes negative and
+// is handed to ellipsize and then to padTo, one of which builds a
+// strings.Repeat. Those guards are the fireable part, and this is what
+// stands on them — a page that renders rather than panics, with the dot
+// in the one cell the chip has. The row is swept from one column up so
+// the narrow cases are reached by the real layout rather than by an
+// Arrange the next Frame would undo.
+func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
+	narrow := 0
+	for w := 1; w <= 40; w++ {
+		ed := newEditor(editorFS())
+		ed.serving = []string{testGrpc, testMCP}
+		src, err := os.ReadFile("wysiwyg.gooey")
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := markup.Build(src, ed.ctx)
+		if err != nil {
+			t.Fatalf("w=%d: the editor's own page does not load: %v", w, err)
+		}
+		ed.rebuild()
+		c := gooey.NewComposer(root, w, 12)
+		f, _ := c.Frame()
+		if ed.addrs == nil {
+			c.Close()
+			t.Fatalf("w=%d: no endpoint strip", w)
+		}
+		for i, ch := range ed.addrs.chips {
+			b := ch.Bounds()
+			if b.W <= 0 || b.W >= 3 {
+				continue
+			}
+			narrow++
+			if got := f.Cells.At(b.X, b.Y).Rune; got != addrDot {
+				t.Errorf("w=%d chip %d has %d cells and holds %q at its origin, want the "+
+					"state dot %q", w, i, b.W, got, addrDot)
+			}
+		}
+		c.Close()
+	}
+	// The discrimination floor: without a width that actually squeezes a
+	// chip below three cells, the loop above asserts nothing at all and
+	// would stay green if the guards were removed.
+	if narrow == 0 {
+		t.Fatal("no terminal width between 1 and 40 gave a chip one or two cells, so " +
+			"the sub-three-cell path was never entered and this test checked nothing")
+	}
+	t.Logf("%d squeezed chips exercised", narrow)
+}

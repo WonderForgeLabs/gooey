@@ -1,6 +1,10 @@
 package gooey
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -198,8 +202,23 @@ func TestFrozenAllowProjectsTheBoolInterface(t *testing.T) {
 	if got := frozenAllow(&plainLeaf{}); got != AllowAll {
 		t.Errorf("a component that does not implement Frozen answered %q, want All", got)
 	}
-	if !isFrozen(&boolFrozen{v: true}) || isFrozen(&boolFrozen{v: false}) || isFrozen(&plainLeaf{}) {
-		t.Error("isFrozen is no longer the bool projection of frozenAllow")
+	// The projection itself, spelled out rather than delegated to a
+	// helper. There used to be an isFrozen(w) — `frozenAllow(w) !=
+	// AllowAll` — whose only caller was this line: a function that
+	// exists to be asserted equal to its own body proves nothing and
+	// reads as API. The CLAIM is worth keeping, so it is written here.
+	for _, tc := range []struct {
+		name   string
+		w      Component
+		frozen bool
+	}{
+		{"Frozen()==true", &boolFrozen{v: true}, true},
+		{"Frozen()==false", &boolFrozen{v: false}, false},
+		{"no Frozen at all", &plainLeaf{}, false},
+	} {
+		if got := frozenAllow(tc.w) != AllowAll; got != tc.frozen {
+			t.Errorf("%s: withholds-anything = %v, want %v", tc.name, got, tc.frozen)
+		}
 	}
 	// A set host that is not Active answers AllowAll however permissive
 	// its set is — the "not frozen" endpoint is reachable from either
@@ -257,5 +276,317 @@ func TestFrozenAllowReadsBothMethodsEvenWhenInactive(t *testing.T) {
 	if h.reads != 1 {
 		t.Errorf("frozenAllow called FrozenAllow() %d times on an inactive host, want 1: "+
 			"a read behind the branch is a dropped dependency", h.reads)
+	}
+}
+
+// TestAllowForClassifiesEveryDeclaredKey derives the list of keys from
+// the file that declares them, rather than agreeing with a list written
+// beside the switch.
+//
+// AllowFor used to end in `return AllowPunct`, and its test walked the
+// same hand-written set of keys the switch did — so the two agreed by
+// construction and neither could see a key that was in neither. An
+// input.Key added later (a function key, insert, a keypad) would have
+// been silently classified as punctuation, which is the category a
+// text-entry surface is most likely to have granted: a frozen preview
+// that let typing through would have let the new key through too, and
+// nothing would go red about it.
+//
+// So the source is the authority. Adding a Key to input/key.go now
+// fails here until somebody decides what class it belongs to.
+func TestAllowForClassifiesEveryDeclaredKey(t *testing.T) {
+	// PARSED, AND ANCHORED TO THE iota BLOCK, not matched by shape.
+	//
+	// This read the names with `(?m)^\t(Key[A-Z]\w*)`, which matches any
+	// tab-indented identifier starting with Key anywhere in the file —
+	// and the loop below maps the i'th name to input.Key(i). Today the
+	// file holds exactly the iota constants and nothing else that
+	// matches, so the mapping happens to be right. The ordinary
+	// companion to a key enum would end that quietly:
+	//
+	//	var keyNames = map[Key]string{
+	//		KeyEnter: "enter",
+	//		...
+	//	}
+	//
+	// Every match after the const block shifts the positional mapping,
+	// and the test starts asserting about the wrong Key values. The len
+	// floor below cannot notice — it only sees the list shrink.
+	//
+	// Checked rather than assumed, and what it does is worth recording:
+	// with such a map added, the OLD regex reported KeyEnter, KeyTab and
+	// KeyEsc as reaching no arm of AllowFor — three keys that are
+	// classified, named by a test that had walked off the end of the
+	// enum into the fallback. So the failure mode here is a MISLEADING
+	// RED rather than the silent green a shift usually buys, which is
+	// worse in its own way: it sends the reader to allow.go to fix three
+	// keys that were never broken.
+	//
+	// The regex survived this long by an accident of style. input/key.go
+	// already carries a companion table — `var keyNames = []struct{…}`,
+	// whose lines begin `\t{KeyEnter,` — and the leading brace is the
+	// only reason it never matched. A map literal, the more usual
+	// spelling, would have. Found in the review of PR #425.
+	//
+	// go/ast reads the block that actually defines the enum: the const
+	// declaration whose first spec is `… Key = iota`. Nothing outside it
+	// can be mistaken for a member.
+	names := declaredKeyConstants(t)
+	// Discrimination: a walk that stopped finding the block would leave
+	// this empty and the loop below would check nothing. The floor is
+	// well under the real count so it does not become a second number to
+	// maintain.
+	if len(names) < 10 {
+		t.Fatalf("only %d Key constants parsed out of input/key.go (%v); "+
+			"the declarations moved and this test is checking nothing",
+			len(names), names)
+	}
+
+	// The constants are an iota block starting at KeyRune, so the i'th
+	// name is input.Key(i). Taken from the ORDER in the source for the
+	// same reason as the names: a map written here would be the hand
+	// list again.
+	for i, name := range names {
+		ev := input.KeyEvent{Key: input.Key(i)}
+		if input.Key(i) == input.KeyRune {
+			ev.Rune = 'a' // KeyRune is classified by its rune
+		}
+		if _, ok := allowForKey(ev); !ok {
+			t.Errorf("input.%s reaches no arm of AllowFor, so it falls "+
+				"through to the unknown class and is withheld by every "+
+				"Frozen surface. Give it a class in allow.go.", name)
+		}
+	}
+
+	// And the fallback must still BE a fallback: a key past the end of
+	// the block is unknown, and an unknown key must not ride in on a
+	// permission the author granted for something else.
+	unknown := input.KeyEvent{Key: input.Key(len(names) + 50)}
+	if got, ok := allowForKey(unknown); ok {
+		t.Errorf("an undeclared Key was classified as %v; the fallback is "+
+			"supposed to fail closed", got)
+	}
+	// The fallback is asserted by its PROPERTY, not by its value. Naming
+	// the constant would have passed just as well when the constant was
+	// AllowNone, which is exactly how the fail-open survived: AllowNone
+	// is the zero value of a set, and Has is containment, so every set
+	// permitted it — including the fully sealed one.
+	fallback := AllowFor(unknown)
+	if AllowNone.Has(fallback) {
+		t.Errorf("a fully sealed Frozen permits the unclassified class %v. Has is "+
+			"containment, so a fallback of AllowNone is permitted by EVERY set and "+
+			"the key it stands for reaches the focused descendant inside a seal — "+
+			"the fallback documented as failing closed failing open", fallback)
+	}
+	for _, name := range AllowNames() {
+		if name == "All" {
+			continue // "All" means not frozen; see bitUnknown
+		}
+		granted, err := ParseAllow(name)
+		if err != nil {
+			t.Fatalf("ParseAllow(%q): %v", name, err)
+		}
+		if granted.Has(fallback) {
+			t.Errorf("Allow=%q permits an unclassified key. No name in the "+
+				"vocabulary may grant the unknown class — that is the only thing "+
+				"keeping a Key added to input/key.go later from riding in on a "+
+				"permission its author granted for something else", name)
+		}
+	}
+}
+
+// declaredKeyConstants is the names of input.Key's iota block, in
+// declaration order, so the i'th is input.Key(i).
+//
+// It finds the block by its DEFINITION — a const declaration whose first
+// spec has type Key and value iota — rather than by what its lines look
+// like. See TestAllowForClassifiesEveryDeclaredKey for what the
+// shape-matching version got wrong.
+func declaredKeyConstants(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join("input", "key.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing input/key.go: %v", err)
+	}
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST || len(gd.Specs) == 0 {
+			continue
+		}
+		first, ok := gd.Specs[0].(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		id, ok := first.Type.(*ast.Ident)
+		if !ok || id.Name != "Key" {
+			continue
+		}
+		if len(first.Values) != 1 {
+			continue
+		}
+		if v, ok := first.Values[0].(*ast.Ident); !ok || v.Name != "iota" {
+			continue
+		}
+		var names []string
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, n := range vs.Names {
+				names = append(names, n.Name)
+			}
+		}
+		return names
+	}
+	t.Fatal("no `const ( … Key = iota )` block found in input/key.go — the " +
+		"declarations moved and nothing below is checking the real enum")
+	return nil
+}
+
+// TestAnUnclassifiedKeyCannotEnterASealedSubtree is the same claim as the
+// fallback assertions above, taken at the BOUNDARY rather than the
+// centre. Those check what AllowFor returns and what a name grants; this
+// checks the only thing anybody cares about — where the key is delivered.
+//
+// It is the difference that mattered. AllowFor returned AllowNone and
+// every unit-level statement about it was true; the routing was still
+// wrong, because Has is containment and Has(AllowNone) is vacuously true
+// for every set. A test that named the constant agreed with the code and
+// with the comment, and all three were wrong together.
+func TestAnUnclassifiedKeyCannotEnterASealedSubtree(t *testing.T) {
+	// host is <Frozen Allow="None">, child is the focused descendant.
+	host := &boolFrozen{v: true}
+	child := &plainLeaf{}
+	m := &FocusManager{parent: map[Component]Component{
+		child: host,
+		host:  nil,
+	}}
+
+	// A Key past the end of input/key.go's iota block: classified by
+	// nothing, which is the case the fallback exists for.
+	unknown := input.KeyEvent{Key: input.Key(200)}
+	if _, ok := allowForKey(unknown); ok {
+		t.Fatal("the probe key is classified, so it cannot exercise the fallback")
+	}
+
+	if got := m.frozenHostFor(child, AllowFor(unknown)); got != Component(host) {
+		t.Errorf("an unclassified key inside <Frozen Allow=\"None\"> was delivered " +
+			"to the focused descendant instead of being withheld by the host. A " +
+			"fully sealed subtree admitted a key no permission in the vocabulary " +
+			"names — the seal is not a seal for anything AllowFor has not heard of")
+	}
+
+	// The other half, and the reason bitUnknown is a bit inside AllowAll
+	// rather than outside it: with no Frozen anywhere, an unclassified
+	// key must still reach the focused component. A fallback that no set
+	// permits at all would break every unclassified key everywhere, which
+	// trades a silent hole for a silent outage.
+	plainParent := &plainLeaf{}
+	m2 := &FocusManager{parent: map[Component]Component{
+		child:       plainParent,
+		plainParent: nil,
+	}}
+	if got := m2.frozenHostFor(child, AllowFor(unknown)); got != Component(child) {
+		t.Errorf("with no Frozen in the tree an unclassified key was retargeted "+
+			"away from the focused component to %T — outside a seal there is "+
+			"nothing to withhold it, and a fallback no set permits would silently "+
+			"disable every key added to input/key.go from now on", got)
+	}
+}
+
+// TestAGroupExpansionNeverGrantsMoreThanTheGroup is the safety rule
+// AllowGroups owes handlers/sets, and it is CONTAINMENT rather than
+// equality — which is the correction. sets:Group is served straight out
+// of that map, so an expansion parsing back to something WIDER than the
+// group is a permission granted by a spelling nobody chose.
+//
+// Equality is the wrong assertion, and this test asserted it for one
+// round. "All" cannot round-trip: it contains bitUnknown, which is
+// deliberately nameless, so its names parse back to a set without it.
+// That is a NARROWING, the direction the whole design leans — an
+// unclassified key fails closed. Demanding equality made the opaque
+// token "All" look like the fix, and that token broke the name algebra
+// this map feeds: "everything except Start" came back as "All", which
+// grants Start.
+//
+// So: never wider, and never EMPTY, because the empty string is how
+// markup says an attribute was not written and would read as no seal at
+// all. Those two are the contract.
+func TestAGroupExpansionNeverGrantsMoreThanTheGroup(t *testing.T) {
+	groups := AllowGroups()
+	if len(groups) == 0 {
+		t.Fatal("AllowGroups is empty — this test would pass vacuously")
+	}
+	for name, names := range groups {
+		want, err := ParseAllow(name)
+		if err != nil {
+			t.Fatalf("AllowGroups names a group %q that ParseAllow rejects: %v", name, err)
+		}
+		if len(names) == 0 {
+			t.Errorf("group %q expands to nothing; the empty string is how markup "+
+				"says an attribute was not written, so a set must never render as it",
+				name)
+			continue
+		}
+		got, err := ParseAllow(strings.Join(names, " "))
+		if err != nil {
+			t.Errorf("group %q expands to %q, which ParseAllow rejects: %v",
+				name, strings.Join(names, " "), err)
+			continue
+		}
+		if got.Union(want) != want {
+			t.Errorf("group %q expands to %q, which parses to %q — WIDER than the "+
+				"group it names, so the expansion grants what the group does not",
+				name, strings.Join(names, " "), got)
+		}
+	}
+}
+
+// TestOnlyAllNarrowsUnderExpansion bounds that exception from the other
+// side. Containment alone is satisfied by a group expanding to "None",
+// so the narrowing has to be exactly the one the design argues for: the
+// nameless class, and only out of "All".
+func TestOnlyAllNarrowsUnderExpansion(t *testing.T) {
+	for name, names := range AllowGroups() {
+		want, _ := ParseAllow(name)
+		got, _ := ParseAllow(strings.Join(names, " "))
+		if got == want {
+			continue
+		}
+		if name != "All" {
+			t.Errorf("group %q expands to %q, which parses to %q rather than %q; "+
+				"only All is expected to narrow", name, strings.Join(names, " "), got, want)
+			continue
+		}
+		if lost := want &^ got; lost != bitUnknown {
+			t.Errorf("expanding All drops %v; the only bit it may drop is the "+
+				"nameless unclassified class", lost)
+		}
+	}
+}
+
+// TestAnUnclassifiedKeyStillDescribesItself: AllowFor hands back
+// bitUnknown for a key nobody classified, and Allow is a fmt.Stringer,
+// so a host logging the class it refused printed the EMPTY STRING — the
+// one rendering String's own doc forbids, in the one case where the
+// message is the entire point.
+//
+// The name must still be UNGRANTABLE, and that half is what makes this
+// more than cosmetic: rendering a value is not the same as accepting it.
+func TestAnUnclassifiedKeyStillDescribesItself(t *testing.T) {
+	a := AllowFor(input.KeyEvent{Key: input.Key(200)})
+	if a != bitUnknown {
+		t.Fatalf("an undeclared key classifies as %v, not the unclassified class — "+
+			"the fixture no longer reaches the case", a)
+	}
+	if got := a.String(); got == "" {
+		t.Error("the unclassified class renders as the empty string, which is how " +
+			"markup says an attribute was not written")
+	}
+	if _, err := ParseAllow(a.String()); err == nil {
+		t.Errorf("ParseAllow accepts %q, so the unclassified class became grantable "+
+			"by name — every frozen host must withhold it", a.String())
 	}
 }

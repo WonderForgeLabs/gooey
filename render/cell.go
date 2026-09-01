@@ -53,6 +53,25 @@ func (c Cell) Text() string {
 	return string(c.Rune)
 }
 
+// WithStyle is this cell's CONTENT under a different style.
+//
+// It exists because restyling is a read-modify-write and the obvious
+// spelling of it loses information. `c := buf.At(x, y); c.Style.Reverse =
+// on; buf.Set(x, y, c.Rune, c.Style)` drops c.Cluster, so a cell holding
+// "⚠️" comes back as bare U+26A0 — one column where the buffer
+// had reserved two, which displaces the row in the direction #358 exists
+// to prevent. Selection highlighting is exactly this shape, so the glyph
+// narrows the moment a row is selected and repairs itself when it is not.
+//
+// Four call sites had written it the lossy way (ItemsView's highlight,
+// introdeck's terminal twice, the wysiwyg overlay's mark restore). That
+// they were four copies of one missing operation is why this is a method
+// rather than a fix in each of them. Found in review of #413.
+func (c Cell) WithStyle(s Style) Cell {
+	c.Style = s
+	return c
+}
+
 // Width is how many columns a terminal advances for this cell.
 //
 // Zero for a continuation, which is the rule TerminalColumns spells out
@@ -63,6 +82,19 @@ func (c Cell) Text() string {
 func (c Cell) Width() int {
 	if c.Rune == Continuation {
 		return 0
+	}
+	// ASCII FAST PATH. A printable ASCII rune is one column and cannot
+	// carry a combining mark on its own, so the segmenter has nothing to
+	// decide — and this is the overwhelmingly common cell. Worth having
+	// because Set now asks TWICE per write, once for itself and once
+	// through healSeam, on a path that runs for every character painted.
+	//
+	// Guarded on Cluster being empty as well as on the rune: a cell whose
+	// cluster is "é" holds an ASCII lead and is not what Text()
+	// returns. Control characters and DEL fall through rather than being
+	// assumed, since their width is a terminal's business.
+	if c.Cluster == "" && c.Rune >= 0x20 && c.Rune < 0x7f {
+		return 1
 	}
 	return StringWidth(c.Text())
 }
@@ -138,13 +170,106 @@ func (b *Buffer) Clear() {
 // The clip is kept inside the buffer by Clip, so testing it also tests
 // the buffer: four comparisons, exactly as many as bounding to the
 // screen alone used to cost.
+//
+// IT IS SetCell, and that is the point rather than a shortcut. The two
+// were the same 25 lines twice — same clip test, same wide-lead-at-the-
+// edge space, same continuation write, same healSeam pair — differing
+// only in SetCell refusing a Continuation. This PR exists because two
+// writers disagreed about one rule, and the review of PR #425 pointed
+// out that a third copy of that rule is the same trap set again: the
+// copy a future clip or seam change has to remember to edit twice.
+//
+// Collapsing also gives Set SetCell's refusal, which it should always
+// have had. Nothing in the repo passes render.Continuation to Set, so
+// this closes a door rather than changing behaviour — but the door was
+// open, and through it a caller could place the orphan healSeam exists
+// to remove.
 func (b *Buffer) Set(x, y int, r rune, s Style) {
+	b.SetCell(x, y, Cell{Rune: r, Style: s})
+}
+
+// SetCell writes a whole cell — cluster and all — under exactly the clip
+// and seam rules Set uses.
+//
+// Set takes a rune, which is the right argument for painting text and the
+// wrong one for moving a cell that already exists: a cluster cannot be
+// spelled as a rune, so every restyle through Set silently truncated one.
+// See WithStyle for what that costs.
+func (b *Buffer) SetCell(x, y int, c Cell) {
 	if x < b.cx0 || y < b.cy0 || x >= b.cx1 || y >= b.cy1 {
 		return
 	}
-	b.Cells[y*b.W+x] = Cell{Rune: r, Style: s}
-	// A single-cell write can break a two-cell glyph from either side,
-	// and both halves of the break are silent. See healSeam.
+	// A Continuation is written only as the tail of the pair its lead
+	// writes; accepting one on its own would place the orphan healSeam
+	// exists to remove.
+	//
+	// SO SetCell CANNOT ROUND-TRIP EVERY CELL At HANDS BACK, which is
+	// the one thing to know before using it to restyle a SPAN. Over a
+	// run of cells — `SetCell(x, y, At(x, y).WithStyle(st))` in a loop,
+	// which is what a row highlight does — the second column of every
+	// wide glyph is refused, so it keeps its old style.
+	//
+	// That is invisible in the output and real in the model. The flusher
+	// skips continuation cells (emitter.run), so their style is never
+	// emitted and the lead's covers both columns; what it costs is that
+	// the buffer no longer says what the screen shows, and a caller that
+	// un-highlights by comparing styles finds Reverse still set on cells
+	// it thought it had cleared. Found in the review of PR #425.
+	if c.Rune == Continuation {
+		return
+	}
+	// A WIDE RUNE OWNS TWO COLUMNS, so a write has to place both of them.
+	//
+	// Writing only the lead left a wide cell with no Continuation beside
+	// it, which is precisely the broken pair healSeam exists to repair —
+	// so healSeam blanked the glyph one line after it was written, and a
+	// caller could not put a CJK or emoji rune on the screen at all.
+	// Every caller reaching for the single-rune form got a space: TextBox
+	// drawing its own runes, cmd/finder, the mnemonic underline painters.
+	// Found in review of #413, after the healSeam it collides with had
+	// already landed.
+	if c.Width() >= 2 {
+		// The second column has to be inside the CLIP, not merely inside
+		// the buffer. Outside it the cell belongs to a neighbour whose
+		// paint node is clean — the stray-write defect every writer here
+		// drops writes to avoid — and a lead without its tail displaces
+		// the rest of the row either way. A space is the honest answer,
+		// and the one SetString already gives at the right edge.
+		if x+1 >= b.cx1 {
+			// A RESTYLE IS NOT A PLACEMENT, and answering one with a
+			// space deletes a character. docs/learn/howto/howto-custom-draw.md
+			// documents `b.SetCell(x, y, b.At(x, y).WithStyle(st))` as
+			// the way to restyle, and a row highlight runs it across a
+			// span — so a descendant clipped one column short of an
+			// enclosing paint's wide glyph erased it. That configuration
+			// is not exotic: it is the one healSeam's own comment below
+			// is written about.
+			//
+			// The pair is ALREADY on the screen here, so nothing needs
+			// placing and the tail needs no permission. Only the lead's
+			// style is written, which is inside the clip, and the tail is
+			// left untouched — its style never reaches the terminal
+			// anyway, because the flusher skips continuation cells and
+			// the lead's style covers both columns. Found in review of
+			// #425.
+			if i := y*b.W + x; b.Cells[i].Rune == c.Rune &&
+				b.Cells[i].Cluster == c.Cluster &&
+				x+1 < b.W && b.Cells[i+1].Rune == Continuation {
+				b.Cells[i].Style = c.Style
+				return
+			}
+			b.Cells[y*b.W+x] = Cell{Rune: ' ', Style: c.Style}
+			b.healSeam(x, y)
+			b.healSeam(x+1, y)
+			return
+		}
+		b.Cells[y*b.W+x] = c
+		b.Cells[y*b.W+x+1] = Cell{Rune: Continuation, Style: c.Style}
+		b.healSeam(x, y)
+		b.healSeam(x+2, y)
+		return
+	}
+	b.Cells[y*b.W+x] = c
 	b.healSeam(x, y)
 	b.healSeam(x+1, y)
 }
@@ -166,11 +291,59 @@ func (b *Buffer) Set(x, y int, r rune, s Style) {
 // The surviving half becomes a space rather than being left alone,
 // because a space is the only value that both draws correctly and
 // occupies exactly the one column the cell owns.
+// # The seam is the ONE place a repair may write outside the clip
+//
+// PR #425 scoped this function to the clip, and its comment then claimed
+// the unrepairable case could not arise because Set, SetCell and
+// SetString all refuse to leave a lead in their own last column. The
+// review of that PR showed the claim covers the wrong neighbour: it is
+// true of a NARROWER writer beside us, and says nothing about an
+// ENCLOSING paint — an ancestor container, an AdornmentLayer, a
+// ToastHost — whose own clip legitimately spanned both columns of a wide
+// glyph that a descendant's narrower clip then cuts through.
+//
+// Both halves were reproducible on that branch. Clip{0,10}, write 世 at
+// column 4; then Clip{5,10}, write 'a' at column 5: column 4 is a lead
+// with no tail, the row measures 11 columns on a 10-wide buffer, and
+// every glyph after it is displaced. Mirror it — Clip{0,5}, write at
+// column 4 over a lead — and column 5 keeps a Continuation the flusher
+// skips forever.
+//
+// SO THE REPAIR REACHES ONE COLUMN PAST THE CLIP, deliberately, and it
+// is the only write in this file that does. The reasoning is that the
+// cell it touches is ALREADY corrupt, and corrupt because of the write
+// we just made: a lead with no tail displaces the entire rest of the
+// row, and an orphan Continuation is a column that can never be
+// repainted by anything. A one-cell space is a smaller injury to a
+// neighbour than either, and unlike either it is confined to the column
+// the broken glyph already owned.
+//
+// The residual is real and worth stating: that neighbour's node is
+// clean, so it will not repaint, and its glyph stays a space until
+// something else dirties it. That is the honest outcome of two
+// components disagreeing about who owns a column — the row can only be
+// one thing, and it is not this function's job to decide the layout was
+// wrong.
 func (b *Buffer) healSeam(x, y int) {
-	if y < 0 || y >= b.H || x < 0 || x >= b.W {
+	// THE CLIP, not the buffer, for the same reason every writer below
+	// tests it: a repair outside this component's rect is still a write
+	// to a neighbour's cells, and the neighbour's node is clean so
+	// nothing repaints over it.
+	//
+	// The case that cannot then be repaired also cannot arise. It would
+	// need a neighbour to have left a wide LEAD in its own last column
+	// with the continuation past its clip — and Set, SetCell and
+	// SetString all refuse exactly that, writing a space instead. So the
+	// dangling half this declines to fix is unreachable rather than
+	// tolerated — EXCEPT at the seam itself, which is the one column on
+	// each side of the clip and the subject of the paragraph above.
+	if y < b.cy0 || y >= b.cy1 || x < b.cx0 || x > b.cx1 || x >= b.W {
 		return
 	}
 	i := y*b.W + x
+	// x > 0, not x > b.cx0: the pair this inspects may STRADDLE the left
+	// clip edge, and refusing to look at the cell before it is what left
+	// the straddling case unrepaired.
 	lead := x > 0 && b.Cells[i-1].Width() >= 2
 	cont := b.Cells[i].Rune == Continuation
 	switch {
@@ -185,8 +358,20 @@ func (b *Buffer) healSeam(x, y int) {
 // whole pairs itself and repairs only the two edges of its run. Going
 // through Set would make the Continuation it writes at x+1 look like an
 // overpaint of the lead it wrote at x one call earlier.
+//
+// IT TESTS THE CLIP, and until PR #425 it tested only the buffer — so
+// SetString, the framework's primary text writer, wrote straight through
+// the rect Composer.build brackets every Render with. Two writers then
+// disagreed about one rule: Set and SetCell refused a wide glyph whose
+// second column fell outside the clip while SetString wrote it, leaving
+// a Continuation one column past the clip in a cell belonging to a clean
+// node that never repaints over it. The clip-blindness predated the PR;
+// what the PR added was the disagreement, and a new unclipped write in
+// the left-straddle branch below.
+//
+// Clip narrows only (see Clip), so testing it also tests the buffer.
 func (b *Buffer) put(x, y int, c Cell) {
-	if x < 0 || y < 0 || x >= b.W || y >= b.H {
+	if x < b.cx0 || y < b.cy0 || x >= b.cx1 || y >= b.cy1 {
 		return
 	}
 	b.Cells[y*b.W+x] = c
@@ -241,7 +426,7 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 		if cluster == "" {
 			continue
 		}
-		if x >= b.W {
+		if x >= b.cx1 {
 			break
 		}
 		// Clip on the LEFT as well as the right. Set bounds-checks, so
@@ -249,7 +434,24 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 		// its Continuation still landed in cell 0 — an orphan marking a
 		// column the flusher then skips forever. Skipping by the
 		// cluster's width keeps the columns of what follows correct.
-		if x < 0 {
+		if x < b.cx0 {
+			// A cluster STRADDLING the left edge still covers columns
+			// this string is responsible for, and cannot draw in them —
+			// half a glyph is not something a terminal renders. Skipping
+			// them outright left whatever was underneath, so a line
+			// scrolled one column right showed the previous frame's
+			// character in the gap and nothing ever repainted it.
+			//
+			// The visible columns are those from the clip's left edge to
+			// where the cluster ends — cx0 rather than 0, because the
+			// left edge this string straddles is the component's, not
+			// the buffer's. Written before PR #425 as a bare 0, which
+			// blanked column 0 of the SCREEN whatever rect the caller
+			// was clipped to. Found in review of #413, then in the
+			// review of that fix.
+			for c := b.cx0; c < x+max(w, 1); c++ {
+				b.put(c, y, Cell{Rune: ' ', Style: s})
+			}
 			x += max(w, 1)
 			continue
 		}
@@ -261,7 +463,11 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 			// No room for the second half: drawing it would overflow the
 			// line and put the glyph's tail in column 0 of the next row
 			// on a terminal with autowrap. A space is the honest answer.
-			if x+1 >= b.W {
+			//
+			// The CLIP, matching Set and SetCell. Against b.W the three
+			// writers disagreed wherever a component's rect was narrower
+			// than the screen, which is every component but the root.
+			if x+1 >= b.cx1 {
 				b.put(x, y, Cell{Rune: ' ', Style: s})
 				x++
 				break
@@ -276,6 +482,41 @@ func (b *Buffer) SetString(x, y int, str string, s Style) {
 	}
 	// Only the two edges of the run can have broken a pair; everything
 	// between them this call wrote itself.
-	b.healSeam(start, y)
+	//
+	// CLAMPED INTO THE CLIP, because healSeam returns immediately for an
+	// x outside it — so a run starting LEFT of cx0, which is exactly the
+	// straddle branch above, repaired nothing at all. It had just written
+	// over an enclosing paint's wide tail at cx0 and left the lead one
+	// column outside, which is the injury healSeam exists to blank: a
+	// lead with no tail displaces every glyph after it for the rest of
+	// the row.
+	//
+	// ONLY the left edge is clamped, because only the left edge can land
+	// outside: the loop breaks at x >= cx1 and the wide-glyph branch
+	// answers with a space rather than overshooting, so x ends at cx1 at
+	// the furthest — which healSeam accepts. Clamping the trailing call
+	// too would reach a seam this run never touched.
+	//
+	// TestAPairStraddlingTheClipEdgeIsRepaired reached the left edge
+	// through Set only, which is why it was green. Found in review of
+	// #425.
+	//
+	// AND ONLY WHEN THIS RUN WROTE INSIDE THE CLIP. A run lying wholly
+	// left of it — SetString(cx0-9, y, "ab") — wrote nothing, and the
+	// clamp then aims healSeam at cx0, whose pair (cx0-1, cx0) belongs
+	// entirely to an enclosing paint. Already broken, that pair gets a
+	// half blanked by a run that never touched either column: exactly
+	// the asymmetry the paragraph above rules out for the trailing
+	// call, on the leading one.
+	//
+	// `x > b.cx0` IS the test for "wrote something inside", not a proxy
+	// for it: every put below lands at a column >= cx0 and leaves x one
+	// past it, so x rests at or before cx0 precisely when the run ended
+	// before the clip began. Found in the review of the review of #425.
+	lead := start
+	if x > b.cx0 {
+		lead = max(start, b.cx0)
+	}
+	b.healSeam(lead, y)
 	b.healSeam(x, y)
 }

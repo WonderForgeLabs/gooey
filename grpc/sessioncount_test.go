@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -260,4 +261,399 @@ func TestOnSessionsRunsOutsideTheLock(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the callback never returned; it cannot re-enter the server while the lock is held")
 	}
+}
+
+// TestOnSessionsNeverDeliversACountOutOfOrder is the ordering half of
+// the push contract, and it is a property no polling test can see.
+//
+// add and remove each captured a true count under the lock and then
+// called the host callback OUTSIDE it, which is correct — host code must
+// not run inside the mutex afterFrame takes every frame — but left the
+// two callers free to cross on the way out. A host told 2 and then 1
+// while two clients are attached goes on rendering 1 forever: nothing
+// re-sends the count until the next connect or disconnect, so a
+// transient reordering becomes a permanent lie. That is why the old
+// comment on notify reads as safe — every count delivered WAS true when
+// it was taken. Found in the review of #391 (issue #419).
+//
+// THE ASSERTION IS ONE-SIDED, and deliberately. A second delivery
+// arriving while the first callback is still in flight is PROOF that two
+// callers crossed; its absence over a generous window is what the fix
+// guarantees by construction. So a slow machine can only make this pass,
+// never fail spuriously — a failure here is real.
+func TestOnSessionsNeverDeliversACountOutOfOrder(t *testing.T) {
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		if n == 1 {
+			<-gate // hold the FIRST delivery inside the callback
+		}
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	read := func() []int {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]int(nil), seen...)
+	}
+
+	s1, s2 := &session{}, &session{}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); b.add(s1) }()
+
+	// Wait for each add to have MUTATED — observable through the same
+	// mutex the count is taken under — so the second one races the
+	// first's callback rather than its map write.
+	for b.count() != 1 {
+		runtime.Gosched()
+	}
+	go func() { defer wg.Done(); b.add(s2) }()
+	for b.count() != 2 {
+		runtime.Gosched()
+	}
+
+	// The first callback is parked on gate. Nothing may reach the host
+	// until it returns.
+	deadline := time.After(500 * time.Millisecond)
+	for waiting := true; waiting; {
+		select {
+		case <-deadline:
+			waiting = false
+		case <-time.After(5 * time.Millisecond):
+			if got := read(); len(got) > 0 {
+				close(gate)
+				wg.Wait()
+				t.Fatalf("the host was told %v while an earlier count was still being "+
+					"delivered — two callers crossed on the way out of the lock, and "+
+					"the value the host keeps is the older one", got)
+			}
+		}
+	}
+
+	close(gate)
+	wg.Wait()
+
+	got := read()
+	if len(got) == 0 {
+		t.Fatal("the host was never told anything, so nothing above discriminated")
+	}
+	if last := got[len(got)-1]; last != b.count() {
+		t.Errorf("the last count delivered was %d, the live count is %d (sequence %v) — "+
+			"a host that renders the last value it was given is now permanently wrong",
+			last, b.count(), got)
+	}
+}
+
+// TestTheForcedZeroOnShutdownOutranksALateRemove is finding five: the
+// same ordering hole reached from the other end.
+//
+// When the accept loop returns the server forces a zero, because every
+// stream it carried is finished and a host listening only for counts has
+// to see the endpoint go quiet. That zero went straight to the host
+// callback, bypassing the broadcaster — so a remove that had taken its
+// count but not yet delivered it could land afterwards and leave the
+// host showing a live client for an endpoint that no longer exists. Two
+// clients attached and one teardown lagging is all it takes. Found in
+// the review of #391 (issue #419).
+//
+// The lagging remove is INJECTED rather than raced for, because the race
+// is not reproducible on demand. What that pins is the property the race
+// depends on: whether the shutdown zero is ordered against the removes
+// at all. Delivered outside the broadcaster there is nothing to be
+// ordered against, and the stale count wins by arriving last.
+func TestTheForcedZeroOnShutdownOutranksALateRemove(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+
+	s1, s2 := &session{}, &session{}
+	b.add(s1)
+	b.add(s2)
+
+	// A teardown that has taken its count and not yet delivered it.
+	b.mu.Lock()
+	delete(b.sessions, s1)
+	staleN, staleSeq := len(b.sessions), b.next()
+	b.mu.Unlock()
+
+	b.closed()                        // the accept loop returns first
+	b.notify(staleN, staleSeq, false) // ...and the lagging remove arrives after
+
+	mu.Lock()
+	defer mu.Unlock()
+	if last := seen[len(seen)-1]; last != 0 {
+		t.Errorf("after the accept loop returned the host was last told %d "+
+			"(sequence %v) — the endpoint is gone and the host is showing a live "+
+			"client for it", last, seen)
+	}
+}
+
+// TestClosingTheServerNumbersItsZero is the other half of the same fix,
+// and the half that lives in the server rather than the broadcaster.
+//
+// The test above proves a NUMBERED zero outranks a lagging remove. This
+// proves the server's shutdown actually produces one, which is the part
+// a direct call to the host callback silently skipped: the count reached
+// the host, so every count assertion in this file stayed green, while
+// the ordering it should have taken part in did not exist.
+//
+// Asserted as GROWTH rather than against a total, so it does not encode
+// how many mutations an attach and a detach happen to make: the detach
+// contributes one change, the shutdown zero contributes another, and a
+// zero delivered outside the broadcaster contributes none.
+func TestClosingTheServerNumbersItsZero(t *testing.T) {
+	var mu sync.Mutex
+	var last int
+	vm, values := newVM()
+	app := newTestApp(t, testMarkup, values, nil)
+	h := attachHarness(t, app, vm, Options{
+		Name: "gooey-test", Version: "0",
+		OnSessions: func(n int) {
+			mu.Lock()
+			last = n
+			mu.Unlock()
+		},
+	})
+
+	a := attach(t, h, &controlv1.Subscription{})
+	a.recv()
+	waitCount(t, h.srv, "attached", h.srv.Sessions, 1)
+
+	b := h.srv.bc
+	b.mu.Lock()
+	before := b.seq
+	b.mu.Unlock()
+
+	// THE ASSERTION IS A WAIT, because the two changes land in either
+	// order and neither is observable on its own: Close stops the accept
+	// loop while the stream goroutine runs its deferred unregister
+	// independently, and each delivers a zero, so "the host was told 0"
+	// is reached by one of them alone. Waiting for the SEQUENCE to grow
+	// by two is the only edge that needs both. With the zero delivered
+	// straight to the callback it never arrives and this times out.
+	h.srv.Close()
+	deadline := time.After(3 * time.Second)
+	for {
+		b.mu.Lock()
+		after := b.seq
+		b.mu.Unlock()
+		if after >= before+2 {
+			break
+		}
+		select {
+		case <-deadline:
+			mu.Lock()
+			n := last
+			mu.Unlock()
+			t.Fatalf("the sequence went %d -> %d across a detach and a shutdown, want at "+
+				"least %d — the detach numbers one change and the shutdown zero must "+
+				"number another. A zero delivered straight to the callback numbers "+
+				"nothing, so a lagging remove has nothing to lose to. Last count %d",
+				before, after, before+2, n)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if last != 0 {
+		t.Errorf("the host was last told %d after the endpoint closed", last)
+	}
+}
+
+// TestNoCountSurvivesTheAcceptLoop is the LATCH, and it is the finding
+// the first version of this fix did not cover.
+//
+// Numbering the shutdown zero drops a remove that was already in flight.
+// A remove that takes the lock AFTERWARDS gets a higher number, and was
+// delivered normally — so the host was told a positive count for an
+// endpoint that no longer exists, which is the same lie the numbering
+// was introduced to prevent, one ordering later.
+//
+// It is routine rather than exotic. grpc's Stop does not wait for
+// handler goroutines, so sessionServer.Attach's deferred unregister
+// regularly runs after Serve has returned and closed() has fired. With
+// two clients attached at shutdown the host saw 0 then 1, and a handler
+// wedged in Send left it at 1 permanently.
+//
+// Found in the review of PR #425 — the review OF the fix, which is the
+// second time that has been where the real defect was.
+func TestNoCountSurvivesTheAcceptLoop(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+
+	s1, s2 := &session{}, &session{}
+	b.add(s1)
+	b.add(s2)
+	b.closed()   // the accept loop returns with two still attached
+	b.remove(s1) // one handler unwinds after it — a HIGHER seq, not a stale one
+	b.remove(s2)
+	b.add(s1) // and something pathological: an attach after shutdown
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("the host was never told anything")
+	}
+	if last := seen[len(seen)-1]; last != 0 {
+		t.Errorf("after the accept loop returned the host was last told %d "+
+			"(sequence %v) — the endpoint is gone, so no later count can be true "+
+			"however recent its number", last, seen)
+	}
+	// Stronger, and the reason a "last value" check alone is not enough:
+	// nothing non-zero may be delivered AT ALL once the loop is gone, so
+	// a host that renders every count it is given never flickers a live
+	// client onto a dead endpoint.
+	for i, n := range seen {
+		if i >= 3 && n != 0 {
+			t.Errorf("count %d in %v arrived after the accept loop returned", n, seen)
+		}
+	}
+}
+
+// TestAnAttachDoesNotWaitOnAnotherSessionsCallback is the deadlock the
+// review of PR #425 found in that PR's own ordering fix.
+//
+// The fix delivered the callback under notifyMu. register runs on the UI
+// goroutine and calls add, which calls notify — so an attach blocked on
+// notifyMu while a detach, on a stream goroutine, sat inside host code
+// that Options.OnSessions explicitly permits to block. The UI goroutine
+// waiting on an arbitrary host callback is not a stall, it is a deadlock
+// as soon as that callback wants anything the run loop must perform.
+//
+// Two clients is enough, which is exactly the scenario the ordering fix
+// was written for — so the fix's own motivating case was the case that
+// hung.
+//
+// The assertion is a TIMEOUT, which is the only shape available: the
+// claim is that a call returns without waiting for something else, and
+// nothing observable distinguishes "returned promptly" from "returned"
+// except the clock. The window is deliberately generous; against the
+// reviewed code the attach does not complete at all until the detach's
+// callback is released, so the test fails by the full three seconds
+// rather than by a millisecond of scheduling noise.
+func TestAnAttachDoesNotWaitOnAnotherSessionsCallback(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+	var once sync.Once
+
+	// ONE harness for both broadcasters. gooey's evaluation stack and
+	// layout-fault slot are PROCESS-global, so two live testApps race by
+	// construction and -race reports it inside NewComposer and
+	// prop.Get — nothing to do with the code under test, but it turns
+	// this test red for a reason that has no bearing on its claim.
+	host := newHarness(t).app
+
+	b := newBroadcaster(nil, host, func(int) {
+		// Only the FIRST delivery blocks: it stands for a host callback
+		// that is waiting on something slow.
+		once.Do(func() {
+			entered <- struct{}{}
+			<-release
+		})
+	})
+
+	first, second := &session{}, &session{}
+	b.mu.Lock()
+	b.sessions[first] = true
+	b.mu.Unlock()
+
+	// The detach, on its own goroutine, wedged inside host code.
+	go b.remove(first)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the host callback was never entered, so the test never reached " +
+			"the state it exists to probe")
+	}
+
+	// The attach, standing in for the UI goroutine. It must not wait on
+	// the callback above.
+	done := make(chan struct{})
+	go func() { b.add(second); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("an attach blocked while another session's host callback was " +
+			"running. register runs on the UI goroutine, and Options.OnSessions " +
+			"permits the callback to block, so this is the UI thread waiting on " +
+			"arbitrary host code — a deadlock the moment that code wants anything " +
+			"the run loop must do")
+	}
+	close(release)
+
+	// And the ordering guarantee still holds afterwards: the count the
+	// host is left with is the newest one, not the one that was in
+	// flight. Without this the test would pass for a notify that simply
+	// dropped everything it could not deliver immediately.
+	var mu sync.Mutex
+	var seen []int
+	b2 := newBroadcaster(nil, host, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	a, c := &session{}, &session{}
+	b2.add(a)
+	b2.add(c)
+	b2.remove(a)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 || seen[len(seen)-1] != 1 {
+		t.Errorf("the host was left with %v; the last value must be the newest "+
+			"count, which is 1 after two attaches and one detach", seen)
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] == seen[i-1] {
+			t.Errorf("the host was told %d twice in a row (%v) — a coalescing "+
+				"mailbox must not replay a value it already delivered", seen[i], seen)
+		}
+	}
+}
+
+// TestTheMailboxNeverDeliversAnOlderCountThanOneWaiting pins the half of
+// the deposit check that reads redundant and is not. notified only
+// advances when a value is DELIVERED, so a change that arrives while a
+// newer one is still sitting in the mailbox passes the `seq <= notified`
+// test — and would overwrite it, leaving the host on the older count for
+// good. The guard against a trailing 1 after a 2 has to compare against
+// what is waiting, not only against what has gone out.
+func TestTheMailboxNeverDeliversAnOlderCountThanOneWaiting(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	b := newBroadcaster(nil, newHarness(t).app, func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+	b.notifyMu.Lock()
+	b.delivering = true // pretend a delivery is in flight
+	b.notifyMu.Unlock()
+
+	b.notify(2, 10, false) // deposited, nobody carries it
+	b.notify(1, 5, false)  // older than the deposit, must not replace it
+
+	b.notifyMu.Lock()
+	gotN, gotSeq := b.pendN, b.pendSeq
+	b.delivering = false
+	b.notifyMu.Unlock()
+	if gotN != 2 || gotSeq != 10 {
+		t.Errorf("the mailbox holds count %d at seq %d after an OLDER change "+
+			"arrived behind a newer one; the host would be left on %d, which is "+
+			"the trailing-lie the sequence number exists to prevent", gotN, gotSeq, gotN)
+	}
+	_ = seen
 }

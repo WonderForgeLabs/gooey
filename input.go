@@ -720,17 +720,35 @@ func (m *FocusManager) reachable(w Component) bool {
 // Dispatch routes a key event in three phases.
 //
 // It TUNNELS first: every PreviewKeyHandler from the root down to the
-// focused component is offered the event, and the first that takes it
-// ends the dispatch. Then it BUBBLES: starting at the focused component
-// and walking up its ancestors to the root, the KeyBindings attached at
-// each level are matched first, then that component's own HandleKey. The
-// first true stops propagation. Then the MNEMONICS get their turn: every
-// MnemonicHandler in the tree, in tree order, is offered what the
-// focused chain declined — accelerators are page-scoped, so they run
-// outside the chain, but after it, which is what keeps a KeyBinding on
-// the same gesture winning. Finally, if nothing consumed the event,
-// tab and shift+tab move focus and an unclaimed arrow navigates — which
-// means either can be overridden by binding or handling it.
+// START component is offered the event, and the first that takes it ends
+// the dispatch. Then it BUBBLES from that same START up to the root, and
+// each level gets THREE steps in order — the KeyBindings attached there,
+// then that level's attachment handlers (attachedKey: type-ahead and
+// friends), then its own HandleKey. The first true stops propagation.
+//
+// THE START IS NOT ALWAYS THE FOCUSED COMPONENT, which this paragraph
+// used to say and which the frozen-host gate below stopped making true.
+// frozenHostFor hoists it to the outermost ancestor that withholds the
+// pressed key's CLASS, so inside a <Frozen> that refuses letters both
+// phases begin at the <Frozen> and everything below it is skipped —
+// that is precisely the mechanism, not an edge case, and a reader who
+// believes "from the focused component" cannot predict where a binding
+// fires.
+//
+// The middle step is easy to lose too: it was missing from this list
+// while attachedKey sat in the loop, and its POSITION is load-bearing.
+// Moving it past HandleKey still compiles and still passes most of the
+// suite — only TestAttachmentKeysPrecedeHost notices.
+//
+// Then the MNEMONICS get their turn: every MnemonicHandler in the tree,
+// in tree order, is offered what the focused chain declined —
+// accelerators are page-scoped, so they run outside the chain, but
+// after it, which is what keeps a KeyBinding on the same gesture
+// winning.
+//
+// Finally, if nothing consumed the event, tab and shift+tab move focus
+// and an unclaimed arrow navigates — which means either can be
+// overridden by binding or handling it.
 //
 // Bindings stay interleaved with handlers per level rather than running
 // as one pass after the bubble: a binding declared inside a control has
