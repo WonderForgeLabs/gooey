@@ -4,10 +4,42 @@ These SVG files are Codicons, Visual Studio Code's icon set.
     Copyright: (c) Microsoft Corporation
     License:   CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
 
-Fetched from src/icons/ in that repository, unmodified on disk. The
-activitybar package substitutes the documents' fill="currentColor" for a
-concrete colour before rasterizing, which is a render-time substitution
-and not a change to these files.
+Fetched from src/icons/ in that repository, unmodified on disk. EVERY
+FILE HERE KEEPS ITS UPSTREAM NAME, which is what makes that sentence
+checkable rather than a claim: each one is src/icons/<same name>.svg and
+is byte-identical to it. Verify with
+
+    curl -s https://raw.githubusercontent.com/microsoft/vscode-codicons/\
+main/src/icons/<name>.svg | diff - <name>.svg
+
+The review of PR #426 is why this paragraph is this specific. book.svg
+arrived hand-drawn, and the blanket "fetched, unmodified" above it was
+then false for one of five files — a licensing statement is the wrong
+place for an approximation, and the machine-generated coordinate
+precision of its neighbours made the odd one out visible on sight. It
+was replaced with the real Codicon rather than the claim being narrowed.
+
+THE RECIPE ABOVE HAS BEEN RUN, on 2026-08-30, against every file in this
+directory and every file in components/toolbox/icons. EVERY ONE matched
+src/icons/<same name>.svg on that repository's main branch, byte for
+byte. A recipe nobody has executed is a claim like any other, which is
+what the review of #426 said about the sentence it verifies — so the
+result is recorded here rather than left to the next reader.
+
+No count is written down, deliberately: a number in prose is a sample
+taken once, and a licensing statement is the worst place to keep a stale
+one. "Every file" stays true when an icon is added; "all 38" quietly
+stops being a claim about the directory and becomes a claim about the
+day it was typed. Count them with `ls *.svg | wc -l` if you need the
+number.
+
+Re-run the diff after adding an icon. Upstream's main branch moves, so a
+future mismatch is as likely to be an upstream edit as a bad copy, and
+the diff says which.
+
+The activitybar package substitutes the documents' fill="currentColor"
+for a concrete colour before rasterizing, which is a render-time
+substitution and not a change to these files.
 
 CC BY 4.0 permits use and modification, commercial included, and requires
 attribution — which is what this file is. Keep it beside the icons.

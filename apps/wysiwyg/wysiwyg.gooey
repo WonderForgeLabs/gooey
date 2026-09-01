@@ -329,8 +329,29 @@
       <!-- TOOLS — the palette and the rail's other views. Declared
            UNPINNED so ctrl+f has something to demonstrate on: pin is a
            claim about what survives "get everything out of my way", and
-           a dock where every pane is pinned cannot show what pin means. -->
-      <DockPane Id="tools" Title="TOOLS" Slot="Left" Size="34" Pinned="false">
+           a dock where every pane is pinned cannot show what pin means.
+
+           SIZE IS SET BY THE TAB STRIP, not by the widest pane content,
+           and this is the one number here that a feature can silently
+           invalidate. Every component is clipped to its own bounds
+           (#409), so a header that does not fit does not spill — it
+           VANISHES, and the tab it names becomes reachable only from
+           the activity rail with no visible affordance that it exists.
+           That is what a fifth tab did: at 34 the strip renders
+
+               | DESIGN | TOOLS | CODE | ISSUES |
+
+           and DOCS is simply absent from the cell plane at every
+           terminal size, because this width is a constant.
+
+           40 is the measured minimum for five headers — 38 still drops
+           DOCS — and it is measured rather than reasoned so that the
+           number cannot be off by the separator arithmetic. The pin is
+           TestEveryRailSlotsHeaderReachesTheCellPlane, which reads the
+           strip back off a composed frame and checks every railOrder
+           header is on it. A sixth tab makes that test red instead of
+           shipping an invisible one. -->
+      <DockPane Id="tools" Title="TOOLS" Slot="Left" Size="40" Pinned="false">
         <Panel Name="SideBar" Style="dim">
           <Tabs Selected="{{.ActivitySel}}">
 
@@ -426,6 +447,101 @@
                honest state and not a missing view. -->
           <Tab Header="ISSUES">
             <Text Style="dim">{{.FitMsg}}</Text>
+          </Tab>
+
+          <!-- 4 — DOCS. The platform's own docs/ tree, inside the editor
+               (#288). The list and the page share the side bar because
+               the docs are a REFERENCE consulted while building, not a
+               thing you edit: putting the page in the centre region
+               would make reading the docs and seeing your design
+               mutually exclusive, which is the opposite of what a
+               reference is for.
+
+               Rows="5,*" rather than two equal halves: the list is for
+               finding a page and the page is for reading it, so the
+               reader gets whatever is left.
+
+               THE NUMBER IS MEASURED, and it started at 8, which made
+               that sentence false. TOOLS shares the LEFT slot with
+               EXPLORER and sits above PANEL, so on a 48-row terminal it
+               gets ~17 rows and this Grid gets fewer: at Rows="8,*" the
+               reader got SIX lines against the list's eight, so
+               "whatever is left" was the minority share. Read off a
+               composed 160x48 frame, one line of body per row:
+
+                   Rows="8,*" -> 6 body lines
+                   Rows="5,*" -> 9
+                   Rows="4,*" -> 10
+
+               5 is where the reader has the majority and the list is
+               still tall enough to scan. TestTheDocsReaderOutgrowsItsList
+               pins the ordering rather than the numbers, which drift
+               with every pane above. -->
+          <Tab Header="DOCS">
+            <Grid Rows="5,*" Cols="*">
+              <ItemsView Grid.Row="0" Name="DocsList"
+                         Items="{{.DocsItems}}" Selected="{{.DocsSel}}">
+                <ItemsView.ItemTemplate>
+                  <!-- Same two-column shape the toolbox uses, and the
+                       same reason: mentioning _selected stands the house
+                       highlight down so the marker is the only thing
+                       that moves when the selection does. Two Texts, and
+                       a selection hop repaints exactly the two rows that
+                       changed. -->
+                  <Grid Rows="1" Cols="1,*">
+                    <Text Grid.Col="0" Style="sel" Visibility="{{._selected}}">{{.Bar}}</Text>
+                    <Text Grid.Col="1" Margin="1,0,0,0">{{.Name}}</Text>
+                  </Grid>
+                </ItemsView.ItemTemplate>
+              </ItemsView>
+              <!-- The page. A <Text>, because there is no Markdown
+                   component and #288 says ship the cheap version first —
+                   a list plus preformatted text answers "where do the
+                   docs come from at runtime" without committing to a
+                   renderer or the dependency one would cost.
+
+                   AND THEREFORE THE PAGE DOES NOT SCROLL: the whole body
+                   goes into one <Text> in a fixed cell, so on a 48-row
+                   terminal the first NINE lines of a page are reachable
+                   and the rest cannot be reached by any gesture. Nine,
+                   measured off a composed frame — not the "roughly 38"
+                   this comment used to claim, which was a guess at the
+                   terminal's height rather than at this pane's, and was
+                   six times too generous about how bad the gap is.
+                   Anyone weighing whether #67 can wait should weigh it
+                   against nine. That is the consequence of the choice
+                   above and it is written here because a reader who hits
+                   the bottom of architecture.md has NO WAY TO TELL a
+                   truncated pane from a short file — the two look
+                   identical.
+
+                   Not an oversight and not cheap to fix. CLIPPING is not
+                   what is missing — every component has been clipped to
+                   its own bounds since #409 landed on 2026-08-29, and
+                   that is precisely why the overflow is invisible rather
+                   than spilling over the pane below it. What is missing
+                   is a VIEWPORT: something that decides WHICH lines the
+                   fixed cell shows. That is the pane-local viewport in
+                   docs/specs/2026-08-23-scrolling.md (issue #67), real
+                   work and correctly out of scope for the cheap version.
+
+                   The distinction is worth keeping straight, because a
+                   reader who believes there is no clipping will look for
+                   the wrong bug: they will expect to SEE the extra lines
+                   somewhere. -->
+              <!-- NO Style, and that is deliberate rather than an omission.
+                   dim is what this page uses for secondary chrome — hints,
+                   the fit message, the "designer is the centre pane" note —
+                   and a pane whose whole purpose is reading prose is not
+                   chrome. Reading architecture.md at reduced contrast works
+                   against the feature. Found in review of #426.
+
+                   The empty-state messages come back through this same
+                   <Text>, so they lose the dim too; one string cannot carry
+                   two styles, and the primary content is the one to get the
+                   readable one. -->
+              <Text Grid.Row="1">{{.DocsBody}}</Text>
+            </Grid>
           </Tab>
 
           </Tabs>

@@ -799,6 +799,39 @@ type editor struct {
 	// how it is bound.
 	activitySel *prop.Property[int]
 
+	// The documentation tree, and the page being read. docsRoot is an
+	// fs.FS so dev and release differ only in what is passed here — see
+	// docs.go, which also says why embedding is not the one-line change
+	// #288 assumed.
+	//
+	// docList is the LIST, walked once rather than per frame: a Render
+	// that walked a directory would put filesystem latency inside a
+	// paint.
+	//
+	// IT IS A SOURCE PROPERTY, NOT A SLICE FIELD, and that is the fix for
+	// a defect the review of PR #426 found rather than a preference.
+	// docsItems closed over a plain field, so the computed read nothing
+	// observable — it cached on first evaluation and could never be
+	// invalidated by anything. Today the list is written once, which
+	// makes that invisible; the moment anything refreshes it (a watcher,
+	// a -workspace change) the pane would silently keep the old list.
+	// Going through a property means "the list changed" is expressible,
+	// and the only reason the tests' post-construction override worked
+	// was that nothing had evaluated the computed yet.
+	//
+	// docsRoot and docsSkipped are SOURCE PROPERTIES for the same reason,
+	// and the review of #426 found them sitting under that paragraph
+	// still plain: docsBody reads both, so a refresh that changed either
+	// without also writing docList would invalidate nothing. That every
+	// refresh happens to write all three today is a coupling nobody had
+	// written down, which is what the docsItems defect was made of.
+	docsRoot    *prop.Property[fs.FS]
+	docList     *prop.Property[[]docPage]
+	docsSkipped *prop.Property[int]
+	docsItems   *prop.Property[components.ItemSource]
+	docsSel     *prop.Property[int]
+	docsBody    *prop.Property[string]
+
 	// Bindable surface.
 	paletteItems *prop.Property[components.ItemSource]
 	attrItems    *prop.Property[components.ItemSource]
@@ -996,6 +1029,76 @@ type editor struct {
 	clip clipboard
 }
 
+// emptyDocsBody names WHICH empty this is, and that it has to is a fix
+// from the review of PR #426. The pane keyed its message off an empty
+// list alone, so three unrelated states — no docs/ tree anywhere, a
+// docs/ tree holding no markdown, and a docs/ tree that could not be
+// read — all told the reader the same thing, and for two of the three it
+// was false. The tree in front of them existed.
+//
+// The skipped count is the same fix seen from docsPages' end: it is the
+// difference between "there is nothing here" and "I could not look".
+//
+// One case is still NOT surfaced — a partially readable tree that DID
+// yield pages says nothing about the ones it lost, because the pane is
+// one string and that string is the page you selected. That wants a
+// status line, which the docs tab does not have yet.
+//
+// A PLAIN FUNCTION TAKING WHAT IT NEEDS, and it has been three shapes
+// across two review rounds because each one was wrong in a way the next
+// exposed. A func field assigned during construction came first, and it
+// worked only because docsBody's closure is lazy and nothing evaluated
+// the computed before the assignment ran — the same accident-of-ordering
+// the review found in docsItems. A method fixed that and introduced the
+// next one: it read ed.docsRoot and ed.docsSkipped from inside an
+// evaluating computed, so the dependency set depended on which branch of
+// docsBody had run. Taking both as arguments settles it, because now
+// every property read belongs to docsBody and is hoisted above its
+// branch. See docsBody.
+//
+// TWO STATES, not three. A "Select a page." case sat below these until
+// the review of #426: it could only be entered with a non-empty list,
+// and docsBody now CLAMPS such an index to a real page rather than
+// asking for a message, so nothing could reach it. A branch nothing can
+// enter is a claim about behaviour that never happens.
+func emptyDocsBody(root fs.FS, skipped int) string {
+	skipnote := ""
+	if skipped > 0 {
+		unit := "entries"
+		if skipped == 1 {
+			unit = "entry"
+		}
+		skipnote = fmt.Sprintf(" %d %s could not be read.", skipped, unit)
+	}
+	if root == nil {
+		return "No docs/ directory was found beside the editor." + skipnote
+	}
+	// UNREADABILITY LEADS, because with nothing read the emptiness is not
+	// a fact this function has. "holds no markdown pages" is a claim
+	// about what is there; when the walk skipped something — and when
+	// the ROOT itself was unreadable, docsPages returns (nil, 1) — the
+	// honest answer is that it could not look, and appending that after
+	// the claim made the pane say both:
+	//
+	//	The docs/ directory beside the editor holds no markdown pages.
+	//	1 entry could not be read.
+	//
+	// The first sentence is contradicted by the second, and this
+	// function's whole purpose is the difference between "there is
+	// nothing here" and "I could not look". docs_test.go asserted only
+	// that the skip note appeared, so the false half shipped past the
+	// test written for it. Found in review of #426.
+	if skipped > 0 {
+		unit, verb := "entries", "were"
+		if skipped == 1 {
+			unit, verb = "entry", "was"
+		}
+		return fmt.Sprintf("%d %s under the docs/ directory %s unreadable, "+
+			"so what it holds is unknown.", skipped, unit, verb)
+	}
+	return "The docs/ directory beside the editor holds no markdown pages."
+}
+
 // newEditor takes the editor's root FS because the panes are markup on
 // disk, not markup compiled in. One FS for the page and every control:
 // os.DirFS in development, so editing a pane's .gooey hot reloads it, and
@@ -1023,6 +1126,7 @@ func newEditor(fsys fs.FS) *editor {
 		paletteSel:  prop.NewSource(0),
 		attrSel:     prop.NewSource(0),
 		activitySel: prop.NewSource(1), // the toolbox, which is what the side bar shows
+		docsSel:     prop.NewSource(0),
 		source:      prop.NewSource(""),
 		status:      prop.NewSource(""),
 		dragHint:    prop.NewSource(""),
@@ -1136,6 +1240,90 @@ func newEditor(fsys fs.FS) *editor {
 	// resolve to nothing, and the palette renders empty with no error
 	// anywhere. Both computeds read ed.palette lazily, so it is fine
 	// that the palette itself is filled further down.
+	// THE DOCS TREE, resolved once. docsRoot is nil when there is none
+	// beside the editor, which is a legal state the pane says out loud
+	// rather than a startup failure — see docsFS.
+	docsRootFS := docsFS()
+	pages, skipped := docsPages(docsRootFS)
+	ed.docsRoot = prop.NewSource(docsRootFS)
+	ed.docList = prop.NewSource(pages)
+	ed.docsSkipped = prop.NewSource(skipped)
+	ed.docsItems = prop.NewComputed(func() components.ItemSource {
+		return components.ItemsOf(ed.docList.Get(), func(d docPage) map[string]any {
+			return map[string]any{"Name": d.Label, "Bar": "▌"}
+		})
+	})
+	// docsBody READS THE FILE INSIDE AN EVALUATION, which breaks "no I/O
+	// in a paint", and the review of PR #426 was right that the previous
+	// version of this comment defended it on the wrong axis.
+	//
+	// It argued reportability — a paint cannot report an error, so
+	// svg.IconSet needs Preload while docBody has the pane's one string
+	// to put the failure in. That is true and it is not the objection.
+	// THE RULE EXISTS FOR LATENCY: this runs on the UI goroutine while a
+	// <Text> renders, so the read is synchronous inside the frame, and on
+	// a cold cache or a network filesystem selecting a page stalls the
+	// whole editor rather than just this pane.
+	//
+	// Accepted here, deliberately and with the bound stated: the read is
+	// one local file of a few kilobytes, on a selection change rather
+	// than per frame, and it happens off the render path for every other
+	// pane. The framework's answer if that stops holding is written down
+	// and is not this — do the read off the loop and Dispatcher.Post the
+	// result into a source property, which also needs a sequence number
+	// so a slow read of page A cannot land after a fast read of page B.
+	//
+	// THE READ IS NOT THE EXPENSIVE PART, and this comment used to imply
+	// it was by answering the whole objection with "on a keystroke rather
+	// than per frame". That is true of the read and false of what the
+	// string then costs. Layout is UNCONDITIONAL — Composer measures and
+	// arranges every frame, damage or no damage — so a <Text> holding a
+	// whole markdown file is re-measured on every frame for as long as
+	// the tab is open, not once per selection. markup-reference.md is
+	// ~1600 lines; the specs tree has a page longer still.
+	//
+	// docsBodyMaxLines is the bound, and it is a stopgap with the real
+	// fix named: a pane-local viewport (#67,
+	// docs/specs/2026-08-23-scrolling.md). Until then nothing below the
+	// clip is reachable by any gesture anyway, so measuring it buys the
+	// reader nothing and costs them every frame.
+	//
+	// THERE IS NO CACHE, and its absence is the point. One used to sit
+	// here keyed by path and never invalidated, which made the sentence
+	// above it false: "a page deleted under the editor renders its own
+	// read error" held only for a page never opened, and the common
+	// path — read a page, then edit or delete it — served the stale body
+	// forever. Re-reading costs one file read per selection change, which
+	// is the same order as the read the cache was saving.
+	ed.docsBody = prop.NewComputed(func() string {
+		// HOISTED, ALL FOUR, above every branch. A Get behind an early
+		// return drops out of the dependency set on the frames it does
+		// not run, and the pane goes deaf to that property with no error
+		// anywhere — the trap CLAUDE.md names and the one the two fields
+		// promoted above were already an instance of.
+		root := ed.docsRoot.Get()
+		list := ed.docList.Get()
+		i := ed.docsSel.Get()
+		skipped := ed.docsSkipped.Get()
+		if len(list) == 0 {
+			return emptyDocsBody(root, skipped)
+		}
+		// CLAMPED, the way ItemsView.selection clamps its own read
+		// (components/itemsview.go:472). The view and the pane read the
+		// same index and must agree about what it means: the view clamps
+		// and writes back only on a gesture, so a docList that refreshes
+		// SHORTER leaves the list highlighting a row while an
+		// out-of-range branch here rendered nothing — a blank pane that
+		// is indistinguishable from a page with nothing in it, which is
+		// the exact failure docBody's own comment argues against.
+		//
+		// A shorter list is not hypothetical: it is what docList was
+		// promoted to a source property to support. Found in review of
+		// #426.
+		i = min(max(i, 0), len(list)-1)
+		return clampLines(docBody(root, list[i].Path), docsBodyMaxLines)
+	})
+
 	ed.paletteItems = prop.NewComputed(func() components.ItemSource {
 		ed.rev.Get() // hoisted above everything: the dependency is the point
 		return components.ItemsOf(ed.palette, func(e markup.ElementSpec) map[string]any {
@@ -1245,6 +1433,9 @@ func newEditor(fsys fs.FS) *editor {
 			"EditDoc":     ed.editDoc,
 			"TreeText":    ed.treeText,
 			"ActivitySel": ed.activitySel,
+			"DocsItems":   ed.docsItems,
+			"DocsSel":     ed.docsSel,
+			"DocsBody":    ed.docsBody,
 			"Serving":     ed.serveInfo,
 			"Fits":        ed.fits,
 			"Cramped":     ed.cramped,
