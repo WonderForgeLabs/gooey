@@ -176,7 +176,41 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 // the tree, because they all reach the final pass through the timer.
 // What is lost is the last keystrokes a user typed before the terminal
 // went away. Added in review of #445.
+//
+// IT CAN ONLY MEASURE ANYTHING IF THE TTY CLOSES WHILE THE PREFIX IS
+// STILL HELD, and the first version of it did not check that. A runner
+// stalling past the grace window lets the TIMER resolve the prefix
+// before the close, at which point the Esc arrives either way and the
+// test passes without guarding its mutation — green, and blind. Raised
+// in review of #445.
+//
+// The discriminator is arrival TIME, measured from the moment the
+// decoder is known to be holding the prefix. The stall path cannot
+// deliver before PasteMarkerGrace full timeouts have elapsed; the
+// tty-close path delivers as soon as the read fails. So an Esc arriving
+// inside that budget can only have come from the close. Outside it, the
+// attempt is INCONCLUSIVE rather than passing, and the test tries again
+// — running out of attempts is a failure, never a pass.
 func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
+	const attempts = 20
+	for i := range attempts {
+		if closedTtyAttempt(t) {
+			return
+		}
+		t.Logf("attempt %d missed the grace window (the timer resolved the "+
+			"prefix first); retrying", i+1)
+	}
+	t.Fatalf("could not close the tty inside the grace window in %d attempts. "+
+		"This machine is too loaded to attribute the resolution to the "+
+		"tty-close path, and passing on that basis would be a test that "+
+		"guards nothing", attempts)
+}
+
+// closedTtyAttempt runs one attempt. It returns false when the attempt
+// could not distinguish the two routes to drainFinal; every genuine
+// disagreement is a t.Fatal rather than a false.
+func closedTtyAttempt(t *testing.T) bool {
+	t.Helper()
 	master, slave := openPTY(t)
 	s := FromFile(slave)
 	if err := s.Raw(); err != nil {
@@ -185,7 +219,7 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 	evs := s.Events(16)
 
 	// ONE write carrying a handshake byte and then the held prefix, and
-	// the handshake is what makes this deterministic rather than a race.
+	// the handshake is what makes this a measurement rather than a race.
 	// Closing the master can discard bytes the slave has not read yet, so
 	// "write, then close" alone loses the prefix on most runs and the
 	// test measures nothing. Reading the 'b' back proves the decoder
@@ -197,17 +231,22 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
 		t.Fatalf("got %#v, want the 'b' we typed", ev)
 	}
+	// The clock starts HERE: the decoder has just consumed that read, so
+	// this is when its escape timer is armed over the held prefix.
+	held := time.Now()
 
-	// Now the tty goes away, well inside the grace window — so the TIMER
-	// route to the final pass is not what can resolve this.
 	if err := master.Close(); err != nil {
 		t.Fatalf("close master: %v", err)
 	}
 
-	if ev := next(t, evs, "the decoder discarded the Esc it was holding when the "+
+	ev := next(t, evs, "the decoder discarded the Esc it was holding when the "+
 		"tty closed. A closed tty is the strongest deadline there is — nothing "+
 		"can arrive — so a held prefix must resolve on the way out rather than "+
-		"leave with it"); !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		"leave with it")
+	if elapsed := time.Since(held); elapsed >= PasteMarkerGrace*EscTimeout {
+		return false // the timer could have done this; attribute nothing
+	}
+	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
 		t.Fatalf("first event after the tty closed was %#v, want the Esc key", ev)
 	}
 	for _, want := range []rune{'[', '2'} {
@@ -216,6 +255,7 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			t.Fatalf("got %#v, want the %q key", ev, want)
 		}
 	}
+	return true
 }
 
 func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {

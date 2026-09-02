@@ -17,9 +17,9 @@ const EscTimeout = 40 * time.Millisecond
 // buffer that looks like half a bracketed-paste marker — reading it as
 // the Esc key the user actually pressed. The buffer is held through
 // PasteMarkerGrace-1 timeouts and resolved ON the PasteMarkerGrace'th:
-// the loop below does `stalls++` and then
-// `drain(true, stalls >= PasteMarkerGrace)`, so at 2 the buffer survives
-// exactly ONE timeout. (This comment used to say "how many timeouts it
+// the loop below increments `stalls` and escalates to drainFinal once it
+// reaches this value, so at 2 the buffer survives exactly ONE timeout.
+// (This comment used to say "how many timeouts it
 // gets before the decoder gives up", which is one more than the loop
 // grants; someone raising it to 3 to buy one extra grace period would
 // have got two.) It is one number in one place because it is a trade
@@ -52,19 +52,20 @@ const PasteMarkerGrace = 2
 type drainDeadline uint8
 
 const (
-	drainLive  drainDeadline = iota // bytes may still be arriving
-	drainIdle                       // none arrived within EscTimeout
-	drainFinal                      // nothing more can arrive at all
-)
+	drainLive drainDeadline = iota // bytes may still be arriving
+	drainIdle                      // none arrived within EscTimeout
 
-// drainFinal is NOT "the stall count reached PasteMarkerGrace" — it is
-// "nothing more can arrive", and the two are different in a way the
-// earlier wording got wrong. The stall path reaches it after
-// PasteMarkerGrace-1 fruitless timeouts, ON the PasteMarkerGrace'th; the
-// TTY-CLOSE path reaches it with zero timeouts elapsed, because a closed
-// tty is a stronger guarantee than any deadline. A precondition written
-// as "only after N timeouts" is false for the second caller and would
-// send the next reader looking for a bug there. Raised in review of #445.
+	// drainFinal is NOT "the stall count reached PasteMarkerGrace" — it
+	// is "nothing more can arrive", and the two are different in a way
+	// an earlier wording got wrong. The stall path reaches it after
+	// PasteMarkerGrace-1 fruitless timeouts, ON the PasteMarkerGrace'th;
+	// the TTY-CLOSE path reaches it with ZERO timeouts elapsed, because
+	// a closed tty is a stronger guarantee than any deadline. A
+	// precondition written as "only after N timeouts" is false for the
+	// second caller and would send the next reader hunting a bug there.
+	// Raised in review of #445.
+	drainFinal
+)
 
 // recoverable reports whether a tty read error is one the decoder should
 // retry rather than treat as the end of terminal input.
@@ -149,15 +150,20 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 			}
 			if n == 0 && !ok {
 				// Incomplete: wait for more bytes. Safe to return only
-				// because the decoder answers this way under idle for
-				// ONE input — an incomplete bracketed paste, where the
-				// terminal is mid-write and the next byte resolves it.
-				// See input.Decode's doc comment. For anything else,
-				// pend would strand here forever and the app would go
-				// permanently deaf while still painting.
+				// because under drainIdle the decoder answers this way
+				// for exactly TWO inputs, both bracketed pastes: a split
+				// MARKER, and an OPEN paste whose end has not arrived.
+				// For anything else pend would strand here forever and
+				// the app would go permanently deaf while still
+				// painting.
 				//
-				// Under final even that shrinks to an OPEN paste, whose
-				// wedge is deliberate (input.DecodeFinal says why).
+				// Under drainFinal that shrinks to the open paste alone,
+				// whose wedge is deliberate. The split marker used to be
+				// justified by "the terminal is mid-write, so the next
+				// byte resolves it either way" — false when a person
+				// typed those bytes, which is #440 and the reason
+				// drainFinal exists. See input.Decode and
+				// input.DecodeFinal.
 				return
 			}
 			pend = pend[n:]
