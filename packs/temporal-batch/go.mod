@@ -20,7 +20,7 @@ go 1.25.6
 require (
 	go.temporal.io/api v1.63.5
 	go.temporal.io/sdk v1.47.0
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 )
 
 require (
