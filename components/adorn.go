@@ -145,20 +145,26 @@ func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 // Add puts an adornment up. UI goroutine only, like everything that
 // reaches the tree; it appears on the next frame, positioned by Place.
 //
-// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE AND IS STILL HIT-TESTED
-// WHERE IT WAS DECLARED. The layer implements gooey.Overlay, and overlay
-// membership is inherited, so your adornment paints above every ordinary
-// node — but that marker moves paint only. FocusManager.HitTest walks document
-// order and knows nothing about it, so a press over your adornment goes
-// to whatever ordinary component is under those cells.
+// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE WHEREVER THE LAYER SITS,
+// BUT IS ONLY HIT-TESTED FIRST IF THE LAYER IS LAST. The layer implements
+// gooey.Overlay and overlay membership is inherited, so your adornment
+// paints above every ordinary node — that marker moves paint only.
+// FocusManager.HitTest still walks document order (children last-to-first,
+// mouse.go), which reaches your adornment first exactly when the layer is
+// the root's last child, the shape the docs mandate.
 //
-// The framework's own three adorners sidestep this by being
-// HitTestTransparent (they are decoration: a tooltip, a validation
-// message, a drag ghost), and the Adornment interface deliberately does
-// not require it, because "what should the pointer do here" is the
-// adornment's policy. So an INTERACTIVE adorner needs its own routing —
-// pointer capture, the way Popup does it — until the hit-test walk
-// learns the two layers. Named in review of #444.
+// So the two agree on the documented shape and diverge SILENTLY off it,
+// which is newly easy to get wrong: before gooey.Overlay, declaring the
+// layer late was the only thing keeping it on top, so a mistake here
+// showed up as a painting bug immediately. Now it paints correctly and
+// loses the press.
+//
+// The framework's own three adorners cannot notice either way — tipPopup,
+// markerPopup and DragGhost are all HitTestTransparent, being decoration.
+// The Adornment interface deliberately does not require it, because "what
+// should the pointer do here" is the adornment's policy. An INTERACTIVE
+// adorner should therefore either rely on the layer being last, or take
+// pointer capture the way Popup does. Named in review of #444.
 func (l *AdornmentLayer) Add(a Adornment) {
 	l.adorns = append(l.adorns, a)
 	if l.structure != nil {
@@ -274,17 +280,29 @@ func (l *AdornmentLayer) HitTestTransparent() bool { return true }
 // OverlaysPage puts the layer — and every adornment in it, since overlay
 // membership is inherited down the subtree — in the overlay layer.
 //
-// The marker moves paint and NOT input, and the exemption that makes
-// that safe is narrower than the layer is. It covers the layer itself
-// (HitTestTransparent, just below) and the three adornments the
-// FRAMEWORK hosts: tipPopup, markerPopup and DragGhost, all three
-// HitTestTransparent too. It does not and cannot cover an adornment
-// somebody else writes: Adornment requires only gooey.Component, Anchor
-// and Place, so a custom adorner added through Add inherits this paint
-// order while FocusManager.HitTest goes on walking document order and
-// hands its presses to whatever sits under it. See Add. Raised in
-// review of #444; the underlying gap is gooey.Overlay's, and closing it
-// means teaching the hit-test walk the same two layers.
+// The marker moves paint and NOT input, and the consequence is subtler
+// than "presses go to the wrong place". hitTest walks each container's
+// children from LAST to first (mouse.go), so a layer declared as the
+// root's last child is descended into FIRST and its adornments are
+// found before anything earlier — paint order and hit order agree, and
+// even an interactive adorner would work.
+//
+// WHAT THIS MARKER CHANGES IS THAT THE TWO NO LONGER AGREE BY
+// CONSTRUCTION. Being last used to be the only thing keeping the layer
+// on top, so nobody could get the paint right and the input wrong.
+// Now the layer paints above the page wherever it sits, which removes
+// the visible reason to declare it last — and hit-testing still needs
+// it there. Declare the layer anywhere but last and its adornments
+// paint above a later sibling that quietly takes their presses, with
+// nothing on screen to say so.
+//
+// It costs the framework's own adorners nothing: tipPopup, markerPopup
+// and DragGhost are all HitTestTransparent, as is this layer
+// (HitTestTransparent, just above), so no press is theirs to lose. An
+// adornment somebody else writes is where it bites — Adornment requires
+// only gooey.Component, Anchor and Place. See Add. Raised in review of
+// #444; closing it properly means teaching the hit-test walk the same
+// two layers gooey.Overlay gave the paint walk.
 func (l *AdornmentLayer) OverlaysPage() {}
 
 // attachAdornment is the attach half both AdornmentLayer customers share:

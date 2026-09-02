@@ -83,18 +83,30 @@ and would starve every click if they were not — and so is every adornment the
 framework hosts in the layer: `tipPopup`, `markerPopup`, `DragGhost`. Toasts
 are not interactive either. There is no press for the walk to misroute.
 
-**The exemption is narrower than the layer, and the gap is a public one.**
-`AdornmentLayer.Add` is exported and `Adornment` requires only
-`gooey.Component`, `Anchor` and `Place` — not `HitTestTransparent`. So an
-adornment somebody else writes inherits this paint order and does **not**
-inherit the exemption: it paints above the page while `FocusManager.HitTest`,
-still walking document order, hands its presses to whatever ordinary component
-sits under those cells. The interface omits the requirement deliberately —
-"what should the pointer do here" is the adornment's policy, and the
-framework's own three are decoration — so the answer for an interactive
-adorner is its own routing via pointer capture, the way `Popup` does it. Both
-`Add` and `OverlaysPage` say so at the extension point, which is where someone
-hits it. Raised in review of [PR #444](https://github.com/WonderForgeLabs/gooey/pull/444).
+**The exemption is narrower than the layer, and the gap is a public one** —
+though not in the shape it first looked. `AdornmentLayer.Add` is exported and
+`Adornment` requires only `gooey.Component`, `Anchor` and `Place`, not
+`HitTestTransparent`, so an adornment somebody else writes inherits this paint
+order without inheriting the exemption.
+
+The first draft of this section said such an adornment therefore loses its
+presses, full stop. **That is wrong, and checking `hitTest` rather than
+asserting it is what caught it** (raised in review of
+[PR #444](https://github.com/WonderForgeLabs/gooey/pull/444)): the walk
+descends each container's children from LAST to first (`mouse.go`), so a layer
+declared as the root's last child — the shape the docs mandate — is entered
+*first*, and its adornments are found before anything earlier. On the
+documented shape, paint order and hit order agree, and an interactive adorner
+works.
+
+What this change really does is **decouple them**. Being last used to be the
+only thing keeping the layer on top, so getting the paint right and the input
+wrong was not expressible. Now the layer paints above the page wherever it
+sits, which removes the visible reason to declare it last, while hit-testing
+still requires it there. Declare it anywhere else and its adornments paint over
+a later sibling that silently takes their presses — correct on screen, wrong on
+click, with nothing to show for it. Both `Add` and `OverlaysPage` say this at
+the extension point, which is where someone meets it.
 
 The first **interactive** overlay is what makes teaching `HitTest` the same two
 layers compulsory, and the paragraph above is the reason that adopter can now
