@@ -1,4 +1,4 @@
-# Dependabot for a 26-module workspace with ONE vendor directory.
+# Dependabot for a multi-module workspace with ONE vendor directory.
 #
 # Until this file existed the repo got Dependabot SECURITY updates only —
 # those need no config — and they arrived one PR per module. A single grpc
@@ -34,6 +34,23 @@
 # only — but "the docs say so" is not the same as "the parser accepted it",
 # and the parser cannot be consulted until this is on the default branch.
 #
+# AND ONE QUESTION IS STILL OPEN, which is why this is a draft. The review of
+# #453 argues the `/` entry errors on every run, because Dependabot's gomod
+# updater refuses a VENDORED go.work workspace (`check_workspace_not_vendored`)
+# — and that if workspace mode does engage, `/` subsumes every other glob here
+# and they are all redundant. Those two cannot both be acted on, and I could
+# not settle either: GitHub's ecosystem table confirms gomod supports
+# vendoring but says nothing about go.work, and the only empirical evidence
+# available cuts the other way without answering it — Dependabot IS currently
+# opening gomod PRs against this repo's NESTED modules (#449/#450/#451). The
+# root, which is the directory that holds go.work, is exactly the case those
+# do not cover.
+#
+# Do not merge this on my say-so. Either somebody knows the answer, or the
+# cheap experiment is to land it with `/` REMOVED and see whether the globbed
+# entries behave, since the nested modules are the ones already demonstrated
+# to work.
+#
 # So: land this separately from the vendor workflows, and CHECK IT AFTER
 # MERGING. Repository → Insights → Dependency graph → Dependabot shows the
 # config error if there is one. If it is unhappy, revert this file; nothing
@@ -46,10 +63,14 @@ updates:
   - package-ecosystem: gomod
     # `directories` (plural) rather than `directory`, because only the plural
     # form takes globs — and globs are what keep this from being a hand-kept
-    # list of 26 paths that goes stale the first time somebody adds a module.
+    # path list that goes stale the first time somebody adds a module.
     # That is the same reasoning CLAUDE.md's verify loop gives for discovering
     # modules instead of enumerating them; a glob is the nearest thing a
-    # static config file has to a discovery.
+    # static config file has to a discovery. Note there is deliberately no
+    # COUNT written here either — CLAUDE.md's rule about numbers in prose
+    # applies to config comments exactly as much, and an earlier draft of
+    # this file said "26 modules" three days after that would stop being
+    # true. Run the find in CLAUDE.md's Verify section for the number.
     #
     # A NEW TOP-LEVEL NAMESPACE STILL NEEDS A LINE HERE. `packs/temporal-foo`
     # is covered; a new `widgets/` tree is not, and nothing will say so — it
@@ -76,10 +97,13 @@ updates:
         group-by: dependency-name
         patterns:
           - '*'
-    # Deliberately low. These are grouped, so each PR carries a whole
-    # dependency across the tree, and every one of them costs a full CI run on
+    # Deliberately low, and it WILL be saturated immediately rather than only
+    # under load — a workspace this size has more than three dependencies
+    # behind on some version at any moment, so expect a steady three open and
+    # a queue behind them. That is the intended shape: each grouped PR carries
+    # a whole dependency across the tree and costs a full CI run on
     # self-hosted pools that do not autoscale (see ci.yml on why legs are
-    # packed per tier). Raise it if the queue is starving, not by default.
+    # packed per tier). Raise it deliberately, knowing that is the cost.
     open-pull-requests-limit: 3
 
 # ── THE PART THIS FILE DOES NOT SOLVE ───────────────────────────────────────
@@ -87,6 +111,10 @@ updates:
 # Grouped or not, Dependabot edits go.mod and go.sum and never runs
 # `go work vendor`, so the committed vendor/ goes stale and `go` refuses with
 # "inconsistent vendoring" on the next command — surfacing in whichever job
-# runs Go first, which for #449/#450/#451 was a protobuf step. That is what
-# .github/workflows/vendor-freshness.yml checks and
-# .github/workflows/vendor-autofix.yml repairs.
+# runs Go first, which for #449/#450/#451 was a protobuf step.
+#
+# PR #452 proposes the two workflows that check and repair that
+# (vendor-freshness.yml, vendor-autofix.yml). They are NOT on main as this is
+# written, and this file must not read as though they are: if #453 lands
+# first, grouped bumps still arrive with a stale vendor/ and still need the
+# manual `go work vendor`. Land #452 first, or expect that.
