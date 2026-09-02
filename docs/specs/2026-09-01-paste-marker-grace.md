@@ -121,6 +121,37 @@ arrives as keystrokes, which is #419's symptom returning. Going deaf forever is
 the worse half of that trade, and 80ms of silence inside a six-byte marker the
 terminal is actively writing is not a case anyone has observed.
 
+### Half of the reported symptom survives, and it is worth being blunt
+
+#440 reported **two** symptoms of one hold. This change fixes the first
+completely and the second only partly:
+
+1. *the buffer strands forever* — fixed, unconditionally;
+2. *the next keystroke is absorbed into the CSI parse* — fixed only for a key
+   arriving **after** the window.
+
+A key arriving **inside** the window is still absorbed, because the window is
+precisely the interval in which the decoder is still waiting for more bytes,
+and the key is more bytes. Measured on a pty against this branch — write
+`ESC [ 2`, wait `EscTimeout/2`, write `z`:
+
+```
+total events after ESC [ 2 then z inside the window: 0
+```
+
+Zero. The Esc is lost and `[`, `2`, `z` are swallowed together as one unmapped
+four-byte CSI. Outside the window the same sequence correctly yields Esc, `[`,
+`2`, `z`.
+
+Closing it means the decoder distinguishing "this CSI began as a marker prefix
+I was holding" from "this CSI arrived whole", which is **state**, and `input`
+is deliberately a stateless function over bytes — the same constraint recorded
+on `decodePaste` about its quadratic re-scan. That is a change to the decoder's
+shape rather than to this grace, so it is
+[#447](https://github.com/WonderForgeLabs/gooey/issues/447) rather than a rider
+here. Raised in review of PR #445, which is also where the "no record says so"
+version of this section was correctly called out.
+
 ## The second bug in the same loop
 
 While `pend` is non-empty the loop re-armed its timer unconditionally. Once the
@@ -148,7 +179,23 @@ red:
 | `DecodeFinal` becomes a synonym for `Decode(b, true)` | the same four |
 | the loop never escalates to the final pass | the term strand test alone |
 | the stall counter resets on every timeout instead of counting | the term strand test alone |
+| the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` alone |
 | the timer is re-armed unconditionally | **nothing** — the honest result, and the one the section above predicts |
+
+The tty-close row is the reason `drainFinal` is defined as "nothing more can
+arrive" and not as "the stall count reached `PasteMarkerGrace`". That path
+reaches the last-chance pass with **zero** timeouts elapsed, and it had no test
+until review of #445 asked what the precondition actually was: every other test
+in the tree reaches the final pass through the timer, so the arm could have
+quietly dropped to `drainIdle` and lost the last keystrokes a user typed before
+the terminal went away, with nothing to notice.
+
+That test needs a **handshake** rather than a sleep, and the first draft
+without one measured nothing: closing the pty master can discard bytes the
+slave has not read yet, so "write the prefix, then close" loses it on most
+runs. Writing `b` and the prefix in ONE write and reading the `b` back proves
+the decoder consumed that read, which means the prefix is in `pend` at the
+moment the tty is closed.
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement: the

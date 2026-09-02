@@ -44,6 +44,28 @@ const EscTimeout = 40 * time.Millisecond
 // the paste silently. See input.DecodeFinal.
 const PasteMarkerGrace = 2
 
+// drainDeadline is how much of the terminal's benefit of the doubt is
+// left when the decoder is asked to empty its buffer. It mirrors input's
+// own unexported `deadline` because it is answering the same question,
+// and it is ONE value rather than two bools so that "more bytes may
+// arrive, and also nothing is ever coming" cannot be written.
+type drainDeadline uint8
+
+const (
+	drainLive  drainDeadline = iota // bytes may still be arriving
+	drainIdle                       // none arrived within EscTimeout
+	drainFinal                      // nothing more can arrive at all
+)
+
+// drainFinal is NOT "the stall count reached PasteMarkerGrace" — it is
+// "nothing more can arrive", and the two are different in a way the
+// earlier wording got wrong. The stall path reaches it after
+// PasteMarkerGrace-1 fruitless timeouts, ON the PasteMarkerGrace'th; the
+// TTY-CLOSE path reaches it with zero timeouts elapsed, because a closed
+// tty is a stronger guarantee than any deadline. A precondition written
+// as "only after N timeouts" is false for the second caller and would
+// send the next reader looking for a bug there. Raised in review of #445.
+
 // recoverable reports whether a tty read error is one the decoder should
 // retry rather than treat as the end of terminal input.
 //
@@ -107,20 +129,23 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 	}()
 
 	var pend []byte
-	// drain empties pend as far as the decoder will take it. final is the
-	// last-chance pass: it withdraws the split-paste-marker grace, and is
-	// only ever true after PasteMarkerGrace timeouts left pend untouched.
-	drain := func(idle, final bool) {
+	// drain empties pend as far as the decoder will take it, under one of
+	// three deadlines. ONE parameter and not two bools: `idle` and
+	// `final` were independent, which made `drain(false, true)` — "more
+	// bytes may still arrive, and also nothing is ever coming" —
+	// representable and meaningless. Raised in review of #445; input's
+	// own `deadline` is the same three values for the same reason.
+	drain := func(d drainDeadline) {
 		for len(pend) > 0 {
 			var (
 				ev input.Event
 				n  int
 				ok bool
 			)
-			if final {
+			if d == drainFinal {
 				ev, n, ok = input.DecodeFinal(pend)
 			} else {
-				ev, n, ok = input.Decode(pend, idle)
+				ev, n, ok = input.Decode(pend, d == drainIdle)
 			}
 			if n == 0 && !ok {
 				// Incomplete: wait for more bytes. Safe to return only
@@ -149,7 +174,7 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 	// saying nothing and the decoder can do nothing with what it has.
 	stalls := 0
 	for {
-		drain(false, false)
+		drain(drainLive)
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
@@ -167,8 +192,11 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 		case c, ok := <-chunks:
 			if !ok {
 				// The tty is gone: no byte is coming, ever. That is the
-				// strongest form of the deadline there is.
-				drain(true, true)
+				// strongest form of the deadline there is, and it is
+				// reached with ZERO timeouts elapsed — which is why the
+				// last-chance pass is defined by "nothing more can
+				// arrive" rather than by a stall count.
+				drain(drainFinal)
 				return
 			}
 			pend = append(pend, c...)
@@ -176,7 +204,11 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 		case <-timer.C:
 			stalls++
 			before := len(pend)
-			drain(true, stalls >= PasteMarkerGrace)
+			d := drainIdle
+			if stalls >= PasteMarkerGrace {
+				d = drainFinal
+			}
+			drain(d)
 			if len(pend) != before {
 				stalls = 0
 			}

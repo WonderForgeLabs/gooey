@@ -162,6 +162,62 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 	}
 }
 
+// The OTHER route to the last-chance pass, and the one whose deadline is
+// not a clock at all.
+//
+// DecodeEvents reaches drainFinal two ways: the stall path, on the
+// PasteMarkerGrace'th fruitless timeout, and this one — the tty closed,
+// so no byte can ever arrive regardless of how little time has passed.
+// Writing that precondition as "after N timeouts" (which an earlier
+// draft did) is false here and would send a reader hunting for a bug.
+//
+// Without this test the tty-close arm could quietly drop to drainIdle and
+// nothing would notice: the mutation is invisible to every other test in
+// the tree, because they all reach the final pass through the timer.
+// What is lost is the last keystrokes a user typed before the terminal
+// went away. Added in review of #445.
+func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	evs := s.Events(16)
+
+	// ONE write carrying a handshake byte and then the held prefix, and
+	// the handshake is what makes this deterministic rather than a race.
+	// Closing the master can discard bytes the slave has not read yet, so
+	// "write, then close" alone loses the prefix on most runs and the
+	// test measures nothing. Reading the 'b' back proves the decoder
+	// consumed that read, which means ESC [ 2 is in pend right now.
+	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
+		t.Fatalf("got %#v, want the 'b' we typed", ev)
+	}
+
+	// Now the tty goes away, well inside the grace window — so the TIMER
+	// route to the final pass is not what can resolve this.
+	if err := master.Close(); err != nil {
+		t.Fatalf("close master: %v", err)
+	}
+
+	if ev := next(t, evs, "the decoder discarded the Esc it was holding when the "+
+		"tty closed. A closed tty is the strongest deadline there is — nothing "+
+		"can arrive — so a held prefix must resolve on the way out rather than "+
+		"leave with it"); !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		t.Fatalf("first event after the tty closed was %#v, want the Esc key", ev)
+	}
+	for _, want := range []rune{'[', '2'} {
+		ev := next(t, evs, "the bytes after the Esc were dropped on teardown")
+		if !ev.IsKey() || ev.Key.Rune != want {
+			t.Fatalf("got %#v, want the %q key", ev, want)
+		}
+	}
+}
+
 func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
 	t.Helper()
 	select {
