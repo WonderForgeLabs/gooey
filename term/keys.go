@@ -13,6 +13,30 @@ import (
 // escape sequence before it is reported as the Esc key.
 const EscTimeout = 40 * time.Millisecond
 
+// PasteMarkerGrace is how many CONSECUTIVE escape timeouts a buffer that
+// looks like half a bracketed-paste marker gets before the decoder gives
+// up on it and reads it as the Esc key the user actually pressed. It is
+// one number in one place because it is a trade with a loser either way,
+// and both halves belong beside it.
+//
+// ESC [ 2 is a strict prefix of ESC [ 200 ~ AND three keys a person can
+// type. input.Decode holds it rather than resolving it, on the reasoning
+// that the rest of a real marker is already on the wire — true for a
+// paste, false for the typing, and in the typing case the hold is
+// permanent: the Esc is never delivered, the next keystroke is absorbed
+// into the CSI parse, and the loop below re-arms its timer every 40ms
+// for the rest of the process's life (#440).
+//
+// TWO, so the window is 80ms. Lower is not available — one is what
+// "idle" already means, and the grace would not exist. Higher buys a
+// paste marker split across a slower link at the price of the Esc key
+// taking that long to arrive, and of the deaf window being that much
+// wider if something new lands in this shape. What is NOT on this scale
+// is an open paste (marker complete, payload's end not yet arrived):
+// that waits forever by design, because delivering it early truncates
+// the paste silently. See input.DecodeFinal.
+const PasteMarkerGrace = 2
+
 // recoverable reports whether a tty read error is one the decoder should
 // retry rather than treat as the end of terminal input.
 //
@@ -76,17 +100,32 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 	}()
 
 	var pend []byte
-	drain := func(idle bool) {
+	// drain empties pend as far as the decoder will take it. final is the
+	// last-chance pass: it withdraws the split-paste-marker grace, and is
+	// only ever true after PasteMarkerGrace timeouts left pend untouched.
+	drain := func(idle, final bool) {
 		for len(pend) > 0 {
-			ev, n, ok := input.Decode(pend, idle)
+			var (
+				ev input.Event
+				n  int
+				ok bool
+			)
+			if final {
+				ev, n, ok = input.DecodeFinal(pend)
+			} else {
+				ev, n, ok = input.Decode(pend, idle)
+			}
 			if n == 0 && !ok {
 				// Incomplete: wait for more bytes. Safe to return only
-				// because input.Decode answers this way under idle for
+				// because the decoder answers this way under idle for
 				// ONE input — an incomplete bracketed paste, where the
 				// terminal is mid-write and the next byte resolves it.
 				// See input.Decode's doc comment. For anything else,
 				// pend would strand here forever and the app would go
 				// permanently deaf while still painting.
+				//
+				// Under final even that shrinks to an OPEN paste, whose
+				// wedge is deliberate (input.DecodeFinal says why).
 				return
 			}
 			pend = pend[n:]
@@ -97,26 +136,43 @@ func DecodeEvents(s *Screen, out chan<- input.Event) {
 	}
 	timer := time.NewTimer(EscTimeout)
 	defer timer.Stop()
+	// stalls counts CONSECUTIVE escape timeouts that left pend exactly as
+	// they found it. Any byte read, and any byte consumed, is progress and
+	// resets it — so the count only ever grows while the terminal is
+	// saying nothing and the decoder can do nothing with what it has.
+	stalls := 0
 	for {
-		drain(false)
+		drain(false, false)
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
 			default:
 			}
 		}
-		if len(pend) > 0 {
+		// Re-arm only while a timeout could still change something. Once
+		// the last-chance pass has run and pend survived it, nothing but
+		// a new byte can, and re-arming on a buffer no deadline can move
+		// is the 40ms-forever wakeup #440 reported.
+		if len(pend) > 0 && stalls < PasteMarkerGrace {
 			timer.Reset(EscTimeout)
 		}
 		select {
 		case c, ok := <-chunks:
 			if !ok {
-				drain(true)
+				// The tty is gone: no byte is coming, ever. That is the
+				// strongest form of the deadline there is.
+				drain(true, true)
 				return
 			}
 			pend = append(pend, c...)
+			stalls = 0
 		case <-timer.C:
-			drain(true)
+			stalls++
+			before := len(pend)
+			drain(true, stalls >= PasteMarkerGrace)
+			if len(pend) != before {
+				stalls = 0
+			}
 		}
 	}
 }

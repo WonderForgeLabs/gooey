@@ -74,6 +74,95 @@ func TestEscBeforeAMouseReportDoesNotStrandTheDecoder(t *testing.T) {
 	}
 }
 
+// The SECOND way to go deaf without dying, and the one that also burns a
+// wakeup every 40ms while it does it.
+//
+// ESC [ 2 is a strict prefix of the bracketed-paste marker ESC [ 200 ~,
+// so input.Decode holds it under idle rather than resolving it to Esc —
+// on the reasoning that the rest of a real marker is already on the wire.
+// That reasoning covers a paste and not a PERSON, and a person pressing
+// Escape and then typing `[` and `2` produces the same three bytes with
+// nothing behind them. The buffer then never shrinks, so DecodeEvents
+// re-arms its escape timer on every iteration for the rest of the
+// process's life, and the next unrelated keystroke is appended behind
+// the prefix and absorbed into the CSI parse — ESC [ 2 z is one unmapped
+// four-byte sequence and no event at all.
+//
+// PasteMarkerGrace is the fix: the grace is bounded rather than removed,
+// and the pass after it withdraws the exception (input.DecodeFinal).
+// Here rather than in input for the reason the test above gives — only
+// the loop can show that a decoding contract stranding live input, and
+// only a real tty makes the loop the thing under test. In particular the
+// GAP is the fixture: these bytes have to arrive in their own read and
+// then nothing for two timeouts, which is exactly what a keyboard does
+// and what a single Write in one test cannot fake.
+func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	evs := s.Events(16)
+
+	if _, err := master.Write([]byte("a")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'a' {
+		t.Fatalf("got %#v, want the 'a' we typed", ev)
+	}
+
+	if _, err := master.Write([]byte("\x1b[2")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	// Longer than PasteMarkerGrace timeouts, and generously so: the
+	// assertion is about what happens AFTER the grace expires, and a
+	// margin here cannot make a broken decoder pass.
+	time.Sleep((PasteMarkerGrace + 2) * EscTimeout)
+	if _, err := master.Write([]byte("z")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+
+	// Esc first — the key the user actually pressed, which the grace
+	// swallowed — then the two bytes they typed after it as themselves,
+	// then the keystroke that proves the buffer drained.
+	var got []rune
+	sawEsc := false
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-evs:
+			if !ev.IsKey() {
+				continue
+			}
+			if ev.Key.Key == input.KeyEsc {
+				sawEsc = true
+				continue
+			}
+			got = append(got, ev.Key.Rune)
+			if ev.Key.Rune == 'z' {
+				if !sawEsc {
+					t.Errorf("the 'z' arrived but the Esc never did: the key that "+
+						"started the sequence was consumed by the paste grace "+
+						"instead of being delivered when it expired (saw %q)", string(got))
+				}
+				if string(got) != "[2z" {
+					t.Errorf("keys after the Esc were %q, want \"[2z\" — the bytes "+
+						"the user typed must arrive as themselves, not be "+
+						"swallowed with the escape", string(got))
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatalf("the 'z' typed after ESC [ 2 never arrived (saw esc=%v, keys %q): "+
+				"the decoder is alive and reading the tty, and every keystroke is "+
+				"stranded behind three bytes its drain loop refuses to advance past. "+
+				"DecoderDone cannot see this — the goroutine never returns.",
+				sawEsc, string(got))
+		}
+	}
+}
+
 func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
 	t.Helper()
 	select {
