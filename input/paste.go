@@ -82,9 +82,18 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 //
 // What waiting costs, stated as plainly as the wedge above: a genuinely
 // truncated CSI — an F9 whose "~" never arrives — is held instead of
-// being delivered as Esc. It is not stranded, because the next byte from
-// the terminal resolves it either way, and a sequence that stopped
-// mid-flight was never going to be the key the user pressed.
+// being delivered as Esc.
+//
+// THAT COST WAS UNDERSTATED HERE, and the sentence that follows replaces
+// one claiming the hold "is not stranded, because the next byte from the
+// terminal resolves it either way". There is a case with no next byte:
+// ESC [ 2 is not only half a marker, it is Esc, `[`, `2` typed by a
+// person, and nothing more is coming. The hold was then permanent — no
+// Esc, the following keystroke swallowed into the CSI parse, and the
+// decoder waking every 40ms for the life of the process (#440). The wait
+// is now bounded at term.PasteMarkerGrace consecutive timeouts, after
+// which DecodeFinal withdraws this exception. An OPEN paste is still not
+// on that scale, for the reason above.
 func splitPasteMarker(b []byte) bool {
 	if len(b) < 3 {
 		return false

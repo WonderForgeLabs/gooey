@@ -51,13 +51,70 @@ import (
 // every 1- and 2-byte input, which is also exactly the range the paste
 // exception stays out of. If you are changing a `return` in decodeCSI,
 // decodeEsc or decodeX10Mouse, that test is the one to run.
+//
+// THE EXCEPTION IS TIME-LIMITED, and DecodeFinal is how a caller says
+// the time is up. See its doc for the case that made it necessary.
 func Decode(b []byte, idle bool) (Event, int, bool) {
+	if idle {
+		return decode(b, idled)
+	}
+	return decode(b, live)
+}
+
+// DecodeFinal is Decode with the split-paste-marker exception WITHDRAWN:
+// the caller is asserting that not one but two escape timeouts have gone
+// by with the buffer unchanged, so "the terminal is mid-write" — the
+// entire justification for that exception — is no longer available.
+//
+// The case it exists for is not a paste. It is a user pressing Esc and
+// then typing `[`, `2`. Those three bytes are a strict prefix of
+// ESC [ 200 ~, so splitPasteMarker claims them and Decode answers
+// (0, false) under idle forever: the Esc is never delivered, the next
+// unrelated keystroke is absorbed into the CSI parse (ESC [ 2 a is one
+// unmapped CSI, four bytes, no event at all), and DecodeEvents re-arms
+// its 40ms timer on every iteration for the rest of the process's life
+// because pend never shrinks. Reported as #440, found in the seventh
+// review of #425.
+//
+// What it does NOT withdraw is decodePaste's wedge — an OPEN paste,
+// ESC [ 200 ~ complete with a payload whose end marker has not arrived,
+// still waits. That is a different exception with a different reason
+// (delivering the prefix silently truncates the paste, and a user who
+// pastes 40KB and gets 8KB has no way to tell), and it is deliberate.
+// So DecodeFinal's liveness is "progress on everything except an open
+// paste", not an absolute — stating the exception rather than the
+// absolute is the lesson Decode's own comment above records.
+//
+// The residual risk, stated rather than waved at: a genuine paste marker
+// split across reads MORE than two escape timeouts apart resolves to Esc
+// and its payload arrives as keystrokes, which is #419's symptom. The
+// grace period is term.PasteMarkerGrace, named there so the trade is one
+// number in one place; going deaf forever is the worse half of it.
+func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, final) }
+
+// deadline is how much of the terminal's benefit of the doubt is left.
+// Internal on purpose: Decode's public signature stays a bool, so no
+// caller and no test moves for this.
+type deadline uint8
+
+const (
+	live  deadline = iota // bytes may still be arriving
+	idled                 // none arrived within the escape timeout
+	final                 // nor within a second one: nothing more is coming
+)
+
+// idle reports whether the escape timeout has fired at least once, which
+// is the only question every arm but the paste one asks.
+func (d deadline) idle() bool { return d != live }
+
+func decode(b []byte, d deadline) (Event, int, bool) {
+	idle := d.idle()
 	if len(b) == 0 {
 		return Event{}, 0, false
 	}
 	switch c := b[0]; {
 	case c == 0x1b:
-		return decodeEsc(b, idle)
+		return decodeEsc(b, d)
 	case c == '\r' || c == '\n':
 		return KeyOf(Named(KeyEnter)), 1, true
 	case c == '\t':
@@ -100,7 +157,8 @@ func Decode(b []byte, idle bool) (Event, int, bool) {
 	}
 }
 
-func decodeEsc(b []byte, idle bool) (Event, int, bool) {
+func decodeEsc(b []byte, d deadline) (Event, int, bool) {
+	idle := d.idle()
 	if len(b) == 1 {
 		if idle {
 			return KeyOf(Named(KeyEsc)), 1, true
@@ -109,7 +167,7 @@ func decodeEsc(b []byte, idle bool) (Event, int, bool) {
 	}
 	switch b[1] {
 	case '[':
-		return decodeCSI(b, idle)
+		return decodeCSI(b, d)
 	case 'O':
 		// SS3: application cursor keys (ESC O A … ESC O F).
 		if len(b) < 3 {
@@ -124,7 +182,7 @@ func decodeEsc(b []byte, idle bool) (Event, int, bool) {
 		return KeyOf(Named(KeyEsc)), 1, true
 	default:
 		// ESC + key in the same read is alt+key.
-		ev, n, ok := Decode(b[1:], idle)
+		ev, n, ok := decode(b[1:], d)
 		if ok && ev.IsKey() {
 			ev.Key.Mods |= ModAlt
 			return ev, n + 1, true
@@ -156,7 +214,8 @@ func decodeEsc(b []byte, idle bool) (Event, int, bool) {
 
 // decodeCSI parses ESC [ params intermediates final, where params are
 // 0x30–0x3f, intermediates 0x20–0x2f and the final byte 0x40–0x7e.
-func decodeCSI(b []byte, idle bool) (Event, int, bool) {
+func decodeCSI(b []byte, d deadline) (Event, int, bool) {
+	idle := d.idle()
 	i := 2
 	for i < len(b) && b[i] >= 0x20 && b[i] < 0x40 {
 		i++
@@ -174,7 +233,16 @@ func decodeCSI(b []byte, idle bool) (Event, int, bool) {
 		// stall inside six bytes is all it takes, and what the user gets
 		// is the burst that mode 2004 exists to prevent. Found in the
 		// review of #391 (issue #419).
-		if idle && splitPasteMarker(b) {
+		//
+		// `d == idled`, NOT `idle`, and the difference is the whole of
+		// #440. Waiting is only defensible while "the terminal is
+		// mid-write" is still a live possibility; after a SECOND timeout
+		// with the buffer unchanged it is not, and the reading that is
+		// left — a user who pressed Esc and then typed `[`, `2` — has no
+		// rest of the marker on the wire to wait for. Holding on made the
+		// app permanently deaf and re-armed the escape timer every 40ms
+		// forever. See DecodeFinal.
+		if d == idled && splitPasteMarker(b) {
 			return Event{}, 0, false
 		}
 		if idle {
