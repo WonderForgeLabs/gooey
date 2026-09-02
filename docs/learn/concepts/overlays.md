@@ -16,7 +16,8 @@ with `Grid.Row="0"` keeping the bar on the top row.
 
 > **One correction to the paragraph above, and this page has not yet been
 > rewritten around it ([#443](https://github.com/WonderForgeLabs/gooey/issues/443)).**
-> Since [#430](https://github.com/WonderForgeLabs/gooey/issues/430),
+> Since [PR #437](https://github.com/WonderForgeLabs/gooey/pull/437) (which
+> fixed [#430](https://github.com/WonderForgeLabs/gooey/issues/430)),
 > z-order is document order in **two layers**: the ordinary tree, then
 > every subtree whose component implements `gooey.Overlay`, lifted to the
 > end of the paint order wherever it sits in the document. "Declare it

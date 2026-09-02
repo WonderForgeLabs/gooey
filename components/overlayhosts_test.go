@@ -128,7 +128,8 @@ func TestADismissedToastUncoversTheOpenPopup(t *testing.T) {
 //
 // A ValidationMarker rather than a Tooltip, and that is forced rather
 // than chosen: Popup.Open takes pointer capture unconditionally
-// (components/popup.go:120, not only when Modal), so the hover that
+// (Popup.Open calls mgr.CaptureMouse unconditionally — not only when
+// Modal), so the hover that
 // raised a tip is out the moment any dropdown opens and Tooltip.IsShown
 // goes false. The overlap this test needs cannot be built out of a
 // tooltip at all. A marker is the PERSISTENT customer — up for as long

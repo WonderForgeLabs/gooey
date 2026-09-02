@@ -118,7 +118,7 @@ strand the toast's cells on screen after it expired.
 
 A `ValidationMarker` rather than a `Tooltip` for the layer's pin, and that is
 forced rather than chosen. `Popup.Open` takes pointer capture unconditionally
-(`components/popup.go:120` — not only when `Modal`), so the hover that raised a
+(`Popup.Open` calls `mgr.CaptureMouse` — not only when `Modal`), so the hover that raised a
 tip is out the moment any dropdown opens and `Tooltip.IsShown` goes false. The
 overlap the test needs cannot be built out of a tooltip at all. The marker is
 the persistent customer, and the one the bug hurts most.
@@ -170,6 +170,35 @@ the two PRs rather than inside either:
   reader the correct model, so it gets a pointer now and its rewrite still
   belongs to #443.
 
-The criterion those four share, and the reason they were not left: they are Go
-doc comments and demo markup rather than `docs/**`, so "the doc sweep" may not
+The criterion those share, and the reason they were not left: they are Go doc
+comments and demo markup rather than `docs/**`, so "the doc sweep" may not
 cover them at all.
+
+**The sweep took three passes, and each miss had the same cause: the search was
+narrower than the criterion.** Worth writing down, because the criterion was
+right each time and the grep was not.
+
+1. First pass read around the change and swept the package being edited. It
+   missed everything outside `components/`.
+2. Second pass grepped `'*.go' '*.gooey' README.md` — and piped through
+   `grep -v '_test.go'`, which structurally excluded `menu_test.go`,
+   `dragghost_test.go` and `popup_test.go`. A test's doc comment teaches a
+   reader exactly as a source file's does, and `popup_test.go`'s was the
+   fixture comment the whole z-order suite is built on.
+3. Third pass dropped the exclusion and added `cmd/browser/browser.gooey`,
+   which had been contradicting `cmd/browser/picker.go` — the file the second
+   pass rewrote — ever since.
+
+The command that finally covered it, with no `-v` filter and no path
+narrowing:
+
+```sh
+git grep -ni 'document order.*z-order\|z-order.*document order' \
+  -- '*.go' '*.gooey' '*.md' ':!vendor'
+```
+
+**Line-number citations were removed rather than corrected.** This PR's own
+doc-comment edit to `popup.go` shifted the line a test and this spec both cited
+as `components/popup.go:120`, so both silently pointed at the wrong statement —
+the failure mode where a citation stays plausible while becoming false. They
+now name `Popup.Open` and `mgr.CaptureMouse` instead, which move with the code.
