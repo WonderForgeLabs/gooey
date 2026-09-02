@@ -209,8 +209,9 @@
             <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a surface that is its last child, and a dismissal grammar: esc or an outside press</Text>
             <Text Grid.Row="4" Style="dim">picking one sets the same property the ColorPicker on the visual tab edits</Text>
             <!-- Declared LAST in this page for the reason every overlay
-                 is: document order is z-order, and the dropped list has
-                 to paint above the rows it covers. -->
+                 is: the popup surface is a gooey.Overlay, so it paints
+                 in the layer above the page, and declaration order is
+                 what ranks it against the page's other overlays. -->
             <HStack Grid.Row="5" Gap="3" VAlign="Start">
               <Text Style="dim" VAlign="Center">accent preset</Text>
               <ColorPreset Name="Presets" Selected="{{.Preset}}" Changed="{{.PresetChanged}}"/>

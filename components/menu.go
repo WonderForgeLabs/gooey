@@ -108,11 +108,14 @@ func (m Menu) checkBox(it MenuItem) string {
 // docs/specs/2026-08-30-overlay-layer.md.
 //
 // Declaring the MenuBar as the LAST child of its container is still the
-// advice — it is what orders the bar against the page's OTHER overlays,
-// the ToastHost and the AdornmentLayer (#439) — and positioning it onto
-// the top row stays independent of that (in a Grid, element order and
-// Grid.Row are separate, which is exactly what this needs). The dropdown
-// is a child of the bar arranged BELOW the bar's own bounds, and the
+// advice, for a reason one step removed from the bar: the BAR is not an
+// overlay, its dropdown surface is. Declaring the bar late puts that
+// surface late in document order, which is what decides its position
+// among the page's other overlays — a ToastHost and an AdornmentLayer
+// declared after it paint above the open dropdown (#439). Positioning
+// stays independent of all of it (in a Grid, element order and Grid.Row
+// are separate, which is exactly what this needs). The dropdown is a
+// child of the bar arranged BELOW the bar's own bounds, and the
 // Composer's restore pass repaints what it covered when the menu closes
 // or moves.
 //

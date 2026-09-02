@@ -39,12 +39,15 @@
     <KeyBinding Gesture="ctrl+s" Command="{{.Start}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
 
-    <!-- Overlays are declared LAST because document order is z-order:
-         a later sibling paints above what it covers. Grid.Row still
-         places the bar on the top row — element order and layout
-         position are independent, which is exactly what an overlay
-         needs. The AdornmentLayer comes after the ToastHost so tips
-         paint above even the toasts. -->
+    <!-- Overlays paint in a LAYER above the page — the MenuBar's
+         dropdown surface, the ToastHost and the AdornmentLayer all
+         implement gooey.Overlay — so where they sit in the document
+         does not decide whether they cover the page. Declaring them
+         LAST is what ranks them against EACH OTHER: the AdornmentLayer
+         comes after the ToastHost, so tips paint above even the toasts.
+         Grid.Row still places the bar on the top row — element order and
+         layout position are independent, which is exactly what an
+         overlay needs. -->
     <MenuBar Grid.Row="0" Style="accent">
       <Menu Title="_Job">
         <MenuItem Text="Re_start" Gesture="ctrl+s" Command="{{.Start}}"/>

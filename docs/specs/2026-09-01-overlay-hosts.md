@@ -83,10 +83,24 @@ and would starve every click if they were not — and so is every adornment the
 framework hosts in the layer: `tipPopup`, `markerPopup`, `DragGhost`. Toasts
 are not interactive either. There is no press for the walk to misroute.
 
+**The exemption is narrower than the layer, and the gap is a public one.**
+`AdornmentLayer.Add` is exported and `Adornment` requires only
+`gooey.Component`, `Anchor` and `Place` — not `HitTestTransparent`. So an
+adornment somebody else writes inherits this paint order and does **not**
+inherit the exemption: it paints above the page while `FocusManager.HitTest`,
+still walking document order, hands its presses to whatever ordinary component
+sits under those cells. The interface omits the requirement deliberately —
+"what should the pointer do here" is the adornment's policy, and the
+framework's own three are decoration — so the answer for an interactive
+adorner is its own routing via pointer capture, the way `Popup` does it. Both
+`Add` and `OverlaysPage` say so at the extension point, which is where someone
+hits it. Raised in review of [PR #444](https://github.com/WonderForgeLabs/gooey/pull/444).
+
 The first **interactive** overlay is what makes teaching `HitTest` the same two
-layers compulsory. This change does not create that adopter; it does make the
-inheritance clause in `orderPaint` carry real subtrees for the first time, since
-both hosts are containers.
+layers compulsory, and the paragraph above is the reason that adopter can now
+arrive from outside this repo rather than only from inside it. This change does
+not create one; it does make the inheritance clause in `orderPaint` carry real
+subtrees for the first time, since both hosts are containers.
 
 ## Verification
 
@@ -143,7 +157,13 @@ the two PRs rather than inside either:
 - `components/popup.go`'s *"(LAST, because document order is z-order)"* gives
   the demoted reason for a surface that has implemented `Overlay` since #437.
 - `cmd/toolkit/toolkit.gooey` said it **on screen**, in the flagship demo's
-  overlays tab, and again in a markup comment.
+  overlays tab, and twice more in markup comments.
+- `apps/wysiwyg/wysiwyg.gooey` and `apps/wysiwyg/statusaddr.go` said it for
+  the MenuBar and the status-bar address popup, and `README.md`'s feature
+  table said it for `MenuBar` and `ToastHost` together. These four came from
+  a second pass over the criterion below rather than the first: having set
+  "Go doc comments and demo markup" as the line, the first pass then only
+  swept the package being edited. Raised in review of PR #444.
 - `docs/learn/concepts/overlays.md` is the page a reader lands on to answer
   "how does z-order work here" and mentioned neither layer nor marker. It does
   not read as imprecise, it reads as complete — the one deferral that costs a

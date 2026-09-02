@@ -144,6 +144,21 @@ func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 
 // Add puts an adornment up. UI goroutine only, like everything that
 // reaches the tree; it appears on the next frame, positioned by Place.
+//
+// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE AND IS STILL HIT-TESTED
+// WHERE IT WAS DECLARED. The layer implements gooey.Overlay, and overlay
+// membership is inherited, so your adornment paints above every ordinary
+// node — but that marker moves paint only. FocusManager.HitTest walks document
+// order and knows nothing about it, so a press over your adornment goes
+// to whatever ordinary component is under those cells.
+//
+// The framework's own three adorners sidestep this by being
+// HitTestTransparent (they are decoration: a tooltip, a validation
+// message, a drag ghost), and the Adornment interface deliberately does
+// not require it, because "what should the pointer do here" is the
+// adornment's policy. So an INTERACTIVE adorner needs its own routing —
+// pointer capture, the way Popup does it — until the hit-test walk
+// learns the two layers. Named in review of #444.
 func (l *AdornmentLayer) Add(a Adornment) {
 	l.adorns = append(l.adorns, a)
 	if l.structure != nil {
@@ -257,12 +272,19 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
 
 // OverlaysPage puts the layer — and every adornment in it, since overlay
-// membership is inherited down the subtree — in the overlay layer. The
-// marker moves paint and not input, and that gap does not reach here:
-// this layer is HitTestTransparent, and so is every adornment the
-// framework hosts in it (tipPopup, markerPopup, DragGhost). An
-// INTERACTIVE adornment would be the first thing to need the hit-test
-// walk taught the same two layers. See gooey.Overlay, and #439.
+// membership is inherited down the subtree — in the overlay layer.
+//
+// The marker moves paint and NOT input, and the exemption that makes
+// that safe is narrower than the layer is. It covers the layer itself
+// (HitTestTransparent, just below) and the three adornments the
+// FRAMEWORK hosts: tipPopup, markerPopup and DragGhost, all three
+// HitTestTransparent too. It does not and cannot cover an adornment
+// somebody else writes: Adornment requires only gooey.Component, Anchor
+// and Place, so a custom adorner added through Add inherits this paint
+// order while FocusManager.HitTest goes on walking document order and
+// hands its presses to whatever sits under it. See Add. Raised in
+// review of #444; the underlying gap is gooey.Overlay's, and closing it
+// means teaching the hit-test walk the same two layers.
 func (l *AdornmentLayer) OverlaysPage() {}
 
 // attachAdornment is the attach half both AdornmentLayer customers share:
