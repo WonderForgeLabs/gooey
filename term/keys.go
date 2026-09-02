@@ -13,11 +13,17 @@ import (
 // escape sequence before it is reported as the Esc key.
 const EscTimeout = 40 * time.Millisecond
 
-// PasteMarkerGrace is how many CONSECUTIVE escape timeouts a buffer that
-// looks like half a bracketed-paste marker gets before the decoder gives
-// up on it and reads it as the Esc key the user actually pressed. It is
-// one number in one place because it is a trade with a loser either way,
-// and both halves belong beside it.
+// PasteMarkerGrace names WHICH consecutive escape timeout resolves a
+// buffer that looks like half a bracketed-paste marker — reading it as
+// the Esc key the user actually pressed. The buffer is held through
+// PasteMarkerGrace-1 timeouts and resolved ON the PasteMarkerGrace'th:
+// the loop below does `stalls++` and then
+// `drain(true, stalls >= PasteMarkerGrace)`, so at 2 the buffer survives
+// exactly ONE timeout. (This comment used to say "how many timeouts it
+// gets before the decoder gives up", which is one more than the loop
+// grants; someone raising it to 3 to buy one extra grace period would
+// have got two.) It is one number in one place because it is a trade
+// with a loser either way, and both halves belong beside it.
 //
 // ESC [ 2 is a strict prefix of ESC [ 200 ~ AND three keys a person can
 // type. input.Decode holds it rather than resolving it, on the reasoning
@@ -27,7 +33,8 @@ const EscTimeout = 40 * time.Millisecond
 // into the CSI parse, and the loop below re-arms its timer every 40ms
 // for the rest of the process's life (#440).
 //
-// TWO, so the window is 80ms. Lower is not available — one is what
+// TWO, so the buffer survives one timeout and the window is 80ms. Lower
+// is not available — at one the FIRST timeout resolves, which is what
 // "idle" already means, and the grace would not exist. Higher buys a
 // paste marker split across a slower link at the price of the Esc key
 // taking that long to arrive, and of the deaf window being that much

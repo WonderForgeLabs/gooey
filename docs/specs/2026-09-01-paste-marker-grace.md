@@ -100,10 +100,20 @@ into doing so.
 `term.PasteMarkerGrace = 2`, so the window is 80ms, and it is named because it
 is a trade with a loser either way rather than a tuning constant.
 
-Lower is not available: one is what `idle` already means, and the grace would
-not exist. Higher buys a marker split across a slower link, at the price of the
-Esc key taking that long to arrive and of the deaf window being that much wider
-if something new ever lands in this shape.
+It names **which** timeout resolves the buffer, not how many the buffer
+survives — the loop does `stalls++` and then
+`drain(true, stalls >= PasteMarkerGrace)`, so at 2 the buffer is held through
+exactly **one** timeout and resolved **on** the second. Worth stating precisely
+because it is off by one from the natural reading: someone raising it to 3 to
+buy one more grace period gets two. (Raised in review of
+[PR #445](https://github.com/WonderForgeLabs/gooey/pull/445), where the
+constant's own doc comment had the looser phrasing.)
+
+Lower is not available: at 1 the FIRST timeout resolves, which is what `idle`
+already means, and the grace would not exist. Higher buys a marker split across
+a slower link, at the price of the Esc key taking that long to arrive and of
+the deaf window being that much wider if something new ever lands in this
+shape.
 
 The residual risk, stated rather than waved at: a genuine marker split across
 reads **more than two escape timeouts apart** resolves to Esc and its payload
@@ -134,10 +144,21 @@ red:
 
 | mutation | what goes red |
 |---|---|
-| the grace is never withdrawn (`d == idled` → `idle`) | `TestFinalDecodeResolvesTheTypedMarkerPrefix`, `TestFinalDecodeWaitsForNothingButAnOpenPaste`, and the term strand test |
-| `DecodeFinal` becomes a synonym for `Decode(b, true)` | the same three |
+| the grace is never withdrawn (`d == idled` → `idle`) | `TestFinalDecodeResolvesTheTypedMarkerPrefix`, `TestFinalDecodeMakesProgressOnNestedEscapes`, `TestFinalDecodeHoldsNoMarkerPrefix`, and the term strand test |
+| `DecodeFinal` becomes a synonym for `Decode(b, true)` | the same four |
 | the loop never escalates to the final pass | the term strand test alone |
 | the stall counter resets on every timeout instead of counting | the term strand test alone |
+| the timer is re-armed unconditionally | **nothing** — the honest result, and the one the section above predicts |
+
+The mutation harness itself has to be watched, and this one caught it out. The
+targets must carry their leading TABS so they can only match a statement: the
+doc comment on `PasteMarkerGrace` now quotes the escalation line verbatim, and
+a bare substring replace hit the COMMENT and left the code intact — reporting
+"the loop never escalates" as a mutation no test caught, when in fact no
+mutation had happened. A harness that silently mutates nothing grades every
+test as a passing pin. The tell was the timing: 81ms to the Esc, which is two
+escape timeouts, i.e. exactly the behaviour the mutation was supposed to have
+removed.
 
 The split is deliberate: the `input` tests cannot see whether the *loop* ever
 asks for the final pass, and the `term` test cannot see which byte sequences the
@@ -155,6 +176,34 @@ the thing under test. Here the **gap is the fixture** — the three bytes must
 arrive in their own read with nothing after them for two timeouts, which is what
 a keyboard does and what no single `Write` can fake.
 
-`TestFinalDecodeMakesProgressOnNestedEscapes` extends the existing alphabet
-sweep to **five** bytes, because three to five is exactly the range
-`splitPasteMarker` covers and the old sweep stopped at four.
+It **waits for the Esc rather than sleeping past the grace**, and that is a
+correctness fix rather than a tidy-up. Sleeping cannot make a broken decoder
+pass, but it can make a working one fail: if the decoder goroutine is delayed
+past the sleep, the trailing `z` lands before the second timeout, `stalls`
+resets, and `ESC [ 2 z` decodes as one complete unmapped four-byte CSI emitting
+nothing — so the test fails at its deadline with the message for the bug under
+test, and a scheduling flake on a shared runner reads as a regression. Waiting
+on the channel removes the timing dependency and pins the ORDERING as well as
+the outcome, since the Esc arriving is itself the proof that the grace expired
+with no new input. Raised in review of #445; measured at 81ms to the Esc, which
+is the two timeouts, and stable at `-count=20` and at `-count=10 -cpu=1`.
+
+`TestFinalDecodeMakesProgressOnNestedEscapes` extends the existing sweep in
+**two** directions, and the second was missing in the first draft of this
+change. Length: three to five is exactly the range `splitPasteMarker` covers
+and the old sweep stopped at four. **Alphabet:** the inherited one contains no
+`'2'`, and every strict prefix of `\x1b[200~` / `\x1b[201~` needs a `'2'` at
+index 2 — so `splitPasteMarker` returned true for **zero** of the sweep's
+~1.1M inputs and the grace arm was unreachable at any length.
+
+That is worth recording rather than quietly fixing, because it is the same
+defect this record diagnoses one paragraph above — a fixture that cannot
+express the bug — reproduced by the fix for it. Extending the length moved the
+walk across the right range while leaving it unable to build anything in that
+range, and the test's own comment claimed the coverage. Measured in review of
+[PR #445](https://github.com/WonderForgeLabs/gooey/pull/445): 0 hits before,
+4 after, at a cost of 16⁵ → 17⁵.
+
+The lesson generalizes past this file: when a sweep is widened to cover a new
+rule, check that its ALPHABET can spell the rule's inputs, not only that its
+lengths reach them.

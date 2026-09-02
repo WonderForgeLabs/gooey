@@ -845,9 +845,11 @@ are genuinely I/O: reading the tty in a goroutine, and the 40 ms
 `EscTimeout` that settles the classic ambiguity — a lone ESC and the
 first byte of an escape sequence are the same byte, and only the absence
 of a follow-up within the timeout proves the user meant the Esc key. It
-counts those timeouts: after `term.PasteMarkerGrace` of them with the
-buffer untouched it drains through `DecodeFinal` instead, which is what
-keeps a typed `ESC [ 2` from deafening the app forever.
+counts those timeouts: the `term.PasteMarkerGrace`'th consecutive one
+that leaves the buffer untouched drains through `DecodeFinal` instead of
+`Decode` — so at the shipped value of 2 the buffer survives one timeout
+and is resolved on the second, which is what keeps a typed `ESC [ 2`
+from deafening the app forever.
 `input.ParseGesture` is the third leg: it parses the markup gesture
 syntax (`"ctrl+s"`, `"shift+tab"`, `"j"`, `"esc"`) into a `KeyEvent`,
 and because `KeyEvent` is comparable, gesture matching is `==`.

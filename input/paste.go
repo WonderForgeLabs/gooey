@@ -48,27 +48,6 @@ func PasteOf(p PasteEvent) Event { return Event{Kind: EventPaste, Paste: p} }
 
 func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 
-// decodePaste is called from decodeCSI once the opening bracket has been
-// recognised. rest is everything after it, and n is how many bytes the
-// bracket itself took.
-//
-// The one deliberate departure from the rest of this decoder: an
-// unterminated paste keeps WAITING even when idle is true, where a
-// truncated CSI resolves to the Esc key. idle exists to resolve an
-// AMBIGUITY — a lone ESC and the start of a sequence are the same byte —
-// and there is no ambiguity here. ESC [ 200 ~ is six bytes that nothing
-// else spells and that no keyboard can produce, so the only reading is
-// "a paste whose end has not arrived yet", and a large paste crossing
-// many 128-byte reads will routinely take longer than the 40ms escape
-// timeout to complete.
-//
-// The cost of that choice, stated plainly: a terminal that sends an
-// opening bracket and never closes it wedges the decoder, which then
-// holds every subsequent keystroke in the pending buffer. The
-// alternative — giving up after some cap and delivering the prefix — is
-// worse, because it silently TRUNCATES a paste, and a user who pastes
-// 40KB of markup and gets 8KB of it has no way to tell. A wedge is at
-// least visible.
 // splitPasteMarker reports whether b is an incomplete bracket — a strict
 // prefix of one of the two markers, long enough to be nothing else.
 //
@@ -93,7 +72,7 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 // decoder waking every 40ms for the life of the process (#440). The wait
 // is now bounded at term.PasteMarkerGrace consecutive timeouts, after
 // which DecodeFinal withdraws this exception. An OPEN paste is still not
-// on that scale, for the reason above.
+// on that scale, for the reason on decodePaste below.
 func splitPasteMarker(b []byte) bool {
 	if len(b) < 3 {
 		return false
@@ -103,6 +82,33 @@ func splitPasteMarker(b []byte) bool {
 		len(s) < len(pasteStart)
 }
 
+// decodePaste is called from decodeCSI once the opening bracket has been
+// recognised. rest is everything after it, and n is how many bytes the
+// bracket itself took.
+//
+// The one deliberate departure from the rest of this decoder: an
+// unterminated paste keeps WAITING even when idle is true, where a
+// truncated CSI resolves to the Esc key. idle exists to resolve an
+// AMBIGUITY — a lone ESC and the start of a sequence are the same byte —
+// and there is no ambiguity here. ESC [ 200 ~ is six bytes that nothing
+// else spells and that no keyboard can produce, so the only reading is
+// "a paste whose end has not arrived yet", and a large paste crossing
+// many 128-byte reads will routinely take longer than the 40ms escape
+// timeout to complete.
+//
+// It is also the one exception DecodeFinal does NOT withdraw, and this
+// is the reason splitPasteMarker's doc points at. The cost, stated
+// plainly: a terminal that sends an opening bracket and never closes it
+// wedges the decoder, which then holds every subsequent keystroke in the
+// pending buffer. The alternative — giving up after some cap and
+// delivering the prefix — is worse, because it silently TRUNCATES a
+// paste, and a user who pastes 40KB of markup and gets 8KB of it has no
+// way to tell. A wedge is at least visible.
+//
+// These paragraphs used to sit ABOVE splitPasteMarker with no blank
+// comment line between them and its doc, so godoc rendered the whole
+// block as splitPasteMarker's and this function had no doc at all.
+// Noticed in review of #445.
 func decodePaste(rest []byte, n int) (Event, int, bool) {
 	// bytes.Index, NOT strings.Index(string(rest), …), and the
 	// conversion is the whole point rather than a style preference.
