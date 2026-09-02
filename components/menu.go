@@ -92,14 +92,29 @@ func (m Menu) checkBox(it MenuItem) string {
 // MenuBar is the top menu row: titles across one line, and a dropdown
 // overlay below the open title.
 //
-// Z-ORDER: the dropdown must paint above the page content, and in gooey
-// z-order IS document order — so declare the MenuBar as the LAST child
-// of its container, positioned onto the top row (in a Grid, the element
-// order and Grid.Row are independent, which is exactly what this
-// needs). The dropdown is a child of the bar arranged BELOW the bar's
-// own bounds; being late in document order is what puts it above the
-// content it covers, and the Composer's restore pass repaints that
-// content when the menu closes or moves.
+// Z-ORDER: the dropdown must paint above the page content, and what
+// puts it there is that its surface is a gooey.Overlay — a second paint
+// layer above the whole page, lifted out of document order entirely.
+//
+// BEING LATE IS NOT THE MECHANISM, and this comment used to say it was.
+// Document order was the whole story until it turned out not to be one:
+// being the last of the bar's children buys being above the bar's OTHER
+// children, and forcing runs forward only, so anything declared after
+// the BAR painted over the open dropdown with nothing able to put it
+// back. That is #430, reported against this component — a MenuBar on
+// apps/wysiwyg's designer canvas beside a Gauge, an ItemsView and a
+// Border, whose menu painted on the frame that opened it and was erased
+// by the next repaint. Fixed in #437; see gooey.Overlay and
+// docs/specs/2026-08-30-overlay-layer.md.
+//
+// Declaring the MenuBar as the LAST child of its container is still the
+// advice — it is what orders the bar against the page's OTHER overlays,
+// the ToastHost and the AdornmentLayer (#439) — and positioning it onto
+// the top row stays independent of that (in a Grid, element order and
+// Grid.Row are separate, which is exactly what this needs). The dropdown
+// is a child of the bar arranged BELOW the bar's own bounds, and the
+// Composer's restore pass repaints what it covered when the menu closes
+// or moves.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

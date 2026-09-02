@@ -71,25 +71,55 @@ func TestAToastPaintsAboveAnOpenPopup(t *testing.T) {
 // A toast must still UNCOVER the popup when it goes down: the
 // counterweight that stops the fix from being "let nothing paint over a
 // toast's rect", which would strand its cells on screen.
+//
+// This one carries a DAMAGE COUNT and the others do not, which is the
+// line CLAUDE.md draws: the tests above make an ORDERING claim, and a
+// count says nothing about who is on top. This one makes a REPAINT
+// claim — that restoreUnder force-dirtied the node beneath the vacated
+// rect and the forward pass laid it back down — and for that a row read
+// passes just as well when the entire tree repainted.
+//
+// It is also a shape no existing count covers, which is why it cannot
+// borrow one from toast_test.go: this is a restore INSIDE the overlay
+// layer, one lifted node vacating over another, and that path did not
+// exist before this change. Raised in review of #444.
 func TestADismissedToastUncoversTheOpenPopup(t *testing.T) {
 	owner, host, page := toastOverPopupPage()
 	c := gooey.NewComposer(page, 20, 5)
 	c.Focus().SetFocus(owner)
 	c.Frame()
-	c.HandleKey(input.Named(input.KeyEnter))
+	if !c.HandleKey(input.Named(input.KeyEnter)) {
+		t.Fatal("enter on the focused owner was not consumed")
+	}
 	c.Frame()
 
 	toast := host.Show("TOAST")
 	c.Frame()
 	host.Dismiss(toast)
-	c.Frame()
+	_, painted := c.Frame()
 
+	// ONE: the popup surface, forced by the restore sweep over the cells
+	// the toast gave up. Not two — the host owns no cells
+	// (PassesCellsThrough) and the toast has already left the
+	// composition, so neither is a candidate. Not the node count: a fix
+	// that bought the ordering by repainting the tree every frame
+	// satisfies every RowText assertion in this file and reports four
+	// here.
+	if painted != 1 {
+		t.Errorf("dismissing the toast repainted %d components, want 1 (the "+
+			"popup surface the restore pass forces back down). More means "+
+			"the vacated cells were bought with a repaint wider than the "+
+			"rect required", painted)
+	}
 	if !owner.popup().IsOpen() {
 		t.Fatal("the popup closed on its own")
 	}
 	if got := render.RowText(c.Cells(), 1); !strings.HasPrefix(got, "POPUP!") {
 		t.Errorf("row 1 after the toast was dismissed = %q; the popup "+
 			"underneath did not come back", got)
+	}
+	if _, settled := c.Frame(); settled != 0 {
+		t.Errorf("the frame after the dismissal painted %d components, want 0", settled)
 	}
 }
 
@@ -107,12 +137,23 @@ func TestADismissedToastUncoversTheOpenPopup(t *testing.T) {
 // erased by the menu they opened to fix it.
 //
 // The field is empty and Required, so the marker is up from the first
-// frame and floats its message on row 1, across the popup's cells.
+// frame and floats its message on the row BELOW its anchor.
+//
+// Both the field and the popup's owner take the Canvas's default 0,0,
+// and that is load-bearing twice over rather than incidental. The field
+// on row 0 is what puts its marker on row 1; the owner on row 0 is what
+// puts its dropdown on rows 1-2 (toyOwner.Arrange). Row 1 is therefore
+// the one strip of cells both write, which is the only arrangement in
+// which one can be read off the other.
+//
+// The cost of that is a row 0 with two components stacked on it — the
+// owner's rule of '-' and the field over it. Nothing asserts on row 0
+// and nothing needs to; it is noted because a reader debugging a
+// failure here should not have to rediscover it.
 func markerOverPopupPage() (*toyOwner, *ValidationMarker, gooey.Component) {
 	owner := &toyOwner{}
 	name := prop.NewSource("")
 	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required(""))}
-	tb.LayoutProps().Left, tb.LayoutProps().Top = 0, 0
 	m := &ValidationMarker{}
 	tb.Attach(m)
 	page := &Canvas{Children: []gooey.Component{

@@ -124,10 +124,32 @@ and the damage numbers these shapes produce are already pinned by
 [#443](https://github.com/WonderForgeLabs/gooey/issues/443) tracks the doc sweep
 for every site that still teaches "declare it last, document order is z-order"
 as the *mechanism*. That advice remains correct as advice — declaration order is
-still what orders overlays among themselves — so those sites are imprecise
-rather than misleading, and rewriting them is one edit with one reviewer rather
-than a rider on this fix. Reconciled here are only the claims this change makes
-newly false: the two host doc comments, the `ToastHost` and `AdornmentLayer`
-sections of `docs/markup-reference.md`, the hosts sentence in
-`docs/architecture.md`, the comment in `components/menu_live_test.go`, and the
-leaf claim in the #430 spec.
+still what orders overlays among themselves — so most of those sites are
+imprecise rather than misleading, and rewriting them is one edit with one
+reviewer rather than a rider on this fix.
+
+Reconciled here are the claims this change makes newly false — the two host doc
+comments, the `ToastHost` and `AdornmentLayer` sections of
+`docs/markup-reference.md`, the hosts sentence in `docs/architecture.md`, the
+comment in `components/menu_live_test.go`, and the two retired claims in the
+#430 spec — plus four sites the review of
+[PR #444](https://github.com/WonderForgeLabs/gooey/pull/444) argued fall between
+the two PRs rather than inside either:
+
+- `components/menu.go` stated the demoted mechanism as the rule — *"being late
+  in document order is what puts it above the content it covers"* — in the doc
+  comment of the very component #430 was filed against. Same package, two
+  sibling host comments away from this change.
+- `components/popup.go`'s *"(LAST, because document order is z-order)"* gives
+  the demoted reason for a surface that has implemented `Overlay` since #437.
+- `cmd/toolkit/toolkit.gooey` said it **on screen**, in the flagship demo's
+  overlays tab, and again in a markup comment.
+- `docs/learn/concepts/overlays.md` is the page a reader lands on to answer
+  "how does z-order work here" and mentioned neither layer nor marker. It does
+  not read as imprecise, it reads as complete — the one deferral that costs a
+  reader the correct model, so it gets a pointer now and its rewrite still
+  belongs to #443.
+
+The criterion those four share, and the reason they were not left: they are Go
+doc comments and demo markup rather than `docs/**`, so "the doc sweep" may not
+cover them at all.

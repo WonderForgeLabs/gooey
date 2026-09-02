@@ -14,6 +14,24 @@ row" is spellable directly — `cmd/toolkit`'s markup declares its
 `MenuBar`, `ToastHost`, and `AdornmentLayer` as the Grid's last children
 with `Grid.Row="0"` keeping the bar on the top row.
 
+> **One correction to the paragraph above, and this page has not yet been
+> rewritten around it ([#443](https://github.com/WonderForgeLabs/gooey/issues/443)).**
+> Since [#430](https://github.com/WonderForgeLabs/gooey/issues/430),
+> z-order is document order in **two layers**: the ordinary tree, then
+> every subtree whose component implements `gooey.Overlay`, lifted to the
+> end of the paint order wherever it sits in the document. "Declare it
+> last" is still the right advice, but it is no longer the mechanism —
+> it now decides only the order among OVERLAYS. The three adopters are
+> exactly the three named above: a `Popup`'s surface (so, `MenuBar`'s
+> dropdown), `ToastHost`, and `AdornmentLayer` (so, tooltips, validation
+> markers and drag ghosts). Read
+> [specs/2026-08-30-overlay-layer.md](../../specs/2026-08-30-overlay-layer.md)
+> for why, and
+> [specs/2026-09-01-overlay-hosts.md](../../specs/2026-09-01-overlay-hosts.md)
+> for the two hosts that adopted it late — during which a dropdown
+> painted over the toasts and validation markers it should have been
+> under.
+
 ## The forward pass keeps the stack honest
 
 Damage tracking repaints only dirty components, which would break a
