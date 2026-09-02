@@ -20,11 +20,19 @@ import (
 //
 // LIVENESS, and it is a contract rather than an observation: when idle
 // is true, Decode consumes at least one byte or produces an event —
-// never (0, false) — EXCEPT for an incomplete bracketed paste, which is
-// the one place the ambiguity idle settles does not exist. See
-// splitPasteMarker and decodePaste for why, and read the exception as
-// the narrow thing it is: ESC [ 2 0 0 ~ and its prefixes from the third
-// byte on, nothing else.
+// never (0, false) — EXCEPT for a bracketed paste. That exception has
+// TWO members, and naming only the first is how it got understated
+// before:
+//
+//   - a SPLIT MARKER — ESC [ 2 0 0 ~ or ESC [ 2 0 1 ~ and their prefixes
+//     from the third byte on, nothing else (splitPasteMarker). This one
+//     is time-limited: DecodeFinal withdraws it, because those same
+//     bytes are also keys a person can type (#440).
+//   - an OPEN PASTE — the marker complete, the payload's end not yet
+//     arrived (decodePaste). This one is NOT time-limited and survives
+//     DecodeFinal, because resolving it truncates the paste silently.
+//
+// See splitPasteMarker and decodePaste for the reasoning behind each.
 //
 // Stating the exception rather than the absolute matters more than it
 // looks. This comment used to say "Never (0, false)" flat, while
@@ -41,10 +49,19 @@ import (
 // reports incomplete can never be resolved. The buffer strands, every
 // later keystroke is appended behind it, and the app paints on forever
 // without taking another key. No error, no exit, no tripwire: App.Run
-// watches for a decoder that DIED, and this one is alive. What makes the
-// paste exception safe is that the terminal is mid-write: the rest of
-// the marker and its payload are already on the wire, and any later byte
-// resolves the buffer either way.
+// watches for a decoder that DIED, and this one is alive.
+//
+// What was supposed to make the paste exception safe is that the
+// terminal is mid-write: the rest of the marker and its payload already
+// on the wire, so any later byte resolves the buffer either way. THAT
+// ARGUMENT IS FALSE FOR HALF THE EXCEPTION, and the sentence it replaces
+// asserted it for all of it. ESC [ 2 is a marker prefix and also Esc,
+// `[`, `2` typed by a person, and in the typed case there is no later
+// byte — the hold was permanent, and the app went deaf while waking
+// every EscTimeout forever (#440). The split-marker half is now bounded
+// in time (DecodeFinal, term.PasteMarkerGrace); the OPEN-paste half
+// keeps the wedge on purpose, and its justification is a different one
+// — truncating a paste is worse — written out on decodePaste.
 //
 // It costs nothing to preserve and is silent to break, so the rule is
 // asserted exhaustively rather than trusted — decodeidle_test.go checks
@@ -61,10 +78,18 @@ func Decode(b []byte, idle bool) (Event, int, bool) {
 	return decode(b, live)
 }
 
-// DecodeFinal is Decode with the split-paste-marker exception WITHDRAWN:
-// the caller is asserting that not one but two escape timeouts have gone
-// by with the buffer unchanged, so "the terminal is mid-write" — the
-// entire justification for that exception — is no longer available.
+// DecodeFinal is Decode with the split-paste-marker exception WITHDRAWN.
+// The caller is asserting that NOTHING MORE CAN ARRIVE, so "the terminal
+// is mid-write" — the entire justification for that exception — is no
+// longer available.
+//
+// That precondition is about arrival, not about elapsed time, and the
+// two callers reach it differently: term.DecodeEvents' stall path gets
+// there on the PasteMarkerGrace'th consecutive fruitless timeout, and
+// its tty-close path gets there with ZERO timeouts elapsed, a closed tty
+// being a stronger guarantee than any deadline. Stating this as "after
+// two timeouts" was wrong for the second caller. Raised in review of
+// #445.
 //
 // The case it exists for is not a paste. It is a user pressing Esc and
 // then typing `[`, `2`. Those three bytes are a strict prefix of
@@ -90,6 +115,16 @@ func Decode(b []byte, idle bool) (Event, int, bool) {
 // and its payload arrives as keystrokes, which is #419's symptom. The
 // grace period is term.PasteMarkerGrace, named there so the trade is one
 // number in one place; going deaf forever is the worse half of it.
+//
+// AND HALF OF #440'S SYMPTOM SURVIVES. The permanent strand is gone
+// unconditionally, but the absorbed keystroke is only fixed for a key
+// arriving AFTER the window — one arriving inside it is still swallowed,
+// because the window is exactly the interval in which the decoder is
+// still waiting for more bytes and the key is more bytes. ESC [ 2 then z
+// within 80ms yields no event at all. Closing that needs the decoder to
+// remember that this CSI began as a held prefix, which is state this
+// package does not have; it is
+// https://github.com/WonderForgeLabs/gooey/issues/447.
 func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, final) }
 
 // deadline is how much of the terminal's benefit of the doubt is left.
