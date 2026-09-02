@@ -92,11 +92,21 @@ func TestFinalDecodeAlwaysMakesProgress(t *testing.T) {
 }
 
 // Deeper than the exhaustive sweep can afford, over the bytes that
-// actually build escape sequences — the same alphabet decodeidle_test.go
-// uses, for the same reason, extended to five so it covers every length
-// the paste-marker grace can reach.
+// actually build escape sequences — decodeidle_test.go's alphabet
+// extended in BOTH directions: to five bytes, and by one byte.
+//
+// THE INHERITED ALPHABET COULD NOT SPELL THE THING THIS FILE IS ABOUT.
+// It has no '2', and every strict prefix of \x1b[200~ / \x1b[201~ needs
+// a '2' at index 2 — so `splitPasteMarker` returned true for **zero** of
+// the sweep's ~1.1M inputs and the grace arm was unreachable at any
+// length. Extending only the length moved the walk across the right
+// range while leaving it unable to build anything in it, which is the
+// same failure this PR diagnoses in the OLD two-byte sweep, one level
+// up: a fixture that cannot express the bug. Adding '2' takes the hits
+// from 0 to 4 and the cost from 16^5 to 17^5. Measured in review of
+// #445.
 func TestFinalDecodeMakesProgressOnNestedEscapes(t *testing.T) {
-	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
+	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', '2', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 5)
 	for _, v := range alpha {
 		for _, w := range alpha {
@@ -116,23 +126,27 @@ func TestFinalDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	}
 }
 
-// TestFinalDecodeWaitsForNothingButAnOpenPaste is the UPPER bound, the
-// complement of TestTheIdleExceptionIsExactlyThePasteMarker next door.
+// TestFinalDecodeHoldsNoMarkerPrefix is the UPPER bound, the complement
+// of TestTheIdleExceptionIsExactlyThePasteMarker next door.
 //
 // The walk there proves the idle exception is exactly the marker
 // prefixes. This one proves that under final NONE of them is left: every
 // input beginning ESC [ and continuing in parameter bytes resolves.
 // Without it, a change that made DecodeFinal a synonym for Decode would
 // turn no test in this file red except the named case above.
-func TestFinalDecodeWaitsForNothingButAnOpenPaste(t *testing.T) {
-	held := 0
+//
+// NAMED FOR WHAT THE WALK CAN BUILD, which is narrower than "waits for
+// nothing but an open paste" — it only ever appends 0x30–0x3f, so '~'
+// never lands and \x1b[200~ is unreachable from here. The open-paste
+// half is TestFinalDecodeStillWaitsForAnOpenPaste's job. Renamed in
+// review of #445.
+func TestFinalDecodeHoldsNoMarkerPrefix(t *testing.T) {
 	var walk func(b []byte)
 	walk = func(b []byte) {
 		if len(b) > len(pasteStart) {
 			return
 		}
 		if _, n, ok := DecodeFinal(b); n == 0 && !ok {
-			held++
 			t.Errorf("DecodeFinal(%q) waits for more bytes. Two escape timeouts "+
 				"have already gone by unchanged, so nothing can arrive to resolve "+
 				"it and every later keystroke strands behind it", b)
@@ -143,9 +157,6 @@ func TestFinalDecodeWaitsForNothingButAnOpenPaste(t *testing.T) {
 		}
 	}
 	walk([]byte{0x1b, '['})
-	if held != 0 {
-		t.Logf("%d inputs still held under final", held)
-	}
 }
 
 // The one exception final does NOT withdraw, and the floor that keeps

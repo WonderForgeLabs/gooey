@@ -115,51 +115,50 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 	if _, err := master.Write([]byte("\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
-	// Longer than PasteMarkerGrace timeouts, and generously so: the
-	// assertion is about what happens AFTER the grace expires, and a
-	// margin here cannot make a broken decoder pass.
-	time.Sleep((PasteMarkerGrace + 2) * EscTimeout)
+
+	// WAIT FOR THE ESC, do not sleep for it. The grace expiring is an
+	// EVENT — the Esc arriving is itself the proof that PasteMarkerGrace
+	// timeouts passed with nothing new on the wire — so reading for it
+	// pins the ordering rather than assuming a schedule.
+	//
+	// A sleep here was the first version and it raced its own subject.
+	// Sleeping past the two timeouts cannot make a broken decoder pass,
+	// but it can make a WORKING one fail: if the decoder goroutine is
+	// delayed past the sleep, 'z' lands before the second timeout,
+	// stalls resets, and ESC [ 2 z decodes as one complete unmapped
+	// four-byte CSI emitting nothing — so the test fails at its deadline
+	// with the message for the bug under test, and a scheduling flake on
+	// a shared runner reads as a regression. Raised in review of #445.
+	if ev := next(t, evs, "the Esc never arrived: three bytes that are half a "+
+		"paste marker and also three keys a person typed are being held "+
+		"forever, and the decoder now wakes every EscTimeout for the life of "+
+		"the process without ever delivering them"); !ev.IsKey() ||
+		ev.Key.Key != input.KeyEsc {
+		t.Fatalf("first event after ESC [ 2 was %#v, want the Esc key", ev)
+	}
+
+	// The bytes typed after the Esc arrive as THEMSELVES — consuming only
+	// the escape is what makes that true, and swallowing all three would
+	// satisfy the liveness assertion below while losing two keystrokes.
+	for _, want := range []rune{'[', '2'} {
+		ev := next(t, evs, "the keys typed after the Esc never arrived")
+		if !ev.IsKey() || ev.Key.Rune != want {
+			t.Fatalf("got %#v after the Esc, want the %q key", ev, want)
+		}
+	}
+
+	// Only now write the unrelated keystroke, with the buffer known to be
+	// empty. It is the liveness half: a decoder that resolved the prefix
+	// but wedged afterwards would have passed everything above.
 	if _, err := master.Write([]byte("z")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
-
-	// Esc first — the key the user actually pressed, which the grace
-	// swallowed — then the two bytes they typed after it as themselves,
-	// then the keystroke that proves the buffer drained.
-	var got []rune
-	sawEsc := false
-	deadline := time.After(3 * time.Second)
-	for {
-		select {
-		case ev := <-evs:
-			if !ev.IsKey() {
-				continue
-			}
-			if ev.Key.Key == input.KeyEsc {
-				sawEsc = true
-				continue
-			}
-			got = append(got, ev.Key.Rune)
-			if ev.Key.Rune == 'z' {
-				if !sawEsc {
-					t.Errorf("the 'z' arrived but the Esc never did: the key that "+
-						"started the sequence was consumed by the paste grace "+
-						"instead of being delivered when it expired (saw %q)", string(got))
-				}
-				if string(got) != "[2z" {
-					t.Errorf("keys after the Esc were %q, want \"[2z\" — the bytes "+
-						"the user typed must arrive as themselves, not be "+
-						"swallowed with the escape", string(got))
-				}
-				return
-			}
-		case <-deadline:
-			t.Fatalf("the 'z' typed after ESC [ 2 never arrived (saw esc=%v, keys %q): "+
-				"the decoder is alive and reading the tty, and every keystroke is "+
-				"stranded behind three bytes its drain loop refuses to advance past. "+
-				"DecoderDone cannot see this — the goroutine never returns.",
-				sawEsc, string(got))
-		}
+	if ev := next(t, evs, "the 'z' typed after the resolved prefix never arrived: "+
+		"the decoder is alive and reading the tty, and keystrokes are stranded "+
+		"behind a buffer its drain loop refuses to advance past. DecoderDone "+
+		"cannot see this — the goroutine never returns."); !ev.IsKey() ||
+		ev.Key.Rune != 'z' {
+		t.Fatalf("got %#v, want the 'z' we typed", ev)
 	}
 }
 
