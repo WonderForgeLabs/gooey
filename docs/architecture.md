@@ -1122,8 +1122,15 @@ subscription exists before the popup has ever opened. Around it,
 `Tooltip` rides the `HoverWatcher` attachment seam, and `ToastHost` and
 `AdornmentLayer` are the page-spanning hosts that lean on
 `HitTestTransparent` here and on the Composer's `restoreUnder` sweep to
-vacate cleanly. Design record:
-[specs/2026-08-10-popup.md](specs/2026-08-10-popup.md).
+vacate cleanly. Both implement `gooey.Overlay` as well — being the
+root's last child stopped putting them above the page the moment popup
+surfaces got a layer of their own, and for one release a dropdown
+covered the toasts and validation markers that are the framework's two
+ways of telling a user something they did not ask to hear
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439),
+[spec](specs/2026-09-01-overlay-hosts.md)). Being containers, they are
+also what makes the marker's subtree inheritance carry real nodes.
+Design record: [specs/2026-08-10-popup.md](specs/2026-08-10-popup.md).
 
 ## The runtime: gooey.App
 

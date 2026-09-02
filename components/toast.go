@@ -11,12 +11,19 @@ import (
 // host nor the Show call says otherwise.
 const DefaultToastDuration = 3 * time.Second
 
-// ToastHost is the notification layer: a transparent overlay the app
-// places as the LAST child of its root, so document order — which is
-// z-order — puts every toast above the page. Show stacks a transient
-// message in the top-right corner; an auto-dismiss timer takes it down
-// again, and the Composer's restore pass repaints whatever the toast
-// was covering.
+// ToastHost is the notification layer: a transparent gooey.Overlay the
+// app places as the LAST child of its root, so its whole subtree paints
+// above the page. Show stacks a transient message in the top-right
+// corner; an auto-dismiss timer takes it down again, and the Composer's
+// restore pass repaints whatever the toast was covering.
+//
+// BEING LAST IS NO LONGER WHAT PUTS IT ON TOP — OverlaysPage is. The
+// two claims were the same thing until #437 gave popup surfaces a
+// second paint layer, at which point an ordinary-layer host sat under
+// every open dropdown however late it was declared, and a notification
+// the user had to see could be covered by a menu (#439). Declaration
+// order now decides only the order among OVERLAYS, which is what still
+// puts an AdornmentLayer declared after this host above it.
 //
 // The host paints nothing and declares no background, so a page that
 // never shows a toast pays nothing for hosting the layer. Each toast is
@@ -132,6 +139,14 @@ func (h *ToastHost) Render(*gooey.Frame) {}
 // PassesCellsThrough marks the transparent host as a no-cell container.
 // Toasts are separate child nodes and remain eligible for restoration.
 func (h *ToastHost) PassesCellsThrough() {}
+
+// OverlaysPage puts the host — and with it every toast, since overlay
+// membership is inherited down the subtree — in the overlay layer. The
+// marker moves paint and not input, which costs this host nothing: it
+// is HitTestTransparent and its toasts are not interactive, so there is
+// no press for the document-order hit-test walk to route wrongly. See
+// gooey.Overlay, and #439 for the report.
+func (h *ToastHost) OverlaysPage() {}
 
 // HitTestTransparent: the host spans the whole page invisibly (the same
 // hosting shape as AdornmentLayer), so the pointer must pass through it

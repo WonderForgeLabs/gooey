@@ -60,11 +60,18 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it as the LAST child of its root — document order is z-order, the same
-// hosting shape as ToastHost — and adorners are added and removed at
-// runtime through the Dynamic re-sync a list uses. The layer paints
-// nothing and declares no background, so a page that never shows an
-// adornment pays nothing for hosting the layer.
+// it as the LAST child of its root — a gooey.Overlay, the same hosting
+// shape as ToastHost — and adorners are added and removed at runtime
+// through the Dynamic re-sync a list uses. The layer paints nothing and
+// declares no background, so a page that never shows an adornment pays
+// nothing for hosting the layer.
+//
+// OverlaysPage is what puts it above the page; being declared last only
+// orders it against the OTHER overlays, which is how a layer declared
+// after a ToastHost still paints its tooltips above that host's toasts.
+// The two were the same claim until #437 gave popup surfaces a second
+// paint layer and left this one behind, so a validation marker or a
+// tooltip disappeared under any open dropdown (#439).
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -248,6 +255,15 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // pointer must pass through it to the content beneath, or hosting the
 // layer would starve every click and hover on the page.
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
+
+// OverlaysPage puts the layer — and every adornment in it, since overlay
+// membership is inherited down the subtree — in the overlay layer. The
+// marker moves paint and not input, and that gap does not reach here:
+// this layer is HitTestTransparent, and so is every adornment the
+// framework hosts in it (tipPopup, markerPopup, DragGhost). An
+// INTERACTIVE adornment would be the first thing to need the hit-test
+// walk taught the same two layers. See gooey.Overlay, and #439.
+func (l *AdornmentLayer) OverlaysPage() {}
 
 // attachAdornment is the attach half both AdornmentLayer customers share:
 // find the page's layer through the input tree and put pop in it,

@@ -72,12 +72,21 @@ great-grandparent. An overlay is on top of the page.
 **Membership is inherited down the tree.** `n.overlay = isOverlay ||
 (n.parent != nil && n.parent.overlay)`, computed in one pass because `c.nodes`
 is pre-order and a parent is always visited first. That is what moves an
-overlay's whole subtree with it. Every overlay the framework ships today is a
-leaf, so this clause decides nothing yet and could be deleted with the suite
-still green — `TestAnOverlayLiftsItsWholeSubtree` exists to make that false. A
-container overlay ordered on its own would paint above the page while its
-children stayed behind in the ordinary layer, i.e. the surface would land on
-top of its own contents and the popup would show as an empty box.
+overlay's whole subtree with it. A container overlay ordered on its own would
+paint above the page while its children stayed behind in the ordinary layer,
+i.e. the surface would land on top of its own contents and the popup would
+show as an empty box.
+
+> **Superseded on 2026-09-01.** This paragraph originally read "every overlay
+> the framework ships today is a leaf, so this clause decides nothing yet and
+> could be deleted with the suite still green —
+> `TestAnOverlayLiftsItsWholeSubtree` exists to make that false", and the
+> section below said the same of hit-testing. Both stopped being true when
+> `ToastHost` and `AdornmentLayer` adopted the marker
+> ([#439](https://github.com/WonderForgeLabs/gooey/issues/439),
+> [specs/2026-09-01-overlay-hosts.md](2026-09-01-overlay-hosts.md)): they are
+> containers, so the clause now carries every toast and every adornment, and
+> deleting it turns real tests red rather than only the synthetic one.
 
 **`Overlay` is a marker with an empty method, not a predicate.** Making it
 `Overlays() bool` would put a structural fact — where a paint node sits — into
@@ -103,8 +112,11 @@ But `Overlay` is a public interface, and `FocusManager.HitTest` walks document
 order knowing nothing about it. **The marker moves paint, not input.** An
 overlay that does not take capture will paint above a later sibling while that
 sibling takes the press. `TestAnOverlayLiftsItsWholeSubtree` exists precisely to
-support container overlays the framework does not ship yet, so this is reachable
-by the first adopter rather than hypothetical.
+support container overlays, so this is reachable by an adopter rather than
+hypothetical — and as of #439 there are two, `ToastHost` and `AdornmentLayer`.
+Neither pays the gap: both are `HitTestTransparent`, as is every adornment the
+framework hosts in the layer, so there is no press for the walk to misroute.
+The first INTERACTIVE overlay is what makes closing this compulsory.
 
 The interface's own doc comment says so, and `HitTest`'s comment no longer
 claims "later siblings paint on top" as its reason. Closing it properly means
