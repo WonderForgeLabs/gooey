@@ -101,8 +101,8 @@ into doing so.
 is a trade with a loser either way rather than a tuning constant.
 
 It names **which** timeout resolves the buffer, not how many the buffer
-survives — the loop does `stalls++` and then
-`drain(true, stalls >= PasteMarkerGrace)`, so at 2 the buffer is held through
+survives — the loop increments `stalls` and escalates to `drainFinal` once it
+reaches this value, so at 2 the buffer is held through
 exactly **one** timeout and resolved **on** the second. Worth stating precisely
 because it is off by one from the natural reading: someone raising it to 3 to
 buy one more grace period gets two. (Raised in review of
@@ -196,6 +196,17 @@ slave has not read yet, so "write the prefix, then close" loses it on most
 runs. Writing `b` and the prefix in ONE write and reading the `b` back proves
 the decoder consumed that read, which means the prefix is in `pend` at the
 moment the tty is closed.
+
+It also needs to know **whether it measured anything**, which the second draft
+did not. If the runner stalls past the grace window, the timer resolves the
+prefix before the close, the Esc arrives either way, and the test passes while
+guarding nothing — green and blind, which is worse than red. The discriminator
+is arrival TIME from the moment the decoder is known to be holding: the stall
+path cannot deliver before `PasteMarkerGrace × EscTimeout` has elapsed, so an
+Esc inside that budget can only be the close. Outside it the attempt is
+**inconclusive** and retried; exhausting the retries fails. Raised in review of
+PR #445, which is the second time on this branch that a test needed to be
+stopped from passing for the wrong reason.
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement: the
