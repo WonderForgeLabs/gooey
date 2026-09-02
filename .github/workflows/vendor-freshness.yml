@@ -31,10 +31,22 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - 'vendor/**'
-  # Dispatchable so it can be exercised without a module change. The PR that
-  # introduced this file touches no go.mod, so the paths filter correctly does
-  # NOT match it and the workflow would otherwise land having never run once.
-  # Read-only, so a manual run costs nothing and risks nothing.
+  # ALSO ON main, and not for symmetry. Vendor staleness is a property of a
+  # MERGED tree, not of a diff: two PRs can each be vendor-correct against
+  # their own base and still produce a stale vendor/ once both have landed,
+  # because neither one's diff touches the other's require. A
+  # pull_request-only check cannot see that by construction. No paths filter
+  # here — the point is the case where no single commit looks responsible.
+  push:
+    branches: [main]
+  # Dispatchable so the guard can be re-run on demand, e.g. to confirm main
+  # is clean after a manual vendor fix.
+  #
+  # IT DOES NOT MAKE THIS EXERCISABLE BEFORE IT MERGES, and an earlier
+  # revision of this comment claimed it did. workflow_dispatch is only
+  # registered for workflows already on the default branch; dispatching from
+  # a topic branch answers `HTTP 404: workflow vendor-freshness.yml not found
+  # on the default branch`. Tried, not assumed.
   workflow_dispatch:
 
 # Read-only, and it stays that way. This job runs for EVERY pull request
@@ -45,9 +57,11 @@ permissions:
   contents: read
 
 concurrency:
-  # pull_request_number is empty on a workflow_dispatch run, which would
-  # put every manual run in one group and cancel the previous. Fall back
-  # to the ref so dispatches are grouped per branch instead.
+  # Falls back to the ref for push and dispatch runs, where there is no PR
+  # number. Note what this does NOT do: two dispatches on the SAME branch
+  # still share a group and the later cancels the earlier. That is fine for
+  # this workflow — the answer depends only on the tree — but it is not the
+  # "one group per run" an earlier version of this comment implied.
   group: vendor-freshness-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -59,25 +73,46 @@ jobs:
     # is what `contract` uses default for.
     runs-on: forge-runners-default-vsphere
     steps:
+      # lfs: true is not optional — TestEveryCheckoutFetchesLFS fails the root
+      # module for ANY workflow checkout without it. The repo keeps
+      # *.wav/*.gif/*.png in LFS and checkout defaults to lfs:false, which
+      # hands the job pointer TEXT in their place with no error raised.
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # `go work vendor` is idempotent: on a correct tree it rewrites the same
       # bytes and git sees nothing. So the check is "did running it change
       # anything", which is the actual invariant rather than a proxy for it.
+      #
+      # GOTOOLCHAIN=local for the same reason vendor-autofix.yml sets it: a
+      # `toolchain` line in a go.mod would otherwise have `go` download and
+      # run a different toolchain. This job holds no writable token so the
+      # stakes are lower, but an unannounced toolchain download is a surprise
+      # either way, and the two files should not disagree about it.
       - name: Regenerate the vendor directory
+        env:
+          GOTOOLCHAIN: local
         run: go work vendor
 
       - name: Fail if it changed anything
         run: |
-          if git diff --quiet; then
+          # `git status --porcelain`, NOT `git diff --quiet`, and the
+          # difference is the whole check. git diff sees TRACKED files only,
+          # and the most important case here adds UNTRACKED ones: a bump that
+          # introduces a NEW dependency creates whole new directories under
+          # vendor/, which git diff reports as clean. The guard would have
+          # gone green on precisely the change it exists to catch.
+          if [ -z "$(git status --porcelain)" ]; then
             echo "vendor/ matches the modules."
             exit 0
           fi
-          echo "::error::vendor/ is stale for the module changes in this PR. Run 'go work vendor' and commit the result — see the diff below."
-          # --stat first so the summary is readable, then the modules.txt
-          # detail, which is where the require/explicit mismatch actually
-          # shows and is what `go`'s error message is quoting.
-          git diff --stat
+          echo "::error::vendor/ is stale for the module changes here. Run 'go work vendor' and commit the result — see below."
+          # --short first, so ADDED and deleted paths are visible at all (a
+          # diff of an untracked file shows nothing), then the modules.txt
+          # detail, which is where the require/explicit mismatch shows and is
+          # what `go`'s own error message quotes.
+          git status --short
           echo '--- vendor/modules.txt ---'
           git diff -- vendor/modules.txt
           exit 1
