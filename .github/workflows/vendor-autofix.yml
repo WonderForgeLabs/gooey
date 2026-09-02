@@ -58,12 +58,15 @@ jobs:
     if: >-
       github.actor == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: forge-runners-small-vsphere
+    # default, not small, for the reason given in vendor-freshness.yml:
+    # this runs the Go toolchain, not a shell one-liner.
+    runs-on: forge-runners-default-vsphere
     steps:
       # SHA, not ref: github.event.pull_request.head.ref is attacker-shaped
       # input in the general case, and a SHA is a hex string that cannot be
-      # anything else. checkout needs the branch too in order to push, so that
-      # is fetched separately below rather than trusted into this step.
+      # anything else. The push below still needs the branch NAME, which is
+      # why it goes through an env var there rather than being interpolated
+      # into a script — the two halves of the same precaution.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}

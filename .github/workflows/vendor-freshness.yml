@@ -31,6 +31,11 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - 'vendor/**'
+  # Dispatchable so it can be exercised without a module change. The PR that
+  # introduced this file touches no go.mod, so the paths filter correctly does
+  # NOT match it and the workflow would otherwise land having never run once.
+  # Read-only, so a manual run costs nothing and risks nothing.
+  workflow_dispatch:
 
 # Read-only, and it stays that way. This job runs for EVERY pull request
 # including forks (gooey is public), so it must never hold a token that can
@@ -40,12 +45,19 @@ permissions:
   contents: read
 
 concurrency:
-  group: vendor-freshness-${{ github.event.pull_request.number }}
+  # pull_request_number is empty on a workflow_dispatch run, which would
+  # put every manual run in one group and cancel the previous. Fall back
+  # to the ref so dispatches are grouped per branch instead.
+  group: vendor-freshness-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   vendor:
-    runs-on: forge-runners-small-vsphere
+    # default, not small: small is documented in ci.yml as the 2Gi tier for
+    # "find + git ls-files + jq, no build toolchain". `go work vendor` runs
+    # the Go toolchain over 26 modules and writes thousands of files, which
+    # is what `contract` uses default for.
+    runs-on: forge-runners-default-vsphere
     steps:
       - uses: actions/checkout@v4
 
