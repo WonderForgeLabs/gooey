@@ -199,7 +199,7 @@
              beside it opens a popup it does not own. -->
         <Tab Header="overlays">
           <Grid Height="13" Rows="Auto,Auto,Auto,Auto,Auto,*">
-            <Text Grid.Row="0" Style="dim">ToastHost, MenuBar and AdornmentLayer are Overlays: they paint in a layer above every tab</Text>
+            <Text Grid.Row="0" Style="dim">ToastHost, AdornmentLayer and the MenuBar's dropdown paint in the Overlay layer, above every tab</Text>
             <ButtonBar Grid.Row="1" Gap="3" Separator="│">
               <Button Content="sticky toast" Click="{{.Sticky}}" Tooltip="ShowFor with a negative duration never expires"/>
               <Button Content="clear toasts" Click="{{.ClearToasts}}" Tooltip="takes the sticky one back down"/>
@@ -243,7 +243,11 @@
         </StatusBar.Right>
       </StatusBar>
 
-      <!-- Overlays. Each of these paints in the OVERLAY LAYER, above the
+      <!-- The overlay hosts. The ToastHost and the AdornmentLayer are
+           themselves gooey.Overlays; the MenuBar is NOT — it is an
+           ordinary component whose dropdown SURFACE is the overlay, and
+           conflating the two is the misconception #430 was filed over.
+           What each contributes paints in the OVERLAY LAYER above the
            page wherever it is declared; declaring them LAST is what
            orders them against each other, so the dropdown is under the
            toasts and the toasts under the tooltips. Grid.Row still

@@ -127,11 +127,9 @@ func TestADismissedToastUncoversTheOpenPopup(t *testing.T) {
 // which Tooltip, ValidationMarker and DragGhost all reach through.
 //
 // A ValidationMarker rather than a Tooltip, and that is forced rather
-// than chosen: Popup.Open takes pointer capture unconditionally
-// (Popup.Open calls mgr.CaptureMouse unconditionally — not only when
-// Modal), so the hover that
-// raised a tip is out the moment any dropdown opens and Tooltip.IsShown
-// goes false. The overlap this test needs cannot be built out of a
+// than chosen: Popup.Open calls mgr.CaptureMouse unconditionally — not
+// only when Modal — so the hover that raised a tip is out the moment any
+// dropdown opens, and Tooltip.IsShown goes false. The overlap this test needs cannot be built out of a
 // tooltip at all. A marker is the PERSISTENT customer — up for as long
 // as its field is invalid, no pointer anywhere in it — which is also
 // the case the bug hurts most: a form telling the user what is wrong,

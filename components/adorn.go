@@ -150,8 +150,10 @@ func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 // gooey.Overlay and overlay membership is inherited, so your adornment
 // paints above every ordinary node — that marker moves paint only.
 // FocusManager.HitTest still walks document order (children last-to-first,
-// mouse.go), which reaches your adornment first exactly when the layer is
-// the root's last child, the shape the docs mandate.
+// mouse.go), so it reaches your adornment first as long as nothing
+// declared AFTER the layer covers the same cells. Hosting the layer as
+// the root's last child — the shape the docs mandate — guarantees that
+// by leaving no later sibling at all; it is sufficient, not necessary.
 //
 // So the two agree on the documented shape and diverge SILENTLY off it,
 // which is newly easy to get wrong: before gooey.Overlay, declaring the

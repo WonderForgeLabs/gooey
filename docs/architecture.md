@@ -615,9 +615,13 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, and whatever grows one
-next — lifted to the end with its subtree, because a dropdown is not at
-a position in the document, it is on top of it. The paint loop forces a
+implementing `gooey.Overlay` — a popup surface, `ToastHost` and
+`AdornmentLayer` — lifted to the end with its subtree, because a
+dropdown is not at a position in the document, it is on top of it. Note
+what is *not* on that list: a `MenuBar` is an ordinary component whose
+dropdown SURFACE is the overlay, which is the distinction
+[#430](https://github.com/WonderForgeLabs/gooey/issues/430) was filed
+over. The paint loop forces a
 repaint of every node above a rect somebody below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
