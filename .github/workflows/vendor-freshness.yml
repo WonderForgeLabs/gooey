@@ -1,0 +1,71 @@
+name: Vendor freshness
+
+# `vendor/` IS THE BUILD, and nothing checked that it matched the modules.
+#
+# go.work lists every module in the tree and one root vendor/ holds their
+# dependencies merged, committed, so the whole tree builds with the network
+# off. The property that keeps that true is trivial and unenforced: whoever
+# changes a require must run `go work vendor` and commit the result.
+#
+# When they do not, `go` refuses outright:
+#
+#   go: inconsistent vendoring in /home/runner/_work/gooey/gooey:
+#     google.golang.org/grpc@v1.83.1: is explicitly required in go.mod,
+#     but not marked as explicit in vendor/modules.txt
+#
+# and it surfaces wherever a Go command happens to run first — for #449/#450/
+# #451 that was `contract`'s "Build buf from the tools module", a step about
+# protobuf that has nothing to do with the bump. The diagnosis is one layer
+# away from the cause, so this workflow says it in one place, by name, keyed
+# on the files that can cause it.
+#
+# WHY A SEPARATE WORKFLOW rather than a step in ci.yml: ci.yml's jobs are
+# matrix legs over discovered modules, and this question is about the tree as
+# a whole exactly once. It also wants a `paths:` filter, which is per-workflow.
+
+on:
+  pull_request:
+    paths:
+      - '**/go.mod'
+      - '**/go.sum'
+      - 'go.work'
+      - 'go.work.sum'
+      - 'vendor/**'
+
+# Read-only, and it stays that way. This job runs for EVERY pull request
+# including forks (gooey is public), so it must never hold a token that can
+# write. The companion vendor-autofix.yml is the privileged half and is
+# guarded accordingly.
+permissions:
+  contents: read
+
+concurrency:
+  group: vendor-freshness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  vendor:
+    runs-on: forge-runners-small-vsphere
+    steps:
+      - uses: actions/checkout@v4
+
+      # `go work vendor` is idempotent: on a correct tree it rewrites the same
+      # bytes and git sees nothing. So the check is "did running it change
+      # anything", which is the actual invariant rather than a proxy for it.
+      - name: Regenerate the vendor directory
+        run: go work vendor
+
+      - name: Fail if it changed anything
+        run: |
+          if git diff --quiet; then
+            echo "vendor/ matches the modules."
+            exit 0
+          fi
+          echo "::error::vendor/ is stale for the module changes in this PR. Run 'go work vendor' and commit the result — see the diff below."
+          # --stat first so the summary is readable, then the modules.txt
+          # detail, which is where the require/explicit mismatch actually
+          # shows and is what `go`'s error message is quoting.
+          git diff --stat
+          echo '--- vendor/modules.txt ---'
+          git diff -- vendor/modules.txt
+          exit 1
