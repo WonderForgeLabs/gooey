@@ -20,36 +20,59 @@
 # as ONE pull request touching every module that requires it, rather than as
 # a dozen.
 
-# ── THE RISK THIS FILE CARRIES, AND WHY IT IS ON ITS OWN BRANCH ─────────────
+# ── THE RISK THIS FILE CARRIES ──────────────────────────────────────────────
 #
 # Today this repo has NO dependabot.yml and still receives SECURITY updates —
 # those need no config. Adding this file puts that on the line: if Dependabot
-# rejects the config for ANY reason, it does not fall back to the previous
-# behaviour, it stops. Security updates included. A single unrecognised key
-# takes out the one Dependabot service the repo currently depends on.
+# rejects the config, it does not fall back to the previous behaviour, it
+# stops. Security updates included.
 #
-# `group-by: dependency-name` is the key with that exposure. It is verified
-# against GitHub's dependabot options reference — nested under a group
-# IDENTIFIER, accepted value `dependency-name`, documented as version-updates
-# only — but "the docs say so" is not the same as "the parser accepted it",
-# and the parser cannot be consulted until this is on the default branch.
+# THAT RISK IS LARGELY RETIRED, and by measurement rather than by reading.
+# GitHub runs its own config validation as a PR check —
+# `.github/dependabot.yml`, served by dependabot-api.githubapp.com — and it
+# PASSED on this file, `group-by: dependency-name` included. An earlier
+# version of this comment said "the parser cannot be consulted until this is
+# on the default branch"; that was wrong, the PR check IS the parser, and it
+# has now been consulted. Corrected on the evidence in #453.
 #
-# AND ONE QUESTION IS STILL OPEN, which is why this is a draft. The review of
-# #453 argues the `/` entry errors on every run, because Dependabot's gomod
-# updater refuses a VENDORED go.work workspace (`check_workspace_not_vendored`)
-# — and that if workspace mode does engage, `/` subsumes every other glob here
-# and they are all redundant. Those two cannot both be acted on, and I could
-# not settle either: GitHub's ecosystem table confirms gomod supports
-# vendoring but says nothing about go.work, and the only empirical evidence
-# available cuts the other way without answering it — Dependabot IS currently
-# opening gomod PRs against this repo's NESTED modules (#449/#450/#451). The
-# root, which is the directory that holds go.work, is exactly the case those
-# do not cover.
+# What that check does NOT cover is RUNTIME behaviour: a config can parse and
+# still have an updater error on a particular directory. That is the question
+# the `/` decision below settles.
 #
-# Do not merge this on my say-so. Either somebody knows the answer, or the
-# cheap experiment is to land it with `/` REMOVED and see whether the globbed
-# entries behave, since the nested modules are the ones already demonstrated
-# to work.
+# The residual failure is silent either way — a Dependabot config error
+# produces no notification and turns nothing red; it appears only under
+# Insights → Dependency graph → Dependabot. So "check it after merging" needs
+# a person and a sitting, not a good intention. Best is to merge and check in
+# the same one.
+#
+# THE ROOT `/` IS DELIBERATELY NOT IN THE LIST BELOW, and this is settled
+# rather than cautious. Two measurements, both re-runnable in a checkout:
+#
+#   $ go mod vendor -o /tmp/probe
+#   go: 'go mod vendor' cannot be run in workspace mode. Run 'go work vendor'
+#       to vendor the workspace or set 'GOWORK=off' to exit workspace mode.
+#
+#   $ find . -mindepth 1 -name '.?*' -prune -o -name modules.txt -print
+#   ./vendor/modules.txt
+#
+# A flat refusal, not a degraded result — and exactly ONE vendor/modules.txt
+# in the tree, sitting beside the ROOT go.mod. Dependabot's gomod updater
+# takes its vendoring path when a vendor/modules.txt sits in the manifest's
+# own directory, which is true of `/` and of no other entry here.
+#
+# That makes the answer the same under both hypotheses. If workspace mode
+# engages at `/`, vendoring there cannot succeed. If Dependabot ignores
+# go.work entirely, `/` is merely the root module and the globbed entries
+# were never redundant with it. Either way the globbed entries are the ones
+# already demonstrated to work — #449/#450/#451 all landed against NESTED
+# modules, which never enter the vendoring path and are therefore not
+# evidence about the root.
+#
+# THE COST, stated where every other cost in this file is: the root module's
+# own direct requires (golang.org/x/term, golang.org/x/image, rivo/uniseg,
+# gopkg.in/yaml.v3) get no version updates until somebody revisits this.
+# Security updates for them are unaffected — those need no config at all.
+# Settled in review of #453.
 #
 # So: land this separately from the vendor workflows, and CHECK IT AFTER
 # MERGING. Repository → Insights → Dependency graph → Dependabot shows the
@@ -76,7 +99,6 @@ updates:
     # is covered; a new `widgets/` tree is not, and nothing will say so — it
     # will simply never be updated. That is the one maintenance edge.
     directories:
-      - '/'
       - '/apps/*'
       - '/grpc'
       - '/handlers/*'
@@ -115,6 +137,15 @@ updates:
 #
 # PR #452 proposes the two workflows that check and repair that
 # (vendor-freshness.yml, vendor-autofix.yml). They are NOT on main as this is
-# written, and this file must not read as though they are: if #453 lands
-# first, grouped bumps still arrive with a stale vendor/ and still need the
-# manual `go work vendor`. Land #452 first, or expect that.
+# written, and this file must not read as though they are.
+#
+# WHAT TO EXPECT IF THIS LANDS FIRST is a JAM, not a queue, and the two
+# halves of this file only produce it together. Every grouped PR arrives
+# with a stale vendor/ and is therefore RED until somebody runs
+# `go work vendor` on it; and Dependabot will not open a fourth while three
+# are open. So the steady state is three permanently-red PRs occupying every
+# slot until a human intervenes on each, weekly, forever. A reader who has
+# not joined those two facts will read the red as this config being broken.
+#
+# Land #452 first. If it cannot go first, `interval: monthly` here keeps the
+# jam from re-forming weekly. Raised in review of #453.
