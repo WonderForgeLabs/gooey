@@ -334,13 +334,32 @@ func splitMarkerAttempt(t *testing.T) bool {
 	held := time.Now()
 
 	// Past ONE timeout — so the grace is genuinely exercised rather than the
-	// marker simply arriving whole in one read — but inside PasteMarkerGrace
-	// of them, which is the window the constant defines.
-	time.Sleep(EscTimeout + EscTimeout/2)
+	// marker simply arriving whole in one read — and comfortably inside two.
+	time.Sleep(EscTimeout + EscTimeout/4)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
-	if elapsed := time.Since(held); elapsed >= PasteMarkerGrace*EscTimeout {
+	// AN ABSOLUTE BUDGET, not PasteMarkerGrace*EscTimeout, and both halves of
+	// that matter.
+	//
+	// Scaling by the constant under test is self-defeating: at
+	// PasteMarkerGrace = 1 — the mutation this test exists to catch — the
+	// sleep stays put while the budget collapses to 40ms, so every attempt
+	// returns false and the test dies with "this machine is too loaded",
+	// pointing the next reader at the runner instead of at the constant they
+	// just changed. The #419 message below becomes unreachable. The floor in
+	// TestPasteMarkerGraceHasAFloor is what makes 2*EscTimeout safe to write
+	// literally here.
+	//
+	// And the SLACK is the same drift closedTtyAttempt was tightened for:
+	// `held` is sampled after a buffered-channel receive and the decoder arms
+	// its timer after that send, so `held` can land late and the measured
+	// elapsed understates the real one. With zero slack an attempt whose
+	// grace had already expired reads as conclusive and hard-fails with the
+	// #419 message — a scheduling stall wearing the costume of a regression,
+	// which is precisely what the sleep-vs-wait fix in the sibling test
+	// removed. Both raised in review of #445.
+	if elapsed := time.Since(held); elapsed >= 2*EscTimeout-EscTimeout/2 {
 		return false // the grace may already have expired; attribute nothing
 	}
 

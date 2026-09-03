@@ -66,10 +66,15 @@ func DecodeFinal(b []byte) (Event, int, bool)
 ```
 
 Internally the two share one walk. `Decode`'s `idle bool` becomes an unexported
-three-valued `deadline` (`live`, `idled`, `final`) threaded through `decodeEsc`
-and `decodeCSI`; every arm but one asks `d.idle()` and cannot tell the
-difference. The one that can is the marker grace, which now reads
-`d == idled` rather than `idle`.
+three-valued `deadline` (`deadlineLive`, `deadlineIdled`, `deadlineFinal`)
+threaded through `decodeEsc` and `decodeCSI`; every arm but one asks `d.idle()`
+and cannot tell the difference. The one that can is the marker grace, which now
+reads `d == deadlineIdled` rather than `idle`.
+
+The names carry the `deadline` prefix because `decodeCSI`'s local for the CSI
+final byte is also called `final`, so the bare constant meant one thing above
+that declaration and was a type error below it — inside the one function every
+arm of this change routes through. Renamed in review of #445.
 
 Nothing outside the package moves. `Decode(b, idle bool)` keeps its signature,
 its meaning and its 40-odd existing call sites, three of which are in `apps/`.
@@ -181,39 +186,53 @@ trusting the prose. Mutation-tested, each mutation turning its own tests red:
 
 | mutation | what goes red |
 |---|---|
-| the grace is never withdrawn (`d == idled` → `idle`) | `TestFinalDecodeResolvesTheTypedMarkerPrefix`, `TestFinalDecodeMakesProgressOnNestedEscapes`, `TestFinalDecodeHoldsNoMarkerPrefix`, and the term strand test |
-| `DecodeFinal` becomes a synonym for `Decode(b, true)` | the same four |
-| the loop never escalates to the final pass | the term strand test alone |
-| the stall counter resets on every timeout instead of counting | the term strand test alone |
-| the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` alone |
-| `PasteMarkerGrace` lowered from 2 to 1 | `TestASplitPasteMarkerStillPastes` and `TestPasteMarkerGraceHasAFloor` |
-| the timer is re-armed unconditionally | **nothing** — the honest result, and the one the section above predicts |
+| the grace is never withdrawn (`d == deadlineIdled` -> `idle`) | `TestFinalDecodeResolvesTheTypedMarkerPrefix`, `TestFinalDecodeMakesProgressOnNestedEscapes`, `TestFinalDecodeHoldsNoMarkerPrefix`, `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
+| `DecodeFinal` becomes a synonym for `Decode(b, true)` | the same five |
+| the loop never escalates to the final pass | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
+| the stall counter resets on every timeout instead of counting | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
+| the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
+| `PasteMarkerGrace` lowered from 2 to 1 | `TestASplitPasteMarkerStillPastes`, `TestPasteMarkerGraceHasAFloor` |
+| the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
 
-The tty-close row is the reason `drainFinal` is defined as "nothing more can
-arrive" and not as "the stall count reached `PasteMarkerGrace`". That path
-reaches the last-chance pass with **zero** timeouts elapsed, and it had no test
-until review of #445 asked what the precondition actually was: every other test
-in the tree reaches the final pass through the timer, so the arm could have
-quietly dropped to `drainIdle` and lost the last keystrokes a user typed before
-the terminal went away, with nothing to notice.
+**Every row is re-derived by running its mutation**, never edited by hand, and
+the difference is not cosmetic. Earlier versions said "the term strand test" -
+a phrase that named one test when `strand_linux_test.go` held one, and names
+none of four now - and undercounted two rows: withdrawing the grace turns the
+tty-close test red as well, since with the grace never withdrawn that route
+cannot resolve a held prefix either. A table whose whole value is that it can
+be re-run has to be re-run. Corrected in review of #445.
 
-That test needs a **handshake** rather than a sleep, and the first draft
-without one measured nothing: closing the pty master can discard bytes the
-slave has not read yet, so "write the prefix, then close" loses it on most
-runs. Writing `b` and the prefix in ONE write and reading the `b` back proves
-the decoder consumed that read, which means the prefix is in `pend` at the
-moment the tty is closed.
+### The two pty tests refuse to pass vacuously, and that took three goes
 
-It also needs to know **whether it measured anything**, which the second draft
-did not. If the runner stalls past the grace window, the timer resolves the
-prefix before the close, the Esc arrives either way, and the test passes while
-guarding nothing — green and blind, which is worse than red. The discriminator
-is arrival TIME from the moment the decoder is known to be holding: the stall
-path cannot deliver before `PasteMarkerGrace × EscTimeout` has elapsed, so an
-Esc inside that budget can only be the close. Outside it the attempt is
-**inconclusive** and retried; exhausting the retries fails. Raised in review of
-PR #445, which is the second time on this branch that a test needed to be
-stopped from passing for the wrong reason.
+Both `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` and
+`TestASplitPasteMarkerStillPastes` need a window: the first needs the tty to
+close while the prefix is still held, the second needs the marker's tail to
+land after one timeout but inside the grace. A stalled runner misses either,
+and a test that merely passes when it does is green and blind — worse than
+red. So each measures whether it hit the window, treats a miss as
+**inconclusive** and retries, and fails when the retries run out. Neither can
+report success on an attempt it did not make.
+
+Getting the measurement itself right took three corrections, all from review:
+
+- **A handshake, not a sleep.** Closing the pty master discards bytes the
+  slave has not read, so "write the prefix, then close" loses it on most runs.
+  Writing `b` and the prefix in ONE write and reading the `b` back proves the
+  decoder consumed that read.
+- **Slack in the direction the clock drifts.** `held` is sampled after a
+  buffered-channel receive, and the decoder arms its timer after that send, so
+  under load `held` lands late and the measured elapsed understates the real
+  one. `closedTtyAttempt` budgets **one `EscTimeout`** rather than the full
+  stall latency for exactly that reason: the wider budget let a
+  timer-delivered Esc measure just under it and be credited to the close.
+- **An absolute budget, never one scaled by the constant under test.**
+  `splitMarkerAttempt` first scaled its window by `PasteMarkerGrace`, so under
+  the mutation it exists to catch the budget collapsed with the constant,
+  every attempt went inconclusive, and the test died pointing at the *runner*
+  instead of at the number someone had just changed — with its carefully
+  written #419 message two lines below, unreachable. It budgets `2*EscTimeout
+  - EscTimeout/2` literally now; `TestPasteMarkerGraceHasAFloor` is what makes
+  that safe to hardcode.
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement. The

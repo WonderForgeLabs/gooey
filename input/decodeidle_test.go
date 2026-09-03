@@ -19,8 +19,18 @@ import (
 // That is a liveness bug no decoding test can see, because every
 // individual byte still decodes correctly. What is broken is that the
 // loop cannot make progress, so the assertion has to be about progress:
-// when idle, EVERY non-empty input must either consume a byte or produce
-// an event.
+// every input in THIS SWEEP'S RANGE must either consume a byte or
+// produce an event under idle.
+//
+// The range is the scope, not a detail. Stated as "every non-empty
+// input" — which it was — the claim is false, and contradicted by
+// TestTheIdleExceptionIsExactlyThePasteMarker seventy lines below:
+// splitPasteMarker holds 3-to-5-byte marker prefixes, and decodePaste
+// holds an open paste indefinitely. What keeps the absolute true HERE is
+// splitPasteMarker's three-byte floor, which puts both exceptions
+// outside the 1- and 2-byte sweep by construction. See input.Decode's
+// doc for the exception list and input.DecodeFinal for which half is
+// bounded. Scoped in review of #445.
 func assertProgress(t *testing.T, b []byte) {
 	t.Helper()
 	_, n, ok := Decode(b, true)
