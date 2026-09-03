@@ -243,12 +243,15 @@ func (p *Pane) Child() gooey.Component { return p.child }
 //
 // THE ORDER IS THE Z-ORDER and may not be swapped: the composer walks
 // depth-first pre-order, so the overlay paints last and therefore on
-// top — of the ORDINARY layer. A gooey.Overlay inside the previewed
-// subtree is lifted above this one wherever it sits (#437); see
-// overlay.go's file comment for why that is inert while design mode is
-// Frozen. Third copy of this rule in this package, found in review of
-// #444 after two others were qualified. Putting it first would paint the guides under the document and
+// top. Putting it first would paint the guides under the document, and
 // the document's own pre-clears would erase them.
+//
+// ABOVE THE ORDINARY LAYER ONLY, since #437. A gooey.Overlay inside the
+// previewed subtree is lifted above this one wherever it sits; see
+// overlay.go's file comment for why that is inert while design mode is
+// Frozen. Third copy of this rule in this package, and the one a grep
+// for "document order" does not match — found by reading, in review of
+// #444, after the other two were qualified.
 func (p *Pane) ChildComponents() []gooey.Component {
 	var out []gooey.Component
 	if p.child != nil {

@@ -136,8 +136,15 @@ removing one turns exactly its own tests red:
 
 | mutation | what goes red |
 |---|---|
-| `ToastHost` drops `OverlaysPage` | `TestAToastPaintsAboveAnOpenPopup` |
-| `AdornmentLayer` drops `OverlaysPage` | `TestAValidationMarkerPaintsAboveAnOpenPopup` **and** `TestATooltipPaintsAboveAToast` — with the host lifted and the layer not, a toast covers the tooltips the docs promise are above it |
+| `ToastHost` drops `OverlaysPage` | `TestAToastPaintsAboveAnOpenPopup`, `TestAButtonUnderAToastTakesTheHoverWhenTheHostIsNotLast` |
+| `AdornmentLayer` drops `OverlaysPage` | `TestAValidationMarkerPaintsAboveAnOpenPopup`, `TestATooltipPaintsAboveAToast` — with the host lifted and the layer not, a toast covers the tooltips the docs promise are above it — and `TestAnAdornmentLosesThePressWhenTheLayerIsNotLast`, on its paint precondition: un-lifted, an adornment declared before the overlapping sibling paints *under* it |
+
+This table is **re-derived by running the mutations**, not maintained by hand,
+and the difference showed: it said "exactly its own tests" and listed two rows
+of two, written before the hit-test pairs existed and never re-derived after.
+Removing `AdornmentLayer.OverlaysPage` turns three red. On a change that exists
+because a written z-order claim outlived its truth, the record's own
+verification table is the last place to leave one. Caught in review of #444.
 
 `TestADismissedToastUncoversTheOpenPopup` is the counterweight: without it the
 fix could have been "never let anything paint over a toast's rect", which would
@@ -201,6 +208,15 @@ The criterion those share, and the reason they were not left: they are Go doc
 comments and demo markup rather than `docs/**`, so "the doc sweep" may not
 cover them at all.
 
+**Two are deliberately left to #443, and named here so the line is visible.**
+`docs/demos.md:620` ("the MenuBar overlay recipe reused in an app:
+last-in-document-order z-order") and `docs/learn/07-app-chrome.md:108` ("being
+later in document order is the entire mechanism") are #437-era debt rather than
+newly false here. The second sits directly opposite the
+`07-app-chrome/app.gooey` comment this change rewrote, so a reader has the
+tutorial and its own example disagreeing until #443 lands — worth knowing
+rather than discovering.
+
 **The sweep took three passes, and each miss had the same cause: the search was
 narrower than the criterion.** Worth writing down, because the criterion was
 right each time and the grep was not.
@@ -215,6 +231,13 @@ right each time and the grep was not.
 3. Third pass dropped the exclusion and added `cmd/browser/browser.gooey`,
    which had been contradicting `cmd/browser/picker.go` — the file the second
    pass rewrote — ever since.
+4. And a fourth, which is the one that undercuts the tidy narrative above:
+   `docs/demos.md:530` **is matched by the command below** and was missed
+   anyway — the walkthrough for `cmd/toolkit`, whose on-screen string this
+   change rewrote, so the demo and its own documentation taught opposite
+   mechanisms. A grep that finds a line is not a sweep that fixes it. Two Go
+   doc comments in `apps/wysiwyg/components/preview/` were found the same
+   round by reading rather than by matching.
 
 The command below is what the third pass used. Calling it "the command that
 finally covered it" — which an earlier version of this sentence did — repeats

@@ -129,8 +129,9 @@ func TestADismissedToastUncoversTheOpenPopup(t *testing.T) {
 // A ValidationMarker rather than a Tooltip, and that is forced rather
 // than chosen: Popup.Open calls mgr.CaptureMouse unconditionally — not
 // only when Modal — so the hover that raised a tip is out the moment any
-// dropdown opens, and Tooltip.IsShown goes false. The overlap this test needs cannot be built out of a
-// tooltip at all. A marker is the PERSISTENT customer — up for as long
+// dropdown opens, and Tooltip.IsShown goes false. The overlap this test
+// needs cannot be built out of a tooltip at all. A marker is the
+// PERSISTENT customer — up for as long
 // as its field is invalid, no pointer anywhere in it — which is also
 // the case the bug hurts most: a form telling the user what is wrong,
 // erased by the menu they opened to fix it.
@@ -370,7 +371,7 @@ func TestAToastIsHitFirstWhenTheHostIsLast(t *testing.T) {
 	_, host, page := toastHitPage(true)
 	c := gooey.NewComposer(page, 20, 3)
 	c.Frame()
-	toast := host.Show("T")
+	toast := host.Show("TOAST")
 	c.Frame()
 
 	b := toast.Bounds()
@@ -390,11 +391,19 @@ func TestAButtonUnderAToastTakesTheHoverWhenTheHostIsNotLast(t *testing.T) {
 	btn, host, page := toastHitPage(false)
 	c := gooey.NewComposer(page, 20, 3)
 	c.Frame()
-	toast := host.Show("T")
+	toast := host.Show("TOAST")
 	c.Frame()
 
 	b := toast.Bounds()
-	if got := render.RowText(c.Cells(), b.Y); !strings.Contains(got, "T") {
+	// "TOAST", not "T", and the difference is the whole precondition. The
+	// sibling renders "[ BUTTON ]", which CONTAINS "T" — so the first
+	// version of this line passed off the Button's own text while the toast
+	// was entirely covered, and the test stayed green under the very
+	// mutation it exists to catch (removing ToastHost.OverlaysPage).
+	// Verified by re-running that mutation. It is the failure recorded two
+	// tests above, arriving through the FIXTURE rather than the assertion's
+	// shape. Raised in review of #444.
+	if got := render.RowText(c.Cells(), b.Y); !strings.Contains(got, "TOAST") {
 		t.Fatalf("row %d = %q; the toast should paint above the button "+
 			"wherever the host sits — that is what the marker does", b.Y, got)
 	}
