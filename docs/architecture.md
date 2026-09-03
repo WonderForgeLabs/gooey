@@ -825,15 +825,31 @@ that reach the app as real commands. Its tri-state return (`ok`, consumed count)
 distinguishes "incomplete, feed me more bytes" from "complete but
 unmapped, skip it". The third state is the one whose violation is
 silent: under `idle` there are no more bytes to feed, so `Decode`
-guarantees it never answers "incomplete" then — it always consumes a
-byte or produces an event. A decoder that broke that guarantee would
-strand its buffer and go permanently deaf while still painting, which
-is the failure `App.Run`'s decoder-death watch cannot see, because the
-goroutine never returns. `term.DecodeEvents` adds the only two things that
+answers "incomplete" only where a byte can still resolve it — and that
+list is two entries long and shrinking, not empty. A decoder that
+answered it anywhere else would strand its buffer and go permanently
+deaf while still painting, which is the failure `App.Run`'s
+decoder-death watch cannot see, because the goroutine never returns.
+Read the list as a list: this paragraph said "it always consumes a byte
+or produces an event" while `decodePaste` had already departed from it,
+and an absolute nobody can check is how the departure went unnoticed.
+The two are an **open bracketed paste** (payload's end marker not yet
+arrived — deliberate, because delivering the prefix truncates the paste
+silently) and a **split paste marker** (`ESC [ 2` and its siblings,
+which are also three keys a person can type). The second is bounded by
+`input.DecodeFinal`, the last-chance pass
+([#440](https://github.com/WonderForgeLabs/gooey/issues/440),
+[spec](specs/2026-09-01-paste-marker-grace.md)); the first is not, by
+design. `term.DecodeEvents` adds the only two things that
 are genuinely I/O: reading the tty in a goroutine, and the 40 ms
 `EscTimeout` that settles the classic ambiguity — a lone ESC and the
 first byte of an escape sequence are the same byte, and only the absence
-of a follow-up within the timeout proves the user meant the Esc key.
+of a follow-up within the timeout proves the user meant the Esc key. It
+counts those timeouts: the `term.PasteMarkerGrace`'th consecutive one
+that leaves the buffer untouched drains through `DecodeFinal` instead of
+`Decode` — so at the shipped value of 2 the buffer survives one timeout
+and is resolved on the second, which is what keeps a typed `ESC [ 2`
+from deafening the app forever.
 `input.ParseGesture` is the third leg: it parses the markup gesture
 syntax (`"ctrl+s"`, `"shift+tab"`, `"j"`, `"esc"`) into a `KeyEvent`,
 and because `KeyEvent` is comparable, gesture matching is `==`.
