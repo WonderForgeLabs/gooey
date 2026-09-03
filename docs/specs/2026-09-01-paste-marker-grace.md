@@ -169,9 +169,15 @@ demanded it.
 
 ## Verification
 
-`input/decodefinal_test.go` and one new test in `term/strand_linux_test.go`.
-Every clause is pinned — mutation-tested, and each mutation turns its own tests
-red:
+`input/decodefinal_test.go`, and four new tests in `term/strand_linux_test.go`
+— one per route to the last-chance pass, one for the constant's behaviour and a
+deterministic floor under it.
+
+**Every clause but one is pinned**, and the exception is named in the table
+rather than glossed: the conditional re-arm turns nothing red. An earlier
+version of this sentence said "every clause is pinned" directly above the row
+reporting that, which is the kind of contradiction a reader resolves by
+trusting the prose. Mutation-tested, each mutation turning its own tests red:
 
 | mutation | what goes red |
 |---|---|
@@ -180,6 +186,7 @@ red:
 | the loop never escalates to the final pass | the term strand test alone |
 | the stall counter resets on every timeout instead of counting | the term strand test alone |
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` alone |
+| `PasteMarkerGrace` lowered from 2 to 1 | `TestASplitPasteMarkerStillPastes` and `TestPasteMarkerGraceHasAFloor` |
 | the timer is re-armed unconditionally | **nothing** — the honest result, and the one the section above predicts |
 
 The tty-close row is the reason `drainFinal` is defined as "nothing more can
@@ -209,9 +216,11 @@ PR #445, which is the second time on this branch that a test needed to be
 stopped from passing for the wrong reason.
 
 The mutation harness itself has to be watched, and this one caught it out. The
-targets must carry their leading TABS so they can only match a statement: the
-doc comment on `PasteMarkerGrace` now quotes the escalation line verbatim, and
-a bare substring replace hit the COMMENT and left the code intact — reporting
+targets must carry their leading TABS so they can only match a statement. The
+doc comment on `PasteMarkerGrace` USED TO quote the escalation line verbatim —
+it describes it in prose now, so a reader checking this lesson against the code
+will not find the quote — and while it did, a bare substring replace hit the
+COMMENT and left the code intact — reporting
 "the loop never escalates" as a mutation no test caught, when in fact no
 mutation had happened. A harness that silently mutates nothing grades every
 test as a passing pin. The tell was the timing: 81ms to the Esc, which is two

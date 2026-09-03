@@ -105,6 +105,14 @@ func TestFinalDecodeAlwaysMakesProgress(t *testing.T) {
 // up: a fixture that cannot express the bug. Adding '2' takes the hits
 // from 0 to 4 and the cost from 16^5 to 17^5. Measured in review of
 // #445.
+//
+// AND THE FIVE-BYTE CEILING IS NOW LOAD-BEARING, which it was not before
+// that byte went in. With '2' present, alpha contains every byte of
+// \x1b[200~ — so a six-byte sweep would build a complete OPEN PASTE,
+// DecodeFinal would correctly answer (0, false), and assertFinalProgress
+// would fail claiming the decoder strands live input when what it found
+// is the one exception the record says must never be withdrawn. Widening
+// this past five means skipping buffers that begin with pasteStart.
 func TestFinalDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', '2', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 5)

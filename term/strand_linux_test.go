@@ -243,7 +243,17 @@ func closedTtyAttempt(t *testing.T) bool {
 		"tty closed. A closed tty is the strongest deadline there is — nothing "+
 		"can arrive — so a held prefix must resolve on the way out rather than "+
 		"leave with it")
-	if elapsed := time.Since(held); elapsed >= PasteMarkerGrace*EscTimeout {
+	// EscTimeout, not PasteMarkerGrace*EscTimeout, and the difference is
+	// slack against this clock's own drift. `held` is sampled after
+	// receiving `b` from a BUFFERED channel, and the decoder sends that
+	// event before it arms the escape timer — so if the test goroutine is
+	// descheduled, `held` lands after the arm by that much. Budgeting the
+	// full stall latency then lets a timer-delivered Esc measure just under
+	// it and be credited to the close, which is the false pass this retry
+	// loop exists to prevent. One EscTimeout is still orders of magnitude
+	// above the close path's real latency — it resolves on a failed read,
+	// not on a deadline. Raised in review of #445.
+	if elapsed := time.Since(held); elapsed >= EscTimeout {
 		return false // the timer could have done this; attribute nothing
 	}
 	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
@@ -267,4 +277,103 @@ func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
 		t.Fatal(msg)
 	}
 	return input.Event{}
+}
+
+// PasteMarkerGrace itself, which nothing pinned — and it is the number the
+// whole record argues about.
+//
+// Mutating it from 2 to 1 left `go test ./input/... ./term/...` and the root
+// suite entirely green while reverting #425's fix for #419. At 1, `stalls++`
+// reaches the threshold on the FIRST idle timeout, so the split-marker arm is
+// never exercised: any 40ms stall inside the six-byte opener resolves it to
+// Esc and the payload arrives as the keystroke burst mode 2004 exists to
+// prevent. TestFinalDecodeResolvesTheTypedMarkerPrefix pins the input-side
+// grace, but that is independent of the constant; the loop is the only layer
+// that decides it. Raised in review of #445.
+//
+// So this is #419 itself, end to end: a real paste whose opening marker
+// straddles a read must still arrive as ONE PasteEvent.
+func TestASplitPasteMarkerStillPastes(t *testing.T) {
+	const attempts = 20
+	for i := range attempts {
+		if splitMarkerAttempt(t) {
+			return
+		}
+		t.Logf("attempt %d could not land the second write inside the grace "+
+			"window; retrying", i+1)
+	}
+	t.Fatalf("could not write the marker's tail inside the grace window in %d "+
+		"attempts. This machine is too loaded to distinguish a working decoder "+
+		"from a broken one, and passing on that basis would be a test that "+
+		"guards nothing", attempts)
+}
+
+// splitMarkerAttempt returns false when the attempt could not be made inside
+// the window — the same inconclusive-rather-than-green discipline
+// closedTtyAttempt uses, and for the same reason: a stalled runner must not
+// be able to turn "we never tested it" into a pass.
+func splitMarkerAttempt(t *testing.T) bool {
+	t.Helper()
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	evs := s.Events(16)
+
+	// The handshake byte again: reading `b` back proves the decoder consumed
+	// that read, so ESC [ 2 is in pend and the clock below starts when its
+	// escape timer is armed rather than whenever the write happened to land.
+	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
+		t.Fatalf("got %#v, want the 'b' we typed", ev)
+	}
+	held := time.Now()
+
+	// Past ONE timeout — so the grace is genuinely exercised rather than the
+	// marker simply arriving whole in one read — but inside PasteMarkerGrace
+	// of them, which is the window the constant defines.
+	time.Sleep(EscTimeout + EscTimeout/2)
+	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if elapsed := time.Since(held); elapsed >= PasteMarkerGrace*EscTimeout {
+		return false // the grace may already have expired; attribute nothing
+	}
+
+	ev := next(t, evs, "no event arrived after the paste marker's tail")
+	if !ev.IsPaste() {
+		// THE #419 FAILURE, and it is worth naming rather than reporting a
+		// type mismatch: at PasteMarkerGrace = 1 the first timeout resolves
+		// the held prefix to Esc, and what arrives here is that Esc followed
+		// by "00~payload" as individual keystrokes.
+		t.Fatalf("first event after the split marker was %#v, want one PasteEvent. "+
+			"A paste whose opening marker straddled a read has been torn up into "+
+			"keystrokes — #419. If PasteMarkerGrace was just lowered, this is "+
+			"what it costs: at 1 the FIRST idle timeout resolves the prefix, "+
+			"which is what `idle` already means, and the grace does not exist", ev)
+	}
+	if got := ev.Paste.Text; got != "payload" {
+		t.Fatalf("paste payload = %q, want %q", got, "payload")
+	}
+	return true
+}
+
+// The cheap deterministic backstop for the same property. The pty test above
+// is the real pin — it fails on the BEHAVIOUR — but it needs a pty and a
+// window, and this one needs neither, so a machine that cannot run the first
+// still cannot lower the constant unnoticed.
+func TestPasteMarkerGraceHasAFloor(t *testing.T) {
+	if PasteMarkerGrace < 2 {
+		t.Fatalf("PasteMarkerGrace is %d. Below 2 the FIRST idle timeout "+
+			"resolves a split paste marker to Esc — which is exactly what "+
+			"`idle` already means, so the grace stops existing and #419 "+
+			"returns: a paste whose opening marker straddles a read arrives "+
+			"as a stray Esc followed by its payload as keystrokes. Raising it "+
+			"is a trade (see the constant's doc); lowering it past 2 is not.",
+			PasteMarkerGrace)
+	}
 }

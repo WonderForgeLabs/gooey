@@ -73,9 +73,9 @@ import (
 // the time is up. See its doc for the case that made it necessary.
 func Decode(b []byte, idle bool) (Event, int, bool) {
 	if idle {
-		return decode(b, idled)
+		return decode(b, deadlineIdled)
 	}
-	return decode(b, live)
+	return decode(b, deadlineLive)
 }
 
 // DecodeFinal is Decode with the split-paste-marker exception WITHDRAWN.
@@ -125,7 +125,7 @@ func Decode(b []byte, idle bool) (Event, int, bool) {
 // remember that this CSI began as a held prefix, which is state this
 // package does not have; it is
 // https://github.com/WonderForgeLabs/gooey/issues/447.
-func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, final) }
+func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, deadlineFinal) }
 
 // deadline is how much of the terminal's benefit of the doubt is left.
 // Internal on purpose: Decode's public signature stays a bool, so no
@@ -133,14 +133,19 @@ func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, final) }
 type deadline uint8
 
 const (
-	live  deadline = iota // bytes may still be arriving
-	idled                 // none arrived within the escape timeout
-	final                 // nor within a second one: nothing more is coming
+	// deadlineFinal, not `final`: decodeCSI's local for the CSI final byte
+	// is also called `final`, so the bare name means one thing above that
+	// declaration and is a type error below it — inside the function every
+	// arm of this change routes through. Prefixed all three rather than one,
+	// so the set reads as a set. Raised in review of #445.
+	deadlineLive  deadline = iota // bytes may still be arriving
+	deadlineIdled                 // none arrived within the escape timeout
+	deadlineFinal                 // nor within a second one: nothing more is coming
 )
 
 // idle reports whether the escape timeout has fired at least once, which
 // is the only question every arm but the paste one asks.
-func (d deadline) idle() bool { return d != live }
+func (d deadline) idle() bool { return d != deadlineLive }
 
 func decode(b []byte, d deadline) (Event, int, bool) {
 	idle := d.idle()
@@ -277,7 +282,7 @@ func decodeCSI(b []byte, d deadline) (Event, int, bool) {
 		// rest of the marker on the wire to wait for. Holding on made the
 		// app permanently deaf and re-armed the escape timer every 40ms
 		// forever. See DecodeFinal.
-		if d == idled && splitPasteMarker(b) {
+		if d == deadlineIdled && splitPasteMarker(b) {
 			return Event{}, 0, false
 		}
 		if idle {
