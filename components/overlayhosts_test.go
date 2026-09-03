@@ -227,3 +227,114 @@ func TestATooltipPaintsAboveAToast(t *testing.T) {
 			"what puts tooltips above toasts", got)
 	}
 }
+
+// hitAdornment is an adornment that is NOT HitTestTransparent, which no
+// adornment the framework ships is — tipPopup, markerPopup and DragGhost
+// are all decoration and all opt out. That uniformity is exactly why the
+// claim below had nothing pinning it: with every shipped adorner invisible
+// to the pointer, no existing test can tell "hit order agrees with paint
+// order" apart from "the press went somewhere else entirely".
+//
+// Two comments in adorn.go argue at length that on the documented shape
+// the two agree and an interactive adorner works, and that off it they
+// diverge silently. That is a written claim about z-order with nothing
+// going red when it reverses — the shape of defect this whole change
+// exists to remove. Raised in review of #444.
+type hitAdornment struct {
+	gooey.Base
+	anchor gooey.Component
+}
+
+func (a *hitAdornment) Anchor() gooey.Component { return a.anchor }
+
+// Place puts it on the row BELOW its anchor, the way a tooltip or a
+// validation marker floats. That keeps the anchor itself off the contested
+// cells, so the only two candidates there are this adornment and the
+// ordinary sibling — which is what makes the hit a statement about z-order
+// rather than about which component happens to be on top of the anchor.
+func (a *hitAdornment) Place(against, _ gooey.Rect) gooey.Rect {
+	return gooey.Rect{X: against.X, Y: against.Y + 1, W: 6, H: 1}
+}
+
+func (a *hitAdornment) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 6, H: 1} }
+
+func (a *hitAdornment) Render(f *gooey.Frame) {
+	b := a.Bounds()
+	if b.W > 0 && b.H > 0 {
+		f.Cells.SetString(b.X, b.Y, clipCols("ADORN!", b.W), render.Style{})
+	}
+}
+
+// hitPage builds the same page twice over, differing only in whether the
+// AdornmentLayer is the root's LAST child. `over` is an ordinary Text on
+// the same cells as the adornment, and the question both tests ask is
+// which of the two the pointer finds there.
+func hitPage(layerLast bool) (*Text, *hitAdornment, gooey.Component) {
+	// The anchor sits on row 0 and the contested cells are on row 1, so the
+	// anchor itself is never a candidate for the hit — otherwise it, not the
+	// sibling, is what the pointer finds, and the negative assertion below
+	// would pass for a reason that has nothing to do with z-order.
+	anchor := &Text{Content: Str("anchor")}
+	over := gooey.L(&Text{Content: Str("SIBLING")}, gooey.Layout{Top: 1}).(*Text)
+	layer := &AdornmentLayer{}
+	a := &hitAdornment{anchor: anchor}
+	layer.Add(a)
+
+	kids := []gooey.Component{anchor, over, layer}
+	if !layerLast {
+		kids = []gooey.Component{anchor, layer, over}
+	}
+	return over, a, &Canvas{Children: kids}
+}
+
+// The documented shape: layer LAST, so hitTest — which walks each
+// container's children from last to first — descends it first and finds
+// the adornment before the ordinary sibling covering the same cells. Hit
+// order agrees with the lifted paint order, which is what makes an
+// interactive adorner work on the shape the docs mandate.
+func TestAnAdornmentIsHitFirstWhenTheLayerIsLast(t *testing.T) {
+	_, a, page := hitPage(true)
+	c := gooey.NewComposer(page, 20, 3)
+	c.Frame()
+
+	b := a.Bounds()
+	if b.W == 0 || b.H == 0 {
+		t.Fatal("the adornment was never placed, so this test hit-tests nothing")
+	}
+	if hit := c.Focus().HitTest(b.X, b.Y); hit != gooey.Component(a) {
+		t.Errorf("HitTest over the adornment found %T, want the adornment. With "+
+			"the layer declared last, hit order and the overlay paint order "+
+			"agree — which is what makes an interactive adorner work on the "+
+			"shape the docs mandate", hit)
+	}
+}
+
+// And the divergence the same comments warn about, worth pinning precisely
+// because it is the half a reader is asked to take on trust: move the layer
+// off the end and the adornment still PAINTS above (it is lifted
+// regardless) while the later sibling takes the press.
+func TestAnAdornmentLosesThePressWhenTheLayerIsNotLast(t *testing.T) {
+	over, a, page := hitPage(false)
+	c := gooey.NewComposer(page, 20, 3)
+	c.Frame()
+
+	b := a.Bounds()
+	if got := render.RowText(c.Cells(), b.Y); !strings.HasPrefix(got, "ADORN!") {
+		t.Fatalf("row %d = %q; the adornment should paint above the sibling "+
+			"wherever the layer sits — that is what the marker does", b.Y, got)
+	}
+	// NAMES THE WINNER rather than asserting `!= a`. A negative assertion
+	// here passes whenever anything at all other than the adornment is hit,
+	// including when the walk finds some third component for reasons that
+	// have nothing to do with z-order — which is how the first draft of this
+	// test stayed green under a mutation that reversed the walk direction.
+	if hit := c.Focus().HitTest(b.X, b.Y); hit != gooey.Component(over) {
+		t.Errorf("HitTest over the adornment found %T, want the later sibling. "+
+			"With the layer declared BEFORE something that overlaps it, the "+
+			"adornment paints on top and the sibling takes the press — the "+
+			"divergence AdornmentLayer.Add and ToastHost.OverlaysPage warn "+
+			"about. If the adornment now wins, the marker has started moving "+
+			"input as well as paint: good news, and those comments need "+
+			"rewriting rather than this test deleting", hit)
+	}
+}

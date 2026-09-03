@@ -145,28 +145,17 @@ func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 // Add puts an adornment up. UI goroutine only, like everything that
 // reaches the tree; it appears on the next frame, positioned by Place.
 //
-// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE WHEREVER THE LAYER SITS,
-// BUT IS ONLY HIT-TESTED FIRST IF THE LAYER IS LAST. The layer implements
-// gooey.Overlay and overlay membership is inherited, so your adornment
-// paints above every ordinary node — that marker moves paint only.
-// FocusManager.HitTest still walks document order (children last-to-first,
-// mouse.go), so it reaches your adornment first as long as nothing
-// declared AFTER the layer covers the same cells. Hosting the layer as
-// the root's last child — the shape the docs mandate — guarantees that
-// by leaving no later sibling at all; it is sufficient, not necessary.
+// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE, AND IS HIT-TESTED FIRST
+// AS LONG AS NOTHING DECLARED AFTER THE LAYER COVERS THE SAME CELLS.
 //
-// So the two agree on the documented shape and diverge SILENTLY off it,
-// which is newly easy to get wrong: before gooey.Overlay, declaring the
-// layer late was the only thing keeping it on top, so a mistake here
-// showed up as a painting bug immediately. Now it paints correctly and
-// loses the press.
-//
-// The framework's own three adorners cannot notice either way — tipPopup,
-// markerPopup and DragGhost are all HitTestTransparent, being decoration.
-// The Adornment interface deliberately does not require it, because "what
-// should the pointer do here" is the adornment's policy. An INTERACTIVE
-// adorner should therefore either rely on the layer being last, or take
-// pointer capture the way Popup does. Named in review of #444.
+// Hosting the layer as the root's last child — the documented shape —
+// guarantees that by leaving no later sibling at all. Off that shape paint
+// and input diverge silently, and an interactive adorner is where it
+// bites. The full argument, and why it is newly easy to get wrong, is on
+// OverlaysPage below; it lives in one place on purpose, because this file
+// exists because a written z-order claim outlived its truth and two copies
+// of one drift apart. Pinned by TestAnAdornmentIsHitFirstWhenTheLayerIsLast
+// and its off-shape twin.
 func (l *AdornmentLayer) Add(a Adornment) {
 	l.adorns = append(l.adorns, a)
 	if l.structure != nil {

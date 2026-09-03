@@ -22,8 +22,10 @@ with `Grid.Row="0"` keeping the bar on the top row.
 > every subtree whose component implements `gooey.Overlay`, lifted to the
 > end of the paint order wherever it sits in the document. "Declare it
 > last" is still the right advice, but it is no longer the mechanism —
-> it now decides only the order among OVERLAYS. The three adopters are
-> exactly the three named above: a `Popup`'s surface (so, `MenuBar`'s
+> it now decides only the order among OVERLAYS. The adopters TODAY — derive
+> the current set with `git grep -l 'OverlaysPage' -- '*.go' ':!*_test.go'`
+> rather than trusting this sentence, which goes stale on the next one —
+> are: a `Popup`'s surface (so, `MenuBar`'s
 > dropdown), `ToastHost`, and `AdornmentLayer` (so, tooltips, validation
 > markers and drag ghosts). Read
 > [specs/2026-08-30-overlay-layer.md](../../specs/2026-08-30-overlay-layer.md)

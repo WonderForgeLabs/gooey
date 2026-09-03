@@ -53,7 +53,10 @@ type Pane struct {
 // it is a child rather than something Pane.Render draws: the composer
 // paints depth-first pre-order, so a later sibling paints after the
 // document subtree, and anything Pane drew itself would go underneath
-// and be erased by the tree's own pre-clears. See overlay.go's file
+// and be erased by the tree's own pre-clears. That ranks it above the
+// ORDINARY layer only — a gooey.Overlay inside the previewed tree is
+// lifted above this too (#437), which is inert while design mode is
+// Frozen. See overlay.go's file
 // comment.
 func (p *Pane) BindOverlay(o *Overlay) { p.overlay = o }
 

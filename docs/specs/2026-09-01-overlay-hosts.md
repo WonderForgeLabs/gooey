@@ -76,12 +76,27 @@ same mechanism it uses for everything else: an `AdornmentLayer` declared after a
 order and knows nothing about the marker, so an overlay that does not take
 capture paints above a later sibling that takes the press.
 
-Both new adopters are exempt, and by their own pre-existing design rather than
-by luck. `ToastHost` and `AdornmentLayer` are both `HitTestTransparent`
+Both new adopters are exempt, and the reason is the HOSTING SHAPE — not, as
+an earlier draft of this section had it, that nothing in them takes a press.
+
+`ToastHost` and `AdornmentLayer` are both `HitTestTransparent`
 (`components/toast.go`, `components/adorn.go`) — they span the page invisibly
 and would starve every click if they were not — and so is every adornment the
-framework hosts in the layer: `tipPopup`, `markerPopup`, `DragGhost`. Toasts
-are not interactive either. There is no press for the walk to misroute.
+framework hosts in the layer: `tipPopup`, `markerPopup`, `DragGhost`.
+
+**But a Toast is not.** It declares no `HitTestTransparent`, deliberately, and
+`TestAShownToastStillCatchesThePointer` asserts `HitTest` returns it over its
+own rectangle — the transparency is the host's, not its children's. So "toasts
+are not interactive, there is no press to misroute" was false, and contradicted
+a hundred lines from the claim in the same file's tests. Caught in review of
+[PR #444](https://github.com/WonderForgeLabs/gooey/pull/444).
+
+What actually holds: declared as the root's LAST child, a host is the first
+thing `hitTest` descends into (it walks children last-to-first), so hit order
+agrees with the lifted paint order; and while a dropdown is open `Popup` holds
+capture, so no press reaches the walk. Both are properties of where the host
+is declared, which is why the advice to declare it last survives the mechanism
+that used to justify it.
 
 **The exemption is narrower than the layer, and the gap is a public one** —
 though not in the shape it first looked. `AdornmentLayer.Add` is exported and
@@ -201,8 +216,14 @@ right each time and the grep was not.
    which had been contradicting `cmd/browser/picker.go` — the file the second
    pass rewrote — ever since.
 
-The command that finally covered it, with no `-v` filter and no path
-narrowing:
+The command below is what the third pass used. Calling it "the command that
+finally covered it" — which an earlier version of this sentence did — repeats
+the very mistake this list is about, one level up: a REGEX is narrower than a
+criterion too. It matches the phrase "document order … z-order", and two Go
+doc comments in `apps/wysiwyg/components/preview/` stated the demoted rule
+without ever using it ("A LATER SIBLING paints after"). Those were found by
+reading, in review of #444, and swept then. Assume the next phrasing is also
+unmatched:
 
 ```sh
 git grep -ni 'document order.*z-order\|z-order.*document order' \

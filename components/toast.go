@@ -141,11 +141,32 @@ func (h *ToastHost) Render(*gooey.Frame) {}
 func (h *ToastHost) PassesCellsThrough() {}
 
 // OverlaysPage puts the host — and with it every toast, since overlay
-// membership is inherited down the subtree — in the overlay layer. The
-// marker moves paint and not input, which costs this host nothing: it
-// is HitTestTransparent and its toasts are not interactive, so there is
-// no press for the document-order hit-test walk to route wrongly. See
-// gooey.Overlay, and #439 for the report.
+// membership is inherited down the subtree — in the overlay layer.
+//
+// The marker moves paint and NOT input, and what makes that safe here is
+// the hosting shape, not the toasts. An earlier version of this comment
+// said "its toasts are not interactive, so there is no press for the
+// hit-test walk to route wrongly", and TestAShownToastStillCatchesThePointer
+// in this package's own tests says the opposite in its own words: a Toast
+// declares no HitTestTransparent, deliberately, and HitTest returns it
+// over its own rectangle. The transparency is the HOST's, not its
+// children's. Corrected in review of #444.
+//
+// The real reasons, in the order they apply. Declared as the root's LAST
+// child — the documented shape — the host is what hitTest descends into
+// first (it walks children last-to-first, mouse.go), so hit order agrees
+// with the lifted paint order. And while a dropdown is open, Popup holds
+// pointer capture, so no press reaches the walk at all.
+//
+// OFF THAT SHAPE THEY DECOUPLE, SILENTLY, and worse here than for
+// AdornmentLayer because a toast IS a hit target by design. Declare the
+// host before a sibling that overlaps a toast's corner and the toast
+// paints on top — new, because the host is now lifted — while hitTest
+// still returns the later sibling. The covered Button takes the hover and
+// highlights under a toast the user can plainly see over it. Before this
+// change the two agreed there, because the un-lifted toast was under that
+// sibling too. Declare the host last. See gooey.Overlay, the same warning
+// on AdornmentLayer.OverlaysPage, and #439 for the report.
 func (h *ToastHost) OverlaysPage() {}
 
 // HitTestTransparent: the host spans the whole page invisibly (the same

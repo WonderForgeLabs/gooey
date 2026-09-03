@@ -24,6 +24,18 @@ package preview
 // and depth-first pre-order does the rest: Pane, the document subtree,
 // then this.
 //
+// WITH ONE LIMIT SINCE #437: z-order is document order in TWO layers, and
+// an ordinary later sibling only outranks the ordinary layer. Anything in
+// the previewed subtree implementing gooey.Overlay — a popup surface, a
+// ToastHost, an AdornmentLayer — is lifted above every ordinary node,
+// including this one, wherever it sits. Harmless today: this overlay
+// paints nothing until a Guide is bound, design mode is Frozen so the
+// previewed tree places nothing in its own hosts, and neither host paints
+// while empty. It stops being harmless the moment a previewed document
+// grows a live overlay. See gooey.Overlay and
+// docs/specs/2026-08-30-overlay-layer.md; found by a grep that this
+// comment's phrasing had escaped, in review of #444.
+//
 // # Why it does not wipe what it sits on top of
 //
 // A component covering the previewed tree is exactly the thing that
