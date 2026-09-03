@@ -146,6 +146,24 @@ Removing `AdornmentLayer.OverlaysPage` turns three red. On a change that exists
 because a written z-order claim outlived its truth, the record's own
 verification table is the last place to leave one. Caught in review of #444.
 
+One test in that file pins no marker at all.
+`TestAValidationMarkerPlacesItsAdornmentWhileFrozen` exists because the
+wysiwyg preview overlay's doc comment listed "design mode is Frozen" among the
+reasons a previewed document places nothing in the page's overlay hosts — and
+it does not. `Frozen` bounds dispatch and Startables; a marker places from
+`SetFocusManager` through `attachAdornment`, on the input-tree walk, which
+still reaches a frozen subtree because a frozen component is a focus candidate
+the manager must EVICT rather than never see. A previewed document holding a
+Required field and a marker floats a lifted adornment on its first frame,
+frozen and unclicked.
+
+The test asserts the freeze as well as the placement, and that half is the
+point: without it the test passes identically with no `Frozen` in the tree, and
+its name would be a claim about a wrapper doing nothing. Mutating the wrapper
+away fails on the freeze assertion, not the placement one. Written in review of
+#444, after the comment correcting the claim was found to be the only statement
+of it anywhere.
+
 `TestADismissedToastUncoversTheOpenPopup` is the counterweight: without it the
 fix could have been "never let anything paint over a toast's rect", which would
 strand the toast's cells on screen after it expired.
@@ -209,8 +227,8 @@ comments and demo markup rather than `docs/**`, so "the doc sweep" may not
 cover them at all.
 
 **Two are deliberately left to #443, and named here so the line is visible.**
-`docs/demos.md:620` ("the MenuBar overlay recipe reused in an app:
-last-in-document-order z-order") and `docs/learn/07-app-chrome.md:108` ("being
+`docs/demos.md` ("the MenuBar overlay recipe reused in an app:
+last-in-document-order z-order") and `docs/learn/07-app-chrome.md` ("being
 later in document order is the entire mechanism") are #437-era debt rather than
 newly false here. The second sits directly opposite the
 `07-app-chrome/app.gooey` comment this change rewrote, so a reader has the
@@ -232,7 +250,8 @@ right each time and the grep was not.
    which had been contradicting `cmd/browser/picker.go` — the file the second
    pass rewrote — ever since.
 4. And a fourth, which is the one that undercuts the tidy narrative above:
-   `docs/demos.md:530` **is matched by the command below** and was missed
+   `docs/demos.md`'s toolkit walkthrough **is matched by the command below**
+   and was missed
    anyway — the walkthrough for `cmd/toolkit`, whose on-screen string this
    change rewrote, so the demo and its own documentation taught opposite
    mechanisms. A grep that finds a line is not a sweep that fixes it. Two Go
@@ -253,7 +272,12 @@ git grep -ni 'document order.*z-order\|z-order.*document order' \
   -- '*.go' '*.gooey' '*.md' ':!vendor'
 ```
 
-**Line-number citations were removed rather than corrected.** This PR's own
+**Line-number citations were removed rather than corrected — including this
+record's own.** The "Not done here" list above cited three, and one was
+already off by one before this paragraph was written: the quoted sentence in
+`07-app-chrome.md` had moved to the next line. A rule stated in a document
+that breaks it two screens earlier teaches the opposite of what it says.
+Caught in review of #444. This PR's own
 doc-comment edit to `popup.go` shifted the line a test and this spec both cited
 as `components/popup.go:120`, so both silently pointed at the wrong statement —
 the failure mode where a citation stays plausible while becoming false. They

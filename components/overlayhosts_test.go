@@ -420,3 +420,47 @@ func TestAButtonUnderAToastTakesTheHoverWhenTheHostIsNotLast(t *testing.T) {
 			"comment needs rewriting rather than this test deleting", hit)
 	}
 }
+
+// A ValidationMarker places its lifted adornment inside a FULLY FROZEN
+// subtree, with no gesture anywhere — the pin for a claim the wysiwyg
+// preview overlay's doc comment makes about its own safety.
+//
+// That comment used to give "design mode is Frozen" as one of three
+// reasons the previewed tree places nothing in the page's overlay
+// hosts. It is not a reason. Frozen bounds DISPATCH and Startables;
+// placement here runs from SetFocusManager through attachAdornment, on
+// the input-tree walk, and the walk still reaches a frozen subtree — it
+// must, because a frozen component is still a focus candidate the
+// manager has to EVICT rather than never see.
+//
+// So a previewed document holding a Required field and a marker floats
+// an adornment on its FIRST FRAME: frozen, unclicked. Nothing in the
+// suite said so, the comment was the only statement of it, and it said
+// the opposite. Caught in review of #444.
+func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
+	name := prop.NewSource("")
+	errP := validate.Field(name, validate.Required("required"))
+	tb := &TextBox{Text: name, Error: errP}
+	m := &ValidationMarker{}
+	tb.Attach(m)
+	// A plain <Frozen> is AllowNone — the strongest freeze there is.
+	root := &VStack{Children: []gooey.Component{
+		&Frozen{Child: tb},
+		&AdornmentLayer{},
+	}}
+	c := gooey.NewComposer(root, 30, 5)
+	c.Frame()
+	// Discriminating half: without this the test passes just as well
+	// with no Frozen in the tree at all, and its name would be a claim
+	// about a wrapper that was doing nothing.
+	if c.Focus().SetFocus(tb) {
+		t.Fatal("the TextBox took focus, so the subtree is not frozen and " +
+			"this test proves nothing about Frozen")
+	}
+	if !m.IsShown() {
+		t.Fatal("the marker did not place while frozen — if Frozen has " +
+			"grown a gate on the input-tree walk that is a real change, " +
+			"and preview/overlay.go's comment can drop the correction " +
+			"this test exists to hold")
+	}
+}

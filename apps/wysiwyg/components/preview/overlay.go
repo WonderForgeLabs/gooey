@@ -28,13 +28,26 @@ package preview
 // an ordinary later sibling only outranks the ordinary layer. Anything in
 // the previewed subtree implementing gooey.Overlay — a popup surface, a
 // ToastHost, an AdornmentLayer — is lifted above every ordinary node,
-// including this one, wherever it sits. Harmless today: this overlay
-// paints nothing until a Guide is bound, design mode is Frozen so the
-// previewed tree places nothing in its own hosts, and neither host paints
-// while empty. It stops being harmless the moment a previewed document
-// grows a live overlay. See gooey.Overlay and
-// docs/specs/2026-08-30-overlay-layer.md; found by a grep that this
-// comment's phrasing had escaped, in review of #444.
+// including this one, wherever it sits. Harmless today for two reasons
+// that do hold: this overlay paints nothing until a Guide is bound, and
+// neither host paints while empty.
+//
+// NOT because design mode is Frozen, which an earlier version of this
+// comment gave as the third reason. Frozen bounds DISPATCH and
+// Startables, not evaluation or the input-tree walk — and a
+// ValidationMarker places its popup from SetFocusManager through
+// attachAdornment, with no gesture involved, showing from the first
+// frame on an empty Required field. A previewed document containing
+// <Validate Required="true"/> and <ValidationMarker/> therefore places
+// a lifted adornment while Frozen, today. That is the case this stops
+// being harmless for, and it is nearer than "the moment a previewed
+// document grows a live overlay" suggested.
+//
+// Not asserted here: components.TestAValidationMarkerPlacesItsAdornmentWhileFrozen
+// is the pin, and it fails the freeze itself if a future Frozen ever does
+// gate the walk — at which point this paragraph may go. Corrected in
+// review of #444. See gooey.Overlay and
+// docs/specs/2026-08-30-overlay-layer.md.
 //
 // # Why it does not wipe what it sits on top of
 //

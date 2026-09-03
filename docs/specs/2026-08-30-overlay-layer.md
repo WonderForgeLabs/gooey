@@ -114,9 +114,30 @@ overlay that does not take capture will paint above a later sibling while that
 sibling takes the press. `TestAnOverlayLiftsItsWholeSubtree` exists precisely to
 support container overlays, so this is reachable by an adopter rather than
 hypothetical — and as of #439 there are two, `ToastHost` and `AdornmentLayer`.
-Neither pays the gap: both are `HitTestTransparent`, as is every adornment the
-framework hosts in the layer, so there is no press for the walk to misroute.
-The first INTERACTIVE overlay is what makes closing this compulsory.
+
+**What keeps them safe is the HOSTING SHAPE, not transparency**, and the
+distinction is not pedantry: a `Toast` declares no `HitTestTransparent`
+(`TestAShownToastStillCatchesThePointer`), so it is a genuine hit target, and
+`Adornment` requires none either, so a third-party adorner is one too. Hosted
+as the root's LAST child — the shape both mandate — a host is the first thing
+`hitTest` descends into, since it walks each container's children last-to-first;
+hit order then agrees with the lifted paint order. `Popup` additionally holds
+capture while a dropdown is open, so no press reaches the walk at all.
+
+Off that shape they decouple, silently, and both directions are pinned:
+`TestAButtonUnderAToastTakesTheHoverWhenTheHostIsNotLast` and
+`TestAnAdornmentLosesThePressWhenTheLayerIsNotLast` ARE the walk misrouting a
+press.
+
+> An earlier version of this paragraph — added by #439 itself — said "both are
+> `HitTestTransparent` … so there is no press for the walk to misroute". That
+> was the retracted reasoning surviving in the record of the very change that
+> retracted it, and by the fourth review it was the only instance left in the
+> tree. Corrected in review of
+> [PR #444](https://github.com/WonderForgeLabs/gooey/pull/444).
+
+The first overlay that is neither declared last nor takes capture is what makes
+closing this compulsory.
 
 The interface's own doc comment says so, and `HitTest`'s comment no longer
 claims "later siblings paint on top" as its reason. Closing it properly means
