@@ -12,7 +12,10 @@ import (
 // the real event pipeline — input.Event through Composer.Handle, hit
 // testing, focus-follows-click, capture — on a page shaped like
 // cmd/toolkit, where a full-page ToastHost is declared AFTER the
-// MenuBar (document order is z-order, so the toast layer is topmost).
+// MenuBar. The toast layer is topmost because ToastHost is a
+// gooey.Overlay (#439) — it was topmost by document order alone when
+// this test was written, and stopped being so for the length of one
+// release, between #437 and #439.
 //
 // Wave 2's tests synthesized events directly on the bar's handlers and
 // missed this: hit-testing used to treat any Bounded container as

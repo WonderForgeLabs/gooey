@@ -12,11 +12,15 @@ import (
 
 // The z-order claim, from the OTHER side of the owner.
 //
-// Popup's doc comment states the rule as a fact of the design: the
-// surface is "a leaf child the owner returns from ChildComponents (LAST,
-// because document order is z-order)". toyPage is built to satisfy it —
-// it declares the owner last, with that reason in a comment — and every
-// other test in this package inherits the arrangement.
+// Popup's doc comment USED TO state the rule as a fact of the design:
+// the surface was "a leaf child the owner returns from ChildComponents
+// (LAST, because document order is z-order)". That sentence is gone —
+// #437 replaced it with the gooey.Overlay marker, and #439 corrected
+// the parenthetical, so do not go looking for it in popup.go. It is
+// quoted here as the claim these tests were written against, because
+// toyPage is still built to satisfy it: it declares the owner last, with
+// that reason in a comment, and every other test in this package
+// inherits the arrangement.
 //
 // Which means the whole suite only ever asked whether the surface is
 // above its OWNER'S siblings. Being last among the owner's children buys

@@ -11,12 +11,19 @@ import (
 // host nor the Show call says otherwise.
 const DefaultToastDuration = 3 * time.Second
 
-// ToastHost is the notification layer: a transparent overlay the app
-// places as the LAST child of its root, so document order — which is
-// z-order — puts every toast above the page. Show stacks a transient
-// message in the top-right corner; an auto-dismiss timer takes it down
-// again, and the Composer's restore pass repaints whatever the toast
-// was covering.
+// ToastHost is the notification layer: a transparent gooey.Overlay the
+// app places as the LAST child of its root, so its whole subtree paints
+// above the page. Show stacks a transient message in the top-right
+// corner; an auto-dismiss timer takes it down again, and the Composer's
+// restore pass repaints whatever the toast was covering.
+//
+// BEING LAST IS NO LONGER WHAT PUTS IT ON TOP — OverlaysPage is. The
+// two claims were the same thing until #437 gave popup surfaces a
+// second paint layer, at which point an ordinary-layer host sat under
+// every open dropdown however late it was declared, and a notification
+// the user had to see could be covered by a menu (#439). Declaration
+// order now decides only the order among OVERLAYS, which is what still
+// puts an AdornmentLayer declared after this host above it.
 //
 // The host paints nothing and declares no background, so a page that
 // never shows a toast pays nothing for hosting the layer. Each toast is
@@ -132,6 +139,35 @@ func (h *ToastHost) Render(*gooey.Frame) {}
 // PassesCellsThrough marks the transparent host as a no-cell container.
 // Toasts are separate child nodes and remain eligible for restoration.
 func (h *ToastHost) PassesCellsThrough() {}
+
+// OverlaysPage puts the host — and with it every toast, since overlay
+// membership is inherited down the subtree — in the overlay layer.
+//
+// The marker moves paint and NOT input, and what makes that safe here is
+// the hosting shape, not the toasts. An earlier version of this comment
+// said "its toasts are not interactive, so there is no press for the
+// hit-test walk to route wrongly", and TestAShownToastStillCatchesThePointer
+// in this package's own tests says the opposite in its own words: a Toast
+// declares no HitTestTransparent, deliberately, and HitTest returns it
+// over its own rectangle. The transparency is the HOST's, not its
+// children's. Corrected in review of #444.
+//
+// The real reasons, in the order they apply. Declared as the root's LAST
+// child — the documented shape — the host is what hitTest descends into
+// first (it walks children last-to-first, mouse.go), so hit order agrees
+// with the lifted paint order. And while a dropdown is open, Popup holds
+// pointer capture, so no press reaches the walk at all.
+//
+// OFF THAT SHAPE THEY DECOUPLE, SILENTLY, and worse here than for
+// AdornmentLayer because a toast IS a hit target by design. Declare the
+// host before a sibling that overlaps a toast's corner and the toast
+// paints on top — new, because the host is now lifted — while hitTest
+// still returns the later sibling. The covered Button takes the hover and
+// highlights under a toast the user can plainly see over it. Before this
+// change the two agreed there, because the un-lifted toast was under that
+// sibling too. Declare the host last. See gooey.Overlay, the same warning
+// on AdornmentLayer.OverlaysPage, and #439 for the report.
+func (h *ToastHost) OverlaysPage() {}
 
 // HitTestTransparent: the host spans the whole page invisibly (the same
 // hosting shape as AdornmentLayer), so the pointer must pass through it

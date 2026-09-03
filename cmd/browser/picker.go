@@ -67,9 +67,10 @@ func newSourcePicker(choose func(source)) *sourcePicker {
 	}
 	p.pop = components.NewPopup(p, p.drawPopup)
 	p.pop.Modal = true // an open picker swallows what it does not understand
-	// Document order is z-order and the surface is the LAST (only) child,
-	// so the box paints above both panes; the Composer's restore pass
-	// repaints what it covered when it goes away.
+	// The surface is a gooey.Overlay, so the box paints in the layer
+	// above the page and covers both panes wherever this picker sits in
+	// the document; being the only child decides nothing. The Composer's
+	// restore pass repaints what it covered when it goes away.
 	p.kids = []gooey.Component{p.pop.Surface()}
 	p.LayoutProps().BindVisibilityFunc(func() gooey.Visibility {
 		if p.pop.IsOpen() {

@@ -10,9 +10,11 @@ import (
 )
 
 // The standard page these tests share: full-width content on row 1, a
-// focusable button on row 2, and the MenuBar declared LAST — document
-// order is z-order, so being last is what puts its dropdown above the
-// content it drops over.
+// focusable button on row 2, and the MenuBar declared LAST. What puts
+// its dropdown above the content is that the surface is a gooey.Overlay
+// (#437); being last only ranks it against other overlays, of which this
+// page has none. The fixture keeps the position anyway, because it is
+// the shape apps are told to declare.
 func menuPage(saved *int, can *prop.Property[bool]) (*MenuBar, *Button, gooey.Component) {
 	save := gooey.NewCommand(func() { *saved++ })
 	var saveAction gooey.Action = save

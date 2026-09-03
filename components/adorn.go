@@ -60,11 +60,18 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it as the LAST child of its root — document order is z-order, the same
-// hosting shape as ToastHost — and adorners are added and removed at
-// runtime through the Dynamic re-sync a list uses. The layer paints
-// nothing and declares no background, so a page that never shows an
-// adornment pays nothing for hosting the layer.
+// it as the LAST child of its root — a gooey.Overlay, the same hosting
+// shape as ToastHost — and adorners are added and removed at runtime
+// through the Dynamic re-sync a list uses. The layer paints nothing and
+// declares no background, so a page that never shows an adornment pays
+// nothing for hosting the layer.
+//
+// OverlaysPage is what puts it above the page; being declared last only
+// orders it against the OTHER overlays, which is how a layer declared
+// after a ToastHost still paints its tooltips above that host's toasts.
+// The two were the same claim until #437 gave popup surfaces a second
+// paint layer and left this one behind, so a validation marker or a
+// tooltip disappeared under any open dropdown (#439).
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -137,6 +144,18 @@ func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 
 // Add puts an adornment up. UI goroutine only, like everything that
 // reaches the tree; it appears on the next frame, positioned by Place.
+//
+// AN ADORNMENT ADDED HERE PAINTS ABOVE THE PAGE, AND IS HIT-TESTED FIRST
+// AS LONG AS NOTHING DECLARED AFTER THE LAYER COVERS THE SAME CELLS.
+//
+// Hosting the layer as the root's last child — the documented shape —
+// guarantees that by leaving no later sibling at all. Off that shape paint
+// and input diverge silently, and an interactive adorner is where it
+// bites. The full argument, and why it is newly easy to get wrong, is on
+// OverlaysPage below; it lives in one place on purpose, because this file
+// exists because a written z-order claim outlived its truth and two copies
+// of one drift apart. Pinned by TestAnAdornmentIsHitFirstWhenTheLayerIsLast
+// and its off-shape twin.
 func (l *AdornmentLayer) Add(a Adornment) {
 	l.adorns = append(l.adorns, a)
 	if l.structure != nil {
@@ -248,6 +267,34 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // pointer must pass through it to the content beneath, or hosting the
 // layer would starve every click and hover on the page.
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
+
+// OverlaysPage puts the layer — and every adornment in it, since overlay
+// membership is inherited down the subtree — in the overlay layer.
+//
+// The marker moves paint and NOT input, and the consequence is subtler
+// than "presses go to the wrong place". hitTest walks each container's
+// children from LAST to first (mouse.go), so a layer declared as the
+// root's last child is descended into FIRST and its adornments are
+// found before anything earlier — paint order and hit order agree, and
+// even an interactive adorner would work.
+//
+// WHAT THIS MARKER CHANGES IS THAT THE TWO NO LONGER AGREE BY
+// CONSTRUCTION. Being last used to be the only thing keeping the layer
+// on top, so nobody could get the paint right and the input wrong.
+// Now the layer paints above the page wherever it sits, which removes
+// the visible reason to declare it last — and hit-testing still needs
+// it there. Declare the layer anywhere but last and its adornments
+// paint above a later sibling that quietly takes their presses, with
+// nothing on screen to say so.
+//
+// It costs the framework's own adorners nothing: tipPopup, markerPopup
+// and DragGhost are all HitTestTransparent, as is this layer
+// (HitTestTransparent, just above), so no press is theirs to lose. An
+// adornment somebody else writes is where it bites — Adornment requires
+// only gooey.Component, Anchor and Place. See Add. Raised in review of
+// #444; closing it properly means teaching the hit-test walk the same
+// two layers gooey.Overlay gave the paint walk.
+func (l *AdornmentLayer) OverlaysPage() {}
 
 // attachAdornment is the attach half both AdornmentLayer customers share:
 // find the page's layer through the input tree and put pop in it,

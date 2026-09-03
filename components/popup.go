@@ -21,10 +21,13 @@ import (
 //     owner keeps everything domain-shaped: what the popup shows, where
 //     it goes, which gestures mean what.
 //   - The SURFACE is the visible box: a leaf child the owner returns
-//     from ChildComponents (LAST, because document order is z-order),
-//     whose pre-clear paints exactly the popup rectangle — the overlay
-//     contract. The primitive owns the surface so it can guarantee the
-//     subscription rule below; the owner supplies only the draw func.
+//     from ChildComponents (last, though what puts it on top is that it
+//     implements gooey.Overlay — being late in document order bought
+//     being above the owner's other children and nothing more, which is
+//     #430), whose pre-clear paints exactly the popup rectangle — the
+//     overlay contract. The primitive owns the surface so it can
+//     guarantee the subscription rule below; the owner supplies only
+//     the draw func.
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //

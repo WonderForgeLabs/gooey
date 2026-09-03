@@ -615,9 +615,13 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, and whatever grows one
-next — lifted to the end with its subtree, because a dropdown is not at
-a position in the document, it is on top of it. The paint loop forces a
+implementing `gooey.Overlay` — a popup surface, `ToastHost` and
+`AdornmentLayer` — lifted to the end with its subtree, because a
+dropdown is not at a position in the document, it is on top of it. Note
+what is *not* on that list: a `MenuBar` is an ordinary component whose
+dropdown SURFACE is the overlay, which is the distinction
+[#430](https://github.com/WonderForgeLabs/gooey/issues/430) was filed
+over. The paint loop forces a
 repaint of every node above a rect somebody below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
@@ -1122,8 +1126,15 @@ subscription exists before the popup has ever opened. Around it,
 `Tooltip` rides the `HoverWatcher` attachment seam, and `ToastHost` and
 `AdornmentLayer` are the page-spanning hosts that lean on
 `HitTestTransparent` here and on the Composer's `restoreUnder` sweep to
-vacate cleanly. Design record:
-[specs/2026-08-10-popup.md](specs/2026-08-10-popup.md).
+vacate cleanly. Both implement `gooey.Overlay` as well — being the
+root's last child stopped putting them above the page the moment popup
+surfaces got a layer of their own, and for one release a dropdown
+covered the toasts and validation markers that are the framework's two
+ways of telling a user something they did not ask to hear
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439),
+[spec](specs/2026-09-01-overlay-hosts.md)). Being containers, they are
+also what makes the marker's subtree inheritance carry real nodes.
+Design record: [specs/2026-08-10-popup.md](specs/2026-08-10-popup.md).
 
 ## The runtime: gooey.App
 

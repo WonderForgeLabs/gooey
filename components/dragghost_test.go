@@ -9,7 +9,8 @@ import (
 )
 
 // A page shaped like an app that hosts free adornments: h rows of filler
-// under a layer declared LAST (document order is z-order). Every filler
+// under a layer declared LAST (which is the documented hosting shape;
+// what actually lifts the layer is gooey.Overlay — #439). Every filler
 // is a Text — no HoverState anywhere — so the damage counts below are
 // the ghost's alone and not some host's hover repaint, the same reason
 // tipPage uses a Text host.

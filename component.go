@@ -121,10 +121,25 @@ type ChildSetter interface {
 // presses before the walk runs — but that is Popup's mechanism, not
 // something this interface provides.
 //
-// So an overlay that does NOT take capture is responsible for its own
-// routing. Implementing this alone will paint you on top and leave the
-// clicks to whoever is underneath. Stated in review of #437; the same
-// gap is named in docs/specs/2026-08-30-overlay-layer.md.
+// So an overlay that does NOT take capture must arrange its own routing,
+// and TWO OF THE THREE THE FRAMEWORK NOW SHIPS DO NOT TAKE ANY. This
+// paragraph used to say Popup's capture was the whole answer, which was
+// true while Popup's surface was the only adopter; ToastHost and
+// AdornmentLayer joined in #439 and never capture anything.
+//
+// What makes those two safe is WHERE THEY ARE DECLARED. Hosted as the
+// root's last child — the shape their docs mandate — they are the first
+// thing hitTest descends into, because it walks each container's
+// children last-to-first, so hit order agrees with the lifted paint
+// order. Declare one anywhere else and the two decouple silently: it
+// paints above while a later sibling takes the press. The full argument
+// is on ToastHost.OverlaysPage and AdornmentLayer.OverlaysPage, and in
+// docs/specs/2026-09-01-overlay-hosts.md; it is not repeated here.
+//
+// Implementing this marker alone, in a component declared anywhere, will
+// still paint you on top and leave the clicks to whoever is underneath.
+// Stated in review of #437, corrected for the two new adopters in review
+// of #444.
 type Overlay interface{ OverlaysPage() }
 
 // HasBackground is implemented by containers that declare a background

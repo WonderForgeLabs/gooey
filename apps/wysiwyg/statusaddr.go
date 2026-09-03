@@ -534,8 +534,9 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	for _, c := range s.chips {
 		s.kids = append(s.kids, c)
 	}
-	// LAST, because document order is z-order: the menu must paint over
-	// whatever it covers.
+	// LAST: the surface is a gooey.Overlay and paints in the layer above
+	// the page regardless, so this orders it against the page's OTHER
+	// overlays rather than against these siblings (#439).
 	s.kids = append(s.kids, p.Surface())
 	return s.kids
 }

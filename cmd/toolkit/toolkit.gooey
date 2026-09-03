@@ -199,7 +199,7 @@
              beside it opens a popup it does not own. -->
         <Tab Header="overlays">
           <Grid Height="13" Rows="Auto,Auto,Auto,Auto,Auto,*">
-            <Text Grid.Row="0" Style="dim">ToastHost, MenuBar and AdornmentLayer are page-level: declared last, so they paint above every tab</Text>
+            <Text Grid.Row="0" Style="dim">ToastHost, AdornmentLayer and the MenuBar's dropdown paint in the Overlay layer, above every tab</Text>
             <ButtonBar Grid.Row="1" Gap="3" Separator="│">
               <Button Content="sticky toast" Click="{{.Sticky}}" Tooltip="ShowFor with a negative duration never expires"/>
               <Button Content="clear toasts" Click="{{.ClearToasts}}" Tooltip="takes the sticky one back down"/>
@@ -209,8 +209,9 @@
             <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a surface that is its last child, and a dismissal grammar: esc or an outside press</Text>
             <Text Grid.Row="4" Style="dim">picking one sets the same property the ColorPicker on the visual tab edits</Text>
             <!-- Declared LAST in this page for the reason every overlay
-                 is: document order is z-order, and the dropped list has
-                 to paint above the rows it covers. -->
+                 is: the popup surface is a gooey.Overlay, so it paints
+                 in the layer above the page, and declaration order is
+                 what ranks it against the page's other overlays. -->
             <HStack Grid.Row="5" Gap="3" VAlign="Start">
               <Text Style="dim" VAlign="Center">accent preset</Text>
               <ColorPreset Name="Presets" Selected="{{.Preset}}" Changed="{{.PresetChanged}}"/>
@@ -242,10 +243,15 @@
         </StatusBar.Right>
       </StatusBar>
 
-      <!-- Overlays. Document order is z-order, so the MenuBar and the
-           toast layer are declared LAST — the dropdown and the toasts
-           paint above the rows they cover — while Grid.Row still places
-           the bar on the top row. -->
+      <!-- The overlay hosts. The ToastHost and the AdornmentLayer are
+           themselves gooey.Overlays; the MenuBar is NOT — it is an
+           ordinary component whose dropdown SURFACE is the overlay, and
+           conflating the two is the misconception #430 was filed over.
+           What each contributes paints in the OVERLAY LAYER above the
+           page wherever it is declared; declaring them LAST is what
+           orders them against each other, so the dropdown is under the
+           toasts and the toasts under the tooltips. Grid.Row still
+           places the bar on the top row, independently of all of it. -->
       <MenuBar Grid.Row="0" Style="accent">
         <Menu Title="Job">
           <MenuItem Text="Start" Gesture="ctrl+s" Command="{{.Start}}"/>
