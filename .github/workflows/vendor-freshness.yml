@@ -26,17 +26,48 @@ name: Vendor freshness
 on:
   pull_request:
     paths:
+      # The BARE entries are not redundant with the `**` ones, and the root
+      # module is the reason. `**/go.mod` is anything followed by a literal
+      # `/go.mod`, so the repository-root go.mod — path `go.mod`, no slash —
+      # is not matched by it. That is the one module whose stale vendor/
+      # breaks every other module's build. Both forms are listed so this is
+      # correct whichever way GitHub's globbing reads, and
+      # TestVendorWorkflowsCoverTheRootModule fails if either form is
+      # dropped. Raised in review of #452.
+      - 'go.mod'
+      - 'go.sum'
       - '**/go.mod'
       - '**/go.sum'
       - 'go.work'
       - 'go.work.sum'
+      # vendor/** is here and NOT in vendor-autofix.yml, which is the one
+      # asymmetry between the two lists. The guard wants it because a human
+      # can hand-edit vendor/ into disagreeing with the modules; the autofix
+      # does not, because it only ever acts on Dependabot PRs and those
+      # always move a go.mod.
       - 'vendor/**'
-  # ALSO ON main, and not for symmetry. Vendor staleness is a property of a
-  # MERGED tree, not of a diff: two PRs can each be vendor-correct against
-  # their own base and still produce a stale vendor/ once both have landed,
-  # because neither one's diff touches the other's require. A
-  # pull_request-only check cannot see that by construction. No paths filter
-  # here — the point is the case where no single commit looks responsible.
+  # ALSO ON main, and the justification is a SCHEDULING gap rather than a
+  # blindness. An earlier version of this comment said a pull_request-only
+  # check "cannot see" a two-PR semantic conflict "by construction", and that
+  # is wrong: actions/checkout on a pull_request event checks out the MERGE
+  # commit, so this guard already runs against head-merged-into-base and
+  # would catch it — on the runs that happen. The gap is that no run happens
+  # when the BASE advances without a push to the head. Corrected in review
+  # of #452.
+  #
+  # Worth stating outright while we are here, because this file explains
+  # everything else at that level: "did running it change anything" depends
+  # entirely on WHICH TREE was checked out, and on a pull_request event that
+  # is the merge result, not the head.
+  #
+  # THE COST, since an unargued trade gets re-litigated in this repo: no
+  # paths filter here — deliberately, since the case is the one where no
+  # single commit looks responsible — so this spends one default-tier pod
+  # running the Go toolchain over the whole tree on EVERY merge to main, on
+  # pools CLAUDE.md describes as shared with production and non-autoscaling.
+  # A nightly `schedule:` is the cheaper alternative and is deliberately not
+  # taken: it would leave main knowingly broken for up to a day, and the
+  # thing being guarded is the state every other branch forks from.
   push:
     branches: [main]
   # Dispatchable so the guard can be re-run on demand, e.g. to confirm main
@@ -93,7 +124,23 @@ jobs:
       - name: Regenerate the vendor directory
         env:
           GOTOOLCHAIN: local
-        run: go work vendor
+        run: |
+          # WHICH Go produced these bytes is part of the answer, not trivia.
+          # ci.yml spends ~70 lines (its "Check the image's Go satisfies both
+          # modules" step) on the fact that these pools ship their own Go and
+          # export GOROOT, so actions/setup-go breaks rather than helps and
+          # the version is CHECKED instead of pinned. These jobs inherit the
+          # unpinned half of that trade, and GOTOOLCHAIN=local removes the
+          # download that would otherwise paper over a drifted image.
+          #
+          # Two things then need this line. A toolchain-drift failure dies
+          # inside `go work vendor` with a message that never says what the
+          # image shipped; and vendor/modules.txt's format has changed across
+          # Go releases, so an image upgrade is a plausible cause of a red
+          # guard on a tree nobody touched. Without this the reader has
+          # nothing to suspect it with. Raised in review of #452.
+          go env GOVERSION
+          go work vendor
 
       - name: Fail if it changed anything
         run: |

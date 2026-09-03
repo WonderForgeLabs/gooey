@@ -32,6 +32,16 @@ name: Vendor autofix
 #     above was stated as absolute and was not.
 #   * The checkout is pinned to the head SHA, never a ref name.
 #   * permissions is contents: write and nothing else.
+#   * The push stages a NARROW pathspec, not the whole tree.
+#
+# And the thing all of that is protecting, which deserves naming rather than
+# being left implicit: actions/checkout defaults to persist-credentials:true,
+# so a WRITABLE credential sits in .git/config for the rest of the job with
+# the PR's tree checked out beside it. That is what makes the `git push`
+# below work, so it is not a defect — but it means "no PR code executes" is
+# the single property holding the diff and the token apart, and ANY step
+# added to this job inherits that. Do not add one that runs anything from the
+# checkout. Named in review of #452.
 #
 # The unprivileged check in vendor-freshness.yml is what actually GUARDS the
 # invariant — it runs on every PR including forks, and it is the one that must
@@ -42,6 +52,12 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened]
     paths:
+      # Bare AND globbed, for the root-module reason spelled out in
+      # vendor-freshness.yml and pinned by
+      # TestVendorWorkflowsCoverTheRootModule. No 'vendor/**' here: this job
+      # only ever acts on Dependabot PRs, which always move a go.mod.
+      - 'go.mod'
+      - 'go.sum'
       - '**/go.mod'
       - '**/go.sum'
       - 'go.work'
@@ -86,7 +102,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          # 1, not 0. A single-commit push needs no history, and on a repo
+          # with LFS a full fetch is real time on a shared pool. The earlier
+          # 0 was the only undefended decision in this file, which is its own
+          # reason to have changed it. Raised in review of #452.
+          fetch-depth: 1
           lfs: true
 
       # NEEDS EGRESS, which is worth knowing because the rest of this repo's
@@ -101,7 +121,23 @@ jobs:
       - name: Regenerate the vendor directory
         env:
           GOTOOLCHAIN: local
-        run: go work vendor
+        run: |
+          # WHICH Go produced these bytes is part of the answer, not trivia.
+          # ci.yml spends ~70 lines (its "Check the image's Go satisfies both
+          # modules" step) on the fact that these pools ship their own Go and
+          # export GOROOT, so actions/setup-go breaks rather than helps and
+          # the version is CHECKED instead of pinned. These jobs inherit the
+          # unpinned half of that trade, and GOTOOLCHAIN=local removes the
+          # download that would otherwise paper over a drifted image.
+          #
+          # Two things then need this line. A toolchain-drift failure dies
+          # inside `go work vendor` with a message that never says what the
+          # image shipped; and vendor/modules.txt's format has changed across
+          # Go releases, so an image upgrade is a plausible cause of a red
+          # guard on a tree nobody touched. Without this the reader has
+          # nothing to suspect it with. Raised in review of #452.
+          go env GOVERSION
+          go work vendor
 
       - name: Push the result if it changed
         env:
@@ -119,10 +155,14 @@ jobs:
           # go.sum or go.work.sum without changing vendor/ at all. Raised in
           # review of #452.
           #
-          # -A over the whole tree rather than a path list, because
-          # `go work vendor` legitimately updates go.sum and go.work.sum
-          # alongside vendor/, and those belong in the same commit.
-          git add -A
+          # NARROW, not `git add -A`. The set `go work vendor` can
+          # legitimately touch is knowable and fixed — vendor/, go.work.sum,
+          # and any module's go.sum — and on a job holding contents:write
+          # under pull_request_target, "whatever else happened to be in the
+          # workspace" is surface with no upside. A bare `*` in a git
+          # pathspec matches `/`, so '*go.sum' covers every nested module's
+          # go.sum as well as the root's. Raised in review of #452.
+          git add -A -- vendor go.work.sum '*go.sum'
           if git diff --cached --quiet; then
             echo "vendor/ already matched the modules; nothing to push."
             exit 0
@@ -150,5 +190,19 @@ jobs:
           # this file's header is careful about, so it wants a deliberate yes
           # rather than my assumption. Until then a maintainer re-runs CI once
           # per bump, which still beats diagnosing the vendoring by hand.
-          # Raised in review of #452.
+          #
+          # AND THERE IS A SECOND COST STACKED ON THAT ONE. Dependabot stops
+          # maintaining a PR once a non-Dependabot commit lands on its
+          # branch: after this pushes, the PR no longer rebases on base
+          # changes and no longer auto-updates when a newer version of the
+          # same advisory arrives. Recovering it takes `@dependabot
+          # recreate`, which discards this commit and starts the cycle over.
+          # So the honest per-bump cost is "re-run CI, and the PR is now
+          # frozen against further Dependabot updates".
+          #
+          # Flagged as REPORTED, not verified: this is Dependabot's
+          # documented behaviour as of writing and it was not tested here,
+          # because testing it means letting this workflow push to a real
+          # advisory PR. Confirm before relying on it. Raised in review
+          # of #452.
           echo "::notice::Pushed the regenerated vendor/. CI will NOT re-run by itself (pushes made with GITHUB_TOKEN do not trigger workflows) — re-run CI on the new head to clear the gate. See the comment in this workflow for why that is not automated yet."
