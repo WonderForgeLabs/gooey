@@ -338,3 +338,76 @@ func TestAnAdornmentLosesThePressWhenTheLayerIsNotLast(t *testing.T) {
 			"rewriting rather than this test deleting", hit)
 	}
 }
+
+// The ToastHost twin of the two adornment hit-tests above, and it is not
+// redundant with them even though the mechanism is identical.
+//
+// ToastHost.OverlaysPage claims a DIFFERENT consequence from
+// AdornmentLayer's: not "an interactive adorner loses its press", but "the
+// covered Button takes the hover and highlights under a toast the user can
+// plainly see over it". A Toast is a real hit target — it declares no
+// HitTestTransparent, and TestAShownToastStillCatchesThePointer pins that —
+// where every adornment the framework ships is decoration. Only one of the
+// two claims was a fact about the code; this makes the other one one too.
+// Raised in review of #444.
+func toastHitPage(hostLast bool) (*Button, *ToastHost, gooey.Component) {
+	// A Button rather than a Text for the sibling, because the claim is
+	// about a real hit target taking a hover it should not have.
+	btn := gooey.L(&Button{Content: Str("BUTTON")}, gooey.Layout{Top: 0}).(*Button)
+	host := gooey.L(&ToastHost{}, gooey.Layout{Top: 0, Width: 8}).(*ToastHost)
+
+	kids := []gooey.Component{btn, host}
+	if !hostLast {
+		kids = []gooey.Component{host, btn}
+	}
+	return btn, host, &Canvas{Children: kids}
+}
+
+// Host LAST — the documented shape. hitTest descends it first, so the
+// toast takes the press over its own cells and hit order agrees with the
+// lifted paint order.
+func TestAToastIsHitFirstWhenTheHostIsLast(t *testing.T) {
+	_, host, page := toastHitPage(true)
+	c := gooey.NewComposer(page, 20, 3)
+	c.Frame()
+	toast := host.Show("T")
+	c.Frame()
+
+	b := toast.Bounds()
+	if b.W == 0 || b.H == 0 {
+		t.Fatal("the toast was never arranged, so this test hit-tests nothing")
+	}
+	if hit := c.Focus().HitTest(b.X, b.Y); hit != gooey.Component(toast) {
+		t.Errorf("HitTest over the toast found %T, want the toast", hit)
+	}
+}
+
+// And the divergence, which is the half ToastHost.OverlaysPage warns about
+// in its own words: the toast paints on top either way, but with the host
+// declared BEFORE an overlapping sibling the Button underneath takes the
+// pointer — visibly covered, and still the thing that highlights.
+func TestAButtonUnderAToastTakesTheHoverWhenTheHostIsNotLast(t *testing.T) {
+	btn, host, page := toastHitPage(false)
+	c := gooey.NewComposer(page, 20, 3)
+	c.Frame()
+	toast := host.Show("T")
+	c.Frame()
+
+	b := toast.Bounds()
+	if got := render.RowText(c.Cells(), b.Y); !strings.Contains(got, "T") {
+		t.Fatalf("row %d = %q; the toast should paint above the button "+
+			"wherever the host sits — that is what the marker does", b.Y, got)
+	}
+	// Names the winner rather than asserting != toast, for the reason the
+	// adornment twin records: a negative assertion passes whenever anything
+	// else wins, including for reasons unrelated to z-order.
+	if hit := c.Focus().HitTest(b.X, b.Y); hit != gooey.Component(btn) {
+		t.Errorf("HitTest over the toast found %T, want the Button underneath. "+
+			"With the host declared before an overlapping sibling, the toast "+
+			"paints on top and the button still takes the pointer — the "+
+			"divergence ToastHost.OverlaysPage warns about, and the reason "+
+			"the host must be declared last. If the toast now wins, the "+
+			"marker has started moving input as well as paint and that "+
+			"comment needs rewriting rather than this test deleting", hit)
+	}
+}

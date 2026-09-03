@@ -103,11 +103,21 @@ type PointerFollower interface{ FollowsPointer() bool }
 // the whole page, and this walk does not know about it. A later sibling
 // therefore takes the press even where an overlay paints above it.
 //
-// It is not a defect for the overlay the framework ships — Popup holds
-// pointer capture for as long as it is open, so presses never reach this
-// walk — but Overlay is a public interface, and an overlay that does not
-// take capture is responsible for its own routing. See the Overlay
-// interface's comment. Corrected in review of #437.
+// It is not a defect for the overlays the framework ships, and the reason
+// is not one reason. Popup holds pointer capture while open, so presses
+// never reach this walk at all. ToastHost and AdornmentLayer (#439) never
+// capture — they are safe because they are hosted as the root's LAST
+// child, which makes them the first thing this walk descends into, so hit
+// order agrees with the lifted paint order. Off that shape they decouple
+// silently.
+//
+// An earlier version of this said "the overlay the framework ships",
+// singular, and credited capture alone. Read literally that made the two
+// hosts broken. Overlay is a public interface besides, so an adopter that
+// neither captures nor is declared last is responsible for its own
+// routing. See the Overlay interface's comment and
+// docs/specs/2026-09-01-overlay-hosts.md. Corrected in review of #437,
+// and again for the two new adopters in review of #444.
 func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y, 0) }
 
 // depth is threaded rather than counted in a package variable because
