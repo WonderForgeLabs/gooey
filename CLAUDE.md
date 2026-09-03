@@ -48,6 +48,20 @@ strips the vendored modules' own `go.mod` files, which is why the module
 discovery below still finds exactly the tree's own modules and needs no
 `vendor` prune.
 
+**That pairing is now CHECKED rather than remembered.**
+`.github/workflows/vendor-freshness.yml` runs `go work vendor` on every PR
+touching a `go.mod`, `go.sum`, `go.work`, `go.work.sum` or `vendor/`, and on
+every push to main, and fails if running it changed anything — which is the
+invariant itself rather than a proxy for it. Until it existed the rule was
+convention, and Dependabot broke it three times in one morning
+([#449](https://github.com/WonderForgeLabs/gooey/issues/449)–[#451](https://github.com/WonderForgeLabs/gooey/issues/451)):
+it edits a require and never vendors, so `go` refused with `inconsistent
+vendoring` in whichever job ran a Go command first — for all three, a
+*protobuf* step. `vendor-autofix.yml` repairs Dependabot's PRs in place.
+`TestVendorWorkflowsCoverTheRootModule` pins the one blind spot those
+filters can silently acquire: `**/go.mod` does not match the ROOT `go.mod`,
+whose stale `vendor/` breaks every other module's build.
+
 **`tool` directives go in `tools/`, never in a module somebody imports.** A
 `tool` directive records the tool's whole dependency graph as `// indirect`
 requires of the go.mod holding it, and MVS hands those to every consumer of

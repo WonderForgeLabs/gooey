@@ -1,0 +1,165 @@
+name: Vendor freshness
+
+# `vendor/` IS THE BUILD, and nothing checked that it matched the modules.
+#
+# go.work lists every module in the tree and one root vendor/ holds their
+# dependencies merged, committed, so the whole tree builds with the network
+# off. The property that keeps that true is trivial and unenforced: whoever
+# changes a require must run `go work vendor` and commit the result.
+#
+# When they do not, `go` refuses outright:
+#
+#   go: inconsistent vendoring in /home/runner/_work/gooey/gooey:
+#     google.golang.org/grpc@v1.83.1: is explicitly required in go.mod,
+#     but not marked as explicit in vendor/modules.txt
+#
+# and it surfaces wherever a Go command happens to run first — for #449/#450/
+# #451 that was `contract`'s "Build buf from the tools module", a step about
+# protobuf that has nothing to do with the bump. The diagnosis is one layer
+# away from the cause, so this workflow says it in one place, by name, keyed
+# on the files that can cause it.
+#
+# WHY A SEPARATE WORKFLOW rather than a step in ci.yml: ci.yml's jobs are
+# matrix legs over discovered modules, and this question is about the tree as
+# a whole exactly once. It also wants a `paths:` filter, which is per-workflow.
+
+on:
+  pull_request:
+    paths:
+      # The BARE entries are not redundant with the `**` ones, and the root
+      # module is the reason. `**/go.mod` is anything followed by a literal
+      # `/go.mod`, so the repository-root go.mod — path `go.mod`, no slash —
+      # is not matched by it. That is the one module whose stale vendor/
+      # breaks every other module's build. Both forms are listed so this is
+      # correct whichever way GitHub's globbing reads, and
+      # TestVendorWorkflowsCoverTheRootModule fails if either form is
+      # dropped. Raised in review of #452.
+      - 'go.mod'
+      - 'go.sum'
+      - '**/go.mod'
+      - '**/go.sum'
+      - 'go.work'
+      - 'go.work.sum'
+      # vendor/** is here and NOT in vendor-autofix.yml, which is the one
+      # asymmetry between the two lists. The guard wants it because a human
+      # can hand-edit vendor/ into disagreeing with the modules; the autofix
+      # does not, because it only ever acts on Dependabot PRs and those
+      # always move a go.mod.
+      - 'vendor/**'
+  # ALSO ON main, and the justification is a SCHEDULING gap rather than a
+  # blindness. An earlier version of this comment said a pull_request-only
+  # check "cannot see" a two-PR semantic conflict "by construction", and that
+  # is wrong: actions/checkout on a pull_request event checks out the MERGE
+  # commit, so this guard already runs against head-merged-into-base and
+  # would catch it — on the runs that happen. The gap is that no run happens
+  # when the BASE advances without a push to the head. Corrected in review
+  # of #452.
+  #
+  # Worth stating outright while we are here, because this file explains
+  # everything else at that level: "did running it change anything" depends
+  # entirely on WHICH TREE was checked out, and on a pull_request event that
+  # is the merge result, not the head.
+  #
+  # THE COST, since an unargued trade gets re-litigated in this repo: no
+  # paths filter here — deliberately, since the case is the one where no
+  # single commit looks responsible — so this spends one default-tier pod
+  # running the Go toolchain over the whole tree on EVERY merge to main, on
+  # pools CLAUDE.md describes as shared with production and non-autoscaling.
+  # A nightly `schedule:` is the cheaper alternative and is deliberately not
+  # taken: it would leave main knowingly broken for up to a day, and the
+  # thing being guarded is the state every other branch forks from.
+  push:
+    branches: [main]
+  # Dispatchable so the guard can be re-run on demand, e.g. to confirm main
+  # is clean after a manual vendor fix.
+  #
+  # IT DOES NOT MAKE THIS EXERCISABLE BEFORE IT MERGES, and an earlier
+  # revision of this comment claimed it did. workflow_dispatch is only
+  # registered for workflows already on the default branch; dispatching from
+  # a topic branch answers `HTTP 404: workflow vendor-freshness.yml not found
+  # on the default branch`. Tried, not assumed.
+  workflow_dispatch:
+
+# Read-only, and it stays that way. This job runs for EVERY pull request
+# including forks (gooey is public), so it must never hold a token that can
+# write. The companion vendor-autofix.yml is the privileged half and is
+# guarded accordingly.
+permissions:
+  contents: read
+
+concurrency:
+  # Falls back to the ref for push and dispatch runs, where there is no PR
+  # number. Note what this does NOT do: two dispatches on the SAME branch
+  # still share a group and the later cancels the earlier. That is fine for
+  # this workflow — the answer depends only on the tree — but it is not the
+  # "one group per run" an earlier version of this comment implied.
+  group: vendor-freshness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vendor:
+    # default, not small: small is documented in ci.yml as the 2Gi tier for
+    # "find + git ls-files + jq, no build toolchain". `go work vendor` runs
+    # the Go toolchain over 26 modules and writes thousands of files, which
+    # is what `contract` uses default for.
+    runs-on: forge-runners-default-vsphere
+    steps:
+      # lfs: true is not optional — TestEveryCheckoutFetchesLFS fails the root
+      # module for ANY workflow checkout without it. The repo keeps
+      # *.wav/*.gif/*.png in LFS and checkout defaults to lfs:false, which
+      # hands the job pointer TEXT in their place with no error raised.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # `go work vendor` is idempotent: on a correct tree it rewrites the same
+      # bytes and git sees nothing. So the check is "did running it change
+      # anything", which is the actual invariant rather than a proxy for it.
+      #
+      # GOTOOLCHAIN=local for the same reason vendor-autofix.yml sets it: a
+      # `toolchain` line in a go.mod would otherwise have `go` download and
+      # run a different toolchain. This job holds no writable token so the
+      # stakes are lower, but an unannounced toolchain download is a surprise
+      # either way, and the two files should not disagree about it.
+      - name: Regenerate the vendor directory
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          # WHICH Go produced these bytes is part of the answer, not trivia.
+          # ci.yml spends ~70 lines (its "Check the image's Go satisfies both
+          # modules" step) on the fact that these pools ship their own Go and
+          # export GOROOT, so actions/setup-go breaks rather than helps and
+          # the version is CHECKED instead of pinned. These jobs inherit the
+          # unpinned half of that trade, and GOTOOLCHAIN=local removes the
+          # download that would otherwise paper over a drifted image.
+          #
+          # Two things then need this line. A toolchain-drift failure dies
+          # inside `go work vendor` with a message that never says what the
+          # image shipped; and vendor/modules.txt's format has changed across
+          # Go releases, so an image upgrade is a plausible cause of a red
+          # guard on a tree nobody touched. Without this the reader has
+          # nothing to suspect it with. Raised in review of #452.
+          go env GOVERSION
+          go work vendor
+
+      - name: Fail if it changed anything
+        run: |
+          # `git status --porcelain`, NOT `git diff --quiet`, and the
+          # difference is the whole check. git diff sees TRACKED files only,
+          # and the most important case here adds UNTRACKED ones: a bump that
+          # introduces a NEW dependency creates whole new directories under
+          # vendor/, which git diff reports as clean. The guard would have
+          # gone green on precisely the change it exists to catch.
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "vendor/ matches the modules."
+            exit 0
+          fi
+          echo "::error::vendor/ is stale for the module changes here. Run 'go work vendor' and commit the result — see below."
+          # --short first, so ADDED and deleted paths are visible at all (a
+          # diff of an untracked file shows nothing), then the modules.txt
+          # detail, which is where the require/explicit mismatch shows and is
+          # what `go`'s own error message quotes.
+          git status --short
+          echo '--- vendor/modules.txt ---'
+          git diff -- vendor/modules.txt
+          exit 1
