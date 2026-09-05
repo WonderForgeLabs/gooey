@@ -627,3 +627,170 @@ func findComponentFrozen(w gooey.Component) *components.Frozen {
 	}
 	return nil
 }
+
+// ---- #424: the fail-closed seal must be REPORTABLE from markup ----
+
+const errAllowPage = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="inside" Text="{{.In}}"/>
+    </Frozen>
+    <TextBox Name="outside" Text="{{.Out}}"/>
+  </VStack>
+</Gooey>`
+
+func errAllowCtx(allow string) *Context {
+	return &Context{
+		Dispatcher: &gooey.Dispatcher{},
+		Values: map[string]any{
+			"Allow": prop.NewSource(allow),
+			"Err":   prop.NewSource(""),
+			"In":    prop.NewSource("in"),
+			"Out":   prop.NewSource("out"),
+		},
+	}
+}
+
+// TestABoundAllowPublishesItsParseFailure is #424: the failure was
+// recorded and unreadable.
+//
+// components.Frozen already fails CLOSED on an unparseable bound set and
+// already records why, in AllowError. Nothing in the repo read it — a Go
+// host could, a page could not — so the only symptom of a typo in a
+// bound Allow was a subtree that had silently stopped responding. That
+// is exactly the class of failure the rest of markup refuses to ship: a
+// LITERAL Allow is a load error naming the attribute.
+//
+// AllowError= is the channel. It is an ordinary bound handle, so the
+// page owns the property and can render it, and the framework Sets it.
+func TestABoundAllowPublishesItsParseFailure(t *testing.T) {
+	ctx := errAllowCtx("Focus")
+	c := allowPage(t, errAllowPage, ctx)
+	errProp := ctx.Values["Err"].(*prop.Property[string])
+	if got := errProp.Get(); got != "" {
+		t.Fatalf("a parseable Allow published %q; want no error", got)
+	}
+
+	ctx.Values["Allow"].(*prop.Property[string]).Set("Focus Clicks")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	if boxesIn(c.Focus().Order()) != 1 {
+		t.Fatal("the set did not fail closed; nothing below was tested")
+	}
+	got := errProp.Get()
+	if got == "" {
+		t.Fatalf("the subtree sealed and the page was told nothing")
+	}
+	// The MESSAGE, not merely non-empty: the author's mistake is a
+	// category name, so the name has to be in it.
+	if !strings.Contains(got, "Clicks") {
+		t.Errorf("the published failure does not name the bad category:\n\t%s", got)
+	}
+}
+
+// TestAGoodAllowClearsAPublishedFailure is the other half, and it is the
+// half a "the error appears" test passes without: a channel that only
+// ever fills up reports the FIRST typo forever, so a page fixing its set
+// keeps showing the old message beside a subtree that now works.
+func TestAGoodAllowClearsAPublishedFailure(t *testing.T) {
+	ctx := errAllowCtx("Focus Clicks")
+	c := allowPage(t, errAllowPage, ctx)
+	ctx.Dispatcher.Drain()
+	errProp := ctx.Values["Err"].(*prop.Property[string])
+	if errProp.Get() == "" {
+		t.Fatal("the bad set published nothing; nothing below was tested")
+	}
+
+	allow := ctx.Values["Allow"].(*prop.Property[string])
+	allow.Set("Focus")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	if got := errProp.Get(); got != "" {
+		t.Errorf("a repaired Allow left the old failure published: %q", got)
+	}
+
+	// A THIRD transition, and it is the one the first two cannot stand in
+	// for. A computed invalidates ONCE and then stays dirty until somebody
+	// reads it, so a hook that publishes without re-evaluating fires on the
+	// first change and is deaf to every change after it. Both assertions
+	// above pass against that — each only ever crosses one edge.
+	allow.Set("Focus Nonsense")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	if got := errProp.Get(); got == "" {
+		t.Error("a SECOND bad set published nothing: the observer fired once and " +
+			"stopped, so the page is told about the first typo only")
+	}
+}
+
+// TestAllowErrorRefusesWhatCannotReceiveASet keeps the attribute honest
+// about what it is: a WRITE target, which is the opposite direction from
+// every other attribute on this element.
+//
+// Each arm asserts the SHAPE of the refusal, not that one exists. This
+// package fails at load for a dozen reasons and an unknown attribute is
+// one of them — so every arm below passed before AllowError existed at
+// all, on "no such attribute", which is how a test like this comes to
+// assert nothing.
+func TestAllowErrorRefusesWhatCannotReceiveASet(t *testing.T) {
+	for _, tc := range []struct {
+		name, page, want string
+	}{{
+		// A literal has nowhere for the message to go: it would read as
+		// configured and report nothing, forever.
+		name: "a literal",
+		page: strings.Replace(errAllowPage, `AllowError="{{.Err}}"`, `AllowError="oops"`, 1),
+		want: "not a binding expression",
+	}, {
+		// Reporting the parse of a set the element does not have. The
+		// author either meant to bind Allow too, or meant nothing.
+		name: "without an Allow",
+		page: strings.Replace(errAllowPage, `Allow="{{.Allow}}" `, "", 1),
+		want: "without a BOUND Allow",
+	}, {
+		// A LITERAL Allow already parsed, at load, and produced an error
+		// naming the attribute if it was wrong. So the channel beside it
+		// can never carry anything — it reads as configured and reports
+		// nothing forever, which is the failure mode #424 is about,
+		// re-created by the fix for it.
+		name: "beside a literal Allow",
+		page: strings.Replace(errAllowPage, `Allow="{{.Allow}}"`, `Allow="Focus"`, 1),
+		want: "without a BOUND Allow",
+	}, {
+		// The wrong TYPE is the ordinary Bound[string] rejection, and it
+		// earns an arm because the message has to name THIS attribute:
+		// the page binds several properties here and a refusal that does
+		// not say which one sends the author reading all of them.
+		name: "a non-string handle",
+		page: strings.Replace(errAllowPage, "{{.Err}}", "{{.Count}}", 1),
+		want: "AllowError",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := errAllowCtx("Focus")
+			ctx.Values["Count"] = prop.NewSource(0)
+			_, err := Build([]byte(tc.page), ctx)
+			if err == nil {
+				t.Fatalf("%s built; it cannot receive a Set", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal is not the one this arm is about:\n\t%v", err)
+			}
+		})
+	}
+}
+
+// TestAllowErrorWithoutADispatcherIsALoadError pins the requirement the
+// publication carries, at the moment the page is read rather than on the
+// first bad set — which is the only time a page without a Dispatcher
+// would otherwise discover it, by publishing nothing and saying nothing.
+func TestAllowErrorWithoutADispatcherIsALoadError(t *testing.T) {
+	ctx := errAllowCtx("Focus")
+	ctx.Dispatcher = nil
+	_, err := Build([]byte(errAllowPage), ctx)
+	if err == nil {
+		t.Fatal("<Frozen AllowError=…> built with no Dispatcher; the publication has no route")
+	}
+	if !strings.Contains(err.Error(), "Dispatcher") {
+		t.Errorf("the refusal does not name what is missing:\n\t%v", err)
+	}
+}

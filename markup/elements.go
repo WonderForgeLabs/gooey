@@ -353,6 +353,11 @@ var defFrozen = &ElementDef{
 		// "always frozen".
 		{Name: "Active", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin},
 		{Name: "Allow", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+		// Bind-only, and for a different reason than Active above: this
+		// is a WRITE target. The framework Sets it, so a literal has
+		// nowhere for the message to go — it would read as configured
+		// and report nothing forever.
+		{Name: "AllowError", Kind: KindBinding, Binds: BindsBinding, GoType: "string", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeOne},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -390,6 +395,35 @@ var defFrozen = &ElementDef{
 				return nil, err
 			}
 			f.Allow = allow
+		}
+		if raw := e.Attrs["AllowError"]; raw != "" {
+			// It reports the parse of a BOUND Allow, and only that. With
+			// no Allow there is no parse; with a LITERAL one the parse
+			// already happened, twenty lines up, and produced a load
+			// error naming the attribute — so the channel could never
+			// carry anything and would read as configured forever.
+			//
+			// The literal half also buys the reasoning in
+			// armAllowError: refusing it here is what makes the handle
+			// it receives always a computed rather than sometimes a
+			// source, and prop.OnInvalidate on a source never fires.
+			if f.Allow == nil || !strings.Contains(e.Attrs["Allow"], "{{") {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> without a BOUND Allow: the only failure "+
+						"it can report is an unparseable set, and a set that is absent or "+
+						"literal cannot become one after load", raw)
+			}
+			sink, err := Bound[string](e, ctx, "AllowError")
+			if err != nil {
+				return nil, err
+			}
+			if ctx.Dispatcher == nil {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> needs ctx.Dispatcher: the failure is "+
+						"published from an invalidation, and a Set from inside one would "+
+						"mutate the graph mid-invalidation", raw)
+			}
+			armAllowError(f.Allow, sink, ctx.Dispatcher)
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err
