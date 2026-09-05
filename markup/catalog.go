@@ -294,6 +294,46 @@ type ElementSpec struct {
 	// OccupiesSpace treats as a failure rather than as a third state:
 	// an unseeded element is one a user can add and then not see.
 	Seed string
+	// Nested reports that this element is legal ONLY inside a parent
+	// that names it — <Tab> in <Tabs>, <Menu> in <MenuBar>, <MenuItem>
+	// in <Menu>. It is declared so a property grid and the loader know
+	// its vocabulary, and it must never be offered on its own: a palette
+	// that lists it invites markup that cannot load.
+	//
+	// DERIVED, not declared, and that is the point. The answer already
+	// exists in the vocabulary — a nested element is one some other
+	// entry names in Children.Only under ModeRestricted — so a field an
+	// author sets by hand would be a second copy of a fact the registry
+	// already carries, which is the drift ElementDef's own doc comment
+	// gives as the reason the behavioural axes are derived too.
+	//
+	// It replaces a hardcoded `e.Name == "Tab"` in the wysiwyg palette.
+	// That check was correct and unmaintainable in the same breath: the
+	// second nested element was silently offered, and nothing anywhere
+	// went red. See markNested.
+	Nested bool
+	// Pseudo reports that this element builds NO COMPONENT OF ITS OWN:
+	// its parent's Build reads it as data and draws the result itself.
+	// <Tab>, <Menu> and <MenuItem> are the three today.
+	//
+	// It matters to anything holding a correspondence between document
+	// elements and built components, because for these there is no
+	// component to hold — and the failure is not an absence, it is a
+	// WRONG PAIRING. A <MenuBar> with one <Menu> hands back exactly one
+	// child (its dropdown surface), so a walk pairing children by index
+	// maps the <Menu> onto the popup and every question asked of that
+	// pairing afterwards is answered about the wrong thing. Counts agree
+	// perfectly; nothing looks wrong. The designer's mapNodes is the
+	// consumer, and it had that bug.
+	//
+	// DERIVED from a nil Proto, which is what "no component" means in
+	// an ElementDef: the behavioural axes are all read off Proto, and an
+	// element with none has nothing for them to read. That is already
+	// enforced from the other side — TestDeclaredElementsCarryAProtoOr
+	// SayWhyNot requires a Proto-less element to say why, either with
+	// Opaque or by naming the ParsedBy that consumes it — so this cannot
+	// become true by accident.
+	Pseudo bool
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.
 	NonVisual bool
@@ -680,7 +720,41 @@ func BuiltinElements() []ElementSpec {
 	for _, d := range defs {
 		out = append(out, d.spec())
 	}
+	markNested(out)
 	return out
+}
+
+// markNested sets Nested on every entry some OTHER entry names in
+// Children.Only, which is what makes "may this be placed on its own?" an
+// answer the vocabulary gives rather than one a palette hardcodes.
+//
+// ModeRestricted only. Only is meaningless under any other mode, and
+// reading it regardless would let a stray list in an unrestricted
+// element quietly hide something from every palette.
+//
+// A name is looked up rather than trusted: Only may name an element that
+// does not exist in this catalog — a host's restricted container
+// referring to something it did not register — and the loader reports
+// that at build time. Nothing here needs to.
+//
+// Run over the ASSEMBLED list rather than over the registry, so a host's
+// own declared container contributes to it on the same terms as a
+// builtin. That is the half a registry-only derivation would miss.
+func markNested(specs []ElementSpec) {
+	nested := make(map[string]bool)
+	for _, e := range specs {
+		if e.Children.Mode != ModeRestricted {
+			continue
+		}
+		for _, name := range e.Children.Only {
+			nested[name] = true
+		}
+	}
+	for i := range specs {
+		if nested[specs[i].Name] {
+			specs[i].Nested = true
+		}
+	}
 }
 
 // Catalog is the full element vocabulary available to THIS context: the
@@ -743,6 +817,9 @@ func (ctx *Context) Catalog() []ElementSpec {
 		})
 	}
 	out = append(out, ctx.includeElements(seen)...)
+	// After every source has contributed, so a host's restricted
+	// container marks its own pseudo-children too.
+	markNested(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }

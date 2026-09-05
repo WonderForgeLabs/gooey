@@ -150,6 +150,34 @@
          could only be undone with another double-click could never be
          captured. -->
     <KeyBinding Gesture="esc" Command="{{.SelectParent}}"/>
+    <!-- ALT+ENTER IS THE INVERSE OF ESC, and it is the ONLY way to
+         select a node that builds no component: a <Menu> or <MenuItem>
+         is drawn by <MenuBar> out of data, so nothing under the pointer
+         belongs to it and the double-click drill cannot reach one. See
+         selectChild.
+
+         ALT+ENTER RATHER THAN ENTER, and both halves of that were
+         measured rather than preferred.
+
+         Bare enter is gone before it gets here. The bubble offers a
+         node's own handlers before its ancestors' KeyBindings, and
+         enter is the toolbox's Activate, the inspector's row editor and
+         every caret editor's commit — there is no focus position in
+         this app where a root enter would fire.
+
+         Scoping it to the design pane instead was the obvious fix and
+         does not work: *preview.Pane is not in the focus order (it is a
+         gooey.Frozen HOST, which is why presses are retargeted to it
+         rather than routed through it), so nothing focused ever passes
+         through that subtree and a binding hosted there can never fire.
+         TestEnterDescendsIntoTheMenuVocabulary asserts the gesture
+         through this binding, so a move back to either shape fails
+         rather than going quiet.
+
+         The alt prefix is safe here where alt+<letter> would not be: a
+         root binding is offered the key before the menu mnemonics are,
+         and enter is not a letter any menu title can carry. -->
+    <KeyBinding Gesture="alt+enter" Command="{{.SelectChild}}"/>
     <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
     <!-- The theme switch, and today it moves exactly one thing: the
          tint the toolbox's icons are rasterized in. That is a small

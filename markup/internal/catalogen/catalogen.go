@@ -47,9 +47,16 @@ type Finding struct {
 	// OverDeclared is true when the literal claims an attribute the code
 	// never reads; false when the code reads one the literal omits.
 	OverDeclared bool
+	// Note carries a disagreement that is not about a single attribute
+	// — a ParsedBy naming an element with no Build to check against. It
+	// wins over the two attribute messages when set.
+	Note string
 }
 
 func (f Finding) String() string {
+	if f.Note != "" {
+		return f.Note
+	}
 	if f.OverDeclared {
 		return fmt.Sprintf("<%s> declares %q but its Build never reads it: markup setting it would be accepted and silently ignored",
 			f.Element, f.Attr)
@@ -94,6 +101,8 @@ func Check(dir string) ([]Finding, error) {
 	}
 
 	var out []Finding
+	var defs []defInfo
+	buildOf := map[string]*ast.FuncLit{}
 	for _, f := range files {
 		for _, d := range f.Decls {
 			gd, ok := d.(*ast.GenDecl)
@@ -105,23 +114,32 @@ func Check(dir string) ([]Finding, error) {
 				if !ok || len(vs.Values) != 1 {
 					continue
 				}
-				name, declared, build, ok := elementDef(vs.Values[0])
-				if !ok || build == nil {
+				name, declared, build, parsedBy, ok := elementDef(vs.Values[0])
+				if !ok || (build == nil && parsedBy == "") {
 					continue
 				}
-				read := map[string]bool{}
-				scan(build, funcs, read, map[string]bool{}, 0)
-
-				for a := range read {
-					if !declared[a] && !universal[a] {
-						out = append(out, Finding{name, a, false})
-					}
+				defs = append(defs, defInfo{name, declared, build, parsedBy})
+				if build != nil {
+					buildOf[name] = build
 				}
-				for a := range declared {
-					if !read[a] {
-						out = append(out, Finding{name, a, true})
-					}
-				}
+			}
+		}
+	}
+	for _, d := range defs {
+		if d.parsedBy != "" {
+			out = append(out, checkPseudo(d, buildOf, funcs)...)
+			continue
+		}
+		read := map[string]bool{}
+		scan(d.build, funcs, read, map[string]bool{}, 0)
+		for a := range read {
+			if !d.declared[a] && !universal[a] {
+				out = append(out, Finding{Element: d.name, Attr: a})
+			}
+		}
+		for a := range d.declared {
+			if !read[a] {
+				out = append(out, Finding{Element: d.name, Attr: a, OverDeclared: true})
 			}
 		}
 	}
@@ -134,20 +152,109 @@ func Check(dir string) ([]Finding, error) {
 	return out, nil
 }
 
+// defInfo is one element literal, held until every file has been read.
+// A ParsedBy element is checked against ANOTHER element's Build, which
+// may be declared in a file the walk has not reached yet, so nothing can
+// be decided in the first pass.
+type defInfo struct {
+	name     string
+	declared map[string]bool
+	build    *ast.FuncLit
+	parsedBy string
+}
+
+// checkPseudo checks a pseudo-element against the Build that actually
+// parses it, and it is deliberately HALF the check an ordinary element
+// gets. See ElementDef.ParsedBy for why the field exists at all.
+//
+// Only the over-declared direction is decidable here. One Build parses
+// several pseudo-elements — buildMenuBar reads both <Menu>'s Title and
+// <MenuItem>'s Text — and the attribute names in it carry no record of
+// which element they came off, so a read cannot be attributed to one
+// declaration. What survives is the direction that matters: an
+// attribute NO ONE reads is the silent-drop defect this package exists
+// to catch, and it still fails. What is given up is catching an
+// attribute declared on the wrong sibling; that one is at least visible
+// in the property grid, and under-declaring stays loud the ordinary way
+// because unknown attributes are rejected at load.
+func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*ast.FuncDecl) []Finding {
+	host := buildOf[d.parsedBy]
+	if host == nil {
+		return []Finding{{Element: d.name, Note: fmt.Sprintf(
+			"<%s> is ParsedBy <%s>, which declares no Build to check it against: the declaration is unverifiable",
+			d.name, d.parsedBy)}}
+	}
+	// scanAny, not scan. The reader walks its children, so these
+	// attributes land on element variables OTHER than `e` — c and ic in
+	// buildMenuBar — and attrOf insists on `e` precisely so an ordinary
+	// element cannot claim a neighbour's reads.
+	read := map[string]bool{}
+	scanAny(host, funcs, read, map[string]bool{})
+	var out []Finding
+	for a := range d.declared {
+		if !read[a] && !universal[a] {
+			out = append(out, Finding{Element: d.name, Attr: a, OverDeclared: true})
+		}
+	}
+	return out
+}
+
+// scanAny collects every `<ident>.Attrs["Name"]` in a body, whatever the
+// element variable is called, following calls into package-level
+// functions as scan does — a Build that is one line handing e to a named
+// builder is the normal shape, and stopping at the closure would see
+// nothing at all.
+//
+// seen is per-walk, not per-call: a builder reached twice adds nothing
+// the first visit missed, and without it a mutually recursive pair
+// (buildChildren calling build calling buildChildren) does not
+// terminate.
+func scanAny(n ast.Node, funcs map[string]*ast.FuncDecl, read, seen map[string]bool) {
+	ast.Inspect(n, func(nd ast.Node) bool {
+		switch v := nd.(type) {
+		case *ast.IndexExpr:
+			sel, isSel := v.X.(*ast.SelectorExpr)
+			if !isSel || sel.Sel.Name != "Attrs" {
+				return true
+			}
+			if _, isIdent := sel.X.(*ast.Ident); !isIdent {
+				return true
+			}
+			if lit, isLit := v.Index.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+				if a, err := strconv.Unquote(lit.Value); err == nil {
+					read[a] = true
+				}
+			}
+		case *ast.CallExpr:
+			name := calleeName(v.Fun)
+			if name == "" || seen[name] {
+				return true
+			}
+			fd := funcs[name]
+			if fd == nil || fd.Body == nil {
+				return true
+			}
+			seen[name] = true
+			scanAny(fd.Body, funcs, read, seen)
+		}
+		return true
+	})
+}
+
 // elementDef pulls Name, the declared attribute names, and the Build
 // closure out of an &ElementDef{...} literal.
-func elementDef(v ast.Expr) (name string, declared map[string]bool, build *ast.FuncLit, ok bool) {
+func elementDef(v ast.Expr) (name string, declared map[string]bool, build *ast.FuncLit, parsedBy string, ok bool) {
 	var dynamic bool
 	u, isUnary := v.(*ast.UnaryExpr)
 	if !isUnary || u.Op != token.AND {
-		return "", nil, nil, false
+		return "", nil, nil, "", false
 	}
 	cl, isLit := u.X.(*ast.CompositeLit)
 	if !isLit {
-		return "", nil, nil, false
+		return "", nil, nil, "", false
 	}
 	if id, isID := cl.Type.(*ast.Ident); !isID || id.Name != "ElementDef" {
-		return "", nil, nil, false
+		return "", nil, nil, "", false
 	}
 	declared = map[string]bool{}
 	for _, el := range cl.Elts {
@@ -180,6 +287,10 @@ func elementDef(v ast.Expr) (name string, declared map[string]bool, build *ast.F
 			})
 		case "Build":
 			build, _ = kv.Value.(*ast.FuncLit)
+		case "ParsedBy":
+			if lit, isLit := kv.Value.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+				parsedBy, _ = strconv.Unquote(lit.Value)
+			}
 		case "DynamicAttrs":
 			// The element consumes attributes by ranging rather than by
 			// name, so this walk cannot follow it. It validates its own
@@ -189,9 +300,9 @@ func elementDef(v ast.Expr) (name string, declared map[string]bool, build *ast.F
 		}
 	}
 	if dynamic {
-		return name, nil, nil, false
+		return name, nil, nil, "", false
 	}
-	return name, declared, build, name != ""
+	return name, declared, build, parsedBy, name != ""
 }
 
 // generic helpers that must not be followed: they belong to no element.

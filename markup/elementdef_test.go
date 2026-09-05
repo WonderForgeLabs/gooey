@@ -53,6 +53,21 @@ func TestDeclaredElementsCarryAProtoOrSayWhyNot(t *testing.T) {
 		if d.Proto != nil {
 			continue
 		}
+		// A pseudo-element that names its READER is the other legal
+		// shape, and it is the opposite claim to Opaque's: <Tab> says its
+		// surface cannot be enumerated, <MenuItem> says it can and points
+		// at the Build that consumes it. catalogen checks that pointer,
+		// so Known here is backed by the same cross-check every ordinary
+		// element gets rather than by a promise.
+		if d.ParsedBy != "" {
+			if _, ok := elementDefs[d.ParsedBy]; !ok {
+				t.Errorf("<%s> is ParsedBy <%s>, which is not in the registry", d.Name, d.ParsedBy)
+			}
+			if d.Opaque != "" {
+				t.Errorf("<%s> names a reader AND claims to be opaque; those are opposite claims about the same surface", d.Name)
+			}
+			continue
+		}
 		if d.Known {
 			t.Errorf("<%s> has no Proto but claims Known: every behavioural axis will silently read false", d.Name)
 		}

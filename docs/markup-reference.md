@@ -559,6 +559,8 @@ A Tabs sizes to its **active** page (plus one strip row). Pages of different hei
 
 `<Menu>` and `<MenuItem>` are **data, not components** — like Grid track lists, they declare the bar's contents and never enter the visual tree.
 
+They are nonetheless **declared elements** with the exhaustive attribute surface in the table below, which is what lets a tool offer it: the wysiwyg designer shows a selected `<MenuItem>`'s properties from the same catalog it shows a `<Button>`'s. Two consequences follow from their being data. Neither is offered in the designer's palette — an element legal only inside a named parent is never placed on its own — and neither can be selected with the pointer, because there is no component under the cursor that belongs to it; `alt+enter` selects the first child of the selection and is the way in. See [#429](https://github.com/WonderForgeLabs/gooey/issues/429).
+
 | Element / attribute | Meaning |
 |---|---|
 | `<Menu Title="…">` | One titled dropdown. A missing `Title` is a load error. The title carries the menu's **mnemonic**: an underscore marks the accelerator letter (`Title="_File"`, `Title="E_xit"`), and without a marker the first letter is it. `__` renders a literal underscore. Underscore rather than `&` because these strings live in XML attributes. |
