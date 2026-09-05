@@ -73,7 +73,8 @@ type PersistentAdornment interface {
 // validation marker or a tooltip is above the page, above any toast and
 // above any open dropdown. Correcting it here was missed on the first
 // pass, which left this file's godoc contradicting the docs/ edit in its
-// own commit; found in review of #456.
+// own commit; found in review of #456. Being above all of them is the
+// whole point of an adornment, and was not true while position decided.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -300,8 +301,12 @@ func attachAdornment(host gooey.Component, mgr *gooey.FocusManager, pop Adornmen
 	return layer
 }
 
-// findAdornmentLayer walks the live tree for the page's layer. Overlays
-// are declared last, so the walk searches later siblings first.
+// findAdornmentLayer walks the live tree for the page's layer,
+// searching later siblings first. That is a HEURISTIC and not a
+// requirement: it is where apps still put the layer, out of the habit
+// document-order z-order left behind, so looking there first usually
+// wins on the first probe. A layer declared anywhere is found just the
+// same, one subtree later.
 func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
 	if l, ok := w.(*AdornmentLayer); ok {
 		return l

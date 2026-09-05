@@ -53,8 +53,9 @@ func newColorPreset(sel *prop.Property[int], changed gooey.Action) *colorPreset 
 	return p
 }
 
-// Wiring line 1: the surface is the LAST (here: only) child, so it
-// paints above what it covers.
+// Wiring line 1: hand the surface out as a child. It is a
+// gooey.Overlay, so it paints above what it covers from wherever this
+// preset sits — being the only child here is incidental.
 func (p *colorPreset) ChildComponents() []gooey.Component {
 	return []gooey.Component{p.pop.Surface()}
 }

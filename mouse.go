@@ -57,10 +57,15 @@ func (h *HoverState) hover() *prop.Property[bool] {
 // component's own (often invisible) surface, not its subtree.
 //
 // The overlay hosts need this to exist at all: a ToastHost or an
-// AdornmentLayer spans the whole page as the root's last child, which
-// makes it the FIRST thing hit-testing finds — an invisible layer that
-// ate every click and starved every hover beneath it. Non-interactive
-// adornments (a tooltip's popup) are transparent for the same reason.
+// AdornmentLayer spans the whole page, so wherever the walk reaches it
+// it would be an invisible layer eating every click and starving every
+// hover beneath it. Non-interactive adornments (a tooltip's popup) are
+// transparent for the same reason.
+//
+// It is ALSO what makes those two hosts safe under the paint/input
+// divergence below. They paint above the page from anywhere now, while
+// this walk still finds them exactly where they are declared — a gap
+// that would matter if either of them wanted a press. Neither does.
 type HitTestTransparent interface{ HitTestTransparent() bool }
 
 // PointerFollower is implemented by a component whose arranged position
@@ -103,11 +108,19 @@ type PointerFollower interface{ FollowsPointer() bool }
 // the whole page, and this walk does not know about it. A later sibling
 // therefore takes the press even where an overlay paints above it.
 //
-// It is not a defect for the overlay the framework ships — Popup holds
-// pointer capture for as long as it is open, so presses never reach this
-// walk — but Overlay is a public interface, and an overlay that does not
-// take capture is responsible for its own routing. See the Overlay
-// interface's comment. Corrected in review of #437.
+// It is not a defect for any overlay the framework ships, and the
+// reason is now TWO reasons, because #439 added two adopters that take
+// no capture at all. A Popup holds the pointer capture for as long as it
+// is open, so presses never reach this walk; ToastHost and
+// AdornmentLayer are HitTestTransparent, so no press was theirs to lose.
+//
+// Overlay is a public interface, and an overlay that is neither is
+// responsible for its own routing — which got HARDER to remember, not
+// easier: being declared last used to be the only thing keeping an
+// overlay on top, so nobody could get the paint right and the input
+// wrong. Now paint no longer needs it and this walk still does. See the
+// Overlay interface's comment. Corrected in review of #437, extended
+// for the two capture-less adopters in #439.
 func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y, 0) }
 
 // depth is threaded rather than counted in a package variable because

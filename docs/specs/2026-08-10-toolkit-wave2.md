@@ -4,6 +4,16 @@
 
 **Date:** 2026-08-10
 
+> **The z-order half of this record is superseded.** "The app declares
+> the overlay element last" was the mechanism chosen here, and it was
+> retired in three steps: `2026-08-30-overlay-layer.md` (overlays are
+> lifted into a paint layer, so position stops deciding),
+> `2026-09-05-overlay-ranks.md` (a rank orders that layer against
+> itself), `2026-09-05-one-shot-overlay-order.md` (one rule for both
+> paint paths). Everything else here — the popup lifecycle, the capture
+> and modality rules, the restore pass — still holds. Left unrewritten
+> because a spec records what was decided on its date.
+
 ## What was asked for
 
 The two components unblocked by container backgrounds & z-ordered

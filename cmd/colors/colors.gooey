@@ -25,7 +25,9 @@
         <!-- Stacked cards, and a real overlap: each swatch is 10 cells
              wide and 2 rows tall, stepping 4 right and 1 down, so every
              card shares 6 cells of its lower row with the next one.
-             Tree order IS z-order — the later sibling paints on top.
+             Tree order IS z-order for ordinary siblings — the later one
+             paints on top. (An overlay is the exception: it is lifted
+             out of that order entirely. Nothing here is one.)
 
              The card itself is swatch.gooey, a markup-only control: the
              five instances differ only in a bound tint and a position,
