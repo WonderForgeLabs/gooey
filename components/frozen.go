@@ -138,20 +138,24 @@ func (f *Frozen) FrozenAllow() gooey.Allow {
 // fail at runtime, because its value does not exist until the app
 // supplies it, and that is the case this exists for.
 //
-// NOTHING IN THIS REPO READS IT, which is a real gap and is why it is
-// written down rather than implied: a bound Allow whose value is a typo
-// seals its subtree, correctly and permanently, with no message anywhere
-// — the symptom is a pane that has simply stopped responding. A host can
-// read this and say so, and a test does; the framework has no channel of
-// its own to report a runtime COMPONENT fault through. Its one such
-// channel, gooey.LayoutFault, is specifically about tree walks, and
-// widening it to mean "any runtime fault" would make the type answer for
-// two unrelated questions. Choosing that channel is a design decision
-// rather than a fix, so it is tracked separately; see the issue linked
-// from the Frozen section of docs/markup-reference.md.
+// THIS IS THE GO-SIDE ACCESSOR, and it is no longer the only reader.
+// A page writes <Frozen Allow="{{…}}" AllowError="{{.Err}}"> and the
+// markup layer publishes the same failure into a property the page owns
+// (markup/frozenerror.go, #424). Before that channel existed a bound
+// Allow whose value was a typo sealed its subtree — correctly and
+// permanently — with no message anywhere, and the symptom was a pane
+// that had simply stopped responding.
 //
-// Until then the fail-closed half is the guarantee — an unparseable set
-// never grants anything — and what holds it is
+// THE PUBLICATION IS DELIBERATELY NOT DONE HERE, and the reason is the
+// UI-goroutine rule rather than layering taste. This method is called
+// from FocusManager.frozenHostFor on every routed event, motion
+// included, and from inside the Composer's evaluation of the freeze
+// observer. A Set from here would mutate the property graph
+// mid-evaluation, on the routing hot path, once per pointer sample —
+// and nothing in the framework would catch it.
+//
+// The fail-closed half is the guarantee underneath both readers — an
+// unparseable set never grants anything — and what holds it is
 // TestAnUnknownAllowCategoryInABindingFailsClosed, in
 // markup/frozenallow_test.go.
 func (f *Frozen) AllowError() error { return f.cachedErr }

@@ -94,6 +94,7 @@ Wraps exactly one visual child in a region that **renders but does not act**. Th
 |---|---|
 | `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
 | `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
+| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. Both are load errors. |
 
 ```xml
 <Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
@@ -138,7 +139,16 @@ Two rules are built into the **constants** rather than applied by a pass, so no 
 
 `TestAllowBindingsAloneFiresNothing` in `markup/frozenallow_test.go` pins it.
 
-**A bound `Allow` that fails to parse fails CLOSED and says nothing.** A literal one is checked at load time, so a typo in the markup is a load error naming the attribute. An interpolated one cannot be — its value does not exist yet — so `components.Frozen` parses it at runtime, answers `None` on failure, and records why in `AllowError()`. Nothing reads that today, so the symptom is a subtree that has silently stopped responding: [#424](https://github.com/WonderForgeLabs/gooey/issues/424).
+**A bound `Allow` that fails to parse fails CLOSED, and `AllowError=` is how a page hears about it.** A literal `Allow` is checked at load time, so a typo in the markup is a load error naming the attribute. An interpolated one cannot be — its value does not exist yet — so `components.Frozen` parses it at runtime, answers `None` on failure, and records why. Without a channel the only symptom was a subtree that had silently stopped responding, which is [#424](https://github.com/WonderForgeLabs/gooey/issues/424). Bind a property and render it:
+
+```xml
+<Frozen Allow="{{.Categories}}" AllowError="{{.FreezeErr}}">
+  <VStack> … the document being edited … </VStack>
+</Frozen>
+<Text Text="{{.FreezeErr}}"/>
+```
+
+It is published from an observer rather than read per frame, which is why it needs `Context.Dispatcher`: the parse failure surfaces during an invalidation, and Setting from inside one would mutate the graph mid-invalidation. The Set is posted and lands on the next drain.
 
 `Start` is the one category nothing implies. `Companion.Start` spawns a child process, so a grant that turned starting on as a side effect of wanting hover would launch a subprocess from an editing gesture; it must always be asked for by name.
 
