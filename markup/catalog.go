@@ -594,8 +594,15 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// unknowable — so <Tab Name="Zonk"> still loads clean and is
 		// still dropped, buildTabs never calling named() either. That
 		// is the same silent-drop class this change closes for <Menu>
-		// and <MenuItem>, left open one element over; it is pre-existing
-		// and not fixed here. Stated in review of #454, because the
+		// and <MenuItem>, left open one element over. It is pre-existing
+		// and not fixed here, and it is TRACKED IN
+		// https://github.com/WonderForgeLabs/gooey/issues/461 rather than
+		// asserted in prose — CLAUDE.md's "A red suite is yours" rules
+		// out a known-defect claim that cannot expire, because a stale
+		// dismissal spends the attention that would have caught the bug
+		// (#207). If #461 is closed, this paragraph is wrong and the
+		// reader should trust the code over it. Stated in review of #454,
+		// because the
 		// sentence above read as universal and a reader checking <Tab>
 		// finds the two gates disagreeing.
 		for _, a := range universalAttrs {

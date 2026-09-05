@@ -120,7 +120,8 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 // the child set.
 func optDuration(e Element, name string) any { return nil }
 
-// childExtras stands in for menuItemIcon: a helper the host hands a
+// childExtras stands in for menuItemIcon (#400's helper, which lands one
+// PR above this one — not greppable from this branch): a helper the host hands a
 // CHILD element to, which then reads off its own parameter. Its
 // parameter is deliberately named c, matching the caller's variable, so
 // a walk that inherited the caller's `self` would file the read as the

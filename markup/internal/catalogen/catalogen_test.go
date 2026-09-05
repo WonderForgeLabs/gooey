@@ -227,7 +227,8 @@ func childBuildFor(t *testing.T) *ast.FuncLit {
 // TestAHelperHandedAChildReadsTheChildsAttributes is the third hole, and
 // unlike the first two it WAS reachable from the real vocabulary — #400
 // tripped it on its first day, when <MenuItem Icon> moved its two reads
-// into menuItemIcon(ic, ctx, &it) and the whole vocabulary check went
+// into menuItemIcon(ic, ctx, &it) — #400's helper, landing one PR above
+// this one, so grep will not find it from here — and the whole vocabulary check went
 // red against code that was correct.
 //
 // Two independent bugs, and each alone is enough to produce the false

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
@@ -305,34 +306,74 @@ func elemOf(n *node) string {
 // guard against a regression of a known shape, not a budget for
 // rebuild() to be held to.
 func TestARebuildDoesNotRebuildTheCatalogPerNode(t *testing.T) {
-	ed, _ := buildPage(t)
-	const nodes = 60
-	for i := 0; i < nodes; i++ {
-		ed.doc().Kids = append(ed.doc().Kids, &node{
-			Elem:  "VStack",
-			Attrs: map[string]string{"Canvas.Left": "0", "Canvas.Top": "0"},
-			Kids:  []*node{{Elem: "Text", Body: "x"}},
-		})
+	// DIFFERENTIAL, NOT AN ABSOLUTE CEILING, and the change is the point.
+	//
+	// This was `AllocsPerRun(...) > 8000` against a measured 6,630 — a
+	// fifth of headroom over its own baseline. The number encoded today's
+	// TOTAL rebuild cost, so any unrelated change adding 20% to rebuild()
+	// turned it red, in a nested module CI only VETS: the failure would
+	// surface first in the CLAUDE.md loop, in a file named for menu
+	// vocabulary, where it is easy to misattribute.
+	//
+	// The claim is "the catalog is not read per node". Measuring the same
+	// rebuild at N and 2N nodes and asserting the PER-NODE delta stays
+	// small says exactly that, and is invariant to rebuild() getting
+	// cheaper or dearer overall. A catalog read per node shows up as a
+	// delta of ~87 allocations per node — the cost of one Catalog() —
+	// against single digits when the snapshot is doing its job.
+	// Raised in review of #454.
+	measure := func(t *testing.T, nodes int) float64 {
+		t.Helper()
+		ed, _ := buildPage(t)
+		for i := 0; i < nodes; i++ {
+			ed.doc().Kids = append(ed.doc().Kids, &node{
+				Elem:  "VStack",
+				Attrs: map[string]string{"Canvas.Left": "0", "Canvas.Top": "0"},
+				Kids:  []*node{{Elem: "Text", Body: "x"}},
+			})
+		}
+		ed.rebuild()
+		if ed.docRoot == nil {
+			t.Fatalf("the fixture does not build: %q", ed.status.Get())
+		}
+		// The set must actually be populated, or the cheap path is cheap
+		// because it answers nothing.
+		if !ed.pseudo["MenuItem"] || !ed.pseudo["Menu"] || !ed.pseudo["Tab"] {
+			t.Fatalf("ed.pseudo does not hold the pseudo-elements: %v", ed.pseudo)
+		}
+		return testing.AllocsPerRun(3, func() { ed.rebuild() })
 	}
-	ed.rebuild()
-	if ed.docRoot == nil {
-		t.Fatalf("the fixture does not build: %q", ed.status.Get())
+
+	const n = 60
+	small := measure(t, n)
+	large := measure(t, 2*n)
+	// Each added node is a VStack AND a Text, so the document grows by
+	// 2*n nodes between the two measurements.
+	perNode := (large - small) / float64(2*n)
+
+	// THE CEILING IS SET FROM THE MEASURED PAIR, not from a guess about
+	// what the work "should" cost — which is the correction round 3 of
+	// this review already forced on the two absolute pins, and which I
+	// got wrong again here on the first attempt by assuming the healthy
+	// per-node cost was single digits. Measured on this checkout:
+	//
+	//	healthy                       52.6 allocations per node
+	//	catalog read per node        141.7 allocations per node
+	//
+	// (the regression arm produced by replacing ed.pseudo[k.Elem] in
+	// select.go with a scan of ed.docCtx.Catalog()). 90 sits between
+	// them with room for ordinary per-node work to grow, and still
+	// catches a partial regression that reads the catalog for only some
+	// nodes.
+	const perNodeCeiling = 90
+	if perNode > perNodeCeiling {
+		t.Errorf("rebuild() allocates %.1f times per additional document node "+
+			"(%.0f at %d nodes, %.0f at %d; ceiling %d): a Catalog() read is ~87 "+
+			"allocations, so something on the per-node path is asking again — see loadPalette",
+			perNode, small, 2*n, large, 4*n, perNodeCeiling)
 	}
-	// The set must actually be populated, or the cheap path is cheap
-	// because it answers nothing.
-	if !ed.pseudo["MenuItem"] || !ed.pseudo["Menu"] || !ed.pseudo["Tab"] {
-		t.Fatalf("ed.pseudo does not hold the pseudo-elements: %v", ed.pseudo)
-	}
-	got := testing.AllocsPerRun(3, func() { ed.rebuild() })
-	// 120 document nodes at ~87 allocations per catalog read is >10000
-	// on its own; a rebuild that reads the catalog once lands far below.
-	const ceiling = 8000
-	if got > ceiling {
-		t.Errorf("rebuild() allocates %.0f times for a %d-node document (ceiling %d): "+
-			"something on the per-node path is asking the catalog again — see loadPalette",
-			got, nodes*2, ceiling)
-	}
-	t.Logf("rebuild() allocates %.0f times for %d document nodes", got, nodes*2)
+	t.Logf("rebuild(): %.0f allocs at %d nodes, %.0f at %d — %.1f per node",
+		small, 2*n, large, 4*n, perNode)
 }
 
 // TestAttrRowsDoesNotRebuildTheCatalog is the SECOND allocation pin, and
@@ -446,3 +487,70 @@ func TestANestedParentsGrantStillReachesTheGrid(t *testing.T) {
 }
 
 var errNotStandalone = errors.New("markup: only valid inside its parent")
+
+// TestTheCatalogSnapshotMatchesTheCatalog is the enforcement the snapshot
+// shipped without.
+//
+// specOf, target(), grantOf and pairAgrees moved off a live
+// docCtx.Catalog() read and onto ed.specs / ed.pseudo, which loadPalette
+// fills. That is correct as shipped — loadPalette runs once at the end of
+// newEditor and docCtx is never reassigned — and the paint-path reason
+// for moving is sound: Catalog() re-derives every builtin spec with fresh
+// Attrs copies, and mapNodes asks per document node on every rebuild.
+//
+// WHAT MADE IT WORTH PINNING is that both failure modes are SILENT, and
+// both are the symptoms the change exists to remove: a missing ed.specs
+// entry sends target() to the markup.ElementSpec{Name: n.Elem} fallback,
+// which is #429's empty property grid, and grantOf returns
+// markup.Grant{}, which is #418's missing attached rows. Neither errors,
+// and a nil map reads exactly like an empty one.
+//
+// WHAT THIS CANNOT CATCH, stated so nobody reads more into it: it cannot
+// see a future caller that changes the vocabulary and forgets to
+// re-derive, because a test only exercises the paths it calls. It pins
+// that loadPalette's derivation IS the catalog — so a divergence in the
+// derivation itself is red rather than blank. The stronger fix is one
+// seam owning both halves (mutate docCtx and re-derive in one step), and
+// it is worth taking the day docCtx.Includes is wired, which target()'s
+// own comment calls "one feature away". Raised in review of #454.
+func TestTheCatalogSnapshotMatchesTheCatalog(t *testing.T) {
+	ed, _ := buildPage(t)
+	check := func(when string) {
+		t.Helper()
+		cat := ed.docCtx.Catalog()
+		if len(ed.specs) != len(cat) {
+			t.Errorf("%s: ed.specs has %d entries, the catalog has %d — a name missing here "+
+				"is an empty property grid and an empty Grant, with no error on either path",
+				when, len(ed.specs), len(cat))
+		}
+		for _, e := range cat {
+			if _, ok := ed.specs[e.Name]; !ok {
+				t.Errorf("%s: <%s> is in the catalog and not in ed.specs", when, e.Name)
+			}
+			if e.Pseudo && !ed.pseudo[e.Name] {
+				t.Errorf("%s: <%s> is Pseudo in the catalog and not in ed.pseudo", when, e.Name)
+			}
+		}
+	}
+	check("after newEditor")
+
+	// And after the vocabulary changes — the path
+	// TestANestedParentsGrantStillReachesTheGrid exercises, where the
+	// re-derive has to be remembered by hand.
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	ed.docCtx.Elements["SnapshotProbe"] = &markup.ElementDef{
+		Name:  "SnapshotProbe",
+		Proto: &components.Border{},
+		Known: true,
+		Build: func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+			return &components.Border{}, nil
+		},
+	}
+	ed.loadPalette()
+	check("after a vocabulary change and loadPalette")
+	if _, ok := ed.specs["SnapshotProbe"]; !ok {
+		t.Error("the re-derive did not pick up the new element, so the check above is vacuous")
+	}
+}

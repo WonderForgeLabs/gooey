@@ -383,6 +383,25 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 			// Which element it belongs to is the same question as
 			// everywhere else here, answered the same way — by whether
 			// the element argument is the host's own.
+			// THE DENY-LIST FIRST. It used to gate only the recursion
+			// below, while the harvest above it ran unconditionally — so
+			// a host calling a DENIED builder with a capitalised string
+			// literal (the slotChild(c, ctx, "Header") shape) filed
+			// "Header" into child, and checkPseudoPool then reported an
+			// attribute nobody wrote. That is the false-positive class
+			// this function's doc comment argues against, produced by
+			// this function.
+			//
+			// Latent today — MenuBar is the only ParsedBy host and no
+			// generic call in buildMenuBar carries such a literal — so it
+			// is about the next host. Hoisting also makes the code match
+			// the doc comment, which already claimed generic and
+			// passesAnElement "are applied for the same reason scan
+			// applies them". Raised in review of #454.
+			name := calleeName(v.Fun)
+			if name == "" || generic[name] || !passesAnElement(v, funcs) {
+				return true
+			}
 			if elem, ok := elementOf(v, funcs); ok {
 				for _, arg := range v.Args {
 					lit, isLit := arg.(*ast.BasicLit)
@@ -400,10 +419,6 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 					}
 				}
 			}
-			name := calleeName(v.Fun)
-			if name == "" || generic[name] || !passesAnElement(v, funcs) {
-				return true
-			}
 			fd := funcs[name]
 			if fd == nil || fd.Body == nil {
 				return true
@@ -414,7 +429,8 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 			inner := elementParam(fd.Type)
 			// UNLESS THE HELPER WAS HANDED A CHILD, which is the whole
 			// reason the receiver split exists and the case that gets it
-			// backwards. menuItemIcon(ic, ctx, &it) names its parameter
+			// backwards. menuItemIcon(ic, ctx, &it) — #400's helper, one
+			// PR above this one — names its parameter
 			// `ic` too, so the line above would call ic.Attrs["Icon"] a
 			// read of the HOST's own attribute — filing a child read in
 			// the one set that cannot see it, and reporting <MenuItem>
@@ -705,7 +721,9 @@ func passesAnElement(c *ast.CallExpr, funcs map[string]*ast.FuncDecl) bool {
 	}
 	// THE NAME "e" IS A CONVENTION, NOT THE QUESTION, and taking it for
 	// the question is a hole this function shipped with: a helper handed
-	// a CHILD element — menuItemIcon(ic, ctx, &it) — was never followed,
+	// a CHILD element — menuItemIcon(ic, ctx, &it), which lands in the
+	// #400 branch one PR above this one and is not greppable from here —
+	// was never followed,
 	// so every attribute it read became a FALSE OVER-DECLARATION. That
 	// is the loud direction, a red test asserting the opposite of what
 	// the code does, and #400 tripped it on its first day.
