@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -25,13 +24,19 @@ import (
 // The issue framed this as implement-or-document, and named the cost of
 // implementing: a second copy of the z-order rule, which the next change
 // to that rule has to find. So the rule is EXTRACTED rather than copied
-// — paintOrder is the one implementation, and both paths call it. #439
-// added ranks to it days later, which is exactly the change that would
-// have had to find both.
+// — overlayOf is the one implementation of membership-and-rank, and
+// appendByRank the one implementation of ordering; both paths call both.
+// #439 added ranks days later, which is exactly the change that would
+// have had to find two copies. (This comment named "paintOrder", which
+// has never existed — git grep finds nothing and a reader following it
+// finds no such symbol. Corrected in review of #457, along with the
+// ordering half, which was still two implementations at the time.)
 
-// oneShotStripe fills its bounds with a rune. Same shape as the ranked
-// fixture above; kept separate so a change to one test's fixture cannot
-// silently retune the other's.
+// oneShotStripe fills its bounds with a rune. Same shape as rankedStripe
+// in overlayrank_test.go — naming the FILE because "above" was wrong in
+// two directions: rankedStripe is in another file, and this file's own
+// ranked fixture is below. Kept separate so a change to one test's
+// fixture cannot silently retune the other's.
 type oneShotStripe struct {
 	Base
 	ch   rune
@@ -102,8 +107,67 @@ func TestBothPaintPathsAgree(t *testing.T) {
 	fr, _ := c.Frame()
 	retained := render.RowText(fr.Cells, 0)
 
+	// NON-VACUITY FIRST. This test compares two strings and asserts
+	// nothing about either, so a later change to oneShotStripe's
+	// Measure/Arrange — or to ArrangeChild — that left both paths
+	// painting a blank row would keep it green while it checked
+	// nothing. The lift is what it exists to observe, so the overlay's
+	// rune has to be at the front. Raised in review of #457.
+	if !strings.HasPrefix(one, "P") {
+		t.Fatalf("the fixture stopped exercising the lift — row %q does not start with the "+
+			"overlay's rune, so the comparison below would pass vacuously", one)
+	}
+
 	if one != retained {
 		t.Errorf("the two public paint paths disagree about what is on top:\n"+
+			"  gooey.Compose  %q\n  Composer.Frame %q", one, retained)
+	}
+}
+
+// TestBothPaintPathsAgreeOnRanks is finding 8's gap, and it is the arm
+// that discriminates the two ORDERINGS rather than the two lifts.
+//
+// TestBothPaintPathsAgree uses one unranked overlay, so it cannot tell a
+// bucket pass from a sort from a coin flip. TestComposeHonoursTheOverlayRank
+// pins the one-shot side alone. Until the ordering was shared, the two
+// implementations — a bucket pass here, a sort.SliceStable there — were
+// never checked against each other at all.
+//
+// Thirteen nodes on purpose: Go's pdqsort short-circuits to insertion
+// sort below twelve, which is stable by accident, so a smaller fixture
+// agrees with itself under either rule. The ranks alternate so document
+// order and rank order disagree everywhere.
+func TestBothPaintPathsAgreeOnRanks(t *testing.T) {
+	const n = 13
+	build := func() Component {
+		kids := make([]Component, 0, n)
+		for i := 0; i < n; i++ {
+			// Two ranks, alternating: every even-indexed child must end
+			// up behind every odd-indexed one, and within each rank the
+			// declaration order has to survive.
+			kids = append(kids, &oneShotRanked{
+				oneShotStripe{ch: rune('a' + i)}, 1 + i%2,
+			})
+		}
+		return &oneShotStripe{ch: '.', kids: kids}
+	}
+	caps := oneShotCaps()
+
+	one := render.RowText(Compose(build(), caps, nil).Cells, 0)
+	c := NewComposer(build(), caps.Cols, caps.Rows)
+	t.Cleanup(c.Close)
+	fr, _ := c.Frame()
+	retained := render.RowText(fr.Cells, 0)
+
+	// The last child of the HIGHEST rank paints last, so it is what a
+	// full-width stripe leaves on the row. n=13 makes index 12 even,
+	// hence rank 1 — so the winner is the last odd index, 11 => 'l'.
+	if !strings.HasPrefix(one, "l") {
+		t.Fatalf("the one-shot path did not order by rank: row %q, want the last rank-2 "+
+			"child ('l') on top", one)
+	}
+	if one != retained {
+		t.Errorf("the two paint paths order equal ranks differently:\n"+
 			"  gooey.Compose  %q\n  Composer.Frame %q", one, retained)
 	}
 }
@@ -151,5 +215,3 @@ func TestComposeStillPaintsAPlainTreeInDocumentOrder(t *testing.T) {
 		t.Errorf("a tree with no overlay no longer paints in document order: row %q", got)
 	}
 }
-
-var _ = graphics.Placement{}
