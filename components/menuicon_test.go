@@ -165,6 +165,52 @@ func TestAnIconItemPlacesItsImageWhenPixelsExist(t *testing.T) {
 		t.Errorf("the icon at cols %d..%d is outside the dropdown's interior %d..%d",
 			p.Col, p.Col+p.Cols, b.X+1, b.X+b.W-1)
 	}
+	// THE PICTURE IS NARROWER THAN THE GUTTER IT SITS IN, and that is why
+	// the reservation is two constants rather than one. iconWidth is what
+	// Measure reserves; iconCols is how much of it the picture may take,
+	// and the column between them is what keeps the image off the text.
+	// Collapse them and the placement still lands inside the interior,
+	// still sits on the right row, still measures the same — every other
+	// assertion in this test passes — and the icon is drawn up against
+	// the label.
+	//
+	// The gutter is MEASURED, not read off the constant: it is how much
+	// further right the label sits than it does in plainBar, which is
+	// iconBar with the icons removed and nothing else changed. Asserting
+	// p.Cols == iconCols instead would be the code agreeing with itself.
+	//
+	// Both label columns come from StringWidth of the prefix rather than
+	// from the strings.Index directly: Index returns a BYTE offset, which
+	// agrees with the column only while the fixture stays ASCII.
+	// Raised in review of #455.
+	labelCol := func(f *gooey.Frame, r gooey.Rect) int {
+		t.Helper()
+		row := render.RowText(f.Cells, r.Y+1)
+		k := strings.Index(row, "Open")
+		if k < 0 {
+			t.Fatalf("the first item's label is not on its row:\n\t%q", row)
+		}
+		return render.StringWidth(row[:k])
+	}
+	plain := plainBar()
+	c2 := gooey.NewComposer(plain, 40, 16)
+	t.Cleanup(c2.Close)
+	c2.SetCaps(term8x16(40, 16))
+	c2.SetGraphics(graphics.Kitty{})
+	c2.Frame()
+	plain.Open(0, nil)
+	c2.Frame()
+	f2, _ := c2.Frame()
+
+	gutter := labelCol(f, b) - labelCol(f2, plain.popupRect())
+	if gutter <= 0 {
+		t.Fatalf("the icon menu reserves no more width than the plain one (%d cells); "+
+			"nothing below was tested", gutter)
+	}
+	if p.Cols >= gutter {
+		t.Errorf("the picture is %d cells wide in a %d-cell gutter: no column separates it "+
+			"from the label, so the image is drawn up against the text", p.Cols, gutter)
+	}
 	// The SECOND item has no icon and must not have borrowed the first's.
 	for _, q := range ps {
 		if q.Row == b.Y+2 {
@@ -256,4 +302,67 @@ func TestAWideIconRuneDoesNotOverrunItsGutter(t *testing.T) {
 			"puts it at %d: wide %q vs narrow %q — the gutter is being counted in runes, "+
 			"not columns", wideAt, narrowAt, row, row2)
 	}
+}
+
+// THE PLACEMENT MUST ALSO GO AWAY, and no cell assertion in this file
+// can see whether it did.
+//
+// Under sixel or kitty a stale placement is pixels composited over the
+// page — the cell plane is untouched and every RowText check stays
+// green while an icon sits on screen after its dropdown closed. This is
+// the first component in the tree to place images from a POPUP SURFACE
+// THAT COMES AND GOES, a lifecycle Image and Button never exercise:
+// placements.go names "painted fewer images" as its own diff case, and
+// nothing else in the repo reaches that case from an overlay.
+//
+// Both arms passed when this was written — it is a pin, not a fix.
+// Raised in review of #455.
+func TestTheIconPlacementIsWithdrawn(t *testing.T) {
+	t.Run("dismissing the dropdown", func(t *testing.T) {
+		bar := iconBar()
+		c := gooey.NewComposer(bar, 40, 16)
+		t.Cleanup(c.Close)
+		c.SetCaps(term8x16(40, 16))
+		c.SetGraphics(graphics.Kitty{})
+		c.Frame()
+		bar.Open(0, nil)
+		c.Frame()
+		if f, _ := c.Frame(); len(f.Placements()) != 1 {
+			t.Fatalf("the open dropdown published %d placements, want 1 — nothing below was tested",
+				len(f.Placements()))
+		}
+		bar.Dismiss()
+		f, _ := c.Frame()
+		if n := len(f.Placements()); n != 0 {
+			t.Errorf("a dismissed dropdown still publishes %d pixel placements: under sixel or kitty "+
+				"that is an icon left composited over the page, and no cell assertion can see it", n)
+		}
+	})
+
+	t.Run("switching to an icon-free menu", func(t *testing.T) {
+		bar := &MenuBar{Menus: []Menu{
+			{Title: "_File", Items: []MenuItem{
+				{Text: "_Open", Icon: iconImg(color.RGBA{200, 40, 40, 255}), Action: gooey.Command(func() {})},
+			}},
+			{Title: "_Edit", Items: []MenuItem{
+				{Text: "_Copy", Action: gooey.Command(func() {})},
+			}},
+		}}
+		c := gooey.NewComposer(bar, 40, 16)
+		t.Cleanup(c.Close)
+		c.SetCaps(term8x16(40, 16))
+		c.SetGraphics(graphics.Kitty{})
+		c.Frame()
+		bar.Open(0, nil)
+		c.Frame()
+		if f, _ := c.Frame(); len(f.Placements()) != 1 {
+			t.Fatalf("the first menu published %d placements, want 1", len(f.Placements()))
+		}
+		bar.Open(1, nil)
+		f, _ := c.Frame()
+		if n := len(f.Placements()); n != 0 {
+			t.Errorf("switching to a menu whose items carry no icons still publishes %d placements: "+
+				"the previous menu's icon is stranded on screen", n)
+		}
+	})
 }

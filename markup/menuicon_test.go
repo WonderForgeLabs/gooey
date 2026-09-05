@@ -164,3 +164,79 @@ func TestTheIconAttributesAreDeclaredOnMenuItem(t *testing.T) {
 		t.Errorf("MenuItem does not declare %s, so no property inspector can offer it", n)
 	}
 }
+
+// A BOUND IconRune is refused by a message about BINDING, not about
+// counting glyphs.
+//
+// Icon had a purpose-built refusal naming the freeze; IconRune had none,
+// so a binding fell through to the glyph count and came back "IconRune
+// is one glyph — the icon gutter holds exactly one, and 10 were given".
+// The author's mistake is "I tried to bind this"; the message counted
+// the characters of the template. Nothing in checkAttrs enforces
+// BindsLiteral — it validates attribute NAMES — so menuItemIcon is the
+// only place the declared Binds is enforced, and for IconRune it was
+// enforced by accident. Found in review of #455.
+//
+// The assertion is on the message's SUBJECT rather than on err != nil,
+// because the bug was never a missing error. It was the wrong one.
+func TestABoundMenuItemIconRuneIsRefusedForBeingBound(t *testing.T) {
+	const page = `<Gooey><MenuBar><Menu Title="_File">` +
+		`<MenuItem Text="_Open" IconRune="{{.Glyph}}"/></Menu></MenuBar></Gooey>`
+	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+	_, err := Load(fsys, "p.gooey", &Context{Values: map[string]any{"Glyph": "x"}})
+	if err == nil {
+		t.Fatal("a bound IconRune loaded clean; it would be sampled once and frozen")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "not a binding") {
+		t.Errorf("the refusal does not name BINDING as the mistake:\n\t%s", msg)
+	}
+	if strings.Contains(msg, "were given") {
+		t.Errorf("the refusal counted glyphs, which describes a different mistake:\n\t%s", msg)
+	}
+}
+
+// A separator carries nothing else, and an unresolvable asset on one is
+// a LOAD ERROR like it is anywhere else.
+//
+// The Separator short-circuit ran before every other attribute was read,
+// so this exact markup loaded clean while the same Icon on a
+// non-separator item was a load error naming the path
+// (TestAMissingIconAssetIsALoadError). One spelling kept the
+// "everything resolvable fails at load" posture and the other dropped
+// it. Found in review of #455.
+func TestASeparatorRefusesTheAttributesItWouldIgnore(t *testing.T) {
+	for _, tc := range []struct{ attr, val string }{
+		{"Icon", "assets/nope.png"},
+		{"IconRune", "x"},
+		{"Text", "not shown"},
+		{"Gesture", "ctrl+q"},
+	} {
+		page := `<Gooey><MenuBar><Menu Title="_File">` +
+			`<MenuItem Separator="true" ` + tc.attr + `="` + tc.val + `"/>` +
+			`</Menu></MenuBar></Gooey>`
+		fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+		_, err := Load(fsys, "p.gooey", &Context{})
+		if err == nil {
+			t.Errorf("<MenuItem Separator=%q %s=%q> loaded clean — it is accepted and silently ignored",
+				"true", tc.attr, tc.val)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.attr) {
+			t.Errorf("the refusal for %s does not name the attribute:\n\t%s", tc.attr, err)
+		}
+	}
+}
+
+// The bare separator every page in this repo actually writes still
+// loads. Without this the test above is satisfiable by refusing all
+// separators.
+func TestABareSeparatorStillLoads(t *testing.T) {
+	const page = `<Gooey><MenuBar><Menu Title="_File">` +
+		`<MenuItem Text="_Open"/><MenuItem Separator="true"/><MenuItem Text="_Quit"/>` +
+		`</Menu></MenuBar></Gooey>`
+	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+	if _, err := Load(fsys, "p.gooey", &Context{}); err != nil {
+		t.Fatalf("a bare separator is refused: %v", err)
+	}
+}
