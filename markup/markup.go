@@ -1113,6 +1113,32 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				return nil, err
 			}
 			if ic.Attrs["Separator"] == "true" {
+				// A SEPARATOR CARRIES NOTHING ELSE, and saying so is new.
+				// This short-circuit used to run before every other
+				// attribute was read, so `<MenuItem Separator="true"
+				// Icon="assets/nope.png"/>` loaded clean — the same Icon
+				// on a non-separator item is a load error naming the path
+				// (TestAMissingIconAssetIsALoadError). One spelling of
+				// the same markup kept the "everything resolvable fails
+				// at load" posture and the other silently dropped it,
+				// which reads as "my icon doesn't show up" with nothing
+				// anywhere to explain it.
+				//
+				// Pre-existing for Text, Gesture, Checked and Command;
+				// #455 is what added an attribute whose value is a FILE,
+				// which is where a silent drop stops being cosmetic.
+				// Reported in review of that PR. Every separator in this
+				// repo is a bare <MenuItem Separator="true"/>, so
+				// rejecting costs nothing and makes the trap loud.
+				for _, a := range [...]string{"Text", "Gesture", "Checked", "Command", "Icon", "IconRune"} {
+					if _, ok := ic.Attrs[a]; ok {
+						return nil, fmt.Errorf(
+							"markup: <MenuItem Separator=\"true\" %s=%q>: a separator is a rule "+
+								"across the menu and carries nothing else — %s would be accepted "+
+								"and silently ignored; drop it, or drop Separator",
+							a, ic.Attrs[a], a)
+					}
+				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
 				continue
 			}
@@ -1227,6 +1253,24 @@ func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
 	// them. Refusing a second glyph at load beats clipping it to a half
 	// a glyph at paint, which is not drawable.
 	if raw := strings.TrimSpace(ic.Attrs["IconRune"]); raw != "" {
+		// THE SAME REFUSAL Icon gets, and for the same reason — the field
+		// is read while painting, so a bound handle freezes at load.
+		//
+		// Without it a binding fell through to the glyph count below and
+		// was refused by a message describing a DIFFERENT MISTAKE: the
+		// author tried to bind, and `IconRune="{{.Glyph}}"` came back
+		// "IconRune is one glyph … and 10 were given". Nothing in
+		// checkAttrs enforces BindsLiteral — it validates attribute NAMES
+		// — so this function is the only place the declared Binds is
+		// enforced at all, and for IconRune it was being enforced by
+		// accident. Found in review of #455.
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune takes one literal glyph, not a "+
+					"binding — a menu item's icon rune is a plain field read while painting, so a "+
+					"bound handle would be sampled once at load and never update again",
+				it.Text, raw)
+		}
 		rs := []rune(raw)
 		if len(rs) != 1 {
 			return fmt.Errorf(

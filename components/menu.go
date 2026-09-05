@@ -85,13 +85,25 @@ type Menu struct {
 	Items []MenuItem
 }
 
-// iconWidth is the reserved icon gutter, in CELLS: two for the picture
-// plus one separating it from the check box or the label.
+// iconCols is the PICTURE's own width in cells, and iconWidth is the
+// gutter reserved for it: the picture plus one column separating it from
+// the check box or the label.
 //
 // Two rather than one because a one-cell box is 10x20 pixels, and svg
 // fits to the narrow side — half of that box is letterboxing. Two cells
 // is the smallest box a one-row icon is legible in (#400).
-const iconWidth = 3
+//
+// TWO CONSTS, and the derivation runs this way round on purpose. The
+// picture's width used to exist only as `iconWidth - 1` at the f.Place
+// call, with the "two" a sentence in this comment — so widening the
+// gutter to add a leading pad would have silently grown the IMAGE to
+// three cells instead of moving it. Making the separator column the
+// derived quantity is the direction this comment already described.
+// Found in review of #455.
+const (
+	iconCols  = 2
+	iconWidth = iconCols + 1
+)
 
 // iconLead is the icon gutter this menu reserves, 0 when no item in it
 // carries an icon of either tier.
@@ -128,8 +140,15 @@ func (m Menu) lead() int {
 	return 1
 }
 
-// iconGutter is the item's icon column as CELLS, always exactly
-// iconLead() columns wide and empty when this menu reserves none.
+// iconGutter is the item's icon column as CELLS, exactly w columns wide
+// and empty when w is 0.
+//
+// THE WIDTH IS A PARAMETER, not asked here, because the answer belongs
+// to the MENU and every caller is already in a loop over that menu's
+// items. iconLead walks every item to answer, so asking per item is
+// O(n²) — this used to be a method that did exactly that, one function
+// away from popupRect hoisting the identical call out of its own loop
+// with a comment saying why. Found in review of #455.
 //
 // pixel says whether the frame can place an image. When it can, the
 // gutter is blank here and drawDropdown places the picture over those
@@ -141,8 +160,7 @@ func (m Menu) lead() int {
 // function rather than string(it.IconRune)+"  ". An emoji is one rune
 // and TWO cells, so a rune-counted pad would push every label in the
 // dropdown one cell right of where popupRect measured for it.
-func (m Menu) iconGutter(it MenuItem, pixel bool) string {
-	w := m.iconLead()
+func iconGutter(it MenuItem, pixel bool, w int) string {
 	if w == 0 {
 		return ""
 	}
@@ -468,6 +486,16 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // this while painting tracks opening, closing and switching, and does
 // not track an app replacing the list underneath it. Same caveat, more
 // sharply, on DropdownBounds below.
+//
+// AND ON A CLOSED FRAME, ONLY THE OPEN FLAG SUBSCRIBES. showing() is
+// `IsOpen() && len(Menus) > 0 && len(Items) > 0`, so while the bar is
+// closed curIdx() sits on the short-circuit side of && and never runs —
+// the "dependencies are recorded by the Get that actually runs" trap,
+// exactly. It is safe here rather than accidental: the answer is -1 for
+// EVERY value of cur while closed, and Open sets both properties, so the
+// open transition dirties the reader before cur can matter. A reader
+// that needed cur on closed frames would need a different accessor.
+// Stated in review of #455.
 func (m *MenuBar) OpenIndex() int {
 	if !m.showing() {
 		return -1
@@ -482,6 +510,14 @@ func (m *MenuBar) OpenIndex() int {
 // a caller placing pixels into a returned rect must not be handed a
 // live-looking answer for a surface that is not on screen, and the zero
 // value is the one every Rect check already treats as nothing.
+//
+// THE RECT IS UNCLIPPED. popupRect may extend past the right or bottom
+// edge of the composition — that is the point of an overlay, and its own
+// doc says so — and nothing clamps it here. A caller drawing through
+// Frame.Place is clipped by clipPlacement and need not care; a caller
+// doing its own cell arithmetic off this rect must clip itself, or it
+// will index outside the buffer. Stated in review of #455, since the
+// documented use is exactly the second kind of caller.
 //
 // This is the same arithmetic drawDropdown paints into — it is popupRect
 // — which is precisely why it is worth exporting and why its tests read
@@ -795,6 +831,18 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 	DrawBoxRunes(f.Cells, b, st)
 
 	inner := b.W - 2
+	// HOISTED, both of them, for the reason popupRect states one function
+	// up: iconLead walks every item, so asking it per item makes this loop
+	// O(n²) — the exact shape popupRect was fixed to avoid, and the two
+	// had drifted apart. `pixel` is loop-invariant as well and was being
+	// recomputed per row.
+	//
+	// THE SAME GUARD Image, ColorPicker and buttonchrome ask, and it
+	// decides WHICH THING IS DRAWN rather than at what fidelity — see
+	// MenuItem.Icon. The gutter's width is reserved either way, so it
+	// cannot move anything. Found in review of #455.
+	pixel := f.Graphics != nil && f.CellW > 0 && f.CellH > 0
+	gutter := menu.iconLead()
 	for i, it := range menu.Items {
 		y := b.Y + 1 + i
 		if y >= b.Y+b.H-1 {
@@ -824,12 +872,7 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		// toggling a check while the menu is open repaints the dropdown
 		// and nothing else, and toggling it while the menu is closed
 		// repaints nothing at all.
-		// THE SAME GUARD Image, ColorPicker and buttonchrome ask, and it
-		// decides WHICH THING IS DRAWN rather than at what fidelity —
-		// see MenuItem.Icon. The gutter's width is already reserved
-		// either way, so this cannot move anything.
-		pixel := f.Graphics != nil && f.CellW > 0 && f.CellH > 0
-		lead := menu.iconGutter(it, pixel) + menu.checkBox(it)
+		lead := iconGutter(it, pixel, gutter) + menu.checkBox(it)
 		line := lead + text
 		if it.Gesture != "" {
 			pad := inner - render.StringWidth(line) - render.StringWidth(it.Gesture) - 1
@@ -861,11 +904,11 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		// AFTER the row's cells, not before: SetString above would
 		// otherwise overwrite nothing visible but would leave the
 		// placement's cells outside the flush that carries it. The
-		// image goes in the first iconWidth-1 columns of the gutter,
-		// leaving its trailing separator column blank.
+		// image gets iconCols of the gutter, leaving its trailing
+		// separator column blank.
 		if pixel && it.Icon != nil {
 			f.Place(graphics.Placement{
-				Img: it.Icon, Col: b.X + 1, Row: y, Cols: iconWidth - 1, Rows: 1,
+				Img: it.Icon, Col: b.X + 1, Row: y, Cols: iconCols, Rows: 1,
 			})
 		}
 	}
