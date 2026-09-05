@@ -11,7 +11,6 @@ package gooey
 import (
 	"image"
 	"io"
-	"sort"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/prop"
@@ -525,7 +524,7 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
 //
-// IT PAINTS THE SAME PICTURE Composer does, and that sentence is the
+// IT PAINTS IN THE SAME Z-ORDER Composer does, and that sentence is the
 // point rather than a pleasantry. "The one-shot path (full repaint)" is
 // all this used to say, which reads as the same picture and was not:
 // renderTree walked document order and never consulted Overlay, so #430
@@ -533,8 +532,25 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // that cmd/pixels, cmd/typeahead --dump and around nineteen test helpers
 // use. A fixture asserted through it would have looked green while
 // encoding the bug. Both paths now order through the one overlayOf rule
-// (#438), and TestBothPaintPathsAgree compares them rather than pinning
-// each to a string, so they cannot drift together either.
+// (#438) and through the one appendByRank bucket pass, and
+// TestBothPaintPathsAgree compares them rather than pinning each to a
+// string, so they cannot drift together either.
+//
+// Z-ORDER, THOUGH, AND NOT THE PICTURE — the claim above is scoped on
+// purpose, because two things this path does NOT do are easy to assume
+// from a wider one:
+//
+//   - Composer brackets every Render with Cells.Clip(bounds)
+//     (#357/#409); paintOne does not clip at all, so a component that
+//     overruns its rect reaches a neighbour's cells here and is cut off
+//     there.
+//   - The pre-clear rules — a leaf clearing to the nearest ancestor's
+//     background, a HasBackground container filling and being marked
+//     covered — are Composer's, and have no counterpart here.
+//
+// TestBothPaintPathsAgree compares z-order and nothing else, so nothing
+// in the suite would catch the wider sentence being read literally.
+// Narrowed in review of #457.
 //
 // It BRACKETS the pass with TakeLayoutFault, and both halves are load
 // bearing because layoutFault is package-level state.
@@ -574,18 +590,34 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 // lifted subtree cannot be painted at the moment it is reached: its
 // position depends on nodes the walk has not seen yet. That is the same
 // reason Composer keeps c.nodes (structure) apart from c.paint (order).
-// A tree with no Overlay in it collects one slice, sorts nothing, and
+// A tree with no Overlay in it collects one slice, buckets nothing, and
 // paints in exactly the order it always did.
 func renderTree(w Component, f *Frame, depth int) {
 	var ordinary, lifted []paintItem
 	collectPaint(w, depth, false, 0, &ordinary, &lifted)
-	// STABLE, so equal ranks keep document order — the limit the Overlay
-	// interface documents, preserved here rather than reinvented.
-	sort.SliceStable(lifted, func(i, j int) bool { return lifted[i].rank < lifted[j].rank })
+	// THE SAME BUCKET PASS THE RETAINED PATH USES, not a sort. Equal
+	// ranks keep document order because they are appended in encounter
+	// order — a consequence of the construction rather than a claim about
+	// sort.SliceStable, which no mutation of this repo could falsify.
+	// Ordering is shared for the same reason membership-and-rank is:
+	// two implementations is the second copy the next change has to
+	// find. Raised in review of #457.
+	//
+	// No reuse across calls here — Compose is one-shot by definition, so
+	// the buckets are a local that dies with the frame.
+	// A SEPARATE DESTINATION, not lifted[:0]. Writing the result back
+	// over its own input happens to be safe — every item is copied into
+	// a bucket before the append loop starts — but appendByRank has
+	// already shipped one aliasing bug (its own comment records it), and
+	// Compose is one-shot, so a slice is the honest price for not being
+	// clever twice in the same function.
+	var buckets []rankBucket[paintItem]
+	ordered := appendByRank(make([]paintItem, 0, len(lifted)), lifted,
+		func(it paintItem) int { return it.rank }, &buckets)
 	for _, it := range ordinary {
 		paintOne(it.w, f)
 	}
-	for _, it := range lifted {
+	for _, it := range ordered {
 		paintOne(it.w, f)
 	}
 }

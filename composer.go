@@ -97,20 +97,19 @@ type Composer struct {
 	// buckets is orderPaint's rank ordering, one entry per DISTINCT rank
 	// in ascending order — three in the framework today, plus whatever an
 	// app adds. Reused like `lifted`, inner slices included.
-	// RETAINS PAST ITS OWN LENGTH, deliberately noted rather than left
-	// for the next reader to re-derive. appendByRank does bs :=
-	// (*buckets)[:0] and reuses the backing arrays, which is what makes
-	// the pass allocation-free — and what keeps *paintNode from earlier
-	// frames reachable in two dimensions: bucket slots past the new len,
-	// and elements past each inner slice's new len. c.lifted and c.over
-	// have the same shape, but this is a slice OF slices, so a large
-	// frame pins one inner array per rank rather than one overall.
+	// REUSED ACROSS FRAMES, which is what makes the pass allocation-free
+	// and what made it RETAIN: items holds *paintNode, appendByRank does
+	// bs := (*buckets)[:0], and a dead node stayed reachable in two
+	// dimensions — bucket slots past the new len, and elements past each
+	// inner slice's len. c.lifted and c.over have the same shape, but
+	// this is a slice OF slices, so a large frame pinned one inner array
+	// per rank rather than one overall.
 	//
-	// Not a correctness bug; a node is unreachable from the tree either
-	// way. It is cleared to CAP in PR #457 (issue #438), directly above this one,
-	// which is where the measurement lives (18 items held across a
-	// shrinking rank set). Raised in review of #456.
-	buckets []rankBucket
+	// appendByRank clears to CAP before handing them back, which is the
+	// fix: len is what the next call resets, cap is what the collector
+	// sees. Measured at 18 items held without it. Raised in review of
+	// #456; fixed and measured in #438.
+	buckets []rankBucket[*paintNode]
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
@@ -363,14 +362,14 @@ func (c *Composer) orderPaint() {
 			c.paint = append(c.paint, n)
 		}
 	}
-	c.paint = appendByRank(c.paint, c.lifted, &c.buckets)
+	c.paint = appendByRank(c.paint, c.lifted, func(n *paintNode) int { return n.rank }, &c.buckets)
 }
 
 // rankBucket is one distinct overlay rank and the nodes carrying it, in
 // the order the walk met them.
-type rankBucket struct {
+type rankBucket[T any] struct {
 	rank  int
-	nodes []*paintNode
+	items []T
 }
 
 // appendByRank appends lifted to dst in ascending rank, EQUAL RANKS IN
@@ -398,14 +397,25 @@ type rankBucket struct {
 // The insertion is linear in the number of DISTINCT ranks, not in the
 // number of nodes: three in the framework today. buckets is reused
 // across calls, inner slices included.
-func appendByRank(dst, lifted []*paintNode, buckets *[]rankBucket) []*paintNode {
+//
+// GENERIC BECAUSE THE ORDERING IS SHARED, not for reuse in the abstract.
+// gooey.Compose lifts []paintItem where the Composer lifts []*paintNode,
+// and the one-shot path originally ordered its own with
+// sort.SliceStable — which put the unfalsifiable-stability claim back one
+// file over, and reflect.Swapper back on a paint path, days after this
+// function was written to remove both. Sharing membership-and-rank while
+// leaving ORDERING as two implementations of different character is
+// exactly the second copy #438 set out to retire. Raised in review of
+// #457.
+func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBucket[T]) []T {
 	bs := (*buckets)[:0]
 	for _, n := range lifted {
+		r := rankOf(n)
 		i := 0
-		for i < len(bs) && bs[i].rank < n.rank {
+		for i < len(bs) && bs[i].rank < r {
 			i++
 		}
-		if i == len(bs) || bs[i].rank != n.rank {
+		if i == len(bs) || bs[i].rank != r {
 			// Grow by one, then open a gap at i.
 			//
 			// THE SPARE SLICE IS TAKEN BEFORE THE COPY, and that is the
@@ -424,16 +434,16 @@ func appendByRank(dst, lifted []*paintNode, buckets *[]rankBucket) []*paintNode 
 			if len(bs) < cap(bs) {
 				bs = bs[:len(bs)+1]
 			} else {
-				bs = append(bs, rankBucket{})
+				bs = append(bs, rankBucket[T]{})
 			}
-			spare := bs[len(bs)-1].nodes[:0]
+			spare := bs[len(bs)-1].items[:0]
 			copy(bs[i+1:], bs[i:])
-			bs[i] = rankBucket{rank: n.rank, nodes: spare}
+			bs[i] = rankBucket[T]{rank: r, items: spare}
 		}
-		bs[i].nodes = append(bs[i].nodes, n)
+		bs[i].items = append(bs[i].items, n)
 	}
 	for _, b := range bs {
-		dst = append(dst, b.nodes...)
+		dst = append(dst, b.items...)
 	}
 	*buckets = bs
 	return dst

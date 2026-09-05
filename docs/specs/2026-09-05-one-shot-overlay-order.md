@@ -31,7 +31,11 @@ instead of paying it.**
 `overlayOf(w, parentOverlay, parentRank) (overlay bool, rank int)` is now
 the single implementation. `Composer.orderPaint` asks it per paint node;
 `gooey.Compose`'s new `collectPaint` asks it per component. Both then
-partition into two layers and stable-sort the lifted one by rank.
+partition into two layers and order the lifted one by rank through
+`appendByRank` — a bucket pass, not a sort. Both paths call it: sharing the
+rule's membership half while leaving ORDERING as two implementations was the
+second copy this change set out to retire, and the one-shot path first landed
+with a `sort.SliceStable` of its own.
 
 That the extraction is real rather than nominal is checked by the tests,
 not asserted here: mutating `overlayOf` fails **both** paths' tests in
@@ -65,7 +69,7 @@ helpers ride on it and a change in their meaning would be silent.
 
 ## What is NOT changed
 
-- **Equal ranks keep document order** on both paths — the stable sort is
+- **Equal ranks keep document order** on both paths — the bucket pass is
   what preserves it, and the `Overlay` interface's documented limit
   survives untouched.
 - **`Overlay` still moves paint, not input.** Neither path consults it
