@@ -7,7 +7,14 @@ Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
 ## The problem
 
 `Popup`'s doc comment stated the rule as a fact of the design — the sentence
-below is quoted as history and no longer appears anywhere in the tree: the
+below is quoted as history and no longer appears anywhere in the tree AS AN
+ASSERTION — it survives only inside quotations of itself, in
+`components/popupzorder_test.go`, `docs/specs/2026-09-05-zorder-doc-sweep.md`
+and the guard's own fixtures in `zorderdocs_test.go`, which is what
+`declaresItselfSuperseded` and the epitaph qualifier exist to permit. (This
+line said "anywhere in the tree", full stop, which was a checkable absolute
+and was wrong — the exact failure #443 was filed about. Corrected in review
+of #458.) The sentence: the
 surface was "a leaf child the owner returns from `ChildComponents` (**LAST**,
 because document order is z-order)".
 Every customer followed it, and the test page in

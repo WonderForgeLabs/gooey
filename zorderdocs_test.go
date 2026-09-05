@@ -42,6 +42,35 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
+		// A PREFILTER, because the loop below runs a dozen
+		// case-insensitive alternations over every line of every
+		// .go/.md/.gooey file in the tree. Raised in review of #458,
+		// with a claim that this drops the cost "to near-nothing".
+		//
+		// IT DOES NOT, AND THE MEASURED NUMBERS ARE HERE so the next
+		// person does not repeat the two attempts. Walk plus read plus
+		// this filter is 113ms of it; the rest is the regex loop.
+		// Substring filtering took the pair of tests from ~4.5s to
+		// ~3.6s — real, but far from nothing, because 512 of 788 files
+		// contain "order" in a repo whose docs are largely about
+		// ordering.
+		//
+		// Prefiltering with retiredRule ITSELF — which is the version
+		// that cannot drift out of step with the pattern list — was
+		// tried and is WORSE, 5.6s: it scans all 7MB with every pattern
+		// and then the per-line loop scans the matches again. The cheap
+		// inexact filter beats the exact one here.
+		//
+		// So this stays, and it stays with the hazard written down:
+		// KEEP IN STEP WITH retiredRule. Every pattern there requires
+		// one of these two words today. One that did not would be
+		// silently skipped for most of the tree, which is a guard
+		// quietly checking less than it claims — the failure this whole
+		// file exists to prevent, in the file itself.
+		low := strings.ToLower(string(body))
+		if !strings.Contains(low, "order") && !strings.Contains(low, "last") {
+			continue
+		}
 		lines := strings.Split(string(body), "\n")
 		if declaresItselfSuperseded(lines) {
 			continue
@@ -59,7 +88,7 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 				"layer (#437) and ranked within it (#439), so declaring "+
 				"one last decides nothing. Either state the current rule, "+
 				"or mark the sentence as history — the markers this test "+
-				"accepts are in qualifiers(). Hit-testing is the one thing "+
+				"accepts are in qualifierRes. Hit-testing is the one thing "+
 				"position still orders; say so explicitly if that is what "+
 				"you mean.", f, i+1, strings.TrimSpace(line))
 		}
@@ -85,6 +114,16 @@ var retiredRule = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)last child of the (root|Grid|page)`),
 	regexp.MustCompile(`(?i)last child = top`),
 	regexp.MustCompile(`(?i)last-in-document-order`),
+	// THE REPO'S OWN PARAPHRASES, added in review of #458 — and the
+	// reason they matter is that the sweep missed a site because of
+	// them. components/menu_live_test.go said "late in document order:
+	// the dropdown paints above the content" ONE LINE ABOVE a line this
+	// same change corrected: the flagship instance of the thesis, in a
+	// file the sweep had open, invisible because no pattern matched the
+	// phrasing. The issue's site table was a sample and so was the first
+	// draft of this list.
+	regexp.MustCompile(`(?i)(late|last|later) in (the )?document order`),
+	regexp.MustCompile(`(?i)document order is paint order`),
 }
 
 func statesTheRetiredRule(line string) bool {
@@ -107,7 +146,11 @@ func statesTheRetiredRule(line string) bool {
 // A third family is admitted grudgingly: hit-testing genuinely still walks
 // document order, so a line about the hit walk may say "last" and mean it.
 // It has to name the walk to get the exemption.
-func qualifiers() []*regexp.Regexp {
+// Compiled ONCE, like retiredRule above. This was a function returning a
+// fresh slice, recompiling nine regexps on every call — one per matching
+// line, per file — for no reason the file could give. Raised in review of
+// #458.
+var qualifierRes = func() []*regexp.Regexp {
 	return []*regexp.Regexp{
 		// The correction.
 		regexp.MustCompile(`(?i)two layers|second (paint )?layer|overlay layer`),
@@ -122,7 +165,7 @@ func qualifiers() []*regexp.Regexp {
 		// The hit-test exemption.
 		regexp.MustCompile(`(?i)hit-?test|hit order|HitTest`),
 	}
-}
+}()
 
 // declaresItselfSuperseded exempts a whole file whose HEAD says the rule
 // below it is dead. That is for the dated decision records: a spec is a
@@ -139,13 +182,45 @@ func declaresItselfSuperseded(lines []string) bool {
 	if len(lines) < head {
 		head = len(lines)
 	}
-	return supersededRe.MatchString(strings.Join(lines[:head], "\n"))
+	h := strings.Join(lines[:head], "\n")
+	return supersededRe.MatchString(h) && supersededOf.MatchString(h)
 }
 
-var supersededRe = regexp.MustCompile(`(?i)superseded`)
+// BOTH HALVES REQUIRED. Keying on the bare word "superseded" exempted a
+// file's ENTIRE body on the strength of a banner that might be about
+// anything — an allow-list by accident, which is the thing this file's
+// own comments argue against. Only the three intended specs match today,
+// so this was latent rather than live, but the floor mattered: the
+// exemption has to be about THIS rule. All three banners name the
+// overlay layer already, so requiring it costs nothing. Raised in review
+// of #458.
+var (
+	supersededRe = regexp.MustCompile(`(?i)superseded`)
+	supersededOf = regexp.MustCompile(`(?i)overlay|z-?order`)
+)
 
 // qualifiedNear looks in a NARROW window around the hit — two lines each
 // way, enough for one wrapped sentence and no more.
+//
+// THE FLOOR IS ONE LINE, AND THAT IS THE RESIDUAL HOLE. The window
+// includes line i itself, so a single line carrying both the retired rule
+// and a qualifier passes:
+//
+//	// A gooey.Overlay must be declared LAST.
+//
+// — the retired instruction and the marker name, in one sentence, which
+// is the two-contradictory-rules-in-one-place shape the narrowing from
+// six lines to two was done to kill, merely compressed further.
+//
+// It cannot be closed by excluding line i: several CORRECTED sites
+// legitimately qualify themselves on their own line, docs/markup-reference.md
+// among them, where the epitaph and the #430 citation sit in one sentence.
+// Excluding i would make the guard reject the very phrasing the sweep
+// produced.
+//
+// So the floor is recorded rather than fixed, next to the six-line
+// finding, so the next person narrowing this knows where it is. Raised in
+// review of #458.
 //
 // The window was six lines first, and mutation testing killed that
 // version: a stale sentence re-introduced into components/menu.go and
@@ -172,7 +247,7 @@ func qualifiedNear(lines []string, i int) bool {
 		hi = len(lines) - 1
 	}
 	block := strings.Join(lines[lo:hi+1], "\n")
-	for _, re := range qualifiers() {
+	for _, re := range qualifierRes {
 		if re.MatchString(block) {
 			return true
 		}
@@ -244,6 +319,12 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 		"**Declare the `MenuBar` as the LAST child of its container.**",
 		"<AdornmentLayer/>   <!-- last child of the root -->",
 		"the MenuBar overlay recipe reused in an app: last-in-document-order",
+		// The two the FIRST version of this list did not have, which is
+		// how components/menu_live_test.go kept the rule through a sweep
+		// that edited the line beneath it. Added with their patterns in
+		// review of #458.
+		"bar,          // late in document order: the dropdown paints above the content",
+		"// it. Document order is paint order, so a component that overflows",
 	}
 	for _, line := range removed {
 		if !statesTheRetiredRule(line) {
