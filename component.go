@@ -207,7 +207,27 @@ const (
 // or the floor.
 func overlayRank(w Component) int {
 	if r, ok := w.(OverlayRanker); ok {
-		return r.OverlayRank()
+		// CLAMPED, because three doc comments, a spec heading and a test
+		// message all called OverlayRankPopup "the floor" while
+		// appendByRank compared plain ints — so `OverlayRank() int {
+		// return -1 }` sorted below every popup with nothing red
+		// anywhere. An ordering claim living only in prose is the exact
+		// defect this change exists to remove, and it was in this
+		// change. Raised in review of #456.
+		//
+		// CLAMPING RATHER THAN DEFINING NEGATIVE RANKS, and the choice
+		// is deliberate. A negative rank is a plausible way to spell a
+		// modal scrim that sits under popups and over the page — but
+		// nothing in the tree wants one, and inventing the semantics
+		// from a hypothetical is how a rule acquires a case nobody can
+		// test. An app that needs a below-popup band can have it the
+		// day something does; until then the floor is the floor, and
+		// TestANegativeRankLandsOnTheFloor is what keeps this comment
+		// from becoming prose again.
+		if r := r.OverlayRank(); r > OverlayRankPopup {
+			return r
+		}
+		return OverlayRankPopup
 	}
 	return OverlayRankPopup
 }

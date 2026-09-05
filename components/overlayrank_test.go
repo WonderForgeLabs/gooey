@@ -101,7 +101,7 @@ func TestAToastIsNotHiddenByAnOpenMenu(t *testing.T) {
 	}
 	if got := render.RowText(f.Cells, toast.Y); !strings.Contains(got, "THREE") {
 		t.Errorf("a toast on a row the open dropdown covers is not visible — it is painting underneath.\nrow %d: %q\n%s",
-			toast.Y, got, framePlane(f, w, h))
+			toast.Y, got, frameText(f, w, h))
 	}
 	// THE DAMAGE COUNT, which the cell assertion above cannot be. Ranking
 	// MOVED this number and CLAUDE.md is explicit that when a change moves
@@ -194,14 +194,27 @@ func TestAnAdornmentIsAboveAToast(t *testing.T) {
 	t.Cleanup(c2.Close)
 	c2.Frame()
 	host2.Show("TOASTTOAST")
-	f, _ := c2.Frame()
+	f, painted := c2.Frame()
+
+	// THE SETTLED FRAME, the same guard TestAToastIsNotHiddenByAnOpenMenu
+	// gained and for the same reason: a cell assertion passes for the
+	// wrong reason if the winning component is repainting unconditionally
+	// rather than being ordered above. Once nothing has changed, nothing
+	// should repaint — and then the cells below are the composition's
+	// answer about ORDER rather than about who painted most recently.
+	// Missing here in the first pass, in the test whose whole subject is
+	// paint order. Raised in review of #456.
+	if _, painted = c2.Frame(); painted != 0 {
+		t.Errorf("a settled frame repainted %d components; the cell assertion below "+
+			"would then be about repaint frequency, not about rank", painted)
+	}
 
 	got := render.RowText(f.Cells, tb.Y)
 	if !strings.Contains(got, strings.Repeat("M", tb.W)) {
 		t.Errorf("a component at OverlayRankAdornment sitting on a toast's cells is not what is on screen — "+
 			"it is painting underneath, reversing what docs/markup-reference.md states.\nrow %d: %q\n"+
 			"mark rank %d, toast rank %d\n%s",
-			tb.Y, got, rankOf(t, mark), rankOf(t, host2), framePlane(f, w, h))
+			tb.Y, got, rankOf(t, mark), rankOf(t, host2), frameText(f, w, h))
 	}
 }
 
@@ -258,11 +271,58 @@ func rankOf(t *testing.T, w gooey.Component) int {
 	return r.OverlayRank()
 }
 
-func framePlane(f *gooey.Frame, w, h int) string {
-	var b strings.Builder
-	for y := 0; y < h; y++ {
-		b.WriteString(render.RowText(f.Cells, y))
-		b.WriteByte('\n')
+// TestANegativeRankLandsOnTheFloor is finding 1 of the review of #456:
+// three doc comments, a spec heading and a test failure message all
+// called OverlayRankPopup "the floor", and appendByRank compared plain
+// ints — so a negative rank sorted below every popup with nothing red.
+//
+// This PR's whole thesis is that an ordering claim living only in prose
+// costs nothing to break, so the claim is now clamped in overlayRank and
+// this is what holds it.
+//
+// The assertion is a CELL, not the clamp's return value: overlayRank is
+// unexported and asserting on it would be the code agreeing with itself.
+// What has to hold is that a negative-ranked overlay cannot paint under
+// an ordinary one.
+func TestANegativeRankLandsOnTheFloor(t *testing.T) {
+	const w, h = 40, 8
+	at := gooey.Rect{X: 0, Y: 0, W: 10, H: 1}
+	// Declared FIRST, so within one rank document order puts it behind.
+	// If the negative rank were honoured it would go behind anyway; the
+	// discriminating arm is the one below it.
+	below := &atRankN{atAdornmentRank{at: at, text: strings.Repeat("N", at.W)}, -5}
+	plain := &atRankN{atAdornmentRank{at: at, text: strings.Repeat("P", at.W)}, gooey.OverlayRankPopup}
+	c := gooey.NewComposer(&rankPage{kids: []gooey.Component{below, plain}}, w, h)
+	t.Cleanup(c.Close)
+	c.Frame()
+	f, _ := c.Frame()
+	if got := render.RowText(f.Cells, at.Y)[:at.W]; got != strings.Repeat("P", at.W) {
+		t.Fatalf("the control arm failed: row %q, want the later-declared popup-rank "+
+			"overlay on top", got)
 	}
-	return b.String()
+
+	// Now swap the declaration order. Under a real floor the negative
+	// rank is clamped to the popup floor, the two are equal-ranked, and
+	// document order decides — so the LATER one wins. Without the clamp
+	// the negative rank loses regardless of where it is declared.
+	below2 := &atRankN{atAdornmentRank{at: at, text: strings.Repeat("N", at.W)}, -5}
+	plain2 := &atRankN{atAdornmentRank{at: at, text: strings.Repeat("P", at.W)}, gooey.OverlayRankPopup}
+	c2 := gooey.NewComposer(&rankPage{kids: []gooey.Component{plain2, below2}}, w, h)
+	t.Cleanup(c2.Close)
+	c2.Frame()
+	f2, _ := c2.Frame()
+	if got := render.RowText(f2.Cells, at.Y)[:at.W]; got != strings.Repeat("N", at.W) {
+		t.Errorf("a negative OverlayRank painted below a popup-rank overlay declared "+
+			"BEFORE it: row %q. OverlayRankPopup is documented as the floor in four "+
+			"places, so either the clamp is gone or the docs are wrong", got)
+	}
 }
+
+// atRankN is atAdornmentRank with the rank as a field, so one fixture
+// can carry an arbitrary rank including a negative one.
+type atRankN struct {
+	atAdornmentRank
+	rank int
+}
+
+func (a *atRankN) OverlayRank() int { return a.rank }

@@ -135,7 +135,7 @@ not take pointer capture is still responsible for its own routing.
 | A higher rank beats a later declaration | `TestAHigherRankPaintsOverALowerOneDeclaredLater` | reverse the bucket order (M2) |
 | Equal ranks keep document order | `TestEqualRanksKeepDocumentOrder` | prepend within a bucket (M3) |
 | An unranked `Overlay` is rank 0 | `TestAnUnrankedOverlayIsRankZero` | M2, and M4 (don't rank at all) |
-| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap the two `overlayOf` arms; M3 |
+| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap `case inherited:` and `case isOverlay:` in `Composer.orderPaint` (`composer.go`); M3 |
 | The layer still clears the page | `TestTheOverlayLayerStillClearsThePage` | — (guards #437) |
 | **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |
