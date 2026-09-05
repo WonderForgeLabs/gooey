@@ -30,6 +30,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -1169,6 +1170,9 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 					return nil, fmt.Errorf("markup: <MenuItem Text=%q Checked=%q>: %w", it.Text, raw, err)
 				}
 			}
+			if err := menuItemIcon(ic, ctx, &it); err != nil {
+				return nil, err
+			}
 			cmd, err := ctx.Command(ic.Attrs["Command"])
 			if err != nil {
 				return nil, fmt.Errorf("markup: <MenuItem Command=%q>: %w", ic.Attrs["Command"], err)
@@ -1179,6 +1183,60 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		menus = append(menus, menu)
 	}
 	return &components.MenuBar{Menus: menus, Style: style}, nil
+}
+
+// menuItemIcon reads the two icon attributes onto the item.
+//
+// THEY ARE TWO ATTRIBUTES BECAUSE THE TWO TIERS DRAW DIFFERENT THINGS,
+// which is the whole finding behind #400 and the reason this is not
+// modelled as one Src with a fallback. Everywhere else in the framework
+// the cell-plane tier is graphics.DrawHalfblock over the same image; a
+// dropdown row is ONE CELL TALL, so that is two vertical samples for the
+// entire glyph, and the issue measured two clearly different icons
+// coming back as the same uniform '▀'. There is no rendering of Icon
+// that works here, so the second tier is a rune the author chooses.
+//
+// Icon is LITERAL ONLY, where <Image Src> takes either form. Not an
+// omission and not a smaller feature: components.Image.Src is a
+// *prop.Property[image.Image] and tracks its source, MenuItem.Icon is a
+// plain field read while painting. A handle resolved here would be
+// sampled once and silently freeze — the same trap Text spells out two
+// screens up, refused for the same reason and in the same place.
+func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
+	if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != "" {
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q Icon=%q>: Icon takes a file path, not a binding — "+
+					"a menu item's icon is a plain field read while painting, so a bound handle "+
+					"would be sampled once at load and never update again",
+				it.Text, raw)
+		}
+		fsys := ctx.assets()
+		if fsys == nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: no file system to load from — this tree was built from bytes; use markup.Load or set Context.Includes", raw)
+		}
+		img, err := imaging.Load(fsys, raw)
+		if err != nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: %w", raw, err)
+		}
+		it.Icon = img
+	}
+	// IconRune is ONE rune, counted in runes and not bytes, because the
+	// question here is how many glyphs — the gutter's three CELLS are
+	// components.Menu's arithmetic, and an emoji is one glyph in two of
+	// them. Refusing a second glyph at load beats clipping it to a half
+	// a glyph at paint, which is not drawable.
+	if raw := strings.TrimSpace(ic.Attrs["IconRune"]); raw != "" {
+		rs := []rune(raw)
+		if len(rs) != 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune is one glyph — the icon gutter "+
+					"holds exactly one, and %d were given",
+				it.Text, raw, len(rs))
+		}
+		it.IconRune = rs[0]
+	}
+	return nil
 }
 
 func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Component, error) {
