@@ -218,9 +218,30 @@ func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*a
 	// THE CHILD HALF ONLY. A read the host takes off its own element is
 	// the host's attribute, not this one's — see scanChildAttrs.
 	_, child := hostReads(d.parsedBy, buildOf, funcs)
+	// AND THE ELEMENT'S OWN Build, which is not usually nothing. A
+	// ParsedBy def whose Build reads an attribute is a legal shape —
+	// today's two only return "only valid inside…" errors, but the
+	// branch above skips the ordinary two-direction scan, so without
+	// this such a read would be unattributed AND the declaration
+	// serving it reported over-declared.
+	if d.build != nil {
+		scan(d.build, funcs, child, map[string]bool{}, 0)
+	}
 	var out []Finding
 	for a := range d.declared {
-		if !child[a] && !universal[a] {
+		// NO universal SKIP HERE, and that is the difference between a
+		// pseudo-element and an ordinary one. The skip is right for an
+		// ordinary element because applyLayout consumes Margin, Width
+		// and the rest outside its Build. A pseudo-element has no
+		// applyLayout — a nil Proto makes TakesLayout false, so
+		// vocabulary() never adds the universal set to it — but
+		// checkAttrs allows anything in spec.Attrs regardless. So
+		// declaring Margin on <MenuItem> made it settable, unread and
+		// silently dropped, with the whole suite green: the exact
+		// defect TestAnUnknownMenuAttributeIsALoadError closes for an
+		// undeclared name, still reachable through the eight universal
+		// ones.
+		if !child[a] {
 			out = append(out, Finding{Element: d.name, Attr: a, OverDeclared: true})
 		}
 	}
@@ -344,6 +365,32 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 				child[a] = true
 			}
 		case *ast.CallExpr:
+			// THE HELPER IDIOM, which scan recognises and this used to
+			// miss: Bound(e, ctx, "Text"), BoundColor(ic, ctx, "Fg"),
+			// optDuration(c, "Tick") — the attribute name is a string
+			// argument, not an index. Missing it is not a quiet gap in
+			// one direction: it produces a FALSE over-declaration,
+			// because the declaration is real and the read is invisible.
+			// Which element it belongs to is the same question as
+			// everywhere else here, answered the same way — by whether
+			// the element argument is the host's own.
+			if elem, ok := elementArg(v); ok {
+				for _, arg := range v.Args {
+					lit, isLit := arg.(*ast.BasicLit)
+					if !isLit || lit.Kind != token.STRING {
+						continue
+					}
+					a, err := strconv.Unquote(lit.Value)
+					if err != nil || !isAttrName(a) {
+						continue
+					}
+					if elem == self {
+						own[a] = true
+					} else {
+						child[a] = true
+					}
+				}
+			}
 			name := calleeName(v.Fun)
 			if name == "" || generic[name] || seen[name] || !passesElement(v) {
 				return true
@@ -360,6 +407,24 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 		}
 		return true
 	})
+}
+
+// elementArg is the name of the first bare identifier argument, which is
+// the element a helper is being asked about: Bound(e, ctx, "Text") and
+// Bound(ic, ctx, "Text") differ in exactly that position.
+//
+// It is a HEURISTIC and deliberately a loose one, in the direction that
+// cannot hide a defect: a wrong guess files a read under the wrong
+// element, which produces a finding, where missing the read entirely
+// produces a false over-declaration — a red test asserting the opposite
+// of what the code does.
+func elementArg(c *ast.CallExpr) (string, bool) {
+	for _, a := range c.Args {
+		if id, ok := a.(*ast.Ident); ok {
+			return id.Name, true
+		}
+	}
+	return "", false
 }
 
 // elementParam is the name of the parameter declared `Element`, or ""

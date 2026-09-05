@@ -29,8 +29,19 @@ var defChild = &ElementDef{
 	Known:    true,
 	Attrs: []AttrSpec{
 		{Name: "Text"},
+		{Name: "OwnRead"},
+		// Read only through the helper idiom below, never as an index.
+		// scan recognises that form; the child walk did not, and the
+		// consequence was a FALSE over-declaration — a red test
+		// asserting the opposite of what the code does.
+		{Name: "Tick"},
 	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		// A pseudo-element's OWN Build reading an attribute is a legal
+		// shape, and Check's ParsedBy branch used to skip it entirely —
+		// so the read was unattributed and the declaration serving it
+		// was reported over-declared, both wrong at once.
+		_ = e.Attrs["OwnRead"]
 		return nil, errStandalone
 	},
 }
@@ -42,6 +53,10 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 	for _, c := range e.Children {
 		// Read off a CHILD element. This is <Child>'s surface.
 		_ = c.Attrs["Text"]
+		// The same, through a helper: the attribute name is a string
+		// ARGUMENT, and the element it belongs to is the first bare
+		// identifier — c here, e would make it the host's own.
+		_ = optDuration(c, "Tick")
 		// A call into the generic builder machinery. scanChildAttrs must
 		// not follow it, or the literals inside land in the child set
 		// and get reported as attributes nobody declared.
@@ -57,6 +72,10 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 // discriminating: the receiver split alone would file such a read as the
 // host's own and hide it, so only the deny-list keeps "Smuggled" out of
 // the child set.
+// optDuration stands in for Bound / BoundColor / optDuration — the
+// helper idiom where the attribute name is an argument.
+func optDuration(e Element, name string) any { return nil }
+
 func checkAttrs(e Element, ctx *Context) error {
 	for _, k := range e.Children {
 		_ = k.Attrs["Smuggled"]

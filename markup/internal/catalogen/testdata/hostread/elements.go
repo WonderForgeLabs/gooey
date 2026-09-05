@@ -29,9 +29,17 @@ var defChild = &ElementDef{
 	Known:    true,
 	Attrs: []AttrSpec{
 		{Name: "Text"},
+		{Name: "OwnRead"},
+		// Read only through the helper idiom below, never as an index.
+		{Name: "Tick"},
 		{Name: "Style"}, // read off the HOST, not off a child — must be reported
 	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		// A pseudo-element's OWN Build reading an attribute is a legal
+		// shape, and Check's ParsedBy branch used to skip it entirely —
+		// so the read was unattributed and the declaration serving it
+		// was reported over-declared, both wrong at once.
+		_ = e.Attrs["OwnRead"]
 		return nil, errStandalone
 	},
 }
@@ -43,6 +51,7 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 	for _, c := range e.Children {
 		// Read off a CHILD element. This is <Child>'s surface.
 		_ = c.Attrs["Text"]
+		_ = optDuration(c, "Tick")
 		// A call into the generic builder machinery. scanChildAttrs must
 		// not follow it, or the literals inside land in the child set
 		// and get reported as attributes nobody declared.
@@ -58,6 +67,8 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 // discriminating: the receiver split alone would file such a read as the
 // host's own and hide it, so only the deny-list keeps "Smuggled" out of
 // the child set.
+func optDuration(e Element, name string) any { return nil }
+
 func checkAttrs(e Element, ctx *Context) error {
 	for _, k := range e.Children {
 		_ = k.Attrs["Smuggled"]

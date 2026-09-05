@@ -1,6 +1,11 @@
 package catalogen
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,4 +89,137 @@ func TestTheHostsOwnAttributeIsNotReportedUndeclared(t *testing.T) {
 			t.Errorf("the host's own attribute was attributed to its children: %s", f)
 		}
 	}
+}
+
+// TestTheHelperIdiomIsAChildRead is the FALSE-POSITIVE direction, which
+// is the loud one: the declaration is real and the read is invisible, so
+// the check reports an over-declaration that is not there — a red test
+// asserting the opposite of what the code does.
+//
+// scan has always recognised the form (Bound(e, ctx, "Text"),
+// optDuration(e, "Tick")); the child walk did not. The fixture's <Child>
+// declares Tick and the host reads it only that way.
+func TestTheHelperIdiomIsAChildRead(t *testing.T) {
+	for _, f := range findingsFor(t, "src") {
+		if strings.Contains(f.String(), "Tick") {
+			t.Errorf("an attribute read through a helper was not seen as a read: %s", f)
+		}
+	}
+}
+
+// TestAPseudoElementGetsNoUniversalPass is the hole the universal skip
+// left, and it is the same silent-drop defect one set of names over.
+//
+// The skip is right for an ordinary element — applyLayout consumes
+// Margin, Width and the rest outside its Build. A pseudo-element has no
+// applyLayout: a nil Proto makes TakesLayout false, so vocabulary()
+// never adds the universal set to it. But checkAttrs allows anything in
+// spec.Attrs, so DECLARING one makes it settable, unread and dropped.
+// Verified in the real vocabulary before the fix: adding Margin to
+// defMenuItem left the suite green and
+// `<MenuItem Text="Open" Margin="3"/>` built with err == nil.
+func TestAPseudoElementGetsNoUniversalPass(t *testing.T) {
+	// "Width" is in the universal set and the fixture's host reads it
+	// nowhere.
+	got := checkPseudo(
+		defInfo{name: "Child", declared: map[string]bool{"Width": true}, parsedBy: "Host"},
+		buildsFor(t), funcsFor(t))
+	if len(got) == 0 {
+		t.Error("a pseudo-element declared a universal-named attribute nothing reads and it " +
+			"was waved through: markup setting it would load clean and be silently dropped")
+	}
+}
+
+// TestAPseudoElementsOwnBuildIsScanned closes the branch that skipped
+// it. Check's ParsedBy arm continues before the ordinary two-direction
+// scan, so a ParsedBy def whose Build reads an attribute had that read
+// unattributed AND the declaration serving it reported over-declared —
+// both directions wrong at once. Legal shape; today's two only return
+// "only valid inside…" errors.
+func TestAPseudoElementsOwnBuildIsScanned(t *testing.T) {
+	build := childBuildFor(t)
+	if build == nil {
+		t.Fatal("the fixture's <Child> has no Build: this test would pass vacuously")
+	}
+	got := checkPseudo(
+		defInfo{name: "Child", declared: map[string]bool{"OwnRead": true}, parsedBy: "Host", build: build},
+		buildsFor(t), funcsFor(t))
+	for _, f := range got {
+		if strings.Contains(f.String(), "OwnRead") {
+			t.Errorf("an attribute the element's OWN Build reads was reported over-declared: %s", f)
+		}
+	}
+}
+
+// fixtureMaps parses testdata/src the way Check does, so a test can call
+// checkPseudo directly with the same inputs the driver would hand it.
+// Replicating the collection loop rather than exporting one keeps Check
+// a single entry point; the loop is four lines and its shape is pinned
+// by every other test in this file going through Check.
+func fixtureMaps(t *testing.T) (map[string]*ast.FuncLit, map[string]*ast.FuncDecl, []defInfo) {
+	t.Helper()
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir("testdata/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildOf := map[string]*ast.FuncLit{}
+	funcs := map[string]*ast.FuncDecl{}
+	var defs []defInfo
+	for _, e := range entries {
+		f, err := parser.ParseFile(fset, filepath.Join("testdata/src", e.Name()), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil {
+				funcs[fd.Name.Name] = fd
+			}
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok || len(vs.Values) != 1 {
+					continue
+				}
+				name, declared, build, parsedBy, ok := elementDef(vs.Values[0])
+				if !ok {
+					continue
+				}
+				defs = append(defs, defInfo{name, declared, build, parsedBy})
+				if build != nil {
+					buildOf[name] = build
+				}
+			}
+		}
+	}
+	if len(buildOf) == 0 || len(funcs) == 0 {
+		t.Fatal("the fixture parsed to nothing: every assertion using it would be vacuous")
+	}
+	return buildOf, funcs, defs
+}
+
+func buildsFor(t *testing.T) map[string]*ast.FuncLit {
+	t.Helper()
+	b, _, _ := fixtureMaps(t)
+	return b
+}
+
+func funcsFor(t *testing.T) map[string]*ast.FuncDecl {
+	t.Helper()
+	_, f, _ := fixtureMaps(t)
+	return f
+}
+
+func childBuildFor(t *testing.T) *ast.FuncLit {
+	t.Helper()
+	_, _, defs := fixtureMaps(t)
+	for _, d := range defs {
+		if d.name == "Child" {
+			return d.build
+		}
+	}
+	return nil
 }

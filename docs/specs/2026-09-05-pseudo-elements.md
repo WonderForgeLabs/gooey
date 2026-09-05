@@ -76,11 +76,33 @@ two sets with *different* walks and subtract them, those literals were
 reported as attributes nobody wrote. One walk, two outputs, comparable by
 construction.
 
-`markup/internal/catalogen` had **no tests at all**, which is how both holes
-got there: neither is reachable from the real vocabulary, so neither could be
+Three more followed from the same question — *which element does this read
+belong to* — and each was a way of answering it wrongly:
+
+- **The `universal` skip does not apply to a pseudo-element.** Skipping
+  `Margin`/`Width`/`Visibility` is right for an ordinary element, whose
+  `applyLayout` consumes them outside its `Build`. A pseudo-element has no
+  `applyLayout` — a nil `Proto` makes `TakesLayout` false, so `vocabulary()`
+  never adds the universal set — but `checkAttrs` allows anything in
+  `spec.Attrs`. So *declaring* `Margin` on `<MenuItem>` made it settable,
+  unread and silently dropped, with the whole suite green and
+  `<MenuItem Text="Open" Margin="3"/>` building with `err == nil`. The
+  silent-drop defect again, one set of names over.
+- **The helper idiom is a read.** `scan` recognises `Bound(e, ctx, "Text")`
+  and `optDuration(e, "Tick")`; the child walk saw only `x.Attrs["…"]`. That
+  gap is loud in the wrong direction — the declaration is real and the read is
+  invisible, so it produces a **false over-declaration**, a red test asserting
+  the opposite of what the code does.
+- **A pseudo-element's own `Build` is scanned too.** `Check`'s `ParsedBy`
+  branch `continue`s before the ordinary two-direction scan, so a `ParsedBy`
+  def whose `Build` reads anything had that read unattributed *and* the
+  declaration serving it reported over-declared. Legal shape; today's two only
+  return "only valid inside…" errors.
+
+`markup/internal/catalogen` had **no tests at all**, which is how all five
+holes got there: none is reachable from the real vocabulary, so none could be
 pinned against it. `testdata/src` and `testdata/hostread` are fixture packages
-(parsed with `go/ast`, never type-checked) that differ by exactly the
-offending line.
+(parsed with `go/ast`, never type-checked) that differ by exactly one line.
 
 **The check splits by what is decidable, and only one thing is actually lost.**
 One `Build` parses several pseudo-elements — `buildMenuBar` reads both
@@ -242,10 +264,28 @@ Measured on a 120-node document: **17,585 allocations per rebuild** with the
 per-node lookup, **6,630** with it hoisted. Every correctness test passes
 either way.
 
-So the set is derived once, in `loadPalette`, beside the palette — the two
+So the set is derived once, in `loadPalette`, beside the palette — they
 answer different questions about one catalog read, and must not come from
 different reads of it. `TestARebuildDoesNotRebuildTheCatalogPerNode` bounds
 the allocations, because nothing else would notice.
+
+**And there is a second path, which that ceiling is blind to.** `target()`
+resolving the selection in the catalog — the fix for defect (3) above — put a
+`Catalog()` call on `attrRows()`. That is O(1) per call, so a rebuild-ceiling
+test cannot see it; but `attrRows` is evaluated by `ed.attrItems`, a
+`prop.NewComputed` bound to `<ItemsView Items="{{.AttrItems}}">`, so it runs
+**inside that ItemsView's paint node** on every repaint after an `ed.rev`
+bump, and again per keypress from `selectedRow()` and per commit from
+`valueEditor.Write`. With `Includes` set it would be `fs.Glob` plus a
+`Declarations` parse of every file, inside a `Render`, which has nowhere to
+put an error.
+
+Measured: `attrRows()` costs **91** allocations reading the map and **180**
+rebuilding the catalog. `ed.specs` is that catalog by name, taken in
+`loadPalette` from the same read as the palette and the pseudo set, and
+`specOf` reads it too — it was paying the rebuild three times inside one add
+gesture. `TestAttrRowsDoesNotRebuildTheCatalog` bounds it at 135, from both
+measurements rather than a guess.
 
 ## What is checked
 
@@ -268,6 +308,10 @@ test go red.
 | the host/child read split collapses | `TestAHostsOwnReadIsNotAChildsAttribute` |
 | the child walk ignores the `generic` deny-list | `TestTheDenyListAppliesToTheChildWalk` |
 | `Pseudo` derived from a nil `Proto` alone | `TestAHostElementWithNoProtoIsNotPseudo` |
+| the `universal` skip applied to a pseudo-element | `TestAPseudoElementGetsNoUniversalPass` (and `Margin` on `<MenuItem>` in the real vocabulary) |
+| the helper idiom not counted as a read | `TestTheHelperIdiomIsAChildRead` |
+| a pseudo-element's own `Build` not scanned | `TestAPseudoElementsOwnBuildIsScanned` |
+| `specOf` rebuilds the catalog | `TestAttrRowsDoesNotRebuildTheCatalog` |
 
 The palette test asserts the **derivation** rather than three names: every
 element some other entry restricts itself to is absent, and every restricted

@@ -950,6 +950,11 @@ type editor struct {
 	// loadPalette for why it is not asked per node, and pairAgrees for
 	// what it answers.
 	pseudo map[string]bool
+	// specs is the catalog BY NAME, from the same read. It is what
+	// specOf and target() answer from — see loadPalette. The catalog
+	// itself is a rebuild, not a lookup, and both of those are on paths
+	// that must not pay for one.
+	specs map[string]markup.ElementSpec
 
 	// drag is the move gesture in flight, and invalidateFn is what asks
 	// for the frame it needs — see drag.go. invalidateFn is injected for
@@ -1664,6 +1669,7 @@ func (ed *editor) loadPalette() {
 	// markup.ElementSpec.Nested — so the second one costs nothing here.
 	ed.palette = ed.palette[:0]
 	ed.pseudo = map[string]bool{}
+	ed.specs = map[string]markup.ElementSpec{}
 	// ONE Catalog() CALL, and that is load-bearing rather than tidy.
 	// Catalog() is not a getter: it re-derives every builtin spec with
 	// fresh Attrs copies, re-runs markNested and sorts — 73us and 52KB
@@ -1676,6 +1682,7 @@ func (ed *editor) loadPalette() {
 	// palette and the pseudo set answer two questions about one catalog
 	// read, and cannot come from different reads of it.
 	for _, e := range ed.docCtx.Catalog() {
+		ed.specs[e.Name] = e
 		if e.Pseudo {
 			ed.pseudo[e.Name] = true
 		}
@@ -1961,6 +1968,16 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 	// empty list for a node whose vocabulary this same change went and
 	// declared. Which is the reported symptom, reproduced by the fix for
 	// it.
+	//
+	// THE MAP, THOUGH, NOT Catalog(), AND THIS ONE IS ON THE PAINT PATH.
+	// attrRows reaches here from ed.attrItems, a prop.NewComputed bound
+	// to <ItemsView Items="{{.AttrItems}}"> — so it evaluates INSIDE
+	// that ItemsView's paint node, on every repaint after an ed.rev
+	// bump. A Catalog() call there rebuilds every builtin spec while
+	// painting, and would do filesystem I/O and XML parsing there the
+	// moment a document context sets Includes, which a workspace editor
+	// is one feature away from. specOf reads the same map for the same
+	// reason.
 	if e, ok := ed.specOf(n.Elem); ok {
 		return e, parent, n
 	}

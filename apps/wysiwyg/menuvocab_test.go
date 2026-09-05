@@ -294,3 +294,43 @@ func TestARebuildDoesNotRebuildTheCatalogPerNode(t *testing.T) {
 	}
 	t.Logf("rebuild() allocates %.0f times for %d document nodes", got, nodes*2)
 }
+
+// TestAttrRowsDoesNotRebuildTheCatalog is the SECOND allocation pin, and
+// it is not a duplicate of the one above — the two watch different
+// paths, and the first is blind to what this catches.
+//
+// attrRows() reaches the catalog through target(). That is O(1) per
+// call, so a rebuild-ceiling test cannot see it; but attrRows is
+// evaluated by ed.attrItems, a prop.NewComputed bound to
+// <ItemsView Items="{{.AttrItems}}">, which means it runs INSIDE that
+// ItemsView's paint node on every repaint after an ed.rev bump — every
+// property edit, every selection change — and again per keypress from
+// selectedRow() and per commit from valueEditor.Write.
+//
+// Context.Catalog() re-derives every builtin spec with fresh Attrs
+// copies, re-runs markNested and sorts, at ~89 allocations. Worse, it
+// globs *.gooey and runs Declarations on every include file when a
+// context has them: filesystem I/O and XML parsing inside a Render,
+// which has nowhere to put an error. docCtx sets no Includes today and
+// this is a workspace editor.
+//
+// The ceiling comes from BOTH measurements rather than a guess:
+// building the rows for a selected <MenuItem> costs 91 allocations, and
+// restoring the Catalog() call in specOf takes it to 180. 135 sits
+// between them with room either side — a guard against a regression of
+// a known shape, not a budget attrRows is held to.
+func TestAttrRowsDoesNotRebuildTheCatalog(t *testing.T) {
+	ed, _, _, _, item := menuFixture(t)
+	ed.setSelection(item)
+	if len(ed.attrRows()) == 0 {
+		t.Fatal("the selected <MenuItem> has no rows: this test would measure nothing")
+	}
+	got := testing.AllocsPerRun(5, func() { _ = ed.attrRows() })
+	const ceiling = 135
+	if got > ceiling {
+		t.Errorf("attrRows() allocates %.0f times (ceiling %d): something on it is rebuilding "+
+			"the catalog, and it runs inside the properties ItemsView's paint node — see target()",
+			got, ceiling)
+	}
+	t.Logf("attrRows() allocates %.0f times", got)
+}
