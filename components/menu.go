@@ -1,9 +1,11 @@
 package components
 
 import (
+	"image"
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -41,11 +43,37 @@ import (
 // activation DOES; Checked only says what the box shows. An item whose
 // Action does not write the property it displays is a lie the framework
 // cannot catch, so write the toggle once and point both at it.
+//
+// Icon and IconRune are the item's leading picture, in the two tiers
+// this framework always has — and here, uniquely, THE TWO TIERS DRAW
+// DIFFERENT THINGS rather than the same thing at different fidelity.
+//
+// Everywhere else the fallback is graphics.DrawHalfblock, which scales
+// an image to cols×rows*2. A dropdown row is ONE CELL TALL, so that is
+// two vertical samples for the whole glyph: #400 measured two clearly
+// different icons coming back as the same uniform '▀', rgb(105,69,24)
+// against rgb(83,55,19) — two states, one appearance, 22/255 apart in a
+// single channel. Widening the box does not help, because it is still
+// one '▀' per cell. So an item's cell-plane representation is a RUNE and
+// not a scaled-down picture, and IconRune is not decoration.
+//
+// The gutter is reserved UNCONDITIONALLY when any item in the menu
+// carries either — see Menu.iconLead. A dropdown one cell narrower
+// without a graphics protocol would reflow when the capability probe
+// answered, which happens after the first frame; buttonchrome.go
+// reserves its pill rows the same way and for the same reason.
+//
+// Both are plain fields read while painting, like Text and unlike
+// Checked. An icon that changed would need the handle treatment; none
+// does, and a *prop.Property[image.Image] on every item to serve a case
+// nobody has is the wrong trade.
 type MenuItem struct {
 	Text      string
 	Gesture   string
 	Action    gooey.Action
 	Checked   *prop.Property[bool]
+	Icon      image.Image
+	IconRune  rune
 	Separator bool
 }
 
@@ -55,6 +83,54 @@ type MenuItem struct {
 type Menu struct {
 	Title string
 	Items []MenuItem
+}
+
+// iconCols is the PICTURE's own width in cells, and iconWidth is the
+// gutter reserved for it: the picture plus one column separating it from
+// the check box or the label.
+//
+// Two rather than one because a one-cell box is 10x20 pixels, and svg
+// fits to the narrow side — half of that box is letterboxing. Two cells
+// is the smallest box a one-row icon is legible in (#400).
+//
+// TWO CONSTS, and the derivation runs this way round on purpose. The
+// picture's width used to exist only as `iconWidth - 1` at the f.Place
+// call, with the "two" a sentence in this comment — so widening the
+// gutter to add a leading pad would have silently grown the IMAGE to
+// three cells instead of moving it. Making the separator column the
+// derived quantity is the direction this comment already described.
+// Found in review of #455.
+const (
+	iconCols  = 2
+	iconWidth = iconCols + 1
+)
+
+// iconLead is the icon gutter this menu reserves, 0 when no item in it
+// carries an icon of either tier.
+//
+// PER MENU, not per item, so every label in one dropdown starts at the
+// same column — the same reason lead() asks the menu rather than the
+// item. And it counts EITHER tier: reserving only when an image is
+// present would make the width depend on which fields the app filled
+// in, and reserving only when a protocol exists would make it depend on
+// the terminal. Neither is a property of the menu.
+func (m Menu) iconLead() int {
+	for _, it := range m.Items {
+		// SEPARATORS DO NOT COUNT, because drawDropdown continues past
+		// one before it ever reaches iconGutter. Counting them let a
+		// MenuItem{Separator: true, Icon: img} widen every row by three
+		// columns that nothing draws in — measured one way, painted
+		// another. Markup refuses that item now, but the struct is
+		// public and this file's contract is the Go one. Found in
+		// review of #455.
+		if it.Separator {
+			continue
+		}
+		if it.Icon != nil || it.IconRune != 0 {
+			return iconWidth
+		}
+	}
+	return 0
 }
 
 // lead is the width of the column before an item's text: 4 cells
@@ -72,6 +148,57 @@ func (m Menu) lead() int {
 		}
 	}
 	return 1
+}
+
+// iconGutter is the item's icon column as CELLS, exactly w columns wide
+// and empty when w is 0.
+//
+// THE WIDTH IS A PARAMETER, not asked here, because the answer belongs
+// to the MENU and every caller is already in a loop over that menu's
+// items. iconLead walks every item to answer, so asking per item is
+// O(n²) — this used to be a method that did exactly that, one function
+// away from popupRect hoisting the identical call out of its own loop
+// with a comment saying why. Found in review of #455.
+//
+// pixel says whether the frame can place an image. When it can, the
+// gutter is blank here and drawDropdown places the picture over those
+// cells; when it cannot, the rune goes in. An item with no icon in a
+// menu that has one gets blanks either way — the column is the menu's,
+// not the item's.
+//
+// PADDED IN COLUMNS, not runes, which is the whole reason this is a
+// function rather than string(it.IconRune)+"  ". An emoji is one rune
+// and TWO cells, so a rune-counted pad would push every label in the
+// dropdown one cell right of where popupRect measured for it.
+func iconGutter(it MenuItem, pixel bool, w int) string {
+	if w == 0 {
+		return ""
+	}
+	if pixel && it.Icon != nil {
+		return spaces(w)
+	}
+	if it.IconRune == 0 {
+		return spaces(w)
+	}
+	// PADDED IN COLUMNS and exactly, so there is nothing left to clip.
+	//
+	// "A rune is at most two cells and the gutter is three, so the pad is
+	// always at least one" is what this said, and the missing case is
+	// ZERO. A combining mark is one rune measuring no columns, and
+	// Buffer.SetString still spends a cell on it — so the pad came out a
+	// column too long, the row overran the width popupRect measured, and
+	// the dropdown lost its right border. "A branch no input can take"
+	// was the claim, and the input existed. Found in review of #455.
+	//
+	// The loader refuses one now, but this guard is not redundant: the
+	// field is settable from Go with no loader in the path, which is the
+	// API this file's comments address. A rune that occupies nothing is
+	// treated as no rune at all.
+	g := string(it.IconRune)
+	if render.StringWidth(g) < 1 {
+		return spaces(w)
+	}
+	return g + spaces(w-render.StringWidth(g))
 }
 
 // checkBox is the item's leading column. The spelling is Checkbox's —
@@ -178,6 +305,30 @@ func (m *MenuBar) sel() *prop.Property[int] {
 // is a paint dependency like any other property.
 func (m *MenuBar) IsOpen() bool { return m.popup().IsOpen() }
 
+// showing is IsOpen plus the two conditions that decide whether a
+// dropdown is actually ON SCREEN, and it exists because those conditions
+// were spelled out inline in Arrange and nowhere else.
+//
+// Menus is an EXPORTED FIELD, so an app rebuilding its menu list while a
+// dropdown is open is legal, and both new accessors indexed straight
+// into it. popupRect does m.Menus[m.curIdx()] and curIdx returns 0 for
+// an empty slice, so DropdownBounds panicked with index out of range —
+// a public accessor crashing on a state every other path in this file
+// already tolerated. drawDropdown guards with its own `if len(m.Menus)
+// == 0 { return }`, Arrange guarded with the expression now in here, and
+// the accessors guarded with neither.
+//
+// The ITEMS half matters just as much and is quieter: Arrange refuses to
+// show a surface for a menu with no items, so DropdownBounds asking only
+// IsOpen handed back a live-looking rect for a dropdown that was never
+// arranged — exactly what its own doc comment says must not happen.
+//
+// Both accessors ask THIS, so they cannot disagree with each other or
+// with what was arranged. Found in review of #400.
+func (m *MenuBar) showing() bool {
+	return m.popup().IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
+}
+
 func (m *MenuBar) curIdx() int {
 	if len(m.Menus) == 0 {
 		return 0
@@ -224,6 +375,10 @@ func (m *MenuBar) popupRect() gooey.Rect {
 	tx, _ := m.titleSpan(i)
 	w := 4 // border + padding
 	lead := menu.lead()
+	// HOISTED, like lead one line up and for the same reason: iconLead
+	// walks every item, so calling it per item makes popupRect O(n^2) —
+	// on the layout path, and now on the public accessor path too.
+	icons := menu.iconLead()
 	for _, it := range menu.Items {
 		text, _, _ := splitMnemonic(it.Text)
 		// border (2) + the lead column + one trailing cell. The lead is
@@ -231,7 +386,7 @@ func (m *MenuBar) popupRect() gooey.Rect {
 		// check items sizes itself three cells too narrow and clips every
 		// label it holds. The text is measured in COLUMNS, so a CJK or
 		// emoji label sizes to the cells it will actually occupy.
-		iw := render.StringWidth(text) + lead + 3
+		iw := render.StringWidth(text) + lead + icons + 3
 		if it.Gesture != "" {
 			iw += render.StringWidth(it.Gesture) + 2
 		}
@@ -253,7 +408,7 @@ func (m *MenuBar) Measure(avail gooey.Size) gooey.Size {
 func (m *MenuBar) Arrange(r gooey.Rect) {
 	m.Base.Arrange(r)
 	p := m.popup()
-	show := p.IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
+	show := m.showing()
 	pr := gooey.Rect{X: r.X, Y: r.Y}
 	if show {
 		pr = m.popupRect()
@@ -323,6 +478,96 @@ func (m *MenuBar) Open(i int, restore gooey.Component) {
 // back to whatever had it when the menu opened — provided nothing moved
 // it elsewhere in the meantime.
 func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
+
+// OpenIndex is which menu is showing, or -1 when none is.
+//
+// -1 RATHER THAN A SECOND CALL TO IsOpen, because the pair is what an
+// app would have to write anyway and a zero index is a real answer: a
+// bar that reported 0 for "closed" and 0 for "the first menu is open"
+// would need every caller to remember to ask twice. The clamp is the
+// same one curIdx applies, so this cannot report a menu that does not
+// exist.
+//
+// EXPOSED because everything an app needs to decorate a dropdown was
+// private and reachable only by reconstructing it. #400's reporter
+// recovered this index by walking the title widths and matching the
+// dropdown's left edge — duplicating titleSpan and splitMnemonic's
+// marker handling in application code, against arithmetic this package
+// is free to change. There is no new state here; there was no way to
+// read the state there already was.
+//
+// -1 ALSO WHEN NOTHING IS ON SCREEN, not merely when the popup is
+// closed: a menu whose Items are empty is one Arrange declines to show,
+// and a bar whose Menus were replaced while open has no menu at that
+// index at all. Answering 0 for either would disagree with
+// DropdownBounds, which returns the zero Rect for both — two accessors
+// over one state must not tell different stories.
+//
+// PAINT DEPENDENCY, PARTLY. Read from a Render, the open flag and the
+// highlighted index are property reads and subscribe like any other. The
+// menu LIST is not — Menus is a plain field — so a component that reads
+// this while painting tracks opening, closing and switching, and does
+// not track an app replacing the list underneath it. Same caveat, more
+// sharply, on DropdownBounds below.
+//
+// AND ON A CLOSED FRAME, ONLY THE OPEN FLAG SUBSCRIBES. showing() is
+// `IsOpen() && len(Menus) > 0 && len(Items) > 0`, so while the bar is
+// closed curIdx() sits on the short-circuit side of && and never runs —
+// the "dependencies are recorded by the Get that actually runs" trap,
+// exactly. It is safe here rather than accidental: the answer is -1 for
+// EVERY value of cur while closed, and Open sets both properties, so the
+// open transition dirties the reader before cur can matter. A reader
+// that needed cur on closed frames would need a different accessor.
+// Stated in review of #455.
+func (m *MenuBar) OpenIndex() int {
+	if !m.showing() {
+		return -1
+	}
+	return m.curIdx()
+}
+
+// DropdownBounds is where the open dropdown was arranged, or the zero
+// Rect when no menu is open.
+//
+// The zero Rect for closed rather than the rect the menu WOULD occupy:
+// a caller placing pixels into a returned rect must not be handed a
+// live-looking answer for a surface that is not on screen, and the zero
+// value is the one every Rect check already treats as nothing.
+//
+// THE RECT IS UNCLIPPED. popupRect may extend past the right or bottom
+// edge of the composition — that is the point of an overlay, and its own
+// doc says so — and nothing clamps it here. A caller drawing through
+// Frame.Place is clipped by clipPlacement and need not care; a caller
+// doing its own cell arithmetic off this rect must clip itself, or it
+// will index outside the buffer. Stated in review of #455, since the
+// documented use is exactly the second kind of caller.
+//
+// This is the same arithmetic drawDropdown paints into — it is popupRect
+// — which is precisely why it is worth exporting and why its tests read
+// the rect back off the painted cells instead of comparing it to
+// popupRect. An accessor checked against the function behind it is
+// correct by construction and says nothing about where the dropdown went.
+//
+// THE GUARD IS showing(), NOT IsOpen, and the difference is the whole
+// point of the sentence above: an open menu with no items is never
+// arranged, so asking IsOpen returned a plausible rect for a surface
+// that is not on screen — precisely the answer this comment forbids.
+//
+// WHAT SUBSCRIBES AND WHAT DOES NOT. The open flag and the highlighted
+// index are properties, so a Render reading this repaints when the menu
+// opens, closes or switches. The GEOMETRY is not: popupRect reads
+// m.Bounds(), and Base.Bounds is a plain field. A relayout that moves
+// the bar without touching either property leaves a decorator holding a
+// stale rect and nothing dirties it. A decorator must therefore depend
+// on whatever drives the bar's own layout as well — this handle alone is
+// not enough, and reading it as if it were is the "goes deaf to that
+// property" trap one level up.
+func (m *MenuBar) DropdownBounds() gooey.Rect {
+	if !m.showing() {
+		return gooey.Rect{}
+	}
+	return m.popupRect()
+}
 
 // firstItem is the first activatable index — separators are furniture.
 func (m *MenuBar) firstItem(menu int) int {
@@ -609,6 +854,18 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 	DrawBoxRunes(f.Cells, b, st)
 
 	inner := b.W - 2
+	// HOISTED, both of them, for the reason popupRect states one function
+	// up: iconLead walks every item, so asking it per item makes this loop
+	// O(n²) — the exact shape popupRect was fixed to avoid, and the two
+	// had drifted apart. `pixel` is loop-invariant as well and was being
+	// recomputed per row.
+	//
+	// THE SAME GUARD Image, ColorPicker and buttonchrome ask, and it
+	// decides WHICH THING IS DRAWN rather than at what fidelity — see
+	// MenuItem.Icon. The gutter's width is reserved either way, so it
+	// cannot move anything. Found in review of #455.
+	pixel := f.Graphics != nil && f.CellW > 0 && f.CellH > 0
+	gutter := menu.iconLead()
 	for i, it := range menu.Items {
 		y := b.Y + 1 + i
 		if y >= b.Y+b.H-1 {
@@ -638,7 +895,7 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		// toggling a check while the menu is open repaints the dropdown
 		// and nothing else, and toggling it while the menu is closed
 		// repaints nothing at all.
-		lead := menu.checkBox(it)
+		lead := iconGutter(it, pixel, gutter) + menu.checkBox(it)
 		line := lead + text
 		if it.Gesture != "" {
 			pad := inner - render.StringWidth(line) - render.StringWidth(it.Gesture) - 1
@@ -666,6 +923,16 @@ func (m *MenuBar) drawDropdown(f *gooey.Frame, b gooey.Rect) {
 		// agree everywhere ASCII.
 		if at := render.StringWidth(lead) + mnemonicCol(text, pos); pos >= 0 && at < inner {
 			underlineAt(f, b.X+1+at, y, is)
+		}
+		// AFTER the row's cells, not before: SetString above would
+		// otherwise overwrite nothing visible but would leave the
+		// placement's cells outside the flush that carries it. The
+		// image gets iconCols of the gutter, leaving its trailing
+		// separator column blank.
+		if pixel && it.Icon != nil {
+			f.Place(graphics.Placement{
+				Img: it.Icon, Col: b.X + 1, Row: y, Cols: iconCols, Rows: 1,
+			})
 		}
 	}
 }

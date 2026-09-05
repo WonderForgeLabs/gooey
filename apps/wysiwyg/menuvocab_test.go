@@ -241,7 +241,13 @@ func TestASelectedMenuItemOffersItsAttributes(t *testing.T) {
 	// one the issue asked for; the rest are here because a grid that
 	// offers the label and hides the accelerator is the same defect one
 	// row narrower.
-	for _, want := range []string{"Text", "Gesture", "Checked", "Command", "Separator"} {
+	//
+	// Icon and IconRune are #400's designer half, and the reason this
+	// list is worth extending rather than replacing with a count: the
+	// feature is not shipped when the loader reads the attributes, it is
+	// shipped when somebody can set them without opening $EDITOR — which
+	// is the same sentence #429 was filed about.
+	for _, want := range []string{"Text", "Gesture", "Checked", "Command", "Separator", "Icon", "IconRune"} {
 		if !got[want] {
 			t.Errorf("a selected <MenuItem> has no %q row: %v", want, got)
 		}

@@ -1126,8 +1126,8 @@ var defMenuBar = &ElementDef{
 // an oversight either way. <Tab>'s attributes are whatever <Tabs> cares
 // to read out of the element and its content is an arbitrary subtree, so
 // its vocabulary genuinely is not knowable from here. A <MenuItem>'s is:
-// buildMenuBar reads exactly the five attributes below and rejects
-// anything else about them at load. Declaring an exhaustive set is what
+// buildMenuBar reads exactly the attributes below and rejects anything
+// else about them at load. Declaring an exhaustive set is what
 // lets the property grid offer it.
 //
 // Every Kind and Binds below is READ OFF buildMenuBar rather than
@@ -1143,6 +1143,13 @@ var defMenuBar = &ElementDef{
 //     change". The same handle the accelerator's KeyBinding writes is
 //     the one the box renders, so the check and the key are one state
 //     shown twice.
+//   - Icon is BindsLiteral where <Image Src> — the same GoType, the same
+//     loader, the same fs.FS — is BindsEither. The difference is the
+//     FIELD, not the attribute: components.Image.Src is a
+//     *prop.Property[image.Image] and can track, MenuItem.Icon is a
+//     plain image.Image read while painting and cannot. Declaring
+//     BindsEither here would put a binding in a designer's dropdown that
+//     the loader then refuses.
 var defMenu = &ElementDef{
 	Name: "Menu",
 	Icon: "list-unordered",
@@ -1181,8 +1188,12 @@ var defMenuItem = &ElementDef{
 			Doc: "What choosing the item does."},
 		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Origin: OriginBuiltin,
 			Doc: "The accelerator shown beside the item. Parsed at load, so a typo is a startup error rather than a key that never fires."},
+		{Name: "Icon", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "A picture for the item, as a path in the page's own FS — the same assets <Image Src> loads from. Drawn only where the terminal has a graphics protocol; set IconRune for everywhere else."},
+		{Name: "IconRune", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "One glyph for the item, drawn on the cell plane when there is no graphics protocol. Not a fallback rendering of Icon — a one-cell-tall halfblock is two vertical samples, so the two tiers draw different things (#400)."},
 		{Name: "Separator", Kind: KindBool, Binds: BindsLiteral, Origin: OriginBuiltin,
-			Doc: "A rule instead of an item. Set it and Text is not required."},
+			Doc: "A rule instead of an item, and it carries nothing else: Text, Gesture, Checked, Command, Icon and IconRune on a separator are load errors, because a separator draws none of them."},
 		{Name: "Text", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin,
 			Doc: "The label. A binding resolves to a static string ONCE at load — enough for a value the markup cannot know, but a property handle is refused because the label would never update."},
 	},

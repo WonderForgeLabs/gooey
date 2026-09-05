@@ -30,6 +30,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -1112,6 +1113,32 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				return nil, err
 			}
 			if ic.Attrs["Separator"] == "true" {
+				// A SEPARATOR CARRIES NOTHING ELSE, and saying so is new.
+				// This short-circuit used to run before every other
+				// attribute was read, so `<MenuItem Separator="true"
+				// Icon="assets/nope.png"/>` loaded clean — the same Icon
+				// on a non-separator item is a load error naming the path
+				// (TestAMissingIconAssetIsALoadError). One spelling of
+				// the same markup kept the "everything resolvable fails
+				// at load" posture and the other silently dropped it,
+				// which reads as "my icon doesn't show up" with nothing
+				// anywhere to explain it.
+				//
+				// Pre-existing for Text, Gesture, Checked and Command;
+				// #455 is what added an attribute whose value is a FILE,
+				// which is where a silent drop stops being cosmetic.
+				// Reported in review of that PR. Every separator in this
+				// repo is a bare <MenuItem Separator="true"/>, so
+				// rejecting costs nothing and makes the trap loud.
+				for _, a := range [...]string{"Text", "Gesture", "Checked", "Command", "Icon", "IconRune"} {
+					if _, ok := ic.Attrs[a]; ok {
+						return nil, fmt.Errorf(
+							"markup: <MenuItem Separator=\"true\" %s=%q>: a separator is a rule "+
+								"across the menu and carries nothing else — %s would be accepted "+
+								"and silently ignored; drop it, or drop Separator",
+							a, ic.Attrs[a], a)
+					}
+				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
 				continue
 			}
@@ -1169,6 +1196,9 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 					return nil, fmt.Errorf("markup: <MenuItem Text=%q Checked=%q>: %w", it.Text, raw, err)
 				}
 			}
+			if err := menuItemIcon(ic, ctx, &it); err != nil {
+				return nil, err
+			}
 			cmd, err := ctx.Command(ic.Attrs["Command"])
 			if err != nil {
 				return nil, fmt.Errorf("markup: <MenuItem Command=%q>: %w", ic.Attrs["Command"], err)
@@ -1179,6 +1209,98 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		menus = append(menus, menu)
 	}
 	return &components.MenuBar{Menus: menus, Style: style}, nil
+}
+
+// menuItemIcon reads the two icon attributes onto the item.
+//
+// THEY ARE TWO ATTRIBUTES BECAUSE THE TWO TIERS DRAW DIFFERENT THINGS,
+// which is the whole finding behind #400 and the reason this is not
+// modelled as one Src with a fallback. Everywhere else in the framework
+// the cell-plane tier is graphics.DrawHalfblock over the same image; a
+// dropdown row is ONE CELL TALL, so that is two vertical samples for the
+// entire glyph, and the issue measured two clearly different icons
+// coming back as the same uniform '▀'. There is no rendering of Icon
+// that works here, so the second tier is a rune the author chooses.
+//
+// Icon is LITERAL ONLY, where <Image Src> takes either form. Not an
+// omission and not a smaller feature: components.Image.Src is a
+// *prop.Property[image.Image] and tracks its source, MenuItem.Icon is a
+// plain field read while painting. A handle resolved here would be
+// sampled once and silently freeze — the same trap Text spells out two
+// screens up, refused for the same reason and in the same place.
+func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
+	if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != "" {
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q Icon=%q>: Icon takes a file path, not a binding — "+
+					"a menu item's icon is a plain field read while painting, so a bound handle "+
+					"would be sampled once at load and never update again",
+				it.Text, raw)
+		}
+		fsys := ctx.assets()
+		if fsys == nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: no file system to load from — this tree was built from bytes; use markup.Load or set Context.Includes", raw)
+		}
+		img, err := imaging.Load(fsys, raw)
+		if err != nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: %w", raw, err)
+		}
+		it.Icon = img
+	}
+	// IconRune is ONE rune, counted in runes and not bytes, because the
+	// question here is how many glyphs — the gutter's three CELLS are
+	// components.Menu's arithmetic, and an emoji is one glyph in two of
+	// them. Refusing a second glyph at load beats clipping it to a half
+	// a glyph at paint, which is not drawable.
+	if raw := strings.TrimSpace(ic.Attrs["IconRune"]); raw != "" {
+		// THE SAME REFUSAL Icon gets, and for the same reason — the field
+		// is read while painting, so a bound handle freezes at load.
+		//
+		// Without it a binding fell through to the glyph count below and
+		// was refused by a message describing a DIFFERENT MISTAKE: the
+		// author tried to bind, and `IconRune="{{.Glyph}}"` came back
+		// "IconRune is one glyph … and 10 were given". Nothing in
+		// checkAttrs enforces BindsLiteral — it validates attribute NAMES
+		// — so this function is the only place the declared Binds is
+		// enforced at all, and for IconRune it was being enforced by
+		// accident. Found in review of #455.
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune takes one literal glyph, not a "+
+					"binding — a menu item's icon rune is a plain field read while painting, so a "+
+					"bound handle would be sampled once at load and never update again",
+				it.Text, raw)
+		}
+		rs := []rune(raw)
+		if len(rs) != 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune is one glyph — the icon gutter "+
+					"holds exactly one, and %d were given",
+				it.Text, raw, len(rs))
+		}
+		// AND IT HAS TO OCCUPY A CELL. One rune is not one column: a
+		// combining mark survives TrimSpace, passes the count above, and
+		// measures ZERO — while Buffer.SetString still consumes a cell
+		// for it. The gutter then measures three columns and paints
+		// four, so every label sits right of where popupRect sized for
+		// it, the row overruns its own width and loses its right border
+		// to the clip, and the mnemonic rule — placed at
+		// StringWidth(lead) — lands a cell left of the accelerator.
+		//
+		// Refusing at load rather than coping at paint, for the reason
+		// the count check beside it exists: a glyph that cannot be drawn
+		// is an author mistake, and this is the last place anyone can
+		// still be told about it. Found in review of #455.
+		if render.StringWidth(string(rs[0])) < 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune must be a glyph that occupies "+
+					"a cell — %q is one rune but measures zero columns, so it would consume a "+
+					"cell the gutter did not reserve and shift every label in the dropdown",
+				it.Text, raw, raw)
+		}
+		it.IconRune = rs[0]
+	}
+	return nil
 }
 
 func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Component, error) {
