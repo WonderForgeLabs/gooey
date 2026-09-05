@@ -366,3 +366,91 @@ func TestTheIconPlacementIsWithdrawn(t *testing.T) {
 		}
 	})
 }
+
+// TestAZeroWidthIconRuneDoesNotStealACell is the arm
+// TestAWideIconRuneDoesNotOverrunItsGutter could not reach, and the one
+// the gutter's own comment said was impossible.
+//
+// That comment read "a rune is at most two cells and the gutter is
+// three, so the pad is always at least one" — true at widths 1 and 2,
+// false at ZERO. A combining mark is one rune measuring no columns, and
+// Buffer.SetString still spends a cell on it, so the pad came out a
+// column too long and the row overran the width popupRect measured for
+// it.
+//
+// The assertion is the dropdown's RIGHT BORDER, not the label column.
+// StringWidth reports the same label column for both arms — the
+// combining mark contributes nothing to it — so a column comparison is
+// blind to this by construction. What the overrun destroys is the
+// closing rule, clipped off the end of a row that got one cell too
+// long. Found in review of #455.
+func TestAZeroWidthIconRuneDoesNotStealACell(t *testing.T) {
+	borderOf := func(t *testing.T, r rune) string {
+		t.Helper()
+		bar := &MenuBar{Menus: []Menu{{
+			Title: "_File",
+			Items: []MenuItem{{Text: "Open", IconRune: r, Action: gooey.Command(func() {})}},
+		}}}
+		c := gooey.NewComposer(bar, 40, 16)
+		t.Cleanup(c.Close)
+		c.Frame()
+		bar.Open(0, nil)
+		c.Frame()
+		f, _ := c.Frame()
+		b := bar.popupRect()
+		row := render.RowText(f.Cells, b.Y+1)
+		return render.ClipCols(row, b.W)
+	}
+
+	wide := borderOf(t, '○')
+	if !strings.HasSuffix(wide, "│") {
+		t.Fatalf("the control arm has no right border, so the arm below proves nothing:\n\t%q", wide)
+	}
+	if got := borderOf(t, '\u0308'); !strings.HasSuffix(got, "│") {
+		t.Errorf("a zero-width IconRune cost the dropdown its right border — the row overran "+
+			"the width popupRect measured and the clip ate the rule:\n\t%q", got)
+	}
+}
+
+// TestASeparatorCarryingAnIconReservesNoGutter is finding 4, and it is a
+// GO-side case: markup refuses that item now, but MenuItem is a public
+// struct and this file's contract is the Go one.
+//
+// drawDropdown continues past a separator before it ever reaches
+// iconGutter, so an icon on one is never drawn. iconLead counted it
+// anyway, and the two paths disagreeing is three columns of dropdown
+// that nothing paints in.
+func TestASeparatorCarryingAnIconReservesNoGutter(t *testing.T) {
+	widthOf := func(items []MenuItem) int {
+		bar := &MenuBar{Menus: []Menu{{Title: "_File", Items: items}}}
+		c := gooey.NewComposer(bar, 40, 16)
+		t.Cleanup(c.Close)
+		c.Frame()
+		bar.Open(0, nil)
+		c.Frame()
+		c.Frame()
+		return bar.popupRect().W
+	}
+	plain := widthOf([]MenuItem{
+		{Text: "Open", Action: gooey.Command(func() {})},
+		{Separator: true},
+	})
+	sepIcon := widthOf([]MenuItem{
+		{Text: "Open", Action: gooey.Command(func() {})},
+		{Separator: true, Icon: iconImg(color.RGBA{200, 40, 40, 255})},
+	})
+	if sepIcon != plain {
+		t.Errorf("a separator carrying an icon widened the dropdown from %d to %d columns; "+
+			"drawDropdown skips separators, so nothing is ever drawn in them", plain, sepIcon)
+	}
+	// The control: a real item's icon MUST still widen it, or the
+	// assertion above is satisfied by an icon gutter that never appears.
+	real := widthOf([]MenuItem{
+		{Text: "Open", Icon: iconImg(color.RGBA{200, 40, 40, 255}), Action: gooey.Command(func() {})},
+		{Separator: true},
+	})
+	if real <= plain {
+		t.Errorf("an icon on a REAL item did not widen the dropdown (%d vs %d), so the "+
+			"separator assertion above proves nothing", real, plain)
+	}
+}
