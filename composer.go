@@ -2,7 +2,6 @@ package gooey
 
 import (
 	"io"
-	"sort"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -40,6 +39,13 @@ import (
 // lifted to the end, because a dropdown or a toast is not at a position
 // in the document, it is on top of it (orderPaint, and the Overlay
 // interface for why that had to stop being "declare it last").
+//
+// WITHIN that second layer, document order is not the rule either: an
+// OverlayRanker's rank orders it — popups, then toasts, then adornments
+// — and equal ranks keep the order the walk met them in. appendByRank is
+// the whole of it, and it is a bucket pass rather than a sort so that
+// "equal ranks keep document order" is structural instead of being a
+// comment the suite cannot check (review of #456).
 //
 // The paint loop keeps that order honest under partial
 // repaints: when a node paints, every LATER node whose bounds intersect
@@ -88,6 +94,10 @@ type Composer struct {
 	// shadowing it made a reader work out which one they were looking
 	// at. Found in review of #437.
 	lifted []*paintNode
+	// buckets is orderPaint's rank ordering, one entry per DISTINCT rank
+	// in ascending order — three in the framework today, plus whatever an
+	// app adds. Reused like `lifted`, inner slices included.
+	buckets []rankBucket
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
@@ -143,7 +153,7 @@ type paintNode struct {
 	// the subtree's lifting ROOT rather than to each node: a nested
 	// Overlay inside an already-lifted subtree keeps the outer rank.
 	// That is not a detail — ranks that varied inside one subtree would
-	// let the sort below separate a container from its children, and a
+	// let appendByRank separate a container from its children, and a
 	// container that pre-clears would then paint over the very nodes it
 	// lifted. Meaningless outside the overlay layer, where it is 0.
 	rank int
@@ -341,12 +351,80 @@ func (c *Composer) orderPaint() {
 			c.paint = append(c.paint, n)
 		}
 	}
-	// STABLE, which is what leaves equal ranks in document order — the
-	// limit #437 documented and this does not lift. A subtree is
-	// contiguous in document order and shares one rank, so no sort can
-	// split one.
-	sort.SliceStable(c.lifted, func(i, j int) bool { return c.lifted[i].rank < c.lifted[j].rank })
-	c.paint = append(c.paint, c.lifted...)
+	c.paint = appendByRank(c.paint, c.lifted, &c.buckets)
+}
+
+// rankBucket is one distinct overlay rank and the nodes carrying it, in
+// the order the walk met them.
+type rankBucket struct {
+	rank  int
+	nodes []*paintNode
+}
+
+// appendByRank appends lifted to dst in ascending rank, EQUAL RANKS IN
+// ENCOUNTER ORDER — which is document order, the limit #437 documented
+// and ranks do not lift. A subtree is contiguous in the walk and shares
+// one rank, so it stays contiguous here.
+//
+// THIS IS A BUCKET PASS RATHER THAN A SORT, and the reason is that the
+// stability was previously a COMMENT the suite could not check. Review
+// of #456 replaced sort.SliceStable with sort.Slice — nothing else — and
+// the whole root suite plus ./components stayed green: every fixture had
+// at most three lifted nodes, and Go's pdqsort runs insertion sort below
+// n=12 and short-circuits on sorted input, so no test in the tree could
+// tell stable from unstable. Writing a 13-node fixture whose ranks
+// alternate would have pinned it; making the property structural means
+// there is nothing left to pin. That is the same trade the PR beneath
+// this one took when it deleted an unfalsifiable clipCols guard.
+//
+// It also takes sort.Slice's reflect.Swapper off the structural path.
+// Not a violation of "no reflection in core" by the letter — there is no
+// "reflect" import — but orderPaint runs on every structural re-sync,
+// which for a Dynamic list is per frame while it scrolls, and the rule's
+// motivation is the ahead-of-time gooey gen path (#59).
+//
+// The insertion is linear in the number of DISTINCT ranks, not in the
+// number of nodes: three in the framework today. buckets is reused
+// across calls, inner slices included.
+func appendByRank(dst, lifted []*paintNode, buckets *[]rankBucket) []*paintNode {
+	bs := (*buckets)[:0]
+	for _, n := range lifted {
+		i := 0
+		for i < len(bs) && bs[i].rank < n.rank {
+			i++
+		}
+		if i == len(bs) || bs[i].rank != n.rank {
+			// Grow by one, then open a gap at i.
+			//
+			// THE SPARE SLICE IS TAKEN BEFORE THE COPY, and that is the
+			// whole subtlety. Reading bs[i].nodes AFTER the shift hands
+			// back the array that now belongs to bs[i+1] — the two
+			// buckets alias, and appending to one silently overwrites the
+			// other's nodes. That is not hypothetical: it is the bug the
+			// first version of this function shipped, and
+			// TestAHigherRankPaintsOverALowerOneDeclaredLater caught it.
+			//
+			// The slot past the end is the safe one: whatever slice it
+			// held is dropped by the shift, so nothing else refers to it.
+			// Extending into spare capacity rather than appending is what
+			// makes the reuse happen at all — append would zero the slot
+			// and throw the array away.
+			if len(bs) < cap(bs) {
+				bs = bs[:len(bs)+1]
+			} else {
+				bs = append(bs, rankBucket{})
+			}
+			spare := bs[len(bs)-1].nodes[:0]
+			copy(bs[i+1:], bs[i:])
+			bs[i] = rankBucket{rank: n.rank, nodes: spare}
+		}
+		bs[i].nodes = append(bs[i].nodes, n)
+	}
+	for _, b := range bs {
+		dst = append(dst, b.nodes...)
+	}
+	*buckets = bs
+	return dst
 }
 
 // walkNodes rebuilds the paint-node list from the current tree, REUSING

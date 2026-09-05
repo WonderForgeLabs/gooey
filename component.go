@@ -142,20 +142,39 @@ type Overlay interface{ OverlaysPage() }
 // layer and left order within it to the document, documenting that as a
 // limit. It stopped being tenable the moment more than one KIND of
 // overlay existed (#439): a dropdown, a toast and a tooltip are not
-// peers whose stacking is a matter of taste, and the framework already
-// tells an author to declare the MenuBar LAST so its dropdown covers the
-// page. Getting a toast above that dropdown would then ALSO require
-// declaring the ToastHost after it — two rules pulling opposite ways,
-// where following the wrong one silently hides a notification on
+// peers whose stacking is a matter of taste, and declaration order makes
+// the answer an ARBITRARY AUTHORING CHOICE. Whether a toast covers an
+// open menu would depend on which of the two an app happened to type
+// last — a decision nobody makes deliberately, with a silent wrong
+// answer one way round: the notification simply does not appear, on
 // exactly the frames somebody most wanted to read it.
+//
+// (An earlier draft of this paragraph argued from "the framework tells
+// you to declare the MenuBar last", which was already false — #437's
+// lift is global, so the bar's position stopped mattering for its own
+// dropdown too. Found in review of #456. The conclusion is unchanged and
+// does not need that premise: ordering by KIND beats ordering by typing
+// position whether or not anyone was ever given the rule.)
 //
 // The three ranks the framework itself uses are OverlayRankPopup,
 // OverlayRankToast and OverlayRankAdornment. They are spaced so an
 // application can sit between them.
 //
+// A RANK IS A STATIC PROPERTY OF THE TYPE. It is sampled by
+// Composer.orderPaint, which runs on composition build and structural
+// re-sync — NOT per frame. A component whose OverlayRank() returned a
+// varying value would restack on some unrelated later re-sync, or never,
+// with no error anywhere. That is the same reason Overlay is a marker
+// rather than a bool: a value that can change needs the
+// observer-and-re-sync machinery Frozen has, and a method returning an
+// int reads as dynamic in a way an empty marker never does. Return a
+// constant. Raised in review of #456.
+//
 // EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
 // they were declared rather than the order they were opened; the rank
 // orders KINDS, and #437's limit survives untouched within each one.
+// Composer.appendByRank is a bucket pass rather than a sort so that this
+// is structural rather than a claim the suite has to check.
 type OverlayRanker interface {
 	Overlay
 	OverlayRank() int

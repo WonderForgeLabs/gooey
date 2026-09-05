@@ -46,16 +46,24 @@ const (
 )
 ```
 
-`Composer.orderPaint` stable-sorts the lifted set by rank.
+`Composer.orderPaint` orders the lifted set through `appendByRank`, a
+bucket pass — one entry per distinct rank, nodes appended in encounter
+order. **Not a sort**, for the reason the mutation table below gives.
 
-**Why not declaration order.** It can express the right stacking, but
-only if the author declares the `ToastHost` *after* the `MenuBar` — while
-the framework separately tells them to declare the `MenuBar` last so its
-dropdown covers the page. Two rules pulling in opposite directions, with
-a silent wrong answer when you follow the wrong one: the toast simply
+**Why not declaration order.** It makes the answer an ARBITRARY
+AUTHORING CHOICE: whether a toast covers an open menu would depend on
+which of the two an app happened to type last — a decision nobody makes
+deliberately, with a silent wrong answer one way round. The toast simply
 does not appear, on exactly the frames somebody most wanted to read it.
 A layering that depends on where someone typed an element is a layering
 that will be wrong in some app.
+
+(An earlier draft argued from "the framework tells you to declare the
+`MenuBar` last", which was already false when it was written — #437's
+lift is global, so the bar's position had stopped mattering for its own
+dropdown too. Found in review of #456. The conclusion does not need that
+premise: ordering by KIND beats ordering by typing position whether or
+not anyone was ever given the rule.)
 
 **Why not document the reversal.** It makes the worst failure mode the
 specified behaviour. A toast is a notification the user did not ask for
@@ -84,12 +92,13 @@ nested `Overlay` inside an already-lifted subtree keeps the *outer* rank.
 `orderPaint` tests `inherited` *before* the marker for exactly this, and
 the ordering of those two switch arms is the whole of it.
 
-Ranks that varied inside one subtree would let the sort separate a
+Ranks that varied inside one subtree would let `appendByRank` separate a
 container from its children. A rank-2 container holding a rank-0
-`Overlay` would sort the child ahead of the parent, the parent would
-paint after it, and a parent that covers its bounds would erase the very
-child it lifted. The forward-only forcing pass cannot put it back —
-which is the reason the overlay layer exists in the first place.
+`Overlay` would land the child in an earlier bucket than its parent, the
+parent would paint after it, and a parent that covers its bounds would
+erase the very child it lifted. The forward-only forcing pass cannot put
+it back — which is the reason the overlay layer exists in the first
+place.
 
 No user-facing behaviour reaches this today, so it is pinned directly:
 `TestALiftedSubtreeIsNotSplitByItsChildsRank` builds exactly that shape
@@ -123,13 +132,37 @@ not take pointer capture is still responsible for its own routing.
 
 | Claim | Test | Mutation that fires it |
 |---|---|---|
-| A higher rank beats a later declaration | `TestAHigherRankPaintsOverALowerOneDeclaredLater` | comparator returns false |
-| Equal ranks keep document order | `TestEqualRanksKeepDocumentOrder` | `sort.Slice` with `<=` |
-| An unranked `Overlay` is rank 0 | `TestAnUnrankedOverlayIsRankZero` | comparator returns false |
-| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap the two switch arms |
+| A higher rank beats a later declaration | `TestAHigherRankPaintsOverALowerOneDeclaredLater` | reverse the bucket order (M2) |
+| Equal ranks keep document order | `TestEqualRanksKeepDocumentOrder` | prepend within a bucket (M3) |
+| An unranked `Overlay` is rank 0 | `TestAnUnrankedOverlayIsRankZero` | M2, and M4 (don't rank at all) |
+| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap the two `overlayOf` arms; M3 |
 | The layer still clears the page | `TestTheOverlayLayerStillClearsThePage` | — (guards #437) |
-| **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | drop `ToastHost`'s rank, or its marker |
-| A tooltip outranks a toast | `TestAnAdornmentIsAboveAToast` | rank `AdornmentLayer` at the floor |
+| **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
+| Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |
+| These hosts claim these ranks | `TestTheOverlayHostsClaimTheRanksTheyDocument` | rank `AdornmentLayer` at the floor (M1) |
+
+**The last two rows were one row, and that was the defect.** A single
+test asserting "a tooltip outranks a toast" by comparing two ints proved
+nothing about painting — it passed with the ordering reversed or removed,
+because it never reached `orderPaint`. Rewriting it to assert on cells
+relocated the hole rather than closing it: the cell test goes through a
+stub that names `OverlayRankAdornment` itself, so **M1 — ranking the real
+`AdornmentLayer` at the popup floor — still passed the whole suite.**
+Two claims need two tests: *ranks order paint*, and *these hosts claim
+these ranks*. Each now has a mutation that fires only it. Found in review
+of #456.
+
+**The stability row is gone because the property is now structural.** It
+used to read "`sort.Slice` with `<=`", which conflated two different
+mutations: `<=` fires `TestEqualRanksKeepDocumentOrder`, and dropping
+stability alone — `sort.SliceStable` → `sort.Slice`, nothing else — fired
+**nothing**. Verified: the whole root suite plus `./components` stayed
+green. Every fixture had at most three lifted nodes, and Go's pdqsort
+runs insertion sort below n=12 and short-circuits on sorted input, so no
+test in the tree could tell stable from unstable. `appendByRank` is a
+bucket pass instead, so equal ranks keep encounter order **by
+construction** — and M3, prepending within a bucket, is the mutation that
+now fires where none could before.
 
 `TestAToastIsNotHiddenByAnOpenMenu` is the reported bug, and its geometry
 is the hard part: toasts stack *downward* from the host's top edge, one
