@@ -93,7 +93,6 @@ func TestAToastIsNotHiddenByAnOpenMenu(t *testing.T) {
 	}
 }
 
-
 // TestAnAdornmentIsAboveAToast is the other rank boundary, and it is not
 // covered by the test above: with only two ranks in play a single
 // "overlays win" rule would pass it.
