@@ -125,9 +125,28 @@ func Check(dir string) ([]Finding, error) {
 			}
 		}
 	}
+	// Every pseudo-element sharing a host, so the under-declared
+	// direction can be checked against their UNION. See checkPseudo.
+	pool := map[string]map[string]bool{}
+	for _, d := range defs {
+		if d.parsedBy == "" {
+			continue
+		}
+		if pool[d.parsedBy] == nil {
+			pool[d.parsedBy] = map[string]bool{}
+		}
+		for a := range d.declared {
+			pool[d.parsedBy][a] = true
+		}
+	}
+	hostChecked := map[string]bool{}
 	for _, d := range defs {
 		if d.parsedBy != "" {
 			out = append(out, checkPseudo(d, buildOf, funcs)...)
+			if !hostChecked[d.parsedBy] {
+				hostChecked[d.parsedBy] = true
+				out = append(out, checkPseudoPool(d.parsedBy, pool[d.parsedBy], buildOf, funcs)...)
+			}
 			continue
 		}
 		read := map[string]bool{}
@@ -163,20 +182,32 @@ type defInfo struct {
 	parsedBy string
 }
 
-// checkPseudo checks a pseudo-element against the Build that actually
-// parses it, and it is deliberately HALF the check an ordinary element
-// gets. See ElementDef.ParsedBy for why the field exists at all.
+// checkPseudo is the OVER-declared direction for a pseudo-element,
+// checked against the Build that actually parses it. See
+// ElementDef.ParsedBy for why the field exists at all.
 //
-// Only the over-declared direction is decidable here. One Build parses
+// Per element, only this direction is decidable. One Build parses
 // several pseudo-elements — buildMenuBar reads both <Menu>'s Title and
 // <MenuItem>'s Text — and the attribute names in it carry no record of
 // which element they came off, so a read cannot be attributed to one
-// declaration. What survives is the direction that matters: an
-// attribute NO ONE reads is the silent-drop defect this package exists
-// to catch, and it still fails. What is given up is catching an
-// attribute declared on the wrong sibling; that one is at least visible
-// in the property grid, and under-declaring stays loud the ordinary way
-// because unknown attributes are rejected at load.
+// declaration.
+//
+// The under-declared direction is NOT given up; it moves up a level, to
+// checkPseudoPool, which asks it of the host's whole family at once.
+// That split is the honest decomposition: "nobody declares this" is
+// answerable, "the wrong sibling declares this" is not. Only the second
+// is lost, and it is at least visible in the property grid.
+//
+// An earlier version of this comment gave up the under-declared
+// direction outright, on the grounds that "under-declaring stays loud
+// the ordinary way because unknown attributes are rejected at load".
+// That was FALSE for exactly the elements this function covers —
+// checkAttrs runs inside build(), and a pseudo-element never reaches
+// build() — which left <Menu> and <MenuItem> the only elements in the
+// vocabulary with NEITHER direction guarded. buildMenuBar calls
+// checkAttrs on its children now, so the sentence is true; the pool
+// check is here anyway, because a guard that rests on a claim about
+// somebody else's code is one refactor from being wrong again.
 func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*ast.FuncDecl) []Finding {
 	host := buildOf[d.parsedBy]
 	if host == nil {
@@ -195,6 +226,56 @@ func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*a
 		if !read[a] && !universal[a] {
 			out = append(out, Finding{Element: d.name, Attr: a, OverDeclared: true})
 		}
+	}
+	return out
+}
+
+// checkPseudoPool is the UNDER-declared direction, recovered at the only
+// level ParsedBy actually models: the host reads a set of attribute
+// names off its children, and every one of them must be declared by
+// SOME pseudo-element naming that host.
+//
+// Per-element it is undecidable — the names in buildMenuBar carry no
+// record of whether they came off a <Menu> or a <MenuItem> — so this
+// pools the declarations and asks the weaker, still-useful question. An
+// attribute the host reads and NOBODY declares is caught, which is the
+// half that matters: it is a read the property grid cannot offer,
+// #429's symptom returning through the machinery built to remove it.
+// What stays unattributable is which of the siblings should have
+// declared it, and that one is at least visible in the grid.
+//
+// The reads are attributed to the HOST in the finding rather than to a
+// child, because that is the honest address: the fix is to add the
+// attribute to whichever child element it belongs on, and this cannot
+// say which.
+func checkPseudoPool(host string, declared map[string]bool, buildOf map[string]*ast.FuncLit, funcs map[string]*ast.FuncDecl) []Finding {
+	fn := buildOf[host]
+	if fn == nil {
+		return nil // already reported per-element by checkPseudo
+	}
+	// The host's OWN declared attributes are not the pool's business —
+	// it is an ordinary element and its own check covers them.
+	var own map[string]bool
+	hostRead := map[string]bool{}
+	scanAny(fn, funcs, hostRead, map[string]bool{})
+	ownRead := map[string]bool{}
+	scan(fn, funcs, ownRead, map[string]bool{}, 0)
+	own = ownRead
+
+	names := make([]string, 0, len(hostRead))
+	for a := range hostRead {
+		names = append(names, a)
+	}
+	sort.Strings(names)
+	var out []Finding
+	for _, a := range names {
+		if declared[a] || own[a] || universal[a] {
+			continue
+		}
+		out = append(out, Finding{Element: host, Attr: a, Note: fmt.Sprintf(
+			"<%s> reads %q off a child element that no <%s>-parsed element declares: "+
+				"markup setting it would work and no catalog would know it exists",
+			host, a, host)})
 	}
 	return out
 }

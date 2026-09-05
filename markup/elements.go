@@ -1144,9 +1144,15 @@ var defMenuBar = &ElementDef{
 //     the one the box renders, so the check and the key are one state
 //     shown twice.
 var defMenu = &ElementDef{
-	Name:     "Menu",
-	Icon:     "list-unordered",
-	Seed:     "<Menu Title=\"File\"><MenuItem Text=\"Open\"/></Menu>",
+	Name: "Menu",
+	Icon: "list-unordered",
+	// NO SEED, as <Tab> has none, and for the reason this file argues
+	// three times over: seed_test's walk skips every def with a nil
+	// Proto and the palette skips every Nested one, so a seed here
+	// would be built by nothing and composed by nothing — an
+	// unexercised second copy of the vocabulary above it. It belongs
+	// with the gesture that would use it, when adding menu entries
+	// from the designer exists (the gap #429 names and does not fill).
 	ParsedBy: "MenuBar",
 	Known:    true,
 	Attrs: []AttrSpec{
@@ -1166,8 +1172,7 @@ var defMenu = &ElementDef{
 var defMenuItem = &ElementDef{
 	Name:     "MenuItem",
 	Icon:     "list-selection",
-	Seed:     "<MenuItem Text=\"Item\"/>",
-	ParsedBy: "MenuBar",
+	ParsedBy: "MenuBar", // and no Seed, for the reason on defMenu
 	Known:    true,
 	Attrs: []AttrSpec{
 		{Name: "Checked", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin,

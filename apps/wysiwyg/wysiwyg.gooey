@@ -176,7 +176,16 @@
 
          The alt prefix is safe here where alt+<letter> would not be: a
          root binding is offered the key before the menu mnemonics are,
-         and enter is not a letter any menu title can carry. -->
+         and enter is not a letter any menu title can carry.
+
+         ONE DEGRADATION WORTH NAMING, because this is the pair where it
+         is not harmless. alt+X is ESC followed by X in one read; split
+         across two reads, decodeEsc resolves the lone ESC to KeyEsc once
+         idle, so alt+enter becomes esc + an unbound enter — which fires
+         SelectParent, one level the OPPOSITE way. Every alt+* binding in
+         this app shares the mechanism and this is not new, but the
+         others degrade into a no-op and this one degrades into the
+         inverse action. In practice the two bytes arrive together. -->
     <KeyBinding Gesture="alt+enter" Command="{{.SelectChild}}"/>
     <KeyBinding Gesture="d" Command="{{.ToggleMode}}"/>
     <!-- The theme switch, and today it moves exactly one thing: the

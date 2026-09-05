@@ -244,3 +244,53 @@ func elemOf(n *node) string {
 	}
 	return "<" + n.Elem + ">"
 }
+
+// TestARebuildDoesNotRebuildTheCatalogPerNode is the pin on a cost that
+// is invisible in every other assertion here.
+//
+// pairAgrees answers "is this element pseudo?" once per document node,
+// and the obvious way to answer it — ed.specOf — ranges over
+// ed.docCtx.Catalog(), which is not a getter: it re-derives every
+// builtin spec with fresh Attrs copies, re-runs markNested and sorts.
+// Measured at ~87 allocations per call. mapNodes runs from rebuild(),
+// which fires on every drag frame, every move and every property edit,
+// so a per-node catalog read is O(nodes) of that on the inner loop —
+// and NOTHING ELSE WOULD NOTICE. Every correctness test here passes
+// either way; a rebuild simply gets slower and allocates megabytes.
+//
+// So the assertion is allocations, and the ceiling is set where the two
+// implementations cannot both fit: the document below has enough nodes
+// that a per-node catalog read costs thousands of allocations more than
+// the whole rest of the rebuild. It is deliberately loose — this is a
+// guard against a regression of a known shape, not a budget for
+// rebuild() to be held to.
+func TestARebuildDoesNotRebuildTheCatalogPerNode(t *testing.T) {
+	ed, _ := buildPage(t)
+	const nodes = 60
+	for i := 0; i < nodes; i++ {
+		ed.doc().Kids = append(ed.doc().Kids, &node{
+			Elem:  "VStack",
+			Attrs: map[string]string{"Canvas.Left": "0", "Canvas.Top": "0"},
+			Kids:  []*node{{Elem: "Text", Body: "x"}},
+		})
+	}
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("the fixture does not build: %q", ed.status.Get())
+	}
+	// The set must actually be populated, or the cheap path is cheap
+	// because it answers nothing.
+	if !ed.pseudo["MenuItem"] || !ed.pseudo["Menu"] || !ed.pseudo["Tab"] {
+		t.Fatalf("ed.pseudo does not hold the pseudo-elements: %v", ed.pseudo)
+	}
+	got := testing.AllocsPerRun(3, func() { ed.rebuild() })
+	// 120 document nodes at ~87 allocations per catalog read is >10000
+	// on its own; a rebuild that reads the catalog once lands far below.
+	const ceiling = 8000
+	if got > ceiling {
+		t.Errorf("rebuild() allocates %.0f times for a %d-node document (ceiling %d): "+
+			"something on the per-node path is asking the catalog again — see loadPalette",
+			got, nodes*2, ceiling)
+	}
+	t.Logf("rebuild() allocates %.0f times for %d document nodes", got, nodes*2)
+}

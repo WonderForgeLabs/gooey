@@ -57,16 +57,47 @@ Two things had to change in the checker for that to work:
 - The driver is two passes. A `ParsedBy` element needs another element's
   `Build`, which may be declared in a file the walk has not reached.
 
-**The check is half of what an ordinary element gets, and the limit is worth
-stating.** One `Build` parses several pseudo-elements — `buildMenuBar` reads
-both `<Menu>`'s `Title` and `<MenuItem>`'s `Text` — and the attribute names in
-it carry no record of which element they came off, so a read cannot be
-attributed to one declaration. What survives is the direction that matters: an
-attribute **nobody** reads is the silent-drop defect the package exists to
-catch, and it still fails. What is given up is catching an attribute declared
-on the wrong sibling — visible in the property grid, and covered by
-`TestASelectedMenuOffersItsTitle`. Under-declaring stays loud the ordinary
-way, because unknown attributes are rejected at load.
+**The check splits by what is decidable, and only one thing is actually lost.**
+One `Build` parses several pseudo-elements — `buildMenuBar` reads both
+`<Menu>`'s `Title` and `<MenuItem>`'s `Text` — and the attribute names in it
+carry no record of which element they came off. So:
+
+- **Over-declared** is decidable per element (`checkPseudo`): an attribute the
+  declaration claims and the host never reads.
+- **Under-declared** is decidable per *family* (`checkPseudoPool`): an
+  attribute the host reads off a child that **no** element naming that host
+  declares. The finding is addressed to the host, because that is the honest
+  address — the fix is to add it to whichever child it belongs on, and this
+  cannot say which.
+- **Declared on the wrong sibling** is what is genuinely lost. It is at least
+  visible in the property grid, and `TestASelectedMenuOffersItsTitle` covers
+  the case that motivated it.
+
+### The claim that was false, and what it cost
+
+An earlier draft of this record and of the code gave up the under-declared
+direction outright, on the grounds that *"under-declaring stays loud the
+ordinary way, because unknown attributes are rejected at load."*
+
+**That was false for exactly the elements `ParsedBy` covers.** `checkAttrs`
+runs inside `build()`, and a pseudo-element never reaches `build()` — that is
+what "consumed as data" means. `<Gooey><MenuBar><Menu Bogus="x"><MenuItem
+Text="Open" Frobnicate="yes"/></Menu></MenuBar></Gooey>` loaded clean. So
+`<Menu>` and `<MenuItem>` were, briefly, the only elements in the vocabulary
+with **neither** direction of the drift check guarded — the silent-drop defect
+reachable through the one corner of the vocabulary the loader never looked at.
+
+Both halves of the repair shipped, and they are deliberately redundant:
+
+- `buildMenuBar` calls `checkAttrs` on its `<Menu>` and `<MenuItem>` children
+  (before the `Separator` short-circuit, so a typo on a separator is reported
+  rather than skipped past). This makes the sentence true.
+- `checkPseudoPool` exists anyway, because a guard resting on a claim about
+  somebody else's code is one refactor from being wrong again.
+
+`TestAnUnknownMenuAttributeIsALoadError` pins the first;
+`TestTheMenuVocabularyStillLoadsWhatItDeclares` is its other half, so a check
+that rejected everything could not pass.
 
 ## `ElementSpec.Nested` — derived, not declared
 
@@ -75,13 +106,35 @@ check was correct and unmaintainable in the same breath: the second nested
 element would have been offered silently, producing markup the loader refuses,
 with nothing anywhere going red.
 
-The answer already exists in the vocabulary. A nested element is one some
-*other* entry names in `Children.Only` under `ModeRestricted`, so `markNested`
-derives it over the assembled catalog rather than over the registry — which
-means a host's own restricted container contributes on the same terms as a
-builtin. A hand-set flag would have been a second copy of a fact the registry
-already carries, which is the drift `ElementDef`'s own doc comment gives as
-the reason the behavioural axes are derived.
+The answer already exists in the vocabulary, and `markNested` derives it over
+the assembled catalog rather than over the registry — so a host's own
+restricted container contributes on the same terms as a builtin. A hand-set
+flag would have been a second copy of a fact the registry already carries,
+which is the drift `ElementDef`'s own doc comment gives as the reason the
+behavioural axes are derived.
+
+**It takes two conjuncts, and the first draft had only the second.** Reading
+`Children.Only` alone is the *converse* of the property wanted, and the two
+are not equivalent: `ModeRestricted` says "this container accepts only these",
+`Nested` says "this element is accepted only inside a container that names
+it". A host declaring a toolbar with `Only: []string{"Button"}` — an entirely
+reasonable container — would mark `<Button>` nested and vanish it from every
+palette, silently. Restricting a container says nothing about where its child
+may otherwise go.
+
+`Pseudo` closes it: an element that builds no component cannot stand anywhere,
+because there is nothing for it to be. So `Nested = Pseudo && named-in-an-Only-list`.
+
+Nothing shipped can fail that, because every restricted container in the box
+names pseudo-children — so
+`TestARestrictedContainerDoesNotHideARealElement` constructs the case with a
+host-declared `<HostBar>` restricted to `<Button>`. A guard that cannot fail
+is not a guard.
+
+**Assigned, not or-ed.** `markNested` runs twice over overlapping data —
+`BuiltinElements` marks, then `Catalog` re-runs over a list seeded from it —
+so a conditional set would *accumulate* rather than derive. `TestMarkNestedIsIdempotent`
+pins it directly, because the shipped catalog cannot tell the two apart.
 
 `<Menu>` is both: a restricted container *and* a nested element. That is
 exactly why "may this be placed on its own?" had to become a question about
@@ -129,11 +182,38 @@ have passed against a direct call to `ed.selectChild`:
 where `alt+<letter>` would not be — a root binding is offered the key before
 the menu mnemonics are, and `enter` is not a letter any menu title can carry.
 
+**One degradation is worth naming**, because this is the pair where it is not
+harmless. `alt+X` is ESC followed by X in one read; split across two reads,
+`decodeEsc` resolves the lone ESC to `KeyEsc` once idle, so `alt+enter`
+becomes `esc` plus an unbound `enter` — which fires `SelectParent`, one level
+the **opposite** way. Every `alt+*` binding in the app shares the mechanism
+and this is not new, but the others degrade into a no-op and this one degrades
+into the inverse action. In practice the two bytes arrive together.
+
 **First child, not the last selection remembered per node.** Restoring where
 you were is nicer to use and needs state that every edit, retype, delete and
 undo must then invalidate — the same argument `selectionScope` makes, decided
 the same way. `esc` climbs back out, so the round trip costs one keypress
 either way.
+
+## The cost that no correctness test can see
+
+`pairAgrees` answers "is this element pseudo?" once per document node, and the
+obvious way to answer it — `ed.specOf` — ranges over `Context.Catalog()`.
+`Catalog()` is **not a getter**: it re-derives every builtin spec with fresh
+`Attrs` copies, re-runs `markNested`, and sorts — ~87 allocations per call,
+and a glob-and-parse of every include file when a context has them. `mapNodes`
+runs from `rebuild()`, which fires on every drag frame, every `alt+k` and
+every property edit.
+
+Measured on a 120-node document: **17,585 allocations per rebuild** with the
+per-node lookup, **6,630** with it hoisted. Every correctness test passes
+either way.
+
+So the set is derived once, in `loadPalette`, beside the palette — the two
+answer different questions about one catalog read, and must not come from
+different reads of it. `TestARebuildDoesNotRebuildTheCatalogPerNode` bounds
+the allocations, because nothing else would notice.
 
 ## What is checked
 
@@ -148,6 +228,11 @@ test go red.
 | `target()` reads the catalog | `TestASelectedMenuItemOffersItsAttributes`, `TestASelectedMenuOffersItsTitle` |
 | `alt+enter` descends | `TestEnterDescendsIntoTheMenuVocabulary` |
 | `Pseudo` blocks the mis-pairing | `TestThePointerCannotReachAMenuItem` |
+| `checkAttrs` on `<Menu>` / `<MenuItem>` / a separator item | `TestAnUnknownMenuAttributeIsALoadError` |
+| an undeclared read off a child element | `TestDeclaredVocabularyMatchesTheCode` (via `checkPseudoPool`) |
+| `markNested` drops the `Pseudo` conjunct | `TestARestrictedContainerDoesNotHideARealElement` |
+| `markNested` sets instead of assigning | `TestMarkNestedIsIdempotent` |
+| `pairAgrees` asks the catalog per node | `TestARebuildDoesNotRebuildTheCatalogPerNode` |
 
 The palette test asserts the **derivation** rather than three names: every
 element some other entry restricts itself to is absent, and every restricted

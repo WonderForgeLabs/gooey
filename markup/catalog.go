@@ -301,11 +301,13 @@ type ElementSpec struct {
 	// that lists it invites markup that cannot load.
 	//
 	// DERIVED, not declared, and that is the point. The answer already
-	// exists in the vocabulary — a nested element is one some other
-	// entry names in Children.Only under ModeRestricted — so a field an
-	// author sets by hand would be a second copy of a fact the registry
-	// already carries, which is the drift ElementDef's own doc comment
-	// gives as the reason the behavioural axes are derived too.
+	// exists in the vocabulary — Pseudo, and named by some other entry's
+	// Children.Only under ModeRestricted — so a field an author sets by
+	// hand would be a second copy of a fact the registry already
+	// carries, which is the drift ElementDef's own doc comment gives as
+	// the reason the behavioural axes are derived too. Read markNested
+	// for why it takes BOTH conjuncts; the Only list on its own is the
+	// converse of this claim, not this claim.
 	//
 	// It replaces a hardcoded `e.Name == "Tab"` in the wysiwyg palette.
 	// That check was correct and unmaintainable in the same breath: the
@@ -724,13 +726,41 @@ func BuiltinElements() []ElementSpec {
 	return out
 }
 
-// markNested sets Nested on every entry some OTHER entry names in
-// Children.Only, which is what makes "may this be placed on its own?" an
-// answer the vocabulary gives rather than one a palette hardcodes.
+// markNested derives Nested, which is what makes "may this be placed on
+// its own?" an answer the vocabulary gives rather than one a palette
+// hardcodes.
 //
-// ModeRestricted only. Only is meaningless under any other mode, and
-// reading it regardless would let a stray list in an unrestricted
-// element quietly hide something from every palette.
+// TWO CONJUNCTS, AND THE SECOND IS NOT REDUNDANT. An element is nested
+// when it is Pseudo *and* some other entry names it in Children.Only
+// under ModeRestricted.
+//
+// The Only list alone is the CONVERSE of what is wanted and they are not
+// equivalent. ModeRestricted says "this container accepts only these";
+// Nested says "this element is accepted only inside a container that
+// names it". A host declaring a toolbar with Only: ["Button"] — an
+// entirely reasonable container — would mark <Button> nested and
+// vanish it from every palette, silently, which is the same class of
+// failure this field exists to remove, inverted. Restricting the
+// container says nothing about where its child may otherwise go.
+//
+// Pseudo is what closes that: an element that builds no component of its
+// own cannot stand anywhere, because there is nothing for it to be. A
+// <Button> under a restricted toolbar keeps its Proto and stays on
+// offer; <Tab>, <Menu> and <MenuItem> have none and do not.
+//
+// Pseudo alone would nearly do, and the Only conjunct is kept because
+// the two claims are different: Pseudo is "builds nothing", Nested is
+// "has exactly one legal home". An element with no component and no
+// parent naming it is a declaration nothing can reach, which is a bug
+// to notice rather than a palette entry to hide.
+//
+// ASSIGNED, NOT OR-ED. This runs twice over overlapping data —
+// BuiltinElements marks, then Catalog re-runs over a list seeded from
+// it — so a conditional set would ACCUMULATE rather than derive: a
+// host shadowing <Tabs> with an unrestricted declaration leaves nothing
+// restricting to <Tab>, and <Tab> would still arrive already marked
+// from the builtin pass. Assigning unconditionally makes this
+// idempotent and makes the field's "DERIVED" claim literally true.
 //
 // A name is looked up rather than trusted: Only may name an element that
 // does not exist in this catalog — a host's restricted container
@@ -741,19 +771,17 @@ func BuiltinElements() []ElementSpec {
 // own declared container contributes to it on the same terms as a
 // builtin. That is the half a registry-only derivation would miss.
 func markNested(specs []ElementSpec) {
-	nested := make(map[string]bool)
+	named := make(map[string]bool)
 	for _, e := range specs {
 		if e.Children.Mode != ModeRestricted {
 			continue
 		}
 		for _, name := range e.Children.Only {
-			nested[name] = true
+			named[name] = true
 		}
 	}
 	for i := range specs {
-		if nested[specs[i].Name] {
-			specs[i].Nested = true
-		}
+		specs[i].Nested = specs[i].Pseudo && named[specs[i].Name]
 	}
 }
 

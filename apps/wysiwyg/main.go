@@ -80,6 +80,9 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	alt+enter        select the FIRST CHILD — the inverse, and the only
+//	                 way to reach a <Menu> or <MenuItem>, which build no
+//	                 component for the pointer to hit
 //	alt+k, alt+j     move the selection up / down among its siblings
 //	alt+h            PROMOTE — lift the selection out to its grandparent
 //	alt+l            DEMOTE — nest the selection into the sibling above it
@@ -942,6 +945,11 @@ type editor struct {
 	// the same point — so the inverse cannot disagree with nodeOf
 	// without mapNodes being wrong about both.
 	compOf map[*node]gooey.Component
+	// pseudo is the set of element names that build no component of
+	// their own, derived with the palette from one Catalog() read. See
+	// loadPalette for why it is not asked per node, and pairAgrees for
+	// what it answers.
+	pseudo map[string]bool
 
 	// drag is the move gesture in flight, and invalidateFn is what asks
 	// for the frame it needs — see drag.go. invalidateFn is injected for
@@ -1655,7 +1663,22 @@ func (ed *editor) loadPalette() {
 	// refusing to load. The catalog answers this now — see
 	// markup.ElementSpec.Nested — so the second one costs nothing here.
 	ed.palette = ed.palette[:0]
+	ed.pseudo = map[string]bool{}
+	// ONE Catalog() CALL, and that is load-bearing rather than tidy.
+	// Catalog() is not a getter: it re-derives every builtin spec with
+	// fresh Attrs copies, re-runs markNested and sorts — 73us and 52KB
+	// on this checkout — and it globs and parses every include file when
+	// a context has them. mapNodes asks "is this element pseudo?" once
+	// per document node on every rebuild, which is every drag frame,
+	// every alt+k and every property edit, so asking the catalog there
+	// would put that cost and that garbage on the inner loop. The set is
+	// derived HERE because this is where the vocabulary changes: the
+	// palette and the pseudo set answer two questions about one catalog
+	// read, and cannot come from different reads of it.
 	for _, e := range ed.docCtx.Catalog() {
+		if e.Pseudo {
+			ed.pseudo[e.Name] = true
+		}
 		if e.NonVisual || e.Nested {
 			continue
 		}

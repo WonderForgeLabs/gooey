@@ -358,7 +358,11 @@ func (ed *editor) pairAgrees(k *node, comp gooey.Component) bool {
 	// A PSEUDO-ELEMENT PAIRS WITH NOTHING. There is no component it
 	// could be, so whatever sits at its index belongs to something else
 	// — its parent's chrome, or a sibling's content.
-	if spec, ok := ed.specOf(k.Elem); ok && spec.Pseudo {
+	//
+	// The SET, not ed.specOf. This runs once per document node on every
+	// rebuild, and specOf ranges over ed.docCtx.Catalog(), which rebuilds
+	// the whole catalog per call — see loadPalette.
+	if ed.pseudo[k.Elem] {
 		return false
 	}
 	if name := k.Attrs["Name"]; name != "" {

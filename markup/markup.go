@@ -1063,6 +1063,30 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		if c.Name != "Menu" {
 			return nil, fmt.Errorf("markup: <MenuBar> children must be <Menu> elements, got <%s>", c.Name)
 		}
+		// THE ATTRIBUTE NAMES ARE CHECKED HERE BECAUSE NOTHING ELSE
+		// WILL. checkAttrs runs inside build() (see the call above the
+		// buildComponent switch), and these children never reach it —
+		// this function reads them straight off e.Children, which is
+		// what "consumed as DATA" means. So until this call existed,
+		// <Menu Bogus="x"> and <MenuItem Frobnicate="yes"> LOADED
+		// CLEAN: the loop below reads the names it knows and every
+		// other attribute was accepted and silently dropped, which is
+		// the exact defect the declared vocabulary exists to prevent.
+		//
+		// It works with no other change because both elements declare
+		// Known: true, so ctx.spec finds an exhaustive Attrs set, and
+		// Element.parent is already stamped at parse time. Neither
+		// carries a Layout — a nil Proto makes TakesLayout false — so
+		// the universal set is correctly NOT offered on them.
+		//
+		// This is also what makes catalogen's half-check sound. Its
+		// comment says the under-declared direction "stays loud the
+		// ordinary way"; that sentence was false for exactly these two
+		// elements until now, which left them the only elements in the
+		// vocabulary with NEITHER direction guarded.
+		if err := checkAttrs(c, ctx); err != nil {
+			return nil, err
+		}
 		title := strings.TrimSpace(c.Attrs["Title"])
 		if title == "" {
 			return nil, fmt.Errorf("markup: <Menu> needs a Title")
@@ -1071,6 +1095,11 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		for _, ic := range c.Children {
 			if ic.Name != "MenuItem" {
 				return nil, fmt.Errorf("markup: <Menu> children must be <MenuItem> elements, got <%s>", ic.Name)
+			}
+			// Before the Separator short-circuit, so a typo on a
+			// separator is reported rather than skipped past.
+			if err := checkAttrs(ic, ctx); err != nil {
+				return nil, err
 			}
 			if ic.Attrs["Separator"] == "true" {
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
