@@ -104,9 +104,18 @@ bindings — and it becomes the top row of the app:
 
 `<Menu>` and `<MenuItem>` are **data, not components** — like a Grid's
 track list, they declare the bar's contents and never enter the visual
-tree. The dropdown that appears below an open title is the reason the
-bar must be a late sibling: it paints over the progress row and the
-sparkline, and being later in document order is the entire mechanism.
+tree. The dropdown that appears below an open title paints over the
+progress row and the sparkline, and **document order is not what does
+it**: the popup surface implements `gooey.Overlay`, so the Composer
+lifts it out of the ordinary layer entirely and paints it above the
+page wherever the bar is declared.
+
+"Declare the bar last" is what this page used to say, and it was
+specifically the thing that did not work — a component declared *after*
+the bar painted over an open dropdown and nothing could put it back,
+because the z-ordered pass forces forward only
+([#430](https://github.com/WonderForgeLabs/gooey/issues/430)). Position
+is free now.
 
 **Mnemonics.** The underscore in `Title="_Job"` marks the accelerator:
 `alt+j` opens the Job menu from anywhere on the page, whatever holds

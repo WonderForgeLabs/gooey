@@ -182,6 +182,11 @@ helper on a child element found all three on its first day.
 | `OpenIndex` is -1 closed and tracks the open menu | `TestTheOpenIndexIsReadableFromOutside` | drop the `IsOpen` guard |
 | `DropdownBounds` is zero closed, and is where it painted | `TestTheDropdownBoundsAreWhereItPainted` | return `popupRect()` unguarded |
 | …and follows the open title | `TestTheReportedBoundsMoveWithTheOpenMenu` | always measure menu 0 |
+| An emptied menu list does not crash the accessors | `TestTheAccessorsSurviveAMenuListReplacedWhileOpen` | guard on `IsOpen` alone |
+| An open menu with no items reports nothing | `TestAnOpenMenuWithNoItemsReportsNothing` | guard on `IsOpen` alone |
+| Reading `OpenIndex` while painting subscribes | `TestReadingTheOpenIndexWhilePaintingIsADependency` | — (damage-count pin) |
+| A ctx-first helper still reads the HOST's element | `TestAHelperTakingCtxFirstStillReadsTheHostsElement` | resolve by first bare ident |
+| One helper in two roles is scanned in both | `TestOneHelperUsedInBothRolesIsScannedInBoth` | key `seen` on the name alone |
 | A helper handed a child reads the CHILD's attributes | `TestAHelperHandedAChildReadsTheChildsAttributes` | revert either half of the catalogen fix |
 | …and the widening stays out of `scan` | `TestWideningTheGateStaysOutOfTheUndifferentiatedWalk` | widen `passesElement` too |
 
@@ -192,6 +197,84 @@ one cell's worth of arithmetic. The two rows were identically laid out and
 the test said otherwise. It measures the prefix with `render.StringWidth`
 now — the same function the gutter is padded with, which is the point.
 This file's own trap, sprung on itself.
+
+## What the review found, and the shape of it
+
+Eleven findings, every one verified against HEAD before being acted on.
+Ten were real. The exception is a sub-claim inside finding 1 — that
+`OpenIndex()` reports 0 "for a bar with no menus at all" — which does not
+reproduce, because `Open` returns early when `len(m.Menus) == 0` and the
+popup never opens. The finding itself is real by the path it also names:
+a menu list replaced *while* a dropdown is open.
+
+Two of them are the interesting ones, and they are the same mistake.
+
+**The new accessors were the only paths in `menu.go` that did not guard
+`Menus`.** It is an exported field, so an app rebuilding its menu list
+while a dropdown is open is legal — `Arrange` guarded, `drawDropdown`
+guarded, and `DropdownBounds` **panicked** with index out of range.
+Worse in kind than a wrong answer: a public accessor crashing the process
+on a state the component itself handles, introduced by the PR that
+exported it. Its sibling was quieter and the same error — asking only
+`IsOpen` handed back a live-looking rect for a menu with no items, which
+`Arrange` declines to show, *which is precisely what that accessor's own
+doc comment forbids*. Both now ask one predicate, `showing()`, which is
+the expression `Arrange` had inline; two accessors over one state cannot
+disagree with each other or with what was arranged.
+
+The lesson is not "add a guard". It is that **exporting an internal
+calculation exports its preconditions**, and `popupRect`'s were written
+down nowhere — they lived as an inline expression at one call site and an
+early return at another. The accessor inherited neither.
+
+**The `catalogen` walk got the element wrong for the idiom `markup`
+itself documents.** `elementArg` answers "the first bare identifier
+argument", which is right for `menuItemIcon(ic, ctx, &it)` and wrong for
+`markup.Attr[T](ctx, e, "Value")` — the public element-author idiom, with
+`ctx` first. It answers `"ctx"`, decides the helper was handed something
+other than the host, and files the host's own reads against a child: the
+same false over-declaration this PR just fixed, arriving through the
+opposite door. Latent only because no `ElementDef.Build` calls `Attr`
+yet. Resolved positionally from the callee's declared `Element` parameter
+now, falling back to the heuristic only for functions outside the
+package. That also retired a `bare` flag which did not mean what it said
+— `nil`, `true` and `false` are all `*ast.Ident`.
+
+Alongside it, `seen` keyed on the function name alone, so one helper
+called in both roles was scanned in whichever came first and the other
+role's reads vanished. Keyed on name-and-role now.
+
+### Two fixes needed a fixture built specifically to falsify them
+
+Both were caught by mutation, not by review:
+
+- The `seen` fix passed its first mutation. The fixture read the
+  attribute as a **string argument**, and the literal branch picks those
+  up whether or not the descent runs — so it could not see a skipped
+  descent at all. It reaches the bug only with a helper reading a
+  *hardcoded* index, called in both roles.
+- `TestAToastIsNotHiddenByAnOpenMenu` in the PR above this one had the
+  same disease geometrically.
+
+The pattern is worth naming: **a test for a fix inside a walk must
+exercise the branch the fix is in**, and "the attribute shows up in the
+findings" is satisfied by any of several branches.
+
+### The rest
+
+Hoisted `iconLead()` out of `popupRect`'s per-item loop — it walks every
+item, so calling it per item made `popupRect` O(n²) on the layout path
+(`lead` one line above was already hoisted for exactly that reason).
+Dropped an unused `w` parameter from `paintedDropdown`. Added the
+damage-count pin the accessors' paint-dependency claim needed, since
+CLAUDE.md is explicit that nothing else pins a repaint claim — and while
+writing it, corrected the claim itself: `popupRect` reads `m.Bounds()`,
+and `Base.Bounds` is a **plain field**, so the open-index half subscribes
+and the geometry half does not. A decorator must depend on whatever
+drives the bar's layout too, and the doc now says so instead of implying
+otherwise. Fixed `docs/learn/07-app-chrome.md`, which still taught
+"declare the bar last, document order is the entire mechanism" — the rule
+#430 specifically disproved.
 
 ## Still open
 
