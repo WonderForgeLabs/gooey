@@ -203,8 +203,7 @@ const (
 	OverlayRankAdornment = 20
 )
 
-// overlayRank is c.orderPaint's question: the component's declared rank,
-// or the floor.
+// overlayRank is the component's declared rank, or the floor.
 func overlayRank(w Component) int {
 	if r, ok := w.(OverlayRanker); ok {
 		// CLAMPED, because three doc comments, a spec heading and a test
@@ -230,6 +229,34 @@ func overlayRank(w Component) int {
 		return OverlayRankPopup
 	}
 	return OverlayRankPopup
+}
+
+// overlayOf is THE overlay-layer rule, and it is one function because
+// there are TWO PAINT PATHS. Composer.orderPaint asks it per paint node
+// and gooey.Compose's collectPaint asks it per component; #438 was those
+// two disagreeing, because only the first had ever implemented it.
+//
+// The issue proposed either implementing the lift in the one-shot path
+// or documenting that it does not have one, and named the cost of the
+// first: a second copy of the rule, which the next change to that rule
+// has to find. Extracting it retires that objection instead of paying
+// it — and #439 added ranks days later, which is precisely the change
+// that would have had to find both copies.
+//
+// MEMBERSHIP IS INHERITED, and the rank belongs to the lifting ROOT.
+// An overlay that is a container would otherwise leave its children in
+// the ordinary layer, painting them under the very surface they belong
+// to; and a nested Overlay answering for itself could sort out of its
+// parent's run, letting a parent that covers its bounds erase the child
+// it lifted. Both are why the parent's answer is consulted first.
+func overlayOf(w Component, parentOverlay bool, parentRank int) (overlay bool, rank int) {
+	if parentOverlay {
+		return true, parentRank
+	}
+	if _, isOverlay := w.(Overlay); isOverlay {
+		return true, overlayRank(w)
+	}
+	return false, 0
 }
 
 // HasBackground is implemented by containers that declare a background
@@ -497,6 +524,34 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
 //
+// IT PAINTS IN THE SAME Z-ORDER Composer does, and that sentence is the
+// point rather than a pleasantry. "The one-shot path (full repaint)" is
+// all this used to say, which reads as the same picture and was not:
+// renderTree walked document order and never consulted Overlay, so #430
+// reproduced here verbatim long after Composer was fixed — on the path
+// that cmd/pixels, cmd/typeahead --dump and around nineteen test helpers
+// use. A fixture asserted through it would have looked green while
+// encoding the bug. Both paths now order through the one overlayOf rule
+// (#438) and through the one appendByRank bucket pass, and
+// TestBothPaintPathsAgree compares them rather than pinning each to a
+// string, so they cannot drift together either.
+//
+// Z-ORDER, THOUGH, AND NOT THE PICTURE — the claim above is scoped on
+// purpose, because two things this path does NOT do are easy to assume
+// from a wider one:
+//
+//   - Composer brackets every Render with Cells.Clip(bounds)
+//     (#357/#409); paintOne does not clip at all, so a component that
+//     overruns its rect reaches a neighbour's cells here and is cut off
+//     there.
+//   - The pre-clear rules — a leaf clearing to the nearest ancestor's
+//     background, a HasBackground container filling and being marked
+//     covered — are Composer's, and have no counterpart here.
+//
+// TestBothPaintPathsAgree compares z-order and nothing else, so nothing
+// in the suite would catch the wider sentence being read literally.
+// Narrowed in review of #457.
+//
 // It BRACKETS the pass with TakeLayoutFault, and both halves are load
 // bearing because layoutFault is package-level state.
 //
@@ -527,7 +582,57 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 	return f
 }
 
+// renderTree paints the tree in Z-ORDER, which is document order with
+// every Overlay subtree lifted to the end and ranked — the same answer
+// Composer.paint carries, through the same overlayOf rule.
+//
+// COLLECT THEN PAINT, rather than painting during the walk, because a
+// lifted subtree cannot be painted at the moment it is reached: its
+// position depends on nodes the walk has not seen yet. That is the same
+// reason Composer keeps c.nodes (structure) apart from c.paint (order).
+// A tree with no Overlay in it collects one slice, buckets nothing, and
+// paints in exactly the order it always did.
 func renderTree(w Component, f *Frame, depth int) {
+	var ordinary, lifted []paintItem
+	collectPaint(w, depth, false, 0, &ordinary, &lifted)
+	// THE SAME BUCKET PASS THE RETAINED PATH USES, not a sort. Equal
+	// ranks keep document order because they are appended in encounter
+	// order — a consequence of the construction rather than a claim about
+	// sort.SliceStable, which no mutation of this repo could falsify.
+	// Ordering is shared for the same reason membership-and-rank is:
+	// two implementations is the second copy the next change has to
+	// find. Raised in review of #457.
+	//
+	// No reuse across calls here — Compose is one-shot by definition, so
+	// the buckets are a local that dies with the frame.
+	// A SEPARATE DESTINATION, not lifted[:0]. Writing the result back
+	// over its own input happens to be safe — every item is copied into
+	// a bucket before the append loop starts — but appendByRank has
+	// already shipped one aliasing bug (its own comment records it), and
+	// Compose is one-shot, so a slice is the honest price for not being
+	// clever twice in the same function.
+	var buckets []rankBucket[paintItem]
+	ordered := appendByRank(make([]paintItem, 0, len(lifted)), lifted,
+		func(it paintItem) int { return it.rank }, &buckets)
+	for _, it := range ordinary {
+		paintOne(it.w, f)
+	}
+	for _, it := range ordered {
+		paintOne(it.w, f)
+	}
+}
+
+// paintItem is one component in paint order. rank is meaningless outside
+// the lifted slice, where it is the subtree root's.
+type paintItem struct {
+	w    Component
+	rank int
+}
+
+// collectPaint walks the tree in depth-first pre-order and partitions it
+// into the two layers, carrying the depth cap and the Collapsed prune
+// that renderTree has always applied.
+func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, ordinary, lifted *[]paintItem) {
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("Render", w, depth)
 		return
@@ -535,21 +640,33 @@ func renderTree(w Component, f *Frame, depth int) {
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return // collapsed subtrees paint nothing at all
 	}
+	overlay, rank := overlayOf(w, parentOverlay, parentRank)
 	if paintable(w) {
-		if bp := backgroundProp(w); bp != nil {
-			if col := bp.Get(); col.Set {
-				if b, ok := w.(Bounded); ok {
-					fillRect(f.Cells, b.Bounds(), render.Style{Bg: col})
-				}
-			}
+		it := paintItem{w: w, rank: rank}
+		if overlay {
+			*lifted = append(*lifted, it)
+		} else {
+			*ordinary = append(*ordinary, it)
 		}
-		w.Render(f)
 	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			renderTree(ch, f, depth+1)
+			collectPaint(ch, depth+1, overlay, rank, ordinary, lifted)
 		}
 	}
+}
+
+// paintOne is the per-component half renderTree used to do inline: the
+// declared background fill, then the component's own Render.
+func paintOne(w Component, f *Frame) {
+	if bp := backgroundProp(w); bp != nil {
+		if col := bp.Get(); col.Set {
+			if b, ok := w.(Bounded); ok {
+				fillRect(f.Cells, b.Bounds(), render.Style{Bg: col})
+			}
+		}
+	}
+	w.Render(f)
 }
 
 // Flush writes the frame: cell plane first, then pixel placements. The
