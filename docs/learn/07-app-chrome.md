@@ -74,15 +74,26 @@ The rest of this tutorial adds chrome, and every piece of chrome is an
 **overlay**: something that paints *above* the content. The recipe is
 operational and short:
 
-> **Declare overlay elements LAST in their container.** Document order
-> is z-order — a later sibling paints above what it covers. In a
-> `Grid`, `Grid.Row` still places the element wherever it belongs, so
-> "last child, top row" is an ordinary thing to write.
+> **Declare overlay elements wherever they belong.** An overlay is
+> lifted out of document order into a paint layer of its own, so it
+> paints above the page from anywhere; within that layer a rank decides,
+> so a toast is never hidden by an open menu. In a `Grid`, `Grid.Row`
+> still places the element wherever it belongs.
 
-Why document order is z-order — and what happens when an overlay is
-dismissed and the cells under it come back — is the subject of
-[concepts/overlays.md](concepts/overlays.md). Here we just use the
-rule.
+**"Declare overlay elements LAST" is what this box used to say**, and
+you will still find the shape in older apps — including this tutorial's
+own example, where the overlays are at the end of the `Grid` because
+that is where they read best. It is harmless and no longer load-bearing:
+position stopped deciding paint in
+[#437](https://github.com/WonderForgeLabs/gooey/issues/437) and stopped
+deciding order *among* overlays in
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439). Where it is
+still load-bearing is **hit-testing**, which is not lifted — so an
+overlay that wants presses (none of the built-in ones do) still cares.
+
+How the layer works — and what happens when an overlay is dismissed and
+the cells under it come back — is the subject of
+[concepts/overlays.md](concepts/overlays.md). Here we just use it.
 
 ## Step 2: Add a MenuBar
 
@@ -202,7 +213,7 @@ that should look like a bar styles its sections. The why is recorded in
 
 Toasts need a host on the page — an overlay spanning everything, so a
 notification can sit in the top-right corner regardless of what is
-under it. Last child, full span:
+under it. Full span, anywhere in the `Grid`:
 
 ```xml
 <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="9" Duration="2500ms"/>
@@ -346,8 +357,11 @@ so `tab` never lands on a button nobody can see.
 
 ## What you learned
 
-- Overlays are declared **last in their container** because document
-  order is z-order; `Grid.Row` places them independently of that order.
+- Overlays are **lifted out of document order** into a paint layer of
+  their own and ranked within it, so where you declare one does not
+  decide what it paints over; `Grid.Row` places it independently either
+  way. Hit-testing is *not* lifted — that divergence is the one thing
+  position still decides.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.
@@ -357,8 +371,10 @@ so `tab` never lands on a button nobody can see.
   attribute shorthand for dim text, property elements for anything.
 - Toasts are imperative: the host is markup, `Show` is code through
   `markup.Find`, looked up per fire so hot reload cannot strand it.
-- Tooltips (both spellings) need an `AdornmentLayer` on the page, and
-  the layer's position in document order decides what tips paint over.
+- Tooltips (both spellings) need an `AdornmentLayer` on the page. Its
+  position no longer decides what tips paint over: the layer ranks
+  itself to the top of the overlay layer, above toasts and above an open
+  dropdown, which is what a validation marker needs.
 - The wave-1 widgets share the framework's rules rather than inventing
   their own: arrows are consumed only when they move something, and
   disabled is always "a command whose condition says no".
@@ -379,8 +395,8 @@ so `tab` never lands on a button nobody can see.
 
 ## Next steps
 
-- Concept: [overlays](concepts/overlays.md) — why document order is
-  z-order, and how dismissing an overlay restores what it covered.
+- Concept: [overlays](concepts/overlays.md) — the two paint layers and
+  their ranks, and how dismissing an overlay restores what it covered.
 - The full-size version: [`cmd/toolkit`](../demos.md) puts waves 1
   and 2 on one page, including the pixel-chrome `Button` this tutorial
   skipped.

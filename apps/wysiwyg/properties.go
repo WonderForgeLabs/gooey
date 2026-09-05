@@ -205,10 +205,11 @@ func newValueEditor(ed *editor, list *components.ItemsView, text *components.Tex
 	}
 	p.cp = &components.ColorPicker{Value: p.col}
 	p.pop = components.NewPopup(p, p.draw)
-	// Document order is z-order, and the list has to be underneath
-	// everything. The surface is LAST of the three overlays only because
-	// the three are never open at once; the ordering that matters is
-	// list first.
+	// The list has to be underneath everything, and it is — it is not an
+	// overlay, and every overlay is lifted above it whatever the order
+	// here. The popup surface being last of the three editors is
+	// arbitrary: the three are never open at once, and both the color
+	// picker and the surface would lift anyway.
 	p.kids = []gooey.Component{list, text, p.cp, p.pop.Surface()}
 	ed.props = p
 	return p

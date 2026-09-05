@@ -39,7 +39,7 @@ func TestMenuClicksThroughLiveDispatchUnderToastLayer(t *testing.T) {
 		gooey.L(&Text{Content: Str(strings.Repeat("#", 30))}, gooey.Layout{Top: 1}),
 		gooey.L(btn, gooey.Layout{Top: 6, Left: 25}),
 		bar,          // late in document order: the dropdown paints above the content
-		&ToastHost{}, // LAST child, full page — the demo's notification layer
+		&ToastHost{}, // full page — the demo's notification layer
 	}}
 	c := gooey.NewComposer(page, 40, 10)
 	c.Frame()

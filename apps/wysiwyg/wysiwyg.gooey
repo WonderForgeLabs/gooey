@@ -31,10 +31,13 @@
        is not "grids are bad", it is "a track list cannot express a
        layout the user rearranges".
 
-       THE MENU BAR IS THE LAST CHILD, on purpose. Z-order in gooey IS
-       document order, and the dropdown must paint above the panes it
-       covers; Grid.Row and element order are independent, which is what
-       lets it be declared last and drawn first. -->
+       THE MENU BAR IS THE LAST CHILD, and that is now only where it
+       reads best. The dropdown paints above the panes it covers because
+       the Popup surface is a gooey.Overlay, lifted out of document
+       order — which is what #430 was filed about, a MenuBar on the
+       designer canvas whose dropdown was painted over by a sibling on
+       the very next repaint. Grid.Row still places the bar on row 0. -->
+
   <Grid Name="Page" Rows="1,1*,1" Cols="5,1*">
 
     <!-- KeyBindings live on the ROOT. A binding only fires while the
@@ -738,9 +741,9 @@
       <StatusBar.Right><ServeAddrs/></StatusBar.Right>
     </StatusBar>
 
-    <!-- THE MENUS, declared LAST for z-order and placed on row 0 by
-         Grid.Row — the two are independent, which is exactly what an
-         overlay needs.
+    <!-- THE MENUS, last by convention and placed on row 0 by Grid.Row.
+         The dropdown lifts into the overlay layer on its own, so this
+         position no longer decides what it paints over.
 
          VIEW → CODE IS FLATTENED, and that is a framework limit stated
          rather than worked around: components.Menu is ONE level (Menu →

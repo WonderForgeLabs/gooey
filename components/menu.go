@@ -219,14 +219,27 @@ func (m Menu) checkBox(it MenuItem) string {
 // MenuBar is the top menu row: titles across one line, and a dropdown
 // overlay below the open title.
 //
-// Z-ORDER: the dropdown must paint above the page content, and in gooey
-// z-order IS document order — so declare the MenuBar as the LAST child
-// of its container, positioned onto the top row (in a Grid, the element
-// order and Grid.Row are independent, which is exactly what this
-// needs). The dropdown is a child of the bar arranged BELOW the bar's
-// own bounds; being late in document order is what puts it above the
-// content it covers, and the Composer's restore pass repaints that
-// content when the menu closes or moves.
+// Z-ORDER: the dropdown must paint above the page content, and it does
+// so WHEREVER THE BAR IS DECLARED. The dropdown is the bar's Popup
+// surface, a gooey.Overlay, lifted out of document order into the
+// overlay layer (#437); the Composer's restore pass repaints the content
+// underneath when the menu closes or moves.
+//
+// "DECLARE THE MENUBAR AS THE LAST CHILD OF ITS CONTAINER" is what this
+// used to say, and it is the sentence #430 was filed against. It bought
+// being above the bar's own SIBLINGS and nothing more: an owner three
+// containers deep still drops its menu over a dock that is a sibling of
+// its great-grandparent, and anything declared after that owner painted
+// straight over the open dropdown. Position is free now.
+//
+// Ranks order the layer against ITSELF: a dropdown is at
+// gooey.OverlayRankPopup, the floor, so a ToastHost or an
+// AdornmentLayer is above it and a notification raised while a menu is
+// open is still readable (#439).
+//
+// What position still decides is INPUT. Hit-testing is not lifted — it
+// walks document order — but the bar holds the pointer capture while
+// open, so every press routes here regardless. See MOUSE below.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

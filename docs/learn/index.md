@@ -131,8 +131,8 @@ Short framings, each linking into the deep guide.
 - [Input routing](concepts/input-routing.md) — focus-to-root dispatch,
   hit-testing, and why focus movement is cheap.
 - [Overlays and z-order](concepts/overlays.md) — there is no z-index and
-  no overlay registry; document order is the whole mechanism, so an
-  overlay is a declaration rather than machinery.
+  no overlay registry; document order in *two layers* is the whole
+  mechanism, and a rank orders the second one.
 - [The App lifecycle](concepts/app-lifecycle.md) — what `gooey.App` owns:
   the terminal, the console signal story, suspend/resume, and dying with
   the terminal intact.

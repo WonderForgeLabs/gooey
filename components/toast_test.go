@@ -12,8 +12,9 @@ import (
 )
 
 // A page with a toast layer: full-width content under a host that spans
-// the whole composition, the way an app declares it (last child = top
-// of the z-order).
+// the whole composition. It is declared last here only because that is
+// how apps still write it; the host ranks itself to OverlayRankToast
+// and would be on top from either position.
 func toastPage(w, h int) (*ToastHost, *Canvas, *Text) {
 	content := &Text{Content: Str(strings.Repeat("#", w))}
 	host := &ToastHost{}

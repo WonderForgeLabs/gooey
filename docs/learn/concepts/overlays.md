@@ -1,18 +1,68 @@
 # Concept: overlays and z-order
 
 gooey has no z-index property and no overlay registry. **Z-order is
-document order**: the Composer keeps its paint nodes in depth-first
-pre-order, so children paint after (above) their parents and later
-siblings after earlier ones. An overlay is nothing more than a later
-sibling with a covering paint — a leaf's pre-clear, or a container's
-background fill.
+document order in TWO layers.** The Composer keeps its paint nodes in
+depth-first pre-order — children paint after (above) their parents,
+later siblings after earlier ones — and then lifts every subtree whose
+root implements `gooey.Overlay` out of that order and onto the end.
+`c.nodes` stays the structure; `c.paint` is the answer to what is in
+front of what.
 
-That makes overlay hosting a declaration, not machinery: **declare the
-overlay element as the LAST child**. In a `Grid`, an element's position
-(`Grid.Row`) is independent of its document order, so "last child, top
-row" is spellable directly — `cmd/toolkit`'s markup declares its
-`MenuBar`, `ToastHost`, and `AdornmentLayer` as the Grid's last children
-with `Grid.Row="0"` keeping the bar on the top row.
+So an overlay paints above the page **from wherever it is declared**. In
+a `Grid`, `Grid.Row` places it wherever it belongs and nothing about
+z-order argues with that — `cmd/toolkit` declares its `MenuBar`,
+`ToastHost` and `AdornmentLayer` at the end of the Grid because that
+reads best, not because it decides anything.
+
+## Within the layer, a rank decides
+
+Lifting alone left the three hosts fighting over position among
+themselves, which is a real bug and not a tidiness issue: a toast raised
+while a menu was open landed *under* the dropdown, so a notification the
+user had to see was simply not shown. `gooey.OverlayRanker` sorts the
+lifted layer:
+
+| rank | value | who |
+|---|---|---|
+| `OverlayRankPopup` | 0 | a `Popup` surface — a menu dropdown, a picker, a color list |
+| `OverlayRankToast` | 10 | `ToastHost` |
+| `OverlayRankAdornment` | 20 | `AdornmentLayer` — tooltips, validation markers, drag ghosts |
+
+The sort is **stable**, so equal ranks keep document order, and a plain
+`Overlay` that names no rank sorts as a popup. The rank is asked of the
+**lifting root only**: a popup nested inside a toast inherits the
+toast's rank rather than sorting out of its parent's run, so a lifted
+subtree always comes up whole.
+
+The values are spaced by ten so somebody else's overlay can sit between
+two of them without a framework change.
+
+## What the lift does NOT move
+
+**`Overlay` moves paint, not input.** Hit-testing still walks plain
+document order, last sibling first — it is not lifted and it is not
+ranked. The two agree only when an overlay happens to be late in the
+document, which is why "declare it last" survives as a *convention* in
+this repo's own markup even though it stopped deciding paint.
+
+That divergence got easier to fall into with the fix, not harder. Being
+last used to be the only thing keeping an overlay on top, so nobody
+could get the paint right and the input wrong. Now paint no longer needs
+it and hit-testing still does. None of the framework's own overlays care
+— a `Popup` takes the pointer capture while open, and `ToastHost`,
+`AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
+`HitTestTransparent`, so no press was ever theirs to lose — but an
+interactive adorner somebody else writes is where it bites.
+
+The two layers are one function, `overlayOf` in `component.go`, asked by
+both the retained path (`Composer.orderPaint`) and the one-shot path
+(`gooey.Compose`). They answered differently until
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438).
+
+Decision records:
+[the layer](../../specs/2026-08-30-overlay-layer.md),
+[the ranks](../../specs/2026-09-05-overlay-ranks.md),
+[one rule for both paths](../../specs/2026-09-05-one-shot-overlay-order.md).
 
 ## The forward pass keeps the stack honest
 
@@ -32,8 +82,12 @@ restore). The pass and both exemptions landed in
 ## Dismissal is the reverse half
 
 The forward pass can only force nodes *later* in z-order than a painter
-— and an overlay is the last node, so when it goes away, nothing after
-it can fix the hole. `Composer.restoreUnder`
+— and the lifted layer is the end of that order, so when an overlay goes
+away, nothing after it can fix the hole. (This is also why the lift has
+to be global rather than within the overlay's own parent: forcing runs
+FORWARD ONLY, so putting a surface last among its owner's children
+bought being above the owner's *other* children and nothing else.)
+`Composer.restoreUnder`
 ([PR #93](https://github.com/WonderForgeLabs/gooey/pull/93)) is the
 missing half: when a rect **leaves the screen**, the sweep clears the
 vacated cells and force-dirties every still-visible node intersecting
@@ -68,8 +122,8 @@ Two conventions ride along with the z-hosting, both visible in the
   else stops at the overlay.
 
 One trap for page-spanning hosts: hit-testing treats every bounded
-container as opaque, so a full-page `ToastHost` declared last would eat
-every click on the page. Hosts like it implement `HitTestTransparent` —
+container as opaque, so a full-page `ToastHost` would eat every click
+that reaches it. Hosts like it implement `HitTestTransparent` —
 the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).

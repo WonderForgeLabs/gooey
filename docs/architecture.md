@@ -615,9 +615,30 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, and whatever grows one
-next — lifted to the end with its subtree, because a dropdown is not at
-a position in the document, it is on top of it. The paint loop forces a
+implementing `gooey.Overlay` — a popup surface, a `ToastHost`, an
+`AdornmentLayer` — lifted to the end with its subtree, because a
+dropdown is not at a position in the document, it is on top of it.
+
+Within the lifted layer, document order is **not** the whole rule.
+`gooey.OverlayRanker` sorts it: `OverlayRankPopup` (0), then
+`OverlayRankToast` (10), then `OverlayRankAdornment` (20), stable, so
+equal ranks keep document order and a plain `Overlay` sorts as a popup.
+The ranks exist because "lifted" alone still left the three hosts
+fighting over position — a toast raised while a menu was open landed
+under the dropdown and was simply not seen
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439)). A rank is
+asked of the **lifting root only**: a popup nested inside a toast
+inherits the toast's rank rather than sorting out of its parent's run.
+
+One function answers this for both paint paths. `overlayOf` in
+`component.go` is the single implementation of membership-and-rank;
+`Composer.orderPaint` asks it per paint node and `gooey.Compose`'s
+`collectPaint` asks it per component
+([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Before
+that the one-shot path had never implemented the rule at all, so the two
+exported paint paths answered "what is on top" differently.
+
+The paint loop forces a
 repaint of every node above a rect somebody below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
@@ -1014,15 +1035,41 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns the deepest component whose arranged
 `Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones (they paint on top); `Collapsed` subtrees,
-zero-size components, and `HitTestTransparent` components are not hit.
-The transparency marker is what lets a page-spanning overlay host exist
-at all: a `ToastHost` or an `AdornmentLayer` sits above everything as
-the root's last child, which makes it the *first* thing hit-testing
-finds — an invisible layer that would eat every click and starve every
-hover beneath it. Transparency is about the component's own surface,
-not its subtree, so the toasts and adornments inside stay hittable. The
-walk allocates nothing, because it runs on every motion report.
+siblings before earlier ones; `Collapsed` subtrees, zero-size
+components, and `HitTestTransparent` components are not hit.
+
+**"Later siblings first, because they paint on top" is no longer one
+statement — it is two, and they have come apart.** `gooey.Overlay` moves
+*paint* and not *input*: the paint walk lifts overlay subtrees into a
+second layer and sorts them by rank, and this walk does neither. It is
+still plain document order, reversed. So an overlay paints above the
+page from anywhere while being hit-tested exactly where it was declared,
+and the two agree only when the overlay happens to be late in the
+document.
+
+That is a live trap rather than a curiosity, and it got *worse* with the
+fix, not better. Being declared last used to be the only thing keeping
+an overlay host on top, so nobody could get the paint right and the
+input wrong — the two were the same decision. Now paint no longer needs
+it and hit-testing still does, which removes the visible reason to do
+the thing input silently depends on. Declare a host anywhere but last
+and its contents paint above a later sibling that quietly takes their
+presses, with nothing on screen to say so.
+
+What keeps the framework's own overlays safe is that none of them wants
+the press. A `Popup` takes the pointer capture while open, so every
+event routes to its owner before this walk runs at all; `ToastHost`,
+`AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
+`HitTestTransparent`, so no press was ever theirs to lose. Transparency
+is about a component's own surface and not its subtree, so the toasts
+and adornments inside stay hittable — an *interactive* adorner somebody
+else writes is where the divergence bites, since `Adornment` requires
+only `gooey.Component`, `Anchor` and `Place`. Closing it properly means
+teaching this walk the same two layers the paint walk has
+([#375](https://github.com/WonderForgeLabs/gooey/issues/375) is the
+related "no seam for walking the children" problem).
+
+The walk allocates nothing, because it runs on every motion report.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:
