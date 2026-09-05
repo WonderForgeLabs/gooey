@@ -1077,7 +1077,17 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// Known: true, so ctx.spec finds an exhaustive Attrs set, and
 		// Element.parent is already stamped at parse time. Neither
 		// carries a Layout — a nil Proto makes TakesLayout false — so
-		// the universal set is correctly NOT offered on them.
+		// the layout half of the universal set is not offered on them.
+		//
+		// THAT WAS TRUE OF SEVEN UNIVERSALS AND FALSE OF THE EIGHTH.
+		// Name is hoisted ABOVE the TakesLayout gate in both vocabulary
+		// and AttrsFor, because addressability is not a layout
+		// property — so <MenuItem Name="Save"> loaded clean while
+		// nothing here ever called named(), and ctx.Named stayed empty.
+		// Accepted, silently dropped: the exact class this declaration
+		// exists to close. Both gates now ask !spec.Pseudo, which is the
+		// declared form of "there is nothing to address". Found in
+		// review of #454.
 		//
 		// This is also what makes catalogen's half-check sound. Its
 		// comment says the under-declared direction "stays loud the

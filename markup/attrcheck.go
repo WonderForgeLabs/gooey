@@ -91,7 +91,22 @@ func describeParent(parent string) string {
 // misplaced one can be reported as misplaced rather than as unknown.
 func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map[string]bool, attached map[string]string) {
 	allowed = make(map[string]bool, len(spec.Attrs)+len(universalAttrs)+4)
-	allowed["Name"] = true
+	// NAME IS UNIVERSAL EXCEPT WHERE THERE IS NOTHING TO ADDRESS. It is
+	// hoisted above the TakesLayout gate below because every element can
+	// be named whether or not it has a layout surface — every element
+	// that BUILDS one, which a pseudo-element does not.
+	//
+	// buildMenuBar reads <Menu> and <MenuItem> as data and never calls
+	// named(), so <MenuItem Name="Save"> loaded clean and ctx.Named
+	// stayed empty forever: accepted, dropped, no error on any surface.
+	// The designer made it reachable AND put the row first, because
+	// KindIdentity sorts into CategoryDesign at rank 0 — so the fix for
+	// #429 turned a latent hole into an inviting one.
+	//
+	// Pseudo is already the declared form of "there is nothing to
+	// address", which is exactly the question being asked. Found in
+	// review of #454.
+	allowed["Name"] = !spec.Pseudo
 	for _, a := range spec.Attrs {
 		allowed[a.Name] = true
 	}

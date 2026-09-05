@@ -39,10 +39,14 @@ func goTypeOf(c any) string {
 // screen or in any error to explain it. A palette for a UI builder is the
 // catalog's second customer, not its reason.
 //
-// The table below is GENERATED from markup.go's element switch by
-// ./internal/catalogen; see catalog_gen.go. Do not hand-edit it. The
-// generator is the drift test: a switch arm it cannot fully explain is a
-// build failure, not a silently incomplete entry.
+// The table below is DECLARED, one ElementDef literal per element, in
+// elements.go — beside the code that consumes it. It used to be
+// generated into a committed catalog_gen.go from markup.go's element
+// switch, and that file has not existed for some time; ./internal/catalogen
+// survives as the CROSS-CHECK rather than the source, comparing each
+// declaration against the attributes its Build actually reads. See that
+// package's doc for why the two directions of that comparison are not
+// symmetric — over-declaring is silent, and nothing but this catches it.
 
 // Origin is where an element came from — its PROVENANCE. It deliberately
 // does not answer whether the element's attributes are knowable; that is
@@ -572,9 +576,14 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	if TakesLayout(e) {
 		out = append(out, universalAttrs...)
 		out = append(out, g.Attached...)
-	} else {
+	} else if !e.Pseudo {
 		// Name is universal even where the layout surface is not: every
-		// element can be addressed.
+		// element can be addressed — every element that BUILDS one. A
+		// pseudo-element is consumed as data and never reaches named(),
+		// so offering the row here invites an edit the loader accepts
+		// and nothing honours. The loader refuses it for the same
+		// reason (see Context.vocabulary); these two must agree or the
+		// grid offers a row that fails to load. Found in review of #454.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)

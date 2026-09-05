@@ -590,13 +590,24 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 //
 // Read from ed.palette rather than a fresh Catalog() call, for the same
 // reason bodySpec does: the palette IS the document's vocabulary.
+// grantOf is the attached-property surface a parent contributes, asked
+// of the CATALOG rather than of the palette.
+//
+// Same distinction target() was just corrected for, one line away and
+// missed: the palette is the catalog minus what may not be PLACED on its
+// own, and this asks what may be SET. A <MenuItem>'s parent is a <Menu>,
+// which is Nested and therefore absent from the palette — so the scan
+// returned the empty grant and every attached row vanished from the
+// inspector with no error. Inert only because defMenu grants nothing;
+// the first nested container that grants an attached property would lose
+// them all, which is #418's defect returning through the fix for #429's.
+// Found in review of #454.
 func (ed *editor) grantOf(elem string) markup.Grant {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e.Grants
-		}
+	e, ok := ed.specs[elem]
+	if !ok {
+		return markup.Grant{}
 	}
-	return markup.Grant{}
+	return e.Grants
 }
 
 func (n *node) markup(indent string) string {

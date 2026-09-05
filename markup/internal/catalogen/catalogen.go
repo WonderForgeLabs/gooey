@@ -300,7 +300,16 @@ func checkPseudoPool(host string, declared map[string]bool, buildOf map[string]*
 	sort.Strings(names)
 	var out []Finding
 	for _, a := range names {
-		if declared[a] || universal[a] {
+		// NO `universal[a]` HERE, and its absence is the point. The
+		// over-declared direction dropped that skip when checkPseudo
+		// learned that a pseudo-element has no applyLayout and so no
+		// universal set; leaving it in the under-declared direction made
+		// the two halves of one check assert opposite things about the
+		// same eight names. A host reading ic.Attrs["Margin"] off a
+		// pseudo child would be waved through even though vocabulary()
+		// will never let markup set it — a dead read, which is exactly
+		// what this package exists to surface. Found in review of #454.
+		if declared[a] {
 			continue
 		}
 		out = append(out, Finding{Element: host, Attr: a, Note: fmt.Sprintf(
@@ -374,7 +383,7 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 			// Which element it belongs to is the same question as
 			// everywhere else here, answered the same way — by whether
 			// the element argument is the host's own.
-			if elem, ok := elementArg(v); ok {
+			if elem, ok := elementOf(v, funcs); ok {
 				for _, arg := range v.Args {
 					lit, isLit := arg.(*ast.BasicLit)
 					if !isLit || lit.Kind != token.STRING {
@@ -392,18 +401,46 @@ func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own
 				}
 			}
 			name := calleeName(v.Fun)
-			if name == "" || generic[name] || seen[name] || !passesElement(v) {
+			if name == "" || generic[name] || !passesAnElement(v, funcs) {
 				return true
 			}
 			fd := funcs[name]
 			if fd == nil || fd.Body == nil {
 				return true
 			}
-			seen[name] = true
 			// The callee's OWN element parameter, not the caller's: a
 			// helper is free to name it differently, and inheriting the
 			// caller's name would file its self-reads as child reads.
-			scanChildAttrs(fd.Body, funcs, elementParam(fd.Type), own, child, seen)
+			inner := elementParam(fd.Type)
+			// UNLESS THE HELPER WAS HANDED A CHILD, which is the whole
+			// reason the receiver split exists and the case that gets it
+			// backwards. menuItemIcon(ic, ctx, &it) names its parameter
+			// `ic` too, so the line above would call ic.Attrs["Icon"] a
+			// read of the HOST's own attribute — filing a child read in
+			// the one set that cannot see it, and reporting <MenuItem>
+			// as over-declaring the attribute the code plainly reads.
+			//
+			// "" matches no identifier, so every read inside the helper
+			// lands on the child side, which is what being handed a
+			// child element means.
+			if elem, ok := elementOf(v, funcs); ok && elem != self {
+				inner = ""
+			}
+			// KEYED ON THE FUNCTION AND THE ROLE, not the function alone.
+			// One builder may call the same helper twice — once with its
+			// own element and once with a child — and those two calls
+			// scan to different sets. A name-only key recorded whichever
+			// came first and dropped the other's reads entirely, which is
+			// a read going invisible: a false over-declaration, the exact
+			// class this walk exists to prevent. The key space is still
+			// finite (functions x their element parameter names plus ""),
+			// so termination is unchanged.
+			key := name + "\x00" + inner
+			if seen[key] {
+				return true
+			}
+			seen[key] = true
+			scanChildAttrs(fd.Body, funcs, inner, own, child, seen)
 		}
 		return true
 	})
@@ -649,6 +686,102 @@ func passesElement(c *ast.CallExpr) bool {
 		}
 	}
 	return false
+}
+
+// passesAnElement is passesElement widened to any element, and IT IS
+// ONLY SAFE WHERE THE RECEIVER IS SPLIT — scanChildAttrs, never scan.
+//
+// scan collects one undifferentiated read set, so widening it there
+// files a CHILD's attribute as the host's own read and reports the host
+// as under-declaring it: <MenuBar> reads "Checked", <Tabs> reads
+// "Header", <Companion> reads "Value". All three appeared the moment
+// this was applied to both, and TestAHostsOwnReadIsNotAChildsAttribute
+// said so about the fixture in the same run. Inside scanChildAttrs the
+// split answers the question the widening opens, which is why the same
+// change is correct in one and wrong in the other.
+func passesAnElement(c *ast.CallExpr, funcs map[string]*ast.FuncDecl) bool {
+	if _, ok := elementOf(c, funcs); ok {
+		return true
+	}
+	// THE NAME "e" IS A CONVENTION, NOT THE QUESTION, and taking it for
+	// the question is a hole this function shipped with: a helper handed
+	// a CHILD element — menuItemIcon(ic, ctx, &it) — was never followed,
+	// so every attribute it read became a FALSE OVER-DECLARATION. That
+	// is the loud direction, a red test asserting the opposite of what
+	// the code does, and #400 tripped it on its first day.
+	//
+	// So ask the callee instead: a function declaring an Element
+	// parameter is being handed one, whatever the caller named its
+	// variable. The "e" arm stays as well as rather than instead —
+	// funcs holds only THIS package's decls, so a helper across a
+	// package boundary has no signature here to ask, and dropping the
+	// convention would reintroduce the same false positive by another
+	// route. The union is the loose direction, which is the one this
+	// file argues for at elementArg: a wrong guess produces a finding
+	// somebody reads, a missed read produces a finding that is wrong.
+	return false
+}
+
+// elementOf is which element a call is asking about, resolved from the
+// CALLEE'S SIGNATURE when it is available and from argument order only
+// when it is not.
+//
+// elementArg — the first bare identifier — is the wrong question and was
+// wrong the moment markup exported its own helper. attr.go documents the
+// public idiom as
+//
+//	value, err := markup.Attr[*prop.Property[int]](ctx, e, "Value")
+//
+// with ctx FIRST, so elementArg answers "ctx", which is nobody's element
+// and in particular is not the host's `e`. Every read inside such a
+// helper would then be filed as a CHILD read — the same false
+// over-declaration this file exists to prevent, arriving by the other
+// door, and reported against the host instead. Latent only because no
+// ElementDef.Build uses Attr yet; it is the idiom attr.go tells authors
+// to use.
+//
+// `nil`, `true` and `false` are also *ast.Ident in Go's AST, so the old
+// first-bare-ident scan happily accepted helper(nil) as "an element was
+// passed". Asking the signature removes that too.
+func elementOf(c *ast.CallExpr, funcs map[string]*ast.FuncDecl) (string, bool) {
+	if fd := funcs[calleeName(c.Fun)]; fd != nil {
+		i, ok := elementParamIndex(fd.Type)
+		if !ok {
+			return "", false
+		}
+		if i < len(c.Args) {
+			if id, isID := c.Args[i].(*ast.Ident); isID {
+				return id.Name, true
+			}
+		}
+		return "", false
+	}
+	// Not this package's function — no signature to ask. Fall back to
+	// the heuristic, which is loose in the direction elementArg argues
+	// for: a wrong guess produces a finding somebody reads, a missed
+	// read produces a finding that is wrong.
+	return elementArg(c)
+}
+
+// elementParamIndex is elementParam's position rather than its name.
+// Counts one per NAME, not one per field: `func f(a, b Element)` is two
+// parameters in one ast.Field.
+func elementParamIndex(ft *ast.FuncType) (int, bool) {
+	if ft == nil || ft.Params == nil {
+		return 0, false
+	}
+	i := 0
+	for _, f := range ft.Params.List {
+		n := len(f.Names)
+		if n == 0 {
+			n = 1
+		}
+		if id, ok := f.Type.(*ast.Ident); ok && id.Name == "Element" && len(f.Names) > 0 {
+			return i, true
+		}
+		i += n
+	}
+	return 0, false
 }
 
 // attrOf resolves an expression to the attribute it reads, seeing

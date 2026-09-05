@@ -3,6 +3,7 @@ package markup
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -59,6 +60,79 @@ func TestAnUnknownMenuAttributeIsALoadError(t *testing.T) {
 // it is not ceremony: a check that rejects everything would pass the
 // test above. Every attribute the two elements declare is exercised
 // here, so an over-tight vocabulary fails rather than looking correct.
+// TestAPseudoElementRefusesName is the one universal that was NOT
+// correctly withheld, and it is the same silent-drop class the declared
+// vocabulary exists to close.
+//
+// Name is hoisted ABOVE the TakesLayout gate in both vocabulary
+// (attrcheck.go) and AttrsFor (catalog.go), because addressability is
+// not a layout property. But buildMenuBar consumes its children as data
+// and never calls named(), so <MenuItem Name="Save"> loaded clean and
+// ctx.Named stayed empty forever — accepted, dropped, no error anywhere.
+//
+// The designer made that reachable AND put the row first (KindIdentity
+// sorts into CategoryDesign at rank 0), so the fix for #429 turned a
+// latent hole into an inviting one. Found in review of #454.
+func TestAPseudoElementRefusesName(t *testing.T) {
+	for _, tc := range []struct{ name, doc string }{
+		{"menu", `<Menu Title="_File" Name="Zonk"><MenuItem Text="Open" Command="{{.Op}}"/></Menu>`},
+		{"item", `<Menu Title="_File"><MenuItem Text="Open" Name="Zork" Command="{{.Op}}"/></Menu>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys := fstest.MapFS{"p.gooey": {Data: []byte(
+				`<Gooey><VStack><MenuBar Name="bar">` + tc.doc + `</MenuBar></VStack></Gooey>`)}}
+			ctx := &Context{Values: map[string]any{"Op": func() {}}}
+			_, err := Load(fsys, "p.gooey", ctx)
+			if err == nil {
+				t.Fatalf("Name was accepted on a pseudo-element; ctx.Named has %d entries and neither is it", len(ctx.Named))
+			}
+			if !strings.Contains(err.Error(), "Name") {
+				t.Errorf("the error does not name the attribute: %v", err)
+			}
+		})
+	}
+}
+
+// TestTheCatalogDoesNotOfferNameOnAPseudoElement is the other half, and
+// it is not redundant: the loader and the catalog are separate gates and
+// only one of them is what a property grid reads. A grid offering a row
+// the loader refuses is worse than either alone — it invites the edit
+// and then rejects the file.
+func TestTheCatalogDoesNotOfferNameOnAPseudoElement(t *testing.T) {
+	ctx := &Context{Values: map[string]any{}}
+	var checked int
+	for _, e := range ctx.Catalog() {
+		if !e.Pseudo {
+			continue
+		}
+		checked++
+		for _, a := range AttrsFor(e, "") {
+			if a.Kind == KindIdentity {
+				t.Errorf("the catalog offers %q on <%s>, which builds no component to address", a.Name, e.Name)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no pseudo-elements in the catalog: this test asserted nothing")
+	}
+	// The other direction, so the check cannot pass by the identity
+	// attribute having vanished for everyone.
+	var found bool
+	for _, e := range ctx.Catalog() {
+		if e.Pseudo || e.Name != "Button" {
+			continue
+		}
+		for _, a := range AttrsFor(e, "") {
+			if a.Kind == KindIdentity {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("<Button> is no longer offered an identity attribute either: Name was withheld from everything")
+	}
+}
+
 func TestTheMenuVocabularyStillLoadsWhatItDeclares(t *testing.T) {
 	src := `<Gooey><MenuBar>
 	  <Menu Title="_File">

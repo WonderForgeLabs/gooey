@@ -359,9 +359,11 @@ func (ed *editor) pairAgrees(k *node, comp gooey.Component) bool {
 	// could be, so whatever sits at its index belongs to something else
 	// — its parent's chrome, or a sibling's content.
 	//
-	// The SET, not ed.specOf. This runs once per document node on every
-	// rebuild, and specOf ranges over ed.docCtx.Catalog(), which rebuilds
-	// the whole catalog per call — see loadPalette.
+	// The SET, not ed.specOf. Both are map lookups now, so this is no
+	// longer about cost — it is about asking the narrower question: this
+	// wants one bit, and specOf returns a whole spec whose other fields
+	// have nothing to do with pairing. See loadPalette, which derives
+	// both from one Catalog() read.
 	if ed.pseudo[k.Elem] {
 		return false
 	}

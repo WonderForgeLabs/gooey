@@ -223,3 +223,125 @@ func childBuildFor(t *testing.T) *ast.FuncLit {
 	}
 	return nil
 }
+
+// TestAHelperHandedAChildReadsTheChildsAttributes is the third hole, and
+// unlike the first two it WAS reachable from the real vocabulary — #400
+// tripped it on its first day, when <MenuItem Icon> moved its two reads
+// into menuItemIcon(ic, ctx, &it) and the whole vocabulary check went
+// red against code that was correct.
+//
+// Two independent bugs, and each alone is enough to produce the false
+// over-declaration:
+//
+//   - passesElement gated the descent on an argument literally named
+//     "e", so a helper handed a child was never entered at all.
+//   - the descent then set `self` to the callee's own element parameter,
+//     which for such a helper IS the child — so its reads were filed as
+//     the HOST's own and never reached the child set.
+//
+// The fixture's childExtras names its parameter c, matching the caller's
+// variable, so the second bug survives fixing only the first.
+func TestAHelperHandedAChildReadsTheChildsAttributes(t *testing.T) {
+	for _, f := range findingsFor(t, "src") {
+		if strings.Contains(f.String(), "Deep") {
+			t.Errorf("an attribute read through a helper handed the CHILD was not seen as a read: %s", f)
+		}
+	}
+}
+
+// TestWideningTheGateStaysOutOfTheUndifferentiatedWalk is the other half
+// of that fix, and it is here because the obvious repair is wrong.
+//
+// scan — the walk for ordinary elements — collects ONE read set with no
+// receiver split, so widening its gate the same way files a child's
+// attribute as the host's own read. Applied to both walks at once it
+// produced three fresh under-declarations in the shipped vocabulary
+// (<MenuBar> reads "Checked", <Tabs> reads "Header", <Companion> reads
+// "Value") — every one of them a child's attribute attributed to its
+// host. The fixture says the same thing in miniature: Tick and Deep are
+// read off children, so <Host> must not be reported as reading either.
+func TestWideningTheGateStaysOutOfTheUndifferentiatedWalk(t *testing.T) {
+	for _, f := range findingsFor(t, "src") {
+		if f.Element == "Host" {
+			t.Errorf("a child's attribute was attributed to the host: %s", f)
+		}
+	}
+}
+
+// TestAHelperTakingCtxFirstStillReadsTheHostsElement is finding 3 of the
+// review of #400, and it is the same defect class this file already
+// guards arriving through the opposite door.
+//
+// elementArg answers "the first bare identifier argument", which is the
+// element for menuItemIcon(ic, ctx, &it) and NOT the element for the
+// idiom markup/attr.go documents to element authors:
+//
+//	value, err := markup.Attr[*prop.Property[int]](ctx, e, "Value")
+//
+// There it answers "ctx", which is not the host's `e`, so the walk
+// decides the helper was handed a child and files the HOST's own reads
+// against a child — reporting the host as over-declaring an attribute it
+// plainly reads. Latent in the shipped vocabulary only because no
+// ElementDef.Build calls Attr yet.
+//
+// The fixture's ctxFirst reads "Ctxed" off the host, and <Host> declares
+// it. Resolving the element positionally from the callee's signature is
+// what keeps that attributed correctly.
+func TestAHelperTakingCtxFirstStillReadsTheHostsElement(t *testing.T) {
+	for _, f := range findingsFor(t, "src") {
+		if strings.Contains(f.String(), "Ctxed") {
+			t.Errorf("a host attribute read through a ctx-first helper was misattributed: %s", f)
+		}
+	}
+}
+
+// TestOneHelperUsedInBothRolesIsScannedInBoth is finding 4.
+//
+// The descent's `seen` set keyed on the FUNCTION NAME, and it is checked
+// before the walk and set before it, so a builder calling one helper
+// twice — once with its own element, once with a child — recorded only
+// whichever call came first. The second call's reads never landed, which
+// is a read going invisible: a false over-declaration, the class this
+// whole file exists to catch.
+//
+// The fixture calls bothRoles on the host AND on each child, and that
+// helper reads "Roled" as a HARDCODED index rather than a string
+// argument — which is what makes this reachable at all. An attribute
+// named as a call argument is picked up by the literal branch whether or
+// not the descent runs, so a first attempt at this fixture could not see
+// the bug it was written for.
+func TestOneHelperUsedInBothRolesIsScannedInBoth(t *testing.T) {
+	for _, f := range findingsFor(t, "src") {
+		if strings.Contains(f.String(), "Roled") {
+			t.Errorf("one helper used in two roles lost a role's reads: %s", f)
+		}
+	}
+}
+
+// TestAUniversalReadOffAPseudoChildIsReported is finding 5 of the review
+// of #454, and it is an asymmetry rather than a missing check.
+//
+// checkPseudo dropped its `universal[a]` skip when it was established
+// that a pseudo-element has no applyLayout and therefore no universal
+// set. checkPseudoPool — the under-declared direction of the same check,
+// a hundred lines up — kept the skip, so the two halves asserted
+// opposite things about the same eight names.
+//
+// The consequence is a dead read waved through: a host reading
+// ic.Attrs["Margin"] off a pseudo child, which vocabulary() will never
+// let markup set, is exactly the kind of thing this package exists to
+// surface. The hostread fixture reads Margin off its child and nobody
+// declares it.
+func TestAUniversalReadOffAPseudoChildIsReported(t *testing.T) {
+	var named bool
+	got := findingsFor(t, "hostread")
+	for _, f := range got {
+		if strings.Contains(f.String(), "Margin") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("a universal attribute read off a pseudo child and declared by nobody was waved through: "+
+			"markup can never set it, so the read is dead. findings: %v", got)
+	}
+}

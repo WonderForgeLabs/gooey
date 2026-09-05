@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -70,7 +71,9 @@ func TestTheMenuVocabularyIsNotOfferedInThePalette(t *testing.T) {
 	// cannot be the second copy of the fact it is checking.
 	restricted := map[string]string{}
 	hosts := map[string]markup.ElementSpec{}
+	specs := map[string]markup.ElementSpec{}
 	for _, e := range ed.docCtx.Catalog() {
+		specs[e.Name] = e
 		if e.Children.Mode != markup.ModeRestricted {
 			continue
 		}
@@ -82,9 +85,46 @@ func TestTheMenuVocabularyIsNotOfferedInThePalette(t *testing.T) {
 	if len(restricted) == 0 {
 		t.Fatal("no element in the catalog restricts its children: the palette filter has nothing to exclude and this test proves nothing")
 	}
+	// THE RULE IS Nested, NOT "named in an Only list", and the
+	// difference is the whole of markNested's doc comment. "Named in an
+	// Only list" is the one-conjunct converse it spends two paragraphs
+	// rejecting, and markup/menuvocab_test.go's
+	// TestARestrictedContainerDoesNotHideARealElement builds a fixture
+	// specifically to forbid it — a host with Only: ["Button"] must
+	// leave <Button> on offer.
+	//
+	// Asserting the converse here made the two tests contradict each
+	// other about one derivation. It passed only because every Only name
+	// in the shipped catalog happens to be Pseudo or NonVisual, so
+	// adding that host would turn this red while blaming a palette
+	// filter that is right. Found in review of #454.
 	for name, parent := range restricted {
-		if offered[name] {
-			t.Errorf("the palette offers <%s>, which is legal only inside <%s>: adding it produces markup that will not load", name, parent)
+		spec, ok := specs[name]
+		if !ok {
+			// UNDECLARED, which is #429's symptom one element over and
+			// not something this test can assert about the palette: an
+			// element with no catalog entry has no Nested flag to
+			// compare against. <Companion> restricts to <Arg> and
+			// <Var>, and buildCompanion validates both by hand
+			// (companion.go:289, :322) — so nothing is silently
+			// dropped, but no property grid can show them either.
+			//
+			// Declaring them is exactly what ParsedBy is for and is
+			// deliberately NOT done here: it is a new public surface,
+			// beyond the findings this commit answers, and it belongs
+			// with the same tests and docs <Menu>/<MenuItem> got.
+			// Logged rather than skipped silently, so the next reader
+			// finds it.
+			t.Logf("gap: <%s> is named in <%s>'s Only list but is not a declared element — "+
+				"its properties are unreachable from any tool, the way <MenuItem>'s were", name, parent)
+			continue
+		}
+		if offered[name] == spec.Nested {
+			if spec.Nested {
+				t.Errorf("the palette offers <%s>, which is Nested — legal only inside <%s>: adding it produces markup that will not load", name, parent)
+			} else {
+				t.Errorf("the palette withholds <%s>, which <%s> restricts to but which is NOT Nested: an element placeable on its own has been hidden", name, parent)
+			}
 		}
 	}
 	// The other direction, so the filter cannot pass by emptying the
@@ -334,3 +374,75 @@ func TestAttrRowsDoesNotRebuildTheCatalog(t *testing.T) {
 	}
 	t.Logf("attrRows() allocates %.0f times", got)
 }
+
+// TestANestedParentsGrantStillReachesTheGrid is finding 3 of the review
+// of #454, and it is the palette-vs-catalog mistake that target() had
+// just been corrected for, one function away.
+//
+// grantOf scanned ed.palette, which is the catalog MINUS what may not be
+// placed on its own — so a Nested parent was simply absent and the scan
+// returned the empty Grant. Every attached row vanished from the
+// inspector with no error: #418's defect returning through the fix for
+// #429's.
+//
+// It is inert in the shipped catalog because defMenu grants nothing,
+// which is why this registers its own pair. A nested container that
+// grants an attached property is the whole case, and nothing in the
+// vocabulary is one yet.
+func TestANestedParentsGrantStillReachesTheGrid(t *testing.T) {
+	ed, _ := buildPage(t)
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	// THREE LEVELS, mirroring MenuBar -> Menu -> MenuItem, because
+	// markNested marks an element Nested only when it is NAMED in some
+	// other element's Only list. The granting container must be the
+	// nested one — that is the whole case — so it needs an owner above
+	// it that restricts to it.
+	ed.docCtx.Elements["GrantOwner"] = &markup.ElementDef{
+		Name: "GrantOwner", Icon: "list-unordered", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"GrantHost"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["GrantHost"] = &markup.ElementDef{
+		Name: "GrantHost", Icon: "list-unordered", ParsedBy: "GrantOwner", Known: true,
+		Grants:   markup.Grant{Attached: []markup.AttrSpec{{Name: "GrantHost.Slot", Kind: markup.KindInt, Binds: markup.BindsLiteral}}},
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"GrantKid"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["GrantKid"] = &markup.ElementDef{
+		Name: "GrantKid", Icon: "list-selection", ParsedBy: "GrantOwner", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.loadPalette()
+
+	// The premise: GrantHost really is Nested, so it really is absent
+	// from the palette. Without this the assertion below passes for a
+	// host the palette happened to contain.
+	spec, ok := ed.specOf("GrantHost")
+	if !ok {
+		t.Fatal("the registered host is not in the catalog: nothing below was tested")
+	}
+	if !spec.Nested {
+		t.Fatal("the registered host is not Nested, so it is in the palette and this test cannot see the bug")
+	}
+	for _, e := range ed.palette {
+		if e.Name == "GrantHost" {
+			t.Fatal("the palette offers the nested host: same")
+		}
+	}
+
+	if got := ed.grantOf("GrantHost"); len(got.Attached) != 1 {
+		t.Errorf("a nested parent's grant resolved to %d attached attributes, want 1: "+
+			"the inspector drops every attached row for a nested container", len(got.Attached))
+	}
+}
+
+var errNotStandalone = errors.New("markup: only valid inside its parent")

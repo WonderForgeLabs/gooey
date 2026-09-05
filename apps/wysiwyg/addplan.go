@@ -55,6 +55,7 @@ import (
 // example, which was true until markup.ElementSpec.Nested replaced the
 // hardcoded name. Deleting that hardcode is the point of the field, so a
 // comment still quoting it is the same staleness in prose.
+
 // A LOOKUP, not a Catalog() call. Context.Catalog is not a getter — it
 // re-derives every builtin spec with fresh Attrs copies, re-runs
 // markNested and sorts, and globs and parses every include file when a
