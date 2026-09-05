@@ -584,6 +584,20 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// and nothing honours. The loader refuses it for the same
 		// reason (see Context.vocabulary); these two must agree or the
 		// grid offers a row that fails to load. Found in review of #454.
+		//
+		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, and saying which
+		// pseudo-elements it covers matters more than the claim does.
+		// checkAttrs returns early on !spec.AttrsKnown (attrcheck.go),
+		// so for an OPAQUE pseudo-element this gate drops the row and
+		// the loader does not refuse it. <Tab> is the one such element
+		// today — Pseudo, and Known:false because its surface really is
+		// unknowable — so <Tab Name="Zonk"> still loads clean and is
+		// still dropped, buildTabs never calling named() either. That
+		// is the same silent-drop class this change closes for <Menu>
+		// and <MenuItem>, left open one element over; it is pre-existing
+		// and not fixed here. Stated in review of #454, because the
+		// sentence above read as universal and a reader checking <Tab>
+		// finds the two gates disagreeing.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
@@ -728,7 +742,7 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 // Found by TestDeclaredVocabularyElementsKeepTheirExactSet.
 func TakesLayout(e ElementSpec) bool { return e.HasLayout && !e.NonVisual }
 
-// BuiltinElements returns the generated table: the element vocabulary
+// BuiltinElements returns the DECLARED table: the element vocabulary
 // this build of gooey compiled in, with no reference to any app. Callers
 // that have a Context should use Context.Catalog instead, which is the
 // only answer that matches what a given app can actually build.

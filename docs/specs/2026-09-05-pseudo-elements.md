@@ -102,7 +102,18 @@ belong to* — and each was a way of answering it wrongly:
 `markup/internal/catalogen` had **no tests at all**, which is how all five
 holes got there: none is reachable from the real vocabulary, so none could be
 pinned against it. `testdata/src` and `testdata/hostread` are fixture packages
-(parsed with `go/ast`, never type-checked) that differ by exactly one line.
+(parsed with `go/ast`, never type-checked). They are near-twins, not one line
+apart: `diff -u` shows the `package` clause, a `{Name: "Style"}` declaration
+read off the HOST, and a `_ = c.Attrs["Margin"]` universal read off a pseudo
+child. Each exists to exercise a case the other does not.
+
+That they must stay in step is the thing to watch, because **neither is
+compiled** — `testdata/` is skipped by `go build` and `go vet`, so nothing
+reports a fixture rotting. They have already diverged in the dimension
+`go/ast` cannot see: `hostread` dropped two of `src`'s explanatory comment
+blocks while keeping the code they explain. Restored, and worth restoring
+again if it recurs — the comments are the only record of which case each
+line is for.
 
 **The check splits by what is decidable, and only one thing is actually lost.**
 One `Build` parses several pseudo-elements — `buildMenuBar` reads both

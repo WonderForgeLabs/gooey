@@ -86,8 +86,30 @@ func TestAPseudoElementRefusesName(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Name was accepted on a pseudo-element; ctx.Named has %d entries and neither is it", len(ctx.Named))
 			}
-			if !strings.Contains(err.Error(), "Name") {
-				t.Errorf("the error does not name the attribute: %v", err)
+			// THE ASSERTION IS ON THE TAIL, and the obvious one is
+			// unfireable. The format is
+			// `markup: <%s %s=%q>: no such attribute%s`, so the message
+			// ALWAYS echoes the offending attribute — for this input
+			// strings.Contains(err, "Name") is true whatever suggest()
+			// does, and it passed identically before and after the
+			// attrcheck fix. It was checking the message prefix, not the
+			// vocabulary.
+			//
+			// What has to hold is that nothing AFTER "no such attribute"
+			// mentions Name: not the near-miss suggestion, not the
+			// exhaustive listing. That is the half that regressed —
+			// suggest() ranges over allowed's KEYS and the key was
+			// present at value false — and it is what keeps the two
+			// halves, refusing it and not advertising it, from drifting
+			// apart again. Found in review of #454.
+			msg := err.Error()
+			_, tail, ok := strings.Cut(msg, "no such attribute")
+			if !ok {
+				t.Fatalf("the refusal is not the vocabulary one, so the tail below means nothing: %v", err)
+			}
+			if strings.Contains(tail, "Name") {
+				t.Errorf("the message advertises Name on the element that just refused it — "+
+					"a reader who follows it lands back on the same error:\n\t%s", msg)
 			}
 		})
 	}

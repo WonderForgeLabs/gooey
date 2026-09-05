@@ -106,7 +106,25 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map
 	// Pseudo is already the declared form of "there is nothing to
 	// address", which is exactly the question being asked. Found in
 	// review of #454.
-	allowed["Name"] = !spec.Pseudo
+	//
+	// THE WRITE IS GUARDED RATHER THAN COMPUTED, and the difference is
+	// not style. This map's contract is ABSENT-means-disallowed, because
+	// suggest() below ranges over its KEYS — both the near-miss scan and
+	// the exhaustive "this element takes …" listing — and neither reads
+	// the value. checkAttrs does read it, so `allowed["Name"] = false`
+	// still REFUSED correctly while the two messages went on advertising
+	// Name: <MenuItem Name="Zork"> answered "did you mean Name?", and the
+	// listing named Name as accepted on the element that had just started
+	// refusing it. Three failures from one line, and the loop that sends
+	// a reader from the listing back to the rejection is the one this
+	// file's header comment exists to forbid.
+	//
+	// Every other write in vocabulary() is a bare `= true`, so the
+	// contract held implicitly until this line asked a question whose
+	// answer could be false. Found in review of #454.
+	if !spec.Pseudo {
+		allowed["Name"] = true
+	}
 	for _, a := range spec.Attrs {
 		allowed[a.Name] = true
 	}

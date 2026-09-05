@@ -45,6 +45,9 @@ var defChild = &ElementDef{
 		{Name: "Text"},
 		{Name: "OwnRead"},
 		// Read only through the helper idiom below, never as an index.
+		// scan recognises that form; the child walk did not, and the
+		// consequence was a FALSE over-declaration — a red test
+		// asserting the opposite of what the code does.
 		{Name: "Tick"},
 		// Read inside a helper the host hands the CHILD to. The helper
 		// names its own parameter, so the receiver split would call
@@ -93,6 +96,10 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 		// The over-declared half stopped skipping them in 11e9b1e; this
 		// is the other half agreeing.
 		_ = c.Attrs["Margin"]
+		// The same as the Text read above, through a helper: the
+		// attribute name is a string ARGUMENT, and the element it
+		// belongs to is the first bare identifier — c here, e would make
+		// it the host's own.
 		_ = optDuration(c, "Tick")
 		childExtras(c)
 		bothRoles(c)

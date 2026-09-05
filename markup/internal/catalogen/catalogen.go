@@ -712,13 +712,24 @@ func passesAnElement(c *ast.CallExpr, funcs map[string]*ast.FuncDecl) bool {
 	//
 	// So ask the callee instead: a function declaring an Element
 	// parameter is being handed one, whatever the caller named its
-	// variable. The "e" arm stays as well as rather than instead —
-	// funcs holds only THIS package's decls, so a helper across a
-	// package boundary has no signature here to ask, and dropping the
-	// convention would reintroduce the same false positive by another
-	// route. The union is the loose direction, which is the one this
-	// file argues for at elementArg: a wrong guess produces a finding
-	// somebody reads, a missed read produces a finding that is wrong.
+	// variable.
+	//
+	// THE BARE-IDENTIFIER FALLBACK IS NOT A SECOND ARM HERE. There is
+	// no "e" branch below — this function returns elementOf's answer
+	// and nothing else. The fallback lives INSIDE elementOf and fires
+	// on one condition only: funcs[callee] == nil, i.e. the callee is
+	// not this package's, so there is no signature to ask. That keeps
+	// cross-package helpers followed without reintroducing the false
+	// positive.
+	//
+	// What it does NOT cover, and this comment claimed it did: a
+	// SAME-package helper that receives an element without declaring a
+	// parameter typed exactly Element — []Element, *Element, or a named
+	// alias. elementParamIndex says no, elementOf returns false, and the
+	// call stops being followed even when it is literally handed `e`.
+	// Nothing in markup has that shape today, so it is latent — but the
+	// prose is what a future reader trusts, and it promised a fallback
+	// that is not reachable from here. Corrected in review of #454.
 	return false
 }
 
