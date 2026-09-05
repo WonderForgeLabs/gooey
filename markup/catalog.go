@@ -39,10 +39,14 @@ func goTypeOf(c any) string {
 // screen or in any error to explain it. A palette for a UI builder is the
 // catalog's second customer, not its reason.
 //
-// The table below is GENERATED from markup.go's element switch by
-// ./internal/catalogen; see catalog_gen.go. Do not hand-edit it. The
-// generator is the drift test: a switch arm it cannot fully explain is a
-// build failure, not a silently incomplete entry.
+// The table below is DECLARED, one ElementDef literal per element, in
+// elements.go — beside the code that consumes it. It used to be
+// generated into a committed catalog_gen.go from markup.go's element
+// switch, and that file has not existed for some time; ./internal/catalogen
+// survives as the CROSS-CHECK rather than the source, comparing each
+// declaration against the attributes its Build actually reads. See that
+// package's doc for why the two directions of that comparison are not
+// symmetric — over-declaring is silent, and nothing but this catches it.
 
 // Origin is where an element came from — its PROVENANCE. It deliberately
 // does not answer whether the element's attributes are knowable; that is
@@ -294,6 +298,55 @@ type ElementSpec struct {
 	// OccupiesSpace treats as a failure rather than as a third state:
 	// an unseeded element is one a user can add and then not see.
 	Seed string
+	// Nested reports that this element is legal ONLY inside a parent
+	// that names it — <Tab> in <Tabs>, <Menu> in <MenuBar>, <MenuItem>
+	// in <Menu>. It is declared so a property grid and the loader know
+	// its vocabulary, and it must never be offered on its own: a palette
+	// that lists it invites markup that cannot load.
+	//
+	// DERIVED, not declared, and that is the point. The answer already
+	// exists in the vocabulary — Pseudo, and named by some other entry's
+	// Children.Only under ModeRestricted — so a field an author sets by
+	// hand would be a second copy of a fact the registry already
+	// carries, which is the drift ElementDef's own doc comment gives as
+	// the reason the behavioural axes are derived too. Read markNested
+	// for why it takes BOTH conjuncts; the Only list on its own is the
+	// converse of this claim, not this claim.
+	//
+	// It replaces a hardcoded `e.Name == "Tab"` in the wysiwyg palette.
+	// That check was correct and unmaintainable in the same breath: the
+	// second nested element was silently offered, and nothing anywhere
+	// went red. See markNested.
+	Nested bool
+	// Pseudo reports that this element builds NO COMPONENT OF ITS OWN:
+	// its parent's Build reads it as data and draws the result itself.
+	// <Tab>, <Menu> and <MenuItem> are the three today.
+	//
+	// It matters to anything holding a correspondence between document
+	// elements and built components, because for these there is no
+	// component to hold — and the failure is not an absence, it is a
+	// WRONG PAIRING. A <MenuBar> with one <Menu> hands back exactly one
+	// child (its dropdown surface), so a walk pairing children by index
+	// maps the <Menu> onto the popup and every question asked of that
+	// pairing afterwards is answered about the wrong thing. Counts agree
+	// perfectly; nothing looks wrong. The designer's mapNodes is the
+	// consumer, and it had that bug.
+	//
+	// DERIVED from a nil Proto AND a stated reason — Opaque, or a
+	// ParsedBy naming the reader. A nil Proto is what "no component"
+	// means in an ElementDef, since the behavioural axes are all read
+	// off Proto; the second conjunct is what stops this becoming true
+	// by accident.
+	//
+	// The conjunct is not belt-and-braces for the builtins, where
+	// TestDeclaredElementsCarryAProtoOrSayWhyNot already forces the
+	// reason. It is there for a HOST's def, which that test never sees:
+	// it ranges over the builtin registry, and nothing rejects a
+	// Context.Elements entry with a real Build and no Proto. Deriving
+	// from the nil alone would make such a def silently pseudo —
+	// dropped from every palette that filters Nested, and
+	// unselectable-through in the designer — with no error anywhere.
+	Pseudo bool
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.
 	NonVisual bool
@@ -523,9 +576,35 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	if TakesLayout(e) {
 		out = append(out, universalAttrs...)
 		out = append(out, g.Attached...)
-	} else {
+	} else if !e.Pseudo {
 		// Name is universal even where the layout surface is not: every
-		// element can be addressed.
+		// element can be addressed — every element that BUILDS one. A
+		// pseudo-element is consumed as data and never reaches named(),
+		// so offering the row here invites an edit the loader accepts
+		// and nothing honours. The loader refuses it for the same
+		// reason (see Context.vocabulary); these two must agree or the
+		// grid offers a row that fails to load. Found in review of #454.
+		//
+		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, and saying which
+		// pseudo-elements it covers matters more than the claim does.
+		// checkAttrs returns early on !spec.AttrsKnown (attrcheck.go),
+		// so for an OPAQUE pseudo-element this gate drops the row and
+		// the loader does not refuse it. <Tab> is the one such element
+		// today — Pseudo, and Known:false because its surface really is
+		// unknowable — so <Tab Name="Zonk"> still loads clean and is
+		// still dropped, buildTabs never calling named() either. That
+		// is the same silent-drop class this change closes for <Menu>
+		// and <MenuItem>, left open one element over. It is pre-existing
+		// and not fixed here, and it is TRACKED IN
+		// https://github.com/WonderForgeLabs/gooey/issues/461 rather than
+		// asserted in prose — CLAUDE.md's "A red suite is yours" rules
+		// out a known-defect claim that cannot expire, because a stale
+		// dismissal spends the attention that would have caught the bug
+		// (#207). If #461 is closed, this paragraph is wrong and the
+		// reader should trust the code over it. Stated in review of #454,
+		// because the
+		// sentence above read as universal and a reader checking <Tab>
+		// finds the two gates disagreeing.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
@@ -670,7 +749,7 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 // Found by TestDeclaredVocabularyElementsKeepTheirExactSet.
 func TakesLayout(e ElementSpec) bool { return e.HasLayout && !e.NonVisual }
 
-// BuiltinElements returns the generated table: the element vocabulary
+// BuiltinElements returns the DECLARED table: the element vocabulary
 // this build of gooey compiled in, with no reference to any app. Callers
 // that have a Context should use Context.Catalog instead, which is the
 // only answer that matches what a given app can actually build.
@@ -680,7 +759,67 @@ func BuiltinElements() []ElementSpec {
 	for _, d := range defs {
 		out = append(out, d.spec())
 	}
+	markNested(out)
 	return out
+}
+
+// markNested derives Nested, which is what makes "may this be placed on
+// its own?" an answer the vocabulary gives rather than one a palette
+// hardcodes.
+//
+// TWO CONJUNCTS, AND THE SECOND IS NOT REDUNDANT. An element is nested
+// when it is Pseudo *and* some other entry names it in Children.Only
+// under ModeRestricted.
+//
+// The Only list alone is the CONVERSE of what is wanted and they are not
+// equivalent. ModeRestricted says "this container accepts only these";
+// Nested says "this element is accepted only inside a container that
+// names it". A host declaring a toolbar with Only: ["Button"] — an
+// entirely reasonable container — would mark <Button> nested and
+// vanish it from every palette, silently, which is the same class of
+// failure this field exists to remove, inverted. Restricting the
+// container says nothing about where its child may otherwise go.
+//
+// Pseudo is what closes that: an element that builds no component of its
+// own cannot stand anywhere, because there is nothing for it to be. A
+// <Button> under a restricted toolbar keeps its Proto and stays on
+// offer; <Tab>, <Menu> and <MenuItem> have none and do not.
+//
+// Pseudo alone would nearly do, and the Only conjunct is kept because
+// the two claims are different: Pseudo is "builds nothing", Nested is
+// "has exactly one legal home". An element with no component and no
+// parent naming it is a declaration nothing can reach, which is a bug
+// to notice rather than a palette entry to hide.
+//
+// ASSIGNED, NOT OR-ED. This runs twice over overlapping data —
+// BuiltinElements marks, then Catalog re-runs over a list seeded from
+// it — so a conditional set would ACCUMULATE rather than derive: a
+// host shadowing <Tabs> with an unrestricted declaration leaves nothing
+// restricting to <Tab>, and <Tab> would still arrive already marked
+// from the builtin pass. Assigning unconditionally makes this
+// idempotent and makes the field's "DERIVED" claim literally true.
+//
+// A name is looked up rather than trusted: Only may name an element that
+// does not exist in this catalog — a host's restricted container
+// referring to something it did not register — and the loader reports
+// that at build time. Nothing here needs to.
+//
+// Run over the ASSEMBLED list rather than over the registry, so a host's
+// own declared container contributes to it on the same terms as a
+// builtin. That is the half a registry-only derivation would miss.
+func markNested(specs []ElementSpec) {
+	named := make(map[string]bool)
+	for _, e := range specs {
+		if e.Children.Mode != ModeRestricted {
+			continue
+		}
+		for _, name := range e.Children.Only {
+			named[name] = true
+		}
+	}
+	for i := range specs {
+		specs[i].Nested = specs[i].Pseudo && named[specs[i].Name]
+	}
 }
 
 // Catalog is the full element vocabulary available to THIS context: the
@@ -743,6 +882,9 @@ func (ctx *Context) Catalog() []ElementSpec {
 		})
 	}
 	out = append(out, ctx.includeElements(seen)...)
+	// After every source has contributed, so a host's restricted
+	// container marks its own pseudo-children too.
+	markNested(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }

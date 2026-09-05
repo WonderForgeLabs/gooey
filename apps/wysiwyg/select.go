@@ -208,6 +208,49 @@ func (ed *editor) selectParent() {
 	ed.setSelection(p)
 }
 
+// selectChild is alt+enter, the inverse of Escape, and it is THE ONLY
+// ROUTE to a node that builds no component of its own.
+//
+// Every other way into the tree goes through the pointer, and the
+// pointer cannot reach these. HitTest answers with a COMPONENT and
+// nodeChain maps that back to the node that owns it, so a node with no
+// component is not in any chain the pointer can produce — a <Menu>
+// inside a <MenuBar> is drawn by the bar itself, out of data, and there
+// is nothing under the cursor that belongs to it. mapNodes stops at the
+// bar for the same reason and says so.
+//
+// Which made the vocabulary work of #429 only half a fix: declaring
+// <MenuItem>'s attributes gives the property grid something to show, and
+// without a descent there was still no gesture that would select one. So
+// the two halves ship together.
+//
+// FIRST CHILD, not the last selection remembered per node. A designer
+// that restores where you were is nicer to use and needs state that must
+// then be invalidated by every edit, retype, delete and undo — the
+// selectionScope comment above is the same argument, and it went the
+// same way. Escape climbs back out, so the round trip costs one keypress
+// either way whatever this picks.
+//
+// The keyboard's whole share of the drill, which is not a nicety: mouse
+// reports cannot be injected through a recording pty, so a gesture with
+// no key has no capture and no headless test. Why the gesture is
+// alt+enter rather than enter is in wysiwyg.gooey, beside the binding:
+// bare enter never reaches a root KeyBinding in this app, and the
+// design pane is not in the focus order to scope one to.
+func (ed *editor) selectChild() {
+	n := ed.sel
+	// Nothing selected is the same start ctrl+n uses — the user's root,
+	// not the surface — so the two descents agree about where the
+	// document begins.
+	if n == nil || ed.isSurface(n) {
+		n = ed.doc()
+	}
+	if len(n.Kids) == 0 {
+		return
+	}
+	ed.setSelection(n.Kids[0])
+}
+
 // componentPath is the components from root down to w inclusive, or false
 // when w is not below root. It walks the same gooey.Container seam the
 // framework's own hit test walks (component.go:85) — a type assertion,
@@ -282,10 +325,26 @@ func (ed *editor) mapNodes(n *node, comp gooey.Component) {
 //     nothing and the component belongs to the descendant.
 //
 // A node with no Name and no named descendants cannot be checked either
-// way, and then the count is all there is. That limit is real, and it is
-// why the descent stays conservative rather than clever: the cost of
-// stopping early is a press resolving to an ancestor, and the cost of
-// pairing wrongly is a press resolving to the wrong element entirely.
+// way, and the count alone is NOT ENOUGH — which was not a hypothetical
+// limit, it was a live wrong pairing. A <MenuBar> holding one <Menu>
+// hands back exactly one child, its dropdown surface, so the counts
+// agreed and the <Menu> node was mapped onto the popup. Two menus and
+// the counts disagree and the descent stops; one menu and it does not.
+// A correctness guard that depends on how many children the user
+// happened to write is not one.
+//
+// So the catalog answers it first now. markup.ElementSpec.Pseudo is the
+// declared form of "builds no component of its own" — the exact fact
+// this check was trying to infer from names — and an element carrying
+// it can never be paired with anything. That covers <Tab>, <Menu> and
+// <MenuItem> by declaration rather than by luck, and the Named checks
+// below stay for what they were always for: a node that DOES build
+// something, but not the component sitting at its index.
+//
+// The descent stays conservative rather than clever either way: the
+// cost of stopping early is a press resolving to an ancestor, and the
+// cost of pairing wrongly is a press resolving to the wrong element
+// entirely.
 func (ed *editor) pairsAgree(n *node, kids []gooey.Component) bool {
 	for i, k := range n.Kids {
 		if !ed.pairAgrees(k, kids[i]) {
@@ -296,6 +355,18 @@ func (ed *editor) pairsAgree(n *node, kids []gooey.Component) bool {
 }
 
 func (ed *editor) pairAgrees(k *node, comp gooey.Component) bool {
+	// A PSEUDO-ELEMENT PAIRS WITH NOTHING. There is no component it
+	// could be, so whatever sits at its index belongs to something else
+	// — its parent's chrome, or a sibling's content.
+	//
+	// The SET, not ed.specOf. Both are map lookups now, so this is no
+	// longer about cost — it is about asking the narrower question: this
+	// wants one bit, and specOf returns a whole spec whose other fields
+	// have nothing to do with pairing. See loadPalette, which derives
+	// both from one Catalog() read.
+	if ed.pseudo[k.Elem] {
+		return false
+	}
 	if name := k.Attrs["Name"]; name != "" {
 		if c := ed.docCtx.Named[name]; c != nil {
 			return c == comp

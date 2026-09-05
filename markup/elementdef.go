@@ -97,6 +97,32 @@ type ElementDef struct {
 	// built to make attribute mistakes visible.
 	Open bool
 
+	// ParsedBy names the element whose Build actually consumes this
+	// one's attributes, for a pseudo-element that builds no component of
+	// its own — <Menu> and <MenuItem> are read by buildMenuBar.
+	//
+	// It exists because the vocabulary had no way to say "declared here,
+	// read there", and the absence had a cost: the only shape available
+	// was <Tab>'s, which pairs a nil Proto with Known false and an
+	// Opaque reason. That is honest for <Tab>, whose attributes really
+	// are whatever <Tabs> cares to read — but it is wrong for a
+	// pseudo-element whose surface IS knowable, and paying it meant a
+	// <MenuItem> could not tell a property grid it has a Text. Which is
+	// what #429 reported, from the far end: no way to set a menu item's
+	// label except by hand in $EDITOR.
+	//
+	// IT IS CHECKED, NOT TRUSTED, and that is what makes it a field
+	// rather than a comment. catalogen resolves an element's Build
+	// through this name, so a wrong one — or a right one that stops
+	// reading an attribute — fails TestDeclaredVocabularyMatchesTheCode
+	// exactly as an ordinary element's own drift does. The declaration
+	// cannot quietly disagree with the code that reads it.
+	//
+	// The named element is the one that PARSES, not necessarily the
+	// parent: <MenuItem> sits inside <Menu>, but <Menu> only refuses a
+	// standalone use, and buildMenuBar walks both levels.
+	ParsedBy string
+
 	// Known reports whether Attrs is exhaustive. False for a
 	// pseudo-element whose attributes are parsed by its parent.
 	Known bool
@@ -293,7 +319,19 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 			// through it and edit the registry's own definition.
 			Attached: append([]AttrSpec(nil), d.Grants.Attached...),
 		},
-		Seed:      d.Seed,
+		Seed: d.Seed,
+		// A NIL Proto IS NOT ENOUGH ON ITS OWN, and the difference only
+		// shows for a HOST's def. TestDeclaredElementsCarryAProtoOrSay
+		// WhyNot forces a Proto-less element to say why — Opaque, or a
+		// ParsedBy naming its reader — but it ranges over the builtin
+		// registry and never sees anything in Context.Elements. A host
+		// def with a real Build and no Proto is legal and nothing
+		// rejects it, so deriving Pseudo from the nil alone would make
+		// it silently pseudo: dropped from every palette that filters
+		// Nested, and unselectable-through in the designer, with no
+		// error anywhere. Requiring the STATED reason means the field
+		// is only true where something enforces it.
+		Pseudo:    d.Proto == nil && (d.Opaque != "" || d.ParsedBy != ""),
 		NonVisual: nonVisual,
 		Focusable: focusable,
 		Attaches:  attaches,

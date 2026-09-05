@@ -80,6 +80,9 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	alt+enter        select the FIRST CHILD — the inverse, and the only
+//	                 way to reach a <Menu> or <MenuItem>, which build no
+//	                 component for the pointer to hit
 //	alt+k, alt+j     move the selection up / down among its siblings
 //	alt+h            PROMOTE — lift the selection out to its grandparent
 //	alt+l            DEMOTE — nest the selection into the sibling above it
@@ -587,13 +590,24 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 //
 // Read from ed.palette rather than a fresh Catalog() call, for the same
 // reason bodySpec does: the palette IS the document's vocabulary.
+// grantOf is the attached-property surface a parent contributes, asked
+// of the CATALOG rather than of the palette.
+//
+// Same distinction target() was just corrected for, one line away and
+// missed: the palette is the catalog minus what may not be PLACED on its
+// own, and this asks what may be SET. A <MenuItem>'s parent is a <Menu>,
+// which is Nested and therefore absent from the palette — so the scan
+// returned the empty grant and every attached row vanished from the
+// inspector with no error. Inert only because defMenu grants nothing;
+// the first nested container that grants an attached property would lose
+// them all, which is #418's defect returning through the fix for #429's.
+// Found in review of #454.
 func (ed *editor) grantOf(elem string) markup.Grant {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e.Grants
-		}
+	e, ok := ed.specs[elem]
+	if !ok {
+		return markup.Grant{}
 	}
-	return markup.Grant{}
+	return e.Grants
 }
 
 func (n *node) markup(indent string) string {
@@ -942,6 +956,16 @@ type editor struct {
 	// the same point — so the inverse cannot disagree with nodeOf
 	// without mapNodes being wrong about both.
 	compOf map[*node]gooey.Component
+	// pseudo is the set of element names that build no component of
+	// their own, derived with the palette from one Catalog() read. See
+	// loadPalette for why it is not asked per node, and pairAgrees for
+	// what it answers.
+	pseudo map[string]bool
+	// specs is the catalog BY NAME, from the same read. It is what
+	// specOf and target() answer from — see loadPalette. The catalog
+	// itself is a rebuild, not a lookup, and both of those are on paths
+	// that must not pay for one.
+	specs map[string]markup.ElementSpec
 
 	// drag is the move gesture in flight, and invalidateFn is what asks
 	// for the frame it needs — see drag.go. invalidateFn is injected for
@@ -1459,6 +1483,7 @@ func newEditor(fsys fs.FS) *editor {
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
 			"PrevEl":       gooey.Command(func() { ed.selectNext(-1) }),
 			"SelectParent": gooey.Command(func() { ed.selectParent() }),
+			"SelectChild":  gooey.Command(func() { ed.selectChild() }),
 			"MoveUp":       gooey.Command(func() { ed.moveSelected(-1) }),
 			"MoveDown":     gooey.Command(func() { ed.moveSelected(1) }),
 			"Promote":      gooey.Command(func() { ed.promoteSelected() }),
@@ -1646,9 +1671,33 @@ func (ed *editor) loadPalette() {
 	// The palette IS the catalog. Only elements that can appear in a
 	// container are offered; the non-visual ones are attachments and
 	// belong to a different gesture than "add a child".
+	//
+	// Nested replaces a hardcoded `e.Name == "Tab"`. The name was right
+	// when it was written and wrong by the time <Menu> and <MenuItem>
+	// were declared, in the way a name list always goes wrong: it did
+	// not fail, it just started offering a <Menu> that produces markup
+	// refusing to load. The catalog answers this now — see
+	// markup.ElementSpec.Nested — so the second one costs nothing here.
 	ed.palette = ed.palette[:0]
+	ed.pseudo = map[string]bool{}
+	ed.specs = map[string]markup.ElementSpec{}
+	// ONE Catalog() CALL, and that is load-bearing rather than tidy.
+	// Catalog() is not a getter: it re-derives every builtin spec with
+	// fresh Attrs copies, re-runs markNested and sorts — 73us and 52KB
+	// on this checkout — and it globs and parses every include file when
+	// a context has them. mapNodes asks "is this element pseudo?" once
+	// per document node on every rebuild, which is every drag frame,
+	// every alt+k and every property edit, so asking the catalog there
+	// would put that cost and that garbage on the inner loop. The set is
+	// derived HERE because this is where the vocabulary changes: the
+	// palette and the pseudo set answer two questions about one catalog
+	// read, and cannot come from different reads of it.
 	for _, e := range ed.docCtx.Catalog() {
-		if e.NonVisual || e.Name == "Tab" {
+		ed.specs[e.Name] = e
+		if e.Pseudo {
+			ed.pseudo[e.Name] = true
+		}
+		if e.NonVisual || e.Nested {
 			continue
 		}
 		ed.palette = append(ed.palette, e)
@@ -1920,11 +1969,32 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 	if p := ed.parentOf(n); p != nil {
 		parent = p.Elem
 	}
-	for _, e := range ed.palette {
-		if e.Name == n.Elem {
-			return e, parent, n
-		}
+	// THE CATALOG, NOT ed.palette, and the difference is the whole of
+	// #429's second half. The palette is the catalog minus what may not
+	// be PLACED on its own; this asks what may be SET on what is already
+	// there, and those stopped being the same question the moment a
+	// nested element could be selected. Resolving a <MenuItem> here in
+	// the palette finds nothing and falls through to the bare spec below
+	// — an element with no attributes — so the grid would have shown an
+	// empty list for a node whose vocabulary this same change went and
+	// declared. Which is the reported symptom, reproduced by the fix for
+	// it.
+	//
+	// THE MAP, THOUGH, NOT Catalog(), AND THIS ONE IS ON THE PAINT PATH.
+	// attrRows reaches here from ed.attrItems, a prop.NewComputed bound
+	// to <ItemsView Items="{{.AttrItems}}"> — so it evaluates INSIDE
+	// that ItemsView's paint node, on every repaint after an ed.rev
+	// bump. A Catalog() call there rebuilds every builtin spec while
+	// painting, and would do filesystem I/O and XML parsing there the
+	// moment a document context sets Includes, which a workspace editor
+	// is one feature away from. specOf reads the same map for the same
+	// reason.
+	if e, ok := ed.specOf(n.Elem); ok {
+		return e, parent, n
 	}
+	// Still reachable, and it is not dead code: an element the document
+	// names and the catalog does not. The node is returned so the grid
+	// says which element is selected rather than going blank.
 	return markup.ElementSpec{Name: n.Elem}, parent, n
 }
 
