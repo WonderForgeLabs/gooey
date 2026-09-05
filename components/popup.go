@@ -21,10 +21,12 @@ import (
 //     owner keeps everything domain-shaped: what the popup shows, where
 //     it goes, which gestures mean what.
 //   - The SURFACE is the visible box: a leaf child the owner returns
-//     from ChildComponents (LAST, because document order is z-order),
-//     whose pre-clear paints exactly the popup rectangle — the overlay
-//     contract. The primitive owns the surface so it can guarantee the
-//     subscription rule below; the owner supplies only the draw func.
+//     from ChildComponents, whose pre-clear paints exactly the popup
+//     rectangle — the overlay contract. It is a gooey.Overlay, so it is
+//     lifted out of document order into the overlay layer and paints
+//     above the page wherever the owner sits (#437). The primitive owns
+//     the surface so it can guarantee the subscription rule below; the
+//     owner supplies only the draw func.
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //
@@ -85,8 +87,15 @@ func NewPopup(owner gooey.Component, draw func(*gooey.Frame, gooey.Rect)) *Popup
 }
 
 // Surface is the visible leaf. The owner returns it from
-// ChildComponents — as the LAST child, so it paints above what it
-// covers — and places it with ArrangeSurface from its own Arrange.
+// ChildComponents and places it with ArrangeSurface from its own
+// Arrange. WHERE among the owner's children no longer decides paint:
+// the surface is a gooey.Overlay and is lifted into the overlay layer
+// (#437). Returning it last is still the convention, and it is not
+// pointless — hit-testing is NOT lifted (mouse.go walks each container's
+// children last-to-first), so position is what an overlay's INPUT order
+// still rides on. For a Popup that is belt-and-braces: an open popup
+// holds the pointer capture, so every press routes to the owner before
+// the walk runs at all.
 func (p *Popup) Surface() gooey.Component { return p.surf }
 
 // SurfaceBounds is where the surface currently sits — the rectangle the

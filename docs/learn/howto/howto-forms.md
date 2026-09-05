@@ -140,7 +140,7 @@ the screen edge:
   <ValidationMarker/>
 </TextBox>
 …
-<AdornmentLayer/>   <!-- last child of the root -->
+<AdornmentLayer/>   <!-- anywhere in the root; it ranks itself on top -->
 ```
 
 The marker adopts its host's `Error` handle (bind `Error="…"` on the

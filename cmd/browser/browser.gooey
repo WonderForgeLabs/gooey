@@ -46,10 +46,11 @@
            ticker's lifetime, like every other Startable in the tree. -->
       <Timer Interval="1500ms" Tick="{{.Rescan}}"/>
 
-      <!-- The source picker is the Grid's LAST painted child: document
-           order is z-order, so its popup paints above both panes, and
-           the Composer's restore pass repaints them when it closes. It
-           spans the whole grid but is Collapsed until `b` opens it. -->
+      <!-- The source picker's popup paints above both panes because its
+           surface is a gooey.Overlay, lifted out of document order —
+           being the Grid's last child is incidental. The Composer's
+           restore pass repaints the panes when it closes. It spans the
+           whole grid but is Collapsed until `b` opens it. -->
       <SourcePicker Grid.Row="0" Grid.RowSpan="4" Grid.ColSpan="2"/>
     </Grid>
   </Border>

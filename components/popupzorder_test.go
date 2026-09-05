@@ -12,11 +12,16 @@ import (
 
 // The z-order claim, from the OTHER side of the owner.
 //
-// Popup's doc comment states the rule as a fact of the design: the
-// surface is "a leaf child the owner returns from ChildComponents (LAST,
-// because document order is z-order)". toyPage is built to satisfy it —
-// it declares the owner last, with that reason in a comment — and every
-// other test in this package inherits the arrangement.
+// Popup's doc comment USED TO STATE the rule as a fact of the design:
+// the surface was "a leaf child the owner returns from ChildComponents
+// (LAST, because document order is z-order)". Do not go looking for that
+// sentence — #437 removed it, and the sweep in #443 removed the rest of
+// its family. toyPage was built to satisfy it, declaring the owner last
+// with that reason in a comment, and every other test in this package
+// inherited the arrangement. That is the shape this file exists to
+// escape, and it is quoted here because the quote IS the evidence: a
+// suite calibrated against a doc comment can only ever re-ask what the
+// comment already assumed.
 //
 // Which means the whole suite only ever asked whether the surface is
 // above its OWNER'S siblings. Being last among the owner's children buys
@@ -133,9 +138,11 @@ func TestADismissedPopupStillUncoversALaterSibling(t *testing.T) {
 	}
 }
 
-// deepOwner is the case "declare it last" could never reach even in
-// principle: the popup's owner is buried, and the component that has to
-// end up UNDER the dropdown is a sibling of the owner's grandparent.
+// deepOwner is the case the retired "declare it last" could never reach
+// even in principle — which is the sharpest argument that it was never
+// the rule, only a shape that happened to work on shallow pages. The
+// popup's owner is buried, and the component that has to end up UNDER
+// the dropdown is a sibling of the owner's grandparent.
 //
 // This is the shipped shell's shape, not a contrivance — apps/wysiwyg
 // puts its MenuBar inside a Panel inside a Grid, and the dock it drops

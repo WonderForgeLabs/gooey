@@ -518,8 +518,8 @@ func (a *probeAdornment) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 1
 func (a *probeAdornment) Render(*gooey.Frame)           {}
 
 // frozenValidationPage is validationPage with the field inside the
-// wrapper. The AdornmentLayer stays OUTSIDE it, which is where a page
-// actually puts one — last child of the root.
+// wrapper. The AdornmentLayer stays OUTSIDE it, which is what matters
+// here — outside the Frozen subtree, not last in the root.
 const frozenValidationPage = `<Gooey>
   <VStack>
     %s<TextBox Name="field" Text="{{.Name}}" Error="{{.NameErr}}" InvalidStyle="bad">

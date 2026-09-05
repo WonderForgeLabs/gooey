@@ -35,8 +35,11 @@ the *why* — this page is the *how*.
 
 The four lines of wiring:
 
-1. return `pop.Surface()` **last** from `ChildComponents` — document
-   order is z-order, so the last child paints on top;
+1. return `pop.Surface()` from `ChildComponents`. It is a
+   `gooey.Overlay`, so it is lifted out of document order and paints
+   above the page from wherever your owner sits — returning it last is
+   convention, not mechanism (hit-testing is *not* lifted, and an open
+   popup holds the capture anyway);
 2. forward `SetFocusManager` (the `gooey.FocusHost` call) to the popup;
 3. call `pop.ArrangeSurface(show, rect)` from your `Arrange`;
 4. end your key and mouse handlers with `pop.HandleKey` /
@@ -68,7 +71,7 @@ func newPicker(choices []string, sel *prop.Property[int]) *picker {
 	return p
 }
 
-// Wiring line 1: the surface is the LAST child.
+// Wiring line 1: hand the surface out as a child — it lifts on its own.
 func (p *picker) ChildComponents() []gooey.Component {
 	return []gooey.Component{p.pop.Surface()}
 }
@@ -258,12 +261,13 @@ into a component so you cannot get it wrong.
   ([#104](https://github.com/WonderForgeLabs/gooey/issues/104) tracks
   submenus, pointer-anchored context menus, and mnemonics as menus v2.)
 - A toast is *not* a popup — no anchor, no dismissal grammar, no focus
-  or capture. `ToastHost` shares only the z-hosting convention.
+  or capture. `ToastHost` shares only the overlay layer — and outranks
+  a popup within it, so a toast raised over an open menu is readable.
 
 ## See also
 
-- Concept: [overlays and z-order](../concepts/overlays.md) — why last
-  child means on top, and how dismissal restores the screen.
+- Concept: [overlays and z-order](../concepts/overlays.md) — the two
+  paint layers and their ranks, and how dismissal restores the screen.
 - [`components/menu.go`](../../../components/menu.go) — the full-size
   adopter: mnemonics, accelerator routing, and its own dropdown
   geometry over the same four seams.

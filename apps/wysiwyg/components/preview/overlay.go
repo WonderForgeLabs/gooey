@@ -24,6 +24,14 @@ package preview
 // and depth-first pre-order does the rest: Pane, the document subtree,
 // then this.
 //
+// THIS TYPE IS NOT A gooey.Overlay, despite the name, and must not
+// become one. That marker lifts a subtree out of document order into a
+// second paint layer — which would put these guides above the whole
+// PAGE rather than above the previewed document, and would break the
+// one thing the paragraph above depends on. Ordinary document order is
+// still the rule for everything that is not lifted, which is what makes
+// "Pane's second child" the correct and sufficient answer here.
+//
 // # Why it does not wipe what it sits on top of
 //
 // A component covering the previewed tree is exactly the thing that

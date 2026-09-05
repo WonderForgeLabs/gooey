@@ -87,7 +87,7 @@ type ChildSetter interface {
 // the document, it is on top of it, and where its owner happens to be
 // declared has nothing to do with what it must cover.
 //
-// THE OLD ANSWER WAS "DECLARE IT LAST", and it was not an answer. A
+// THE OLD ANSWER WAS "DECLARE IT LAST", and it was never an answer. A
 // popup surface is the last of its OWNER'S children, which buys being
 // above the owner's other children and nothing else: Frame's z-ordered
 // pass forces a repaint only of nodes LATER in c.nodes than a painter

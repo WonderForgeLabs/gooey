@@ -4,6 +4,16 @@
 
 **Date:** 2026-08-10
 
+> **The hosting shape below is superseded.** "A chrome-less,
+> background-less last child of the root" was how the layer got on top,
+> and it is not any more: `AdornmentLayer` is a `gooey.OverlayRanker` at
+> `OverlayRankAdornment`, so it is above the page — and above toasts and
+> open dropdowns — from anywhere. See
+> `2026-08-30-overlay-layer.md` and `2026-09-05-overlay-ranks.md`. The
+> `HitTestTransparent` argument here is *not* superseded and is now
+> load-bearing for a second reason: hit-testing was never lifted, so the
+> layer is still found exactly where it is declared.
+
 ## What was asked for
 
 Elan asked for tooltips, and tooltips force a concept: WPF's adorner

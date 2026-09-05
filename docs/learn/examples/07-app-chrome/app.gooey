@@ -39,12 +39,15 @@
     <KeyBinding Gesture="ctrl+s" Command="{{.Start}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
 
-    <!-- Overlays are declared LAST because document order is z-order:
-         a later sibling paints above what it covers. Grid.Row still
-         places the bar on the top row — element order and layout
-         position are independent, which is exactly what an overlay
-         needs. The AdornmentLayer comes after the ToastHost so tips
-         paint above even the toasts. -->
+    <!-- Overlays. All three are lifted out of document order into a
+         paint layer of their own, so they paint above the content from
+         wherever they are declared; they are at the end here because
+         that reads best, not because it decides anything. Grid.Row
+         still places the bar on the top row. Within the overlay layer a
+         RANK decides: the AdornmentLayer is at the top, then the
+         ToastHost, then the dropdown — so a tip paints above a toast
+         and a toast paints above an open menu, whatever order these
+         three are written in. -->
     <MenuBar Grid.Row="0" Style="accent">
       <Menu Title="_Job">
         <MenuItem Text="Re_start" Gesture="ctrl+s" Command="{{.Start}}"/>

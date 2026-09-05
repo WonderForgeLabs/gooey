@@ -11,9 +11,11 @@ for the hit-testing gap, which is why the pointer has to run both ways.
 
 ## The problem
 
-`Popup`'s doc comment stated the rule as a fact of the design: the surface is
-"a leaf child the owner returns from `ChildComponents` (**LAST**, because
-document order is z-order)". Every customer followed it, and the test page in
+`Popup`'s doc comment stated the rule as a fact of the design — the sentence
+below is quoted as history and no longer appears anywhere in the tree: the
+surface was "a leaf child the owner returns from `ChildComponents` (**LAST**,
+because document order is z-order)".
+Every customer followed it, and the test page in
 `components/popup_test.go` was built to satisfy it — `toyPage` declares the
 owner last, with that reason written in a comment beside it.
 

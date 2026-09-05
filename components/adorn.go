@@ -73,7 +73,8 @@ type PersistentAdornment interface {
 // validation marker or a tooltip is above the page, above any toast and
 // above any open dropdown. Correcting it here was missed on the first
 // pass, which left this file's godoc contradicting the docs/ edit in its
-// own commit; found in review of #456.
+// own commit; found in review of #456. Being above all of them is the
+// whole point of an adornment, and was not true while position decided.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
