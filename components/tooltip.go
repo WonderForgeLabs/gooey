@@ -28,7 +28,8 @@ const DefaultTooltipDelay = 600 * time.Millisecond
 //
 // The tip itself is shown in the page's AdornmentLayer, found by
 // walking the tree from the root at show time; a page without a layer
-// shows no tooltips (declare one as the root's last child). If the host
+// shows no tooltips (declare one anywhere spanning the page; the layer
+// ranks itself to the top, so its position is free). If the host
 // declares a KeyBinding, the tip renders the gesture as a dim hint in
 // the canonical spelling — the MenuItem hint pattern; Gesture overrides
 // it for hosts whose binding lives elsewhere (a page-level gesture).

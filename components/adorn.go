@@ -109,6 +109,17 @@ type PersistentAdornment interface {
 // gooey.PointerFollower for why that split is what bounds the wakeup
 // cost, and Composer.armPointer for what makes a motion schedule a frame
 // at all.
+// OverlaysPage and OverlayRank put the layer at the top of the overlay
+// stack — above toasts, which are above popups.
+//
+// TOP because an adornment describes something ALREADY ON SCREEN: a
+// tooltip names the control under the pointer, a validation marker
+// points at the field it is about. Covered by the thing it annotates it
+// says nothing, so of the three kinds it is the one with no reason ever
+// to be underneath. See gooey.OverlayRanker and #439.
+func (l *AdornmentLayer) OverlaysPage()    {}
+func (l *AdornmentLayer) OverlayRank() int { return gooey.OverlayRankAdornment }
+
 type AdornmentLayer struct {
 	gooey.Base
 	adorns    []Adornment
