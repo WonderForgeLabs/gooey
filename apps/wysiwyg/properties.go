@@ -208,8 +208,16 @@ func newValueEditor(ed *editor, list *components.ItemsView, text *components.Tex
 	// The list has to be underneath everything, and it is — it is not an
 	// overlay, and every overlay is lifted above it whatever the order
 	// here. The popup surface being last of the three editors is
-	// arbitrary: the three are never open at once, and both the color
-	// picker and the surface would lift anyway.
+	// arbitrary: the three are never open at once, and the surface lifts
+	// anyway.
+	//
+	// ONLY THE SURFACE LIFTS. components.ColorPicker is a plain leaf —
+	// Base, FocusState, HoverState, no ChildComponents, no
+	// OverlaysPage — so its position among p.kids IS ordinary document
+	// order and does decide what it paints over relative to list and
+	// text. An earlier draft of this comment claimed the picker lifts
+	// too, which is the same class of false z-order claim #443 exists
+	// to delete. Corrected in review of #458.
 	p.kids = []gooey.Component{list, text, p.cp, p.pop.Surface()}
 	ed.props = p
 	return p
