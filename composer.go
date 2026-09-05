@@ -330,21 +330,20 @@ func (c *Composer) orderPaint() {
 	c.paint = c.paint[:0]
 	c.lifted = c.lifted[:0]
 	for _, n := range c.nodes {
-		_, isOverlay := n.w.(Overlay)
-		inherited := n.parent != nil && n.parent.overlay
-		n.overlay = isOverlay || inherited
-		switch {
-		case inherited:
-			// ALREADY INSIDE A LIFTED SUBTREE, so the lifting root owns
-			// the rank even if this node declares its own. Checked
-			// BEFORE the marker for exactly that reason — a popup
-			// nested in a toast must not sort out of its parent's run.
-			n.rank = n.parent.rank
-		case isOverlay:
-			n.rank = overlayRank(n.w)
-		default:
-			n.rank = 0
+		// THE SHARED RULE. overlayOf is the one implementation of
+		// overlay membership and rank; gooey.Compose's collectPaint
+		// asks the same function. #438 was these two disagreeing,
+		// because the one-shot path had never implemented it at all —
+		// so the repair was to extract the rule rather than write a
+		// second copy of it. It is also where "the lifting ROOT owns
+		// the rank" lives: a nested Overlay that answered for itself
+		// could sort out of its parent's run.
+		var parentOverlay bool
+		var parentRank int
+		if n.parent != nil {
+			parentOverlay, parentRank = n.parent.overlay, n.parent.rank
 		}
+		n.overlay, n.rank = overlayOf(n.w, parentOverlay, parentRank)
 		if n.overlay {
 			c.lifted = append(c.lifted, n)
 		} else {
