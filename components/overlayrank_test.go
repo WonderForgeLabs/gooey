@@ -84,7 +84,7 @@ func TestAToastIsNotHiddenByAnOpenMenu(t *testing.T) {
 	// Prove the overlap before asserting who won it. A test whose two
 	// rects do not intersect passes no matter which one paints on top.
 	toast := gooey.Rect{X: w - 7, Y: 2, W: 7, H: 1}
-	if !overlaps(drop, toast) {
+	if !rectsOverlap(drop, toast) {
 		t.Fatalf("the dropdown %v and the third toast %v do not overlap: this fixture cannot see the bug", drop, toast)
 	}
 	if got := render.RowText(f.Cells, toast.Y); !strings.Contains(got, "THREE") {
@@ -93,9 +93,6 @@ func TestAToastIsNotHiddenByAnOpenMenu(t *testing.T) {
 	}
 }
 
-func overlaps(a, b gooey.Rect) bool {
-	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
-}
 
 // TestAnAdornmentIsAboveAToast is the other rank boundary, and it is not
 // covered by the test above: with only two ranks in play a single
