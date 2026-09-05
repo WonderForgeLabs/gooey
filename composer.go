@@ -2,6 +2,7 @@ package gooey
 
 import (
 	"io"
+	"sort"
 
 	"github.com/WonderForgeLabs/gooey/graphics"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -137,6 +138,15 @@ type paintNode struct {
 	// leave its children behind in the ordinary layer, painting under the
 	// very surface they belong to.
 	overlay bool
+
+	// rank orders this node WITHIN the overlay layer, and it belongs to
+	// the subtree's lifting ROOT rather than to each node: a nested
+	// Overlay inside an already-lifted subtree keeps the outer rank.
+	// That is not a detail — ranks that varied inside one subtree would
+	// let the sort below separate a container from its children, and a
+	// container that pre-clears would then paint over the very nodes it
+	// lifted. Meaningless outside the overlay layer, where it is 0.
+	rank int
 
 	// visObs exists only for a component whose Layout binds Visibility:
 	// a computed whose evaluation reads the bound source (recording the
@@ -311,13 +321,31 @@ func (c *Composer) orderPaint() {
 	c.lifted = c.lifted[:0]
 	for _, n := range c.nodes {
 		_, isOverlay := n.w.(Overlay)
-		n.overlay = isOverlay || (n.parent != nil && n.parent.overlay)
+		inherited := n.parent != nil && n.parent.overlay
+		n.overlay = isOverlay || inherited
+		switch {
+		case inherited:
+			// ALREADY INSIDE A LIFTED SUBTREE, so the lifting root owns
+			// the rank even if this node declares its own. Checked
+			// BEFORE the marker for exactly that reason — a popup
+			// nested in a toast must not sort out of its parent's run.
+			n.rank = n.parent.rank
+		case isOverlay:
+			n.rank = overlayRank(n.w)
+		default:
+			n.rank = 0
+		}
 		if n.overlay {
 			c.lifted = append(c.lifted, n)
 		} else {
 			c.paint = append(c.paint, n)
 		}
 	}
+	// STABLE, which is what leaves equal ranks in document order — the
+	// limit #437 documented and this does not lift. A subtree is
+	// contiguous in document order and shares one rank, so no sort can
+	// split one.
+	sort.SliceStable(c.lifted, func(i, j int) bool { return c.lifted[i].rank < c.lifted[j].rank })
 	c.paint = append(c.paint, c.lifted...)
 }
 
