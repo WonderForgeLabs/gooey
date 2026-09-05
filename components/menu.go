@@ -116,6 +116,16 @@ const (
 // the terminal. Neither is a property of the menu.
 func (m Menu) iconLead() int {
 	for _, it := range m.Items {
+		// SEPARATORS DO NOT COUNT, because drawDropdown continues past
+		// one before it ever reaches iconGutter. Counting them let a
+		// MenuItem{Separator: true, Icon: img} widen every row by three
+		// columns that nothing draws in — measured one way, painted
+		// another. Markup refuses that item now, but the struct is
+		// public and this file's contract is the Go one. Found in
+		// review of #455.
+		if it.Separator {
+			continue
+		}
 		if it.Icon != nil || it.IconRune != 0 {
 			return iconWidth
 		}
@@ -170,11 +180,24 @@ func iconGutter(it MenuItem, pixel bool, w int) string {
 	if it.IconRune == 0 {
 		return spaces(w)
 	}
-	// PADDED IN COLUMNS and exactly, so there is nothing left to clip:
-	// a rune is at most two cells and the gutter is three, so the pad is
-	// always at least one and the result is always exactly w columns.
-	// clipCols here would be a branch no input can take.
+	// PADDED IN COLUMNS and exactly, so there is nothing left to clip.
+	//
+	// "A rune is at most two cells and the gutter is three, so the pad is
+	// always at least one" is what this said, and the missing case is
+	// ZERO. A combining mark is one rune measuring no columns, and
+	// Buffer.SetString still spends a cell on it — so the pad came out a
+	// column too long, the row overran the width popupRect measured, and
+	// the dropdown lost its right border. "A branch no input can take"
+	// was the claim, and the input existed. Found in review of #455.
+	//
+	// The loader refuses one now, but this guard is not redundant: the
+	// field is settable from Go with no loader in the path, which is the
+	// API this file's comments address. A rune that occupies nothing is
+	// treated as no rune at all.
 	g := string(it.IconRune)
+	if render.StringWidth(g) < 1 {
+		return spaces(w)
+	}
 	return g + spaces(w-render.StringWidth(g))
 }
 

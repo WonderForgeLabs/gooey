@@ -240,3 +240,35 @@ func TestABareSeparatorStillLoads(t *testing.T) {
 		t.Fatalf("a bare separator is refused: %v", err)
 	}
 }
+
+// TestAZeroWidthIconRuneIsRefused is the load-time half of the gutter
+// overrun. One rune is not one column: a combining mark passes the count
+// check beside this one and measures zero, and Buffer.SetString still
+// spends a cell on it — so the gutter measures three and paints four.
+//
+// The assertion names the measurement, not merely that an error exists,
+// because the count check next door already refuses plenty and "err !=
+// nil" would pass against the bug. Found in review of #455.
+func TestAZeroWidthIconRuneIsRefused(t *testing.T) {
+	const page = `<Gooey><MenuBar><Menu Title="_File">` +
+		`<MenuItem Text="_Open" IconRune="&#x308;"/></Menu></MenuBar></Gooey>`
+	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+	_, err := Load(fsys, "p.gooey", &Context{})
+	if err == nil {
+		t.Fatal("a zero-width IconRune loaded clean; it would steal a cell the gutter did not reserve")
+	}
+	if !strings.Contains(err.Error(), "measures zero columns") {
+		t.Errorf("the refusal does not name the measurement, so it is a different mistake:\n\t%v", err)
+	}
+}
+
+// TestAOneCellIconRuneStillLoads keeps the refusal above from being
+// satisfiable by rejecting every IconRune.
+func TestAOneCellIconRuneStillLoads(t *testing.T) {
+	const page = `<Gooey><MenuBar><Menu Title="_File">` +
+		`<MenuItem Text="_Open" IconRune="○"/></Menu></MenuBar></Gooey>`
+	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+	if _, err := Load(fsys, "p.gooey", &Context{}); err != nil {
+		t.Fatalf("a one-cell IconRune is refused: %v", err)
+	}
+}

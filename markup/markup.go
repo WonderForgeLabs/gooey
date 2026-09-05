@@ -1278,6 +1278,26 @@ func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
 					"holds exactly one, and %d were given",
 				it.Text, raw, len(rs))
 		}
+		// AND IT HAS TO OCCUPY A CELL. One rune is not one column: a
+		// combining mark survives TrimSpace, passes the count above, and
+		// measures ZERO — while Buffer.SetString still consumes a cell
+		// for it. The gutter then measures three columns and paints
+		// four, so every label sits right of where popupRect sized for
+		// it, the row overruns its own width and loses its right border
+		// to the clip, and the mnemonic rule — placed at
+		// StringWidth(lead) — lands a cell left of the accelerator.
+		//
+		// Refusing at load rather than coping at paint, for the reason
+		// the count check beside it exists: a glyph that cannot be drawn
+		// is an author mistake, and this is the last place anyone can
+		// still be told about it. Found in review of #455.
+		if render.StringWidth(string(rs[0])) < 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune must be a glyph that occupies "+
+					"a cell — %q is one rune but measures zero columns, so it would consume a "+
+					"cell the gutter did not reserve and shift every label in the dropdown",
+				it.Text, raw, raw)
+		}
 		it.IconRune = rs[0]
 	}
 	return nil
