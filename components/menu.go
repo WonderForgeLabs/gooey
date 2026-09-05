@@ -410,6 +410,52 @@ func (m *MenuBar) Open(i int, restore gooey.Component) {
 // it elsewhere in the meantime.
 func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 
+// OpenIndex is which menu is showing, or -1 when none is.
+//
+// -1 RATHER THAN A SECOND CALL TO IsOpen, because the pair is what an
+// app would have to write anyway and a zero index is a real answer: a
+// bar that reported 0 for "closed" and 0 for "the first menu is open"
+// would need every caller to remember to ask twice. The clamp is the
+// same one curIdx applies, so this cannot report a menu that does not
+// exist.
+//
+// EXPOSED because everything an app needs to decorate a dropdown was
+// private and reachable only by reconstructing it. #400's reporter
+// recovered this index by walking the title widths and matching the
+// dropdown's left edge — duplicating titleSpan and splitMnemonic's
+// marker handling in application code, against arithmetic this package
+// is free to change. There is no new state here; there was no way to
+// read the state there already was.
+//
+// Read it from a Render and it is a paint dependency like any other
+// property, exactly as IsOpen is.
+func (m *MenuBar) OpenIndex() int {
+	if !m.IsOpen() {
+		return -1
+	}
+	return m.curIdx()
+}
+
+// DropdownBounds is where the open dropdown was arranged, or the zero
+// Rect when no menu is open.
+//
+// The zero Rect for closed rather than the rect the menu WOULD occupy:
+// a caller placing pixels into a returned rect must not be handed a
+// live-looking answer for a surface that is not on screen, and the zero
+// value is the one every Rect check already treats as nothing.
+//
+// This is the same arithmetic drawDropdown paints into — it is popupRect
+// — which is precisely why it is worth exporting and why its tests read
+// the rect back off the painted cells instead of comparing it to
+// popupRect. An accessor checked against the function behind it is
+// correct by construction and says nothing about where the dropdown went.
+func (m *MenuBar) DropdownBounds() gooey.Rect {
+	if !m.IsOpen() {
+		return gooey.Rect{}
+	}
+	return m.popupRect()
+}
+
 // firstItem is the first activatable index — separators are furniture.
 func (m *MenuBar) firstItem(menu int) int {
 	for i, it := range m.Menus[menu].Items {

@@ -64,6 +64,54 @@ is fine — the gutter's three cells are the *component's* arithmetic, and
 the loader's question is how many glyphs. Two glyphs are refused at load
 rather than clipped at paint, because half a glyph is not drawable.
 
+## The second gap: the dropdown had no geometry
+
+#400 names two gaps, and the icons are only the first. The second is that
+**nothing outside the bar could say which menu is open or where its
+dropdown landed.** `popup()`, `curP`, `popupRect` and `titleSpan` are all
+unexported; the only seam was that `ChildComponents()` happens to return
+the popup surface as its single element, which is an implementation
+ordering rather than an API.
+
+The reporter's workaround recovered the open index by walking the title
+widths and matching the dropdown's left edge — reimplementing `titleSpan`
+*and* `splitMnemonic`'s marker stripping in application code, against
+arithmetic this package is free to change without notice.
+
+`MenuBar.OpenIndex() int` and `MenuBar.DropdownBounds() gooey.Rect` close
+it. There is no new state: both read what the bar already keeps, and both
+are what an app would otherwise reconstruct.
+
+- **`OpenIndex` returns -1 when closed** rather than leaving the caller to
+  pair it with `IsOpen`. A zero index is a real answer, so a bar
+  reporting 0 for "closed" and 0 for "the first menu is open" would need
+  every caller to remember to ask twice.
+- **`DropdownBounds` returns the zero Rect when closed** rather than the
+  rect the menu *would* occupy. A caller placing pixels into a returned
+  rect must not be handed a live-looking answer for a surface that is not
+  on screen.
+
+Their tests read the rect back **off the painted cells**, not from
+`popupRect`. An accessor checked against the function behind it is
+correct by construction and says nothing about where the dropdown went —
+which is the only question an app placing an overlay is asking.
+
+That readback helper promptly sprang this file's own trap a second time:
+`strings.IndexAny` over `render.RowText` returns BYTE offsets, and every
+box-drawing glyph is three bytes. It got the left edge right by luck (the
+padding before it is ASCII) and the width wrong by twice the border
+count, reporting a 9-wide box for a 7-wide dropdown and blaming the
+accessor. It walks runes and accumulates `render.StringWidth` now. The
+rune-vs-column rule applies to the READER as much as to the painter, and
+neither time did anything but a deliberate wide fixture reveal it.
+
+The issue's third option — a `DecorateItem` per-item draw hook — is not
+taken. It is the most general of the three and has a genuinely nice
+property (the host paints inside the popup's own paint node, so its
+placements are owned by the surface), but with icons upstream the case
+that motivated it is served, and a hook with no caller is a shape guessed
+rather than derived.
+
 ## What was rejected
 
 - **One `Src` with a halfblock fallback.** The measurement above.
@@ -131,6 +179,9 @@ helper on a child element found all three on its first day.
 | …counted in runes, not cells | `TestAWideIconRuneIsAccepted` | validate with `StringWidth` |
 | The catalog agrees with the loader about binding | `TestTheIconAttributesAreDeclaredOnMenuItem` | declare `BindsEither` |
 | The designer's grid offers both | `TestASelectedMenuItemOffersItsAttributes` | — |
+| `OpenIndex` is -1 closed and tracks the open menu | `TestTheOpenIndexIsReadableFromOutside` | drop the `IsOpen` guard |
+| `DropdownBounds` is zero closed, and is where it painted | `TestTheDropdownBoundsAreWhereItPainted` | return `popupRect()` unguarded |
+| …and follows the open title | `TestTheReportedBoundsMoveWithTheOpenMenu` | always measure menu 0 |
 | A helper handed a child reads the CHILD's attributes | `TestAHelperHandedAChildReadsTheChildsAttributes` | revert either half of the catalogen fix |
 | …and the widening stays out of `scan` | `TestWideningTheGateStaysOutOfTheUndifferentiatedWalk` | widen `passesElement` too |
 
@@ -145,6 +196,8 @@ This file's own trap, sprung on itself.
 ## Still open
 
 - **Submenus and context menus** remain [#104](https://github.com/WonderForgeLabs/gooey/issues/104); icons will apply unchanged when they land.
+- **A `DecorateItem` hook**, if a second decoration case turns up that
+  the icon fields do not serve. See above for why it is not guessed now.
 - **A designer gesture to ADD a menu entry.** #429 gave `<Menu>` and
   `<MenuItem>` a declared surface and a selection route, and this gives
   them an icon, but there is still no way to create one from the palette
