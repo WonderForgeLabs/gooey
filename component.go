@@ -108,11 +108,18 @@ type ChildSetter interface {
 // closed is arranged to a zero rect and skipped by the bounds check, so
 // membership costs nothing while it is not showing.
 //
-// Overlays keep document order AMONG THEMSELVES. That is a real limit:
-// two overlapping popups paint in the order they were declared rather
-// than the order they were opened. Nothing in the tree needs the other
-// answer yet, and the machinery it would take — an open-order stack the
-// Composer maintains — is worth writing when something does.
+// Overlays keep document order WITHIN A RANK. Between ranks the rank
+// decides — see OverlayRanker, and #439 for why leaving the whole layer
+// to document order did not survive contact with a second kind of
+// overlay.
+//
+// Within one rank it is still a real limit: two overlapping popups paint
+// in the order they were declared rather than the order they were
+// opened. Nothing in the tree needs the other answer yet, and the
+// machinery it would take — an open-order stack the Composer maintains —
+// is worth writing when something does. A rank does not help there,
+// because the two popups are the same KIND; that is exactly the
+// distinction the rank draws and the one it does not.
 //
 // IT MOVES PAINT, NOT INPUT. FocusManager.HitTest walks document order
 // and knows nothing about this marker, so a later sibling still takes a
@@ -126,6 +133,104 @@ type ChildSetter interface {
 // clicks to whoever is underneath. Stated in review of #437; the same
 // gap is named in docs/specs/2026-08-30-overlay-layer.md.
 type Overlay interface{ OverlaysPage() }
+
+// OverlayRanker is an Overlay that says where in the overlay layer it
+// belongs. Higher is nearer the viewer; an Overlay that does not
+// implement this is rank 0, which is the floor.
+//
+// WHY A RANK AND NOT DECLARATION ORDER. #437 lifted overlays into one
+// layer and left order within it to the document, documenting that as a
+// limit. It stopped being tenable the moment more than one KIND of
+// overlay existed (#439): a dropdown, a toast and a tooltip are not
+// peers whose stacking is a matter of taste, and declaration order makes
+// the answer an ARBITRARY AUTHORING CHOICE. Whether a toast covers an
+// open menu would depend on which of the two an app happened to type
+// last — a decision nobody makes deliberately, with a silent wrong
+// answer one way round: the notification simply does not appear, on
+// exactly the frames somebody most wanted to read it.
+//
+// (An earlier draft of this paragraph argued from "the framework tells
+// you to declare the MenuBar last", which was already false — #437's
+// lift is global, so the bar's position stopped mattering for its own
+// dropdown too. Found in review of #456. The conclusion is unchanged and
+// does not need that premise: ordering by KIND beats ordering by typing
+// position whether or not anyone was ever given the rule.)
+//
+// The three ranks the framework itself uses are OverlayRankPopup,
+// OverlayRankToast and OverlayRankAdornment. They are spaced so an
+// application can sit between them.
+//
+// A RANK IS A STATIC PROPERTY OF THE TYPE. It is sampled by
+// Composer.orderPaint, which runs on composition build and structural
+// re-sync — NOT per frame. A component whose OverlayRank() returned a
+// varying value would restack on some unrelated later re-sync, or never,
+// with no error anywhere. That is the same reason Overlay is a marker
+// rather than a bool: a value that can change needs the
+// observer-and-re-sync machinery Frozen has, and a method returning an
+// int reads as dynamic in a way an empty marker never does. Return a
+// constant. Raised in review of #456.
+//
+// EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
+// they were declared rather than the order they were opened; the rank
+// orders KINDS, and #437's limit survives untouched within each one.
+// Composer.appendByRank is a bucket pass rather than a sort so that this
+// is structural rather than a claim the suite has to check.
+type OverlayRanker interface {
+	Overlay
+	OverlayRank() int
+}
+
+// The framework's own overlay ranks, from the page upward. Spaced by ten
+// so an app can put something between two of them without patching this
+// file — a rank is an int, not an enum, and nothing here is exhaustive.
+//
+// The ORDER is the user-facing claim, and it is the one the docs have
+// always made: a popup covers the page, a toast covers the popup, a
+// tooltip covers the toast. Read it as "a notification is never hidden
+// by a menu", which is the failure #439 reported.
+const (
+	// OverlayRankPopup is the floor, and deliberately 0 — every Overlay
+	// written before ranks existed lands here, which is where popup
+	// surfaces already were.
+	OverlayRankPopup = 0
+	// OverlayRankToast is above popups: a notification the user did not
+	// ask for and cannot re-request must not be hidden by a menu they
+	// opened, because nothing tells them it happened.
+	OverlayRankToast = 10
+	// OverlayRankAdornment is the top: a tooltip or a validation marker
+	// describes something already on screen, so it is only ever useful
+	// above whatever it is describing.
+	OverlayRankAdornment = 20
+)
+
+// overlayRank is c.orderPaint's question: the component's declared rank,
+// or the floor.
+func overlayRank(w Component) int {
+	if r, ok := w.(OverlayRanker); ok {
+		// CLAMPED, because three doc comments, a spec heading and a test
+		// message all called OverlayRankPopup "the floor" while
+		// appendByRank compared plain ints — so `OverlayRank() int {
+		// return -1 }` sorted below every popup with nothing red
+		// anywhere. An ordering claim living only in prose is the exact
+		// defect this change exists to remove, and it was in this
+		// change. Raised in review of #456.
+		//
+		// CLAMPING RATHER THAN DEFINING NEGATIVE RANKS, and the choice
+		// is deliberate. A negative rank is a plausible way to spell a
+		// modal scrim that sits under popups and over the page — but
+		// nothing in the tree wants one, and inventing the semantics
+		// from a hypothetical is how a rule acquires a case nobody can
+		// test. An app that needs a below-popup band can have it the
+		// day something does; until then the floor is the floor, and
+		// TestANegativeRankLandsOnTheFloor is what keeps this comment
+		// from becoming prose again.
+		if r := r.OverlayRank(); r > OverlayRankPopup {
+			return r
+		}
+		return OverlayRankPopup
+	}
+	return OverlayRankPopup
+}
 
 // HasBackground is implemented by containers that declare a background
 // fill. The fill itself is the framework's job — the Composer (and the

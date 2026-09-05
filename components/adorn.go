@@ -60,11 +60,20 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it as the LAST child of its root — document order is z-order, the same
-// hosting shape as ToastHost — and adorners are added and removed at
-// runtime through the Dynamic re-sync a list uses. The layer paints
-// nothing and declares no background, so a page that never shows an
-// adornment pays nothing for hosting the layer.
+// it ANYWHERE spanning the page — the same hosting shape as ToastHost —
+// and adorners are added and removed at runtime through the Dynamic
+// re-sync a list uses. The layer paints nothing and declares no
+// background, so a page that never shows an adornment pays nothing for
+// hosting the layer.
+//
+// "AS THE LAST CHILD OF ITS ROOT, BECAUSE DOCUMENT ORDER IS Z-ORDER" is
+// what this used to say, and both halves stopped being true: #437 lifted
+// overlays into a layer of their own, and #439 — this change — gave that
+// layer ranks. The layer is at gooey.OverlayRankAdornment, the top, so a
+// validation marker or a tooltip is above the page, above any toast and
+// above any open dropdown. Correcting it here was missed on the first
+// pass, which left this file's godoc contradicting the docs/ edit in its
+// own commit; found in review of #456.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -115,6 +124,23 @@ type AdornmentLayer struct {
 	structure func()
 	mgr       *gooey.FocusManager
 }
+
+// OverlaysPage and OverlayRank put the layer at the top of the overlay
+// layer — above toasts, which are above popups.
+//
+// TOP because an adornment describes something ALREADY ON SCREEN: a
+// tooltip names the control under the pointer, a validation marker
+// points at the field it is about. Covered by the thing it annotates it
+// says nothing, so of the three kinds it is the one with no reason ever
+// to be underneath. See gooey.OverlayRanker and #439.
+//
+// These live BELOW the struct on purpose. Inserted above it they sat
+// between the type's doc comment and the type, which left AdornmentLayer
+// undocumented and hung its sixty-line design block on OverlaysPage —
+// invisible to every reader who does not run `go doc`. Found in review
+// of #456.
+func (l *AdornmentLayer) OverlaysPage()    {}
+func (l *AdornmentLayer) OverlayRank() int { return gooey.OverlayRankAdornment }
 
 // SetStructureHook receives the composition's structural-change hook —
 // adding and removing adorners are child-set changes (gooey.Dynamic).
