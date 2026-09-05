@@ -264,6 +264,30 @@ func (m *MenuBar) sel() *prop.Property[int] {
 // is a paint dependency like any other property.
 func (m *MenuBar) IsOpen() bool { return m.popup().IsOpen() }
 
+// showing is IsOpen plus the two conditions that decide whether a
+// dropdown is actually ON SCREEN, and it exists because those conditions
+// were spelled out inline in Arrange and nowhere else.
+//
+// Menus is an EXPORTED FIELD, so an app rebuilding its menu list while a
+// dropdown is open is legal, and both new accessors indexed straight
+// into it. popupRect does m.Menus[m.curIdx()] and curIdx returns 0 for
+// an empty slice, so DropdownBounds panicked with index out of range —
+// a public accessor crashing on a state every other path in this file
+// already tolerated. drawDropdown guards with its own `if len(m.Menus)
+// == 0 { return }`, Arrange guarded with the expression now in here, and
+// the accessors guarded with neither.
+//
+// The ITEMS half matters just as much and is quieter: Arrange refuses to
+// show a surface for a menu with no items, so DropdownBounds asking only
+// IsOpen handed back a live-looking rect for a dropdown that was never
+// arranged — exactly what its own doc comment says must not happen.
+//
+// Both accessors ask THIS, so they cannot disagree with each other or
+// with what was arranged. Found in review of #400.
+func (m *MenuBar) showing() bool {
+	return m.popup().IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
+}
+
 func (m *MenuBar) curIdx() int {
 	if len(m.Menus) == 0 {
 		return 0
@@ -310,6 +334,10 @@ func (m *MenuBar) popupRect() gooey.Rect {
 	tx, _ := m.titleSpan(i)
 	w := 4 // border + padding
 	lead := menu.lead()
+	// HOISTED, like lead one line up and for the same reason: iconLead
+	// walks every item, so calling it per item makes popupRect O(n^2) —
+	// on the layout path, and now on the public accessor path too.
+	icons := menu.iconLead()
 	for _, it := range menu.Items {
 		text, _, _ := splitMnemonic(it.Text)
 		// border (2) + the lead column + one trailing cell. The lead is
@@ -317,7 +345,7 @@ func (m *MenuBar) popupRect() gooey.Rect {
 		// check items sizes itself three cells too narrow and clips every
 		// label it holds. The text is measured in COLUMNS, so a CJK or
 		// emoji label sizes to the cells it will actually occupy.
-		iw := render.StringWidth(text) + lead + menu.iconLead() + 3
+		iw := render.StringWidth(text) + lead + icons + 3
 		if it.Gesture != "" {
 			iw += render.StringWidth(it.Gesture) + 2
 		}
@@ -339,7 +367,7 @@ func (m *MenuBar) Measure(avail gooey.Size) gooey.Size {
 func (m *MenuBar) Arrange(r gooey.Rect) {
 	m.Base.Arrange(r)
 	p := m.popup()
-	show := p.IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
+	show := m.showing()
 	pr := gooey.Rect{X: r.X, Y: r.Y}
 	if show {
 		pr = m.popupRect()
@@ -427,10 +455,21 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // is free to change. There is no new state here; there was no way to
 // read the state there already was.
 //
-// Read it from a Render and it is a paint dependency like any other
-// property, exactly as IsOpen is.
+// -1 ALSO WHEN NOTHING IS ON SCREEN, not merely when the popup is
+// closed: a menu whose Items are empty is one Arrange declines to show,
+// and a bar whose Menus were replaced while open has no menu at that
+// index at all. Answering 0 for either would disagree with
+// DropdownBounds, which returns the zero Rect for both — two accessors
+// over one state must not tell different stories.
+//
+// PAINT DEPENDENCY, PARTLY. Read from a Render, the open flag and the
+// highlighted index are property reads and subscribe like any other. The
+// menu LIST is not — Menus is a plain field — so a component that reads
+// this while painting tracks opening, closing and switching, and does
+// not track an app replacing the list underneath it. Same caveat, more
+// sharply, on DropdownBounds below.
 func (m *MenuBar) OpenIndex() int {
-	if !m.IsOpen() {
+	if !m.showing() {
 		return -1
 	}
 	return m.curIdx()
@@ -449,8 +488,23 @@ func (m *MenuBar) OpenIndex() int {
 // the rect back off the painted cells instead of comparing it to
 // popupRect. An accessor checked against the function behind it is
 // correct by construction and says nothing about where the dropdown went.
+//
+// THE GUARD IS showing(), NOT IsOpen, and the difference is the whole
+// point of the sentence above: an open menu with no items is never
+// arranged, so asking IsOpen returned a plausible rect for a surface
+// that is not on screen — precisely the answer this comment forbids.
+//
+// WHAT SUBSCRIBES AND WHAT DOES NOT. The open flag and the highlighted
+// index are properties, so a Render reading this repaints when the menu
+// opens, closes or switches. The GEOMETRY is not: popupRect reads
+// m.Bounds(), and Base.Bounds is a plain field. A relayout that moves
+// the bar without touching either property leaves a decorator holding a
+// stale rect and nothing dirties it. A decorator must therefore depend
+// on whatever drives the bar's own layout as well — this handle alone is
+// not enough, and reading it as if it were is the "goes deaf to that
+// property" trap one level up.
 func (m *MenuBar) DropdownBounds() gooey.Rect {
-	if !m.IsOpen() {
+	if !m.showing() {
 		return gooey.Rect{}
 	}
 	return m.popupRect()

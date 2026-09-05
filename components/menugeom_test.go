@@ -54,7 +54,7 @@ func geomBar() *MenuBar {
 // helper first reported a 9-wide box for a 7-wide dropdown and blamed
 // the accessor. Same trap as CLAUDE.md's rune-vs-column rule, one level
 // up: the reader has to count cells too.
-func paintedDropdown(t *testing.T, f *gooey.Frame, w, h int) gooey.Rect {
+func paintedDropdown(t *testing.T, f *gooey.Frame, h int) gooey.Rect {
 	t.Helper()
 	const border = "┌┐└┘╭╮╰╯├┤│─"
 	got := gooey.Rect{X: -1, Y: -1}
@@ -135,7 +135,7 @@ func TestTheDropdownBoundsAreWhereItPainted(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	want := paintedDropdown(t, f, 40, 12)
+	want := paintedDropdown(t, f, 12)
 	if want.Y < 0 {
 		t.Fatal("no dropdown was painted: the fixture never opened and nothing below was tested")
 	}
@@ -180,4 +180,146 @@ func frameText(f *gooey.Frame, w, h int) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// TestTheAccessorsSurviveAMenuListReplacedWhileOpen is finding 1 of the
+// review of #400, and it was a PANIC rather than a wrong answer.
+//
+// Menus is an exported field, so replacing it while a dropdown is open
+// is legal, and every other path in menu.go tolerates it — Arrange
+// guards, drawDropdown guards, and the two new accessors guarded with
+// neither. popupRect indexes m.Menus[m.curIdx()] and curIdx returns 0
+// for an empty slice, so a public accessor crashed the process on a
+// state the component itself handles.
+func TestTheAccessorsSurviveAMenuListReplacedWhileOpen(t *testing.T) {
+	bar := geomBar()
+	c := gooey.NewComposer(bar, 40, 12)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(1, nil)
+	c.Frame()
+
+	bar.Menus = nil
+	// No recover(): a panic here fails the test by crashing it, which is
+	// the report this test exists to make.
+	if got := bar.OpenIndex(); got != -1 {
+		t.Errorf("OpenIndex = %d after the menu list was emptied; there is no menu at that index", got)
+	}
+	if got := bar.DropdownBounds(); got != (gooey.Rect{}) {
+		t.Errorf("DropdownBounds = %v after the menu list was emptied", got)
+	}
+	// And the frame after still composes — the accessors are not the
+	// only thing that must survive it.
+	c.Frame()
+}
+
+// TestAnOpenMenuWithNoItemsReportsNothing is finding 2, and it is the
+// quiet half: no crash, just a plausible rect for a surface that was
+// never arranged.
+//
+// Arrange refuses to show a dropdown whose menu has no items, so an
+// accessor asking only IsOpen described a box that is not on screen —
+// exactly what DropdownBounds' own doc comment says it must not do. An
+// app placing a sixel into that rect draws it over the page.
+func TestAnOpenMenuWithNoItemsReportsNothing(t *testing.T) {
+	bar := &MenuBar{Menus: []Menu{{Title: "Empty"}}}
+	c := gooey.NewComposer(bar, 40, 12)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(0, nil)
+	c.Frame()
+	f, _ := c.Frame()
+
+	// The premise: nothing was drawn below the bar row. Without this the
+	// assertions below could pass for a fixture that did open properly.
+	if got := paintedDropdown(t, f, 12); got.Y >= 0 {
+		t.Fatalf("a menu with no items painted a dropdown at %v: this fixture cannot see the bug", got)
+	}
+	if got := bar.DropdownBounds(); got != (gooey.Rect{}) {
+		t.Errorf("DropdownBounds = %v for a menu with no items, which Arrange declines to show", got)
+	}
+	if got := bar.OpenIndex(); got != -1 {
+		t.Errorf("OpenIndex = %d while DropdownBounds reports nothing: the two accessors disagree "+
+			"about one state", got)
+	}
+}
+
+// menuWatcher reads OpenIndex while PAINTING, which is the only way to
+// test the claim its doc makes.
+type menuWatcher struct {
+	gooey.Base
+	bar *MenuBar
+}
+
+func (w *menuWatcher) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 1, H: 1} }
+func (w *menuWatcher) Render(f *gooey.Frame) {
+	// The Get that makes this a dependency happens inside OpenIndex.
+	b := w.Bounds()
+	f.Cells.SetString(b.X, b.Y, string(rune('0'+w.bar.OpenIndex()+1)), render.Style{})
+}
+
+// TestReadingTheOpenIndexWhilePaintingIsADependency is finding 7.
+//
+// OpenIndex' doc says reading it from a Render makes it a paint
+// dependency "exactly as IsOpen is", and CLAUDE.md is explicit that a
+// DAMAGE COUNT is the only pin for a repaint claim — every other
+// assertion here passes just as well when the whole tree repainted. The
+// three tests above call the accessor from the test body, where nothing
+// subscribes to anything.
+func TestReadingTheOpenIndexWhilePaintingIsADependency(t *testing.T) {
+	bar := geomBar()
+	w := &menuWatcher{bar: bar}
+	root := &rankRow{kids: []gooey.Component{bar, w}}
+
+	c := gooey.NewComposer(root, 40, 12)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(0, nil)
+	c.Frame()
+	c.Frame()
+
+	// Switching menus must repaint the watcher.
+	bar.Open(1, nil)
+	_, painted := c.Frame()
+	if painted == 0 {
+		t.Fatal("switching menus repainted nothing at all")
+	}
+	var hit bool
+	for _, d := range c.Damage() {
+		if rectsOverlap(d, w.Bounds()) {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("switching menus did not damage the component that reads OpenIndex while painting: "+
+			"the read is not a subscription. damage %v, watcher %v", c.Damage(), w.Bounds())
+	}
+
+	// And a frame with no change repaints nothing — otherwise the
+	// assertion above is satisfied by a tree that repaints always.
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("an idle frame repainted %d components; the assertion above proves nothing", painted)
+	}
+}
+
+// rankRow arranges its children side by side so the watcher has bounds
+// of its own to be damaged.
+type rankRow struct {
+	gooey.Base
+	kids []gooey.Component
+}
+
+func (r *rankRow) ChildComponents() []gooey.Component { return r.kids }
+func (r *rankRow) Render(*gooey.Frame)                {}
+func (r *rankRow) Measure(a gooey.Size) gooey.Size    { return a }
+func (r *rankRow) Arrange(b gooey.Rect) {
+	r.Base.Arrange(b)
+	gooey.ArrangeChild(r.kids[0], b)
+	gooey.ArrangeChild(r.kids[1], gooey.Rect{X: b.X + b.W - 1, Y: b.Y + b.H - 1, W: 1, H: 1})
+}
+
+// rectsOverlap is the damage check above; gooey.Rect carries no
+// intersection predicate and Composer.Damage returns a slice.
+func rectsOverlap(a, b gooey.Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
 }
