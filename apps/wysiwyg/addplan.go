@@ -46,10 +46,15 @@ import (
 // specOf is the catalog entry for an element name.
 //
 // The CATALOG, not ed.palette. The palette is the catalog minus the
-// non-visual elements and minus <Tab>, and <Tab> is precisely the entry
-// this file has to be able to reason about — asking the palette would
-// make a tab's own child rule unknowable, which is how the hole above
-// stayed open.
+// non-visual elements and minus the NESTED ones, and a nested element is
+// precisely what this file has to be able to reason about — <Tab> is the
+// example, and asking the palette would make a tab's own child rule
+// unknowable, which is how the hole above stayed open.
+//
+// This sentence used to name <Tab> as the filter rather than as the
+// example, which was true until markup.ElementSpec.Nested replaced the
+// hardcoded name. Deleting that hardcode is the point of the field, so a
+// comment still quoting it is the same staleness in prose.
 func (ed *editor) specOf(elem string) (markup.ElementSpec, bool) {
 	for _, e := range ed.docCtx.Catalog() {
 		if e.Name == elem {

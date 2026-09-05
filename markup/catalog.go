@@ -328,13 +328,20 @@ type ElementSpec struct {
 	// perfectly; nothing looks wrong. The designer's mapNodes is the
 	// consumer, and it had that bug.
 	//
-	// DERIVED from a nil Proto, which is what "no component" means in
-	// an ElementDef: the behavioural axes are all read off Proto, and an
-	// element with none has nothing for them to read. That is already
-	// enforced from the other side — TestDeclaredElementsCarryAProtoOr
-	// SayWhyNot requires a Proto-less element to say why, either with
-	// Opaque or by naming the ParsedBy that consumes it — so this cannot
-	// become true by accident.
+	// DERIVED from a nil Proto AND a stated reason — Opaque, or a
+	// ParsedBy naming the reader. A nil Proto is what "no component"
+	// means in an ElementDef, since the behavioural axes are all read
+	// off Proto; the second conjunct is what stops this becoming true
+	// by accident.
+	//
+	// The conjunct is not belt-and-braces for the builtins, where
+	// TestDeclaredElementsCarryAProtoOrSayWhyNot already forces the
+	// reason. It is there for a HOST's def, which that test never sees:
+	// it ranges over the builtin registry, and nothing rejects a
+	// Context.Elements entry with a real Build and no Proto. Deriving
+	// from the nil alone would make such a def silently pseudo —
+	// dropped from every palette that filters Nested, and
+	// unselectable-through in the designer — with no error anywhere.
 	Pseudo bool
 	// NonVisual elements are attachments rather than laid-out children:
 	// a parent hangs them off itself and they occupy no space.

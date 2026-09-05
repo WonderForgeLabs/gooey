@@ -160,3 +160,58 @@ func TestMarkNestedIsIdempotent(t *testing.T) {
 			"field's DERIVED claim does not hold")
 	}
 }
+
+// TestAHostElementWithNoProtoIsNotPseudo is the case the builtin guard
+// cannot see, and the whole reason Pseudo takes two conjuncts.
+//
+// TestDeclaredElementsCarryAProtoOrSayWhyNot forces a Proto-less element
+// to say why — Opaque, or a ParsedBy naming its reader — but it ranges
+// over definedElements(), the BUILTIN registry, and never sees anything
+// a host puts in Context.Elements. A host def with a real Build and no
+// Proto is legal and nothing rejects it.
+//
+// Deriving Pseudo from the nil alone would make such a def silently
+// pseudo, and every consequence is silent: dropped from any palette
+// filtering Nested, and — in the wysiwyg designer — unselectable
+// through, because pairAgrees refuses to pair a pseudo-element with the
+// component it actually built. Nothing in this repo trips it today,
+// which is exactly why it needs a test rather than a comment.
+func TestAHostElementWithNoProtoIsNotPseudo(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{
+		// A perfectly ordinary host element: it builds a component, it
+		// just does not hand the registry a prototype to derive axes
+		// from. Nothing anywhere requires it to.
+		"HostThing": {
+			Name:     "HostThing",
+			Known:    true,
+			Children: ChildSpec{Mode: ModeMany},
+			Build: func(e Element, ctx *Context) (gooey.Component, error) {
+				return &components.Text{}, nil
+			},
+		},
+	}}
+	var got ElementSpec
+	var found bool
+	for _, e := range ctx.Catalog() {
+		if e.Name == "HostThing" {
+			got, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("the host element is not in the catalog: the fixture proves nothing")
+	}
+	if got.Pseudo {
+		t.Error("a host element with a real Build and no Proto was marked Pseudo: " +
+			"nothing requires a registered def to say why it has no Proto, so this " +
+			"is derivable from a nil nobody checks. It would drop out of every " +
+			"palette filtering Nested and stop the designer selecting through it, " +
+			"silently.")
+	}
+	// And the builtins that ARE pseudo still are, so a fix cannot be
+	// "stop deriving it".
+	for _, e := range ctx.Catalog() {
+		if e.Name == "MenuItem" && !e.Pseudo {
+			t.Error("<MenuItem> is no longer Pseudo: the derivation was narrowed into uselessness")
+		}
+	}
+}

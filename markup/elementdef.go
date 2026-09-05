@@ -319,8 +319,19 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 			// through it and edit the registry's own definition.
 			Attached: append([]AttrSpec(nil), d.Grants.Attached...),
 		},
-		Seed:      d.Seed,
-		Pseudo:    d.Proto == nil,
+		Seed: d.Seed,
+		// A NIL Proto IS NOT ENOUGH ON ITS OWN, and the difference only
+		// shows for a HOST's def. TestDeclaredElementsCarryAProtoOrSay
+		// WhyNot forces a Proto-less element to say why — Opaque, or a
+		// ParsedBy naming its reader — but it ranges over the builtin
+		// registry and never sees anything in Context.Elements. A host
+		// def with a real Build and no Proto is legal and nothing
+		// rejects it, so deriving Pseudo from the nil alone would make
+		// it silently pseudo: dropped from every palette that filters
+		// Nested, and unselectable-through in the designer, with no
+		// error anywhere. Requiring the STATED reason means the field
+		// is only true where something enforces it.
+		Pseudo:    d.Proto == nil && (d.Opaque != "" || d.ParsedBy != ""),
 		NonVisual: nonVisual,
 		Focusable: focusable,
 		Attaches:  attaches,

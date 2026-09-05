@@ -215,19 +215,28 @@ func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*a
 			"<%s> is ParsedBy <%s>, which declares no Build to check it against: the declaration is unverifiable",
 			d.name, d.parsedBy)}}
 	}
-	// scanAny, not scan. The reader walks its children, so these
-	// attributes land on element variables OTHER than `e` — c and ic in
-	// buildMenuBar — and attrOf insists on `e` precisely so an ordinary
-	// element cannot claim a neighbour's reads.
-	read := map[string]bool{}
-	scanAny(host, funcs, read, map[string]bool{})
+	// THE CHILD HALF ONLY. A read the host takes off its own element is
+	// the host's attribute, not this one's — see scanChildAttrs.
+	_, child := hostReads(d.parsedBy, buildOf, funcs)
 	var out []Finding
 	for a := range d.declared {
-		if !read[a] && !universal[a] {
+		if !child[a] && !universal[a] {
 			out = append(out, Finding{Element: d.name, Attr: a, OverDeclared: true})
 		}
 	}
 	return out
+}
+
+// hostReads is one walk of a host Build, split into what it reads off
+// its own element and what it reads off its children.
+func hostReads(host string, buildOf map[string]*ast.FuncLit, funcs map[string]*ast.FuncDecl) (own, child map[string]bool) {
+	own, child = map[string]bool{}, map[string]bool{}
+	fn := buildOf[host]
+	if fn == nil {
+		return own, child
+	}
+	scanChildAttrs(fn, funcs, elementParam(fn.Type), own, child, map[string]bool{})
+	return own, child
 }
 
 // checkPseudoPool is the UNDER-declared direction, recovered at the only
@@ -249,27 +258,28 @@ func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*a
 // attribute to whichever child element it belongs on, and this cannot
 // say which.
 func checkPseudoPool(host string, declared map[string]bool, buildOf map[string]*ast.FuncLit, funcs map[string]*ast.FuncDecl) []Finding {
-	fn := buildOf[host]
-	if fn == nil {
+	if buildOf[host] == nil {
 		return nil // already reported per-element by checkPseudo
 	}
-	// The host's OWN declared attributes are not the pool's business —
-	// it is an ordinary element and its own check covers them.
-	var own map[string]bool
-	hostRead := map[string]bool{}
-	scanAny(fn, funcs, hostRead, map[string]bool{})
-	ownRead := map[string]bool{}
-	scan(fn, funcs, ownRead, map[string]bool{}, 0)
-	own = ownRead
+	// ONE WALK, SPLIT — not two walks subtracted. The previous version
+	// took the child set with the loose walk and the own set with
+	// scan's strict one and subtracted them, which is not a subtraction
+	// at all: the two disagree about the deny-list, about
+	// passesElement and about depth, so anything reachable through the
+	// generic builder machinery landed in the first set, could not
+	// appear in the second, and was reported as an attribute nobody
+	// wrote. scanChildAttrs answers both from the same walk, so they
+	// are comparable by construction.
+	_, child := hostReads(host, buildOf, funcs)
 
-	names := make([]string, 0, len(hostRead))
-	for a := range hostRead {
+	names := make([]string, 0, len(child))
+	for a := range child {
 		names = append(names, a)
 	}
 	sort.Strings(names)
 	var out []Finding
 	for _, a := range names {
-		if declared[a] || own[a] || universal[a] {
+		if declared[a] || universal[a] {
 			continue
 		}
 		out = append(out, Finding{Element: host, Attr: a, Note: fmt.Sprintf(
@@ -280,17 +290,35 @@ func checkPseudoPool(host string, declared map[string]bool, buildOf map[string]*
 	return out
 }
 
-// scanAny collects every `<ident>.Attrs["Name"]` in a body, whatever the
-// element variable is called, following calls into package-level
-// functions as scan does — a Build that is one line handing e to a named
-// builder is the normal shape, and stopping at the closure would see
-// nothing at all.
+// scanChildAttrs splits a host Build's attribute reads in two: the ones
+// taken off its OWN element and the ones taken off some other element
+// variable. For a ParsedBy host those other variables ARE its
+// pseudo-children — c and ic in buildMenuBar — so the second set is the
+// pseudo-elements' surface and the first is the host's own.
 //
-// seen is per-walk, not per-call: a builder reached twice adds nothing
-// the first visit missed, and without it a mutually recursive pair
-// (buildChildren calling build calling buildChildren) does not
-// terminate.
-func scanAny(n ast.Node, funcs map[string]*ast.FuncDecl, read, seen map[string]bool) {
+// THE SPLIT IS THE WHOLE POINT, and collapsing it is a silent hole.
+// Before it existed, checkPseudo counted every read in the body, so a
+// pseudo-element could declare an attribute only the HOST reads off
+// itself and pass: <MenuItem> declaring Style — which buildMenuBar reads
+// off e, the bar — was green, and `<MenuItem Style="…">` loaded clean
+// and was dropped on the floor. That is the silent-drop defect this
+// package exists to catch, reached through the check meant to catch it.
+//
+// The host's own element is identified by NAME, taken from the
+// parameter declared `Element` in the body being walked, rather than
+// assumed to be `e`. attrOf hardcodes `e` and is right to — it is what
+// stops an ordinary element claiming a neighbour's reads — but a
+// hardcode here would silently mis-split the first host that names its
+// parameter anything else.
+//
+// generic and passesElement are applied for the same reason scan
+// applies them: without the deny-list this follows build/buildChildren/
+// checkAttrs into the general builder machinery and collects literals
+// that belong to no element, and checkPseudoPool would then report an
+// attribute nobody wrote. scan's depth cap is not needed — seen already
+// bounds the walk, and it bounds it per walk rather than per call so a
+// mutually recursive pair terminates.
+func scanChildAttrs(n ast.Node, funcs map[string]*ast.FuncDecl, self string, own, child, seen map[string]bool) {
 	ast.Inspect(n, func(nd ast.Node) bool {
 		switch v := nd.(type) {
 		case *ast.IndexExpr:
@@ -298,17 +326,26 @@ func scanAny(n ast.Node, funcs map[string]*ast.FuncDecl, read, seen map[string]b
 			if !isSel || sel.Sel.Name != "Attrs" {
 				return true
 			}
-			if _, isIdent := sel.X.(*ast.Ident); !isIdent {
+			recv, isIdent := sel.X.(*ast.Ident)
+			if !isIdent {
 				return true
 			}
-			if lit, isLit := v.Index.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-				if a, err := strconv.Unquote(lit.Value); err == nil {
-					read[a] = true
-				}
+			lit, isLit := v.Index.(*ast.BasicLit)
+			if !isLit || lit.Kind != token.STRING {
+				return true
+			}
+			a, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			if recv.Name == self {
+				own[a] = true
+			} else {
+				child[a] = true
 			}
 		case *ast.CallExpr:
 			name := calleeName(v.Fun)
-			if name == "" || seen[name] {
+			if name == "" || generic[name] || seen[name] || !passesElement(v) {
 				return true
 			}
 			fd := funcs[name]
@@ -316,10 +353,33 @@ func scanAny(n ast.Node, funcs map[string]*ast.FuncDecl, read, seen map[string]b
 				return true
 			}
 			seen[name] = true
-			scanAny(fd.Body, funcs, read, seen)
+			// The callee's OWN element parameter, not the caller's: a
+			// helper is free to name it differently, and inheriting the
+			// caller's name would file its self-reads as child reads.
+			scanChildAttrs(fd.Body, funcs, elementParam(fd.Type), own, child, seen)
 		}
 		return true
 	})
+}
+
+// elementParam is the name of the parameter declared `Element`, or ""
+// when there is none — in which case every read in that body is a child
+// read, which is the conservative direction: it can produce a finding,
+// never suppress one.
+func elementParam(ft *ast.FuncType) string {
+	if ft == nil || ft.Params == nil {
+		return ""
+	}
+	for _, f := range ft.Params.List {
+		id, ok := f.Type.(*ast.Ident)
+		if !ok || id.Name != "Element" {
+			continue
+		}
+		if len(f.Names) > 0 {
+			return f.Names[0].Name
+		}
+	}
+	return ""
 }
 
 // elementDef pulls Name, the declared attribute names, and the Build

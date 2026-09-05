@@ -49,13 +49,38 @@ own drift does.
 
 Two things had to change in the checker for that to work:
 
-- `scanAny` recognises `<ident>.Attrs["Name"]` for any element variable, where
-  `attrOf` insists the receiver be `e`. `buildMenuBar` reads its children off
-  `c` and `ic`, so the ordinary scan sees none of it. `attrOf`'s insistence is
-  deliberate and stays — it is what stops an ordinary element claiming a
+- `scanChildAttrs` walks the host's `Build` and **splits** its attribute reads
+  in two: the ones taken off the host's own element, and the ones taken off
+  some other element variable. For a `ParsedBy` host those other variables
+  *are* its pseudo-children — `c` and `ic` in `buildMenuBar` — so the second
+  set is the pseudo-elements' surface. `attrOf` insists the receiver be `e`
+  and stays that way: it is what stops an ordinary element claiming a
   neighbour's reads.
 - The driver is two passes. A `ParsedBy` element needs another element's
   `Build`, which may be declared in a file the walk has not reached.
+
+**The split is the whole point, and collapsing it is a silent hole.** A first
+draft counted every read in the body, so a pseudo-element could declare an
+attribute only the **host** reads off *itself* and pass: `<MenuItem>`
+declaring `Style` — which `buildMenuBar` reads off the bar — was green, while
+`<MenuItem Style="…">` loaded clean and was dropped on the floor. The host's
+own element is identified by the parameter declared `Element` in the body
+being walked rather than assumed to be `e`, because a hardcode would
+mis-split the first host that names its parameter anything else.
+
+`scanChildAttrs` also applies `scan`'s `generic` deny-list and
+`passesElement`. Without them it follows `build` / `buildChildren` /
+`checkAttrs` into the general builder machinery and collects literals
+belonging to no element — and because `checkPseudoPool` used to compute its
+two sets with *different* walks and subtract them, those literals were
+reported as attributes nobody wrote. One walk, two outputs, comparable by
+construction.
+
+`markup/internal/catalogen` had **no tests at all**, which is how both holes
+got there: neither is reachable from the real vocabulary, so neither could be
+pinned against it. `testdata/src` and `testdata/hostread` are fixture packages
+(parsed with `go/ast`, never type-checked) that differ by exactly the
+offending line.
 
 **The check splits by what is decidable, and only one thing is actually lost.**
 One `Build` parses several pseudo-elements — `buildMenuBar` reads both
@@ -155,11 +180,18 @@ the descent stops correctly; one menu and it does not. A correctness guard
 that depends on how many children the user happened to write is not one.
 
 `Pseudo` is the declared form of "builds no component of its own", derived
-from a nil `Proto` — which is what that means in an `ElementDef`, since every
-behavioural axis is read off `Proto`. An element carrying it can never be
-paired with anything. `TestDeclaredElementsCarryAProtoOrSayWhyNot` already
-requires a `Proto`-less element to say why, with `Opaque` or with `ParsedBy`,
-so this cannot become true by accident.
+from a nil `Proto` **and a stated reason** — `Opaque`, or a `ParsedBy` naming
+the reader. An element carrying it can never be paired with anything.
+
+The second conjunct is not belt-and-braces.
+`TestDeclaredElementsCarryAProtoOrSayWhyNot` forces a `Proto`-less element to
+say why, but it ranges over `definedElements()` — the *builtin* registry — and
+never sees anything a host puts in `Context.Elements`. A host def with a real
+`Build` and no `Proto` is legal and nothing rejects it, so deriving from the
+nil alone would make it silently pseudo: dropped from any palette filtering
+`Nested`, and unselectable-through in the designer, with no error anywhere.
+Nothing in this repo trips it, which is why
+`TestAHostElementWithNoProtoIsNotPseudo` constructs the case.
 
 ## The gesture: `alt+enter`, on the root
 
@@ -233,6 +265,9 @@ test go red.
 | `markNested` drops the `Pseudo` conjunct | `TestARestrictedContainerDoesNotHideARealElement` |
 | `markNested` sets instead of assigning | `TestMarkNestedIsIdempotent` |
 | `pairAgrees` asks the catalog per node | `TestARebuildDoesNotRebuildTheCatalogPerNode` |
+| the host/child read split collapses | `TestAHostsOwnReadIsNotAChildsAttribute` |
+| the child walk ignores the `generic` deny-list | `TestTheDenyListAppliesToTheChildWalk` |
+| `Pseudo` derived from a nil `Proto` alone | `TestAHostElementWithNoProtoIsNotPseudo` |
 
 The palette test asserts the **derivation** rather than three names: every
 element some other entry restricts itself to is absent, and every restricted
