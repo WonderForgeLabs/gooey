@@ -641,7 +641,12 @@ const errAllowPage = `<Gooey>
 
 func errAllowCtx(allow string) *Context {
 	return &Context{
-		Dispatcher: &gooey.Dispatcher{},
+		// NewDispatcher, not &Dispatcher{}. The zero value's wake channel
+		// is nil, so Post's select falls straight through to default and
+		// the wake path never runs — it is the one Dispatcher shape whose
+		// Post cannot wake an app loop, which makes it the wrong one to
+		// pin a posted publication with. Raised in review of #459.
+		Dispatcher: gooey.NewDispatcher(),
 		Values: map[string]any{
 			"Allow": prop.NewSource(allow),
 			"Err":   prop.NewSource(""),
@@ -672,6 +677,21 @@ func TestABoundAllowPublishesItsParseFailure(t *testing.T) {
 	}
 
 	ctx.Values["Allow"].(*prop.Property[string]).Set("Focus Clicks")
+	// THE INTERVAL, and it is the whole reason this attribute requires a
+	// Dispatcher. Between the Set that breaks the parse and the Drain
+	// that publishes it, the work must be QUEUED and the sink must still
+	// hold its old value. An inline Set — the mutation
+	// `sink.Set(errC.Get())` in place of `d.Post(...)` — leaves the whole
+	// package green without this, because every other assertion here
+	// Drains before it reads and cannot tell the two apart.
+	// Raised in review of #459.
+	if n := ctx.Dispatcher.Pending(); n != 1 {
+		t.Errorf("the publication is not queued (Pending()=%d, want 1): it ran inline, "+
+			"inside the invalidation, which is the confinement violation the Dispatcher exists to avoid", n)
+	}
+	if got := errProp.Get(); got != "" {
+		t.Errorf("the sink already holds %q before Drain: the Set was not posted", got)
+	}
 	ctx.Dispatcher.Drain()
 	c.Frame()
 	if boxesIn(c.Focus().Order()) != 1 {
@@ -764,10 +784,22 @@ func TestAllowErrorRefusesWhatCannotReceiveASet(t *testing.T) {
 		name: "a non-string handle",
 		page: strings.Replace(errAllowPage, "{{.Err}}", "{{.Count}}", 1),
 		want: "AllowError",
+	}, {
+		// A COMPUTED sink is the fourth spelling of "reads as configured
+		// and reports nothing forever", and the worst of them: Bound does
+		// not check Settable, so before this guard the priming Set PANICKED
+		// inside Build — in the package whose contract is that everything
+		// resolvable resolves before the UI is live, and under the
+		// os.DirFS watcher a rebuild panic takes the app down rather than
+		// showing a load error. Raised in review of #459.
+		name: "a computed handle",
+		page: strings.Replace(errAllowPage, "{{.Err}}", "{{.Derived}}", 1),
+		want: "COMPUTED",
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := errAllowCtx("Focus")
 			ctx.Values["Count"] = prop.NewSource(0)
+			ctx.Values["Derived"] = prop.NewComputed(func() string { return "derived" })
 			_, err := Build([]byte(tc.page), ctx)
 			if err == nil {
 				t.Fatalf("%s built; it cannot receive a Set", tc.name)
@@ -793,4 +825,133 @@ func TestAllowErrorWithoutADispatcherIsALoadError(t *testing.T) {
 	if !strings.Contains(err.Error(), "Dispatcher") {
 		t.Errorf("the refusal does not name what is missing:\n\t%v", err)
 	}
+}
+
+// errAllowReportPage RENDERS the published failure. errAllowPage does not
+// — it holds the sink and nothing reads it — so a damage assertion there
+// would be counting the repaints of a property with no consumer, which is
+// zero however badly the publication behaves.
+const errAllowReportPage = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="inside" Text="{{.In}}"/>
+    </Frozen>
+    <Text Name="report">{{.Err}}</Text>
+    <Text Name="bystander">steady</Text>
+  </VStack>
+</Gooey>`
+
+// TestABenignAllowChangeRepublishesNothing is the guard on the publish.
+//
+// prop.Set does not compare (CLAUDE.md's own trap, prop/prop.go:101), and
+// Allow changes far more often than it breaks. Every benign edit — "Focus"
+// to "Hover", both parseable, message unchanged at "" — would otherwise
+// invalidate every dependent of the sink and repaint the error label for
+// nothing.
+//
+// The instrument is a COUNTED DEPENDENT rather than a damage count,
+// because it answers precisely this question and nothing else: a computed
+// re-evaluates only if it was invalidated, so the read count moves if and
+// only if the sink was Set. A frame count here would be confounded by the
+// Composer's own freeze observer, which re-evaluates on any Allow change
+// whether or not the message moved. Raised in review of #459.
+func TestABenignAllowChangeRepublishesNothing(t *testing.T) {
+	ctx := errAllowCtx("Focus")
+	c := allowPage(t, errAllowPage, ctx)
+	errProp := ctx.Values["Err"].(*prop.Property[string])
+	allow := ctx.Values["Allow"].(*prop.Property[string])
+
+	reads := 0
+	watcher := prop.NewComputed(func() string { reads++; return errProp.Get() })
+	watcher.Get()
+	settled := reads
+
+	// Focus -> Hover. Both parse, so the message is "" on both sides.
+	allow.Set("Hover")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	watcher.Get()
+	if reads != settled {
+		t.Errorf("a benign Allow change republished an unchanged message: "+
+			"the watcher re-evaluated (%d -> %d). prop.Set does not compare, so every "+
+			"dependent of the sink repainted for a change nobody can see", settled, reads)
+	}
+
+	// NON-VACUITY. The assertion above passes just as well against a
+	// publication that has stopped working altogether, so a real change
+	// has to still get through.
+	allow.Set("Nonsense")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	watcher.Get()
+	if reads == settled {
+		t.Fatal("a BREAKING Allow change republished nothing either: the guard is not " +
+			"comparing, it is swallowing, and the assertion above proved nothing")
+	}
+}
+
+// TestPublishingAFailureRepaintsOnlyItsReader is the damage-count pin.
+//
+// CLAUDE.md is explicit that this is the only instrument for a repaint
+// claim — "a bounds assertion or a 'the cell says X' assertion passes just
+// as well when the entire tree repainted". The claim the feature makes is
+// that publishing a failure repaints what reads it and nothing else.
+//
+// DIFFERENTIAL, against a control page identical but for the reader, and
+// the reason is measured rather than assumed: an absolute count cannot
+// answer this. Any Allow change re-evaluates the Composer's own freeze
+// observer, which repaints one component on its own, so the first version
+// of this test asserted breaking > benign and read 1 against 1 — the
+// publication was completely hidden inside the observer's own repaint.
+// Subtracting a page that publishes identically and reads nothing leaves
+// exactly the reader's repaint. Raised in review of #459.
+func TestPublishingAFailureRepaintsOnlyItsReader(t *testing.T) {
+	// The control differs in ONE character sequence: the report renders a
+	// constant instead of the sink. Everything else — the Frozen, the
+	// binding, the publication — is identical, so the difference between
+	// the two counts is the reader and nothing else.
+	control := strings.Replace(errAllowReportPage, `>{{.Err}}</Text>`, `>steady</Text>`, 1)
+	if control == errAllowReportPage {
+		t.Fatal("the control page is the same as the reporting one; the subtraction is vacuous")
+	}
+
+	run := func(t *testing.T, page string) (benign, breaking int) {
+		t.Helper()
+		ctx := errAllowCtx("Focus")
+		c := allowPage(t, page, ctx)
+		ctx.Dispatcher.Drain()
+		c.Frame()
+		if _, painted := c.Frame(); painted != 0 {
+			t.Fatalf("the page has not settled: %d components still repainting", painted)
+		}
+		allow := ctx.Values["Allow"].(*prop.Property[string])
+
+		// Benign: both sides parse, so the published message does not move.
+		allow.Set("Hover")
+		ctx.Dispatcher.Drain()
+		_, benign = c.Frame()
+
+		// Breaking: the message changes, so a reader of it must repaint.
+		allow.Set("Nonsense")
+		ctx.Dispatcher.Drain()
+		_, breaking = c.Frame()
+		return benign, breaking
+	}
+
+	readerBenign, readerBreaking := run(t, errAllowReportPage)
+	quietBenign, quietBreaking := run(t, control)
+
+	if readerBenign != quietBenign {
+		t.Errorf("a benign Allow change repainted %d components with a reader and %d without: "+
+			"the reader repainted for a message that did not change, which is the "+
+			"unguarded Set (prop.Set does not compare)", readerBenign, quietBenign)
+	}
+	if readerBreaking-quietBreaking != 1 {
+		t.Errorf("a breaking Allow change repainted %d components with a reader and %d without "+
+			"(difference %d, want exactly 1): publishing a failure must repaint the one "+
+			"component that renders it, and no others",
+			readerBreaking, quietBreaking, readerBreaking-quietBreaking)
+	}
+	t.Logf("repaints: with a reader benign=%d breaking=%d; without benign=%d breaking=%d",
+		readerBenign, readerBreaking, quietBenign, quietBreaking)
 }

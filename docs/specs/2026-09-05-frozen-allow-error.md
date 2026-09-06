@@ -86,3 +86,90 @@ palette. This is the existing shape for every bind-only attribute
 (`Active` on this same element behaves identically), so it is recorded
 here rather than changed: a wrong `Binds` ships a palette that offers a
 literal for an attribute that will refuse it at load, and no test notices.
+
+## Round two: what review found, and the one thing it changed my mind about
+
+Seven findings, all real against `HEAD`. Four are worth recording because
+each is a *class* this record had already claimed to be careful about.
+
+**A write target has to be checked for writability, and `Bound` does not
+do it.** `Bound[string]` resolves handles for READING — which is what every
+other attribute on `<Frozen>` wants — so `AllowError="{{.Derived}}"` over a
+`prop.NewComputed` reached `armAllowError`'s priming `Set` and **panicked
+inside `Build`**: `panic: prop: Set on computed property`, in the one
+package whose entire contract is that everything resolvable resolves before
+the UI is live, and under the `os.DirFS` watcher a rebuild panic takes the
+app down instead of showing a load error. `markup/cond.go` already names
+this gap and says the fix belongs in the two-way binders; `AllowError` is
+this package's first write target, so it is the first place to honour it.
+The guard is `sink.Settable()`, and it makes a fourth spelling of "reads as
+configured and reports nothing forever" — the worst one, because it takes
+the process with it.
+
+**`prop.Set` does not compare, and this record knew that and did it
+anyway.** Every benign edit to `Allow` — `"Focus"` to `"Hover"`, both
+parseable, message unchanged at `""` — republished and repainted every
+dependent of the sink. `Allow` changes far more often than it breaks, so
+the common case was the wasteful one. `validate/validate.go:99-102` is the
+in-repo precedent and the fix is its shape. The re-read that re-arms `errC`
+still happens; only the publication is skipped.
+
+**The one argument this PR made hardest was the one it pinned least.**
+Replacing `d.Post(publish)` with an inline `publish()` left the entire
+`markup` package green — including `TestAllowErrorWithoutADispatcherIsALoadError`,
+which exercises the nil guard and never the use. Every publication test
+Drained before it read, so an inline Set was indistinguishable from a
+posted one. What distinguishes them is **the interval**: after the `Set`
+that breaks the parse and BEFORE the `Drain`, the work must be queued
+(`Pending() == 1`) and the sink must still hold its old value. The tests
+also built `&gooey.Dispatcher{}`, whose `wake` channel is nil — the one
+`Dispatcher` shape whose `Post` cannot wake an app loop, and the wrong one
+to pin a posted publication with. They use `NewDispatcher()` now.
+
+**Two parses of one string are two answers that agree by coincidence.**
+`errC` re-derived the message with its own `ParseAllow` rather than asking
+the `Frozen` it is attached to. They agree today; the day `FrozenAllow`
+wraps its error with context, the private parse silently keeps publishing
+the bare one. It now calls `f.FrozenAllow()` and reads `f.AllowError()`,
+which makes the accessor the single record, subscribes identically
+(`FrozenAllow`'s `Allow.Get()` is unconditional, above the cache check) and
+reuses the parse cache.
+
+### The damage assertion had to be differential, and finding that out took a measurement
+
+CLAUDE.md is explicit that a damage count is the only pin for a repaint
+claim, and the first version of this test asserted `breaking > benign`. It
+read **1 against 1**. Any `Allow` change re-evaluates the Composer's own
+freeze observer, which repaints one component by itself, and the
+publication was entirely hidden inside that. Subtracting a control page
+identical but for the reader (`>{{.Err}}</Text>` against `>steady</Text>`)
+leaves exactly the reader's repaint: benign `1` vs `1`, breaking `1` vs
+`0`, difference exactly 1. Guessing the number would have shipped a test
+that passed against the bug.
+
+### Corrected, not reworded
+
+`elements.go` carried a comment claiming the literal-`Allow` refusal is
+what makes `armAllowError`'s handle a computed, "and `prop.OnInvalidate` on
+a source never fires". `armAllowError` never observed the handle it
+receives — it observes `errC`, a computed it builds itself, which
+invalidates correctly either way. That false reason was caught during
+development and corrected in `frozenerror.go`, and the copy in
+`elements.go` was left standing, eight lines from the text contradicting
+it. It is deleted rather than reworded; the paragraph above it already
+gives the true reason.
+
+### Found while fixing the above
+
+`docs/markup-reference.md`'s own worked example did not load:
+`<Text Text="{{.FreezeErr}}"/>`. `<Text>` takes its text as a BODY and has
+no `Text` attribute, so the one snippet showing a reader of this channel
+was markup that fails at load. It was the only occurrence in `docs/`.
+
+And the published message reports the **parse**, not the seal. `frozenAllow`
+(`component.go:242`) asks `FrozenAllow()` before `Frozen()` — deliberately,
+or the observer goes deaf to an allow-set change on exactly the frames
+where it begins to matter — so an unparseable set publishes even while
+`Active` is false and nothing is sealed. That is the right behaviour and
+the wrong reading of the name, so the reference now says which it is.
+

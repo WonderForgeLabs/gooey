@@ -94,7 +94,7 @@ Wraps exactly one visual child in a region that **renders but does not act**. Th
 |---|---|
 | `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
 | `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
-| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. Both are load errors. |
+| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. All three are load errors. |
 
 ```xml
 <Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
@@ -145,10 +145,22 @@ Two rules are built into the **constants** rather than applied by a pass, so no 
 <Frozen Allow="{{.Categories}}" AllowError="{{.FreezeErr}}">
   <VStack> … the document being edited … </VStack>
 </Frozen>
-<Text Text="{{.FreezeErr}}"/>
+<Text>{{.FreezeErr}}</Text>
 ```
 
 It is published from an observer rather than read per frame, which is why it needs `Context.Dispatcher`: the parse failure surfaces during an invalidation, and Setting from inside one would mutate the graph mid-invalidation. The Set is posted and lands on the next drain.
+
+The Set also **compares first**, so a benign edit to `Allow` — one spelling of a
+parseable set to another — republishes nothing and repaints nothing. `prop.Set`
+does not compare on its own, and `Allow` changes far more often than it breaks.
+
+**It reports the PARSE, not the seal**, and the distinction shows when `Active`
+is bound. `gooey`'s freeze walk asks `FrozenAllow()` before `Frozen()` — it has
+to, or the observer goes deaf to an allow-set change on exactly the frames where
+it starts mattering — so an unparseable set publishes its message even while
+`Active` is false and nothing is sealed. Read the property as *"this allow set
+did not parse"*, which is true either way, rather than *"the subtree is frozen
+because…"*.
 
 `Start` is the one category nothing implies. `Companion.Start` spawns a child process, so a grant that turned starting on as a side effect of wanting hover would launch a subprocess from an editing gesture; it must always be asked for by name.
 
@@ -157,6 +169,13 @@ It is published from an observer rather than read per frame, which is why it nee
 #### Errors
 
 A **literal** `Allow` is checked at load time — `<Frozen Allow="Clicks">` fails to load, naming the vocabulary. A **bound** one cannot be, so it fails *closed*: an unparseable value becomes `None`, the strictest answer, and `components.Frozen.AllowError()` reports why.
+
+`AllowError` is refused at load in four cases, all of which would otherwise read
+as configured and report nothing forever: a literal (`AllowError="oops"` has
+nowhere to put the message), an absent or literal `Allow` (there is no runtime
+parse to report), a missing `Context.Dispatcher` (the publication has no route),
+and a **computed** target (no setter — this one used to panic inside `Build`
+rather than fail to load).
 
 #### Changing the set at runtime
 

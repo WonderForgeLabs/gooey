@@ -376,7 +376,13 @@ var defFrozen = &ElementDef{
 			}
 			f.Active = active
 		}
+		// Whether Allow is BOUND is asked twice: here, to decide whether
+		// it is checkable at load, and again by AllowError, which accepts
+		// nothing else. Spelled twice, the two guards have to agree or the
+		// second one is wrong about the first — so it is computed once.
+		allowBound := false
 		if raw := e.Attrs["Allow"]; raw != "" {
+			allowBound = strings.Contains(raw, "{{")
 			// A LITERAL Allow is checked here, at load time, which is the
 			// bargain the rest of markup makes: everything resolvable
 			// resolves before the UI is live. An interpolated one cannot
@@ -385,7 +391,7 @@ var defFrozen = &ElementDef{
 			// AllowError. Checking only what is checkable is the point;
 			// pretending the bound case is checkable would be worse than
 			// admitting it is not.
-			if !strings.Contains(raw, "{{") {
+			if !allowBound {
 				if _, err := gooey.ParseAllow(raw); err != nil {
 					return nil, fmt.Errorf("markup: <Frozen Allow=%q>: %w", raw, err)
 				}
@@ -403,11 +409,7 @@ var defFrozen = &ElementDef{
 			// error naming the attribute — so the channel could never
 			// carry anything and would read as configured forever.
 			//
-			// The literal half also buys the reasoning in
-			// armAllowError: refusing it here is what makes the handle
-			// it receives always a computed rather than sometimes a
-			// source, and prop.OnInvalidate on a source never fires.
-			if f.Allow == nil || !strings.Contains(e.Attrs["Allow"], "{{") {
+			if f.Allow == nil || !allowBound {
 				return nil, fmt.Errorf(
 					"markup: <Frozen AllowError=%q> without a BOUND Allow: the only failure "+
 						"it can report is an unparseable set, and a set that is absent or "+
@@ -417,13 +419,30 @@ var defFrozen = &ElementDef{
 			if err != nil {
 				return nil, err
 			}
+			// A WRITE target has to be writable, and Bound does not ask —
+			// it resolves handles for reading, which is what every other
+			// attribute on this element wants. A computed derives its
+			// value and has no setter, so armAllowError's priming Set
+			// would panic INSIDE Build: in the one package whose contract
+			// is that everything resolvable resolves before the UI is
+			// live, and under the os.DirFS watcher a rebuild panic takes
+			// the app down instead of showing a load error.
+			//
+			// markup/cond.go names this gap and says the fix belongs in
+			// the two-way binders. AllowError is the package's first
+			// write target, so this is the first place to honour it.
+			if !sink.Settable() {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> is a COMPUTED property: it derives its "+
+						"value and has no setter, so the failure has nowhere to go", raw)
+			}
 			if ctx.Dispatcher == nil {
 				return nil, fmt.Errorf(
 					"markup: <Frozen AllowError=%q> needs ctx.Dispatcher: the failure is "+
 						"published from an invalidation, and a Set from inside one would "+
 						"mutate the graph mid-invalidation", raw)
 			}
-			armAllowError(f.Allow, sink, ctx.Dispatcher)
+			armAllowError(f, sink, ctx.Dispatcher)
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err

@@ -2,6 +2,7 @@ package markup
 
 import (
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
 
@@ -29,44 +30,65 @@ import (
 // So the publication is arranged out here, where the page is being
 // built, and components.Frozen is untouched.
 //
-// # Why a COMPUTED, and why the Get is inside the post
+// # The accessor is the record, not a second parse
 //
-// prop.OnInvalidate on a SOURCE never fires — invalidation is what a
-// computed does to its dependents, and a source has no upstream to be
-// invalidated by. BoundText returns a computed for a bound attribute and
-// a SOURCE for a literal one, so `allow` is only observable at all
-// because the builder refuses AllowError on a literal Allow. Observing
-// `allow` directly would work identically under that restriction and a
-// mutation swapping the two is silent — errC is observed because it is
-// the handle that survives if the restriction is ever relaxed, not
-// because the other one is broken today.
+// The computed asks f.FrozenAllow() and then f.AllowError() rather than
+// re-deriving the message with its own ParseAllow. Two independent parses
+// of one string are two answers to one question that agree only by
+// coincidence — the day FrozenAllow wraps its error with context, a
+// private parse here would silently keep publishing the bare one.
 //
-// The re-read is the second half, and it is the one that is easy to drop.
+// Consulting the accessor also subscribes identically and costs nothing
+// extra: FrozenAllow's Allow.Get() is UNCONDITIONAL (frozen.go:114, above
+// the cache check), so the dependency edge is recorded whether or not the
+// parse cache hits, and a hit skips the parse entirely.
+//
+// What it publishes is the PARSE, not the seal. gooey.frozenAllow
+// (component.go:242) deliberately calls FrozenAllow() before Frozen(), so
+// an unparseable set reports itself even while Active is false and
+// nothing is sealed. That is the right way round — the message is "this
+// set did not parse", which is true regardless of whether the subtree is
+// currently frozen — but it means the attribute is misread as "why it
+// sealed".
+//
+// # Why the Get is inside the post, and why both Sets compare
+//
 // A computed invalidates ONCE and then stays dirty until something reads
 // it — so a hook that does not re-evaluate fires on the first bad set and
 // is deaf to every set after it. Reading inside the posted closure does
 // both jobs at once: it re-validates the computed so the next
 // invalidation arms, and it runs the Set on the UI goroutine at Drain
 // rather than inside the invalidation that woke it.
-func armAllowError(allow, sink *prop.Property[string], d *gooey.Dispatcher) {
+//
+// prop.Set does not compare (prop/prop.go:101), and Allow changes far more
+// often than it breaks: every benign edit — "Focus" to "Hover", both
+// parseable, message unchanged at "" — would otherwise invalidate every
+// dependent of the sink and repaint the error label for nothing. The
+// guard is validate.go:99-102's shape, and it goes on BOTH Sets because
+// the priming one has the same property on a reload. The re-read that
+// re-arms errC still happens either way; only the publication is skipped.
+func armAllowError(f *components.Frozen, sink *prop.Property[string], d *gooey.Dispatcher) {
 	errC := prop.NewComputed(func() string {
-		// The Get is unconditional and its result is used on both paths,
-		// so this reads `allow` on every evaluation. A Get behind an
-		// early return would drop out of the dependency set on the frames
-		// where it did not run.
-		if _, err := gooey.ParseAllow(allow.Get()); err != nil {
+		// FrozenAllow is called for its parse and its cache write; the
+		// error it recorded is then read back. Both calls are
+		// unconditional, so neither drops out of the dependency set.
+		f.FrozenAllow()
+		if err := f.AllowError(); err != nil {
 			return err.Error()
 		}
 		return ""
 	})
-	errC.OnInvalidate(func() {
-		d.Post(func() { sink.Set(errC.Get()) })
-	})
+	publish := func() {
+		if v := errC.Get(); v != sink.Get() {
+			sink.Set(v)
+		}
+	}
+	errC.OnInvalidate(func() { d.Post(publish) })
 	// The priming read. Two jobs, both required: it publishes the state a
 	// page loaded with an already-bad set is in — a page that has to wait
 	// for a CHANGE before it can be told anything is a page that cannot
 	// report the failure it started with — and it is what evaluates the
 	// computed the first time, so the hook above has something to be
 	// invalidated from.
-	sink.Set(errC.Get())
+	publish()
 }
