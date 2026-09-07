@@ -94,7 +94,7 @@ Wraps exactly one visual child in a region that **renders but does not act**. Th
 |---|---|
 | `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
 | `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
-| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. All three are load errors. |
+| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. Every one of these is a load error — see the four-case list below. |
 
 ```xml
 <Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
@@ -169,6 +169,16 @@ because…"*.
 #### Errors
 
 A **literal** `Allow` is checked at load time — `<Frozen Allow="Clicks">` fails to load, naming the vocabulary. A **bound** one cannot be, so it fails *closed*: an unparseable value becomes `None`, the strictest answer, and `components.Frozen.AllowError()` reports why.
+
+**The sink must be a PAGE-OWNED property, and nothing checks that.** Inside
+an `<ItemsView>` item template `{{.Err}}` resolves to the per-row source the
+row creates, not to a page property, and row reuse re-Sets every row handle
+from the collection — overwriting the published message while the computed
+is clean, so the compare-guarded publish never restores it. The subtree
+stays sealed and the reader shows `""`, which is the exact failure this
+attribute exists to remove, one layer down. There is no load-time signal
+that separates the two, so this is a rule you keep rather than one the
+framework enforces.
 
 `AllowError` is refused at load in four cases, all of which would otherwise read
 as configured and report nothing forever: a literal (`AllowError="oops"` has

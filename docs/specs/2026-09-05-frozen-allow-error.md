@@ -42,14 +42,17 @@ renders it like any other, and the framework Sets it. The publication is
 arranged in `markup/frozenerror.go`, at build time; `components.Frozen` is
 untouched.
 
-Three load-time refusals, because each is a spelling that would read as
+Four load-time refusals, because each is a spelling that would read as
 configured and report nothing forever:
 
 - a **literal** in the attribute — a write target has nowhere to put the
   message;
 - an **absent or literal `Allow`** — with no parse, or a parse that
   already happened at load, the channel could never carry anything;
-- a nil **`Context.Dispatcher`** — the publication has no route.
+- a nil **`Context.Dispatcher`** — the publication has no route;
+- a **computed** target — it derives its value and has no setter. This one
+  is the worst of the four and was added in round two: before the guard it
+  did not read as configured, it PANICKED inside `Build`.
 
 ## The two subtleties
 
@@ -172,4 +175,49 @@ or the observer goes deaf to an allow-set change on exactly the frames
 where it begins to matter — so an unparseable set publishes even while
 `Active` is false and nothing is sealed. That is the right behaviour and
 the wrong reading of the name, so the reference now says which it is.
+
+### The first consumer this breaks is the designer
+
+`apps/wysiwyg` builds `ed.docCtx` — the context the edited DOCUMENT is
+built with — from `ed.ctx.Values` and `ed.ctx.Styles` and never sets
+`Dispatcher`, so a document using `AllowError` loads in a real app and
+fails to load on the canvas, while the palette still offers the attribute.
+The class is not new (`markup/handlers.go:193` refuses `{{ns:Fn}}` the same
+way) but this is the first PLAIN attribute to trip it. Tracked as
+[#462](https://github.com/WonderForgeLabs/gooey/issues/462) rather than
+fixed here, because the fix is in another module and the test worth writing
+pins the general property — that `docCtx` can build whatever a real app can
+— not this attribute.
+
+### Also not pinned: the observer is never detached
+
+`armAllowError` installs `errC.OnInvalidate` and returns; nothing
+unsubscribes. Any path that re-`Build`s a page against the same
+`Context.Values` — the `os.DirFS` watcher, and the designer, where
+`ed.docCtx` shares `ed.ctx.Values` and the document rebuilds per edit —
+leaves each previous build's `errC` subscribed through its own computed
+chain, keeping the dead `*components.Frozen` reachable and posting one
+redundant `publish` per generation on every `Allow` change.
+
+The compare guard makes every one of those a no-op, so it is a slow leak
+rather than a wrong answer, and `validate/validate.go` has the identical
+shape — this is the package's existing contract for observer lifetime, not
+a regression introduced here. It is recorded because `AllowError` is the
+first WRITE target and the next one multiplies it; a detach seam is the
+right fix and it belongs with the second consumer, not the first.
+
+### One reviewer suggestion that did not survive its own mutation
+
+Review proposed that the new `Active="{{.Off}}"` test would also guard
+`gooey.frozenAllow`'s deliberate `FrozenAllow()`-before-`Frozen()` ordering
+(`component.go:235-241`). It does not. Rewriting that function to return
+early when unfrozen leaves the test green, because `armAllowError`'s
+computed calls `f.FrozenAllow()` on the component directly and never routes
+through it. The test pins that the COMPUTED does not gate on `Frozen()` —
+which is a real and separate claim, and the mutation that fails it is
+`if !f.Frozen() { return "" }` at the top of the computed.
+
+Recorded because adopting the reviewer's framing unchecked would have put a
+false "this test guards X" comment into the tree — which is the exact defect
+round two removed from `elements.go`, re-introduced from the other side.
 

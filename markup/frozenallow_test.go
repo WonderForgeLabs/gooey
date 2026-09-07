@@ -955,3 +955,51 @@ func TestPublishingAFailureRepaintsOnlyItsReader(t *testing.T) {
 	t.Logf("repaints: with a reader benign=%d breaking=%d; without benign=%d breaking=%d",
 		readerBenign, readerBreaking, quietBenign, quietBreaking)
 }
+
+// TestAnUnsealedFrozenStillPublishesItsParseFailure pins "reports the
+// PARSE, not the seal", which frozenerror.go and markup-reference.md both
+// assert in prose and nothing tested.
+//
+// It was derived from component.go:242 rather than pinned, and the whole
+// publication suite is blind to it: errAllowPage omits Active, so Frozen()
+// is true in every other test here and the two readings agree everywhere.
+// Binding Active to a FALSE source separates them — nothing is sealed, and
+// an unparseable Allow must still say so, because the message is about the
+// set not parsing rather than about the subtree being frozen.
+//
+// WHAT IT DOES NOT GUARD, checked rather than assumed. Review suggested
+// this would also go red if someone "optimized" gooey.frozenAllow to ask
+// Frozen() before FrozenAllow() (component.go:235-241). It does not, and I
+// took that framing on trust before mutating it: rewriting frozenAllow to
+// return early when unfrozen leaves this test GREEN. armAllowError's
+// computed calls f.FrozenAllow() on the component directly and never
+// routes through that function, so its ordering cannot reach this
+// assertion. What the test does pin is that the COMPUTED does not gate on
+// Frozen() — inserting `if !f.Frozen() { return "" }` at the top of it
+// fails this and nothing else. Raised in review of #459.
+func TestAnUnsealedFrozenStillPublishesItsParseFailure(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Active="{{.Off}}" Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="inside" Text="{{.In}}"/>
+    </Frozen>
+    <TextBox Name="outside" Text="{{.Out}}"/>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus Clicks") // unparseable: "Clicks" is not a category
+	ctx.Values["Off"] = prop.NewSource(false)
+	c := allowPage(t, page, ctx)
+	ctx.Dispatcher.Drain()
+	c.Frame()
+
+	// Nothing is sealed — the arm that makes this test about the SEAL
+	// rather than merely about the parse.
+	if boxesIn(c.Focus().Order()) != 2 {
+		t.Fatalf("Active=false still sealed the subtree; the premise of this test does not hold")
+	}
+	if got := ctx.Values["Err"].(*prop.Property[string]).Get(); got == "" {
+		t.Error("an unparseable Allow published nothing while Active was false: " +
+			"the message reports the PARSE, not the seal, and a page with a bound " +
+			"Active would be told nothing until it happened to freeze")
+	}
+}

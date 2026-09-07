@@ -409,7 +409,13 @@ var defFrozen = &ElementDef{
 			// error naming the attribute — so the channel could never
 			// carry anything and would read as configured forever.
 			//
-			if f.Allow == nil || !allowBound {
+			// ONE term, not two. allowBound is false whenever Allow is
+			// absent (it is only assigned inside the branch that also
+			// assigns f.Allow), so it already covers both the absent and
+			// the literal case. Spelling it as `f.Allow == nil || …`
+			// read as two independent conditions and invited the next
+			// reader to delete whichever looked redundant.
+			if !allowBound {
 				return nil, fmt.Errorf(
 					"markup: <Frozen AllowError=%q> without a BOUND Allow: the only failure "+
 						"it can report is an unparseable set, and a set that is absent or "+

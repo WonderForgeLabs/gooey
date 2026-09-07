@@ -64,7 +64,10 @@ import (
 // often than it breaks: every benign edit — "Focus" to "Hover", both
 // parseable, message unchanged at "" — would otherwise invalidate every
 // dependent of the sink and repaint the error label for nothing. The
-// guard is validate.go:99-102's shape, and it goes on BOTH Sets because
+// guard is validate/validate.go:98-103's shape — the PACKAGE path
+// matters, because bare "validate.go" resolves from in here to
+// markup/validate.go, which is the boolRules map and has no Set in it at
+// all. It goes on BOTH Sets because
 // the priming one has the same property on a reload. The re-read that
 // re-arms errC still happens either way; only the publication is skipped.
 func armAllowError(f *components.Frozen, sink *prop.Property[string], d *gooey.Dispatcher) {
