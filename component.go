@@ -594,7 +594,7 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 // paints in exactly the order it always did.
 func renderTree(w Component, f *Frame, depth int) {
 	var ordinary, lifted []paintItem
-	collectPaint(w, depth, false, 0, &ordinary, &lifted)
+	collectPaint(w, depth, false, 0, render.Style{}, &ordinary, &lifted)
 	// THE SAME BUCKET PASS THE RETAINED PATH USES, not a sort. Equal
 	// ranks keep document order because they are appended in encounter
 	// order — a consequence of the construction rather than a claim about
@@ -615,10 +615,10 @@ func renderTree(w Component, f *Frame, depth int) {
 	ordered := appendByRank(make([]paintItem, 0, len(lifted)), lifted,
 		func(it paintItem) int { return it.rank }, &buckets)
 	for _, it := range ordinary {
-		paintOne(it.w, f)
+		paintOne(it.w, it.clear, f)
 	}
 	for _, it := range ordered {
-		paintOne(it.w, f)
+		paintOne(it.w, it.clear, f)
 	}
 }
 
@@ -627,12 +627,17 @@ func renderTree(w Component, f *Frame, depth int) {
 type paintItem struct {
 	w    Component
 	rank int
+	// clear is the nearest paintable ancestor's declared background —
+	// what this component pre-clears to if it is a leaf. It is the
+	// one-shot equivalent of Composer.clearStyle, computed on the way
+	// DOWN because Compose has no paint nodes to walk back up through.
+	clear render.Style
 }
 
 // collectPaint walks the tree in depth-first pre-order and partitions it
 // into the two layers, carrying the depth cap and the Collapsed prune
 // that renderTree has always applied.
-func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, ordinary, lifted *[]paintItem) {
+func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, parentClear render.Style, ordinary, lifted *[]paintItem) {
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("Render", w, depth)
 		return
@@ -642,23 +647,62 @@ func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, or
 	}
 	overlay, rank := overlayOf(w, parentOverlay, parentRank)
 	if paintable(w) {
-		it := paintItem{w: w, rank: rank}
+		it := paintItem{w: w, rank: rank, clear: parentClear}
 		if overlay {
 			*lifted = append(*lifted, it)
 		} else {
 			*ordinary = append(*ordinary, it)
 		}
 	}
+	// What THIS node's children clear to. Same rule as
+	// Composer.clearStyle walking up: the nearest PAINTABLE ancestor with
+	// a background whose colour is Set. A hidden panel's background is
+	// not on screen, so it does not count — matching clearStyle's
+	// `if !paintable(p.w) { continue }`.
+	childClear := parentClear
+	if paintable(w) {
+		if bp := backgroundProp(w); bp != nil {
+			if col := bp.Get(); col.Set {
+				childClear = render.Style{Bg: col}
+			}
+		}
+	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			collectPaint(ch, depth+1, overlay, rank, ordinary, lifted)
+			collectPaint(ch, depth+1, overlay, rank, childClear, ordinary, lifted)
 		}
 	}
 }
 
 // paintOne is the per-component half renderTree used to do inline: the
-// declared background fill, then the component's own Render.
-func paintOne(w Component, f *Frame) {
+// pre-clear, the declared background fill, then the component's own
+// Render.
+//
+// LEAVES PRE-CLEAR, which they did not until #457's review. Composer
+// clears every leaf's rect to the nearest ancestor's background
+// (composer.go, via clearStyle) and components.Popup's own doc cites that
+// as where popupSurface's opacity comes from: it writes a border and a
+// title and leaves the middle to the clear. Without it here, a lifted
+// popup rendered SEE-THROUGH under Compose while occluding under
+// Composer — measured on an overlay leaf that writes two runes of a
+// twelve-column rect:
+//
+//	gooey.Compose   "XX@@@@@@@@@@"
+//	Composer.Frame  "XX          "
+//
+// which is position without occlusion, and exactly the kind of silent
+// divergence between the two paths that #438 was filed about.
+//
+// Containers are excluded for the reason Composer excludes them: their
+// bounds enclose children, so clearing would wipe siblings that have
+// already painted. A container states its opacity by declaring a
+// Background, which is the fill below.
+func paintOne(w Component, clear render.Style, f *Frame) {
+	if _, isContainer := w.(Container); !isContainer {
+		if b, ok := w.(Bounded); ok {
+			fillRect(f.Cells, b.Bounds(), clear)
+		}
+	}
 	if bp := backgroundProp(w); bp != nil {
 		if col := bp.Get(); col.Set {
 			if b, ok := w.(Bounded); ok {

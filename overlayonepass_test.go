@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -91,6 +92,17 @@ func TestComposeLiftsOverlaysTheWayComposerDoes(t *testing.T) {
 // deliberately a COMPARISON rather than two separate expectations. Two
 // exported paths that disagree about z-order is the defect; either one
 // being individually wrong is a symptom.
+//
+// The comparison is of two whole rendered rows, so it can see ANY picture
+// difference — not only z-order. What makes this fixture a z-order test is
+// oneShotStripe.Render writing exactly b.W runes at b.X: every component
+// fills its own rect, so nothing but order can differ. An overlay leaf
+// that filled only PART of its rect would make the same comparison fail on
+// the pre-clear instead, which is what
+// TestBothPaintPathsAgreeOnLeafOcclusion below is for. Said explicitly
+// because the earlier wording ("compares z-order and nothing else")
+// invited changing the fixture on a guarantee the test does not give.
+// Raised in review of #457.
 func TestBothPaintPathsAgree(t *testing.T) {
 	build := func() Component {
 		return &oneShotStripe{ch: '.', kids: []Component{
@@ -213,5 +225,129 @@ func TestComposeStillPaintsAPlainTreeInDocumentOrder(t *testing.T) {
 	}}
 	if got := render.RowText(Compose(root, oneShotCaps(), nil).Cells, 0); !strings.HasPrefix(got, "B") {
 		t.Errorf("a tree with no overlay no longer paints in document order: row %q", got)
+	}
+}
+
+// oneShotPartial is components.Popup's shape: an overlay LEAF whose Render
+// writes part of its rect and relies on the pre-clear for the rest.
+// popupSurface (components/popup.go) documents its own opacity as coming
+// from exactly that.
+type oneShotPartial struct {
+	Base
+	mark string
+}
+
+func (p *oneShotPartial) Measure(a Size) Size { return a }
+func (p *oneShotPartial) OverlaysPage()       {}
+func (p *oneShotPartial) Render(f *Frame) {
+	b := p.Bounds()
+	f.Cells.SetString(b.X, b.Y, p.mark, render.Style{})
+}
+
+// TestBothPaintPathsAgreeOnLeafOcclusion is the half TestBothPaintPathsAgree
+// cannot see, because its fixture fills every rect.
+//
+// Compose delivered POSITION WITHOUT OCCLUSION: it lifted the overlay to
+// the front and then let the sibling beneath show through the cells the
+// overlay's Render did not write. Measured before the fix:
+//
+//	gooey.Compose   "XX@@@@@@@@@@"
+//	Composer.Frame  "XX          "
+//
+// Composer pre-clears every leaf to the nearest ancestor's background;
+// Compose had no equivalent, because it has no paint nodes to walk up
+// through. collectPaint now carries that background DOWN beside
+// parentOverlay/parentRank, at no extra walk.
+//
+// Not a live break when it was found — cmd/typeahead --dump never opens
+// its popup — but latent in the way #438 was filed about: an
+// overlay-bearing fixture asserted through Compose would look green while
+// encoding a see-through popup, with the doc comment saying the paths
+// agree. Raised in review of #457.
+func TestBothPaintPathsAgreeOnLeafOcclusion(t *testing.T) {
+	build := func() Component {
+		return &oneShotStripe{ch: '.', kids: []Component{
+			&oneShotPartial{mark: "XX"},
+			&oneShotStripe{ch: '@'}, // declared later, would show through
+		}}
+	}
+	caps := oneShotCaps()
+
+	one := render.RowText(Compose(build(), caps, nil).Cells, 0)
+
+	c := NewComposer(build(), caps.Cols, caps.Rows)
+	t.Cleanup(c.Close)
+	fr, _ := c.Frame()
+	retained := render.RowText(fr.Cells, 0)
+
+	// NON-VACUITY: the overlay must still be lifted, or this compares two
+	// pictures of the sibling and passes without testing occlusion.
+	if !strings.HasPrefix(one, "XX") {
+		t.Fatalf("the fixture stopped exercising the lift — row %q", one)
+	}
+	if one != retained {
+		t.Errorf("a lifted leaf occludes on one path and not the other:\n"+
+			"  gooey.Compose  %q\n  Composer.Frame %q\n"+
+			"Compose is positioning the overlay without clearing behind it, so a "+
+			"components.Popup renders see-through here and opaque under Composer.",
+			one, retained)
+	}
+}
+
+// oneShotPanel is a container that DECLARES a background, so a leaf
+// inside it has an ancestor colour to pre-clear against.
+type oneShotPanel struct {
+	oneShotStripe
+	bg *prop.Property[render.Color]
+}
+
+func (p *oneShotPanel) BackgroundProperty() *prop.Property[render.Color] { return p.bg }
+
+// TestAOneShotLeafClearsToItsAncestorsBackground pins the half the
+// occlusion test cannot see.
+//
+// Dropping the ancestor walk in collectPaint — clearing every leaf to the
+// terminal default instead of the nearest declared Background — is SILENT
+// against every other test in this file, because none of their fixtures
+// declares a background. That is the same hole Composer.clearStyle exists
+// to fill: a Text inside a coloured panel must not punch a
+// default-coloured hole when it pre-clears.
+//
+// Asserted as a COMPARISON against Composer, like its neighbours, plus a
+// direct check on the colour so a future change that made both paths
+// clear to the default would not agree its way to green. Raised in review
+// of #457.
+func TestAOneShotLeafClearsToItsAncestorsBackground(t *testing.T) {
+	blue := render.Color{Set: true, R: 0, G: 0, B: 200}
+	build := func() Component {
+		return &oneShotPanel{
+			oneShotStripe: oneShotStripe{ch: '.', kids: []Component{
+				&oneShotPartial{mark: "XX"},
+				&oneShotStripe{ch: '@'},
+			}},
+			bg: prop.NewSource(blue),
+		}
+	}
+	caps := oneShotCaps()
+
+	f := Compose(build(), caps, nil)
+	c := NewComposer(build(), caps.Cols, caps.Rows)
+	t.Cleanup(c.Close)
+	fr, _ := c.Frame()
+
+	// A cell the overlay cleared but did not write: column 5 of row 0.
+	got := f.Cells.At(5, 0)
+	want := fr.Cells.At(5, 0)
+	if got.Style.Bg != want.Style.Bg {
+		t.Errorf("the two paths clear a lifted leaf to different backgrounds:\n"+
+			"  gooey.Compose  %+v\n  Composer.Frame %+v", got.Style.Bg, want.Style.Bg)
+	}
+	// And the colour is the PANEL's, not the terminal default — otherwise
+	// both paths agreeing on "default" would pass the comparison above
+	// while punching a hole in the panel.
+	if got.Style.Bg != blue {
+		t.Errorf("a leaf inside a coloured panel pre-cleared to %+v, want the panel's %+v — "+
+			"the nearest ancestor's background is not reaching collectPaint",
+			got.Style.Bg, blue)
 	}
 }

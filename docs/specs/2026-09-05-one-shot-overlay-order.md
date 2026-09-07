@@ -95,3 +95,69 @@ two separate expectations. Two exported paths disagreeing is the defect;
 either one being individually wrong is a symptom, and a test that pinned
 each against a hardcoded string would keep passing if they drifted
 together in the wrong direction.
+
+## Round two: ordering was shared, occlusion was not
+
+Review found that `Compose` delivered **position without occlusion**, and
+it is the more interesting half of #438's premise: the two paths agreed
+about what was in front, and disagreed about whether being in front meant
+anything. Measured on an overlay leaf that writes two runes of a
+twelve-column rect:
+
+```
+gooey.Compose   "XX@@@@@@@@@@"     <- the sibling beneath shows through
+Composer.Frame  "XX          "     <- occluded
+```
+
+`Composer.build` pre-clears every LEAF to the nearest ancestor's
+background (`clearStyle` walks paint-node parents). `Compose` has no paint
+nodes to walk up through, so it had no equivalent and simply painted the
+overlay's runes on top of whatever was there. `components.Popup`'s own doc
+cites that pre-clear as where `popupSurface`'s opacity comes from — it
+draws a border and a title and leaves the middle to the clear — so a popup
+composed through `Compose` was see-through.
+
+Not a live break when found (`cmd/typeahead --dump` never opens its
+popup), but latent in exactly the way #438 was filed about: the next
+overlay-bearing fixture asserted through `Compose` would look green while
+encoding a see-through popup, with a doc comment saying the paths agree.
+
+`collectPaint` now carries the nearest declared background DOWN beside
+`parentOverlay`/`parentRank` — no extra walk, since it is already
+descending — and `paintOne` clears a leaf to it. Containers are excluded
+for the reason `Composer` excludes them: their bounds enclose children, so
+clearing would wipe siblings that already painted.
+
+### What the mutations say, including the one that says nothing
+
+| mutation | caught by |
+| --- | --- |
+| drop the leaf pre-clear | `TestBothPaintPathsAgreeOnLeafOcclusion` |
+| ignore the ancestor background, clear to default | `TestAOneShotLeafClearsToItsAncestorsBackground` |
+| pre-clear CONTAINERS too | **silent** |
+
+The second row exists because the first mutation did not need the
+background at all: every fixture in this file paints on the terminal
+default, so clearing a leaf to the default instead of to its panel's
+colour passed everything. That is `clearStyle`'s whole reason for
+existing — a Text in a coloured panel must not punch a default-coloured
+hole — and it was unpinned here until a fixture declared a `Background`.
+
+**The third row is an open gap, stated rather than fixed.** Pre-clearing
+containers as well as leaves changes no test in this repo. The exclusion
+is right — it mirrors `Composer`, and clearing a container's rect would
+wipe already-painted siblings — but nothing here demonstrates it, so a
+future edit that removed the `isContainer` check would go green. Pinning
+it needs a fixture where a container's bounds overlap an
+earlier-painted sibling, which no current test builds.
+
+### And the comparison test's doc comment was too strong
+
+`TestBothPaintPathsAgree` said it "compares z-order and nothing else". It
+compares two whole rendered rows, so it can see any picture difference —
+the occlusion repro above **is** that test with the overlay swapped, and
+it failed on the pre-clear. What is true is narrower: `oneShotStripe`
+fills exactly its own rect, so for THAT fixture nothing but order can
+differ. As written the comment invited someone to change the fixture on a
+guarantee the test does not give.
+
