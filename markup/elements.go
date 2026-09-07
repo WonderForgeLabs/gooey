@@ -421,6 +421,20 @@ var defFrozen = &ElementDef{
 						"it can report is an unparseable set, and a set that is absent or "+
 						"literal cannot become one after load", raw)
 			}
+			// ALIASED to Allow. <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+			// builds, and then the priming publish overwrites the author's
+			// own allow set with the parse message before the UI is live —
+			// measured: X goes "Focus" -> "" during Build. Pointer identity
+			// cannot catch it, because BoundText wraps a dynamic attribute
+			// in a FRESH computed every call, so the two handles differ
+			// even here. The binding PATHS are what match.
+			if ap := bindingPath(e.Attrs["Allow"]); ap != "" && ap == bindingPath(raw) {
+				return nil, fmt.Errorf(
+					"markup: <Frozen Allow=%q AllowError=%q>: one property cannot be both "+
+						"the allow set and the place its parse failure is reported — "+
+						"publishing would overwrite the set it just read",
+					e.Attrs["Allow"], raw)
+			}
 			sink, err := Bound[string](e, ctx, "AllowError")
 			if err != nil {
 				return nil, err
@@ -448,6 +462,16 @@ var defFrozen = &ElementDef{
 						"published from an invalidation, and a Set from inside one would "+
 						"mutate the graph mid-invalidation", raw)
 			}
+			// A SECOND arm on the same sink. Two <Frozen> publishing to
+			// one property erase each other — see Context.armedSinks.
+			if was, dup := ctx.armedSinks[sink]; dup {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q>: already the failure channel for "+
+						"<Frozen AllowError=%q> in this document — two sealed subtrees "+
+						"writing one property erase each other's message, leaving a "+
+						"subtree sealed with nothing to show for it", raw, was)
+			}
+			ctx.armedSinks[sink] = raw
 			armAllowError(f, sink, ctx.Dispatcher)
 		}
 		if err := attachAll(e, f, attach); err != nil {

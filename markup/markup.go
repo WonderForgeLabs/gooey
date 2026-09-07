@@ -198,6 +198,23 @@ type Context struct {
 	// whichever FS that markup came from. A tree built from bytes
 	// (markup.Build) has none, and falls back to Includes.
 	fsys fs.FS
+	// armedSinks is the set of *prop.Property[string] already armed as a
+	// <Frozen AllowError> target in the CURRENT top-level build, mapped to
+	// the attribute text that armed it.
+	//
+	// Two <Frozen> binding one sink is a load error because they would
+	// erase each other: each arm publishes its own transitions, so the
+	// parseable one going "Focus" -> "Hover" writes "" over the other's
+	// live failure, and the other's computed is clean so it never
+	// republishes. The subtree stays sealed and the reader shows nothing —
+	// #424's exact symptom, one page-shape over.
+	//
+	// PAGE-WIDE but per top-level build: a nested Load inherits the
+	// outermost map (so two controls sharing a sink are still caught),
+	// while a rebuild against the same Context — the os.DirFS watcher, the
+	// designer — starts clean instead of refusing its own previous
+	// generation. document.build owns that scoping.
+	armedSinks map[*prop.Property[string]]string
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix
@@ -467,6 +484,18 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	prev := ctx.ns
 	ctx.ns = d.ns
 	defer func() { ctx.ns = prev }()
+
+	// The armed-sink set is page-wide and per top-level build. A nil map
+	// means this is the outermost document, so it gets a fresh one; a
+	// nested Load finds it non-nil and shares it, which is what makes two
+	// controls binding one sink collide. Restoring unconditionally leaves
+	// it nil again after the outermost build, so the next rebuild against
+	// this same Context does not refuse what it armed last time.
+	prevArmed := ctx.armedSinks
+	if prevArmed == nil {
+		ctx.armedSinks = map[*prop.Property[string]]string{}
+	}
+	defer func() { ctx.armedSinks = prevArmed }()
 
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Component{}

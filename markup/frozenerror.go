@@ -60,16 +60,27 @@ import (
 // invalidation arms, and it runs the Set on the UI goroutine at Drain
 // rather than inside the invalidation that woke it.
 //
-// prop.Set does not compare (prop/prop.go:101), and Allow changes far more
+// prop.Set does not compare (prop/prop.go:117 — Set itself, not line 101,
+// which is inside Settable's doc comment), and Allow changes far more
 // often than it breaks: every benign edit — "Focus" to "Hover", both
 // parseable, message unchanged at "" — would otherwise invalidate every
 // dependent of the sink and repaint the error label for nothing. The
 // guard is validate/validate.go:98-103's shape — the PACKAGE path
 // matters, because bare "validate.go" resolves from in here to
 // markup/validate.go, which is the boolRules map and has no Set in it at
-// all. It goes on BOTH Sets because
-// the priming one has the same property on a reload. The re-read that
-// re-arms errC still happens either way; only the publication is skipped.
+// all.
+//
+// The comparison is against THIS ARM'S OWN last published value, not
+// against sink.Get(). Reading the sink back treats it as the record of
+// what this arm published, which it stops being the moment anything else
+// writes to it: with two <Frozen> on one sink, the parseable one going
+// "Focus" -> "Hover" saw a sink holding the OTHER's live failure, decided
+// that differed from its own "", and wrote over it — while the other's
+// computed was clean and so never republished. A load error now refuses
+// that page (Context.armedSinks), and the local makes each arm own only
+// its own transitions regardless, which also stops the same erasure by a
+// page that clears the property itself. The re-read that re-arms errC
+// still happens either way; only the publication is skipped.
 func armAllowError(f *components.Frozen, sink *prop.Property[string], d *gooey.Dispatcher) {
 	errC := prop.NewComputed(func() string {
 		// FrozenAllow is called for its parse and its cache write; the
@@ -81,8 +92,14 @@ func armAllowError(f *components.Frozen, sink *prop.Property[string], d *gooey.D
 		}
 		return ""
 	})
+	last, primed := "", false
 	publish := func() {
-		if v := errC.Get(); v != sink.Get() {
+		v := errC.Get() // unconditional: it is what re-arms the observer
+		if primed && v == last {
+			return
+		}
+		primed, last = true, v
+		if v != sink.Get() {
 			sink.Set(v)
 		}
 	}

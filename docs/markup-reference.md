@@ -170,6 +170,13 @@ because…"*.
 
 A **literal** `Allow` is checked at load time — `<Frozen Allow="Clicks">` fails to load, naming the vocabulary. A **bound** one cannot be, so it fails *closed*: an unparseable value becomes `None`, the strictest answer, and `components.Frozen.AllowError()` reports why.
 
+**One sink, one `<Frozen>`.** Two sealed subtrees publishing to the same
+property erase each other — the parseable one going quiet writes `""` over
+the other's live failure, and the other's observer is clean so it never
+republishes. That is a load error naming both attributes. So is binding
+`Allow` and `AllowError` to the *same* property, which would overwrite the
+allow set with the message describing it.
+
 **The sink must be a PAGE-OWNED property, and nothing checks that.** Inside
 an `<ItemsView>` item template `{{.Err}}` resolves to the per-row source the
 row creates, not to a page property, and row reuse re-Sets every row handle

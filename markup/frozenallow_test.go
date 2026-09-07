@@ -843,7 +843,7 @@ const errAllowReportPage = `<Gooey>
 
 // TestABenignAllowChangeRepublishesNothing is the guard on the publish.
 //
-// prop.Set does not compare (CLAUDE.md's own trap, prop/prop.go:101), and
+// prop.Set does not compare (CLAUDE.md's own trap, prop/prop.go:117), and
 // Allow changes far more often than it breaks. Every benign edit — "Focus"
 // to "Hover", both parseable, message unchanged at "" — would otherwise
 // invalidate every dependent of the sink and repaint the error label for
@@ -1001,5 +1001,133 @@ func TestAnUnsealedFrozenStillPublishesItsParseFailure(t *testing.T) {
 		t.Error("an unparseable Allow published nothing while Active was false: " +
 			"the message reports the PARSE, not the seal, and a page with a bound " +
 			"Active would be told nothing until it happened to freeze")
+	}
+}
+
+// TestTwoFrozenCannotShareOneFailureChannel is #424's symptom reappearing
+// in plain page markup, and it was REAL — measured before the guard:
+//
+//	after load:                 Err="unknown Allow category \"Nonsense\"; …"
+//	after A's benign change:    Err=""      <- B still sealed, message gone
+//
+// Each <Frozen> arms its own computed, and publish compared against
+// sink.Get() — treating the sink as the record of what THIS arm last
+// published, which it stops being the moment a second arm writes to it. A
+// going "Focus" -> "Hover" (both parseable) yielded "", saw it differ from
+// the sink's current value (B's live failure), and wrote over it. B's
+// computed was clean, so it never republished: the subtree stays sealed
+// and the reader shows nothing, which is the exact failure this attribute
+// exists to remove. Two writers on one property is refusable at load, like
+// the other spellings. Raised in review of #459.
+func TestTwoFrozenCannotShareOneFailureChannel(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.AllowA}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <Frozen Allow="{{.AllowB}}" AllowError="{{.Err}}">
+      <TextBox Name="b" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["AllowA"] = prop.NewSource("Focus")
+	ctx.Values["AllowB"] = prop.NewSource("Nonsense")
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("two <Frozen> armed one AllowError property; they erase each other")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+}
+
+// TestASecondBuildMayReuseASinkTheFirstArmed keeps the guard above from
+// breaking the two hosts that rebuild a page against ONE Context: the
+// os.DirFS watcher and the designer, where docCtx shares ed.ctx.Values and
+// the document is rebuilt on every edit.
+//
+// Without per-build scoping the second build would refuse what the first
+// armed, and the failure would look like the user's markup being wrong.
+// This is the arm that makes armedSinks' save/restore load-bearing rather
+// than decorative.
+func TestASecondBuildMayReuseASinkTheFirstArmed(t *testing.T) {
+	ctx := errAllowCtx("Focus")
+	if _, err := Build([]byte(errAllowPage), ctx); err != nil {
+		t.Fatalf("first build: %v", err)
+	}
+	if _, err := Build([]byte(errAllowPage), ctx); err != nil {
+		t.Fatalf("REBUILD against the same Context was refused — a watcher or the "+
+			"designer would report this as the document being wrong:\n\t%v", err)
+	}
+}
+
+// TestAllowCannotAliasItsOwnErrorChannel: <Frozen Allow="{{.X}}"
+// AllowError="{{.X}}"> built, and the priming publish then overwrote the
+// author's own allow set with the parse message BEFORE the UI was live —
+// measured: X went "Focus" -> "" during Build.
+//
+// Pointer identity does not catch it. BoundText wraps a dynamic attribute
+// in a fresh computed on every call, so the two handles differ even when
+// the markup names one property twice; the binding PATHS are what match.
+// Raised in review of #459.
+func TestAllowCannotAliasItsOwnErrorChannel(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("Focus")
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("Allow and AllowError bound to one property built; the publication " +
+			"overwrites the set it just read")
+	}
+	if !strings.Contains(err.Error(), "cannot be both") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+	// The author's set must survive the refusal — a load error that has
+	// already scribbled on the page's state is not a refusal.
+	if got := ctx.Values["X"].(*prop.Property[string]).Get(); got != "Focus" {
+		t.Errorf("the allow set was modified before the refusal: X=%q, want \"Focus\"", got)
+	}
+}
+
+// TestAPublishDoesNotClobberAnotherWritersValue pins the half the load
+// guard cannot reach.
+//
+// armedSinks refuses two <Frozen> in MARKUP, but nothing stops a
+// code-behind, an MCP set_value, or a Startable from writing the same
+// property. publish therefore compares against this arm's OWN last
+// published value rather than reading the sink back: an arm whose message
+// has not changed must not write at all, whatever the sink now holds.
+//
+// The differential is exact — comparing against sink.Get() instead makes
+// the benign change below Set("") over the other writer's value. Raised in
+// review of #459.
+func TestAPublishDoesNotClobberAnotherWritersValue(t *testing.T) {
+	ctx := errAllowCtx("Focus") // parseable: this arm's message is ""
+	c := allowPage(t, errAllowPage, ctx)
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	errProp := ctx.Values["Err"].(*prop.Property[string])
+	if got := errProp.Get(); got != "" {
+		t.Fatalf("a parseable Allow published %q; the premise does not hold", got)
+	}
+
+	// Somebody else owns the line right now.
+	errProp.Set("saving…")
+
+	// A BENIGN change: this arm's message is "" before and after, so it
+	// has nothing to say and must stay quiet.
+	ctx.Values["Allow"].(*prop.Property[string]).Set("Hover")
+	ctx.Dispatcher.Drain()
+	c.Frame()
+	if got := errProp.Get(); got != "saving…" {
+		t.Errorf("a benign Allow change overwrote another writer's value: %q, want \"saving…\" — "+
+			"publish is reading the sink back instead of tracking what it last published", got)
 	}
 }

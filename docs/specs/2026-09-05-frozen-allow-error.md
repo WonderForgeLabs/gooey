@@ -113,7 +113,7 @@ the process with it.
 anyway.** Every benign edit to `Allow` — `"Focus"` to `"Hover"`, both
 parseable, message unchanged at `""` — republished and repainted every
 dependent of the sink. `Allow` changes far more often than it breaks, so
-the common case was the wasteful one. `validate/validate.go:99-102` is the
+the common case was the wasteful one. `validate/validate.go:98-103` is the
 in-repo precedent and the fix is its shape. The re-read that re-arms `errC`
 still happens; only the publication is skipped.
 
@@ -220,4 +220,65 @@ which is a real and separate claim, and the mutation that fails it is
 Recorded because adopting the reviewer's framing unchecked would have put a
 false "this test guards X" comment into the tree — which is the exact defect
 round two removed from `elements.go`, re-introduced from the other side.
+
+## Round four: two writers, and a channel wired to its own source
+
+Two correctness findings, both reproduced before they were fixed, and both
+the same failure this attribute exists to remove — reappearing in page
+shapes the first three rounds never built.
+
+**Two `<Frozen>` binding one `AllowError` erase each other.** Measured:
+
+```
+after load:              Err="unknown Allow category \"Nonsense\"; …"
+after A's benign change: Err=""      <- B still sealed, message gone
+```
+
+`publish` compared against `sink.Get()`, which treats the sink as the record
+of what THIS arm last published — true until a second arm writes to it. A
+going `"Focus"` → `"Hover"` (both parseable) yielded `""`, saw that differ
+from the sink's current value (B's live failure), and wrote over it. B's
+computed was clean, so it never republished. Subtree sealed, reader empty:
+#424 exactly, one page-shape over — and a plausible shape, since two frozen
+panes over one status line is the surface `Frozen` was built for.
+
+Fixed twice over, because the two halves cover different writers.
+`Context.armedSinks` makes a second arm on the same handle a **load error**,
+which is the real fix and matches how the other four spellings are refused.
+And `publish` now compares against **this arm's own last published value**
+rather than reading the sink back, so an arm with nothing new to say writes
+nothing whatever the sink holds — that half reaches writers the load guard
+cannot see, a code-behind, an MCP `set_value`, a `Startable`.
+
+`armedSinks` is page-wide but **per top-level build**: a nested `Load`
+inherits the outermost map so two controls sharing a sink still collide,
+while a rebuild against the same `Context` — the `os.DirFS` watcher, the
+designer — starts clean instead of refusing what it armed last time.
+`TestASecondBuildMayReuseASinkTheFirstArmed` is what makes that scoping
+load-bearing rather than decorative; without it the guard breaks both
+hosts, and the failure reads as the user's markup being wrong.
+
+**`Allow` and `AllowError` bound to one property destroys the allow set.**
+`<Frozen Allow="{{.X}}" AllowError="{{.X}}">` built, and the priming
+publish then overwrote the author's own set with the parse message before
+the UI was live — measured, `X` went `"Focus"` → `""` during `Build`.
+Pointer identity cannot catch it: `BoundText` wraps a dynamic attribute in
+a fresh computed on every call, so the two handles differ even here. The
+binding PATHS match, and `bindingPath` already existed for exactly this.
+The fifth spelling of the class, refused the same way.
+
+### The citation, and where it came from
+
+`prop/prop.go:101` is inside `Settable`'s doc comment; `Property.Set` is at
+`:117`. The number came from round two's review and I propagated it into
+`frozenerror.go` without checking, which is the same unchecked-adoption
+that produced round three's false test comment. Corrected here and in
+`CLAUDE.md`'s Traps section, which is where it was copied from.
+
+Two older specs (`2026-08-12-settings-store.md`, `2026-08-14-frozen-observed.md`)
+carry the same stale number. They are dated decision records and are left
+alone here rather than widening this diff — but a line reference is a
+navigational aid, not a historical claim, so they send a reader today to
+the wrong function. That is the hazard line-numbered citations always carry
+and the reason the other three in `frozenerror.go` were each re-checked.
 
