@@ -351,3 +351,73 @@ func TestAOneShotLeafClearsToItsAncestorsBackground(t *testing.T) {
 			got.Style.Bg, blue)
 	}
 }
+
+// TestTheBucketPassRetainsNothingPastItsOwnItems is the leak the reuse
+// buys, checked structurally rather than with a finalizer.
+//
+// appendByRank keeps its buckets between calls — that is what makes it
+// allocation-free — and items holds *paintNode on the Composer's path,
+// which outlives no frame. Two ways a dead node stayed reachable:
+//
+//   - a bucket the call did not reach (last frame had five ranks, this
+//     one has two), and
+//   - the TAIL of a bucket it did reach (last frame put ten nodes in a
+//     rank, this one put three, and seven pointers sit past len in the
+//     same backing array).
+//
+// Neither is overwritten until that slot is used again, which for a rank
+// that stops occurring is never. Clearing to CAP rather than to len is
+// the fix; len is what the next call resets, cap is what the collector
+// sees.
+//
+// Reading past len is exactly what a leak check has to do, so this test
+// slices to cap deliberately. Raised in review of #457.
+func TestTheBucketPassRetainsNothingPastItsOwnItems(t *testing.T) {
+	type item struct {
+		rank int
+		mark string
+	}
+	rankOf := func(it *item) int { return it.rank }
+	var buckets []rankBucket[*item]
+
+	// A wide frame: five ranks, several items each.
+	var wide []*item
+	for r := 0; r < 5; r++ {
+		for n := 0; n < 4; n++ {
+			wide = append(wide, &item{rank: r, mark: "wide"})
+		}
+	}
+	appendByRank(make([]*item, 0, len(wide)), wide, rankOf, &buckets)
+
+	// A narrow one: two ranks, one item each. Everything else is dead.
+	narrow := []*item{{rank: 0, mark: "narrow"}, {rank: 1, mark: "narrow"}}
+	got := appendByRank(make([]*item, 0, len(narrow)), narrow, rankOf, &buckets)
+	if len(got) != 2 {
+		t.Fatalf("the second pass returned %d items, want 2", len(got))
+	}
+
+	// NON-VACUITY: the buckets must actually still be reused, or there is
+	// nothing that COULD retain and this test passes for the wrong reason.
+	if cap(buckets) < 5 {
+		t.Fatalf("the buckets were not reused (cap %d); this test cannot see a leak", cap(buckets))
+	}
+
+	live := map[*item]bool{}
+	for _, it := range narrow {
+		live[it] = true
+	}
+	held := 0
+	for i := 0; i < cap(buckets); i++ {
+		b := buckets[:cap(buckets)][i]
+		for _, it := range b.items[:cap(b.items)] {
+			if it != nil && !live[it] {
+				held++
+			}
+		}
+	}
+	if held != 0 {
+		t.Errorf("the bucket pass still references %d items from the previous call — "+
+			"on the Composer's path those are *paintNode from a tree that no longer "+
+			"exists, held until the slot happens to be reused", held)
+	}
+}

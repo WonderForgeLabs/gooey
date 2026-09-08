@@ -445,6 +445,31 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 	for _, b := range bs {
 		dst = append(dst, b.items...)
 	}
+	// DROP THE STALE REFERENCES BEFORE HANDING THE BUCKETS BACK.
+	//
+	// The reuse that makes this pass allocation-free is also what makes it
+	// retain: items holds *paintNode on the Composer's path, and the
+	// buckets outlive the frame. Two ways a dead node stays reachable —
+	// a bucket this call did not reach (last frame had five ranks, this
+	// one has two), and the TAIL of a bucket it did reach (last frame put
+	// ten nodes in a rank, this one put three, and seven pointers sit
+	// past len in the same backing array). Neither is overwritten until
+	// the slot happens to be used again, which for a rank that stops
+	// occurring is never.
+	//
+	// Clearing to cap rather than to len is the point: len is what the
+	// next call resets, cap is what the garbage collector sees.
+	// Pre-existing — the pass has always reused — and surfaced when it
+	// became generic. Raised in review of #457.
+	prev := *buckets
+	for i := range prev {
+		items := prev[i].items
+		keep := 0
+		if i < len(bs) {
+			keep = len(bs[i].items)
+		}
+		clear(items[keep:cap(items)])
+	}
 	*buckets = bs
 	return dst
 }

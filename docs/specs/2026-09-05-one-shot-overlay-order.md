@@ -85,10 +85,31 @@ helpers ride on it and a change in their meaning would be silent.
 |---|---|---|
 | `Compose` lifts an overlay over a later sibling | `TestComposeLiftsOverlaysTheWayComposerDoes` | append everything to `ordinary` |
 | **The two paths agree** | `TestBothPaintPathsAgree` | same |
-| `Compose` honours the rank | `TestComposeHonoursTheOverlayRank` | comparator returns false |
+| `Compose` honours the rank | `TestComposeHonoursTheOverlayRank` | `rankOf` returns 0 for every item |
+| **Both paths order ranks alike** | `TestBothPaintPathsAgreeOnRanks` | same — it reddens with the row above |
+| **A lifted leaf occludes** | `TestBothPaintPathsAgreeOnLeafOcclusion` | drop the leaf pre-clear in `paintOne` |
+| **It clears to the ancestor's background** | `TestAOneShotLeafClearsToItsAncestorsBackground` | clear to the terminal default instead |
 | A lifted subtree comes up whole | `TestComposeKeepsALiftedSubtreeTogether` | drop the inherited-membership arm |
 | A plain tree is unaffected | `TestComposeStillPaintsAPlainTreeInDocumentOrder` | — (guards the ~19 helpers) |
+| Equal ranks keep document order | `TestBothPaintPathsAgreeOnRanks` (13 nodes, alternating) | — structural: the bucket pass appends in encounter order |
 | The rule is genuinely shared | *both* files' subtree tests | any mutation of `overlayOf` reddens both |
+
+The rank row said **"comparator returns false"** until review of #457
+caught it. There is no comparator: `0df26bac` replaced the `sort` with the
+bucket pass, and the mutation the table named had become impossible to
+perform — an evidence table describing a test by an experiment nobody can
+run is worse than a blank cell, because it reads as verified. The
+replacement is measured, not proposed: making `rankOf` return 0 reddens
+`TestComposeHonoursTheOverlayRank` and `TestBothPaintPathsAgreeOnRanks`
+together.
+
+"Equal ranks keep document order" has no mutation for a reason worth
+stating rather than leaving as an empty cell: it is **structural**. The
+bucket pass appends items in encounter order within a rank, so there is no
+line to flip — the property follows from the construction rather than from
+a choice, which is exactly why the bucket pass was preferred to a stable
+sort. A test can observe it; no mutation can remove it without removing
+the pass.
 
 `TestBothPaintPathsAgree` is deliberately a **comparison** rather than
 two separate expectations. Two exported paths disagreeing is the defect;
