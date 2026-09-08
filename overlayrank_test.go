@@ -88,7 +88,12 @@ func rankRow(t *testing.T, f *Frame) string {
 // The higher-ranked one is declared FIRST, which is the WORST case for
 // declaration order: it is exactly the arrangement in which the document
 // would put the lower-ranked one on top, so a rank that did not work
-// shows up as the wrong rune.
+// shows up as the wrong rune. It is also the arrangement an app actually
+// has — a MenuBar somewhere in the page and a page-wide ToastHost after
+// it. The framework USED to tell you to declare the MenuBar last; #437's
+// global lift already made that irrelevant and #443 retired the wording,
+// so the fixture's shape is the worst case rather than an instruction
+// being followed.
 func TestAHigherRankPaintsOverALowerOneDeclaredLater(t *testing.T) {
 	top := &rankedStripe{stripe{ch: 'T', rank: 2}}
 	bottom := &rankedStripe{stripe{ch: 'B', rank: 1}}

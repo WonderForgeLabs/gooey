@@ -45,7 +45,17 @@ keeps them.
 
 A mouse event finds its target by hit-testing the retained tree — deepest
 component first, later siblings before earlier ones — then bubbles up the
-same ancestor chain. Four framework behaviors run before your code sees
+same ancestor chain.
+
+**Document order still decides this, and it is the one place it still
+does.** Paint order no longer follows the document: a `gooey.Overlay` is
+lifted out into a second layer and ranked within it, so an overlay paints
+above content it was declared before. The hit walk does not do that lift —
+it walks the tree as written. So for an overlay the two orders genuinely
+disagree, and a popup that visibly covers a button is not necessarily the
+thing a click at that point reaches. `components.Popup` handles this by
+capturing the pointer while it is open rather than by relying on position.
+See [overlays](overlays.md) for the paint side. Four framework behaviors run before your code sees
 anything:
 
 - **The frozen retarget**, first, because everything below is measured

@@ -238,10 +238,18 @@ func (p *Pane) Child() gooey.Component { return p.child }
 
 // ChildComponents is the previewed tree, then the overlay.
 //
-// THE ORDER IS THE Z-ORDER and may not be swapped: the composer walks
-// depth-first pre-order, so the overlay paints last and therefore on
-// top. Putting it first would paint the guides under the document and
-// the document's own pre-clears would erase them.
+// THE ORDER IS THE Z-ORDER here and may not be swapped — and this is the
+// EXCEPTION, not the framework rule (#437/#439 retired that; a
+// gooey.Overlay is lifted into a paint layer and ranked in it). The
+// composer walks depth-first pre-order, so the overlay paints last and
+// therefore on top. Putting it first would paint the guides under the
+// document and the document's own pre-clears would erase them.
+//
+// It still applies here because preview.Overlay is deliberately NOT a
+// gooey.Overlay: it is an ordinary child that must stay inside the
+// PREVIEWED page's stacking rather than being lifted into the editor's.
+// overlay.go carries that reasoning. Do not read this comment as the
+// general rule — docs/learn/concepts/overlays.md has that one.
 func (p *Pane) ChildComponents() []gooey.Component {
 	var out []gooey.Component
 	if p.child != nil {

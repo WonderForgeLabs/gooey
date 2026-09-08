@@ -61,14 +61,18 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 		// and then the per-line loop scans the matches again. The cheap
 		// inexact filter beats the exact one here.
 		//
-		// So this stays, and it stays with the hazard written down:
-		// KEEP IN STEP WITH retiredRule. Every pattern there requires
-		// one of these two words today. One that did not would be
-		// silently skipped for most of the tree, which is a guard
-		// quietly checking less than it claims — the failure this whole
-		// file exists to prevent, in the file itself.
+		// So this stays — and the words it gates on are now a named list
+		// that a test CHECKS against every sample retiredRule is pinned
+		// with, rather than a hazard written down and hoped for. The
+		// comment that used to live here said "KEEP IN STEP WITH
+		// retiredRule", which enforced nothing: a pattern needing a word
+		// that is not here is skipped for most of the tree, and the
+		// negative assertion still passes — a guard switched off by
+		// adding to it. That happened immediately: the imperative
+		// patterns added in this same review needed "bottom" and
+		// "end of", and the new check caught it before they shipped.
 		low := strings.ToLower(string(body))
-		if !strings.Contains(low, "order") && !strings.Contains(low, "last") {
+		if !containsAnyPrefilterWord(low) {
 			continue
 		}
 		lines := strings.Split(string(body), "\n")
@@ -95,6 +99,26 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 	}
 }
 
+// prefilterWords is what docFiles requires a file to contain before it is
+// scanned line by line. It is an inexact, cheap filter over ~7MB, and it
+// is the reason the guard runs in ~3s rather than ~6s.
+//
+// It is a NAMED LIST because the relationship to retiredRule is a
+// contract, not a coincidence: a pattern that needs a word absent here can
+// never fire on most of the tree.
+// TestTheRetiredRuleGuardCanActuallyFire asserts every sample survives
+// this filter, so the two cannot drift apart silently.
+var prefilterWords = []string{"order", "last", "bottom", "end of"}
+
+func containsAnyPrefilterWord(low string) bool {
+	for _, w := range prefilterWords {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
 // retiredRule matches a line ASSERTING the hosting rule. Both halves have
 // to be there: "z-order" alone is fine (the forward pass, the restore
 // sweep and overlapping Canvas children all legitimately talk about it),
@@ -103,8 +127,11 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 // two together, or the bare equation, that only ever meant the thing that
 // stopped being true.
 var retiredRule = []*regexp.Regexp{
-	// The equation itself, either direction.
-	regexp.MustCompile(`(?i)document order is z-?order`),
+	// The equation itself, either direction. There is no standalone
+	// `document order is z-order` entry: the (tree|document) alternation
+	// below matches everything it did and one thing more, so keeping both
+	// meant a pattern that could never be the reason a line was caught.
+	// Removed in review of #458.
 	regexp.MustCompile(`(?i)z-?order is document order`),
 	regexp.MustCompile(`(?i)(tree|document) order IS z-?order`),
 	// The instruction, in the spellings the repo actually used.
@@ -124,6 +151,24 @@ var retiredRule = []*regexp.Regexp{
 	// draft of this list.
 	regexp.MustCompile(`(?i)(late|last|later) in (the )?document order`),
 	regexp.MustCompile(`(?i)document order is paint order`),
+	// IMPERATIVE PHRASINGS. No live site matches these today — which is
+	// the argument for adding them NOW rather than after the next one
+	// lands. Every pattern above was drafted from a phrasing that already
+	// existed, which is exactly why the list missed
+	// components/menu_live_test.go twice: a predicate assembled from the
+	// sites you can see is a sample of the ways the thing can be said.
+	// Raised in review of #458.
+	regexp.MustCompile(`(?i)must be the last child`),
+	regexp.MustCompile(`(?i)belongs at the (end|bottom) of (its|the) (container|markup|page|document)`),
+	regexp.MustCompile(`(?i)put it at the (end|bottom) of the (markup|page|document|container)`),
+	// "THE ORDER IS THE Z-ORDER", without naming tree or document. Found
+	// live in apps/wysiwyg/components/preview/preview.go, where it is
+	// TRUE — preview.Overlay is deliberately not a gooey.Overlay — which
+	// is precisely why it needed the pattern: the sentence is correct
+	// there and would be the retired rule anywhere else, so it has to be
+	// caught and then qualified rather than left unmatched. Raised in
+	// review of #458.
+	regexp.MustCompile(`(?i)the order is the z-?order`),
 }
 
 func statesTheRetiredRule(line string) bool {
@@ -146,26 +191,46 @@ func statesTheRetiredRule(line string) bool {
 // A third family is admitted grudgingly: hit-testing genuinely still walks
 // document order, so a line about the hit walk may say "last" and mean it.
 // It has to name the walk to get the exemption.
-// Compiled ONCE, like retiredRule above. This was a function returning a
-// fresh slice, recompiling nine regexps on every call — one per matching
-// line, per file — for no reason the file could give. Raised in review of
-// #458.
-var qualifierRes = func() []*regexp.Regexp {
-	return []*regexp.Regexp{
-		// The correction.
-		regexp.MustCompile(`(?i)two layers|second (paint )?layer|overlay layer`),
-		regexp.MustCompile(`(?i)gooey\.Overlay|OverlaysPage|OverlayRank|\bis a gooey\.Overlay\b`),
-		regexp.MustCompile(`(?i)\blifted\b|\blifts\b|\brank(s|ed)?\b`),
-		regexp.MustCompile(`#4(37|38|39)|#430`),
-		// The epitaph.
-		regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
-		regexp.MustCompile(`(?i)superseded|no longer|stopped being|was never|not any more|retired`),
-		regexp.MustCompile(`(?i)by convention|convention,? not|incidental|heuristic|arbitrary`),
-		regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
-		// The hit-test exemption.
-		regexp.MustCompile(`(?i)hit-?test|hit order|HitTest`),
-	}
-}()
+// Compiled ONCE, like retiredRule above — and a plain slice literal, like
+// retiredRule. This was a function returning a fresh slice, recompiling
+// nine regexps on every call; the recompile was fixed by hoisting, and the
+// closure it was extracted from lingered for a release. Raised in review
+// of #458.
+var qualifierRes = []*regexp.Regexp{
+	// The correction.
+	regexp.MustCompile(`(?i)two layers|second (paint )?layer|overlay layer`),
+	regexp.MustCompile(`(?i)gooey\.Overlay|OverlaysPage|OverlayRank|\bis a gooey\.Overlay\b`),
+	regexp.MustCompile(`(?i)\blifted\b|\blifts\b`),
+	// RANK, NARROWLY. This was a bare `\brank(s|ed)?\b`, and the bare word
+	// appears in ordinary prose about ordering all over the repo — so it
+	// was not evidence that a nearby sentence had been corrected, it was
+	// a mask. It hid a live stale site in overlayrank_test.go: the word
+	// "higher-ranked" one line above "the framework tells it to declare
+	// the MenuBar last" was enough to qualify the retired rule as
+	// current, inside the file that most explains the new one. The forms
+	// below carry the meaning the bare word does not.
+	// Raised in review of #458.
+	regexp.MustCompile(`(?i)OverlayRank|overlay rank|rank(s|ed)? (it|them|the layer|above|over|beats|higher|lower)|by rank|rank order|equal ranks?`),
+	regexp.MustCompile(`#4(37|38|39)|#430`),
+	// The epitaph.
+	regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
+	regexp.MustCompile(`(?i)superseded|no longer|stopped being|was never|not any more|retired`),
+	regexp.MustCompile(`(?i)by convention|convention,? not|incidental|heuristic|arbitrary`),
+	regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
+}
+
+// hitTestExemption is applied to the MATCHING LINE ALONE, never to the
+// window, and that is the whole reason it is a separate variable.
+//
+// Hit-testing genuinely still walks document order, so a line about the
+// hit walk may say "last" and mean it — but it has to name the walk to
+// earn that, which is what this file's own comment always claimed and
+// what qualifiedNear did not do. Every other qualifier reads a ±2 window,
+// so a paragraph mentioning hit-testing two lines away exempted a stale
+// PAINT claim beside it. That adjacency is not rare: it is this sweep's
+// own house style — state the paint rule, then the input divergence, in
+// one comment (components/popup.go, mouse.go). Raised in review of #458.
+var hitTestExemption = regexp.MustCompile(`(?i)hit-?test|hit order|HitTest`)
 
 // declaresItselfSuperseded exempts a whole file whose HEAD says the rule
 // below it is dead. That is for the dated decision records: a spec is a
@@ -246,6 +311,12 @@ func qualifiedNear(lines []string, i int) bool {
 	if hi >= len(lines) {
 		hi = len(lines) - 1
 	}
+	// The hit-test exemption is checked against THIS line only. See
+	// hitTestExemption: naming the hit walk excuses the line that names
+	// it, not its neighbours.
+	if hitTestExemption.MatchString(lines[i]) {
+		return true
+	}
 	block := strings.Join(lines[lo:hi+1], "\n")
 	for _, re := range qualifierRes {
 		if re.MatchString(block) {
@@ -296,9 +367,17 @@ func docFiles(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
-	if len(out) < 100 {
-		t.Fatalf("found %d documentation files, want far more — the walk "+
-			"is broken and every assertion below it is vacuous", len(out))
+	// The floor exists to catch "the walk visits nothing", and 100 was
+	// far too slack for that claim: the tree holds ~788 matching files, so
+	// 100 also passes with docs/, components/, apps/ and cmd/ lost
+	// TOGETHER — the walk could go blind to four of the five places the
+	// rule is taught and still call itself intact. 500 is the same
+	// guarantee actually enforced, and still leaves room for the tree to
+	// shrink by a third. Raised in review of #458.
+	const floor = 500
+	if len(out) < floor {
+		t.Fatalf("found %d documentation files, want at least %d — the walk "+
+			"is broken and every assertion below it is vacuous", len(out), floor)
 	}
 	return out
 }
@@ -326,12 +405,33 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 		"bar,          // late in document order: the dropdown paints above the content",
 		"// it. Document order is paint order, so a component that overflows",
 	}
+	// Sentences the repo NEVER SHIPPED, kept apart from `removed` because
+	// that list carries a factual claim — these are the sentences the
+	// sweep deleted — and inventing entries for it would falsify the
+	// record. These exist so a pattern guarding a phrasing nobody has
+	// written yet still has something to fire on, which the per-pattern
+	// check below requires. `declared LAST` is here because review found
+	// it matched nothing in `removed`: it was guarding a spelling the
+	// repo never used, and there was no way to tell that from the list.
+	neverShipped := []string{
+		"// The AdornmentLayer must be declared LAST or it paints underneath.",
+		"// The ToastHost must be the last child, or the toasts go behind the page.",
+		"// A MenuBar belongs at the end of its container so the dropdown paints on top.",
+		"// Put it at the bottom of the markup and it will paint over everything.",
+		"// THE ORDER IS THE Z-ORDER and may not be swapped.",
+	}
 	for _, line := range removed {
 		if !statesTheRetiredRule(line) {
 			t.Errorf("the guard does not recognize a line the sweep "+
 				"actually removed, so it would not have caught it:\n\t%s", line)
 		}
 	}
+	for _, line := range neverShipped {
+		if !statesTheRetiredRule(line) {
+			t.Errorf("the guard does not recognize a phrasing it exists to catch:\n\t%s", line)
+		}
+	}
+	samples := append(append([]string{}, removed...), neverShipped...)
 
 	// And the other error: a predicate that fires on everything would
 	// also pass the loop above while making the real test meaningless.
@@ -343,10 +443,102 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 		"// Adornments is what the layer is currently showing, in z-order.",
 		"// It is the row's last child, so its node runs after the template's,",
 	}
+	// EVERY PATTERN needs a sample, not just every sample a pattern.
+	//
+	// The loop above pins the list as a WHOLE: it passes while an
+	// individual retiredRule entry matches nothing in it, so that entry
+	// could be deleted, or could never have worked, and nothing would go
+	// red. Walking the other way found both kinds — `declared LAST\b` had
+	// no sample containing "declared last", and `document order is
+	// z-?order` was fully subsumed by the `(tree|document) order IS
+	// z-?order` pattern beside it. A dead pattern in a negative
+	// assertion is indistinguishable from a working one until the day it
+	// was supposed to fire. Raised in review of #458.
+	for _, re := range retiredRule {
+		matched := false
+		for _, line := range samples {
+			if re.MatchString(line) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("retiredRule pattern %v matches none of the sample lines: it is "+
+				"either dead or subsumed by another pattern, and deleting it would "+
+				"redden nothing. Add the sentence it exists to catch.", re)
+		}
+	}
+
+	// THE PREFILTER CONTRACT, checked rather than asserted in prose.
+	//
+	// docFiles' prefilter skips any file containing neither "order" nor
+	// "last", and a comment tells the next author to keep retiredRule in
+	// step with it. That comment is true today and enforces nothing: a
+	// future pattern for, say, "paints on top because it is declared
+	// after" matches neither substring, is skipped for 100% of the tree,
+	// and the negative assertion still passes — a guard switched off by
+	// adding to it. Every sample the patterns are pinned against must
+	// therefore survive the prefilter too. Raised in review of #458.
+	for _, line := range samples {
+		if !containsAnyPrefilterWord(strings.ToLower(line)) {
+			t.Errorf("the prefilter would skip a file containing this line, so the "+
+				"pattern that catches it can never run:\n\t%s\n"+
+				"Either add a word to prefilterWords or keep the pattern inside it.", line)
+		}
+	}
+
 	for _, line := range kept {
 		if statesTheRetiredRule(line) && !qualifiedNear([]string{line}, 0) {
 			t.Errorf("the guard fires on a correct sentence, which makes "+
 				"it noise rather than a check:\n\t%s", line)
 		}
+	}
+}
+
+// TestTheHitTestExemptionIsLineScoped pins the one qualifier that reads a
+// single line instead of the ±2 window.
+//
+// Hit-testing really does still walk document order, so a line about the
+// hit walk may say "last" and mean it — but it has to NAME the walk to
+// earn that. Every other qualifier reads the window, and the exemption
+// did too, so a paragraph mentioning hit-testing two lines away excused a
+// stale PAINT claim beside it.
+//
+// That adjacency is not hypothetical: it is this sweep's own house style,
+// which is to state the paint rule and then the input divergence in one
+// comment (components/popup.go, mouse.go). The exemption was therefore at
+// its most permissive exactly where the sweep concentrated its prose.
+//
+// Reverting the exemption to the window is otherwise SILENT — measured —
+// which is what this test is for. Raised in review of #458.
+func TestTheHitTestExemptionIsLineScoped(t *testing.T) {
+	stale := "// z-order is document order, so declare the MenuBar last."
+	if !statesTheRetiredRule(stale) {
+		t.Fatalf("the fixture line is not caught by retiredRule, so this test proves nothing:\n\t%s", stale)
+	}
+
+	// NAMED ON THE LINE: exempt. This is a real thing to write.
+	onTheLine := []string{
+		"// unrelated",
+		"// hit-testing walks document order, so the last child is hit first.",
+		"// unrelated",
+	}
+	if !qualifiedNear(onTheLine, 1) {
+		t.Error("a line that names the hit walk was not exempted; the exemption has " +
+			"stopped working and every such comment now has to be reworded")
+	}
+
+	// NAMED TWO LINES AWAY, with a stale PAINT claim between: not exempt.
+	nearby := []string{
+		"// Hit-testing still walks document order.",
+		"//",
+		stale,
+	}
+	if qualifiedNear(nearby, 2) {
+		t.Error("a stale paint claim was exempted because a NEIGHBOURING line mentions " +
+			"hit-testing. The exemption is for the line that names the walk, not for " +
+			"its neighbours — and 'paint rule, then input divergence, in one comment' " +
+			"is this repo's house style, so the window makes the guard blindest exactly " +
+			"where the prose is densest.")
 	}
 }
