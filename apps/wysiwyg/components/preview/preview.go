@@ -131,7 +131,7 @@ func (p *Pane) Frozen() bool {
 // fact rather than a filing decision. gooey.Frozen exempts the host from
 // its own freeze precisely so a design surface has somewhere to put its
 // gestures, and DispatchMouse retargets a press inside a frozen subtree
-// to that host in ONE place at the top (mouse.go:176). So in DESIGN mode
+// to that host in ONE place at the top (mouse.go:358). So in DESIGN mode
 // this pane is the only component a press inside the document can reach
 // — the document's own Button never sees it, which is the whole point of
 // the mode.

@@ -355,11 +355,14 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:152`) now returns the component that
-PAINTS LAST among those containing the cell, comparing candidates on
-exactly what `appendByRank` orders by, and it gets there by asking
-`overlayOf` — the same membership-and-rank rule `orderPaint` and
-`gooey.Compose` ask. That is the point: not a second ordering, the same
+`FocusManager.HitTest` (`mouse.go:175`) now returns the component that
+PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
+BOUNDS — contain the cell, comparing candidates on exactly what
+`appendByRank` orders by, and it gets there by asking `overlayOf` — the
+same membership-and-rank rule `orderPaint` and `gooey.Compose` ask. The
+ancestor half is not a detail: the walk prunes on bounds at every node,
+so a surface arranged outside its parent's rect paints and can never be
+hit. That is the point: not a second ordering, the same
 one. `TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
 Four caveats came out with the fix (`components/toast.go`,
 `docs/markup-reference.md`, `docs/architecture.md`, `mouse.go`), and so

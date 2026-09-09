@@ -1050,7 +1050,9 @@ every node, while paint clips each node to *its own* rect. A surface
 arranged outside its owner's rectangle therefore paints and cannot be
 hit. Nothing shipped is in that position without also holding pointer
 capture; `FocusManager.HitTest` carries the measurement and the
-alternative resolution.
+alternative resolution, and
+[#482](https://github.com/WonderForgeLabs/gooey/issues/482) carries what
+each of the two candidate resolutions would cost.
 
 **That is one sentence on purpose, and for a while it was two.**
 "Deepest component, children before ancestors and later siblings before

@@ -128,7 +128,9 @@ type PointerFollower interface{ FollowsPointer() bool }
 // to change anyway, because four files were claiming more than the code
 // does. Descending into a lifted subtree regardless of the ancestor
 // prune is the other resolution, and it is a behaviour change that wants
-// its own PR. Pinned by TestAnOverlayOutsideItsParentPaintsAndIsNotHit
+// its own PR — filed as #482, with both candidate resolutions and what
+// each costs, because a deferral with no number cannot be checked for
+// having happened. Pinned by TestAnOverlayOutsideItsParentPaintsAndIsNotHit
 // so the divergence cannot quietly become something else.
 // Raised in review of #478.
 //

@@ -147,6 +147,7 @@ type ChildSetter interface {
 // EVERY ancestor, where paint clips each node to its own rect. A surface
 // arranged outside its owner's rectangle therefore paints and cannot be
 // hit. Nothing shipped is in that position without also holding capture.
+// Tracked as #482.
 type Overlay interface{ OverlaysPage() }
 
 // OverlayRanker is an Overlay that says where in the overlay layer it

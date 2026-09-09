@@ -1,3 +1,14 @@
+<!--
+LINE NUMBERS WERE STRIPPED FROM THIS FILE'S mouse.go CITATIONS in review
+of #478. They had drifted by roughly a hundred lines — `hitTest` cited
+at :73 was at :231, `DispatchMouse` at :153 was at :335 — and a dated
+decision record is the one document that must NOT be edited to track the
+tree, so chasing the numbers would have to be redone after every change
+to that file and would be wrong again within the month. The symbol names
+are stable and are what a reader searches for; a line number here was
+never carrying anything the name did not.
+-->
+
 # The design surface: COD, edit/runtime vocabularies, selection, and a property grid (design)
 
 Status: partially implemented. `Frozen` (see
@@ -43,7 +54,7 @@ It is four:
 | Seam | Consumer | What it gives |
 |---|---|---|
 | damage | `Composer.build` (`composer.go:283`) | each child gets its own paint node |
-| input | `FocusManager.walk` (`input.go:388`), `hitTest` (`mouse.go:73`) | focus order, key bindings, hit-testing |
+| input | `FocusManager.walk` (`input.go:388`), `hitTest` (`mouse.go`) | focus order, key bindings, hit-testing |
 | adornment | `visiblyReachable` (`components/adorn.go:146`) | an adornment's anchor must be reachable from the root |
 | lifecycle | `Composer` startable discovery (`composer.go:398,403`) | timers, spinners, progress bars tick |
 
@@ -76,9 +87,9 @@ Everything that can reach a component from outside, and where it enters:
 - **key bindings** — `m.bindings[host]`, collected by the same walk from
   each component's attachments.
 - **mnemonics** — same walk, `MnemonicHandler`.
-- **mouse** — `DispatchMouse` (`mouse.go:153`) routes to
+- **mouse** — `DispatchMouse` (`mouse.go`) routes to
   `m.target(hit)`, and `hit` is the deepest component under the pointer.
-- **hover** — `m.setHover(hit)` (`mouse.go:168`), a source property on
+- **hover** — `m.setHover(hit)` (`mouse.go`), a source property on
   the hit component; a hovered button repaints itself.
 - **focus-follows-click** — `m.focusTargetFor(hit)`, nearest focusable
   at-or-above the hit.
@@ -148,12 +159,12 @@ Four touch points, each mirroring a pattern already in the file:
    it, and so does `depth`/`ancestor`), keep `FocusHost` wiring, and
    register **nothing targetable**: no `m.order` entry, no `m.bindings`,
    no `m.mnemonics`, no `m.watchers`.
-2. **`FocusManager.target` (`mouse.go:217`)** — retarget upward: the
+2. **`FocusManager.target` (`mouse.go`)** — retarget upward: the
    captor if captured, otherwise the nearest frozen ancestor at-or-above
    the hit, otherwise the hit. This is `focusTargetFor` with a different
    predicate, and it lands in the one function every mouse kind — press,
    release, motion and **wheel** — already routes through.
-3. **`setHover` (`mouse.go:168`)** — the same retarget, so a button in
+3. **`setHover` (`mouse.go`)** — the same retarget, so a button in
    the surface does not light up under the pointer. See below for why
    hover is nonetheless not fully frozen.
 4. **`Composer.collect` (`composer.go:395`)** — do not append a
@@ -284,7 +295,7 @@ keeps meeting.
 The design put a `Frozen` check in `FocusManager.target` and another in
 `setHover`. Both were written, both worked, and the press test failed
 anyway: `DispatchMouse` sets the implicit captor **from the raw hit,
-before routing** (`mouse.go:180`), and `target` returns the captor first —
+before routing** (`mouse.go`), and `target` returns the captor first —
 so the descendant got the event back through its own capture.
 
 The fix is to retarget once, at the top of `DispatchMouse`, and let

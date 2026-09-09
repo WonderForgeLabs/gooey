@@ -182,9 +182,12 @@ func (h *ToastHost) PassesCellsThrough() {}
 // the intended follow-up if the swallowing is reported: it would let a
 // press fall through to whatever the toast is covering while the toast
 // is still visible, which is a different semantic and wants its own
-// issue, its own damage-count evidence and its own answer for a toast
-// that IS meant to be clicked. Named in review of #478, where the
-// consequence was stated nowhere and the upside was stated twice.
+// damage-count evidence and its own answer for a toast that IS meant to
+// be clicked. Named in review of #478, where the consequence was stated
+// nowhere and the upside was stated twice, and filed as #481 in the next
+// round — every other deferred decision in this file carries a number,
+// and a promise in prose with none is what CLAUDE.md's "A red suite is
+// yours" section calls a claim that outlives the thing it describes.
 func (h *ToastHost) HitTestTransparent() bool { return true }
 
 // Toast is one transient message — an ordinary leaf, so its paint node

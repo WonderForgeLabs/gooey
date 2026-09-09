@@ -101,14 +101,24 @@ retired "declare it last" rule the thing on top was also the thing the
 walk found first, so the divergence arrived with the freedom rather than
 with the layer.
 
-That divergence got easier to fall into with the fix, not harder. Being
-last used to be the only thing keeping an overlay on top, so nobody
-could get the paint right and the input wrong. Now paint no longer needs
-it and hit-testing still does. None of the framework's own overlays care
-— a `Popup` takes the pointer capture while open, and `ToastHost`,
+For those five weeks the divergence was easier to fall into than it had
+been before the lift, not harder. Being last used to be the only thing
+keeping an overlay on top, so nobody could get the paint right and the
+input wrong; once paint stopped needing it and the walk still did, the
+two could disagree. None of the framework's own overlays cared — a
+`Popup` takes the pointer capture while open, and `ToastHost`,
 `AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
-`HitTestTransparent`, so no press was ever theirs to lose — but an
-interactive adorner somebody else writes is where it bites.
+`HitTestTransparent`, so no press was ever theirs to lose — which is
+exactly why nothing in the suite went red and the gap sat open. An
+interactive adorner somebody else writes is where it would have bitten,
+and since #465 it does not: that adorner receives the presses its
+painted position implies.
+
+The paragraph above used to say the gap was live, ending on the words
+"hit-testing still does". Since #465 the hit walk asks `overlayOf`, so
+it does not; corrected in review of #478, eight lines below a heading
+the same PR had already rewritten. A doc can contradict itself inside
+one section, and only a guard notices.
 
 The two layers are one function, `overlayOf` in `component.go`, asked by
 both the retained path (`Composer.orderPaint`) and the one-shot path

@@ -545,7 +545,7 @@ func (m *FocusManager) walk(w, parent Component, allow Allow) {
 			// mnemonic one, and the note matters because it is what stops
 			// the next reader deleting this line against a green suite.
 			// updateWatchers only ever sees the hit DispatchMouse already
-			// retargeted to the frozen host (mouse.go:176), so
+			// retargeted to the frozen host (mouse.go:358), so
 			// within(hw.host, hit) is false for every host inside the
 			// subtree whether or not this registration happened.
 			// Measured: deleting this category test leaves the whole

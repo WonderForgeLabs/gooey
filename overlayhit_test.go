@@ -186,18 +186,6 @@ func TestATransparentOverlayHostPassesThePressToItsOwnChild(t *testing.T) {
 	}
 }
 
-// TestTheHitWalkAllocatesNothing pins the cost the design was
-// constrained by, because it is the reason #465 could not simply ask the
-// Composer for c.paint and index it.
-//
-// HitTest runs on every motion report, and ?1003h sends one per cell
-// crossed. The rewrite threads its running best through a pointer and
-// numbers nodes with an int rather than collecting candidates, and none
-// of that is visible in any behavioural assertion — a version that built
-// a slice per event would pass every other test in this file.
-//
-// AllocsPerRun and not a benchmark: a benchmark reports a number nobody
-// reads, and the claim here is a zero, which is a test.
 // TestTheHitWalkInheritsTheRankNotJustTheMembership is the mutation the
 // PR's own matrix scored membership for and rank not at all.
 //
@@ -332,6 +320,27 @@ func TestAnOverlayOutsideItsParentPaintsAndIsNotHit(t *testing.T) {
 	}
 }
 
+// TestTheHitWalkAllocatesNothing pins the cost the design was
+// constrained by, because it is the reason #465 could not simply ask the
+// Composer for c.paint and index it.
+//
+// HitTest runs on every motion report, and ?1003h sends one per cell
+// crossed. The rewrite threads its running best through a pointer and
+// numbers nodes with an int rather than collecting candidates, and none
+// of that is visible in any behavioural assertion — a version that built
+// a slice per event would pass every other test in this file.
+//
+// AllocsPerRun and not a benchmark: a benchmark reports a number nobody
+// reads, and the claim here is a zero, which is a test.
+//
+// THIS COMMENT WAS SITTING ABOVE A DIFFERENT FUNCTION until review of
+// #478 — TestTheHitWalkInheritsTheRankNotJustTheMembership, inserted
+// between it and the function it names, which left that test with two
+// stacked doc blocks and this one with none. gofmt and vet are both
+// blind to it. Third occurrence in this story (the rebase note in
+// TestTheHitTestExemptionIsLineScoped and qualifierRes's header were the
+// first two), so it is filed rather than only fixed:
+// https://github.com/WonderForgeLabs/gooey/issues/483.
 func TestTheHitWalkAllocatesNothing(t *testing.T) {
 	over := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
 	inner := &twoKids{kids: []Component{&stripe{ch: 'A'}, &stripe{ch: 'B'}}}

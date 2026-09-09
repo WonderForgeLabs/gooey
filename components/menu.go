@@ -276,7 +276,8 @@ func (m Menu) checkBox(it MenuItem) string {
 // geometry alone the dropdown paints and is not hit. The capture is what
 // makes that unobservable here, which is exactly why the sentence had to
 // go: it was the one this file could not have noticed being wrong.
-// See gooey.FocusManager.HitTest. Raised in review of #478.
+// Tracked as #482. See gooey.FocusManager.HitTest. Raised in review of
+// #478.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

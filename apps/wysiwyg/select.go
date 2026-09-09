@@ -5,7 +5,7 @@ package main
 // The framework already does the hard part, and the shape of this file is
 // dictated by which part that is. In DESIGN mode the designer is a
 // gooey.Frozen host, so a press anywhere inside the document is retargeted
-// to the pane (mouse.go:176) and the document's own components never act —
+// to the pane (mouse.go:358) and the document's own components never act —
 // that is the mode. But hit-testing is deliberately NOT retargeted
 // (component.go:86-93 says so in as many words: "Stopping the descent here
 // would make click-to-select impossible"), so the deepest component under

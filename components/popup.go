@@ -99,7 +99,7 @@ func NewPopup(owner gooey.Component, draw func(*gooey.Frame, gooey.Rect)) *Popup
 // rect — that is its whole job — so a surface there paints and cannot be
 // hit. An open Popup holds pointer capture, so no press reaches the walk
 // and nothing shipped depends on this; a future Overlay that places
-// itself outside its parent AND wants clicks would.
+// itself outside its parent AND wants clicks would. Tracked as #482.
 // See gooey.FocusManager.HitTest. Raised in review of #478.
 //
 // This paragraph said position was what an overlay's INPUT order rode

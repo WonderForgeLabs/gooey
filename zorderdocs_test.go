@@ -54,7 +54,8 @@ import (
 //
 // Raised in review of #458.
 func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
-	scanForRetiredRule(t, statesTheRetiredRule, prefilterWords, qualifierRes, scanAdvice)
+	scanForRetiredRule(t, statesTheRetiredRule, prefilterWords, qualifierRes,
+		supersededOf, scanAdvice)
 }
 
 // scanAdvice is NAMED rather than written at the call, because
@@ -89,7 +90,9 @@ const scanAdvice = "Overlays are lifted out of document order into a paint " +
 // TestThePaintCorrectionDoesNotExemptTheInputClaim, which measures it.
 // Raised in review of #478.
 func TestNoFileTeachesTheRetiredInputRule(t *testing.T) {
+	scanFilesForResidue(t, docFiles(t))
 	scanForRetiredRule(t, statesTheRetiredInputRule, inputPrefilterWords, inputQualifierRes,
+		supersededOfInput,
 		"FocusManager.HitTest asks overlayOf since #465 — the same "+
 			"membership-and-rank rule paint derives its order from — so "+
 			"the hit walk is lifted, it does know about the marker, and "+
@@ -110,6 +113,14 @@ func TestNoFileTeachesTheRetiredInputRule(t *testing.T) {
 // arithmetic, the superseded-head exemption and the prefilter contract —
 // four subtleties this file spent a review each on — into a place where
 // only one copy would receive the next fix.
+func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) {
+	scanFilesForRetiredRule(t, docFiles(t), states, prefilter, quals, of, advice)
+}
+
+// scanFilesForRetiredRule takes the file list explicitly so a FIXTURE
+// can be handed to the same walk the repo gets. A guard checked only
+// against a clean tree is a guard nobody has ever seen fail.
+//
 // PARALLEL OVER THE FILES, because between them these two guards are
 // the most expensive thing in the root package — 11.9s of 26s for the
 // paint one alone, measured — and the work is embarrassingly parallel:
@@ -124,9 +135,8 @@ func TestNoFileTeachesTheRetiredInputRule(t *testing.T) {
 // reason anybody can act on.
 //
 // Raised in review of #458, generalised to two planes in review of #478.
-func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []string, quals []*regexp.Regexp, advice string) {
+func scanFilesForRetiredRule(t *testing.T, files []string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) {
 	t.Helper()
-	files := docFiles(t)
 	found := make([][]string, len(files))
 	errs := make([]error, len(files))
 
@@ -138,7 +148,7 @@ func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []stri
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			found[i], errs[i] = retiredRuleProblems(f, states, prefilter, quals, advice)
+			found[i], errs[i] = retiredRuleProblems(f, states, prefilter, quals, of, advice)
 		}()
 	}
 	wg.Wait()
@@ -157,7 +167,7 @@ func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []stri
 
 // retiredRuleProblems is the per-file half, pure so it can run off the
 // test's goroutine: it returns what it found rather than reporting it.
-func retiredRuleProblems(f string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, advice string) ([]string, error) {
+func retiredRuleProblems(f string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) ([]string, error) {
 	var problems []string
 	{
 		body, err := os.ReadFile(f)
@@ -205,7 +215,7 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 			return nil, nil
 		}
 		lines := strings.Split(string(body), "\n")
-		if declaresItselfSuperseded(lines) {
+		if declaresItselfSuperseded(lines, of) {
 			return nil, nil
 		}
 		// ONE REPORT PER STATEMENT, and the first version had none.
@@ -217,10 +227,10 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 		// the case that found this — so a single stale sentence read as
 		// two violations, one of them at a location with nothing on it.
 		//
-		// Found by TestTheScanItselfReportsAFixtureFile, on the first
-		// run of the first fixture ever pointed at this scan, which is
-		// the argument for that test rather than a remark about this
-		// one. Raised in review of #458.
+		// Found by pointing a FIXTURE at the scan, on its first run, in
+		// both #458's and #478's reviews independently — which is the
+		// argument for those fixtures rather than a remark about this
+		// line.
 		reported := map[int]bool{}
 		for i, line := range lines {
 			// The line AND the line joined to its successor. A rule
@@ -549,9 +559,84 @@ var paintCorrectionRes = []*regexp.Regexp{
 	// below carry the meaning the bare word does not.
 	// Raised in review of #458.
 	regexp.MustCompile(`(?i)OverlayRank|overlay rank|rank(s|ed)? (it|them|the layer|above|over|beats|higher|lower)|by rank|rank order|equal ranks?`),
-	// #465 alongside the paint issues: a sentence correcting either
-	// plane cites it, and the input guard shares this list.
+	// #465 alongside the paint issues, because a sentence correcting
+	// either plane cites it by house style.
+	//
+	// THE INPUT GUARD DOES NOT SHARE THIS LIST — this comment said it
+	// did, which is the reading that gets inputCorrectionRes's own #465
+	// entry deleted as redundant, silently narrowing the guard to four
+	// patterns. The correction halves are deliberately separate
+	// (inputCorrectionRes + epitaphRes is what the input scan uses), and
+	// TestThePaintCorrectionDoesNotExemptTheInputClaim measures the
+	// separation. Only the EPITAPHS are shared. The sentence was written
+	// before the split and outlived it by one commit. Raised in review of
+	// #478.
 	regexp.MustCompile(`#4(37|38|39|65)|#430`),
+}
+
+// scanFilesForResidue binds correctionResidueRule to the qualifier set it
+// has to be scanned with, because THE PAIRING IS THE RULE.
+//
+// Scanning the residue family with inputQualifierRes — the epitaphs
+// included — restores the exact self-exemption the family exists to
+// close: the sentence "paint NO LONGER needs it and hit-testing still
+// does" carries an epitaph of its own, attached to the other plane.
+//
+// It is a function rather than two argument lists because it was two
+// argument lists first, and weakening ONE of them was SILENT under
+// mutation: the repo scan and the fixture arm each spelled the pairing
+// out, so either could be got wrong on its own while the other kept the
+// suite green. A rule written twice is a rule that only half of the
+// callers will receive the next fix. Raised in review of #478.
+func scanFilesForResidue(t *testing.T, files []string) {
+	t.Helper()
+	scanFilesForRetiredRule(t, files, statesTheCorrectionResidue,
+		inputPrefilterWords, inputCorrectionRes, supersededOfInput,
+		"That is the residue of a correction that stopped halfway: paint "+
+			"was described as lifted and the hit walk was left behind. "+
+			"Since #465 both derive their order from overlayOf. An "+
+			"epitaph does NOT excuse this one — say what the walk does "+
+			"now (the markers are inputCorrectionRes), because \"no "+
+			"longer\" in the same sentence is exactly what the live "+
+			"instance of this said.")
+}
+
+// correctionResidueRule is the shape a HALF-FINISHED correction leaves
+// behind, and it is a separate list because it needs a stricter qualifier
+// than everything else here.
+//
+// Nobody writes "paint no longer needs it and hit-testing still does"
+// from scratch. It is what an edit produces when the heading gets
+// rewritten and the paragraph under it does not — and it was live in
+// docs/learn/concepts/overlays.md eight lines below a heading #478 had
+// already rewritten.
+//
+// THE EPITAPHS DO NOT QUALIFY IT, which is the whole reason for the
+// second list. The residue sentence CONTAINS an epitaph — "paint NO
+// LONGER needs it" — attached to the other plane, so scanning it with
+// inputQualifierRes exempts it on its own words. That is the same
+// self-exemption as `\blifted\b` matching "hit-testing is NOT lifted",
+// found for the third time in this file and measured here: the fixture
+// arm in TestTheDocGuardsFireOnAFixtureTree was SILENT until this list
+// existed.
+//
+// So a residue sentence is excused only by inputCorrectionRes — a
+// statement of what the walk does NOW. That is the right bar: the
+// failure mode being caught is a correction that stopped halfway, and
+// the evidence that it did not is the corrected sentence, not the word
+// "no longer" sitting somewhere in the same paragraph.
+var correctionResidueRule = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(hit-?test(ing)?|the hit walk|input)\b.{0,20}?\bstill (does|is|walks|needs|uses)\b`),
+	regexp.MustCompile(`(?i)still (walks|uses) (plain |ordinary )?document order`),
+}
+
+func statesTheCorrectionResidue(line string) bool {
+	for _, re := range correctionResidueRule {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // inputCorrectionRes is the correction half for the INPUT plane, and
@@ -593,23 +678,256 @@ var inputQualifierRes = append(append([]*regexp.Regexp{}, inputCorrectionRes...)
 // right. This guard exists because a description outlives its subject;
 // it does not get to keep one of its own.
 
+// TestASupersessionBannerIsScopedToItsOwnPlane pins the exemption's two
+// bounds, because a whole-file exemption is the widest thing in this
+// guard and both of its edges were wrong.
+//
+// The fixtures are synthetic on purpose. Pointed at the real spec this
+// would pass the day somebody rewrote that file for an unrelated reason,
+// and the mechanism is what has to hold — docs/specs/2026-08-30-overlay-
+// layer.md is the sample that found it, not the property.
+//
+// Raised in review of #478.
+func TestASupersessionBannerIsScopedToItsOwnPlane(t *testing.T) {
+	// A ranks banner: paint's epitaph, and a passing mention of
+	// hit-testing that is a CROSS-REFERENCE and not a supersession —
+	// exactly the head of the spec that found this.
+	ranks := []string{
+		"# Overlays paint in a layer",
+		"",
+		"**Superseded in part by:** the overlay ranks spec (#439) —",
+		"ordering *within* the layer is now RANKED, not document order.",
+		"`component.go`'s `Overlay` doc points readers here for the",
+		"hit-testing gap, which is why the pointer runs both ways.",
+	}
+	if !declaresItselfSuperseded(ranks, supersededOf) {
+		t.Error("a banner declaring the OVERLAY ordering superseded does not exempt " +
+			"the file from the z-order scan. Dated specs depend on this: measured, " +
+			"deleting the exemption lights up six of them at once")
+	}
+	if declaresItselfSuperseded(ranks, supersededOfInput) {
+		t.Error("a banner about the RANKS exempts the file from the INPUT scan. " +
+			"That is how the most detailed statement of the rule #465 retired — " +
+			"\"the marker moves paint, not input\" — sat thirty lines under a " +
+			"banner that said nothing about input and was never scanned")
+	}
+
+	// AND THE PLANE'S OWN BANNER STILL WORKS, or the scoping above is
+	// just a guard that can never be satisfied.
+	input := []string{
+		"# Overlays paint in a layer",
+		"",
+		"**The hit-testing gap below is superseded by #465** — the walk",
+		"asks overlayOf now.",
+	}
+	if !declaresItselfSuperseded(input, supersededOfInput) {
+		t.Error("a banner declaring the HIT-TESTING gap superseded does not exempt " +
+			"the file from the input scan, so a dated record has no way to keep " +
+			"its own history")
+	}
+
+	// TWO KEYWORDS ARE NOT A CLAIM. Scoping the plane alone did not close
+	// the hole: "superseded" in one line and "hit-testing" in another
+	// satisfied a whole-head match, which is precisely the ranks banner
+	// above. The two have to be one statement, joined at most across a
+	// wrap.
+	scattered := []string{
+		"# A spec",
+		"",
+		"This section is superseded.",
+		"",
+		"Elsewhere in the head, a sentence about hit-testing that",
+		"supersedes nothing at all.",
+	}
+	if declaresItselfSuperseded(scattered, supersededOfInput) {
+		t.Error("two keywords in different sentences bought a whole-file exemption. " +
+			"A banner earns silence by SAYING the rule is superseded, not by " +
+			"containing both words somewhere in twenty lines")
+	}
+
+	// AND A WRAPPED BANNER IS STILL ONE STATEMENT, or the tightening
+	// above turns into a rule about where a line break falls.
+	wrapped := []string{
+		"# A spec",
+		"",
+		"The hit-testing gap this records is superseded by",
+		"#465, which taught the walk the two layers.",
+	}
+	if !declaresItselfSuperseded(wrapped, supersededOfInput) {
+		t.Error("a banner wrapped at 72 columns is not read as one statement, so " +
+			"whether a file is exempt depends on where its line breaks fall")
+	}
+}
+
+// TestTheDocGuardsFireOnAFixtureTree is the honesty arm for the two
+// scans, and it exists because everything else here is exercised only
+// against THE REPO'S CURRENT CONTENTS.
+//
+// That is the whole failure mode. A guard is a negative assertion: it
+// reports PASS when the tree is clean and when the guard has stopped
+// working, and the only way to tell those apart is to hand it something
+// dirty. Handing it the repo cannot do that, because the repo is the
+// thing being kept clean — so five separate mutations of these guards
+// came back SILENT in review of #478, not because the guards were right
+// but because the sentences they had stopped catching were the ones this
+// PR had just deleted.
+//
+// The fixtures are synthetic, in a temp dir, walked by the same
+// docFilesIn the real scan uses. Each is a phrasing the guard exists to
+// catch, paired with the same phrasing carrying its qualifier — because
+// "reject everything" satisfies every dirty arm on its own.
+func TestTheDocGuardsFireOnAFixtureTree(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		caught bool
+	}{
+		{
+			// #478's finding 1: one plane's epitaph bought silence on the
+			// other plane's live claim, and it was thirty lines away.
+			name: "a paint-plane banner does not exempt an input claim",
+			body: "# A dated record\n\n" +
+				"**Superseded in part by:** the overlay ranks spec (#439) — ordering\n" +
+				"*within* the layer is now RANKED, not document order.\n\n" +
+				"## Some section, thirty lines down\n\n" +
+				"filler\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\n" +
+				"filler\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\n" +
+				"But `Overlay` is a public interface, and the walk knows nothing\n" +
+				"about it. **The marker moves paint, not input.**\n",
+			caught: true,
+		},
+		{
+			name: "an input-plane banner does exempt it",
+			body: "# A dated record\n\n" +
+				"**The hit-testing gap below is superseded by #465** — the walk asks\n" +
+				"overlayOf now, and the paragraph is kept as history.\n\n" +
+				"But `Overlay` is a public interface, and the walk knows nothing\n" +
+				"about it. **The marker moves paint, not input.**\n",
+			caught: false,
+		},
+		{
+			// The residue of a half-finished correction, which no pattern
+			// drafted from a shipped sentence reaches.
+			name: "the residue of a correction is caught",
+			body: "# A guide\n\nBeing last used to be the only thing keeping an overlay\n" +
+				"on top. Now paint no longer needs it and hit-testing still does.\n",
+			caught: true,
+		},
+		{
+			name: "the same sentence marked as history is not",
+			body: "# A guide\n\nThe paragraph used to say paint no longer needs it and\n" +
+				"hit-testing still does. Since #465 the hit walk asks overlayOf.\n",
+			caught: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fixture.md"),
+				[]byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files := docFilesIn(t, dir)
+			if len(files) != 1 {
+				t.Fatalf("the fixture walk found %d files, want 1 — this arm is "+
+					"about what the scan REPORTS, so it has to be reading the "+
+					"fixture", len(files))
+			}
+			var sub testing.T
+			scanFilesForRetiredRule(&sub, files, statesTheRetiredInputRule,
+				inputPrefilterWords, inputQualifierRes, supersededOfInput, "advice")
+			scanFilesForResidue(&sub, files)
+			if got := sub.Failed(); got != tc.caught {
+				t.Errorf("the input scan reported=%v, want %v, for:\n%s", got,
+					tc.caught, tc.body)
+			}
+		})
+	}
+}
+
+// TestTheContractGuardFiresOnAFixtureTree is the same arm for the
+// ancestor-clause guard, and it is here for the same reason: keyed on
+// "among those WHOSE", that guard could not see CLAUDE.md's "among those
+// CONTAINING" and reported nothing for two review rounds. Widening the
+// pattern against the repo alone proves nothing once the repo has been
+// corrected to the phrasing the pattern already matched.
+func TestTheContractGuardFiresOnAFixtureTree(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		caught bool
+	}{
+		{"the CLAUDE.md phrasing, unqualified",
+			"HitTest returns the component that paints last among those containing\n" +
+				"the cell, comparing candidates on what appendByRank orders by.\n", true},
+		{"the mouse.go phrasing, unqualified",
+			"the one that paints last among those whose arranged bounds contain\n" +
+				"the cell.\n", true},
+		{"either phrasing with the clause",
+			"the one that paints last among those whose arranged bounds — and every\n" +
+				"ancestor's bounds — contain the cell.\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fixture.md"),
+				[]byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var sub testing.T
+			hitContractProblems(&sub, docFilesIn(t, dir))
+			if got := sub.Failed(); got != tc.caught {
+				t.Errorf("the contract guard reported=%v, want %v, for:\n%s", got,
+					tc.caught, tc.body)
+			}
+		})
+	}
+}
+
 // declaresItselfSuperseded exempts a whole file whose HEAD says the rule
 // below it is dead. That is for the dated decision records: a spec is a
 // record of what was decided on its date and rewriting its body would
 // falsify the history it exists to keep, so the honest repair is a banner
 // at the top — which the per-line window cannot see from thirty lines
-// down.
+// down. Deleting the exemption is not an option: measured, it lights up
+// six dated specs at once, which is the history it exists to protect.
 //
 // Scoped to the head deliberately. A "superseded" note buried in the
 // middle of a long document does not reach a reader who lands on a
 // section, so it does not buy the exemption either.
-func declaresItselfSuperseded(lines []string) bool {
+//
+// AND SCOPED TO A PLANE, which it was not. `of` is the caller's plane,
+// so a banner has to say it supersedes THAT rule rather than any rule
+// about overlays. docs/specs/2026-08-30-overlay-layer.md is what found
+// this: its banner declares the ordering *within* the layer superseded
+// by #439 — a paint change — and that exempted the whole file from the
+// INPUT scan, thirty lines above the most detailed statement of the rule
+// #465 retired ("The marker moves paint, not input"). One plane's
+// epitaph bought silence on the other's live claim.
+//
+// That is the same shape as the hit-test exemption this file deleted in
+// #465: a hole shaped exactly like the sentence that has just become
+// wrong. Raised in review of #478.
+//
+// AND IN ONE STATEMENT, not two matches anywhere in the head. Scoping
+// the plane alone did not close it, measured: that same banner MENTIONS
+// hit-testing — to say the cross-reference runs both ways — so
+// "superseded" on line 6 and "hit-testing" on line 10 satisfied a
+// whole-head match and the file stayed exempt. Two keywords in one
+// banner are not a claim; a sentence saying THIS rule is superseded is.
+// The join is the same one-line lookahead the per-line scan uses, so a
+// banner wrapped at 72 columns still reads as one statement.
+func declaresItselfSuperseded(lines []string, of *regexp.Regexp) bool {
 	head := 20
 	if len(lines) < head {
 		head = len(lines)
 	}
-	h := strings.Join(lines[:head], "\n")
-	return supersededRe.MatchString(h) && supersededOf.MatchString(h)
+	for i := range lines[:head] {
+		for _, s := range []string{lines[i], joinWrapped(lines, i)} {
+			if supersededRe.MatchString(s) && of.MatchString(s) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BOTH HALVES REQUIRED. Keying on the bare word "superseded" exempted a
@@ -622,7 +940,14 @@ func declaresItselfSuperseded(lines []string) bool {
 // of #458.
 var (
 	supersededRe = regexp.MustCompile(`(?i)superseded`)
+	// The PAINT plane's supersession terms. A banner naming these
+	// exempts a file from the z-order scan and from that one only.
 	supersededOf = regexp.MustCompile(`(?i)overlay|z-?order`)
+	// And the INPUT plane's. Deliberately NOT "overlay": that word
+	// appears in the banner of every spec in this story, which is how a
+	// ranks note came to exempt a live input claim. A banner earns
+	// silence on the input rule by naming the input rule.
+	supersededOfInput = regexp.MustCompile(`(?i)hit-?test|hit walk|input|#465`)
 )
 
 // qualifiedNear looks in a NARROW window around the hit — two lines each
@@ -738,16 +1063,26 @@ func qualifiedIn(lines []string, first, last int, res []*regexp.Regexp) bool {
 // routinely has agent worktrees under .claude/worktrees/ holding whole
 // checkouts of itself, and a top-anchored filter walks into them. vendor/
 // is somebody else's prose entirely.
-func docFiles(t *testing.T) []string {
+func docFiles(t *testing.T) []string { return docFilesIn(t, ".") }
+
+// docFilesIn is docFiles over an arbitrary root, which is what lets the
+// honesty arm point these guards at a FIXTURE DIRECTORY instead of at the
+// repo. Without it every one of them is exercised only against the tree's
+// current contents, so a mutation the tree does not happen to trigger is
+// silent — and five of them were, measured, in review of #478. That is
+// the same defect #475 found in the citation guard: an honesty arm that
+// drives the check through a stub exercises everything except the
+// production path.
+func docFilesIn(t *testing.T, root string) []string {
 	t.Helper()
 
 	var out []string
-	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if p == "." {
+			if p == root {
 				return nil
 			}
 			if strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor" {
@@ -783,7 +1118,10 @@ func docFiles(t *testing.T) []string {
 	// guarantee actually enforced, and still leaves room for the tree to
 	// shrink by a third. Raised in review of #458.
 	const floor = 500
-	if len(out) < floor {
+	// The floor is about THE REPO. A fixture root holds four files on
+	// purpose, and applying the repo's floor to it would turn the honesty
+	// arm into a failure about the fixture's size.
+	if root == "." && len(out) < floor {
 		t.Fatalf("found %d documentation files, want at least %d — the walk "+
 			"is broken and every assertion below it is vacuous", len(out), floor)
 	}
@@ -937,27 +1275,54 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 // stating the contract in the repo's own words has to carry the
 // qualification within the same few lines.
 //
-// It covers the two sites that use this phrasing (mouse.go and
-// docs/architecture.md) and NOT the two that paraphrase it —
-// components/popup.go and components/menu.go say it in their own words,
-// and a pattern loose enough to catch those would catch every sentence
-// about painting order in the repo. Those two are named here so the gap
-// is recorded rather than assumed closed. Raised in review of #478.
+// It covers the three sites that use this phrasing (mouse.go,
+// docs/architecture.md and CLAUDE.md) and NOT the two that paraphrase it
+// — components/popup.go and components/menu.go say it in their own
+// words, and a pattern loose enough to catch those would catch every
+// sentence about painting order in the repo. Those two are named here so
+// the gap is recorded rather than assumed closed.
+//
+// CLAUDE.md is the third only since the second round of review: the
+// claim pattern required "among those WHOSE" and CLAUDE.md wrote "among
+// those CONTAINING", so the one file whose instructions govern every
+// agent in this repo was the one the guard could not see. Two rounds,
+// two ways for a derived guard to be narrower than it reads. Raised in
+// review of #478.
 func TestEveryStatementOfTheHitContractNamesTheAncestorClause(t *testing.T) {
-	claim := regexp.MustCompile(`(?i)paints? last among those whose`)
+	hitContractProblems(t, docFiles(t))
+}
+
+// hitContractProblems is the check itself, over a file list, so
+// TestTheContractGuardFiresOnAFixtureTree can point it at a fixture. The
+// split is the same one #475 made in the citation guard, for the same
+// reason: a negative assertion driven only by the tree it is protecting
+// cannot tell "clean" from "switched off".
+func hitContractProblems(t *testing.T, files []string) {
+	t.Helper()
+	// "those whose" OR "those containing". Keyed on the first alone this
+	// guard was derived to the width of ONE PHRASING, and the file it
+	// missed was CLAUDE.md — whose instructions override default
+	// behaviour for every agent in this repo, and which said "PAINTS
+	// LAST among those containing the cell". The sentence §1 corrected
+	// in four files survived in the fifth, and the guard written to
+	// prevent that reported nothing. A guard against prose drift has to
+	// be at least as loose as the prose. Raised in review of #478.
+	claim := regexp.MustCompile(`(?i)paints? last among those (whose|containing)`)
 	ancestor := regexp.MustCompile(`(?i)ancestor`)
 	found := 0
-	for _, f := range docFiles(t) {
+	for _, f := range files {
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
-		// "among those whose", not "paints last among": the claim wraps
-		// at 72 columns in mouse.go ("THE ONE THAT PAINTS / LAST among
-		// those whose"), so a prefilter keyed on the whole phrase skips
-		// the file the contract is defined in — and the guard reports
-		// nothing rather than reporting a miss.
-		if !strings.Contains(strings.ToLower(string(body)), "among those whose") {
+		// "among those", not "paints last among": the claim wraps at 72
+		// columns in mouse.go ("THE ONE THAT PAINTS / LAST among those
+		// whose"), so a prefilter keyed on the whole phrase skips the
+		// file the contract is defined in — and the guard reports
+		// nothing rather than reporting a miss. Trimmed further, past
+		// "whose", when CLAUDE.md turned out to say "among those
+		// containing".
+		if !strings.Contains(strings.ToLower(string(body)), "among those ") {
 			continue
 		}
 		lines := strings.Split(string(body), "\n")
@@ -1037,6 +1402,45 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 		"// HitTest knows nothing about ranks.",
 		"// hit-testing takes the last sibling first, whatever paints on top.",
 		"// The marker moves paint, not the clicks.",
+	}
+	// THE RESIDUE OF A CORRECTION is its own family and its own arm,
+	// because it is scanned with a stricter qualifier set —
+	// inputCorrectionRes alone, no epitaphs. See correctionResidueRule.
+	//
+	// Both carry a prefilter word ("hit"), and the second says "the hit
+	// walk" rather than "hit-testing" on purpose: that is what makes it
+	// discriminate against the walks-document-order pattern at the top of
+	// retiredInputRule rather than being caught by it. Measured — before
+	// these two lines existed, deleting BOTH residue patterns was silent.
+	// Raised in review of #478.
+	residue := []string{
+		"// paint no longer needs it and hit-testing still does.",
+		"// The hit walk still uses document order.",
+	}
+	for _, line := range residue {
+		if !statesTheCorrectionResidue(line) {
+			t.Errorf("the residue guard does not recognize a phrasing it exists "+
+				"to catch:\n\t%s", line)
+		}
+	}
+	for _, re := range correctionResidueRule {
+		matched := false
+		for _, line := range residue {
+			if re.MatchString(line) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("correctionResidueRule pattern %v matches none of the residue "+
+				"samples: it is dead or subsumed, and deleting it would redden "+
+				"nothing.", re)
+		}
+	}
+	if !containsAny(strings.ToLower(strings.Join(residue, "\n")), inputPrefilterWords) {
+		t.Error("a residue sample carries none of inputPrefilterWords, so the scan " +
+			"skips the file it appears in and this whole family is switched off " +
+			"for most of the tree")
 	}
 	for _, line := range removed {
 		if !statesTheRetiredInputRule(line) {
@@ -1343,7 +1747,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 	bad := write("bad.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top.\n\nMore prose.\n")
 	got, err := retiredRuleProblems(bad, statesTheRetiredRule, prefilterWords,
-		qualifierRes, scanAdvice)
+		qualifierRes, supersededOf, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -1359,7 +1763,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 	good := write("good.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top — that is what this used to say.\n\nMore prose.\n")
 	got, err = retiredRuleProblems(good, statesTheRetiredRule, prefilterWords,
-		qualifierRes, scanAdvice)
+		qualifierRes, supersededOf, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -1385,7 +1789,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 		"\n"+
 		"More prose.\n")
 	got, err = retiredRuleProblems(wrapped, statesTheRetiredRule, prefilterWords,
-		qualifierRes, scanAdvice)
+		qualifierRes, supersededOf, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
