@@ -526,6 +526,20 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 		lines[path] = s
 		return s
 	}
+	// code is src with every block-comment span blanked, memoised
+	// separately so the reports above keep quoting the file as written.
+	// It is computed per FILE and not per window, for the reason
+	// blockFree's own doc gives: a window is a slice, and a span opened
+	// above it is invisible from inside.
+	blanked := map[string][]string{}
+	code := func(path string) []string {
+		if s, ok := blanked[path]; ok {
+			return s
+		}
+		s := blockFree(src(path))
+		blanked[path] = s
+		return s
+	}
 
 	// ---- half one: every citation names a real place ----
 	for _, m := range citation.FindAllStringSubmatch(md, -1) {
@@ -631,7 +645,21 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			// end and belongs to the validity check above, not here.
 			// Raised in review of #475.
 			from, to := max(0, lo-1-citeWindow), min(len(s), lo+citeWindow)
-			if !strings.Contains(codeOnly(s[from:to]), leaf) {
+			// A WORD BOUNDARY, not a substring. `Settable` contains
+			// `Set`, so a window whose only code is
+			// `func (p *Property[T]) Settable() bool` satisfied a
+			// citation for prop.Set — the same fail-open as the prose
+			// case one layer down, satisfied by a DIFFERENT SYMBOL that
+			// happens to contain the leaf. It is not hypothetical here:
+			// prop/prop.go puts Settable at 114 and Set at 117, three
+			// lines apart, so an edit that moves Set out of the window
+			// and leaves Settable in it keeps this green while pointing
+			// at the wrong symbol.
+			//
+			// This repo has the bug's twin on the record with the same
+			// fix — reviewprompt_test.go: "NOTE" contains "NOT". Raised
+			// in review of #475.
+			if !identRe(leaf).MatchString(codeOnly(code(path)[from:to])) {
 				problems = append(problems, fmt.Sprintf(
 					"cites %s:%d for %s, but %q is nowhere within %d lines of it — "+
 						"line %d holds %q. Any edit above a cited line moves it, so "+
@@ -644,6 +672,74 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 		}
 	}
 	return problems, forms
+}
+
+// citeFixturePrefix is the name TestTheProductionReaderCountsRealLines
+// gives its fixture directory in the module root, and the thing
+// .gitignore has to cover.
+const citeFixturePrefix = "citelines"
+
+// TestTheFixtureLeftoverIsIgnored is the guard on the pair above.
+//
+// The fixture is a real Go package in the module root by design — the
+// citation grammar cannot match a Windows temp path — and t.Cleanup does
+// not run when the binary dies on another test's panic or a -timeout
+// kill. .gitignore covers it, and a rename of the prefix would silently
+// stop being covered: the leftover only appears after an interrupted
+// run, which is exactly when nobody is looking.
+func TestTheFixtureLeftoverIsIgnored(t *testing.T) {
+	b, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	// The name an actual run leaves behind, not the prefix: os.MkdirTemp
+	// appends digits, so a pattern covering the prefix alone would not
+	// cover the directory.
+	leftover := citeFixturePrefix + "1234567890"
+	var covered bool
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		pat := strings.TrimSuffix(line, "/")
+		if ok, err := path.Match(pat, leftover); err == nil && ok {
+			covered = true
+			break
+		}
+	}
+	if !covered {
+		t.Errorf("no .gitignore pattern matches %q, which is what "+
+			"TestTheProductionReaderCountsRealLines leaves in the module root when "+
+			"the binary dies before its t.Cleanup runs — a real `package p` that "+
+			"`go build ./...` compiles and `git status` reports", leftover)
+	}
+}
+
+// citeRange renders a RANGE citation in a form that only knows how to
+// render a single line.
+//
+// It rewrites the form's own sample rather than carrying a second
+// renderer, so the range spelling cannot drift from the single-line one
+// — and the Fatalf is what keeps the rewrite honest: a form whose sample
+// stops writing `path:N` in backticks fails loudly here instead of
+// silently producing a document the guard does not recognise, which this
+// arm would then report as an accept. Raised in review of #475.
+func citeRange(t *testing.T, form struct {
+	name   string
+	re     *regexp.Regexp
+	fields func([]string) (string, string, int, int)
+	sample func(ident, path string, line int) string
+}, ident, path string, lo, hi int) string {
+	t.Helper()
+	md := form.sample(ident, path, lo)
+	old := fmt.Sprintf(":%d`", lo)
+	if !strings.Contains(md, old) {
+		t.Fatalf("%s renders %q, which does not spell the line as %q — this helper "+
+			"cannot turn it into a range, and the arm below would test a document "+
+			"the guard does not match", form.name, md, old)
+	}
+	return strings.Replace(md, old, fmt.Sprintf(":%d-%d`", lo, hi), 1)
 }
 
 // accepts is an ACCEPT arm with its own floor, and the floor is the
@@ -845,11 +941,37 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		"\treturn w / Alpha()",
 		"}",
 	}
+	// AND A FILE WHOSE ONLY MENTION OF THE LEAF IS INSIDE A LONGER
+	// IDENTIFIER. This is the arm for the word-boundary match, and the
+	// commented.go arm cannot stand in for it: that one tests
+	// comment-stripping, and here the text IS code. It mirrors
+	// prop/prop.go, where Settable and Set sit three lines apart.
+	longer := []string{
+		"package fake",
+		"func Settable() bool { return true }",
+		"func Beta() {",
+		"\tx := SetString(1)",
+		"}",
+	}
+	// AND A FILE WHOSE ONLY MENTION IS INSIDE A BLOCK COMMENT, SPANNING
+	// THE WINDOW. The span opens above the cited line and closes below
+	// it, which is the case a per-window strip cannot see: from inside
+	// the slice there is no /* and no */, so every line looks like code.
+	blocked := []string{
+		"package fake",
+		"/*",
+		"Alpha is the thing this file used to have.",
+		"It has three more lines of prose about it.",
+		"*/",
+		"func Beta() {}",
+	}
 	files := map[string][]string{
 		"fake.go":      src,
 		"commented.go": commented,
 		"long.go":      long,
 		"divided.go":   divided,
+		"longer.go":    longer,
+		"blocked.go":   blocked,
 	}
 	read := func(path string) ([]string, error) {
 		s, ok := files[path]
@@ -931,8 +1053,16 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// AND A RANGE THAT DOES CITE ITS DECLARATION, accepted — otherwise
 	// "reject every range" satisfies the arm above, and CLAUDE.md cites
 	// several (composer.go:442-479 among them).
+	//
+	// DERIVED FROM citeForms[0], for the same reason the arm above it
+	// is: this was the last hand-written copy of form A's spelling, so
+	// reordering citeForms or respelling that form left this arm
+	// exercising a shape the guard no longer recognises — reported as an
+	// ACCEPT, which is what the arm asserts. citeRange renders the
+	// range, since sample takes one line. Raised in review of #475.
 	t.Run("a range starting at the identifier", func(t *testing.T) {
-		accepts(t, "`Alpha` (`long.go:20-40`) does the thing.", read,
+		md := citeRange(t, citeForms[0], "Alpha", "long.go", 20, 40)
+		accepts(t, md, read,
 			"`Alpha` is ON the cited start line — a range citation names where a "+
 				"thing begins, and refusing them all is not a tighter window, it "+
 				"is a broken one")
@@ -997,6 +1127,22 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		{"a range whose start is nowhere near the identifier",
 			"`Alpha` (`long.go:1-40`) does the thing.",
 			"is nowhere within"},
+		// THE LEAF INSIDE A LONGER IDENTIFIER, in code. `Settable`
+		// contains `Set` and `SetString` contains it too, so a substring
+		// match satisfied a citation for prop.Set with a window holding
+		// neither. Two arms, one either side of the cited line, because
+		// a prefix and a suffix are different failures of the same
+		// match. Raised in review of #475.
+		{"the leaf only as the prefix of a longer identifier",
+			"`Set` (`longer.go:3`) does the thing.", "is nowhere within"},
+		{"the leaf only inside a longer identifier",
+			"`prop.Set` (`longer.go:3`) does the thing.", "is nowhere within"},
+		// THE LEAF ONLY INSIDE A BLOCK COMMENT that spans the window.
+		// Same fail-open as the // case, one spelling out, and the span
+		// deliberately opens above the cited line and closes below it —
+		// the shape a per-window strip cannot see at all.
+		{"the identifier only inside a block comment",
+			"`Alpha` (`blocked.go:3`) does the thing.", "is nowhere within"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problems, _ := citationProblems(tc.md, read)
@@ -1064,8 +1210,22 @@ func TestTheProductionReaderCountsRealLines(t *testing.T) {
 	// assertions read "the guard reported no problem", and the arm fails
 	// while saying something that is not true of the reader. The paths
 	// this guard is FOR are repo-relative anyway, so the fixture should
-	// be one. Raised in review of #475.
-	dir, err := os.MkdirTemp(".", "citelines")
+	// be one.
+	//
+	// THE COST IS A REAL GO PACKAGE IN THE MODULE ROOT, and the prefix
+	// is load-bearing rather than decorative: t.Cleanup does not run
+	// when the binary dies on another test's panic or a -timeout kill,
+	// so an interrupted run leaves `citelinesNNNN/three.go` holding
+	// `package p` for `./...` to compile and `git status` to report.
+	// `.gitignore` carries a line with that reasoning, so the leftover
+	// is harmless rather than merely unlikely.
+	//
+	// TestTheFixtureLeftoverIsIgnored below is what keeps the prefix and
+	// the pattern in step — two things that must agree is the shape this
+	// branch has already been caught leaving unguarded once, so the
+	// prefix is a constant and the guard reads .gitignore. Both raised
+	// in review of #475.
+	dir, err := os.MkdirTemp(".", citeFixturePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1171,8 +1331,20 @@ func dashed(hi string) string {
 // string literal holds one. That can only make the guard STRICTER, and
 // every identifier-checked citation in CLAUDE.md was re-run against it —
 // none loses its leaf this way. A citation that properly points at a
-// comment is a decision to record here rather than a silent pass. Raised
-// in review of #475.
+// comment is a decision to record here rather than a silent pass.
+//
+// BLOCK COMMENTS TOO, and they are the same hole one spelling further
+// out: an identifier that appears only inside a /* … */ span satisfied
+// the citation for as long as only // was stripped. Nothing in the tree
+// passes for that reason today — no file CLAUDE.md or
+// docs/markup-reference.md cites contains a /* at all — so this closes a
+// class rather than a live case, which is the right time to close one.
+//
+// THE SPANS ARE FOUND OVER THE WHOLE FILE, in blockFree below, not here.
+// A window is a SLICE: a span opened above it and closed below it is
+// invisible from inside, so stripping per-window would leave exactly the
+// long comments most likely to hold a stray identifier. Both raised in
+// review of #475.
 func codeOnly(lines []string) string {
 	out := make([]string, len(lines))
 	for i, l := range lines {
@@ -1182,4 +1354,55 @@ func codeOnly(lines []string) string {
 		out[i] = l
 	}
 	return strings.Join(out, "\n")
+}
+
+// blockFree is lines with every /* … */ span blanked out, LINE COUNT
+// PRESERVED so a caller's line numbers still index it.
+//
+// Blanking rather than deleting is the whole point: the citation guard
+// indexes this by the cited line number, and a shorter slice would make
+// every citation below the first block comment point somewhere else.
+//
+// It is deliberately not a Go parser. A /* inside a string literal or
+// after a // would fool it, and the effect of being fooled is that MORE
+// text is blanked — the guard gets stricter and says "is nowhere
+// within", which is a visible failure rather than a silent pass. The
+// asymmetry is the same one codeOnly's own comment makes.
+func blockFree(lines []string) []string {
+	out := make([]string, len(lines))
+	in := false
+	for i, l := range lines {
+		var b strings.Builder
+		for j := 0; j < len(l); {
+			if in {
+				if k := strings.Index(l[j:], "*/"); k >= 0 {
+					j += k + 2
+					in = false
+					continue
+				}
+				break
+			}
+			if k := strings.Index(l[j:], "/*"); k >= 0 {
+				b.WriteString(l[j : j+k])
+				j += k + 2
+				in = true
+				continue
+			}
+			b.WriteString(l[j:])
+			break
+		}
+		out[i] = b.String()
+	}
+	return out
+}
+
+// identRe matches leaf as a whole identifier rather than as a substring.
+//
+// \b is not enough on its own for every leaf a citation can name —
+// `Cells.Clip` has a dot in it, and QuoteMeta is what keeps that a
+// literal — so the pattern is built rather than written. Compiled per
+// call because the set of leaves is the set of citations, small and read
+// once.
+func identRe(leaf string) *regexp.Regexp {
+	return regexp.MustCompile(`\b` + regexp.QuoteMeta(leaf) + `\b`)
 }
