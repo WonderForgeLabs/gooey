@@ -1043,6 +1043,73 @@ func TestTwoFrozenCannotShareOneFailureChannel(t *testing.T) {
 	}
 }
 
+// TestARefusedBuildArmsNothing is the other half of the guard above, and
+// the half that was missing: refusing the SECOND <Frozen> does not undo
+// the FIRST, which had already published into the caller's property and
+// left an observer subscribed to it forever.
+//
+// armAllowError does two irreversible things — it registers
+// errC.OnInvalidate, and it PRIMES by publishing the current state into
+// the sink. Both ran for every <Frozen> the build got past, and a load
+// error after that point returned an error to a caller whose viewmodel
+// property had already been written by a page that does not exist. Worse
+// than the stale value: the observer outlives the failed build, so every
+// later change to that Frozen's Allow posts another Set into the
+// caller's handle, from a subtree nothing can see.
+//
+// Two assertions, because either alone passes against half a fix. The
+// sink must be untouched — that is the visible symptom — AND a later
+// change to the armed Frozen's source must stay silent, which is the
+// only way to see the SUBSCRIPTION rather than the publication.
+//
+// Raised in review of #459.
+func TestARefusedBuildArmsNothing(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.AllowA}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <Frozen Allow="{{.AllowB}}" AllowError="{{.Err}}">
+      <TextBox Name="b" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	// A IS ALREADY BAD, so the first arm's priming publish has something
+	// to say. With a parseable A the sink would be written with "" and
+	// the assertion could not tell "wrote nothing" from "wrote the value
+	// that was already there".
+	allowA := prop.NewSource("Nonsense")
+	ctx.Values["AllowA"] = allowA
+	ctx.Values["AllowB"] = prop.NewSource("Focus")
+	sink := ctx.Values["Err"].(*prop.Property[string])
+
+	if _, err := Build([]byte(page), ctx); err == nil {
+		t.Fatal("the duplicate arm was accepted, so this test is not about a " +
+			"refused build")
+	}
+
+	if got := sink.Get(); got != "" {
+		t.Errorf("the refused build left %q in the caller's property. The first "+
+			"<Frozen> primed before the second was refused, so a page that does "+
+			"not exist wrote into the viewmodel and the caller has no way to know "+
+			"the value came from nowhere", got)
+	}
+
+	// THE SUBSCRIPTION, which the assertion above cannot see. If the
+	// first arm's observer survived, changing its Allow invalidates the
+	// computed, the invalidation posts, and the drain writes into the
+	// sink — from a subtree that was never built.
+	allowA.Set("AlsoNonsense")
+	ctx.Dispatcher.Drain()
+	if got := sink.Get(); got != "" {
+		t.Errorf("a change to the refused page's Frozen published %q into the "+
+			"caller's property. armAllowError's OnInvalidate hook outlived the "+
+			"build that registered it, so the sink now has a writer with no page "+
+			"behind it — and nothing can unregister it", got)
+	}
+}
+
 // TestASecondBuildMayReuseASinkTheFirstArmed keeps the guard above from
 // breaking the two hosts that rebuild a page against ONE Context: the
 // os.DirFS watcher and the designer, where docCtx shares ed.ctx.Values and
@@ -1572,8 +1639,19 @@ func TestAllPathsIgnoresProseOutsideBraces(t *testing.T) {
 // docs/markup-reference.md tells the author the sink must be page-owned,
 // which is exactly this shape.
 //
-// SECOND ASSERTION IS THE DAMAGE. A guard that refuses after the page's
-// message is already gone is not a refusal. Raised in review of #459.
+// SECOND ASSERTION IS THE DAMAGE, and what counts as damage got
+// stronger. It read `shared.Get() == ""` — FAIL — on the argument that a
+// guard refusing after the page's message is already gone is not a
+// refusal. That was the right property while the page's arm published
+// during the build: the only way to see the row had not overwritten it
+// was to find the page's message still there.
+//
+// Since arms are deferred to the end of a successful build (#459 again,
+// review round eight), a refused build publishes NOTHING, so the sink is
+// untouched and the assertion inverts. The property is the stronger one
+// either way — the caller's handle is not written by a page that does
+// not exist — and TestARefusedBuildArmsNothing is where it is stated
+// directly, including the half this fixture cannot see: the observer.
 func TestAPageAndARowCannotArmTheSameSink(t *testing.T) {
 	const page = `<Gooey>
   <VStack>
@@ -1611,9 +1689,96 @@ func TestAPageAndARowCannotArmTheSameSink(t *testing.T) {
 	if !strings.Contains(err.Error(), "already the failure channel") {
 		t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
 	}
-	if got := shared.Get(); got == "" {
-		t.Error("the page's failure message was erased before the refusal " +
-			"arrived, so the guard refused a page it had already damaged")
+	if got := shared.Get(); got != "" {
+		t.Errorf("the refused build left %q in the caller's handle. Neither arm "+
+			"may publish on a build that does not produce a tree — the row's "+
+			"priming publish erasing the page's message was the original damage, "+
+			"and a page message surviving alone is the same defect one writer "+
+			"smaller", got)
+	}
+}
+
+// TestTheTemplateRefusalNeedSTheListToHaveItems is the CONDITION on the
+// template cases, and it is here because docs/markup-reference.md stated
+// them without it.
+//
+// Every template judgement rides on the one row ItemsView.Validate
+// realizes during the build. A list that is EMPTY at load realizes none,
+// so its template's <Frozen> never arms, never records, and a sibling
+// template arming the same sink builds clean. The second arm then
+// happens at scroll time, after the record has closed — the same
+// mechanism as the rows-of-one-list exemption the reference already
+// documents, reached by a different route.
+//
+// BOTH ARMS ARE THE TEST. The refusal arm alone would pass against a
+// guard that refuses everything; the empty arm alone would pass against
+// one that refuses nothing. Together they say where the boundary
+// actually is, which is what the reference now claims.
+//
+// This is a LIMIT, not a fix: the honest repair is to judge a template
+// without realizing a row from it, and that is a change to how
+// ItemsView.Validate works rather than to this guard. Raised in review
+// of #459.
+func TestTheTemplateRefusalNeedsTheListToHaveItems(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <ItemsView Items="{{.A}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+    <ItemsView Items="{{.B}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	build := func(t *testing.T, a, b []post) error {
+		t.Helper()
+		ctx := errAllowCtx("Focus")
+		shared := ctx.Values["Err"].(*prop.Property[string])
+		proj := func(x post) map[string]any {
+			return map[string]any{
+				"Label": x.Title,
+				"Cats":  prop.NewSource("Focus"),
+				"Err":   shared,
+			}
+		}
+		ctx.Values["A"] = components.Items(prop.NewSource(a), proj)
+		ctx.Values["B"] = components.Items(prop.NewSource(b), proj)
+		_, err := Build([]byte(page), ctx)
+		return err
+	}
+
+	full := []post{{Title: "one"}}
+	if err := build(t, full, full); err == nil {
+		t.Error("two sibling templates armed one sink with both lists populated " +
+			"and the page built clean; that is the case the reference names as " +
+			"refused")
+	} else if !strings.Contains(err.Error(), "another item template") {
+		t.Errorf("the refusal is not the sibling-template one:\n\t%v", err)
+	}
+
+	// AND THE CONDITION. An empty list realizes no row, so its template
+	// arms nothing during the build and there is no pair to see.
+	for _, tc := range []struct {
+		name string
+		a, b []post
+	}{
+		{"first list empty", nil, full},
+		{"second list empty", full, nil},
+	} {
+		if err := build(t, tc.a, tc.b); err != nil {
+			t.Errorf("%s: the build was refused with %v. A template whose list has "+
+				"no items at load realizes no row, so it arms nothing and there is "+
+				"nothing to collide with — if this now refuses, the reference's "+
+				"condition is wrong and should say so", tc.name, err)
+		}
 	}
 }
 
@@ -2025,6 +2190,21 @@ func TestThePageRowCollisionIsFoundInEitherDocumentOrder(t *testing.T) {
 				!strings.Contains(err.Error(), "already the failure channel") {
 				t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
 			}
+			// AND NOTHING WAS PUBLISHED, which is what pins the ORDER of
+			// the two end-of-build steps. "list declared first" is
+			// refused by nested.collide rather than by an immediate check
+			// inside the element's build, so it is the one case where the
+			// pending arms and the judgement are both waiting at the end
+			// of document.build. Running the arms first is silent
+			// everywhere else in this file — measured — because every
+			// other refusal happens before the build finishes.
+			// Raised in review of #459.
+			if got := shared.Get(); got != "" {
+				t.Errorf("the refused build published %q into the caller's handle. "+
+					"The end-of-build judgement has to run BEFORE the pending arms, "+
+					"or a page refused by it has already written into the viewmodel "+
+					"and subscribed an observer to a tree nobody receives", got)
+			}
 		})
 	}
 }
@@ -2095,6 +2275,60 @@ func TestAControlInsideATemplateSeesThePagesArms(t *testing.T) {
 				t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
 			}
 		})
+	}
+}
+
+// TestAControlsArmIsDroppedWithTheBuildToo is the boundary half of
+// TestARefusedBuildArmsNothing: a <Frozen AllowError=…> inside an
+// <Include> is part of the page's build, so a page that fails must take
+// the control's arm with it.
+//
+// The child Context is built fresh in usercontrol.go and every per-build
+// record has to be propagated into it by hand. armedSinks, armedOuter
+// and armedNested each had to be added there in turn, each after a
+// review found the boundary crossing it silently; the pending-arm
+// carrier is the fourth, and a child that kept its own nil would arm
+// immediately — publishing into the caller's handle and subscribing an
+// observer to a page that is about to be refused.
+//
+// Raised in review of #459.
+func TestAControlsArmIsDroppedWithTheBuildToo(t *testing.T) {
+	const inc = `<Gooey>
+  <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+    <Text>inside</Text>
+  </Frozen>
+</Gooey>`
+	// The CONTROL arms first, then the page's own <Frozen> on the same
+	// handle is refused — so the control's arm is the one that has
+	// already run when the build gives up.
+	const page = `<Gooey>
+  <VStack>
+    <Panel Cats="{{.Cats}}" Err="{{.Err}}"/>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	fsys := fstest.MapFS{"panel.gooey": &fstest.MapFile{Data: []byte(inc)}}
+	ctx.Includes = fsys
+	ctx.Components = map[string]Builder{"Panel": Include(fsys, "panel.gooey")}
+	// UNPARSEABLE inside the control, so its priming publish has a
+	// message to write. With a parseable one the sink would be primed to
+	// "" and this assertion could not tell "wrote nothing" apart from
+	// "wrote what was already there".
+	ctx.Values["Cats"] = prop.NewSource("NoSuchCategory")
+	sink := ctx.Values["Err"].(*prop.Property[string])
+
+	if _, err := Build([]byte(page), ctx); err == nil {
+		t.Fatal("the control and the page armed one handle and the build was " +
+			"accepted, so this test is not about a refused build")
+	}
+	if got := sink.Get(); got != "" {
+		t.Errorf("the control's arm published %q into the caller's handle before "+
+			"the page was refused. A <Frozen> inside an <Include> is part of this "+
+			"build; a child Context that keeps its own nil carrier arms where it "+
+			"is built and the refusal cannot take it back", got)
 	}
 }
 

@@ -524,7 +524,16 @@ var defFrozen = &ElementDef{
 							"this build can see the pair", raw, was)
 				}
 			}
-			armAllowError(f, sink, ctx.Dispatcher)
+			// THROUGH armPending, so a load error later in this build
+			// takes the arm with it. armAllowError both subscribes and
+			// PUBLISHES, and neither is undoable — see Context.armPending
+			// for what a refused build used to leave behind. The
+			// immediate call is the runtime path: an ItemsView row
+			// realized after the page was built has no build to fail.
+			arm := func() { armAllowError(f, sink, ctx.Dispatcher) }
+			if !ctx.armPending.add(arm) {
+				arm()
+			}
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err

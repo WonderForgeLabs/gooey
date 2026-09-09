@@ -97,6 +97,15 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 		pageArmed = ctx.armedSinks
 	}
 	pageNested := ctx.armedNested
+	// AND THE PENDING-ARM CARRIER, captured here rather than read inside
+	// the factory. Reading ctx.armPending per row would find nil at
+	// scroll time — document.build restores the field when it returns —
+	// and the arm would run immediately by accident rather than by rule.
+	// Captured, the row reads a CLOSED carrier and arms immediately
+	// because add() says so, which is what makes the flag load-bearing
+	// and the behaviour independent of what a caller left on the page's
+	// Context. Raised in review of #459.
+	pagePending := ctx.armPending
 	factory := func(values map[string]any) (gooey.Component, error) {
 		item := &Context{
 			Values:     values,
@@ -169,8 +178,16 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// pointer whose flag is false once the build returns, so
 			// scroll-time rows record nothing. Raised in review of #459.
 			armedNested: pageNested,
-			ns:          ns,
-			res:         res,
+			// AND THE PENDING ARMS, by pointer. During the page build the
+			// carrier is open, so a <Frozen AllowError=…> in a template
+			// realized at load time is dropped with a build that fails.
+			// At scroll time the carrier is closed and the arm runs where
+			// it is built — a row realized then has no build to fail and
+			// nothing that would ever run a queued closure.
+			// Raised in review of #459.
+			armPending: pagePending,
+			ns:         ns,
+			res:        res,
 		}
 		return build(row, item)
 	}

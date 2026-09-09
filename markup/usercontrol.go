@@ -216,6 +216,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// review of #459, twice.
 		child.armedOuter = parent.armedOuter
 		child.armedNested = parent.armedNested
+		// AND THE PENDING ARMS. A <Frozen AllowError=…> inside a control
+		// is part of the page's build and has to be dropped with it if
+		// the build fails; a child that kept its own nil would arm
+		// immediately and leak exactly what armPending exists to stop.
+		child.armPending = parent.armPending
 		// A control's literal asset paths (Image Src) resolve against
 		// the FS its OWN markup came from, the same isolation its
 		// bindings get: the file that names the asset is the file the

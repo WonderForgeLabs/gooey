@@ -266,6 +266,28 @@ type Context struct {
 	// after the build — and adding one so a test could exist would be
 	// inventing the very coupling the flag exists to avoid.
 	armedNested *nestedArms
+	// armPending collects the AllowError arms an in-flight build has
+	// asked for, so that NO ARM SURVIVES A BUILD THAT FAILS.
+	//
+	// armAllowError does two irreversible things: it registers an
+	// OnInvalidate hook, and it primes by publishing into the caller's
+	// property. Both used to run the moment a <Frozen AllowError=…> was
+	// built, so a load error anywhere after it — the duplicate-sink
+	// refusal three lines down, a bad attribute in the next element,
+	// anything — returned an error to a caller whose viewmodel had
+	// already been written, and left an observer subscribed to a subtree
+	// that was never handed back. Every later change to that Frozen's
+	// Allow then posted another Set into the caller's handle, from a page
+	// that does not exist, with nothing left holding a reference that
+	// could unregister it.
+	//
+	// The seam is document.build's `outermost`, which is the only place
+	// that knows the whole build succeeded. Same lifetime and the same
+	// open/closed shape as armedNested, and for the same reason: a
+	// Context outlives the build, so an ItemsView factory realizing a row
+	// LATER must arm immediately rather than append to a slice nothing
+	// will ever run. Raised in review of #459.
+	armPending *deferredArms
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix
@@ -524,6 +546,43 @@ func (e *fileError) Error() string {
 
 func (e *fileError) Unwrap() error { return e.err }
 
+// deferredArms is armPending's carrier: the arms collected during one
+// outermost build, run only if it returns a tree.
+//
+// `open` is what makes it safe to share with a Context that outlives the
+// build. Closed, add reports false and the caller arms immediately —
+// which is the right answer for an ItemsView row realized at runtime,
+// where there is no build to fail and no later moment to run anything.
+type deferredArms struct {
+	open bool
+	fns  []func()
+}
+
+// add takes the arm if a build is in flight, and reports whether it did.
+// A nil or closed receiver reports false, so the ONE call site reads
+// `if !ctx.armPending.add(arm) { arm() }` and cannot forget the
+// immediate case.
+func (a *deferredArms) add(fn func()) bool {
+	if a == nil || !a.open {
+		return false
+	}
+	a.fns = append(a.fns, fn)
+	return true
+}
+
+// run performs the collected arms in the order they were asked for, so
+// the priming publishes land in document order — the order they landed in
+// when each arm ran where it was built.
+func (a *deferredArms) run() {
+	if a == nil {
+		return
+	}
+	for _, fn := range a.fns {
+		fn()
+	}
+	a.fns = nil
+}
+
 // nestedArms is armedNested's carrier. See the field for why it is a
 // pointer and why it carries a flag.
 type nestedArms struct {
@@ -618,6 +677,21 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 		ctx.armedNested = prevNested
 	}()
 
+	// The pending arms share that lifetime exactly. Closing in the defer
+	// rather than after the run is what makes a Context reused for row
+	// realization arm immediately instead of appending to a dead slice.
+	prevPending := ctx.armPending
+	if outermost {
+		ctx.armPending = &deferredArms{open: true}
+	}
+	pending := ctx.armPending
+	defer func() {
+		if outermost && pending != nil {
+			pending.open = false
+		}
+		ctx.armPending = prevPending
+	}()
+
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Component{}
 	}
@@ -649,6 +723,11 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 				"sealed with nothing to show for it. Give the template its own handle "+
 				"through the projection", inner, outer)
 	}
+	// THE ARMS, and only now. Every error path above returns without
+	// reaching this line, which is the whole mechanism: a build that does
+	// not produce a tree does not produce a subscription or a publish
+	// either. Raised in review of #459.
+	pending.run()
 	return root, nil
 }
 
