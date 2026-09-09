@@ -190,9 +190,17 @@ framework enforces. What is NOT a rule you can break: a row template's
 `document.build`, so the armed-sink set arrived nil — and it now builds,
 with the set scoped to the row. Two `<Frozen>` in one template sharing a
 sink still collide, and so does a row `<Frozen>` arming a sink the PAGE
-already armed — the row's set is separate but the check consults the
-page's, so registration stays row-local while a page-versus-row collision
-is still refused.
+already armed: registration stays row-local, and the page-versus-row
+question is settled **once, at the end of the document build**, against
+everything both sides armed.
+
+*"The check consults the page's set"* is what this said, and review of
+#459 showed it was document-order dependent. That check reads the page's
+**live** map, and `ItemsView.Validate` realizes one throwaway row while
+the `<ItemsView>` is still building — so a `<Frozen>` written **below**
+the list had armed nothing yet when the row looked, and the identical
+document loaded clean one way round and was refused the other. Deferring
+the judgement is what makes the answer the same either way.
 
 Two ROWS arming the same template sink do not collide, because a row's
 values normally carry their own handle. **Normally, and it is not
@@ -219,8 +227,12 @@ is the thing to read:
   one property and an alias anywhere in a multi-binding `Allow` are both
   caught;
 - a **second `<Frozen>`** binding a sink another already armed, anywhere on the
-  page including across an `Include` or `UserControl` boundary — they would
-  erase each other's message and leave a subtree sealed with nothing to show.
+  page including across an `Include` or `UserControl` boundary, **and** including
+  a control instantiated from an item template — they would erase each other's
+  message and leave a subtree sealed with nothing to show. That last clause is
+  new in review of #459: the child `Context` inherited the page's armed set but
+  not the two fields saying *"you are inside a row"*, so a control under a
+  template looked like a page to itself and checked against nothing.
 
 #### Changing the set at runtime
 

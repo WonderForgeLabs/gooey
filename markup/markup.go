@@ -232,6 +232,40 @@ type Context struct {
 	// Splitting check from registration refuses that shape and keeps row
 	// reuse working. Raised in review of #459.
 	armedOuter map[*prop.Property[string]]string
+	// armedNested is where a NESTED scope records what it armed, so the
+	// page-versus-row collision is judged ONCE at the end of the document
+	// build instead of at the moment of the arm.
+	//
+	// Checking armedOuter at the moment of the arm was the first fix and
+	// it is DOCUMENT-ORDER DEPENDENT: armedOuter is the page's live map,
+	// so a row realized after the page's <Frozen> sees it and a row
+	// realized before does not — and ItemsView.Validate realizes one
+	// throwaway row DURING the <ItemsView> build. Put the <Frozen> below
+	// the list and the collision loads clean; put it above and the same
+	// document is refused. A guard whose answer depends on which line the
+	// author typed first is not a guard. Raised in review of #459.
+	//
+	// A POINTER TO A STRUCT WITH A FLAG, not a bare map, and the flag is
+	// what stops it leaking. The row factory runs per realization and
+	// never unregisters, which is the whole reason armedSinks is
+	// row-local; a shared map written on every scroll would grow without
+	// bound. open is true only while the outermost document.build is on
+	// the stack, so scroll-time rows record nothing — their collision
+	// surfaces through the list's Err(), where every other scroll-time
+	// load error already does.
+	//
+	// HALF OF THAT IS UNPINNED, deliberately, and this is the honest
+	// statement of which half. nestedArms.record honouring the flag is
+	// pinned by TestTheNestedRecordCloses. document.build actually
+	// CLOSING the record is not: deleting that line is measured silent
+	// against the whole package, because nothing reads the record after
+	// the build returns and the pointer the row factory captured is
+	// reachable from no test. The mutation is equivalent in every answer
+	// the package gives; it differs only in a map that grows for the
+	// life of the process. What would make it falsifiable is a reader
+	// after the build — and adding one so a test could exist would be
+	// inventing the very coupling the flag exists to avoid.
+	armedNested *nestedArms
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix
@@ -490,6 +524,43 @@ func (e *fileError) Error() string {
 
 func (e *fileError) Unwrap() error { return e.err }
 
+// nestedArms is armedNested's carrier. See the field for why it is a
+// pointer and why it carries a flag.
+type nestedArms struct {
+	open bool
+	m    map[*prop.Property[string]]string
+}
+
+// record notes a nested arm, if the document build is still open.
+func (n *nestedArms) record(sink *prop.Property[string], raw string) {
+	if n == nil || !n.open {
+		return
+	}
+	if _, seen := n.m[sink]; !seen {
+		n.m[sink] = raw
+	}
+}
+
+// collide reports the first sink armed BOTH by a nested scope and by the
+// page, with the two attribute texts.
+//
+// Map iteration is unordered and this returns the first hit, which is
+// fine because ANY hit is a load error and the message names both sides.
+// It is not fine to sort for determinism and call that a fix — a
+// document with two collisions has two bugs and the author fixes one at
+// a time either way.
+func (n *nestedArms) collide(page map[*prop.Property[string]]string) (nested, outer string, ok bool) {
+	if n == nil {
+		return "", "", false
+	}
+	for sink, raw := range n.m {
+		if was, dup := page[sink]; dup {
+			return raw, was, true
+		}
+	}
+	return "", "", false
+}
+
 func (d *document) build(ctx *Context) (gooey.Component, error) {
 	// The namespace table belongs to THIS document for the duration of
 	// THIS build, and is then restored. Nested Loads (a UserControl
@@ -509,10 +580,26 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	// it nil again after the outermost build, so the next rebuild against
 	// this same Context does not refuse what it armed last time.
 	prevArmed := ctx.armedSinks
-	if prevArmed == nil {
+	outermost := prevArmed == nil
+	if outermost {
 		ctx.armedSinks = map[*prop.Property[string]]string{}
 	}
 	defer func() { ctx.armedSinks = prevArmed }()
+
+	// The nested record shares armedSinks' lifetime and its outermost
+	// rule: a nested Load inherits it, so a <Frozen> inside an <Include>
+	// inside a template still lands in the page's judgement.
+	prevNested := ctx.armedNested
+	if outermost {
+		ctx.armedNested = &nestedArms{open: true, m: map[*prop.Property[string]]string{}}
+	}
+	nested := ctx.armedNested
+	defer func() {
+		if outermost && nested != nil {
+			nested.open = false
+		}
+		ctx.armedNested = prevNested
+	}()
 
 	if ctx.Named == nil {
 		ctx.Named = map[string]gooey.Component{}
@@ -527,7 +614,25 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	}
 	defer pop()
 
-	return build(d.content, ctx)
+	root, err := build(d.content, ctx)
+	if err != nil || !outermost {
+		return root, err
+	}
+	// THE PAGE-VERSUS-ROW JUDGEMENT, deferred to here and nowhere
+	// earlier. By now everything the page armed is in armedSinks and
+	// everything a nested scope armed is in the record, so the answer
+	// cannot depend on which of the two the author wrote first — which
+	// is exactly what it depended on before. Raised in review of #459.
+	if inner, outer, dup := nested.collide(ctx.armedSinks); dup {
+		return nil, fmt.Errorf(
+			"markup: <Frozen AllowError=%q> inside an item template and "+
+				"<Frozen AllowError=%q> on the page arm the same property — two sealed "+
+				"subtrees writing one channel erase each other's message, and the row's "+
+				"priming publish erases the page's during Build, leaving a subtree "+
+				"sealed with nothing to show for it. Give the template its own handle "+
+				"through the projection", inner, outer)
+	}
+	return root, nil
 }
 
 // Build parses markup and constructs the component tree.

@@ -204,6 +204,18 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// is precisely the case that must NOT be allowed to opt out of
 		// the page's set. Raised in review of #459.
 		child.armedSinks = parent.armedSinks
+		// AND armedOuter, AND the nested record. armedSinks alone was the
+		// first fix and it propagated the PAGE's set while dropping the
+		// two fields that say "you are inside a row" — so a UserControl
+		// or Include instantiated from an item template got a child
+		// Context that looked like a page, checked nothing against the
+		// page's arms, and recorded nothing for the end-of-build
+		// judgement. Two panes over one status line is the surface
+		// <Frozen> was built for and <Include> is exactly how you spell
+		// it, so this is the shape most likely to hit it. Raised in
+		// review of #459, twice.
+		child.armedOuter = parent.armedOuter
+		child.armedNested = parent.armedNested
 		// A control's literal asset paths (Image Src) resolve against
 		// the FS its OWN markup came from, the same isolation its
 		// bindings get: the file that names the asset is the file the

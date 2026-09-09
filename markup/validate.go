@@ -394,8 +394,15 @@ func allPaths(attr string) []string {
 // cannot see and which the dup-sink guard in elements.go already refuses
 // for its own question.
 //
-// EVERY POSITION, not only a whole-body binding — see pathRe. That is
-// what closes the value-call spelling round five measured.
+// EVERY POSITION, not only a whole-body binding — see allPaths, which
+// runs scanBindings over the attribute. That is what closes the
+// value-call spelling round five measured.
+//
+// NOT pathRe, which this cited until review of #459. pathRe is
+// `^\.([A-Za-z0-9_.]+)$` (scan.go) — anchored at both ends, so it is
+// precisely the WHOLE-BODY matcher, the thing this paragraph says is not
+// enough. A citation naming the opposite of its own claim sends the next
+// reader to check the wrong function and find it correct.
 //
 // An unresolvable path is not an alias. Reporting one here would turn a
 // typo into the wrong load error; the binder that runs after this

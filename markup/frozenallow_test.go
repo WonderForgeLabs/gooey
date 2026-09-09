@@ -1762,3 +1762,187 @@ func TestARowRealizedAfterLoadStillSeesThePagesArms(t *testing.T) {
 			"publish before the refusal arrived")
 	}
 }
+
+// TestThePageRowCollisionIsFoundInEitherDocumentOrder is the guard's own
+// symmetry, and it is here because the first fix did not have it.
+//
+// armedOuter is the page's LIVE map, so a row realized after the page's
+// <Frozen> sees the arm and a row realized before does not. That is not
+// an edge: ItemsView.Validate realizes one throwaway row DURING the
+// <ItemsView> build, so declaring the list first means the load-time row
+// is checked against a page that has armed nothing yet. The identical
+// document loaded clean one way round and was refused the other —
+// measured, both arms below were needed to see it.
+//
+// The end-of-build judgement (nestedArms) is what makes the answer the
+// same. Raised in review of #459.
+func TestThePageRowCollisionIsFoundInEitherDocumentOrder(t *testing.T) {
+	const listFirst = `<Gooey>
+  <VStack>
+    <ItemsView Name="list" Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	const frozenFirst = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <ItemsView Name="list" Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+
+	for _, c := range []struct{ name, page string }{
+		{"list declared first", listFirst},
+		{"frozen declared first", frozenFirst},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := errAllowCtx("Nonsense")
+			shared := ctx.Values["Err"].(*prop.Property[string])
+			// NON-EMPTY at load, so Validate realizes its throwaway row
+			// during the build. That row is the one whose timing used to
+			// decide the answer.
+			rows := prop.NewSource([]post{{Title: "one"}})
+			ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+				return map[string]any{
+					"Label": x.Title,
+					"Cats":  prop.NewSource("NoSuchCategory"),
+					"Err":   shared,
+				}
+			})
+
+			_, err := Build([]byte(c.page), ctx)
+			if err == nil {
+				t.Fatal("a page <Frozen> and a template <Frozen> arming ONE handle " +
+					"loaded clean. Whichever order the author writes them in, the " +
+					"row's priming publish erases the page's message during Build " +
+					"and a sealed subtree shows nothing")
+			}
+			if !strings.Contains(err.Error(), "arm the same property") &&
+				!strings.Contains(err.Error(), "already the failure channel") {
+				t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
+			}
+		})
+	}
+}
+
+// TestAControlInsideATemplateSeesThePagesArms is the UserControl/Include
+// boundary, which armedSinks crossed and armedOuter did not.
+//
+// The child Context is built fresh, and the first fix propagated
+// armedSinks — the PAGE's set — while dropping the two fields that say
+// "you are inside a row". So a control instantiated from an item
+// template looked like a page to itself: it checked nothing against the
+// page's arms and recorded nothing for the end-of-build judgement.
+//
+// Two panes over one status line is the surface <Frozen AllowError> was
+// built for and <Include> is exactly how you spell it, so this is the
+// shape most likely to meet it. Raised in review of #459.
+func TestAControlInsideATemplateSeesThePagesArms(t *testing.T) {
+	const inc = `<Gooey>
+  <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+    <Text>{{.Label}}</Text>
+  </Frozen>
+</Gooey>`
+	const list = `    <ItemsView Name="list" Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <Row Cats="{{.Cats}}" Err="{{.Err}}" Label="{{.Label}}"/>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+`
+	const frozen = `    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+`
+	// BOTH ORDERS, and the second is what the two fields carry between
+	// them. With the page's <Frozen> first, the row's immediate
+	// armedOuter check catches the collision on its own and dropping
+	// armedNested from the child Context is SILENT — measured. Only the
+	// list-first arm needs the end-of-build record to have crossed the
+	// boundary too.
+	for _, c := range []struct{ name, page string }{
+		{"frozen declared first", "<Gooey>\n  <VStack>\n" + frozen + list + "  </VStack>\n</Gooey>"},
+		{"list declared first", "<Gooey>\n  <VStack>\n" + list + frozen + "  </VStack>\n</Gooey>"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := errAllowCtx("Nonsense")
+			fsys := fstest.MapFS{"row.gooey": &fstest.MapFile{Data: []byte(inc)}}
+			ctx.Includes = fsys
+			// Include is a Go-side Builder, not an element name — the same
+			// registration TestTwoControlsCannotShareOneFailureChannel uses.
+			ctx.Components = map[string]Builder{"Row": Include(fsys, "row.gooey")}
+			shared := ctx.Values["Err"].(*prop.Property[string])
+			rows := prop.NewSource([]post{{Title: "one"}})
+			ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+				return map[string]any{
+					"Label": x.Title,
+					"Cats":  prop.NewSource("NoSuchCategory"),
+					"Err":   shared,
+				}
+			})
+
+			_, err := Build([]byte(c.page), ctx)
+			if err == nil {
+				t.Fatal("a <Frozen> inside an <Include> inside an item template armed " +
+					"the handle the page had already armed, and the document loaded " +
+					"clean. The boundary is where the page's set stopped being visible")
+			}
+			if !strings.Contains(err.Error(), "arm the same property") &&
+				!strings.Contains(err.Error(), "already the failure channel") {
+				t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
+			}
+		})
+	}
+}
+
+// TestTheNestedRecordCloses is the leak half of nestedArms, and it is a
+// UNIT test because the leak has no behavioural symptom.
+//
+// The flag exists so a scrolling list does not accumulate one map entry
+// per realized row forever — which is the exact reason armedSinks is
+// row-local in the first place. Nothing READS the record after the build,
+// so leaving it open changes no answer and no test of a built page can
+// see it. Removing the flag was measured silent against the whole
+// package; this is what makes it not.
+func TestTheNestedRecordCloses(t *testing.T) {
+	sink := prop.NewSource("")
+	n := &nestedArms{open: true, m: map[*prop.Property[string]]string{}}
+
+	n.record(sink, "{{.Err}}")
+	if _, ok := n.m[sink]; !ok {
+		t.Fatal("an OPEN record dropped the arm, so the page-versus-row judgement " +
+			"has nothing to judge")
+	}
+
+	other := prop.NewSource("")
+	n.open = false
+	n.record(other, "{{.Err2}}")
+	if _, ok := n.m[other]; ok {
+		t.Error("a CLOSED record still took the arm. open is what stops a scrolling " +
+			"list accumulating one entry per realized row for the life of the " +
+			"program — the same unbounded growth that makes armedSinks row-local")
+	}
+
+	// A nil receiver is the scroll-time row whose Context never carried
+	// one, and it must not panic — a panic inside a template factory
+	// lands in the composer, where it skips Screen.Restore.
+	var none *nestedArms
+	none.record(sink, "{{.Err}}")
+	if _, _, dup := none.collide(map[*prop.Property[string]]string{sink: "x"}); dup {
+		t.Error("a nil record reported a collision")
+	}
+}

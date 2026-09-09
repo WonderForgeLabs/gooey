@@ -509,6 +509,14 @@ var defFrozen = &ElementDef{
 						"subtree sealed with nothing to show for it", raw, was)
 			}
 			ctx.armedSinks[sink] = raw
+			// AND, when this is a nested scope, on the document's record.
+			// The immediate armedOuter check above catches a row realized
+			// AFTER the page's <Frozen>; this is what catches one realized
+			// before, which ItemsView.Validate's throwaway row always is
+			// when the list is declared first. Raised in review of #459.
+			if ctx.armedOuter != nil {
+				ctx.armedNested.record(sink, raw)
+			}
 			armAllowError(f, sink, ctx.Dispatcher)
 		}
 		if err := attachAll(e, f, attach); err != nil {

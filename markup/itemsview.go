@@ -79,6 +79,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// scope happens to be current then, not the page whose arms matter.
 	// Raised in review of #459.
 	pageArmed := ctx.armedSinks
+	pageNested := ctx.armedNested
 	factory := func(values map[string]any) (gooey.Component, error) {
 		item := &Context{
 			Values:     values,
@@ -130,8 +131,14 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// Raised in review of #459, twice.
 			armedSinks: map[*prop.Property[string]]string{},
 			armedOuter: pageArmed,
-			ns:         ns,
-			res:        res,
+			// The document's record, so a row realized BEFORE the page's
+			// own <Frozen> — which the load-time throwaway row always is
+			// when the list is declared first — is still judged. It is a
+			// pointer whose flag is false once the build returns, so
+			// scroll-time rows record nothing. Raised in review of #459.
+			armedNested: pageNested,
+			ns:          ns,
+			res:         res,
 		}
 		return build(row, item)
 	}
