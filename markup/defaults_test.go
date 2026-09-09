@@ -2,6 +2,7 @@ package markup
 
 import (
 	"fmt"
+	"image"
 	"strings"
 	"testing"
 
@@ -59,6 +60,7 @@ func defaultsContext() *Context {
 			// attribute it is probing.
 			"Pct":  prop.NewSource(85),
 			"Noop": gooey.Command(func() {}),
+			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 	}
@@ -90,6 +92,12 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 		return "{{.C}}"
 	case "components.ItemSource":
 		return "{{.IS}}"
+	case "image.Image":
+		// Added for the #460 sweeps, which reach elements the defaults
+		// probe never did: <Image Src> is required and bind-only, so
+		// without a placeholder the whole element drops out — which is
+		// the failure this function's Fatalf exists to make loud.
+		return "{{.Img}}"
 	}
 	t.Fatalf("no placeholder for required attribute %s of type %q — "+
 		"add one, or the element silently stops being checked", a.Name, a.GoType)

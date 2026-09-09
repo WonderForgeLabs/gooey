@@ -88,7 +88,11 @@ var defText = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		if e.Attrs["Bold"] == "true" {
+		bold, err := litBool(e, "Bold")
+		if err != nil {
+			return nil, err
+		}
+		if bold {
 			// Bold composes over either form of Style, so it wraps the
 			// handle rather than mutating a value — a bound style stays
 			// live and still gets its bold.
@@ -459,7 +463,10 @@ var defVStack = &ElementDef{
 	Children: ChildSpec{Mode: ModeMany},
 	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		gap, _ := strconv.Atoi(e.Attrs["Gap"])
+		gap, err := litInt(e, "Gap")
+		if err != nil {
+			return nil, err
+		}
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {
 			return nil, err
@@ -489,7 +496,10 @@ var defHStack = &ElementDef{
 	Children: ChildSpec{Mode: ModeMany},
 	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		gap, _ := strconv.Atoi(e.Attrs["Gap"])
+		gap, err := litInt(e, "Gap")
+		if err != nil {
+			return nil, err
+		}
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {
 			return nil, err
@@ -627,7 +637,9 @@ var defGauge = &ElementDef{
 			label = components.Str(e.Attrs["Label"])
 		}
 		g := &components.Gauge{Value: value, Label: label}
-		g.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		if g.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
 		// Style is an override for the threshold ramp, so it is applied
 		// only when the attribute is actually present.
 		if _, ok := e.Attrs["Style"]; ok {
@@ -658,8 +670,12 @@ var defSparkline = &ElementDef{
 			return nil, err
 		}
 		s := &components.Sparkline{Values: series}
-		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
-		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		if s.Rows, err = litInt(e, "Height"); err != nil {
+			return nil, err
+		}
+		if s.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
 		if _, ok := e.Attrs["Style"]; ok {
 			if s.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
@@ -814,8 +830,12 @@ var defProgressBar = &ElementDef{
 			return nil, err
 		}
 		p := &components.ProgressBar{Value: value, Label: label}
-		p.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
-		p.Thresholds = e.Attrs["Thresholds"] == "true"
+		if p.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
+		if p.Thresholds, err = litBool(e, "Thresholds"); err != nil {
+			return nil, err
+		}
 		// Indeterminate is optional, and its absence is load-bearing: a
 		// bar that can never be indeterminate starts no goroutine.
 		if suppliedAttr(e, "Indeterminate") {
@@ -1069,8 +1089,12 @@ var defButtonBar = &ElementDef{
 			return nil, err
 		}
 		bar := &components.ButtonBar{Children: kids, Separator: e.Attrs["Separator"]}
-		bar.Gap, _ = strconv.Atoi(e.Attrs["Gap"])
-		bar.Uniform = e.Attrs["Uniform"] == "true"
+		if bar.Gap, err = litInt(e, "Gap"); err != nil {
+			return nil, err
+		}
+		if bar.Uniform, err = litBool(e, "Uniform"); err != nil {
+			return nil, err
+		}
 		if err := attachAll(e, bar, attach); err != nil {
 			return nil, err
 		}
@@ -1378,6 +1402,56 @@ var defFileWatcher = &ElementDef{
 // cheap to refuse. A BOUND list cannot be checked here and is not:
 // the same path arrives as the absent state, and the component's doc
 // says so.
+// litInt reads a KindInt / BindsLiteral attribute, and REFUSES what it
+// cannot parse.
+//
+// Every one of these was `n, _ := strconv.Atoi(e.Attrs["X"])`. Atoi
+// returns 0 on failure, so `Gap="wide"`, `BarWidth="8px"` and
+// `Height="{{.Rows}}"` all loaded clean and laid out as if the attribute
+// had been omitted — the silent drop this vocabulary exists to refuse,
+// in the one place nobody was looking, because the discarded error was
+// spelled `_`.
+//
+// Absent and empty are NOT errors: they mean the declared Default, which
+// is what omitting the attribute already meant. Only a value that is
+// there and unreadable is refused.
+//
+// Found by the derived Kind/Binds sweep in #460 — the eleven-row
+// spot-check it replaces named none of these.
+func litInt(e Element, name string) (int, error) {
+	raw := strings.TrimSpace(e.Attrs[name])
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
+			"literally — it is not a binding, and an unreadable value would "+
+			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
+	}
+	return n, nil
+}
+
+// litBool reads a KindBool / BindsLiteral attribute, and REFUSES what is
+// neither "true" nor "false".
+//
+// Same defect as litInt in a different spelling: `e.Attrs["X"] == "true"`
+// makes every other value mean false, so `Uniform="yes"`,
+// `Thresholds="1"` and `Bold="{{.Loud}}"` were accepted and ignored.
+func litBool(e Element, name string) (bool, error) {
+	switch strings.TrimSpace(e.Attrs[name]) {
+	case "":
+		return false, nil
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("markup: <%s %s=%q>: %s takes \"true\" or \"false\" "+
+		"written literally — it is not a binding, and any other value would "+
+		"silently mean \"false\"", e.Name, name, e.Attrs[name], name)
+}
+
 func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 	raw := e.Attrs["Paths"]
 	if bindRe.MatchString(raw) {
