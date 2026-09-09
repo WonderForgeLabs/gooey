@@ -286,8 +286,25 @@ func TestAOneCellIconRuneStillLoads(t *testing.T) {
 // is nothing to ignore. A diagnostic that describes a consequence that
 // cannot happen is the same defect the refusal was added to remove, one
 // level up. Found in review of #455.
+// separatorRejects is every attribute a separator refuses, taken from
+// the declaration the loader ranges over. One spelling of the set, for
+// the guard and for the thing guarded.
+func separatorRejects() []string {
+	var out []string
+	for _, a := range defMenuItem.Attrs {
+		if a.Name != "Separator" {
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
 func TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes(t *testing.T) {
-	for _, attr := range []string{"Icon", "IconRune", "Text", "Gesture", "Checked", "Command"} {
+	// DERIVED, for the reason the refusal itself now is: a hand-written
+	// copy of defMenuItem.Attrs minus Separator goes stale silently, and
+	// this arm would then pass while saying nothing about the new
+	// attribute. Raised in review of #455.
+	for _, attr := range separatorRejects() {
 		page := `<Gooey><MenuBar><Menu Title="_File">` +
 			`<MenuItem Separator="true" ` + attr + `=""/>` +
 			`</Menu></MenuBar></Gooey>`

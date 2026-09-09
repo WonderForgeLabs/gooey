@@ -74,8 +74,9 @@ func TestTheHostsThisPageCallsPositionDependentStillAre(t *testing.T) {
 				"name the guard cannot check is a claim nothing is keeping true", name)
 			continue
 		}
-		if _, isOverlay := w.(gooey.Overlay); isOverlay {
-			t.Errorf("%s now implements gooey.Overlay, so it is LIFTED and its position "+
+		if _, isOverlay := w(t).(gooey.Overlay); isOverlay {
+			t.Errorf("the surface %s hosts now implements gooey.Overlay, so it is "+
+				"LIFTED and its position "+
 				"in document order no longer decides anything. Three claims to the "+
 				"contrary come out with this test, and then delete the test:\n"+
 				"  docs/learn/concepts/overlays.md — the \"Which surfaces are lifted\" paragraph\n"+
@@ -182,12 +183,40 @@ var liftedSurfaceByName = map[string]func(*testing.T) any{
 // type answers the question. It is a LOOKUP, not the list: what is at
 // stake comes from the page, and a name missing here fails the test
 // rather than being skipped.
-var hostByName = map[string]any{
-	"ToastHost":      &ToastHost{},
-	"AdornmentLayer": &AdornmentLayer{},
-	"MenuBar":        &MenuBar{},
-	"Tooltip":        &Tooltip{},
-	"Popup":          &Popup{},
+//
+// THROUGH THE SURFACE, exactly as liftedSurfaceByName does, and it did
+// not until review of #455 — for the one entry where host and surface
+// differ and it matters.
+//
+// A Tooltip never paints: Tooltip.Render is empty and NonVisual()
+// returns true (tooltip.go). The thing on screen is tipPopup. So
+// `&Tooltip{}` could never implement gooey.Overlay whatever happened to
+// tipPopup, and the arm asserting "these are still position-dependent"
+// would have stayed green while the page's claim about Tooltip became
+// wrong — the one host a reader is most likely to move an
+// AdornmentLayer for.
+//
+// The sibling test's own comment states this rule in full ("RESOLVED
+// THROUGH THE SURFACE, not through the host … asking the host would
+// assert the opposite of the page about both and pass for the wrong
+// reason"), and liftedSurfaceByName follows it. This map is the copy
+// that did not — a rule written down once and applied once.
+//
+// MenuBar and Popup resolve through their surfaces here too. They are
+// unreachable in practice, because the cross-check errors if a name
+// appears on both lists, but leaving two entries resolving one way and
+// three the other is how the next reader learns the wrong rule.
+//
+// Funcs rather than values, for liftedSurfaceByName's reason: a Popup
+// allocates its surface.
+var hostByName = map[string]func(*testing.T) any{
+	"ToastHost":      func(*testing.T) any { return &ToastHost{} },
+	"AdornmentLayer": func(*testing.T) any { return &AdornmentLayer{} },
+	"MenuBar":        func(*testing.T) any { return (&MenuBar{}).popup().Surface() },
+	"Tooltip":        func(*testing.T) any { return &tipPopup{tip: &Tooltip{}} },
+	"Popup": func(*testing.T) any {
+		return NewPopup(&Border{}, func(*gooey.Frame, gooey.Rect) {}).Surface()
+	},
 }
 
 // unliftedHostsNamed reads the CLAUSE that makes the claim and returns

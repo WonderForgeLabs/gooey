@@ -21,9 +21,17 @@ where the tip lands. `Tooltip`, `ToastHost` and `AdornmentLayer` do
 **not** implement `gooey.Overlay` yet, so for those three the old rule
 still holds: they are in the ordinary layer, and their position in document
 order is what decides whether a toast paints over an open menu or under
-it. `cmd/toolkit` declares all three at the end of its Grid, and for the
-bar that is now only house style — for the other two it is still load
-bearing. Do not move them.
+it. `cmd/toolkit` declares its `MenuBar`, `ToastHost` and
+`AdornmentLayer` at the end of its Grid; for the `MenuBar` that is now
+only house style, and for the other two it is still load bearing, so do
+not move them.
+
+(That sentence named "all three" and then "the bar", and neither had an
+antecedent it could take: the nearest three were `Tooltip`, `ToastHost`
+and `AdornmentLayer` — and `cmd/toolkit` declares no `Tooltip` at the end
+of its Grid, its tips being inside the job and overlays tabs — while "the
+bar" had appeared nowhere. Naming the three makes the sentence say what
+the file does.)
 
 That is [#439](https://github.com/WonderForgeLabs/gooey/issues/439),
 which adopts the marker on both hosts and ranks the layer so a toast is

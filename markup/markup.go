@@ -1157,13 +1157,30 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				// for an empty value there is nothing to ignore, so the
 				// diagnostic described a consequence that cannot happen.
 				// Reported in review of #455.
-				for _, a := range [...]string{"Text", "Gesture", "Checked", "Command", "Icon", "IconRune"} {
-					if v := strings.TrimSpace(ic.Attrs[a]); v != "" {
+				// DERIVED FROM THE DECLARATION, not enumerated. This
+				// was a hand-written [...]string of exactly
+				// defMenuItem.Attrs minus "Separator", in the same
+				// package as defMenuItem — so the next attribute added
+				// there would be silently accepted-and-ignored on a
+				// separator, which is PRECISELY the defect this loop
+				// exists to make loud. A guard whose staleness mode is
+				// the bug it guards against is the one shape CLAUDE.md's
+				// derive-never-enumerate rule is about.
+				//
+				// The declared order decides which attribute a
+				// multi-attribute separator is reported for, and that is
+				// stable because Attrs is a slice. Raised in review of
+				// #455.
+				for _, a := range defMenuItem.Attrs {
+					if a.Name == "Separator" {
+						continue
+					}
+					if v := strings.TrimSpace(ic.Attrs[a.Name]); v != "" {
 						return nil, fmt.Errorf(
 							"markup: <MenuItem Separator=%q %s=%q>: a separator is a rule "+
 								"across the menu and carries nothing else — %s would be accepted "+
 								"and silently ignored; drop it, or drop Separator",
-							strings.TrimSpace(ic.Attrs["Separator"]), a, v, a)
+							strings.TrimSpace(ic.Attrs["Separator"]), a.Name, v, a.Name)
 					}
 				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})

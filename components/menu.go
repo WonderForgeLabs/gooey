@@ -67,6 +67,19 @@ import (
 // Checked. An icon that changed would need the handle treatment; none
 // does, and a *prop.Property[image.Image] on every item to serve a case
 // nobody has is the wrong trade.
+//
+// SET BOTH, OR NEITHER, and this is the Go statement of a rule the
+// markup loader already enforces with an error that explains itself
+// (<MenuItem Icon> without IconRune does not load). Set from Go there is
+// no loader, so an Icon alone is reachable with no diagnostic anywhere —
+// and what it produces is not a missing picture but three blank columns
+// for the life of the program on any terminal without a graphics
+// protocol, because the gutter above is reserved unconditionally.
+//
+// This file twice justifies a guard with "the struct is public and this
+// file's contract is the Go one" (iconLead, lead). The same reasoning
+// asks for the rule to be written where a Go caller reads it, which it
+// was not. Raised in review of #455.
 type MenuItem struct {
 	Text      string
 	Gesture   string
@@ -363,6 +376,41 @@ func (m *MenuBar) showing() bool {
 	return m.popup().IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
 }
 
+// arranged reports whether m.shown names a menu that is on screen, and
+// it is the ONE question both public accessors ask.
+//
+// It is a function rather than two copies of the same conjunction
+// because the pair's entire contract is that they never disagree, and
+// this file has now had that contract broken twice by editing one
+// accessor and not the other — cur() versus the arranged surface in
+// round 4, and the range check below in round 8. A shared predicate is
+// what makes "they answer together" structural instead of a promise.
+//
+// THE RANGE CHECK IS THE HALF THAT WAS MISSING. showing() clamps through
+// curIdx(), so on a bar whose Menus were replaced with a SHORTER but
+// non-empty slice it inspects Menus[0].Items — a different menu from the
+// one m.shown names — and says yes. The surface bounds are the live rect
+// from the last Arrange, so they say yes too. m.shown was then returned
+// unclamped, and Menus[OpenIndex()] panicked in the caller the accessor
+// was exported for.
+//
+// `bar.Menus = nil` was tested and passes every emptiness guard in the
+// file; the shortened case passes them all as well and is the one with
+// no correct answer. Reporting NOTHING is that answer: a shortened list
+// while open has no honest rect and no honest index, and the pair saying
+// so together is what the rest of these comments already argue for.
+// Raised in review of #455.
+func (m *MenuBar) arranged() bool {
+	if m.pop == nil || !m.showing() {
+		return false
+	}
+	if m.shown < 0 || m.shown >= len(m.Menus) {
+		return false
+	}
+	b := m.pop.SurfaceBounds()
+	return b.W > 0 && b.H > 0
+}
+
 // shown is the menu index the LAST Arrange put on screen, and it is
 // what OpenIndex answers with.
 //
@@ -535,9 +583,14 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // -1 RATHER THAN A SECOND CALL TO IsOpen, because the pair is what an
 // app would have to write anyway and a zero index is a real answer: a
 // bar that reported 0 for "closed" and 0 for "the first menu is open"
-// would need every caller to remember to ask twice. The clamp is the
-// same one curIdx applies, so this cannot report a menu that does not
-// exist.
+// would need every caller to remember to ask twice.
+//
+// It cannot report a menu that does not exist — and THAT SENTENCE USED
+// TO NAME THE WRONG MECHANISM. It said "the clamp is the same one
+// curIdx applies", which was true while this returned curIdx(); round
+// 7's move to m.shown (the right fix for the pairing defect) took the
+// clamp away and left the sentence. The guarantee is now arranged()'s
+// explicit range check, which holds for a reason a reader can find.
 //
 // EXPOSED because everything an app needs to decorate a dropdown was
 // private and reachable only by reconstructing it. #400's reporter
@@ -553,6 +606,12 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // index at all. Answering 0 for either would disagree with
 // DropdownBounds, which returns the zero Rect for both — two accessors
 // over one state must not tell different stories.
+//
+// THE SECOND OF THOSE WAS FALSE FOR A SHORTENED LIST until review of
+// #455: this answered 1 for a one-element slice and DropdownBounds
+// agreed with it, so the pair was self-consistent and jointly wrong —
+// which is worse than disagreeing, because the disagreement is the thing
+// a test looks for. Both go through arranged() now.
 //
 // AND THAT SENTENCE WAS FALSE UNTIL REVIEW OF #455. DropdownBounds moved
 // to the arranged surface and this one kept reading the live property,
@@ -596,15 +655,11 @@ func (m *MenuBar) OpenIndex() int {
 	// is invisible in every observable except the allocation itself.
 	// Pinned by TestAskingWhichMenuIsOpenDoesNotBuildTheSurface.
 	// Raised in review of #455, one accessor after the same finding.
-	if m.pop == nil || !m.showing() {
-		return -1
-	}
-	// THE ARRANGED SURFACE, the same question DropdownBounds asks and in
-	// the same words, because "is anything on screen" must have one
-	// answer. A surface with no extent is a position for something with
-	// no pixels, not an open dropdown.
-	b := m.pop.SurfaceBounds()
-	if b.W <= 0 || b.H <= 0 {
+	// THE SAME PREDICATE DropdownBounds ASKS, and now literally the same
+	// function rather than the same words — see arranged(), which is
+	// where the lazy-constructor ordering, the extent check and the
+	// range check all live.
+	if !m.arranged() {
 		return -1
 	}
 	return m.shown
@@ -678,14 +733,10 @@ func (m *MenuBar) DropdownBounds() gooey.Rect {
 	// describing protection that the code had put on the wrong side of
 	// an `||`. Raised in review of #455, pinned by
 	// TestAskingForTheBoundsDoesNotBuildTheSurface.
-	if m.pop == nil || !m.showing() {
+	if !m.arranged() {
 		return gooey.Rect{}
 	}
-	b := m.pop.SurfaceBounds()
-	if b.W <= 0 || b.H <= 0 {
-		return gooey.Rect{}
-	}
-	return b
+	return m.pop.SurfaceBounds()
 }
 
 // firstItem is the first activatable index — separators are furniture.

@@ -279,6 +279,72 @@ func TestTheAccessorsSurviveAMenuListReplacedWhileOpen(t *testing.T) {
 	c.Frame()
 }
 
+// TestTheAccessorsSurviveAShorterMenuListWhileOpen is the half the test
+// above could not see, and it is the half round 7 asked about.
+//
+// `bar.Menus = nil` is the EASY replacement: every guard in the file
+// tests emptiness, so all of them fire. A shortened but NON-EMPTY slice
+// passes every one of them and still has no menu at the open index:
+//
+//   - showing() clamps through curIdx(), so it checks Menus[0].Items —
+//     a DIFFERENT menu from the one m.shown names — and returns true;
+//   - SurfaceBounds() is the still-live rect from the last Arrange, so
+//     the extent check passes;
+//   - m.shown is a plain int written in Arrange and returned unclamped.
+//
+// So OpenIndex() hands back 1 for a one-element slice, and the
+// documented use — decorate the open menu, Menus[OpenIndex()] — panics
+// in the caller the accessor was exported for. The two doc claims that
+// said this could not happen both named a clamp that the move from
+// cur() to m.shown had removed. Raised in review of #455.
+//
+// THE PAIR IS ASSERTED TOGETHER, because a shortened list is a state
+// with no correct rect and no correct index: reporting neither is the
+// only self-consistent answer, and a fix to one accessor alone would
+// recreate the disagreement the round before this one closed.
+func TestTheAccessorsSurviveAShorterMenuListWhileOpen(t *testing.T) {
+	bar := geomBar()
+	c := gooey.NewComposer(bar, 40, 12)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(1, nil)
+	c.Frame()
+
+	// THE PREMISE, asserted rather than assumed: menu 1 really is open
+	// and really does report a rect. Without this the arms below pass
+	// against a fixture that never opened anything.
+	if got := bar.OpenIndex(); got != 1 {
+		t.Fatalf("OpenIndex = %d before the list was shortened, want 1 — this "+
+			"fixture cannot see the bug", got)
+	}
+	if bar.DropdownBounds() == (gooey.Rect{}) {
+		t.Fatal("DropdownBounds is the zero Rect before the list was shortened, " +
+			"so nothing is on screen and this fixture cannot see the bug")
+	}
+
+	// SHORTER, NOT EMPTY. One menu remains, so len(Menus) > 0 and every
+	// emptiness guard in the file is satisfied.
+	bar.Menus = bar.Menus[:1]
+
+	if got := bar.OpenIndex(); got != -1 {
+		t.Errorf("OpenIndex = %d with len(Menus) = %d — Menus[OpenIndex()] is the "+
+			"documented use and would panic", got, len(bar.Menus))
+	}
+	if got := bar.DropdownBounds(); got != (gooey.Rect{}) {
+		t.Errorf("DropdownBounds = %v with the open index out of range; the pair "+
+			"must report nothing together", got)
+	}
+	// AND THE DOCUMENTED USE ITSELF, spelled out, because "OpenIndex is
+	// -1" is a proxy for it and a future accessor could satisfy the
+	// proxy while still handing back an index nobody can use.
+	if i := bar.OpenIndex(); i >= 0 && i >= len(bar.Menus) {
+		t.Errorf("bar.Menus[bar.OpenIndex()] would panic: index %d, len %d",
+			i, len(bar.Menus))
+	}
+	// And the frame after still composes.
+	c.Frame()
+}
+
 // TestAnOpenMenuWithNoItemsReportsNothing is finding 2, and it is the
 // quiet half: no crash, just a plausible rect for a surface that was
 // never arranged.

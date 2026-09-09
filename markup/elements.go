@@ -1193,7 +1193,7 @@ var defMenuItem = &ElementDef{
 		{Name: "IconRune", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
 			Doc: "One glyph for the item, drawn on the cell plane when there is no graphics protocol. Not a fallback rendering of Icon — a one-cell-tall halfblock is two vertical samples, so the two tiers draw different things (#400)."},
 		{Name: "Separator", Kind: KindBool, Binds: BindsLiteral, Origin: OriginBuiltin,
-			Doc: "A rule instead of an item, and it carries nothing else: Text, Gesture, Checked, Command, Icon and IconRune on a separator are load errors, because a separator draws none of them."},
+			Doc: "A rule instead of an item, and it carries nothing else: EVERY other attribute this element declares is a load error on a separator, because a separator draws none of them. Phrased that way rather than listing them, so the sentence cannot fall behind the declaration it describes — which is what the refusal in markup.go had done."},
 		{Name: "Text", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin,
 			Doc: "The label. A binding resolves to a static string ONCE at load — enough for a value the markup cannot know, but a property handle is refused because the label would never update."},
 	},
