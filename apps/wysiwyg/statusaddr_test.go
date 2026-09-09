@@ -1560,19 +1560,25 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 	// this failure telling whoever added it to write the behavioural arm
 	// too. Without this the two guards would drift the moment they
 	// disagreed, which is the shape #463 survived its first fix in.
-	stubs, _ := clipboardStubs(t, ".")
-	for _, fn := range sortedStubNames(stubs) {
+	stubs := clipboardStubs(t, ".")
+	found := map[string]bool{}
+	for _, door := range slices.Sorted(maps.Keys(stubs)) {
+		fn := doorName(door)
+		found[fn] = true
 		if !named[fn] {
-			t.Errorf("%s (%s) stubs writeSystemClipboard and no arm above calls it, "+
+			t.Errorf("%s stubs writeSystemClipboard and no arm above calls it, "+
 				"so it is covered only by TestEveryClipboardStubStatesItsTerminal — "+
 				"which reads the SOURCE. That check passes on a door that calls "+
 				"statePlainTerminal and then re-sets $TMUX, or calls it before a "+
 				"helper that overwrites it. Add an arm here that calls %s and "+
-				"asserts the caveat is gone afterwards. Issue #463.", fn, stubs[fn], fn)
+				"asserts the caveat is gone afterwards. Issue #463.", door, fn)
 		}
 	}
-	for fn := range named {
-		if _, ok := stubs[fn]; !ok {
+	// SORTED, like the arm above. This iterated the map directly, so two
+	// stale rows produced two orderings of one failure and a reader
+	// comparing runs saw a difference that was not there.
+	for _, fn := range slices.Sorted(maps.Keys(named)) {
+		if !found[fn] {
 			t.Errorf("the table names %s as a clipboard stub and the walk does not "+
 				"find it assigning writeSystemClipboard. Either the helper was "+
 				"renamed and this row is pointing at nothing, or the walk has a "+
@@ -1598,7 +1604,7 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 // is the same package's working example of the idiom, including its "the
 // glob is broken" floor.
 func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
-	stubs, states := clipboardStubs(t, ".")
+	stubs := clipboardStubs(t, ".")
 
 	// NON-VACUITY. A walk that found no assignment at all would report
 	// every stub compliant, which is the failure this test exists to make
@@ -1610,20 +1616,27 @@ func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
 			"stub helpers in this package, so the walk is broken and the assertion "+
 			"below is about nothing", len(stubs), stubs)
 	}
-	for _, fn := range unstated(stubs, states) {
-		t.Errorf("%s (%s) assigns writeSystemClipboard but never calls "+
+	for _, door := range unstated(stubs) {
+		t.Errorf("%s assigns writeSystemClipboard but never calls "+
 			"statePlainTerminal, so the tests behind it read the developer's "+
 			"$TMUX/$STY and go red inside tmux or screen while passing in a "+
 			"plain shell. That is #463, in a door the hand-written guard did "+
-			"not name.", fn, stubs[fn])
+			"not name.", door)
 	}
-	t.Logf("clipboard stub helpers checked: %v", stubs)
+	t.Logf("clipboard stub helpers checked: %v", slices.Sorted(maps.Keys(stubs)))
 }
 
 // clipboardStubs walks dir's test files and reports, for every DECLARATION
-// whose body ASSIGNS the package-level writeSystemClipboard, which file
-// it is in and whether that same declaration also calls
-// statePlainTerminal.
+// whose body ASSIGNS the package-level writeSystemClipboard, whether that
+// same declaration also calls statePlainTerminal.
+//
+// KEYED "file:name", not by the bare name, and that is a correctness
+// matter rather than a nicer message. Two methods of that name on
+// different receiver types, or two same-named helpers in two files, are
+// legal Go: keyed by name the second file parsed OVERWRITES the first, so
+// a compliant door masks a non-compliant one — and the non-vacuity floor
+// below cannot notice, because it still counts one entry per name. Use
+// doorName to get the identifier back out. Raised in review of #467.
 //
 // It takes a DIRECTORY rather than hardcoding ".", and that is the half
 // that makes the guard above falsifiable. On a corpus where every stub
@@ -1643,14 +1656,14 @@ func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
 // reviewer built exactly that door and watched the guard pass over it.
 // So a package-level `var` holding a function literal is walked too, keyed
 // by the variable's name, and the fixture below carries one.
-func clipboardStubs(t *testing.T, dir string) (files map[string]string, states map[string]bool) {
+func clipboardStubs(t *testing.T, dir string) map[string]bool {
 	t.Helper()
 	names, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	files, states = map[string]string{}, map[string]bool{}
+	states := map[string]bool{}
 	for _, name := range names {
 		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
@@ -1660,7 +1673,7 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 		// callers below hand it a node and a name; nothing else decides
 		// what a "door" is.
 		record := func(name string, file string, body ast.Node) {
-			assigns, calls := false, false
+			assigns := false
 			// saved is the identifiers this declaration has taken a copy
 			// of the seam INTO — `prev := writeSystemClipboard`. Putting
 			// one of them back is a RESTORE, not a stub, and the
@@ -1675,9 +1688,27 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 			// assignment from anything OTHER than a saved identifier is
 			// treated as a stub, so `writeSystemClipboard = fakeWriter`
 			// still counts.
+			//
+			// BOTH SPELLINGS OF THE SAVE, and the second one is why this
+			// is a switch with two arms rather than one. `prev :=
+			// writeSystemClipboard` is an AssignStmt; `var prev =
+			// writeSystemClipboard` is a ValueSpec and was not recorded,
+			// so the t.Cleanup that followed it was scored as a stub —
+			// the exact false accusation the exclusion exists to prevent,
+			// one spelling over. The fixture carried only the spelling
+			// that worked, which is why nothing saw it. Raised in review
+			// of #467.
 			saved := map[string]bool{}
 			ast.Inspect(body, func(n ast.Node) bool {
 				switch x := n.(type) {
+				case *ast.ValueSpec:
+					for i, v := range x.Values {
+						id, ok := v.(*ast.Ident)
+						if !ok || id.Name != "writeSystemClipboard" || i >= len(x.Names) {
+							continue
+						}
+						saved[x.Names[i].Name] = true
+					}
 				case *ast.AssignStmt:
 					for i, rhs := range x.Rhs {
 						id, ok := rhs.(*ast.Ident)
@@ -1703,16 +1734,37 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 						}
 						assigns = true
 					}
-				case *ast.CallExpr:
-					if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
-						calls = true
-					}
 				}
 				return true
 			})
+			// THE CALL HAS TO BE A TOP-LEVEL STATEMENT OF THIS
+			// DECLARATION'S OWN BODY, not a match anywhere in its
+			// subtree. ast.Inspect descends into nested literals, so
+			//
+			//	t.Cleanup(func() { statePlainTerminal(t) })
+			//
+			// scored compliant while every test behind the door read the
+			// developer's shell: the call is registered, not made, and
+			// t.Cleanup runs it after the test it was supposed to
+			// protect. Both real doors call it as a plain statement, so
+			// requiring that costs nothing and closes the shape. Raised
+			// in review of #467.
+			calls := false
+			for _, st := range topLevelStmts(body) {
+				es, ok := st.(*ast.ExprStmt)
+				if !ok {
+					continue
+				}
+				call, ok := es.X.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
+					calls = true
+				}
+			}
 			if assigns {
-				files[name] = file
-				states[name] = calls
+				states[file+":"+name] = calls
 			}
 		}
 		base := filepath.Base(name)
@@ -1744,29 +1796,39 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 			}
 		}
 	}
-	return files, states
+	return states
+}
+
+// topLevelStmts is a declaration body's own statement list — the
+// FuncDecl's block, or the block of the function literal a package-level
+// var holds. Anything else has no statements of its own.
+func topLevelStmts(body ast.Node) []ast.Stmt {
+	switch b := body.(type) {
+	case *ast.BlockStmt:
+		return b.List
+	case *ast.FuncLit:
+		return b.Body.List
+	}
+	return nil
+}
+
+// doorName is the identifier out of a "file:name" key.
+func doorName(door string) string {
+	if i := strings.IndexByte(door, ':'); i >= 0 {
+		return door[i+1:]
+	}
+	return door
 }
 
 // unstated is the comparison, extracted for the same reason the walk
 // takes a root: an inlined loop over a compliant corpus returns the empty
 // set whether it compares anything or not.
-func unstated(files map[string]string, states map[string]bool) []string {
+func unstated(states map[string]bool) []string {
 	var out []string
-	for fn := range files {
-		if !states[fn] {
-			out = append(out, fn)
+	for door, ok := range states {
+		if !ok {
+			out = append(out, door)
 		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// sortedStubNames is the door names in a stable order, so a failure list
-// reads the same twice.
-func sortedStubNames(files map[string]string) []string {
-	out := make([]string, 0, len(files))
-	for fn := range files {
-		out = append(out, fn)
 	}
 	slices.Sort(out)
 	return out
@@ -1786,15 +1848,23 @@ func TestTheClipboardStubGuardCatchesWhatItIsFor(t *testing.T) {
 	}
 
 	// A COMPLIANT door, a NON-COMPLIANT one, a function that merely READS
-	// the variable, one that RESTORES a saved copy (the t.Cleanup idiom
+	// the variable, TWO that RESTORE a saved copy (the t.Cleanup idiom
 	// every correct stub ends with — not a door), a function that calls
-	// statePlainTerminal without stubbing anything, and a door that assigns
-	// a NAMED function rather than a literal.
+	// statePlainTerminal without stubbing anything, a door that assigns a
+	// NAMED function rather than a literal, and a door whose
+	// statePlainTerminal call is REGISTERED rather than made.
 	//
-	// The middle three are the false positives a looser walk invents; the
-	// last is the false negative a walk over-corrected against them would
-	// invent, and both directions need a row or the exclusion is only
-	// half stated.
+	// The false positives a looser walk invents, the false negative a
+	// walk over-corrected against them would invent, and both need a row
+	// or the exclusion is only half stated.
+	//
+	// TWO RESTORE ROWS, AND THAT IS THE POINT OF THE SECOND. The
+	// exclusion is spelling-sensitive: `prev := writeSystemClipboard` is
+	// an AssignStmt and `var prev = writeSystemClipboard` is a ValueSpec,
+	// and the walk recorded only the first — so the second was accused of
+	// being a door, in a message naming #463, for doing the right thing.
+	// The fixture carried only the spelling that worked, which is exactly
+	// why nothing could see it. Raised in review of #467.
 	write("good_test.go", `func goodStub(t *T) {
 	statePlainTerminal(t)
 	writeSystemClipboard = func(ed *editor, text string) error { return nil }
@@ -1812,6 +1882,16 @@ func onlyReads(t *T) {
 func restoresOnly(t *T) {
 	prev := writeSystemClipboard
 	t.Cleanup(func() { writeSystemClipboard = prev })
+}
+
+func restoresOnlyVarSpelling(t *T) {
+	var prev = writeSystemClipboard
+	t.Cleanup(func() { writeSystemClipboard = prev })
+}
+
+func lateStub(t *T) {
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
+	t.Cleanup(func() { statePlainTerminal(t) })
 }
 
 func namedStub(t *T) {
@@ -1836,20 +1916,53 @@ var statedVarStub = func(t *T) {
 }
 `)
 
-	files, states := clipboardStubs(t, dir)
-	wantFiles := map[string]string{
-		"goodStub": "good_test.go", "badStub": "bad_test.go",
-		"namedStub": "bad_test.go",
-		"varStub":   "var_test.go", "statedVarStub": "var_test.go",
+	states := clipboardStubs(t, dir)
+	want := map[string]bool{
+		"good_test.go:goodStub":     true,
+		"bad_test.go:badStub":       false,
+		"bad_test.go:namedStub":     false,
+		"bad_test.go:lateStub":      false,
+		"var_test.go:varStub":       false,
+		"var_test.go:statedVarStub": true,
 	}
-	if !maps.Equal(files, wantFiles) {
+	if !maps.Equal(states, want) {
 		t.Errorf("clipboardStubs found %v, want %v — the walk either misses an "+
-			"assignment or counts a plain read of writeSystemClipboard as a stub",
-			files, wantFiles)
+			"assignment, counts a plain read or a restore of "+
+			"writeSystemClipboard as a stub, or accepts a statePlainTerminal "+
+			"call that is registered rather than made", states, want)
 	}
-	if got, want := unstated(files, states), []string{"badStub", "namedStub", "varStub"}; !slices.Equal(got, want) {
+	wantUnstated := []string{
+		"bad_test.go:badStub", "bad_test.go:lateStub", "bad_test.go:namedStub",
+		"var_test.go:varStub",
+	}
+	if got := unstated(states); !slices.Equal(got, wantUnstated) {
 		t.Errorf("unstated = %v, want %v — the comparison is not comparing, so "+
 			"TestEveryClipboardStubStatesItsTerminal would pass over a door that "+
-			"never states its terminal", got, want)
+			"never states its terminal", got, wantUnstated)
+	}
+	// THE COLLISION THE KEY EXISTS FOR. Two same-named declarations in
+	// two files must both be reported; keyed by the bare name the second
+	// parsed would overwrite the first, and a compliant door would mask a
+	// non-compliant one while len(states) still counted one per name.
+	dir2 := t.TempDir()
+	for name, body := range map[string]string{
+		"a_test.go": `func swap(t *T) {
+	statePlainTerminal(t)
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
+}
+`,
+		"b_test.go": `func swap(t *T) {
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
+}
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir2, name), []byte("package fake\n\n"+body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := unstated(clipboardStubs(t, dir2)); !slices.Equal(got, []string{"b_test.go:swap"}) {
+		t.Errorf("two declarations named swap in two files gave unstated = %v, "+
+			"want [b_test.go:swap]. Keyed by the bare name the compliant one "+
+			"masks the other and the non-compliant door goes unreported", got)
 	}
 }
