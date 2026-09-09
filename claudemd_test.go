@@ -468,20 +468,25 @@ const (
 	rePath  = "[A-Za-z0-9_./-]+\\.(?:go|yml|yaml|md)"
 )
 
+// identFirst and pathFirst DISCARD the parse failure on purpose. A line
+// number half one could not parse comes back as 0, and half two's
+// `lo < 1` skip drops the citation there — half one has already reported
+// it, with the raw text this side no longer holds. Raised in review of
+// #475.
 func identFirst(m []string) (ident, path string, lo, hi int) {
-	lo = mustAtoi(m[3])
+	lo, _ = atoiLine(m[3])
 	hi = lo
 	if m[4] != "" {
-		hi = mustAtoi(m[4])
+		hi, _ = atoiLine(m[4])
 	}
 	return m[1], m[2], lo, hi
 }
 
 func pathFirst(m []string) (ident, path string, lo, hi int) {
-	lo = mustAtoi(m[2])
+	lo, _ = atoiLine(m[2])
 	hi = lo
 	if m[3] != "" {
-		hi = mustAtoi(m[3])
+		hi, _ = atoiLine(m[3])
 	}
 	return m[4], m[1], lo, hi
 }
@@ -504,14 +509,17 @@ const citeWindow = 3
 // some.
 func citationProblems(md string, read func(string) ([]string, error)) (problems, forms []string) {
 	lines := map[string][]string{}
-	missing := map[string]bool{}
 	src := func(path string) []string {
 		if s, ok := lines[path]; ok {
 			return s
 		}
 		s, err := read(path)
 		if err != nil {
-			missing[path] = true
+			// The nil IS the record — a second citation to the same
+			// unreadable file finds it cached and reports again, which is
+			// right: each citation is its own problem and names its own
+			// line. A `missing` set beside this was written and never
+			// read. Raised in review of #475.
 			lines[path] = nil
 			return nil
 		}
@@ -521,10 +529,28 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 
 	// ---- half one: every citation names a real place ----
 	for _, m := range citation.FindAllStringSubmatch(md, -1) {
-		path, lo := m[1], mustAtoi(m[2])
-		hi := lo
+		path := m[1]
+		// HALF ONE OWNS EVERY MALFORMED LINE NUMBER, because it is the
+		// only place holding the RAW text — `fields` has already
+		// converted by the time half two sees one. Each of the three
+		// arms below was a panic first: a checker whose job is reporting
+		// problems should report its own inputs rather than take the
+		// root suite down with a stack trace naming no citation.
+		lo, loOK := atoiLine(m[2])
+		hi, hiOK := lo, true
 		if m[3] != "" {
-			hi = mustAtoi(m[3])
+			hi, hiOK = atoiLine(m[3])
+		}
+		// A DIGIT RUN TOO LONG FOR AN int. The pattern matches \d+, so
+		// `file.go:99999999999999999999` is a citation as far as the
+		// regexp is concerned; mustAtoi panicked on it with "produced a
+		// non-numeric line", whose own message argued it could not
+		// happen. Raised in review of #475.
+		if !loOK || !hiOK {
+			problems = append(problems, fmt.Sprintf(
+				"cites %s:%s, and that is not a line number — it does not fit in an "+
+					"int, so nothing in the file can be at it", path, m[2]+dashed(m[3])))
+			continue
 		}
 		// LINE 0 IS NOT A LINE, and half two indexes s[lo-1] to quote it
 		// — so `file.go:0` panicked with index out of range instead of
@@ -535,6 +561,16 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			problems = append(problems, fmt.Sprintf(
 				"cites %s:%d, and there is no line 0 — lines are counted from 1, "+
 					"so this addresses nothing", path, lo))
+			continue
+		}
+		// A RANGE THAT RUNS BACKWARDS. Half two slices
+		// s[lo-1-citeWindow : hi+citeWindow], so `prop.go:120-100` was a
+		// slice bounds panic — the same class as line zero, one more
+		// spelling. Raised in review of #475.
+		if hi < lo {
+			problems = append(problems, fmt.Sprintf(
+				"cites %s:%d-%d, which runs backwards; a range names its first line "+
+					"then its last", path, lo, hi))
 			continue
 		}
 		s := src(path)
@@ -576,7 +612,7 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			seen[key] = true
 
 			s := src(path)
-			if s == nil || lo < 1 || hi > len(s) {
+			if s == nil || lo < 1 || hi < lo || hi > len(s) {
 				continue // half one already reported it
 			}
 			// The LEAF of a dotted name: the doc writes `Composer.Frame`
@@ -586,7 +622,7 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 				leaf = ident[i+1:]
 			}
 			from, to := max(0, lo-1-citeWindow), min(len(s), hi+citeWindow)
-			if !strings.Contains(strings.Join(s[from:to], "\n"), leaf) {
+			if !strings.Contains(codeOnly(s[from:to]), leaf) {
 				problems = append(problems, fmt.Sprintf(
 					"cites %s:%d for %s, but %q is nowhere within %d lines of it — "+
 						"line %d holds %q. Any edit above a cited line moves it, so "+
@@ -601,20 +637,43 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 	return problems, forms
 }
 
-func TestCLAUDEMDCitationsResolve(t *testing.T) {
-	b, err := os.ReadFile(claudeMD)
-	if err != nil {
-		t.Fatalf("reading %s: %v", claudeMD, err)
-	}
-	md := string(b)
-	if len(citation.FindAllString(md, -1)) == 0 {
-		t.Fatalf("%s carries no `file:line` citation at all, so this test checks "+
-			"nothing — the pattern has drifted from the file", claudeMD)
-	}
+// citedDocs are the documents whose `file:line` citations are checked.
+//
+// WHY THE LIST STOPS HERE, since "one more filename" is the whole cost
+// of adding to it. README.md and docs/architecture.md carry no
+// `file:line` citation at all. The other sixty-odd live under
+// docs/specs/, which are DATED decision records describing the tree as
+// it was on the day they were written — a citation there going stale is
+// the record staying honest about its own moment, and a guard demanding
+// they track the tree would be asking a history to be a reference.
+//
+// markup-reference.md joined after review of #475 pointed out it had
+// just had a citation corrected by hand and was free to rot again the
+// same way. It measured clean when it was added.
+var citedDocs = []string{claudeMD, "docs/markup-reference.md"}
 
-	problems, forms := citationProblems(md, readLines)
-	for _, p := range problems {
-		t.Errorf("%s %s (#466)", claudeMD, p)
+func TestCLAUDEMDCitationsResolve(t *testing.T) {
+	// ONE FORM COVERAGE SET ACROSS ALL THE DOCUMENTS, not one per
+	// document: the forms are properties of the CHECKER, and requiring
+	// every document to exercise every form would fail the day a
+	// reference stops using a spelling CLAUDE.md still uses.
+	var forms []string
+	for _, doc := range citedDocs {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("reading %s: %v", doc, err)
+		}
+		md := string(b)
+		if len(citation.FindAllString(md, -1)) == 0 {
+			t.Fatalf("%s carries no `file:line` citation at all, so this test checks "+
+				"nothing — the pattern has drifted from the file", doc)
+		}
+
+		problems, got := citationProblems(md, readLines)
+		for _, p := range problems {
+			t.Errorf("%s %s (#466)", doc, p)
+		}
+		forms = append(forms, got...)
 	}
 
 	// NON-VACUITY, per FORM rather than as a fraction: a ratio would be
@@ -622,10 +681,10 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 	// while one form's regexp quietly matched nothing.
 	for _, f := range citeForms {
 		if !slices.Contains(forms, f.name) {
-			t.Errorf("no citation in %s matches the form %s, so that pattern is "+
-				"checking nothing. If the doc genuinely stopped using the form, "+
+			t.Errorf("no citation in %v matches the form %s, so that pattern is "+
+				"checking nothing. If the docs genuinely stopped using the form, "+
 				"delete it here — but first check the regexp has not simply rotted "+
-				"against a change in the prose around it.", claudeMD, f.name)
+				"against a change in the prose around it.", citedDocs, f.name)
 		}
 	}
 }
@@ -691,7 +750,51 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	for i := identLine + 1; i < driftLine-1; i++ {
 		src[i] = "// filler"
 	}
-	files := map[string][]string{"fake.go": src}
+	// AND A FILE WHOSE ONLY MENTION OF Alpha IS PROSE, four lines above
+	// the cited one — the exact shape of CLAUDE.md's `prop.Set` ->
+	// `prop/prop.go:101` citation, which pointed at the tail of a
+	// neighbouring doc comment and passed. The window has to reach the
+	// comment for this to be a test of comment-stripping rather than of
+	// distance, so line 5 is cited and the sentence is on line 2.
+	commented := []string{
+		"package fake",
+		"// Alpha reports whether the thing is legal.",
+		"func Beta() {",
+		"}",
+		"func Gamma() {}",
+	}
+	// AND A FILE LONG ENOUGH FOR A REVERSED RANGE TO REACH THE SLICE.
+	// Half two computes s[lo-1-citeWindow : hi+citeWindow], which only
+	// inverts when lo exceeds hi by more than 2*citeWindow+1 — so
+	// `fake.go:7-3` in an eight-line fixture is backwards as a CITATION
+	// and still a valid slice (s[3:6]). It exercises half one's report
+	// and says nothing about half two's skip; the two are separate
+	// defences against the same malformed input and want separate
+	// fixtures. Raised in review of #475.
+	long := make([]string, 40)
+	for i := range long {
+		long[i] = "// filler"
+	}
+	long[0] = "package fake"
+	long[19] = "func Alpha() {"
+	// AND A FILE WHOSE CITED LINE HOLDS A SINGLE SLASH, in code. This is
+	// the accept arm for codeOnly: it must cut at // and not at /, or a
+	// division — or a path in a string literal — takes the identifier
+	// after it with the comment text and the guard rejects a correct
+	// citation. Cutting too eagerly is silent in every rejection arm
+	// above, because they all want a rejection anyway.
+	divided := []string{
+		"package fake",
+		"func Beta(w int) int {",
+		"\treturn w / Alpha()",
+		"}",
+	}
+	files := map[string][]string{
+		"fake.go":      src,
+		"commented.go": commented,
+		"long.go":      long,
+		"divided.go":   divided,
+	}
 	read := func(path string) ([]string, error) {
 		s, ok := files[path]
 		if !ok {
@@ -738,20 +841,76 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// rather than as a number: exactly citeWindow away is inside, one
 	// more is not. Without the accept arm, "reject anything not on the
 	// cited line" would satisfy every rejection arm above.
-	if md := citeForms[0].sample("Alpha", "fake.go", edgeLine); true {
+	//
+	// PER FORM, for the same reason the two arms above are. Hardcoded to
+	// citeForms[0] this pinned one form's reach and left a fourth form's
+	// unpinned the day it was added, and reordering the slice moved the
+	// arm to a different form without saying so — the drift arms were
+	// iterated for exactly that reason and this one was not. It also
+	// stood inside `if md := …; true {`, a constant condition doing the
+	// work of a plain statement. Raised in review of #475.
+	// AND A CITED LINE WITH A SLASH IN IT, accepted. codeOnly strips
+	// COMMENTS; cutting at the first / instead would take `w / Alpha()`
+	// down to `w ` and reject a citation that is exactly right.
+	t.Run("the identifier after a division on the cited line", func(t *testing.T) {
+		md := "`Alpha` (`divided.go:3`) does the thing."
 		if problems, _ := citationProblems(md, read); len(problems) > 0 {
-			t.Errorf("the guard rejected %q, where `Alpha` is exactly citeWindow "+
-				"(%d) lines from the cited line — the window does not reach as far "+
-				"as it says: %v", md, citeWindow, problems)
+			t.Errorf("the guard rejected %q, where `Alpha` is on the cited line in "+
+				"CODE — the comment stripping has taken real source with it: %v",
+				md, problems)
 		}
+	})
+
+	for _, form := range citeForms {
+		t.Run("the window's edge, "+form.name, func(t *testing.T) {
+			md := form.sample("Alpha", "fake.go", edgeLine)
+			if problems, _ := citationProblems(md, read); len(problems) > 0 {
+				t.Errorf("the guard rejected %q, where `Alpha` is exactly citeWindow "+
+					"(%d) lines from the cited line — the window does not reach as far "+
+					"as it says: %v", md, citeWindow, problems)
+			}
+		})
 	}
 
-	for _, tc := range []struct{ name, md string }{
-		{"a file that does not exist", "`Alpha` (`nosuch.go:3`) does the thing."},
-		{"a line past the end of the file", "`Alpha` (`fake.go:900`) does the thing."},
+	// `wants` is a substring the REPORT has to carry, and it is here
+	// because "some problem was reported" is a weaker claim than these
+	// arms look like they make. Every malformed line number ends up in
+	// one arm or another of half one, so deleting the too-big-for-an-int
+	// arm leaves `:99999999999999999999` falling through to the line-zero
+	// arm — still reported, still green, and now telling the reader
+	// "there is no line 0" about a citation that says nothing of the
+	// kind. Naming the expected report is what tells the arms apart.
+	// Raised in review of #475.
+	for _, tc := range []struct{ name, md, wants string }{
+		{"a file that does not exist", "`Alpha` (`nosuch.go:3`) does the thing.",
+			"no such file"},
+		{"a line past the end of the file", "`Alpha` (`fake.go:900`) does the thing.",
+			"the file has"},
 		// LINE 0 panicked rather than reporting, because half two quotes
 		// s[lo-1] in its message. Raised in review of #475.
-		{"line zero, which is not a line", "`Alpha` (`fake.go:0`) does the thing."},
+		{"line zero, which is not a line", "`Alpha` (`fake.go:0`) does the thing.",
+			"there is no line 0"},
+		// AND THE OTHER TWO PANICS, same class, found in the same
+		// review. A reversed range slices s[lo-1-citeWindow:hi+citeWindow]
+		// backwards; a digit run past math.MaxInt reaches an Atoi that
+		// used to panic with a message arguing it could not happen.
+		// Both took the whole root suite down with a stack trace naming
+		// no citation.
+		{"a range that runs backwards", "`Alpha` (`fake.go:7-3`) does the thing.",
+			"runs backwards"},
+		{"a range backwards by more than the window",
+			"`Alpha` (`long.go:30-4`) does the thing.", "runs backwards"},
+		{"a line number too big for an int",
+			"`Alpha` (`fake.go:99999999999999999999`) does the thing.",
+			"99999999999999999999"},
+		// THE IDENTIFIER IS THERE, BUT ONLY IN A COMMENT — the citation
+		// that shipped in this very file. Without codeOnly the window
+		// contains "Alpha" and the guard reports no problem, so this arm
+		// is the difference between checking a citation and checking a
+		// neighbourhood's prose.
+		{"the identifier only in prose near the line",
+			"`Alpha` (`commented.go:5`) does the thing.",
+			"is nowhere within"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problems, _ := citationProblems(tc.md, read)
@@ -760,6 +919,14 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 					"document whether or not it is checking anything, so an arm "+
 					"that cannot fail here is a guard that has stopped working.",
 					tc.md)
+				return
+			}
+			if !strings.Contains(strings.Join(problems, "\n"), tc.wants) {
+				t.Errorf("the guard rejected %q, but for the wrong reason: no report "+
+					"mentions %q.\n\t%v\nA rejection arm that only counts problems "+
+					"passes when a DIFFERENT arm of the checker fires, so the two "+
+					"are indistinguishable and either can be deleted unnoticed.",
+					tc.md, tc.wants, problems)
 			}
 		})
 	}
@@ -847,10 +1014,47 @@ func readLines(path string) ([]string, error) {
 // mustAtoi is total for this caller: the regexps only ever hand it a
 // digit run, so a failure is a bug in a pattern rather than in the
 // document, and a zero would silently become "line 0".
-func mustAtoi(s string) int {
+func atoiLine(s string) (int, bool) {
 	n, err := strconv.Atoi(s)
 	if err != nil {
-		panic("citation pattern produced a non-numeric line " + s)
+		return 0, false
 	}
-	return n
+	return n, true
+}
+
+// dashed renders a range's second half for a message, or nothing.
+func dashed(hi string) string {
+	if hi == "" {
+		return ""
+	}
+	return "-" + hi
+}
+
+// codeOnly drops // comment text from a window before the identifier
+// check, because a citation satisfied by PROSE is not checked at all.
+//
+// CLAUDE.md pointed `prop.Set` at `prop/prop.go:101` — the tail of
+// Settable's doc comment, sixteen lines above Set itself — and the guard
+// passed it, because "Settable reports whether Set is legal" sits inside
+// the window and holds the leaf. So the file whose stated purpose is
+// corrected citations shipped one that sends a reader to the wrong
+// symbol, and the guard written to prevent exactly that accepted it. A
+// citation names where a symbol is DEFINED or CALLED; a mention of it in
+// someone else's sentence is neither.
+//
+// It cuts at the first // on the line, which also truncates a line whose
+// string literal holds one. That can only make the guard STRICTER, and
+// every identifier-checked citation in CLAUDE.md was re-run against it —
+// none loses its leaf this way. A citation that properly points at a
+// comment is a decision to record here rather than a silent pass. Raised
+// in review of #475.
+func codeOnly(lines []string) string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		if j := strings.Index(l, "//"); j >= 0 {
+			l = l[:j]
+		}
+		out[i] = l
+	}
+	return strings.Join(out, "\n")
 }
