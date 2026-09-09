@@ -459,7 +459,7 @@ schema. Noted, not built, matching that spec's precedent.
 
 <!-- spec-tests: planned -->
 <!-- Names below are tests this section PROPOSES, not ones the tree
-     holds. TestEverySpecTestNameResolves skips a marked section for
+     holds. TestEveryCitedTestNameResolves skips a marked section for
      exactly that reason; without the marker it would fail, and the
      only way to land it green would be an allowlist — the
      hand-maintained known-bad list CLAUDE.md forbids. See #468. -->

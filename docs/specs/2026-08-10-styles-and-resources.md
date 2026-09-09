@@ -352,13 +352,6 @@ a section overrides only the fields its setters name.
 
 ## Part 4 — The laziness contract, hot reload, acceptance tests
 
-<!-- spec-tests: planned -->
-<!-- Names below are tests this section PROPOSES, not ones the tree
-     holds. TestEverySpecTestNameResolves skips a marked section for
-     exactly that reason; without the marker it would fail, and the
-     only way to land it green would be an allowlist — the
-     hand-maintained known-bad list CLAUDE.md forbids. See #468. -->
-
 Everything resolves in two moments and no others:
 
 - **LOAD**: parse and validate — unknown setter property, bad literal,
@@ -379,6 +372,30 @@ inherited from the graph: `prop.Set` never compares, so re-Setting a
 resource to its current value still repaints its readers; guard hot
 paths at the call site, as everywhere.
 
+### Acceptance tests — the two that have landed
+
+The resources stage shipped, and with it two of the damage-count arms
+this section proposed. They are ordinary citations now, not proposals,
+and they are written here as such so a rename of either shows up:
+
+- `markup.TestResourceSetRepaintsExactlyReaders` — three components, two
+  styled through `{accent}`: `Set` repaints 2, the third never paints.
+- `markup.TestSubtreeOverrideShadows` — inner scope redefines a key;
+  outer readers keep the outer handle; `Set` on the outer repaints only
+  outer readers.
+
+### Acceptance tests — the rest, still proposed
+
+<!-- spec-tests: planned -->
+<!-- Names below are tests this section PROPOSES, not ones the tree
+     holds. TestEveryCitedTestNameResolves skips a marked section for
+     exactly that reason; without the marker it would fail, and the
+     only way to land it green would be an allowlist — the
+     hand-maintained known-bad list CLAUDE.md forbids.
+     TestNoMarkedSectionNamesALandedTest is what stops this exemption
+     outliving what it exempts: it fails the moment one of the names
+     below exists, which is how the two above got moved out. See #468. -->
+
 Damage-count acceptance tests, named here so the implementing issues
 assert the same numbers:
 
@@ -387,11 +404,6 @@ assert the same numbers:
   the existing focus/hover contract tests pass unmodified.
 - `TestFocusWithinPaneMoveRepaintsFour` — two `:focus`-styled Borders
   each wrapping a stop: 4.
-- `TestResourceSetRepaintsExactlyReaders` — three components, two
-  styled through `{accent}`: `Set` repaints 2, the third never paints.
-- `TestSubtreeOverrideShadows` — inner scope redefines a key; outer
-  readers keep the outer handle; `Set` on the outer repaints only
-  outer readers.
 - `TestUnknownStyleKeyFailsLoad`, `TestBadSetterFailsLoad` — the error
   names file, style, and offending property/value.
 
@@ -442,7 +454,7 @@ Design-ahead only; nothing here is committed by this record.
 
 <!-- spec-tests: planned -->
 <!-- Names below are tests this section PROPOSES, not ones the tree
-     holds. TestEverySpecTestNameResolves skips a marked section for
+     holds. TestEveryCitedTestNameResolves skips a marked section for
      exactly that reason; without the marker it would fail, and the
      only way to land it green would be an allowlist — the
      hand-maintained known-bad list CLAUDE.md forbids. See #468. -->
@@ -452,8 +464,8 @@ Design-ahead only; nothing here is committed by this record.
    on `Context` with save/restore; `Style="name"` and the other
    `ctx.Styles` call sites resolve through the chain; unknown-key load
    error (after a demo survey); `Context.Resource`. Tests:
-   shadowing, load errors, `TestResourceSetRepaintsExactlyReaders`,
-   `TestSubtreeOverrideShadows`, every demo loads unchanged.
+   shadowing, load errors, the two resource damage-count arms named in
+   Part 4, every demo loads unchanged.
 2. **Style declaration + explicit key**: `styleDef` parse/validation,
    the `styleFields` closure table, `Value`/`Resource` setters,
    materialization behind `bindStyle` for `Style="key"`. State sections

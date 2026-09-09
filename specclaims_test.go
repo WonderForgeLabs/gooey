@@ -24,14 +24,27 @@ import (
 //
 // #468.
 
-// specTestName is a backticked Go test name in a spec.
-var specTestName = regexp.MustCompile("`(Test[A-Za-z0-9_]*)`")
+// citedTestName is a backticked Go test name in prose, with an OPTIONAL
+// package qualifier.
+//
+// The qualifier is not decoration and matching it is not optional: six
+// live citations in docs/specs are written `markup.TestX` and
+// `wysiwyg.TestX`, and the first version of this guard's pattern required
+// a backtick immediately before `Test`, so all six were invisible to it —
+// a guard against rot that could not see the citations most likely to
+// rot, because a cross-package name is the one whose test you are least
+// likely to notice renaming. Review of PR #476 caught that.
+var citedTestName = regexp.MustCompile("`(?:([a-z][A-Za-z0-9_]*)\\.)?(Test[A-Za-z0-9_]*)`")
 
-// specTestFunc is a test function declaration in the tree.
-var specTestFunc = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
+// testFuncDecl is a test function declaration in the tree.
+var testFuncDecl = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
 
-// specHeading is a Markdown ATX heading; the level scopes plannedMarker.
-var specHeading = regexp.MustCompile(`^(#+)\s`)
+// mdHeading is a Markdown ATX heading; the level scopes plannedMarker.
+var mdHeading = regexp.MustCompile(`^(#+)\s`)
+
+// mdFence opens or closes a fenced code block. Up to three leading spaces
+// is what CommonMark allows before a fence.
+var mdFence = regexp.MustCompile("^ {0,3}(```|~~~)")
 
 // plannedMarker opts a section OUT of the check.
 //
@@ -54,69 +67,160 @@ var specHeading = regexp.MustCompile(`^(#+)\s`)
 // A historical mention — "formerly TestX", "it was TestX until" — is
 // spelled WITHOUT backticks instead, which is both honest (the name is
 // not a live reference) and mechanical (nothing has to classify it).
+//
+// THE EXEMPTION EXPIRES ON ITS OWN, which is the half that keeps it from
+// becoming the very list it replaces: TestNoMarkedSectionNamesALandedTest
+// fails the moment a proposed name exists in the tree, because from that
+// moment the section is describing something that landed and the name is
+// an ordinary citation that can rot like any other. Review of PR #476
+// found four such rows already — this marker had gone stale inside the
+// commit that introduced it.
 const plannedMarker = "<!-- spec-tests: planned -->"
 
-const specDir = "docs/specs"
+// citedRoots is the prose this guard reads. It is deliberately WIDER than
+// docs/specs, because the rot is not a property of decision records:
+// CLAUDE.md cites nine tests by name as the authority for its own rules
+// (TestCIWorkflowAndCLAUDEMDShareOneDiscovery among them), and a rename
+// there leaves a rule citing nothing while still reading as enforced.
+var citedRoots = []string{
+	"docs",
+	"CLAUDE.md",
+	"README.md",
+}
 
-// specClaim is one backticked test name in a spec, outside a marked
-// section.
-type specClaim struct {
+// citation is one backticked test name in prose.
+type citation struct {
 	file string
 	line int
+	pkg  string // "" when the citation is unqualified
 	name string
 	text string
 }
 
-// specClaims returns every name a spec asserts, skipping sections marked
-// planned. It is separate from the test so the parser can be pointed at a
-// synthetic document — see TestTheSpecClaimGuardCatchesWhatItIsFor.
-func specClaims(file, body string) []specClaim {
-	var out []specClaim
-	// skipDepth is the heading level of the marked section currently in
-	// force, or 0 when none is. A heading at that level or shallower ends
-	// it; a deeper one is inside it and stays skipped.
-	skipDepth := 0
-	pendingDepth := 0
-	for i, line := range strings.Split(body, "\n") {
-		if h := specHeading.FindStringSubmatch(line); h != nil {
-			d := len(h[1])
-			if skipDepth > 0 && d <= skipDepth {
-				skipDepth = 0
-			}
-			pendingDepth = d
+func (c citation) cited() string {
+	if c.pkg == "" {
+		return c.name
+	}
+	return c.pkg + "." + c.name
+}
+
+// fencedLines marks the lines inside a fenced code block, the fence lines
+// themselves included.
+//
+// It exists for one specific misreading: CLAUDE.md's verify loop is a
+// ```sh block whose shell comments start at column 0, so a line reading
+// `# TestCIWorkflow…` parses as an ATX heading. A phantom heading inside a
+// fence ENDS an exemption region early, silently un-skipping the rest of a
+// planned section — the guard then fails on names nobody claimed. Review
+// of PR #476 caught it before the corpus grew to a file that had one.
+func fencedLines(lines []string) []bool {
+	in := make([]bool, len(lines))
+	open := false
+	for i, l := range lines {
+		if mdFence.MatchString(l) {
+			in[i] = true
+			open = !open
 			continue
 		}
-		if strings.Contains(line, plannedMarker) {
-			// The marker attaches to the heading above it. Without a
-			// heading it marks nothing, rather than silently exempting
-			// the rest of the file.
-			if pendingDepth > 0 {
-				skipDepth = pendingDepth
-			}
+		in[i] = open
+	}
+	return in
+}
+
+// readProse splits one document's citations into the ones it asserts and
+// the ones a marked section merely proposes. It is separate from the
+// tests so the parser can be pointed at a synthetic document — see
+// TestTheCitationGuardCatchesWhatItIsFor.
+func readProse(file, body string) (live, planned []citation) {
+	lines := strings.Split(body, "\n")
+	fenced := fencedLines(lines)
+
+	// Headings, in order, with their level.
+	type heading struct{ line, depth int }
+	var heads []heading
+	for i, l := range lines {
+		if fenced[i] {
 			continue
 		}
-		if skipDepth > 0 {
-			continue
-		}
-		for _, m := range specTestName.FindAllStringSubmatch(line, -1) {
-			out = append(out, specClaim{file, i + 1, m[1], strings.TrimSpace(line)})
+		if h := mdHeading.FindStringSubmatch(l); h != nil {
+			heads = append(heads, heading{i, len(h[1])})
 		}
 	}
-	return out
+	// end is the first line NOT in the section heads[k] opens: the next
+	// heading at its level or shallower. A deeper one is inside it.
+	end := func(k int) int {
+		for j := k + 1; j < len(heads); j++ {
+			if heads[j].depth <= heads[k].depth {
+				return heads[j].line
+			}
+		}
+		return len(lines)
+	}
+
+	// THE MARKER ATTACHES TO ITS SECTION, NOT TO THE REST OF THE FILE,
+	// and it covers the WHOLE section rather than only the part below
+	// itself. Attaching downward only would be a trap the reader cannot
+	// see: a sentence above the marker but under the same heading reads
+	// as exempt to a human and was checked by the machine. Review of
+	// PR #476 asked which it was; this is the answer, and the arms below
+	// pin it.
+	skip := make([]bool, len(lines))
+	for i, l := range lines {
+		if fenced[i] || !strings.Contains(l, plannedMarker) {
+			continue
+		}
+		k := -1
+		for j := range heads {
+			if heads[j].line >= i {
+				break
+			}
+			k = j
+		}
+		if k < 0 {
+			// No heading above it. It marks nothing, rather than
+			// silently exempting the rest of the file.
+			continue
+		}
+		for n := heads[k].line; n < end(k); n++ {
+			skip[n] = true
+		}
+	}
+
+	for i, l := range lines {
+		if fenced[i] {
+			continue
+		}
+		for _, m := range citedTestName.FindAllStringSubmatch(l, -1) {
+			c := citation{file, i + 1, m[1], m[2], strings.TrimSpace(l)}
+			if skip[i] {
+				planned = append(planned, c)
+			} else {
+				live = append(live, c)
+			}
+		}
+	}
+	return live, planned
 }
 
 // testFuncsUnder is every `func TestX(` beneath root, nested modules
-// included. Derived rather than listed, which is the point: neither side
-// of this comparison is written down anywhere.
+// included, mapped to the DIRECTORY NAMES holding it. Derived rather than
+// listed, which is the point: neither side of this comparison is written
+// down anywhere.
+//
+// The directories are what a package qualifier is checked against.
+// Matching the qualifier to the directory rather than to the Go package
+// clause is deliberate: `wysiwyg.TestTheModeFlipRepaintsOnlyTheIndicator`
+// lives in apps/wysiwyg, whose package clause is `main`, and every
+// citation in the tree spells the qualifier the way the import path ends.
 //
 // The root is a parameter so the arm below can walk a FIXTURE. Without
 // that, the dot-directory pruning is unfalsifiable: dropping it can only
 // ADD names, and adding names to a corpus whose claims all resolve
 // changes no outcome — the mutation was silent until this took an
 // argument.
-func testFuncsUnder(t *testing.T, root string) map[string]bool {
+func testFuncsUnder(t *testing.T, root string) map[string]map[string]bool {
 	t.Helper()
-	found := map[string]bool{}
+	found := map[string]map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -139,8 +243,12 @@ func testFuncsUnder(t *testing.T, root string) map[string]bool {
 		if err != nil {
 			return err
 		}
-		for _, m := range specTestFunc.FindAllStringSubmatch(string(b), -1) {
-			found[m[1]] = true
+		dir := filepath.Base(filepath.Dir(path))
+		for _, m := range testFuncDecl.FindAllStringSubmatch(string(b), -1) {
+			if found[m[1]] == nil {
+				found[m[1]] = map[string]bool{}
+			}
+			found[m[1]][dir] = true
 		}
 		return nil
 	})
@@ -150,123 +258,289 @@ func testFuncsUnder(t *testing.T, root string) map[string]bool {
 	return found
 }
 
-// unresolved returns the claims naming a test the tree does not hold.
-// Separate from the test for the same reason testFuncsUnder takes a root:
-// with a corpus whose claims all resolve, a mutation that stops comparing
-// altogether changes nothing observable.
-func unresolved(claims []specClaim, funcs map[string]bool) []specClaim {
-	var out []specClaim
-	for _, c := range claims {
-		if !funcs[c.name] {
-			out = append(out, c)
+// fault is a citation that does not resolve, and why.
+type fault struct {
+	citation
+	why string
+}
+
+// unresolved returns the citations naming a test the tree does not hold —
+// or holds somewhere the qualifier says it is not. Separate from the test
+// for the same reason testFuncsUnder takes a root: with a corpus whose
+// citations all resolve, a mutation that stops comparing altogether
+// changes nothing observable.
+func unresolved(cites []citation, funcs map[string]map[string]bool) []fault {
+	var out []fault
+	for _, c := range cites {
+		dirs, ok := funcs[c.name]
+		switch {
+		case !ok:
+			out = append(out, fault{c, "no such test exists"})
+		case c.pkg != "" && !dirs[c.pkg]:
+			out = append(out, fault{c, "the test exists, but in " +
+				strings.Join(sortedKeys(dirs), "/") + ", not " + c.pkg})
 		}
 	}
 	return out
 }
 
-func TestEverySpecTestNameResolves(t *testing.T) {
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// proseFiles is every Markdown file under the cited roots. filepath.WalkDir
+// rather than os.ReadDir, so a docs/specs subdirectory — or any of the
+// nested trees under docs/learn — is read rather than silently skipped.
+func proseFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, root := range citedRoots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if path != root && strings.HasPrefix(d.Name(), ".") {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".md") {
+				out = append(out, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestEveryCitedTestNameResolves(t *testing.T) {
 	funcs := testFuncsUnder(t, ".")
 	if len(funcs) == 0 {
 		t.Fatal("the walk found no test functions at all, so every name below " +
 			"would report as orphaned and the failure would be this test's")
 	}
 
-	entries, err := os.ReadDir(specDir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", specDir, err)
+	files := proseFiles(t)
+	if len(files) == 0 {
+		t.Fatalf("no Markdown found under %v, so this test reads nothing", citedRoots)
 	}
-	claims := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		p := filepath.Join(specDir, e.Name())
+	cited := 0
+	for _, p := range files {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			t.Errorf("reading %s: %v", p, err)
 			continue
 		}
-		found := specClaims(e.Name(), string(b))
-		claims += len(found)
-		for _, c := range unresolved(found, funcs) {
-			t.Errorf("%s:%d names %s as evidence and no such test exists.\n\t%s\n"+
+		live, _ := readProse(p, string(b))
+		cited += len(live)
+		for _, f := range unresolved(live, funcs) {
+			t.Errorf("%s:%d cites %s as evidence and %s.\n\t%s\n"+
 				"A renamed test leaves the row reading as a check while checking "+
 				"nothing. Fix the name, delete the claim, or — if the test is one "+
 				"this section PROPOSES rather than one the tree holds — put %q "+
 				"under the section's heading. (#468)",
-				p, c.line, c.name, c.text, plannedMarker)
+				p, f.line, f.cited(), f.why, f.text, plannedMarker)
 		}
 	}
-	if claims == 0 {
-		t.Errorf("no spec names a test outside a marked section, so this test "+
-			"checks nothing. Either %s has stopped citing tests or the pattern "+
-			"has drifted from how they are written.", specDir)
+	if cited == 0 {
+		t.Errorf("no document under %v names a test outside a marked section, so "+
+			"this test checks nothing. Either the docs have stopped citing tests "+
+			"or the pattern has drifted from how they are written.", citedRoots)
 	}
 }
 
-// TestTheSpecClaimGuardCatchesWhatItIsFor is the arm that keeps the guard
+// TestNoMarkedSectionNamesALandedTest is what stops the exemption from
+// becoming the hand-maintained known-bad list it was written to avoid.
+//
+// plannedMarker means "these names are PROPOSALS". The moment one of them
+// exists, that stops being true and the row is an ordinary citation — one
+// that can rot, inside a region where nothing would notice. The marker has
+// no expiry of its own, so this is it.
+//
+// It is not hypothetical: review of PR #476 found the marker already stale
+// in the commit that introduced it. docs/specs/2026-08-10-styles-and-
+// resources.md proposed six damage-count arms, two of which had landed in
+// markup/resources_test.go, and the whole of Part 4 — live contract prose,
+// not a proposal list — was exempt because the marker sat directly under
+// the Part's own heading.
+func TestNoMarkedSectionNamesALandedTest(t *testing.T) {
+	funcs := testFuncsUnder(t, ".")
+	if len(funcs) == 0 {
+		t.Fatal("the walk found no test functions, so every proposal below would " +
+			"read as still-planned and this test would pass on anything")
+	}
+	marked := 0
+	for _, p := range proseFiles(t) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Errorf("reading %s: %v", p, err)
+			continue
+		}
+		_, planned := readProse(p, string(b))
+		marked += len(planned)
+		for _, c := range planned {
+			if funcs[c.name] == nil {
+				continue
+			}
+			t.Errorf("%s:%d proposes %s under %q, and that test now exists in %s.\n\t%s\n"+
+				"The exemption has outlived what it exempted: the row is an ordinary "+
+				"citation now, and inside a marked section nothing would notice it "+
+				"rotting. Cite it live — outside the marked section, qualified by its "+
+				"package — or drop the row. (#468)",
+				p, c.line, c.name, plannedMarker,
+				strings.Join(sortedKeys(funcs[c.name]), "/"), c.text)
+		}
+	}
+	// NON-VACUITY. Every arm above is a for-range over a slice that a
+	// broken parser returns empty, and an empty slice is green.
+	if marked == 0 {
+		t.Errorf("no section under %v is marked %q, so this test read nothing. "+
+			"Either every proposal has landed and the markers should be gone, or "+
+			"the marker's spelling has drifted.", citedRoots, plannedMarker)
+	}
+}
+
+// TestTheCitationGuardCatchesWhatItIsFor is the arm that keeps the guard
 // honest, and it is not decoration.
 //
 // A checker like this fails OPEN in every direction that matters: widen
 // the marker's scope and whole files stop being read, break the name
 // pattern and nothing is collected, and neither shows against a corpus
-// that is already correct — docs/specs passes just as well with the check
+// that is already correct — the docs pass just as well with the check
 // disabled. So the parser is pointed at documents whose contents are
 // known.
-func TestTheSpecClaimGuardCatchesWhatItIsFor(t *testing.T) {
+func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	const marked = "## Implementation plan\n" + plannedMarker + "\nTests: `TestPlanned`.\n"
 
 	for _, tc := range []struct {
-		name string
-		body string
-		want []string
+		name          string
+		body          string
+		live, planned []string
 	}{
-		{"a plain claim is collected", "Pinned by `TestAlpha`.", []string{"TestAlpha"}},
-		{"two on one line", "`TestAlpha` and `TestBeta`.", []string{"TestAlpha", "TestBeta"}},
-		{"a marked section is skipped", marked, nil},
 		{
-			name: "the marker ends at the next same-level heading",
-			body: marked + "## After\nPinned by `TestAfter`.\n",
-			want: []string{"TestAfter"},
+			name: "a plain claim is collected",
+			body: "Pinned by `TestAlpha`.",
+			live: []string{"TestAlpha"},
 		},
 		{
-			name: "a deeper heading stays inside the marked section",
-			body: marked + "### Still planned\nTests: `TestDeeper`.\n",
-			want: nil,
+			name: "two on one line",
+			body: "`TestAlpha` and `TestBeta`.",
+			live: []string{"TestAlpha", "TestBeta"},
+		},
+		{
+			name:    "a marked section is skipped",
+			body:    marked,
+			planned: []string{"TestPlanned"},
+		},
+		{
+			name:    "the marker ends at the next same-level heading",
+			body:    marked + "## After\nPinned by `TestAfter`.\n",
+			live:    []string{"TestAfter"},
+			planned: []string{"TestPlanned"},
+		},
+		{
+			name:    "a deeper heading stays inside the marked section",
+			body:    marked + "### Still planned\nTests: `TestDeeper`.\n",
+			planned: []string{"TestPlanned", "TestDeeper"},
 		},
 		{
 			name: "an unbackticked historical name is not a claim",
 			body: "It was TestOldName until the rename.",
-			want: nil,
 		},
 		{
 			name: "a marker with no heading above it marks nothing",
 			body: plannedMarker + "\nPinned by `TestLoose`.\n",
-			want: []string{"TestLoose"},
+			live: []string{"TestLoose"},
+		},
+		{
+			// THE HALF THE OLD ARM MISSED. It covered a marker with no
+			// heading at all and called that "attachment"; the question a
+			// reader actually has is what happens to a citation ABOVE the
+			// marker but under the same heading. It is exempt: the marker
+			// scopes its section, not the remainder of the file after
+			// itself.
+			name:    "a claim above the marker in the same section is exempt too",
+			body:    "## Plan\nProposed: `TestEarly`.\n" + plannedMarker + "\nAlso `TestLate`.\n",
+			planned: []string{"TestEarly", "TestLate"},
+		},
+		{
+			name: "a package-qualified citation is collected with its qualifier",
+			body: "See `markup.TestQualified`.",
+			live: []string{"markup.TestQualified"},
+		},
+		{
+			// A COLUMN-0 SHELL COMMENT IS NOT A HEADING. CLAUDE.md's
+			// verify loop is exactly this shape, and reading the `#` as a
+			// heading ends the marked section early — the guard then fails
+			// on names the document never claimed.
+			name:    "a fenced block does not end a marked section",
+			body:    marked + "```sh\n# TestFake pins that\n```\nStill `TestAfterFence`.\n",
+			planned: []string{"TestPlanned", "TestAfterFence"},
+		},
+		{
+			name: "a name inside a fence is not a citation",
+			body: "```go\nrun(`TestInAFence`)\n```\n",
+		},
+		{
+			name:    "a tilde fence counts too",
+			body:    marked + "~~~\n# TestFake\n~~~\nStill `TestAfterTilde`.\n",
+			planned: []string{"TestPlanned", "TestAfterTilde"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var got []string
-			for _, c := range specClaims("t.md", tc.body) {
-				got = append(got, c.name)
+			live, planned := readProse("t.md", tc.body)
+			check := func(what string, got []citation, want []string) {
+				t.Helper()
+				var names []string
+				for _, c := range got {
+					names = append(names, c.cited())
+				}
+				sort.Strings(names)
+				w := append([]string(nil), want...)
+				sort.Strings(w)
+				if strings.Join(names, ",") != strings.Join(w, ",") {
+					t.Errorf("%s: collected %v, want %v", what, names, w)
+				}
 			}
-			sort.Strings(got)
-			want := append([]string(nil), tc.want...)
-			sort.Strings(want)
-			if strings.Join(got, ",") != strings.Join(want, ",") {
-				t.Errorf("collected %v, want %v", got, want)
-			}
+			check("live", live, tc.live)
+			check("planned", planned, tc.planned)
 		})
 	}
 
 	// The comparison itself, which a clean corpus cannot exercise: with
-	// every claim resolving, "compare and report" and "report nothing"
+	// every citation resolving, "compare and report" and "report nothing"
 	// are the same green.
 	t.Run("an unresolved claim is reported", func(t *testing.T) {
-		claims := specClaims("t.md", "Pinned by `TestHere` and `TestGone`.")
-		got := unresolved(claims, map[string]bool{"TestHere": true})
+		live, _ := readProse("t.md", "Pinned by `TestHere` and `TestGone`.")
+		got := unresolved(live, map[string]map[string]bool{"TestHere": {"markup": true}})
 		if len(got) != 1 || got[0].name != "TestGone" {
 			t.Errorf("unresolved reported %v, want exactly TestGone", got)
+		}
+	})
+
+	// And the qualifier, which the name check alone cannot see: a test
+	// that exists SOMEWHERE resolves under an unqualified citation, so
+	// without this the qualifier could be parsed and then thrown away.
+	t.Run("a qualifier naming the wrong package is reported", func(t *testing.T) {
+		live, _ := readProse("t.md", "See `markup.TestSomewhere` and `wysiwyg.TestSomewhere`.")
+		funcs := map[string]map[string]bool{"TestSomewhere": {"markup": true}}
+		got := unresolved(live, funcs)
+		if len(got) != 1 || got[0].pkg != "wysiwyg" {
+			t.Fatalf("unresolved reported %v, want exactly the wysiwyg citation", got)
+		}
+		if !strings.Contains(got[0].why, "markup") {
+			t.Errorf("the report says %q; it should name where the test actually "+
+				"is, or the reader has to go looking", got[0].why)
 		}
 	})
 
@@ -292,17 +566,66 @@ func TestTheSpecClaimGuardCatchesWhatItIsFor(t *testing.T) {
 		write("", "a_test.go", "TestVisible")
 		write(".worktrees/other", "b_test.go", "TestInsideADotDir")
 		write("vendor/x", "c_test.go", "TestInVendor")
+		write("markup", "d_test.go", "TestInMarkup")
 
 		funcs := testFuncsUnder(t, root)
-		if !funcs["TestVisible"] {
+		if funcs["TestVisible"] == nil {
 			t.Error("the walk missed an ordinary test file, so the two absences " +
 				"below prove nothing")
 		}
+		if !funcs["TestInMarkup"]["markup"] {
+			t.Errorf("the walk recorded TestInMarkup in %v, not markup; a qualified "+
+				"citation would be reported against the wrong directory",
+				sortedKeys(funcs["TestInMarkup"]))
+		}
 		for _, n := range []string{"TestInsideADotDir", "TestInVendor"} {
-			if funcs[n] {
+			if funcs[n] != nil {
 				t.Errorf("the walk found %s; a claim resolved against a checkout "+
 					"under .claude/worktrees/ is checked against another branch's "+
 					"tree, not this one", n)
+			}
+		}
+	})
+
+	// The corpus walk, which os.ReadDir got wrong in a way no current file
+	// exposes: docs/specs is flat today, so a reader that never descends
+	// passes — and would keep passing the day somebody adds a
+	// subdirectory, with the new records simply unchecked.
+	t.Run("the corpus walk descends into subdirectories", func(t *testing.T) {
+		files := proseFiles(t)
+		nested := 0
+		for _, f := range files {
+			if strings.Count(filepath.ToSlash(f), "/") > 1 {
+				nested++
+			}
+		}
+		if nested == 0 {
+			t.Errorf("every one of the %d documents read is at the top of its root, "+
+				"so a walk that never descends would look identical to this one",
+				len(files))
+		}
+	})
+
+	// And the corpus's REACH, which is the half a subdirectory check cannot
+	// see: docs/specs alone is nested too, so narrowing the roots back to
+	// decision records looks identical to the walk above. The rot is not a
+	// property of decision records — CLAUDE.md cites tests as the authority
+	// for its own rules, and docs/learn cites them as the reason a tutorial
+	// says what it says.
+	t.Run("the corpus reaches past docs/specs", func(t *testing.T) {
+		want := map[string]bool{"CLAUDE.md": false, "docs/learn": false, "docs/specs": false}
+		for _, f := range proseFiles(t) {
+			s := filepath.ToSlash(f)
+			for k := range want {
+				if s == k || strings.HasPrefix(s, k+"/") {
+					want[k] = true
+				}
+			}
+		}
+		for _, k := range sortedKeys(want) {
+			if !want[k] {
+				t.Errorf("no document under %s is read, so a citation there can rot "+
+					"with nothing to notice", k)
 			}
 		}
 	})
