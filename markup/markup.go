@@ -796,12 +796,43 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 	}
 	l := hl.LayoutProps()
 	for k, v := range e.Attrs {
+		// THE UNIVERSAL LITERAL INTS GO THROUGH litInt, the same helper
+		// every declared KindInt/BindsLiteral attribute uses, and this is
+		// the table #460 was about that the first fix left alone.
+		//
+		// Measured before the change, on this branch: <Border Width="-3">
+		// LOADED — and layout guards on l.Width > 0 (layout.go), so a
+		// negative width behaves exactly as if the attribute had been
+		// omitted, which is #460's own defect definition. <Border
+		// Width="+3"> loaded and meant 3. <Border Width=" 3 "> was a load
+		// error while <HStack Gap=" 3 "> loaded.
+		//
+		// Height is the sharpest case, because it sits in BOTH tables:
+		// <Sparkline Height="-2"/> was refused by litInt and <Border
+		// Height="-2"> loaded, and <Sparkline Height=" 2 "/> was a load
+		// error EVEN THOUGH litInt trims — applyLayout read the same
+		// attribute again, untrimmed, and litInt's trim was dead on it.
+		//
+		// Grid.* and Canvas.* are non-negative for the same reason and it
+		// is stated rather than inherited: Row/Col are indices into a
+		// track list and RowSpan/ColSpan are counts, so a negative
+		// addresses no cell; Left/Top are an offset from the Canvas's own
+		// top-left, so a negative one puts the child outside the rect
+		// that clips it — a silent drop rather than a placement. Nothing
+		// in this tree writes one, checked before the change.
+		if p := layoutInt(l, k); p != nil {
+			n, err := litInt(e, k)
+			if err != nil {
+				// litInt's message already names the element, the
+				// attribute, the raw value and the consequence. The wrap
+				// below would repeat the first three.
+				return err
+			}
+			*p = n
+			continue
+		}
 		var err error
 		switch k {
-		case "Width":
-			l.Width, err = strconv.Atoi(v)
-		case "Height":
-			l.Height, err = strconv.Atoi(v)
 		case "Margin":
 			l.Margin, err = parseThickness(v)
 		case "HAlign":
@@ -823,22 +854,40 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 				continue
 			}
 			l.Visibility, err = parseVisibility(v)
-		case "Grid.Row":
-			l.Row, err = strconv.Atoi(v)
-		case "Grid.Col":
-			l.Col, err = strconv.Atoi(v)
-		case "Grid.RowSpan":
-			l.RowSpan, err = strconv.Atoi(v)
-		case "Grid.ColSpan":
-			l.ColSpan, err = strconv.Atoi(v)
-		case "Canvas.Left":
-			l.Left, err = strconv.Atoi(v)
-		case "Canvas.Top":
-			l.Top, err = strconv.Atoi(v)
 		}
 		if err != nil {
 			return fmt.Errorf("markup: attribute %s=%q: %w", k, v, err)
 		}
+	}
+	return nil
+}
+
+// layoutInt is the field a universal literal int attribute writes, or nil
+// when the name is not one.
+//
+// A pointer rather than a second switch in applyLayout: the point is that
+// all eight share ONE grammar, and two switches over the same eight names
+// is how one of them comes to be edited without the other. It is also
+// what lets the sweep in bindsweep_test.go derive the list from this
+// function rather than repeating it.
+func layoutInt(l *gooey.Layout, name string) *int {
+	switch name {
+	case "Width":
+		return &l.Width
+	case "Height":
+		return &l.Height
+	case "Grid.Row":
+		return &l.Row
+	case "Grid.Col":
+		return &l.Col
+	case "Grid.RowSpan":
+		return &l.RowSpan
+	case "Grid.ColSpan":
+		return &l.ColSpan
+	case "Canvas.Left":
+		return &l.Left
+	case "Canvas.Top":
+		return &l.Top
 	}
 	return nil
 }

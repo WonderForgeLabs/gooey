@@ -136,7 +136,14 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		builtin[n] = true
 	}
 	for name, raw := range e.Attrs {
-		if builtin[name] {
+		// Name is UNIVERSAL, not a rule. Context.vocabulary permits it on
+		// every element unconditionally (attrcheck.go), so the loader
+		// said yes and this loop said "unknown rule (have Required,
+		// MinLen, …)" — one vocabulary answering two ways about the same
+		// attribute, which is what #460 is about. Found by the sweep
+		// harness in review of #470, when every probe started naming
+		// itself and <Validate> was the only element that refused.
+		if name == "Name" || builtin[name] {
 			continue
 		}
 		if _, ok := ctx.Rules[name]; ok {

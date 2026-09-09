@@ -721,6 +721,20 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 | `Message` | string | `ErrorMessage` | — (overrides every rule on this behavior) |
 | `Into` | name | — | — |
 
+**The `Type` column is the grammar, and it is the house one.** A `bool` rule
+takes only `"true"` or `"false"`, written literally; anything else, `"1"` and
+an empty value included, is a load error rather than a silent `"false"`. An
+`int` rule takes a whole number written literally, so a negative, a leading
+`+`, a leading zero, an empty value or a binding is a load error, not a silent
+0 — surrounding whitespace is trimmed, as it is everywhere else. That is the
+same sentence the `<Segmented Wrap>` and `<HStack Gap>` rows carry, and it is
+here because until [#470](https://github.com/WonderForgeLabs/gooey/pull/470)
+it was not true: these rules had their own readers, so `<Validate
+Required="1">` loaded while `<Segmented Wrap="1">` did not, and
+`<Validate MinLen=" 3 ">` was a load error where every other int in the
+vocabulary trims. One vocabulary, two answers, in the pair of files a form is
+written across.
+
 `Into` is the context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild).
 
 `Compare` names the *other* field — `Compare=".Password"` or `Compare="{{.Password}}"`, both accepted since the attribute names a property rather than carrying a value. The rule reads that property, and the read is what subscribes this field to it: editing the original re-validates the confirmation with no extra wiring.

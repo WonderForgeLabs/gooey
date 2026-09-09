@@ -3,8 +3,10 @@ package markup
 import (
 	"fmt"
 	"image"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -63,6 +65,13 @@ func defaultsContext() *Context {
 			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
+		// AN EMPTY FS, NOT NIL. <FileWatcher> refuses to build without
+		// one, so its three declarations came back UNVERIFIED in every
+		// sweep arm — refused, but by a message about the context rather
+		// than about the attribute under test. Empty is enough: nothing
+		// here reads a file, and a nil Includes is the only thing the
+		// element objects to. Raised in review of #470.
+		Includes: fstest.MapFS{},
 	}
 }
 
@@ -132,12 +141,44 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
+	// EVERY PROBE NAMES ITSELF, and it is not decoration.
+	//
+	// Name is a UNIVERSAL attribute and is not declared Required, because
+	// for almost every element it is not — but <Companion> refuses to
+	// build without one ("it is what errors call the service"). Required
+	// is declared per element and Name lives in the universal table, so
+	// there is nowhere for that requirement to be written today, and the
+	// loop below — which reads def.Attrs — could not learn it. Every
+	// <Companion> probe therefore failed on the missing Name and came
+	// back UNVERIFIED in all five sweep arms, including the one whose own
+	// comment argues from <Companion CleanEnv> being a security switch.
+	//
+	// A name is harmless everywhere else: it is KindIdentity, it renders
+	// nothing, and each probe is its own single-element document, so
+	// there is no uniqueness to collide with. Skipped only when Name is
+	// the attribute under test. Raised in review of #470.
+	if attr != "Name" {
+		b.WriteString(` Name="probe"`)
+	}
 	for _, a := range def.Attrs {
 		if !a.Required || a.Name == attr {
 			continue
 		}
 		if a.Binds == BindsLiteral {
-			fmt.Fprintf(&b, " %s=%q", a.Name, literalFor(a))
+			// THE SEED FIRST. literalFor answers by KIND, which is a
+			// shape and not a value: "x" is a fine string for a Label and
+			// useless for a <Companion Path>, which has to resolve to an
+			// executable. The element's own Seed is markup that loads by
+			// construction, so where it states a value for a required
+			// attribute that value is the one to write. Declaring a
+			// Default instead is not available — a declared default is
+			// checked by RENDERING it, which a non-visual element cannot
+			// do. Raised in review of #470.
+			v := seedValue(def.Seed, a.Name)
+			if v == "" {
+				v = literalFor(a)
+			}
+			fmt.Fprintf(&b, " %s=%q", a.Name, v)
 			continue
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
@@ -167,12 +208,47 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		// unobservable.
 		b.WriteString("<Text>one</Text><Text>seven</Text>")
 	case ModeRestricted:
-		for _, only := range def.Children.Only {
-			fmt.Fprintf(&b, "<%s Header=\"h\"><Text>one</Text></%s>", only, only)
+		// ONLY WHEN THE ELEMENT DECLARES NO SLOTS, and the exclusion is
+		// the fix for a blind spot rather than a shortcut.
+		//
+		// <Companion> is ModeRestricted over {Arg, Var} AND declares the
+		// slots <Companion.Args> and <Companion.Env>; buildCompanion
+		// requires the children to be inside them. Writing them as
+		// DIRECT children made every <Companion> probe fail with a
+		// message about children, so <Companion CleanEnv> came back
+		// UNVERIFIED in all five sweep arms — including the one whose own
+		// comment argues from CleanEnv being a security switch. Measured
+		// in review of #470.
+		//
+		// The harness cannot place them correctly either, and that is a
+		// fact about the catalog rather than a limitation here: NOTHING
+		// DECLARES WHICH SLOT HOSTS WHICH CHILD. <Arg> goes in Args and
+		// <Var> in Env because companion.go says so in Go. So the probe
+		// omits them — legal, since neither slot is Required — and the
+		// element builds, which is what the attribute sweeps need.
+		if len(def.Slots) == 0 {
+			for _, only := range def.Children.Only {
+				fmt.Fprintf(&b, "<%s Header=\"h\"><Text>one</Text></%s>", only, only)
+			}
 		}
 	}
 	fmt.Fprintf(&b, "</%s>", def.Name)
 	return b.String()
+}
+
+// seedValue is the literal an element's own Seed writes for attr, or ""
+// when the seed does not mention it or writes a binding there.
+//
+// A regexp over the seed rather than a parse: the seed is one element
+// with quoted attributes, the test only needs a literal, and reaching for
+// the document parser here would make the harness depend on the thing it
+// exists to probe.
+func seedValue(seed, attr string) string {
+	m := regexp.MustCompile(`\b` + regexp.QuoteMeta(attr) + `="([^"]*)"`).FindStringSubmatch(seed)
+	if len(m) != 2 || strings.Contains(m[1], "{{") {
+		return ""
+	}
+	return m[1]
 }
 
 // renderProbe builds src and composes it into a fixed rect, returning the

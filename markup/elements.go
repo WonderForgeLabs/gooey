@@ -196,7 +196,16 @@ var defCompanion = &ElementDef{
 		{Name: "Exited", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
 		{Name: "KillDelay", Kind: KindDuration, Binds: BindsLiteral, Origin: OriginBuiltin},
 		{Name: "Log", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
-		{Name: "Path", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
+		// REQUIRED, and declared so. buildCompanion refuses a
+		// <Companion> without one ("needs a Path (the executable)"), and
+		// this said otherwise — so every consumer that reads Required to
+		// decide what a new element must carry got it wrong, and the
+		// sweep harness could not build the element at all. No Default:
+		// TestDeclaredDefaultsRenderIdenticallyToOmission checks a
+		// declared default by RENDERING it, which a non-visual element
+		// cannot do, and there is no honest default for "which binary"
+		// anyway. Found in review of #470.
+		{Name: "Path", Kind: KindString, Binds: BindsLiteral, Required: true, Origin: OriginBuiltin},
 		{Name: "StopTimeout", Kind: KindDuration, Binds: BindsLiteral, Origin: OriginBuiltin},
 	},
 	Slots:    []SlotSpec{{Name: "Args"}, {Name: "Env"}},
@@ -426,11 +435,11 @@ var defGrid = &ElementDef{
 		},
 	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		rows, err := components.ParseGridLens(e.Attrs["Rows"])
+		rows, err := gridLens(e, "Rows")
 		if err != nil {
 			return nil, err
 		}
-		cols, err := components.ParseGridLens(e.Attrs["Cols"])
+		cols, err := gridLens(e, "Cols")
 		if err != nil {
 			return nil, err
 		}
@@ -1444,13 +1453,21 @@ func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 // worse than no rationale. Raised in review of #470.
 //
 // NEGATIVE IS REFUSED for the same reason unreadable is. Every call site
-// is a measured extent — a gap, a bar width, a row count — and
-// `Gap="-3"` parses cleanly, reaches `y += v.Gap`, and overlaps the
+// is a measured extent — a gap, a bar width, a row count, a grid index —
+// and `Gap="-3"` parses cleanly, reaches `y += v.Gap`, and overlaps the
 // children it was meant to separate; `BarWidth="-5"` hands layout a
 // gooey.Size{W: -5}. The error text already said "a whole number", and
 // accepting a negative was the same silent-wrong one arithmetic step
 // later. If a signed literal attribute ever exists, it needs its own
-// helper and its own reason. Raised in review of #470.
+// helper and its own reason — and apps/wysiwyg DERIVES the floor from
+// this rule (properties.go, stepperKey) rather than keeping a list, so
+// that helper is where the exemption would be recorded.
+//
+// ONE SPELLING PER VALUE is enforced below against strconv.Itoa's
+// canonical form, which is the parser's own inverse. It replaces a
+// hand-named refusal of a leading `+` that missed leading zeros — review
+// of #470 measured `Gap="007"` loading and meaning 7, which is verbatim
+// the argument the `+` refusal was making.
 //
 // The value is quoted UNTRIMMED, so an author who typed `Gap=" wide "`
 // is shown the spaces rather than a tidied version that does not match
@@ -1458,28 +1475,67 @@ func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 //
 // Found by the derived Kind/Binds sweep in #460 — the eleven-row
 // spot-check it replaces named none of these.
+// gridLens reads a track list and NAMES the attribute when it will not
+// parse.
+//
+// components.ParseGridLens says only `grid: bad length "{{.B}}"`. That is
+// true of the value and silent about which attribute carried it — on an
+// element that always has both Rows and Cols, so the author is told a
+// string is bad and left to find it. Every other literal in this file
+// refuses in the house form, which names the element and the attribute.
+//
+// Found by the bindsweep discriminator, which requires the refusal to
+// name the attribute before it counts as one: <Grid Rows> and <Grid Cols>
+// were the only two declarations in the whole vocabulary it could not
+// verify. That is the discriminator earning its tightening — the arm was
+// green with the loose form and the message was still unusable.
+func gridLens(e Element, name string) ([]components.GridLen, error) {
+	raw := e.Attrs[name]
+	ls, err := components.ParseGridLens(raw)
+	if err != nil {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %v", e.Name, name, raw, err)
+	}
+	return ls, nil
+}
+
 func litInt(e Element, name string) (int, error) {
 	raw, ok := e.Attrs[name]
 	if !ok {
 		return 0, nil
 	}
-	// A LEADING SIGN IS NOT A SPELLING OF A WHOLE NUMBER HERE, and the
-	// `+` half is the one that needed saying. strconv.Atoi accepts both
-	// signs, so Gap="+3" loaded and meant 3 while Gap="-3" was refused
-	// below — a "refused" int with a second silent spelling, in the
-	// change whose argument is that one value has one grammar. Raised in
-	// review of #470.
 	trimmed := strings.TrimSpace(raw)
 	n, err := strconv.Atoi(trimmed)
-	if err != nil || strings.HasPrefix(trimmed, "+") {
+	if err != nil {
 		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
 			"literally — it is not a binding, and an unreadable value would "+
 			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is a measured extent and cannot "+
-			"be negative — it parses, so nothing would refuse it, and layout would "+
-			"quietly overlap or invert what it measures", e.Name, name, raw, name)
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is a measurement in cells — an "+
+			"extent, a count, an index or an offset — and cannot be negative. It "+
+			"parses, so nothing would refuse it: layout overlaps what it was meant "+
+			"to separate, addresses no cell, or places a child outside the rect "+
+			"that clips it", e.Name, name, raw, name)
+	}
+	// ONE SPELLING PER VALUE, and it is a canonical-form check rather
+	// than a list of bad prefixes.
+	//
+	// The first version refused a leading `+` by name and shared the
+	// UNREADABLE message with it — which claimed the value "would
+	// silently lay out as 0", and +2 is perfectly readable and lays out
+	// as 2. Review of #470 caught both halves of that: a message stating
+	// a consequence that does not happen, and a rule that named one
+	// second spelling while `Gap="007"` went on loading and meaning 7 —
+	// verbatim the argument the `+` refusal was making.
+	//
+	// Comparing against strconv.Itoa's output covers every second
+	// spelling there is, including ones nobody has thought of, and it
+	// cannot drift from the parser because it IS the parser's inverse.
+	if canon := strconv.Itoa(n); canon != trimmed {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is spelled %q — %q is a second "+
+			"way to write the same number, and two documents meaning the same "+
+			"layout should not differ in their text", e.Name, name, raw, name,
+			canon, trimmed)
 	}
 	return n, nil
 }

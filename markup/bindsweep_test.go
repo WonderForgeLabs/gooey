@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -134,9 +135,13 @@ func TestTheSweepCoversAllThreeTables(t *testing.T) {
 // summarised, because "three unverified" tells the next reader nothing
 // and "<Companion Error>, <FileWatcher Enabled>, <FileWatcher Path>"
 // tells them exactly which declarations the harness cannot reach.
-func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal func(AttrSpec, string) string) (checked int) {
+// RETURNS the unverified list rather than reporting it, for the same
+// reason literalOnlySweep and boolSpellingSweep do: the harness self-test
+// below drives this with a predicate no error can match, which makes
+// EVERY declaration unverified on purpose. A floor inside the sweep would
+// fire on the one caller that must not trip it.
+func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal func(AttrSpec, string) string) (checked int, unverified []string) {
 	t.Helper()
-	var unverified []string
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
 		if a.Binds != want {
@@ -160,12 +165,7 @@ func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal fu
 		}
 		checked++
 	}
-	if len(unverified) > 0 {
-		t.Logf("%d declarations UNVERIFIED — the build failed for another reason, "+
-			"so the Binds rule itself was not exercised:\n\t%s",
-			len(unverified), strings.Join(unverified, "\n\t"))
-	}
-	return checked
+	return checked, unverified
 }
 
 // TestEveryBindOnlyAttributeRefusesALiteral is the sweep the eleven-row
@@ -173,12 +173,13 @@ func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal fu
 // <Frozen Active> corruption: Active is BindsBinding, so a literal has to
 // be a load error, and the declaration is what says so.
 func TestEveryBindOnlyAttributeRefusesALiteral(t *testing.T) {
-	n := bindSweep(t, BindsBinding, literalFor, func(AttrSpec, string) string {
+	n, unverified := bindSweep(t, BindsBinding, literalFor, func(AttrSpec, string) string {
 		// Bound[T]'s own words (usercontrol.go), which fire exactly when
 		// the loader demanded a handle. Any other error means the harness
 		// could not reach the declaration.
 		return "is not a binding expression"
 	})
+	reportUnverified(t, unverified)
 	if n == 0 {
 		t.Fatal("no bind-only attributes were checked: this sweep would pass vacuously")
 	}
@@ -202,7 +203,7 @@ func TestEveryBindOnlyAttributeRefusesALiteral(t *testing.T) {
 // `{{.S}}` as literal braces today — see the note at the bottom of this
 // file.
 func TestEveryLiteralIntOrBoolAttributeRefusesGarbage(t *testing.T) {
-	n := bindSweep(t, BindsLiteral, func(a AttrSpec) string {
+	n, unverified := bindSweep(t, BindsLiteral, func(a AttrSpec) string {
 		switch a.Kind {
 		case KindInt, KindBool:
 			return "{{.S}}" // unparseable as either, and the shape an author would try
@@ -217,6 +218,7 @@ func TestEveryLiteralIntOrBoolAttributeRefusesGarbage(t *testing.T) {
 		// contain `{{.S}}`; every message about the attribute does.
 		return v
 	})
+	reportUnverified(t, unverified)
 	if n == 0 {
 		t.Fatal("no literal int/bool attributes were checked: this sweep would pass vacuously")
 	}
@@ -250,7 +252,7 @@ func TestEveryLiteralOnlyAttributeRefusesABinding(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no literal-only attributes were checked: this sweep would pass vacuously")
 	}
-	logUnverified(t, unverified)
+	reportUnverified(t, unverified)
 	t.Logf("checked %d literal-only attributes", checked)
 }
 
@@ -268,14 +270,97 @@ func TestEveryLiteralOnlyAttributeRefusesABinding(t *testing.T) {
 // so they inherited neither the check nor the test of it, and the review
 // found them counting 8 of 13 and 4 of 47 refusals they never made.
 // Raised in review of #470, twice.
-func ruleRefusedIt(err error, v string) bool {
-	return strings.Contains(err.Error(), v)
+//
+// BOTH HALVES, and the review asked for the second one. A bare
+// Contains(err, v) is looser than it reads: the probe values are "1",
+// "0", "T" and "{{.S}}", and a one-character value appears in error text
+// that has nothing to do with the attribute — a line number, a column
+// count, another attribute's value, the word "T" inside a type name. The
+// %q quoting is what makes the value a token rather than a substring, and
+// the attribute NAME is what says the refusal is about THIS declaration
+// rather than a sibling on the same probe element.
+//
+// It paid immediately: <Grid Rows> and <Grid Cols> dropped to UNVERIFIED
+// because components.ParseGridLens answers `grid: bad length "{{.B}}"`,
+// which names no attribute on an element that always has both. The loose
+// form counted them — the value was in the string — and left an author
+// told only that some string is bad. markup.gridLens now refuses in the
+// house form and the count is back where it was, which is the shape of a
+// tightening that found something rather than one that merely narrowed.
+func ruleRefusedIt(err error, attr, v string) bool {
+	msg := err.Error()
+	return strings.Contains(msg, attr) && strings.Contains(msg, fmt.Sprintf("%q", v))
+}
+
+// TestTheDiscriminatorNeedsBothHalves is the arm the review named as
+// missing, and it is a unit test of the predicate because nothing else
+// can be.
+//
+// TestTheHandRolledArmsCountOnlyTheRightRefusal feeds the sweeps a
+// predicate that never matches, which proves the discriminator is
+// CONSULTED. It cannot prove the discriminator DISCRIMINATES: loosening
+// it back to a bare substring match leaves every sweep green and every
+// count identical — measured, SILENT against the whole package — because
+// every refusal in the vocabulary happens to carry both halves today.
+// That is the state the review measured and the reason it asked for the
+// tightening anyway: the hole is not open, and nothing would notice it
+// opening.
+//
+// So the errors here are SYNTHETIC, on purpose. A real one cannot express
+// "carries the value but is about a different attribute" while the
+// vocabulary is uniform, and building a probe element that produces one
+// would pin the harness rather than the rule.
+func TestTheDiscriminatorNeedsBothHalves(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{
+			// The shape every real refusal has.
+			"the rule's own refusal",
+			`markup: <Segmented Wrap="1">: Wrap takes "true" or "false"`,
+			true,
+		},
+		{
+			// A harness failure about a CHILD, carrying the value by
+			// coincidence. probeElement injects <Text> children into most
+			// elements, and the probe values are "1", "0", "T" and "TRUE" —
+			// single characters and digits turn up everywhere.
+			"someone else's error carrying the value",
+			`markup: <HStack>: <Text> body "1" is not a component`,
+			false,
+		},
+		{
+			// Names the attribute, does not quote the value: a refusal
+			// about the attribute for a reason that is not this value.
+			"a refusal about the attribute but not the value",
+			`markup: <Segmented Wrap>: Wrap needs a bool`,
+			false,
+		},
+		{
+			// The value UNQUOTED. This is the one that says the %q is
+			// load-bearing rather than decoration: "1" appears inside
+			// "31" and inside a line number.
+			"the value as a bare substring",
+			`markup: <Segmented Wrap>: at line 31`,
+			false,
+		},
+	} {
+		if got := ruleRefusedIt(errors.New(tc.msg), "Wrap", "1"); got != tc.want {
+			t.Errorf("%s: ruleRefusedIt(%q) = %v, want %v.\n"+
+				"A refusal counts only when it names the attribute AND quotes the "+
+				"offending value; anything looser counts a harness failure as "+
+				"coverage, which is the over-count this review found twice",
+				tc.name, tc.msg, got, tc.want)
+		}
+	}
 }
 
 // literalOnlySweep is TestEveryLiteralOnlyAttributeRefusesABinding's
 // body, with the discriminator injected. accepted holds the failures,
 // unbuilt, so the caller reports them and a meta-test can ignore them.
-func literalOnlySweep(t *testing.T, refused func(error, string) bool) (checked int, unverified, accepted []string) {
+func literalOnlySweep(t *testing.T, refused func(error, string, string) bool) (checked int, unverified, accepted []string) {
 	t.Helper()
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
@@ -309,7 +394,7 @@ func literalOnlySweep(t *testing.T, refused func(error, string) bool) (checked i
 				break
 			}
 			why = err.Error()
-			if refused(err, v) {
+			if refused(err, a.Name, v) {
 				verified = true
 			}
 		}
@@ -352,13 +437,13 @@ func TestALiteralBoolRefusesTheParseBoolSpellings(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no literal bool attributes were checked: this test would pass vacuously")
 	}
-	logUnverified(t, unverified)
+	reportUnverified(t, unverified)
 	t.Logf("checked %d literal bool attributes", checked)
 }
 
 // boolSpellingSweep is the body, with the discriminator injected. See
 // ruleRefusedIt for why that is not an implementation detail.
-func boolSpellingSweep(t *testing.T, refused func(error, string) bool) (checked int, unverified, accepted []string) {
+func boolSpellingSweep(t *testing.T, refused func(error, string, string) bool) (checked int, unverified, accepted []string) {
 	t.Helper()
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
@@ -392,7 +477,7 @@ func boolSpellingSweep(t *testing.T, refused func(error, string) bool) (checked 
 						"are extra near-misses", tg.def.Name, a.Name, v))
 				continue
 			}
-			if refused(err, v) {
+			if refused(err, a.Name, v) {
 				verified = true
 				continue
 			}
@@ -417,7 +502,7 @@ func boolSpellingSweep(t *testing.T, refused func(error, string) bool) (checked 
 // and nothing in the suite could see — the same reasoning that produced
 // TestBindSweepCountsOnlyTheRightRefusal, one arm across, twice.
 func TestTheHandRolledArmsCountOnlyTheRightRefusal(t *testing.T) {
-	never := func(error, string) bool { return false }
+	never := func(error, string, string) bool { return false }
 	if n, _, _ := boolSpellingSweep(t, never); n != 0 {
 		t.Errorf("boolSpellingSweep verified %d attributes against a refusal that can "+
 			"never match, so it is counting build failures rather than refusals", n)
@@ -428,22 +513,73 @@ func TestTheHandRolledArmsCountOnlyTheRightRefusal(t *testing.T) {
 	}
 }
 
-// logUnverified is bindSweep's report, extracted so the two hand-rolled
-// arms say the same thing in the same words.
+// reportUnverified is every arm's report, and it FAILS.
 //
-// It LOGS rather than fails, deliberately and for the reason bindSweep
-// gives: an attribute the harness cannot reach is a gap in the harness,
-// not a defect in the declaration, and failing on it would make the
-// sweep un-extendable. What must not happen — and did — is that gap
-// being counted as coverage.
-func logUnverified(t *testing.T, unverified []string) {
+// It used to log. The argument for logging was that an attribute the
+// harness cannot reach is a gap in the harness rather than a defect in
+// the declaration, and failing on it would make the sweep
+// un-extendable — which was reasonable while there were nine such gaps
+// and no way to close them.
+//
+// It is the wrong shape and review of #470 named why: a report nothing
+// checks lets coverage shrink silently. An element that becomes
+// unreachable makes every arm's count drop, the logged list grow, and
+// the suite stay green — the exact silent-loop failure this file's
+// header invokes CLAUDE.md for, one level up, on the numbers the file's
+// whole coverage argument rests on.
+//
+// So the floor is ZERO and it is met today: closing the <Companion> and
+// <FileWatcher> gaps took every arm to nought unverified, and the counts
+// rose 22→23, 29→30, 44→47, 12→13. An attribute that genuinely cannot be
+// probed does not get a quiet line in a log — it gets a named exemption
+// with an open issue number, the mechanism "A red suite is yours" asks
+// for, and there are none today.
+func reportUnverified(t testing.TB, unverified []string) {
 	t.Helper()
 	if len(unverified) == 0 {
 		return
 	}
-	t.Logf("%d declarations UNVERIFIED — the build failed for another reason, "+
-		"so the rule itself was not exercised:\n\t%s",
+	t.Errorf("%d declarations UNVERIFIED — the build failed for another reason, so "+
+		"the rule itself was not exercised on them and this arm's coverage count "+
+		"is that much smaller than it reads. Reach them, or record a named "+
+		"exemption with an open issue number:\n\t%s",
 		len(unverified), strings.Join(unverified, "\n\t"))
+}
+
+// countingTB records whether reportUnverified reported, without failing
+// the test that is asking. A subtest cannot do this job: a failing
+// subtest fails its parent, which is the answer being measured.
+type countingTB struct {
+	testing.TB
+	errs int
+}
+
+func (c *countingTB) Helper()               {}
+func (c *countingTB) Errorf(string, ...any) { c.errs++ }
+func (c *countingTB) Logf(string, ...any)   {}
+
+// TestTheUnverifiedFloorIsAFloor is the arm on the arm.
+//
+// reportUnverified FAILING is the whole of the change it carries, and
+// nothing else in this file can see it: every sweep passes it an empty
+// slice today, so switching it back to t.Logf is SILENT — measured
+// against the whole package. Both directions are asserted, because
+// "reports something" is satisfied by a function that reports always.
+func TestTheUnverifiedFloorIsAFloor(t *testing.T) {
+	var full countingTB
+	reportUnverified(&full, []string{"<Nonesuch Attr>: a harness failure"})
+	if full.errs == 0 {
+		t.Error("reportUnverified accepted a non-empty unverified list. Coverage can " +
+			"then shrink to nothing with every arm still green, which is the " +
+			"failure the counts in this file exist to make visible")
+	}
+
+	var empty countingTB
+	reportUnverified(&empty, nil)
+	if empty.errs != 0 {
+		t.Error("reportUnverified failed on an EMPTY list, so the arm above would " +
+			"pass for a function that fails unconditionally")
+	}
 }
 
 // TestBindSweepCountsOnlyTheRightRefusal is a test OF THE HARNESS, and it
@@ -458,7 +594,7 @@ func logUnverified(t *testing.T, unverified []string) {
 // match is the one thing that can.
 func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
 	never := func(AttrSpec, string) string { return "\x00 no error says this" }
-	if n := bindSweep(t, BindsBinding, literalFor, never); n != 0 {
+	if n, _ := bindSweep(t, BindsBinding, literalFor, never); n != 0 {
 		t.Errorf("bindSweep verified %d attributes against a refusal no error can "+
 			"contain, so it is counting build failures rather than refusals — "+
 			"and every coverage number this file logs is then an overstatement", n)
@@ -654,11 +790,7 @@ func TestAnEmptyLiteralIsALoadError(t *testing.T) {
 		}
 		checked++
 	}
-	if len(unverified) > 0 {
-		t.Logf("%d declarations UNVERIFIED — refused, but not by a message about "+
-			"the attribute, so the empty rule itself was not exercised:\n\t%s",
-			len(unverified), strings.Join(unverified, "\n\t"))
-	}
+	reportUnverified(t, unverified)
 	if checked == 0 {
 		t.Fatal("no literal int/bool attributes were checked: this test would pass vacuously")
 	}
@@ -691,34 +823,134 @@ func TestOmittingTheAttributeStillMeansTheDefault(t *testing.T) {
 	}
 }
 
+// litIntSweep runs one spelling against EVERY declared literal int in the
+// vocabulary and reports how many refusals named the attribute.
+//
+// Derived rather than enumerated, and the two arms below were the last
+// enumerated ones in this file. That is not tidiness: <Width>, <Height>,
+// <Grid.*> and <Canvas.*> read their value in applyLayout, not in litInt,
+// so a hand-written list of <VStack Gap="-3"> rows could not see that
+// <Border Width="-3"> LOADED and was then silently treated as auto —
+// #460's own defect definition, in the table this file's sweepTargets was
+// extended to cover. Review of #470 measured it; the swept form goes red
+// on it immediately.
+func litIntSweep(t *testing.T, value string) (checked int, unverified, accepted []string) {
+	t.Helper()
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds != BindsLiteral || a.Kind != KindInt {
+			continue
+		}
+		src := harnessFor(a.Name, probeElement(t, tg.def, a.Name, value))
+		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+		if err == nil {
+			accepted = append(accepted, fmt.Sprintf("<%s %s=%q>", tg.def.Name, a.Name, value))
+			continue
+		}
+		// THE VALUE, QUOTED, is what separates a refusal about this
+		// attribute from a harness failure — the same discriminator arm 2
+		// uses, and for the same reason.
+		if !strings.Contains(err.Error(), fmt.Sprintf("%q", value)) {
+			unverified = append(unverified,
+				fmt.Sprintf("<%s %s=%q>: %v", tg.def.Name, a.Name, value, err))
+			continue
+		}
+		checked++
+	}
+	return checked, unverified, accepted
+}
+
 // TestALiteralExtentCannotBeNegative is the range half of litInt, and it
 // is a separate test because it is a separate claim: unreadable and
 // out-of-range are two ways to be silently wrong, and the first version
 // of the helper refused only the first.
 //
-// Every litInt call site is a measured extent. <VStack Gap="-3"> parsed
+// Every literal int is a measurement in cells. <VStack Gap="-3"> parsed
 // clean, reached `y += v.Gap` and overlapped the children the gap exists
-// to separate; <Gauge BarWidth="-5"> handed layout a gooey.Size{W: -5}.
-// The helper's own error text said "a whole number" while accepting one
-// that was not. Raised in review of #470.
+// to separate; <Gauge BarWidth="-5"> handed layout a gooey.Size{W: -5};
+// <Border Width="-3"> loaded and behaved exactly as if the attribute had
+// been omitted, because layout guards on l.Width > 0.
 func TestALiteralExtentCannotBeNegative(t *testing.T) {
-	for _, tc := range []struct{ src, attr string }{
-		{`<VStack Gap="-3"><Text>a</Text></VStack>`, "Gap"},
-		{`<HStack Gap="-1"><Text>a</Text></HStack>`, "Gap"},
-		{`<Gauge Value="{{.Pct}}" BarWidth="-5"/>`, "BarWidth"},
-		{`<Sparkline Values="{{.F64}}" Height="-2"/>`, "Height"},
-	} {
-		_, err := Build([]byte("<Gooey>"+tc.src+"</Gooey>"), defaultsContext())
-		if err == nil {
-			t.Errorf("%s loads; a negative extent parses, so nothing else would "+
-				"refuse it, and layout quietly overlaps or inverts what it "+
-				"measures", tc.src)
+	checked, unverified, accepted := litIntSweep(t, "-3")
+	reportUnverified(t, unverified)
+	for _, s := range accepted {
+		t.Errorf("%s loads. A negative measurement parses, so nothing else would "+
+			"refuse it: layout quietly overlaps what it was meant to separate, "+
+			"addresses no cell, or places a child outside the rect that clips it", s)
+	}
+	if checked == 0 {
+		t.Fatal("no literal ints were checked: this sweep would pass vacuously")
+	}
+	t.Logf("checked %d literal ints against a negative spelling", checked)
+}
+
+// TestALiteralIntHasOneSpelling is the canonical-form half.
+//
+// strconv.Atoi accepts a leading sign and leading zeros, so Gap="+3" and
+// Gap="007" both loaded and meant 3 and 7 while Gap="-3" was refused — a
+// "refused" int with two silent second spellings, in the change whose
+// argument is that one value has one grammar. The first fix named `+` and
+// missed `007`; litInt compares against strconv.Itoa's output now, which
+// is the parser's own inverse and cannot drift from it.
+func TestALiteralIntHasOneSpelling(t *testing.T) {
+	for _, v := range []string{"+3", "007", "-0"} {
+		t.Run(v, func(t *testing.T) {
+			checked, unverified, accepted := litIntSweep(t, v)
+			reportUnverified(t, unverified)
+			for _, s := range accepted {
+				t.Errorf("%s loads. A whole number written literally has one "+
+					"spelling; a second one that means the same thing is a value "+
+					"two documents disagree about", s)
+			}
+			if checked == 0 {
+				t.Fatal("no literal ints were checked: this sweep would pass vacuously")
+			}
+		})
+	}
+}
+
+// TestALiteralIntAcceptsSurroundingSpace is the accept direction, and it
+// is the arm that found the sharpest asymmetry in review of #470.
+//
+// litInt trims. applyLayout did not — and Height sits in BOTH tables, so
+// <Sparkline Height=" 2 "/> was a load error EVEN THOUGH litInt trims,
+// because the same attribute was read again, untrimmed, on the way out.
+// litInt's trim was dead on it. Without this arm the two readers can
+// disagree again and every refusal arm above stays green, since they only
+// ever ask what is REFUSED.
+func TestALiteralIntAcceptsSurroundingSpace(t *testing.T) {
+	var checked int
+	var refused []string
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds != BindsLiteral || a.Kind != KindInt {
 			continue
 		}
-		if !strings.Contains(err.Error(), tc.attr) {
-			t.Errorf("the refusal for %s does not name the attribute:\n\t%v", tc.src, err)
+		// The seed's own value where there is one, so an attribute whose
+		// number has to mean something still gets one that does; " 1 "
+		// otherwise, which every extent, count and index accepts.
+		v := seedValue(tg.def.Seed, a.Name)
+		if v == "" {
+			v = "1"
 		}
+		src := harnessFor(a.Name, probeElement(t, tg.def, a.Name, " "+v+" "))
+		if _, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext()); err != nil {
+			refused = append(refused,
+				fmt.Sprintf("<%s %s=%q>: %v", tg.def.Name, a.Name, " "+v+" ", err))
+			continue
+		}
+		checked++
 	}
+	for _, s := range refused {
+		t.Errorf("%s is refused. litInt trims, so an attribute that does not is "+
+			"being read by a second parser — which is how <Border Height=\" 2 \"> "+
+			"and <Sparkline Height=\" 2 \"> came to answer differently about the "+
+			"same string:\n\t%s", s, s)
+	}
+	if checked == 0 {
+		t.Fatal("no literal ints were checked: this sweep would pass vacuously")
+	}
+	t.Logf("checked %d literal ints for a trimmed spelling", checked)
 }
 
 // STILL UNSWEPT, ONE: a Kind WIDENED TO THE CATCH-ALL. Corrupting

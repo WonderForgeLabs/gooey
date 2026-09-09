@@ -58,27 +58,20 @@ func TestTheValidateHarnessReachesTheRule(t *testing.T) {
 	}
 }
 
-// TestALiteralIntRefusesASignedSpelling is the leading-plus finding.
+// TestTheOneSpellingRuleIsNotARefuseEverything is the non-vacuity arm for
+// the three swept ones in bindsweep_test.go
+// (TestALiteralExtentCannotBeNegative, TestALiteralIntHasOneSpelling,
+// TestALiteralIntAcceptsSurroundingSpace).
 //
-// strconv.Atoi accepts both signs, so Gap="+3" loaded and meant 3 while
-// Gap="-3" was refused — the "refused" int quietly had a second
-// spelling. Both arms matter: the minus one is what says the fix did not
-// simply stop parsing signs at all.
-func TestALiteralIntRefusesASignedSpelling(t *testing.T) {
-	for _, v := range []string{"+3", "-3"} {
-		src := `<HStack Gap="` + v + `"><Text>a</Text><Text>b</Text></HStack>`
-		if _, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext()); err == nil {
-			t.Errorf("<HStack Gap=%q> loads. A whole number written literally has one "+
-				"spelling; a second one that means the same thing is a value two "+
-				"documents disagree about", v)
-		}
-	}
-	// NON-VACUITY: the unsigned spelling must still load, or the test
-	// above passes for a reader that refuses every int.
+// Those ask what is REFUSED, and an int reader that refuses everything
+// satisfies all three. This is the one line that says the canonical
+// spelling still loads. It stays enumerated because it is one claim about
+// one value, not a claim about the vocabulary.
+func TestTheOneSpellingRuleIsNotARefuseEverything(t *testing.T) {
 	ok := `<HStack Gap="3"><Text>a</Text><Text>b</Text></HStack>`
 	if _, err := Build([]byte("<Gooey>"+ok+"</Gooey>"), defaultsContext()); err != nil {
-		t.Fatalf(`<HStack Gap="3"> no longer loads, so the assertions above are about `+
-			`an int reader that refuses everything: %v`, err)
+		t.Fatalf(`<HStack Gap="3"> no longer loads, so the swept refusal arms are `+
+			`about an int reader that refuses everything: %v`, err)
 	}
 }
 
