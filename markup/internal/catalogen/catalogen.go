@@ -195,8 +195,26 @@ type defInfo struct {
 // The under-declared direction is NOT given up; it moves up a level, to
 // checkPseudoPool, which asks it of the host's whole family at once.
 // That split is the honest decomposition: "nobody declares this" is
-// answerable, "the wrong sibling declares this" is not. Only the second
-// is lost, and it is at least visible in the property grid.
+// answerable, "the wrong sibling declares this" is not.
+//
+// AND WHAT IS LOST IS LOST IN BOTH DIRECTIONS, which this comment used
+// to soften. An attribute declared on the wrong sibling is in the union,
+// so the check above sees nothing; and the union is covered, so
+// checkPseudoPool sees nothing either. Measured: a `Text` AttrSpec added
+// to defMenu leaves markup, this package and apps/wysiwyg green, and
+// <Menu Text="ghost"> loads clean and is dropped.
+//
+// This comment also claimed the gap was "at least visible in the
+// property grid", citing TestASelectedMenuOffersItsTitle. That test is a
+// PRESENCE loop returning on the first match: it catches an attribute
+// MOVING off <Menu> and cannot see one being ADDED. Presence is not
+// partition, and a mitigation that does not mitigate spends the
+// attention that would have caught the bug.
+//
+// The partition is asserted where a literal set can be written down —
+// markup.TestTheMenuFamilyKeepsItsExactSet — because it cannot be
+// derived from the declarations it is checking. Raised in review of
+// #454.
 //
 // An earlier version of this comment gave up the under-declared
 // direction outright, on the grounds that "under-declaring stays loud

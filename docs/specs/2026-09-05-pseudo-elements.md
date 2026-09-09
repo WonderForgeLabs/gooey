@@ -127,9 +127,24 @@ carry no record of which element they came off. So:
   declares. The finding is addressed to the host, because that is the honest
   address — the fix is to add it to whichever child it belongs on, and this
   cannot say which.
-- **Declared on the wrong sibling** is what is genuinely lost. It is at least
-  visible in the property grid, and `TestASelectedMenuOffersItsTitle` covers
-  the case that motivated it.
+- **Declared on the wrong sibling** is what is genuinely lost, and it is lost
+  in **both** directions: the attribute is in the host's union, so
+  `checkPseudo` sees nothing, and the union is covered, so `checkPseudoPool`
+  sees nothing either. Measured — a `Text` `AttrSpec` on `defMenu` leaves
+  `markup`, `catalogen` and `apps/wysiwyg` green while
+  `<Menu Text="ghost">` loads clean and is dropped.
+
+  This bullet used to say the case was "at least visible in the property grid",
+  citing `TestASelectedMenuOffersItsTitle`. That test is a **presence** loop
+  that returns on the first match: it catches an attribute *moving* off
+  `<Menu>` and cannot see one being *added*. Presence is not partition, and a
+  mitigation that does not mitigate spends the attention that would have caught
+  the bug — which is the same shape as the false claim this record corrects two
+  sections down.
+
+  The partition is pinned by `markup.TestTheMenuFamilyKeepsItsExactSet`, whose
+  sets are **literal**: derived from `defMenu`/`defMenuItem` they would assert
+  the declarations against themselves and pass on any gain.
 
 ### The claim that was false, and what it cost
 

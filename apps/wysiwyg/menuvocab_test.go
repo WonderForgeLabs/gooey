@@ -109,7 +109,7 @@ func TestTheMenuVocabularyIsNotOfferedInThePalette(t *testing.T) {
 			// element with no catalog entry has no Nested flag to
 			// compare against. <Companion> restricts to <Arg> and
 			// <Var>, and buildCompanion validates both by hand
-			// (companion.go:289, :322) — so nothing is silently
+			// (markup/companion.go:289, :322) — so nothing is silently
 			// dropped, but no property grid can show them either.
 			//
 			// Declaring them is exactly what ParsedBy is for and is

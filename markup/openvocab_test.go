@@ -1,6 +1,8 @@
 package markup
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,6 +90,83 @@ func TestOpenVocabularyStillRejectsUnknownRules(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Email") {
 		t.Errorf("the error should name the live vocabulary including host rules, got: %v", err)
+	}
+}
+
+// TestTheMenuFamilyKeepsItsExactSet is the PARTITION check that
+// catalogen cannot make, and it exists because the mitigation this
+// repo's own comments claimed for that gap did not hold.
+//
+// catalogen.checkPseudo compares a pseudo-element's declared Attrs
+// against the host Build's UNION of child reads — buildMenuBar reads
+// <Menu>'s Title and <MenuItem>'s Text, and the AST carries no record of
+// which element each read came off. So an attribute declared on the
+// WRONG sibling passes in BOTH directions: it is in the union, so
+// over-declaration sees nothing, and the union is covered, so
+// checkPseudoPool sees nothing either.
+//
+// Measured on this branch: adding a `Text` AttrSpec to defMenu left
+// markup, markup/internal/catalogen and apps/wysiwyg all green, and
+//
+//	<Menu Text="ghost"><MenuItem Text="Open"/></Menu>
+//
+// loaded clean and was silently dropped — the exact class this package's
+// doc comment says nothing but catalogen catches, reintroduced inside
+// the element family this PR adds. The designer grid gains a dead row
+// with it, because Grant.AttrsFor reads spec.Attrs directly.
+//
+// THE MITIGATION THAT WAS CLAIMED DOES NOT WORK.
+// TestASelectedMenuOffersItsTitle and TestASelectedMenuItemOffersItsAttributes
+// are PRESENCE loops that return on the first match, so they catch an
+// attribute MOVING off its element and cannot see one being ADDED.
+// Presence is not partition.
+//
+// SO THE SETS ARE LITERAL HERE, and that is the whole mechanism —
+// deriving them from defMenu/defMenuItem, in this package, would assert
+// the declaration against itself and pass on any gain. An attribute
+// added to either element is a decision that has to be made in a failing
+// test. Raised in review of #454.
+func TestTheMenuFamilyKeepsItsExactSet(t *testing.T) {
+	specs := map[string]ElementSpec{}
+	for _, e := range BuiltinElements() {
+		specs[e.Name] = e
+	}
+	for _, tc := range []struct {
+		el, parent string
+		want       []string
+	}{
+		{"Menu", "MenuBar", []string{"Title"}},
+		{"MenuItem", "Menu", []string{
+			"Checked", "Command", "Gesture", "Separator", "Text"}},
+	} {
+		t.Run(tc.el, func(t *testing.T) {
+			spec, ok := specs[tc.el]
+			if !ok {
+				t.Fatalf("<%s> missing from the catalog", tc.el)
+			}
+			got := map[string]bool{}
+			for _, a := range AttrsFor(spec, tc.parent) {
+				got[a.Name] = true
+			}
+			// Name is universal and joined onto everything; it is not
+			// part of what either element declares.
+			delete(got, "Name")
+			for _, n := range tc.want {
+				if !got[n] {
+					t.Errorf("<%s> no longer offers %q inside <%s>", tc.el, n, tc.parent)
+				}
+				delete(got, n)
+			}
+			for _, n := range slices.Sorted(maps.Keys(got)) {
+				t.Errorf("<%s> offers %q inside <%s> and this set does not list it. "+
+					"buildMenuBar reads the whole family's attributes through one "+
+					"Build, so catalogen cannot tell an attribute declared on the "+
+					"wrong sibling from one declared on the right one — a <%s %s=…> "+
+					"would load clean and be silently dropped. If the attribute is "+
+					"real, buildMenuBar has to read it off THIS element and this "+
+					"list has to name it.", tc.el, n, tc.parent, tc.el, n)
+			}
+		})
 	}
 }
 

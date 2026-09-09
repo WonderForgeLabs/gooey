@@ -2211,7 +2211,7 @@ func (ed *editor) addSelected() {
 	plan := ed.planAdd(spec.Name)
 	into := plan.into
 	// planAdd REFUSES rather than landing a nested element on the root
-	// (addplan.go:222), and a refusal is an empty addPlan. Today
+	// (planAdd, in addplan.go), and a refusal is an empty addPlan. Today
 	// loadPalette keeps Nested elements out of the palette so this arm is
 	// unreachable from here; the dereference below is one `ed.specs`
 	// range away from a nil panic the moment that stops being true, and
