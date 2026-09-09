@@ -225,6 +225,24 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Validate %s=%q>: want a number", b.name, raw)
 		}
+		// NaN AND Inf PARSE, and a bound made of either is a rule that
+		// can never fire: every comparison against NaN is false, so the
+		// field validates whatever is typed into it and the marker never
+		// appears. The empty-range check below cannot see it for the
+		// same reason — NaN > NaN is false — so it has to be refused
+		// here. Raised in review of #470.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: a bound has to be a "+
+				"finite number — %s is a bound that can never fire, and nothing "+
+				"downstream would refuse it", b.name, raw, strings.TrimSpace(raw))
+		}
+		// THE CANONICAL-SPELLING RULE THAT GOVERNS INTS IS DELIBERATELY
+		// NOT APPLIED HERE, and the asymmetry is a decision rather than
+		// an omission. A whole number has exactly one honest spelling,
+		// so "007" is a second way to write 7 and nothing else. A float
+		// has several: "1.50" says something about precision and "1e6"
+		// something about scale, and refusing them would refuse an
+		// author writing the bound the way the domain writes it.
 		*b.into = f
 		haveNum = true
 	}

@@ -1171,15 +1171,18 @@ var defToastHost = &ElementDef{
 			return nil, err
 		}
 		h := &components.ToastHost{Style: st}
-		// optDuration, NOT a hand-rolled ParseDuration. This one read
-		// the attribute itself and refused NOTHING but an unparseable
-		// value: <ToastHost Duration="-5s"> parsed cleanly and set a
-		// negative dismissal delay, which every other KindDuration
-		// attribute in the vocabulary refuses, and an empty value
-		// answered with time's own wording rather than the sentence
-		// that tells the author omitting it is how to ask for the
-		// default. Raised in review of #470.
-		d, err := optDuration(e, "Duration")
+		// signedDuration, and the SIGNED half is the point.
+		//
+		// This read the attribute itself, so an empty value answered
+		// with time's own wording rather than the sentence that tells
+		// the author omitting it is how to ask for the default. The
+		// first fix routed it through optDuration, which also brought
+		// the positivity rule — and a NEGATIVE Duration is documented
+		// behaviour here: components.ToastHost says "negative means
+		// sticky — toasts stay until dismissed". Unifying a vocabulary
+		// means asking one question one way, not giving every attribute
+		// the same answer. Raised in review of #470, twice.
+		d, err := signedDuration(e, "Duration")
 		if err != nil {
 			return nil, err
 		}
@@ -1288,7 +1291,14 @@ var defKeyBinding = &ElementDef{
 	Known: true,
 	Attrs: []AttrSpec{
 		{Name: "Command", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
-		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Origin: OriginBuiltin},
+		// REQUIRED, and it always was in fact: the builder's first
+		// statement is ParseGesture, which refuses "" with "empty
+		// gesture". Undeclared, the probe harness had nothing to seed it
+		// from, so every probe of <KeyBinding Command> failed on the
+		// missing Gesture and the Command declaration went unverified in
+		// every sweep arm. <Tooltip Gesture> is genuinely optional and
+		// is left alone. Raised in review of #470.
+		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Required: true, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -1515,6 +1525,30 @@ func litInt(e Element, name string) (int, error) {
 	return litIntGrammar(e, name, raw)
 }
 
+// intSpelling parses a whole number and reports its ONE spelling.
+//
+// It is shared rather than copied because the two readers of a literal
+// int in this package ask the same question: litIntGrammar for every
+// declared count, extent, index and offset, and parseThickness for
+// Margin. Review of #470 found them answering differently — <Border
+// Margin="007"> loaded and meant 7 while <HStack Gap="007"> was refused,
+// which is the whole of the argument the Gap refusal makes, one
+// attribute across.
+//
+// The canonical form comes from strconv.Itoa, the parser's own inverse,
+// so it covers every second spelling there is and cannot drift from what
+// Atoi accepted. The MESSAGES are not shared: each caller knows what its
+// number is for and what a wrong one costs, and a sentence general
+// enough for both would say neither.
+func intSpelling(raw string) (n int, canon, trimmed string, ok bool) {
+	trimmed = strings.TrimSpace(raw)
+	n, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, "", trimmed, false
+	}
+	return n, strconv.Itoa(n), trimmed, true
+}
+
 // litIntGrammar is the grammar alone, on an attribute already known to
 // be PRESENT. litInt owns absence; cellCount owns required-ness and the
 // binding alternative; the rules about what a present literal may say
@@ -1534,9 +1568,8 @@ func litInt(e Element, name string) (int, error) {
 // the sweep could not see it, because <Image Cols> is declared
 // KindBinding and the literal sweep reads Kind.
 func litIntGrammar(e Element, name, raw string) (int, error) {
-	trimmed := strings.TrimSpace(raw)
-	n, err := strconv.Atoi(trimmed)
-	if err != nil {
+	n, canon, trimmed, ok := intSpelling(raw)
+	if !ok {
 		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
 			"literally — it is not a binding, and an unreadable value would "+
 			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
@@ -1562,7 +1595,8 @@ func litIntGrammar(e Element, name, raw string) (int, error) {
 	// Comparing against strconv.Itoa's output covers every second
 	// spelling there is, including ones nobody has thought of, and it
 	// cannot drift from the parser because it IS the parser's inverse.
-	if canon := strconv.Itoa(n); canon != trimmed {
+	// It is intSpelling's job now, shared with parseThickness.
+	if canon != trimmed {
 		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is spelled %q — %q is a second "+
 			"way to write the same number, and two documents meaning the same "+
 			"layout should not differ in their text", e.Name, name, raw, name,

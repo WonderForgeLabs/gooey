@@ -91,9 +91,20 @@ builder cannot correctly write for itself**:
 Deliberately excluded, with reasons:
 
 - **`litBool` / `litInt` / `optDuration` / `optionList`** stay unexported,
-  because a third-party builder receives its attributes already parsed. The
-  reason is the export surface, not the parsers — see below, which is where
-  that changed.
+  because four more exported parsers is a surface decision worth taking
+  deliberately rather than as a side effect of a bug fix. The cost of not
+  taking it is real and is written down below: a third-party builder gets
+  raw text, so every third-party int and bool is its own grammar and no
+  sweep in `markup/` can see one.
+
+  This bullet has been amended twice and the LEAD SENTENCE is what both
+  amendments were about, so it now carries the current reason rather than
+  a superseded one with a pointer. It said "*because a third-party builder
+  receives its attributes already parsed*" for a review round after the
+  note below it had established that they are not — and a reader who stops
+  at the bullet, which is what a bullet is for, took away the false half.
+  That is the same failure as a stale subject line over a supersede note,
+  one line up.
 
   **Amended 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)).**
   This bullet was headed `optBool` / `optDuration` / `optionList` and argued:

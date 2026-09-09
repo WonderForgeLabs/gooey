@@ -21,6 +21,16 @@ import (
 // inserted above ruleRefusedIt with no blank line, so one comment group
 // covered both and ruleRefusedIt went bare.
 //
+// EVERY DOCUMENTED DECLARATION, not just functions. The first version
+// walked *ast.FuncDecl alone, which left out the shape this package is
+// most made of: elements.go is 40-odd `var defX = &ElementDef{...}`
+// blocks, most of them documented, and inserting a new element between
+// one of those comments and its var is the same mistake with the same
+// silence. `declares` below already understood a GenDecl on the receiving
+// end — it was only the SUBJECT that was narrow, so the guard could see
+// a var being stolen from and not a var being stolen from by. Raised in
+// review of #470.
+//
 // THE SIGNATURE, not the convention. "A doc comment opens with the name
 // of what it documents" is Go's convention, and asserting it directly
 // flags six honest sentences in this package — a test whose name starts
@@ -49,14 +59,14 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 		for _, f := range pkg.Files {
 			files++
 			for i, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Doc == nil || fn.Recv != nil || i+1 >= len(f.Decls) {
+				name, doc, ok := documented(d)
+				if !ok || i+1 >= len(f.Decls) {
 					continue
 				}
 				examined++
-				first, _, _ := strings.Cut(strings.TrimSpace(fn.Doc.Text()), " ")
+				first, _, _ := strings.Cut(strings.TrimSpace(doc.Text()), " ")
 				first = strings.TrimRight(first, ",.:")
-				if first == "" || first == fn.Name.Name || !declares(f.Decls[i+1], first) {
+				if first == "" || first == name || !declares(f.Decls[i+1], first) {
 					continue
 				}
 				t.Errorf("%s: the doc comment on %s opens by naming %s, which is the "+
@@ -65,7 +75,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 					"the two, or the blank line between two comment groups was lost, and "+
 					"either way %s is now undocumented. Confirm with "+
 					"`go doc -u ./markup %s`",
-					fset.Position(fn.Pos()), fn.Name.Name, first, fn.Name.Name, first, first)
+					fset.Position(d.Pos()), name, first, name, first, first)
 			}
 		}
 	}
@@ -81,6 +91,38 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 			"ruled on nothing: the walk is not reaching the package's functions")
 	}
 	t.Logf("examined %d doc comments across %d files", examined, files)
+}
+
+// documented is d's own name and doc comment, for the declarations this
+// rule can judge: a package-level func or a var/const/type block.
+//
+// A method is excluded because its doc opens with the method name and
+// the receiver is what disambiguates it; an import block, because it
+// declares no name of its own. A parenthesised block answers with its
+// FIRST spec's name, which is the one a comment above the block would be
+// about.
+func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
+	switch d := d.(type) {
+	case *ast.FuncDecl:
+		if d.Doc == nil || d.Recv != nil {
+			return "", nil, false
+		}
+		return d.Name.Name, d.Doc, true
+	case *ast.GenDecl:
+		if d.Doc == nil || d.Tok == gotoken.IMPORT || len(d.Specs) == 0 {
+			return "", nil, false
+		}
+		switch s := d.Specs[0].(type) {
+		case *ast.ValueSpec:
+			if len(s.Names) == 0 {
+				return "", nil, false
+			}
+			return s.Names[0].Name, d.Doc, true
+		case *ast.TypeSpec:
+			return s.Name.Name, d.Doc, true
+		}
+	}
+	return "", nil, false
 }
 
 // declares reports whether d introduces the top-level name want.

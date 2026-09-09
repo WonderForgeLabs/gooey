@@ -48,23 +48,69 @@ func literalOrBound(raw string, ctx *Context) (*prop.Property[string], error) {
 // the same place; suppliedAttr deliberately does not, and carries the
 // reconciliation.
 func optDuration(e Element, attr string) (time.Duration, error) {
+	d, ok, err := readDuration(e, attr)
+	if err != nil || !ok {
+		return 0, err
+	}
+	// ABSENT AND ZERO ARE DIFFERENT ANSWERS, which is why readDuration
+	// returns a bool rather than letting 0 stand for both. Interval="0s"
+	// parses, means a busy loop, and was accepted as "the component's
+	// default" for as long as the two were collapsed.
+	if d <= 0 {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: must be positive",
+			e.Name, attr, strings.TrimSpace(e.Attrs[attr]))
+	}
+	return d, nil
+}
+
+// signedDuration is optDuration WITHOUT the positivity rule, for the one
+// attribute where a negative duration MEANS something.
+//
+// components.ToastHost documents it at the field: "Zero means
+// DefaultToastDuration; negative means sticky — toasts stay until
+// dismissed". Routing <ToastHost Duration> through optDuration in the
+// first pass at #460 made Duration="-5s" a load error and deleted that
+// feature, which is the opposite of the unification's point — one
+// vocabulary is not one RULE, it is one rule per question, asked the
+// same way everywhere it applies. Raised in review of #470.
+//
+// It is a separate function rather than a bool parameter for litInt's
+// reason: an exemption written as an argument at the call site is an
+// exemption nobody reviews. This one has a name, a doc, and exactly one
+// caller.
+func signedDuration(e Element, attr string) (time.Duration, error) {
+	d, _, err := readDuration(e, attr)
+	return d, err
+}
+
+// readDuration is the two rules every duration attribute shares:
+// present-and-empty is a typo, and unparseable is a load error. Absence
+// returns 0 with no error, which every caller reads as "the component's
+// default".
+//
+// SPLIT OUT because the third rule — positive — is not universal, and
+// discovering that by deleting a feature is how it came to be split.
+//
+// The bool is PRESENCE, not success. A duration that parses to zero is
+// present and is a value; without the bool it is indistinguishable from
+// an absent attribute, and Interval="0s" — a busy loop — rides in as
+// "the component's default".
+func readDuration(e Element, attr string) (time.Duration, bool, error) {
 	if _, ok := e.Attrs[attr]; !ok {
-		return 0, nil
+		return 0, false, nil
 	}
 	raw := strings.TrimSpace(e.Attrs[attr])
 	if raw == "" {
-		return 0, fmt.Errorf("markup: <%s %s=\"\">: %s takes a duration written "+
-			"literally (e.g. %s=\"250ms\") — an empty one is a typo, and omitting "+
-			"the attribute is how you ask for the default", e.Name, attr, attr, attr)
+		return 0, false, fmt.Errorf("markup: <%s %s=\"\">: %s takes a duration "+
+			"written literally (e.g. %s=\"250ms\") — an empty one is a typo, and "+
+			"omitting the attribute is how you ask for the default",
+			e.Name, attr, attr, attr)
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
+		return 0, false, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
 	}
-	if d <= 0 {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: must be positive", e.Name, attr, raw)
-	}
-	return d, nil
+	return d, true, nil
 }
 
 // optBool IS GONE. It read a component's bool attribute through

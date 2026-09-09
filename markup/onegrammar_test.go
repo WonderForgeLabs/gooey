@@ -2,6 +2,7 @@ package markup
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -213,8 +214,13 @@ func TestOneIntGrammarReachesEveryIntLiteral(t *testing.T) {
 				want, strings.Join(unverified, "\n\t"))
 		}
 	}
-	t.Logf("verified %d of %d int-literal attributes; %d probes unverified",
-		len(verified), len(targets), len(unverified))
+	// THE SAME FLOOR THE SWEEP ARMS USE. This logged its unverified
+	// count where bindsweep_test.go's arms fail on theirs — so an
+	// element that stopped being reachable would shrink this sweep
+	// silently, and the named floor above only pins two of them.
+	// Raised in review of #470.
+	reportUnverified(t, unverified)
+	t.Logf("verified %d of %d int-literal attributes", len(verified), len(targets))
 }
 
 // intLiteralTargets is every attribute whose literal form is a whole
@@ -264,13 +270,40 @@ func TestTheIntGrammarStillAcceptsANumber(t *testing.T) {
 	}
 }
 
-// TestEveryDurationAnswersTheSameWayIsDerived is finding 5. Two of the
-// nine KindDuration attributes read their value by hand rather than
-// through optDuration, and hand-rolled is where they disagreed:
-// <ToastHost Duration="-5s"> set a negative dismissal delay, and
+// signedDurationAttrs names every duration attribute for which a
+// NEGATIVE value is meaningful rather than wrong, with the reason, keyed
+// "<Element>.<Attr>".
+//
+// It exists because unifying a vocabulary means asking one question one
+// way — it does not mean giving every attribute the same answer. The
+// first pass at #460 routed <ToastHost Duration> through optDuration and
+// so made "-5s" a load error, deleting a documented feature. Raised in
+// review of #470.
+//
+// It is NOT a skip list, and the arms below are what stop it becoming
+// one: every entry must name a declared duration attribute, the map must
+// not be empty, and each exempted attribute must actually LOAD a
+// negative. An entry that stops being true goes red rather than going
+// quiet, and somebody has to decide.
+var signedDurationAttrs = map[string]string{
+	"ToastHost.Duration": "components.ToastHost documents it at the field: " +
+		"\"Zero means DefaultToastDuration; negative means sticky — toasts " +
+		"stay until dismissed\"",
+}
+
+// TestEveryDurationAnswersTheSameWay is finding 5. Two of the nine
+// KindDuration attributes read their value by hand rather than through
+// optDuration, and hand-rolled is where they disagreed:
+// <ToastHost Duration=""> answered with time's own parse wording, and
 // <Timer Interval=""> answered "needs an Interval" where the other seven
 // say an empty one is a typo and name the spelling that asks for the
 // default.
+//
+// The two probes are deliberately not the same claim. EMPTY is universal
+// — every duration attribute in the vocabulary answers it identically,
+// with no exemptions. NEGATIVE is the set minus signedDurationAttrs,
+// because positivity is a rule about the attribute's meaning and not
+// about its grammar.
 //
 // Derived from Kind, so a tenth duration attribute joins this the day it
 // is declared.
@@ -286,12 +319,22 @@ func TestEveryDurationAnswersTheSameWay(t *testing.T) {
 	}
 	// Each probe is a value that PARSES as far as the previous reader
 	// took it, so a refusal here is about the rule and not about syntax.
-	for _, probe := range []struct{ value, want string }{
-		{"", "is a typo"},
-		{"-5s", "must be positive"},
+	for _, probe := range []struct {
+		value, want string
+		// signed says this probe asks a question the exempted
+		// attributes are entitled to answer differently.
+		signed bool
+	}{
+		{value: "", want: "is a typo"},
+		{value: "-5s", want: "must be positive", signed: true},
 	} {
-		var verified int
+		var verified, exempt int
+		var unverified []string
 		for _, tg := range targets {
+			if _, ok := signedDurationAttrs[tg.def.Name+"."+tg.attr.Name]; ok && probe.signed {
+				exempt++
+				continue
+			}
 			el := probeElement(t, tg.def, tg.attr.Name, probe.value)
 			if probe.value == "" {
 				// probeElement OMITS an empty value — `if value != ""` —
@@ -310,13 +353,50 @@ func TestEveryDurationAnswersTheSameWay(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), probe.want) {
 				verified++
+				continue
 			}
+			// THE REFUSAL, NOT err != nil. A probe the harness cannot
+			// reach also fails, and counting that as a pass is how a
+			// sweep goes green over the bug it was written for.
+			unverified = append(unverified, fmt.Sprintf("<%s %s=%q>: %v",
+				tg.def.Name, tg.attr.Name, probe.value, err))
 		}
 		if verified == 0 {
 			t.Errorf("no duration attribute was refused %q with %q, so this arm is "+
 				"passing on harness errors rather than on the rule", probe.value, probe.want)
 		}
-		t.Logf("%q: %d of %d duration attributes verified", probe.value, verified, len(targets))
+		// THE SAME FLOOR THE SWEEP ARMS USE, and it is what turns the
+		// count below from a log into a claim. Raised in review of #470.
+		reportUnverified(t, unverified)
+		t.Logf("%q: %d of %d duration attributes verified (%d exempt)",
+			probe.value, verified, len(targets)-exempt, exempt)
+		if probe.signed && exempt != len(signedDurationAttrs) {
+			t.Errorf("%d of %d signedDurationAttrs entries were reached by this "+
+				"sweep. An entry naming an attribute the vocabulary no longer "+
+				"declares exempts nothing and hides that it is stale",
+				exempt, len(signedDurationAttrs))
+		}
+	}
+	// THE EXEMPTIONS ARE EXERCISED, NOT SKIPPED. Each one has to load
+	// the value the sweep above excused it from refusing — otherwise
+	// making ToastHost positive-only would pass here by being skipped
+	// twice, once in the sweep and once in this file.
+	if len(signedDurationAttrs) == 0 {
+		t.Error("signedDurationAttrs is empty. If positivity really did become " +
+			"universal, delete the exemption machinery rather than emptying it: " +
+			"an empty map makes the arm below vacuous and says nothing")
+	}
+	for key, why := range signedDurationAttrs {
+		el, attr, ok := strings.Cut(key, ".")
+		if !ok {
+			t.Fatalf("signedDurationAttrs key %q is not <Element>.<Attr>", key)
+		}
+		src := fmt.Sprintf("<%s %s=%q/>", el, attr, "-5s")
+		if _, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext()); err != nil {
+			t.Errorf("%s is refused: %v\nIt is exempt from the positivity rule "+
+				"because %s. If that stopped being true, the exemption goes with "+
+				"it — this arm is where you decide, not where you skip", src, err, why)
+		}
 	}
 	// NON-VACUITY: a real duration still loads.
 	for _, src := range []string{`<Spinner Interval="250ms"/>`, `<ToastHost Duration="4s"/>`} {
@@ -366,4 +446,105 @@ func TestTheTrackListRefusalCarriesItsCause(t *testing.T) {
 		"chain, so errors.Is and errors.As stop at the markup layer:\n\tgot   %v"+
 		"\n\tcause %s\nEvery sibling wrap in elements.go uses %%w; this one used "+
 		"%%v, and the two render the same text", src, err, inner)
+}
+
+// TestTheMarginGrammarIsTheIntGrammar is finding 1 of the second review
+// round, and Margin is the attribute that hid longest.
+//
+// It is universal, so it is on every element in the vocabulary, and it
+// reached none of the int sweeps: parseThickness takes a STRING of one,
+// two or four numbers, so <Border Margin> is declared as text and the
+// arms that walk KindInt cannot see it. Underneath, it read bare
+// strconv.Atoi — the exact reader #460 was filed about, still there
+// after the sweep that was supposed to have found all of them.
+//
+// The three consequences are asserted apart, because they fail for
+// different reasons and a single "is refused" arm would pass on any one
+// of them.
+func TestTheMarginGrammarIsTheIntGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		v    string
+		load bool
+		want string
+	}{
+		{v: "1", load: true},
+		{v: "1,2", load: true},
+		{v: "1,2,3,4", load: true},
+		{v: "0", load: true},
+		// A SECOND SPELLING, refused three lines away for <HStack Gap>
+		// and loading here, meaning 7, until review of #470.
+		{v: "007", want: "is spelled"},
+		{v: "+7", want: "is spelled"},
+		{v: "1,007", want: "is spelled"},
+		// NEGATIVE. It parses, so nothing downstream refuses it:
+		// ArrangeChild adds Margin.L to the slot's X and subtracts L+R
+		// from its width, so a negative margin arranges the child
+		// outside the rect that clips it.
+		{v: "-1", want: "cannot be negative"},
+		{v: "1,-2,3,4", want: "cannot be negative"},
+		// AND THE MESSAGE IS ABOUT MARKUP. The old one wrapped
+		// strconv's own text, so an author reading a load error about
+		// their document was shown the name of a Go function.
+		{v: "x", want: "not a whole number of cells"},
+	} {
+		src := `<Gooey><Border Margin="` + tc.v + `"><Text>a</Text></Border></Gooey>`
+		_, err := Build([]byte(src), defaultsContext())
+		switch {
+		case tc.load && err != nil:
+			t.Errorf(`Margin=%q is refused: %v`, tc.v, err)
+		case !tc.load && err == nil:
+			t.Errorf(`Margin=%q loads. Every other literal int in the vocabulary `+
+				`refuses it`, tc.v)
+		case !tc.load && !strings.Contains(err.Error(), tc.want):
+			t.Errorf(`Margin=%q is refused with %v; want a message containing %q`,
+				tc.v, err, tc.want)
+		case !tc.load && strings.Contains(err.Error(), "strconv"):
+			t.Errorf(`Margin=%q leaks strconv's own wording into a load error `+
+				`about a document: %v`, tc.v, err)
+		}
+	}
+}
+
+// TestABoundThatCanNeverFireIsALoadError is finding 2 of the second
+// round, and the reason it is a load error rather than a lint is that
+// NOTHING downstream can see it.
+//
+// validate.NumberRange compares the field's value against the bounds,
+// and every comparison against NaN is false — so MinValue="NaN" installs
+// a rule that passes whatever is typed, and the marker never appears.
+// The empty-range check beside it (minV > maxV) is blind for the same
+// reason: NaN > NaN is false too, so a NaN bound reads as a perfectly
+// ordinary range.
+//
+// The accepting arm is not decoration. The canonical-spelling rule that
+// governs ints is deliberately NOT applied to a float, because "1.50"
+// and "1e3" are honest spellings that say different things about
+// precision and scale — so those have to keep loading, or the refusal
+// above is a different rule from the one that was written.
+func TestABoundThatCanNeverFireIsALoadError(t *testing.T) {
+	for _, tc := range []struct {
+		attr, v string
+		load    bool
+	}{
+		{attr: "MinValue", v: "NaN"},
+		{attr: "MaxValue", v: "NaN"},
+		{attr: "MinValue", v: "+Inf"},
+		{attr: "MaxValue", v: "-Inf"},
+		{attr: "MinValue", v: "1", load: true},
+		{attr: "MinValue", v: "1.50", load: true},
+		{attr: "MinValue", v: "1e3", load: true},
+		{attr: "MinValue", v: "-2", load: true},
+	} {
+		src := `<Gooey><TextBox Text="{{.S}}"><Validate ` + tc.attr + `="` + tc.v +
+			`"/></TextBox></Gooey>`
+		_, err := Build([]byte(src), defaultsContext())
+		if tc.load && err != nil {
+			t.Errorf(`<Validate %s=%q> is refused: %v`, tc.attr, tc.v, err)
+		}
+		if !tc.load && err == nil {
+			t.Errorf(`<Validate %s=%q> loads. It installs a bound no value can be `+
+				`on the wrong side of, so the field validates everything and the `+
+				`marker never appears`, tc.attr, tc.v)
+		}
+	}
 }

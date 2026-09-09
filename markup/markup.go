@@ -906,9 +906,24 @@ func parseThickness(s string) (gooey.Thickness, error) {
 	parts := strings.Split(s, ",")
 	ns := make([]int, len(parts))
 	for i, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			return gooey.Thickness{}, err
+		// THE SAME INT GRAMMAR AS EVERY OTHER LITERAL INT, and it read
+		// bare strconv.Atoi until review of #470. Three consequences,
+		// all silent: Margin="007" loaded and meant 7 where Gap="007" is
+		// a load error, Margin="-1" placed a child outside the rect that
+		// clips it, and an unreadable value leaked "strconv.Atoi:
+		// parsing \"x\": invalid syntax" into a message about markup.
+		n, canon, trimmed, ok := intSpelling(p)
+		if !ok {
+			return gooey.Thickness{}, fmt.Errorf("%q is not a whole number of cells", trimmed)
+		}
+		if n < 0 {
+			return gooey.Thickness{}, fmt.Errorf("%q: a margin is a gap in cells and "+
+				"cannot be negative — it parses, so nothing would refuse it, and the "+
+				"child is arranged outside the rect that clips it", trimmed)
+		}
+		if canon != trimmed {
+			return gooey.Thickness{}, fmt.Errorf("%q is spelled %q — two documents "+
+				"meaning the same layout should not differ in their text", trimmed, canon)
 		}
 		ns[i] = n
 	}

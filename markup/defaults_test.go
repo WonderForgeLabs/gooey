@@ -1,8 +1,10 @@
 package markup
 
 import (
+	"bytes"
 	"fmt"
 	"image"
+	"image/png"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,14 +67,38 @@ func defaultsContext() *Context {
 			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
-		// AN EMPTY FS, NOT NIL. <FileWatcher> refuses to build without
-		// one, so its three declarations came back UNVERIFIED in every
-		// sweep arm — refused, but by a message about the context rather
-		// than about the attribute under test. Empty is enough: nothing
-		// here reads a file, and a nil Includes is the only thing the
-		// element objects to. Raised in review of #470.
-		Includes: fstest.MapFS{},
+		// A REGISTERED HANDLER. Every KindCommand attribute in the
+		// vocabulary — eleven of them — was probed with "x", which
+		// Context.Command refuses with "no handler \"x\" registered"
+		// (usercontrol.go:338). That is the context being empty, not the
+		// declaration being wrong, so all eleven landed in the sweep's
+		// unverified bucket and no arm ever saw whether they take a
+		// literal. Raised in review of #470.
+		Handlers: map[string]gooey.Action{"probe": gooey.Command(func() {})},
+		// PRESENT, AND NOT EMPTY. <FileWatcher> refuses to build without
+		// an FS at all, so its three declarations came back UNVERIFIED in
+		// every sweep arm — refused, but by a message about the context
+		// rather than about the attribute under test.
+		//
+		// Empty was enough for that and not for <Image Src>, the one
+		// literal in the vocabulary that has to name something in this
+		// FS: an empty FS refused it with "file does not exist", the
+		// context again. The bytes are encoded here rather than checked
+		// in under testdata because buildImage reads through
+		// Context.Includes, so they belong beside the FS they are served
+		// from. Both raised in review of #470.
+		Includes: fstest.MapFS{"probe.png": &fstest.MapFile{Data: probePNG()}},
 	}
+}
+
+// probePNG is a 1x1 image encoded as PNG, for the one attribute whose
+// literal must be a decodable file rather than merely a path.
+func probePNG() []byte {
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }
 
 // bindingFor is the placeholder binding for a required attribute of a
@@ -227,13 +253,54 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		// omits them — legal, since neither slot is Required — and the
 		// element builds, which is what the attribute sweeps need.
 		if len(def.Slots) == 0 {
-			for _, only := range def.Children.Only {
-				fmt.Fprintf(&b, "<%s Header=\"h\"><Text>one</Text></%s>", only, only)
-			}
+			// THE ELEMENT'S OWN SEED SUPPLIES THE CHILDREN, and
+			// fabricating them is what this replaced.
+			//
+			// The old line wrote `<%s Header="h">` for every name in
+			// Only. `Header` is <Tab>'s required attribute; <Menu> needs
+			// a Title, so every <MenuBar> probe failed with "<Menu>
+			// needs a Title" — the harness's own fabricated child
+			// refusing, in an arm about MenuBar's attributes.
+			//
+			// A restricted child cannot be built the way the parent is,
+			// either: <Menu> and <MenuItem> have no ElementDef at all
+			// (markup.go:1112 reads them in MenuBar's builder), so there
+			// is no declaration to seed from. The Seed is markup that
+			// loads by construction and states the children the element
+			// actually wants — the same argument seedValue makes for
+			// required attributes, one level down. Raised in review of
+			// #470.
+			b.WriteString(seedChildren(t, def))
 		}
 	}
 	fmt.Fprintf(&b, "</%s>", def.Name)
 	return b.String()
+}
+
+// seedChildren is the body of an element's Seed — everything between its
+// root open and close tags.
+//
+// EMPTY IS A FAILURE, not a skip: an element that restricts its children
+// and whose seed shows none would silently probe as childless, and a
+// builder that needs one would refuse for that reason in every arm.
+func seedChildren(t *testing.T, def *ElementDef) string {
+	t.Helper()
+	open := "<" + def.Name
+	close := "</" + def.Name + ">"
+	i := strings.Index(def.Seed, open)
+	j := strings.Index(def.Seed, ">")
+	k := strings.LastIndex(def.Seed, close)
+	if i != 0 || j < 0 || k < j {
+		t.Fatalf("<%s> restricts its children to %v and its Seed %q has no body to "+
+			"take them from", def.Name, def.Children.Only, def.Seed)
+	}
+	body := def.Seed[j+1 : k]
+	if strings.TrimSpace(body) == "" {
+		t.Fatalf("<%s> restricts its children to %v and its Seed %q shows none, so "+
+			"every probe of its attributes builds a childless element",
+			def.Name, def.Children.Only, def.Seed)
+	}
+	return body
 }
 
 // seedValue is the literal an element's own Seed writes for attr, or ""

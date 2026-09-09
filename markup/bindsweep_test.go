@@ -3,6 +3,7 @@ package markup
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -143,6 +144,7 @@ func TestTheSweepCoversAllThreeTables(t *testing.T) {
 // below drives this with a predicate no error can match, which makes
 // EVERY declaration unverified on purpose. A floor inside the sweep would
 // fire on the one caller that must not trip it.
+//
 // ONE PREDICATE SHAPE for every arm, which is finding 6 of review #470.
 // This took a func returning a SUBSTRING and matched it bare — the loose
 // form TestTheDiscriminatorNeedsBothHalves argues at length is
@@ -628,13 +630,57 @@ func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
 	}
 }
 
-// validLiteralFor is a per-KIND table, not a per-attribute one. That
-// distinction is the whole point: Kind is a closed set the type system
-// already names, so this cannot go stale the way a list of attributes
-// does — a new Kind fails to compile its way past the switch, a new
-// attribute does not need a row.
-// validLiteralFor is a CLOSED set over Kind, and the closing is the
-// point.
+// narrowerThanItsKind names the attributes whose literal has a grammar
+// their Kind cannot express, keyed "<Element>.<Attr>", with the reason.
+//
+// Kind is the grammar of the VALUE — a duration, a colour, a whole
+// number — and it is the right default for exactly that reason. But some
+// attributes are KindText or KindString and still refuse most text,
+// because the string has to NAME something: a category from a closed
+// vocabulary, a path in the page's FS, a binding path in the context, a
+// number inside a string-shaped attribute. For those, "x" is a literal
+// of nothing in particular. The probe still ran, the refusal landed in
+// the unverified bucket, and the declaration went unchecked — which is
+// why this file's one remaining arm was still logging a non-empty
+// unverified list. Raised in review of #470.
+//
+// It is a per-attribute table and that is a cost, so it carries the
+// guard a per-attribute table needs: TestEveryNarrowedLiteralIsReached
+// fails on a key naming an attribute the vocabulary no longer declares,
+// so a row cannot outlive its declaration.
+var narrowerThanItsKind = map[string]struct {
+	value func() string
+	why   string
+}{
+	"Frozen.Allow":     {lit("Focus"), "a category from a closed vocabulary, not free text"},
+	"Companion.Dir":    {lit("."), "a directory that has to exist when the element builds"},
+	"Validate.Compare": {lit("S"), "a binding path resolved against the context"},
+	"Validate.MinValue": {lit("1"), "a number, in an attribute whose Kind is text " +
+		"because either bound alone is legal"},
+	"Validate.MaxValue": {lit("9"), "the other half of the same range"},
+	"Border.Margin": {lit("1"), "a thickness — one, two or four whole numbers of " +
+		"cells, the one universal literal whose grammar is not a single value"},
+	// THE TEST BINARY, and it is the reason these are funcs rather than
+	// strings. <Companion Path> must name an executable that exists, and
+	// no constant does on every machine — TestNoSweepProbeDependsOnAn
+	// InstalledBinary is in this file because a probe that needs `true`
+	// or `sh` installed is a declaration that goes silently unverified
+	// wherever it is not. os.Args[0] is an executable by construction:
+	// it is the process running the assertion.
+	"Companion.Path": {func() string { return os.Args[0] },
+		"an executable resolved through exec.LookPath at load time"},
+}
+
+// lit is the constant answer, spelled as a func so the table has one
+// shape. See Companion.Path for the row that cannot be one.
+func lit(s string) func() string { return func() string { return s } }
+
+// validLiteralFor is a per-KIND table with a named per-attribute
+// exception list, and the split is the point. Kind is a closed set the
+// type system already names, so the table cannot go stale the way a list
+// of attributes does: a new Kind fails to compile its way past the
+// switch, and a new attribute needs a row only when its literal is
+// narrower than its Kind.
 //
 // It ended in `return "x"`, which answered for every Kind nobody had
 // thought about — including KindBinding, where "x" is not a literal of
@@ -647,8 +693,11 @@ func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
 // So an unanswered Kind is a FAILURE now rather than a default, and for
 // KindBinding the answer comes from GoType — which is where that Kind
 // records what its literal has to be. Raised in review of #470.
-func validLiteralFor(t *testing.T, a AttrSpec) string {
+func validLiteralFor(t *testing.T, el string, a AttrSpec) string {
 	t.Helper()
+	if n, ok := narrowerThanItsKind[el+"."+a.Name]; ok {
+		return n.value()
+	}
 	switch a.Kind {
 	case KindDuration:
 		return "50ms"
@@ -662,6 +711,13 @@ func validLiteralFor(t *testing.T, a AttrSpec) string {
 		return "#4a9"
 	case KindStyle:
 		return "probe" // registered by defaultsContext
+	case KindCommand:
+		// A REGISTERED HANDLER, and it is registered by defaultsContext
+		// for this. Every one of these answered "x" and was refused with
+		// "no handler \"x\" registered" — the context being empty, not
+		// the declaration being wrong, and eleven declarations went
+		// unverified on it. Raised in review of #470.
+		return "probe"
 	case KindGridLens:
 		return "1*"
 	case KindEnum:
@@ -669,11 +725,10 @@ func validLiteralFor(t *testing.T, a AttrSpec) string {
 			return a.Enum[0]
 		}
 		return ""
-	case KindText, KindString, KindCommand, KindIdentity:
-		// Any non-empty text is a literal of these. KindCommand's will
-		// be refused for want of a registered handler, which is a
-		// harness limit the callers report as unverified rather than as
-		// coverage.
+	case KindText, KindString, KindIdentity:
+		// Any non-empty text is a literal of these — except where an
+		// individual attribute is narrower, which narrowerThanItsKind
+		// above answers for.
 		return "x"
 	case KindBinding:
 		// THE KIND SAYS "A HANDLE" AND Binds SAYS "OR A LITERAL", so
@@ -684,7 +739,7 @@ func validLiteralFor(t *testing.T, a AttrSpec) string {
 		case "[]string":
 			return "a,b"
 		case "image.Image":
-			return "probe.png"
+			return "probe.png" // served by defaultsContext's Includes
 		}
 		t.Fatalf("<%s> is KindBinding with GoType %q and takes a literal, and this "+
 			"function has no literal of that type — so it would be probed with "+
@@ -722,7 +777,7 @@ func TestValidLiteralForAnswersInTheAttributesOwnGrammar(t *testing.T) {
 		if a.Binds == BindsBinding {
 			continue
 		}
-		v := validLiteralFor(t, a)
+		v := validLiteralFor(t, tg.def.Name, a)
 		if v == "" {
 			continue
 		}
@@ -787,7 +842,7 @@ func TestTheLiteralArmCountsVerificationsAndNotProbes(t *testing.T) {
 	// non-empty text by definition, so it would be verified here and the
 	// arm would be asserting nothing about counting. These seven have a
 	// value grammar that this string is outside of.
-	unacceptable := func(t *testing.T, a AttrSpec) string {
+	unacceptable := func(t *testing.T, _ string, a AttrSpec) string {
 		t.Helper()
 		switch a.Kind {
 		case KindInt, KindBool, KindDuration, KindColor, KindGesture, KindGridLens:
@@ -830,7 +885,7 @@ func TestNoSweepProbeDependsOnAnInstalledBinary(t *testing.T) {
 		if a.Binds == BindsBinding {
 			continue
 		}
-		v := validLiteralFor(t, a)
+		v := validLiteralFor(t, tg.def.Name, a)
 		if v == "" {
 			continue
 		}
@@ -910,9 +965,38 @@ func TestEveryAttributeThatSaysItTakesALiteralAcceptsOne(t *testing.T) {
 		t.Fatal("no literal-taking attribute actually took a literal: this sweep " +
 			"would pass vacuously")
 	}
-	t.Logf("verified %d literal-taking attributes; %d unverified (the harness could "+
-		"not reach the element):\n\t%s",
-		verified, len(unverified), strings.Join(unverified, "\n\t"))
+	// THE SAME FLOOR AS EVERY OTHER ARM. This one LOGGED its unverified
+	// list where the other four fail on theirs, which made
+	// reportUnverified's own doc — "the floor is ZERO and it is met
+	// today" — false about the file it lives in, and left twenty
+	// declarations reported as a number nobody was checking. Raised in
+	// review of #470.
+	reportUnverified(t, unverified)
+	t.Logf("verified %d literal-taking attributes", verified)
+}
+
+// TestEveryNarrowedLiteralIsReached is the guard a per-attribute table
+// needs, and it is the reason narrowerThanItsKind is allowed to be one.
+//
+// A row naming an attribute the vocabulary no longer declares narrows
+// nothing. It would sit there reading like coverage while the attribute
+// it was written for had been renamed, removed, or given a Kind that
+// answers properly — and the sweep above would go on passing, because a
+// key that matches nothing simply never fires.
+func TestEveryNarrowedLiteralIsReached(t *testing.T) {
+	declared := map[string]bool{}
+	for _, tg := range sweepTargets(t) {
+		declared[tg.def.Name+"."+tg.attr.Name] = true
+	}
+	if len(declared) == 0 {
+		t.Fatal("no declarations found: this guard would pass vacuously")
+	}
+	for key, n := range narrowerThanItsKind {
+		if !declared[key] {
+			t.Errorf("narrowerThanItsKind has a row for %s (%s), which no element "+
+				"declares as a literal-taking attribute any more", key, n.why)
+		}
+	}
 }
 
 // literalAcceptSweep is the arm's body, EXTRACTED so the classification
@@ -922,14 +1006,14 @@ func TestEveryAttributeThatSaysItTakesALiteralAcceptsOne(t *testing.T) {
 // `report` is what separates the two callers: the real arm reports a
 // declaration that demands a binding, and the self-test below must not,
 // because it is feeding values nothing can accept on purpose.
-func literalAcceptSweep(t *testing.T, value func(*testing.T, AttrSpec) string, report bool) (verified int, unverified []string) {
+func literalAcceptSweep(t *testing.T, value func(*testing.T, string, AttrSpec) string, report bool) (verified int, unverified []string) {
 	t.Helper()
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
 		if a.Binds != BindsLiteral && a.Binds != BindsEither {
 			continue
 		}
-		v := value(t, a)
+		v := value(t, tg.def.Name, a)
 		if v == "" {
 			continue
 		}
