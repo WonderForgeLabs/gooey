@@ -302,6 +302,10 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		w.Kids = []*node{n}
 		add = w
 	}
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and
+	// unshadowMnemonic is the one place all three insertion routes share.
+	ed.unshadowMnemonic(into, add)
 	prevSel := ed.sel
 	into.Kids = append(into.Kids, add)
 	ed.sel = n

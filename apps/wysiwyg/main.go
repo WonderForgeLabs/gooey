@@ -2309,6 +2309,10 @@ func (ed *editor) addSelected() {
 		w.Kids = []*node{n}
 		add = w
 	}
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and
+	// unshadowMnemonic is the one place all three insertion routes share.
+	ed.unshadowMnemonic(into, add)
 	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	ed.rebuild()
@@ -2342,16 +2346,26 @@ func (ed *editor) addSelected() {
 // PREFER canHold (addplan.go) FOR ANY NEW CALLER. This function answers a
 // coarser question and gets two things wrong for a restricted container:
 // it never consults ChildSpec.Only, so it says yes to putting a <Text> in
-// a <Tabs>; and it scans ed.palette rather than the catalog, so an
-// element the palette filters out — <Tab> is exactly that — is
-// unknowable to it. The doc comment that used to sit above this one
-// described `addTarget`, which moved to addplan.go and now climbs and
-// wraps rather than checking one node and its parent; the explanation
-// lives in that file's header.
+// a <Tabs>; and it scans ed.palette rather than the catalog, so every
+// element loadPalette filters out is unknowable to it. The doc comment
+// that used to sit above this one described `addTarget`, which moved to
+// addplan.go and now climbs and wraps rather than checking one node and
+// its parent; the explanation lives in that file's header.
 //
-// It remains because the FIT check (fit.go) asks the coarse question
-// legitimately — "could this element ever nest anything" — where Only
-// does not enter into it.
+// TWO CORRECTIONS FROM REVIEW OF #454, and the second is the one worth
+// reading. The filter used to be `e.Name == "Tab"` and this paragraph
+// named <Tab> as "exactly that"; this PR generalised it to `e.Nested`,
+// which is three elements today and derived — so naming one was a count
+// in prose that had already gone stale.
+//
+// And it does NOT remain because fit.go asks it. That sentence was here
+// and it is false: a grep for this name finds surface_test.go and this
+// definition, and nothing else. It is a test-facing predicate — two
+// fixtures use it to state "this element is/is not a leaf" before
+// asserting anything, and TestEveryPaletteElementIsClassifiedForContainment
+// pins the classification across the whole toolbox. That is a real use and
+// a smaller one than the old sentence claimed, so it says what it is
+// rather than reading like production wiring. It goes when they go.
 func (ed *editor) holdsChildren(elem string) bool {
 	for _, e := range ed.palette {
 		if e.Name != elem {
@@ -2508,13 +2522,22 @@ func (ed *editor) retype(elem string) {
 		// rather than left to be ignored. Leaving them is what the old
 		// loader did, and it is the defect this whole change deletes.
 		//
-		// OVER THE PALETTE, for the reason attrRows reads it:
-		// markup.AttachedParents lists BUILTINS, so a child retyped out
-		// of a third-party container kept that container's attributes,
-		// which the new parent discards in silence — the exact defect
-		// this loop exists to delete, surviving for every element the
-		// host registered.
-		for _, e := range ed.palette {
+		// OVER THE CATALOG, and the two reasons stack.
+		//
+		// Not markup.AttachedParents, which lists BUILTINS: a child
+		// retyped out of a third-party container kept that container's
+		// attributes, which the new parent discards in silence — the
+		// exact defect this loop exists to delete, surviving for every
+		// element the host registered.
+		//
+		// And not ed.palette either, which is the correction round 10
+		// asked for and a DIFFERENT distinction from the one above. The
+		// palette is what may be PLACED from the toolbox; loadPalette
+		// drops every Nested and NonVisual element from it, so a child
+		// retyped out of one of those kept its grants — the same silent
+		// leftover, through the other filter. This asks what elements
+		// DECLARE, so it reads the declarations.
+		for _, e := range ed.specs {
 			if e.Name == elem {
 				continue
 			}

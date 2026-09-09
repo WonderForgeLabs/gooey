@@ -135,6 +135,10 @@ func (ed *editor) duplicateSelected() bool {
 	// The count, not the vocabulary, is what fails — so the build is the
 	// only thing that can decide it. Issue #403.
 	prev := ed.sel
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and
+	// unshadowMnemonic is the one place all three insertion routes share.
+	ed.unshadowMnemonic(p, c)
 	insertAt(p, i+1, c)
 	ed.sel = c
 	ed.rebuild()

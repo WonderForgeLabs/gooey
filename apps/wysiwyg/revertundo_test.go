@@ -385,3 +385,49 @@ func TestAnUnchangedRebuildDoesNotLeaveAStaleRedoStash(t *testing.T) {
 			"already edited past", len(h.redo))
 	}
 }
+
+// TestAnAbortAfterAnUnchangedRecordKeepsTheRedoBranch is the OTHER
+// direction of the same asymmetry, and it is the one round 10 found.
+//
+// The test above proves abort does not RESURRECT a branch the record
+// before it abandoned. This proves it does not DESTROY one the record
+// before it never touched. record takes an early return when the attempt
+// changed no document state — one of the three cases abort's own fallback
+// branch enumerates — and never reaches the line that nils redo. An
+// unconditional `h.redo, h.cleared = h.cleared, nil` in abort therefore
+// assigns nil over a live branch.
+//
+// A unit test on history, for the same reason as the one above: every
+// abortHistory in the editor is preceded by the refused mutator's own
+// rebuild, which changed the tree, so record reaches its push branch and
+// there is nothing to be asymmetric about. The undo half of abort is
+// already guarded; this is the redo half catching up.
+func TestAnAbortAfterAnUnchangedRecordKeepsTheRedoBranch(t *testing.T) {
+	h := &history{limit: 10}
+	one := &node{Elem: "VStack", Attrs: map[string]string{"Name": "A"}}
+	two := &node{Elem: "VStack", Attrs: map[string]string{"Name": "B"}}
+
+	h.record(one, nil, false) // the baseline
+	h.record(two, nil, false) // an edit
+	// The history half of ed.undo(), inline — the user has stepped back,
+	// so there is a live branch to lose.
+	h.redo = append(h.redo, h.base)
+	h.base = h.undo[len(h.undo)-1]
+	h.undo = h.undo[:len(h.undo)-1]
+	want := len(h.redo)
+	if want == 0 {
+		t.Fatal("nothing on the redo stack; there is no branch for abort to destroy " +
+			"and this test asserts nothing")
+	}
+
+	// A rebuild that changes nothing, then a refusal's abort. Neither
+	// touched the branch.
+	h.record(one, nil, false)
+	h.abort(one)
+
+	if got := len(h.redo); got != want {
+		t.Errorf("the redo stack holds %d state(s) after a no-change record and an "+
+			"abort, want %d — one ctrl+y is now dead, and nothing in the sequence "+
+			"abandoned the branch", got, want)
+	}
+}

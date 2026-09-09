@@ -216,14 +216,30 @@ func (ed *editor) wrapperNode(into *node, wrap string) *node {
 		for name, v := range k.Attrs {
 			attrs[name] = v
 		}
-		ed.unshadowMnemonic(into, wrap, attrs)
 		return &node{Elem: wrap, Attrs: attrs}
 	}
 	return bare
 }
 
-// unshadowMnemonic keeps a cloned wrapper from stealing a sibling's
-// keyboard accelerator.
+// unshadowMnemonic keeps a node about to be inserted from stealing a
+// sibling's keyboard accelerator.
+//
+// AT THE INSERTION SEAM, called once beside each append, and that is the
+// half review round 10 corrected. It used to live inside wrapperNode,
+// which covered the ONE route to a <MenuBar> that cannot be reached from
+// the palette: wrapperFor("MenuBar", elem) needs canHold("Menu", elem),
+// and <Menu>'s Only is {"MenuItem"}, which loadPalette drops as Nested —
+// so addSelected never produces wrap == "Menu". Both direct gestures were
+// unguarded and both reproduce it: ctrl+d on a selected <Menu>
+// (duplicateSelected, which <Menu> became selectable for IN THIS PR), and
+// y-then-p (insertSubtree, where a <Menu> into a <MenuBar> needs no
+// wrapper at all).
+//
+// It sits beside the renameInto/clone rename at each of those seams,
+// which solves the same collision problem for Name. MOVES are not seams:
+// promote and demote relocate a node that was already in the document,
+// and a <Menu> can only live in a <MenuBar>, which cannot nest — so
+// neither can produce a second claimant.
 //
 // It asks components.MenuMnemonic rather than looking for an underscore,
 // which is the whole point: that function is EXPORTED FOR THE COLLISION
@@ -239,18 +255,14 @@ func (ed *editor) wrapperNode(into *node, wrap string) *node {
 // applied to whatever element happens to be a single-candidate wrapper.
 // The PARENT is what the name tests, because the parent is what
 // dispatches the alt gesture (MenuBar.HandleMnemonic); that is the rule
-// itself rather than a proxy for it.
-//
-// Named rather than derived because markup.ElementSpec carries no "this
+// itself rather than a proxy for it. markup.ElementSpec carries no "this
 // attribute is an accelerator" fact — ElementDef.ParsedBy is not on the
-// catalog's surface, and reading it would only move the name. That gap is
-// the one the KNOWN LIMIT above names for labels, and closing it is what
-// would let this lose the name. Found in review of #454.
-func (ed *editor) unshadowMnemonic(into *node, wrap string, attrs map[string]string) {
-	if into.Elem != "MenuBar" {
+// catalog's surface — so deriving it would only move the name.
+func (ed *editor) unshadowMnemonic(into, n *node) {
+	if into == nil || n == nil || n.Attrs == nil || into.Elem != "MenuBar" {
 		return
 	}
-	spec, ok := ed.specOf(wrap)
+	spec, ok := ed.specOf(n.Elem)
 	if !ok {
 		return
 	}
@@ -258,13 +270,16 @@ func (ed *editor) unshadowMnemonic(into *node, wrap string, attrs map[string]str
 		if !a.Required || a.Kind != markup.KindString {
 			continue
 		}
-		want, has := components.MenuMnemonic(attrs[a.Name])
+		want, has := components.MenuMnemonic(n.Attrs[a.Name])
 		if !has {
 			continue
 		}
 		claimed := map[rune]bool{}
 		for _, sib := range into.Kids {
-			if sib.Elem != wrap {
+			// sib != n because the seams differ: two call it before the
+			// append and one after a wrapper is built, and a node that
+			// claimed its own letter would always look shadowed.
+			if sib == n || sib.Elem != n.Elem {
 				continue
 			}
 			if r, ok := components.MenuMnemonic(sib.Attrs[a.Name]); ok {
@@ -274,8 +289,8 @@ func (ed *editor) unshadowMnemonic(into *node, wrap string, attrs map[string]str
 		if !claimed[want] {
 			continue
 		}
-		if marked, ok := markUnclaimed(attrs[a.Name], claimed); ok {
-			attrs[a.Name] = marked
+		if marked, ok := markUnclaimed(n.Attrs[a.Name], claimed); ok {
+			n.Attrs[a.Name] = marked
 		}
 	}
 }
@@ -288,18 +303,67 @@ func (ed *editor) unshadowMnemonic(into *node, wrap string, attrs map[string]str
 // user can see and fix, while one carrying a marker on a letter someone
 // else already owns would be the same shadowing wearing a fix.
 //
-// The scan is over RUNES and skips a `_` already present, so a title that
-// arrives marked is re-marked rather than double-marked.
+// THE STRING IT WALKS IS ENCODED, and that is the correction round 10
+// asked for. The first version did strings.ReplaceAll(title, "_", "") and
+// scanned the result, which deletes a LITERAL `__` as readily as a
+// marker: markUnclaimed("Sa__ve", {'s'}) returned "S_ave", so a label the
+// user wrote to read `Sa_ve` came back reading `Save`. `__` is a literal
+// underscore in this convention — components/mnemonic.go's
+// splitExplicitMnemonic, and the <Menu Title> row in
+// docs/markup-reference.md.
+//
+// There is no exported encoder to borrow and this is not a re-derivation
+// of the parse: mnemonic.go owns reading a marker, and nothing in the
+// framework ever WRITES one, because a marker is authored. So the loop
+// below normalises rather than interprets — it drops the first marker,
+// leaves every literal escaped as `__`, and escapes a bare `_` the parser
+// would have shown literally, which is what makes inserting one `_` in
+// front of a chosen rune unambiguous. components.MenuMnemonic stays the
+// authority on what a title CLAIMS; this only has to find a letter it
+// does not.
 func markUnclaimed(title string, claimed map[rune]bool) (string, bool) {
-	runes := []rune(strings.ReplaceAll(title, "_", ""))
-	for i, r := range runes {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+	in := []rune(title)
+	out := make([]rune, 0, len(in)+2)
+	// spots are the candidate accelerators: the rune, and where it sits
+	// in out, so the marker goes in front of the letter and not in front
+	// of an escape.
+	type spot struct {
+		at int
+		r  rune
+	}
+	var spots []spot
+	dropped := false
+	for i := 0; i < len(in); i++ {
+		r := in[i]
+		if r == '_' && i+1 < len(in) && in[i+1] == '_' {
+			out = append(out, '_', '_')
+			i++
 			continue
 		}
-		if claimed[unicode.ToLower(r)] {
+		if r == '_' && i+1 < len(in) && !dropped {
+			// The existing marker. It goes, so the one this adds is the
+			// first — only the first counts — and the letter it named
+			// stays a candidate.
+			dropped = true
 			continue
 		}
-		return string(runes[:i]) + "_" + string(runes[i:]), true
+		if r == '_' {
+			// A second marker's underscore, or a trailing one: the parser
+			// shows both literally, so they are escaped here and the
+			// display text is unchanged.
+			out = append(out, '_', '_')
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			spots = append(spots, spot{len(out), r})
+		}
+		out = append(out, r)
+	}
+	for _, s := range spots {
+		if claimed[unicode.ToLower(s.r)] {
+			continue
+		}
+		return string(out[:s.at]) + "_" + string(out[s.at:]), true
 	}
 	return title, false
 }
