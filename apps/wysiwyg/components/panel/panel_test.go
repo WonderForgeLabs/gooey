@@ -665,6 +665,25 @@ func TestTheGroundReachesTheArtAndItsCacheKey(t *testing.T) {
 // until somebody gave the cell tier a rule and got the border's colour.
 func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 	fg := render.RGB(140, 140, 150)
+	// BOTH TIERS. This ran only the opaque one, and the composited
+	// branch is where Fallback is most easily wrong: its Brush carries
+	// alpha, so the two fields differ by construction there and an
+	// equality between them cannot be the check. The ground reached that
+	// branch as BLACK regardless of what the pane declared, because
+	// frame() erased bg before drawCanvas — dormant, computed and
+	// discarded, which is exactly the argument this test exists to
+	// reject. Raised in review of #474.
+	for _, opaque := range []bool{true, false} {
+		for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
+			if got, want := hairlineStroke(fg, bg, opaque).Fallback,
+				over(fg, bg, hairlineFade); got != want {
+				t.Errorf("opaque=%v bg %v: Fallback is %v, want %v — the colour a "+
+					"terminal with no pixel protocol would draw does not depend on "+
+					"the protocol the pane is not using, and it does depend on the "+
+					"ground", opaque, bg, got, want)
+			}
+		}
+	}
 	for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
 		s := hairlineStroke(fg, bg, true)
 		want := over(fg, bg, hairlineFade)
@@ -803,8 +822,12 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 // composites the translucent stroke against its own background — a
 // colour this process never learns and therefore cannot better. Drawing
 // one opaque picture for all three replaced the terminal's answer with a
-// guess, and in this repo the guess is always black, because no element
-// declares a Background at all.
+// guess, and in this repo the guess is always black, because no ANCESTOR
+// of a Panel declares a Background. (The rail's VStack in
+// components/activitybar does declare one — its only child is the rail
+// image, so no Panel sits under it. The stronger claim, "no element in
+// apps/wysiwyg", was written here and was false; raised in review of
+// #474.)
 //
 // Raised in review of #474.
 func TestTheEncoderDecidesWhichPictureIsDrawn(t *testing.T) {
@@ -958,9 +981,9 @@ func TestTheUnsetGroundIsOneCacheEntry(t *testing.T) {
 	// becomes black on the opaque tier and is erased to black on the
 	// composited one, so the two keys differ in the bg field and the tier
 	// bit could be dropped with every arm still green. Measured: without
-	// this arm, hardcoding the tier in the key is SILENT. And no element
-	// in apps/wysiwyg declares a Background at all, so this is not the
-	// exotic case — it is every pane in the app.
+	// this arm, hardcoding the tier in the key is SILENT. And no ancestor
+	// of a Panel in apps/wysiwyg declares a Background, so this is not
+	// the exotic case — it is every pane in the app.
 	c := NewArt()
 	if _, err := c.frame(20, 6, 8, 16, fg, render.Color{}, true); err != nil {
 		t.Fatal(err)

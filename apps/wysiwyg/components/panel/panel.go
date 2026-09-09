@@ -82,8 +82,8 @@
 // trade in both directions. Kitty and iTerm2 transmit through
 // png.Encode, which un-premultiplies, so the terminal composites the
 // rule against ITS OWN background — an answer no arithmetic here can
-// improve on, because Pane has no BackgroundProperty and nothing in
-// apps/wysiwyg declares a Background at all, so the only ground this
+// improve on, because Pane has no BackgroundProperty and no ANCESTOR of
+// a Panel in apps/wysiwyg declares a Background, so the only ground this
 // package can name is black. Two tiers that were already right were
 // spent to mend the one that was not. Learning the terminal's own
 // background — an OSC 11 query — is filed on #259.
@@ -146,7 +146,15 @@ const (
 	// un-premultiplied colour, so any alpha at or above the threshold
 	// renders the line at FULL fg — a second border, which is the thing
 	// the fade exists to avoid. Sixel can only carry a fainter line as
-	// a DIMMER COLOUR, so that is what the line now is.
+	// a DIMMER COLOUR.
+	//
+	// SO THE CONSTANT HAS TWO READINGS, one per tier, and the sentence
+	// that stood here gave it one ("so that is what the line now is").
+	// On sixel it is a MIX FRACTION handed to over(); on kitty and
+	// iTerm2 it is an ALPHA handed to fade(), which is what it was
+	// before #254 and is again. The reader most likely to meet this
+	// comment is the one changing 0.4, and both readings move together
+	// when they do. Raised in review of #474.
 	hairlineInset = 7.0
 	hairlineWidth = 1.0
 	hairlineFade  = 0.4
@@ -336,22 +344,33 @@ func (a *Art) frame(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bo
 	// key finer than the picture buys a second 1.4ms raster and a second
 	// cache entry for the identical bytes.
 	//
-	// It reaches the drawing only on the opaque tier, so everywhere else
-	// it is normalized OUT: two panes on different backgrounds ARE the
-	// same picture when the stroke carries its own alpha. And over()
-	// maps an unset ground to black, so render.Color{} and RGB(0,0,0)
-	// were two keys for one canvas — the `%t` on bg.Set said they were
-	// different pictures and they never were. fg has had the same
-	// treatment three lines up since before this. Raised in review of
-	// #474.
+	// It reaches the PICTURE only on the opaque tier, so everywhere else
+	// it is normalized out of the KEY: two panes on different backgrounds
+	// are the same canvas when the stroke carries its own alpha. And
+	// over() maps an unset ground to black, so render.Color{} and
+	// RGB(0,0,0) were two keys for one canvas — the `%t` on bg.Set said
+	// they were different pictures and they never were. fg has had the
+	// same treatment three lines up since before this.
+	//
+	// THE KEY IS NORMALIZED; THE GROUND PASSED DOWN IS NOT. Erasing bg
+	// before drawCanvas also erased it from hairlineStroke's Fallback,
+	// which is the colour the stroke becomes where there are no pixels —
+	// so a pane that declared a Bg got a black-composited Fallback on the
+	// composited tier. The picture is unaffected, the value being
+	// computed and discarded, which is exactly the argument
+	// hairlineStroke's own doc rejects for the opaque branch: dormant is
+	// why it would be wrong the day somebody gives the cell tier a rule.
+	// Raised in review of #474.
+	keyBg := bg
 	if !opaque {
-		bg = render.Color{}
+		keyBg = render.Color{}
 	}
-	if !bg.Set {
-		bg = render.RGB(0, 0, 0)
+	if !keyBg.Set {
+		keyBg = render.RGB(0, 0, 0)
 	}
 	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x/%02x%02x%02x/%t",
-		cols, rows, cellW, cellH, fg.R, fg.G, fg.B, bg.R, bg.G, bg.B, opaque)
+		cols, rows, cellW, cellH, fg.R, fg.G, fg.B,
+		keyBg.R, keyBg.G, keyBg.B, opaque)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if fr, ok := a.cache[key]; ok {
@@ -545,10 +564,18 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 // a pane whose Bg is declared — and none is. Pane has no
 // BackgroundProperty, so the composer never fills p.style.Bg into its
 // cells; what is actually behind the top slice is Composer.clearStyle's
-// answer, the nearest ANCESTOR with a background, and in apps/wysiwyg no
-// element declares one at all. The real ground there is the terminal's
-// own default, a colour this process never learns. Raised in review of
-// #474.
+// answer, the nearest ANCESTOR with a background.
+//
+// This said "in apps/wysiwyg no element declares one at all", which is
+// FALSE and falsifiable with one grep — activitybar.go declares
+// `Background: prop.NewSource(Ground())` on the rail's VStack, with
+// twenty lines above it explaining that this is what makes it a
+// gooey.HasBackground. The conclusion survives and the premise did not:
+// that VStack's only child is the rail image, so no <Panel> is under it,
+// and clearStyle walking a pane's own ancestors still finds none. The
+// real ground is the terminal's own default, a colour this process never
+// learns. Raised in review of #474 — twice, the second time because the
+// first correction stated a stronger fact than it had measured.
 //
 // So the honest scope is narrow: the ground is the pane's declared Bg
 // when it has one, and black when it does not, and black is a guess. What
@@ -566,36 +593,20 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 //     the terminal composites the translucent stroke against its own
 //     background. That is a better answer than anything computable here,
 //     and drawing one opaque picture for all three threw it away.
-//   - halfblock discards alpha and reads the premultiplied channels, so
-//     it draws the same ~3% darkening under either stroke — a one-pixel
-//     rule averaged into a cell's worth of source rows keeps a fraction
-//     of its strength.
-//   - the rune tier draws no hairline at all.
+//   - there is NO halfblock tier here, and a bullet claiming one stood
+//     in this list until review of #474. Halfblock IS the nil encoder,
+//     and Pane.Render returns to renderCells the moment f.Graphics is
+//     nil — before any placement — so graphics.DrawHalfblock is never
+//     reached from this package and nothing here could have gone red for
+//     the claim.
+//   - the rune tier, which is where a terminal with no protocol actually
+//     lands, draws no hairline at all.
 //
 // The cost is stated rather than hidden: an opaque rule COVERS what it
 // crosses instead of tinting it, and the top cell row it sits in is the
 // row DrawBoxTitle writes the title into. That was already true of the
 // border's own 1.5-pixel stroke at the top of the same cell, and it is
 // now true on sixel only.
-// fade returns a colour at the given opacity, ALPHA-PREMULTIPLIED, which
-// is what color.RGBA means and what gg's pattern painter composites with.
-// Handing it a straight colour at a low alpha paints a washed-out line
-// too bright by 1/opacity.
-//
-// This is the stroke for a protocol that can carry alpha, and it is what
-// the pane drew before #254's sixel fix made every tier opaque. It came
-// back when that fix turned out to have spent kitty and iTerm2 — where
-// the TERMINAL composites, against its own background — to buy sixel a
-// line it was discarding. See graphics.OpaqueEncoder and over below.
-func fade(c render.Color, a float64) color.Color {
-	return color.RGBA{
-		R: uint8(float64(c.R)*a + 0.5),
-		G: uint8(float64(c.G)*a + 0.5),
-		B: uint8(float64(c.B)*a + 0.5),
-		A: uint8(255*a + 0.5),
-	}
-}
-
 func over(fg, bg render.Color, f float64) render.Color {
 	if !bg.Set {
 		bg = render.RGB(0, 0, 0)
@@ -608,5 +619,33 @@ func over(fg, bg render.Color, f float64) render.Color {
 		G:   mix(fg.G, bg.G),
 		B:   mix(fg.B, bg.B),
 		Set: true,
+	}
+}
+
+// fade returns a colour at the given opacity, ALPHA-PREMULTIPLIED, which
+// is what color.RGBA means and what gg's pattern painter composites with.
+// Handing it a straight colour at a low alpha paints a washed-out line
+// too bright by 1/opacity.
+//
+// This is the stroke for a protocol that can carry alpha, and it is what
+// the pane drew before #254's sixel fix made every tier opaque. It came
+// back when that fix turned out to have spent kitty and iTerm2 — where
+// the TERMINAL composites, against its own background — to buy sixel a
+// line it was discarding. See graphics.OpaqueEncoder and over above.
+//
+// THIS FUNCTION WAS INSERTED BETWEEN over AND ITS OWN DOC COMMENT,
+// which left over undocumented and gave this one a 45-line rationale
+// about a different function — `go doc -all -u` printed it. gofmt and
+// vet are both blind to that; the guard is #470's
+// TestNoDocCommentNamesTheDeclarationBelowIt, scoped to markup/ today
+// and widened to the tree in #483. Fourth occurrence in this stack,
+// and the first one committed by the same session that filed the
+// issue. Raised in review of #474.
+func fade(c render.Color, a float64) color.Color {
+	return color.RGBA{
+		R: uint8(float64(c.R)*a + 0.5),
+		G: uint8(float64(c.G)*a + 0.5),
+		B: uint8(float64(c.B)*a + 0.5),
+		A: uint8(255*a + 0.5),
 	}
 }

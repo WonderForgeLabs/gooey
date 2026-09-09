@@ -48,8 +48,20 @@ type Encoder interface {
 // That is the panel hairline in apps/wysiwyg (#254), and it is why the
 // question lives here rather than as a type switch at the call site: a
 // fourth alpha-less protocol would otherwise take the composited branch
-// silently, which is the failure this whole interface exists to make
-// impossible.
+// silently.
+//
+// THE INTERFACE DOES NOT MAKE THAT IMPOSSIBLE, and this comment said it
+// did. The mapping is opt-in: an encoder that simply never declares
+// OpaqueOnly gets the composited branch by default and nothing notices.
+// Measured in review of #474 — adding OpaqueOnly to Kitty was caught by
+// a downstream pixel test, and adding it to ITerm2 left the entire root
+// suite green.
+//
+// What holds the mapping is TestOnlySixelIsAlphaLess beside this file:
+// a compile-time assertion that Sixel implements it, a table saying the
+// others do not, and a count against the encoder list so a fourth
+// protocol cannot be added without answering the question. That is a
+// guard an author can still get wrong; it is not a type system.
 //
 // A second interface rather than another method on Encoder, matching
 // IDEncoder above: capability questions here are type assertions, the
