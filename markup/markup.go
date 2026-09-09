@@ -834,7 +834,17 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 		var err error
 		switch k {
 		case "Margin":
-			l.Margin, err = parseThickness(v)
+			// thickness, not parseThickness: the generic wrap below
+			// names the attribute and the value and NOT the element, so
+			// a document with a dozen <Border>s reported "attribute
+			// Margin=\"x\"" and left the author to find which one.
+			// litInt three lines up does not have that problem, and
+			// Margin is the same grammar. Raised in review of #470.
+			var t gooey.Thickness
+			if t, err = thickness(e, k, v); err != nil {
+				return err
+			}
+			l.Margin = t
 		case "HAlign":
 			l.HAlign, err = parseAlign(v)
 		case "VAlign":
@@ -902,10 +912,43 @@ func layoutInt(l *gooey.Layout, name string) *int {
 // left/top, and the answer has to be the same in every element.
 func ParseThickness(s string) (gooey.Thickness, error) { return parseThickness(s) }
 
+// thickness is parseThickness in the house error form: the element, the
+// attribute, the raw value, and then what is wrong with it.
+//
+// It is a wrap rather than a second parser, for the reason ParseThickness
+// is exported at all — one parser decides what "1,2" means, and a
+// component outside this package spells its padding the same way. What
+// the wrap adds is the half a bare string parser cannot know.
+// Raised in review of #470.
+func thickness(e Element, name, raw string) (gooey.Thickness, error) {
+	t, err := parseThickness(raw)
+	if err != nil {
+		return gooey.Thickness{}, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, name, raw, err)
+	}
+	return t, nil
+}
+
 func parseThickness(s string) (gooey.Thickness, error) {
+	// AN EMPTY VALUE IS ITS OWN SENTENCE, and it used to fall out of the
+	// number reader as `"" is not a whole number of cells` — true, and
+	// no help at all to an author who wrote Margin="" meaning "none".
+	// litIntGrammar says the same thing about Gap="" now, in the same
+	// words, because it is the same mistake. Raised in review of #470.
+	if strings.TrimSpace(s) == "" {
+		return gooey.Thickness{}, fmt.Errorf("%s", emptyLiteralWhy)
+	}
 	parts := strings.Split(s, ",")
 	ns := make([]int, len(parts))
 	for i, p := range parts {
+		// WHICH ONE. "4,2,x,2" reported only that "x" is not a number,
+		// and a four-value margin whose values are often equal gives the
+		// author nothing to search for. The position is named only when
+		// there is more than one, so the ordinary single value keeps the
+		// shorter sentence. Raised in review of #470.
+		where := ""
+		if len(parts) > 1 {
+			where = fmt.Sprintf(" (%s of %d)", thicknessSide(i, len(parts)), len(parts))
+		}
 		// THE SAME INT GRAMMAR AS EVERY OTHER LITERAL INT, and it read
 		// bare strconv.Atoi until review of #470. Three consequences,
 		// all silent: Margin="007" loaded and meant 7 where Gap="007" is
@@ -914,16 +957,19 @@ func parseThickness(s string) (gooey.Thickness, error) {
 		// parsing \"x\": invalid syntax" into a message about markup.
 		n, canon, trimmed, ok := intSpelling(p)
 		if !ok {
-			return gooey.Thickness{}, fmt.Errorf("%q is not a whole number of cells", trimmed)
+			if trimmed == "" {
+				return gooey.Thickness{}, fmt.Errorf("%s%s", emptyLiteralWhy, where)
+			}
+			return gooey.Thickness{}, fmt.Errorf("%q is not a whole number of cells%s", trimmed, where)
 		}
 		if n < 0 {
-			return gooey.Thickness{}, fmt.Errorf("%q: a margin is a gap in cells and "+
+			return gooey.Thickness{}, fmt.Errorf("%q%s: a margin is a gap in cells and "+
 				"cannot be negative — it parses, so nothing would refuse it, and the "+
-				"child is arranged outside the rect that clips it", trimmed)
+				"child is arranged outside the rect that clips it", trimmed, where)
 		}
 		if canon != trimmed {
-			return gooey.Thickness{}, fmt.Errorf("%q is spelled %q — two documents "+
-				"meaning the same layout should not differ in their text", trimmed, canon)
+			return gooey.Thickness{}, fmt.Errorf("%q is spelled %q%s — two documents "+
+				"meaning the same layout should not differ in their text", trimmed, canon, where)
 		}
 		ns[i] = n
 	}
@@ -936,6 +982,18 @@ func parseThickness(s string) (gooey.Thickness, error) {
 		return gooey.Thickness{L: ns[0], T: ns[1], R: ns[2], B: ns[3]}, nil
 	}
 	return gooey.Thickness{}, fmt.Errorf("want 1, 2, or 4 values")
+}
+
+// thicknessSide names a position in MAUI's 1/2/4 spelling, because the
+// index alone would be a fourth thing for the author to look up.
+func thicknessSide(i, of int) string {
+	switch of {
+	case 2:
+		return [...]string{"horizontal", "vertical"}[i]
+	case 4:
+		return [...]string{"left", "top", "right", "bottom"}[i]
+	}
+	return fmt.Sprintf("value %d", i+1)
 }
 
 func parseAlign(s string) (gooey.Align, error) {

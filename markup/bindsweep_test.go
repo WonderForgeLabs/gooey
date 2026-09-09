@@ -557,12 +557,18 @@ func TestTheHandRolledArmsCountOnlyTheRightRefusal(t *testing.T) {
 // header invokes CLAUDE.md for, one level up, on the numbers the file's
 // whole coverage argument rests on.
 //
-// So the floor is ZERO and it is met today: closing the <Companion> and
-// <FileWatcher> gaps took every arm to nought unverified, and the counts
-// rose 22→23, 29→30, 44→47, 12→13. An attribute that genuinely cannot be
-// probed does not get a quiet line in a log — it gets a named exemption
-// with an open issue number, the mechanism "A red suite is yours" asks
-// for, and there are none today.
+// So the floor is ZERO. An attribute that genuinely cannot be probed
+// does not get a quiet line in a log — it gets a named exemption with an
+// open issue number, the mechanism "A red suite is yours" asks for, and
+// there are none.
+//
+// THE COUNTS ARE NOT WRITTEN HERE, and they were: this comment listed
+// four before-and-after pairs from the round that first met the floor,
+// and the next round moved every one of them while the sentence went on
+// asserting the old ones. That is the sample-taken-once shape CLAUDE.md
+// refuses for module counts, in a comment whose whole subject is a
+// number nobody re-derives. Each arm logs its own count on every run;
+// read those. Raised in review of #470.
 func reportUnverified(t testing.TB, unverified []string) {
 	t.Helper()
 	if len(unverified) == 0 {
@@ -698,6 +704,20 @@ func validLiteralFor(t *testing.T, el string, a AttrSpec) string {
 	if n, ok := narrowerThanItsKind[el+"."+a.Name]; ok {
 		return n.value()
 	}
+	return kindLiteralFor(t, a)
+}
+
+// kindLiteralFor is validLiteralFor WITHOUT the per-attribute narrowing:
+// what the Kind alone says a literal looks like.
+//
+// Split out so a caller can ask the question the narrowing exists to
+// answer — would the generic value do? A row that says "narrower than
+// its Kind" about an attribute whose Kind already answers is a row that
+// narrows nothing, and it would sit there reading like a considered
+// exception. TestEveryNarrowedLiteralIsReached asks it of every row.
+// Raised in review of #470.
+func kindLiteralFor(t *testing.T, a AttrSpec) string {
+	t.Helper()
 	switch a.Kind {
 	case KindDuration:
 		return "50ms"
@@ -996,6 +1016,48 @@ func TestEveryNarrowedLiteralIsReached(t *testing.T) {
 			t.Errorf("narrowerThanItsKind has a row for %s (%s), which no element "+
 				"declares as a literal-taking attribute any more", key, n.why)
 		}
+	}
+
+	// AND EVERY ROW IS STILL EARNING ITS PLACE, which "the attribute is
+	// still declared" does not ask.
+	//
+	// A row narrows the Kind's own answer. If the Kind starts answering —
+	// the attribute is given a narrower Kind, or its builder is relaxed —
+	// the row stops narrowing anything and becomes a considered-looking
+	// exception to a rule that no longer needs one. Nothing would notice:
+	// the sweep takes the row's value, it loads, and the count is the
+	// same either way. So the check is the counterfactual — probe with
+	// the GENERIC value and require that it still fails. Raised in review
+	// of #470.
+	checked := 0
+	for _, tg := range sweepTargets(t) {
+		key := tg.def.Name + "." + tg.attr.Name
+		n, ok := narrowerThanItsKind[key]
+		if !ok {
+			continue
+		}
+		generic := kindLiteralFor(t, tg.attr)
+		if generic == "" {
+			// The Kind has no answer at all, so the row is load-bearing
+			// by construction and there is nothing to compare against.
+			continue
+		}
+		checked++
+		src := harnessFor(tg.attr.Name, probeElement(t, tg.def, tg.attr.Name, generic))
+		if _, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext()); err == nil {
+			t.Errorf("narrowerThanItsKind narrows %s to %q on the grounds that it is "+
+				"%s — and <%s %s=%q>, the value its Kind alone gives, loads. The row "+
+				"narrows nothing and should go, or the reason it states is no longer "+
+				"the reason",
+				key, n.value(), n.why, tg.def.Name, tg.attr.Name, generic)
+		}
+	}
+	// NON-VACUITY. A sweepTargets that stopped producing the narrowed
+	// attributes would skip every row above and report nothing.
+	if checked == 0 {
+		t.Errorf("no narrowed row was reached through sweepTargets, so the "+
+			"counterfactual above ran on nothing (%d rows declared)",
+			len(narrowerThanItsKind))
 	}
 }
 

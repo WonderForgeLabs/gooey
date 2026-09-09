@@ -285,7 +285,7 @@ A declared gesture — a non-visual element:
 
 | Attribute | Meaning |
 |---|---|
-| `Gesture` | Key gesture, parsed by `input.ParseGesture` (syntax below). |
+| `Gesture` | **Required.** Key gesture, parsed by `input.ParseGesture` (syntax below). A `<KeyBinding>` with no gesture binds nothing and matches nothing, so its absence is a load error rather than an inert element. (`<MenuItem Gesture>` and `<Tooltip Gesture>` are display hints and stay optional.) |
 | `Command` | Binding or bare handler name, same resolution as `Click`. A command whose `When` condition is false does not match: the gesture is not consumed and the key keeps bubbling, so an outer binding can still have it. |
 
 Attachment and scoping semantics: a KeyBinding is never laid out or painted. The builder hangs it off its parent element as an attachment (any element that embeds `gooey.Base` can host one — a Grid, Border, stack, or custom component). Key dispatch starts at the focused component and walks up its ancestor chain to the root; at each level the KeyBindings attached there are matched first, then any **behaviour attachments** that handle keys (`<TypeAhead>`), then that component's own key handler. So:
@@ -587,7 +587,7 @@ While open the bar holds the pointer capture: clicks on items activate, motion t
 
 | Attribute | Meaning |
 |---|---|
-| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s. Empty or unparseable is a load error. **The one duration attribute where a negative value is meaningful** — it means sticky — so this row is deliberately exempt from the must-be-positive rule the other eight share, and reads `time.ParseDuration` directly rather than through the shared literal helper. |
+| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s. Empty or unparseable is a load error, like every other duration. **The one duration attribute where a negative value is meaningful** — it means sticky — so it is exempt from the must-be-positive rule alone: it reads through the same shared helper (`readDuration`, which owns empty-is-a-typo and unparseable-is-an-error) by way of `signedDuration`, which simply does not add positivity. One question asked one way; one rule that does not apply here. |
 | `Style` | Named style applied to the toasts; absent paints reverse-video. |
 
 The host takes no children — toasts are shown from code, through the named element:
@@ -1033,12 +1033,20 @@ Every **visual** element (all built-ins whose component embeds `gooey.Base`, and
 | Attribute | Values | Meaning |
 |---|---|---|
 | `Width`, `Height` | integer cells | Explicit size; 0/absent = auto. |
-| `Margin` | 1, 2, or 4 comma-separated integers | `"1"` = all four sides; `"2,0"` = horizontal, vertical; `"2,0,0,0"` = left, top, right, bottom. |
+| `Margin` | 1, 2, or 4 comma-separated integers | `"1"` = all four sides; `"2,0"` = horizontal, vertical; `"2,0,0,0"` = left, top, right, bottom. Each value follows the integer grammar below, and a refusal names the element and which side is wrong (`left`, `top`, `right`, `bottom`, or `horizontal`/`vertical` for the two-value form). |
 | `HAlign`, `VAlign` | `Stretch` (default), `Start`, `Center`, `End` | Alignment inside the layout slot. Stretch fills the slot; the others use the measured desired size. |
 | `Visibility` | `Visible` (default), `Hidden`, `Collapsed`, or a `{{...}}` binding | Hidden occupies space but does not paint; Collapsed occupies nothing (and its subtree is skipped by focus traversal). The bound form accepts a `*prop.Property[gooey.Visibility]` or a `*prop.Property[bool]` (true→Visible, false→Collapsed); a `Set` repaints exactly what the literal flip repaints. |
 | `Grid.Row`, `Grid.Col` | integer | Cell address when the parent is a Grid — the attached-property syntax. |
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
+
+**The integer grammar, once, for every row above that says "integer".** A literal integer attribute is a measurement in cells — an extent, a count, an index or an offset — and three things are load errors rather than silent misreadings:
+
+- **Negative.** It parses, so nothing downstream refuses it: layout overlaps what it was meant to separate, addresses no cell, or arranges a child outside the rect that clips it.
+- **A second spelling.** `"007"` and `"+7"` are refused; the canonical form is `strconv.Itoa`'s, so two documents meaning the same layout cannot differ in their text.
+- **Empty.** `Width=""` is an attribute nobody finished writing, not a zero, and reading it as one would make a half-typed document indistinguishable from a deliberate default.
+
+Surrounding whitespace is trimmed, and the refusal quotes the value **untrimmed**, so it matches what is in the file.
 
 **Every integer row above is read by one rule, and it refuses four
 things**, so the table is stated once rather than eight times: an
@@ -1532,11 +1540,13 @@ A control file can declare its own property surface. Declarations are direct chi
 | Attribute | Meaning |
 |---|---|
 | `Name` | Required. The attribute callers set, and the path the control's own markup binds (`{{.Title}}`). Cannot be `Name`, `Tooltip`, or a layout attribute — those belong to the element. |
-| `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any`. |
+| `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any` — or one of the **bind-only** kinds `style`, `image`, `series`, which accept a `{{...}}` handle and refuse a literal. |
 | `Default` | The literal used when the attribute is absent, coerced by `Type`. A bad default fails the load of the *control*, not of the page. |
 | `Required` | `true` makes an absent attribute a load error. Exclusive with `Default` — a default is what makes an attribute optional. |
 
 Literal syntax per type is the obvious one: `strconv` for `int`/`bool`/`float`, `time.ParseDuration` for `duration` (`600ms`), `#rgb`/`#rrggbb` for `color`. `any` is the escape hatch for app types that have no markup literal; it accepts whatever handle the parent holds, unchecked, and takes no `Default`.
+
+The three **bind-only** kinds refuse a literal for one shared reason: `Declarations()` is a pure function of the control's bytes — it doubles as the wire schema — so it has no page context to resolve one against. A `style` literal is a name looked up in `Context.Styles`, an `image` literal is a path resolved against the instantiating page's `fs.FS`, and a `series` literal would let a declared property accept text the `<Sparkline Values>` it feeds refuses. Half a literal — one checked on whichever page happens to omit the attribute — is worse than none, and passing the handle loses nothing. They take no `Default`; the zero handle is the empty state.
 
 ### What happens at the instantiation site
 

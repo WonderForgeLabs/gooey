@@ -268,12 +268,31 @@ var defValidate = &ElementDef{
 // disagree. The rule kinds differ (MinLen is an int, Required a bool,
 // Pattern a regexp) and are named here because the loop that consumes
 // them cannot say so.
+//
+// THE FALLTHROUGH IS PART OF THE ANSWER, and this comment used to read
+// as though every kind were named. Three are not: Pattern is a regular
+// expression, and MinValue/MaxValue are floating-point bounds. There is
+// no Kind for either, so they land on KindString — "literal only, used
+// verbatim", which is true and says nothing about the grammar.
+//
+// Inventing KindRegexp and KindFloat is not a local change: Kind is read
+// by the wysiwyg property grid, by catalogen, and by the reference
+// generator, and each would need to learn an editor and a validator for
+// a kind with three attributes in it. What the vocabulary loses by not
+// having them is one thing — a probe value the sweeps can derive — and
+// narrowerThanItsKind carries that instead, per attribute, with
+// TestEveryNarrowedLiteralIsReached keeping the rows honest. Recorded as
+// a decision rather than left as a default. Raised in review of #470.
 func validateBuiltinAttrs() []AttrSpec {
 	kinds := map[string]Kind{
 		"MinLen": KindInt, "MaxLen": KindInt,
 		"Required": KindBool, "EmailAddress": KindBool, "Url": KindBool,
 		"Phone": KindBool, "CreditCard": KindBool, "Digits": KindBool,
 		"Integer": KindBool,
+		// NO KIND OF THEIR OWN — see the paragraph above. Spelled out
+		// rather than left to the fallthrough, so the reader is not left
+		// deciding whether the omission was deliberate.
+		"Pattern": KindString, "MinValue": KindString, "MaxValue": KindString,
 	}
 	out := make([]AttrSpec, 0, len(validateBuiltins))
 	for _, n := range validateBuiltins {
@@ -1525,6 +1544,20 @@ func litInt(e Element, name string) (int, error) {
 	return litIntGrammar(e, name, raw)
 }
 
+// emptyLiteralWhy is what BOTH literal-int readers say about an empty
+// value, in the same words, because it is the same mistake.
+//
+// They did not. litIntGrammar told the author their value "would
+// silently lay out as 0" — which is what would happen if it were
+// accepted, not what does happen — and parseThickness said `"" is not a
+// whole number of cells`, which is true and no help to somebody who
+// wrote Margin="" meaning "none". Review of #470 found the pair
+// disagreeing about the one value an author is most likely to leave
+// behind mid-edit.
+const emptyLiteralWhy = "an empty value is not a zero — it is an attribute " +
+	"nobody finished writing, and reading it as 0 would make a half-typed " +
+	"document indistinguishable from a deliberate default"
+
 // intSpelling parses a whole number and reports its ONE spelling.
 //
 // It is shared rather than copied because the two readers of a literal
@@ -1570,6 +1603,9 @@ func intSpelling(raw string) (n int, canon, trimmed string, ok bool) {
 func litIntGrammar(e Element, name, raw string) (int, error) {
 	n, canon, trimmed, ok := intSpelling(raw)
 	if !ok {
+		if trimmed == "" {
+			return 0, fmt.Errorf("markup: <%s %s=%q>: %s", e.Name, name, raw, emptyLiteralWhy)
+		}
 		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
 			"literally — it is not a binding, and an unreadable value would "+
 			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)

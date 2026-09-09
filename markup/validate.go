@@ -122,6 +122,28 @@ func validateRuleNames(ctx *Context) string {
 	return strings.Join(append(names, reg...), ", ")
 }
 
+// unboundedWhy names what a non-finite bound actually does, which is
+// three different things and not one.
+//
+// It exists because the refusal's first version said all four cases
+// "can never fire". That is true of NaN and exactly backwards for
+// MinValue="+Inf" and MaxValue="-Inf", which fire on every value there
+// is — an author told the opposite of what their document does goes
+// looking in the wrong place. Raised in review of #470.
+func unboundedWhy(name string, f float64) string {
+	switch {
+	case math.IsNaN(f):
+		return "a rule that never fires, because every comparison against NaN is false"
+	case (name == "MinValue") == math.IsInf(f, -1):
+		// -Inf as a MINIMUM, +Inf as a MAXIMUM: the default, written out.
+		return "the bound you already had — it is the default this attribute " +
+			"carries when it is absent, so it declares nothing"
+	default:
+		return "a rule nothing can satisfy — it fires on every value there is, " +
+			"so the field can never become valid"
+	}
+}
+
 // buildValidate parses the rule attributes. The host is not known yet —
 // children build before their parent — so the result carries parsed
 // rules until the host's builder calls wireValidate. Rule order is
@@ -174,20 +196,56 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 	// other one. Found while fixing the leading-+ finding in review of
 	// #470, which is the same defect one element over.
 	var err error
-	if _, ok := e.Attrs["MinLen"]; ok {
-		if minLen, err = litInt(e, "MinLen"); err != nil {
+	for _, b := range []struct {
+		name string
+		into *int
+	}{{"MinLen", &minLen}, {"MaxLen", &maxLen}} {
+		raw, ok := e.Attrs[b.name]
+		if !ok {
+			continue
+		}
+		if *b.into, err = litInt(e, b.name); err != nil {
 			return nil, err
 		}
-	}
-	if _, ok := e.Attrs["MaxLen"]; ok {
-		if maxLen, err = litInt(e, "MaxLen"); err != nil {
-			return nil, err
+		// ZERO IS NOT A LENGTH BOUND, and writing one installed nothing
+		// at all. validate.Len reads 0 as "no bound in this direction",
+		// which is what makes either half optional — so <Validate
+		// MaxLen="0"/> parsed, passed every check, and produced a rule
+		// list with no length rule in it. The author asked for "must be
+		// empty" and got no validation whatsoever, with no error
+		// anywhere.
+		//
+		// MinLen="0" is the same shape from the other side: it is the
+		// default spelled out, so it also declares nothing. Accepted-
+		// but-ignored markup is the failure mode this package refuses,
+		// and a bound that cannot be expressed has to say so rather
+		// than be dropped. Raised in review of #470.
+		if *b.into == 0 {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: a length bound has to "+
+				"be positive — validate.Len reads 0 as \"no bound in this "+
+				"direction\", which is how the other half of the pair is made "+
+				"optional, so this installs no rule at all", b.name, raw)
 		}
 	}
 	if minLen > 0 || maxLen > 0 {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
 	if raw, ok := e.Attrs["Pattern"]; ok {
+		// THE EMPTY EXPRESSION COMPILES, and it matches at every
+		// position of every string — so <Validate Pattern=""/> is a rule
+		// that can never fire, installed and running. It is the same
+		// class as a NaN bound below and refused for the same reason:
+		// nothing downstream can tell it from a pattern the field
+		// happens to satisfy.
+		//
+		// raw == "", not TrimSpace(raw) == "". A Pattern of one space is
+		// an ordinary expression that matches a space, and trimming
+		// would refuse it. Raised in review of #470.
+		if raw == "" {
+			return nil, fmt.Errorf("markup: <Validate Pattern=\"\">: the empty " +
+				"expression matches every string, so this installs a rule that can " +
+				"never fire — write the expression, or drop the attribute")
+		}
 		// Checked here so a bad expression is a LOAD error naming the
 		// element, not a construction panic from validate.Pattern.
 		if _, err := regexp.Compile(raw); err != nil {
@@ -225,16 +283,29 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Validate %s=%q>: want a number", b.name, raw)
 		}
-		// NaN AND Inf PARSE, and a bound made of either is a rule that
-		// can never fire: every comparison against NaN is false, so the
-		// field validates whatever is typed into it and the marker never
-		// appears. The empty-range check below cannot see it for the
-		// same reason — NaN > NaN is false — so it has to be refused
-		// here. Raised in review of #470.
+		// NaN AND Inf PARSE, and neither is a rule. The refusal is one
+		// sentence; the CONSEQUENCE is not, and the first version of
+		// this message got it backwards for half its own cases by
+		// saying every one of them "can never fire".
+		//
+		// NaN never fires: every comparison against it is false, so the
+		// field validates whatever is typed and the marker never
+		// appears. An infinity fires in whichever direction it points —
+		// MinValue="-Inf" and MaxValue="+Inf" are the defaults spelled
+		// out, declaring nothing, while MinValue="+Inf" and
+		// MaxValue="-Inf" fire on EVERYTHING, so the field can never be
+		// valid. Three outcomes, none of them a bound, and the message
+		// now names the one the author actually wrote.
+		//
+		// The empty-range check below cannot see the NaN case for the
+		// same reason the rule cannot — NaN > NaN is false — so it has
+		// to be refused here. Raised in review of #470, twice.
 		if math.IsNaN(f) || math.IsInf(f, 0) {
 			return nil, fmt.Errorf("markup: <Validate %s=%q>: a bound has to be a "+
-				"finite number — %s is a bound that can never fire, and nothing "+
-				"downstream would refuse it", b.name, raw, strings.TrimSpace(raw))
+				"finite number, and %s is %s. Nothing downstream would refuse it: "+
+				"the empty-range check beside this one compares the two bounds, and "+
+				"a comparison against NaN is false whichever way it is written",
+				b.name, raw, strings.TrimSpace(raw), unboundedWhy(b.name, f))
 		}
 		// THE CANONICAL-SPELLING RULE THAT GOVERNS INTS IS DELIBERATELY
 		// NOT APPLIED HERE, and the asymmetry is a decision rather than

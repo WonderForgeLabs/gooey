@@ -505,6 +505,181 @@ func TestTheMarginGrammarIsTheIntGrammar(t *testing.T) {
 	}
 }
 
+// TestAnEmptyLiteralSaysTheSameThingWhicheverReaderSeesIt is the parity
+// the two int readers did not have, on the one value an author is most
+// likely to leave behind mid-edit.
+//
+// Both refused `Gap=""` and `Margin=""` before this, so a "both are
+// refused" arm would have passed on the defect. What differed is the
+// SENTENCE: litIntGrammar said the value "would silently lay out as 0",
+// describing what would happen if it were accepted rather than what
+// does, and parseThickness said `"" is not a whole number of cells`,
+// which is true and no use to somebody who wrote Margin="" meaning
+// "none". Raised in review of #470.
+//
+// It compares the two messages rather than matching each against a
+// literal, because a literal in a test is a third copy of the sentence
+// and would go stale with the other two.
+func TestAnEmptyLiteralSaysTheSameThingWhicheverReaderSeesIt(t *testing.T) {
+	msg := func(src string) string {
+		t.Helper()
+		_, err := Build([]byte(src), defaultsContext())
+		if err == nil {
+			t.Fatalf("%s loads. An empty literal is a half-typed document, not a "+
+				"zero", src)
+		}
+		return err.Error()
+	}
+	gap := msg(`<Gooey><HStack Gap=""><Text>a</Text></HStack></Gooey>`)
+	margin := msg(`<Gooey><Border Margin=""><Text>a</Text></Border></Gooey>`)
+	if !strings.Contains(gap, emptyLiteralWhy) || !strings.Contains(margin, emptyLiteralWhy) {
+		t.Errorf("the two readers explain an empty value differently:\n\tGap:    %s\n\tMargin: %s",
+			gap, margin)
+	}
+	// AND BOTH STILL NAME THEIR ELEMENT. A shared sentence is worth
+	// nothing if one of the two loses the context around it — which is
+	// the other half of the same finding, below.
+	for _, c := range []struct{ what, got, want string }{
+		{"Gap", gap, "<HStack"}, {"Margin", margin, "<Border"},
+	} {
+		if !strings.Contains(c.got, c.want) {
+			t.Errorf("%s's refusal does not name its element (%s): %s", c.what, c.want, c.got)
+		}
+	}
+}
+
+// TestTheMarginRefusalNamesItsElementAndItsPosition is the rest of the
+// Margin finding, and both halves are about a document with more than
+// one of something.
+//
+// The generic attribute wrap names the attribute and the value and NOT
+// the element, so a page with a dozen <Border>s reported `attribute
+// Margin="x"` and left the author to find which one — while litInt, the
+// same grammar three lines up, has named its element all along. And a
+// four-value margin reported only the offending number, which in
+// "4,2,x,2" is one of four values the author has to try in turn.
+//
+// Raised in review of #470.
+func TestTheMarginRefusalNamesItsElementAndItsPosition(t *testing.T) {
+	for _, tc := range []struct {
+		v    string
+		want []string
+	}{
+		{"x", []string{"<Border", `Margin="x"`}},
+		{"1,x", []string{"<Border", "vertical"}},
+		{"x,1", []string{"<Border", "horizontal"}},
+		{"4,2,x,2", []string{"<Border", "right"}},
+		{"4,-2,4,2", []string{"<Border", "top", "cannot be negative"}},
+		{"4,2,4,007", []string{"<Border", "bottom", "is spelled"}},
+	} {
+		src := `<Gooey><Border Margin="` + tc.v + `"><Text>a</Text></Border></Gooey>`
+		_, err := Build([]byte(src), defaultsContext())
+		if err == nil {
+			t.Errorf("Margin=%q loads", tc.v)
+			continue
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("Margin=%q is refused with %v; want it to name %q", tc.v, err, w)
+			}
+		}
+	}
+	// A SINGLE VALUE KEEPS THE SHORTER SENTENCE. Naming "value 1 of 1"
+	// would be noise, and this is what stops the position from being
+	// added unconditionally.
+	_, err := Build([]byte(`<Gooey><Border Margin="x"><Text>a</Text></Border></Gooey>`),
+		defaultsContext())
+	if err == nil {
+		t.Fatal("Margin=\"x\" loads")
+	}
+	if strings.Contains(err.Error(), " of 1") {
+		t.Errorf("a one-value margin reports a position: %v", err)
+	}
+}
+
+// TestARuleThatCanNeverFireIsNeverInstalled is the class the NaN bound
+// belonged to, swept across the two other members review of #470 found.
+//
+// The framework's rule is that accepted-but-ignored markup is refused.
+// Both of these were accepted AND ignored, in different ways:
+//
+//   - <Validate Pattern=""/> compiles, and the empty expression matches
+//     at every position of every string, so the rule is installed and
+//     can never fire.
+//   - <Validate MaxLen="0"/> installs NOTHING: validate.Len reads 0 as
+//     "no bound in this direction", which is how either half of the pair
+//     is made optional, so the author's "must be empty" produced a rule
+//     list with no length rule in it.
+//
+// The loading arms are not decoration — they are what separates "refuses
+// the degenerate value" from "refuses the attribute".
+func TestARuleThatCanNeverFireIsNeverInstalled(t *testing.T) {
+	for _, tc := range []struct {
+		attrs string
+		load  bool
+		want  string
+	}{
+		{attrs: `Pattern=""`, want: "matches every string"},
+		{attrs: `Pattern="^a+$"`, load: true},
+		// ONE SPACE IS AN EXPRESSION. The refusal is on the empty string
+		// and not on a trimmed one, and this is the arm that says so.
+		{attrs: `Pattern=" "`, load: true},
+		{attrs: `MinLen="0"`, want: "has to be positive"},
+		{attrs: `MaxLen="0"`, want: "has to be positive"},
+		{attrs: `MinLen="1"`, load: true},
+		{attrs: `MaxLen="1"`, load: true},
+		{attrs: `MinLen="1" MaxLen="4"`, load: true},
+	} {
+		src := harnessFor("Required", `<Validate `+tc.attrs+`/>`)
+		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+		switch {
+		case tc.load && err != nil:
+			t.Errorf("<Validate %s/> is refused: %v", tc.attrs, err)
+		case !tc.load && err == nil:
+			t.Errorf("<Validate %s/> loads and declares nothing. Accepted-but-ignored "+
+				"markup is the failure mode this package refuses", tc.attrs)
+		case !tc.load && err != nil && !strings.Contains(err.Error(), tc.want):
+			t.Errorf("<Validate %s/> is refused with %v; want a message containing %q",
+				tc.attrs, err, tc.want)
+		}
+	}
+}
+
+// TestTheUnboundedBoundRefusalNamesWhatActuallyHappens is finding 3 of
+// round five, and it is a message test because the message was the bug.
+//
+// The refusal said every non-finite bound "can never fire". That is true
+// of NaN and exactly backwards for MinValue="+Inf" and MaxValue="-Inf",
+// which fire on every value there is — an author told the opposite of
+// what their document does goes looking in the wrong place. There are
+// three outcomes, not one, and each has its own sentence now.
+func TestTheUnboundedBoundRefusalNamesWhatActuallyHappens(t *testing.T) {
+	for _, tc := range []struct{ attr, v, want string }{
+		{"MinValue", "NaN", "never fires"},
+		{"MaxValue", "NaN", "never fires"},
+		// THE DEFAULT, WRITTEN OUT: a minimum of -Inf and a maximum of
+		// +Inf are the bounds the attribute already carries when absent.
+		{"MinValue", "-Inf", "the bound you already had"},
+		{"MaxValue", "+Inf", "the bound you already had"},
+		// AND THE OTHER WAY ROUND, which is the half the old message got
+		// wrong: these fire on everything.
+		{"MinValue", "+Inf", "nothing can satisfy"},
+		{"MaxValue", "-Inf", "nothing can satisfy"},
+	} {
+		src := harnessFor(tc.attr, `<Validate `+tc.attr+`="`+tc.v+`"/>`)
+		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+		if err == nil {
+			t.Errorf("<Validate %s=%q/> loads", tc.attr, tc.v)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("<Validate %s=%q/> is refused with %v; want it to say %q — the "+
+				"consequence differs by case, and one sentence for all four said the "+
+				"opposite of what happens for half of them", tc.attr, tc.v, err, tc.want)
+		}
+	}
+}
+
 // TestABoundThatCanNeverFireIsALoadError is finding 2 of the second
 // round, and the reason it is a load error rather than a lint is that
 // NOTHING downstream can see it.
