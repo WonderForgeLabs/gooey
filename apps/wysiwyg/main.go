@@ -1671,14 +1671,29 @@ func newEditor(fsys fs.FS) *editor {
 // and served grantOf's drag-geometry rationale as the reason for the
 // dispatcher seam.
 //
-// The obligation is ENFORCED, not asked for.
-// TestEveryContextFieldIsInTheList parses this file and fails if the
-// editor struct grows a *markup.Context field this body does not name.
-// The literal list below cannot do that itself: a field absent from both
-// the list and a hand-written test is invisible to both, and
+// The obligation is ENFORCED for the shape the bug arrived in, and that
+// qualifier is load-bearing. TestEveryContextFieldIsInTheList parses this
+// file and fails if the editor struct grows a plain `*markup.Context`
+// field this body does not name. What it cannot see is a context held in
+// a slice or a map, one stored by value, one reached through an embedded
+// struct, or an editor field declared in another file of the package —
+// its own doc comment enumerates those. So "green" means "no new plain
+// pointer field", not "every context is wired", and the unqualified
+// sentence that used to be here read as the second. Corrected in review
+// of #469, which is the same PR that added the test the sentence
+// overclaimed for.
+//
+// The literal list below cannot enforce anything itself: a field absent
+// from both the list and a hand-written test is invisible to both, and
 // add-and-forget is precisely the direction #462 came from — a context
 // that existed and was never wired. Enumerating hardens against the
 // mutation a reviewer would make and leaves the one history made.
+//
+// EVERY ENTRY MUST BE CONSTRUCTED IN newEditor. That is a requirement on
+// what may go in this list, not an observation about what is in it today
+// — see setDispatcher, which skips a nil rather than crashing, and says
+// why a lazily built context needs its own wiring point instead of a slot
+// here.
 func (ed *editor) contexts() []*markup.Context { return []*markup.Context{ed.ctx, ed.docCtx} }
 
 // setDispatcher wires the app's dispatcher into every context.
@@ -1689,8 +1704,27 @@ func (ed *editor) contexts() []*markup.Context { return []*markup.Context{ed.ctx
 //
 // Separate from newEditor because the dispatcher does not exist yet when
 // the contexts are built — gooey.NewApp comes after.
+//
+// THE NIL SKIP IS NOT DEFENSIVE, and it is the difference between a
+// diagnostic and a crash. Both entries are non-nil today, and
+// TestEveryContextTheEditorBuildsWithGetsTheDispatcher asserts that. But
+// TestEveryContextFieldIsInTheList tells the next author to add any new
+// *markup.Context field to contexts(), and a field built LAZILY is nil
+// at this moment — so the seam that exists to turn add-and-forget into a
+// red test would instead turn it into a nil dereference in main(), before
+// the screen comes up. A seam may not convert the mistake it catches into
+// a worse one.
+//
+// Skipping is the honest half, and contexts()' own comment carries the
+// other: a context this list names must be constructed in newEditor, and
+// one built later needs its own wiring point rather than a slot here —
+// because a nil skipped here is a context that silently never gets a
+// dispatcher, which is #462 again. Raised in review of #469.
 func (ed *editor) setDispatcher(d *gooey.Dispatcher) {
 	for _, c := range ed.contexts() {
+		if c == nil {
+			continue
+		}
 		c.Dispatcher = d
 	}
 }

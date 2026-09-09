@@ -211,6 +211,58 @@ func TestTheEditorsOwnContextWasNeverTheBrokenOne(t *testing.T) {
 	}
 }
 
+// TestANilContextInTheListIsSkippedNotDereferenced is the other half of
+// the seam, and it is about what happens to the NEXT author rather than
+// to anything shipping today.
+//
+// TestEveryContextFieldIsInTheList tells them to add a new
+// *markup.Context field to contexts(). If that field is built lazily it
+// is nil when main() wires the dispatcher, so the check that exists to
+// turn add-and-forget into a red test would instead turn it into a nil
+// dereference at startup, before the screen comes up. A seam may not
+// convert the mistake it catches into a worse one.
+//
+// The skip is deliberately not the whole answer, and contexts()' comment
+// carries the rest: a context silently left without a dispatcher is #462
+// again, so an entry in that list must be constructed in newEditor and
+// one built later needs its own wiring point. Raised in review of #469.
+func TestANilContextInTheListIsSkippedNotDereferenced(t *testing.T) {
+	// EVERY POSITION IN THE LIST, and this is not thoroughness for its
+	// own sake. Nilling only the LAST entry cannot tell `continue` from
+	// `break` — there is nothing after it to abandon — and that mutation
+	// was SILENT against the whole package until this loop existed.
+	for _, c := range []struct {
+		name string
+		nilA func(*editor) *markup.Context
+	}{
+		{"the first entry", func(ed *editor) *markup.Context {
+			ed.ctx = nil
+			return ed.docCtx
+		}},
+		{"the last entry", func(ed *editor) *markup.Context {
+			ed.docCtx = nil
+			return ed.ctx
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ed := newEditor(editorFS())
+			// The state a lazily-built context is in at wiring time.
+			survivor := c.nilA(ed)
+			if survivor == nil {
+				t.Fatal("the fixture nilled both contexts, so nothing below is asserted")
+			}
+
+			d := gooey.NewDispatcher()
+			ed.setDispatcher(d) // must not panic
+
+			if survivor.Dispatcher != d {
+				t.Error("the context that WAS there did not get the dispatcher — a " +
+					"nil entry must be skipped, not abandon the rest of the list")
+			}
+		})
+	}
+}
+
 // TestEveryContextFieldIsInTheList is the derived half of the obligation
 // contexts() states, and the reason it is derived rather than written out
 // is the whole of #462: the failure was a context that EXISTED and was
