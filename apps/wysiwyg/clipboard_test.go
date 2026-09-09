@@ -23,7 +23,7 @@ func clipEditor(t *testing.T) (*editor, *fakeClip) {
 	// editor.sayCopiedOut, which reads term.ClipboardCaveat directly and
 	// has no seam to override, so the environment has to be stated here or
 	// not at all. A test that wants the caveat sets $TMUX after this
-	// returns. Raised in review of #467.
+	// returns.
 	statePlainTerminal(t)
 	ed := newEditor(editorFS())
 	f := &fakeClip{}
@@ -377,22 +377,71 @@ func TestCopyWritesTheSubtreeMarkupToTheSystemClipboard(t *testing.T) {
 	if f.last != ed.clip.markup {
 		t.Error("the two clipboards were given different text")
 	}
-	// THE EXACT SUBSTRING, not Contains("system clipboard"). The loose
-	// form is satisfied by the caveat tail "→ system clipboard (inside
-	// tmux: …)" as well, so it passed under $TMUX while asserting a
-	// confirmed copy — #463 living on in a second file, one substring
-	// away. Its sibling below already asserts the exact form. Raised in
-	// review of #467.
-	if s := ed.status.Get(); !strings.Contains(s, "→ system clipboard") ||
-		strings.Contains(s, "→ system clipboard (") {
-		t.Errorf("status = %q, want a bare confirmation that the copy reached the "+
-			"terminal — a parenthesised tail is a caveat, not a confirmation", s)
+	if s := ed.status.Get(); !confirmsTheCopy(s) {
+		t.Errorf("status = %q, want it to END with a bare confirmation that the copy "+
+			"reached the terminal — any tail after it is a caveat, not a "+
+			"confirmation", s)
+	}
+}
+
+// confirmsTheCopy reports whether a status line claims the copy reached
+// the terminal WITHOUT a caveat.
+//
+// THE END OF THE STATUS, not Contains("system clipboard"). The loose form
+// is satisfied by the caveat tail "→ system clipboard (inside tmux: …)"
+// as well, so it passed under $TMUX while asserting a confirmed copy —
+// #463 living on in a second file, one substring away.
+//
+// HasSuffix rather than a pair of Contains checks, which is the same
+// lesson one turn further on: sayCopiedOut appends its tail at the END of
+// the status (clipboard.go), so "ends with the bare confirmation" states
+// the claim once and rejects EVERY tail. The pair rejected only a
+// parenthesised one, and would pass again the day the caveat is spelled
+// with brackets.
+//
+// EXTRACTED so the tightening is testable at all. Written inline, both
+// forms agree on every status these tests actually produce — the copy
+// tests neutralise the environment, so there is no tail for the loose
+// form to let through, and loosening it back was measured SILENT against
+// the whole package. TestOnlyABareTailConfirmsTheCopy is what makes it
+// not.
+func confirmsTheCopy(status string) bool {
+	return strings.HasSuffix(status, "→ system clipboard")
+}
+
+// TestOnlyABareTailConfirmsTheCopy drives the predicate over the statuses
+// sayCopiedOut can actually produce, plus the one it would produce if the
+// caveat were ever re-spelled. It is the arm that fails when the check
+// goes back to a substring.
+func TestOnlyABareTailConfirmsTheCopy(t *testing.T) {
+	const head = "copied <Button> "
+	for _, c := range []struct {
+		status string
+		want   bool
+		why    string
+	}{
+		{head + "→ system clipboard", true,
+			"the bare tail sayCopiedOut returns when the write succeeded and no " +
+				"caveat applies"},
+		{head + "→ system clipboard (inside tmux: needs `set -g set-clipboard on`)", false,
+			"the caveat tail as spelled today — the substring form let this through, " +
+				"which is #463 in this file"},
+		{head + "→ system clipboard [inside tmux: needs `set -g set-clipboard on`]", false,
+			"the same caveat re-spelled with brackets. A pair of Contains checks " +
+				"rejecting only \"(\" passes here, which is why the claim is stated " +
+				"once as a suffix"},
+		{head + "(system clipboard: no terminal)", false,
+			"the failure tail — it does not confirm anything"},
+	} {
+		if got := confirmsTheCopy(c.status); got != c.want {
+			t.Errorf("confirmsTheCopy(%q) = %v, want %v: %s", c.status, got, c.want, c.why)
+		}
 	}
 }
 
 // TestInsideTmuxTheStatusDoesNotClaimSuccess is the positive complement
-// of TestSwapClipboardNeutralisesTheAmbientEnvironment, and the branch it
-// covers had no test at all.
+// of TestTheClipboardStubsNeutraliseTheAmbientEnvironment, and the branch
+// it covers had no test at all.
 //
 // The strip has TestInsideTmuxTheChipDoesNotClaimSuccess for exactly this
 // and reaches it through the injectable caveatFn. The editor's own copy
@@ -400,8 +449,7 @@ func TestCopyWritesTheSubtreeMarkupToTheSystemClipboard(t *testing.T) {
 // which is why it has no such test and why the two axes were free to
 // drift apart unnoticed. The environment is the only seam it has, so the
 // environment is what this sets — AFTER clipEditor, which states the
-// plain-terminal default every other test in this file wants. Raised in
-// review of #467.
+// plain-terminal default every other test in this file wants.
 func TestInsideTmuxTheStatusDoesNotClaimSuccess(t *testing.T) {
 	ed, f := clipEditor(t)
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
@@ -419,6 +467,15 @@ func TestInsideTmuxTheStatusDoesNotClaimSuccess(t *testing.T) {
 		t.Fatalf("the system clipboard was written %d times, want 1", f.calls)
 	}
 	s := ed.status.Get()
+	// THE SAME PREDICATE, from the other side. Asserting "contains tmux"
+	// alone would pass for a status that ALSO ended in a bare
+	// confirmation, and the two tests would be free to disagree about
+	// what confirmation means — which is how the two axes drifted apart
+	// in the first place.
+	if confirmsTheCopy(s) {
+		t.Errorf("status = %q inside tmux ends in a bare confirmation; it claims a "+
+			"copy that tmux swallows by default", s)
+	}
 	if !strings.Contains(s, "tmux") {
 		t.Errorf("status = %q inside tmux; it confirms a copy that tmux swallows by "+
 			"default, with nothing to connect a green line to an unchanged clipboard", s)

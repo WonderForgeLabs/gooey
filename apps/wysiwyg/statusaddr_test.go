@@ -70,11 +70,10 @@ func addrPage(t *testing.T, endpoints ...string) (*editor, *gooey.Composer) {
 func swapClipboard(t *testing.T, err error) *string {
 	t.Helper()
 	// Issue #463. statePlainTerminal is the single statement of WHY a
-	// clipboard stub has to say what terminal it is in; this block used
-	// to repeat the whole argument and then point at it, which is four
-	// copies of one rationale and the prose-drift shape CLAUDE.md warns
-	// about. The drift had already started — two copies said the guard
-	// runs "in CI", which it does not. Raised in review of #467.
+	// clipboard stub has to say what terminal it is in; four copies of
+	// that argument used to be spread across this package, and two of
+	// them had already drifted into saying the guard runs "in CI", which
+	// it does not.
 	statePlainTerminal(t)
 
 	var got string
@@ -107,8 +106,7 @@ func okCopy(t *testing.T) *string { return swapClipboard(t, nil) }
 // so no test in this package has ever run there — the three copy tests
 // were not green in CI, they were never RUN in CI. The enforcement point
 // is CLAUDE.md's nested-module verify loop, run by hand, which is the
-// same green-where-nobody-is-watching shape one level up. Raised in
-// review of #467.
+// same green-where-nobody-is-watching shape one level up.
 //
 // A test that stubs the clipboard is by definition not testing the real
 // terminal, so it has to state its environment. That is the discipline
@@ -123,16 +121,23 @@ func okCopy(t *testing.T) *string { return swapClipboard(t, nil) }
 // term.ClipboardCaveat DIRECTLY and has no caveatFn seam to opt out with.
 // They passed under $TMUX only by luck of phrasing — one asserted
 // Contains("system clipboard"), which the caveat tail still satisfies.
-// Raised in review of #467.
 //
-// NOT ON addrPage, though the review suggested the two constructors.
-// Measured: removing it from addrPage while the two write stubs keep it
-// reddens nothing, because the caveat only reaches an assertion where a
-// stubbed write is being reported as an outcome, and every such test
-// goes through okCopy. The tests that stub nothing are immune for a
-// different reason — the error branch of sayCopiedOut precedes the
-// caveat branch — so a call there would have been an unfireable line
-// claiming coverage it did not have. The write stub is the seam.
+// NOT ON addrPage. Measured: removing it from addrPage while the two
+// write stubs keep it reddens nothing, because the caveat only reaches
+// an assertion where a stubbed write is being reported as an outcome,
+// and every such test goes through okCopy.
+//
+// The tests that stub nothing are immune for a different reason, and
+// they are named rather than pointed at by line, because a line number
+// is a citation that goes wrong silently:
+// TestWithNoTerminalTheChipReportsFailureNotSuccess here and
+// TestTheRealFailureReasonSurvivesTheReservedWidth in
+// noticeseparation_test.go. Both drive the strip, so the function whose
+// ordering makes them immune is addrStrip.copyText — error branch,
+// then caveat branch, then ok (statusaddr.go). The same ordering holds
+// in editor.sayCopiedOut, which is the clipEditor path and not this one.
+// A call on addrPage would have been an unfireable line claiming
+// coverage it did not have. The write stub is the seam.
 //
 // A test that WANTS a caveat states that instead: the strip's tests set
 // ed.addrs.caveatFn, which overrides this and is assigned after addrPage
@@ -143,7 +148,8 @@ func okCopy(t *testing.T) *string { return swapClipboard(t, nil) }
 // is neutral only because term.ClipboardCaveat compares os.Getenv against
 // "" rather than using os.LookupEnv. A detector that switched would
 // re-break every one of these tests — and the guard below,
-// TestSwapClipboardNeutralisesTheAmbientEnvironment, is what catches that.
+// TestTheClipboardStubsNeutraliseTheAmbientEnvironment, is what catches
+// that.
 //
 // t.Setenv also marks the test non-parallel. There is no t.Parallel in
 // this package today, so nothing panics; whoever adds the first one has
@@ -1488,18 +1494,11 @@ func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
 // RENAMED from TestSwapClipboardNeutralisesTheAmbientEnvironment, which
 // named one of the two helpers it asserts: a reader looking for the
 // clipEditor guard found nothing by that name and had to read the body
-// of a test named after the other door. Raised in review of #467.
+// of a test named after the other door.
 //
-// term.ClipboardCaveat reads $TMUX and $STY. The strip reports
-// copyUnverified whenever it answers non-empty, so a test that stubs the
-// WRITE and asserts a confirmed copy was still reading the developer's
-// shell — green in a plain one, red for anyone running the suite inside
-// tmux or screen. Green where nobody is watching and red where everybody
-// is, which is the worst way round.
-//
-// Where it runs is CLAUDE.md's nested-module verify loop, NOT CI: ci.yml
-// tiers apps/* to vet-only, so nothing in this package is tested there.
-// Raised in review of #467.
+// WHY a stub must state its terminal, and where "green" is actually
+// measured, are both on statePlainTerminal and are not restated here.
+// This one asserts the property that argument asks for.
 //
 // Each helper is given an environment that is ALREADY hostile and then
 // called, because the claim is that it overrides one — not merely that it
@@ -1509,8 +1508,7 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 	// a guard: ClipboardCaveat returns on the $TMUX branch first, so a
 	// detector that stopped reading $STY would still answer non-empty and
 	// this test would still declare it live. term/clipboard_test.go
-	// already checks per-variable, and this is that shape. Raised in
-	// review of #467.
+	// already checks per-variable, and this is that shape.
 	for _, v := range []struct{ name, value string }{
 		{"TMUX", "/tmp/tmux-1000/default,4242,0"},
 		{"STY", "1234.pts-0.host"},
@@ -1567,12 +1565,12 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 // survived the first time — the guard covered one door while the defect
 // lived behind the other.
 //
-// So this parses every test file in the package, finds each function
-// whose body ASSIGNS writeSystemClipboard, and requires that same
-// function to call statePlainTerminal. grant_test.go's
-// TestTheEditorNamesNoContainerElement is the same package's working
-// example of the idiom, including its "the glob is broken" floor.
-// Raised in review of #467.
+// So this parses every test file in the package, finds each DECLARATION
+// whose body ASSIGNS writeSystemClipboard — a func or a package-level var
+// holding a function literal — and requires that same declaration to call
+// statePlainTerminal. grant_test.go's TestTheEditorNamesNoContainerElement
+// is the same package's working example of the idiom, including its "the
+// glob is broken" floor.
 func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
 	stubs, states := clipboardStubs(t, ".")
 
@@ -1596,16 +1594,29 @@ func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
 	t.Logf("clipboard stub helpers checked: %v", stubs)
 }
 
-// clipboardStubs walks dir's test files and reports, for every function
-// that ASSIGNS the package-level writeSystemClipboard, which file it is
-// in and whether that same function also calls statePlainTerminal.
+// clipboardStubs walks dir's test files and reports, for every DECLARATION
+// whose body ASSIGNS the package-level writeSystemClipboard, which file
+// it is in and whether that same declaration also calls
+// statePlainTerminal.
 //
 // It takes a DIRECTORY rather than hardcoding ".", and that is the half
 // that makes the guard above falsifiable. On a corpus where every stub
 // already complies — which is the corpus after this change — a walk that
 // works and a walk that answers "compliant" unconditionally are the same
-// green. #468's review hit exactly this shape and the fix was the same:
-// give the walk a root so a fixture can drive it.
+// green. The fix for that shape is to give the walk a root so a fixture
+// can drive it.
+//
+// DECLARATION, NOT FUNCTION, and the difference was a live re-entry for
+// #463. This iterated *ast.FuncDecl only, so
+//
+//	var stub = func(t *testing.T) { writeSystemClipboard = … }
+//
+// assigns the seam and is attributed to nothing — the guard reports the
+// package compliant while the new door reads $TMUX, and the non-vacuity
+// floor cannot notice because the two existing doors still count two. A
+// reviewer built exactly that door and watched the guard pass over it.
+// So a package-level `var` holding a function literal is walked too, keyed
+// by the variable's name, and the fixture below carries one.
 func clipboardStubs(t *testing.T, dir string) (files map[string]string, states map[string]bool) {
 	t.Helper()
 	names, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
@@ -1619,13 +1630,12 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
-		for _, d := range f.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok || fd.Body == nil {
-				continue
-			}
+		// record attributes one body to the name that owns it. Both
+		// callers below hand it a node and a name; nothing else decides
+		// what a "door" is.
+		record := func(name string, file string, body ast.Node) {
 			assigns, calls := false, false
-			ast.Inspect(fd.Body, func(n ast.Node) bool {
+			ast.Inspect(body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.AssignStmt:
 					// The STUB is `writeSystemClipboard = func...`, not the
@@ -1644,8 +1654,36 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 				return true
 			})
 			if assigns {
-				files[fd.Name.Name] = filepath.Base(name)
-				states[fd.Name.Name] = calls
+				files[name] = file
+				states[name] = calls
+			}
+		}
+		base := filepath.Base(name)
+		for _, d := range f.Decls {
+			switch decl := d.(type) {
+			case *ast.FuncDecl:
+				if decl.Body == nil {
+					continue
+				}
+				record(decl.Name.Name, base, decl.Body)
+			case *ast.GenDecl:
+				// A `var` holding a function literal is a door with a
+				// different shape and the same effect.
+				if decl.Tok != token.VAR {
+					continue
+				}
+				for _, sp := range decl.Specs {
+					vs, ok := sp.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, v := range vs.Values {
+						if i >= len(vs.Names) {
+							break
+						}
+						record(vs.Names[i].Name, base, v)
+					}
+				}
 			}
 		}
 	}
@@ -1699,15 +1737,33 @@ func onlyReads(t *T) {
 
 func onlyStates(t *T) { statePlainTerminal(t) }
 `)
+	// A DOOR THAT IS NOT A FuncDecl. This is the shape the walk used to
+	// miss entirely: a reviewer wrote one, asserted a confirmed copy
+	// behind it, and watched TestEveryClipboardStubStatesItsTerminal pass
+	// while the new test went red under $TMUX. It is in the fixture rather
+	// than only in the walk because a walk is only checked by a corpus
+	// that contains what it must not miss.
+	write("var_test.go", `var varStub = func(t *T) {
+	writeSystemClipboard = func(string) error { return nil }
+}
+
+var statedVarStub = func(t *T) {
+	statePlainTerminal(t)
+	writeSystemClipboard = func(string) error { return nil }
+}
+`)
 
 	files, states := clipboardStubs(t, dir)
-	wantFiles := map[string]string{"goodStub": "good_test.go", "badStub": "bad_test.go"}
+	wantFiles := map[string]string{
+		"goodStub": "good_test.go", "badStub": "bad_test.go",
+		"varStub": "var_test.go", "statedVarStub": "var_test.go",
+	}
 	if !maps.Equal(files, wantFiles) {
 		t.Errorf("clipboardStubs found %v, want %v — the walk either misses an "+
 			"assignment or counts a plain read of writeSystemClipboard as a stub",
 			files, wantFiles)
 	}
-	if got, want := unstated(files, states), []string{"badStub"}; !slices.Equal(got, want) {
+	if got, want := unstated(files, states), []string{"badStub", "varStub"}; !slices.Equal(got, want) {
 		t.Errorf("unstated = %v, want %v — the comparison is not comparing, so "+
 			"TestEveryClipboardStubStatesItsTerminal would pass over a door that "+
 			"never states its terminal", got, want)
