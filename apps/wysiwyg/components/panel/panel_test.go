@@ -12,8 +12,10 @@ package panel
 import (
 	"bytes"
 	"image"
+	"io/fs"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -1265,8 +1267,8 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 	}
 }
 
-// TestTheBackgroundElementsAreTheOnesTheRegistrySays holds the one
-// sentence in panel.go that names a set somebody else owns.
+// TestTheBackgroundElementsAreTheOnesTheRegistrySays holds every
+// sentence in this module that names a set somebody else owns.
 //
 // `over`'s doc argues that the black ground is provably wrong in a
 // document, and the argument turns on Background being AUTHORABLE — so
@@ -1275,10 +1277,27 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 // and nothing went red, because prose about another package's registry
 // is exactly the claim nothing checks.
 //
-// So the sentence is derived from markup.BuiltinElements() here rather
-// than remembered there. Both directions: a name in the comment that the
-// registry does not carry is as wrong as one it carries and the comment
-// omits. Raised in review of #474.
+// EVERY FILE, NOT panel.go. The first version of this guard read
+// os.ReadFile("panel.go") and nothing else, so when panel.go was
+// corrected and derived, apps/wysiwyg/panelground_test.go went on saying
+// "VStack/Grid/Canvas" — the identical error, in the identical argument,
+// about the identical registry, one directory up and structurally out of
+// reach. The two files then DISAGREED with each other, which panel.go's
+// own package doc calls worse than either being wrong alone. So the
+// corpus is a walk of the module and the floor is two: a third copy is
+// covered the day it is written. Raised in review of #474, twice.
+//
+// Both directions per file: a name in the comment that the registry does
+// not carry is as wrong as one it carries and the comment omits.
+//
+// AND IT RUNS OUTSIDE CI, like its neighbour in panelground_test.go and
+// for the same reason — ci.yml maps `apps/*` to vet, so this file is
+// compiled on every push and executed only in CLAUDE.md's manual verify
+// loop. That matters more here than for a behavioural test: the subject
+// is a DOC COMMENT, so the person most likely to trip it is somebody
+// editing prose, who has no reason to run a 25-module loop and will see
+// a green PR. The asymmetry is CLAUDE.md's deliberate one; it is written
+// down so the red arrives explained. Raised in review of #474.
 func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 	want := map[string]bool{}
 	for _, e := range markup.BuiltinElements() {
@@ -1294,46 +1313,99 @@ func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 			"wrong field", len(want))
 	}
 
-	src, err := os.ReadFile("panel.go")
+	// The module root, from this package's directory. Dot-directories are
+	// pruned at every depth, not just the top: this repo routinely has
+	// agent worktrees under .claude/ holding whole checkouts of itself,
+	// and a top-anchored filter walks into somebody else's tree.
+	var srcs []string
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); n != ".." && strings.HasPrefix(n, ".") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(p) == ".go" {
+			srcs = append(srcs, p)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("reading panel.go: %v", err)
+		t.Fatalf("walking apps/wysiwyg: %v", err)
 	}
+	if len(srcs) < 20 {
+		t.Fatalf("walked only %d Go files, which is not this module — the corpus "+
+			"is wrong and every assertion below would be vacuous", len(srcs))
+	}
+
 	// THE SENTENCE, not the file: "Background is authorable on A, B and
 	// C". Anchored on the phrase so the names cannot drift out of the
 	// clause they are in.
-	m := regexp.MustCompile(`Background is authorable on ([^.]+?) — so`).
-		FindSubmatch(src)
-	if m == nil {
-		t.Fatal("panel.go no longer contains the sentence naming the " +
-			"Background-authorable elements, so this guard is checking nothing. " +
-			"Either restore it or delete this test — a guard whose subject is " +
-			"gone is the failure mode the file it guards is about")
-	}
-	// The clause wraps across comment lines, and the names are separated
-	// by commas and a final "and".
-	clause := regexp.MustCompile(`(?s)\s*//\s*|\s+`).
-		ReplaceAllString(string(m[1]), " ")
-	got := map[string]bool{}
-	for _, n := range regexp.MustCompile(`[A-Z][A-Za-z]*`).
-		FindAllString(clause, -1) {
-		got[n] = true
-	}
+	//
+	// FLATTENED FIRST, and that is not tidiness. The pattern matched the
+	// RAW BYTES, and the sentence sits right at the 72-column wrap:
+	// re-wrapping the comment so the line broke after "on" —
+	// gofmt-neutral, semantically identical — made the match fail and
+	// this test t.Fatal saying the sentence was GONE, offering "delete
+	// this test" as the remedy. A guard that hands a maintainer a reason
+	// to delete it for reflowing a comment is worse than no guard, and
+	// the block it reads needed re-wrapping in the same round. It is
+	// wrapped after "on" today, so this is load-bearing rather than
+	// defensive. Raised in review of #474.
+	//
+	// ONE MECHANISM, not two. `\s+` in place of the literal spaces would
+	// also survive the wrap, and having both meant neither could be shown
+	// to matter — removing either was measured SILENT. Flattening is the
+	// one kept because it is also what lets m[1] be read directly instead
+	// of being cleaned up a second time afterwards.
+	cont := regexp.MustCompile(`(?s)\n\s*//\s?`)
+	sentence := regexp.MustCompile(`Background is authorable on ([^.]+?) — so`)
+	names := regexp.MustCompile(`[A-Z][A-Za-z]*`)
 
-	for n := range want {
-		if !got[n] {
-			t.Errorf("markup declares Background on %s and panel.go's sentence "+
-				"does not name it. The argument that sentence makes is that a "+
-				"document CAN put a Panel under a coloured ancestor; an element "+
-				"left out of it is a way that happens which the reasoning does "+
-				"not cover", n)
+	found := 0
+	for _, path := range srcs {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		m := sentence.FindStringSubmatch(cont.ReplaceAllString(string(src), " "))
+		if m == nil {
+			continue
+		}
+		found++
+		got := map[string]bool{}
+		for _, n := range names.FindAllString(m[1], -1) {
+			got[n] = true
+		}
+		for n := range want {
+			if !got[n] {
+				t.Errorf("markup declares Background on %s and %s's sentence "+
+					"does not name it. The argument that sentence makes is that a "+
+					"document CAN put a Panel under a coloured ancestor; an element "+
+					"left out of it is a way that happens which the reasoning does "+
+					"not cover", n, path)
+			}
+		}
+		for n := range got {
+			if !want[n] {
+				t.Errorf("%s's sentence names %s as Background-authorable and "+
+					"the registry does not declare it there", path, n)
+			}
 		}
 	}
-	for n := range got {
-		if !want[n] {
-			t.Errorf("panel.go's sentence names %s as Background-authorable and "+
-				"the registry does not declare it there", n)
-		}
+	// TWO IS THE COUNT TODAY AND THE FLOOR IS THE POINT. A walk that
+	// found none would pass every assertion above, and a walk that found
+	// one would be the guard this replaced.
+	if found < 2 {
+		t.Fatalf("found the Background-authorable sentence in %d file(s); "+
+			"panel.go and apps/wysiwyg/panelground_test.go both carry it, so "+
+			"either the phrase was reworded — re-anchor this guard — or the walk "+
+			"is not reaching the module", found)
 	}
+	t.Logf("checked the Background-authorable sentence in %d files", found)
 }
 
 // TestTheHairlineNeedsBothStrokesToFitTheCell is the HEIGHT-axis

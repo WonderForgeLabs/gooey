@@ -14,10 +14,20 @@ package main
 //
 // It covers the app's OWN SHELL and not a document. main.go registers
 // "Panel" on docCtx deliberately, and Background is authorable on
-// VStack/Grid/Canvas, so `<VStack Background="#282c34"><Panel/></VStack>`
-// is a page the designer renders today and the guess is simply wrong for
-// it. That is user data and unpinnable by construction; panel.go's over()
-// carries the statement and what closing it would need.
+// Border, Canvas, Grid, HStack and VStack — so
+// `<VStack Background="#282c34"><Panel/></VStack>` is a page the
+// designer renders today and the guess is simply wrong for it. That is
+// user data and unpinnable by construction; panel.go's over() carries
+// the statement and what closing it would need.
+//
+// That list is spelled the same way panel.go spells it, and on purpose:
+// TestTheBackgroundElementsAreTheOnesTheRegistrySays finds every file in
+// this module making the claim and checks each against
+// markup.BuiltinElements(). It read "VStack/Grid/Canvas" while the
+// registry declared five, for the review round AFTER panel.go's copy was
+// corrected and derived — so the two files disagreed with each other
+// about one registry, which is worse than either being wrong alone.
+// Raised in review of #474.
 //
 // And it runs OUTSIDE CI. ci.yml maps `apps/*` to vet, so this file is
 // compiled on every push and executed only in CLAUDE.md's manual

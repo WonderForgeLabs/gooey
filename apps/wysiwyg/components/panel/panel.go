@@ -614,21 +614,26 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 //
 // IN A DOCUMENT THE GUESS IS PROVABLY WRONG, not merely unpinned.
 // main.go registers "Panel" on docCtx deliberately ("a document is
-// entitled to a framed region"), and Background is authorable on Border,
-// Canvas, Grid, HStack and VStack — so
+// entitled to a framed region"), and Background is authorable on
+// Border, Canvas, Grid, HStack and VStack — so
 // `<VStack Background="#282c34"><Panel/></VStack>` is a document the
-// designer renders today.
+// designer renders today. The framework fills the pane's cells with
+// #282c34 and this function composites against black anyway:
+// (56,56,60) laid over (40,44,52). That is #254's own contrast
+// complaint, in the tree the app exists to render. Measured in review
+// of #474.
 //
 // THAT LIST IS DERIVED, not remembered: it read "VStack, Grid and
 // Canvas" for a review round while Border and HStack had carried the
 // attribute all along, which is a hand-written list doing what a
-// hand-written list does. TestTheBackgroundElementsAreTheOnesTheRegistrySays
-// reads markup.BuiltinElements() and fails if this sentence and the
-// registry ever name different sets. Raised in review of #474. The framework fills the
-// pane's cells with #282c34 and this function composites against black
-// anyway: (56,56,60) laid over (40,44,52). That is #254's own contrast
-// complaint, in the tree the app exists to render. Measured in review of
-// #474.
+// hand-written list does.
+// TestTheBackgroundElementsAreTheOnesTheRegistrySays reads
+// markup.BuiltinElements() and fails if this sentence and the registry
+// ever name different sets — in THIS file and in every other file of
+// the app that makes the same claim, because the first version of that
+// guard read only this one and the copy in
+// apps/wysiwyg/panelground_test.go stayed at three of five. Raised in
+// review of #474, twice.
 //
 // THERE IS NO SEAM TO FIX IT WITH TODAY, and that is the fact worth
 // carrying rather than the apology. Composer.clearStyle is unexported

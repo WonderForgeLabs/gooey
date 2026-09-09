@@ -151,10 +151,16 @@ func declaredEncoders(t *testing.T) []string {
 // drop either rule was measured SILENT in review round 7 for exactly
 // that reason: nothing in the package could tell the two walks apart.
 //
-// testdata/encoders is that type's home. The go tool ignores a testdata
-// directory, so it compiles as part of nothing and can hold whatever a
-// fixture needs; the walk parses it the same way it parses this package,
-// against an Encoder interface the fixture declares itself.
+// internal/encoderfixture is that type's home. A package of its own
+// keeps those types out of the walk over ".", which is the only
+// constraint there is; the walk parses it the same way it parses this
+// package, against an Encoder interface the fixture declares itself.
+//
+// A PACKAGE, NOT A testdata DIRECTORY, and the difference is what checks
+// the fixture. Under testdata the go tool compiles the file as part of
+// nothing, so its claims about embedding were asserted by this walk
+// alone — the thing it exists to verify. See the fixture's own package
+// doc. Raised in review of #474.
 func encodersIn(t *testing.T, dir string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -359,6 +365,15 @@ func funcSig(fset *token.FileSet, ft *ast.FuncType) []string {
 
 // receiverName is the type name a method is declared on, with any
 // pointer and type parameters stripped.
+//
+// A QUALIFIED NAME RETURNS "", and that is a known boundary rather than
+// an oversight. `type Wez struct{ pkg.Base }`, where pkg.Base satisfies
+// Encoder, is invisible to this walk: no row is demanded of it and it
+// takes the composited branch by default. It is the same shape as the
+// `struct{ Encoder }` hole the fixture's Wrapped closed, and it is
+// latent only because graphics/ embeds nothing qualified today —
+// resolving one would mean resolving imports, which is a type checker
+// rather than an AST walk. Noted in review of #474.
 func receiverName(e ast.Expr) string {
 	switch t := e.(type) {
 	case *ast.StarExpr:
@@ -377,7 +392,7 @@ func receiverName(e ast.Expr) string {
 // fixture package, which is the only way to state the two rules this
 // package cannot get wrong.
 //
-// testdata/encoders declares an Encoder of the same two-method shape and
+// internal/encoderfixture declares an Encoder of the same two-method shape and
 // four types around it:
 //
 //	Full     declares both methods            → an encoder
@@ -406,7 +421,7 @@ func receiverName(e ast.Expr) string {
 // feeds is of concrete encoders and an interface cannot have a row.
 // TestTheEncoderWalkDropsTheInterfacesThemselves is that half.
 func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
-	got := encodersIn(t, "testdata/encoders")
+	got := encodersIn(t, "internal/encoderfixture")
 	want := []string{"Boxed", "Chained", "Derived", "Full", "Wrapped"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the walk reports %v over the fixture package; want %v.\n"+
@@ -430,7 +445,7 @@ func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
 // against, arrived at from the opposite side. Asserted separately
 // because the want list above cannot say why a name is absent.
 func TestTheEncoderWalkDropsTheInterfacesThemselves(t *testing.T) {
-	for _, n := range encodersIn(t, "testdata/encoders") {
+	for _, n := range encodersIn(t, "internal/encoderfixture") {
 		if n == "Encoder" || n == "Named" {
 			t.Errorf("the walk reports %q, which is an INTERFACE. Seeding the "+
 				"interface as satisfied is what makes an embedder reachable; "+
