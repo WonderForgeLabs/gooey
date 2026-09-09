@@ -263,9 +263,12 @@ func (m Menu) checkBox(it MenuItem) string {
 // AdornmentLayer is above it and a notification raised while a menu is
 // open is still readable (#439).
 //
-// What position still decides is INPUT. Hit-testing is not lifted — it
-// walks document order — but the bar holds the pointer capture while
-// open, so every press routes here regardless. See MOUSE below.
+// INPUT AGREES, since #465: FocusManager.HitTest asks the same
+// membership-and-rank rule the paint order is derived from, so the
+// dropdown is hit where it paints. It said "hit-testing is not lifted"
+// here — true when written, and the bar never depended on it either
+// way, because it holds the pointer capture while open and every press
+// routes here regardless. See MOUSE below.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

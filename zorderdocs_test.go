@@ -1049,10 +1049,20 @@ func TestAWrappedHitKeepsTheLineAboveItsWindow(t *testing.T) {
 // become wrong is a hole shaped exactly like the wrong claim — so it had
 // to go WITH #465 rather than after it.
 //
-// The header above this function used to name a test that no longer
-// exists, describing the exemption as live, because the replacement took
-// the function and left the comment. gofmt and vet are both blind to a
-// doc comment's subject; `go doc -u` is the instrument.
+// THE HEADER OUTLIVED THE FUNCTION for two rebases, which is the exact
+// failure this file exists to catch, in this file. It still opened
+// "Hit-testing really does still walk document order" — the premise #465
+// killed — above a function asserting the opposite, and it named
+// TestTheHitTestExemptionIsLineScoped, which no longer exists. Nothing
+// went red: gofmt and vet are blind to a doc comment's subject, and the
+// retired-rule guard in this file scans for the DECLARE-IT-LAST rule,
+// not for claims about the hit walk. Found by rebasing, twice, not by
+// the suite. `go doc -u` is the instrument.
+//
+// What the exemption WAS: any line stating the retired rule was waved
+// through if it NAMED the hit walk, applied to that line alone rather
+// than to the ±2 window — because a paragraph mentioning hit-testing two
+// lines away would otherwise excuse a stale PAINT claim beside it.
 //
 // Deleting the exemption is otherwise SILENT — measured — which is what
 // this test is for. Raised in review of #458, carried out in #478.

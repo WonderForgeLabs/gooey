@@ -360,8 +360,10 @@ so `tab` never lands on a button nobody can see.
 - Overlays are **lifted out of document order** into a paint layer of
   their own and ranked within it, so where you declare one does not
   decide what it paints over; `Grid.Row` places it independently either
-  way. Hit-testing is *not* lifted — that divergence is the one thing
-  position still decides.
+  way — and since
+  [#465](https://github.com/WonderForgeLabs/gooey/issues/465) that is
+  true of the CLICK as well as the paint: hit-testing asks the same
+  layer and the same ranks, so the two planes cannot disagree.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.
