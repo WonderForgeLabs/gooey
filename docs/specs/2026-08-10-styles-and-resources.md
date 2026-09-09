@@ -352,6 +352,13 @@ a section overrides only the fields its setters name.
 
 ## Part 4 — The laziness contract, hot reload, acceptance tests
 
+<!-- spec-tests: planned -->
+<!-- Names below are tests this section PROPOSES, not ones the tree
+     holds. TestEverySpecTestNameResolves skips a marked section for
+     exactly that reason; without the marker it would fail, and the
+     only way to land it green would be an allowlist — the
+     hand-maintained known-bad list CLAUDE.md forbids. See #468. -->
+
 Everything resolves in two moments and no others:
 
 - **LOAD**: parse and validate — unknown setter property, bad literal,
@@ -432,6 +439,13 @@ Design-ahead only; nothing here is committed by this record.
   matches a control the same whether or not it has been retemplated.
 
 ## Implementation plan (PR-sized stages)
+
+<!-- spec-tests: planned -->
+<!-- Names below are tests this section PROPOSES, not ones the tree
+     holds. TestEverySpecTestNameResolves skips a marked section for
+     exactly that reason; without the marker it would fail, and the
+     only way to land it green would be an allowlist — the
+     hand-maintained known-bad list CLAUDE.md forbids. See #468. -->
 
 1. **Resources core** (`markup/resources.go`): `Resources` slots parsed
    at any element; `<Resource>` with `propKinds` coercion; scope chain
