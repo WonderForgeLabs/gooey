@@ -1129,9 +1129,10 @@ ancestor's background, and the surface is a leaf. Reading the occlusion as
 something the marker does is the mistake that let `gooey.Compose` ship
 lifting overlays without clearing behind them — position without
 occlusion, and a see-through popup on that path until
-[#438](https://github.com/WonderForgeLabs/gooey/issues/438). Being last among the owner's children was the whole story
-until it turned out not to be one: it buys being above the owner's
-*other* children, and nothing else. Forcing runs forward only, so a
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438). Being last
+among the owner's children was the whole story until it turned out not
+to be one: it buys being above the owner's *other* children, and nothing
+else. Forcing runs forward only, so a
 component declared after the *owner* painted over an open popup with
 nothing able to put it back — reported as a menu that vanished on a
 design canvas, where a `MenuBar` sits among a `Gauge`, an `ItemsView`

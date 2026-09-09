@@ -434,6 +434,10 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 			if len(bs) < cap(bs) {
 				bs = bs[:len(bs)+1]
 			} else {
+				// APPEND ON A FULL SLICE REALLOCATES, and from here bs
+				// and the caller's old header are different arrays. The
+				// clear loop at the end is written not to care; the
+				// comment there is where that is argued.
 				bs = append(bs, rankBucket[T]{})
 			}
 			spare := bs[len(bs)-1].items[:0]
@@ -461,14 +465,45 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 	// next call resets, cap is what the garbage collector sees.
 	// Pre-existing — the pass has always reused — and surfaced when it
 	// became generic. Raised in review of #457.
+	//
+	// PAIRING prev[i] WITH bs[i] BY INDEX IS ONLY VALID WHILE THEY ARE
+	// THE SAME ARRAY, and the first version of this loop did it
+	// unconditionally. That is a PANIC, not a leak: once the bucket list
+	// has grown, bs is a copy and prev no longer tracks it, so
+	// `keep := len(bs[i].items)` is a length from one array applied to a
+	// capacity from another. Three items where the previous frame put
+	// one gives `items[3:1]` — slice bounds out of range, on the
+	// retained paint path, every frame.
+	//
+	// It needs a rank REVISITED after the growth to fire, which is why
+	// it survived the round that introduced it: grouping the ranks lets
+	// every append happen before the list moves. Document order does not
+	// group them — a popup, a toast, then more of the popup's subtree is
+	// an ordinary page. TestTheBucketPassSurvivesGrowingItsBucketList is
+	// that shape. Raised in review of #457.
+	//
+	// So: clear the tail of every LIVE bucket, which needs no pairing at
+	// all — each bucket knows its own len and cap.
+	for i := range bs {
+		items := bs[i].items
+		clear(items[len(items):cap(items)])
+	}
+	// And the buckets this call did not reach — last frame had five
+	// ranks, this one has two — still hold last frame's items and have
+	// to be emptied whole.
+	//
+	// This one DOES read the old header, and that is safe rather than
+	// lucky. bs starts at (*buckets)[:0], so an append can only fire
+	// once len(bs) has reached the capacity it inherited, which is at
+	// least len(prev); a call that reallocated therefore ends with
+	// len(bs) >= len(prev) and this range is empty. Guarding it on "did
+	// it reallocate" would be a branch no input can take — an
+	// unfalsifiable claim, which is the thing this package deleted a
+	// clipCols guard over rather than ship.
 	prev := *buckets
-	for i := range prev {
+	for i := len(bs); i < len(prev); i++ {
 		items := prev[i].items
-		keep := 0
-		if i < len(bs) {
-			keep = len(bs[i].items)
-		}
-		clear(items[keep:cap(items)])
+		clear(items[:cap(items)])
 	}
 	*buckets = bs
 	return dst
@@ -595,7 +630,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		n.covered = false
 		if b, ok := w.(Bounded); ok {
 			r := b.Bounds()
-			if _, isContainer := w.(Container); !isContainer {
+			if !isContainer(w) {
 				// Leaves pre-clear to the nearest ancestor's background,
 				// not to the terminal default — a Text inside a colored
 				// panel must not punch a default-colored hole when it

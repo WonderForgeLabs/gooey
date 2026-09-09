@@ -58,14 +58,35 @@ depends on nodes the walk has not seen. That is the same split
 `Composer` already makes between `c.nodes` (structure) and `c.paint`
 (order), arrived at for the same reason.
 
-The per-component half — the declared background fill, then `Render` —
-moved to `paintOne` unchanged. The depth cap and the `Collapsed` prune
-stay in the walk, where they were.
+The per-component half moved to `paintOne`, and this section said it
+moved **unchanged**. It did not — and the sentence did more than record
+a wrong fact, it was used as a specification. The leaf pre-clear was
+added in the review round that wrote this paragraph, and the two arms
+found in the round after — a container whose declared background has
+been *cleared*, and a hidden container's bounds — were missing precisely
+because the code had been built to match the claim rather than to match
+`composer.go`. `paintOne` carries the same three-arm chain the Composer
+does now, spelled in the same order, and the tests compare the two paths
+rather than either against prose.
 
-**A tree with no overlay is unaffected**: one slice, nothing to sort,
-painted in the order it always was. That is asserted rather than assumed
+The depth cap and the `Collapsed` prune stay in the walk, where they
+were. What did move out of the walk is the `paintable` gate. It used to
+decide whether a component was **collected at all**, which is why the
+hidden-container arm could not be written: a component the walk drops
+never reaches `paintOne`, and blanking a hidden container's bounds is
+something to *paint*. It now gates only `Render`, which is where the
+Composer has always had it — every component gets a paint node there,
+and `paintable` is asked inside it.
+
+**A tree with no overlay keeps its ORDER**: one slice, nothing to sort,
+painted in the order it always was, asserted rather than assumed
 (`TestComposeStillPaintsAPlainTreeInDocumentOrder`), because ~19 test
-helpers ride on it and a change in their meaning would be silent.
+helpers ride on it and a change in their meaning would be silent. Its
+PICTURE is the weaker claim, and this section used to state the two as
+one: a hidden container now blanks its bounds and a cleared background
+now fills, on a tree with no overlay anywhere in it. Both are the
+Composer's long-standing answer arriving on this path at last, so a
+fixture that disagrees was asserting the divergence.
 
 ## What is NOT changed
 
@@ -90,7 +111,10 @@ helpers ride on it and a change in their meaning would be silent.
 | **A lifted leaf occludes** | `TestBothPaintPathsAgreeOnLeafOcclusion` | drop the leaf pre-clear in `paintOne` |
 | **It clears to the ancestor's background** | `TestAOneShotLeafClearsToItsAncestorsBackground` | clear to the terminal default instead |
 | A lifted subtree comes up whole | `TestComposeKeepsALiftedSubtreeTogether` | drop the inherited-membership arm |
-| A plain tree is unaffected | `TestComposeStillPaintsAPlainTreeInDocumentOrder` | — (guards the ~19 helpers) |
+| A plain tree keeps its order | `TestComposeStillPaintsAPlainTreeInDocumentOrder` | — (guards the ~19 helpers) |
+| **A cleared background still fills** | `TestBothPaintPathsFillAContainerWhoseBackgroundIsCleared` | drop the `else` beside `col.Set` |
+| **A hidden container blanks its bounds** | `TestBothPaintPathsBlankAHiddenContainersBounds` | gate collection on `paintable` again |
+| The bucket pass survives a growing list | `TestTheBucketPassSurvivesGrowingItsBucketList` | pair `prev[i]` with `bs[i]` unconditionally |
 | Equal ranks keep document order | `TestBothPaintPathsAgreeOnRanks` (13 nodes, alternating) | — structural: the bucket pass appends in encounter order |
 | The rule is genuinely shared | *both* files' subtree tests | any mutation of `overlayOf` reddens both |
 

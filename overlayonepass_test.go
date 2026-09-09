@@ -352,6 +352,217 @@ func TestAOneShotLeafClearsToItsAncestorsBackground(t *testing.T) {
 	}
 }
 
+// oneShotBare is a CONTAINER that declares a background and paints no
+// chrome of its own. Everything it puts on screen comes from the
+// framework's fill, which is what makes it the fixture for the fill
+// rule: if the branch is missing, this component is INVISIBLE rather
+// than wrong-coloured, and whatever painted under it shows through.
+type oneShotBare struct {
+	Base
+	bg *prop.Property[render.Color]
+}
+
+func (b *oneShotBare) Measure(a Size) Size                              { return a }
+func (b *oneShotBare) Render(*Frame)                                    {}
+func (b *oneShotBare) ChildComponents() []Component                     { return nil }
+func (b *oneShotBare) BackgroundProperty() *prop.Property[render.Color] { return b.bg }
+
+// TestBothPaintPathsFillAContainerWhoseBackgroundIsCleared is the branch
+// paintOne did not have.
+//
+// A background handle whose colour is UNSET still fills — with the
+// nearest ancestor's background — and that is not an implementation
+// detail: it is written into the HasBackground interface's own doc, and
+// it is what makes clearing a background at runtime ERASE the old fill
+// instead of stranding it. Composer has the branch (composer.go, the
+// `else` beside `if col.Set`); paintOne had only the `col.Set` half, so
+// under Compose the container declared a surface and painted nothing.
+//
+// The fixture puts the cleared container over a stripe, because a fill
+// that only ever runs on a blank buffer is unobservable — a one-shot
+// compose starts from nothing, so "fills with the ancestor's background"
+// and "does not fill at all" agree on every cell no earlier sibling
+// touched. The stripe is what makes the two answers different, and it is
+// also the real shape: an overlapping sibling is exactly what a declared
+// surface exists to occlude.
+//
+// Asserted as a COMPARISON against Composer plus a direct check on the
+// rune, so a future change that stopped both paths filling would not
+// agree its way to green. Raised in review of #457.
+func TestBothPaintPathsFillAContainerWhoseBackgroundIsCleared(t *testing.T) {
+	blue := render.Color{Set: true, R: 0, G: 0, B: 200}
+	build := func() Component {
+		return &oneShotPanel{
+			oneShotStripe: oneShotStripe{ch: '.', kids: []Component{
+				&oneShotStripe{ch: '@'},
+				// Declared LAST, so it paints over the stripe on both
+				// paths — this is ordinary document order, not the
+				// overlay layer.
+				&oneShotBare{bg: prop.NewSource(render.Color{})},
+			}},
+			bg: prop.NewSource(blue),
+		}
+	}
+	caps := oneShotCaps()
+
+	f := Compose(build(), caps, nil)
+	c := NewComposer(build(), caps.Cols, caps.Rows)
+	t.Cleanup(c.Close)
+	fr, _ := c.Frame()
+
+	got, want := render.RowText(f.Cells, 0), render.RowText(fr.Cells, 0)
+	if got != want {
+		t.Errorf("the two paths disagree about a container whose background was cleared:\n"+
+			"  gooey.Compose  %q\n  Composer.Frame %q", got, want)
+	}
+	if strings.ContainsRune(got, '@') {
+		t.Errorf("row 0 is %q — the stripe beneath a declared surface is still "+
+			"showing through, so the container did not fill", got)
+	}
+	// And it filled to the PANEL's colour, not the terminal default,
+	// which is the half "it covered the stripe" cannot see.
+	if bg := f.Cells.At(5, 0).Style.Bg; bg != blue {
+		t.Errorf("the cleared container filled with %+v, want the panel's %+v — "+
+			"an unset colour must take the nearest ancestor's background", bg, blue)
+	}
+}
+
+// TestBothPaintPathsBlankAHiddenContainersBounds is the third branch,
+// and it is here because fixing only the one the review named would have
+// left a reader finding two of three.
+//
+// Composer's pre-clear is one if/else-if chain — leaf, then HIDDEN
+// container, then declared background — and the middle arm is not a
+// nicety: a hidden container's chrome has to leave the screen the way a
+// hidden leaf's content does. paintOne never saw the case at all,
+// because collectPaint gated COLLECTION on paintable(w) while Composer
+// gates only Render. So a component that should paint a blank rect and
+// nothing else was dropped instead.
+//
+// Same fixture logic as the cleared-background test above: on a blank
+// one-shot buffer, "blank the rect" and "do nothing" agree everywhere no
+// earlier sibling painted, so the stripe is what makes the branch
+// observable. Raised in review of #457.
+func TestBothPaintPathsBlankAHiddenContainersBounds(t *testing.T) {
+	blue := render.Color{Set: true, R: 0, G: 0, B: 200}
+	build := func() Component {
+		// A stripe rather than the bare container, because it RENDERS.
+		// Hidden is two claims — blank the bounds, and run no Render —
+		// and a fixture that paints nothing can only see the first.
+		hidden := &oneShotStripe{ch: '#'}
+		L(hidden, Layout{Visibility: Hidden})
+		return &oneShotPanel{
+			oneShotStripe: oneShotStripe{ch: '.', kids: []Component{
+				&oneShotStripe{ch: '@'},
+				hidden,
+			}},
+			bg: prop.NewSource(blue),
+		}
+	}
+	caps := oneShotCaps()
+
+	f := Compose(build(), caps, nil)
+	c := NewComposer(build(), caps.Cols, caps.Rows)
+	t.Cleanup(c.Close)
+	fr, _ := c.Frame()
+
+	got, want := render.RowText(f.Cells, 0), render.RowText(fr.Cells, 0)
+	if got != want {
+		t.Errorf("the two paths disagree about a hidden container's bounds:\n"+
+			"  gooey.Compose  %q\n  Composer.Frame %q", got, want)
+	}
+	if strings.ContainsAny(got, "@#") {
+		t.Errorf("row 0 is %q — a hidden container either left the sibling "+
+			"beneath it on screen (@) or painted its own chrome (#); it must "+
+			"blank its bounds and Render nothing", got)
+	}
+}
+
+// TestTheBucketPassSurvivesGrowingItsBucketList is the panic, and it is
+// the leak fix's own bug: the clear loop pairs prev[i] with bs[i] by
+// INDEX, and those are the same array only until the bucket list grows.
+//
+//	prev := *buckets          // the OLD header
+//	...
+//	keep = len(bs[i].items)   // from the NEW array once append grew it
+//	clear(items[keep:cap(items)])
+//
+// `append` on a full slice reallocates, so after a frame that adds a
+// rank, prev and bs are different arrays and the pairing is between
+// unrelated buckets. When the new bucket at i holds more items than the
+// old one's CAPACITY — three where the first frame put one — the slice
+// expression is items[3:1] and the process dies with "slice bounds out
+// of range". Not a leak, not a wrong picture: a panic on the retained
+// paint path, which is every frame of every app that opens a second kind
+// of overlay.
+//
+// THE SHAPE IS ORDINARY. Frame 1 is a page with one popup open. Frame 2
+// is the same page with a toast and a tooltip up as well, and three
+// items in the popup rank. That is `cmd/toolkit` doing what its overlays
+// tab exists to demonstrate.
+func TestTheBucketPassSurvivesGrowingItsBucketList(t *testing.T) {
+	type item struct {
+		rank int
+		mark string
+	}
+	rankOf := func(it *item) int { return it.rank }
+	var buckets []rankBucket[*item]
+
+	// FRAME 1: one rank, one item. The bucket list is one long and its
+	// single bucket's items has capacity 1.
+	first := []*item{{rank: 0, mark: "popup"}}
+	appendByRank(make([]*item, 0, len(first)), first, rankOf, &buckets)
+	if len(buckets) != 1 {
+		t.Fatalf("the first frame left %d buckets, want 1 — the fixture is not "+
+			"the narrow state this test needs", len(buckets))
+	}
+	if c := cap(buckets[0].items); c > 2 {
+		t.Fatalf("the first frame's bucket has capacity %d, which is too much "+
+			"slack for the second frame to overrun. The arm depends on the "+
+			"OLD bucket being smaller than the new one at the same index", c)
+	}
+
+	// FRAME 2, AND THE ORDER OF THIS SLICE IS THE WHOLE FIXTURE.
+	//
+	// While bs and prev are still the same array, every write to bs[i]
+	// lands in prev[i] too, so the two stay in step and the pairing is
+	// accidentally right. What breaks it is a rank REVISITED after the
+	// bucket list has grown: the append that adds the second rank
+	// reallocates, and from then on bs[0] is a copy that prev[0] no
+	// longer tracks. Two more rank-0 items then push bs[0].items past
+	// the capacity prev[0].items was frozen at, and the clear loop asks
+	// for items[3:1].
+	//
+	// Document order interleaves ranks exactly like this — a popup, a
+	// toast, then more of the popup's own subtree — so this is not a
+	// contrived permutation. GROUPING the ranks instead lets every
+	// rank-0 append happen before the growth, and the bug does not fire:
+	// the first version of this fixture did that and passed against the
+	// unfixed code, which is the reason the ordering is spelled out
+	// here rather than left to look arbitrary.
+	second := []*item{
+		{rank: 0, mark: "popup"},
+		{rank: 10, mark: "toast"},
+		{rank: 0, mark: "popup"},
+		{rank: 0, mark: "popup"},
+	}
+	got := appendByRank(make([]*item, 0, len(second)), second, rankOf, &buckets)
+
+	if len(got) != len(second) {
+		t.Fatalf("the second pass returned %d items, want %d", len(got), len(second))
+	}
+	// AND THE ORDER IS STILL THE ORDER, because a panic fix that quietly
+	// stopped bucketing would pass a test that only checked it did not
+	// crash.
+	want := []string{"popup", "popup", "popup", "toast"}
+	for i, it := range got {
+		if it.mark != want[i] {
+			t.Errorf("item %d is %q, want %q — the growth path has stopped "+
+				"ordering by rank", i, it.mark, want[i])
+		}
+	}
+}
+
 // TestTheBucketPassRetainsNothingPastItsOwnItems is the leak the reuse
 // buys, checked structurally rather than with a finalizer.
 //
