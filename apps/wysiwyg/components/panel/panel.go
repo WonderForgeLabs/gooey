@@ -438,19 +438,32 @@ func drawCanvas(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bool) 
 	// thickening of it — and an invisible flourish is the defect this
 	// arithmetic was fixed for.
 	//
-	// MEASURED, and the measurement is that ignoring `ok` here changes NO
-	// PIXEL: the guard only fires for a cell 2 pixels tall or less, and
-	// the border's 1.5-pixel stroke already saturates row 0 at every x
-	// the hairline would reach, so drawing a dimmed line at y=0 over it
-	// changes nothing. An A/B of the two canvases at cellH 1 and 2
-	// differs by zero pixels. So this branch is not load-bearing for the
-	// output today; it is load-bearing for the CONTRACT, which hairlineY
-	// states and TestACellTooShortForBothGetsNoHairline asserts directly,
-	// and it stops being a no-op the moment borderWidth or hairlineInset
-	// moves.
-	// Written down rather than left for the next person to re-derive.
-	if y, ok := hairlineY(cellH); ok {
-		dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
+	// IT DECIDES THE PICTURE, and this comment used to say it did not.
+	//
+	// It recorded a measurement — "ignoring `ok` here changes NO PIXEL",
+	// A/B'd at cellH 1 and 2 — which was true of a TRANSLUCENT stroke:
+	// the guard only fires for a cell 2 pixels tall or less, and the
+	// border's 1.5-pixel stroke already saturates row 0, so a dimmed
+	// line drawn over it added nothing. The tier split made the rule
+	// OPAQUE on sixel, and an opaque rule COVERS the border rather than
+	// tinting it: measured again in review of #474, the top row's red
+	// goes 255 → 102 across the hairline's span with the guard removed.
+	// A record of a no-op, left in place after the thing stopped being
+	// one, points the next reader away from a branch that decides the
+	// output.
+	//
+	// BOTH AXES, and the second one was missing. hairlineY answers "is
+	// there room for the rule under the border"; nothing asked whether
+	// there is room ACROSS. The line runs inset-to-inset, so a canvas
+	// narrower than two insets gives DrawLine an x1 left of its x0 — a
+	// reversed segment, which gg strokes as a short dash floating in the
+	// middle of a pane that was supposed to have a rule under its title.
+	// A 2-column pane at cellW 6 is 12 pixels and the insets are 14.
+	// Raised in review of #474.
+	y, tall := hairlineY(cellH)
+	x0, x1, wide := hairlineSpan(w)
+	if tall && wide {
+		dc.DrawLine(x0, y, x1, y)
 		s := hairlineStroke(fg, bg, opaque)
 		s.Apply(dc)
 		dc.Stroke()
@@ -495,6 +508,26 @@ func hairlineY(cellH int) (float64, bool) {
 		return 0, false
 	}
 	return hi, true
+}
+
+// hairlineSpan is how far the rule reaches across the canvas, and
+// whether it reaches at all — hairlineY's counterpart on the other axis,
+// and written to the same shape on purpose.
+//
+// The rule is inset from both sides, so a canvas narrower than the two
+// insets together has x1 LEFT OF x0. gg does not refuse that: it strokes
+// the segment between them, which paints a short dash centred in a pane
+// whose title has no rule under it — a mark that looks like a rendering
+// fault rather than an absent flourish. A 2-column pane at cellW 6 is 12
+// pixels against 14 of inset, so this is a window size and not a
+// degenerate one.
+//
+// Returning a bool rather than clamping, for hairlineY's reason: a
+// clamped span would place a line somewhere it does not belong and look
+// like a decision, where "no room" is the honest answer.
+func hairlineSpan(w float64) (x0, x1 float64, ok bool) {
+	x0, x1 = hairlineInset, w-hairlineInset
+	return x0, x1, x1 > x0
 }
 
 // stroke is the pen shared by both figures. Cap and Join are stated rather
@@ -577,10 +610,21 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 // learns. Raised in review of #474 — twice, the second time because the
 // first correction stated a stronger fact than it had measured.
 //
-// So the honest scope is narrow: the ground is the pane's declared Bg
-// when it has one, and black when it does not, and black is a guess. What
-// keeps that from being a regression is that this colour now reaches only
-// the tier that forces it. Learning the terminal's background — an OSC 11
+// So the honest scope is narrower still, and the third correction to
+// this paragraph is the one that reaches the bottom of it: the ground is
+// a GUESS IN BOTH CASES.
+//
+// "The pane's declared Bg when it has one" reads as though the declared
+// case were solid, and it is not. Pane is not a gooey.HasBackground, so
+// nothing fills its bounds — on the pixel tier the only cells in the top
+// row that ever receive p.style.Bg are the ones DrawBoxTitle writes
+// (`cells.SetString(r.X+2, r.Y, " "+t+" ", style)`, components/box.go).
+// Mid-span, which is where the rule lives and where every sample in this
+// package's tests reads, the real ground is clearStyle's answer or the
+// terminal's default even for a pane that declares a Bg.
+//
+// What keeps that from being a regression is that this colour now
+// reaches only the tier that forces one. Learning the terminal's background — an OSC 11
 // query — is filed on #259 with the rest of "look at this on a real
 // terminal".
 //

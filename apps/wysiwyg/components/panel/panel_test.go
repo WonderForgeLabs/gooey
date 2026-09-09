@@ -684,14 +684,16 @@ func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 			}
 		}
 	}
+	// WHAT THIS LOOP UNIQUELY CARRIES is the BRUSH, and it used to repeat
+	// the Fallback assertion above as well — which the opaque×ground loop
+	// now makes for every combination this one covers. Two spellings of
+	// one check drift apart; the one that is left is the one the loop
+	// above cannot make, because on the composited tier the Brush carries
+	// alpha and an equality between the two fields is false by
+	// construction. Raised in review of #474.
 	for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
 		s := hairlineStroke(fg, bg, true)
 		want := over(fg, bg, hairlineFade)
-		if s.Fallback != want {
-			t.Errorf("bg %v: the stroke's Fallback is %v and its Brush paints %v — "+
-				"a cell tier drawing this rule would use the border's own colour",
-				bg, s.Fallback, want)
-		}
 		br, bgc, bb, _ := s.Brush.ColorAt(0, 0).RGBA()
 		wr, wg, wb, _ := paint.Color(want).RGBA()
 		if br != wr || bgc != wg || bb != wb {
@@ -761,9 +763,30 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 				"no-hairline canvas to compare against")
 		}
 	}
-	without, err := drawCanvas(cols, rows, cw, short, fg, render.Color{}, true)
+	// AND THE ROW COUNT SCALED TO HOLD THE PIXEL HEIGHT, which is what
+	// makes the two canvases comparable at all.
+	//
+	// A shorter cell with `rows` held fixed is a shorter CANVAS — 24
+	// pixels against 192 here — and drawCanvas clamps the corner radius
+	// to half the shorter side. At cornerRadius 6.0 both clamp to 6.0
+	// and the arcs happen to agree, which is luck rather than
+	// construction: at 12.0 the short canvas clamps to 11.25 and the
+	// tall one does not, so the streams differ in their CORNERS while
+	// the assertion below reports on the rule. Raised in review of #474
+	// — the same shape as the sixelKeep problem this test replaced,
+	// which is why it is fixed rather than annotated.
+	if (rows*ch)%short != 0 {
+		t.Fatalf("a %d-pixel canvas does not divide into %d-pixel cells, so the "+
+			"no-rule canvas cannot be built at the same size", rows*ch, short)
+	}
+	without, err := drawCanvas(cols, (rows*ch)/short, cw, short, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if a, b := withRule.Image().Bounds(), without.Image().Bounds(); a != b {
+		t.Fatalf("the two canvases are %v and %v. The comparison below is a byte "+
+			"count, so any geometry difference lands in it as if it were the rule",
+			a, b)
 	}
 
 	// THE CONTROLLED ARM, at IDENTICAL geometry. The `without` canvas
@@ -1263,9 +1286,15 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a pane with %dx%d cells does not draw at all: %v", cw, ch, err)
 	}
-	alpha := func(x, y int) int {
-		_, _, _, a := dc.Image().At(x, y).RGBA()
-		return int(a >> 8)
+	// ALL FOUR CHANNELS, not alpha alone. This sampled alpha, which the
+	// arm's own mutation does not move: an OPAQUE rule drawn over the
+	// border is alpha 255 at both samples and differs only in colour —
+	// red 255 → 102 across the hairline's span, measured in review of
+	// #474. An alpha-only sample could not see the mutation it exists
+	// for, on the tier this branch made opaque.
+	px := func(x, y int) [4]int {
+		r, g, b, a := dc.Image().At(x, y).RGBA()
+		return [4]int{int(r >> 8), int(g >> 8), int(b >> 8), int(a >> 8)}
 	}
 	// TWO POINTS ON THE SAME BORDER STROKE, one of them inside the span a
 	// hairline would cover and one outside it. The rounded rectangle's
@@ -1304,16 +1333,74 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 			"(%d) has dropped below the 2 columns this sample steps back by",
 			outside, int(hairlineInset))
 	}
-	bare, span := alpha(outside, 0), alpha(inside, 0)
-	if bare == 0 {
+	bare, span := px(outside, 0), px(inside, 0)
+	if bare[3] == 0 {
 		t.Fatalf("no border ink at x=%d,y=%d, so there is nothing to compare "+
 			"against and this assertion is vacuous", outside, 0)
 	}
 	if span != bare {
-		t.Errorf("the top row has alpha %d at x=%d and %d at x=%d — the extra ink is "+
-			"a hairline drawn where hairlineY reported there was no room for one, "+
-			"which puts it under the border where it thickens the edge instead of "+
-			"dividing anything", span, inside, bare, outside)
+		t.Errorf("the top row is %v at x=%d and %v at x=%d — the difference is a "+
+			"hairline drawn where hairlineY reported there was no room for one, "+
+			"which puts it under the border where it thickens the edge or "+
+			"REPLACES its colour instead of dividing anything", span, inside,
+			bare, outside)
+	}
+}
+
+// TestAPaneTooNarrowForTheInsetsGetsNoHairline is hairlineY's finding on
+// the other axis, and the failure is louder: too short leaves the rule
+// under the border, where it is invisible or a thickening. Too narrow
+// hands DrawLine an x1 LEFT of its x0, and gg strokes that segment — a
+// short dash floating in the middle of a pane whose title has no rule
+// under it, which reads as a rendering fault rather than as an absent
+// flourish.
+//
+// A 2-column pane at cellW 6 is 12 pixels against 14 of inset, so this
+// is an ordinary window and not a degenerate one. Raised in review of
+// #474.
+func TestAPaneTooNarrowForTheInsetsGetsNoHairline(t *testing.T) {
+	const cw, ch = 6, 16
+	const cols = 2
+	if _, _, ok := hairlineSpan(float64(cols * cw)); ok {
+		t.Fatalf("a %d-pixel canvas reports room for a rule inset %.1f from each "+
+			"side, which is %.1f pixels of inset in %d of canvas",
+			cols*cw, hairlineInset, 2*hairlineInset, cols*cw)
+	}
+	y, tall := hairlineY(ch)
+	if !tall {
+		t.Fatalf("a %d-pixel cell has no room for a rule on the OTHER axis, so "+
+			"this test cannot tell the two guards apart", ch)
+	}
+
+	dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
+	if err != nil {
+		t.Fatalf("a %dx%d-cell pane does not draw at all: %v", cols, 4, err)
+	}
+	// THE MIDDLE OF THE RULE'S ROW, which is where a reversed segment
+	// lands: it runs between w-hairlineInset and hairlineInset, so it is
+	// centred on the canvas by construction.
+	mid := cols * cw / 2
+	row := int(y - hairlineWidth/2)
+	if _, _, _, a := dc.Image().At(mid, row).RGBA(); a != 0 {
+		t.Errorf("x=%d,y=%d carries alpha %d on a pane too narrow for the rule. "+
+			"hairlineSpan says x1 is left of x0 there, and a segment drawn between "+
+			"them is a dash in the middle of the pane", mid, row, a>>8)
+	}
+
+	// NON-VACUITY: the same sample on a pane wide enough IS inked, so
+	// "nothing is drawn anywhere" does not satisfy the assertion above.
+	const wide = 20
+	if _, _, ok := hairlineSpan(float64(wide * cw)); !ok {
+		t.Fatalf("a %d-column pane has no room either, so the arm below is not a "+
+			"contrast", wide)
+	}
+	dc2, err := drawCanvas(wide, 4, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, a := dc2.Image().At(wide*cw/2, row).RGBA(); a == 0 {
+		t.Errorf("a %d-column pane draws no rule at x=%d,y=%d either, so the zero "+
+			"above says nothing about the narrow case", wide, wide*cw/2, row)
 	}
 }
 
