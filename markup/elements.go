@@ -1008,12 +1008,15 @@ var defSegmented = &ElementDef{
 		// means on, so the attribute is never written for the default —
 		// which keeps "unset" and "set to the default" the same tree.
 		//
-		// optBool, not `== "true"`: a bool attribute that fell back to
+		// litBool, not `== "true"`: a bool attribute that fell back to
 		// false on an unrecognized spelling would turn Wrap="yes" into
 		// "stop cycling" silently, and this is the attribute where the two
-		// answers are hardest to tell apart by looking.
+		// answers are hardest to tell apart by looking. It was optBool
+		// until review of #470 — same intent, a laxer grammar, so Wrap="1"
+		// loaded here and the identical spelling of ProgressBar Thresholds
+		// did not.
 		if _, ok := e.Attrs["Wrap"]; ok {
-			w, err := optBool(e, "Wrap")
+			w, err := litBool(e, "Wrap")
 			if err != nil {
 				return nil, err
 			}
@@ -1402,56 +1405,6 @@ var defFileWatcher = &ElementDef{
 // cheap to refuse. A BOUND list cannot be checked here and is not:
 // the same path arrives as the absent state, and the component's doc
 // says so.
-// litInt reads a KindInt / BindsLiteral attribute, and REFUSES what it
-// cannot parse.
-//
-// Every one of these was `n, _ := strconv.Atoi(e.Attrs["X"])`. Atoi
-// returns 0 on failure, so `Gap="wide"`, `BarWidth="8px"` and
-// `Height="{{.Rows}}"` all loaded clean and laid out as if the attribute
-// had been omitted — the silent drop this vocabulary exists to refuse,
-// in the one place nobody was looking, because the discarded error was
-// spelled `_`.
-//
-// Absent and empty are NOT errors: they mean the declared Default, which
-// is what omitting the attribute already meant. Only a value that is
-// there and unreadable is refused.
-//
-// Found by the derived Kind/Binds sweep in #460 — the eleven-row
-// spot-check it replaces named none of these.
-func litInt(e Element, name string) (int, error) {
-	raw := strings.TrimSpace(e.Attrs[name])
-	if raw == "" {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
-			"literally — it is not a binding, and an unreadable value would "+
-			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
-	}
-	return n, nil
-}
-
-// litBool reads a KindBool / BindsLiteral attribute, and REFUSES what is
-// neither "true" nor "false".
-//
-// Same defect as litInt in a different spelling: `e.Attrs["X"] == "true"`
-// makes every other value mean false, so `Uniform="yes"`,
-// `Thresholds="1"` and `Bold="{{.Loud}}"` were accepted and ignored.
-func litBool(e Element, name string) (bool, error) {
-	switch strings.TrimSpace(e.Attrs[name]) {
-	case "":
-		return false, nil
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	}
-	return false, fmt.Errorf("markup: <%s %s=%q>: %s takes \"true\" or \"false\" "+
-		"written literally — it is not a binding, and any other value would "+
-		"silently mean \"false\"", e.Name, name, e.Attrs[name], name)
-}
-
 func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 	raw := e.Attrs["Paths"]
 	if bindRe.MatchString(raw) {
@@ -1468,6 +1421,103 @@ func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 		}
 	}
 	return components.Strs(parts), nil
+}
+
+// litInt reads a KindInt / BindsLiteral attribute, and REFUSES what it
+// cannot parse or cannot lay out.
+//
+// Every one of these was `n, _ := strconv.Atoi(e.Attrs["X"])`. Atoi
+// returns 0 on failure, so `Gap="wide"`, `BarWidth="8px"` and
+// `Height="{{.Rows}}"` all loaded clean and laid out as if the attribute
+// had been omitted — the silent drop this vocabulary exists to refuse,
+// in the one place nobody was looking, because the discarded error was
+// spelled `_`.
+//
+// ABSENT means the declared Default. PRESENT AND EMPTY does not: `Gap=""`
+// is a load error, the same answer the universal literal ints already
+// gave — `Width=""` and `Margin=""` fail inside applyLayout — so one
+// element could not answer two ways about the same empty string. The
+// first version of this helper accepted empty and justified it as "how
+// the designer writes 'not set'", which is not what the designer does:
+// apps/wysiwyg deletes the attribute on an empty value and never emits
+// `X=""`. A rationale that cited a mechanism doing the opposite was
+// worse than no rationale. Raised in review of #470.
+//
+// NEGATIVE IS REFUSED for the same reason unreadable is. Every call site
+// is a measured extent — a gap, a bar width, a row count — and
+// `Gap="-3"` parses cleanly, reaches `y += v.Gap`, and overlaps the
+// children it was meant to separate; `BarWidth="-5"` hands layout a
+// gooey.Size{W: -5}. The error text already said "a whole number", and
+// accepting a negative was the same silent-wrong one arithmetic step
+// later. If a signed literal attribute ever exists, it needs its own
+// helper and its own reason. Raised in review of #470.
+//
+// The value is quoted UNTRIMMED, so an author who typed `Gap=" wide "`
+// is shown the spaces rather than a tidied version that does not match
+// their file.
+//
+// Found by the derived Kind/Binds sweep in #460 — the eleven-row
+// spot-check it replaces named none of these.
+func litInt(e Element, name string) (int, error) {
+	raw, ok := e.Attrs[name]
+	if !ok {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
+			"literally — it is not a binding, and an unreadable value would "+
+			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is a measured extent and cannot "+
+			"be negative — it parses, so nothing would refuse it, and layout would "+
+			"quietly overlap or invert what it measures", e.Name, name, raw, name)
+	}
+	return n, nil
+}
+
+// litBool reads a KindBool / BindsLiteral attribute, and REFUSES what is
+// neither "true" nor "false".
+//
+// Same defect as litInt in a different spelling: `e.Attrs["X"] == "true"`
+// makes every other value mean false, so `Uniform="yes"`,
+// `Thresholds="1"` and `Bold="{{.Loud}}"` were accepted and ignored.
+//
+// THE HOUSE BOOL GRAMMAR, and it is now the only one a component
+// attribute uses. optBool read the same attributes through
+// strconv.ParseBool, so `Wrap="1"` loaded while `Thresholds="1"` was a
+// load error — one vocabulary answering two ways, which is what #460 is
+// about. parseCondBool (cond.go) already made the argument for strict:
+// a document that can spell a bool five ways is a document where the
+// same predicate reads differently in two files, and text bindings
+// render a bool as exactly "true"/"false", so this is that round trip.
+// Raised in review of #470, which also caught that
+// docs/markup-reference.md was already documenting the strict rule for
+// <Segmented Wrap> that the code did not implement.
+//
+// ParseBool survives elsewhere and deliberately is not swept here:
+// property.go's kindOf("bool") and resources.go read x:Property and
+// resource literals, companion.go:61 reads an environment variable, and
+// validate.go reads a declared Default. Those are not component
+// attributes; whether they should agree is #473.
+//
+// Absent means false. PRESENT AND EMPTY is a load error, for litInt's
+// reason.
+func litBool(e Element, name string) (bool, error) {
+	raw, ok := e.Attrs[name]
+	if !ok {
+		return false, nil
+	}
+	switch strings.TrimSpace(raw) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("markup: <%s %s=%q>: %s takes \"true\" or \"false\" "+
+		"written literally — it is not a binding, and any other value would "+
+		"silently mean \"false\"", e.Name, name, raw, name)
 }
 
 var defTypeAhead = &ElementDef{

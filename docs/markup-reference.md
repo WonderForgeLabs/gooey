@@ -195,7 +195,7 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 
 | Attribute | Meaning |
 |---|---|
-| `Gap` | Cells of space between consecutive children. Defaults to 0. |
+| `Gap` | Cells of space between consecutive children. Defaults to 0. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Background` | Fill color: `#rgb`/`#rrggbb` literal or a color-property binding. The fill covers the gap cells no child owns. |
 
 ```xml
@@ -226,7 +226,7 @@ Indenting the document does *not* indent a body — the file's indentation lands
 | Attribute | Meaning |
 |---|---|
 | `Style` | Named style from `Context.Styles`. |
-| `Bold` | `"true"` sets bold on top of whatever the named style says. |
+| `Bold` | `"true"` sets bold on top of whatever the named style says. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 
 ```xml
 <Text Grid.Row="1" Style="dim">space: pause/follow   f: filter   q: quit</Text>
@@ -364,7 +364,7 @@ Overlap is safe under damage tracking: the Composer's z-ordered repaint means th
 |---|---|
 | `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
 | `Label` | Text before the bar. Bindable or literal. |
-| `BarWidth` | Preferred width in cells; absent = 34. |
+| `BarWidth` | Preferred width in cells; absent = 34. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Style` | Overrides the threshold ramp entirely when present. |
 
 ### Sparkline
@@ -374,8 +374,8 @@ Overlap is safe under damage tracking: the Composer's z-ordered repaint means th
 | Attribute | Meaning |
 |---|---|
 | `Values` | **Required binding** to a `*prop.Property[[]float64]`. |
-| `Height` | Rows tall; absent = 1. |
-| `BarWidth` | Preferred width in cells; absent = 40. |
+| `Height` | Rows tall; absent = 1. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
+| `BarWidth` | Preferred width in cells; absent = 40. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Style` | Overrides the threshold ramp. |
 
 The series is tail-cropped to the arranged width, so a narrower window shows recent history rather than compressing all of it.
@@ -389,9 +389,9 @@ The series is tail-cropped to the arranged width, so a narrower window shows rec
 | `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
 | `Indeterminate` | Optional binding to a `*prop.Property[bool]`. While true the bar animates a band instead of showing a number. Absent means the bar can never be indeterminate — and then it starts no goroutine at all. |
 | `Label` | Text before the bar. Bindable or literal. |
-| `BarWidth` | Preferred width in cells; absent = 34. |
+| `BarWidth` | Preferred width in cells; absent = 34. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Unparseable or non-positive is a load error. |
-| `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. |
+| `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 | `Style` | Overrides the coloring entirely when present. |
 
 ```xml
@@ -450,7 +450,7 @@ Space, enter and a click on the label flip it. What makes it a *rocker* rather t
 | `Options` | **Required.** Either a literal pipe-separated list (`Options="Day \| Week \| Month"`, whitespace trimmed) or a binding to a `*prop.Property[[]string]`. |
 | `Selected` | **Required binding** to a `*prop.Property[int]`, clamped into range on read. |
 | `Changed` | Optional command, run after the selection moves. |
-| `Wrap` | `"false"` stops the selection at the ends, restoring `Toggle`'s rocker rule. Absent or `"true"` cycles. Any other spelling is a load error, not a silent false. |
+| `Wrap` | `"false"` stops the selection at the ends, restoring `Toggle`'s rocker rule. Absent cycles, and so does `"true"`. Any other spelling — `"1"`, `"yes"`, an empty value — is a load error, not a silent false. |
 | `Style` | Named style or a bound style. |
 
 ```xml
@@ -490,8 +490,8 @@ It paints nothing of its own, and has no `Background`. A container's bounds encl
 
 | Attribute | Meaning |
 |---|---|
-| `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. |
-| `Uniform` | `"true"` gives every member the width of the widest one. |
+| `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
+| `Uniform` | `"true"` gives every member the width of the widest one. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 | `Separator` | The rune drawn between members; absent draws none. |
 
 ```xml

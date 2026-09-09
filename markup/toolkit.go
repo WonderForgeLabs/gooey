@@ -2,7 +2,6 @@ package markup
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,27 +54,14 @@ func optDuration(e Element, attr string) (time.Duration, error) {
 	return d, nil
 }
 
-// optBool reads an optional bool attribute the way every other markup
-// literal reads one — strconv.ParseBool, so "1", "true", "TRUE" and "T"
-// all work — and makes anything else a LOAD ERROR.
-//
-// Erroring matters more here than for most attributes. A bool attribute
-// that fell back to false on an unrecognized spelling would turn a typo
-// into the silently less safe branch: <Companion CleanEnv="yes"> would
-// look like "start this child with an empty environment" and actually
-// hand it os.Environ() in full. Absent still means false; PRESENT AND
-// UNREADABLE is the case that must not be guessed at.
-func optBool(e Element, attr string) (bool, error) {
-	raw := strings.TrimSpace(e.Attrs[attr])
-	if raw == "" {
-		return false, nil
-	}
-	b, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, fmt.Errorf("markup: <%s %s=%q>: want a bool (true/false, 1/0)", e.Name, attr, raw)
-	}
-	return b, nil
-}
+// optBool IS GONE. It read a component's bool attribute through
+// strconv.ParseBool while litBool (elements.go) read the same kind of
+// attribute strictly, so <Segmented Wrap="1"> loaded and
+// <ProgressBar Thresholds="1"> did not — one vocabulary, two answers,
+// which is the class #460 is about. Its two call sites use litBool now
+// and its doc comment, which claimed ParseBool was "the way every other
+// markup literal reads one", stopped being true the moment the ten
+// silent-drop fixes landed. Removed in review of #470.
 
 // optionList resolves <Segmented Options=…>, which takes either form: a
 // binding to the viewmodel's own []string handle, or a literal

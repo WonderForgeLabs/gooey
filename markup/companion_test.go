@@ -265,19 +265,22 @@ func TestCompanionEnvironmentInheritsUnlessCleaned(t *testing.T) {
 		  </VStack>
 		</Gooey>`
 	}
-	// Every spelling strconv.ParseBool accepts has to mean what it says.
-	// A == "true" comparison made CleanEnv="1" and CleanEnv="TRUE" silently
-	// mean "inherit", which hands a child named by the document every API
-	// key and token in the launching shell — the one place this element
-	// let a typo pick the LESS safe branch. The unreadable spellings are
-	// load errors, pinned in TestCompanionMalformedDeclarationsAreLoadErrors.
+	// TWO SPELLINGS, and the shrink from five is the point. This read
+	// strconv.ParseBool, so "1", "TRUE" and "T" all scrubbed; it reads the
+	// house grammar now, and the other three are load errors pinned in
+	// TestCompanionMalformedDeclarationsAreLoadErrors.
+	//
+	// On a security switch the laxer grammar was the worse one. A
+	// == "true" comparison had made CleanEnv="1" silently mean "inherit",
+	// which hands a child named by the document every API key and token in
+	// the launching shell — the one place this element let a typo pick the
+	// LESS safe branch. ParseBool fixed that spelling by accepting it, and
+	// left "yes", "on" and "T " to fail the same way. Refusing everything
+	// but true/false is the answer that does not have a next near-miss.
+	// Narrowed in review of #470.
 	for _, tc := range []struct{ name, clean, want string }{
 		{"default inherits", "", "[inherited]"},
 		{"CleanEnv scrubs", `CleanEnv="true"`, "[]"},
-		{"CleanEnv=1 scrubs", `CleanEnv="1"`, "[]"},
-		{"CleanEnv=TRUE scrubs", `CleanEnv="TRUE"`, "[]"},
-		{"CleanEnv=T scrubs", `CleanEnv="T"`, "[]"},
-		{"CleanEnv=0 inherits", `CleanEnv="0"`, "[inherited]"},
 		{"CleanEnv=false inherits", `CleanEnv="false"`, "[inherited]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -805,8 +808,8 @@ func TestCompanionMalformedDeclarationsAreLoadErrors(t *testing.T) {
 		// A bool a typo silently flips is not a switch — least of all this
 		// one, which decides whether the child inherits every secret in
 		// the launching shell.
-		{"unreadable CleanEnv", page(`<Companion Name="worker" Path="sh" CleanEnv="yes"/>`), "want a bool"},
-		{"CleanEnv typo", page(`<Companion Name="worker" Path="sh" CleanEnv="ture"/>`), "want a bool"},
+		{"unreadable CleanEnv", page(`<Companion Name="worker" Path="sh" CleanEnv="yes"/>`), `takes "true" or "false"`},
+		{"CleanEnv typo", page(`<Companion Name="worker" Path="sh" CleanEnv="ture"/>`), `takes "true" or "false"`},
 		{"bad KillDelay", page(`<Companion Name="worker" Path="sh" KillDelay="soon"/>`), "KillDelay"},
 		{"negative StopTimeout", page(`<Companion Name="worker" Path="sh" StopTimeout="-2s"/>`), "must be positive"},
 		{"direct child", page(`<Companion Name="worker" Path="sh"><Text>x</Text></Companion>`), "takes no children"},
@@ -818,6 +821,14 @@ func TestCompanionMalformedDeclarationsAreLoadErrors(t *testing.T) {
 		{"Var name with =", page(`<Companion Name="worker" Path="sh"><Companion.Env><Var Name="A=B" Value="x"/></Companion.Env></Companion>`), "cannot contain"},
 		{"unknown Var attribute", page(`<Companion Name="worker" Path="sh"><Companion.Env><Var Name="A" Val="x"/></Companion.Env></Companion>`), "no such attribute"},
 		{"Error is not a string handle", page(`<Companion Name="worker" Path="sh" Error="{{.N}}"/>`), "*prop.Property[string]"},
+		// The ParseBool spellings, which USED to scrub the environment and
+		// are load errors since review of #470. A security switch with
+		// five accepted spellings has five near-misses; these are three of
+		// them, and they now say what the two legal words are.
+		{"CleanEnv=1", page(`<Companion Name="worker" Path="sh" CleanEnv="1"/>`), `takes "true" or "false"`},
+		{"CleanEnv=TRUE", page(`<Companion Name="worker" Path="sh" CleanEnv="TRUE"/>`), `takes "true" or "false"`},
+		{"CleanEnv=T", page(`<Companion Name="worker" Path="sh" CleanEnv="T"/>`), `takes "true" or "false"`},
+		{"CleanEnv empty", page(`<Companion Name="worker" Path="sh" CleanEnv=""/>`), `takes "true" or "false"`},
 		{"unresolvable Exited", page(`<Companion Name="worker" Path="sh" Exited="{{.Missing}}"/>`), "not found in context"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
