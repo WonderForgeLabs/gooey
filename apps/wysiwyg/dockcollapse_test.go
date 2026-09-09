@@ -753,6 +753,133 @@ func TestTheTrimNeverZeroesAHeaderItCanAfford(t *testing.T) {
 	}
 }
 
+// TestARenameNeedsMoreThanATouch is the damage-count pin for dockPane's
+// Title contract, and it exists because the contract this file used to
+// document was the opposite of what the code does.
+//
+// dockPane.Render subscribes to collapsed, pinned and the active state.
+// It does NOT read dock.rev, and rev is what dockModel.touch() bumps and
+// what dockHost.Render reads — so a touch cannot invalidate a header
+// whose bounds did not change. An open pane in the bottom strip is
+// exactly that case, and the doc used to instruct a renamer to call
+// touch() to avoid "a silent no-op".
+//
+// TWO ARMS, AND THE SECOND IS WHY ONE WOULD NOT DO. A COLLAPSED pane's
+// width IS its headerCols(), so renaming it moves the pane's RECT and
+// the repaint follows the LAYOUT — it looks like the touch worked. A
+// test written on that arm alone passes against a Render that reads rev
+// and against one that does not, which is the whole reason the wrong
+// contract survived being written down.
+//
+// THE COUNTS ARE THE ASSERTION, per CLAUDE.md: a cell check alone
+// passes just as well when the entire tree repainted, so it cannot tell
+// "the header was not invalidated" from "everything repainted and the
+// header still says PANEL". If a later change teaches dockPane.Render to
+// read rev, the open arm's 1 moves — and that is the change, to be
+// justified here rather than updated. Raised in review of #480.
+func TestARenameNeedsMoreThanATouch(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		collapsed bool
+		// painted is the count for the frame AFTER the rename+touch.
+		painted int
+		renamed bool
+	}{
+		{"open", false, 1, false},
+		{"collapsed", true, 8, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ed, c := dockFixture(t)
+			first, _ := bottomPair(t, ed, c)
+			if tc.collapsed {
+				ed.dock.ToggleCollapsed(first)
+				settle(t, c)
+			}
+			// A settled frame first, so the count below is the rename's
+			// and not the fixture's.
+			if _, n := c.Frame(); n != 0 {
+				t.Fatalf("the fixture had not settled: %d components repainted "+
+					"before the rename, so the count after it means nothing", n)
+			}
+			was := first.Title
+			first.Title = "RENAMED"
+			ed.dock.touch()
+			f, n := c.Frame()
+			if n != tc.painted {
+				t.Errorf("%d components repainted after Title = %q and a touch(), "+
+					"want %d. touch() bumps dock.rev and only dockHost.Render reads "+
+					"rev; a header repaints here only when its BOUNDS moved",
+					n, "RENAMED", tc.painted)
+			}
+			// render.RowText, not the package's rune-per-cell helper —
+			// CLAUDE.md's reason: the latter renders a continuation
+			// marker as a literal rune.
+			row := render.RowText(f.Cells, first.Bounds().Y)
+			if got := strings.Contains(row, "RENAMED"); got != tc.renamed {
+				t.Errorf("row %d reads %q; contains the new title = %v, want %v.\n"+
+					"The OPEN pane must NOT update: Title is set at construction and "+
+					"there is no supported runtime rename, so a test that renames has "+
+					"to change something the header reads. The COLLAPSED pane updates "+
+					"only because headerCols() is its width, so the rename moved its "+
+					"rect — that is the layout, not the touch",
+					first.Bounds().Y, row, got, tc.renamed)
+			}
+			if !tc.renamed && !strings.Contains(row, was) {
+				t.Errorf("row %d reads %q and no longer contains the ORIGINAL title "+
+					"%q either. This arm asserts the header is STALE; a row holding "+
+					"neither title means the assertion above passed for some other "+
+					"reason", first.Bounds().Y, row, was)
+			}
+		})
+	}
+}
+
+// TestTheTrimTooTightForAChevronEach covers the branch the sweep above
+// declines: a budget too small for one column per collapsed pane.
+//
+// TestTheTrimNeverZeroesAHeaderItCanAfford `continue`s once budget < n,
+// because there is no floor to assert once the floor cannot be met — so
+// WHICH panes survive here was unasserted in the whole suite while a
+// comment above the branch named the wrong rule for it.
+//
+// The three cases are the same three extents in different positions.
+// They must all give the same answer, and that is the assertion: the
+// survivor set is POSITIONAL and indifferent to width, last-declared
+// first, which is the opposite of place()'s `left` clamp. It is that way
+// to reproduce the per-cell loop this replaced, so a future trim that
+// quietly reverses the direction — the natural "fix" for a reader who
+// believes the old comment — goes red here. Raised in review of #480.
+func TestTheTrimTooTightForAChevronEach(t *testing.T) {
+	for _, tc := range []struct {
+		ext  []int
+		want []int
+	}{
+		{[]int{8, 3, 3}, []int{0, 1, 1}},
+		{[]int{3, 3, 8}, []int{0, 1, 1}},
+		{[]int{3, 8, 3}, []int{0, 1, 1}},
+		// A zero entry is an OPEN pane and is not a candidate for a
+		// chevron, so it must not consume one of the two on offer.
+		{[]int{3, 0, 8, 3}, []int{0, 0, 1, 1}},
+	} {
+		got := append([]int(nil), tc.ext...)
+		trimHeaders(got, 2)
+		if len(got) != len(tc.want) {
+			t.Fatalf("trimHeaders(%v, 2) returned %d entries", tc.ext, len(got))
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("trimHeaders(%v, 2) = %v, want %v. A budget below one "+
+					"column per collapsed pane is decided by POSITION and from the "+
+					"right — the last-declared keep their chevron. That is what "+
+					"reproduces the per-cell loop this replaced; place()'s `left` "+
+					"clamp runs the other way and is not the rule here",
+					tc.ext, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
 func sumOf(ns []int) int {
 	n := 0
 	for _, v := range ns {

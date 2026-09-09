@@ -147,14 +147,38 @@ type dockPane struct {
 	//
 	// A source property is what the model's other fields use precisely
 	// because the header reads them while painting. This one is not, and
-	// the reason is that it is set at construction and by the tests, not
-	// by the app at runtime: making it a property would buy a
-	// subscription nobody takes and a second spelling of "set the
-	// title". THE CONTRACT IS THEREFORE MANUAL — a caller that assigns
-	// Title on a live pane must call dockModel.touch(), which is what
-	// schedules the frame that re-lays-out and repaints. Written down in
-	// review of #480; the alternative is that the first runtime rename
-	// is a silent no-op.
+	// the reason is that it is SET AT CONSTRUCTION: newPane's literal is
+	// the only assignment in the package outside tests, and there is no
+	// supported runtime rename.
+	//
+	// THE PREVIOUS VERSION OF THIS COMMENT SAID THE OPPOSITE, and said
+	// it as a procedure: a caller assigning Title on a live pane "must
+	// call dockModel.touch()", the alternative being "that the first
+	// runtime rename is a silent no-op". Measured, touch() IS the silent
+	// no-op. It bumps dock.rev, and the only node reading rev is
+	// dockHost.Render; dockPane.Render subscribes to collapsed, pinned
+	// and the active state and never to rev, so a header whose bounds
+	// did not change is still clean — an OPEN pane repaints once and
+	// keeps its old title for the life of the program. A collapsed one
+	// in the bottom strip does update, and only by accident: headerCols
+	// is its width, so the rename moved the pane's RECT and the repaint
+	// followed the layout rather than the touch. A procedure documented
+	// to prevent a defect, which produces it, is worse than no procedure
+	// — it spends the attention that would have caught the bug.
+	//
+	// So: a test that renames must also change something the header
+	// READS, which every test in dockcollapse_test.go already does —
+	// `first.Title = …` is always followed by a Toggle*.
+	// TestARenameNeedsMoreThanATouch pins both halves with damage
+	// counts, so this paragraph is red rather than stale if the
+	// subscription set changes.
+	//
+	// Making Title a property is the change that would buy a supported
+	// rename, and it is not made here because nothing asks for one.
+	// Teaching dockPane.Render to read rev is the other, and it would
+	// repaint every header on every model touch — which per CLAUDE.md is
+	// itself the change, not a side effect of one. Corrected in review
+	// of #480.
 	Title string
 	// Content is every view this pane can show, OVERLAID in the body
 	// rect. Usually one; the editor pane holds two — the designer and
@@ -351,10 +375,28 @@ func trimHeaders(ext []int, budget int) {
 	if sum <= budget {
 		return
 	}
-	// NOT EVEN A CHEVRON EACH. Document order decides who keeps one —
-	// the same rule the `left` clamp in place() applies when the slot
-	// itself runs out, and the only rule available once the floor
-	// cannot be met for everybody.
+	// NOT EVEN A CHEVRON EACH, so somebody loses the only way to
+	// re-open their pane, and position is all that is left to decide
+	// who: every survivor gets exactly one column, so width has nothing
+	// to say.
+	//
+	// IT WALKS FROM THE RIGHT, so the LAST-declared panes keep a chevron
+	// and the first loses it. That is the direction the remainder loop
+	// below uses and it is chosen for the same reason — it is what the
+	// per-cell loop this replaced did, and the equivalence sweep above
+	// covers these budgets too.
+	//
+	// It is also the OPPOSITE of place()'s `left` clamp and of
+	// components.clampToExtent, which keep the first-declared and starve
+	// the last. This comment used to cite the `left` clamp as "the same
+	// rule", which borrowed authority from a rule the loop does not
+	// follow — the third comment on this branch to do that, and the
+	// reason the citation is now a contrast. Measured:
+	// trimHeaders([8 3 3], 2), ([3 3 8], 2) and ([3 8 3], 2) all give
+	// [0 1 1], indifferent to width. TestTheTrimTooTightForAChevronEach
+	// pins it; the sweep above skips this branch by design (it `continue`s
+	// once budget < n) because there is no floor to assert here.
+	// Corrected in review of #480.
 	if n > budget {
 		for i := len(ext) - 1; i >= 0; i-- {
 			switch {
