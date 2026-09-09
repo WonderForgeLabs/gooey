@@ -194,7 +194,7 @@ func retiredRuleProblems(f string) ([]string, error) {
 				// statement are passed now. Raised in review of #458.
 				span = i + 1
 			}
-			if qualifiedNearSpan(lines, i, span, hit) {
+			if qualifiedNearSpan(lines, i, span) {
 				continue
 			}
 			if reported[span] {
@@ -214,11 +214,12 @@ func retiredRuleProblems(f string) ([]string, error) {
 					"nearby to qualify it:\n\t%s\n"+
 					"Overlays are lifted out of document order into a paint "+
 					"layer (#437) and ranked within it (#439), so declaring "+
-					"one last decides nothing. Either state the current rule, "+
-					"or mark the sentence as history — the markers this test "+
-					"accepts are in qualifierRes. Hit-testing is the one thing "+
-					"position still orders; say so explicitly if that is what "+
-					"you mean.", f, at+1, strings.TrimSpace(lines[at])))
+					"one last decides nothing. Since #465 that is true of "+
+					"HIT-TESTING TOO — naming the hit walk used to earn a "+
+					"line an exemption here and no longer does. Either state "+
+					"the current rule, or mark the sentence as history; the "+
+					"markers this test accepts are in qualifierRes.",
+				f, at+1, strings.TrimSpace(lines[at])))
 		}
 	}
 	return problems, nil
@@ -390,18 +391,23 @@ var qualifierRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
 }
 
-// hitTestExemption is applied to the MATCHING LINE ALONE, never to the
-// window, and that is the whole reason it is a separate variable.
+// THE HIT-TEST EXEMPTION IS GONE, and its removal is part of #465
+// rather than a tidy-up.
 //
-// Hit-testing genuinely still walks document order, so a line about the
-// hit walk may say "last" and mean it — but it has to name the walk to
-// earn that, which is what this file's own comment always claimed and
-// what qualifiedNear did not do. Every other qualifier reads a ±2 window,
-// so a paragraph mentioning hit-testing two lines away exempted a stale
-// PAINT claim beside it. That adjacency is not rare: it is this sweep's
-// own house style — state the paint rule, then the input divergence, in
-// one comment (components/popup.go, mouse.go). Raised in review of #458.
-var hitTestExemption = regexp.MustCompile(`(?i)hit-?test|hit order|HitTest`)
+// It read `(?i)hit-?test|hit order|HitTest` and was applied to the
+// matching line alone. The justification was explicit and, at the time,
+// true: "hit-testing genuinely still walks document order, so a line
+// about the hit walk may say 'last' and mean it — but it has to name the
+// walk to earn that." #465 made FocusManager.HitTest ask overlayOf, the
+// same membership-and-rank rule paint derives its order from, so
+// position no longer decides anything the hit walk answers on its own.
+//
+// An exemption outliving its premise is worse than no exemption, because
+// it is a hole shaped like the exact sentence that is now wrong: any
+// line saying "later siblings win the click" would have named the walk
+// and been waved through, in the one file the reader most needs to be
+// right. This guard exists because a description outlives its subject;
+// it does not get to keep one of its own.
 
 // declaresItselfSuperseded exempts a whole file whose HEAD says the rule
 // below it is dead. That is for the dated decision records: a spec is a
@@ -480,23 +486,28 @@ var (
 // used to say" lands on the same line or the next one — and it is too
 // narrow to reach a neighbouring paragraph that happens to be right.
 func qualifiedNear(lines []string, i int) bool {
-	return qualifiedNearSpan(lines, i, i, lines[i])
+	return qualifiedNearSpan(lines, i, i)
 }
 
-// qualifiedNearSpan is qualifiedNear with the hit-test exemption read
-// against the SPAN THE MATCH CAME FROM rather than line i.
+// qualifiedNearSpan WAS qualifiedNear with the hit-test exemption read
+// against the span the match came from rather than line i, and the split
+// existed only to serve that exemption: a wrapped statement could name
+// the hit walk on line i+1, and refusing there would have rejected the
+// sentence the exemption was for.
 //
-// The two differ only for a wrapped statement: when the scan matches the
-// join of lines i and i+1, the sentence naming the hit walk may be on
-// i+1, and refusing the exemption there would reject the very sentence
-// hitTestExemption exists to admit. It is still not the window — i+2 is
-// no more part of the sentence than it ever was.
+// #465 deleted the exemption, so the `hit string` parameter is gone with
+// it and the two functions no longer differ in what they READ. What is
+// left of the split is the span, and that outlived the exemption for a
+// reason of its own: a statement can occupy two lines, and the ±2 window
+// belongs either side of the WHOLE of it. Passing one index and
+// computing the window around it SLIDES it down for a wrapped hit
+// instead of widening it, which silently drops the line above — where a
+// correction sits at least as often as below.
 //
-// first AND last, because a statement can occupy two lines and the
-// window belongs either side of the WHOLE of it. Passing one index and
-// computing ±2 around it slides the window down for a wrapped hit
-// instead of widening it, which silently drops the line above.
-func qualifiedNearSpan(lines []string, first, last int, hit string) bool {
+// So the names are kept because the CALL SITES still mean different
+// things: the scan passes the span it matched on, the guard's own
+// fixtures pass a line.
+func qualifiedNearSpan(lines []string, first, last int) bool {
 	const window = 2
 	lo, hi := first-window, last+window
 	if lo < 0 {
@@ -504,12 +515,6 @@ func qualifiedNearSpan(lines []string, first, last int, hit string) bool {
 	}
 	if hi >= len(lines) {
 		hi = len(lines) - 1
-	}
-	// The hit-test exemption is checked against THIS line only. See
-	// hitTestExemption: naming the hit walk excuses the line that names
-	// it, not its neighbours.
-	if hitTestExemption.MatchString(hit) {
-		return true
 	}
 	// JOINED AS PROSE, not with newlines. The qualifiers are phrases —
 	// "no longer", "used to say", "does not decide" — and a 72-column
@@ -1025,7 +1030,7 @@ func TestAWrappedHitKeepsTheLineAboveItsWindow(t *testing.T) {
 		}
 	}
 
-	if !qualifiedNearSpan(lines, i, i+1, joinWrapped(lines, i)) {
+	if !qualifiedNearSpan(lines, i, i+1) {
 		t.Error("a statement wrapped across lines i and i+1 does not see the " +
 			"qualifier at i-2. The window is being taken either side of the " +
 			"SECOND line rather than either side of the whole statement, so it " +
@@ -1034,50 +1039,57 @@ func TestAWrappedHitKeepsTheLineAboveItsWindow(t *testing.T) {
 	}
 }
 
-// TestTheHitTestExemptionIsLineScoped pins the one qualifier that reads a
-// single line instead of the ±2 window.
+// TestNamingTheHitWalkNoLongerExemptsALine is the DELETION of the one
+// qualifier that read a single line instead of the ±2 window.
 //
-// Hit-testing really does still walk document order, so a line about the
-// hit walk may say "last" and mean it — but it has to NAME the walk to
-// earn that. Every other qualifier reads the window, and the exemption
-// did too, so a paragraph mentioning hit-testing two lines away excused a
-// stale PAINT claim beside it.
+// It existed because hit-testing really did still walk document order: a
+// line about the hit walk could say "last" and mean it, provided it
+// NAMED the walk. #465 made the hit walk ask overlayOf the same question
+// the paint does, and an exemption keyed on naming a rule that has just
+// become wrong is a hole shaped exactly like the wrong claim — so it had
+// to go WITH #465 rather than after it.
 //
-// That adjacency is not hypothetical: it is this sweep's own house style,
-// which is to state the paint rule and then the input divergence in one
-// comment (components/popup.go, mouse.go). The exemption was therefore at
-// its most permissive exactly where the sweep concentrated its prose.
+// The header above this function used to name a test that no longer
+// exists, describing the exemption as live, because the replacement took
+// the function and left the comment. gofmt and vet are both blind to a
+// doc comment's subject; `go doc -u` is the instrument.
 //
-// Reverting the exemption to the window is otherwise SILENT — measured —
-// which is what this test is for. Raised in review of #458.
-func TestTheHitTestExemptionIsLineScoped(t *testing.T) {
+// Deleting the exemption is otherwise SILENT — measured — which is what
+// this test is for. Raised in review of #458, carried out in #478.
+func TestNamingTheHitWalkNoLongerExemptsALine(t *testing.T) {
 	stale := "// z-order is document order, so declare the MenuBar last."
 	if !statesTheRetiredRule(stale) {
 		t.Fatalf("the fixture line is not caught by retiredRule, so this test proves nothing:\n\t%s", stale)
 	}
 
-	// NAMED ON THE LINE: exempt. This is a real thing to write.
+	// THE SENTENCE THE EXEMPTION EXISTED FOR. It was true in August and
+	// is false now, which is the whole reason the exemption had to go
+	// with #465 rather than after it: an exemption keyed on naming the
+	// hit walk is a hole shaped exactly like the claim that has just
+	// become wrong.
 	onTheLine := []string{
 		"// unrelated",
 		"// hit-testing walks document order, so the last child is hit first.",
 		"// unrelated",
 	}
-	if !qualifiedNear(onTheLine, 1) {
-		t.Error("a line that names the hit walk was not exempted; the exemption has " +
-			"stopped working and every such comment now has to be reworded")
+	if qualifiedNear(onTheLine, 1) {
+		t.Error("a line stating the retired rule was waved through because it names the " +
+			"hit walk. That exemption was deleted in #465 — FocusManager.HitTest asks " +
+			"overlayOf now, so position decides nothing it answers on its own, and the " +
+			"sentence in this fixture is exactly the one a reader must not be left with.")
 	}
 
-	// NAMED TWO LINES AWAY, with a stale PAINT claim between: not exempt.
-	nearby := []string{
-		"// Hit-testing still walks document order.",
-		"//",
-		stale,
+	// AND THE CORRECTED FORM STILL PASSES, so the guard is asking for a
+	// rewrite that can actually be written. Without this arm the test
+	// above is satisfied by a guard that rejects every line in the repo.
+	corrected := []string{
+		"// unrelated",
+		"// hit-testing used to walk document order, so the last child was hit first.",
+		"// the overlay layer decides first now.",
 	}
-	if qualifiedNear(nearby, 2) {
-		t.Error("a stale paint claim was exempted because a NEIGHBOURING line mentions " +
-			"hit-testing. The exemption is for the line that names the walk, not for " +
-			"its neighbours — and 'paint rule, then input divergence, in one comment' " +
-			"is this repo's house style, so the window makes the guard blindest exactly " +
-			"where the prose is densest.")
+	if !qualifiedNear(corrected, 1) {
+		t.Error("the corrected sentence is still reported. Deleting the hit-test " +
+			"exemption must leave the epitaph and correction markers working, or every " +
+			"comment about this walk becomes unwritable.")
 	}
 }

@@ -1039,54 +1039,56 @@ structural rather than a rule every caller has to remember.
 
 Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
-`FocusManager.HitTest` returns the deepest component whose arranged
-`Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones; `Collapsed` subtrees, zero-size
-components, and `HitTestTransparent` components are not hit.
+`FocusManager.HitTest` returns **the component that paints last** among
+those whose arranged `Bounds()` contain the cell; `Collapsed` subtrees,
+zero-size components, and `HitTestTransparent` components are not hit.
 
-**"Later siblings first, because they paint on top" is no longer one
-statement — it is two, and they have come apart.** `gooey.Overlay` moves
-*paint* and not *input*: the paint walk lifts overlay subtrees into a
-second layer and sorts them by rank, and this walk does neither. It is
-still plain document order, reversed. So an overlay paints above the
-page from anywhere while being hit-tested exactly where it was declared,
-and the two agree only when the overlay happens to be late in the
-document.
+**That is one sentence on purpose, and for a while it was two.**
+"Deepest component, children before ancestors and later siblings before
+earlier ones" is what this walk used to say, and it agreed with paint
+only because document order was the whole of both answers.
+`gooey.Overlay` ([#437](https://github.com/WonderForgeLabs/gooey/issues/437))
+lifted overlay subtrees into a second paint layer and
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439) ranked that
+layer; paint started answering by layer-then-rank-then-position and this
+walk kept answering by position alone. An overlay painted above the page
+from anywhere while being hit-tested exactly where it was declared, so
+a host declared early painted its contents over a later sibling that
+quietly took their presses, with nothing on screen to say so.
 
-That is a live trap rather than a curiosity, and it got *worse* with the
-fix, not better. Being declared last used to be the only thing keeping
-an overlay host on top, so nobody could get the paint right and the
-input wrong — the two were the same decision. Now paint no longer needs
-it and hit-testing still does, which removes the visible reason to do
-the thing input silently depends on. Declare a host anywhere but last
-and its contents paint above a later sibling that quietly takes their
-presses, with nothing on screen to say so.
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) closed it by
+asking the *same* question rather than by writing a second ordering.
+`overlayOf` (`component.go`) is the one implementation of overlay
+membership and rank — `Composer.orderPaint` and `gooey.Compose`'s
+`collectPaint` already called it, which is what
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438) extracted it
+for — and the hit walk now threads it down the tree the same way,
+comparing candidates on exactly what `appendByRank` orders by: the
+lifted layer above the ordinary one, a higher rank above a lower one
+within it, and position only as the tiebreak. Nothing consults the
+Composer; the rule is a function of the tree.
 
-What keeps the framework's own overlays safe is that none of them wants
-the press. A `Popup` takes the pointer capture while open, so every
-event routes to its owner before this walk runs at all; `ToastHost`,
-`AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
-`HitTestTransparent`, so no press was ever theirs to lose. Transparency
-is about a component's own surface and not its subtree, so the toasts
-and adornments inside stay hittable — an *interactive* adorner somebody
-else writes is where the divergence bites, since `Adornment` requires
-only `gooey.Component`, `Anchor` and `Place`. Closing it properly means
-teaching this walk the same two layers the paint walk has
-([#375](https://github.com/WonderForgeLabs/gooey/issues/375) is the
-related "no seam for walking the children" problem), and
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465) is where that
-is weighed against the cheaper fix of marking `Toast` transparent too.
+Two consequences worth naming. An **interactive adorner** — `Adornment`
+requires only `gooey.Component`, `Anchor` and `Place` — now receives the
+presses that land where it paints, which it did not before. And a
+`Popup` still never depended on any of this: it takes the pointer
+capture while open, so events route to its owner before this walk runs
+at all. `ToastHost`, `AdornmentLayer`, `tipPopup`, `markerPopup` and
+`DragGhost` are `HitTestTransparent`, and transparency is about a
+component's own surface and not its subtree, so the toasts and
+adornments inside stay hittable.
 
-The divergence is PINNED rather than only described.
-`TestARankOrdersPaintAndNotHitTesting` (root package) builds two overlays
-differing only in rank, asserts that paint answers by rank and this walk
-by document order, and fails if either ever changes — including if
-hit-testing becomes rank-aware, at which point the caveats here, in
-`mouse.go`, in `components/toast.go` and in the markup reference come out
-together. Two answers that live in different files with no shared symbol
-do not otherwise drag each other into review.
+`TestARankOrdersHitTestingAsWellAsPaint` (root package) builds two
+overlays differing only in rank, declares the higher-ranked one first,
+and requires paint and the hit walk to return the same one. It is the
+inversion of `TestARankOrdersPaintAndNotHitTesting`, which pinned the
+divergence and named the four files whose caveats came out with it.
 
-The walk allocates nothing, because it runs on every motion report.
+The walk still allocates nothing, because it runs on every motion
+report. What it gave up is the early exit on a hit: an earlier sibling
+can out-rank a later one, so every subtree whose bounds contain the
+point is visited. Bounds still prune at every node, which is where the
+work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:

@@ -169,7 +169,7 @@ this change would have revealed it.
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |
 | These hosts claim these ranks | `TestTheOverlayHostsClaimTheRanksTheyDocument` | rank `AdornmentLayer` at the floor (M1) |
 | A negative rank lands on the floor | `TestANegativeRankLandsOnTheFloor` | drop the clamp in `overlayRank` (`component.go`) |
-| Ranks order paint and NOT hit-testing | `TestARankOrdersPaintAndNotHitTesting` | walk `hitTest`'s children forward (`mouse.go`) — and M4, which reddens the paint arm |
+| Ranks order paint and NOT hit-testing | *withdrawn* — the divergence this row pinned was closed by [#465](https://github.com/WonderForgeLabs/gooey/issues/465); the row is now `TestARankOrdersHitTestingAsWellAsPaint`, asserting the two agree |
 
 **The last two rows were one row, and that was the defect.** A single
 test asserting "a tooltip outranks a toast" by comparing two ints proved

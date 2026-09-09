@@ -157,19 +157,15 @@ func (h *ToastHost) PassesCellsThrough() {}
 // — a page with a toast layer would otherwise never receive a click.
 // The toasts themselves stay hittable; they own visible cells.
 //
-// WHICH IS THE CAVEAT ON "DECLARE IT ANYWHERE", and it belongs here
-// rather than only in the spec, because this is the file that grants the
-// freedom. The rank frees the host's position for PAINT. Hit-testing is
-// a separate walk that takes later siblings first and knows nothing
-// about ranks, so a host declared FIRST paints its toasts over a button
-// and leaves the click to the button. Toasts are informational and
-// mostly nobody clicks them, so this is a caveat and not a bug — but if
-// yours must be clickable where it overlaps something interactive,
-// declare the host late. Making Toast itself HitTestTransparent would
-// close it and is a behaviour change for another PR; the divergence is
-// pinned by TestARankOrdersPaintAndNotHitTesting in the root package and
-// tracked in #465, which weighs that against making hitTest layer-aware.
-// Raised in review of #456.
+// THE HOST'S POSITION IS FREE, FULL STOP — and this paragraph used to
+// carry the caveat that it was free for PAINT only. It said hit-testing
+// was a separate walk that took later siblings first and knew nothing
+// about ranks, so a host declared FIRST painted its toasts over a button
+// and left the click to the button. #465 closed that: FocusManager.HitTest
+// asks overlayOf, the same membership-and-rank rule the paint order is
+// derived from, so a toast that paints over a button now takes the press
+// as well. A clickable toast needs no declaration discipline, because
+// there is nothing left for position to decide.
 func (h *ToastHost) HitTestTransparent() bool { return true }
 
 // Toast is one transient message — an ordinary leaf, so its paint node

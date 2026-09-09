@@ -347,19 +347,31 @@ to carry the nearest ancestor's background down
 ordering rule is not sharing a picture; if you add a paint path, the
 pre-clear is the half that will be forgotten.
 
-**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:131`;
-the reverse child walk is `mouse.go:157`) knows about neither layer nor
-rank, so the two planes can now disagree: a ranked host declared FIRST
-paints above a button and leaves the click to the button. Under the
-retired "declare it last" rule they agreed, which is why the divergence
-arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
-hit-testing ever becomes rank-aware, so the caveat in
-`components/toast.go`, `docs/markup-reference.md`, `docs/architecture.md`
-and `mouse.go` cannot outlive the behaviour it describes. `Popup` is
-exempt because it holds pointer capture while open, which routes presses
-before the walk runs — that is Popup's mechanism, not the marker's.
-Closing the gap is
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+**The rank orders PAINT AND THE CLICK, through one function.** It
+ordered paint alone until [#465](https://github.com/WonderForgeLabs/gooey/issues/465):
+`hitTest` walked children in reverse and knew about neither layer nor
+rank, so a ranked host declared FIRST painted above a button and left
+the click to the button. Under the retired "declare it last" rule the two
+planes agreed, which is why the divergence arrived with the ranks — the
+freedom is what made it reachable.
+
+`FocusManager.HitTest` (`mouse.go:152`) now returns the component that
+PAINTS LAST among those containing the cell, comparing candidates on
+exactly what `appendByRank` orders by, and it gets there by asking
+`overlayOf` — the same membership-and-rank rule `orderPaint` and
+`gooey.Compose` ask. That is the point: not a second ordering, the same
+one. `TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
+Four caveats came out with the fix (`components/toast.go`,
+`docs/markup-reference.md`, `docs/architecture.md`, `mouse.go`), and so
+did `zorderdocs_test.go`'s hit-test exemption, whose whole premise was
+that this walk still answered by position.
+
+What the walk gave up is the early exit on a hit — an earlier sibling
+can out-rank a later one, so every subtree whose bounds contain the
+point is visited. It still allocates nothing and still prunes on bounds
+at every node. `Popup` never depended on any of it: it holds pointer
+capture while open, which routes presses before the walk runs — that is
+Popup's mechanism, not the marker's.
 
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
