@@ -55,7 +55,7 @@ import (
 // example, which was true until markup.ElementSpec.Nested replaced the
 // hardcoded name. Deleting that hardcode is the point of the field, so a
 // comment still quoting it is the same staleness in prose.
-
+//
 // A LOOKUP, not a Catalog() call. Context.Catalog is not a getter — it
 // re-derives every builtin spec with fresh Attrs copies, re-runs
 // markNested and sorts, and globs and parses every include file when a
@@ -76,6 +76,16 @@ func (ed *editor) specOf(elem string) (markup.ElementSpec, bool) {
 func (ed *editor) canHold(parent, elem string) bool {
 	spec, ok := ed.specOf(parent)
 	if !ok {
+		return false
+	}
+	// A NESTED ELEMENT HAS EXACTLY ONE LEGAL HOME, so the permissive
+	// modes have to refuse it; ModeRestricted below already asks the
+	// right question by name. Without this, canHold("Canvas",
+	// "MenuItem") is true, paste lands the node at the root, the rebuild
+	// fails and docRoot goes nil while the status line says it worked —
+	// issue #403's failure mode, reached by the gesture selectChild
+	// opens. Found in review of #454.
+	if e, ok := ed.specOf(elem); ok && e.Nested && spec.Children.Mode != markup.ModeRestricted {
 		return false
 	}
 	switch spec.Children.Mode {
@@ -203,6 +213,14 @@ func (ed *editor) planAdd(elem string) addPlan {
 		if w := ed.wrapperFor(n.Elem, elem); w != "" {
 			return addPlan{into: n, wrap: w}
 		}
+	}
+	// THE FALLBACK ASKS TOO. Fixing canHold alone still lands the node
+	// here: the loop finds nothing that can hold it and drops to the
+	// root, which is the illegal parent by another route. A refusal is
+	// the honest answer for an element with one legal home and no
+	// instance of it on the page.
+	if e, ok := ed.specOf(elem); ok && e.Nested && !ed.canHold(ed.doc().Elem, elem) {
+		return addPlan{}
 	}
 	return addPlan{into: ed.doc()}
 }

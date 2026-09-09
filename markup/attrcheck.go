@@ -91,37 +91,21 @@ func describeParent(parent string) string {
 // misplaced one can be reported as misplaced rather than as unknown.
 func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map[string]bool, attached map[string]string) {
 	allowed = make(map[string]bool, len(spec.Attrs)+len(universalAttrs)+4)
-	// NAME IS UNIVERSAL EXCEPT WHERE THERE IS NOTHING TO ADDRESS. It is
-	// hoisted above the TakesLayout gate below because every element can
-	// be named whether or not it has a layout surface — every element
-	// that BUILDS one, which a pseudo-element does not.
-	//
+	// NAME IS UNIVERSAL EXCEPT WHERE THERE IS NOTHING TO ADDRESS —
+	// hoisted above the TakesLayout gate because every element that
+	// BUILDS one can be named, which a pseudo-element does not.
 	// buildMenuBar reads <Menu> and <MenuItem> as data and never calls
 	// named(), so <MenuItem Name="Save"> loaded clean and ctx.Named
-	// stayed empty forever: accepted, dropped, no error on any surface.
-	// The designer made it reachable AND put the row first, because
-	// KindIdentity sorts into CategoryDesign at rank 0 — so the fix for
-	// #429 turned a latent hole into an inviting one.
+	// stayed empty forever: accepted, dropped, no error anywhere.
 	//
-	// Pseudo is already the declared form of "there is nothing to
-	// address", which is exactly the question being asked. Found in
-	// review of #454.
-	//
-	// THE WRITE IS GUARDED RATHER THAN COMPUTED, and the difference is
-	// not style. This map's contract is ABSENT-means-disallowed, because
-	// suggest() below ranges over its KEYS — both the near-miss scan and
-	// the exhaustive "this element takes …" listing — and neither reads
-	// the value. checkAttrs does read it, so `allowed["Name"] = false`
-	// still REFUSED correctly while the two messages went on advertising
-	// Name: <MenuItem Name="Zork"> answered "did you mean Name?", and the
-	// listing named Name as accepted on the element that had just started
-	// refusing it. Three failures from one line, and the loop that sends
-	// a reader from the listing back to the rejection is the one this
-	// file's header comment exists to forbid.
-	//
-	// Every other write in vocabulary() is a bare `= true`, so the
-	// contract held implicitly until this line asked a question whose
-	// answer could be false. Found in review of #454.
+	// THE WRITE IS GUARDED RATHER THAN COMPUTED, and that is not style.
+	// This map's contract is ABSENT-means-disallowed, because suggest()
+	// ranges over its KEYS and never reads the value. So
+	// `allowed["Name"] = false` refuses correctly while both messages go
+	// on advertising Name — "did you mean Name?" on the element that had
+	// just started refusing it. Every other write here is a bare
+	// `= true`, so the contract held implicitly until this line asked a
+	// question whose answer could be false.
 	if !spec.Pseudo {
 		allowed["Name"] = true
 	}

@@ -588,8 +588,6 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 // palette is built from means a third-party <Table> declaring
 // GrantCell is designable here with no change to this file.
 //
-// Read from ed.palette rather than a fresh Catalog() call, for the same
-// reason bodySpec does: the palette IS the document's vocabulary.
 // grantOf is the attached-property surface a parent contributes, asked
 // of the CATALOG rather than of the palette.
 //
@@ -1969,26 +1967,21 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 	if p := ed.parentOf(n); p != nil {
 		parent = p.Elem
 	}
-	// THE CATALOG, NOT ed.palette, and the difference is the whole of
-	// #429's second half. The palette is the catalog minus what may not
-	// be PLACED on its own; this asks what may be SET on what is already
-	// there, and those stopped being the same question the moment a
-	// nested element could be selected. Resolving a <MenuItem> here in
-	// the palette finds nothing and falls through to the bare spec below
-	// — an element with no attributes — so the grid would have shown an
-	// empty list for a node whose vocabulary this same change went and
-	// declared. Which is the reported symptom, reproduced by the fix for
-	// it.
+	// THE CATALOG, NOT ed.palette. The palette is the catalog minus what
+	// may not be PLACED on its own; this asks what may be SET on what is
+	// already there, and those stopped being one question the moment a
+	// nested element could be selected. Asking the palette for a
+	// <MenuItem> finds nothing and falls through to the bare spec below,
+	// so the grid shows an empty list for a node whose vocabulary this
+	// same change declared.
 	//
-	// THE MAP, THOUGH, NOT Catalog(), AND THIS ONE IS ON THE PAINT PATH.
+	// THE MAP, THOUGH, NOT Catalog(), BECAUSE THIS IS ON THE PAINT PATH.
 	// attrRows reaches here from ed.attrItems, a prop.NewComputed bound
-	// to <ItemsView Items="{{.AttrItems}}"> — so it evaluates INSIDE
-	// that ItemsView's paint node, on every repaint after an ed.rev
-	// bump. A Catalog() call there rebuilds every builtin spec while
-	// painting, and would do filesystem I/O and XML parsing there the
-	// moment a document context sets Includes, which a workspace editor
-	// is one feature away from. specOf reads the same map for the same
-	// reason.
+	// to <ItemsView Items="{{.AttrItems}}">, so it evaluates inside that
+	// ItemsView's paint node on every repaint after an ed.rev bump. A
+	// Catalog() call there rebuilds every builtin spec while painting,
+	// and does filesystem I/O and XML parsing the moment a document
+	// context sets Includes.
 	if e, ok := ed.specOf(n.Elem); ok {
 		return e, parent, n
 	}

@@ -328,3 +328,84 @@ The palette test asserts the **derivation** rather than three names: every
 element some other entry restricts itself to is absent, and every restricted
 container not itself excluded is present. A fourth nested element is covered
 by the same loop.
+
+## The gesture opened a paste path, and that was the regression
+
+`alt+enter` is the first way to *select* a `<Menu>`, `<MenuItem>` or
+`<Tab>` — the feature. Selection is also the entry condition for `y`,
+`ctrl+x` and `p`, and nothing on the paste path knew about `Nested`:
+
+- `canHold` answers from the **parent's** `Children.Mode` alone, so its
+  permissive tail made `canHold("Canvas", "MenuItem")` true;
+- `planAdd`'s root fallback was unguarded, so fixing `canHold` alone
+  still landed the node at the root;
+- `insertSubtree` was **not** transactional, where `addSelected`,
+  `promoteSelected` and `demoteSelected` all revert on `docRoot == nil`.
+
+Measured before the fix, for all three nested elements:
+
+```
+canHold(Canvas, MenuItem) = true  [Nested=true]
+status="pasted <MenuItem>" docRoot==nil? true
+```
+
+The status line reported success, `docRoot` was nil, and click-to-select
+was dead for the **whole** document while the last good tree stayed on
+screen looking pressable — [#403](https://github.com/WonderForgeLabs/gooey/issues/403)'s
+exact failure mode, reached through a gesture this change opened.
+`ElementSpec.Nested` is the answer at all three sites, and its own doc
+comment already stated the rule: legal only inside a parent that names
+it. Pinned by
+`TestPastingANestedElementIsRefusedRatherThanKillingTheDocument` (all
+three elements) and, separately, by
+`TestPastingIntoAContainerThatRefusesItRevertsTheDocument` — the two
+watch different seams, since the `canHold` gate makes the nested case
+unreachable and so can never exercise the revert.
+
+## The allocation pin is differential, and the absolute one was wrong twice
+
+Both allocation tests started as absolute ceilings and both were
+corrected. `TestAttrRowsDoesNotRebuildTheCatalog` read `ceiling = 135`
+against a measured 90, which looks like generous headroom and is not: the
+cost is per attribute **kind**, roughly 18 allocations for a
+`MenuItem`-shaped attribute against 1.6 for a layout row. So 45 of
+headroom is about two and a half more `<MenuItem>` attributes — and
+[#400](https://github.com/WonderForgeLabs/gooey/issues/400), the next PR
+in this stack, adds `Icon` to `<MenuItem>` and takes it to ~108. The
+failure would have landed in a nested module CI only vets, in a file
+named for menu vocabulary, on a change that added an attribute.
+
+An absolute ceiling is also the wrong instrument for the claim. What is
+being asserted is that a `Catalog()` read scales with **catalog size**
+and row-building does not, so the test registers K and 2K synthetic
+elements and asserts the per-element slope is ~0. Measured: 90 allocations
+at 40 elements and 90 at 80 (0.00 per element); restoring the `Catalog()`
+call in `specOf` gives 220 and 262 — a slope of 1.05, which is what a
+per-element rebuild looks like. That form is invariant to the row cost
+entirely, so no future attribute on `<MenuItem>` can break it.
+
+## Review history
+
+The round-by-round record lives here rather than in the source comments,
+which is where it had accumulated: across the non-test files this change
+touches, 20 comment lines were review narration ("raised in round 4", "my
+first ceiling was 20") rather than the *why* whose violation is silent.
+CLAUDE.md asks for the second and this document is the place for the
+first.
+
+- **Palette vs catalog, three sites.** `target()` was corrected first,
+  `grantOf` two rounds later "one line away and missed", and `specFor`
+  (now `specOrBare`) two rounds after that. Each asks what may be **SET**
+  and each was answering from `ed.palette`, which is what may be
+  **PLACED**. Three separate discoveries of one distinction is the
+  argument for `specOf` being the single lookup.
+- **The deny-list hoist.** `scanChildAttrs` was corrected first; `scan`
+  and `scanWith` kept the original ordering for two more rounds. The
+  fixture that pinned the fix reached only `scan`, so mutating
+  `scanWith`'s copy was silent until a second fixture put the denied call
+  one level down.
+- **`allowed["Name"] = false` vs. omitting the key.** The map's contract
+  is absent-means-disallowed; a `false` value refused correctly while
+  `suggest()`, which ranges over keys, went on advertising `Name` on the
+  element that had just started refusing it.
+

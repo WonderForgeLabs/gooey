@@ -233,6 +233,13 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// pressable. That is the exact failure addplan.go exists to close for
 	// the palette; paste reaches the same container by the other gesture.
 	plan := ed.planAdd(n.Elem)
+	// NOTHING CAN HOLD IT. planAdd returns a zero plan for a Nested
+	// element with no legal parent on the page, and appending into a nil
+	// node would panic where every other refusal here sets the status.
+	if plan.into == nil {
+		ed.status.Set("✗ <" + n.Elem + "> has no legal parent on this page")
+		return
+	}
 	into := plan.into
 	renamed := ed.renameInto(n)
 	if err := ed.rebindInto(n, renamed); err != nil {
@@ -270,6 +277,7 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		w.Kids = []*node{n}
 		add = w
 	}
+	prevSel := ed.sel
 	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	// Mutate, then rebuild — the mutation seam every other edit in this
@@ -278,6 +286,22 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// undo is derived at the choke point, which is why a future mutator
 	// cannot forget it.
 	ed.rebuild()
+	// REVERT ON A FAILED REBUILD, the same guard promoteSelected and
+	// demoteSelected carry (move.go). This path did not have it, so a
+	// paste the vocabulary refuses reported success and left docRoot nil
+	// — click-to-select dead for the WHOLE document while the last good
+	// tree stayed on screen looking pressable (#403). The gates above
+	// make that unreachable through canHold; this is the backstop for
+	// every other way a pasted subtree can fail to build.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		into.Kids = into.Kids[:len(into.Kids)-1]
+		ed.sel = prevSel
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + into.Elem +
+			">: " + refused)
+		return
+	}
 	ed.status.Set(verb + " " + describeNode(n) + ed.sayRenamed(renamed))
 }
 
@@ -489,27 +513,22 @@ func seedValue(spec markup.ElementSpec, attr string) (any, error) {
 // binding path wants a spec it can range over, and "no attributes" is a
 // usable answer where "not found" is not.
 //
-// IT ASKS ed.specs, NOT ed.palette, and that is the whole of this
-// function. The palette is what may be INSERTED; the catalog is what
-// exists. A paste rebinds attributes on nodes that are already in the
-// document, so the palette's exclusions are the wrong filter — the same
-// distinction target() was corrected for in round 1 and grantOf in round
-// 4, in the third site, which answered it from the palette until now.
+// IT ASKS ed.specs, NOT ed.palette. The palette is what may be INSERTED;
+// the catalog is what EXISTS. A paste rebinds attributes on nodes
+// already in the document, so the palette's exclusions are the wrong
+// filter here.
 //
-// It went unnoticed because it is LATENT: Name is refused on <Menu> and
-// <MenuItem>, and <Tab> — the one Nested element that still takes a Name
-// — declares no attributes, so the fallback and the real spec are
-// indistinguishable today. Closing #461 makes the <Tab> half live, and
-// the failure then is silent in the worst direction: rebindInto has
-// already rewritten the attribute (clipboard.go, before this is
-// consulted), so a nil handle skips the ed.ctx.Values registration and
-// the paste lands a {{.New_Attr}} binding nothing registers. The
-// document then fails to load, and seedValue's doc comment would
-// diagnose it as "an element registered as a bare Builder".
+// Latent today — Name is refused on <Menu>/<MenuItem>, and <Tab>
+// declares no attributes, so the fallback and the real spec are
+// indistinguishable — and silent in the worst direction once #461 makes
+// the <Tab> half live: rebindInto has already rewritten the attribute,
+// so a nil handle skips the ed.ctx.Values registration and the paste
+// lands a binding nothing registers.
 //
-// The RENAME is half the fix. specFor and specOf were one character
-// apart and, once ed.specs existed, answered different questions from
-// different sources. Raised in review of #454.
+// The name is half the fix: specFor and specOf were one character apart
+// and answered different questions from different sources. The
+// palette-vs-catalog history is in
+// docs/specs/2026-09-05-pseudo-elements.md.
 func (ed *editor) specOrBare(elem string) markup.ElementSpec {
 	if e, ok := ed.specOf(elem); ok {
 		return e

@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -395,25 +397,78 @@ func TestARebuildDoesNotRebuildTheCatalogPerNode(t *testing.T) {
 // which has nowhere to put an error. docCtx sets no Includes today and
 // this is a workspace editor.
 //
-// The ceiling comes from BOTH measurements rather than a guess:
-// building the rows for a selected <MenuItem> costs 91 allocations, and
-// restoring the Catalog() call in specOf takes it to 180. 135 sits
-// between them with room either side — a guard against a regression of
-// a known shape, not a budget attrRows is held to.
+// DIFFERENTIAL, NOT AN ABSOLUTE CEILING, and the first version of this
+// test had the shape its sibling was corrected out of. It read
+// `ceiling = 135` against a measured 90 — but the cost is per attribute
+// KIND, not per row (~18 allocations for a MenuItem-shaped attribute
+// against ~1.6 for a layout row), so 45 of headroom is about two and a
+// half more <MenuItem> attributes. #400, the next PR in this stack, adds
+// Icon to <MenuItem> and takes it to ~108. The failure would have landed
+// in a nested module CI only vets, in a file named for menu vocabulary,
+// on a change that added an attribute — an absolute budget on the
+// vocabulary this PR exists to grow.
+//
+// What the claim actually is: a Catalog() read scales with CATALOG SIZE
+// and row-building does not. So register K and 2K extra elements and
+// assert the per-element delta is ~0. That is invariant to the row cost
+// entirely, which is why it survives every future attribute on
+// <MenuItem> — and it measures the regression directly rather than
+// inferring it from a total. Found in review of #454.
 func TestAttrRowsDoesNotRebuildTheCatalog(t *testing.T) {
 	ed, _, _, _, item := menuFixture(t)
 	ed.setSelection(item)
 	if len(ed.attrRows()) == 0 {
 		t.Fatal("the selected <MenuItem> has no rows: this test would measure nothing")
 	}
-	got := testing.AllocsPerRun(5, func() { _ = ed.attrRows() })
-	const ceiling = 135
-	if got > ceiling {
-		t.Errorf("attrRows() allocates %.0f times (ceiling %d): something on it is rebuilding "+
-			"the catalog, and it runs inside the properties ItemsView's paint node — see target()",
-			got, ceiling)
+
+	// grow registers n synthetic elements and re-derives, then measures.
+	grow := func(n int) float64 {
+		if ed.docCtx.Elements == nil {
+			ed.docCtx.Elements = map[string]*markup.ElementDef{}
+		}
+		for i := len(ed.docCtx.Elements); i < n; i++ {
+			name := fmt.Sprintf("Synthetic%d", i)
+			ed.docCtx.Elements[name] = &markup.ElementDef{
+				Name:  name,
+				Known: true,
+				Attrs: []markup.AttrSpec{{Name: "Alpha"}, {Name: "Beta"}},
+				Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+					return nil, errors.New("synthetic")
+				},
+			}
+		}
+		ed.loadPalette()
+		return testing.AllocsPerRun(5, func() { _ = ed.attrRows() })
 	}
-	t.Logf("attrRows() allocates %.0f times", got)
+
+	const k = 40
+	atK := grow(k)
+	at2K := grow(2 * k)
+	perElement := (at2K - atK) / float64(k)
+
+	// NON-VACUITY: the registrations must actually have reached the
+	// catalog, or both arms measure the same thing and the delta is
+	// trivially zero.
+	if len(ed.specs) < 2*k {
+		t.Fatalf("only %d specs after registering %d synthetic elements: the arms are "+
+			"not distinguishable and this test would pass for the wrong reason",
+			len(ed.specs), 2*k)
+	}
+
+	// A Catalog() call costs ~1 allocation per registered element, so a
+	// regression shows as a per-element slope near 1. Row-building has no
+	// term in catalog size at all, so the honest expectation is 0; the
+	// threshold is loose enough to absorb measurement noise and tight
+	// enough that a restored Catalog() read cannot hide under it.
+	if perElement > 0.5 {
+		t.Errorf("attrRows() costs %.2f allocations per REGISTERED ELEMENT "+
+			"(%.0f at %d elements, %.0f at %d): its cost scales with the catalog, so "+
+			"something on it is rebuilding the catalog — and it runs inside the "+
+			"properties ItemsView's paint node. See target().",
+			perElement, atK, k, at2K, 2*k)
+	}
+	t.Logf("attrRows(): %.0f allocs at %d elements, %.0f at %d (%.2f per element)",
+		atK, k, at2K, 2*k, perElement)
 }
 
 // TestANestedParentsGrantStillReachesTheGrid is finding 3 of the review
@@ -552,5 +607,91 @@ func TestTheCatalogSnapshotMatchesTheCatalog(t *testing.T) {
 	check("after a vocabulary change and loadPalette")
 	if _, ok := ed.specs["SnapshotProbe"]; !ok {
 		t.Error("the re-derive did not pick up the new element, so the check above is vacuous")
+	}
+}
+
+// TestPastingANestedElementIsRefusedRatherThanKillingTheDocument is the
+// regression this PR opened and the review caught.
+//
+// selectChild is the first gesture that can select a <Menu>, <MenuItem>
+// or <Tab> — that is the feature. Selection is also the entry condition
+// for y / ctrl+x / p, and the paste path had no gate that knew about
+// Nested: canHold answers from the PARENT's Children.Mode alone, so its
+// permissive tail said canHold("Canvas", "MenuItem") is true. The node
+// landed at the root, the rebuild failed, docRoot went nil, and the
+// status line said "pasted <MenuItem>". That is #403's exact failure —
+// click-to-select dead for the whole document while the last good tree
+// stays on screen looking pressable.
+//
+// Measured before the fix, for all three:
+//
+//	canHold(Canvas, MenuItem) = true  [Nested=true]
+//	status="pasted <MenuItem>" docRoot==nil? true
+//
+// The assertion is docRoot, not the status text: a refusal that still
+// nils docRoot is the same dead editor with a better message.
+func TestPastingANestedElementIsRefusedRatherThanKillingTheDocument(t *testing.T) {
+	for _, elem := range []string{"MenuItem", "Menu", "Tab"} {
+		t.Run(elem, func(t *testing.T) {
+			ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
+
+			// NON-VACUITY: the element must really be Nested, or this
+			// test is about an ordinary element and proves nothing.
+			spec, ok := ed.specOf(elem)
+			if !ok || !spec.Nested {
+				t.Fatalf("<%s> is not a Nested element in the catalog (known=%v); "+
+					"this test cannot see the gap it exists for", elem, ok)
+			}
+			if ed.canHold("Canvas", elem) {
+				t.Errorf("canHold(Canvas, %s) is true: a Nested element is legal only "+
+					"inside a parent that names it, so a permissive container must "+
+					"refuse it", elem)
+			}
+
+			before := len(ed.doc().Kids)
+			ed.sel = ed.doc()
+			ed.insertSubtree(&node{Elem: elem, Attrs: map[string]string{"Text": "Open"}}, "pasted")
+
+			if ed.docRoot == nil {
+				t.Fatalf("pasting a <%s> left docRoot nil: click-to-select is dead for "+
+					"the WHOLE document while the last good tree stays on screen "+
+					"(#403). status=%q", elem, ed.status.Get())
+			}
+			if got := len(ed.doc().Kids); got != before {
+				t.Errorf("pasting a <%s> changed the document: %d children, want %d",
+					elem, got, before)
+			}
+			if !strings.HasPrefix(ed.status.Get(), "✗") {
+				t.Errorf("a refused paste reported success: status=%q", ed.status.Get())
+			}
+		})
+	}
+}
+
+// TestPastingIntoAContainerThatRefusesItRevertsTheDocument is the
+// backstop, and it is a SEPARATE test because it pins a different seam.
+//
+// The canHold gate above makes the Nested case unreachable, so it can
+// never exercise insertSubtree's revert. But canHold answers "as far as
+// the catalog knows", and a rebuild can still fail for reasons the
+// catalog cannot see — which is why promoteSelected and demoteSelected
+// both carry this guard (move.go) and this path did not. Without the
+// revert the tree keeps the child that broke it.
+func TestPastingIntoAContainerThatRefusesItRevertsTheDocument(t *testing.T) {
+	ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
+
+	// A node whose ELEMENT is unknown to the loader: canHold cannot
+	// refuse it (specOf misses, so planAdd never finds a holder and the
+	// root fallback takes it), and the rebuild then fails.
+	before := len(ed.doc().Kids)
+	ed.sel = ed.doc()
+	ed.insertSubtree(&node{Elem: "NoSuchElementAnywhere"}, "pasted")
+
+	if ed.docRoot == nil {
+		t.Fatalf("a paste the loader refused left docRoot nil rather than reverting; "+
+			"status=%q", ed.status.Get())
+	}
+	if got := len(ed.doc().Kids); got != before {
+		t.Errorf("the refused paste was left in the tree: %d children, want %d", got, before)
 	}
 }

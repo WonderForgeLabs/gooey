@@ -578,33 +578,21 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		out = append(out, g.Attached...)
 	} else if !e.Pseudo {
 		// Name is universal even where the layout surface is not: every
-		// element can be addressed — every element that BUILDS one. A
-		// pseudo-element is consumed as data and never reaches named(),
-		// so offering the row here invites an edit the loader accepts
-		// and nothing honours. The loader refuses it for the same
-		// reason (see Context.vocabulary); these two must agree or the
-		// grid offers a row that fails to load. Found in review of #454.
+		// element that BUILDS one can be addressed. A pseudo-element is
+		// consumed as data and never reaches named(), so offering the row
+		// invites an edit the loader accepts and nothing honours. The
+		// loader refuses it for the same reason (Context.vocabulary), and
+		// these two must agree or the grid offers a row that fails to
+		// load.
 		//
-		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, and saying which
-		// pseudo-elements it covers matters more than the claim does.
-		// checkAttrs returns early on !spec.AttrsKnown (attrcheck.go),
-		// so for an OPAQUE pseudo-element this gate drops the row and
-		// the loader does not refuse it. <Tab> is the one such element
-		// today — Pseudo, and Known:false because its surface really is
-		// unknowable — so <Tab Name="Zonk"> still loads clean and is
-		// still dropped, buildTabs never calling named() either. That
-		// is the same silent-drop class this change closes for <Menu>
-		// and <MenuItem>, left open one element over. It is pre-existing
-		// and not fixed here, and it is TRACKED IN
-		// https://github.com/WonderForgeLabs/gooey/issues/461 rather than
-		// asserted in prose — CLAUDE.md's "A red suite is yours" rules
-		// out a known-defect claim that cannot expire, because a stale
-		// dismissal spends the attention that would have caught the bug
-		// (#207). If #461 is closed, this paragraph is wrong and the
-		// reader should trust the code over it. Stated in review of #454,
-		// because the
-		// sentence above read as universal and a reader checking <Tab>
-		// finds the two gates disagreeing.
+		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, which is the half a
+		// reader has to know: checkAttrs returns early on !AttrsKnown
+		// (attrcheck.go), so for an OPAQUE pseudo-element this gate drops
+		// the row and the loader does not refuse it. <Tab> is the one
+		// such element today, so <Tab Name="Zonk"> still loads clean and
+		// is still dropped — the same silent-drop class, one element
+		// over. Pre-existing, not fixed here, tracked in #461; if that
+		// issue is closed this paragraph is wrong and the code is right.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
