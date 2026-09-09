@@ -359,8 +359,10 @@ so `tab` never lands on a button nobody can see.
   above the page **wherever the bar is declared**. "Declare it last" is
   what this line said, and it is the rule
   [#430](https://github.com/WonderForgeLabs/gooey/issues/430) disproved —
-  see the box above. `ToastHost` and `AdornmentLayer` are not lifted yet,
-  so for those two, position still decides.
+  see the box above. `ToastHost` and `AdornmentLayer` are lifted too
+  since [#439](https://github.com/WonderForgeLabs/gooey/issues/439), and
+  within the layer a RANK orders them, so a toast is never hidden by an
+  open menu.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.
@@ -371,9 +373,10 @@ so `tab` never lands on a button nobody can see.
 - Toasts are imperative: the host is markup, `Show` is code through
   `markup.Find`, looked up per fire so hot reload cannot strand it.
 - Tooltips (both spellings) need an `AdornmentLayer` on the page, and
-  the layer's position in document order decides what tips paint over —
-  the layer is not lifted, so this one is not the retired rule but the
-  live one.
+  where you put it decides nothing: the layer is lifted and sits at
+  `gooey.OverlayRankAdornment`, the top of the stack, because an
+  adornment describes something already on screen and is useless
+  underneath it.
 - The wave-1 widgets share the framework's rules rather than inventing
   their own: arrows are consumed only when they move something, and
   disabled is always "a command whose condition says no".
