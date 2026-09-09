@@ -113,9 +113,22 @@ func (ed *editor) canHold(parent, elem string) bool {
 //
 // EXACTLY ONE CANDIDATE, or nothing. A restricted container naming two
 // permitted children has no single right answer, and picking the first
-// would be a coin toss the user cannot see; <MenuBar> is that case today
-// (Only: Menu, MenuItem). Better to climb and let them place it
-// deliberately than to guess.
+// would be a coin toss the user cannot see. Better to climb and let the
+// user place it deliberately than to guess.
+//
+// THIS PARAGRAPH USED TO CITE <MenuBar> AS THAT CASE, "(Only: Menu,
+// MenuItem)", and this PR is what made it false: the list is {"Menu"}
+// now, because the two-entry version declared a child the builder refuses
+// ("<MenuBar> children must be <Menu> elements"). So MenuBar moved from
+// the example of the DECLINE path to a live user of the WRAP path, and
+// the comment went on describing the old world. Reported in review of
+// #454 — a doc citing a data structure it does not read is exactly the
+// drift that stays resolvable while meaning something else.
+//
+// No restricted container names two children today, so the decline branch
+// has no example in the shipped vocabulary. It is kept because the
+// vocabulary is open — a host registers its own elements — not because
+// something in this repo reaches it.
 func (ed *editor) wrapperFor(parent, elem string) string {
 	spec, ok := ed.specOf(parent)
 	if !ok || spec.Children.Mode != markup.ModeRestricted {
@@ -158,10 +171,20 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 //
 // KNOWN LIMIT, stated rather than hidden: every wrapper built this way
 // carries the same attribute values, so a second added tab repeats the
-// first's header. That is cosmetic — a header is a label, not an address,
-// so nothing is shadowed and nothing fails to build — but it is real, and
-// fixing it needs a notion of "the attribute that labels this element"
-// that the catalog does not have today.
+// first's header, and adding a <MenuItem> with a <MenuBar> selected
+// builds a second <Menu Title="File"> beside the first. That is cosmetic
+// — a header and a title are labels, not addresses, so nothing is
+// shadowed and nothing fails to build — but it is real, and fixing it
+// needs a notion of "the attribute that labels this element" that the
+// catalog does not have today.
+//
+// The MENU case is new with this PR and was checked rather than assumed,
+// because a menu title CAN carry a mnemonic and a duplicated mnemonic
+// would be shadowing rather than cosmetic. It does not here: MenuBar's
+// seed is `<Menu Title="File">` with no `_` marker, so the clone claims
+// no accelerator. TestWrappingAMenuItemRepeatsTheSeedsTitle pins both
+// halves — the repeat, and the absence of a mnemonic in it — so a seed
+// that later grows one turns this from cosmetic into a bug loudly.
 func (ed *editor) wrapperNode(parent, wrap string) *node {
 	bare := &node{Elem: wrap, Attrs: map[string]string{}}
 	spec, ok := ed.specOf(parent)

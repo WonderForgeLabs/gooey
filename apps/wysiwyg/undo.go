@@ -248,6 +248,50 @@ func (ed *editor) applyEdit(label string, fn func()) {
 // restore is the ONLY writer of ed.sel in this file — checkable with
 // `grep -n 'ed\.sel = ' undo.go`, which must report lines inside restore
 // and nowhere else.
+// abortHistory unrecords the mutation the loader just refused.
+//
+// Every mutator ends in a rebuild and rebuild is where history is
+// recorded, so a TRANSACTIONAL revert records twice: once for the broken
+// intermediate the loader rejected, once for the restore. The stack then
+// holds the broken state, and one ctrl+z after a refusal walks the user
+// straight back into it — docRoot nil, click-to-select dead, which is the
+// crash the revert existed to prevent, reached through the undo key.
+// Reported in review of #454, where it applies to delete, paste, promote
+// and demote alike.
+//
+// It cannot be derived at the choke point the recording itself is. record
+// already pops a step that "came back to where it started", but only
+// inside the COALESCING branch, where the run is one attribute of one
+// node. Generalising that to structural edits would be wrong: adding a
+// node and then deleting it also returns the tree to where it started,
+// and ctrl+z there must still bring the node back. The difference is not
+// visible in the trees — it is whether the mutation was REFUSED, which
+// only the mutator knows. So this is called, not inferred.
+//
+// Call it AFTER restoring the tree and BEFORE the rebuild that follows:
+// base is left naming the restored document, so that rebuild's record
+// sees no change and adds nothing.
+func (ed *editor) abortHistory() { ed.history().abort(ed.root) }
+
+func (h *history) abort(root *node) {
+	if !h.started {
+		return
+	}
+	// The label belonged to an edit that no longer exists.
+	h.pending = ""
+	if n := len(h.undo); n > 0 && h.undo[n-1].root.equal(root) {
+		h.base = h.undo[n-1]
+		h.undo[n-1] = snapshot{}
+		h.undo = h.undo[:n-1]
+		return
+	}
+	// Nothing was pushed for this attempt — history is off, the bound
+	// evicted the entry, or the attempt changed no document state. Base
+	// still names the broken intermediate either way, so re-baseline it on
+	// the document as it actually stands.
+	h.base = snapshot{root: root.clone(), sel: h.base.sel, hasSel: h.base.hasSel}
+}
+
 func (ed *editor) recordHistory() {
 	sel, hasSel := ed.selPath()
 	ed.history().record(ed.root, sel, hasSel)

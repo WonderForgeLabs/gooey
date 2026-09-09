@@ -176,12 +176,26 @@ func (ed *editor) cutSelected() {
 		return
 	}
 	src := n.markup("")
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
 	msg := "cut " + describeNode(n) + ed.sayCopiedOut(src)
+	// THE CLIPBOARD IS WRITTEN ONLY IF THE DELETE STANDS. deletable()
+	// above answers the refusals deleteSelected can see BEFORE trying, but
+	// not the one only the loader can: removing a child can make its
+	// parent illegal (`<Tab Header=… needs exactly one content child,
+	// got 0`), and that is discovered by building. A cut that copied
+	// anyway would leave the node on the page and on the clipboard, so the
+	// next paste duplicates it under a colliding Name. Reported in review
+	// of #454.
+	//
 	// deleteSelected rebuilds, and rebuild sets the build status — so the
 	// message goes on AFTER it or it is overwritten in the same frame by
 	// "✓ builds". Learned the hard way: the cut worked and said nothing.
-	ed.deleteSelected()
+	if !ed.deleteSelected() {
+		// deleteSelected has already put its own refusal in the status
+		// bar, and it names the loader's reason. Saying anything here
+		// would replace a specific message with a vaguer one.
+		return
+	}
+	ed.clip = clipboard{node: n.deepCopy(), markup: src}
 	ed.status.Set(msg)
 }
 
@@ -297,6 +311,10 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
 		ed.sel = prevSel
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + into.Elem +
 			">: " + refused)

@@ -2297,6 +2297,10 @@ func (ed *editor) addSelected() {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
 		ed.sel = prev
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		// AFTER the second rebuild, which sets the status to "✓ builds":
 		// the document is whole again, and the sentence explaining what
@@ -2388,17 +2392,25 @@ func (ed *editor) seed(spec markup.ElementSpec, name string) (*node, error) {
 	return n, nil
 }
 
-// deleteSelected removes the selected node from whatever holds it.
+// deleteSelected removes the selected node from whatever holds it, and
+// reports whether the delete STOOD.
+//
+// The bool is not decoration: cut is copy-then-delete, and a cut that
+// reports success for a delete the loader refused leaves the node on the
+// page AND on the clipboard, so the next paste duplicates it — with a
+// colliding Name, which is the one thing markup.Find cannot resolve.
+// promoteSelected and demoteSelected already return this for the same
+// reason. Reported in review of #454.
 //
 // What it selects afterwards is the node that took the deleted one's
 // place, or the last one when the end was deleted, or NOTHING when the
 // parent is now empty. That last case is the one an index could not
 // express: the old code left selected at -1, which meant "the container",
 // so deleting the last child silently promoted the selection to the root.
-func (ed *editor) deleteSelected() {
+func (ed *editor) deleteSelected() bool {
 	n := ed.sel
 	if n == nil {
-		return
+		return false
 	}
 	p := ed.parentOf(n)
 	if p == nil || ed.isSurface(p) {
@@ -2407,11 +2419,11 @@ func (ed *editor) deleteSelected() {
 		// doc() still expected a child. Deleting the surface is not
 		// expressible at all — it is not in the outline and cannot be
 		// selected.
-		return
+		return false
 	}
 	at := unlink(p, n)
 	if at < 0 {
-		return
+		return false
 	}
 	switch {
 	case len(p.Kids) == 0:
@@ -2440,10 +2452,17 @@ func (ed *editor) deleteSelected() {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		insertAt(p, at, n)
 		ed.sel = n
+		// BEFORE the rebuild, so the rebuild's own recordHistory sees a
+		// document identical to the baseline and adds nothing. Without it
+		// the refused delete stays on the undo stack and one ctrl+z walks
+		// back into the docRoot==nil state this revert exists to prevent.
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + n.Elem + "> cannot be deleted from <" + p.Elem +
 			">: " + refused)
+		return false
 	}
+	return true
 }
 
 // retype is the experiment. Changing the container changes which

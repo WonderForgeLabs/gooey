@@ -142,6 +142,10 @@ func (ed *editor) duplicateSelected() bool {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		unlink(p, c)
 		ed.sel = prev
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + prev.Elem + "> cannot be duplicated inside <" + p.Elem +
 			">: " + refused)
