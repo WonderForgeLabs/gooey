@@ -3,6 +3,7 @@ package main
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"strings"
 	"testing"
@@ -147,11 +148,20 @@ func TestTheCanvasBuildsMarkupARealAppAccepts(t *testing.T) {
 // it reads. Two bugs, one screen. #462 is the one this PR fixes; the
 // second is why no rebuild-driven test can pin the first today.
 //
-// WHEN THE XMLNS GAP IS CLOSED THIS TEST GOES RED, which is the point of
-// writing it as a latch rather than as a comment: the person who fixes it
-// is told, here, that a dispatcher assertion through rebuild has become
-// possible and should replace this.
+// The second bug is tracked as #472. WHEN THAT IS CLOSED THIS TEST GOES
+// RED, which is the point of writing it as a latch rather than as a
+// comment: the person who fixes it is told, here, that a dispatcher
+// assertion through rebuild has become possible and should replace this.
 func TestARebuildCannotCarryAHandlerNamespaceYet(t *testing.T) {
+	// The provider is INERT and deliberately so. Registration is by URI,
+	// while the refusal below happens on the PREFIX `t:` — which the
+	// rebuilt envelope never declares, so nothing ever resolves to this
+	// URI and the handler body cannot run. It is here to remove the
+	// alternative reading of a red result: without it, "the namespace is
+	// undeclared" and "no handler is registered for it" are two
+	// explanations for one message, and only the first is the gap #472
+	// tracks. Registering it makes the second impossible. Raised in
+	// review of #469.
 	const uri = "urn:gooey:test:462:rebuild"
 	markup.RegisterHandlers(uri, markup.HandlerFunc(
 		func(c *markup.Call) (gooey.Command, error) {
@@ -172,7 +182,7 @@ func TestARebuildCannotCarryAHandlerNamespaceYet(t *testing.T) {
 	got := ed.status.Get()
 	if !strings.Contains(got, "undeclared namespace prefix") {
 		t.Errorf("rebuilding a document with a handler expression reports %q.\n"+
-			"If it now LOADS, the xmlns gap is closed and this test has done its "+
+			"If it now LOADS, the xmlns gap (#472) is closed and this test has done its "+
 			"job: replace it with one that asserts the rebuild built, which finally "+
 			"pins the Dispatcher through the path the running editor takes.\n"+
 			"If it fails some other way, the canvas has a third problem.", got)
@@ -212,6 +222,18 @@ func TestTheEditorsOwnContextWasNeverTheBrokenOne(t *testing.T) {
 // names, so the no-reflection invariant is untouched — and the repo
 // already tests this way (TestCIWorkflowAndCLAUDEMDShareOneDiscovery
 // reads a workflow file). Raised in review of #469.
+//
+// WHAT THE WALK DOES NOT SEE, stated because a syntactic check reads as
+// exhaustive and this one is not. It matches exactly `*markup.Context`
+// fields declared on the `editor` struct in THIS file: a context held in
+// a []*markup.Context or a map, a markup.Context stored by value, one
+// reached through an embedded struct, and an editor field declared in
+// another file of the package are all invisible to it. Each of those is
+// a way to reintroduce #462 that this test would not catch. It is still
+// worth having — the shape the bug actually arrived in is a plain
+// pointer field beside the two that are there — but "green" here means
+// "no new plain pointer field", not "every context is wired". Raised in
+// review of #469.
 func TestEveryContextFieldIsInTheList(t *testing.T) {
 	file := parseMainGo(t)
 
@@ -244,13 +266,22 @@ func TestEveryContextFieldIsInTheList(t *testing.T) {
 		}
 		return false
 	})
-	// NON-VACUITY. A walk that found nothing would report every field
-	// covered, which is the failure this whole test exists to make
-	// impossible one level down.
-	if len(fields) < 2 {
-		t.Fatalf("found %d *markup.Context fields on the editor struct (%v); the "+
-			"parse is broken and the assertion below is about nothing",
-			len(fields), fields)
+	// NON-VACUITY, and the floor is DERIVED. A walk that found nothing
+	// would report every field covered, which is the failure this whole
+	// test exists to make impossible one level down — but a written
+	// number is a sample: `< 2` would misread a legitimate merge down to
+	// one context as a broken parse, and would go on passing if the
+	// struct grew to four and the walk started finding two.
+	//
+	// contexts() is the right comparand because it is the list under
+	// test. The parse must find at least as many fields as that list has
+	// entries; finding MORE is the bug this test is for, and is left to
+	// the loop below. Raised in review of #469.
+	want := len(newEditor(editorFS()).contexts())
+	if len(fields) < want {
+		t.Fatalf("found %d *markup.Context field(s) on the editor struct (%v) but "+
+			"contexts() returns %d entries; the parse is broken and the assertion "+
+			"below is about nothing", len(fields), fields, want)
 	}
 
 	named := identsIn(t, file, "contexts")
@@ -273,11 +304,106 @@ func TestEveryContextFieldIsInTheList(t *testing.T) {
 // as uncovered), which is why it is worth writing down rather than
 // assuming the mutation matrix covered it. Raised in review of #469.
 func TestMainWiresTheDispatcher(t *testing.T) {
-	if !identsIn(t, parseMainGo(t), "main")["setDispatcher"] {
-		t.Error("main() does not call ed.setDispatcher, so the shipped editor builds " +
+	file := parseMainGo(t)
+	body := funcBody(t, file, "main")
+
+	// The variable gooey.NewApp's result is bound to, DERIVED rather than
+	// spelled: renaming it must not quietly turn the argument check off.
+	appVar := ""
+	ast.Inspect(body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		if _, is := selectorCall(as.Rhs[0], "gooey", "NewApp"); !is {
+			return true
+		}
+		if id, ok := as.Lhs[0].(*ast.Ident); ok {
+			appVar = id.Name
+		}
+		return false
+	})
+	if appVar == "" {
+		t.Fatal("main() does not bind gooey.NewApp's result to a plain variable, so " +
+			"nothing here can tell which dispatcher is the app's and the assertion " +
+			"below would be about nothing")
+	}
+
+	var arg ast.Expr
+	called := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "setDispatcher" {
+			return true
+		}
+		called = true
+		if len(call.Args) == 1 {
+			arg = call.Args[0]
+		}
+		return false
+	})
+	if !called {
+		t.Fatal("main() does not call ed.setDispatcher, so the shipped editor builds " +
 			"every document with contexts that have no Dispatcher — however well the " +
 			"tests wire their own")
 	}
+	// THE ARGUMENT IS THE ASSERTION. Checking only that the identifier
+	// appears lets the call be fed gooey.NewDispatcher() — a second,
+	// never-drained dispatcher — and every handler result posted to it is
+	// dropped on the floor while the editor looks correctly wired. That
+	// mutation passed the identifier check unchanged. Raised in review of
+	// #469.
+	if arg == nil || !isCallOf(arg, appVar, "Dispatcher") {
+		t.Errorf("main() calls setDispatcher(%s), not %s.Dispatcher(). A dispatcher "+
+			"that is not the app's is never Drained, so every handler result "+
+			"posted to it is dropped and the editor looks wired while nothing "+
+			"it schedules ever runs.", exprString(arg), appVar)
+	}
+}
+
+// selectorCall reports whether e is a call of `x.sel`, whatever its
+// arguments, and hands back the call so a caller can look at them.
+func selectorCall(e ast.Expr, x, sel string) (*ast.CallExpr, bool) {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+	s, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || s.Sel.Name != sel {
+		return nil, false
+	}
+	id, ok := s.X.(*ast.Ident)
+	if !ok || id.Name != x {
+		return nil, false
+	}
+	return call, true
+}
+
+// isCallOf reports whether e is exactly `x.sel()` — a call of a selector
+// on a plain identifier, taking NO arguments. The arity matters here:
+// Dispatcher() takes none, so anything passed to it is a different
+// expression and must not read as the app's own dispatcher.
+func isCallOf(e ast.Expr, x, sel string) bool {
+	call, ok := selectorCall(e, x, sel)
+	return ok && len(call.Args) == 0
+}
+
+// exprString renders an expression for a failure message. nil is spelled
+// out rather than left blank, because "calls setDispatcher() with " reads
+// as a truncated message rather than as the wrong arity it means.
+func exprString(e ast.Expr) string {
+	if e == nil {
+		return "<no single argument>"
+	}
+	var b strings.Builder
+	if err := printer.Fprint(&b, token.NewFileSet(), e); err != nil {
+		return "<unprintable>"
+	}
+	return b.String()
 }
 
 // parseMainGo reads the file both derived checks are about. It fails
@@ -299,18 +425,25 @@ func parseMainGo(t *testing.T) *ast.File {
 func identsIn(t *testing.T, file *ast.File, fn string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
+	ast.Inspect(funcBody(t, file, fn), func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			out[id.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// funcBody is the "or this test checks nothing" half, factored out: every
+// caller here reads a named function's body, and a rename that makes the
+// walk find nothing must be fatal rather than vacuously green.
+func funcBody(t *testing.T, file *ast.File, fn string) *ast.BlockStmt {
+	t.Helper()
 	for _, d := range file.Decls {
 		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != fn || fd.Body == nil {
-			continue
+		if ok && fd.Name.Name == fn && fd.Body != nil {
+			return fd.Body
 		}
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
-				out[id.Name] = true
-			}
-			return true
-		})
-		return out
 	}
 	t.Fatalf("main.go has no func %s, so this test checks nothing", fn)
 	return nil

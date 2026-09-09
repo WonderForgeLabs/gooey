@@ -1649,6 +1649,18 @@ func newEditor(fsys fs.FS) *editor {
 // from ElementDef.Attrs and knows nothing about the context a thing will
 // be built in, so nothing anywhere connected the two.
 //
+// EVERY ENTRY IS CONSTRUCTED IN newEditor, and that is a contract rather
+// than an observation: setDispatcher writes through each pointer without
+// checking it, so a lazily-built context left nil here panics on the
+// first line of main's wiring. That is deliberate and is not an oversight
+// to be patched with a nil skip — skipping a nil entry silently is
+// exactly #462 again, a context that exists and is never wired, arriving
+// this time through the guard meant to prevent it. A startup panic names
+// the field on the first run; a silent skip is found by a user typing a
+// handler expression into the canvas. The obligation is enforced by
+// TestEveryContextTheEditorBuildsWithGetsTheDispatcher, which fails on a
+// nil entry before it wires anything. Raised in review of #469.
+//
 // A CONTEXT ADDED LATER MUST BE ADDED HERE, which is why this sits
 // directly under newEditor rather than in the palette neighbourhood it
 // was first written in: the instruction has to be in front of the person
