@@ -1147,13 +1147,23 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				// Reported in review of that PR. Every separator in this
 				// repo is a bare <MenuItem Separator="true"/>, so
 				// rejecting costs nothing and makes the trap loud.
+				// ON A NON-EMPTY VALUE, not on presence. Every other read
+				// in this builder treats an empty attribute as absent
+				// (`if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw !=
+				// ""`), and gating on `_, ok :=` made `Icon=""` fatal here
+				// and a no-op three lines down — one spelling meaning two
+				// things. The error text is the tell: it promises the
+				// attribute "would be accepted and silently ignored", and
+				// for an empty value there is nothing to ignore, so the
+				// diagnostic described a consequence that cannot happen.
+				// Reported in review of #455.
 				for _, a := range [...]string{"Text", "Gesture", "Checked", "Command", "Icon", "IconRune"} {
-					if _, ok := ic.Attrs[a]; ok {
+					if v := strings.TrimSpace(ic.Attrs[a]); v != "" {
 						return nil, fmt.Errorf(
 							"markup: <MenuItem Separator=\"true\" %s=%q>: a separator is a rule "+
 								"across the menu and carries nothing else — %s would be accepted "+
 								"and silently ignored; drop it, or drop Separator",
-							a, ic.Attrs[a], a)
+							a, v, a)
 					}
 				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
@@ -1316,6 +1326,36 @@ func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
 				it.Text, raw, raw)
 		}
 		it.IconRune = rs[0]
+	}
+	// THE PIXEL TIER NEEDS ITS CELL-TIER PARTNER, and this is last so the
+	// two refusals above keep their own messages: a missing asset and a
+	// bound Icon each describe a different mistake and must not be
+	// reported as this one.
+	//
+	// The gutter is reserved unconditionally — three cells the moment any
+	// item carries either field, protocol or no protocol — and the spec
+	// is right that it must be, because the capability probe answers
+	// after the first frame and a conditional reservation would visibly
+	// reflow the dropdown. What that leaves uncovered is an item carrying
+	// ONLY an Icon on a terminal that never gets a protocol: iconGutter
+	// falls through to spaces(w), so those three columns stay blank for
+	// the life of the program, not for one frame, and nothing anywhere
+	// says why. That is the separator case's shape exactly — markup
+	// accepted, then silently drawing nothing — and it gets the separator
+	// case's answer.
+	//
+	// This does NOT make IconRune a fallback. The spec is explicit that
+	// neither field degrades to the other and that the tiers draw
+	// different things; requiring both is what authoring two tiers means,
+	// and it is resolvable at load, where this repo answers every
+	// question it can. Reported in review of #455.
+	if it.Icon != nil && it.IconRune == 0 {
+		return fmt.Errorf(
+			"markup: <MenuItem Text=%q Icon=%q>: an Icon needs an IconRune beside it — the icon "+
+				"gutter is reserved whether or not the terminal has a graphics protocol, and "+
+				"without a rune this item draws three blank columns on every terminal that "+
+				"has none",
+			it.Text, strings.TrimSpace(ic.Attrs["Icon"]))
 	}
 	return nil
 }

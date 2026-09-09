@@ -44,7 +44,7 @@ func menuPage(t *testing.T, attrs string) (*components.MenuBar, error) {
 // resolves through the SAME fs.FS <Image Src> does — assets ship the
 // way markup does.
 func TestAMenuItemIconLoadsFromThePageFS(t *testing.T) {
-	bar, err := menuPage(t, `Icon="assets/open.png"`)
+	bar, err := menuPage(t, `Icon="assets/open.png" IconRune="O"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,5 +270,93 @@ func TestAOneCellIconRuneStillLoads(t *testing.T) {
 	fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
 	if _, err := Load(fsys, "p.gooey", &Context{}); err != nil {
 		t.Fatalf("a one-cell IconRune is refused: %v", err)
+	}
+}
+
+// TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes.
+//
+// The refusal above gated on PRESENCE (`_, ok := ic.Attrs[a]`) while
+// every other read in the same builder gates on a non-empty VALUE
+// (`if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != ""`). So
+// `Icon=""` was fatal on a separator and a no-op three lines later on
+// anything else, which is one attribute spelling meaning two things.
+//
+// The error text is the tell: it says the attribute "would be accepted
+// and silently ignored", and for an empty value nothing would be — there
+// is nothing to ignore. A diagnostic that describes a consequence that
+// cannot happen is the same defect the refusal was added to remove, one
+// level up. Found in review of #455.
+func TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes(t *testing.T) {
+	for _, attr := range []string{"Icon", "IconRune", "Text", "Gesture", "Checked", "Command"} {
+		page := `<Gooey><MenuBar><Menu Title="_File">` +
+			`<MenuItem Separator="true" ` + attr + `=""/>` +
+			`</Menu></MenuBar></Gooey>`
+		fsys := fstest.MapFS{"p.gooey": &fstest.MapFile{Data: []byte(page)}}
+		if _, err := Load(fsys, "p.gooey", &Context{}); err != nil {
+			t.Errorf(`<MenuItem Separator="true" %s=""> is refused, but the same `+
+				`empty value is a no-op on a non-separator item:%s%v`, attr, "\n\t", err)
+		}
+	}
+}
+
+// TestAnIconWithoutAnIconRuneIsRefused.
+//
+// The gutter is reserved UNCONDITIONALLY — three cells whenever any item
+// in the menu carries either field, protocol or no protocol. That is the
+// spec's decision and it is the right one: the capability probe answers
+// after the first frame, so reserving conditionally would visibly reflow
+// the dropdown on a terminal that turns out to support pixels.
+//
+// What it leaves uncovered is an item carrying ONLY an Icon on a
+// terminal that never gets a protocol. iconGutter falls through to
+// spaces(w), so those three columns stay blank for the life of the
+// program — not for one frame, forever — and nothing anywhere says why.
+// It is the separator case's shape exactly: markup accepted, then
+// silently drawing nothing.
+//
+// The refusal is not "IconRune is a fallback for Icon". The spec is
+// explicit that neither field degrades to the other and that the tiers
+// draw DIFFERENT THINGS; requiring both is what authoring two tiers
+// means, and it is resolvable at load. Found in review of #455.
+func TestAnIconWithoutAnIconRuneIsRefused(t *testing.T) {
+	_, err := menuPage(t, `Icon="assets/open.png"`)
+	if err == nil {
+		t.Fatal(`<MenuItem Icon="assets/open.png"> with no IconRune loaded clean — ` +
+			`on a terminal with no graphics protocol it reserves three blank columns forever`)
+	}
+	if !strings.Contains(err.Error(), "IconRune") {
+		t.Errorf("the refusal does not name the missing field:\n\t%s", err)
+	}
+}
+
+// TestAnIconRuneAloneStillLoads — the cell tier on its own is a complete
+// menu item, and only the pixel tier needs a partner. Without this the
+// refusal above is satisfiable by demanding both fields always.
+func TestAnIconRuneAloneStillLoads(t *testing.T) {
+	if _, err := menuPage(t, `IconRune="O"`); err != nil {
+		t.Fatalf("an item carrying only IconRune is refused: %v", err)
+	}
+}
+
+// TestTheIconPairingCheckRunsLast. A missing asset and a bound Icon each
+// describe a DIFFERENT mistake, and both markups also lack an IconRune —
+// so a pairing check hoisted above them would answer every one of these
+// with "an Icon needs an IconRune beside it" and bury the real cause.
+// This is the ordering assertion, and nothing else makes it.
+func TestTheIconPairingCheckRunsLast(t *testing.T) {
+	for _, tc := range []struct{ attrs, want string }{
+		{`Icon="assets/nope.png"`, "nope.png"},
+		{`Icon="{{.Logo}}"`, "not a binding"},
+	} {
+		_, err := menuPage(t, tc.attrs)
+		if err == nil {
+			t.Errorf("%s loaded clean", tc.attrs)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s was refused as %q, want the refusal to mention %q — "+
+				"the pairing check is running before the one that knows the real cause",
+				tc.attrs, err, tc.want)
+		}
 	}
 }

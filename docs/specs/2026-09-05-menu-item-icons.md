@@ -124,10 +124,28 @@ rather than derived.
   `render.ClipCols` correctly returns a column short rather than half a
   glyph — so the icon would simply vanish.
 - **`clipCols` as a safety net inside the gutter.** It was written and
-  then removed: the pad is exact in columns, a rune is at most two cells,
-  and the gutter is three, so no input can take the branch. Every
-  mutation of it passed. An unfalsifiable guard is not a cheap one — it
-  is a claim the tests cannot check.
+  then removed, on this reasoning: the pad is exact in columns, a rune is
+  at most two cells, and the gutter is three, so no input can take the
+  branch; every mutation of it passed, and an unfalsifiable guard is a
+  claim the tests cannot check.
+
+  **The reasoning was wrong, and the removal was still right.** "A rune
+  is at most two cells" has a floor as well as a ceiling, and the missing
+  case was ZERO: a combining mark is one rune measuring no columns, and
+  `Buffer.SetString` spends a cell on it anyway — so the pad came out a
+  column too long, the row overran the width `popupRect` measured, and
+  the dropdown lost its right border. The input existed; the mutations
+  passed because every fixture in this repo was one-or-two-cell ASCII, so
+  no test could reach the branch to kill it. That is the shape the
+  column-counting invariant warns about, met head-on.
+
+  What replaced it is not `clipCols`. A glyph that occupies nothing is
+  refused at LOAD (`markup.menuItemIcon`) and treated as no rune at all
+  in `iconGutter`, which is the "answer it where it is answerable"
+  posture rather than a clip at paint. The lesson to carry is about the
+  evidence, not the guard: **every mutation passing is not proof a branch
+  is unreachable when the fixtures cannot express the input that reaches
+  it.**
 
 ## The guard this broke, and what that says
 
@@ -189,6 +207,19 @@ helper on a child element found all three on its first day.
 | One helper in two roles is scanned in both | `TestOneHelperUsedInBothRolesIsScannedInBoth` | key `seen` on the name alone |
 | A helper handed a child reads the CHILD's attributes | `TestAHelperHandedAChildReadsTheChildsAttributes` | revert either half of the catalogen fix |
 | …and the widening stays out of `scan` | `TestWideningTheGateStaysOutOfTheUndifferentiatedWalk` | widen `passesElement` too |
+| A separator carries nothing else | `TestASeparatorRefusesTheAttributesItWouldIgnore` | short-circuit before the attribute reads |
+| …and a bare one still loads | `TestABareSeparatorStillLoads` | refuse every separator |
+| …and an EMPTY attribute is not "carrying" | `TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes` | gate on `_, ok :=` instead of a non-empty value |
+| A separator reserves no gutter, whatever it carries | `TestASeparatorCarryingAnIconReservesNoGutter` | drop the `it.Separator` skip from `iconLead` |
+| A bound `IconRune` is refused for BEING BOUND | `TestABoundMenuItemIconRuneIsRefusedForBeingBound` | remove the `bindRe` guard — the glyph count then refuses it by describing a different mistake |
+| A zero-column `IconRune` is refused at load | `TestAZeroWidthIconRuneIsRefused` | validate with `len([]rune(…))` alone |
+| …and is treated as no rune at all in Go | `TestAZeroWidthIconRuneDoesNotStealACell` | drop the `StringWidth(g) < 1` guard in `iconGutter` |
+| …while a one-cell rune still loads | `TestAOneCellIconRuneStillLoads` | refuse on `StringWidth != 2` |
+| An `Icon` needs an `IconRune` beside it | `TestAnIconWithoutAnIconRuneIsRefused` | drop the pairing check |
+| …but the cell tier alone is complete | `TestAnIconRuneAloneStillLoads` | require both fields unconditionally |
+| …and the pairing check runs LAST | `TestTheIconPairingCheckRunsLast` | hoist it above the asset and binding refusals, which then report the wrong cause |
+| The placement is withdrawn when the menu closes | `TestTheIconPlacementIsWithdrawn` | leave the `f.Place` standing |
+| `DropdownBounds` describes the ARRANGED surface | `TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation` | return `popupRect()` — agrees between Arranges, so nothing else catches it |
 
 `TestAWideIconRuneDoesNotOverrunItsGutter` is worth one more line, because
 it first failed on **its own** bug rather than the code's: it compared

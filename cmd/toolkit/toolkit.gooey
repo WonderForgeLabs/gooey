@@ -248,14 +248,14 @@
            the bar on the top row. -->
       <MenuBar Grid.Row="0" Style="accent">
         <Menu Title="Job">
-          <MenuItem Text="Start" Gesture="ctrl+s" Command="{{.Start}}"/>
-          <MenuItem Text="Abort" Gesture="ctrl+x" Command="{{.Abort}}"/>
-          <MenuItem Text="Reset" Gesture="ctrl+r" Command="{{.Reset}}"/>
+          <MenuItem Text="Start" IconRune="▶" Gesture="ctrl+s" Command="{{.Start}}"/>
+          <MenuItem Text="Abort" IconRune="■" Gesture="ctrl+x" Command="{{.Abort}}"/>
+          <MenuItem Text="Reset" IconRune="↺" Gesture="ctrl+r" Command="{{.Reset}}"/>
           <MenuItem Separator="true"/>
-          <MenuItem Text="Quit" Gesture="q" Command="{{.Quit}}"/>
+          <MenuItem Text="Quit" IconRune="✕" Gesture="q" Command="{{.Quit}}"/>
         </Menu>
         <Menu Title="Notify">
-          <MenuItem Text="Toast the status" Gesture="ctrl+t" Command="{{.Notify}}"/>
+          <MenuItem Text="Toast the status" IconRune="●" Gesture="ctrl+t" Command="{{.Notify}}"/>
         </Menu>
       </MenuBar>
       <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="5" Duration="2500ms"/>

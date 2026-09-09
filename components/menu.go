@@ -542,11 +542,27 @@ func (m *MenuBar) OpenIndex() int {
 // will index outside the buffer. Stated in review of #455, since the
 // documented use is exactly the second kind of caller.
 //
-// This is the same arithmetic drawDropdown paints into — it is popupRect
-// — which is precisely why it is worth exporting and why its tests read
-// the rect back off the painted cells instead of comparing it to
-// popupRect. An accessor checked against the function behind it is
-// correct by construction and says nothing about where the dropdown went.
+// IT READS THE ARRANGED SURFACE, NOT popupRect. Those agree between
+// Arranges — Arrange stores popupRect into the surface a few lines below
+// — and that agreement is what made returning popupRect look right for
+// two rounds. They come apart at the two moments where the answer
+// matters most, both of which hand a caller a live-looking rect for
+// pixels that are not on screen:
+//
+//   - a menu OPENED but not yet arranged: Open sets a property, nothing
+//     is laid out until the next frame, and popupRect will happily build
+//     a rect out of a zero m.Bounds();
+//   - Menus REPLACED while open: the dropdown on screen is still the old
+//     one, and popupRect measures the new items.
+//
+// A zero-sized surface reports the zero Rect for the same reason closed
+// does — ArrangeSurface(false, …) leaves it at {X, Y, 0, 0}, which is a
+// position for something with no extent, not a place to put pixels.
+//
+// Its tests still read the rect back off the painted cells rather than
+// comparing against popupRect: an accessor checked against the function
+// behind it is correct by construction and says nothing about where the
+// dropdown went. Found in review of #455.
 //
 // THE GUARD IS showing(), NOT IsOpen, and the difference is the whole
 // point of the sentence above: an open menu with no items is never
@@ -563,10 +579,18 @@ func (m *MenuBar) OpenIndex() int {
 // not enough, and reading it as if it were is the "goes deaf to that
 // property" trap one level up.
 func (m *MenuBar) DropdownBounds() gooey.Rect {
-	if !m.showing() {
+	// m.pop directly rather than m.popup(): the accessor must not
+	// allocate the surface as a side effect of being asked a question,
+	// and a bar whose popup does not exist yet has certainly not
+	// arranged one.
+	if !m.showing() || m.pop == nil {
 		return gooey.Rect{}
 	}
-	return m.popupRect()
+	b := m.pop.SurfaceBounds()
+	if b.W <= 0 || b.H <= 0 {
+		return gooey.Rect{}
+	}
+	return b
 }
 
 // firstItem is the first activatable index — separators are furniture.

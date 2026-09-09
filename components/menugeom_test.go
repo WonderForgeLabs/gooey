@@ -323,3 +323,69 @@ func (r *rankRow) Arrange(b gooey.Rect) {
 func rectsOverlap(a, b gooey.Rect) bool {
 	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
 }
+
+// TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation.
+//
+// DropdownBounds' own doc says it is "where the open dropdown was
+// arranged", and that a caller "must not be handed a live-looking answer
+// for a surface that is not on screen". It returned popupRect() instead,
+// which is not that: popupRect RECOMPUTES from m.Bounds() and the CURRENT
+// Menus every time it is asked, so it answers for a state that has never
+// been laid out.
+//
+// Arrange stores exactly that rect into the popup surface
+// (`p.ArrangeSurface(show, m.popupRect())`, menu.go:416), so between
+// Arranges the two agree and no existing test can tell them apart. They
+// come apart at the two moments below, and both hand an app a plausible
+// rect for pixels that are not on screen. Found in review of #455.
+func TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation(t *testing.T) {
+	// 1. OPENED BUT NEVER ARRANGED. Open() sets the property; nothing is
+	//    laid out until the next frame. popupRect happily builds a rect
+	//    out of a zero m.Bounds() and reports it as live.
+	t.Run("opened but not yet arranged", func(t *testing.T) {
+		bar := geomBar()
+		c := gooey.NewComposer(bar, 40, 12)
+		t.Cleanup(c.Close)
+		c.Frame()
+
+		bar.Open(1, nil) // no Frame: nothing has been arranged for this open
+		if got := bar.DropdownBounds(); got != (gooey.Rect{}) {
+			t.Errorf("a menu opened but never arranged reports bounds %v; "+
+				"nothing is on screen there, and the doc forbids a live-looking "+
+				"answer for a surface that is not", got)
+		}
+	})
+
+	// 2. MENUS REPLACED WHILE OPEN. The painted dropdown is still the old
+	//    one until the next frame, but popupRect measures the NEW items —
+	//    so the reported width describes content nobody has drawn.
+	t.Run("menus replaced while open", func(t *testing.T) {
+		bar := geomBar()
+		c := gooey.NewComposer(bar, 40, 12)
+		t.Cleanup(c.Close)
+		c.Frame()
+		bar.Open(1, nil)
+		c.Frame()
+		f, _ := c.Frame()
+
+		painted := paintedDropdown(t, f, 12)
+		if painted.Y < 0 {
+			t.Fatal("no dropdown was painted: nothing below was tested")
+		}
+		if got := bar.DropdownBounds(); got != painted {
+			t.Fatalf("the fixture disagrees with the frame before the mutation "+
+				"(%v vs %v); the assertion below would be meaningless", got, painted)
+		}
+
+		// A much longer label, so a recomputed width cannot coincide with
+		// the painted one.
+		bar.Menus[1].Items = append(bar.Menus[1].Items,
+			MenuItem{Text: "an item whose label is far wider than any other"})
+
+		if got := bar.DropdownBounds(); got != painted {
+			t.Errorf("after replacing the open menu's items the bounds report %v, "+
+				"but the dropdown on screen is still at %v — the rect describes "+
+				"content no frame has drawn", got, painted)
+		}
+	})
+}
