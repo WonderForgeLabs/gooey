@@ -78,11 +78,22 @@
 // trade in both directions. Kitty and iTerm2 transmit through
 // png.Encode, which un-premultiplies, so the terminal composites the
 // rule against ITS OWN background — an answer no arithmetic here can
-// improve on, because Pane has no BackgroundProperty and no ANCESTOR of
-// a Panel in apps/wysiwyg declares a Background, so the only ground this
-// package can name is black. Two tiers that were already right were
-// spent to mend the one that was not. Learning the terminal's own
-// background — an OSC 11 query — is filed on #259.
+// improve on, because Pane has no BackgroundProperty and the only ground
+// this package can name is black.
+//
+// THE APP'S OWN CHROME IS WHERE THAT IS TRUE, and this paragraph used to
+// state it flat: "no ANCESTOR of a Panel in apps/wysiwyg declares a
+// Background". `over` retracts that fifteen hundred lines down, for the
+// case that matters — main.go registers "Panel" on docCtx, so a DOCUMENT
+// may put a Panel inside a Background-bearing container, and the
+// designer renders one today. Two paragraphs in one file disagreeing
+// about the same fact is worse than either being wrong alone, so this
+// one is now the narrow claim and `over` carries the general one.
+// Raised in review of #474.
+//
+// Two tiers that were already right were spent to mend the one that was
+// not. Learning the terminal's own background — an OSC 11 query — is
+// filed on #259.
 //
 // The cost of the split is one more bit in the Art cache key, which is
 // where every "same shape, different picture" question in this package
@@ -603,9 +614,17 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 //
 // IN A DOCUMENT THE GUESS IS PROVABLY WRONG, not merely unpinned.
 // main.go registers "Panel" on docCtx deliberately ("a document is
-// entitled to a framed region"), and Background is authorable on VStack,
-// Grid and Canvas — so `<VStack Background="#282c34"><Panel/></VStack>`
-// is a document the designer renders today. The framework fills the
+// entitled to a framed region"), and Background is authorable on Border,
+// Canvas, Grid, HStack and VStack — so
+// `<VStack Background="#282c34"><Panel/></VStack>` is a document the
+// designer renders today.
+//
+// THAT LIST IS DERIVED, not remembered: it read "VStack, Grid and
+// Canvas" for a review round while Border and HStack had carried the
+// attribute all along, which is a hand-written list doing what a
+// hand-written list does. TestTheBackgroundElementsAreTheOnesTheRegistrySays
+// reads markup.BuiltinElements() and fails if this sentence and the
+// registry ever name different sets. Raised in review of #474. The framework fills the
 // pane's cells with #282c34 and this function composites against black
 // anyway: (56,56,60) laid over (40,44,52). That is #254's own contrast
 // complaint, in the tree the app exists to render. Measured in review of

@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"image"
 	"math"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/graphics"
+	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/paint"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -1259,6 +1262,161 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 				"antialiasing spill, and every row it takes is a row of glyph it "+
 				"hides", ch, inked, x)
 		}
+	}
+}
+
+// TestTheBackgroundElementsAreTheOnesTheRegistrySays holds the one
+// sentence in panel.go that names a set somebody else owns.
+//
+// `over`'s doc argues that the black ground is provably wrong in a
+// document, and the argument turns on Background being AUTHORABLE — so
+// it names the elements that carry the attribute. It named three of the
+// five for a review round: Border and HStack had declared it all along,
+// and nothing went red, because prose about another package's registry
+// is exactly the claim nothing checks.
+//
+// So the sentence is derived from markup.BuiltinElements() here rather
+// than remembered there. Both directions: a name in the comment that the
+// registry does not carry is as wrong as one it carries and the comment
+// omits. Raised in review of #474.
+func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
+	want := map[string]bool{}
+	for _, e := range markup.BuiltinElements() {
+		for _, a := range e.Attrs {
+			if a.Name == "Background" {
+				want[e.Name] = true
+			}
+		}
+	}
+	if len(want) < 2 {
+		t.Fatalf("the registry reports %d elements carrying Background, which is "+
+			"too few for this to be checking anything — the walk is reading the "+
+			"wrong field", len(want))
+	}
+
+	src, err := os.ReadFile("panel.go")
+	if err != nil {
+		t.Fatalf("reading panel.go: %v", err)
+	}
+	// THE SENTENCE, not the file: "Background is authorable on A, B and
+	// C". Anchored on the phrase so the names cannot drift out of the
+	// clause they are in.
+	m := regexp.MustCompile(`Background is authorable on ([^.]+?) — so`).
+		FindSubmatch(src)
+	if m == nil {
+		t.Fatal("panel.go no longer contains the sentence naming the " +
+			"Background-authorable elements, so this guard is checking nothing. " +
+			"Either restore it or delete this test — a guard whose subject is " +
+			"gone is the failure mode the file it guards is about")
+	}
+	// The clause wraps across comment lines, and the names are separated
+	// by commas and a final "and".
+	clause := regexp.MustCompile(`(?s)\s*//\s*|\s+`).
+		ReplaceAllString(string(m[1]), " ")
+	got := map[string]bool{}
+	for _, n := range regexp.MustCompile(`[A-Z][A-Za-z]*`).
+		FindAllString(clause, -1) {
+		got[n] = true
+	}
+
+	for n := range want {
+		if !got[n] {
+			t.Errorf("markup declares Background on %s and panel.go's sentence "+
+				"does not name it. The argument that sentence makes is that a "+
+				"document CAN put a Panel under a coloured ancestor; an element "+
+				"left out of it is a way that happens which the reasoning does "+
+				"not cover", n)
+		}
+	}
+	for n := range got {
+		if !want[n] {
+			t.Errorf("panel.go's sentence names %s as Background-authorable and "+
+				"the registry does not declare it there", n)
+		}
+	}
+}
+
+// TestTheHairlineNeedsBothStrokesToFitTheCell is the HEIGHT-axis
+// counterpart of TestTheHairlineNeedsMoreThanANonReversedSpan, and its
+// absence is finding 2 of round 7.
+//
+// The two guards in drawCanvas are symmetric — `tall` and `wide`, one
+// per axis — and the tests were not. The width axis had a boundary walk
+// asserting pixels either side of the floor; the height axis had
+// hairlineY(2) refused and hairlineY(16) accepted, with nothing in
+// between. A floor moved from 2.5 to 4.5 breaks cell heights 3 and 4,
+// which is a real terminal (a 4-pixel cell is an 80x24 pane on a small
+// font) and passes every arm this file had.
+//
+// IT SAMPLES COLOUR, NOT ALPHA, for the reason the round-7 arm below
+// records: at these cell heights the row the hairline occupies also
+// carries the border's own stroke, so alpha is 255 with or without a
+// rule and only the COLOUR moves. Measured on the opaque tier at cell
+// width 8, ten columns, reading the row `cellH-1`:
+//
+//	cellH 1  outside [255 255 255 255]  inside [255 255 255 255]  no rule
+//	cellH 2  outside [128 128 128 128]  inside [128 128 128 128]  no rule
+//	cellH 3  outside [  0   0   0   0]  inside [102 102 102 255]  RULE
+//
+// Two samples on the same row rather than one against a constant: what
+// the border paints there changes with the cell height, so an absolute
+// expectation would encode the border and not the rule.
+func TestTheHairlineNeedsBothStrokesToFitTheCell(t *testing.T) {
+	// The first cell height that can hold the border's stroke and the
+	// hairline's half stacked, derived from the constants rather than
+	// written down — hairlineY refuses below borderWidth +
+	// hairlineWidth/2 and places the line at cellH - hairlineWidth/2.
+	first := int(math.Ceil(borderWidth + hairlineWidth))
+
+	// WIDE ENOUGH THAT THE OTHER GUARD IS NOT THE ONE DECIDING. Ten
+	// columns of 8 is 80 pixels, well clear of hairlineSpan's floor, so
+	// a zero here is the height axis talking.
+	const cols, cw = 10, 8
+	if _, _, wide := hairlineSpan(float64(cols * cw)); !wide {
+		t.Fatalf("a %d-pixel canvas fails the WIDTH guard, so this arm would "+
+			"report the wrong axis", cols*cw)
+	}
+
+	ruled := func(t *testing.T, ch int) bool {
+		t.Helper()
+		dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff),
+			render.Color{}, true)
+		if err != nil {
+			t.Fatalf("a pane of %dx%d cells does not draw at all: %v", cw, ch, err)
+		}
+		px := func(x int) [4]int {
+			r, g, b, a := dc.Image().At(x, ch-1).RGBA()
+			return [4]int{int(r >> 8), int(g >> 8), int(b >> 8), int(a >> 8)}
+		}
+		// One sample left of where the rule starts and one mid-span, on
+		// the same row — hairlineInset is the boundary between them.
+		return px(int(hairlineInset)-2) != px(cols*cw/2)
+	}
+
+	for ch := 1; ch < first; ch++ {
+		if _, tall := hairlineY(ch); tall {
+			t.Errorf("hairlineY reports room at cell height %d, below the %.1f "+
+				"pixels the border's stroke and the hairline's half need "+
+				"together", ch, borderWidth+hairlineWidth/2)
+		}
+		if ruled(t, ch) {
+			t.Errorf("a %d-pixel cell draws a rule. The border's stroke reaches "+
+				"%.1f and the hairline needs another %.1f under it — drawn "+
+				"anyway it lands ON the border, where it is either invisible or "+
+				"a thickening of it", ch, borderWidth, hairlineWidth/2)
+		}
+	}
+	// NON-VACUITY AT THE BOUNDARY, not at a comfortable height: an arm
+	// that jumps to cellH 16 cannot tell this floor from one two pixels
+	// higher, which is the regression the finding named.
+	if _, tall := hairlineY(first); !tall {
+		t.Fatalf("hairlineY refuses the first cell height that fits, %d, so the "+
+			"refusals above say nothing about where the boundary is", first)
+	}
+	if !ruled(t, first) {
+		t.Errorf("a %d-pixel cell — the first that holds both strokes — draws no "+
+			"rule, so the zeros above are about something other than the floor",
+			first)
 	}
 }
 

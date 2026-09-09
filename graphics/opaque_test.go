@@ -180,9 +180,24 @@ func encodersIn(t *testing.T, dir string) []string {
 			"is no method set to match declarations against", dir)
 	}
 
-	// What each receiver declares itself, and what each struct embeds.
+	// What each receiver declares itself, what each type embeds, and
+	// which names are INTERFACES.
+	//
+	// The third is not bookkeeping. A type satisfies Encoder by
+	// embedding the interface itself — `struct{ Encoder }`, the
+	// delegating decorator — and by embedding an interface that embeds
+	// it. Neither declares a method and neither embeds anything that
+	// does, so a walk seeded only from declarations reports nothing for
+	// them however many passes it runs; the fixed point below has
+	// nothing to propagate FROM. Seeding the interface's own name is
+	// what gives it a source. Raised in review of #474, measured silent.
+	//
+	// The interfaces are then dropped from the answer: this walk feeds a
+	// table of concrete encoders, and demanding a row for `Encoder`
+	// itself would be a different kind of wrong.
 	has := map[string]map[string]bool{}
 	embeds := map[string][]string{}
+	ifaces := map[string]bool{}
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
@@ -212,13 +227,24 @@ func encodersIn(t *testing.T, dir string) []string {
 						if !ok {
 							continue
 						}
-						st, ok := ts.Type.(*ast.StructType)
-						if !ok || st.Fields == nil {
+						var fields *ast.FieldList
+						switch t := ts.Type.(type) {
+						case *ast.StructType:
+							fields = t.Fields
+						case *ast.InterfaceType:
+							// An interface's "fields" are its method
+							// list, and an entry with no name is an
+							// EMBEDDED interface — the same relation a
+							// struct's anonymous field is.
+							ifaces[ts.Name.Name] = true
+							fields = t.Methods
+						}
+						if fields == nil {
 							continue
 						}
-						for _, fld := range st.Fields.List {
+						for _, fld := range fields.List {
 							if len(fld.Names) != 0 {
-								continue // named field, not embedded
+								continue // named field or declared method
 							}
 							if n := receiverName(fld.Type); n != "" {
 								embeds[ts.Name.Name] = append(embeds[ts.Name.Name], n)
@@ -236,6 +262,10 @@ func encodersIn(t *testing.T, dir string) []string {
 			sat[n] = true
 		}
 	}
+	// THE INTERFACE SATISFIES ITSELF, and saying so is the whole fix for
+	// the embedded-interface case: everything that embeds it, directly
+	// or through another interface, now has a satisfied name to reach.
+	sat["Encoder"] = true
 	// FIXED POINT, because an embedder may itself be embedded. Bounded
 	// by the number of types, since each pass either adds one or stops.
 	for grew := true; grew; {
@@ -255,6 +285,9 @@ func encodersIn(t *testing.T, dir string) []string {
 
 	found := make([]string, 0, len(sat))
 	for n := range sat {
+		if ifaces[n] {
+			continue
+		}
 		found = append(found, n)
 	}
 	slices.Sort(found)
@@ -350,22 +383,59 @@ func receiverName(e ast.Expr) string {
 //	Full     declares both methods            → an encoder
 //	Derived  embeds Full, declares nothing    → an encoder
 //	Chained  embeds Derived                   → an encoder
+//	Wrapped  embeds the INTERFACE             → an encoder
+//	Boxed    embeds an interface embedding it → an encoder
+//	Named    the interface doing that         → an encoder, not a TYPE
 //	Partial  declares Encode and not Name     → NOT an encoder
 //	Shaped   declares Encode with other types → NOT an encoder
 //
-// Partial is the arm that was silent. A walk matching the method NAME
-// counts it, and would then demand a row in the opaque/composited table
-// for a type that cannot be handed to anything expecting an Encoder.
-// Shaped is the same mistake one level down, on the signature rather
-// than the name.
+// Partial is the arm that was silent in round 6. A walk matching the
+// method NAME counts it, and would then demand a row in the
+// opaque/composited table for a type that cannot be handed to anything
+// expecting an Encoder. Shaped is the same mistake one level down, on
+// the signature rather than the name.
+//
+// Wrapped and Boxed are the arms that were silent in round 7, and they
+// fail in the OTHER direction: a satisfier the walk cannot see is a
+// missing table row, which is a real encoder shipping with no statement
+// of whether it is opaque. `struct{ Encoder }` is the delegating
+// decorator, not a corner case.
+//
+// Named is in the want list's shadow rather than in it: it satisfies
+// Encoder and is deliberately NOT reported, because the table this
+// feeds is of concrete encoders and an interface cannot have a row.
+// TestTheEncoderWalkDropsTheInterfacesThemselves is that half.
 func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
 	got := encodersIn(t, "testdata/encoders")
-	want := []string{"Chained", "Derived", "Full"}
+	want := []string{"Boxed", "Chained", "Derived", "Full", "Wrapped"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the walk reports %v over the fixture package; want %v.\n"+
 			"Partial declares Encode and no Name, and Shaped declares an Encode "+
 			"of another signature — neither is an Encoder, and counting one "+
-			"demands a table row for a type nothing can be handed as one",
+			"demands a table row for a type nothing can be handed as one. "+
+			"Wrapped and Boxed declare nothing at all and are encoders anyway, "+
+			"by embedding the interface and an interface that embeds it — miss "+
+			"one and a real encoder ships with no opacity row",
 			got, want)
+	}
+}
+
+// TestTheEncoderWalkDropsTheInterfacesThemselves is the other edge of
+// the same seed.
+//
+// Marking Encoder satisfied is what lets an embedder reach a satisfied
+// name, and it also makes Encoder and Named satisfied names in their own
+// right. Returning them would demand an opaque/composited row for a type
+// nothing can construct — the exact failure the Partial arm guards
+// against, arrived at from the opposite side. Asserted separately
+// because the want list above cannot say why a name is absent.
+func TestTheEncoderWalkDropsTheInterfacesThemselves(t *testing.T) {
+	for _, n := range encodersIn(t, "testdata/encoders") {
+		if n == "Encoder" || n == "Named" {
+			t.Errorf("the walk reports %q, which is an INTERFACE. Seeding the "+
+				"interface as satisfied is what makes an embedder reachable; "+
+				"returning it demands a table row for a type nobody can hand "+
+				"over as a value", n)
+		}
 	}
 }
