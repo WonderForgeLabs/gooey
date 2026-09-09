@@ -32,13 +32,21 @@ with a fallback. The names are deliberately not `Icon` / `IconFallback`:
 neither is a degradation of the other, and a name saying otherwise would
 invite exactly the halfblock implementation the measurement rules out.
 
-**The gutter is reserved unconditionally** — three cells whenever *any*
-item in the menu carries either field, whether or not a protocol exists,
-and whether or not that particular item has an icon.
+**The gutter is reserved whenever any DRAWN item in the menu carries
+either field** — three cells, whether or not a protocol exists, and
+whether or not that particular item has an icon.
 
+- *Separators do not count.* `drawDropdown` continues past a separator
+  before it ever reaches the gutter, so a `MenuItem{Separator: true,
+  Icon: img}` widened every row by three columns that nothing draws in.
+  This section said "unconditionally … any item" until review of #455
+  found `iconLead` counting them; `Menu.lead()` had the identical bug
+  for check boxes and was fixed in the same review. Markup refuses such
+  an item, but `MenuItem` is a public struct and the Go contract is the
+  one these functions keep.
 - *Per menu, not per item*, so every label in one dropdown starts at the
-  same column. Same reason `Menu.lead()` already asks the menu about
-  check boxes.
+  same column. Same reason `Menu.lead()` asks the menu about check
+  boxes — and, since the same review, skips separators the same way.
 - *Regardless of protocol*, because the capability probe answers **after
   the first frame**. A dropdown one cell narrower without pixels would
   visibly reflow on a terminal that supports them. `buttonchrome.go`
@@ -63,6 +71,16 @@ the identical contract for the identical reason.
 is fine — the gutter's three cells are the *component's* arithmetic, and
 the loader's question is how many glyphs. Two glyphs are refused at load
 rather than clipped at paint, because half a glyph is not drawable.
+
+**An `Icon` needs an `IconRune` beside it**, and the loader refuses the
+pair broken. This is not `IconRune` becoming a fallback — the paragraph
+above still holds, neither field degrades to the other and the tiers
+draw different things. It is that the gutter is reserved regardless of
+protocol, so an `Icon` alone draws three blank columns on every terminal
+without one: markup accepted, then silently drawing nothing, which is
+the separator case's shape and gets the separator case's answer.
+Authoring two tiers means authoring both. Added in review of #455, which
+found the code enforcing a rule this section did not record.
 
 ## The second gap: the dropdown had no geometry
 

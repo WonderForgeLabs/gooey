@@ -141,8 +141,21 @@ func (m Menu) iconLead() int {
 // a menu with one check item align its plain items with it instead of
 // stepping them one cell left. Real menus do this; a menu that does not
 // reads as broken.
+//
+// SEPARATORS DO NOT COUNT, for iconLead's reason and in the same words:
+// drawDropdown continues past a separator before it ever draws a check
+// box, so a MenuItem{Separator: true, Checked: p} widened every row by
+// three columns that nothing draws in — measured one way, painted
+// another. The two functions sat one screen apart, one skipping and one
+// not, which is the shape of a rule applied to the site it was found on
+// rather than to the idea. Markup refuses that item, but the struct is
+// public and this file's contract is the Go one. Raised in review of
+// #455, after iconLead got the same fix in the same review.
 func (m Menu) lead() int {
 	for _, it := range m.Items {
+		if it.Separator {
+			continue
+		}
 		if it.Checked != nil {
 			return 4
 		}
@@ -219,14 +232,25 @@ func (m Menu) checkBox(it MenuItem) string {
 // MenuBar is the top menu row: titles across one line, and a dropdown
 // overlay below the open title.
 //
-// Z-ORDER: the dropdown must paint above the page content, and in gooey
-// z-order IS document order — so declare the MenuBar as the LAST child
-// of its container, positioned onto the top row (in a Grid, the element
-// order and Grid.Row are independent, which is exactly what this
-// needs). The dropdown is a child of the bar arranged BELOW the bar's
-// own bounds; being late in document order is what puts it above the
-// content it covers, and the Composer's restore pass repaints that
-// content when the menu closes or moves.
+// Z-ORDER: the dropdown must paint above the page content, and it does
+// so FROM WHEREVER THE BAR IS DECLARED. The surface is a
+// gooey.Overlay (components/popup.go), so the Composer lifts its whole
+// subtree out of document order into a second paint layer above the
+// page.
+//
+// "Declare the MenuBar as the LAST child of its container" is what this
+// comment said, and #430 is the bug that disproved it: being last buys
+// being above your OWNER's other siblings and nothing else, so a
+// MenuBar on the wysiwyg designer canvas — beside a Gauge, an ItemsView
+// and a Border — had its dropdown painted over on the very next repaint,
+// because the z-ordered pass forces FORWARD ONLY and could not reach
+// back. The lift landed in #437; position is free now. Corrected in
+// review of #455, which found this comment still teaching the rule the
+// rest of the change had already retired.
+//
+// The dropdown is a child of the bar arranged BELOW the bar's own
+// bounds, and the Composer's restore pass repaints the content beneath
+// it when the menu closes or moves.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from
@@ -520,7 +544,18 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // that needed cur on closed frames would need a different accessor.
 // Stated in review of #455.
 func (m *MenuBar) OpenIndex() int {
-	if !m.showing() {
+	// m.pop FIRST, exactly as in DropdownBounds, and this accessor was
+	// missed when that one was fixed. showing() calls popup(), the LAZY
+	// CONSTRUCTOR: it allocates m.pop, sets Modal and assigns m.kids. So
+	// asking a fresh MenuBar which menu is open BUILT the surface as a
+	// side effect of the question.
+	//
+	// Nothing misbehaved — ChildComponents calls popup() anyway — which
+	// is precisely why it needs a test rather than a comment: the defect
+	// is invisible in every observable except the allocation itself.
+	// Pinned by TestAskingWhichMenuIsOpenDoesNotBuildTheSurface.
+	// Raised in review of #455, one accessor after the same finding.
+	if m.pop == nil || !m.showing() {
 		return -1
 	}
 	return m.curIdx()

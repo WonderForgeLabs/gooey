@@ -355,8 +355,12 @@ so `tab` never lands on a button nobody can see.
 
 ## What you learned
 
-- Overlays are declared **last in their container** because document
-  order is z-order; `Grid.Row` places them independently of that order.
+- A `MenuBar`'s dropdown is a `gooey.Overlay`: the Composer lifts it
+  above the page **wherever the bar is declared**. "Declare it last" is
+  what this line said, and it is the rule
+  [#430](https://github.com/WonderForgeLabs/gooey/issues/430) disproved —
+  see the box above. `ToastHost` and `AdornmentLayer` are not lifted yet,
+  so for those two, position still decides.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.
@@ -367,7 +371,9 @@ so `tab` never lands on a button nobody can see.
 - Toasts are imperative: the host is markup, `Show` is code through
   `markup.Find`, looked up per fire so hot reload cannot strand it.
 - Tooltips (both spellings) need an `AdornmentLayer` on the page, and
-  the layer's position in document order decides what tips paint over.
+  the layer's position in document order decides what tips paint over —
+  the layer is not lifted, so this one is not the retired rule but the
+  live one.
 - The wave-1 widgets share the framework's rules rather than inventing
   their own: arrows are consumed only when they move something, and
   disabled is always "a command whose condition says no".

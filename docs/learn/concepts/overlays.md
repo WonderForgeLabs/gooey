@@ -8,11 +8,27 @@ root implements `gooey.Overlay` out of that order and onto the end.
 `c.nodes` stays the structure; `c.paint` is the answer to what is in
 front of what.
 
-So an overlay paints above the page **from wherever it is declared**. In
-a `Grid`, `Grid.Row` places it where it belongs and nothing about
-z-order argues with that — `cmd/toolkit` declares its `MenuBar`,
-`ToastHost` and `AdornmentLayer` at the end of the Grid because that
-reads best, not because it decides anything.
+So a lifted overlay paints above the page **from wherever it is
+declared**. In a `Grid`, `Grid.Row` places it where it belongs and
+nothing about z-order argues with that.
+
+**Which surfaces are lifted, exactly.** Today it is `components.Popup`'s
+surface — so the `MenuBar` dropdown, the `Tooltip` popup, and any
+`Popup` an app owns. `ToastHost` and `AdornmentLayer` do **not**
+implement `gooey.Overlay` yet, so for those two the old rule still
+holds: they are in the ordinary layer, and their position in document
+order is what decides whether a toast paints over an open menu or under
+it. `cmd/toolkit` declares all three at the end of its Grid, and for the
+bar that is now only house style — for the other two it is still load
+bearing. Do not move them.
+
+That is [#439](https://github.com/WonderForgeLabs/gooey/issues/439),
+which adopts the marker on both hosts and ranks the layer so a toast is
+never hidden by a menu; this paragraph comes out with it.
+`TestTheHostsThisPageCallsPositionDependentStillAre` (components) fails
+when they adopt it, so the sentence cannot outlive the fact. Stated in
+review of #455, which found this page saying position decided nothing
+for three hosts when it decided everything for two of them.
 
 **This page opened with "Z-order is document order" and instructed
 "declare the overlay element as the LAST child"** until review of #455,
@@ -82,8 +98,7 @@ Two conventions ride along with the z-hosting, both visible in the
 
 One trap for page-spanning hosts: hit-testing treats every bounded
 container as opaque, so a full-page `ToastHost` would eat every click on
-the page — and here position genuinely does still order things, because
-the lift moves PAINT and not input. Hosts like it implement `HitTestTransparent` —
+the page. Hosts like it implement `HitTestTransparent` —
 the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).

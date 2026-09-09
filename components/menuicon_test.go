@@ -498,3 +498,79 @@ func TestAskingForTheBoundsDoesNotBuildTheSurface(t *testing.T) {
 			"under a read")
 	}
 }
+
+// TestAskingWhichMenuIsOpenDoesNotBuildTheSurface is the SAME claim for
+// the accessor beside it, and it is here because the fix above did not
+// reach OpenIndex.
+//
+// Both accessors ask a question about a dropdown that may not exist, and
+// both went through showing(), the function whose first act is to call
+// the lazy constructor. DropdownBounds got the m.pop guard in review of
+// #455 and OpenIndex did not — the finding was applied to the site it
+// was reported on rather than to the pair, which is how one of two
+// identical functions gets fixed. Raised in review of #455, the second
+// time.
+//
+// Note what CANNOT catch this: every behavioural assertion. Nothing
+// misbehaves, because ChildComponents calls popup() anyway. The
+// allocation is the only observable, so the test has to look at m.pop
+// directly.
+func TestAskingWhichMenuIsOpenDoesNotBuildTheSurface(t *testing.T) {
+	bar := iconBar()
+	if bar.pop != nil {
+		t.Fatal("the fixture arrives with a surface already built, so this test " +
+			"cannot see what it exists for")
+	}
+
+	if got := bar.OpenIndex(); got != -1 {
+		t.Errorf("OpenIndex on a bar that has never composed = %d, want -1", got)
+	}
+	if bar.pop != nil {
+		t.Error("asking a MenuBar which menu is open BUILT the dropdown surface. " +
+			"DropdownBounds one function away carries a comment promising exactly " +
+			"this of itself; the two are the same question and answer it the same way")
+	}
+	if bar.kids != nil {
+		t.Error("asking which menu is open populated kids, so the visual tree changed " +
+			"under a read")
+	}
+}
+
+// TestASeparatorDoesNotWidenTheCheckGutter is Menu.lead()'s half of the
+// separator rule, and iconLead's test is its twin.
+//
+// drawDropdown continues past a separator before it ever draws a check
+// box, so a MenuItem{Separator: true, Checked: p} reserved four columns
+// that nothing draws in — measured one way, painted another. iconLead
+// was fixed for the identical reason earlier in review of #455 and
+// lead() was left, one screen away, which is a rule applied to a site
+// rather than to an idea.
+//
+// THE STRUCT, NOT THE MARKUP. The loader refuses <MenuItem
+// Separator="true" Checked="…"/>, so this is unreachable from a
+// document — and MenuItem is a public struct whose Go contract is what
+// this file keeps. A test going through markup would be green against
+// the bug.
+func TestASeparatorDoesNotWidenTheCheckGutter(t *testing.T) {
+	checked := prop.NewSource(true)
+	plain := Menu{Title: "M", Items: []MenuItem{{Text: "one"}, {Text: "two"}}}
+	withSep := Menu{Title: "M", Items: []MenuItem{
+		{Text: "one"},
+		{Separator: true, Checked: checked},
+		{Text: "two"},
+	}}
+	if got, want := withSep.lead(), plain.lead(); got != want {
+		t.Errorf("a menu whose only Checked item is a SEPARATOR leads %d cells, want "+
+			"%d — the same as a menu with no check items at all. The separator row "+
+			"draws no box, so the gutter is %d columns of nothing and every label in "+
+			"the dropdown is pushed right of them", got, want, got-want)
+	}
+	// NON-VACUITY: a real check item must still widen it, or the
+	// assertion above is satisfied by a lead() that returns 1 always.
+	real := Menu{Title: "M", Items: []MenuItem{{Text: "one", Checked: checked}}}
+	if real.lead() <= plain.lead() {
+		t.Fatalf("a menu with a genuine check item leads %d, no more than one without "+
+			"(%d) — lead() has stopped reserving the box and the test above is about "+
+			"nothing", real.lead(), plain.lead())
+	}
+}
