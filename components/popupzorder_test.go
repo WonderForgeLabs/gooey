@@ -15,13 +15,18 @@ import (
 // Popup's doc comment USED TO STATE the rule as a fact of the design:
 // the surface was "a leaf child the owner returns from ChildComponents
 // (LAST, because document order is z-order)". Do not go looking for that
-// sentence — #437 removed it, and the sweep in #443 removed the rest of
-// its family. toyPage was built to satisfy it, declaring the owner last
-// with that reason in a comment, and every other test in this package
-// inherited the arrangement. That is the shape this file exists to
-// escape, and it is quoted here because the quote IS the evidence: a
-// suite calibrated against a doc comment can only ever re-ask what the
-// comment already assumed.
+// sentence — THIS sweep (#443) removed it, along with the rest of its
+// family. #437 is where the rule stopped being true, not where the
+// sentence stating it was deleted; the attribution here said #437 until
+// review of #458 checked the diff and found the line is a `-` in this PR
+// and present in the base branch.
+//
+// toyPage was built to satisfy the retired sentence — it declares the
+// owner last and writes that dead reason in a comment beside it — and
+// every other test in this package inherited the arrangement. That is
+// the shape this file exists to escape, and it is quoted here because
+// the quote IS the evidence: a suite calibrated against a doc comment
+// can only ever re-ask what the comment already assumed.
 //
 // Which means the whole suite only ever asked whether the surface is
 // above its OWNER'S siblings. Being last among the owner's children buys

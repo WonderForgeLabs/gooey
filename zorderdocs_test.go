@@ -80,10 +80,41 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 			continue
 		}
 		for i, line := range lines {
-			if !statesTheRetiredRule(line) {
-				continue
+			// The line AND the line joined to its successor. A rule
+			// statement wrapped across two comment lines —
+			//
+			//	// The AdornmentLayer must be declared
+			//	// LAST or it paints underneath.
+			//
+			// — matches no pattern on either line alone, and every
+			// pattern in retiredRule is a phrase of five to nine words
+			// that a 72-column comment splits routinely. The file
+			// recorded a one-line qualifier FLOOR and said nothing about
+			// this, so the guard's own account of its limits was missing
+			// the larger one. Raised in review of #458.
+			//
+			// The join is what is TESTED, not the report: the error still
+			// names line i, because that is where a reader starts fixing
+			// it.
+			hit, span := line, i
+			if !statesTheRetiredRule(hit) {
+				hit = joinWrapped(lines, i)
+				if !statesTheRetiredRule(hit) {
+					continue
+				}
+				// The statement OCCUPIES two lines, so the window runs
+				// two lines past the second — not two past the first.
+				// Without this a wrapped hit silently loses the last
+				// line of its own window, and apps/wysiwyg/wysiwyg.gooey
+				// proved it immediately: a blank line joined to "THE MENU
+				// BAR IS THE LAST CHILD" reported at the blank line, two
+				// lines above the "gooey.Overlay, lifted" that qualifies
+				// it, while the same sentence matched cleanly one line
+				// down. A guard that reports a corrected site because of
+				// where its own lookahead started is noise.
+				span = i + 1
 			}
-			if qualifiedNear(lines, i) {
+			if qualifiedNearSpan(lines, span, hit) {
 				continue
 			}
 			t.Errorf("%s:%d states the retired overlay rule with nothing "+
@@ -99,9 +130,14 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 	}
 }
 
-// prefilterWords is what docFiles requires a file to contain before it is
-// scanned line by line. It is an inexact, cheap filter over ~7MB, and it
-// is the reason the guard runs in ~3s rather than ~6s.
+// prefilterWords is what TestNoFileTeachesTheRetiredOverlayRule requires a
+// file to contain before it scans it line by line. It is an inexact, cheap
+// filter over ~7MB, and it is the reason the guard runs in ~3s rather than
+// ~6s.
+//
+// It is NOT in docFiles, which only walks and floors — the two sentences
+// above said "docFiles" until review of #458 noticed, in a file whose
+// whole thesis is that a description outlives its subject.
 //
 // It is a NAMED LIST because the relationship to retiredRule is a
 // contract, not a coincidence: a pattern that needs a word absent here can
@@ -135,11 +171,23 @@ var retiredRule = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)z-?order is document order`),
 	regexp.MustCompile(`(?i)(tree|document) order IS z-?order`),
 	// The instruction, in the spellings the repo actually used.
-	regexp.MustCompile(`(?i)declare .{0,40}\bLAST\b`),
-	regexp.MustCompile(`(?i)declared LAST\b`),
+	// ONE INFLECTION-TOLERANT PATTERN replaces the pair that needed a
+	// literal `declare ` and an adjacent `declared LAST`. Both missed
+	// `declared very last` — an ADVERB between the verb and the word —
+	// which is how cmd/toolkit/toolkit.gooey kept the rule through a
+	// sweep that corrected three other sites in the same file. A
+	// predicate assembled from the phrasings you can see is a sample of
+	// the ways the thing can be said, and this is the third time that
+	// has been the finding. Raised in review of #458.
+	regexp.MustCompile(`(?i)declar(e|es|ed|ing)\b.{0,40}\bLAST\b`),
 	regexp.MustCompile(`(?i)(as|is) the LAST child`),
 	regexp.MustCompile(`(?i)last child of the (root|Grid|page)`),
 	regexp.MustCompile(`(?i)last child = top`),
+	// WITHOUT the word "child". components/menu_test.go said
+	// `bar, // last = on top` twenty-two lines below a header this sweep
+	// corrected to say "nothing in this file is asserting z-order".
+	// Raised in review of #458.
+	regexp.MustCompile(`(?i)last = (on )?top`),
 	regexp.MustCompile(`(?i)last-in-document-order`),
 	// THE REPO'S OWN PARAPHRASES, added in review of #458 — and the
 	// reason they matter is that the sweep missed a site because of
@@ -170,6 +218,35 @@ var retiredRule = []*regexp.Regexp{
 	// review of #458.
 	regexp.MustCompile(`(?i)the order is the z-?order`),
 }
+
+// joinWrapped is line i and line i+1 as one string, with the comment or
+// list marker that opens the continuation stripped so the two halves meet
+// as prose. `// LAST or it paints underneath.` has to become
+// `LAST or it paints underneath.` or the join reads
+// `must be declared // LAST` and a pattern with a `.{0,40}` gap survives
+// only by luck.
+//
+// One line of lookahead, not a paragraph: the patterns are single
+// phrases, and joining more would let a rule statement on line i be
+// completed by an unrelated sentence three lines down. Raised in review
+// of #458.
+func joinWrapped(lines []string, i int) string {
+	if i+1 >= len(lines) {
+		return lines[i]
+	}
+	return lines[i] + " " + continuationRe.ReplaceAllString(lines[i+1], "")
+}
+
+// The markers a wrapped line can open with: a Go/`.gooey` comment, a
+// markdown heading, list bullet, or blockquote.
+//
+// The heading form REQUIRES the space. `#+` alone also ate the `#430` in
+// "#430 specifically disproved", which is a qualifier — so stripping the
+// marker deleted the evidence that the sentence beside it was an epitaph,
+// and docs/specs/2026-09-05-menu-item-icons.md was reported as teaching
+// the rule it says was disproved. Found by running the guard, not by
+// reading the regexp. Raised in review of #458.
+var continuationRe = regexp.MustCompile(`^\s*(//+|#{1,6}\s|>+|[-*+]\s)\s*`)
 
 func statesTheRetiredRule(line string) bool {
 	for _, re := range retiredRule {
@@ -267,7 +344,13 @@ var (
 // qualifiedNear looks in a NARROW window around the hit — two lines each
 // way, enough for one wrapped sentence and no more.
 //
-// THE FLOOR IS ONE LINE, AND THAT IS THE RESIDUAL HOLE. The window
+// THE FLOOR IS ONE LINE, AND THAT IS THE RESIDUAL HOLE — the residual
+// one. The larger hole beside it, a rule statement WRAPPED across two
+// comment lines matching neither, went unrecorded here until review of
+// #458 and is now closed by joinWrapped rather than written down. What
+// follows is the part that is still open.
+//
+// The window
 // includes line i itself, so a single line carrying both the retired rule
 // and a qualifier passes:
 //
@@ -303,6 +386,18 @@ var (
 // used to say" lands on the same line or the next one — and it is too
 // narrow to reach a neighbouring paragraph that happens to be right.
 func qualifiedNear(lines []string, i int) bool {
+	return qualifiedNearSpan(lines, i, lines[i])
+}
+
+// qualifiedNearSpan is qualifiedNear with the hit-test exemption read
+// against the SPAN THE MATCH CAME FROM rather than line i.
+//
+// The two differ only for a wrapped statement: when the scan matches the
+// join of lines i and i+1, the sentence naming the hit walk may be on
+// i+1, and refusing the exemption there would reject the very sentence
+// hitTestExemption exists to admit. It is still not the window — i+2 is
+// no more part of the sentence than it ever was.
+func qualifiedNearSpan(lines []string, i int, hit string) bool {
 	const window = 2
 	lo, hi := i-window, i+window
 	if lo < 0 {
@@ -314,10 +409,22 @@ func qualifiedNear(lines []string, i int) bool {
 	// The hit-test exemption is checked against THIS line only. See
 	// hitTestExemption: naming the hit walk excuses the line that names
 	// it, not its neighbours.
-	if hitTestExemption.MatchString(lines[i]) {
+	if hitTestExemption.MatchString(hit) {
 		return true
 	}
-	block := strings.Join(lines[lo:hi+1], "\n")
+	// JOINED AS PROSE, not with newlines. The qualifiers are phrases —
+	// "no longer", "used to say", "does not decide" — and a 72-column
+	// comment splits them exactly as readily as it splits the rule
+	// statements the scan above now joins for the same reason. It split
+	// one in the tree: components/menu_test.go wrapped "Last is no /
+	// longer what puts the dropdown above the content", so the correction
+	// the sweep wrote was invisible to the guard checking for it.
+	// Raised in review of #458.
+	parts := make([]string, 0, hi-lo+1)
+	for _, l := range lines[lo : hi+1] {
+		parts = append(parts, continuationRe.ReplaceAllString(l, ""))
+	}
+	block := strings.Join(parts, " ")
 	for _, re := range qualifierRes {
 		if re.MatchString(block) {
 			return true
@@ -390,7 +497,6 @@ func docFiles(t *testing.T) []string {
 // be caught.
 func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 	removed := []string{
-		"// it as the LAST child of its root — document order is z-order, the same",
 		"//     from ChildComponents (LAST, because document order is z-order),",
 		"// z-order IS document order — so declare the MenuBar as the LAST child",
 		"// LAST, because document order is z-order: the menu must paint over",
@@ -414,6 +520,19 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 	// it matched nothing in `removed`: it was guarding a spelling the
 	// repo never used, and there was no way to tell that from the list.
 	neverShipped := []string{
+		// MOVED FROM `removed` in review of #458, where it was the entry
+		// that made the list's own claim false: `git grep "LAST child of
+		// its root"` finds it in neither the base branch nor this tree,
+		// and it appears on no `-` line of this PR's diff. The list
+		// carries a factual claim about provenance and the neverShipped
+		// rationale below says inventing entries would falsify it — so an
+		// invented entry sitting in `removed` falsified it twice over.
+		"// it as the LAST child of its root — document order is z-order, the same",
+		// Inflections and the bare equation, so the patterns added for
+		// them have something to fire on.
+		"// The AdornmentLayer is declared very last, so it paints on top.",
+		"// Declaring the ToastHost last is what puts the toasts above the page.",
+		"	bar,          // last = on top",
 		"// The AdornmentLayer must be declared LAST or it paints underneath.",
 		"// The ToastHost must be the last child, or the toasts go behind the page.",
 		"// A MenuBar belongs at the end of its container so the dropdown paints on top.",
@@ -471,14 +590,19 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 
 	// THE PREFILTER CONTRACT, checked rather than asserted in prose.
 	//
-	// docFiles' prefilter skips any file containing neither "order" nor
-	// "last", and a comment tells the next author to keep retiredRule in
-	// step with it. That comment is true today and enforces nothing: a
-	// future pattern for, say, "paints on top because it is declared
-	// after" matches neither substring, is skipped for 100% of the tree,
-	// and the negative assertion still passes — a guard switched off by
-	// adding to it. Every sample the patterns are pinned against must
-	// therefore survive the prefilter too. Raised in review of #458.
+	// The scan skips any file containing none of prefilterWords, and the
+	// list used to carry a comment telling the next author to keep
+	// retiredRule in step with it. Prose enforces nothing: a future
+	// pattern for, say, "paints on top because it is declared after"
+	// contains no prefilter word, is skipped for 100% of the tree, and
+	// the negative assertion still passes — a guard switched off by
+	// adding to it. This loop is what replaced that comment. Every sample
+	// the patterns are pinned against must survive the prefilter too.
+	// Raised in review of #458.
+	//
+	// The three sentences above described a two-word list living in
+	// docFiles, and by the time they were read the list was four words
+	// living in the test body. Corrected in review of #458.
 	for _, line := range samples {
 		if !containsAnyPrefilterWord(strings.ToLower(line)) {
 			t.Errorf("the prefilter would skip a file containing this line, so the "+
@@ -492,6 +616,65 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 			t.Errorf("the guard fires on a correct sentence, which makes "+
 				"it noise rather than a check:\n\t%s", line)
 		}
+	}
+}
+
+// TestAWrappedRuleStatementIsStillCaught pins the two-line join, and
+// nothing else in the file can: every sample in
+// TestTheRetiredRuleGuardCanActuallyFire is a single line, so deleting
+// joinWrapped leaves that test green and the tree green, and the hole
+// comes back silently.
+//
+// The hole is not exotic. Every retiredRule pattern is a phrase of five
+// to nine words, and this repo wraps comments at 72 columns, so the
+// statement the guard is looking for is split about as often as not.
+// Raised in review of #458.
+func TestAWrappedRuleStatementIsStillCaught(t *testing.T) {
+	wrapped := []string{
+		"// The AdornmentLayer must be declared",
+		"// LAST or it paints underneath.",
+	}
+	if statesTheRetiredRule(wrapped[0]) || statesTheRetiredRule(wrapped[1]) {
+		t.Fatal("the fixture is not actually wrapped — one of its lines states " +
+			"the rule on its own, so this test would pass without the join")
+	}
+	if !statesTheRetiredRule(joinWrapped(wrapped, 0)) {
+		t.Errorf("a rule statement wrapped across two comment lines is invisible "+
+			"to the guard:\n\t%s\n\t%s", wrapped[0], wrapped[1])
+	}
+
+	// The continuation marker has to go, or the join reads
+	// "declared // LAST" and only survives on the slack in a `.{0,40}`.
+	if got := joinWrapped(wrapped, 0); strings.Contains(got, "declared //") {
+		t.Errorf("joinWrapped left the continuation marker in: %q", got)
+	}
+
+	// And the last line of a file has no successor.
+	if got := joinWrapped(wrapped, 1); got != wrapped[1] {
+		t.Errorf("joinWrapped past the end = %q, want the line itself", got)
+	}
+}
+
+// TestAWrappedQualifierStillExempts is the other half, and without it the
+// join above is a guard that reports corrected prose.
+//
+// A qualifier is a phrase too — "no longer", "used to say" — and wraps
+// the same way. components/menu_test.go had "Last is no / longer what
+// puts the dropdown above the content" the moment the join started
+// catching the sentence above it, so this is a fixture taken from the
+// tree, not an invention. Raised in review of #458.
+func TestAWrappedQualifierStillExempts(t *testing.T) {
+	lines := []string{
+		"// focusable button on row 2, and the MenuBar declared last. Last is no",
+		"// longer what puts the dropdown above the content — the surface is a",
+	}
+	if !statesTheRetiredRule(lines[0]) {
+		t.Fatal("the fixture no longer states the rule, so the exemption it " +
+			"checks is unreachable")
+	}
+	if !qualifiedNear(lines, 0) {
+		t.Error("a correction wrapped across two lines does not qualify the " +
+			"statement it corrects, so the guard fires on the sweep's own prose")
 	}
 }
 

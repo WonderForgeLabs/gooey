@@ -263,8 +263,10 @@
       </MenuBar>
       <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="5" Duration="2500ms"/>
       <!-- The adornment layer hosts tooltips and the forms tab's
-           ValidationMarker: declared very last, so both paint above even
-           the toasts. -->
+           ValidationMarker. It paints above even the toasts because
+           OverlayRankAdornment (20) outranks OverlayRankToast (10) —
+           the same rank rule cited sixteen lines up, and nothing to do
+           with where this element sits in the file. -->
       <AdornmentLayer Grid.Row="0" Grid.RowSpan="5"/>
     </Grid>
   </Border>

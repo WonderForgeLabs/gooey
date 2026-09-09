@@ -36,7 +36,7 @@ func menuPage(saved *int, can *prop.Property[bool]) (*MenuBar, *Button, gooey.Co
 	page := &Canvas{Children: []gooey.Component{
 		under,
 		gooey.L(btn, gooey.Layout{Top: 3, Left: 25}), // clear of the File dropdown
-		bar, // last = on top
+		bar, // position in this slice decides nothing; see the header
 	}}
 	return bar, btn, page
 }

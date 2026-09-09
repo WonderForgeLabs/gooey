@@ -13,9 +13,12 @@ three parts:
    `gooey.Overlay` comes out of document order into a second paint
    layer, so it paints above the page *from wherever it is declared*.
 2. **Ranks order that layer.** `OverlayRankPopup` (0) →
-   `OverlayRankToast` (10) → `OverlayRankAdornment` (20), stable, so
-   equal ranks keep document order and the rank is asked of the lifting
-   root only.
+   `OverlayRankToast` (10) → `OverlayRankAdornment` (20). `appendByRank`
+   is a **bucket pass**, not a stable sort — the word "stable" stood here
+   until review of #458, and `docs/architecture.md` retires it in this
+   same PR. What the buckets buy is the same observable property: equal
+   ranks keep document order, and nothing else does. The rank is asked of
+   the lifting root only.
 3. **Input was not lifted.** Hit-testing still walks plain document
    order, last sibling first. `Overlay` moves paint, not input.
 
@@ -103,13 +106,25 @@ any reason at all, including a regex that matches nothing.
 
 | Failure mode | What catches it |
 |---|---|
-| the predicate matches nothing | `TestTheRetiredRuleGuardCanActuallyFire` feeds it eight sentences the sweep really removed |
-| the predicate matches everything | the same test feeds it five correct sentences from the same files |
-| the walk visits no files | a floor of 100 documentation files, asserted before any line is read |
+| the predicate matches nothing | `TestTheRetiredRuleGuardCanActuallyFire` feeds it the sentences the sweep really removed, plus a `neverShipped` list of phrasings the repo never used |
+| the predicate matches everything | the same test feeds it correct sentences from the same files |
+| a single pattern is dead or subsumed | the per-pattern loop in that test requires EVERY `retiredRule` entry to match at least one sample — the list-as-a-whole loop above it passes while an individual pattern matches nothing |
+| a pattern needs a word the prefilter drops | the prefilter contract loop in that test requires every sample to contain a `prefilterWords` word, so a pattern cannot be switched off for the whole tree by being added to |
+| a rule statement is WRAPPED across two comment lines | the scan tests line i joined to i+1 as well as line i, pinned by `TestAWrappedRuleStatementIsStillCaught`; every sample in the fire test is a single line, so nothing else could show the hole |
+| a CORRECTION is wrapped and stops exempting | the qualifier window is joined as prose rather than with newlines, pinned by `TestAWrappedQualifierStillExempts` — otherwise the join above turns the sweep's own corrected comments into failures |
+| the walk visits no files | a floor asserted before any line is read |
 | a qualifier is accepted from too far away | mutations Z1/Z2/Z3 re-introduce a stale line into Go, markdown and `.gooey` next to correct prose |
+| the hit-test exemption excuses a paint claim beside it | `TestTheHitTestExemptionIsLineScoped` — that one qualifier reads a single line, not the ±2 window, and reverting it to the window is otherwise silent |
 
-All four fire. Z1 and Z3 **passed** against the six-line version, which
-is how the window got narrowed.
+All of them fire. Z1 and Z3 **passed** against the six-line version,
+which is how the window got narrowed.
+
+**The list sizes and the floor are deliberately not written here.** This
+table said "eight sentences", "five correct sentences" and "a floor of
+100" while the guard held different numbers and a floor of 500 — drift
+inside the same commit range as the sweep that exists to catch drift
+(raised in review of #458). Read them from `zorderdocs_test.go`; a count
+in prose is a sample taken once.
 
 ## What is deliberately not guarded
 

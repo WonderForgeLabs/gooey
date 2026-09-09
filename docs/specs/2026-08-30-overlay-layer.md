@@ -13,13 +13,23 @@ for the hit-testing gap, which is why the pointer has to run both ways.
 
 `Popup`'s doc comment stated the rule as a fact of the design — the sentence
 below is quoted as history and no longer appears anywhere in the tree AS AN
-ASSERTION — it survives only inside quotations of itself, in
-`components/popupzorder_test.go`, `docs/specs/2026-09-05-zorder-doc-sweep.md`
-and the guard's own fixtures in `zorderdocs_test.go`, which is what
-`declaresItselfSuperseded` and the epitaph qualifier exist to permit. (This
-line said "anywhere in the tree", full stop, which was a checkable absolute
-and was wrong — the exact failure #443 was filed about. Corrected in review
-of #458.) The sentence: the
+ASSERTION. It survives only inside quotations of itself, which is what
+`declaresItselfSuperseded` and the epitaph qualifier exist to permit. Do not
+read the following as a list to trust; it is derived, and the command is the
+authority:
+
+```sh
+grep -rn "because document order is z-order" . --exclude-dir=vendor
+```
+
+Today that is `components/popupzorder_test.go`,
+`docs/specs/2026-09-05-zorder-doc-sweep.md`, the guard's own fixtures and
+prose in `zorderdocs_test.go` — **and this file, at the quotation four lines
+down.** (This line said "anywhere in the tree", full stop, which was a
+checkable absolute and was wrong — the exact failure #443 was filed about.
+Its replacement was then a checkable list that omitted the file it was
+written in, which is the same defect one size smaller: both corrected in
+review of #458.) The sentence: the
 surface was "a leaf child the owner returns from `ChildComponents` (**LAST**,
 because document order is z-order)".
 Every customer followed it, and the test page in

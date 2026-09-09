@@ -55,8 +55,9 @@ it walks the tree as written. So for an overlay the two orders genuinely
 disagree, and a popup that visibly covers a button is not necessarily the
 thing a click at that point reaches. `components.Popup` handles this by
 capturing the pointer while it is open rather than by relying on position.
-See [overlays](overlays.md) for the paint side. Four framework behaviors run before your code sees
-anything:
+See [overlays](overlays.md) for the paint side.
+
+Four framework behaviors run before your code sees anything:
 
 - **The frozen retarget**, first, because everything below is measured
   against its result. A component may declare its subtree frozen (a design
