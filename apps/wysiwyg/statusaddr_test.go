@@ -63,6 +63,26 @@ func addrPage(t *testing.T, endpoints ...string) (*editor, *gooey.Composer) {
 // disagree about what a copy does.
 func swapClipboard(t *testing.T, err error) *string {
 	t.Helper()
+	// THE CAVEAT IS A SECOND AXIS, and stubbing only the write left it
+	// reading the developer's shell. term.ClipboardCaveat consults $TMUX
+	// and $STY, and the strip's outcome is copyUnverified whenever it
+	// answers non-empty — even though the write here always succeeds. So
+	// three tests asserting a CONFIRMED copy passed in CI and failed for
+	// anyone running the suite inside tmux or screen, which is the worst
+	// direction: green where nobody is watching, red where everybody is.
+	//
+	// A test that stubs the clipboard is by definition not testing the
+	// real terminal, so it has to say what environment it is in rather
+	// than inherit one. That is the discipline term/clipboard_test.go
+	// already uses on the same two variables. A test that WANTS a caveat
+	// sets ed.addrs.caveatFn explicitly and is unaffected — that seam
+	// overrides this, and is set after addrPage returns.
+	//
+	// t.Setenv also marks the test as non-parallel, which these are.
+	// Issue #463.
+	t.Setenv("TMUX", "")
+	t.Setenv("STY", "")
+
 	var got string
 	prev := writeSystemClipboard
 	writeSystemClipboard = func(_ *editor, text string) error {
@@ -1381,4 +1401,41 @@ func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
 			"the sub-three-cell path was never entered and this test checked nothing")
 	}
 	t.Logf("%d squeezed chips exercised", narrow)
+}
+
+// TestSwapClipboardNeutralisesTheAmbientEnvironment pins the contract
+// the three copy tests silently depended on, and is the guard for #463.
+//
+// term.ClipboardCaveat reads $TMUX and $STY. The strip reports
+// copyUnverified whenever it answers non-empty, so a test that stubs the
+// WRITE and asserts a confirmed copy was still reading the developer's
+// shell — green in CI, where neither is set, and red for anyone running
+// the suite inside tmux or screen. Green where nobody is watching and
+// red where everybody is, which is the worst way round.
+//
+// The test sets both variables FIRST and then calls the helper, because
+// the claim is that the helper overrides an environment that is already
+// hostile — not merely that it works in a clean one. Without the
+// t.Setenv pair in swapClipboard this fails here, and the three copy
+// tests fail with their own messages.
+func TestSwapClipboardNeutralisesTheAmbientEnvironment(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	t.Setenv("STY", "1234.pts-0.host")
+
+	// NON-VACUITY: the detector must actually be reporting a caveat from
+	// those variables, or the assertion below is about nothing.
+	if term.ClipboardCaveat() == "" {
+		t.Fatal("term.ClipboardCaveat() is empty with $TMUX and $STY set, so this test " +
+			"cannot see what it exists for — the detector stopped reading them")
+	}
+
+	okCopy(t)
+
+	if got := term.ClipboardCaveat(); got != "" {
+		t.Errorf("swapClipboard left the ambient clipboard environment in place "+
+			"(caveat %q). A test that stubs the clipboard is not testing the real "+
+			"terminal, so it must state its environment rather than inherit one: "+
+			"every copy test that asserts a CONFIRMED copy goes red inside tmux "+
+			"or screen. Issue #463.", got)
+	}
 }
