@@ -1463,8 +1463,15 @@ func litInt(e Element, name string) (int, error) {
 	if !ok {
 		return 0, nil
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
+	// A LEADING SIGN IS NOT A SPELLING OF A WHOLE NUMBER HERE, and the
+	// `+` half is the one that needed saying. strconv.Atoi accepts both
+	// signs, so Gap="+3" loaded and meant 3 while Gap="-3" was refused
+	// below — a "refused" int with a second silent spelling, in the
+	// change whose argument is that one value has one grammar. Raised in
+	// review of #470.
+	trimmed := strings.TrimSpace(raw)
+	n, err := strconv.Atoi(trimmed)
+	if err != nil || strings.HasPrefix(trimmed, "+") {
 		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
 			"literally — it is not a binding, and an unreadable value would "+
 			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)

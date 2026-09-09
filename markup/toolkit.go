@@ -39,10 +39,23 @@ func literalOrBound(raw string, ctx *Context) (*prop.Property[string], error) {
 // means "the component's default"; present and wrong is a load error,
 // because a mistyped interval that silently became zero would look like
 // a component that does not animate.
+//
+// PRESENT AND EMPTY IS ALSO A LOAD ERROR, since review of #470. It fell
+// through to the default before, which is precisely the silent fallback
+// the sentence above refuses one line up: Interval="" is a typo, not a
+// way of asking for the default, and asking for the default already has
+// a spelling — omit the attribute. litInt and litBool draw the line in
+// the same place; suppliedAttr deliberately does not, and carries the
+// reconciliation.
 func optDuration(e Element, attr string) (time.Duration, error) {
+	if _, ok := e.Attrs[attr]; !ok {
+		return 0, nil
+	}
 	raw := strings.TrimSpace(e.Attrs[attr])
 	if raw == "" {
-		return 0, nil
+		return 0, fmt.Errorf("markup: <%s %s=\"\">: %s takes a duration written "+
+			"literally (e.g. %s=\"250ms\") — an empty one is a typo, and omitting "+
+			"the attribute is how you ask for the default", e.Name, attr, attr, attr)
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {

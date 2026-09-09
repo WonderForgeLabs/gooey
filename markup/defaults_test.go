@@ -207,6 +207,18 @@ func cellsDiffer(a, b *render.Buffer) (int, int, bool) {
 // means nothing to an element that is the only thing in its slot.
 func harnessFor(attr, el string) string {
 	switch {
+	case strings.HasPrefix(el, "<Validate"):
+		// A HOST, NOT A CONTAINER. <Validate> is an attachment whose
+		// builder is the input's: attachAll refuses one nobody wired,
+		// with "does not support <Validate>; it belongs on an input
+		// element with a bound text source". Inside the default <HStack>
+		// harness EVERY probe of a Validate attribute therefore failed
+		// for that reason, and an arm counting "the build failed" as
+		// "the rule refused" counted seven vacuous checks — which is
+		// exactly the defect bindSweep's refusal-text discriminator
+		// exists to make visible. TextBox is the element whose builder
+		// calls wireValidate (elements.go). Raised in review of #470.
+		return `<TextBox Text="{{.S}}">` + el + `</TextBox>`
 	case strings.HasPrefix(attr, "Grid."):
 		return `<Grid Rows="1*,1*" Cols="1*,1*">` + el + `<Text Grid.Row="1" Grid.Col="1">z</Text></Grid>`
 	case strings.HasPrefix(attr, "Canvas."):

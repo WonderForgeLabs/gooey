@@ -158,15 +158,23 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 			v.rules = append(v.rules, validate.Required(msg))
 		}
 	}
+	// MinLen/MaxLen through the HOUSE INT READER, for the reason
+	// parseRuleBool now goes through the house bool one. These were a
+	// bare strconv.Atoi on the UNTRIMMED value: MinLen=" 3 " was a load
+	// error while Gap=" 3 " was fine, MinLen="-3" loaded and meant a
+	// negative minimum, and MinLen="+3" loaded — three ways for the same
+	// declared KindInt/BindsLiteral attribute to disagree with every
+	// other one. Found while fixing the leading-+ finding in review of
+	// #470, which is the same defect one element over.
 	var err error
-	if raw, ok := e.Attrs["MinLen"]; ok {
-		if minLen, err = strconv.Atoi(raw); err != nil {
-			return nil, fmt.Errorf("markup: <Validate MinLen=%q>: want an int", raw)
+	if _, ok := e.Attrs["MinLen"]; ok {
+		if minLen, err = litInt(e, "MinLen"); err != nil {
+			return nil, err
 		}
 	}
-	if raw, ok := e.Attrs["MaxLen"]; ok {
-		if maxLen, err = strconv.Atoi(raw); err != nil {
-			return nil, fmt.Errorf("markup: <Validate MaxLen=%q>: want an int", raw)
+	if _, ok := e.Attrs["MaxLen"]; ok {
+		if maxLen, err = litInt(e, "MaxLen"); err != nil {
+			return nil, err
 		}
 	}
 	if minLen > 0 || maxLen > 0 {
@@ -281,14 +289,36 @@ func wireValidate(v *Validate, host string, src *prop.Property[string], textPath
 	return field, nil
 }
 
-// parseRuleBool reads a rule's on/off literal, naming the element in the
-// error the way every other markup literal does.
+// parseRuleBool reads a rule's on/off literal through THE HOUSE BOOL
+// GRAMMAR — "true" or "false", nothing else.
+//
+// It read strconv.ParseBool until review of #470, which is the same
+// defect optBool had one file over and the same argument litBool makes:
+// a bool the document can spell five ways is a bool that reads
+// differently in two files. <Validate Required> is a declared
+// KindBool/BindsLiteral component attribute like any other, so
+// <Validate Required="1"> loading while <ProgressBar Thresholds="1">
+// was a load error is one vocabulary answering two ways.
+//
+// It was not merely inconsistent, it was UNGUARDED. The sweep arm
+// written to catch exactly this counted <Validate> probes as verified
+// while every one of them was failing on "<HStack> does not support
+// <Validate>" — the attachment needs an input host, and the harness gave
+// it a stack. Seven attributes' worth of false credit, in the arm whose
+// job was the strictness. The harness hosts a <Validate> in a <TextBox>
+// now and the arm reports what it could not reach, which is how this
+// became reproducible.
+//
+// Delegates to litBool rather than restating the switch: the value of
+// one grammar is that there is one implementation of it. The element is
+// always <Validate>, so the synthetic Element is exact, not a stand-in.
+//
+// The readers that are NOT component attributes are still ParseBool and
+// are deliberately untouched here — property.go's kindOf("bool"),
+// resources.go, companion.go's environment variable, and this file's own
+// declared Default. Whether they should agree is #473.
 func parseRuleBool(name, raw string) (bool, error) {
-	b, err := strconv.ParseBool(strings.TrimSpace(raw))
-	if err != nil {
-		return false, fmt.Errorf("markup: <Validate %s=%q>: want a bool", name, raw)
-	}
-	return b, nil
+	return litBool(Element{Name: "Validate", Attrs: map[string]string{name: raw}}, name)
 }
 
 // comparePath resolves Compare="{{.Password}}" or the terser
