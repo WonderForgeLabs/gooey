@@ -402,7 +402,16 @@ var citation = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 // the identifier and the path swap group positions between them and
 // deciding which is which by sniffing for ".go" is the kind of guess this
 // guard exists to remove.
-var citeForms = []struct {
+//
+// A NAMED TYPE, because citeRange restated this field list as an
+// anonymous struct and that is a second copy of a fact in the test whose
+// thesis is that second copies drift. Adding a field here would have
+// been a compile error there rather than a silent drift, so it was not
+// the failure class this file is about — but the argument this file
+// makes for building `citation` from rePath ("in a test whose entire
+// subject is two copies of a fact drifting apart that was one copy too
+// many") applies to it just the same. Raised in review of #475.
+type citeForm struct {
 	name string
 	re   *regexp.Regexp
 	// fields pulls (ident, path, lo, hi) out of one match; hi == lo for a
@@ -418,7 +427,9 @@ var citeForms = []struct {
 	// A/B/C at all, which is why the subtest name is form.name now.
 	// Raised in review of #475.
 	sample func(ident, path string, line int) string
-}{
+}
+
+var citeForms = []citeForm{
 	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
 	// which is what keeps the identifier the one being cited.
 	//
@@ -468,6 +479,12 @@ const (
 	rePath  = "[A-Za-z0-9_./-]+\\.(?:go|yml|yaml|md)"
 )
 
+// reIdentIsPath is rePath anchored, for the one question half two asks
+// of a captured identifier: is this actually a filename? See the call
+// site. It is built from rePath rather than restating the extension
+// list, for the reason `citation` is.
+var reIdentIsPath = regexp.MustCompile("^(?:" + rePath + ")$")
+
 // identFirst and pathFirst DISCARD the parse failure on purpose. A line
 // number half one could not parse comes back as 0, and half two's
 // `lo < 1` skip drops the citation there — half one has already reported
@@ -507,7 +524,23 @@ const citeWindow = 3
 // It returns descriptions rather than calling t.Errorf so both callers
 // can decide what a problem means: one requires none, the other requires
 // some.
-func citationProblems(md string, read func(string) ([]string, error)) (problems, forms []string) {
+//
+// AND HOW MANY CITATIONS REACHED HALF TWO, which is the answer to a
+// question nothing else in this file can ask. A citation drops from the
+// identifier check to the mechanical half for reasons that are all
+// silent: a backtick inside form A's 48-character gap, a gap longer than
+// 48, a respelling that no form matches. What is left — "the file exists
+// and is long enough" — is no check at all for a real repo file, and
+// per-form non-vacuity cannot see it, because a dozen other form-A
+// citations still match and the form is still reported exercised.
+//
+// Measured: changing CLAUDE.md's `MeasureChild` citation to
+// "(see `layout.go`, at `layout.go:1`)" — which cites `package gooey`
+// for MeasureChild, a citation as wrong as any this PR corrects — left
+// the whole suite green. A policy number can only be pinned by its
+// value, which is the argument this branch already accepted for
+// citeWindow. Raised in review of #475.
+func citationProblems(md string, read func(string) ([]string, error)) (problems, forms []string, checked int) {
 	lines := map[string][]string{}
 	src := func(path string) []string {
 		if s, ok := lines[path]; ok {
@@ -629,6 +662,31 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			if s == nil || lo < 1 || hi < lo || hi > len(s) {
 				continue // half one already reported it
 			}
+			// A FILENAME IS NOT THE CITED SYMBOL. reIdent matches
+			// `startable.go` — `startable`, then `.go` is a legal dotted
+			// segment — so form A bound a backticked FILENAME sitting
+			// within its 48-character gap as the identifier and the leaf
+			// became "go". Both outcomes are wrong depending on the
+			// neighbourhood: a spurious rejection naming a nonsense
+			// symbol, which is the cry-wolf this guard rejected
+			// proximity matching to avoid, or a vacuous accept anywhere
+			// a `go func(` or a `go` keyword sits inside the window.
+			//
+			// Latent — no citation pairs with a filename today — but
+			// CLAUDE.md writes backticked filenames beside parenthesised
+			// citations throughout, so it is one edit away rather than
+			// hypothetical.
+			//
+			// The test is whether the ident is PATH-SHAPED, not whether
+			// its last segment is an extension: a Go symbol cannot be
+			// named `go`, which is a keyword, but `cfg.yaml` would pass
+			// a segment test and is a filename every time it appears in
+			// this document. The citation keeps half one; what it loses
+			// is an identifier check it was never entitled to. Raised in
+			// review of #475.
+			if reIdentIsPath.MatchString(ident) {
+				continue
+			}
 			// The LEAF of a dotted name: the doc writes `Composer.Frame`
 			// and the file writes `func (c *Composer) Frame(`.
 			leaf := ident
@@ -659,6 +717,7 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			// This repo has the bug's twin on the record with the same
 			// fix — reviewprompt_test.go: "NOTE" contains "NOT". Raised
 			// in review of #475.
+			checked++
 			if !identRe(leaf).MatchString(codeOnly(code(path)[from:to])) {
 				problems = append(problems, fmt.Sprintf(
 					"cites %s:%d for %s, but %q is nowhere within %d lines of it — "+
@@ -671,7 +730,63 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 			forms = append(forms, form.name)
 		}
 	}
-	return problems, forms
+	return problems, forms, checked
+}
+
+// TestABacktickedFilenameIsNotTheCitedIdentifier is finding 3 of review
+// #475, and it is asserted through `checked` rather than through the
+// absence of a problem.
+//
+// reIdent matches `startable.go` — `startable`, then `.go` is a legal
+// dotted segment — so form A bound a backticked FILENAME sitting inside
+// its 48-character gap as the cited identifier and the leaf became "go".
+// Which way that goes wrong depends on the neighbourhood: a spurious
+// rejection naming a nonsense symbol, or a vacuous accept anywhere a
+// `go func(` or a `go` keyword falls inside the window. CLAUDE.md writes
+// backticked filenames beside parenthesised citations throughout, so it
+// is one edit away rather than hypothetical.
+//
+// "NO PROBLEM REPORTED" WOULD NOT BE THE ASSERTION. That passes for two
+// reasons — the skip working, and the leaf happening to appear near the
+// cited line — and the second is exactly the vacuous accept this is
+// about. What the test asks instead is the pair: the form MATCHED, and
+// NO citation reached the identifier check. Only the skip produces both.
+func TestABacktickedFilenameIsNotTheCitedIdentifier(t *testing.T) {
+	// "go" is on the cited line, so a leaf of "go" would be ACCEPTED
+	// here — this fixture is the vacuous-accept shape, not the
+	// spurious-rejection one, and it is the half a problem count cannot
+	// see.
+	src := []string{
+		"package fake",
+		"func Alpha() {",
+		"\tgo func() {}()",
+		"}",
+	}
+	read := func(path string) ([]string, error) {
+		if path != "fake.go" {
+			return nil, fs.ErrNotExist
+		}
+		return src, nil
+	}
+
+	md := "`fake.go` (`fake.go:3`) does the thing."
+	problems, forms, checked := citationProblems(md, read)
+	if len(forms) == 0 {
+		t.Fatalf("no form matched %q, so this arm is about nothing — the "+
+			"filename never became a candidate identifier and the skip below "+
+			"cannot be what produced the result", md)
+	}
+	if checked != 0 {
+		t.Errorf("%d citation(s) in %q reached the identifier check; a backticked "+
+			"FILENAME is not the cited symbol, and binding it makes the leaf "+
+			"%q — which this fixture puts on the cited line, so the guard "+
+			"approves and reports having checked something it never had", checked, md, "go")
+	}
+	if len(problems) > 0 {
+		t.Errorf("the guard rejected %q: %v. Half one is satisfied — fake.go:3 "+
+			"exists — and half two has nothing to say about a citation that "+
+			"names no symbol", md, problems)
+	}
 }
 
 // citeFixturePrefix is the name TestTheProductionReaderCountsRealLines
@@ -725,12 +840,7 @@ func TestTheFixtureLeftoverIsIgnored(t *testing.T) {
 // stops writing `path:N` in backticks fails loudly here instead of
 // silently producing a document the guard does not recognise, which this
 // arm would then report as an accept. Raised in review of #475.
-func citeRange(t *testing.T, form struct {
-	name   string
-	re     *regexp.Regexp
-	fields func([]string) (string, string, int, int)
-	sample func(ident, path string, line int) string
-}, ident, path string, lo, hi int) string {
+func citeRange(t *testing.T, form citeForm, ident, path string, lo, hi int) string {
 	t.Helper()
 	md := form.sample(ident, path, lo)
 	old := fmt.Sprintf(":%d`", lo)
@@ -755,7 +865,7 @@ func citeRange(t *testing.T, form struct {
 // whether a form matched. Raised in review of #475.
 func accepts(t *testing.T, md string, read func(string) ([]string, error), why string) {
 	t.Helper()
-	problems, forms := citationProblems(md, read)
+	problems, forms, _ := citationProblems(md, read)
 	if len(forms) == 0 {
 		t.Fatalf("the guard matched no citation form in %q, so it approved by not "+
 			"looking. This arm asserts an ACCEPT, which is exactly what a guard "+
@@ -791,6 +901,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 	// document stopped citing": no citation anywhere means the regexp no
 	// longer matches the spelling every document uses.
 	cited := 0
+	identChecked := 0
 	for _, doc := range citedDocs {
 		b, err := os.ReadFile(doc)
 		if err != nil {
@@ -815,11 +926,12 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 				"it is the first.", doc)
 		}
 
-		problems, got := citationProblems(md, readLines)
+		problems, got, n := citationProblems(md, readLines)
 		for _, p := range problems {
 			t.Errorf("%s %s (#466)", doc, p)
 		}
 		forms = append(forms, got...)
+		identChecked += n
 	}
 
 	if cited == 0 {
@@ -839,7 +951,43 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 				"against a change in the prose around it.", citedDocs, f.name)
 		}
 	}
+
+	// HOW MANY CITATIONS REACHED THE IDENTIFIER CHECK, pinned by VALUE.
+	//
+	// A citation drops to the mechanical half — "the file exists and is
+	// long enough", which for a real repo file is no check at all —
+	// whenever no form matches it, and every way that happens is silent:
+	// a backtick inside form A's 48-character gap, a gap longer than 48,
+	// a respelling. Nothing above notices, because a dozen other form-A
+	// citations still match and the form is still reported exercised.
+	//
+	// Measured on this branch: rewriting CLAUDE.md's MeasureChild
+	// citation as "(see `layout.go`, at `layout.go:1`)" — which cites
+	// `package gooey` for MeasureChild — left the entire suite green.
+	// That is the hole #466 was filed for, reopened by a reword.
+	//
+	// So the number is shipped, and this file has already accepted the
+	// argument for citeWindow: a policy number can only be pinned by its
+	// value. Moving it is a decision somebody makes in a failing test
+	// rather than a side effect of editing a sentence — UP when a
+	// citation gains an identifier, DOWN only with a reason. Raised in
+	// review of #475.
+	if identChecked != wantIdentChecked {
+		t.Errorf("%d citations reached the identifier check across %v, want %d. "+
+			"A citation that no form matches keeps only the mechanical half — it "+
+			"must name a real line, and nothing checks that the line holds the "+
+			"symbol. If you added a citation with an identifier, raise the "+
+			"constant; if this went DOWN, a citation was reworded out of every "+
+			"form and is now unchecked in the way #466 is about.",
+			identChecked, citedDocs, wantIdentChecked)
+	}
 }
+
+// wantIdentChecked is how many citations across citedDocs reach half
+// two, and it is a VALUE rather than a floor for the reason the
+// assertion above gives: a >= would let a demotion hide behind an
+// addition in the same commit.
+const wantIdentChecked = 22
 
 // TestTheCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.
@@ -989,7 +1137,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	for _, form := range citeForms {
 		t.Run("a drifted line, "+form.name, func(t *testing.T) {
 			md := form.sample("Alpha", "fake.go", driftLine)
-			problems, forms := citationProblems(md, read)
+			problems, forms, _ := citationProblems(md, read)
 			// THIS FORM, not "some form". The sample only ever renders
 			// one, so `len(forms) == 0` was a weaker question than the
 			// loop is asking: a form whose regexp rotted would fall
@@ -1009,6 +1157,22 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 					"document whether or not it is checking anything, so an arm that "+
 					"cannot fail here is a guard that has stopped working.",
 					md, "Alpha", driftLine-identLine, citeWindow)
+			} else if got := strings.Join(problems, "\n"); !strings.Contains(got, "is nowhere within") {
+				// THE REPORT HAS TO BE THE ONE THIS ARM IS ABOUT, which
+				// is the discipline the table and the dup arm already
+				// carry: "a rejection arm that only counts problems
+				// passes when a DIFFERENT arm of the checker fires."
+				// These three are the per-form guarantee that replaced
+				// the hand-written cases, so they need it most — and
+				// they were fail-open only by accident, because fake.go
+				// happens to be driftLine+1 lines long. One line shorter
+				// and every drift arm would have passed on an
+				// out-of-range report from half ONE. Raised in review of
+				// #475.
+				t.Errorf("the guard rejected %q, but not for the reason this arm "+
+					"is about — it reported %q, and the identifier check reports "+
+					"\"is nowhere within\". A rejection arm that counts problems "+
+					"passes when a different half of the checker fires", md, got)
 			}
 		})
 
@@ -1017,7 +1181,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		// rotted would otherwise look identical to a form that works.
 		t.Run("the true line, "+form.name, func(t *testing.T) {
 			md := form.sample("Alpha", "fake.go", identLine)
-			if problems, _ := citationProblems(md, read); len(problems) > 0 {
+			if problems, _, _ := citationProblems(md, read); len(problems) > 0 {
 				t.Errorf("the guard rejected the CORRECT citation %q: %v", md, problems)
 			}
 		})
@@ -1145,7 +1309,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 			"`Alpha` (`blocked.go:3`) does the thing.", "is nowhere within"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			problems, _ := citationProblems(tc.md, read)
+			problems, _, _ := citationProblems(tc.md, read)
 			if len(problems) == 0 {
 				t.Errorf("the guard accepted %q. It reports PASS against a correct "+
 					"document whether or not it is checking anything, so an arm "+
@@ -1175,7 +1339,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// the checker fires — and this document cites the same file and line
 	// twice, so several could. The report has to name Beta, which is the
 	// identifier the dedup was swallowing. Raised in review of #475.
-	problems, _ := citationProblems(dup, read)
+	problems, _, _ := citationProblems(dup, read)
 	if len(problems) == 0 {
 		t.Errorf("the guard accepted %q. The second identifier on one cited line "+
 			"was deduplicated away unchecked, so a wrong citation hides behind a "+
@@ -1252,10 +1416,10 @@ func TestTheProductionReaderCountsRealLines(t *testing.T) {
 	}
 
 	// AND THROUGH THE CHECK, since the count only matters there.
-	if problems, _ := citationProblems("`Gamma` (`"+path+":4`) x.", readLines); len(problems) == 0 {
+	if problems, _, _ := citationProblems("`Gamma` (`"+path+":4`) x.", readLines); len(problems) == 0 {
 		t.Error("a citation one line past the end of the file is accepted")
 	}
-	if problems, _ := citationProblems("`Gamma` (`"+path+":3`) x.", readLines); len(problems) > 0 {
+	if problems, _, _ := citationProblems("`Gamma` (`"+path+":3`) x.", readLines); len(problems) > 0 {
 		t.Errorf("the last real line of the file is rejected: %v", problems)
 	}
 }
@@ -1398,11 +1562,19 @@ func blockFree(lines []string) []string {
 
 // identRe matches leaf as a whole identifier rather than as a substring.
 //
-// \b is not enough on its own for every leaf a citation can name —
-// `Cells.Clip` has a dot in it, and QuoteMeta is what keeps that a
-// literal — so the pattern is built rather than written. Compiled per
-// call because the set of leaves is the set of citations, small and read
-// once.
+// QuoteMeta IS BELT-AND-BRACES, and this comment used to say otherwise.
+// It argued that `Cells.Clip` has a dot in it and QuoteMeta keeps that a
+// literal — but the only caller passes `leaf`, which is the segment
+// AFTER the last dot, and reIdent restricts every segment to
+// [A-Za-z_][A-Za-z0-9_]*. So `Cells.Clip` arrives as `Clip` and QuoteMeta
+// is a no-op on every input this function can receive. It stays as
+// defence against a reIdent that later admits more, which is a different
+// claim from the one that was written here, and a stale comment on a
+// rewritten function is the failure this whole file is about — go vet
+// cannot see one. Raised in review of #475.
+//
+// Compiled per call because the set of leaves is the set of citations,
+// small and read once.
 func identRe(leaf string) *regexp.Regexp {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(leaf) + `\b`)
 }

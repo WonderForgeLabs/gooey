@@ -490,7 +490,8 @@ flake. Joining is what makes stop a barrier: Close ⇒ no further posts, ever.
 The idiom now lives in `startable.go`, not hand-rolled per component:
 `gooey.Every` (`startable.go:42`) owns it for periodic ticks — Timer,
 Spinner, and ProgressBar all delegate to it (`components/timer.go:55`,
-`components/spinner.go:113`, `components/progressbar.go:90`) rather than writing their own
+`components/spinner.go:113`, `components/progressbar.go:90`) rather than
+writing their own
 `done`/`stopped` channels. `gooey.Delays` (`startable.go:80`) owns the same
 contract for a group of one-shot delays that stop together — Tooltip and
 ToastHost embed it (`components/tooltip.go:65`, `components/toast.go:47`) for
@@ -500,7 +501,8 @@ seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
 them, and `App.Every` shipped the signal-no-join defect in the runtime
 itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
-delegated it too (`App.Every`, `app.go:404`). A `Startable` that still hand-rolls its
+delegated it too (`App.Every`, `app.go:404`). A `Startable` that still
+hand-rolls its
 own `done`/`stopped` pair is a claim that neither shape fits —
 `Companion.Start` (`components/companion.go:133`) is the one legitimate
 case, joining a subprocess `Wait()` rather than a ticker.
