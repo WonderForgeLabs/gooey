@@ -2305,14 +2305,14 @@ func (ed *editor) addSelected() {
 		// as the USER's insert being illegal, which it was not. The
 		// attributes come from the container's own seed instead; see
 		// wrapperNode.
-		w := ed.wrapperNode(into, plan.wrap)
+		w := ed.wrapperNode(into.Elem, plan.wrap)
 		w.Kids = []*node{n}
 		add = w
 	}
 	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
 	// claiming the same alt gesture is unreachable by keyboard, and
 	// unshadowMnemonic is the one place all three insertion routes share.
-	ed.unshadowMnemonic(into, add)
+	unshadowMnemonic(into, add)
 	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	ed.rebuild()

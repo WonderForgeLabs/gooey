@@ -213,7 +213,7 @@ func TestTheWrapperTakesItsAttributesFromTheContainersSeed(t *testing.T) {
 		t.Skip("the <Tabs> seed's example tab carries no attributes; nothing to inherit")
 	}
 
-	got := ed.wrapperNode(&node{Elem: "Tabs"}, "Tab")
+	got := ed.wrapperNode("Tabs", "Tab")
 	for name, v := range want {
 		if got.Attrs[name] != v {
 			t.Errorf("the new <Tab> has %s=%q, want %q from the <Tabs> seed's own "+
@@ -231,7 +231,7 @@ func TestTheWrapperTakesItsAttributesFromTheContainersSeed(t *testing.T) {
 	// The must-fall-back arm. An element whose parent has no seed to read
 	// gets a bare node rather than nothing at all — wrapperNode is a best
 	// effort, and the transactional build is still the gate.
-	bare := ed.wrapperNode(&node{Elem: "Nonesuch"}, "Tab")
+	bare := ed.wrapperNode("Nonesuch", "Tab")
 	if bare == nil || bare.Elem != "Tab" || bare.Attrs == nil {
 		t.Errorf("with no catalog entry to read, wrapperNode returned %v; it has to "+
 			"still produce a usable node and let the build refuse it", bare)

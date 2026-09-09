@@ -311,3 +311,80 @@ func TestAHostElementWithNoProtoIsNotPseudo(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSeparatorIsReadAsTheBoolItIsDeclared is round 11's second
+// finding, and the silent case is the one that matters.
+//
+// This PR is what declares <MenuItem Separator> KindBool — it is what
+// puts the row in the designer's property grid — and the builder read it
+// as == "true". toolkit.go states the contract a bool literal carries in
+// this dialect: strconv.ParseBool, so "1", "TRUE" and "T" all work, and
+// anything unreadable is a LOAD ERROR rather than a guess, because
+// falling back to false turns a typo into the silently less safe branch.
+//
+// <MenuItem Separator="True"/> alone was loud by accident: it fell
+// through to "needs Text (or Separator=\"true\")". Give it a Text and it
+// was silent — an ordinary item where the author wrote a rule.
+//
+// catalogen cannot see this class, which is why it needs a test: the
+// attribute name IS read, so the cross-check that finds unread
+// declarations finds nothing wrong.
+//
+// <ButtonBar Uniform> at markup/elements.go is the same shape and is NOT
+// touched here. It is pre-existing, it is a different element, and it is
+// already fixed on #470 (which routes it and <ButtonBar Gap> through the
+// literal readers) — fixing it here as well would only be a conflict
+// between two branches for no extra coverage.
+func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
+	item := func(attrs string) string {
+		return `<Gooey><MenuBar><Menu Title="F"><MenuItem ` + attrs +
+			`/></Menu></MenuBar></Gooey>`
+	}
+	for _, tc := range []struct {
+		name, attrs string
+		sep, load   bool
+	}{
+		{name: `"true"`, attrs: `Separator="true"`, sep: true, load: true},
+		// EVERY SPELLING ParseBool TAKES. Each of these rendered as an
+		// ordinary item, silently, when Text was present.
+		{name: `"True"`, attrs: `Separator="True" Text="Open"`, sep: true, load: true},
+		{name: `"1"`, attrs: `Separator="1" Text="Open"`, sep: true, load: true},
+		{name: `"T"`, attrs: `Separator="T" Text="Open"`, sep: true, load: true},
+		{name: `"false"`, attrs: `Separator="false" Text="Open"`, sep: false, load: true},
+		{name: `"0"`, attrs: `Separator="0" Text="Open"`, sep: false, load: true},
+		{name: "absent", attrs: `Text="Open"`, sep: false, load: true},
+		// PRESENT AND UNREADABLE is the case that must not be guessed
+		// at. "yes" reads as a separator to a person and as false to
+		// ParseBool.
+		{name: `"yes"`, attrs: `Separator="yes" Text="Open"`},
+		{name: `"maybe"`, attrs: `Separator="maybe" Text="Open"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, err := Build([]byte(item(tc.attrs)), &Context{})
+			if !tc.load {
+				if err == nil {
+					t.Fatal("loaded. An unreadable bool falls back to false, which " +
+						"turns a typo into an ordinary item where the author wrote a rule")
+				}
+				if !strings.Contains(err.Error(), "Separator") {
+					t.Errorf("the error does not name the attribute: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			bar, ok := w.(*components.MenuBar)
+			if !ok {
+				t.Fatalf("built a %T, want a *components.MenuBar", w)
+			}
+			if len(bar.Menus) != 1 || len(bar.Menus[0].Items) != 1 {
+				t.Fatalf("built %d menus with %d items", len(bar.Menus), len(bar.Menus[0].Items))
+			}
+			if got := bar.Menus[0].Items[0].Separator; got != tc.sep {
+				t.Errorf("Separator=%v, want %v — the declaration says KindBool and "+
+					"the reader has to agree with it", got, tc.sep)
+			}
+		})
+	}
+}

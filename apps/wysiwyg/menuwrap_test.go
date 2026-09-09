@@ -158,18 +158,24 @@ func menuBarPage(t *testing.T, ed *editor) *node {
 	return ed.doc().Kids[0]
 }
 
-// accelsIn reports what every <Menu> in bar claims, through the function
-// that owns the rule. A rune appearing twice is a menu the user cannot
-// open: MenuBar.titleWithAccel takes the first match, and which <Menu>
-// that is is a fact about tree order no reader of the markup can see.
-func accelsIn(t *testing.T, bar *node) map[rune]int {
+// accelsIn reports what every <elem> in parent claims through attr, by
+// the function that owns the rule. A rune appearing twice is something
+// the user cannot reach: MenuBar.titleWithAccel and Menu.itemWithAccel
+// are both first-match-wins, and which one wins is a fact about tree
+// order no reader of the markup can see.
+//
+// THE PAIR IS PASSED IN rather than read from mnemonicAttr, which is the
+// table under test. A helper that derived it would go blind in exactly
+// the mutation that empties the table, and report no collisions because
+// it looked at nothing. Each caller says which level it is asking about.
+func accelsIn(t *testing.T, parent *node, elem, attr string) map[rune]int {
 	t.Helper()
 	got := map[rune]int{}
-	for _, k := range bar.Kids {
-		if k.Elem != "Menu" {
+	for _, k := range parent.Kids {
+		if k.Elem != elem {
 			continue
 		}
-		if r, ok := components.MenuMnemonic(k.Attrs["Title"]); ok {
+		if r, ok := components.MenuMnemonic(k.Attrs[attr]); ok {
 			got[r]++
 		}
 	}
@@ -194,7 +200,7 @@ func TestDuplicatingAMenuDoesNotStealItsAccelerator(t *testing.T) {
 	if n := len(ed.doc().Kids); n != 2 {
 		t.Fatalf("the bar holds %d children after a duplicate, want 2", n)
 	}
-	for r, n := range accelsIn(t, ed.doc()) {
+	for r, n := range accelsIn(t, ed.doc(), "Menu", "Title") {
 		if n > 1 {
 			t.Errorf("%d menus claim %q after ctrl+d — the copy shadows the original "+
 				"and one of the two never opens", n, string(r))
@@ -224,7 +230,7 @@ func TestPastingAMenuDoesNotStealItsAccelerator(t *testing.T) {
 		t.Fatalf("the bar holds %d children after a paste, want 2: %s",
 			n, ed.status.Get())
 	}
-	for r, n := range accelsIn(t, ed.doc()) {
+	for r, n := range accelsIn(t, ed.doc(), "Menu", "Title") {
 		if n > 1 {
 			t.Errorf("%d menus claim %q after y then p — the pasted menu shadows the "+
 				"original and one of the two never opens", n, string(r))
@@ -310,7 +316,7 @@ func TestTheWrapperStillBuildsWhatItWraps(t *testing.T) {
 		t.Fatal("planAdd climbed past the selected <MenuBar>")
 	}
 
-	w := ed.wrapperNode(&node{Elem: "MenuBar"}, "Menu")
+	w := ed.wrapperNode("MenuBar", "Menu")
 	w.Kids = []*node{{Elem: "MenuItem", Attrs: map[string]string{"Text": "New"}}}
 	plan.into.Kids = append(plan.into.Kids, w)
 	ed.rebuild()
@@ -361,5 +367,136 @@ func TestThePaletteAddSeamIsUnreachableForAMenuWrapper(t *testing.T) {
 	}
 	if len(ed.palette) == 0 {
 		t.Fatal("the palette is empty; the assertion above holds for the wrong reason")
+	}
+}
+
+// TestDuplicatingAMenuItemDoesNotStealItsAccelerator is round 11's
+// finding at the level the round-10 fix could not see.
+//
+// Two filters excluded it and each was sufficient on its own: the guard
+// asked into.Elem != "MenuBar", and a <MenuItem>'s parent is a <Menu>;
+// and it selected the attribute with Required && KindString, which
+// <MenuItem Text> is neither — KindText, and optional because Separator
+// makes it so.
+//
+// The consequence is the one docs/markup-reference.md states for the
+// user: "while the menu is open, typing the letter activates the item".
+// Two items claiming "o" leaves one unreachable, and components/menu.go's
+// itemWithAccel takes the first.
+func TestDuplicatingAMenuItemDoesNotStealItsAccelerator(t *testing.T) {
+	ed, _ := buildPage(t)
+	menu := menuBarPage(t, ed)
+
+	item := menu.Kids[0]
+	if item.Elem != "MenuItem" {
+		t.Fatalf("the fixture's first child is <%s>, want <MenuItem>", item.Elem)
+	}
+	ed.setSelection(item)
+	if !ed.duplicateSelected() {
+		t.Fatalf("ctrl+d on the <MenuItem> was refused: %s", ed.status.Get())
+	}
+	if n := len(menu.Kids); n != 2 {
+		t.Fatalf("the menu holds %d children after a duplicate, want 2", n)
+	}
+	for r, n := range accelsIn(t, menu, "MenuItem", "Text") {
+		if n > 1 {
+			t.Errorf("%d menu items claim %q after ctrl+d — itemWithAccel takes the "+
+				"first, so one of the two is unreachable by letter", n, string(r))
+		}
+	}
+	if ed.docRoot == nil {
+		t.Errorf("the duplicate does not build: %s", ed.status.Get())
+	}
+}
+
+// TestPastingAMenuItemDoesNotStealItsAccelerator is the second gesture,
+// and it is a different route through the code: pasting a <MenuItem>
+// into a <Menu> needs no wrapper, so insertSubtree lands it verbatim.
+func TestPastingAMenuItemDoesNotStealItsAccelerator(t *testing.T) {
+	ed, _ := buildPage(t)
+	menu := menuBarPage(t, ed)
+
+	ed.setSelection(menu.Kids[0])
+	ed.copySelected()
+	if ed.clip.node == nil || ed.clip.node.Elem != "MenuItem" {
+		t.Fatalf("y did not copy the <MenuItem>: %s", ed.status.Get())
+	}
+	ed.setSelection(menu)
+	ed.pasteClip()
+	if n := len(menu.Kids); n != 2 {
+		t.Fatalf("the menu holds %d children after a paste, want 2: %s",
+			n, ed.status.Get())
+	}
+	for r, n := range accelsIn(t, menu, "MenuItem", "Text") {
+		if n > 1 {
+			t.Errorf("%d menu items claim %q after y then p — the pasted item shadows "+
+				"the original and one of the two is unreachable", n, string(r))
+		}
+	}
+	if ed.docRoot == nil {
+		t.Errorf("the paste does not build: %s", ed.status.Get())
+	}
+}
+
+// TestAnItemInAMenuThatCollidesWithNothingKeepsItsText is the other side,
+// matching TestAWrapperInAnEmptyBarKeepsTheSeedsTitle one level down.
+// "Make the accelerator unique" is satisfied by marking every item, which
+// would put a stray underscore in the first item a user ever duplicates
+// into an otherwise clear menu.
+func TestAnItemInAMenuThatCollidesWithNothingKeepsItsText(t *testing.T) {
+	ed, _ := buildPage(t)
+	menuBarPage(t, ed)
+	menu := ed.doc().Kids[0]
+	// A LIVE SIBLING claiming something else, not an empty menu: an
+	// empty one also passes for a guard that never runs.
+	menu.Kids = []*node{
+		{Elem: "MenuItem", Attrs: map[string]string{"Text": "Zoom"}},
+		{Elem: "MenuItem", Attrs: map[string]string{"Text": "Open"}},
+	}
+	ed.rebuild()
+
+	// BY POINTER, not by index. duplicateSelected inserts the copy at
+	// i+1, so every index after the original shifts — and a test that
+	// hardcodes them asserts the insertion position while claiming to
+	// assert the rewrite.
+	src, bystander := menu.Kids[0], menu.Kids[1]
+	ed.setSelection(src)
+	if !ed.duplicateSelected() {
+		t.Fatalf("ctrl+d was refused: %s", ed.status.Get())
+	}
+	if got := bystander.Attrs["Text"]; got != "Open" {
+		t.Errorf("the untouched sibling's Text became %q; it collides with nothing "+
+			"and must not be rewritten", got)
+	}
+	if got := src.Attrs["Text"]; got != "Zoom" {
+		t.Errorf("the ORIGINAL's Text became %q. The node being inserted is the one "+
+			"that gives way; rewriting the document the user already had is a "+
+			"different feature", got)
+	}
+	for r, n := range accelsIn(t, menu, "MenuItem", "Text") {
+		if n > 1 {
+			t.Errorf("%d items claim %q; the copy still shadows something", n, string(r))
+		}
+	}
+}
+
+// TestTheMnemonicTableCoversBothMenuLevels is the derivation floor. The
+// rule is a table of two element names, which is a thing that can be
+// half-deleted without breaking a build — and each half has its own
+// gesture tests above, so a missing row shows up as two failures with no
+// obvious common cause. This says the cause.
+func TestTheMnemonicTableCoversBothMenuLevels(t *testing.T) {
+	for parent, attr := range map[string]string{"MenuBar": "Title", "Menu": "Text"} {
+		if got := mnemonicAttr[parent]; got != attr {
+			t.Errorf("mnemonicAttr[%q] = %q, want %q — a menu level with no row is a "+
+				"level where two children may claim the same letter and one of them "+
+				"is unreachable by keyboard", parent, got, attr)
+		}
+	}
+	if len(mnemonicAttr) != 2 {
+		t.Errorf("mnemonicAttr has %d rows. Adding one is a claim that some other "+
+			"container makes its children's letters compete — mnemonic.go says this "+
+			"rule is menu-flavoured and a guard about buttons must not reach for it",
+			len(mnemonicAttr))
 	}
 }

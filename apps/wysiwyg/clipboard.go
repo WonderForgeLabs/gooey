@@ -298,14 +298,14 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// exist to hold it.
 	add := n
 	if plan.wrap != "" {
-		w := ed.wrapperNode(into, plan.wrap)
+		w := ed.wrapperNode(into.Elem, plan.wrap)
 		w.Kids = []*node{n}
 		add = w
 	}
 	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
 	// claiming the same alt gesture is unreachable by keyboard, and
 	// unshadowMnemonic is the one place all three insertion routes share.
-	ed.unshadowMnemonic(into, add)
+	unshadowMnemonic(into, add)
 	prevSel := ed.sel
 	into.Kids = append(into.Kids, add)
 	ed.sel = n

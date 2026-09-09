@@ -1111,7 +1111,22 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			if err := checkAttrs(ic, ctx); err != nil {
 				return nil, err
 			}
-			if ic.Attrs["Separator"] == "true" {
+			// optBool, NOT == "true". Separator is declared KindBool by
+			// THIS PR — which is what puts the row in the designer's
+			// property grid — and toolkit.go states the contract a bool
+			// literal carries: strconv.ParseBool, and anything
+			// unreadable is a load error rather than a guess. Read as
+			// == "true", <MenuItem Separator="True" Text="Open"/> was
+			// silently an ordinary item; the Text-less form was loud
+			// only by accident, falling through to "needs Text". A
+			// declaration checked against what the code reads is this
+			// PR's own thesis, and catalogen cannot see this class
+			// because the name IS read. Raised in review of #454.
+			sep, err := optBool(ic, "Separator")
+			if err != nil {
+				return nil, err
+			}
+			if sep {
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
 				continue
 			}

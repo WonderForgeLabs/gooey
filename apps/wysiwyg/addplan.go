@@ -197,8 +197,12 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 // leaving the repeated text alone. The text repeat stays a documented
 // cosmetic limit; the accelerator collision does not, because it makes a
 // menu the user just created impossible to open.
-func (ed *editor) wrapperNode(into *node, wrap string) *node {
-	parent := into.Elem
+// A NAME, not a *node. The parameter was widened to *node for the
+// sibling mnemonic scan that round 10 moved out to unshadowMnemonic, and
+// the body has read nothing but .Elem since — a signature saying this
+// function reasons about the container's children when it does not.
+// Raised in review of #454, round 11.
+func (ed *editor) wrapperNode(parent, wrap string) *node {
 	bare := &node{Elem: wrap, Attrs: map[string]string{}}
 	spec, ok := ed.specOf(parent)
 	if !ok || strings.TrimSpace(spec.Seed) == "" {
@@ -249,49 +253,77 @@ func (ed *editor) wrapperNode(into *node, wrap string) *node {
 // first-letter fallback was invisible to it, which is exactly the case
 // here).
 //
-// "MenuBar" IS NAMED, and it is the only element name in this file. The
-// rule being applied is menu-flavoured — mnemonic.go says so, and says a
-// guard about buttons must not reach for this answer — so it may not be
-// applied to whatever element happens to be a single-candidate wrapper.
-// The PARENT is what the name tests, because the parent is what
-// dispatches the alt gesture (MenuBar.HandleMnemonic); that is the rule
-// itself rather than a proxy for it. markup.ElementSpec carries no "this
-// attribute is an accelerator" fact — ElementDef.ParsedBy is not on the
-// catalog's surface — so deriving it would only move the name.
-func (ed *editor) unshadowMnemonic(into, n *node) {
-	if into == nil || n == nil || n.Attrs == nil || into.Elem != "MenuBar" {
+// BOTH LEVELS, and covering only the top one is what review round 11
+// found. The rule is identical a level down: components.itemWithAccel
+// (components/menu.go:394) is first-match-wins exactly the way
+// titleWithAccel is, docs/markup-reference.md states the consequence —
+// "while the menu is open, typing the letter activates the item" — and
+// two items claiming "o" leaves one unreachable by letter, with which
+// one a fact about tree order the markup does not show. Both direct
+// gestures reproduce it on a <MenuItem>.
+//
+// mnemonicAttr IS A TABLE OF TWO NAMES, and the previous version's
+// attempt to derive the attribute is what excluded the item case. It
+// asked for Required && KindString, and <MenuItem Text> is neither:
+// markup/elements.go declares it KindText, and it is optional because
+// Separator makes it so. A predicate over AttrSpec cannot answer "is
+// this attribute an accelerator" — the catalog carries no such fact,
+// ElementDef.ParsedBy is not on its surface — so the derivation was
+// answering a different question that happened to agree at one row.
+//
+// THE PARENT IS THE KEY, because the parent is what makes the letters
+// compete: <Menu> titles compete within a <MenuBar>, <MenuItem> texts
+// within their own <Menu>. That the dispatching component is the
+// MenuBar in both cases is why a rule keyed on the DISPATCHER could not
+// see items at all.
+//
+// Naming elements here rather than deriving them is deliberate for the
+// reason mnemonic.go gives: the rule is menu-flavoured, and a guard
+// about buttons must not reach for this answer. Two names is the whole
+// vocabulary that has it.
+//
+// SEPARATORS NEED NO CASE. components.MenuMnemonic("") reports no
+// claim, which is what itemWithAccel does with them too.
+var mnemonicAttr = map[string]string{
+	"MenuBar": "Title", // <Menu Title="File"> inside it
+	"Menu":    "Text",  // <MenuItem Text="Open"> inside it
+}
+
+func unshadowMnemonic(into, n *node) {
+	if into == nil || n == nil || n.Attrs == nil {
 		return
 	}
-	spec, ok := ed.specOf(n.Elem)
+	attr, ok := mnemonicAttr[into.Elem]
 	if !ok {
 		return
 	}
-	for _, a := range spec.Attrs {
-		if !a.Required || a.Kind != markup.KindString {
+	want, has := components.MenuMnemonic(n.Attrs[attr])
+	if !has {
+		return
+	}
+	claimed := map[rune]bool{}
+	for _, sib := range into.Kids {
+		// sib != n is DEFENSIVE, and the sentence here used to claim it
+		// was load-bearing — "two seams call it before the append and
+		// one after a wrapper is built". All three call it before
+		// insertion (main.go, clipboard.go, duplicate.go), so the branch
+		// is unreachable today; it stays because a node that claimed its
+		// own letter would look shadowed and be marked twice, which is
+		// a silent wrong answer rather than a crash. Corrected in review
+		// of #454, the same class as the two comments this PR already
+		// fixed for citing code that does not exist.
+		if sib == n || sib.Elem != n.Elem {
 			continue
 		}
-		want, has := components.MenuMnemonic(n.Attrs[a.Name])
-		if !has {
-			continue
+		if r, ok := components.MenuMnemonic(sib.Attrs[attr]); ok {
+			claimed[r] = true
 		}
-		claimed := map[rune]bool{}
-		for _, sib := range into.Kids {
-			// sib != n because the seams differ: two call it before the
-			// append and one after a wrapper is built, and a node that
-			// claimed its own letter would always look shadowed.
-			if sib == n || sib.Elem != n.Elem {
-				continue
-			}
-			if r, ok := components.MenuMnemonic(sib.Attrs[a.Name]); ok {
-				claimed[r] = true
-			}
-		}
-		if !claimed[want] {
-			continue
-		}
-		if marked, ok := markUnclaimed(n.Attrs[a.Name], claimed); ok {
-			n.Attrs[a.Name] = marked
-		}
+	}
+	if !claimed[want] {
+		return
+	}
+	if marked, ok := markUnclaimed(n.Attrs[attr], claimed); ok {
+		n.Attrs[attr] = marked
 	}
 }
 

@@ -138,7 +138,7 @@ func (ed *editor) duplicateSelected() bool {
 	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
 	// claiming the same alt gesture is unreachable by keyboard, and
 	// unshadowMnemonic is the one place all three insertion routes share.
-	ed.unshadowMnemonic(p, c)
+	unshadowMnemonic(p, c)
 	insertAt(p, i+1, c)
 	ed.sel = c
 	ed.rebuild()
