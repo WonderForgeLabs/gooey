@@ -472,25 +472,107 @@ func TestTheHairlineHasFlatEnds(t *testing.T) {
 	}
 }
 
-// TestHairlineOpacityIsPremultiplied. gg's pattern painter composites with
-// alpha-premultiplied colour, which is what color.RGBA means. A straight
-// colour with a low alpha would paint a line too bright by 1/opacity, and
-// it would still be a line — so this measures the value, not its presence.
-func TestHairlineOpacityIsPremultiplied(t *testing.T) {
+// TestTheHairlineIsDimAndOPAQUE is both halves of the colour, and they
+// pull in opposite directions on purpose.
+//
+// Dim, or it is a second border rather than a division. Opaque, or sixel
+// never writes it: graphics/sixel.go keeps a pixel only at a >= 0x8000
+// and the old 0.4 ALPHA was 102/255, so every pixel of the line was
+// discarded. A test that checked only the channels would pass against
+// exactly the bug that was shipped.
+func TestTheHairlineIsDimAndOPAQUE(t *testing.T) {
 	white := render.RGB(0xff, 0xff, 0xff)
-	c, ok := fade(white, hairlineOpacity).(interface {
-		RGBA() (uint32, uint32, uint32, uint32)
-	})
+	r, _, _, a := dim(white, hairlineFade).RGBA()
+
+	if a < sixelKeep {
+		t.Errorf("the hairline's alpha is %#04x and sixel keeps a pixel only at "+
+			"%#04x — every pixel of the line is discarded before it reaches the "+
+			"wire, which is #254's own symptom on that protocol", a, sixelKeep)
+	}
+	if got, want := r>>8, uint32(102); got != want {
+		t.Errorf("white faded to %d%% has red %d, want %d: the line renders at its "+
+			"own colour once sixel keeps it, so the colour is the only thing left "+
+			"that can make it read as a rule rather than a border",
+			int(hairlineFade*100), got, want)
+	}
+	// NOT VACUOUS: an OPAQUE FULL-BRIGHTNESS line clears the threshold
+	// too, and it is the second border this fade exists to avoid. The
+	// arm above only means something if the dimming is real.
+	if fr, _, _, _ := dim(white, 1).RGBA(); r >= fr {
+		t.Errorf("the faded red is %d and the undimmed red is %d — nothing was "+
+			"dimmed, so the line is the border's own colour", r>>8, fr>>8)
+	}
+}
+
+// sixelKeep is graphics/sixel.go's threshold, restated here because that
+// is the number this package has to clear. It is deliberately a literal
+// and not an import: the encoder does not export it, and a copy that
+// drifts is caught by TestTheWholeHairlineClearsTheSixelThreshold below
+// failing against a canvas the encoder would in fact have kept.
+const sixelKeep = 0x8000
+
+// TestTheWholeHairlineClearsTheSixelThreshold is the finding measured on
+// the real canvas rather than on the constant.
+//
+// Sixel has no alpha channel: a pixel below half alpha is simply never
+// written. Before this change the hairline was stroked at alpha 102, so
+// on a 40x12 pane of 8x16 cells all 306 of its pixels were dropped and
+// the sixel byte stream was identical with the flourish and without it.
+// The y-coordinate fix put the line inside the placed slice; this is
+// what puts it on the wire.
+func TestTheWholeHairlineClearsTheSixelThreshold(t *testing.T) {
+	const cols, rows, cw, ch = 40, 12, 8, 16
+	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, ok := hairlineY(ch)
 	if !ok {
-		t.Fatal("fade did not return a colour")
+		t.Fatalf("no hairline at all for a cell %d pixels tall", ch)
 	}
-	r, _, _, a := c.RGBA()
-	if got, want := a>>8, uint32(102); got != want {
-		t.Errorf("alpha = %d, want %d (0.4 of 255)", got, want)
+
+	// The span BETWEEN the side strokes, which is the hairline alone —
+	// including the ends, since butt caps mean the first and last
+	// columns are as fully covered as the middle.
+	inked, dropped := 0, 0
+	for x := int(hairlineInset); x < cols*cw-int(hairlineInset); x++ {
+		_, _, _, a := dc.Image().At(x, int(y)).RGBA()
+		if a == 0 {
+			continue
+		}
+		inked++
+		if a < sixelKeep {
+			dropped++
+		}
 	}
-	if got := r >> 8; got != a>>8 {
-		t.Errorf("white at 40%% has red %d and alpha %d; premultiplied, an opaque "+
-			"channel equals the alpha", got, a>>8)
+	if inked == 0 {
+		t.Fatal("there is no hairline on the canvas at all, so counting what sixel " +
+			"would drop from it asserts nothing")
+	}
+	if dropped != 0 {
+		t.Errorf("%d of the hairline's %d pixels are below sixel's %#04x threshold "+
+			"and are never written — the flourish is invisible on that protocol, "+
+			"which is the defect the y-coordinate fix was for",
+			dropped, inked, sixelKeep)
+	}
+
+	// AND STILL DIMMER THAN THE BORDER, measured at the DRAW SITE and not
+	// on the constant. TestTheHairlineIsDimAndOPAQUE checks what dim
+	// returns; it cannot see drawCanvas passing it the wrong fraction,
+	// and "opaque" has an obvious wrong way to satisfy it — stroke the
+	// line at full fg, which sixel keeps happily and which is the second
+	// border the fade exists to avoid. Measured: without this arm that
+	// mutation is silent.
+	x := cols * cw / 2
+	rule, _, _, _ := dc.Image().At(x, int(y)).RGBA()
+	edge, _, _, _ := dc.Image().At(x, 0).RGBA()
+	if edge == 0 {
+		t.Fatal("no border ink on the top row, so there is nothing to be dimmer than")
+	}
+	if rule >= edge {
+		t.Errorf("the rule is red %d and the border is red %d at the same x — a "+
+			"rule the colour of the border is a second border, which is the whole "+
+			"reason it is faded", rule>>8, edge>>8)
 	}
 }
 
@@ -510,33 +592,45 @@ func TestHairlineOpacityIsPremultiplied(t *testing.T) {
 // reason drawCanvas's own comment warns that re-widening a slice silently
 // hands the slice back.
 func TestTheHairlineSurvivesTheRing(t *testing.T) {
-	const cw, ch = 8, 16
-	const cols, rows = 40, 6
-	f, err := drawFrame(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
-	if err != nil {
-		t.Fatal(err)
-	}
-	y, ok := hairlineY(ch)
-	if !ok {
-		t.Fatalf("no hairline at all for a cell %d pixels tall", ch)
-	}
-	row := int(y)
+	// THE SAME SIX HEIGHTS TestTheHairlineClearsTheBorder uses. That one
+	// covers six and never goes through Ring; this one went through Ring
+	// at exactly one. The two halves of "in the slice and clear of the
+	// border" were each checked over a set the other did not, so a cell
+	// height where the arithmetic put the line one pixel past the slice
+	// had only the helper's word for it.
+	for _, ch := range []int{8, 12, 16, 20, 24, 32} {
+		const cw = 8
+		const cols, rows = 40, 6
+		f, err := drawFrame(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
+		if err != nil {
+			t.Fatalf("cell height %d: %v", ch, err)
+		}
+		y, ok := hairlineY(ch)
+		if !ok {
+			t.Errorf("cell height %d: no hairline, though there is room for one", ch)
+			continue
+		}
+		row := int(y)
 
-	b := f.top.Bounds()
-	if row < b.Min.Y || row >= b.Max.Y {
-		t.Fatalf("the hairline is at y=%d and the ring's top slice covers y in "+
-			"[%d,%d) — the line is drawn onto a part of the canvas no placement "+
-			"ever shows, which is exactly #254", row, b.Min.Y, b.Max.Y)
-	}
+		b := f.top.Bounds()
+		if row < b.Min.Y || row >= b.Max.Y {
+			t.Errorf("cell height %d: the hairline is at y=%d and the ring's top "+
+				"slice covers y in [%d,%d) — the line is drawn onto a part of the "+
+				"canvas no placement ever shows, which is exactly #254",
+				ch, row, b.Min.Y, b.Max.Y)
+			continue
+		}
 
-	// MID-SPAN, away from both corners and both side slices: the old
-	// arithmetic left a stub at each extreme end where the line crossed
-	// the left and right slices, so a sample near an end passes against
-	// the bug.
-	x := cols * cw / 2
-	if _, _, _, a := f.top.At(x, row).RGBA(); a>>8 == 0 {
-		t.Errorf("the ring's top slice has no ink at x=%d,y=%d, so the hairline is "+
-			"absent from the only rectangle that gets placed", x, row)
+		// MID-SPAN, away from both corners and both side slices: the old
+		// arithmetic left a stub at each extreme end where the line
+		// crossed the left and right slices, so a sample near an end
+		// passes against the bug.
+		x := cols * cw / 2
+		if _, _, _, a := f.top.At(x, row).RGBA(); a>>8 == 0 {
+			t.Errorf("cell height %d: the ring's top slice has no ink at x=%d,y=%d, "+
+				"so the hairline is absent from the only rectangle that gets placed",
+				ch, x, row)
+		}
 	}
 }
 
@@ -561,6 +655,47 @@ func TestTheHairlineClearsTheBorder(t *testing.T) {
 		if bot := y + hairlineWidth/2; bot > float64(ch) {
 			t.Errorf("cell height %d: the hairline's bottom edge is at %.2f, past the "+
 				"end of the ring's top slice at %d — the line is clipped", ch, bot, ch)
+		}
+	}
+}
+
+// TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell is the answer to
+// "does the rule cross the title's descenders", as far as this repo can
+// answer it.
+//
+// It does, and it cannot not: Ring's top slice is exactly one cell tall,
+// so a rule under the title has nowhere to be except inside the row the
+// title occupies — putting it in the next row is #254 again, drawn onto
+// a part of the canvas no placement shows. The border's own 1.5-pixel
+// stroke already crosses the same glyphs at the top of the same row, so
+// the shape of the question is not new; what this change made sharper is
+// that an opaque rule COVERS rather than tints, which is also the only
+// form sixel can carry.
+//
+// EYEBALLING IT IS NOT AVAILABLE HERE and saying so is the point: the
+// glyphs are the terminal's, drawn from a font this process never sees,
+// so how deep a descender reaches into the cell is not a fact the repo
+// holds. What IS checkable is the bound — the rule takes the LAST pixel
+// row and no more, so whatever it crosses, it crosses one row of. A
+// change that widened it, or floated it up off the bottom edge into the
+// x-height, would take more and this fails.
+func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
+	for _, ch := range []int{8, 12, 16, 20, 24, 32} {
+		y, ok := hairlineY(ch)
+		if !ok {
+			t.Errorf("cell height %d: no hairline, though there is room for one", ch)
+			continue
+		}
+		top, bot := y-hairlineWidth/2, y+hairlineWidth/2
+		if bot != float64(ch) {
+			t.Errorf("cell height %d: the rule's bottom edge is at %.2f, not flush "+
+				"with the cell's %d — a rule that floats up off the bottom sits in "+
+				"the title's x-height instead of under its baseline", ch, bot, ch)
+		}
+		if n := bot - top; n != 1 {
+			t.Errorf("cell height %d: the rule covers %.2f pixel rows of the title's "+
+				"cell, want 1 — every row it takes is a row of glyph it hides",
+				ch, n)
 		}
 	}
 }
@@ -600,9 +735,17 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 	// sit on identical coverage; hairlineInset is where the line would
 	// start, so only the second can gain ink from one.
 	const outside, inside = int(hairlineInset) - 2, cols * cw / 2
-	if outside >= int(hairlineInset) {
-		t.Fatalf("the reference sample at x=%d is inside the hairline's own span, "+
-			"so it cannot be a reference", outside)
+	// BOTH ENDS. `outside >= hairlineInset` is the only half that was
+	// written and it is 5 >= 7 — a compile-time constant, so the guard
+	// could never fire in either direction. The half that can actually
+	// go wrong is the other one: hairlineInset dropping below 2.0 puts
+	// the reference sample off the left edge of the canvas, where At()
+	// returns the zero colour and the `bare == 0` fatal below fires with
+	// a message about missing border ink that would be a lie.
+	if outside >= int(hairlineInset) || outside < 0 {
+		t.Fatalf("the reference sample at x=%d is not a reference: it must be off "+
+			"the hairline's span, which starts at %d, and on the canvas",
+			outside, int(hairlineInset))
 	}
 	bare, span := alpha(outside, 0), alpha(inside, 0)
 	if bare == 0 {
@@ -627,18 +770,28 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 // both.
 func TestTheHairlineTracksTheCellNotTheCanvas(t *testing.T) {
 	const cw, ch = 8, 16
-	short, ok1 := hairlineY(ch)
-	tall, ok2 := hairlineY(ch)
-	if !ok1 || !ok2 {
+	y, ok := hairlineY(ch)
+	if !ok {
 		t.Fatal("no hairline for a 16-pixel cell")
 	}
-	if short != tall {
-		t.Fatalf("hairlineY is not a function of the cell height alone: %.2f vs %.2f",
-			short, tall)
+	short := y
+
+	// THE HELPER ARM USED TO CALL hairlineY(ch) TWICE and compare the
+	// results, which is a pure function against its own argument: it
+	// could not fail under any mutation, and the test's headline claim
+	// rested on it. hairlineY takes only the cell height, so
+	// "independent of the canvas" is not a question its signature can
+	// even be asked — what IS worth pinning about the helper is that it
+	// is not a constant, since a constant would satisfy the seam arm
+	// below at every row count and still be wrong.
+	if other, ok := hairlineY(ch * 2); !ok || other == y {
+		t.Fatalf("hairlineY(%d) and hairlineY(%d) both report %.2f — the line does "+
+			"not track the cell height at all, and the seam arm below would pass "+
+			"against a constant", ch, ch*2, y)
 	}
 
-	// Through the real seam as well, because the assertion above is about
-	// the helper and the bug was about what drawCanvas passed it.
+	// Through the real seam, because the bug was about what drawCanvas
+	// passed it and not about the helper.
 	ink := func(rows int) bool {
 		dc, err := drawCanvas(40, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
 		if err != nil {

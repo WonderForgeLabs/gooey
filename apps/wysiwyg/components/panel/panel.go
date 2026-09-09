@@ -47,12 +47,20 @@
 // and the thing this whole approach exists to avoid.
 //
 // The picture is NOT bit-identical to the old one and cannot be — two
-// rasterizers antialias differently. Measured against the SVG it replaces,
-// at 40x12, 80x24 and 24x6 cells of 8x16 pixels: no pixel the SVG inked is
-// now blank; two pixels gain faint ink, both of them the hairline's
-// butt-capped ends; exactly 80 pixels, twenty per rounded corner, differ
-// by more than 1/255, worst case 24/255; and every remaining difference is
-// exactly 1/255 on a half-covered edge pixel that rounds the other way.
+// rasterizers antialias differently.
+//
+// A PIXEL-DIFF AGAINST THE SVG USED TO BE QUOTED HERE and it has been
+// retired rather than updated, because neither half of it can be stood
+// behind any more. It was measured in #253 against frame.svg, a file this
+// tree no longer contains, so nobody can re-run it; and #254 then moved
+// the hairline from the canvas's h/8 to the bottom of the top CELL, which
+// invalidates the two figures that were about the hairline directly ("no
+// pixel now blank" and the two ends gaining faint ink) and the corner
+// count along with them, since the diff was one measurement. A number
+// nobody can reproduce, describing a picture the code no longer draws, is
+// worse than no number: it reads as evidence. What survives is the claim
+// above it, which is a property of the two rasterizers and not of any
+// one frame.
 //
 // # The cell tier is not a fallback
 //
@@ -91,11 +99,27 @@ const (
 	// too small to carry it.
 	cornerRadius = 6.0
 	// hairlineInset is how far in from each side the title hairline
-	// starts, and hairlineOpacity is what makes it read as a division
+	// starts, and hairlineFade is what makes it read as a division
 	// rather than a second border.
-	hairlineInset   = 7.0
-	hairlineWidth   = 1.0
-	hairlineOpacity = 0.4
+	//
+	// A FADE, NOT AN OPACITY, and the difference is the whole of one
+	// review finding. It used to be an alpha, and sixel has no alpha
+	// channel at all: graphics/sixel.go keeps a pixel only at
+	// a >= 0x8000 and writes nothing for the rest, so a 0.4-alpha
+	// stroke is 102/255 and every pixel of it was discarded. Measured
+	// on a 40x12 pane of 8x16 cells: 306 hairline pixels, 306 dropped,
+	// none kept — the flourish stayed invisible under sixel after the
+	// y-coordinate fix, which is #254's own symptom on that protocol.
+	//
+	// Raising the alpha does not help and it is worth knowing why
+	// before someone tries it. A kept pixel is painted OPAQUE at its
+	// un-premultiplied colour, so any alpha at or above the threshold
+	// renders the line at FULL fg — a second border, which is the thing
+	// the fade exists to avoid. Sixel can only carry a fainter line as
+	// a DIMMER COLOUR, so that is what the line now is.
+	hairlineInset = 7.0
+	hairlineWidth = 1.0
+	hairlineFade  = 0.4
 )
 
 // defaultStroke is the frame's colour when the style carries none. It was
@@ -340,8 +364,8 @@ func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, err
 	// MEASURED, and the measurement is that ignoring `ok` here changes NO
 	// PIXEL: the guard only fires for a cell 2 pixels tall or less, and
 	// the border's 1.5-pixel stroke already saturates row 0 at every x
-	// the hairline would reach, so compositing a 40%-opacity line at y=0
-	// over it is a no-op. An A/B of the two canvases at cellH 1 and 2
+	// the hairline would reach, so drawing a dimmed line at y=0 over it
+	// changes nothing. An A/B of the two canvases at cellH 1 and 2
 	// differs by zero pixels. So this branch is not load-bearing for the
 	// output today; it is load-bearing for the CONTRACT, which hairlineY
 	// states and TestACellTooShortForBothGetsNoHairline asserts directly,
@@ -351,7 +375,7 @@ func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, err
 	if y, ok := hairlineY(cellH); ok {
 		dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
 		s := stroke(fg, hairlineWidth)
-		s.Brush = gg.NewSolidPattern(fade(fg, hairlineOpacity))
+		s.Brush = gg.NewSolidPattern(dim(fg, hairlineFade))
 		s.Apply(dc)
 		dc.Stroke()
 	}
@@ -413,15 +437,30 @@ func stroke(fg render.Color, thickness float64) paint.Stroke {
 	}
 }
 
-// fade returns a colour at the given opacity, ALPHA-PREMULTIPLIED, which
-// is what color.RGBA means and what gg's pattern painter composites with.
-// Handing it a straight colour with a low alpha paints a washed-out line
-// too bright by 1/opacity.
-func fade(c render.Color, a float64) color.Color {
+// dim returns an OPAQUE colour at the given fraction of c: the value a
+// translucent stroke of that opacity composites to over a dark ground,
+// stated directly instead of asked for through an alpha channel.
+//
+// The channels are the same arithmetic the alpha version used, because
+// color.RGBA is alpha-premultiplied and premultiplying by 0.4 IS scaling
+// the channels by 0.4. Only A moves, from 102 to 255, and that one field
+// is the difference between a line sixel keeps and a line it discards
+// wholesale. Over the dark ground this palette is drawn for, the
+// composited result is unchanged; what changes is that the three tiers
+// now draw the same picture rather than two of them drawing nothing.
+//
+// The cost is stated rather than hidden: an opaque rule COVERS what it
+// crosses instead of tinting it, and the top cell row it sits in is the
+// row DrawBoxTitle writes the title into. That was already true of the
+// border's own 1.5-pixel stroke at the top of the same cell — line art
+// over a cell of text crosses the glyphs at both ends of the row, and
+// this package's rule is that only the drawing differs between tiers,
+// which is now true of the hairline too.
+func dim(c render.Color, f float64) color.Color {
 	return color.RGBA{
-		R: uint8(float64(c.R)*a + 0.5),
-		G: uint8(float64(c.G)*a + 0.5),
-		B: uint8(float64(c.B)*a + 0.5),
-		A: uint8(255*a + 0.5),
+		R: uint8(float64(c.R)*f + 0.5),
+		G: uint8(float64(c.G)*f + 0.5),
+		B: uint8(float64(c.B)*f + 0.5),
+		A: 255,
 	}
 }
