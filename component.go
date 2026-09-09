@@ -224,8 +224,8 @@ func overlayRank(w Component) int {
 		// day something does; until then the floor is the floor, and
 		// TestANegativeRankLandsOnTheFloor is what keeps this comment
 		// from becoming prose again.
-		if r := r.OverlayRank(); r > OverlayRankPopup {
-			return r
+		if n := r.OverlayRank(); n > OverlayRankPopup {
+			return n
 		}
 		return OverlayRankPopup
 	}

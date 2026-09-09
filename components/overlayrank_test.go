@@ -18,13 +18,22 @@ import (
 // paint above toasts too, and menu_live_test.go's comment said "the
 // toast layer is topmost".
 //
-// THE FIXTURE DECLARES THE HOSTS FIRST AND THE MENUBAR LAST, which is
-// not incidental — it is the arrangement the framework tells an author
-// to use, so its dropdown covers the page. Under declaration order that
-// is exactly the arrangement in which a toast loses.
+// THE FIXTURES DECLARE THE OVERLAY HOST FIRST AND ITS RIVAL LAST, which
+// is not incidental: it is the WORST case for declaration order, the one
+// arrangement in which the document would put the rival on top. A rank
+// that did not work shows up as the toast vanishing.
+//
+// (An earlier version of this paragraph called that "the arrangement the
+// framework tells an author to use". It is not — #437's lift is global,
+// so a MenuBar's position stopped mattering for its own dropdown, and
+// component.go retracts the rule explicitly. The inline comment at the
+// fixture below had it right and this header did not. Fixed in review of
+// #456.)
 
-// rankPage is a page-wide stack: a ToastHost and an AdornmentLayer
-// declared BEFORE a MenuBar, all over the same rect.
+// rankPage is a stack of children arranged over ONE rect, which is what
+// makes "who is on top" a question the cell plane answers. Each test
+// says what it puts in there; nothing about the type is specific to the
+// overlay hosts.
 type rankPage struct {
 	gooey.Base
 	kids []gooey.Component
@@ -195,6 +204,12 @@ func TestAnAdornmentIsAboveAToast(t *testing.T) {
 	c2.Frame()
 	host2.Show("TOASTTOAST")
 	f, painted := c2.Frame()
+	// NON-VACUITY: the Show must actually have painted something, or the
+	// settled check below is trivially satisfied and the cells are from a
+	// frame in which no toast ever appeared.
+	if painted == 0 {
+		t.Fatalf("the frame after Show repainted nothing; there is no toast to be above")
+	}
 
 	// THE SETTLED FRAME, the same guard TestAToastIsNotHiddenByAnOpenMenu
 	// gained and for the same reason: a cell assertion passes for the
@@ -296,7 +311,12 @@ func TestANegativeRankLandsOnTheFloor(t *testing.T) {
 	t.Cleanup(c.Close)
 	c.Frame()
 	f, _ := c.Frame()
-	if got := render.RowText(f.Cells, at.Y)[:at.W]; got != strings.Repeat("P", at.W) {
+	// HasPrefix rather than [:at.W]: at.W is a COLUMN count and RowText
+	// returns a string, so slicing it by at.W conflates bytes with
+	// columns. It is right only while the fixture is ASCII, which is the
+	// case CLAUDE.md warns agrees with itself under either rule. Raised
+	// in review of #456.
+	if got := render.RowText(f.Cells, at.Y); !strings.HasPrefix(got, strings.Repeat("P", at.W)) {
 		t.Fatalf("the control arm failed: row %q, want the later-declared popup-rank "+
 			"overlay on top", got)
 	}
@@ -311,7 +331,7 @@ func TestANegativeRankLandsOnTheFloor(t *testing.T) {
 	t.Cleanup(c2.Close)
 	c2.Frame()
 	f2, _ := c2.Frame()
-	if got := render.RowText(f2.Cells, at.Y)[:at.W]; got != strings.Repeat("N", at.W) {
+	if got := render.RowText(f2.Cells, at.Y); !strings.HasPrefix(got, strings.Repeat("N", at.W)) {
 		t.Errorf("a negative OverlayRank painted below a popup-rank overlay declared "+
 			"BEFORE it: row %q. OverlayRankPopup is documented as the floor in four "+
 			"places, so either the clamp is gone or the docs are wrong", got)

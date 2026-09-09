@@ -85,6 +85,21 @@ tidiness: every `Overlay` written before ranks existed keeps behaving
 exactly as it did, and popup surfaces were already at the bottom of the
 layer.
 
+It is also **enforced**, which is the half this section shipped without.
+`overlayRank` CLAMPS: a rank below `OverlayRankPopup` is read as the
+floor. Three doc comments, this heading and a test message all called
+the constant "the floor" while `appendByRank` compared plain ints, so
+`OverlayRank() int { return -1 }` sorted below every popup with nothing
+red anywhere — an ordering claim living only in prose, in the change
+whose thesis is that those cost nothing to break. Found in review of
+#456.
+
+Clamping rather than DEFINING negative ranks is deliberate. A negative
+rank is a plausible spelling for a modal scrim that sits under popups
+and over the page, but nothing in the tree wants one, and inventing the
+semantics from a hypothetical is how a rule acquires a case nobody can
+test. The day something needs a below-popup band it can have one.
+
 ## The one clause no behaviour reaches
 
 The rank belongs to the lifted subtree's **root**, not to each node — a
@@ -140,6 +155,8 @@ not take pointer capture is still responsible for its own routing.
 | **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |
 | These hosts claim these ranks | `TestTheOverlayHostsClaimTheRanksTheyDocument` | rank `AdornmentLayer` at the floor (M1) |
+| A negative rank lands on the floor | `TestANegativeRankLandsOnTheFloor` | drop the clamp in `overlayRank` (`component.go`) |
+| Ranks order paint and NOT hit-testing | `TestARankOrdersPaintAndNotHitTesting` | walk `hitTest`'s children forward (`mouse.go`) — and M4, which reddens the paint arm |
 
 **The last two rows were one row, and that was the defect.** A single
 test asserting "a tooltip outranks a toast" by comparing two ints proved

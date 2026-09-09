@@ -1014,15 +1014,31 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns the deepest component whose arranged
 `Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones (they paint on top); `Collapsed` subtrees,
-zero-size components, and `HitTestTransparent` components are not hit.
+siblings before earlier ones; `Collapsed` subtrees, zero-size
+components, and `HitTestTransparent` components are not hit.
+
+That sibling preference used to be justified as "they paint on top",
+and that reason is gone: paint order is the two ranked layers above,
+and this walk knows nothing about either. **The two planes can now
+disagree, and the disagreement is silent.** A ranked overlay host
+declared FIRST paints its toasts above a button and leaves the click to
+the button, because the button is the later sibling.
+`TestARankOrdersPaintAndNotHitTesting` (root package) is what keeps
+that from drifting; it fails if hit-testing ever becomes rank-aware, so
+the caveat and the code cannot part company quietly. Closing the gap —
+by marking `Toast` transparent, or by making this walk layer-aware — is
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
 The transparency marker is what lets a page-spanning overlay host exist
-at all: a `ToastHost` or an `AdornmentLayer` sits above everything as
-the root's last child, which makes it the *first* thing hit-testing
-finds — an invisible layer that would eat every click and starve every
-hover beneath it. Transparency is about the component's own surface,
-not its subtree, so the toasts and adornments inside stay hittable. The
-walk allocates nothing, because it runs on every motion report.
+at all: a `ToastHost` or an `AdornmentLayer` spans the whole page, so
+the pointer meets it before anything it covers — an invisible layer
+that would eat every click and starve every hover beneath it. Declared
+last it is the *first* thing the walk finds, which is the worst case
+and no longer the required position (#437 lifted overlays, #439 ranked
+them). Transparency is about the component's own surface, not its
+subtree, so the toasts and adornments inside stay hittable — which is
+exactly why their own position still matters for clicks. The walk
+allocates nothing, because it runs on every motion report.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:

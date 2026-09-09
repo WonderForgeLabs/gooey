@@ -19,12 +19,17 @@ import (
 //
 // Adopting the marker on all three restores "above the page" and leaves
 // the rest to declaration order WITHIN the layer, which is the part
-// worth not doing. The framework separately tells an author to declare
-// the MenuBar LAST so its dropdown covers the page; getting a toast
-// above that dropdown would then also require declaring the ToastHost
-// after it. Two rules pulling opposite ways, and the wrong choice is
-// silent — the toast simply does not appear, on exactly the frames
-// somebody most wanted to read it.
+// worth not doing. Whether a toast covers an open menu would then depend
+// on which of the two an app happened to type last — a decision nobody
+// makes deliberately, with a silent wrong answer one way round: the
+// toast simply does not appear, on exactly the frames somebody most
+// wanted to read it.
+//
+// (An earlier version of this paragraph argued from "the framework tells
+// an author to declare the MenuBar LAST", which was already false —
+// #437's lift is global, so the bar's position stopped mattering for its
+// own dropdown too. Found in review of #456; component.go carries the
+// same retraction. The conclusion does not need the premise.)
 //
 // So the layer carries a RANK. These tests are about the mechanism; the
 // user-visible claim it exists to make true — a notification is never
@@ -80,9 +85,10 @@ func rankRow(t *testing.T, f *Frame) string {
 // TestAHigherRankPaintsOverALowerOneDeclaredLater is the whole point: a
 // rank beats declaration order, in the direction that matters.
 //
-// The higher-ranked one is declared FIRST, which is the arrangement an
-// app actually has — the framework tells it to declare the MenuBar last,
-// and a page-wide ToastHost sits above that in the document.
+// The higher-ranked one is declared FIRST, which is the WORST case for
+// declaration order: it is exactly the arrangement in which the document
+// would put the lower-ranked one on top, so a rank that did not work
+// shows up as the wrong rune.
 func TestAHigherRankPaintsOverALowerOneDeclaredLater(t *testing.T) {
 	top := &rankedStripe{stripe{ch: 'T', rank: 2}}
 	bottom := &rankedStripe{stripe{ch: 'B', rank: 1}}
@@ -170,5 +176,64 @@ func TestTheOverlayLayerStillClearsThePage(t *testing.T) {
 	got := rankRow(t, rankFixture(t, over, page))
 	if !strings.HasPrefix(got, "O") {
 		t.Errorf("an ordinary component declared last painted over the overlay layer: row %q", got)
+	}
+}
+
+// TestARankOrdersPaintAndNotHitTesting is the divergence the ranks
+// CREATE, pinned rather than described.
+//
+// #437 lifted overlays out of document order for paint and left
+// hit-testing alone, calling that a gap. A rank widens it into a
+// contradiction an author can hit: paint answers by rank, hitTest still
+// walks ChildComponents in REVERSE (mouse.go), so the later sibling
+// wins the click. Declare a ranked host FIRST — which every
+// author-facing doc now says is free — and the two planes disagree.
+//
+// Under the retired "declare it last" rule they agreed, because the
+// thing on top was also the thing hit-testing found first. That is why
+// this test arrives with the ranks and not with #437: the freedom is
+// what makes the disagreement reachable.
+//
+// It is a TEST and not a paragraph because the two answers live in
+// different files with no shared symbol between them — nothing about
+// changing one drags the other into review. Raised in review of #456,
+// where the docs granted the freedom and said nothing about the click.
+func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
+	// BOTH are overlays, and that is what makes the paint arm about the
+	// RANK rather than about the lift. A plain leaf as the loser was the
+	// first version of this fixture, and mutating overlayRank to return
+	// the floor left it green: the lift alone puts any Overlay after any
+	// non-overlay, so the assertion held with ranks entirely disabled.
+	// Two overlays that differ ONLY in rank is the discriminating shape,
+	// and it is also the shape #439 was reported as — a toast above an
+	// open popup.
+	//
+	// The higher-ranked one is declared FIRST, so document order and rank
+	// point opposite ways.
+	over := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
+	under := &overlayStripe{stripe{ch: 'U'}}
+	root := &twoKids{kids: []Component{over, under}}
+
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	f, _ := c.Frame()
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "O") {
+		t.Fatalf("PAINT: the ranked overlay was declared first and lost the cells: row %q", got)
+	}
+
+	// Same tree, same frame, opposite answer. If this ever returns `over`
+	// the divergence closed — which would be good news, and would make
+	// the caveats in components/toast.go, docs/markup-reference.md,
+	// docs/architecture.md and mouse.go wrong rather than merely stale.
+	m := NewFocusManager(root)
+	hit := m.HitTest(0, 0)
+	if hit == Component(over) {
+		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the cell it " +
+			"paints. Delete the divergence caveats in components/toast.go, " +
+			"docs/markup-reference.md, docs/architecture.md and mouse.go rather than this test")
+	}
+	if hit != Component(under) {
+		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+
+			"document order in reverse and knows nothing about ranks", hit)
 	}
 }

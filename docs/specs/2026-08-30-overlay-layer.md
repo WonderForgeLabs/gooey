@@ -3,6 +3,11 @@
 Status: implemented
 Date: 2026-08-30
 Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
+**Superseded in part by:** `docs/specs/2026-09-05-overlay-ranks.md`
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) — ordering
+*within* the layer is now RANKED, not document order. Everything else
+below still holds. `component.go`'s `Overlay` doc points readers here
+for the hit-testing gap, which is why the pointer has to run both ways.
 
 ## The problem
 
@@ -93,6 +98,14 @@ Overlays keep document order **among themselves**. Two overlapping popups paint
 in the order they were declared rather than the order they were opened. Nothing
 in the tree needs the other answer yet, and the machinery — an open-order stack
 the Composer maintains — is worth writing when something does.
+
+> **Superseded by [#439](https://github.com/WonderForgeLabs/gooey/issues/439).**
+> Ordering within the layer is now by RANK (`gooey.OverlayRanker`); equal ranks
+> keep document order, so the paragraph above is what happens *within one rank*.
+> It stopped being tenable as soon as more than one KIND of overlay existed —
+> whether a toast covered an open menu depended on which an app typed last. See
+> `docs/specs/2026-09-05-overlay-ranks.md`. Two overlapping popups are still
+> declaration-ordered, because they are equal-ranked.
 
 Hit-testing is untouched, and that is a gap rather than a non-event. A popup
 takes held pointer capture while open (`Popup.Open`), which routes presses to it

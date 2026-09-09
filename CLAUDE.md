@@ -305,6 +305,40 @@ four unbounded `ChildComponents` walks outside this package
 ([#375](https://github.com/WonderForgeLabs/gooey/issues/375)) do not know
 about layers and never needed to — none of them paints.
 
+**Inside that second layer the order is a RANK, not the document**
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439);
+`docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
+optional companion to the marker — `OverlayRankPopup` 0,
+`OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
+between two — and `Composer.appendByRank` buckets by it, so equal ranks
+keep document order and nothing else does. An `Overlay` that does not
+implement it is rank 0, and `overlayRank` **clamps**: a negative rank
+reads as the floor, because the constant was called "the floor" in five
+places while the comparison was a plain `int`. Two things make this
+breakable in silence. The rank belongs to the **lifted subtree's root**,
+not to each node, so `orderPaint` tests `inherited` BEFORE the marker —
+swap those two switch arms and a rank-2 container's rank-0 child lands in
+an earlier bucket, the parent paints after it, and a parent that covers
+its bounds erases the child it lifted. And `OverlayRank()` must return a
+**constant**: it is sampled on structural re-sync, not per frame, so a
+rank that changes with state is read once and silently stale — that is
+also why it is a method and not a `Property`, which would need `Frozen`'s
+observer machinery to be honest.
+
+**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:143`)
+walks `ChildComponents` in reverse and knows about neither layer nor
+rank, so the two planes can now disagree: a ranked host declared FIRST
+paints above a button and leaves the click to the button. Under the
+retired "declare it last" rule they agreed, which is why the divergence
+arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
+hit-testing ever becomes rank-aware, so the caveat in
+`components/toast.go`, `docs/markup-reference.md`, `docs/architecture.md`
+and `mouse.go` cannot outlive the behaviour it describes. `Popup` is
+exempt because it holds pointer capture while open, which routes presses
+before the walk runs — that is Popup's mechanism, not the marker's.
+Closing the gap is
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
 *become* the child context, with them they are type-checked against the
