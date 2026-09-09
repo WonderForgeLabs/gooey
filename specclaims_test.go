@@ -44,7 +44,7 @@ var mdHeading = regexp.MustCompile(`^(#+)\s`)
 
 // mdFence opens or closes a fenced code block. Up to three leading spaces
 // is what CommonMark allows before a fence.
-var mdFence = regexp.MustCompile("^ {0,3}(```|~~~)")
+var mdFence = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
 
 // plannedMarker opts a section OUT of the check.
 //
@@ -75,17 +75,37 @@ var mdFence = regexp.MustCompile("^ {0,3}(```|~~~)")
 // an ordinary citation that can rot like any other. Review of PR #476
 // found four such rows already — this marker had gone stale inside the
 // commit that introduced it.
+// IT BINDS TO THE NEAREST HEADING ABOVE IT, AT THAT HEADING'S DEPTH,
+// and the exemption ends at the next heading of that depth or shallower.
+// So a marker under `## Implementation plan` → `### Stage 1` exempts
+// Stage 1 and nothing else, and the names in Stage 2 fail — loudly,
+// which is the right direction, but the failure does not say that the
+// marker's depth is why. Put it under the heading whose whole subtree is
+// proposed. Raised in review of #476.
 const plannedMarker = "<!-- spec-tests: planned -->"
 
-// citedRoots is the prose this guard reads. It is deliberately WIDER than
-// docs/specs, because the rot is not a property of decision records:
-// CLAUDE.md cites nine tests by name as the authority for its own rules
-// (TestCIWorkflowAndCLAUDEMDShareOneDiscovery among them), and a rename
-// there leaves a rule citing nothing while still reading as enforced.
-var citedRoots = []string{
-	"docs",
-	"CLAUDE.md",
-	"README.md",
+// proseSkip are the directories the Markdown walk does not enter, and
+// the list is SHORT ON PURPOSE.
+//
+// This started as citedRoots — "docs", "CLAUDE.md", "README.md" — which
+// is the enumeration shape CLAUDE.md refuses for modules, and it failed
+// exactly the way that rule predicts: prose outside those three was
+// already citing tests. handlers/prop/README.md names four,
+// handlers/str, handlers/sets and presentations/the-rectangle one each,
+// and the tracked .claude/plugin/skills/ pages name the CI-discovery
+// trio this repo's whole verify story rests on. Appending a citation to
+// a nonexistent test in handlers/prop/README.md left the guard GREEN.
+// Raised in review of #476.
+//
+// So the corpus is the TREE, and the prune is by path rather than by dot
+// prefix. testFuncsUnder skips every dot-directory because .claude/
+// worktrees hold whole checkouts and their tests are another branch's;
+// that argument is about worktrees, and applying it to dot-directories
+// wholesale is what hid .claude/plugin/skills. Name the two.
+var proseSkip = map[string]bool{
+	"vendor":            true,
+	".claude/worktrees": true,
+	".git":              true,
 }
 
 // citation is one backticked test name in prose.
@@ -105,7 +125,7 @@ func (c citation) cited() string {
 }
 
 // fencedLines marks the lines inside a fenced code block, the fence lines
-// themselves included.
+// themselves included, and reports whether a fence was left open at EOF.
 //
 // It exists for one specific misreading: CLAUDE.md's verify loop is a
 // ```sh block whose shell comments start at column 0, so a line reading
@@ -113,27 +133,61 @@ func (c citation) cited() string {
 // fence ENDS an exemption region early, silently un-skipping the rest of a
 // planned section — the guard then fails on names nobody claimed. Review
 // of PR #476 caught it before the corpus grew to a file that had one.
-func fencedLines(lines []string) []bool {
-	in := make([]bool, len(lines))
-	open := false
+//
+// COMMONMARK'S CLOSING RULE, not a toggle, and the difference is a
+// fail-open. This flipped on ANY fence line: it did not require the
+// closer to match the opener's character, did not require it to be at
+// least as long, and never checked the block closed. So one nested-fence
+// example — ```` wrapping ``` blocks, which docs/learn/** is full of —
+// or one ``` closed with ~~~ inverts the rest of the file, and every
+// real citation after it is read as code and goes unchecked while the
+// suite stays green. That is the exact fail-open this guard exists to
+// remove. Reproduced by appending a lone fence and a bogus citation to
+// docs/specs/2026-08-25-clipping.md: green.
+//
+// Every file in the corpus has even parity today, so nothing was broken
+// — which is why the second return matters. An imbalance is not silently
+// tolerated; the caller reports the file as unparseable, loudly, rather
+// than reading half of it. Raised in review of #476.
+func fencedLines(lines []string) (in []bool, unclosed bool) {
+	in = make([]bool, len(lines))
+	var char string
+	var width int
 	for i, l := range lines {
-		if mdFence.MatchString(l) {
-			in[i] = true
-			open = !open
+		m := mdFence.FindStringSubmatch(l)
+		if m == nil {
+			in[i] = char != ""
 			continue
 		}
-		in[i] = open
+		c, w := m[1][:1], len(m[1])
+		switch {
+		case char == "":
+			char, width = c, w
+			in[i] = true
+		case c == char && w >= width:
+			char, width = "", 0
+			in[i] = true
+		default:
+			// A fence of the OTHER character, or a shorter run of the
+			// same one, is content inside the open block.
+			in[i] = true
+		}
 	}
-	return in
+	return in, char != ""
 }
 
 // readProse splits one document's citations into the ones it asserts and
 // the ones a marked section merely proposes. It is separate from the
 // tests so the parser can be pointed at a synthetic document — see
 // TestTheCitationGuardCatchesWhatItIsFor.
-func readProse(file, body string) (live, planned []citation) {
+// The third return is the unclosed-fence report. It is a value rather
+// than a t.Errorf so this stays callable from a fixture, and it is not
+// dropped by either corpus caller: a file whose fences do not balance is
+// half-read, and half-read is exactly the silence this guard exists to
+// remove.
+func readProse(file, body string) (live, planned []citation, unclosed bool) {
 	lines := strings.Split(body, "\n")
-	fenced := fencedLines(lines)
+	fenced, unclosed := fencedLines(lines)
 
 	// Headings, in order, with their level.
 	type heading struct{ line, depth int }
@@ -199,7 +253,7 @@ func readProse(file, body string) (live, planned []citation) {
 			}
 		}
 	}
-	return live, planned
+	return live, planned, unclosed
 }
 
 // testFuncsUnder is every `func TestX(` beneath root, nested modules
@@ -249,6 +303,16 @@ func testFuncsUnder(t *testing.T, root string) map[string]map[string]bool {
 				found[m[1]] = map[string]bool{}
 			}
 			found[m[1]][dir] = true
+			// AND UNDER THE MODULE'S OWN NAME, for a root-package test.
+			// filepath.Base(filepath.Dir(path)) is "." there, so
+			// `gooey.TestFoo` — the natural spelling, and the one the
+			// race-tier citation above now uses — could never resolve:
+			// the report read "the test exists, but in `.`, not gooey",
+			// which is a false failure with a confusing message. Raised
+			// in review of #476.
+			if dir == "." {
+				found[m[1]][rootModuleName] = true
+			}
 		}
 		return nil
 	})
@@ -257,6 +321,12 @@ func testFuncsUnder(t *testing.T, root string) map[string]map[string]bool {
 	}
 	return found
 }
+
+// rootModuleName is what a citation qualified with the ROOT module's
+// package spells. It is the last element of the module path, the same
+// way every other qualifier in the tree is the last element of an import
+// path.
+const rootModuleName = "gooey"
 
 // fault is a citation that does not resolve, and why.
 type fault struct {
@@ -293,31 +363,29 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// proseFiles is every Markdown file under the cited roots. filepath.WalkDir
+// proseFiles is every Markdown file in the tree. filepath.WalkDir
 // rather than os.ReadDir, so a docs/specs subdirectory — or any of the
 // nested trees under docs/learn — is read rather than silently skipped.
 func proseFiles(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, root := range citedRoots {
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if path != root && strings.HasPrefix(d.Name(), ".") {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if strings.HasSuffix(path, ".md") {
-				out = append(out, path)
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if proseSkip[filepath.ToSlash(path)] {
+				return fs.SkipDir
 			}
 			return nil
-		})
-		if err != nil {
-			t.Fatalf("walking %s: %v", root, err)
 		}
+		if strings.HasSuffix(path, ".md") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree for Markdown: %v", err)
 	}
 	sort.Strings(out)
 	return out
@@ -332,7 +400,7 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 
 	files := proseFiles(t)
 	if len(files) == 0 {
-		t.Fatalf("no Markdown found under %v, so this test reads nothing", citedRoots)
+		t.Fatalf("the tree walk found no Markdown at all, so this test reads nothing")
 	}
 	cited := 0
 	for _, p := range files {
@@ -341,7 +409,14 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 			t.Errorf("reading %s: %v", p, err)
 			continue
 		}
-		live, _ := readProse(p, string(b))
+		live, _, unclosed := readProse(p, string(b))
+		if unclosed {
+			t.Errorf("%s leaves a fenced code block open at EOF, so everything "+
+				"after the stray fence was read as code and no citation in it was "+
+				"checked. Balance the fence — a nested example needs a longer "+
+				"outer run (````), and a ``` block cannot be closed with ~~~. "+
+				"(#468)", p)
+		}
 		cited += len(live)
 		for _, f := range unresolved(live, funcs) {
 			t.Errorf("%s:%d cites %s as evidence and %s.\n\t%s\n"+
@@ -353,9 +428,9 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		}
 	}
 	if cited == 0 {
-		t.Errorf("no document under %v names a test outside a marked section, so "+
-			"this test checks nothing. Either the docs have stopped citing tests "+
-			"or the pattern has drifted from how they are written.", citedRoots)
+		t.Errorf("no document in the tree names a test outside a marked section, " +
+			"so this test checks nothing. Either the docs have stopped citing " +
+			"tests or the pattern has drifted from how they are written.")
 	}
 }
 
@@ -386,7 +461,7 @@ func TestNoMarkedSectionNamesALandedTest(t *testing.T) {
 			t.Errorf("reading %s: %v", p, err)
 			continue
 		}
-		_, planned := readProse(p, string(b))
+		_, planned, _ := readProse(p, string(b))
 		marked += len(planned)
 		for _, c := range planned {
 			if funcs[c.name] == nil {
@@ -401,13 +476,21 @@ func TestNoMarkedSectionNamesALandedTest(t *testing.T) {
 				strings.Join(sortedKeys(funcs[c.name]), "/"), c.text)
 		}
 	}
-	// NON-VACUITY. Every arm above is a for-range over a slice that a
-	// broken parser returns empty, and an empty slice is green.
-	if marked == 0 {
-		t.Errorf("no section under %v is marked %q, so this test read nothing. "+
-			"Either every proposal has landed and the markers should be gone, or "+
-			"the marker's spelling has drifted.", citedRoots, plannedMarker)
-	}
+	// NOT AN ERROR WHEN IT IS ZERO, and this used to be one.
+	//
+	// The arm above is a for-range that a broken parser returns empty
+	// for, so it needs a non-vacuity check — but "no section carries the
+	// marker" is ALSO the correct end state, the one the arm above is
+	// driving the corpus toward, and turning it red made the successful
+	// outcome a failing test whose only remedy is editing the test.
+	//
+	// The parser is pinned where a pin belongs: the `a marked section is
+	// skipped` arm of TestTheCitationGuardCatchesWhatItIsFor feeds it a
+	// document that HAS a marker and requires the names under it to come
+	// back planned rather than live. A spelling drift fails there, on a
+	// fixture, whatever the corpus happens to hold. Raised in review of
+	// #476.
+	t.Logf("sections carrying %q: %d", plannedMarker, marked)
 }
 
 // TestTheCitationGuardCatchesWhatItIsFor is the arm that keeps the guard
@@ -496,9 +579,28 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 			body:    marked + "~~~\n# TestFake\n~~~\nStill `TestAfterTilde`.\n",
 			planned: []string{"TestPlanned", "TestAfterTilde"},
 		},
+		{
+			// A NESTED FENCE, which is ordinary Markdown and was a
+			// fail-open. A ```` run wrapping a ``` block used to toggle
+			// four times, so the tail of the file read as code and every
+			// citation after it went unchecked while the suite stayed
+			// green. CommonMark closes on the same character at the same
+			// length or longer, which is what makes the inner ``` content.
+			name: "a nested fence does not invert the rest of the file",
+			body: "````md\n```go\nrun(`TestInside`)\n```\n````\nPinned by `TestOutside`.\n",
+			live: []string{"TestOutside"},
+		},
+		{
+			// AND A MISMATCHED CLOSER. A ``` block cannot be closed with
+			// ~~~; treating the tilde run as a closer is what let one
+			// typo blind a file.
+			name: "a tilde line does not close a backtick fence",
+			body: "```\n~~~\nrun(`TestInside`)\n```\nPinned by `TestOutside`.\n",
+			live: []string{"TestOutside"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			live, planned := readProse("t.md", tc.body)
+			live, planned, _ := readProse("t.md", tc.body)
 			check := func(what string, got []citation, want []string) {
 				t.Helper()
 				var names []string
@@ -517,11 +619,66 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		})
 	}
 
+	// AN UNBALANCED FENCE IS REPORTED, not tolerated. This is the half
+	// that keeps the CommonMark rule above from trading one silence for
+	// another: with strict closing, a stray opener no longer inverts the
+	// file — it swallows the tail instead, which is the same lost
+	// citations. The corpus caller turns this into a failure naming the
+	// file. Raised in review of #476.
+	t.Run("an unclosed fence is reported", func(t *testing.T) {
+		live, _, unclosed := readProse("t.md", "```\nPinned by `TestInside`.\n")
+		if !unclosed {
+			t.Errorf("a file whose fence never closes was read as balanced, so " +
+				"everything after the stray fence is silently uncheckable")
+		}
+		if len(live) != 0 {
+			t.Errorf("collected %v from inside an unclosed fence; the point of "+
+				"reporting the imbalance is that this content cannot be trusted "+
+				"either way", live)
+		}
+	})
+
+	// AND A BALANCED FILE DOES NOT REPORT ONE, which is the arm that
+	// stops "always true" from being a passing strategy for the check
+	// above.
+	t.Run("a balanced file reports no imbalance", func(t *testing.T) {
+		if _, _, unclosed := readProse("t.md", "```go\nx\n```\nPinned by `TestX`.\n"); unclosed {
+			t.Error("a closed fence was reported as unclosed, which would fail " +
+				"every document in the corpus")
+		}
+	})
+
+	// THE ROOT MODULE ANSWERS TO ITS OWN NAME. testFuncsUnder keys a
+	// root-package test under filepath.Base(filepath.Dir(path)), which is
+	// ".", so `gooey.TestFoo` — the spelling CLAUDE.md's race-tier
+	// citation now uses — reported "the test exists, but in `.`, not
+	// gooey". A false failure with a confusing message. Raised in review
+	// of #476.
+	t.Run("a root-module test resolves under the module name", func(t *testing.T) {
+		// THIS test, whose declaration is in the root package — so the
+		// arm cannot go vacuous by naming something that stopped
+		// existing.
+		const self = "TestTheCitationGuardCatchesWhatItIsFor"
+		live, _, _ := readProse("t.md", "See `"+rootModuleName+"."+self+"`.")
+		funcs := testFuncsUnder(t, ".")
+		if got := unresolved(live, funcs); len(got) != 0 {
+			t.Errorf("a root-package test cited as %s.%s did not resolve: %v",
+				rootModuleName, self, got)
+		}
+		// AND THE DIRECTORY SPELLING STILL WORKS, so the fix added a key
+		// rather than moving one — an unqualified citation and a "."
+		// qualifier both have to keep resolving.
+		if !funcs[self]["."] {
+			t.Errorf("%s is no longer recorded under %q; the module name is an "+
+				"ADDITIONAL key, not a replacement", self, ".")
+		}
+	})
+
 	// The comparison itself, which a clean corpus cannot exercise: with
 	// every citation resolving, "compare and report" and "report nothing"
 	// are the same green.
 	t.Run("an unresolved claim is reported", func(t *testing.T) {
-		live, _ := readProse("t.md", "Pinned by `TestHere` and `TestGone`.")
+		live, _, _ := readProse("t.md", "Pinned by `TestHere` and `TestGone`.")
 		got := unresolved(live, map[string]map[string]bool{"TestHere": {"markup": true}})
 		if len(got) != 1 || got[0].name != "TestGone" {
 			t.Errorf("unresolved reported %v, want exactly TestGone", got)
@@ -532,7 +689,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// that exists SOMEWHERE resolves under an unqualified citation, so
 	// without this the qualifier could be parsed and then thrown away.
 	t.Run("a qualifier naming the wrong package is reported", func(t *testing.T) {
-		live, _ := readProse("t.md", "See `markup.TestSomewhere` and `wysiwyg.TestSomewhere`.")
+		live, _, _ := readProse("t.md", "See `markup.TestSomewhere` and `wysiwyg.TestSomewhere`.")
 		funcs := map[string]map[string]bool{"TestSomewhere": {"markup": true}}
 		got := unresolved(live, funcs)
 		if len(got) != 1 || got[0].pkg != "wysiwyg" {
@@ -612,21 +769,86 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// property of decision records — CLAUDE.md cites tests as the authority
 	// for its own rules, and docs/learn cites them as the reason a tutorial
 	// says what it says.
-	t.Run("the corpus reaches past docs/specs", func(t *testing.T) {
-		want := map[string]bool{"CLAUDE.md": false, "docs/learn": false, "docs/specs": false}
+	// THE CORPUS IS THE TREE, and this arm is the floor on that. It used
+	// to check three roots because the walk WAS three roots — and prose
+	// outside them was already citing tests: handlers/prop/README.md names
+	// four, and the tracked .claude/plugin/skills/ pages name the
+	// CI-discovery trio this repo's whole verify story rests on. Appending
+	// a citation to a nonexistent test in handlers/prop/README.md left the
+	// guard green.
+	//
+	// DERIVED PLUS A HANDFUL OF WITNESSES, and the two halves answer
+	// different questions. The derived half — every Markdown file in the
+	// tree carrying a citation must be in the corpus — is what covers a
+	// document nobody has thought of. The witnesses are the shapes a
+	// plausible re-narrowing would drop: a nested module's README, a
+	// tracked page under a DOT-directory (the reason a blanket dot-prune
+	// is wrong here), and the repo root. Raised in review of #476.
+	t.Run("the corpus is the whole tree", func(t *testing.T) {
+		read := map[string]bool{}
 		for _, f := range proseFiles(t) {
-			s := filepath.ToSlash(f)
-			for k := range want {
-				if s == k || strings.HasPrefix(s, k+"/") {
-					want[k] = true
+			read[filepath.ToSlash(f)] = true
+		}
+
+		// The witnesses, by the property that makes each one a witness
+		// rather than by being a list somebody has to maintain: for each
+		// prefix, SOME document under it must be read.
+		for _, k := range []string{
+			"CLAUDE.md", "docs/learn", "docs/specs",
+			"handlers", ".claude/plugin",
+		} {
+			found := false
+			for f := range read {
+				if f == k || strings.HasPrefix(f, k+"/") {
+					found = true
+					break
 				}
 			}
-		}
-		for _, k := range sortedKeys(want) {
-			if !want[k] {
+			if !found {
 				t.Errorf("no document under %s is read, so a citation there can rot "+
-					"with nothing to notice", k)
+					"with nothing to notice. This corpus is the TREE; a walk that "+
+					"stops short of %s has been narrowed", k, k)
 			}
+		}
+
+		// AND THE DERIVED HALF: any Markdown in the tree that cites a
+		// test must be in the corpus. The witnesses above cannot cover a
+		// file nobody has thought of, and this is the half that does.
+		var missed []string
+		err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				// The two prunes proseSkip makes, plus .git, and NOT
+				// dot-directories in general — that is the point.
+				if proseSkip[filepath.ToSlash(path)] {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".md") {
+				return nil
+			}
+			p := filepath.ToSlash(path)
+			if read[p] {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if live, planned, _ := readProse(p, string(b)); len(live)+len(planned) > 0 {
+				missed = append(missed, p)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking the tree: %v", err)
+		}
+		for _, p := range missed {
+			t.Errorf("%s names a test and is not in the corpus, so that citation "+
+				"can rot with nothing to notice", p)
 		}
 	})
 }

@@ -379,10 +379,20 @@ this section proposed. They are ordinary citations now, not proposals,
 and they are written here as such so a rename of either shows up:
 
 - `markup.TestResourceSetRepaintsExactlyReaders` — three components, two
-  styled through `{accent}`: `Set` repaints 2, the third never paints.
-- `markup.TestSubtreeOverrideShadows` — inner scope redefines a key;
-  outer readers keep the outer handle; `Set` on the outer repaints only
-  outer readers.
+  styled through one resource with `<Setter Property="Fg" Resource="ink"/>`:
+  `Set` repaints 2, the third never paints. The `{accent}` brace spelling
+  this section proposed is not what landed, and the row said `{accent}`
+  for a review round — the numbers were right and the mechanism named was
+  not.
+- `markup.TestSubtreeOverrideShadows` — inner scope redefines a key; an
+  outer reader follows the outer handle and an inner reader does not. It
+  asserts resolved `Style.Fg` values and builds no Composer, so it is
+  **not** a damage-count arm: the row claimed "`Set` on the outer
+  repaints only outer readers" while nothing in the test counts a
+  repaint, which under CLAUDE.md's rule that a damage-count assertion is
+  the only pin for a repaint claim is a fresh instance of the defect this
+  document was corrected for. The repaint half of the resources claim is
+  pinned by the row above it.
 
 ### Acceptance tests — the rest, still proposed
 

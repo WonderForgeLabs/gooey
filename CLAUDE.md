@@ -184,7 +184,16 @@ The `-race` where CI applies it is not a nicety: what those tests prove is
 that no RPC, tool body, activity goroutine, or child-process callback
 touches the property graph off the UI goroutine, and without the detector
 that assertion is only half made. `.github/workflows/ci.yml` is the
-authority on what CI runs.
+authority on what CI runs, and `gooey.TestCIWorkflowRaceTierMatchesCLAUDEMD`
+is what keeps the `case` arm above identical to the one in it.
+
+That sentence exists so the citation is visible. The name was written
+only inside the fenced block above, unbackticked, and both of those
+exclusions apply at once — so the guard over this file's citations
+(`gooey.TestEveryCitedTestNameResolves`) could not see it, and a rename would
+have left the `case` arm's authority pointing at nothing. Its sibling
+`TestCIWorkflowAndCLAUDEMDShareOneDiscovery` was safe only by accident,
+because an earlier paragraph happens to name it in prose too.
 
 One gap CI leaves you to cover by hand, and one it no longer does. CI now
 discovers every module, so a core API change that breaks `apps/gitui` or
