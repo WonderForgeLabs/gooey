@@ -286,6 +286,10 @@ type MenuBar struct {
 
 	curP *prop.Property[int] // highlighted title
 	selP *prop.Property[int] // highlighted item in the open menu
+
+	// shown is the menu Arrange last put on screen — see curIdx's
+	// comment for why OpenIndex answers with this and not with cur.
+	shown int
 }
 
 // SetFocusManager receives the input tree (gooey.FocusHost) — forwarded
@@ -347,12 +351,32 @@ func (m *MenuBar) IsOpen() bool { return m.popup().IsOpen() }
 // IsOpen handed back a live-looking rect for a dropdown that was never
 // arranged — exactly what its own doc comment says must not happen.
 //
-// Both accessors ask THIS, so they cannot disagree with each other or
-// with what was arranged. Found in review of #400.
+// Both accessors ask THIS, and both then answer from the ARRANGED
+// dropdown — DropdownBounds from the surface's own bounds, OpenIndex
+// from the index Arrange recorded beside them. showing() alone was not
+// enough for that: it made both agree about WHETHER something is on
+// screen while they disagreed about WHICH, and this comment claimed
+// otherwise for two rounds. Found and corrected in review of #455 — this
+// said "review of #400", the ISSUE, where all twelve sibling notes in
+// this file name the PR the review was of.
 func (m *MenuBar) showing() bool {
 	return m.popup().IsOpen() && len(m.Menus) > 0 && len(m.Menus[m.curIdx()].Items) > 0
 }
 
+// shown is the menu index the LAST Arrange put on screen, and it is
+// what OpenIndex answers with.
+//
+// Reading cur() there instead was the disagreement review of #455 found:
+// DropdownBounds reports the ARRANGED surface while cur is live, so
+// switching menus without an intervening frame reported "menu 0 is open"
+// beside menu 1's rectangle — a decorator badging the open menu drew into
+// the previous menu's box. Two accessors over one state told different
+// stories, which both their doc comments promised could not happen.
+//
+// A PLAIN FIELD, and the subscription is unaffected: OpenIndex still
+// gates on showing(), whose IsOpen() and cur() reads are what a Render
+// depends on. Arrange runs before Render in the same frame, so a painter
+// reads the index of the dropdown it is about to see.
 func (m *MenuBar) curIdx() int {
 	if len(m.Menus) == 0 {
 		return 0
@@ -436,6 +460,9 @@ func (m *MenuBar) Arrange(r gooey.Rect) {
 	pr := gooey.Rect{X: r.X, Y: r.Y}
 	if show {
 		pr = m.popupRect()
+		// THE INDEX AND THE RECT ARE RECORDED TOGETHER, which is the
+		// whole of the agreement OpenIndex and DropdownBounds promise.
+		m.shown = m.curIdx()
 	}
 	p.ArrangeSurface(show, pr)
 }
@@ -527,6 +554,20 @@ func (m *MenuBar) Dismiss() { m.popup().Dismiss() }
 // DropdownBounds, which returns the zero Rect for both — two accessors
 // over one state must not tell different stories.
 //
+// AND THAT SENTENCE WAS FALSE UNTIL REVIEW OF #455. DropdownBounds moved
+// to the arranged surface and this one kept reading the live property,
+// so the pair had two windows where it disagreed, both reachable from an
+// ordinary key handler (switchMenu sets cur synchronously):
+//
+//	opened, no frame yet:   OpenIndex=1  DropdownBounds={0 0 0 0}
+//	switched, no frame yet: OpenIndex=0  DropdownBounds={3 1 7 3}  <- menu 1's
+//
+// The second is the dangerous one: the pair says "menu 0 is open and its
+// dropdown is at x=3" while x=3 is menu 1's rectangle. It answers from
+// the arranged state now — the surface's extent for whether, and the
+// index Arrange recorded for which — so the two describe one dropdown or
+// neither.
+//
 // PAINT DEPENDENCY, PARTLY. Read from a Render, the open flag and the
 // highlighted index are property reads and subscribe like any other. The
 // menu LIST is not — Menus is a plain field — so a component that reads
@@ -558,7 +599,15 @@ func (m *MenuBar) OpenIndex() int {
 	if m.pop == nil || !m.showing() {
 		return -1
 	}
-	return m.curIdx()
+	// THE ARRANGED SURFACE, the same question DropdownBounds asks and in
+	// the same words, because "is anything on screen" must have one
+	// answer. A surface with no extent is a position for something with
+	// no pixels, not an open dropdown.
+	b := m.pop.SurfaceBounds()
+	if b.W <= 0 || b.H <= 0 {
+		return -1
+	}
+	return m.shown
 }
 
 // DropdownBounds is where the open dropdown was arranged, or the zero

@@ -12,11 +12,14 @@ So a lifted overlay paints above the page **from wherever it is
 declared**. In a `Grid`, `Grid.Row` places it where it belongs and
 nothing about z-order argues with that.
 
-**Which surfaces are lifted, exactly.** Today it is `components.Popup`'s
-surface — so the `MenuBar` dropdown, the `Tooltip` popup, and any
-`Popup` an app owns. `ToastHost` and `AdornmentLayer` do **not**
-implement `gooey.Overlay` yet, so for those two the old rule still
-holds: they are in the ordinary layer, and their position in document
+**Which surfaces are lifted, exactly.** `MenuBar` and `Popup` **are**
+lifted — both paint through `components.Popup`'s surface, which is the
+one type implementing `gooey.Overlay` today. A `Tooltip` is not one of
+them, and it reads as if it should be: its tip is `tipPopup`, an ordinary
+leaf hosted by the `AdornmentLayer`, so the layer's position decides
+where the tip lands. `Tooltip`, `ToastHost` and `AdornmentLayer` do
+**not** implement `gooey.Overlay` yet, so for those three the old rule
+still holds: they are in the ordinary layer, and their position in document
 order is what decides whether a toast paints over an open menu or under
 it. `cmd/toolkit` declares all three at the end of its Grid, and for the
 bar that is now only house style — for the other two it is still load

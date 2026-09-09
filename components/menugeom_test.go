@@ -112,6 +112,72 @@ func TestTheOpenIndexIsReadableFromOutside(t *testing.T) {
 	}
 }
 
+// TestTheOpenIndexAndTheBoundsDescribeOneDropdown is the agreement both
+// accessors' doc comments promised and neither kept.
+//
+// DropdownBounds moved to the ARRANGED surface in round four while
+// OpenIndex kept reading the live cur property, so the pair had two
+// windows of disagreement, both reachable from an ordinary key handler
+// because switchMenu sets cur synchronously:
+//
+//	opened, no frame yet:   OpenIndex=1  DropdownBounds={0 0 0 0}
+//	switched, no frame yet: OpenIndex=0  DropdownBounds={3 1 7 3}  <- menu 1's
+//
+// The second is the one that costs pixels: a decorator badging "the open
+// menu" draws into the PREVIOUS menu's rectangle, guard passed and rect
+// non-zero. Raised in review of #455.
+func TestTheOpenIndexAndTheBoundsDescribeOneDropdown(t *testing.T) {
+	bar := geomBar()
+	c := gooey.NewComposer(bar, 40, 12)
+	t.Cleanup(c.Close)
+	c.Frame()
+
+	// The arranged rect of each menu, taken the only way that proves
+	// anything: by arranging it.
+	arranged := func(i int) gooey.Rect {
+		bar.Open(i, nil)
+		c.Frame()
+		return bar.DropdownBounds()
+	}
+	rect0, rect1 := arranged(0), arranged(1)
+	if rect0 == rect1 {
+		t.Fatal("menu 0 and menu 1 arrange to the same rect, so this fixture cannot " +
+			"tell a right rect from the neighbour's")
+	}
+	want := map[int]gooey.Rect{0: rect0, 1: rect1}
+
+	// 1. OPENED BUT NOT ARRANGED. The bar is left open on menu 1 above;
+	//    dismiss and reopen with no frame between.
+	bar.Dismiss()
+	c.Frame()
+	bar.Open(1, nil)
+	if i, r := bar.OpenIndex(), bar.DropdownBounds(); i >= 0 && (r.W <= 0 || r.H <= 0) {
+		t.Errorf("with menu %d opened and nothing arranged yet, OpenIndex says it is "+
+			"open and DropdownBounds returns %+v. A caller guarding on the index and "+
+			"drawing into the rect gets a zero extent — the two must answer the same "+
+			"question about whether anything is on screen", i, r)
+	}
+
+	// 2. SWITCHED BUT NOT ARRANGED. This is the pair pointing at two
+	//    different menus, which no extent check can catch.
+	c.Frame()
+	bar.Open(0, nil)
+	i, r := bar.OpenIndex(), bar.DropdownBounds()
+	if i >= 0 && r != want[i] {
+		t.Errorf("after switching to menu 0 with no frame, the pair reports index %d "+
+			"at %+v — but menu %d was arranged at %+v. A decorator badging the open "+
+			"menu draws into another menu's rectangle", i, r, i, want[i])
+	}
+
+	// NON-VACUITY: after a frame the pair must still describe menu 0, or
+	// the assertions above pass for accessors that report -1 forever.
+	c.Frame()
+	if i, r := bar.OpenIndex(), bar.DropdownBounds(); i != 0 || r != rect0 {
+		t.Errorf("after the frame the pair reports index %d at %+v, want 0 at %+v",
+			i, r, rect0)
+	}
+}
+
 // TestTheDropdownBoundsAreWhereItPainted is the assertion that matters,
 // and it is against the frame rather than against popupRect. An
 // accessor returning the same private arithmetic the painter uses is
@@ -333,9 +399,21 @@ func rectsOverlap(a, b gooey.Rect) bool {
 // Menus every time it is asked, so it answers for a state that has never
 // been laid out.
 //
-// Arrange stores exactly that rect into the popup surface
-// (`p.ArrangeSurface(show, m.popupRect())`, menu.go:416), so between
-// Arranges the two agree and no existing test can tell them apart. They
+// MenuBar.Arrange stores exactly that rect into the popup surface — it
+// reads `pr := gooey.Rect{X: r.X, Y: r.Y}`, replaces it with
+// `m.popupRect()` when the dropdown shows, and passes that to
+// `p.ArrangeSurface` — so between Arranges the two agree and no existing
+// test can tell them apart.
+//
+// ANCHORED ON THE FUNCTION NAME. This cited "menu.go:416" and an
+// expression that is not in the file: line 416 is a closing brace inside
+// popupRect's item loop, and Arrange has never contained
+// `p.ArrangeSurface(show, m.popupRect())` on one line. The claim was
+// right and the evidence for it was not, which is worse than no citation
+// — it is what a reader checks before touching the accessor. Line
+// numbers in a test go stale in silence, for the reason
+// overlayclaims_test.go gives about anchoring on a sentence. Corrected
+// in review of #455. They
 // come apart at the two moments below, and both hand an app a plausible
 // rect for pixels that are not on screen. Found in review of #455.
 func TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation(t *testing.T) {

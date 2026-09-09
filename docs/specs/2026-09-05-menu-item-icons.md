@@ -241,10 +241,17 @@ which carries the measurement and the reason it could not land here.
 | …and is treated as no rune at all in Go | `TestAZeroWidthIconRuneDoesNotStealACell` | drop the `StringWidth(g) < 1` guard in `iconGutter` |
 | …while a one-cell rune still loads | `TestAOneCellIconRuneStillLoads` | refuse on `StringWidth != 2` |
 | An `Icon` needs an `IconRune` beside it | `TestAnIconWithoutAnIconRuneIsRefused` | drop the pairing check |
+| …and the inline help SAYS so | `TestTheIconHelpSaysWhatTheLoaderEnforces` | soften the `Icon` Doc string back to advice — the grid renders it at the moment of the edit, so advice walks the author into an unloadable document |
 | …but the cell tier alone is complete | `TestAnIconRuneAloneStillLoads` | require both fields unconditionally |
 | …and the pairing check runs LAST | `TestTheIconPairingCheckRunsLast` | hoist it above the asset and binding refusals, which then report the wrong cause |
 | The placement is withdrawn when the menu closes | `TestTheIconPlacementIsWithdrawn` | leave the `f.Place` standing |
 | `DropdownBounds` describes the ARRANGED surface | `TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation` | return `popupRect()` — agrees between Arranges, so nothing else catches it |
+| …and `OpenIndex` describes the SAME dropdown | `TestTheOpenIndexAndTheBoundsDescribeOneDropdown` | read `cur()` in `OpenIndex` — switching menus without a frame then reports one menu's index beside the other's rect |
+| A separator does not widen the check gutter | `TestASeparatorDoesNotWidenTheCheckGutter` | count separators in `lead()` |
+| Asking for the bounds does not BUILD the surface | `TestAskingForTheBoundsDoesNotBuildTheSurface` | put `m.pop == nil` after `showing()` — no behavioural observable, the allocation is the whole symptom |
+| …nor does asking which menu is open | `TestAskingWhichMenuIsOpenDoesNotBuildTheSurface` | the same swap in `OpenIndex` |
+| The hosts this page calls position-dependent still are | `TestTheHostsThisPageCallsPositionDependentStillAre` | adopt `gooey.Overlay` on `ToastHost` — EXPIRING, and the commit that turns it red is the one that should delete it ([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) |
+| …and the ones it calls lifted actually are | `TestTheHostsThisPageCallsLiftedActuallyAre` | name `Tooltip` on the lifted side — which the page did, contradicting its own next sentence |
 
 `TestAWideIconRuneDoesNotOverrunItsGutter` is worth one more line, because
 it first failed on **its own** bug rather than the code's: it compared

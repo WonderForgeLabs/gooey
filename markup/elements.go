@@ -1189,7 +1189,7 @@ var defMenuItem = &ElementDef{
 		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Origin: OriginBuiltin,
 			Doc: "The accelerator shown beside the item. Parsed at load, so a typo is a startup error rather than a key that never fires."},
 		{Name: "Icon", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
-			Doc: "A picture for the item, as a path in the page's own FS — the same assets <Image Src> loads from. Drawn only where the terminal has a graphics protocol; set IconRune for everywhere else."},
+			Doc: "A picture for the item, as a path in the page's own FS — the same assets <Image Src> loads from. Drawn only where the terminal has a graphics protocol. Set IconRune as well: an Icon without one is a LOAD ERROR, because the gutter is reserved whatever the terminal can do, so an Icon alone would draw blank columns forever on a terminal with no protocol."},
 		{Name: "IconRune", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
 			Doc: "One glyph for the item, drawn on the cell plane when there is no graphics protocol. Not a fallback rendering of Icon — a one-cell-tall halfblock is two vertical samples, so the two tiers draw different things (#400)."},
 		{Name: "Separator", Kind: KindBool, Binds: BindsLiteral, Origin: OriginBuiltin,

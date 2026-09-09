@@ -329,6 +329,53 @@ func TestAnIconWithoutAnIconRuneIsRefused(t *testing.T) {
 	}
 }
 
+// TestTheIconHelpSaysWhatTheLoaderEnforces ties the inline help to the
+// rule it describes, in ONE test, because the pair is the claim.
+//
+// The Doc string read "set IconRune for everywhere else", which is
+// advice. menuItemIcon makes it a hard load error. That Doc is what the
+// wysiwyg property grid renders inline at the moment of the edit, and
+// the grid offers Icon and IconRune as independent rows — so an author
+// filled in Icon, read that the other field was optional polish, and
+// produced a document the loader refuses. The reference row and the
+// Separator Doc two lines down had both been corrected in the same diff;
+// only the place a designer actually reads it stayed advisory.
+//
+// Asserted together with the refusal so the sentence expires with the
+// behaviour: if the pairing check is ever dropped, this fails on the
+// FIRST half and the help does not quietly become the wrong kind of
+// wrong. Raised in review of #455.
+func TestTheIconHelpSaysWhatTheLoaderEnforces(t *testing.T) {
+	if _, err := menuPage(t, `Icon="assets/open.png"`); err == nil {
+		t.Fatal("an Icon without an IconRune loads, so the help below would be " +
+			"describing a load error that no longer exists")
+	}
+
+	ctx := &Context{Values: map[string]any{}}
+	var doc string
+	var found bool
+	for _, e := range ctx.Catalog() {
+		if e.Name != "MenuItem" {
+			continue
+		}
+		for _, a := range e.Attrs {
+			if a.Name == "Icon" {
+				doc, found = a.Doc, true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("MenuItem does not declare Icon, so the property grid shows no help " +
+			"for it at all")
+	}
+	if !strings.Contains(doc, "IconRune") || !strings.Contains(doc, "LOAD ERROR") {
+		t.Errorf("the Icon help a designer reads while editing does not say the "+
+			"pairing is a load error:\n\t%s\n"+
+			"The grid offers Icon and IconRune as independent rows, so help that "+
+			"reads as advice walks the author into a document that will not open", doc)
+	}
+}
+
 // TestAnIconRuneAloneStillLoads — the cell tier on its own is a complete
 // menu item, and only the pixel tier needs a partner. Without this the
 // refusal above is satisfiable by demanding both fields always.

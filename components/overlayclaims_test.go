@@ -86,6 +86,98 @@ func TestTheHostsThisPageCallsPositionDependentStillAre(t *testing.T) {
 	}
 }
 
+// TestTheHostsThisPageCallsLiftedActuallyAre is the other direction of
+// the same claim, and it is here because the guard was one regex short
+// of covering its own subject.
+//
+// unliftedRe reads only the run of names before "do **not** implement
+// gooey.Overlay". A host wrongly named on the LIFTED side was unchecked
+// — and that is not hypothetical: the page listed "the `Tooltip` popup"
+// among the lifted surfaces while the very next sentence said the
+// opposite, and a reader who believed it would move the AdornmentLayer
+// and lose their tips behind the page. A Tooltip's tip is tipPopup, an
+// ordinary leaf the layer hosts; nothing in components implements
+// gooey.Overlay except popupSurface. Raised in review of #455, which is
+// the round-five finding one name over.
+//
+// RESOLVED THROUGH THE SURFACE, not through the host: neither MenuBar
+// nor Popup implements the marker itself — the surface each of them
+// hosts does — so asking the host would assert the opposite of the page
+// about both and pass for the wrong reason, which is exactly the bug
+// unliftedRe's own comment records.
+func TestTheHostsThisPageCallsLiftedActuallyAre(t *testing.T) {
+	names := liftedHostsNamed(t, "../docs/learn/concepts/overlays.md")
+	if len(names) == 0 {
+		t.Fatal("the overlays concept page no longer names any host as lifted, so " +
+			"this guard is checking nothing")
+	}
+	t.Logf("the page calls these hosts lifted: %v", names)
+	for _, name := range names {
+		surf, ok := liftedSurfaceByName[name]
+		if !ok {
+			t.Errorf("the overlays concept page calls %q lifted and this test cannot "+
+				"resolve that name to the surface it hosts. Add it to "+
+				"liftedSurfaceByName — a name the guard cannot check is a claim "+
+				"nothing is keeping true", name)
+			continue
+		}
+		if _, isOverlay := surf(t).(gooey.Overlay); !isOverlay {
+			t.Errorf("the page says %s is lifted, but the surface it hosts does not "+
+				"implement gooey.Overlay — so it paints in the ordinary layer and its "+
+				"position in document order decides where it lands. Either the page is "+
+				"wrong, or the marker came off a type that still needs it", name)
+		}
+	}
+
+	// NEITHER LIST MAY CLAIM A NAME THE OTHER DOES. The page contradicted
+	// itself across two adjacent sentences for two rounds, and each arm
+	// alone is happy to let it: the unlifted arm never reads the lifted
+	// clause and this one never reads the unlifted clause.
+	unlifted := map[string]bool{}
+	for _, n := range unliftedHostsNamed(t, "../docs/learn/concepts/overlays.md") {
+		unlifted[n] = true
+	}
+	for _, n := range names {
+		if unlifted[n] {
+			t.Errorf("the overlays concept page names %s as BOTH lifted and "+
+				"position-dependent. One of the two sentences is wrong and a reader "+
+				"has no way to tell which", n)
+		}
+	}
+}
+
+// liftedRe is unliftedRe's mirror: the run of names immediately before
+// "**are** lifted".
+var liftedRe = regexp.MustCompile(
+	"((?:`[A-Za-z][A-Za-z0-9]*`(?:,)?(?: and)?\\s+)+)\\*\\*are\\*\\*\\s+lifted")
+
+func liftedHostsNamed(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the overlays concept page: %v", err)
+	}
+	flat := strings.Join(strings.Fields(string(body)), " ")
+	m := liftedRe.FindStringSubmatch(flat)
+	if m == nil {
+		t.Fatalf("%s no longer contains the sentence this guard is anchored to "+
+			"(\"… **are** lifted\"). Re-anchor it, or delete it with the paragraph", path)
+	}
+	return backticked(m[1])
+}
+
+// liftedSurfaceByName resolves a name to the SURFACE it hosts, since
+// that is the thing the marker is on. Built per call rather than stored,
+// because a Popup allocates one.
+var liftedSurfaceByName = map[string]func(*testing.T) any{
+	"Popup": func(*testing.T) any {
+		return NewPopup(&Border{}, func(*gooey.Frame, gooey.Rect) {}).Surface()
+	},
+	"MenuBar": func(*testing.T) any {
+		return (&MenuBar{}).popup().Surface()
+	},
+}
+
 // hostByName resolves a name the concept page uses to the value whose
 // type answers the question. It is a LOOKUP, not the list: what is at
 // stake comes from the page, and a name missing here fails the test
