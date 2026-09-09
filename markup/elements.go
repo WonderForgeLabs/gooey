@@ -1368,15 +1368,21 @@ var defFileWatcher = &ElementDef{
 		// Interval is optional here where Timer's is required: a timer
 		// with no interval has no meaning, and a watcher with none has
 		// the framework's own 300ms hot-reload poll.
-		if raw := strings.TrimSpace(e.Attrs["Interval"]); raw != "" {
-			d, err := time.ParseDuration(raw)
-			if err != nil {
-				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: %w", raw, err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: must be positive", raw)
-			}
-			w.Interval = d
+		//
+		// THROUGH optDuration, not hand-rolled. This was
+		// `if raw != "" { … }`, which reads an EMPTY value as "use the
+		// default" — the silent fallback optDuration's own doc comment
+		// refuses, in the branch whose thesis is that one value has one
+		// grammar. Two of the eight duration declarations kept a third
+		// answer for an empty string while five were a load error and
+		// one was ParseDuration's. Raised in review of #470; the derived
+		// arm that finds it is TestALiteralDurationCannotBeEmpty.
+		iv, err := optDuration(e, "Interval")
+		if err != nil {
+			return nil, err
+		}
+		if iv > 0 {
+			w.Interval = iv
 		}
 		if suppliedAttr(e, "Path") {
 			if w.Path, err = Bound[string](e, ctx, "Path"); err != nil {
@@ -1475,29 +1481,6 @@ func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 //
 // Found by the derived Kind/Binds sweep in #460 — the eleven-row
 // spot-check it replaces named none of these.
-// gridLens reads a track list and NAMES the attribute when it will not
-// parse.
-//
-// components.ParseGridLens says only `grid: bad length "{{.B}}"`. That is
-// true of the value and silent about which attribute carried it — on an
-// element that always has both Rows and Cols, so the author is told a
-// string is bad and left to find it. Every other literal in this file
-// refuses in the house form, which names the element and the attribute.
-//
-// Found by the bindsweep discriminator, which requires the refusal to
-// name the attribute before it counts as one: <Grid Rows> and <Grid Cols>
-// were the only two declarations in the whole vocabulary it could not
-// verify. That is the discriminator earning its tightening — the arm was
-// green with the loose form and the message was still unusable.
-func gridLens(e Element, name string) ([]components.GridLen, error) {
-	raw := e.Attrs[name]
-	ls, err := components.ParseGridLens(raw)
-	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %v", e.Name, name, raw, err)
-	}
-	return ls, nil
-}
-
 func litInt(e Element, name string) (int, error) {
 	raw, ok := e.Attrs[name]
 	if !ok {
@@ -1538,6 +1521,29 @@ func litInt(e Element, name string) (int, error) {
 			canon, trimmed)
 	}
 	return n, nil
+}
+
+// gridLens reads a track list and NAMES the attribute when it will not
+// parse.
+//
+// components.ParseGridLens says only `grid: bad length "{{.B}}"`. That is
+// true of the value and silent about which attribute carried it — on an
+// element that always has both Rows and Cols, so the author is told a
+// string is bad and left to find it. Every other literal in this file
+// refuses in the house form, which names the element and the attribute.
+//
+// Found by the bindsweep discriminator, which requires the refusal to
+// name the attribute before it counts as one: <Grid Rows> and <Grid Cols>
+// were the only two declarations in the whole vocabulary it could not
+// verify. That is the discriminator earning its tightening — the arm was
+// green with the loose form and the message was still unusable.
+func gridLens(e Element, name string) ([]components.GridLen, error) {
+	raw := e.Attrs[name]
+	ls, err := components.ParseGridLens(raw)
+	if err != nil {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %v", e.Name, name, raw, err)
+	}
+	return ls, nil
 }
 
 // litBool reads a KindBool / BindsLiteral attribute, and REFUSES what is
@@ -1605,17 +1611,15 @@ var defTypeAhead = &ElementDef{
 			return nil, fmt.Errorf("markup: <TypeAhead> needs a Key naming the item value to search (e.g. Key=\"Title\")")
 		}
 		t := &components.TypeAhead{Key: key}
-		if raw := strings.TrimSpace(e.Attrs["Timeout"]); raw != "" {
-			d, err := time.ParseDuration(raw)
-			if err != nil {
-				return nil, fmt.Errorf("markup: <TypeAhead Timeout=%q>: %w", raw, err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("markup: <TypeAhead Timeout=%q>: must be positive", raw)
-			}
-			t.Timeout = d
+		// THROUGH optDuration — see <FileWatcher Interval> for why the
+		// hand-rolled form was a third grammar for an empty value.
+		to, err := optDuration(e, "Timeout")
+		if err != nil {
+			return nil, err
 		}
-		var err error
+		if to > 0 {
+			t.Timeout = to
+		}
 		if suppliedAttr(e, "Search") {
 			if t.Search, err = Bound[string](e, ctx, "Search"); err != nil {
 				return nil, err

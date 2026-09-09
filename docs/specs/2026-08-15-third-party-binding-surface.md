@@ -90,23 +90,27 @@ builder cannot correctly write for itself**:
 
 Deliberately excluded, with reasons:
 
-- **`optBool` / `optDuration` / `optionList`** stay unexported. They are
-  literal parsers, not binding resolution; `strconv` is already public
-  and the dialect has no opinion a caller could get wrong. `#rrggbb` is
-  the exception precisely because the dialect *does* have an opinion
-  there and no standard parser matches it.
+- **`litBool` / `litInt` / `optDuration` / `optionList`** stay unexported,
+  because a third-party builder receives its attributes already parsed. The
+  reason is the export surface, not the parsers — see below, which is where
+  that changed.
 
-  **Superseded 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)):
-  `optBool` no longer exists** — both call sites read `litBool`, the strict
-  literal reader — and the reason given above stopped being true with it. The
-  dialect *does* have an opinion a caller could get wrong: `"1"` is a bool in
-  Go and is not one here, and `" 3 "` is an int here and is not one to a bare
-  `strconv.Atoi`. `litBool` and `litInt` are the dialect's grammar, not
-  `strconv`'s, which is the same argument `#rrggbb` won. **The conclusion still
-  holds** — they stay unexported, because a third-party builder receives its
-  attributes already parsed — but it now rests on the export surface being
-  small rather than on the parsers being uninteresting, and a future
-  `markup.Lit*` request should be answered on that ground.
+  **Amended 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)).**
+  This bullet was headed `optBool` / `optDuration` / `optionList` and argued:
+  "*They are literal parsers, not binding resolution; `strconv` is already
+  public and the dialect has no opinion a caller could get wrong.*" **`optBool`
+  no longer exists** — both call sites read `litBool`, the strict literal
+  reader — and the argument went with it. The dialect *does* have an opinion a
+  caller could get wrong: `"1"` is a bool in Go and is not one here, and
+  `" 3 "` is an int here and is not one to a bare `strconv.Atoi`. `litBool`
+  and `litInt` are the dialect's grammar, not `strconv`'s, which is the same
+  argument `#rrggbb` won. **The conclusion still holds** — but it now rests on
+  the export surface being small rather than on the parsers being
+  uninteresting, and a future `markup.Lit*` request should be answered on that
+  ground. The heading was left naming a deleted function for one review round
+  after the note below it said so; a supersede note under a stale subject line
+  is still a stale subject line, which is the whole failure mode this spec
+  directory keeps re-learning.
 - **An `Opt`/optional variant of `Bound[T]`.** The built-ins that want
   one write `if raw, ok := e.Attrs[attr]; ok && strings.TrimSpace(raw) != ""`
   first (`buildTabs`); a third party can write the same three tokens.

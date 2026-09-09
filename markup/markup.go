@@ -973,14 +973,6 @@ func parseVisibility(s string) (gooey.Visibility, error) {
 	return 0, fmt.Errorf("unknown visibility")
 }
 
-// buildChildren builds an element's children, splitting them into the
-// visual ones the parent lays out and the non-visual ones (KeyBindings)
-// the framework hangs off the parent as attachments.
-//
-// The <X.Behaviors> property element is MAUI's explicit spelling of the
-// same slot: its children are attachments only, appended to the very
-// list the bare form feeds — two spellings, one downstream path. Bare
-// non-visual children stay as the terse shorthand.
 // BuildChildren builds an element's children for a REGISTERED component's
 // Builder, splitting them the way every builtin container gets them:
 // visual children in kids, non-visual ones (KeyBindings, Tooltips,
@@ -1000,6 +992,14 @@ func BuildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err
 	return buildChildren(e, ctx)
 }
 
+// buildChildren builds an element's children, splitting them into the
+// visual ones the parent lays out and the non-visual ones (KeyBindings)
+// the framework hangs off the parent as attachments.
+//
+// The <X.Behaviors> property element is MAUI's explicit spelling of the
+// same slot: its children are attachments only, appended to the very
+// list the bare form feeds — two spellings, one downstream path. Bare
+// non-visual children stay as the terse shorthand.
 func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
 	for _, c := range e.Children {
 		w, err := build(c, ctx)
@@ -1121,7 +1121,24 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			if ic.Name != "MenuItem" {
 				return nil, fmt.Errorf("markup: <Menu> children must be <MenuItem> elements, got <%s>", ic.Name)
 			}
-			if ic.Attrs["Separator"] == "true" {
+			// litBool, not == "true". The string compare is the idiom
+			// this branch removed in ten other places, and it is silent
+			// in the same way: <MenuItem Separator="1"> and
+			// Separator="yes" loaded as ORDINARY ITEMS, so a separator
+			// spelled the way half of Go spells a bool became a menu
+			// entry with no text.
+			//
+			// No sweep arm can reach this one, and the reason is a THIRD
+			// unswept category beyond the two bindsweep_test.go records:
+			// <Menu> and <MenuItem> are ModeRestricted children with no
+			// AttrSpec at all, so Separator is not a declaration that
+			// can be widened — it is a declaration that does not exist.
+			// Raised in review of #470.
+			sep, err := litBool(ic, "Separator")
+			if err != nil {
+				return nil, err
+			}
+			if sep {
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
 				continue
 			}

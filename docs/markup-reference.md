@@ -390,7 +390,7 @@ The series is tail-cropped to the arranged width, so a narrower window shows rec
 | `Indeterminate` | Optional binding to a `*prop.Property[bool]`. While true the bar animates a band instead of showing a number. Absent means the bar can never be indeterminate — and then it starts no goroutine at all. |
 | `Label` | Text before the bar. Bindable or literal. |
 | `BarWidth` | Preferred width in cells; absent = 34. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
-| `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Unparseable or non-positive is a load error. |
+| `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Empty, unparseable, or non-positive is a load error. |
 | `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 | `Style` | Overrides the coloring entirely when present. |
 
@@ -409,7 +409,7 @@ The animation follows the [`Timer`](#timer) discipline exactly: the ticker gorou
 | Attribute | Meaning |
 |---|---|
 | `Frames` | Frame set by name: `braille` (default), `line`, `arc`, `dot`. An unknown name is a load error. |
-| `Interval` | Frame interval, any `time.ParseDuration` string; absent = 100ms. |
+| `Interval` | Frame interval, any `time.ParseDuration` string; absent = 100ms. Empty, unparseable, or non-positive is a load error. |
 | `Label` | Text after the glyph. Bindable or literal. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always spinning. |
 | `Style` | Named style or a bound style. |
@@ -587,7 +587,7 @@ While open the bar holds the pointer capture: clicks on items activate, motion t
 
 | Attribute | Meaning |
 |---|---|
-| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s, negative means sticky. |
+| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s. Empty or unparseable is a load error. **The one duration attribute where a negative value is meaningful** — it means sticky — so this row is deliberately exempt from the must-be-positive rule the other eight share, and reads `time.ParseDuration` directly rather than through the shared literal helper. |
 | `Style` | Named style applied to the toasts; absent paints reverse-video. |
 
 The host takes no children — toasts are shown from code, through the named element:
@@ -631,7 +631,7 @@ The child form is a **non-visual attachment** like `KeyBinding` — it hangs off
 | Attribute | Meaning |
 |---|---|
 | `Text` | What the tip says. Literal or bound; bound text stays live while the tip is up. |
-| `Delay` | Hover-rest time before showing. Any `time.ParseDuration` string; absent means 600ms. |
+| `Delay` | Hover-rest time before showing. Any `time.ParseDuration` string; absent means 600ms. Empty, unparseable, or non-positive is a load error. |
 | `Gesture` | A **display hint** in the gesture syntax, validated at load and shown dim in the canonical spelling — the `MenuItem` rule. Absent, the tip renders the host's own `KeyBinding` gesture automatically. Display only; wiring the key stays a `KeyBinding`'s job. |
 | `Style` | Named style; absent paints reverse-video. |
 
@@ -863,7 +863,7 @@ rows := prop.NewComputed(func() components.ItemSource {
 | `Key` | **Required.** Which projected item value to match. A projection is a `map[string]any` and, with no reflection anywhere, nothing else can say which entry is the label. |
 | `Search` | Binding to a `string`: the live buffer. |
 | `NoMatch` | Binding to a `bool`: the last keystroke matched nothing. |
-| `Timeout` | Idle reset, default `1s`. |
+| `Timeout` | Idle reset, any `time.ParseDuration` string; absent = 1s. Empty, unparseable, or non-positive is a load error. |
 
 It **selects; it does not filter** — no row is ever hidden. That is what makes "any movement resets the search" coherent: a filter would make rows reappear underneath the user mid-gesture. Matching is case-insensitive **prefix**, not fuzzy (`dc` finds `dcache`, not `DocumentCache`), because "the first match in the current sort order" is not something subsequence matching has.
 
@@ -892,7 +892,7 @@ Binding `Search` is optional but recommended. Explorer displays nothing and surv
 
 | Attribute | Meaning |
 |---|---|
-| `Interval` | **Required.** Any `time.ParseDuration` string (`"600ms"`, `"2s"`). Missing, unparseable, or non-positive is a load error. |
+| `Interval` | **Required.** Any `time.ParseDuration` string (`"600ms"`, `"2s"`). Missing or empty, unparseable, or non-positive is a load error. |
 | `Tick` | The command, resolved like `Click` — a binding or a bare handler name. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always enabled. |
 
@@ -937,7 +937,7 @@ case ev := <-events:
 | `Paths` | **Required.** A binding to a `*prop.Property[[]string]`, or a literal pipe-separated list (`Paths="notes.md \| assets"`). Paths resolve against the page's `fs.FS`, so they are slash-separated and unrooted; a literal that is not is a load error. Written empty is a load error, but a **bound** list that resolves empty is legal and inert. |
 | `Changed` | The command, resolved like `Click` — a binding or a bare handler name. |
 | `Path` | Optional binding to a `*prop.Property[string]`, `Set` to the path that caused this hit immediately before `Changed` runs. |
-| `Interval` | Optional poll period. Absent means `components.DefaultWatchInterval` (300 ms — the framework's own hot-reload rate). Unparseable or non-positive is a load error. |
+| `Interval` | Optional poll period. Absent means `components.DefaultWatchInterval` (300 ms — the framework's own hot-reload rate). Empty, unparseable, or non-positive is a load error. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`, or a conditional (`Enabled="{{not .Paused}}"`). Absent means always enabled. |
 
 Three things about it are decisions rather than details.
@@ -986,8 +986,8 @@ An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher ove
 | `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory. Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
 | `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
 | `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
-| `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. |
-| `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. |
+| `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. Empty, unparseable, or non-positive is a load error. |
+| `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. Empty, unparseable, or non-positive is a load error. |
 | `CleanEnv` | Starts the child from an **empty** environment. `"true"` or `"false"`, and nothing else — `CleanEnv="1"` is a **load error**, as it is on every other literal bool. This row documented the `strconv.ParseBool` spellings (`1`, `TRUE`, `T`) until [#460](https://github.com/WonderForgeLabs/gooey/issues/460): on a security switch the laxer grammar is the worse one, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell, and five spellings of "yes" is five chances for a near-miss. Default is inherit-and-override. |
 | `Error` | Optional binding to a `*prop.Property[string]`. Receives a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden, and `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
@@ -1039,6 +1039,19 @@ Every **visual** element (all built-ins whose component embeds `gooey.Base`, and
 | `Grid.Row`, `Grid.Col` | integer | Cell address when the parent is a Grid — the attached-property syntax. |
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
+
+**Every integer row above is read by one rule, and it refuses four
+things**, so the table is stated once rather than eight times: an
+unreadable value (`Width="wide"`, `Height="{{.Rows}}"` — a binding is not
+a literal here), an **empty** one (`Width=""`; omitting the attribute is
+how you ask for the default), a **negative** one (these are extents,
+counts, indices and offsets, and `Grid.Row="-1"` addresses no cell), and a
+**second spelling** of a number already spelled (`Gap="007"`, `Width="+8"`).
+All four are load errors naming the attribute and quoting what you wrote.
+Until [#460](https://github.com/WonderForgeLabs/gooey/issues/460) they were
+`strconv.Atoi` with the error discarded, so all four laid out as if the
+attribute had been omitted — the silent drop this reference exists to
+document, in the rows nobody reads twice.
 
 The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it). A **misplaced** one is a load error naming the parent that would have contributed it — `Canvas.Left` under a `<VStack>`, or `Grid.Row` under a `<Canvas>`, does not load, rather than sitting there inert. The one position where all of them are accepted is a document or patch-fragment **root**, which has no layout parent to scope against. Both families are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
 

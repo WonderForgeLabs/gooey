@@ -295,6 +295,17 @@ func harnessFor(attr, el string) string {
 		// exists to make visible. TextBox is the element whose builder
 		// calls wireValidate (elements.go). Raised in review of #470.
 		return `<TextBox Text="{{.S}}">` + el + `</TextBox>`
+	case strings.HasPrefix(el, "<TypeAhead"):
+		// THE SAME GAP ONE ATTACHMENT OVER. <TypeAhead> belongs on an
+		// <ItemsView> — attachAll refuses one anywhere else with "does
+		// not support <TypeAhead>; it belongs on an <ItemsView>" — so
+		// inside the default harness every probe of a TypeAhead
+		// attribute failed for the host's reason and not the rule's.
+		// Found by the KindDuration sweep, which is the first arm to
+		// reach this element at all. Raised in review of #470, the
+		// second time.
+		return `<ItemsView Items="{{.IS}}">` + el +
+			`<ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate></ItemsView>`
 	case strings.HasPrefix(attr, "Grid."):
 		return `<Grid Rows="1*,1*" Cols="1*,1*">` + el + `<Text Grid.Row="1" Grid.Col="1">z</Text></Grid>`
 	case strings.HasPrefix(attr, "Canvas."):

@@ -140,7 +140,15 @@ func TestTheSweepCoversAllThreeTables(t *testing.T) {
 // below drives this with a predicate no error can match, which makes
 // EVERY declaration unverified on purpose. A floor inside the sweep would
 // fire on the one caller that must not trip it.
-func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal func(AttrSpec, string) string) (checked int, unverified []string) {
+// ONE PREDICATE SHAPE for every arm, which is finding 6 of review #470.
+// This took a func returning a SUBSTRING and matched it bare — the loose
+// form TestTheDiscriminatorNeedsBothHalves argues at length is
+// insufficient, in the file that argues it. Measured before the change:
+// loose 30, strict 30, so nothing was over-counted; that is the same
+// state ruleRefusedIt was in before it was tightened, and the same
+// reason to tighten it — the hole is not open, and nothing would notice
+// it opening.
+func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refused func(error, string, string) bool) (checked int, unverified []string) {
 	t.Helper()
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
@@ -158,7 +166,7 @@ func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal fu
 				tg.def.Name, a.Name, v, a.Name, want)
 			continue
 		}
-		if !strings.Contains(err.Error(), refusal(a, v)) {
+		if !refused(err, a.Name, v) {
 			unverified = append(unverified,
 				fmt.Sprintf("<%s %s=%q>: %v", tg.def.Name, a.Name, v, err))
 			continue
@@ -173,11 +181,15 @@ func bindSweep(t *testing.T, want Binds, value func(AttrSpec) string, refusal fu
 // <Frozen Active> corruption: Active is BindsBinding, so a literal has to
 // be a load error, and the declaration is what says so.
 func TestEveryBindOnlyAttributeRefusesALiteral(t *testing.T) {
-	n, unverified := bindSweep(t, BindsBinding, literalFor, func(AttrSpec, string) string {
+	n, unverified := bindSweep(t, BindsBinding, literalFor, func(err error, attr, _ string) bool {
 		// Bound[T]'s own words (usercontrol.go), which fire exactly when
 		// the loader demanded a handle. Any other error means the harness
-		// could not reach the declaration.
-		return "is not a binding expression"
+		// could not reach the declaration — AND the refusal has to name
+		// the attribute, or it is some other attribute's on the same
+		// probe element.
+		msg := err.Error()
+		return strings.Contains(msg, "is not a binding expression") &&
+			strings.Contains(msg, attr)
 	})
 	reportUnverified(t, unverified)
 	if n == 0 {
@@ -209,15 +221,7 @@ func TestEveryLiteralIntOrBoolAttributeRefusesGarbage(t *testing.T) {
 			return "{{.S}}" // unparseable as either, and the shape an author would try
 		}
 		return ""
-	}, func(a AttrSpec, v string) string {
-		// NOT one fixed sentence here, because there is legitimately more
-		// than one refusal: litInt and litBool say their piece, and the
-		// universal ints go through applyLayout's own parser. What every
-		// real refusal has and no harness error has is the OFFENDING
-		// VALUE, quoted back. "<Companion> takes no children" does not
-		// contain `{{.S}}`; every message about the attribute does.
-		return v
-	})
+	}, ruleRefusedIt)
 	reportUnverified(t, unverified)
 	if n == 0 {
 		t.Fatal("no literal int/bool attributes were checked: this sweep would pass vacuously")
@@ -290,6 +294,26 @@ func TestEveryLiteralOnlyAttributeRefusesABinding(t *testing.T) {
 func ruleRefusedIt(err error, attr, v string) bool {
 	msg := err.Error()
 	return strings.Contains(msg, attr) && strings.Contains(msg, fmt.Sprintf("%q", v))
+}
+
+// refusedTheEmptyValue is the discriminator for the arms that probe an
+// EMPTY value, and it is the attribute name alone — deliberately, and
+// named rather than left as a weaker spelling of ruleRefusedIt inline.
+//
+// The value cannot be part of it. %q of the empty string is `""`, a
+// token a correct refusal legitimately does not carry: <Timer Interval="">
+// is refused by the REQUIRED-attribute check before any duration reader
+// runs, and its message is `<Timer> needs an Interval (e.g.
+// Interval="600ms")`. That is the right refusal for the right reason and
+// requiring `""` would file it as unverified.
+//
+// The name is still a real discriminator here, because the harness
+// failures this has to exclude do not carry it: "<HStack> does not
+// support <Validate>" and "<Companion> takes no children" name the
+// ELEMENT. Raised in review of #470, which asked for one shape — this
+// is the second shape, with the reason it cannot be the first.
+func refusedTheEmptyValue(err error, attr string) bool {
+	return strings.Contains(err.Error(), attr)
 }
 
 // TestTheDiscriminatorNeedsBothHalves is the arm the review named as
@@ -593,7 +617,7 @@ func TestTheUnverifiedFloorIsAFloor(t *testing.T) {
 // nothing in the suite could see. Feeding it a predicate that can never
 // match is the one thing that can.
 func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
-	never := func(AttrSpec, string) string { return "\x00 no error says this" }
+	never := func(error, string, string) bool { return false }
 	if n, _ := bindSweep(t, BindsBinding, literalFor, never); n != 0 {
 		t.Errorf("bindSweep verified %d attributes against a refusal no error can "+
 			"contain, so it is counting build failures rather than refusals — "+
@@ -779,11 +803,7 @@ func TestAnEmptyLiteralIsALoadError(t *testing.T) {
 				"it here makes one vocabulary answer two ways", tg.def.Name, a.Name)
 			continue
 		}
-		// The refusal has to NAME the attribute, which is also what
-		// separates it from a harness failure. An error that does not is
-		// unverified rather than wrong: <Companion> cannot be built here
-		// at all, and its message is about children.
-		if !strings.Contains(err.Error(), a.Name) {
+		if !refusedTheEmptyValue(err, a.Name) {
 			unverified = append(unverified,
 				fmt.Sprintf("<%s %s=\"\">: %v", tg.def.Name, a.Name, err))
 			continue
@@ -795,6 +815,88 @@ func TestAnEmptyLiteralIsALoadError(t *testing.T) {
 		t.Fatal("no literal int/bool attributes were checked: this test would pass vacuously")
 	}
 	t.Logf("checked %d literal int/bool attributes", checked)
+}
+
+// TestALiteralDurationCannotBeEmpty is the KindDuration arm, and its
+// absence is what left two readers on a third grammar.
+//
+// litIntSweep derives the int rules over every KindInt declaration and
+// boolSpellingSweep does the same for KindBool. Durations had ONE
+// hand-written line — <Spinner Interval=""> — and TestAnEmptyLiteralIsA-
+// LoadError filters to int and bool. So optDuration became strict, five
+// of the eight declarations followed it, and two kept reading an empty
+// value as "use the default" while the sixth used ParseDuration's own
+// message. Four readers, three answers, and the enumerated arm probed
+// one of the five that agreed with it.
+//
+// Measured against the branch before this arm existed:
+//
+//	<FileWatcher Paths="a.gooey" Interval=""/>  -> loads, keeps 300ms
+//	<TypeAhead Key="Title" Timeout=""/>         -> loads, keeps 1s
+//	<Spinner Interval=""/>                      -> load error
+//
+// Raised in review of #470, which is this file's own argument for
+// derivation applied to the Kind it stopped at.
+func TestALiteralDurationCannotBeEmpty(t *testing.T) {
+	var checked int
+	var unverified []string
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds != BindsLiteral || a.Kind != KindDuration {
+			continue
+		}
+		src := harnessFor(a.Name, withEmptyAttr(probeElement(t, tg.def, a.Name, ""), a.Name))
+		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+		if err == nil {
+			t.Errorf("<%s %s=\"\"> loads and silently keeps the component's own "+
+				"default. An empty duration is a typo, and asking for the default "+
+				"already has a spelling: omit the attribute", tg.def.Name, a.Name)
+			continue
+		}
+		if !refusedTheEmptyValue(err, a.Name) {
+			unverified = append(unverified,
+				fmt.Sprintf("<%s %s=\"\">: %v", tg.def.Name, a.Name, err))
+			continue
+		}
+		checked++
+	}
+	reportUnverified(t, unverified)
+	if checked == 0 {
+		t.Fatal("no literal durations were checked: this sweep would pass vacuously")
+	}
+	t.Logf("checked %d literal durations against an empty value", checked)
+}
+
+// TestALiteralDurationStillTakesADuration is the accept direction, and
+// it is what keeps the arm above off "refuse every duration".
+//
+// It also covers the half the empty arm cannot: a reader that refuses
+// the empty string by hand and then parses everything else its own way
+// satisfies the sweep while still being a second grammar. A real
+// duration has to load on every declaration.
+func TestALiteralDurationStillTakesADuration(t *testing.T) {
+	var checked int
+	var refused []string
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds != BindsLiteral || a.Kind != KindDuration {
+			continue
+		}
+		src := harnessFor(a.Name, probeElement(t, tg.def, a.Name, "250ms"))
+		if _, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext()); err != nil {
+			refused = append(refused,
+				fmt.Sprintf("<%s %s=\"250ms\">: %v", tg.def.Name, a.Name, err))
+			continue
+		}
+		checked++
+	}
+	for _, r := range refused {
+		t.Errorf("%s is refused, so the empty-value arm above is about a reader "+
+			"that refuses every duration", r)
+	}
+	if checked == 0 {
+		t.Fatal("no literal durations were checked: this sweep would pass vacuously")
+	}
 }
 
 // withEmptyAttr writes `Attr=""` onto an element probeElement built with
@@ -847,10 +949,11 @@ func litIntSweep(t *testing.T, value string) (checked int, unverified, accepted 
 			accepted = append(accepted, fmt.Sprintf("<%s %s=%q>", tg.def.Name, a.Name, value))
 			continue
 		}
-		// THE VALUE, QUOTED, is what separates a refusal about this
-		// attribute from a harness failure — the same discriminator arm 2
-		// uses, and for the same reason.
-		if !strings.Contains(err.Error(), fmt.Sprintf("%q", value)) {
+		// THE SHARED PREDICATE, not a weaker spelling of it. This
+		// checked the quoted value alone; the empty-literal arm below
+		// checked the attribute name alone. Three strengths of one idea
+		// in one file is the drift ruleRefusedIt exists to stop.
+		if !ruleRefusedIt(err, a.Name, value) {
 			unverified = append(unverified,
 				fmt.Sprintf("<%s %s=%q>: %v", tg.def.Name, a.Name, value, err))
 			continue
