@@ -2,7 +2,13 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -63,23 +69,12 @@ func addrPage(t *testing.T, endpoints ...string) (*editor, *gooey.Composer) {
 // disagree about what a copy does.
 func swapClipboard(t *testing.T, err error) *string {
 	t.Helper()
-	// THE CAVEAT IS A SECOND AXIS, and stubbing only the write left it
-	// reading the developer's shell. term.ClipboardCaveat consults $TMUX
-	// and $STY, and the strip's outcome is copyUnverified whenever it
-	// answers non-empty — even though the write here always succeeds. So
-	// three tests asserting a CONFIRMED copy passed in CI and failed for
-	// anyone running the suite inside tmux or screen, which is the worst
-	// direction: green where nobody is watching, red where everybody is.
-	//
-	// A test that stubs the clipboard is by definition not testing the
-	// real terminal, so it has to say what environment it is in rather
-	// than inherit one. That is the discipline term/clipboard_test.go
-	// already uses on the same two variables. A test that WANTS a caveat
-	// sets ed.addrs.caveatFn explicitly and is unaffected — that seam
-	// overrides this, and is set after addrPage returns.
-	//
-	// Issue #463. The two lines are in statePlainTerminal now, and the
-	// reasons they are where they are live there.
+	// Issue #463. statePlainTerminal is the single statement of WHY a
+	// clipboard stub has to say what terminal it is in; this block used
+	// to repeat the whole argument and then point at it, which is four
+	// copies of one rationale and the prose-drift shape CLAUDE.md warns
+	// about. The drift had already started — two copies said the guard
+	// runs "in CI", which it does not. Raised in review of #467.
 	statePlainTerminal(t)
 
 	var got string
@@ -102,9 +97,18 @@ func okCopy(t *testing.T) *string { return swapClipboard(t, nil) }
 // reading the shell: term.ClipboardCaveat consults $TMUX and $STY, and
 // the strip reports copyUnverified whenever it answers non-empty, even
 // though the stubbed write always succeeds. Three tests asserting a
-// CONFIRMED copy therefore passed in CI and failed for anyone running
-// the suite inside tmux or screen — green where nobody is watching, red
-// where everybody is, which is the worst way round.
+// CONFIRMED copy therefore passed for whoever ran the suite in a plain
+// shell and failed for anyone running it inside tmux or screen — green
+// where nobody is watching, red where everybody is, which is the worst
+// way round.
+//
+// NOT "IN CI", and the correction matters to what this guard is worth.
+// ci.yml tiers apps/* to vet-only ("apps/* are VETTED BUT NOT TESTED"),
+// so no test in this package has ever run there — the three copy tests
+// were not green in CI, they were never RUN in CI. The enforcement point
+// is CLAUDE.md's nested-module verify loop, run by hand, which is the
+// same green-where-nobody-is-watching shape one level up. Raised in
+// review of #467.
 //
 // A test that stubs the clipboard is by definition not testing the real
 // terminal, so it has to state its environment. That is the discipline
@@ -1392,12 +1396,20 @@ func TestTheCaveatIsWiredToTheRealDetector(t *testing.T) {
 			"the shipped app")
 	}
 	// THE HOSTILE ENVIRONMENT IS SET HERE, and that is what makes this a
-	// wiring check rather than "" == "". In a clean shell — CI, always —
-	// both sides were empty and the comparison held for a strip wired to
-	// anything at all, so the one test guarding the wiring was the one
-	// test that could not fail. It passed for the same reason the three
-	// copy tests failed: it inherited an environment instead of stating
-	// one. Raised in review of #467.
+	// wiring check rather than "" == "". In a plain shell both sides were
+	// empty and the comparison held for a strip wired to anything at all,
+	// so the one test guarding the wiring was the one test that could not
+	// fail. It passed for the same reason the three copy tests failed: it
+	// inherited an environment instead of stating one. Raised in review
+	// of #467.
+	//
+	// statePlainTerminal FIRST, then the hostile variable. This was the
+	// one caveat test in the file that did not state its terminal, in a
+	// change whose whole argument is that a test must — it happened to
+	// work because ClipboardCaveat returns on the $TMUX branch before it
+	// reads $STY, which is luck, not a property. Raised in review of
+	// #467, twice.
+	statePlainTerminal(t)
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
 	want := term.ClipboardCaveat()
 	if want == "" {
@@ -1470,22 +1482,29 @@ func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
 	t.Logf("%d squeezed chips exercised", narrow)
 }
 
-// TestSwapClipboardNeutralisesTheAmbientEnvironment pins the contract
+// TestTheClipboardStubsNeutraliseTheAmbientEnvironment pins the contract
 // the three copy tests silently depended on, and is the guard for #463.
+//
+// RENAMED from TestSwapClipboardNeutralisesTheAmbientEnvironment, which
+// named one of the two helpers it asserts: a reader looking for the
+// clipEditor guard found nothing by that name and had to read the body
+// of a test named after the other door. Raised in review of #467.
 //
 // term.ClipboardCaveat reads $TMUX and $STY. The strip reports
 // copyUnverified whenever it answers non-empty, so a test that stubs the
 // WRITE and asserts a confirmed copy was still reading the developer's
-// shell — green in CI, where neither is set, and red for anyone running
-// the suite inside tmux or screen. Green where nobody is watching and
-// red where everybody is, which is the worst way round.
+// shell — green in a plain one, red for anyone running the suite inside
+// tmux or screen. Green where nobody is watching and red where everybody
+// is, which is the worst way round.
 //
-// The test sets both variables FIRST and then calls the helper, because
-// the claim is that the helper overrides an environment that is already
-// hostile — not merely that it works in a clean one. Without the
-// t.Setenv pair in swapClipboard this fails here, and the three copy
-// tests fail with their own messages.
-func TestSwapClipboardNeutralisesTheAmbientEnvironment(t *testing.T) {
+// Where it runs is CLAUDE.md's nested-module verify loop, NOT CI: ci.yml
+// tiers apps/* to vet-only, so nothing in this package is tested there.
+// Raised in review of #467.
+//
+// Each helper is given an environment that is ALREADY hostile and then
+// called, because the claim is that it overrides one — not merely that it
+// works in a clean shell.
+func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 	// NON-VACUITY, ONE VARIABLE AT A TIME. Checking both together is half
 	// a guard: ClipboardCaveat returns on the $TMUX branch first, so a
 	// detector that stopped reading $STY would still answer non-empty and
@@ -1507,29 +1526,190 @@ func TestSwapClipboardNeutralisesTheAmbientEnvironment(t *testing.T) {
 		})
 	}
 
-	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
-	t.Setenv("STY", "1234.pts-0.host")
+	// BOTH DOORS, each in its own subtest so a failure names the helper.
+	// This package stubs the same package-level writeSystemClipboard from
+	// two places, and a guard that only reaches one leaves the defect live
+	// in the other file while reporting it fixed — which is how #463
+	// survived its first fix.
+	for _, d := range []struct {
+		name string
+		call func(*testing.T)
+		why  string
+	}{
+		{"swapClipboard", func(t *testing.T) { okCopy(t) },
+			"every copy test that asserts a CONFIRMED copy goes red inside tmux or screen"},
+		{"clipEditor", func(t *testing.T) { clipEditor(t) },
+			"its tests run through editor.sayCopiedOut, which reads term.ClipboardCaveat " +
+				"directly and has no caveatFn seam, so they cannot opt out of the " +
+				"environment even deliberately"},
+	} {
+		t.Run(d.name, func(t *testing.T) {
+			t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+			t.Setenv("STY", "1234.pts-0.host")
+			d.call(t)
+			if got := term.ClipboardCaveat(); got != "" {
+				t.Errorf("%s left the ambient clipboard environment in place "+
+					"(caveat %q). A test that stubs the clipboard is not testing the "+
+					"real terminal, so it must state its environment rather than "+
+					"inherit one: %s. Issue #463.", d.name, got, d.why)
+			}
+		})
+	}
+}
 
-	okCopy(t)
+// TestEveryClipboardStubStatesItsTerminal is the derived half, and it is
+// what covers the THIRD door before it exists.
+//
+// The test above names swapClipboard and clipEditor by hand. That is a
+// written list, and CLAUDE.md's rule is discover, never enumerate: a new
+// helper that stubs the package-level writeSystemClipboard joins the
+// package silently and reinstates #463, which is exactly how the bug
+// survived the first time — the guard covered one door while the defect
+// lived behind the other.
+//
+// So this parses every test file in the package, finds each function
+// whose body ASSIGNS writeSystemClipboard, and requires that same
+// function to call statePlainTerminal. grant_test.go's
+// TestTheEditorNamesNoContainerElement is the same package's working
+// example of the idiom, including its "the glob is broken" floor.
+// Raised in review of #467.
+func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
+	stubs, states := clipboardStubs(t, ".")
 
-	if got := term.ClipboardCaveat(); got != "" {
-		t.Errorf("swapClipboard left the ambient clipboard environment in place "+
-			"(caveat %q). A test that stubs the clipboard is not testing the real "+
-			"terminal, so it must state its environment rather than inherit one: "+
-			"every copy test that asserts a CONFIRMED copy goes red inside tmux "+
-			"or screen. Issue #463.", got)
+	// NON-VACUITY. A walk that found no assignment at all would report
+	// every stub compliant, which is the failure this test exists to make
+	// impossible one level down. Two is the count today and the floor is
+	// the reason the guard exists — a third door must be FOUND, not
+	// assumed absent.
+	if len(stubs) < 2 {
+		t.Fatalf("found %d assignment(s) of writeSystemClipboard (%v); there are two "+
+			"stub helpers in this package, so the walk is broken and the assertion "+
+			"below is about nothing", len(stubs), stubs)
+	}
+	for _, fn := range unstated(stubs, states) {
+		t.Errorf("%s (%s) assigns writeSystemClipboard but never calls "+
+			"statePlainTerminal, so the tests behind it read the developer's "+
+			"$TMUX/$STY and go red inside tmux or screen while passing in a "+
+			"plain shell. That is #463, in a door the hand-written guard did "+
+			"not name.", fn, stubs[fn])
+	}
+	t.Logf("clipboard stub helpers checked: %v", stubs)
+}
+
+// clipboardStubs walks dir's test files and reports, for every function
+// that ASSIGNS the package-level writeSystemClipboard, which file it is
+// in and whether that same function also calls statePlainTerminal.
+//
+// It takes a DIRECTORY rather than hardcoding ".", and that is the half
+// that makes the guard above falsifiable. On a corpus where every stub
+// already complies — which is the corpus after this change — a walk that
+// works and a walk that answers "compliant" unconditionally are the same
+// green. #468's review hit exactly this shape and the fix was the same:
+// give the walk a root so a fixture can drive it.
+func clipboardStubs(t *testing.T, dir string) (files map[string]string, states map[string]bool) {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	files, states = map[string]string{}, map[string]bool{}
+	for _, name := range names {
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			assigns, calls := false, false
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.AssignStmt:
+					// The STUB is `writeSystemClipboard = func...`, not the
+					// `prev := writeSystemClipboard` that saves it, so the
+					// name has to be on the LEFT.
+					for _, lhs := range x.Lhs {
+						if id, ok := lhs.(*ast.Ident); ok && id.Name == "writeSystemClipboard" {
+							assigns = true
+						}
+					}
+				case *ast.CallExpr:
+					if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
+						calls = true
+					}
+				}
+				return true
+			})
+			if assigns {
+				files[fd.Name.Name] = filepath.Base(name)
+				states[fd.Name.Name] = calls
+			}
+		}
+	}
+	return files, states
+}
+
+// unstated is the comparison, extracted for the same reason the walk
+// takes a root: an inlined loop over a compliant corpus returns the empty
+// set whether it compares anything or not.
+func unstated(files map[string]string, states map[string]bool) []string {
+	var out []string
+	for fn := range files {
+		if !states[fn] {
+			out = append(out, fn)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestTheClipboardStubGuardCatchesWhatItIsFor drives the walk and the
+// comparison against a corpus that is deliberately NOT compliant, because
+// the package's own is — and a guard checked only against a clean corpus
+// is a guard nobody has ever seen fail.
+func TestTheClipboardStubGuardCatchesWhatItIsFor(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("package fake\n\n"+body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// THE OTHER DOOR. This package stubs the same writeSystemClipboard var
-	// from two places, and a guard that only reaches one of them leaves
-	// the defect live in the other file while reporting it fixed. Raised
-	// in review of #467.
-	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
-	clipEditor(t)
-	if got := term.ClipboardCaveat(); got != "" {
-		t.Errorf("clipEditor left the ambient clipboard environment in place "+
-			"(caveat %q). Its tests run through editor.sayCopiedOut, which reads "+
-			"term.ClipboardCaveat directly and has no caveatFn seam, so they cannot "+
-			"opt out of the environment even deliberately.", got)
+	// A COMPLIANT door, a NON-COMPLIANT one, a function that merely READS
+	// the variable (the save-and-restore idiom, which is not a stub), and
+	// a function that calls statePlainTerminal without stubbing anything.
+	// The last two are the false positives a looser walk would invent.
+	write("good_test.go", `func goodStub(t *T) {
+	statePlainTerminal(t)
+	writeSystemClipboard = func(string) error { return nil }
+}
+`)
+	write("bad_test.go", `func badStub(t *T) {
+	writeSystemClipboard = func(string) error { return nil }
+}
+
+func onlyReads(t *T) {
+	prev := writeSystemClipboard
+	_ = prev
+}
+
+func onlyStates(t *T) { statePlainTerminal(t) }
+`)
+
+	files, states := clipboardStubs(t, dir)
+	wantFiles := map[string]string{"goodStub": "good_test.go", "badStub": "bad_test.go"}
+	if !maps.Equal(files, wantFiles) {
+		t.Errorf("clipboardStubs found %v, want %v — the walk either misses an "+
+			"assignment or counts a plain read of writeSystemClipboard as a stub",
+			files, wantFiles)
+	}
+	if got, want := unstated(files, states), []string{"badStub"}; !slices.Equal(got, want) {
+		t.Errorf("unstated = %v, want %v — the comparison is not comparing, so "+
+			"TestEveryClipboardStubStatesItsTerminal would pass over a door that "+
+			"never states its terminal", got, want)
 	}
 }
