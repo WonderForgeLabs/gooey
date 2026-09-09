@@ -206,7 +206,9 @@ capability question here. Sixel implements the other one,
 translucent pixel rather than dimming it, and a caller that wants a
 faint line has to draw a DIFFERENT PICTURE for it rather than trust the
 wire. `apps/wysiwyg`'s panel hairline is the consumer
-([#254](https://github.com/WonderForgeLabs/gooey/issues/254)).
+([#254](https://github.com/WonderForgeLabs/gooey/issues/254)); the
+decision record, including what a drawing owes the caller once it
+branches on this, is `docs/specs/2026-09-09-alpha-less-encoders.md`.
 
 The fourth mode, halfblock, is deliberately *not* an `Encoder`. It is
 the universal fallback that degrades pixel content back into the cell

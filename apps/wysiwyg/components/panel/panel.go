@@ -49,17 +49,14 @@
 // The picture is NOT bit-identical to the old one and cannot be — two
 // rasterizers antialias differently.
 //
-// A PIXEL-DIFF AGAINST THE SVG USED TO BE QUOTED HERE and it is gone
-// rather than updated. It was measured in #253 against frame.svg, a file
-// this tree no longer contains, so nobody can re-run it; and #254 then
-// moved the hairline from the canvas's h/8 to the bottom of the top
-// CELL, which invalidates the figures about the hairline and the corner
-// count with them, since the diff was one measurement. A number nobody
-// can reproduce, describing a picture the code no longer draws, reads as
-// evidence and is worse than no number.
+// EVERY FIGURE HERE IS RE-RUNNABLE FROM THIS TREE, which is the bar a
+// number in a comment has to clear: a measurement nobody can reproduce,
+// describing a picture the code no longer draws, reads as evidence and
+// is worse than no number. (The pixel-diff against frame.svg that used
+// to stand here failed that bar twice over — the file is gone and the
+// hairline has moved since.)
 //
-// THESE ARE RE-RUNNABLE FROM THIS TREE, which is what a figure here has
-// to be. On a 40x12 pane of 8x16 cells the hairline is 306 pixels wide
+// On a 40x12 pane of 8x16 cells the hairline is 306 pixels wide
 // between the side strokes; a translucent stroke puts all 306 below
 // sixel's keep-threshold and the encoder's byte stream is IDENTICAL to
 // the same canvas with no hairline drawn at all — 80 bytes either way,
@@ -67,7 +64,6 @@
 // runs exactly that comparison through graphics.Sixel.Encode, at one
 // canvas geometry with only the stroke's alpha changed, so the figures
 // above are a description of a test rather than a memory of a session.
-// Raised in review of #474.
 //
 // # Two strokes, chosen by the encoder
 //
@@ -282,7 +278,7 @@ func (p *Pane) Render(f *gooey.Frame) {
 	// stroke against its OWN background — a colour this process never
 	// learns and therefore cannot better. Drawing one opaque picture for
 	// all three spent the two tiers that already worked to fix the one
-	// that did not. Raised in review of #474; see graphics.OpaqueEncoder.
+	// that did not. See graphics.OpaqueEncoder.
 	_, opaque := f.Graphics.(graphics.OpaqueEncoder)
 	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg, p.style.Bg, opaque)
 	if err != nil {
@@ -360,7 +356,6 @@ func (a *Art) frame(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bo
 	// computed and discarded, which is exactly the argument
 	// hairlineStroke's own doc rejects for the opaque branch: dormant is
 	// why it would be wrong the day somebody gives the cell tier a rule.
-	// Raised in review of #474.
 	keyBg := bg
 	if !opaque {
 		keyBg = render.Color{}
@@ -438,28 +433,20 @@ func drawCanvas(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bool) 
 	// thickening of it — and an invisible flourish is the defect this
 	// arithmetic was fixed for.
 	//
-	// IT DECIDES THE PICTURE, and this comment used to say it did not.
+	// BOTH GUARDS DECIDE THE PICTURE, on their own axis, and neither is
+	// a formality.
 	//
-	// It recorded a measurement — "ignoring `ok` here changes NO PIXEL",
-	// A/B'd at cellH 1 and 2 — which was true of a TRANSLUCENT stroke:
-	// the guard only fires for a cell 2 pixels tall or less, and the
-	// border's 1.5-pixel stroke already saturates row 0, so a dimmed
-	// line drawn over it added nothing. The tier split made the rule
-	// OPAQUE on sixel, and an opaque rule COVERS the border rather than
-	// tinting it: measured again in review of #474, the top row's red
-	// goes 255 → 102 across the hairline's span with the guard removed.
-	// A record of a no-op, left in place after the thing stopped being
-	// one, points the next reader away from a branch that decides the
-	// output.
+	// tall: the rule sits at the bottom of the top CELL, so a cell two
+	// pixels tall or less has no room under the border for it. On sixel
+	// the rule is opaque and COVERS what it crosses rather than tinting
+	// it — drawn without this guard, the top row's red goes 255 → 102
+	// across the hairline's span.
 	//
-	// BOTH AXES, and the second one was missing. hairlineY answers "is
-	// there room for the rule under the border"; nothing asked whether
-	// there is room ACROSS. The line runs inset-to-inset, so a canvas
-	// narrower than two insets gives DrawLine an x1 left of its x0 — a
-	// reversed segment, which gg strokes as a short dash floating in the
-	// middle of a pane that was supposed to have a rule under its title.
-	// A 2-column pane at cellW 6 is 12 pixels and the insets are 14.
-	// Raised in review of #474.
+	// wide: the line runs inset-to-inset, so a narrow canvas gives
+	// DrawLine an x1 near or left of its x0 — a dot or a reversed
+	// segment, which gg strokes as a short dash floating in a pane that
+	// was supposed to have a rule under its title. hairlineSpan carries
+	// the threshold and why it is where it is.
 	y, tall := hairlineY(cellH)
 	x0, x1, wide := hairlineSpan(w)
 	if tall && wide {
@@ -518,16 +505,29 @@ func hairlineY(cellH int) (float64, bool) {
 // insets together has x1 LEFT OF x0. gg does not refuse that: it strokes
 // the segment between them, which paints a short dash centred in a pane
 // whose title has no rule under it — a mark that looks like a rendering
-// fault rather than an absent flourish. A 2-column pane at cellW 6 is 12
-// pixels against 14 of inset, so this is a window size and not a
-// degenerate one.
+// fault rather than an absent flourish.
+//
+// A LEGIBILITY FLOOR, NOT A DEGENERACY ONE, and the first version was
+// the latter. `x1 > x0` refuses only the reversed span, which draws the
+// SAME dash one pixel the other side of the threshold: review of #474
+// measured a 15-pixel canvas drawing a 1-pixel rule and a 16-pixel one
+// (2 columns at cellW 8, the size every fixture in this package uses)
+// drawing 2 — a dot centred in the top cell row, under a title that
+// cannot be drawn at all, since DrawBoxTitle starts two columns in. The
+// guard refused the picture on one side of its boundary and drew it on
+// the other, which is a boundary in the wrong place rather than a rule.
+//
+// The floor is hairlineInset itself, and it is derived rather than
+// chosen: a mark shorter than the gap holding it off each edge reads as
+// a dot between two spaces, not as a line across a pane. It needs no new
+// constant, and it moves with the inset if the inset ever moves.
 //
 // Returning a bool rather than clamping, for hairlineY's reason: a
 // clamped span would place a line somewhere it does not belong and look
 // like a decision, where "no room" is the honest answer.
 func hairlineSpan(w float64) (x0, x1 float64, ok bool) {
 	x0, x1 = hairlineInset, w-hairlineInset
-	return x0, x1, x1 > x0
+	return x0, x1, x1-x0 >= hairlineInset
 }
 
 // stroke is the pen shared by both figures. Cap and Join are stated rather
@@ -556,9 +556,9 @@ func stroke(fg render.Color, thickness float64) paint.Stroke {
 // package's cell tier goes through DrawBoxRunes. Dormant is exactly why
 // it would be wrong the day somebody gives the cell tier a rule: nothing
 // would have been drawing it, so nothing would have noticed it was the
-// border's colour. Raised in review of #474, and unobservable through
-// the canvas — which is why this is a function a test can hold rather
-// than three lines inside drawCanvas.
+// border's colour. It is unobservable through the canvas, which is why
+// this is a function a test can hold rather than three lines inside
+// drawCanvas.
 func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 	s := stroke(fg, hairlineWidth)
 	if !opaque {
@@ -591,42 +591,40 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 // kept pixel is painted at its un-premultiplied colour, so the only way
 // to carry a fainter line there is a dimmer COLOUR.
 //
-// THE GROUND HERE IS A GUESS, and the previous version of this comment
-// said otherwise. It claimed to "reach the same answer as the terminal
-// did, for every ground rather than one of them", which is true only for
-// a pane whose Bg is declared — and none is. Pane has no
-// BackgroundProperty, so the composer never fills p.style.Bg into its
-// cells; what is actually behind the top slice is Composer.clearStyle's
-// answer, the nearest ANCESTOR with a background.
+// THE GROUND HERE IS A GUESS, in every case, and black is the guess.
 //
-// This said "in apps/wysiwyg no element declares one at all", which is
-// FALSE and falsifiable with one grep — activitybar.go declares
-// `Background: prop.NewSource(Ground())` on the rail's VStack, with
-// twenty lines above it explaining that this is what makes it a
-// gooey.HasBackground. The conclusion survives and the premise did not:
-// that VStack's only child is the rail image, so no <Panel> is under it,
-// and clearStyle walking a pane's own ancestors still finds none. The
-// real ground is the terminal's own default, a colour this process never
-// learns. Raised in review of #474 — twice, the second time because the
-// first correction stated a stronger fact than it had measured.
+// Pane is not a gooey.HasBackground, so nothing fills its bounds: on the
+// pixel tier the only cells in the top row that ever receive p.style.Bg
+// are the ones DrawBoxTitle writes (`cells.SetString(r.X+2, r.Y,
+// " "+t+" ", style)`, components/box.go). Mid-span — where the rule
+// lives, and where every sample in this package's tests reads — what is
+// behind it is Composer.clearStyle's answer, the nearest ANCESTOR with a
+// background, or the terminal's own default when there is none.
 //
-// So the honest scope is narrower still, and the third correction to
-// this paragraph is the one that reaches the bottom of it: the ground is
-// a GUESS IN BOTH CASES.
+// IN A DOCUMENT THE GUESS IS PROVABLY WRONG, not merely unpinned.
+// main.go registers "Panel" on docCtx deliberately ("a document is
+// entitled to a framed region"), and Background is authorable on VStack,
+// Grid and Canvas — so `<VStack Background="#282c34"><Panel/></VStack>`
+// is a document the designer renders today. The framework fills the
+// pane's cells with #282c34 and this function composites against black
+// anyway: (56,56,60) laid over (40,44,52). That is #254's own contrast
+// complaint, in the tree the app exists to render. Measured in review of
+// #474.
 //
-// "The pane's declared Bg when it has one" reads as though the declared
-// case were solid, and it is not. Pane is not a gooey.HasBackground, so
-// nothing fills its bounds — on the pixel tier the only cells in the top
-// row that ever receive p.style.Bg are the ones DrawBoxTitle writes
-// (`cells.SetString(r.X+2, r.Y, " "+t+" ", style)`, components/box.go).
-// Mid-span, which is where the rule lives and where every sample in this
-// package's tests reads, the real ground is clearStyle's answer or the
-// terminal's default even for a pane that declares a Bg.
+// THERE IS NO SEAM TO FIX IT WITH TODAY, and that is the fact worth
+// carrying rather than the apology. Composer.clearStyle is unexported
+// and takes a *paintNode; and a component cannot read the answer back
+// off the frame either, because Pane has ChildComponents — a chrome-only
+// container pre-clears NOTHING, so the cells under it at Render time
+// hold whatever was there rather than its ancestor's ground. Closing
+// this needs a framework accessor for "the ground my bounds will clear
+// to", which is a core change and not a panel one. Learning the
+// TERMINAL's background — an OSC 11 query, the other half of the same
+// question — is filed on #259.
 //
-// What keeps that from being a regression is that this colour now
-// reaches only the tier that forces one. Learning the terminal's background — an OSC 11
-// query — is filed on #259 with the rest of "look at this on a real
-// terminal".
+// What keeps the guess from being a regression is that this colour now
+// reaches only the tier that forces one: kitty and iTerm2 composite in
+// the terminal and never call this.
 //
 // WHAT EACH TIER DRAWS:
 //
@@ -637,12 +635,10 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 //     the terminal composites the translucent stroke against its own
 //     background. That is a better answer than anything computable here,
 //     and drawing one opaque picture for all three threw it away.
-//   - there is NO halfblock tier here, and a bullet claiming one stood
-//     in this list until review of #474. Halfblock IS the nil encoder,
+//   - there is NO halfblock tier here. Halfblock IS the nil encoder,
 //     and Pane.Render returns to renderCells the moment f.Graphics is
 //     nil — before any placement — so graphics.DrawHalfblock is never
-//     reached from this package and nothing here could have gone red for
-//     the claim.
+//     reached from this package.
 //   - the rune tier, which is where a terminal with no protocol actually
 //     lands, draws no hairline at all.
 //
@@ -677,14 +673,10 @@ func over(fg, bg render.Color, f float64) render.Color {
 // the TERMINAL composites, against its own background — to buy sixel a
 // line it was discarding. See graphics.OpaqueEncoder and over above.
 //
-// THIS FUNCTION WAS INSERTED BETWEEN over AND ITS OWN DOC COMMENT,
-// which left over undocumented and gave this one a 45-line rationale
-// about a different function — `go doc -all -u` printed it. gofmt and
-// vet are both blind to that; the guard is #470's
+// A doc comment separated from what it documents is invisible to gofmt
+// and to vet, and `go doc -all -u` is what shows it; the guard is #470's
 // TestNoDocCommentNamesTheDeclarationBelowIt, scoped to markup/ today
-// and widened to the tree in #483. Fourth occurrence in this stack,
-// and the first one committed by the same session that filed the
-// issue. Raised in review of #474.
+// and widened to the tree in #483.
 func fade(c render.Color, a float64) color.Color {
 	return color.RGBA{
 		R: uint8(float64(c.R)*a + 0.5),

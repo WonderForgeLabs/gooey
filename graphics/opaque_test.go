@@ -112,62 +112,159 @@ func TestOnlySixelIsAlphaLess(t *testing.T) {
 // declaredEncoders is every type in this package that implements
 // Encoder, read out of the source rather than listed.
 //
-// MATCHED ON THE INTERFACE'S OWN SIGNATURE, not on the method name. A
+// MATCHED ON THE INTERFACE'S OWN METHOD SET, not on a method name. A
 // method called Encode taking something else is not an Encoder, and
-// Encoder is what decides — so the parameter and result types are
-// compared against the ones the interface declares, which are read from
-// the same parse. That is also what keeps this from drifting silently:
-// change Encoder.Encode and nothing matches any more, which the
-// non-vacuity floor above turns into a failure rather than an empty set.
+// Encoder is what decides — so every method the interface declares is
+// read from the same parse, and a type has to carry all of them at the
+// declared signatures. Matching Encode alone was the first version, and
+// it would have demanded a table row from an unrelated helper that
+// happened to take the same arguments. That is also what keeps this from
+// drifting silently: change Encoder and nothing matches any more, which
+// the non-vacuity floor above turns into a failure rather than an empty
+// set.
+//
+// EMBEDDING COUNTS, and missing it was the hole review round 7 found.
+// `type WezTerm struct{ ITerm2 }` is an ordinary way to add a protocol
+// variant, and it declares no method of its own — so a walk over
+// *ast.FuncDecl saw nothing, demanded no row, and let the new encoder
+// take the composited branch by default. The fixed point below promotes
+// a struct that embeds a satisfier, repeatedly, so a chain of them is
+// covered too.
+//
+// go/types would answer all of this exactly, and is not used: it needs
+// golang.org/x/tools in the root go.mod, which is the dependency
+// doctrine CLAUDE.md states, for a test. The AST walk is the shape that
+// fits.
 func declaredEncoders(t *testing.T) []string {
 	t.Helper()
+	return encodersIn(t, ".")
+}
+
+// encodersIn is declaredEncoders' body with the directory as a
+// parameter, and the parameter is the whole reason this is a separate
+// function.
+//
+// Two of the rules above are unobservable through THIS package, because
+// stating them needs a type that gets them wrong — a type declaring
+// Encode and not Name, or one declaring neither and embedding nothing —
+// and such a type has no business in graphics/. Mutating the walk to
+// drop either rule was measured SILENT in review round 7 for exactly
+// that reason: nothing in the package could tell the two walks apart.
+//
+// testdata/encoders is that type's home. The go tool ignores a testdata
+// directory, so it compiles as part of nothing and can hold whatever a
+// fixture needs; the walk parses it the same way it parses this package,
+// against an Encoder interface the fixture declares itself.
+func encodersIn(t *testing.T, dir string) []string {
+	t.Helper()
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
 		// The package's own source, not its tests: a scratch encoder in
 		// a _test.go file is not something a consumer can be handed.
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0)
 	if err != nil {
-		t.Fatalf("parse graphics/: %v", err)
+		t.Fatalf("parse %s: %v", dir, err)
 	}
 
-	var want []string
-	var found []string
+	var want map[string][]string
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
-			if sig := encoderMethodSig(fset, f); sig != nil {
-				want = sig
+			if ms := encoderMethodSigs(fset, f); ms != nil {
+				want = ms
 			}
 		}
 	}
-	if want == nil {
-		t.Fatal("no `type Encoder interface` with an Encode method found in this " +
-			"package, so there is no signature to match declarations against")
+	if len(want) == 0 {
+		t.Fatalf("no `type Encoder interface` with methods found in %s, so there "+
+			"is no method set to match declarations against", dir)
 	}
+
+	// What each receiver declares itself, and what each struct embeds.
+	has := map[string]map[string]bool{}
+	embeds := map[string][]string{}
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
-					continue
-				}
-				if fn.Name.Name != "Encode" || !slices.Equal(funcSig(fset, fn.Type), want) {
-					continue
-				}
-				if n := receiverName(fn.Recv.List[0].Type); n != "" &&
-					!slices.Contains(found, n) {
-					found = append(found, n)
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil || len(d.Recv.List) == 0 {
+						continue
+					}
+					sig, ok := want[d.Name.Name]
+					if !ok || !slices.Equal(funcSig(fset, d.Type), sig) {
+						continue
+					}
+					n := receiverName(d.Recv.List[0].Type)
+					if n == "" {
+						continue
+					}
+					if has[n] == nil {
+						has[n] = map[string]bool{}
+					}
+					has[n][d.Name.Name] = true
+				case *ast.GenDecl:
+					if d.Tok != token.TYPE {
+						continue
+					}
+					for _, spec := range d.Specs {
+						ts, ok := spec.(*ast.TypeSpec)
+						if !ok {
+							continue
+						}
+						st, ok := ts.Type.(*ast.StructType)
+						if !ok || st.Fields == nil {
+							continue
+						}
+						for _, fld := range st.Fields.List {
+							if len(fld.Names) != 0 {
+								continue // named field, not embedded
+							}
+							if n := receiverName(fld.Type); n != "" {
+								embeds[ts.Name.Name] = append(embeds[ts.Name.Name], n)
+							}
+						}
+					}
 				}
 			}
 		}
+	}
+
+	sat := map[string]bool{}
+	for n, m := range has {
+		if len(m) == len(want) {
+			sat[n] = true
+		}
+	}
+	// FIXED POINT, because an embedder may itself be embedded. Bounded
+	// by the number of types, since each pass either adds one or stops.
+	for grew := true; grew; {
+		grew = false
+		for outer, inner := range embeds {
+			if sat[outer] {
+				continue
+			}
+			for _, in := range inner {
+				if sat[in] {
+					sat[outer], grew = true, true
+					break
+				}
+			}
+		}
+	}
+
+	found := make([]string, 0, len(sat))
+	for n := range sat {
+		found = append(found, n)
 	}
 	slices.Sort(found)
 	return found
 }
 
-// encoderMethodSig is Encoder.Encode's parameter and result types, or
-// nil if this file does not declare the interface.
-func encoderMethodSig(fset *token.FileSet, f *ast.File) []string {
+// encoderMethodSigs is every method Encoder declares, by name, with its
+// parameter and result types — or nil if this file does not declare the
+// interface.
+func encoderMethodSigs(fset *token.FileSet, f *ast.File) map[string][]string {
 	for _, d := range f.Decls {
 		gd, ok := d.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {
@@ -182,13 +279,18 @@ func encoderMethodSig(fset *token.FileSet, f *ast.File) []string {
 			if !ok {
 				continue
 			}
+			out := map[string][]string{}
 			for _, m := range it.Methods.List {
 				ft, ok := m.Type.(*ast.FuncType)
-				if !ok || len(m.Names) != 1 || m.Names[0].Name != "Encode" {
+				if !ok || len(m.Names) != 1 {
 					continue
 				}
-				return funcSig(fset, ft)
+				out[m.Names[0].Name] = funcSig(fset, ft)
 			}
+			if len(out) == 0 {
+				return nil
+			}
+			return out
 		}
 	}
 	return nil
@@ -236,4 +338,34 @@ func receiverName(e ast.Expr) string {
 		return t.Name
 	}
 	return ""
+}
+
+// TestTheEncoderWalkNeedsTheWHOLEInterface drives the walk against a
+// fixture package, which is the only way to state the two rules this
+// package cannot get wrong.
+//
+// testdata/encoders declares an Encoder of the same two-method shape and
+// four types around it:
+//
+//	Full     declares both methods            → an encoder
+//	Derived  embeds Full, declares nothing    → an encoder
+//	Chained  embeds Derived                   → an encoder
+//	Partial  declares Encode and not Name     → NOT an encoder
+//	Shaped   declares Encode with other types → NOT an encoder
+//
+// Partial is the arm that was silent. A walk matching the method NAME
+// counts it, and would then demand a row in the opaque/composited table
+// for a type that cannot be handed to anything expecting an Encoder.
+// Shaped is the same mistake one level down, on the signature rather
+// than the name.
+func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
+	got := encodersIn(t, "testdata/encoders")
+	want := []string{"Chained", "Derived", "Full"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the walk reports %v over the fixture package; want %v.\n"+
+			"Partial declares Encode and no Name, and Shaped declares an Encode "+
+			"of another signature — neither is an Encoder, and counting one "+
+			"demands a table row for a type nothing can be handed as one",
+			got, want)
+	}
 }

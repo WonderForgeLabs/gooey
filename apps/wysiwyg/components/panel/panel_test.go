@@ -12,6 +12,7 @@ package panel
 import (
 	"bytes"
 	"image"
+	"math"
 	"strings"
 	"testing"
 
@@ -1356,8 +1357,15 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 // flourish.
 //
 // A 2-column pane at cellW 6 is 12 pixels against 14 of inset, so this
-// is an ordinary window and not a degenerate one. Raised in review of
-// #474.
+// is an ordinary window and not a degenerate one.
+//
+// THE ARMS ARE 12 AND 120 PIXELS, and that gap is what let the first
+// version of the guard ship wrong: a non-degeneracy check
+// (x1 > x0) draws the same floating mark one pixel the other side of its
+// threshold, and nothing between the two arms could see it. The boundary
+// belongs to TestTheHairlineNeedsMoreThanANonReversedSpan below, which
+// walks the pixels either side of the threshold rather than sampling one
+// canvas twice. Raised in review of #474, round 7.
 func TestAPaneTooNarrowForTheInsetsGetsNoHairline(t *testing.T) {
 	const cw, ch = 6, 16
 	const cols = 2
@@ -1450,5 +1458,80 @@ func TestTheHairlineTracksTheCellNotTheCanvas(t *testing.T) {
 				"the same cell size does — the line is following the canvas again",
 				rows, short)
 		}
+	}
+}
+
+// TestTheHairlineNeedsMoreThanANonReversedSpan is finding 1 of round 7,
+// and it is the arm the previous version of this file did not have.
+//
+// hairlineSpan's first guard was `x1 > x0` — degeneracy alone. Measured
+// on the opaque tier at cellH 16, counting inked pixels strictly between
+// the two side strokes:
+//
+//	14 px  span (7.0,  7.0)  refused   0 rule px
+//	15 px  span (7.0,  8.0)  ACCEPTED  1 rule px
+//	16 px  span (7.0,  9.0)  ACCEPTED  2 rule px
+//	18 px  span (7.0, 11.0)  ACCEPTED  4 rule px
+//
+// A 2-column pane at cellW 8 — the cell size every fixture here uses —
+// therefore drew a 2-pixel dot centred in the top cell row, under a title
+// that cannot be drawn at all, since DrawBoxTitle starts two columns in.
+// That is the same mark the guard's own doc calls a rendering fault, so
+// the boundary was in the wrong place rather than absent.
+//
+// The floor is hairlineInset, so the rule is at least as long as the gap
+// holding it off each edge. This walks the canvas widths either side of
+// it and asserts the PIXELS, not the predicate: a test that only called
+// hairlineSpan would agree with any threshold the function happened to
+// hold.
+func TestTheHairlineNeedsMoreThanANonReversedSpan(t *testing.T) {
+	const ch = 16
+	if _, tall := hairlineY(ch); !tall {
+		t.Fatalf("a %d-pixel cell has no room on the other axis, so nothing below "+
+			"separates the two guards", ch)
+	}
+	// The width at which the span first clears the floor, derived from
+	// the constants rather than written down: a literal here would agree
+	// with itself if hairlineInset moved.
+	first := int(math.Ceil(3 * hairlineInset))
+
+	inked := func(t *testing.T, w int) int {
+		t.Helper()
+		// ONE COLUMN of w pixels. drawCanvas takes cells, so the cell
+		// width IS the canvas width here — which keeps the arm about the
+		// canvas and not about how the columns divide it.
+		dc, err := drawCanvas(1, 4, w, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
+		if err != nil {
+			t.Fatalf("a %d-pixel canvas does not draw at all: %v", w, err)
+		}
+		y, _ := hairlineY(ch)
+		row := int(y - hairlineWidth/2)
+		n := 0
+		// STRICTLY BETWEEN THE SIDE STROKES. The border is 1.5 pixels
+		// wide and lands in this row too, so counting from the edge
+		// would count the frame and report ink for every width.
+		for x := int(math.Ceil(borderWidth)) + 1; x < w-int(math.Ceil(borderWidth))-1; x++ {
+			if _, _, _, a := dc.Image().At(x, row).RGBA(); a != 0 {
+				n++
+			}
+		}
+		return n
+	}
+
+	for w := int(math.Ceil(2*hairlineInset)) - 1; w < first; w++ {
+		if got := inked(t, w); got != 0 {
+			t.Errorf("a %d-pixel canvas inks %d pixel(s) between the side strokes. "+
+				"The span there is %.1f, shorter than the %.1f of inset holding it "+
+				"off each edge — a dot between two spaces, which is the mark this "+
+				"guard exists to refuse", w, got, float64(w)-2*hairlineInset, hairlineInset)
+		}
+	}
+	// NON-VACUITY, at the first width that clears the floor rather than
+	// at a comfortable one: an arm that jumps to a wide pane cannot tell
+	// a correct boundary from one placed anywhere to its left.
+	if got := inked(t, first); got == 0 {
+		t.Errorf("a %d-pixel canvas — the first that clears the floor — inks nothing "+
+			"between the side strokes, so the zeros above say nothing about where "+
+			"the boundary is", first)
 	}
 }

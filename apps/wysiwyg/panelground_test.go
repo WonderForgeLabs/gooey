@@ -8,7 +8,25 @@ package main
 // colour is fg composited onto a ground, and the ground is a guess:
 // black, justified by "no ancestor of a <Panel> declares a Background".
 // The justification is a fact about wysiwyg.gooey and the components
-// around it, so it lives here, where changing either can go red.
+// around it, so it lives here rather than in a comment.
+//
+// TWO LIMITS, both worth knowing before trusting this file.
+//
+// It covers the app's OWN SHELL and not a document. main.go registers
+// "Panel" on docCtx deliberately, and Background is authorable on
+// VStack/Grid/Canvas, so `<VStack Background="#282c34"><Panel/></VStack>`
+// is a page the designer renders today and the guess is simply wrong for
+// it. That is user data and unpinnable by construction; panel.go's over()
+// carries the statement and what closing it would need.
+//
+// And it runs OUTSIDE CI. ci.yml maps `apps/*` to vet, so this file is
+// compiled on every push and executed only in CLAUDE.md's manual
+// verify loop. A `Background=` added to a dock container is therefore
+// green on the PR that adds it and red the next time somebody runs the
+// loop — which is later than one would like for a guard whose whole
+// purpose is to catch a markup edit by somebody not running it. Raised
+// in review of #474; the asymmetry is CLAUDE.md's deliberate one, not a
+// CI bug.
 
 import (
 	"testing"
@@ -88,14 +106,6 @@ func TestNoAncestorOfAPanelDeclaresABackground(t *testing.T) {
 	t.Logf("checked the ancestors of %d panes", panels)
 }
 
-// TestTheOneDeclaredBackgroundIsStillThere is the other half, and
-// without it the test above passes for a page that declares no
-// Background anywhere — including the rail's, whose absence would be a
-// visual regression this suite would otherwise wave through.
-//
-// It is also what stops the walk being read as "backgrounds are banned
-// here". One is deliberate, documented at its declaration, and outside
-// every Panel's ancestry.
 // declaresGround is "this container puts a colour behind its subtree",
 // which is narrower than implementing gooey.HasBackground and narrower
 // again than holding a handle. See the note on the walk above.
@@ -108,6 +118,14 @@ func declaresGround(c gooey.Component) bool {
 	return p != nil && p.Get().Set
 }
 
+// TestTheOneDeclaredBackgroundIsStillThere is the other half, and
+// without it the test above passes for a page that declares no
+// Background anywhere — including the rail's, whose absence would be a
+// visual regression this suite would otherwise wave through.
+//
+// It is also what stops the walk being read as "backgrounds are banned
+// here". One is deliberate, documented at its declaration, and outside
+// every Panel's ancestry.
 func TestTheOneDeclaredBackgroundIsStillThere(t *testing.T) {
 	_, root := buildPage(t)
 
