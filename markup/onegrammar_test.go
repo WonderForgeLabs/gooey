@@ -270,6 +270,49 @@ func TestTheIntGrammarStillAcceptsANumber(t *testing.T) {
 	}
 }
 
+// TestAnAbsentCellCountIsNotAnEmptyOne is the last literal int in the
+// vocabulary that could not reach emptyLiteralWhy.
+//
+// cellCount opened `raw := TrimSpace(e.Attrs[attr]); if raw == ""`,
+// which collapses "the author wrote nothing" into "there is no
+// attribute" — so <Image Cols=""/> was told it "needs Cols", about a
+// value the author had just typed. <Timer Interval> was changed for
+// exactly this shape one Kind across, and this is the same case for the
+// int reader.
+//
+// BOTH STATES, in one test, because they are one distinction: a fix that
+// merely swapped the two messages would satisfy either arm alone.
+func TestAnAbsentCellCountIsNotAnEmptyOne(t *testing.T) {
+	for _, tc := range []struct{ src, want, notWant string }{
+		// ABSENT — the element's own answer, naming what it needs.
+		{`<Image Src="{{.Img}}" Rows="2"/>`, "needs Cols", emptyLiteralWhy},
+		{`<Image Src="{{.Img}}" Cols="3"/>`, "needs Rows", emptyLiteralWhy},
+		// PRESENT AND EMPTY — the grammar's answer, in the words every
+		// other literal int uses.
+		{`<Image Src="{{.Img}}" Cols="" Rows="2"/>`, emptyLiteralWhy, "needs Cols"},
+		{`<Image Src="{{.Img}}" Cols="3" Rows=""/>`, emptyLiteralWhy, "needs Rows"},
+		// WHITESPACE IS EMPTY for a cell count, unlike <Validate
+		// Pattern=" ">, where one space is an expression. The
+		// difference is that a number has no spelling made of spaces.
+		{`<Image Src="{{.Img}}" Cols=" " Rows="2"/>`, emptyLiteralWhy, "needs Cols"},
+	} {
+		_, err := Build([]byte("<Gooey>"+tc.src+"</Gooey>"), defaultsContext())
+		if err == nil {
+			t.Errorf("%s loads", tc.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s is refused with %v; want a message containing %q",
+				tc.src, err, tc.want)
+		}
+		if strings.Contains(err.Error(), tc.notWant) {
+			t.Errorf("%s is refused with %v, which is the OTHER state's message — "+
+				"absent and present-but-empty have to answer differently",
+				tc.src, err)
+		}
+	}
+}
+
 // signedDurationAttrs names every duration attribute for which a
 // NEGATIVE value is meaningful rather than wrong, with the reason, keyed
 // "<Element>.<Attr>".
@@ -629,6 +672,25 @@ func TestARuleThatCanNeverFireIsNeverInstalled(t *testing.T) {
 		{attrs: `MinLen="1"`, load: true},
 		{attrs: `MaxLen="1"`, load: true},
 		{attrs: `MinLen="1" MaxLen="4"`, load: true},
+		// THE INVERTED PAIR. The row above is the one this table had,
+		// and it is the reason nothing saw this: an ordered pair proves
+		// a pair is accepted and says nothing about which order.
+		//
+		// validate.Len rejects anything shorter than the minimum or
+		// longer than the maximum, so 5..3 rejects every non-empty
+		// value and the field can never become valid — the outcome the
+		// NUMERIC block thirty lines away already refused. Raised in
+		// review of #470.
+		{attrs: `MinLen="5" MaxLen="3"`, want: "the range is empty"},
+		// EQUAL IS A RANGE OF ONE, not an empty one, and this arm is
+		// what stops the fix being written with >=.
+		{attrs: `MinLen="3" MaxLen="3"`, load: true},
+		// THE NUMERIC HALF, here rather than in its own table, because
+		// what this finding was about is the two blocks DISAGREEING.
+		// Asserting them side by side is what a future divergence trips
+		// over.
+		{attrs: `MinValue="5" MaxValue="3"`, want: "the range is empty"},
+		{attrs: `MinValue="3" MaxValue="5"`, load: true},
 	} {
 		src := harnessFor("Required", `<Validate `+tc.attrs+`/>`)
 		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
@@ -641,6 +703,42 @@ func TestARuleThatCanNeverFireIsNeverInstalled(t *testing.T) {
 		case !tc.load && err != nil && !strings.Contains(err.Error(), tc.want):
 			t.Errorf("<Validate %s/> is refused with %v; want a message containing %q",
 				tc.attrs, err, tc.want)
+		}
+	}
+}
+
+// TestAnEmptyBoundIsNotAnUnreadableOne is the distinction litIntGrammar
+// spent a commit drawing, stopping one element short of <Validate>'s
+// numeric bounds.
+//
+// "want a number" is the UNREADABLE-value message, and an empty value is
+// not unreadable — it is an attribute nobody finished writing. The float
+// reader is a single ParseFloat, which cannot tell the two apart, so the
+// split has to be made before it.
+//
+// Asserted against emptyLiteralWhy itself rather than a quoted phrase,
+// because the whole point of that constant is that every reader says the
+// same words: a fix that wrote a new sentence here would pass a quoted
+// assertion and reintroduce the divergence. Raised in review of #470.
+func TestAnEmptyBoundIsNotAnUnreadableOne(t *testing.T) {
+	for _, attr := range []string{"MinValue", "MaxValue"} {
+		for _, v := range []string{"", " "} {
+			src := harnessFor(attr, `<Validate `+attr+`="`+v+`"/>`)
+			_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+			if err == nil {
+				t.Errorf("<Validate %s=%q/> loads", attr, v)
+				continue
+			}
+			if !strings.Contains(err.Error(), emptyLiteralWhy) {
+				t.Errorf("<Validate %s=%q/> is refused with %v; want the shared "+
+					"empty-literal sentence every other reader gives", attr, v, err)
+			}
+			// AND NOT THE UNREADABLE ONE, which is the message it used
+			// to give and the half a positive assertion cannot see.
+			if strings.Contains(err.Error(), "want a number") {
+				t.Errorf("<Validate %s=%q/> still answers with the unreadable-value "+
+					"message: %v", attr, v, err)
+			}
 		}
 	}
 }

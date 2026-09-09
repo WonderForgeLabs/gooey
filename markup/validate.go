@@ -227,6 +227,30 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 				"optional, so this installs no rule at all", b.name, raw)
 		}
 	}
+	// AN INVERTED PAIR IS A RULE NOTHING CAN SATISFY, and this block had
+	// the zero refusal above and not this one while the NUMERIC block
+	// thirty lines down had exactly this one.
+	//
+	// validate.Len tests `n < min || (max > 0 && n > max)`, so
+	// MinLen="5" MaxLen="3" rejects every non-empty value there is and
+	// the field can never become valid. That is verbatim the third
+	// outcome unboundedWhy was written to name, and the commit that
+	// added the zero refusal added it to this very loop and stopped.
+	// Same class, same element, same block, opposite answer for lengths
+	// and numbers. Raised in review of #470.
+	//
+	// Both bounds have to be POSITIVE for the comparison to mean
+	// anything: a missing bound is 0, and 0 is how validate.Len spells
+	// "no bound in this direction", so `minLen > maxLen` alone would
+	// fire on a lone MinLen. The zero refusal above means a bound that
+	// is present is never 0, so this reads as "both present".
+	if minLen > 0 && maxLen > 0 && minLen > maxLen {
+		return nil, fmt.Errorf("markup: <Validate MinLen=%q MaxLen=%q>: the range "+
+			"is empty — validate.Len rejects anything shorter than the minimum or "+
+			"longer than the maximum, so with the minimum above the maximum every "+
+			"non-empty value fails and the field can never become valid",
+			e.Attrs["MinLen"], e.Attrs["MaxLen"])
+	}
 	if minLen > 0 || maxLen > 0 {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
@@ -278,6 +302,15 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		raw, ok := e.Attrs[b.name]
 		if !ok {
 			continue
+		}
+		// EMPTY IS NOT UNREADABLE, and this reader gave both the same
+		// sentence — the distinction litIntGrammar spent a commit
+		// drawing, stopping one element short of the <Validate> bounds.
+		// A single ParseFloat cannot tell them apart, so the split has
+		// to be here. Raised in review of #470.
+		if strings.TrimSpace(raw) == "" {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: %s",
+				b.name, raw, emptyLiteralWhy)
 		}
 		f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 		if err != nil {

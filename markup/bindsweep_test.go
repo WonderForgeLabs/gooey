@@ -65,6 +65,14 @@ func sweepTargets(t *testing.T) []sweepTarget {
 	t.Helper()
 	var out []sweepTarget
 	for _, def := range definedElements() {
+		// THE FOURTH EXCLUSION, and the three tables below it each have
+		// a floor while this had none. <Tab> is the only opaque def
+		// today and declares no Attrs, so nothing is actually dropped —
+		// which is the state that makes this worth writing down rather
+		// than the state that makes it safe. An opaque element that
+		// ever declares one would leave every arm green with a smaller
+		// count, silently. TestNoOpaqueElementDeclaresAnAttribute is
+		// the floor. Raised in review of #470.
 		if def.Opaque != "" {
 			continue
 		}
@@ -85,6 +93,73 @@ func sweepTargets(t *testing.T) []sweepTarget {
 		}
 	}
 	return out
+}
+
+// TestNoOpaqueElementDeclaresAnAttribute is the floor under
+// sweepTargets' fourth exclusion.
+//
+// It is deliberately a HARD floor rather than a log. An opaque element
+// that declares an attribute is not a thing to be reported quietly at
+// the bottom of a passing run; it is a decision — either the sweep
+// learns to build that element, or the exclusion earns a documented
+// reason — and nobody makes a decision they were not stopped for.
+//
+// This is the same argument the three table floors make, which is the
+// finding: the exclusion this guards was the one without one.
+func TestNoOpaqueElementDeclaresAnAttribute(t *testing.T) {
+	seen := 0
+	for _, def := range definedElements() {
+		if def.Opaque == "" {
+			continue
+		}
+		seen++
+		if len(def.Attrs) > 0 {
+			names := make([]string, 0, len(def.Attrs))
+			for _, a := range def.Attrs {
+				names = append(names, a.Name)
+			}
+			t.Errorf("<%s> is opaque (%s) and declares %v, which sweepTargets "+
+				"drops — every arm in this file would stay green with a smaller "+
+				"count. Teach the sweep to build it, or record why it cannot be "+
+				"probed", def.Name, def.Opaque, names)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no opaque element in the vocabulary, so this floor passes " +
+			"vacuously and the exclusion it guards is dead code")
+	}
+}
+
+// TestEverySweptTextKindRowIsReached keeps sweptDespiteTextKind from
+// outliving what it opts in.
+//
+// Two ways a row goes stale, and the second is the quiet one: the
+// attribute stops being declared, or it is given a Kind the switch in
+// literalOnlySweep already covers — at which point the row opts in
+// something that was coming anyway and reads as a considered exception
+// to a rule that no longer needs one. Both are checked.
+func TestEverySweptTextKindRowIsReached(t *testing.T) {
+	kinds := map[string]Kind{}
+	for _, tg := range sweepTargets(t) {
+		kinds[tg.def.Name+"."+tg.attr.Name] = tg.attr.Kind
+	}
+	if len(kinds) == 0 {
+		t.Fatal("no declarations found: this guard would pass vacuously")
+	}
+	for key, why := range sweptDespiteTextKind {
+		k, ok := kinds[key]
+		if !ok {
+			t.Errorf("sweptDespiteTextKind has a row for %s (%s), which no element "+
+				"declares any more", key, why)
+			continue
+		}
+		switch k {
+		case KindInt, KindBool, KindEnum, KindDuration, KindColor, KindGesture, KindGridLens:
+			t.Errorf("sweptDespiteTextKind opts %s in (%s), but its Kind is %v, "+
+				"which literalOnlySweep already sweeps — the row narrows nothing "+
+				"and should go", key, why, k)
+		}
+	}
 }
 
 // TestTheSweepCoversAllThreeTables is the floor under sweepTargets, and
@@ -261,8 +336,57 @@ func TestEveryLiteralOnlyAttributeRefusesABinding(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no literal-only attributes were checked: this sweep would pass vacuously")
 	}
+	// EVERY TARGET THE RULE ADMITS WAS REACHED, which `checked != 0`
+	// does not ask and the log line certainly does not.
+	//
+	// The opt-in added below for the two float bounds is a lookup inside
+	// literalOnlySweep, and deleting it leaves the table in place and
+	// the count two lower — a silent cap, the exact shape finding 5 of
+	// this round was about, introduced by the fix for finding 4. So the
+	// expectation is RE-DERIVED from the vocabulary rather than written
+	// down: literalOnlyExpected states the admission rule a second time,
+	// and a mutation has to be made in both places to stay quiet.
+	//
+	// Summed across all three buckets because this asks what the sweep
+	// REACHED, not what it verified; the outcome of each is the two
+	// checks either side of this one.
+	if want := literalOnlyExpected(t); checked+len(unverified)+len(accepted) != want {
+		t.Errorf("the sweep reached %d literal-only attributes (%d verified, "+
+			"%d unverified, %d accepted); the vocabulary declares %d. A target "+
+			"the sweep never visits leaves every arm in this file green with a "+
+			"smaller count", checked+len(unverified)+len(accepted), checked,
+			len(unverified), len(accepted), want)
+	}
 	reportUnverified(t, unverified)
 	t.Logf("checked %d literal-only attributes", checked)
+}
+
+// literalOnlyExpected re-derives from the vocabulary how many attributes
+// literalOnlySweep should reach.
+//
+// It is a DELIBERATE second statement of the admission rule, not a
+// helper shared with the sweep — sharing one would make the check
+// vacuous, since both sides would move together. The cost is that the
+// two switches have to be kept in step by hand; that cost is the
+// mechanism, because keeping them in step is a decision somebody is
+// stopped to make. Raised in review of #470.
+func literalOnlyExpected(t *testing.T) int {
+	t.Helper()
+	n := 0
+	for _, tg := range sweepTargets(t) {
+		if tg.attr.Binds != BindsLiteral {
+			continue
+		}
+		switch tg.attr.Kind {
+		case KindInt, KindBool, KindEnum, KindDuration, KindColor, KindGesture, KindGridLens:
+			n++
+		default:
+			if _, ok := sweptDespiteTextKind[tg.def.Name+"."+tg.attr.Name]; ok {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // ruleRefusedIt is the discriminator the two hand-rolled arms share with
@@ -399,7 +523,9 @@ func literalOnlySweep(t *testing.T, refused func(error, string, string) bool) (c
 		switch a.Kind {
 		case KindInt, KindBool, KindEnum, KindDuration, KindColor, KindGesture, KindGridLens:
 		default:
-			continue
+			if _, ok := sweptDespiteTextKind[tg.def.Name+"."+a.Name]; !ok {
+				continue
+			}
 		}
 		// THREE BINDINGS, and it takes all three. BindsLiteral says NO
 		// binding is accepted, so one probe only asks about one type: a
@@ -634,6 +760,35 @@ func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
 			"contain, so it is counting build failures rather than refusals — "+
 			"and every coverage number this file logs is then an overstatement", n)
 	}
+}
+
+// sweptDespiteTextKind names the text-Kind attributes whose BINDING half
+// this arm can still ask about, keyed "<Element>.<Attr>", with the
+// reason.
+//
+// The Kind exclusion above is sound and is not being weakened: for a
+// text attribute "{{.S}}" IS a valid literal, so "does it refuse a
+// binding?" is not a question that can be asked — <Validate Pattern>
+// compiles it as a regexp and is right to. The two float bounds are the
+// case where the premise does not hold. They are KindString only
+// because there is no KindFloat, and a binding is perfectly
+// distinguishable there: ParseFloat refuses it, naming the attribute and
+// quoting the value, so ruleRefusedIt verifies rather than shrugging.
+//
+// Without this, round 6 left two BindsLiteral declarations whose binding
+// half no arm checked — the same gap arm 4 was written for after
+// Visibility, arriving through a Kind choice instead of a Binds one.
+// Raised in review of #470.
+//
+// It is a per-attribute table, so it carries the guard one needs:
+// TestEverySweptTextKindRowIsReached fails on a row naming an attribute
+// the vocabulary no longer declares as text, which is both halves — a
+// deleted attribute AND one that has since been given a Kind the switch
+// already covers, where the row would be silently doing nothing.
+var sweptDespiteTextKind = map[string]string{
+	"Validate.MinValue": "a float bound in a string-shaped attribute — there is " +
+		"no KindFloat, and ParseFloat refuses a binding by name",
+	"Validate.MaxValue": "the other half of the same range",
 }
 
 // narrowerThanItsKind names the attributes whose literal has a grammar

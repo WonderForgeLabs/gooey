@@ -1040,26 +1040,40 @@ Every **visual** element (all built-ins whose component embeds `gooey.Base`, and
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
 
-**The integer grammar, once, for every row above that says "integer".** A literal integer attribute is a measurement in cells — an extent, a count, an index or an offset — and three things are load errors rather than silent misreadings:
+**The integer grammar, once, for every row above that says "integer".**
+A literal integer attribute is a measurement in cells — an extent, a
+count, an index or an offset — and one rule reads all of them, so the
+table is stated once rather than eight times. It refuses **four** things
+as load errors rather than silent misreadings, each naming the attribute
+and quoting what you wrote:
 
-- **Negative.** It parses, so nothing downstream refuses it: layout overlaps what it was meant to separate, addresses no cell, or arranges a child outside the rect that clips it.
-- **A second spelling.** `"007"` and `"+7"` are refused; the canonical form is `strconv.Itoa`'s, so two documents meaning the same layout cannot differ in their text.
-- **Empty.** `Width=""` is an attribute nobody finished writing, not a zero, and reading it as one would make a half-typed document indistinguishable from a deliberate default.
+- **Unreadable.** `Width="wide"`, and `Height="{{.Rows}}"` — a binding is
+  not a literal here.
+- **Empty.** `Width=""` is an attribute nobody finished writing, not a
+  zero, and reading it as one would make a half-typed document
+  indistinguishable from a deliberate default. Omitting the attribute is
+  how you ask for the default.
+- **Negative.** It parses, so nothing downstream refuses it: layout
+  overlaps what it was meant to separate, `Grid.Row="-1"` addresses no
+  cell, or a child is arranged outside the rect that clips it.
+- **A second spelling.** `Gap="007"` and `Width="+8"` are refused; the
+  canonical form is `strconv.Itoa`'s, so two documents meaning the same
+  layout cannot differ in their text.
 
-Surrounding whitespace is trimmed, and the refusal quotes the value **untrimmed**, so it matches what is in the file.
+Surrounding whitespace is trimmed, and the refusal quotes the value
+**untrimmed**, so it matches what is in the file.
 
-**Every integer row above is read by one rule, and it refuses four
-things**, so the table is stated once rather than eight times: an
-unreadable value (`Width="wide"`, `Height="{{.Rows}}"` — a binding is not
-a literal here), an **empty** one (`Width=""`; omitting the attribute is
-how you ask for the default), a **negative** one (these are extents,
-counts, indices and offsets, and `Grid.Row="-1"` addresses no cell), and a
-**second spelling** of a number already spelled (`Gap="007"`, `Width="+8"`).
-All four are load errors naming the attribute and quoting what you wrote.
-Until [#460](https://github.com/WonderForgeLabs/gooey/issues/460) they were
-`strconv.Atoi` with the error discarded, so all four laid out as if the
-attribute had been omitted — the silent drop this reference exists to
-document, in the rows nobody reads twice.
+Until [#460](https://github.com/WonderForgeLabs/gooey/issues/460) all four
+were `strconv.Atoi` with the error discarded, so every one of them laid
+out as if the attribute had been omitted — the silent drop this reference
+exists to document, in the rows nobody reads twice.
+
+*(This section stated the rule twice, in adjacent paragraphs, one of them
+opening "the integer grammar, once" and listing three cases while the
+other listed four — in the passage whose argument is that the rule should
+be stated once. The four-case list is the complete one: the three-case
+version omitted the unreadable value, which is what the reader's main
+error message is about.)*
 
 The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it). A **misplaced** one is a load error naming the parent that would have contributed it — `Canvas.Left` under a `<VStack>`, or `Grid.Row` under a `<Canvas>`, does not load, rather than sitting there inert. The one position where all of them are accepted is a document or patch-fragment **root**, which has no layout parent to scope against. Both families are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
 

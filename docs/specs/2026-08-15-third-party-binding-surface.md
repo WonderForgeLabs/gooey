@@ -151,6 +151,16 @@ Deliberately excluded, with reasons:
   is its own grammar, and no sweep in `markup/` can see one. The
   answer, if it is taken, is `markup.LitInt` / `markup.LitBool` beside
   the `Bound*` four, with `apps/introdeck` as the first caller.
+
+  Tracked as [#485](https://github.com/WonderForgeLabs/gooey/issues/485),
+  and the citation is the point rather than a courtesy: CLAUDE.md's rule
+  for a known-and-unfixed defect is that the record be **derived or
+  expiring** — an issue whose open-or-closed state the next reader
+  *checks* — so that a paragraph excusing a live bug cannot outlive the
+  bug. This was the one place in the branch where a defect was written
+  down without one. If #485 is closed, this paragraph is describing
+  something that no longer exists and should go with it. Raised in
+  review of #470.
 - **An `Opt`/optional variant of `Bound[T]`.** The built-ins that want
   one write `if raw, ok := e.Attrs[attr]; ok && strings.TrimSpace(raw) != ""`
   first (`buildTabs`); a third party can write the same three tokens.
