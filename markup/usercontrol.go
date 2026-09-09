@@ -182,13 +182,13 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
 		}
-		// THE ARMED-SINK SET IS PAGE-WIDE, so it crosses this boundary
-		// the same way Declared does — and Context.armedSinks' own doc
-		// comment already promised it did ("a nested Load inherits the
-		// outermost map, so two controls sharing a sink are still
-		// caught"). It did not: this function built a fresh child and
-		// propagated everything but, so the child's document.build found
-		// nil and allocated its own.
+		// THE ARM SCOPE IS PAGE-WIDE, so it crosses this boundary the
+		// same way Declared does — and armScope.sinks' own doc comment
+		// already promised it did ("a nested Load inherits the outermost
+		// map, so two controls sharing a sink are still caught"). It did
+		// not: this function built a fresh child and propagated
+		// everything but, so the child's document.build found nil and
+		// allocated its own.
 		//
 		// Two panes over one status line is the surface <Frozen> was
 		// built for and exactly what an <Include> is for, so it is the
@@ -197,30 +197,24 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// cover it either: A's message genuinely changes ("err" -> ""),
 		// and that is the value that erases B.
 		//
-		// UNCONDITIONAL, not `if child.armedSinks == nil`. A child
-		// Context is constructed fresh here, so the field is always nil
-		// — but a guard would read as though a caller could supply one
-		// and be honoured, and a control that arrived with its own map
-		// is precisely the case that must NOT be allowed to opt out of
-		// the page's set. Raised in review of #459.
-		child.armedSinks = parent.armedSinks
-		// AND armedOuter, AND the nested record. armedSinks alone was the
-		// first fix and it propagated the PAGE's set while dropping the
-		// two fields that say "you are inside a row" — so a UserControl
-		// or Include instantiated from an item template got a child
-		// Context that looked like a page, checked nothing against the
-		// page's arms, and recorded nothing for the end-of-build
-		// judgement. Two panes over one status line is the surface
-		// <Frozen> was built for and <Include> is exactly how you spell
-		// it, so this is the shape most likely to hit it. Raised in
-		// review of #459, twice.
-		child.armedOuter = parent.armedOuter
-		child.armedNested = parent.armedNested
-		// AND THE PENDING ARMS. A <Frozen AllowError=…> inside a control
-		// is part of the page's build and has to be dropped with it if
-		// the build fails; a child that kept its own nil would arm
-		// immediately and leak exactly what armPending exists to stop.
-		child.armPending = parent.armPending
+		// ONE ASSIGNMENT, and that is the point of the struct rather
+		// than a saving. Three rounds of review landed here in turn:
+		// sinks first, then outer AND the nested record — dropping the
+		// two members that say "you are inside a row" gave a UserControl
+		// instantiated from an item template a child Context that looked
+		// like a page, checked nothing against the page's arms and
+		// recorded nothing for the end-of-build judgement — and then the
+		// pending arms, whose absence let a control's <Frozen> arm
+		// immediately and leak exactly what armScope.pending exists to
+		// stop. Copying the struct cannot omit the fourth.
+		//
+		// UNCONDITIONAL, not `if child.arms.sinks == nil`. A child
+		// Context is constructed fresh here, so the field is always
+		// zero — but a guard would read as though a caller could supply
+		// one and be honoured, and a control that arrived with its own
+		// scope is precisely the case that must NOT be allowed to opt
+		// out of the page's set. Raised in review of #459.
+		child.arms = parent.arms
 		// A control's literal asset paths (Image Src) resolve against
 		// the FS its OWN markup came from, the same isolation its
 		// bindings get: the file that names the asset is the file the

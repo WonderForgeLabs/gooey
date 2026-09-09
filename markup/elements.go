@@ -489,17 +489,17 @@ var defFrozen = &ElementDef{
 						"mutate the graph mid-invalidation", raw)
 			}
 			// A SECOND arm on the same sink. Two <Frozen> publishing to
-			// one property erase each other — see Context.armedSinks.
+			// one property erase each other — see armScope.sinks.
 			//
-			// armedOuter as well, because an ItemsView row's map is
+			// arms.outer as well, because an ItemsView row's map is
 			// deliberately row-local and would otherwise not see the
 			// PAGE's arms. Checking both while registering only in
-			// armedSinks is what lets every row arm the same template
+			// arms.sinks is what lets every row arm the same template
 			// sink — not a collision — while a row arming a page-owned
 			// handle still is. Raised in review of #459.
-			was, dup := ctx.armedSinks[sink]
+			was, dup := ctx.arms.sinks[sink]
 			if !dup {
-				was, dup = ctx.armedOuter[sink]
+				was, dup = ctx.arms.outer[sink]
 			}
 			if dup {
 				return nil, fmt.Errorf(
@@ -508,14 +508,14 @@ var defFrozen = &ElementDef{
 						"writing one property erase each other's message, leaving a "+
 						"subtree sealed with nothing to show for it", raw, was)
 			}
-			ctx.armedSinks[sink] = raw
+			ctx.arms.sinks[sink] = raw
 			// AND, when this is a nested scope, on the document's record.
-			// The immediate armedOuter check above catches a row realized
+			// The immediate arms.outer check above catches a row realized
 			// AFTER the page's <Frozen>; this is what catches one realized
 			// before, which ItemsView.Validate's throwaway row always is
 			// when the list is declared first. Raised in review of #459.
-			if ctx.armedOuter != nil {
-				if was, dup := ctx.armedNested.record(sink, raw); dup {
+			if ctx.arms.outer != nil {
+				if was, dup := ctx.arms.nested.record(sink, raw); dup {
 					return nil, fmt.Errorf(
 						"markup: <Frozen AllowError=%q>: already the failure channel for "+
 							"<Frozen AllowError=%q> in another item template on this page "+
@@ -524,16 +524,14 @@ var defFrozen = &ElementDef{
 							"this build can see the pair", raw, was)
 				}
 			}
-			// THROUGH armPending, so a load error later in this build
+			// THROUGH arms.pending, so a load error later in this build
 			// takes the arm with it. armAllowError both subscribes and
-			// PUBLISHES, and neither is undoable — see Context.armPending
-			// for what a refused build used to leave behind. The
-			// immediate call is the runtime path: an ItemsView row
-			// realized after the page was built has no build to fail.
-			arm := func() { armAllowError(f, sink, ctx.Dispatcher) }
-			if !ctx.armPending.add(arm) {
-				arm()
-			}
+			// PUBLISHES, and neither is undoable — see armScope.pending
+			// for what a refused build used to leave behind. A row is a
+			// build too: the ItemsView factory opens a carrier per
+			// realization, so this reaches an open one whether it is the
+			// page being loaded or a row being scrolled into view.
+			ctx.arms.pending.arm(func() { armAllowError(f, sink, ctx.Dispatcher) })
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err

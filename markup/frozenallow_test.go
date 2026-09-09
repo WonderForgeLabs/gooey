@@ -1117,7 +1117,7 @@ func TestARefusedBuildArmsNothing(t *testing.T) {
 //
 // Without per-build scoping the second build would refuse what the first
 // armed, and the failure would look like the user's markup being wrong.
-// This is the arm that makes armedSinks' save/restore load-bearing rather
+// This is the arm that makes arms.sinks' save/restore load-bearing rather
 // than decorative.
 func TestASecondBuildMayReuseASinkTheFirstArmed(t *testing.T) {
 	ctx := errAllowCtx("Focus")
@@ -1164,7 +1164,7 @@ func TestAllowCannotAliasItsOwnErrorChannel(t *testing.T) {
 // TestAPublishDoesNotClobberAnotherWritersValue pins the half the load
 // guard cannot reach.
 //
-// armedSinks refuses two <Frozen> in MARKUP, but nothing stops a
+// arms.sinks refuses two <Frozen> in MARKUP, but nothing stops a
 // code-behind, an MCP set_value, or a Startable from writing the same
 // property. publish therefore compares against this arm's OWN last
 // published value rather than reading the sink back: an arm whose message
@@ -1200,11 +1200,11 @@ func TestAPublishDoesNotClobberAnotherWritersValue(t *testing.T) {
 // TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle is round five's
 // critical, and it was introduced by round four's own guard.
 //
-// document.build allocates ctx.armedSinks and its defer restores it to
+// document.build allocates ctx.arms.sinks and its defer restores it to
 // nil on the way out. buildItemsView constructs the row Context
 // FIELD-BY-FIELD (markup/itemsview.go) and calls build(row, item)
-// directly — never document.build — so armedSinks is nil there and
-// elements.go's `ctx.armedSinks[sink] = raw` panics with "assignment to
+// directly — never document.build — so arms.sinks is nil there and
+// elements.go's `ctx.arms.sinks[sink] = raw` panics with "assignment to
 // entry in nil map". That row Context is the only *Context in this
 // package built outside document.build.
 //
@@ -1326,12 +1326,12 @@ func TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle(t *testing.T) {
 }
 
 // TestTwoControlsCannotShareOneFailureChannel is the guarantee
-// Context.armedSinks' own doc comment makes and the code did not keep:
+// armScope.sinks' own doc comment makes and the code did not keep:
 // "a nested Load inherits the outermost map (so two controls sharing a
 // sink are still caught)".
 //
 // control() builds a fresh child *Context and propagates Declared,
-// Components, Handlers, Includes and Dispatcher — not armedSinks — so
+// Components, Handlers, Includes and Dispatcher — not arms.sinks — so
 // the child's document.build finds nil and allocates its own. Two panes
 // over one status line is the surface <Frozen> exists for, and it is
 // what an <Include> is for, so this is the collision the page guard was
@@ -2017,12 +2017,12 @@ func rowValue[T any](t *testing.T, ctx *Context, rows *prop.Property[[]post], ti
 // captured OUTSIDE the factory rather than read through ctx when a row is
 // built.
 //
-// document.build's defer restores ctx.armedSinks to what it found, and
+// document.build's defer restores ctx.arms.sinks to what it found, and
 // for the outermost document that is nil — so by the time a row is
-// realized, ctx.armedSinks is nil and armedOuter would be an empty
+// realized, ctx.arms.sinks is nil and arms.outer would be an empty
 // lookup. The sibling test above cannot see this: ItemsView.Validate
 // realizes one throwaway row at LOAD, while build is still on the stack
-// and ctx.armedSinks is still the page's map, so both spellings pass
+// and ctx.arms.sinks is still the page's map, so both spellings pass
 // there. A collection that is empty at load and filled by a timer is the
 // discriminating shape, and it is the ordinary one — the same asymmetry
 // the ns/res captures above are written up for.
@@ -2143,10 +2143,10 @@ func TestTwoItemTemplatesWithTheirOwnSinksStillLoad(t *testing.T) {
 // TestANestedListsRowStillSeesThePagesArms is the second scope the guard
 // did not reach: a list declared INSIDE another list's item template.
 //
-// ItemsView captured ctx.armedSinks and called it "the page's armed
-// set". It is — at page level. Built inside a row, ctx.armedSinks is the
+// ItemsView captured ctx.arms.sinks and called it "the page's armed
+// set". It is — at page level. Built inside a row, ctx.arms.sinks is the
 // OUTER ROW's deliberately row-local map, so the inner rows got an
-// armedOuter pointing at a row and the page's arms were invisible to
+// arms.outer pointing at a row and the page's arms were invisible to
 // them. Load time was still covered by collide; scroll time was not.
 //
 // The outer list is EMPTY at load, which is the whole discriminator: it
@@ -2206,7 +2206,7 @@ func TestANestedListsRowStillSeesThePagesArms(t *testing.T) {
 	err := outer.Err()
 	if err == nil {
 		t.Fatal("a row of a NESTED list armed a handle the page had already " +
-			"armed, and nothing refused it. The inner rows' armedOuter is the " +
+			"armed, and nothing refused it. The inner rows' arms.outer is the " +
 			"outer row's map rather than the page's, so the page's arms are " +
 			"invisible one level down")
 	}
@@ -2278,7 +2278,7 @@ func TestARowRealizedAfterLoadStillSeesThePagesArms(t *testing.T) {
 // TestThePageRowCollisionIsFoundInEitherDocumentOrder is the guard's own
 // symmetry, and it is here because the first fix did not have it.
 //
-// armedOuter is the page's LIVE map, so a row realized after the page's
+// arms.outer is the page's LIVE map, so a row realized after the page's
 // <Frozen> sees the arm and a row realized before does not. That is not
 // an edge: ItemsView.Validate realizes one throwaway row DURING the
 // <ItemsView> build, so declaring the list first means the load-time row
@@ -2368,10 +2368,10 @@ func TestThePageRowCollisionIsFoundInEitherDocumentOrder(t *testing.T) {
 }
 
 // TestAControlInsideATemplateSeesThePagesArms is the UserControl/Include
-// boundary, which armedSinks crossed and armedOuter did not.
+// boundary, which arms.sinks crossed and arms.outer did not.
 //
 // The child Context is built fresh, and the first fix propagated
-// armedSinks — the PAGE's set — while dropping the two fields that say
+// arms.sinks — the PAGE's set — while dropping the two fields that say
 // "you are inside a row". So a control instantiated from an item
 // template looked like a page to itself: it checked nothing against the
 // page's arms and recorded nothing for the end-of-build judgement.
@@ -2397,8 +2397,8 @@ func TestAControlInsideATemplateSeesThePagesArms(t *testing.T) {
 `
 	// BOTH ORDERS, and the second is what the two fields carry between
 	// them. With the page's <Frozen> first, the row's immediate
-	// armedOuter check catches the collision on its own and dropping
-	// armedNested from the child Context is SILENT — measured. Only the
+	// arms.outer check catches the collision on its own and dropping
+	// arms.nested from the child Context is SILENT — measured. Only the
 	// list-first arm needs the end-of-build record to have crossed the
 	// boundary too.
 	for _, c := range []struct{ name, page string }{
@@ -2441,13 +2441,20 @@ func TestAControlInsideATemplateSeesThePagesArms(t *testing.T) {
 // <Include> is part of the page's build, so a page that fails must take
 // the control's arm with it.
 //
-// The child Context is built fresh in usercontrol.go and every per-build
-// record has to be propagated into it by hand. armedSinks, armedOuter
-// and armedNested each had to be added there in turn, each after a
-// review found the boundary crossing it silently; the pending-arm
-// carrier is the fourth, and a child that kept its own nil would arm
-// immediately — publishing into the caller's handle and subscribing an
+// The child Context is built fresh in usercontrol.go, and the four
+// per-build records used to be propagated into it FIELD BY FIELD:
+// sinks, then outer and nested, then the pending carrier, each added
+// after a review found the boundary crossing it silently. This test is
+// the last of those four — a child that kept its own nil carrier arms
+// immediately, publishing into the caller's handle and subscribing an
 // observer to a page that is about to be refused.
+//
+// The four are one armScope now, so `child.arms = parent.arms` cannot
+// omit a member and the omit-one mutation this test was written against
+// is no longer SPELLABLE. What it still pins is the behaviour rather
+// than the propagation: that a refused page takes a control's arm with
+// it. Deleting the assignment altogether is the arm that remains, and it
+// is caught here.
 //
 // Raised in review of #459.
 func TestAControlsArmIsDroppedWithTheBuildToo(t *testing.T) {
@@ -2494,7 +2501,7 @@ func TestAControlsArmIsDroppedWithTheBuildToo(t *testing.T) {
 // UNIT test because the leak has no behavioural symptom.
 //
 // The flag exists so a scrolling list does not accumulate one map entry
-// per realized row forever — which is the exact reason armedSinks is
+// per realized row forever — which is the exact reason arms.sinks is
 // row-local in the first place. Nothing READS the record after the build,
 // so leaving it open changes no answer and no test of a built page can
 // see it. Removing the flag was measured silent against the whole
@@ -2515,7 +2522,7 @@ func TestTheNestedRecordCloses(t *testing.T) {
 	if _, ok := n.m[other]; ok {
 		t.Error("a CLOSED record still took the arm. open is what stops a scrolling " +
 			"list accumulating one entry per realized row for the life of the " +
-			"program — the same unbounded growth that makes armedSinks row-local")
+			"program — the same unbounded growth that makes arms.sinks row-local")
 	}
 
 	// A nil receiver is the scroll-time row whose Context never carried

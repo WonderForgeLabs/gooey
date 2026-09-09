@@ -198,96 +198,12 @@ type Context struct {
 	// whichever FS that markup came from. A tree built from bytes
 	// (markup.Build) has none, and falls back to Includes.
 	fsys fs.FS
-	// armedSinks is the set of *prop.Property[string] already armed as a
-	// <Frozen AllowError> target in the CURRENT top-level build, mapped to
-	// the attribute text that armed it.
-	//
-	// Two <Frozen> binding one sink is a load error because they would
-	// erase each other: each arm publishes its own transitions, so the
-	// parseable one going "Focus" -> "Hover" writes "" over the other's
-	// live failure, and the other's computed is clean so it never
-	// republishes. The subtree stays sealed and the reader shows nothing —
-	// #424's exact symptom, one page-shape over.
-	//
-	// PAGE-WIDE but per top-level build: a nested Load inherits the
-	// outermost map (so two controls sharing a sink are still caught),
-	// while a rebuild against the same Context — the os.DirFS watcher, the
-	// designer — starts clean instead of refusing its own previous
-	// generation. document.build owns that scoping.
-	armedSinks map[*prop.Property[string]]string
-	// armedOuter is the map a NESTED scope must also check but must not
-	// write to. Today its one setter is the ItemsView row factory, whose
-	// armedSinks is deliberately row-local: the factory runs per row
-	// realization and never unregisters, so a shared map would accumulate
-	// an entry per row and refuse the list's own second row.
-	//
-	// Row-local registration alone left a page-versus-row collision with
-	// nobody looking, and it erases at LOAD: a <Frozen> on the page and a
-	// <Frozen> in an item template can arm the same handle — measured,
-	// with the page's message going to "" inside Build — because a
-	// projection may hand every row the page's own property.
-	// components/itemsview.go returns a *prop.Property[string] found in a
-	// row map straight through, so "each row carries its own handle" is a
-	// fact about the projection and not something this package enforces.
-	// Splitting check from registration refuses that shape and keeps row
-	// reuse working. Raised in review of #459.
-	armedOuter map[*prop.Property[string]]string
-	// armedNested is where a NESTED scope records what it armed, so the
-	// page-versus-row collision is judged ONCE at the end of the document
-	// build instead of at the moment of the arm.
-	//
-	// Checking armedOuter at the moment of the arm was the first fix and
-	// it is DOCUMENT-ORDER DEPENDENT: armedOuter is the page's live map,
-	// so a row realized after the page's <Frozen> sees it and a row
-	// realized before does not — and ItemsView.Validate realizes one
-	// throwaway row DURING the <ItemsView> build. Put the <Frozen> below
-	// the list and the collision loads clean; put it above and the same
-	// document is refused. A guard whose answer depends on which line the
-	// author typed first is not a guard. Raised in review of #459.
-	//
-	// A POINTER TO A STRUCT WITH A FLAG, not a bare map, and the flag is
-	// what stops it leaking. The row factory runs per realization and
-	// never unregisters, which is the whole reason armedSinks is
-	// row-local; a shared map written on every scroll would grow without
-	// bound. open is true only while the outermost document.build is on
-	// the stack, so scroll-time rows record nothing — their collision
-	// surfaces through the list's Err(), where every other scroll-time
-	// load error already does.
-	//
-	// HALF OF THAT IS UNPINNED, deliberately, and this is the honest
-	// statement of which half. nestedArms.record honouring the flag is
-	// pinned by TestTheNestedRecordCloses. document.build actually
-	// CLOSING the record is not: deleting that line is measured silent
-	// against the whole package, because nothing reads the record after
-	// the build returns and the pointer the row factory captured is
-	// reachable from no test. The mutation is equivalent in every answer
-	// the package gives; it differs only in a map that grows for the
-	// life of the process. What would make it falsifiable is a reader
-	// after the build — and adding one so a test could exist would be
-	// inventing the very coupling the flag exists to avoid.
-	armedNested *nestedArms
-	// armPending collects the AllowError arms an in-flight build has
-	// asked for, so that NO ARM SURVIVES A BUILD THAT FAILS.
-	//
-	// armAllowError does two irreversible things: it registers an
-	// OnInvalidate hook, and it primes by publishing into the caller's
-	// property. Both used to run the moment a <Frozen AllowError=…> was
-	// built, so a load error anywhere after it — the duplicate-sink
-	// refusal three lines down, a bad attribute in the next element,
-	// anything — returned an error to a caller whose viewmodel had
-	// already been written, and left an observer subscribed to a subtree
-	// that was never handed back. Every later change to that Frozen's
-	// Allow then posted another Set into the caller's handle, from a page
-	// that does not exist, with nothing left holding a reference that
-	// could unregister it.
-	//
-	// The seam is document.build's `outermost`, which is the only place
-	// that knows the whole build succeeded. Same lifetime and the same
-	// open/closed shape as armedNested, and for the same reason: a
-	// Context outlives the build, so an ItemsView factory realizing a row
-	// LATER must arm immediately rather than append to a slice nothing
-	// will ever run. Raised in review of #459.
-	armPending *deferredArms
+	// arms is the <Frozen AllowError> bookkeeping for the build in
+	// flight. The four members travel together across every scope
+	// boundary in this package, so they are ONE FIELD; see armScope for
+	// what each is and for the review history that is the argument for
+	// grouping them.
+	arms armScope
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix
@@ -546,35 +462,159 @@ func (e *fileError) Error() string {
 
 func (e *fileError) Unwrap() error { return e.err }
 
-// deferredArms is armPending's carrier: the arms collected during one
-// outermost build, run only if it returns a tree.
+// armScope is the <Frozen AllowError> bookkeeping for one build: what
+// has been armed, what a nested scope may only read, what it recorded,
+// and what has not been armed yet.
+//
+// ONE STRUCT BECAUSE THE FOUR TRAVEL TOGETHER, and that is a conclusion
+// from this package's own history rather than tidiness. Three seams
+// carry this state across a scope boundary — document.build, control()
+// in usercontrol.go, and the ItemsView row factory — and rounds five
+// through nine of #459's review were each ONE of those seams missing ONE
+// member: arms.sinks not crossing the control boundary, then arms.outer
+// and the nested record not crossing it either, then the pending arms.
+// Every one of those was silent, because a missing member reads as "this
+// scope armed nothing", which is also what a correct empty scope reads
+// as. Grouped, control() is a single assignment that cannot omit a
+// member, and the row factory's deliberate divergence is one visible
+// construction instead of four lines somebody has to notice are four.
+type armScope struct {
+	// sinks is the set of *prop.Property[string] already armed as a
+	// <Frozen AllowError> target in the CURRENT scope, mapped to the
+	// attribute text that armed it.
+	//
+	// Two <Frozen> binding one sink is a load error because they would
+	// erase each other: each arm publishes its own transitions, so the
+	// parseable one going "Focus" -> "Hover" writes "" over the other's
+	// live failure, and the other's computed is clean so it never
+	// republishes. The subtree stays sealed and the reader shows nothing
+	// — #424's exact symptom, one page-shape over.
+	//
+	// PAGE-WIDE but per top-level build: a nested Load inherits the
+	// outermost map (so two controls sharing a sink are still caught),
+	// while a rebuild against the same Context — the os.DirFS watcher,
+	// the designer — starts clean instead of refusing its own previous
+	// generation. document.build owns that scoping.
+	sinks map[*prop.Property[string]]string
+	// outer is the map a NESTED scope must also check but must not write
+	// to. Today its one setter is the ItemsView row factory, whose sinks
+	// map is deliberately row-local: the factory runs per row
+	// realization and never unregisters, so a shared map would
+	// accumulate an entry per row and refuse the list's own second row.
+	//
+	// Row-local registration alone left a page-versus-row collision with
+	// nobody looking, and it erases at LOAD: a <Frozen> on the page and a
+	// <Frozen> in an item template can arm the same handle — measured,
+	// with the page's message going to "" inside Build — because a
+	// projection may hand every row the page's own property.
+	// components/itemsview.go returns a *prop.Property[string] found in a
+	// row map straight through, so "each row carries its own handle" is a
+	// fact about the projection and not something this package enforces.
+	// Splitting check from registration refuses that shape and keeps row
+	// reuse working. Raised in review of #459.
+	outer map[*prop.Property[string]]string
+	// nested is where a NESTED scope records what it armed, so the
+	// page-versus-row collision is judged ONCE at the end of the document
+	// build instead of at the moment of the arm.
+	//
+	// Checking outer at the moment of the arm was the first fix and it is
+	// DOCUMENT-ORDER DEPENDENT: outer is the page's live map, so a row
+	// realized after the page's <Frozen> sees it and a row realized
+	// before does not — and ItemsView.Validate realizes one throwaway row
+	// DURING the <ItemsView> build. Put the <Frozen> below the list and
+	// the collision loads clean; put it above and the same document is
+	// refused. A guard whose answer depends on which line the author
+	// typed first is not a guard. Raised in review of #459.
+	//
+	// A POINTER TO A STRUCT WITH A FLAG, not a bare map, and the flag is
+	// what stops it leaking. The row factory runs per realization and
+	// never unregisters, which is the whole reason sinks is row-local; a
+	// shared map written on every scroll would grow without bound. open
+	// is true only while the outermost document.build is on the stack, so
+	// scroll-time rows record nothing — their collision surfaces through
+	// the list's Err(), where every other scroll-time load error already
+	// does.
+	//
+	// HALF OF THAT IS UNPINNED, deliberately, and this is the honest
+	// statement of which half. nestedArms.record honouring the flag is
+	// pinned by TestTheNestedRecordCloses. document.build actually
+	// CLOSING the record is not: deleting that line is measured silent
+	// against the whole package, because nothing reads the record after
+	// the build returns and the pointer the row factory captured is
+	// reachable from no test. The mutation is equivalent in every answer
+	// the package gives; it differs only in a map that grows for the
+	// life of the process. What would make it falsifiable is a reader
+	// after the build — and adding one so a test could exist would be
+	// inventing the very coupling the flag exists to avoid.
+	nested *nestedArms
+	// pending collects the AllowError arms an in-flight build has asked
+	// for, so that NO ARM SURVIVES A BUILD THAT FAILS.
+	//
+	// armAllowError does two irreversible things: it registers an
+	// OnInvalidate hook, and it primes by publishing into the caller's
+	// property. Both used to run the moment a <Frozen AllowError=…> was
+	// built, so a load error anywhere after it — the duplicate-sink
+	// refusal three lines down, a bad attribute in the next element,
+	// anything — returned an error to a caller whose viewmodel had
+	// already been written, and left an observer subscribed to a subtree
+	// that was never handed back. Every later change to that Frozen's
+	// Allow then posted another Set into the caller's handle, from a page
+	// that does not exist, with nothing left holding a reference that
+	// could unregister it.
+	//
+	// The seam is document.build's `outermost`, which is the only place
+	// that knows the whole build succeeded. A ROW GETS ITS OWN, built by
+	// the factory: a row is a build that can fail like any other, and the
+	// page's carrier answers the wrong question for it. Raised in review
+	// of #459.
+	pending *deferredArms
+}
+
+// deferredArms is arms.pending's carrier: the arms collected during one
+// build, run only if it returns a tree.
 //
 // `open` is what makes it safe to share with a Context that outlives the
-// build. Closed, add reports false and the caller arms immediately —
-// which is the right answer for an ItemsView row realized at runtime,
-// where there is no build to fail and no later moment to run anything.
+// build. It is READ, not just written: inFlight is how the ItemsView row
+// factory tells the load-time probe from a real row. What `open` no
+// longer decides is whether an arm happens at all — see arm.
 type deferredArms struct {
 	open bool
 	fns  []func()
 }
 
-// add takes the arm if a build is in flight, and reports whether it did.
-// A nil or closed receiver reports false, so the ONE call site reads
-// `if !ctx.armPending.add(arm) { arm() }` and cannot forget the
-// immediate case.
-func (a *deferredArms) add(fn func()) bool {
+// arm defers fn to the end of the build if one is collecting, and runs
+// it NOW if none is. Either way the arm happens, and that totality is
+// the contract.
+//
+// It used to be spelled `if !add(arm) { arm() }` at the call site, with
+// four comments — here, on the field, on the type, and above the capture
+// in itemsview.go — describing the immediate branch as THE RUNTIME PATH
+// for an ItemsView row realized after the page was built. That has not
+// been true since the row factory got a carrier of its own: every
+// <Frozen AllowError> this package builds is built inside an OPEN
+// carrier, the page's from document.build or the row's from the factory,
+// so the immediate path is measured UNREACHABLE — replacing the whole
+// body with a bare append leaves ./markup green.
+//
+// It stays, and moves in here, for two reasons. The alternative for a
+// nil or closed carrier is to drop the arm SILENTLY, which is the leak
+// class arms.pending exists to refuse and would be the failure mode of
+// whatever call site is added next. And a total function states that in
+// one place instead of asking every call site to remember the other
+// half. Raised in review of #459.
+func (a *deferredArms) arm(fn func()) {
 	if a == nil || !a.open {
-		return false
+		fn()
+		return
 	}
 	a.fns = append(a.fns, fn)
-	return true
 }
 
 // inFlight reports whether a build is still collecting. It is how an
 // ItemsView row tells ItemsView.Validate's throwaway probe — realized
 // while the page build is open — from a real row, which the composer
 // realizes only after Build has returned. Nil-safe for the same reason
-// add is.
+// arm is.
 func (a *deferredArms) inFlight() bool { return a != nil && a.open }
 
 // run performs the collected arms in the order they were asked for, so
@@ -590,7 +630,7 @@ func (a *deferredArms) run() {
 	a.fns = nil
 }
 
-// nestedArms is armedNested's carrier. See the field for why it is a
+// nestedArms is arms.nested's carrier. See the field for why it is a
 // pointer and why it carries a flag.
 type nestedArms struct {
 	open bool
@@ -605,13 +645,13 @@ type nestedArms struct {
 // templates on one page, each arming the same page-owned handle, are two
 // NESTED arms and neither is in the page's map — so collide sees nothing
 // and the two erase each other at runtime, which is the whole failure
-// Context.armedSinks exists to refuse. Both are catchable at load,
+// armScope.sinks exists to refuse. Both are catchable at load,
 // because ItemsView.Validate realizes one throwaway row per list DURING
 // the build, so both arms land while open is true and both raw texts are
 // in n.m's hand at the moment of the second.
 //
 // "First raw wins" survives, for the MESSAGE only: the error names the
-// arm already recorded, the way the armedSinks refusal does.
+// arm already recorded, the way the arms.sinks refusal does.
 // Raised in review of #459.
 func (n *nestedArms) record(sink *prop.Property[string], raw string) (was string, dup bool) {
 	if n == nil || !n.open {
@@ -656,47 +696,36 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	ctx.ns = d.ns
 	defer func() { ctx.ns = prev }()
 
-	// The armed-sink set is page-wide and per top-level build. A nil map
-	// means this is the outermost document, so it gets a fresh one; a
-	// nested Load finds it non-nil and shares it, which is what makes two
-	// controls binding one sink collide. Restoring unconditionally leaves
-	// it nil again after the outermost build, so the next rebuild against
-	// this same Context does not refuse what it armed last time.
-	prevArmed := ctx.armedSinks
-	outermost := prevArmed == nil
+	// THE WHOLE ARM SCOPE, saved and restored as ONE VALUE. It is
+	// page-wide and per top-level build: a nil sinks map means this is
+	// the outermost document, so it gets a fresh scope, while a nested
+	// Load finds it non-nil and shares it — which is what makes two
+	// controls binding one sink collide. Restoring the struct leaves the
+	// field as this build found it, so the next rebuild against this
+	// same Context does not refuse what it armed last time.
+	//
+	// The record and the pending arms share that lifetime exactly, and
+	// they are CLOSED IN THE DEFER rather than after the run below: a
+	// Context outlives its build, so an ItemsView factory realizing a
+	// row later must find them closed however the build ended.
+	prevArms := ctx.arms
+	outermost := prevArms.sinks == nil
 	if outermost {
-		ctx.armedSinks = map[*prop.Property[string]]string{}
+		ctx.arms.sinks = map[*prop.Property[string]]string{}
+		ctx.arms.nested = &nestedArms{open: true, m: map[*prop.Property[string]]string{}}
+		ctx.arms.pending = &deferredArms{open: true}
 	}
-	defer func() { ctx.armedSinks = prevArmed }()
-
-	// The nested record shares armedSinks' lifetime and its outermost
-	// rule: a nested Load inherits it, so a <Frozen> inside an <Include>
-	// inside a template still lands in the page's judgement.
-	prevNested := ctx.armedNested
-	if outermost {
-		ctx.armedNested = &nestedArms{open: true, m: map[*prop.Property[string]]string{}}
-	}
-	nested := ctx.armedNested
+	nested, pending := ctx.arms.nested, ctx.arms.pending
 	defer func() {
-		if outermost && nested != nil {
-			nested.open = false
+		if outermost {
+			if nested != nil {
+				nested.open = false
+			}
+			if pending != nil {
+				pending.open = false
+			}
 		}
-		ctx.armedNested = prevNested
-	}()
-
-	// The pending arms share that lifetime exactly. Closing in the defer
-	// rather than after the run is what makes a Context reused for row
-	// realization arm immediately instead of appending to a dead slice.
-	prevPending := ctx.armPending
-	if outermost {
-		ctx.armPending = &deferredArms{open: true}
-	}
-	pending := ctx.armPending
-	defer func() {
-		if outermost && pending != nil {
-			pending.open = false
-		}
-		ctx.armPending = prevPending
+		ctx.arms = prevArms
 	}()
 
 	if ctx.Named == nil {
@@ -717,11 +746,11 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 		return root, err
 	}
 	// THE PAGE-VERSUS-ROW JUDGEMENT, deferred to here and nowhere
-	// earlier. By now everything the page armed is in armedSinks and
+	// earlier. By now everything the page armed is in arms.sinks and
 	// everything a nested scope armed is in the record, so the answer
 	// cannot depend on which of the two the author wrote first — which
 	// is exactly what it depended on before. Raised in review of #459.
-	if inner, outer, dup := nested.collide(ctx.armedSinks); dup {
+	if inner, outer, dup := nested.collide(ctx.arms.sinks); dup {
 		return nil, fmt.Errorf(
 			"markup: <Frozen AllowError=%q> inside an item template and "+
 				"<Frozen AllowError=%q> on the page arm the same property — two sealed "+

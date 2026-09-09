@@ -77,7 +77,7 @@ list if you need the number.
 Two defects, both introduced by the guard round four added, and both
 invisible to every test that existed for it.
 
-**`ctx.armedSinks` arrived nil in an item template's row.** `elements.go`
+**`ctx.arms.sinks` arrived nil in an item template's row.** `elements.go`
 WRITES to that map to arm a sink, and a write to a nil map panics.
 `document.build` allocates it, and for one construction site that was
 enough — but `buildItemsView` builds its row `Context` field by field, and
@@ -97,7 +97,7 @@ list is longer than one. The question the guard asks is "does this
 document arm one sink twice", and a row is the scope where that question
 has an answer.
 
-**`armedSinks` did not cross the control boundary**, though its own doc
+**`arms.sinks` did not cross the control boundary**, though its own doc
 comment promised it did: "a nested Load inherits the outermost map (so two
 controls sharing a sink are still caught)". `control()` builds a fresh
 child `Context` and propagates `Declared` but not this, so two
@@ -277,7 +277,7 @@ they compute the same message and write the same value, and the compare
 guard makes the second a no-op. It becomes reachable the moment a reload
 rebinds `Allow` to a different property: two live arms, different
 messages, one sink, and the last invalidation wins. That is the same
-symptom `armedSinks` was added to prevent, arriving through the escape
+symptom `arms.sinks` was added to prevent, arriving through the escape
 hatch that guard needed in order not to break the watcher.
 
 So the escape hatch and the missing detach are one decision, not two.
@@ -322,7 +322,7 @@ computed was clean, so it never republished. Subtree sealed, reader empty:
 panes over one status line is the surface `Frozen` was built for.
 
 Fixed twice over, because the two halves cover different writers.
-`Context.armedSinks` makes a second arm on the same handle a **load error**,
+`armScope.sinks` makes a second arm on the same handle a **load error**,
 which is the real fix and matches how every other spelling in the class is
 refused. (An ordinal here said "the other four" while the section below said
 "the fifth" — off by one against each other, which is why neither says a
@@ -332,7 +332,7 @@ rather than reading the sink back, so an arm with nothing new to say writes
 nothing whatever the sink holds — that half reaches writers the load guard
 cannot see, a code-behind, an MCP `set_value`, a `Startable`.
 
-`armedSinks` is page-wide but **per top-level build**: a nested `Load`
+`arms.sinks` is page-wide but **per top-level build**: a nested `Load`
 inherits the outermost map so two controls sharing a sink still collide,
 while a rebuild against the same `Context` — the `os.DirFS` watcher, the
 designer — starts clean instead of refusing what it armed last time.
@@ -432,7 +432,7 @@ page's own handle is an ordinary thing to write, and
 `docs/markup-reference.md` tells the author the sink must be page-owned,
 which is exactly that shape.
 
-`Context.armedOuter` splits the two halves: the duplicate CHECK consults
+`armScope.outer` splits the two halves: the duplicate CHECK consults
 the page's set as well, while REGISTRATION stays row-local. Both
 directions are pinned, because the fix has an obvious wrong form — share
 one map — that refuses correct markup.
@@ -445,7 +445,7 @@ framework. It now says what is enforced and what is not.
 
 **Corrected in round eight: this paragraph gave the wrong reason.** It
 said the handles are indistinguishable by the time they reach this
-package. They are not — `armedSinks` and `nestedArms` both key by
+package. They are not — `arms.sinks` and `nestedArms` both key by
 `*prop.Property[string]`, so a shared handle is literally the same
 pointer, and that is how round eight caught two item *templates* arming
 one sink. The reason a two-ROW collision has no load-time signal is that
@@ -458,10 +458,10 @@ closed by nature. Round five retired the identical "pointer identity
 cannot catch it" reasoning for the alias guard, and it survived here in a
 second file.
 
-### The judgement is made at the end of the build, not at the arm
+## The judgement is made at the end of the build, not at the arm
 
-`Context.armedOuter` above is the round-six mechanism, and on its own it
-is **document-order dependent**. `armedOuter` is the page's *live* map,
+`armScope.outer` above is the round-six mechanism, and on its own it
+is **document-order dependent**. `arms.outer` is the page's *live* map,
 so a row that arms BEFORE the page's own `<Frozen>` is built finds it
 empty and sees no collision — and `ItemsView.Validate` realizes its
 throwaway row during the build, which for a list declared above the
@@ -470,9 +470,9 @@ round was refused. A guard that depends on which element the author typed
 first is not a guard.
 
 So registration and judgement are separated. A nested scope records what
-it armed on `Context.armedNested`, a `*nestedArms` whose lifetime is the
-outermost build's; the page's own arms keep going into `armedSinks`; and
-`document.build` asks `nested.collide(ctx.armedSinks)` once, after the
+it armed on `armScope.nested`, a `*nestedArms` whose lifetime is the
+outermost build's; the page's own arms keep going into `arms.sinks`; and
+`document.build` asks `nested.collide(ctx.arms.sinks)` once, after the
 whole tree is built and before it returns. By then both halves are
 complete, so the answer cannot depend on the order they arrived in.
 
@@ -480,11 +480,11 @@ complete, so the answer cannot depend on the order they arrived in.
 rather than dropping it. Two `<ItemsView>` item templates on one page
 arming the same page-owned handle are two NESTED arms, so neither is in
 the page's map and `collide` sees nothing — the collision one scope
-further out than `armedOuter` reaches. Both land while the record is
+further out than `arms.outer` reaches. Both land while the record is
 open, because each list realizes one probe row during the build, so it is
 catchable at load and is.
 
-### An arm is a subscription and a publish, and neither is undoable
+## An arm is a subscription and a publish, and neither is undoable
 
 `armAllowError` does two irreversible things: it subscribes an observer
 to a computed over the `<Frozen>`, and it publishes the current parse
@@ -494,23 +494,20 @@ the row's priming publish wrote `""` over the page's failure and the load
 error arrived afterwards, so the user lost the message and got a page
 that did not load.
 
-`Context.armPending` is the answer: a `*deferredArms` collected during
-one outermost build and run only on the line after the last error path.
-`add` reports whether it took the arm, so the one call site reads
+`armScope.pending` is the answer: a `*deferredArms` collected during one
+build and run only on the line after the last error path.
 
 ```go
-arm := func() { armAllowError(f, sink, ctx.Dispatcher) }
-if !ctx.armPending.add(arm) {
-    arm()
-}
+ctx.arms.pending.arm(func() { armAllowError(f, sink, ctx.Dispatcher) })
 ```
 
-and cannot forget the immediate case. The carrier is CLOSED in
-`document.build`'s defer rather than after `run()`, which is what makes a
-`Context` reused for row realization arm immediately instead of appending
-to a slice nothing will ever run.
+`arm` is total — it defers if a build is collecting and runs the arm now
+if none is — so the call site has one branch and no way to forget the
+other half. The carrier is CLOSED in `document.build`'s defer rather than
+after `run()`, so a `Context` reused for row realization finds it closed
+however the build ended.
 
-### Round nine: a row is a build too
+## Round nine: a row is a build too
 
 The rule above was stated for the page and had a hole exactly one scope
 in. A row is also a build that can fail, and until round nine two kinds
@@ -523,7 +520,7 @@ of discarded row left an arm behind:
   a computed over a `<Frozen>` nothing holds, and a message in the row's
   handle published by a component that is in no tree.
 - **A row refused halfway.** At scroll time the page's carrier is closed,
-  so `add` reports false and the arm runs WHERE IT WAS BUILT. A
+  so the arm ran WHERE IT WAS BUILT. A
   `<Frozen AllowError>` early in a template and a sibling further down
   that does not resolve leaves the same debris, with the build failing
   immediately afterwards.
@@ -536,7 +533,7 @@ realized by the composer after `Build` has returned — so
 `pagePending.inFlight()` is the question, asked of the flag the design
 already keeps.
 
-The probe still RECORDS. `armedNested.record` and the `collide` check run
+The probe still RECORDS. `arms.nested.record` and the `collide` check run
 where the `<Frozen>` is built, not where the arm runs, so a page-versus-
 template collision is still a load error. What the probe no longer does
 is subscribe and publish.
@@ -545,3 +542,56 @@ is subscribe and publish.
 is the one a value check cannot make: a dropped arm and an arm that
 published `""` are the same empty string, so it moves the refused row's
 `Allow` afterwards and requires that nothing lands.
+
+## Four fields, three seams, and one of them always missing one
+
+Five review rounds landed in this record and **each of them was the same
+shape**: a piece of arm bookkeeping that did not cross one scope
+boundary. `armedSinks` did not cross the control boundary. Then
+`armedOuter` and the nested record did not cross it either. Then the
+pending arms did not. Each was found by a reviewer rather than by a test,
+and each was silent for the same reason — a field left nil reads exactly
+like a scope that armed nothing, which is also what a correct empty scope
+reads like.
+
+Four fields, three seams that carry them (`document.build`,
+`control()` in `usercontrol.go`, and the `ItemsView` row factory), and
+nothing anywhere saying they belong together. They are one `armScope`
+value now, held behind `Context.arms`:
+
+```go
+type armScope struct {
+	sinks   map[*prop.Property[string]]string
+	outer   map[*prop.Property[string]]string
+	nested  *nestedArms
+	pending *deferredArms
+}
+```
+
+What that buys is not brevity. `control()` is now `child.arms =
+parent.arms`, a single assignment that **cannot** omit a member —
+the next field added to the scope crosses the control boundary without
+anybody remembering this. `document.build` saves and restores one value
+instead of three, and the row factory's divergence — the one place in the
+package that constructs a scope rather than inheriting it — is one
+literal with all four reasons visible side by side, rather than four
+lines a reader has to notice are four.
+
+### The immediate arm was not the runtime path
+
+`if !ctx.armPending.add(arm) { arm() }` had four comments around it — at
+the call site, on the field, on the type, and above the capture in
+`itemsview.go` — all saying the immediate branch was how an `ItemsView`
+row realized after the page build got armed. That stopped being true when
+the row factory got a carrier of its own: every `<Frozen AllowError>` this
+package builds is now built inside an OPEN carrier, the page's or the
+row's. Measured — replacing the whole body of `add` with a bare append
+leaves `./markup` green.
+
+The branch stays, and moves into `deferredArms.arm`, because the
+alternative for a nil or closed carrier is to drop the arm **silently**,
+which is the leak class `armScope.pending` exists to refuse and would be
+the failure mode of whatever call site is added next. A total function
+states that once instead of asking every call site to remember it. Four
+comments describing an unreachable path as the live one is the defect
+that was actually costing something, and it is gone.

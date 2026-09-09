@@ -77,7 +77,7 @@ import (
 // "Focus" -> "Hover" saw a sink holding the OTHER's live failure, decided
 // that differed from its own "", and wrote over it — while the other's
 // computed was clean and so never republished. A load error now refuses
-// that page (Context.armedSinks), and the local makes each arm own only
+// that page (armScope.sinks), and the local makes each arm own only
 // its own transitions regardless, which also stops the same erasure by a
 // page that clears the property itself. The re-read that re-arms errC
 // still happens either way; only the publication is skipped.
