@@ -620,9 +620,14 @@ implementing `gooey.Overlay` — a popup surface, a `ToastHost`, an
 dropdown is not at a position in the document, it is on top of it.
 
 Within the lifted layer, document order is **not** the whole rule.
-`gooey.OverlayRanker` sorts it: `OverlayRankPopup` (0), then
-`OverlayRankToast` (10), then `OverlayRankAdornment` (20), stable, so
-equal ranks keep document order and a plain `Overlay` sorts as a popup.
+`gooey.OverlayRanker` orders it: `OverlayRankPopup` (0), then
+`OverlayRankToast` (10), then `OverlayRankAdornment` (20), and a plain
+`Overlay` ranks as a popup. Equal ranks keep document order — and that
+is a **bucket pass**, not a stable sort. The distinction is the reason
+`appendByRank` exists: "stable" was a claim about the standard library
+that no mutation of this repo could falsify, where appending in
+encounter order within a rank makes the property structural and there is
+no comparator to get wrong.
 The ranks exist because "lifted" alone still left the three hosts
 fighting over position — a toast raised while a menu was open landed
 under the dropdown and was simply not seen
