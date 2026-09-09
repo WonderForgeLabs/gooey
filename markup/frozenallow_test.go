@@ -1707,6 +1707,195 @@ func TestEveryRowStillArmsTheSameTemplateSink(t *testing.T) {
 // The factory's error surfaces on ItemsView.Err(); the second assertion
 // is again the damage, because a refusal that arrives after the page's
 // message is gone is not a refusal.
+// TestTwoItemTemplatesCannotArmOneSink is the collision one scope
+// further out than collide reaches.
+//
+// Two lists on one page, each template arming the same page-owned
+// handle: both are NESTED arms, so neither is in the page's map and
+// collide sees nothing. They erased each other at runtime — A's message
+// genuinely changed "err" -> "", so the own-last-value compare did not
+// stop it, and B's computed was clean so it never republished. Both
+// arms land during Build, because ItemsView.Validate realizes one
+// throwaway row per list, so this is catchable at load and now is.
+// Raised in review of #459.
+func TestTwoItemTemplatesCannotArmOneSink(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <ItemsView Name="a" Items="{{.RowsA}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+    <ItemsView Name="b" Items="{{.RowsB}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	// ONE handle for both lists. Not a page <Frozen> — the point is that
+	// NEITHER arm is the page's, which is what made this invisible.
+	shared := prop.NewSource("")
+	// NON-EMPTY at load, both of them: Validate realizes one row per list
+	// during Build, and that is what puts both arms on the record while
+	// it is still open.
+	rowsA := prop.NewSource([]post{{Title: "a1"}})
+	rowsB := prop.NewSource([]post{{Title: "b1"}})
+	proj := func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   shared,
+		}
+	}
+	ctx.Values["RowsA"] = components.Items(rowsA, proj)
+	ctx.Values["RowsB"] = components.Items(rowsB, proj)
+
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("two item templates armed one handle and the page built clean; " +
+			"the two rows erase each other's message at runtime and neither " +
+			"list is the page, so nothing else in the build can see the pair")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
+	}
+}
+
+// TestTwoItemTemplatesWithTheirOwnSinksStillLoad is the discrimination
+// half of the test above: making record's duplicate fatal must not
+// refuse two lists that arm two different handles, which is the ordinary
+// shape.
+func TestTwoItemTemplatesWithTheirOwnSinksStillLoad(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <ItemsView Name="a" Items="{{.RowsA}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+    <ItemsView Name="b" Items="{{.RowsB}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	rowsA := prop.NewSource([]post{{Title: "a1"}})
+	rowsB := prop.NewSource([]post{{Title: "b1"}})
+	// A handle PER ROW, looked up rather than minted in the projection —
+	// the realistic shape, and the one that makes this discriminate for
+	// the reason TestEveryRowStillArmsTheSameTemplateSink gives.
+	errs := map[string]*prop.Property[string]{}
+	for _, name := range []string{"a1", "b1"} {
+		errs[name] = prop.NewSource("")
+	}
+	proj := func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   errs[x.Title],
+		}
+	}
+	ctx.Values["RowsA"] = components.Items(rowsA, proj)
+	ctx.Values["RowsB"] = components.Items(rowsB, proj)
+
+	if _, err := Build([]byte(page), ctx); err != nil {
+		t.Fatalf("two lists arming two DIFFERENT handles are refused, so the "+
+			"duplicate rule above is about any second nested arm rather than a "+
+			"second arm on one sink: %v", err)
+	}
+}
+
+// TestANestedListsRowStillSeesThePagesArms is the second scope the guard
+// did not reach: a list declared INSIDE another list's item template.
+//
+// ItemsView captured ctx.armedSinks and called it "the page's armed
+// set". It is — at page level. Built inside a row, ctx.armedSinks is the
+// OUTER ROW's deliberately row-local map, so the inner rows got an
+// armedOuter pointing at a row and the page's arms were invisible to
+// them. Load time was still covered by collide; scroll time was not.
+//
+// The outer list is EMPTY at load, which is the whole discriminator: it
+// puts the inner list's build after Build returned, where collide can no
+// longer help and only the captured map answers. Raised in review of
+// #459.
+func TestANestedListsRowStillSeesThePagesArms(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <ItemsView Name="outer" Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <ItemsView Items="{{.Inner}}">
+          <ItemsView.ItemTemplate>
+            <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+              <Text>{{.Label}}</Text>
+            </Frozen>
+          </ItemsView.ItemTemplate>
+        </ItemsView>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	// UNPARSEABLE on the page, so the page arm has a live message to lose.
+	ctx := errAllowCtx("Nonsense")
+	shared := ctx.Values["Err"].(*prop.Property[string])
+	rows := prop.NewSource([]post{})
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		inner := prop.NewSource([]post{{Title: "leaf"}})
+		return map[string]any{
+			"Inner": components.Items(inner, func(y post) map[string]any {
+				return map[string]any{
+					"Label": y.Title,
+					"Cats":  prop.NewSource("NoSuchCategory"),
+					"Err":   shared,
+				}
+			}),
+		}
+	})
+
+	c := allowPage(t, page, ctx)
+	t.Cleanup(c.Close)
+	if shared.Get() == "" {
+		t.Fatal("the page's own arm published nothing, so this fixture cannot " +
+			"show an inner row erasing it")
+	}
+
+	rows.Set([]post{{Title: "one"}})
+	c.Frame()
+
+	outer, ok := ctx.Named["outer"].(*components.ItemsView)
+	if !ok {
+		t.Fatalf("the outer ItemsView is not reachable by name: %T", ctx.Named["outer"])
+	}
+	err := outer.Err()
+	if err == nil {
+		t.Fatal("a row of a NESTED list armed a handle the page had already " +
+			"armed, and nothing refused it. The inner rows' armedOuter is the " +
+			"outer row's map rather than the page's, so the page's arms are " +
+			"invisible one level down")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the template error is not the duplicate-sink one:\n\t%v", err)
+	}
+	if got := shared.Get(); got == "" {
+		t.Error("the page's failure message was erased by the inner row's " +
+			"priming publish before the refusal arrived")
+	}
+}
+
 func TestARowRealizedAfterLoadStillSeesThePagesArms(t *testing.T) {
 	const page = `<Gooey>
   <VStack>

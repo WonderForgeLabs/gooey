@@ -226,13 +226,31 @@ is the thing to read:
   over the set it just read — compared by resolved handle, so two names for
   one property and an alias anywhere in a multi-binding `Allow` are both
   caught;
-- a **second `<Frozen>`** binding a sink another already armed, anywhere on the
-  page including across an `Include` or `UserControl` boundary, **and** including
-  a control instantiated from an item template — they would erase each other's
-  message and leave a subtree sealed with nothing to show. That last clause is
-  new in review of #459: the child `Context` inherited the page's armed set but
-  not the two fields saying *"you are inside a row"*, so a control under a
-  template looked like a page to itself and checked against nothing.
+- a **second `<Frozen>`** binding a sink another already armed — they would
+  erase each other's message and leave a subtree sealed with nothing to show.
+
+**What "already armed" reaches** is worth stating exactly, because this list
+has been ahead of the code twice. Refused: two `<Frozen>` in one scope; a page
+and an item template; a page and a control instantiated from a template, across
+an `Include` or `UserControl` boundary; **two sibling item templates**; and a
+template of a list nested inside another list's template. All of them in either
+document order — the judgement is made at the end of the build, not at the
+moment of the arm.
+
+**Not refused, and it is a rule the author keeps:** two *rows of one list*
+sharing a single handle, where the projection hands every row the same
+`*prop.Property[string]` instead of one of its own. `ItemsView.Validate`
+realizes exactly one row during the build, so the second arm happens at scroll
+time, after the record that would judge it has closed. The symptom is the same
+one this whole list exists to prevent — the rows overwrite each other's
+message — so give each row its own handle, or hand the list one shared handle
+and accept that it reports the last row to fail.
+
+  The template and nested-list clauses are from review of #459: a child
+  `Context` inherited the page's armed set but not the two fields saying *"you
+  are inside a row"*, a second nested arm on one sink was dropped on the floor,
+  and a list built inside a row captured that row's map while calling it the
+  page's.
 
 #### Changing the set at runtime
 

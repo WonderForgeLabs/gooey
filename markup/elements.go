@@ -515,7 +515,14 @@ var defFrozen = &ElementDef{
 			// before, which ItemsView.Validate's throwaway row always is
 			// when the list is declared first. Raised in review of #459.
 			if ctx.armedOuter != nil {
-				ctx.armedNested.record(sink, raw)
+				if was, dup := ctx.armedNested.record(sink, raw); dup {
+					return nil, fmt.Errorf(
+						"markup: <Frozen AllowError=%q>: already the failure channel for "+
+							"<Frozen AllowError=%q> in another item template on this page "+
+							"— two sealed subtrees writing one property erase each other's "+
+							"message, and neither template is the page, so nothing else in "+
+							"this build can see the pair", raw, was)
+				}
 			}
 			armAllowError(f, sink, ctx.Dispatcher)
 		}

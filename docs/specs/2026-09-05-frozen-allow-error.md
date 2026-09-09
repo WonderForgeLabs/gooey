@@ -437,9 +437,23 @@ the page's set as well, while REGISTRATION stays row-local. Both
 directions are pinned, because the fix has an obvious wrong form — share
 one map — that refuses correct markup.
 
-The residual hole is stated rather than closed: two rows sharing one
-handle through the projection has no load-time signal, and the handles
-are indistinguishable by the time they reach this package. The reference
-said "because each row's values carry their own handle", which is an
-assumption about the projection presented as a property of the framework.
-It now says what is enforced and what is not.
+The residual hole is stated rather than closed: two rows of ONE list
+sharing one handle through the projection has no load-time signal. The
+reference said "because each row's values carry their own handle", which
+is an assumption about the projection presented as a property of the
+framework. It now says what is enforced and what is not.
+
+**Corrected in round eight: this paragraph gave the wrong reason.** It
+said the handles are indistinguishable by the time they reach this
+package. They are not — `armedSinks` and `nestedArms` both key by
+`*prop.Property[string]`, so a shared handle is literally the same
+pointer, and that is how round eight caught two item *templates* arming
+one sink. The reason a two-ROW collision has no load-time signal is that
+`ItemsView.Validate` realizes exactly **one** row during the build, so a
+second arm on the same handle never occurs while the nested record is
+open. The two levers that would close it are therefore concrete: realize
+a second row in `Validate`, or record scroll-time arms behind the detach
+seam scoped at `:248`. A reader of the old sentence concluded the hole was
+closed by nature. Round five retired the identical "pointer identity
+cannot catch it" reasoning for the alias guard, and it survived here in a
+second file.

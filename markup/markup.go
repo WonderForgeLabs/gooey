@@ -531,14 +531,31 @@ type nestedArms struct {
 	m    map[*prop.Property[string]]string
 }
 
-// record notes a nested arm, if the document build is still open.
-func (n *nestedArms) record(sink *prop.Property[string], raw string) {
+// record notes a nested arm, if the document build is still open, and
+// REPORTS a second nested arm on the same sink.
+//
+// It used to drop the duplicate on the floor, and that was the collision
+// one scope further out than collide reaches. Two <ItemsView> item
+// templates on one page, each arming the same page-owned handle, are two
+// NESTED arms and neither is in the page's map — so collide sees nothing
+// and the two erase each other at runtime, which is the whole failure
+// Context.armedSinks exists to refuse. Both are catchable at load,
+// because ItemsView.Validate realizes one throwaway row per list DURING
+// the build, so both arms land while open is true and both raw texts are
+// in n.m's hand at the moment of the second.
+//
+// "First raw wins" survives, for the MESSAGE only: the error names the
+// arm already recorded, the way the armedSinks refusal does.
+// Raised in review of #459.
+func (n *nestedArms) record(sink *prop.Property[string], raw string) (was string, dup bool) {
 	if n == nil || !n.open {
-		return
+		return "", false
 	}
-	if _, seen := n.m[sink]; !seen {
-		n.m[sink] = raw
+	if was, seen := n.m[sink]; seen {
+		return was, true
 	}
+	n.m[sink] = raw
+	return "", false
 }
 
 // collide reports the first sink armed BOTH by a nested scope and by the

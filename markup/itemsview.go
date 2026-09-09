@@ -78,7 +78,24 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// returns — so reading it inside the factory would consult whatever
 	// scope happens to be current then, not the page whose arms matter.
 	// Raised in review of #459.
-	pageArmed := ctx.armedSinks
+	//
+	// armedOuter FIRST, and the name is the reason. ctx.armedSinks is the
+	// page's map only when this <ItemsView> is built at page level; for a
+	// list declared INSIDE another list's item template it is the outer
+	// row's deliberately row-local map, so the inner rows got an
+	// armedOuter pointing at a row and the page's arms were invisible to
+	// them. Load time was still covered by collide; scroll time was not,
+	// and an inner row then erased a live page failure with no refusal
+	// anywhere. armedOuter is the page's map at every depth, because a
+	// row context copies it through unchanged.
+	//
+	// The outer ROW's own arms are not lost by this: they go on the
+	// document's nested record, where a second arm on the same sink is
+	// now a load error in its own right. Raised in review of #459.
+	pageArmed := ctx.armedOuter
+	if pageArmed == nil {
+		pageArmed = ctx.armedSinks
+	}
 	pageNested := ctx.armedNested
 	factory := func(values map[string]any) (gooey.Component, error) {
 		item := &Context{
@@ -117,10 +134,25 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// *prop.Property[string] found in a row map straight through,
 			// so a projection that hands every row ONE shared handle gets
 			// no load-time signal and the rows overwrite each other's
-			// message at runtime. That is not fixable from this side — the
-			// handles are indistinguishable by the time they arrive — and
-			// docs/markup-reference.md states it rather than claiming it
-			// cannot happen.
+			// message at runtime.
+			//
+			// THE REASON IS NOT THAT THE HANDLES ARE INDISTINGUISHABLE.
+			// This comment said that, and it is false: armedSinks and
+			// nestedArms both key by *prop.Property[string], so a shared
+			// handle IS the same pointer and a per-row handle is not —
+			// which is exactly how two item TEMPLATES arming one sink is
+			// caught. The real reason a two-ROW collision has no load-time
+			// signal is narrower: ItemsView.Validate realizes exactly ONE
+			// row during the build, so a second arm on the same handle
+			// never happens while the nested record is open.
+			//
+			// That leaves two levers for whoever closes it — realize a
+			// second row in Validate, or record scroll-time arms behind
+			// the detach seam the spec scopes at :248 — rather than the
+			// "closed by nature" the old sentence implied. Round five
+			// retired the same wrong reason for the alias guard;
+			// docs/markup-reference.md states what is enforced.
+			// Raised in review of #459, twice.
 			//
 			// The PAGE's arms are visible through armedOuter, which is the
 			// collision this scoping left open: a <Frozen> on the page and
