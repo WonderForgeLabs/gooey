@@ -1,12 +1,32 @@
 <!--
-LINE NUMBERS WERE STRIPPED FROM THIS FILE'S mouse.go CITATIONS in review
-of #478. They had drifted by roughly a hundred lines — `hitTest` cited
-at :73 was at :231, `DispatchMouse` at :153 was at :335 — and a dated
+SUPERSEDED, IN PART, BY #465: this record says `hitTest` returns the
+DEEPEST component, and since #465 the hit walk asks overlayOf and answers
+by the overlay layer first, then rank, then document order — so a
+shallower overlay beats a deeper ordinary component. Everything the
+record says about the boundary constraining dispatch rather than the
+query still holds; only the word "deepest" is dead. The body is left as
+written because a dated decision record is a record of what was decided
+on its date.
+
+LINE NUMBERS WERE STRIPPED FROM EVERY CITATION IN THIS FILE in review of
+#478. They had drifted by roughly a hundred lines — `hitTest` cited at
+:73 was at :231, `DispatchMouse` at :153 was at :335 — and a dated
 decision record is the one document that must NOT be edited to track the
 tree, so chasing the numbers would have to be redone after every change
-to that file and would be wrong again within the month. The symbol names
-are stable and are what a reader searches for; a line number here was
-never carrying anything the name did not.
+to those files and would be wrong again within the month. The symbol
+names are stable and are what a reader searches for; a line number here
+was never carrying anything the name did not.
+
+THE FIRST PASS STRIPPED ONLY mouse.go's, which is the same mistake one
+size smaller: the argument above is about hand-maintained numbers, not
+about that file, and the thirteen citations left behind were stale for
+exactly the reason the paragraph gives. `FocusManager.walk` at :388 was
+at :477, `HoverState` at :49 was at :42, `Composer.build` at :283 was
+at :409. Measured across the tree rather than argued: before this edit,
+25 of the 34 `symbol` + `file.go:line` citations in the repo's markdown
+named a line the symbol is not on. Stripping this file's took that to
+10, which are somebody else's records to bury; the ratio is the point,
+not the file. Raised in review of #478.
 -->
 
 # The design surface: COD, edit/runtime vocabularies, selection, and a property grid (design)
@@ -53,9 +73,9 @@ It is four:
 
 | Seam | Consumer | What it gives |
 |---|---|---|
-| damage | `Composer.build` (`composer.go:283`) | each child gets its own paint node |
-| input | `FocusManager.walk` (`input.go:388`), `hitTest` (`mouse.go`) | focus order, key bindings, hit-testing |
-| adornment | `visiblyReachable` (`components/adorn.go:146`) | an adornment's anchor must be reachable from the root |
+| damage | `Composer.build` (`composer.go`) | each child gets its own paint node |
+| input | `FocusManager.walk` (`input.go`), `hitTest` (`mouse.go`) | focus order, key bindings, hit-testing |
+| adornment | `visiblyReachable` (`components/adorn.go`) | an adornment's anchor must be reachable from the root |
 | lifecycle | `Composer` startable discovery (`composer.go:398,403`) | timers, spinners, progress bars tick |
 
 A design surface wants five things from its subtree:
@@ -80,7 +100,7 @@ it is the routing.**
 
 Everything that can reach a component from outside, and where it enters:
 
-- **keys** — only through `FocusManager.Dispatch` (`input.go:574`),
+- **keys** — only through `FocusManager.Dispatch` (`input.go`),
   which walks focused → ancestors. A component is reachable only if
   `walk` put it in `m.order`, which needs `Focusable` and
   `AcceptsFocus()`.
@@ -149,12 +169,12 @@ out of the walk.
 
 `KeyBinding`s deserve the separate row: blocking `HandleKey` does not
 block them. `FocusManager.Dispatch` interleaves each level's scoped
-bindings with that level's `HandleKey` (`input.go:574`), so they are two
+bindings with that level's `HandleKey` (`input.go`), so they are two
 independent routes to the same component and freezing has to cut both.
 
 Four touch points, each mirroring a pattern already in the file:
 
-1. **`FocusManager.walk` (`input.go:388`)** — while inside a frozen
+1. **`FocusManager.walk` (`input.go`)** — while inside a frozen
    subtree, keep recording `m.parent` (capture and hover liveness need
    it, and so does `depth`/`ancestor`), keep `FocusHost` wiring, and
    register **nothing targetable**: no `m.order` entry, no `m.bindings`,
@@ -167,7 +187,7 @@ Four touch points, each mirroring a pattern already in the file:
 3. **`setHover` (`mouse.go`)** — the same retarget, so a button in
    the surface does not light up under the pointer. See below for why
    hover is nonetheless not fully frozen.
-4. **`Composer.collect` (`composer.go:395`)** — do not append a
+4. **`Composer.collect` (`composer.go`)** — do not append a
    descendant `Startable` to `c.startable`. This is the widest of the
    four and the one with a safety argument rather than a UX one.
 
@@ -203,7 +223,7 @@ document's first draft, and the reversal is right for a reason stronger
 than animation policy.
 
 `components.Companion` is a `Startable` whose `Start` **spawns a child
-process** (`components/companion.go:133`). A frozen tree that still
+process** (`components/companion.go`). A frozen tree that still
 started its Startables would launch a subprocess the moment somebody
 dropped a `<Companion>` on the design canvas — a side effect outside the
 process, from an editor gesture, with no way to have consented to it.
@@ -214,7 +234,7 @@ That earns a named test of its own —
 freeze failure whose consequence survives the editor exiting.
 
 The `Composer` is the right place: it already *owns* the lifetime of
-everything running inside a composition (`composer.go:389` says so), so
+everything running inside a composition (`composer.go` says so), so
 declining to start a subtree is an existing responsibility taking a new
 input, not a new mechanism.
 
@@ -230,11 +250,11 @@ first place where that convention becomes load-bearing rather than
 stylistic.
 
 **Hover styling.** Elan asked for XAML-style mouseover. `HoverState` is
-an ordinary source property (`mouse.go:49`), so a style that reads it
+an ordinary source property (`mouse.go`), so a style that reads it
 repaints for free and costs the freeze nothing — what is lost is only
 motion *over time*, because gooey has no animation system and an
 animation needs a clock, which in this framework is a lifetime
-(`cmd/browser/gifplay.go:14`). So "freeze the clocks" and "animate on
+(`cmd/browser/gifplay.go`). So "freeze the clocks" and "animate on
 hover" are the same mechanism pointing in two directions, and the split
 falls exactly where the framework already splits: state-driven restyle
 yes, tweened motion no. No new mechanism, and nothing promised that
@@ -368,7 +388,7 @@ if ctx.Decorate != nil { w = ctx.Decorate(e, w) }       // return OUTER
 ```
 
 The funnel is real — `buildComponent`'s three arms all return through
-`named` (`markup/markup.go:693`, `:699`, `:708`, `named` at `:766`). The
+`named` (`markup/markup.go`, `:699`, `:708`, `named` at `:766`). The
 seam would work. **It breaks patching, which is measured, not argued.**
 
 ### What was measured
@@ -384,7 +404,7 @@ container between the `VStack` and the `Text` — exactly the topology
   PatchMarkup cannot rewrite; supported parents are VStack, HStack, Grid,
   Canvas, ButtonBar and Border`.
 
-The cause is `control.childSlot` (`control/markup.go:307`): a **closed
+The cause is `control.childSlot` (`control/markup.go`): a **closed
 type switch over six concrete container types**. `PatchMarkup` finds its
 target's parent and then asks that switch for a write slot; a decorator
 declared anywhere outside `control/` can never be a member.
@@ -473,7 +493,7 @@ element.** Three reasons, and the second is decisive:
 1. A wrapper per element is redundant once the boundary is at the root —
    descendants are already untargetable.
 2. **`named()` would register the wrapper.** The dispatcher applies
-   `named()` once to whatever `Build` returns (`markup/markup.go:766`),
+   `named()` once to whatever `Build` returns (`markup/markup.go`),
    so an element whose builder returns a wrapper puts the *wrapper* in
    `Context.Named`. Every consumer of the address — `Find[T]`,
    `patch_markup`'s fragment-root rule, focus by name, the MCP tree
@@ -564,7 +584,7 @@ What replaces them:
 ### What a resize actually writes, and why availability is a catalog question
 
 Resizing writes `Width` and `Height` — `KindInt`, `BindsLiteral`, rows of
-`universalAttrs` (`markup/catalog.go:225`). Moving writes whatever the
+`universalAttrs` (`markup/catalog.go`). Moving writes whatever the
 **parent** contributes, and that is the same rule the inspector already
 follows through `AttrsFor(spec, parent)`:
 
@@ -593,7 +613,7 @@ tells us, per element and per parent, which parts those are.
 
 ### What the model has, and what a VS-grade grid needs
 
-`AttrSpec` today (`markup/catalog.go:135`):
+`AttrSpec` today (`markup/catalog.go`):
 
 | Field | Present | Grid uses it for |
 |---|---|---|
@@ -805,7 +825,7 @@ Notes 2–4, done in the editor, no framework change:
 - the selection cue is `Style="sel"`, not `warn` — an accent, not an
   alarm (`examples/wysiwyg/components/inspector/inspector.gooey`);
 - enum rows list their own members and binding-only rows say
-  `{{.GoType}}`, via `legalValues` (`examples/wysiwyg/main.go:430`);
+  `{{.GoType}}`, via `legalValues` (`examples/wysiwyg/main.go`);
 - required attributes carry `*` on the name rather than a column that is
   blank nine rows in ten;
 - a description pane shows `Doc` where the catalog has prose and the

@@ -167,9 +167,12 @@ The last sentence is the one that dated fastest: a non-capturing overlay
 did not have to exist first. `MenuBar` on the designer canvas
 ([#430](https://github.com/WonderForgeLabs/gooey/issues/430)) was already
 one, and the divergence between where a surface painted and where it was
-hit shipped for five weeks before #465 closed it. "Worth doing when
-somebody needs it" is a schedule, not a bound, and it does not become
-false loudly.
+hit shipped from #437 (merged 2026-09-01) until #465 (2026-09-09) — a
+week and a day. "Worth doing when somebody needs it" is a schedule, not
+a bound, and it does not become false loudly. The first draft of this
+paragraph said FIVE WEEKS, which is a number nobody measured: the two
+merge dates are eight days apart, and the sentence was making the gap
+sound like negligence it was not. Corrected in review of #478.
 
 ## Damage
 

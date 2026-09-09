@@ -101,7 +101,7 @@ retired "declare it last" rule the thing on top was also the thing the
 walk found first, so the divergence arrived with the freedom rather than
 with the layer.
 
-For those five weeks the divergence was easier to fall into than it had
+For those eight days the divergence was easier to fall into than it had
 been before the lift, not harder. Being last used to be the only thing
 keeping an overlay on top, so nobody could get the paint right and the
 input wrong; once paint stopped needing it and the walk still did, the

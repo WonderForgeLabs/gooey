@@ -347,8 +347,10 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// event back through the capture. Doing it once at the top is also why
 	// setHover does not repeat the check.
 	//
-	// HitTest itself still returns the deepest component — see the comment
-	// there. This is dispatch; that is a query.
+	// HitTest itself does not retarget: it answers with the component that
+	// paints last among those the walk reaches — the overlay layer first,
+	// then rank, then document order — see the comment there. This is
+	// dispatch; that is a query.
 	//
 	// TWO retargets now, because AllowPointer and AllowHover are separate
 	// categories and a design surface wants exactly that split: the
@@ -435,10 +437,11 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 // framework behaviours move it, and paraphrasing either one at the call
 // site is how a check drifts from the routing it claims to model:
 //
-//   - Frozen retargets. `HitTest` returns the deepest component on
-//     purpose (see the comment there), but a frozen subtree does not
-//     act, so dispatch routes to the frozen HOST. A check on the raw hit
-//     would clear an event whose delivery lands somewhere else entirely.
+//   - Frozen retargets. `HitTest` answers with the component that paints
+//     last under the cell, on purpose (see the comment there), but a
+//     frozen subtree does not act, so dispatch routes to the frozen
+//     HOST. A check on the raw hit would clear an event whose delivery
+//     lands somewhere else entirely.
 //   - Capture overrides. While the pointer is captured every event goes
 //     to the captor regardless of where it points — which is what makes
 //     a drag work outside the captor's bounds, and a check on the hit

@@ -45,9 +45,10 @@ func (ed *editor) bindPicking(hit func(x, y int) gooey.Component, invalidate fun
 // the surface root, then each nested node down to the deepest one under
 // the cursor. Empty when the hit is not in the document at all.
 //
-// THIS IS THE WALK, AND IT IS DELIBERATELY NOT A POLICY. HitTest returns
-// the deepest COMPONENT — the <Text> inside the <Border> inside the node
-// — and the interesting question is which DESIGN NODE owns it. Answering
+// THIS IS THE WALK, AND IT IS DELIBERATELY NOT A POLICY. HitTest answers
+// with a COMPONENT — the <Text> inside the <Border> inside the node, or
+// whatever an overlay put on top of it — and the interesting question is
+// which DESIGN NODE owns it. Answering
 // that as a chain rather than as an index is what has let the policy
 // invert twice without this function changing a line: it climbed to the
 // top-level kid while the selection was a flat index, took the deepest

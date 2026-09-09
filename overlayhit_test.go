@@ -16,6 +16,14 @@ import (
 // ordinary layer where position still decides, depth, transparency, and
 // the cost the whole design was constrained by.
 //
+// EVERY COMPOSER HERE IS CLOSED, and it was not a lifetime argument
+// that made three of them so — it was that those three needed the Frame
+// and therefore kept a handle. Two shapes side by side in one file is a
+// reader's problem whichever is right: the next person has to work out
+// whether the bare NewComposer(...).Frame() calls were a considered
+// exception or an oversight. They were an oversight. Raised in review
+// of #478.
+//
 // A NOTE ON THE FIXTURE. twoKids arranges every child to the SAME rect,
 // so all of them contain (0,0) and the answer is decided entirely by the
 // ordering rule rather than by geometry. That is deliberate: a fixture
@@ -38,7 +46,9 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 
 	t.Run("overlay declared first", func(t *testing.T) {
 		root := &twoKids{kids: []Component{over, page}}
-		NewComposer(root, 12, 3).Frame()
+		c := NewComposer(root, 12, 3)
+		t.Cleanup(c.Close)
+		c.Frame()
 		if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(over) {
 			t.Errorf("HitTest returned %T, want the overlay: it paints above the page "+
 				"from anywhere, so it takes the press from anywhere. A later ordinary "+
@@ -48,7 +58,9 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 
 	t.Run("overlay declared after the page", func(t *testing.T) {
 		root := &twoKids{kids: []Component{page, over}}
-		NewComposer(root, 12, 3).Frame()
+		c := NewComposer(root, 12, 3)
+		t.Cleanup(c.Close)
+		c.Frame()
 		if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(over) {
 			t.Errorf("HitTest returned %T, want the overlay — the answer must not depend "+
 				"on where the host is declared, in EITHER direction", hit)
@@ -68,7 +80,9 @@ func TestPositionStillDecidesInsideTheOrdinaryLayer(t *testing.T) {
 	first := &stripe{ch: 'A'}
 	last := &stripe{ch: 'B'}
 	root := &twoKids{kids: []Component{first, last}}
-	NewComposer(root, 12, 3).Frame()
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
 
 	if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(last) {
 		t.Errorf("HitTest returned %T, want the LATER sibling: neither component is "+
@@ -89,7 +103,9 @@ func TestEqualRanksFallBackToPosition(t *testing.T) {
 	first := &rankedStripe{stripe{ch: 'A', rank: OverlayRankToast}}
 	last := &rankedStripe{stripe{ch: 'B', rank: OverlayRankToast}}
 	root := &twoKids{kids: []Component{first, last}}
-	NewComposer(root, 12, 3).Frame()
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
 
 	if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(last) {
 		t.Errorf("HitTest returned %T, want the later of two EQUAL ranks. Rank is not "+
@@ -112,7 +128,9 @@ func TestTheDeepestComponentStillWins(t *testing.T) {
 	leaf := &stripe{ch: 'L'}
 	inner := &twoKids{kids: []Component{leaf}}
 	root := &twoKids{kids: []Component{inner}}
-	NewComposer(root, 12, 3).Frame()
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
 
 	if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(leaf) {
 		t.Errorf("HitTest returned %T, want the leaf. Children paint over their "+
@@ -151,7 +169,9 @@ func TestATransparentOverlayHostPassesThePressToItsOwnChild(t *testing.T) {
 	host := &clearStripe{kids: []Component{inside}}
 	page := &stripe{ch: 'P'}
 	root := &twoKids{kids: []Component{host, page}}
-	NewComposer(root, 12, 3).Frame()
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
 
 	switch hit := NewFocusManager(root).HitTest(0, 0); hit {
 	case Component(inside):
@@ -177,7 +197,9 @@ func TestATransparentOverlayHostPassesThePressToItsOwnChild(t *testing.T) {
 	// anywhere else.
 	empty := &clearStripe{}
 	root = &twoKids{kids: []Component{empty, page}}
-	NewComposer(root, 12, 3).Frame()
+	c2 := NewComposer(root, 12, 3)
+	t.Cleanup(c2.Close)
+	c2.Frame()
 	if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(page) {
 		t.Errorf("HitTest returned %T, want the page. An empty HitTestTransparent "+
 			"overlay spanning the screen must not take the press — it is lifted, so "+
@@ -345,7 +367,9 @@ func TestTheHitWalkAllocatesNothing(t *testing.T) {
 	over := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
 	inner := &twoKids{kids: []Component{&stripe{ch: 'A'}, &stripe{ch: 'B'}}}
 	root := &twoKids{kids: []Component{over, inner, &stripe{ch: 'P'}}}
-	NewComposer(root, 12, 3).Frame()
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
 	m := NewFocusManager(root)
 
 	// NON-VACUITY: a walk that returned nil immediately would also

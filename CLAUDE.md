@@ -310,7 +310,7 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `appendByRank` (`composer.go:402`, a package-level
+between two — and `appendByRank` (`composer.go`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
@@ -355,7 +355,7 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:175`) now returns the component that
+`FocusManager.HitTest` (`mouse.go`) now returns the component that
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
@@ -403,7 +403,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:813`).
-`DispatchMouse` (`mouse.go:312`) bubbles the same way from the
+`DispatchMouse` (`mouse.go`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
