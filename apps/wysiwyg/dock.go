@@ -287,21 +287,123 @@ func (p *dockPane) bindBody(c gooey.Component) {
 // used to sit here described an `extent` function that does not exist;
 // the sizing rule it explained lives inline in place(), and moved there.
 //
-// THE CALL SITES, as they actually are: place() asks twice per pane —
-// once for the extent and once inside the placement loop — on BOTH axes,
-// and laidOutExtent asks once more for the bottom strip. The
-// `vertical &&` short-circuit this paragraph used to describe went away
-// when #441 made collapse a two-axis rule; the version before that
-// described an `extent` function which no longer exists at all.
+// WHAT REPLACED THAT PROSE WAS A LIST OF THE CALL SITES, and it was
+// already wrong when it was written: it named place() and laidOutExtent
+// and missed slotMinimum and allCollapsed — and laidOutExtent does not
+// call this at all, it calls allCollapsed. Three paragraphs in a row
+// here have described a shape the code had left, which is enough to
+// stop writing that kind of paragraph. `git grep collapsedNow` is the
+// list, it is free, and it cannot go stale.
 //
-// No effect either way — layout runs outside any evaluation context, so
-// these are plain reads and record nothing, exactly as place's own
-// comment says. But a comment naming a mechanism that no longer runs is
-// what CLAUDE.md's "dependencies are recorded by the Get that actually
-// runs" trap exists to make visible, and this one has now named a
-// vanished mechanism twice. Corrected in review of #436 and again in
-// review of #480.
+// THE RULE, which can: every caller is a layout pass or a minimum
+// derived from one. Layout runs outside any evaluation context
+// (`composer.go`, in `Composer.Frame`), so every one of these is a
+// plain read that records nothing — exactly as place's own comment
+// says. A caller from inside an evaluating node would be the
+// interesting case and there is none; if one appears, it subscribes,
+// and that is the thing to notice rather than the count.
+//
+// The reason to care at all is CLAUDE.md's "dependencies are recorded
+// by the Get that actually runs" trap: a comment naming a mechanism
+// that no longer runs is what makes that invisible. Corrected in review
+// of #436, of #480, and of #480 again.
 func (p *dockPane) collapsedNow() bool { return p.collapsed.Get() }
+
+// trimHeaders caps the collapsed panes' extents — the non-zero entries
+// of ext — so they sum to no more than budget, taking cells off the
+// widest first.
+//
+// WHAT THIS REPLACED decremented the widest entry once per CELL of
+// shortfall: O(shortfall x panes), run on both Measure and Arrange,
+// with shortfall a column count. Small until a terminal is wide and a
+// title is long, and the water-filling spelling is no harder to read.
+// Raised in review of #480.
+//
+// IT IS EXACTLY EQUIVALENT, and that was measured rather than argued.
+// Every (ext, budget) with up to four panes, extents 0..8 and budgets
+// 0..19 — 63k cases — gives the same vector as the per-cell loop, which
+// is why the remainder below is handed out from the RIGHT: the old loop
+// picked the first STRICT maximum, so on a tie the later pane kept the
+// extra column, and reproducing that is what makes this a refactor
+// rather than a change nobody asked for.
+//
+// THE SAME SWEEP RETIRED A FINDING. Review of #480 reported that a
+// collapsed pane could be trimmed to ZERO and lose the chevron that is
+// the only way to re-open it, and that the trim therefore needed a
+// floor of one. It cannot: to decrement a pane to zero the loop must
+// find it the strict maximum, which means every other pane is already
+// at zero, which means the budget could not have given one column to
+// each. Zero of the 63k cases zeroed a pane while the budget had room
+// for it. So the floor is a CONSEQUENCE of taking from the widest, not
+// something to add on top — and TestTheTrimNeverZeroesAHeaderItCanAfford
+// asserts the consequence, since nothing else in the suite did.
+func trimHeaders(ext []int, budget int) {
+	sum, n, hi := 0, 0, 0
+	for _, e := range ext {
+		sum += e
+		if e > 0 {
+			n++
+		}
+		if e > hi {
+			hi = e
+		}
+	}
+	if sum <= budget {
+		return
+	}
+	// NOT EVEN A CHEVRON EACH. Document order decides who keeps one —
+	// the same rule the `left` clamp in place() applies when the slot
+	// itself runs out, and the only rule available once the floor
+	// cannot be met for everybody.
+	if n > budget {
+		for i := len(ext) - 1; i >= 0; i-- {
+			switch {
+			case ext[i] == 0:
+			case budget > 0:
+				ext[i], budget = 1, budget-1
+			default:
+				ext[i] = 0
+			}
+		}
+		return
+	}
+	// The largest shared cap that still fits. Everything above it comes
+	// down to it, which is "off the widest first" taken to its limit in
+	// one step.
+	lo := 1
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if cappedSum(ext, mid) <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	// The remainder after capping, handed back a cell at a time from the
+	// RIGHT. Every pane above the cap is equal at it, so width has
+	// nothing left to say and the direction is free — which makes it
+	// worth spending on matching the loop this replaced exactly. See
+	// the equivalence note above.
+	left := budget - cappedSum(ext, lo)
+	for i := len(ext) - 1; i >= 0; i-- {
+		if ext[i] <= lo {
+			continue
+		}
+		ext[i] = lo
+		if left > 0 {
+			ext[i]++
+			left--
+		}
+	}
+}
+
+func cappedSum(ext []int, c int) int {
+	s := 0
+	for _, e := range ext {
+		s += min(e, c)
+	}
+	return s
+}
 
 func (p *dockPane) Measure(avail gooey.Size) gooey.Size {
 	body := gooey.Size{W: avail.W, H: max(0, avail.H-headerH)}
@@ -883,25 +985,27 @@ func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
 	//
 	// So the collapsed panes are capped at total-flex — one cell each
 	// for the open ones, which is the least that is still a pane — and
-	// the shortfall comes off the WIDEST header each time round. Evenly
-	// would zero a one-column pane while an eight-column neighbour keeps
-	// seven; off the widest is the same rule ArrangeChild's own share
-	// loop reads as fair, and it terminates because every pass either
-	// removes a cell or finds nothing left to remove. Raised in review
-	// of #480.
-	if short := fixed - max(0, total-flex); short > 0 {
-		for ; short > 0; short-- {
-			w, at := 0, -1
-			for i := range panes {
-				if ext[i] > w {
-					w, at = ext[i], i
-				}
-			}
-			if at < 0 {
-				break
-			}
-			ext[at]--
-			fixed--
+	// what they lose comes off the WIDEST header first. Evenly would
+	// zero a one-column pane while an eight-column neighbour keeps
+	// seven.
+	//
+	// THE FRAMEWORK'S OWN ANALOGUE IS NOT WIDEST-FIRST, and the
+	// paragraph that used to sit here said it was: it cited
+	// "ArrangeChild's own share loop", which does not exist —
+	// ArrangeChild applies the margin/size/align/visibility sandwich to
+	// ONE child and shares nothing. The real analogue is
+	// components.clampToExtent, and it truncates in DOCUMENT ORDER: the
+	// first tracks keep their stated size and the last ones lose,
+	// because a fixed track means "this many cells". That is right for
+	// a grid, where the sizes were declared, and wrong here, where they
+	// are derived from title text nobody chose for its length. Naming
+	// the difference is the point; borrowing authority from a rule that
+	// was never read was the defect. Raised in review of #480.
+	if budget := max(0, total-flex); fixed > budget {
+		trimHeaders(ext, budget)
+		fixed = 0
+		for _, e := range ext {
+			fixed += e
 		}
 	}
 

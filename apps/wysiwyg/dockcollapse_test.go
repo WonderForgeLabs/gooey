@@ -680,6 +680,87 @@ func TestTheTrimComesOffTheWidestHeader(t *testing.T) {
 	}
 }
 
+// TestTheTrimNeverZeroesAHeaderItCanAfford is the finding that turned
+// out not to be one, kept as an assertion because nothing else in the
+// suite made it.
+//
+// Review of #480 reported that the trim needed a floor of one column,
+// on the ground that a collapsed pane walked to zero has no chevron and
+// the chevron is the only way to re-open it. The premise is sound and
+// the conclusion is not: taking from the widest each pass ALREADY
+// implies the floor, because a pane can only be the strict maximum on
+// its way to zero when every other pane is already there — which is
+// exactly the case where the budget could not have given one column to
+// each anyway.
+//
+// So the floor is a consequence, and a consequence nobody was holding.
+// This sweeps the same space the equivalence check did — every pane
+// count to four, extents to eight, budgets to nineteen — and asserts
+// it directly, so a future trim that IS fair-by-halves or proportional
+// cannot quietly drop it.
+func TestTheTrimNeverZeroesAHeaderItCanAfford(t *testing.T) {
+	var walk func(ext []int, k int)
+	cases := 0
+	walk = func(ext []int, k int) {
+		if k == 0 {
+			n := 0
+			for _, e := range ext {
+				if e > 0 {
+					n++
+				}
+			}
+			for budget := 0; budget < 20; budget++ {
+				got := append([]int(nil), ext...)
+				trimHeaders(got, budget)
+				cases++
+				sum := 0
+				for i, e := range got {
+					sum += e
+					if e > ext[i] {
+						t.Fatalf("trimHeaders(%v, %d) = %v: pane %d GREW", ext, budget, got, i)
+					}
+				}
+				if sum > budget && sumOf(ext) > budget {
+					t.Fatalf("trimHeaders(%v, %d) = %v sums to %d, over budget",
+						ext, budget, got, sum)
+				}
+				if budget < n {
+					continue
+				}
+				for i, e := range got {
+					if ext[i] > 0 && e == 0 {
+						t.Fatalf("trimHeaders(%v, %d) = %v: pane %d lost its chevron "+
+							"in a budget with room for %d of them. A collapsed pane at "+
+							"zero columns cannot be re-opened, because the chevron is "+
+							"the hit target", ext, budget, got, i, n)
+					}
+				}
+			}
+			return
+		}
+		for e := 0; e <= 8; e++ {
+			walk(append(ext, e), k-1)
+		}
+	}
+	for k := 1; k <= 4; k++ {
+		walk(nil, k)
+	}
+	// A FLOOR ON THE SWEEP ITSELF, because a walk that generated nothing
+	// would pass every assertion above.
+	if cases < 100000 {
+		t.Fatalf("the sweep ran %d cases, which is fewer than the space it "+
+			"claims to cover", cases)
+	}
+}
+
+func sumOf(ns []int) int {
+	n := 0
+	for _, v := range ns {
+		n += v
+	}
+	return n
+}
+
 // TestTheStripRowPastACollapsedHeaderIsBlank is finding 4, and it is
 // about a row that now belongs to nobody.
 //
@@ -697,6 +778,13 @@ func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
 	ed, c := dockFixture(t)
 	panel := pane(t, ed, "panel")
 	ed.dock.Move(panel, dockBottom)
+	// A WIDE GLYPH IN THE HEADER. CLAUDE.md's rule about column counts
+	// is that an ASCII fixture agrees with itself under either the rune
+	// rule or the column rule and so passes against the bug; this row
+	// now holds a title whose rune count and column count differ, which
+	// is the only state in which the read below is saying anything.
+	// Raised in review of #480.
+	panel.Title = "\u4e16panel"
 	settle(t, c)
 
 	// A BODY WORTH LOSING. The row is only interesting if the pane
@@ -727,13 +815,29 @@ func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
 			"remainder this arm is about is not where it thinks",
 			got.W, panel.headerCols())
 	}
-	line := []rune(render.RowText(f.Cells, got.Y))
-	past := got.X + got.W
-	if past >= len(line) {
-		t.Fatalf("the header reaches column %d of a %d-column row, so there is "+
-			"nothing to its right to assert about", past, len(line))
+	// READ BY CELL, NOT BY RUNE. `past` is a COLUMN, and
+	// render.RowText's result is indexable by rune — the two agree only
+	// while every glyph in the row is one column wide, which is true of
+	// this fixture and of no promise anybody made about it. A title with
+	// a CJK character or an emoji in it would slice at the wrong place
+	// and the assertion would still pass, for the wrong row. Raised in
+	// review of #480.
+	if row := render.RowText(f.Cells, got.Y); len([]rune(row)) == f.Cells.W {
+		t.Fatalf("the strip row is %d runes across %d columns, so a rune index "+
+			"and a column index agree and this arm cannot tell them apart. The "+
+			"wide title above is what is supposed to separate them",
+			len([]rune(row)), f.Cells.W)
 	}
-	if rest := strings.TrimRight(string(line[past:]), " "); rest != "" {
+	past := got.X + got.W
+	if past >= f.Cells.W {
+		t.Fatalf("the header reaches column %d of a %d-column row, so there is "+
+			"nothing to its right to assert about", past, f.Cells.W)
+	}
+	var tail strings.Builder
+	for x := past; x < f.Cells.W; x++ {
+		tail.WriteString(f.Cells.At(x, got.Y).Text())
+	}
+	if rest := strings.TrimRight(tail.String(), " "); rest != "" {
 		t.Errorf("the strip row past the collapsed header at column %d reads %q, "+
 			"want blank. Those cells belong to no component now, so nothing "+
 			"repaints them — a leftover there is the pane's old body, still on "+
