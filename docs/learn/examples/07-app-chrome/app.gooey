@@ -39,11 +39,13 @@
     <KeyBinding Gesture="ctrl+s" Command="{{.Start}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
 
-    <!-- Overlays. All three are lifted out of document order into a
-         paint layer of their own, so they paint above the content from
-         wherever they are declared; they are at the end here because
-         that reads best, not because it decides anything. Grid.Row
-         still places the bar on the top row. Within the overlay layer a
+    <!-- Overlays. What is lifted out of document order into a paint
+         layer of its own is the ToastHost, the AdornmentLayer, and the
+         MenuBar's DROPDOWN — not the bar, which is why Grid.Row still
+         places it on the top row. The lifted parts paint above the
+         content from wherever their hosts are declared; the hosts are
+         at the end here because that reads best, not because it
+         decides anything. Within the overlay layer a
          RANK decides: the AdornmentLayer is at the top, then the
          ToastHost, then the dropdown — so a tip paints above a toast
          and a toast paints above an open menu, whatever order these

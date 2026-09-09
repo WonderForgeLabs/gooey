@@ -69,8 +69,14 @@ lifted layer:
 | `OverlayRankToast` | 10 | `ToastHost` |
 | `OverlayRankAdornment` | 20 | `AdornmentLayer` — tooltips, validation markers, drag ghosts |
 
-The sort is **stable**, so equal ranks keep document order, and a plain
-`Overlay` that names no rank sorts as a popup. The rank is asked of the
+There is no sort. `appendByRank` is a **bucket pass** — it walks the
+lifted nodes once and appends each into its rank's bucket — so equal
+ranks keep document order *structurally*, by never being reordered,
+rather than on a comparator's promise to be stable. A plain `Overlay`
+that names no rank lands in the popup bucket. `docs/architecture.md`
+carries the same distinction and the reason it is worth drawing: a claim
+about the standard library's guarantee is one no mutation of this repo
+could falsify. The rank is asked of the
 **lifting root only**: a popup nested inside a toast inherits the
 toast's rank rather than sorting out of its parent's run, so a lifted
 subtree always comes up whole.

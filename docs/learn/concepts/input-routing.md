@@ -47,11 +47,15 @@ A mouse event finds its target by hit-testing the retained tree — deepest
 component first, later siblings before earlier ones — then bubbles up the
 same ancestor chain.
 
-**Document order still decides this, and it is the one place it still
-does.** Paint order no longer follows the document: a `gooey.Overlay` is
-lifted out into a second layer and ranked within it, so an overlay paints
-above content it was declared before. The hit walk does not do that lift —
-it walks the tree as written. So for an overlay the two orders genuinely
+**Document order still decides this, and it is the one place a LIFT
+does not intervene.** It was "the one place document order still
+decides" for a round, which is an overclaim: document order is still the
+whole rule for paint among ordinary components, and still the tiebreak
+between equal ranks inside the overlay layer. What is different here is
+that the hit walk does no lifting at all — a `gooey.Overlay` is lifted
+out into a second layer and ranked within it, so an overlay paints above
+content it was declared before, and the hit walk walks the tree as
+written. So for an overlay the two orders genuinely
 disagree, and a popup that visibly covers a button is not necessarily the
 thing a click at that point reaches. `components.Popup` handles this by
 capturing the pointer while it is open rather than by relying on position.

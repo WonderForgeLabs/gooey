@@ -1,11 +1,14 @@
 package gooey
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -36,11 +39,58 @@ import (
 // dozens of comments correctly describe the forward pass, the restore
 // sweep and later-sibling painting. Only the overlay-hosting rule is the
 // one that changed.
+// PARALLEL OVER THE FILES, because this is the most expensive test in
+// the root package — 11.9s of the package's 26s, measured — and the work
+// is embarrassingly parallel: read a file, match it, produce findings.
+// Nothing shared is written.
+//
+// The findings are collected into a slice INDEXED BY FILE and reported
+// after the join, not sent to t.Errorf from the workers. Two reasons,
+// and the first is correctness: t.Fatalf outside the test's own
+// goroutine does not fail the test, it is a bare runtime.Goexit and the
+// message is lost. The second is that a test whose failures arrive in
+// scheduler order is a test whose output changes between runs for no
+// reason anybody can act on.
+//
+// Raised in review of #458.
 func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
-	for _, f := range docFiles(t) {
+	files := docFiles(t)
+	found := make([][]string, len(files))
+	errs := make([]error, len(files))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for i, f := range files {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			found[i], errs[i] = retiredRuleProblems(f)
+		}()
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ps := range found {
+		for _, p := range ps {
+			t.Error(p)
+		}
+	}
+}
+
+// retiredRuleProblems is the per-file half, pure so it can run off the
+// test's goroutine: it returns what it found rather than reporting it.
+func retiredRuleProblems(f string) ([]string, error) {
+	var problems []string
+	{
 		body, err := os.ReadFile(f)
 		if err != nil {
-			t.Fatalf("reading %s: %v", f, err)
+			return nil, fmt.Errorf("reading %s: %w", f, err)
 		}
 		// A PREFILTER, because the loop below runs a dozen
 		// case-insensitive alternations over every line of every
@@ -61,6 +111,13 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 		// and then the per-line loop scans the matches again. The cheap
 		// inexact filter beats the exact one here.
 		//
+		// WHAT ACTUALLY MOVED THE NUMBER was running the files in
+		// parallel, not filtering harder: 11.9s to 1.4s. The filter is
+		// still worth keeping — it is what makes each worker cheap —
+		// but the numbers above are the reason to stop tuning it. Both
+		// measurements stay because the second is only interesting
+		// against the first.
+		//
 		// So this stays — and the words it gates on are now a named list
 		// that a test CHECKS against every sample retiredRule is pinned
 		// with, rather than a hazard written down and hoped for. The
@@ -73,12 +130,26 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 		// "end of", and the new check caught it before they shipped.
 		low := strings.ToLower(string(body))
 		if !containsAnyPrefilterWord(low) {
-			continue
+			return nil, nil
 		}
 		lines := strings.Split(string(body), "\n")
 		if declaresItselfSuperseded(lines) {
-			continue
+			return nil, nil
 		}
+		// ONE REPORT PER STATEMENT, and the first version had none.
+		//
+		// A sentence is found TWICE whenever the line above it does not
+		// state the rule on its own: once at that line through the join,
+		// and once at the sentence's own line. The first report then
+		// names whatever the line above happens to be — a blank line, in
+		// the case that found this — so a single stale sentence read as
+		// two violations, one of them at a location with nothing on it.
+		//
+		// Found by TestTheScanItselfReportsAFixtureFile, on the first
+		// run of the first fixture ever pointed at this scan, which is
+		// the argument for that test rather than a remark about this
+		// one. Raised in review of #458.
+		reported := map[int]bool{}
 		for i, line := range lines {
 			// The line AND the line joined to its successor. A rule
 			// statement wrapped across two comment lines —
@@ -112,22 +183,45 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 				// it, while the same sentence matched cleanly one line
 				// down. A guard that reports a corrected site because of
 				// where its own lookahead started is noise.
+				//
+				// EXTENDING, NOT MOVING, and the first version moved it.
+				// It passed `span` alone and the window was computed
+				// either side of that, so a wrapped hit ran [i-1, i+3]
+				// — it bought the line below and paid for it with the
+				// line ABOVE, which is where a correction most often
+				// sits ("…is what this used to say" lands before the
+				// quote as readily as after it). Both ends of the
+				// statement are passed now. Raised in review of #458.
 				span = i + 1
 			}
-			if qualifiedNearSpan(lines, span, hit) {
+			if qualifiedNearSpan(lines, i, span, hit) {
 				continue
 			}
-			t.Errorf("%s:%d states the retired overlay rule with nothing "+
-				"nearby to qualify it:\n\t%s\n"+
-				"Overlays are lifted out of document order into a paint "+
-				"layer (#437) and ranked within it (#439), so declaring "+
-				"one last decides nothing. Either state the current rule, "+
-				"or mark the sentence as history — the markers this test "+
-				"accepts are in qualifierRes. Hit-testing is the one thing "+
-				"position still orders; say so explicitly if that is what "+
-				"you mean.", f, i+1, strings.TrimSpace(line))
+			if reported[span] {
+				continue
+			}
+			reported[span] = true
+			// ANCHORED ON THE LINE THAT SAYS SOMETHING. When the join is
+			// what matched and the first line is blank or bare comment
+			// marker, pointing a reader at it is pointing them at
+			// nothing.
+			at := i
+			if strings.TrimSpace(continuationRe.ReplaceAllString(lines[i], "")) == "" {
+				at = span
+			}
+			problems = append(problems, fmt.Sprintf(
+				"%s:%d states the retired overlay rule with nothing "+
+					"nearby to qualify it:\n\t%s\n"+
+					"Overlays are lifted out of document order into a paint "+
+					"layer (#437) and ranked within it (#439), so declaring "+
+					"one last decides nothing. Either state the current rule, "+
+					"or mark the sentence as history — the markers this test "+
+					"accepts are in qualifierRes. Hit-testing is the one thing "+
+					"position still orders; say so explicitly if that is what "+
+					"you mean.", f, at+1, strings.TrimSpace(lines[at])))
 		}
 	}
+	return problems, nil
 }
 
 // prefilterWords is what TestNoFileTeachesTheRetiredOverlayRule requires a
@@ -386,7 +480,7 @@ var (
 // used to say" lands on the same line or the next one — and it is too
 // narrow to reach a neighbouring paragraph that happens to be right.
 func qualifiedNear(lines []string, i int) bool {
-	return qualifiedNearSpan(lines, i, lines[i])
+	return qualifiedNearSpan(lines, i, i, lines[i])
 }
 
 // qualifiedNearSpan is qualifiedNear with the hit-test exemption read
@@ -397,9 +491,14 @@ func qualifiedNear(lines []string, i int) bool {
 // i+1, and refusing the exemption there would reject the very sentence
 // hitTestExemption exists to admit. It is still not the window — i+2 is
 // no more part of the sentence than it ever was.
-func qualifiedNearSpan(lines []string, i int, hit string) bool {
+//
+// first AND last, because a statement can occupy two lines and the
+// window belongs either side of the WHOLE of it. Passing one index and
+// computing ±2 around it slides the window down for a wrapped hit
+// instead of widening it, which silently drops the line above.
+func qualifiedNearSpan(lines []string, first, last int, hit string) bool {
 	const window = 2
-	lo, hi := i-window, i+window
+	lo, hi := first-window, last+window
 	if lo < 0 {
 		lo = 0
 	}
@@ -462,9 +561,15 @@ func docFiles(t *testing.T) []string {
 		}
 		switch filepath.Ext(p) {
 		case ".go", ".md", ".gooey":
-			// This file quotes the rule to test for it; exempting it by
-			// name is honest, and it is the only name in here.
-			if filepath.Base(p) == "zorderdocs_test.go" {
+			// THIS FILE quotes the rule in order to test for it, and it
+			// is the only exemption in here. The path is the whole
+			// path, not the basename: `filepath.Base` exempts a
+			// same-named file at ANY depth, so a future
+			// `packs/whatever/zorderdocs_test.go` would be skipped
+			// silently — an exemption that grows by itself is the one
+			// shape an exemption must not have. Raised in review of
+			// #458.
+			if filepath.ToSlash(p) == "zorderdocs_test.go" {
 				return nil
 			}
 			out = append(out, filepath.ToSlash(p))
@@ -675,6 +780,257 @@ func TestAWrappedQualifierStillExempts(t *testing.T) {
 	if !qualifiedNear(lines, 0) {
 		t.Error("a correction wrapped across two lines does not qualify the " +
 			"statement it corrects, so the guard fires on the sweep's own prose")
+	}
+}
+
+// TestNoDocCallsTheRankPassAStableSort is the guard the round-12 review
+// left implicit, and the finding it comes from is worth stating in full
+// because it is a claim about a MECHANISM rather than a behaviour.
+//
+// `appendByRank` walks the lifted nodes once and appends each into its
+// rank's bucket. There is no comparator and no call into `sort`. Equal
+// ranks therefore keep document order STRUCTURALLY — by never being
+// reordered — and "the sort is stable" describes a different program:
+// one whose correctness rests on the standard library's guarantee, which
+// no mutation of this repo could falsify. docs/architecture.md draws
+// that distinction at length; docs/learn/concepts/overlays.md contradicted
+// it in the same change.
+//
+// THE MECHANISM HALF IS ASSERTED FIRST, so the prose rule cannot outlive
+// its subject: if appendByRank ever really does sort, this test says so
+// and the docs it polices become correct rather than wrong.
+func TestNoDocCallsTheRankPassAStableSort(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("reading composer.go: %v", err)
+	}
+	fn := appendByRankBody(t, string(src))
+	for _, bad := range []string{"sort.", "slices.Sort", "slices.SortStable"} {
+		if strings.Contains(fn, bad) {
+			t.Fatalf("appendByRank now calls %s, so it really is a sort and the "+
+				"prose rule below is guarding a claim that stopped being wrong. "+
+				"Delete this test with the paragraphs it polices", bad)
+		}
+	}
+
+	claim := regexp.MustCompile(`(?i)stable sort|sort is \*{0,2}stable`)
+	// SCOPED TO THE RANK PASS BY A POSITIVE REQUIREMENT, not by an
+	// exemption — the window must NAME the thing this rule is about.
+	// Without it the guard reported apps/wysiwyg/browser.go, which says
+	// "the sort is STABLE so an empty query leaves the list in its
+	// scanned order" about an entirely different and entirely correct
+	// sort. A guard that fires on somebody else's correct prose is noise
+	// twice over: wrong, and about a file its author will not recognise.
+	subject := regexp.MustCompile(`(?i)appendByRank|overlay|OverlayRank|\branks?\b`)
+	// The epitaph: a sentence may say "stable sort" in order to say it is
+	// NOT one. Narrow on purpose — "not a", "rather than a", "was a
+	// claim" — because a loose exemption here would admit the very
+	// sentence this exists to catch.
+	buried := regexp.MustCompile(`(?i)not a stable sort|rather than a stable sort|` +
+		`no sort|never a stable sort|"stable" was a claim`)
+
+	var problems []string
+	for _, f := range docFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if !strings.Contains(strings.ToLower(string(body)), "stable") {
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		for i, line := range lines {
+			if !claim.MatchString(line) {
+				continue
+			}
+			lo, hi := i-2, i+2
+			if lo < 0 {
+				lo = 0
+			}
+			if hi >= len(lines) {
+				hi = len(lines) - 1
+			}
+			window := strings.Join(lines[lo:hi+1], " ")
+			if !subject.MatchString(window) {
+				continue
+			}
+			if buried.MatchString(window) {
+				continue
+			}
+			problems = append(problems, fmt.Sprintf(
+				"%s:%d calls the overlay rank pass a stable sort:\n\t%s\n"+
+					"appendByRank is a bucket pass — it appends into a bucket "+
+					"per rank and never reorders — so equal ranks keep document "+
+					"order structurally rather than on a comparator's promise. "+
+					"docs/architecture.md draws the distinction; say it the same "+
+					"way or bury the sentence as history.", f, i+1, strings.TrimSpace(line)))
+		}
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+// appendByRankBody is the source of that one function, so the assertion
+// above is about IT rather than about composer.go having no sort call
+// anywhere — the file legitimately sorts elsewhere.
+func appendByRankBody(t *testing.T, src string) string {
+	t.Helper()
+	const sig = "func appendByRank["
+	i := strings.Index(src, sig)
+	if i < 0 {
+		t.Fatalf("composer.go no longer declares appendByRank, so this guard is " +
+			"reading nothing. Re-anchor it or delete it with the rule")
+	}
+	rest := src[i:]
+	// To the next top-level declaration, which is the next line starting
+	// in column zero with "func " or "type ".
+	if j := strings.Index(rest[1:], "\nfunc "); j >= 0 {
+		rest = rest[:j+1]
+	}
+	return rest
+}
+
+// TestTheScanItselfReportsAFixtureFile drives retiredRuleProblems
+// against a file on disk, which is the only arm in here that exercises
+// the SCAN rather than the predicate.
+//
+// Everything else pins statesTheRetiredRule and qualifiedNear directly.
+// That leaves the part between them — the prefilter, the
+// superseded-banner skip, the wrap join, the window, and now the
+// parallel fan-out — checked against a corpus that is expected to be
+// clean, which is a guard nobody has seen fire. Emptying the whole scan
+// was SILENT before this test existed.
+//
+// Two files, because one proves only that something happened: the first
+// must be reported and the second, which says the same thing with the
+// correction beside it, must not.
+func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	bad := write("bad.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
+		"paints on top.\n\nMore prose.\n")
+	got, err := retiredRuleProblems(bad)
+	if err != nil {
+		t.Fatalf("scanning the fixture: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the scan reported %d problems for a file stating the rule "+
+			"unqualified, want 1: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "bad.md:3") {
+		t.Errorf("the report does not name the file and line the statement is "+
+			"on:\n\t%s", got[0])
+	}
+
+	good := write("good.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
+		"paints on top — that is what this used to say.\n\nMore prose.\n")
+	got, err = retiredRuleProblems(good)
+	if err != nil {
+		t.Fatalf("scanning the fixture: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the scan reported a statement that carries its own epitaph on "+
+			"the same line: %v", got)
+	}
+
+	// THE WRAP AND ITS WINDOW, through the scan rather than through
+	// qualifiedNearSpan directly — which is the difference between
+	// pinning the function and pinning the CALL. Moving the window in
+	// the scan (passing the second line for both ends) was measured
+	// SILENT while TestAWrappedHitKeepsTheLineAboveItsWindow passed,
+	// because that test calls the function itself.
+	//
+	// The statement wraps across two lines and the correction sits two
+	// lines above the FIRST of them — the one position that separates
+	// an extended window from a moved one.
+	wrapped := write("wrapped.md", "The surface is lifted out of document order.\n"+
+		"\n"+
+		"The ToastHost must be declared\n"+
+		"LAST or the toasts go behind the page.\n"+
+		"\n"+
+		"More prose.\n")
+	got, err = retiredRuleProblems(wrapped)
+	if err != nil {
+		t.Fatalf("scanning the fixture: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the scan reported a wrapped statement whose correction is two "+
+			"lines above it: %v\n"+
+			"The window is being taken either side of the statement's SECOND "+
+			"line rather than either side of the whole of it, so it slid down "+
+			"by one and dropped the line above", got)
+	}
+
+	// AND THE PREFILTER MUST NOT BE WHAT SAVED IT. A file carrying none
+	// of prefilterWords is skipped whole, so a "clean" answer from one
+	// says nothing about the patterns.
+	if !containsAnyPrefilterWord("declare the toasthost last so it paints on top.") {
+		t.Error("the fixture carries no prefilter word, so both arms above are " +
+			"measuring the filter rather than the rule")
+	}
+}
+
+// TestAWrappedHitKeepsTheLineAboveItsWindow is finding 1 of the round-12
+// review, and it is the difference between EXTENDING a window and MOVING
+// one.
+//
+// A statement that wraps occupies lines i and i+1. The scan used to hand
+// qualifiedNearSpan only i+1, which then took ±2 around THAT — [i-1,
+// i+3]. It bought the line below the wrap and paid for it with the line
+// above, and the line above is where a correction sits at least as often
+// as below it: "…is what this used to say" reads naturally before the
+// quote.
+//
+// THE FIXTURE PUTS THE QUALIFIER AT i-2 and nowhere else, which is the
+// only position that separates the two behaviours. At i-1 both windows
+// reach it; at i+3 only the moved one does; at i-2 only the extended one
+// does. An arm that put it anywhere else would agree with the bug.
+func TestAWrappedHitKeepsTheLineAboveItsWindow(t *testing.T) {
+	lines := []string{
+		"// The surface is a gooey.Overlay, lifted out of document order.", // i-2
+		"//",                                     // i-1
+		"// The AdornmentLayer must be declared", // i
+		"// LAST or it paints underneath.",       // i+1
+		"//",
+		"//",
+	}
+	const i = 2
+	if statesTheRetiredRule(lines[i]) {
+		t.Fatal("the fixture's first line states the rule on its own, so the " +
+			"wrap is not what the scan is matching on and this arm proves nothing")
+	}
+	if !statesTheRetiredRule(joinWrapped(lines, i)) {
+		t.Fatal("the fixture does not state the rule even joined, so there is " +
+			"no hit to place a window around")
+	}
+	// The qualifier is at i-2 and NOWHERE else — asserted, because a
+	// fixture that accidentally qualified twice would pass under either
+	// rule.
+	for n, l := range lines {
+		if n == i-2 {
+			continue
+		}
+		if qualifiedNear([]string{l}, 0) {
+			t.Fatalf("fixture line %d also qualifies (%q), so this arm cannot "+
+				"tell the extended window from the moved one", n, l)
+		}
+	}
+
+	if !qualifiedNearSpan(lines, i, i+1, joinWrapped(lines, i)) {
+		t.Error("a statement wrapped across lines i and i+1 does not see the " +
+			"qualifier at i-2. The window is being taken either side of the " +
+			"SECOND line rather than either side of the whole statement, so it " +
+			"slid down by one and dropped the line above — where a correction " +
+			"sits as readily as below")
 	}
 }
 

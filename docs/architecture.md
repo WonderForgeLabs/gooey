@@ -625,9 +625,10 @@ Within the lifted layer, document order is **not** the whole rule.
 `Overlay` ranks as a popup. Equal ranks keep document order — and that
 is a **bucket pass**, not a stable sort. The distinction is the reason
 `appendByRank` exists: "stable" was a claim about the standard library
-that no mutation of this repo could falsify, where appending in
+that no mutation of this repo could falsify, whereas appending in
 encounter order within a rank makes the property structural and there is
 no comparator to get wrong.
+
 The ranks exist because "lifted" alone still left the three hosts
 fighting over position — a toast raised while a menu was open landed
 under the dropdown and was simply not seen
@@ -643,8 +644,8 @@ One function answers this for both paint paths. `overlayOf` in
 that the one-shot path had never implemented the rule at all, so the two
 exported paint paths answered "what is on top" differently.
 
-The paint loop forces a
-repaint of every node above a rect somebody below just painted — the
+The paint loop forces a repaint of every node above a rect somebody
+below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
 `Canvas` children and runtime-hidden containers correct, and two
