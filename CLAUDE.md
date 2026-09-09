@@ -319,8 +319,9 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 `embed.FS` (release) the same code path.
 
 **One ordered `input.Event` stream.** Keys and SGR mouse reports arrive
-interleaved on one wire and stay on one ordered stream (`input.Event`, `input/mouse.go:87`),
-because two channels could reorder them. `FocusManager.Dispatch`
+interleaved on one wire and stay on one ordered stream — ONE channel,
+`evs` (`term/term.go:61`), fed by a single decoder — because two channels
+could reorder them. `FocusManager.Dispatch`
 (`input.go:757`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends

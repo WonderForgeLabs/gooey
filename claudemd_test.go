@@ -369,18 +369,34 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 // precision is worth a guard.
 
 // citation matches `path/to/file.go:NNN`, optionally a range.
-var citation = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(?:go|yml|yaml|md)):(\\d+)(?:-(\\d+))?`")
+//
+// BUILT FROM rePath, not spelled again. This carried a byte-identical
+// copy of that pattern, and in a test whose entire subject is two copies
+// of a fact drifting apart that was one copy too many: extend one for a
+// new extension and the two halves silently cover different sets — the
+// identifier half matching a shape the mechanical half never counted,
+// and the non-vacuity guard below watching the wrong pattern. Raised in
+// review of #475.
+var citation = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 
-// citeForms are the three spellings CLAUDE.md actually uses to attach an
+// citeForms are the spellings CLAUDE.md actually uses to attach an
 // identifier to a citation. Only these get the second check; a citation
 // in any other shape gets the mechanical half alone.
+//
+// NO COUNT, deliberately. This said "the three spellings" and the
+// paragraph below said "the two forms or nothing" — a count in prose
+// gone stale inside the guard written to stop counts in prose going
+// stale, and the two disagreed with each other as well as with the
+// slice. The honesty arm iterates this slice, so a fourth form is
+// covered by construction rather than by somebody remembering to add a
+// case. Raised in review of #475.
 //
 // MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
 // guard took the nearest backticked identifier on either side, which
 // flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
 // following sentence and `components/timer.go:55` against the word
-// `done` — a test that cries wolf gets suppressed, so the rule is the
-// two forms or nothing.
+// `done` — a test that cries wolf gets suppressed, so the rule is one of
+// the forms below or nothing.
 //
 // Each carries its own field extractor rather than a shared one, because
 // the identifier and the path swap group positions between them and
@@ -392,26 +408,58 @@ var citeForms = []struct {
 	// fields pulls (ident, path, lo, hi) out of one match; hi == lo for a
 	// citation that names a single line.
 	fields func([]string) (string, string, int, int)
+	// sample renders a citation IN THIS FORM, and it is what lets
+	// TestTheCitationGuardCatchesWhatItIsFor derive its cases from this
+	// slice instead of hand-writing one per form.
+	//
+	// It earns its place twice over: the hand-written cases had form B
+	// and form C labelled the other way round, so a failure named a
+	// shape the reader could not locate — and nothing in the file defines
+	// A/B/C at all, which is why the subtest name is form.name now.
+	// Raised in review of #475.
+	sample func(ident, path string, line int) string
 }{
 	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
 	// which is what keeps the identifier the one being cited.
+	//
+	// THE 48 IS A SILENT DEMOTION, and that is why it is written down.
+	// Past 48 non-backtick characters between the identifier and its
+	// citation, this form stops matching and the citation drops to the
+	// MECHANICAL half alone — it still has to name a real line, but
+	// nothing checks that the line holds the symbol. There is no error
+	// for that, and per-form non-vacuity will not notice, because the
+	// other form-A citations still match. 48 is enough for the gaps
+	// CLAUDE.md actually writes (every one today is a character or two)
+	// and short enough that the identifier is recognisably the subject of
+	// the sentence carrying the citation; a paragraph-length gap is a
+	// pairing this guard should not be guessing at. Raised in review of
+	// #475.
 	{
 		name: "`Ident` (`path:N`)",
 		re: regexp.MustCompile("`(" + reIdent + ")(?:\\([^`]*\\))?`[^`]{0,48}?\\(`(" +
 			rePath + "):(\\d+)(?:-(\\d+))?`"),
 		fields: identFirst,
+		sample: func(ident, path string, line int) string {
+			return fmt.Sprintf("`%s` (`%s:%d`) does the thing.", ident, path, line)
+		},
 	},
 	// (`Ident`, `path:NNN`)
 	{
 		name:   "(`Ident`, `path:N`)",
 		re:     regexp.MustCompile("\\(`(" + reIdent + ")`,\\s*`(" + rePath + "):(\\d+)(?:-(\\d+))?`"),
 		fields: identFirst,
+		sample: func(ident, path string, line int) string {
+			return fmt.Sprintf("the sweep (`%s`, `%s:%d`) does the thing.", ident, path, line)
+		},
 	},
 	// (`path:NNN`, in `Ident`)
 	{
 		name:   "(`path:N`, in `Ident`)",
 		re:     regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`,\\s*in\\s+`(" + reIdent + ")`"),
 		fields: pathFirst,
+		sample: func(ident, path string, line int) string {
+			return fmt.Sprintf("the sweep (`%s:%d`, in `%s`) does the thing.", path, line, ident)
+		},
 	},
 }
 
@@ -478,6 +526,17 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 		if m[3] != "" {
 			hi = mustAtoi(m[3])
 		}
+		// LINE 0 IS NOT A LINE, and half two indexes s[lo-1] to quote it
+		// — so `file.go:0` panicked with index out of range instead of
+		// being reported. Loud rather than silent, but a checker whose
+		// job is reporting problems should report this one. Raised in
+		// review of #475.
+		if lo < 1 {
+			problems = append(problems, fmt.Sprintf(
+				"cites %s:%d, and there is no line 0 — lines are counted from 1, "+
+					"so this addresses nothing", path, lo))
+			continue
+		}
 		s := src(path)
 		if s == nil {
 			problems = append(problems, fmt.Sprintf(
@@ -500,14 +559,24 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 		for _, m := range form.re.FindAllStringSubmatch(md, -1) {
 			ident, path, lo, hi := form.fields(m)
 			hits++
-			key := path + ":" + strconv.Itoa(lo)
+			// THE IDENTIFIER IS PART OF THE KEY. Keyed on path:line
+			// alone, a second identifier attached to the same cited
+			// location was dropped unchecked — "`Alpha` (`fake.go:3`) and
+			// also (`Beta`, `fake.go:3`)" reported no problem though Beta
+			// is nowhere in the file. Latent rather than live (CLAUDE.md
+			// has no such collision today: 21 identifier-checked
+			// citations, zero dedup skips), which is exactly the shape
+			// this test exists to catch — a guard that passes while
+			// checking less than it reports. Safe for non-vacuity because
+			// hits++ happens above. Raised in review of #475.
+			key := path + ":" + strconv.Itoa(lo) + " " + ident
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
 
 			s := src(path)
-			if s == nil || hi > len(s) {
+			if s == nil || lo < 1 || hi > len(s) {
 				continue // half one already reported it
 			}
 			// The LEAF of a dotted name: the doc writes `Composer.Frame`
@@ -573,20 +642,56 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 //
 // So each case here is a document the guard MUST reject.
 func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
-	// A fake tree, so the cases do not move when the repo does.
-	files := map[string][]string{
-		"fake.go": {
-			"package fake",   // 1
-			"",               // 2
-			"func Alpha() {", // 3
-			"}",              // 4
-			"",               // 5
-			"// twenty lines of nothing so a wide window is visibly wide", // 6
-			"", "", "", "", "", "", "", "", "", "", "", "", "", "", // 7-20
-			"func Beta() {", // 21
-			"}",             // 22
-		},
+	// THE WINDOW IS PINNED BY VALUE, and that is finding 2 of review
+	// #475 — including the half my first fix got wrong.
+	//
+	// The fixture put `Alpha` at line 3 and the drifted citation at line
+	// 21 — EIGHTEEN lines apart — so the arm only tripped once the window
+	// reached 18. Measured: citeWindow could be raised from 3 to 17, a
+	// 35-line neighbourhood in a repo where almost nothing is 35 lines
+	// long, with BOTH tests reporting PASS.
+	//
+	// Deriving the fixture from citeWindow does NOT fix that, which I
+	// measured before believing it: the drift moves with the constant, so
+	// every widening stays green. A policy number can only be pinned by
+	// its VALUE. That is not the "count in prose" this file argues
+	// against — the opposite: it is a number asserted against the code
+	// that owns it, so raising it is a decision somebody has to make in
+	// this test's failure message rather than a constant somebody edits.
+	//
+	// The two arms below pin the MECHANISM, derived, so the reach cannot
+	// change shape underneath the value: an identifier exactly citeWindow
+	// away is accepted, one line further is not.
+	const shippedWindow = 3
+	if citeWindow != shippedWindow {
+		t.Fatalf("citeWindow is %d, not %d. Widening it is a policy change, not a "+
+			"tuning: at %d the check reads a %d-line neighbourhood, and almost no "+
+			"function in this repo is that long — past which \"the line holds the "+
+			"symbol\" degrades into \"the symbol is somewhere nearby\" while both "+
+			"tests still report PASS. If the widening is deliberate, change this "+
+			"number and say why in the constant's comment.",
+			citeWindow, shippedWindow, citeWindow, 2*citeWindow+1)
 	}
+
+	// The check reads lines [lo-1-citeWindow, hi+citeWindow), so an
+	// identifier at identLine is inside the window exactly while the
+	// citation sits at or below identLine+citeWindow.
+	const identLine = 3
+	edgeLine := identLine + citeWindow
+	driftLine := edgeLine + 1
+
+	src := make([]string, driftLine+1)
+	src[0] = "package fake"
+	src[identLine-1] = "func Alpha() {"
+	src[identLine] = "}"
+	src[driftLine-1] = "func Beta() {"
+	src[driftLine] = "}"
+	// Everything between is filler that mentions no identifier, so the
+	// only thing deciding the two arms below is the distance.
+	for i := identLine + 1; i < driftLine-1; i++ {
+		src[i] = "// filler"
+	}
+	files := map[string][]string{"fake.go": src}
 	read := func(path string) ([]string, error) {
 		s, ok := files[path]
 		if !ok {
@@ -595,12 +700,58 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		return s, nil
 	}
 
+	// PER FORM, ITERATED, so a fourth form is covered the day it is
+	// added. The three cases here were hand-written, and two of them
+	// carried the WRONG LABEL — form B and form C the other way round,
+	// naming a shape nothing in the file defines. The name comes from
+	// form.name now, and the document from form.sample.
+	for _, form := range citeForms {
+		t.Run("a drifted line, "+form.name, func(t *testing.T) {
+			md := form.sample("Alpha", "fake.go", driftLine)
+			problems, forms := citationProblems(md, read)
+			if len(forms) == 0 {
+				t.Fatalf("the guard matched no form at all in %q, so the rejection "+
+					"below would be about the MECHANICAL half and this arm would "+
+					"pass without the identifier check ever running", md)
+			}
+			if len(problems) == 0 {
+				t.Errorf("the guard accepted %q, where %q is %d lines from the cited "+
+					"line and citeWindow is %d. It reports PASS against a correct "+
+					"document whether or not it is checking anything, so an arm that "+
+					"cannot fail here is a guard that has stopped working.",
+					md, "Alpha", driftLine-identLine, citeWindow)
+			}
+		})
+
+		// AND THE OTHER DIRECTION, per form: "reject everything" must not
+		// be a passing strategy for any of them, and a form whose regexp
+		// rotted would otherwise look identical to a form that works.
+		t.Run("the true line, "+form.name, func(t *testing.T) {
+			md := form.sample("Alpha", "fake.go", identLine)
+			if problems, _ := citationProblems(md, read); len(problems) > 0 {
+				t.Errorf("the guard rejected the CORRECT citation %q: %v", md, problems)
+			}
+		})
+	}
+
+	// THE EDGE, both sides of it. These pin the reach as a mechanism
+	// rather than as a number: exactly citeWindow away is inside, one
+	// more is not. Without the accept arm, "reject anything not on the
+	// cited line" would satisfy every rejection arm above.
+	if md := citeForms[0].sample("Alpha", "fake.go", edgeLine); true {
+		if problems, _ := citationProblems(md, read); len(problems) > 0 {
+			t.Errorf("the guard rejected %q, where `Alpha` is exactly citeWindow "+
+				"(%d) lines from the cited line — the window does not reach as far "+
+				"as it says: %v", md, citeWindow, problems)
+		}
+	}
+
 	for _, tc := range []struct{ name, md string }{
-		{"a drifted line, form A", "`Alpha` (`fake.go:21`) does the thing."},
-		{"a drifted line, form C", "the sweep (`Alpha`, `fake.go:21`) does the thing."},
-		{"a drifted line, form B", "the sweep (`fake.go:21`, in `Alpha`) does the thing."},
 		{"a file that does not exist", "`Alpha` (`nosuch.go:3`) does the thing."},
 		{"a line past the end of the file", "`Alpha` (`fake.go:900`) does the thing."},
+		// LINE 0 panicked rather than reporting, because half two quotes
+		// s[lo-1] in its message. Raised in review of #475.
+		{"line zero, which is not a line", "`Alpha` (`fake.go:0`) does the thing."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problems, _ := citationProblems(tc.md, read)
@@ -613,20 +764,84 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		})
 	}
 
-	// And the other direction, so "reject everything" is not a passing
-	// strategy: the same identifier at the line it really occupies.
-	if problems, _ := citationProblems("`Alpha` (`fake.go:3`) does the thing.", read); len(problems) > 0 {
-		t.Errorf("the guard rejected a CORRECT citation: %v", problems)
+	// A SECOND IDENTIFIER AT ONE CITED LINE. seen was keyed on
+	// path:line, and set before the check, so this reported nothing
+	// though Beta is nowhere near line 3. Latent in CLAUDE.md today,
+	// which is the shape this whole test exists to catch: a guard that
+	// passes while checking less than it reports. Raised in review of
+	// #475.
+	dup := "`Alpha` (`fake.go:3`) and also (`Beta`, `fake.go:3`) which is wrong."
+	if problems, _ := citationProblems(dup, read); len(problems) == 0 {
+		t.Errorf("the guard accepted %q. The second identifier on one cited line "+
+			"was deduplicated away unchecked, so a wrong citation hides behind a "+
+			"right one at the same location", dup)
+	}
+}
+
+// TestTheProductionReaderCountsRealLines is the coverage readLines never
+// had, and the reason finding 1 of review #475 was invisible.
+//
+// citationProblems is handed a reader so the honesty arm can drive it
+// with a slice literal — which means the arm exercises everything EXCEPT
+// the function the real test uses. strings.Split on a newline-terminated
+// file yields a trailing "" that is not a line, so len(s) was
+// real-lines + 1 and `hi > len(s)` accepted a citation one past the end
+// of every file in the repo. For the citations that get the mechanical
+// half alone, that was the entire check.
+//
+// It reads a REAL file, because the defect is in the reading.
+func TestTheProductionReaderCountsRealLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "three.go")
+	// NEWLINE-TERMINATED, like every file gofmt writes — which is
+	// precisely the case the trailing element appears in.
+	if err := os.WriteFile(path, []byte("package p\n\nfunc Gamma() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLines(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Errorf("readLines reports %d lines for a 3-line file. A newline TERMINATES "+
+			"the last line rather than starting another, and an extra one makes "+
+			"every out-of-range check off by one in the permissive direction: %q",
+			len(got), got)
+	}
+
+	// AND THROUGH THE CHECK, since the count only matters there.
+	if problems, _ := citationProblems("`Gamma` (`"+path+":4`) x.", readLines); len(problems) == 0 {
+		t.Error("a citation one line past the end of the file is accepted")
+	}
+	if problems, _ := citationProblems("`Gamma` (`"+path+":3`) x.", readLines); len(problems) > 0 {
+		t.Errorf("the last real line of the file is rejected: %v", problems)
 	}
 }
 
 // readLines is citationProblems' production reader.
+//
+// THE TRAILING ELEMENT IS DROPPED, and leaving it in was a fail-open.
+// strings.Split of a newline-TERMINATED file yields a final "" that is
+// not a line, so len(s) was real-lines + 1 and the `hi > len(s)` check
+// accepted a citation one line past the end of every file in the repo —
+// then misreported the length in the error text for the citation two
+// past. For the ten citations that get the mechanical half ALONE that
+// off-by-one was the entire check.
+//
+// It was invisible because the honesty arm hands citationProblems a
+// slice literal and never runs this function: the production reader had
+// no coverage at all. TestTheProductionReaderCountsRealLines is that
+// coverage, and it reads a real file. Raised in review of #475.
 func readLines(path string) ([]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return strings.Split(string(b), "\n"), nil
+	s := strings.Split(string(b), "\n")
+	if n := len(s); n > 0 && s[n-1] == "" {
+		s = s[:n-1]
+	}
+	return s, nil
 }
 
 // mustAtoi is total for this caller: the regexps only ever hand it a
