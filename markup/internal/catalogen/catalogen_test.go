@@ -80,6 +80,51 @@ func TestTheDenyListAppliesToTheChildWalk(t *testing.T) {
 	}
 }
 
+// TestTheDenyListGatesTheHarvestNotJustTheRecursion is the same hole in
+// the OTHER two walks.
+//
+// TestTheDenyListAppliesToTheChildWalk (above) covers scanChildAttrs.
+// scan and scanWith ran their string-literal harvest BEFORE the
+// deny-list and only gated the recursion with it, so a denied builder
+// called with a capitalised literal filed a phantom read.
+//
+// The assertion is the direction that goes quiet rather than loud. A
+// phantom read matching an attribute the element declares and never
+// reads CANCELS the over-declared finding — the failure this package's
+// doc comment says nothing else catches. So the pin is that <Phantom>'s
+// unread Ghost IS still reported: under the bug this test goes green by
+// the finding vanishing, which is exactly how the hole survived in two
+// walks after being closed in the third.
+//
+// It gets its own fixture directory because src's contract is that it
+// yields NO findings, and this one exists to yield one. Raised in review
+// of #454.
+func TestTheDenyListGatesTheHarvestNotJustTheRecursion(t *testing.T) {
+	// BOTH walks, and the split is not belt-and-braces: mutating the two
+	// hoists separately showed that a fixture reaching only scan leaves
+	// scanWith green. scan reads a Build's own body; scanWith is where it
+	// continues once it follows a helper, and each carried its own copy
+	// of the ordering.
+	want := map[string]string{
+		"<Phantom>":     "scan — the literal is in the Build's own body",
+		"<DeepPhantom>": "scanWith — the literal is inside a helper scan followed",
+	}
+	for _, f := range findingsFor(t, "denyharvest") {
+		s := f.String()
+		for elem := range want {
+			if strings.Contains(s, elem) {
+				delete(want, elem)
+			}
+		}
+	}
+	for elem, walk := range want {
+		t.Errorf("%s declares an attribute its Build never reads — it only hands the name "+
+			"to checkProps, which is on the deny-list — yet Check reported nothing. The "+
+			"literal was harvested as a read before the deny-list ran, so a phantom read "+
+			"cancelled a real over-declaration. Walk: %s", elem, walk)
+	}
+}
+
 // TestTheHostsOwnAttributeIsNotReportedUndeclared is the other side of
 // the split: <Host> reads Style off itself and declares it, so the pool
 // check must not demand that some CHILD declare it.
@@ -167,7 +212,16 @@ func fixtureMaps(t *testing.T) (map[string]*ast.FuncLit, map[string]*ast.FuncDec
 	funcs := map[string]*ast.FuncDecl{}
 	var defs []defInfo
 	for _, e := range entries {
-		f, err := parser.ParseFile(fset, filepath.Join("testdata/src", e.Name()), nil, 0)
+		// THE SAME THREE CONDITIONS Check uses (catalogen.go). Without
+		// them this replica parses every directory entry, so a README or
+		// a subdirectory under testdata/src turns four tests into a
+		// t.Fatal naming the PARSER rather than the fixture. Raised in
+		// review of #454.
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join("testdata/src", n), nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -415,7 +415,7 @@ func (ed *editor) rebindInto(n *node, renamed map[string]string) error {
 		// the reverse map is what connects it back to its old keys.
 		for old, next := range renamed {
 			if k.Attrs["Name"] == next {
-				specOf[old] = ed.specFor(k.Elem)
+				specOf[old] = ed.specOrBare(k.Elem)
 			}
 		}
 	})
@@ -485,11 +485,34 @@ func seedValue(spec markup.ElementSpec, attr string) (any, error) {
 	return nil, nil
 }
 
-func (ed *editor) specFor(elem string) markup.ElementSpec {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e
-		}
+// specOrBare is specOf with a bare fallback instead of an ok — the
+// binding path wants a spec it can range over, and "no attributes" is a
+// usable answer where "not found" is not.
+//
+// IT ASKS ed.specs, NOT ed.palette, and that is the whole of this
+// function. The palette is what may be INSERTED; the catalog is what
+// exists. A paste rebinds attributes on nodes that are already in the
+// document, so the palette's exclusions are the wrong filter — the same
+// distinction target() was corrected for in round 1 and grantOf in round
+// 4, in the third site, which answered it from the palette until now.
+//
+// It went unnoticed because it is LATENT: Name is refused on <Menu> and
+// <MenuItem>, and <Tab> — the one Nested element that still takes a Name
+// — declares no attributes, so the fallback and the real spec are
+// indistinguishable today. Closing #461 makes the <Tab> half live, and
+// the failure then is silent in the worst direction: rebindInto has
+// already rewritten the attribute (clipboard.go, before this is
+// consulted), so a nil handle skips the ed.ctx.Values registration and
+// the paste lands a {{.New_Attr}} binding nothing registers. The
+// document then fails to load, and seedValue's doc comment would
+// diagnose it as "an element registered as a bare Builder".
+//
+// The RENAME is half the fix. specFor and specOf were one character
+// apart and, once ed.specs existed, answered different questions from
+// different sources. Raised in review of #454.
+func (ed *editor) specOrBare(elem string) markup.ElementSpec {
+	if e, ok := ed.specOf(elem); ok {
+		return e
 	}
 	return markup.ElementSpec{Name: elem}
 }

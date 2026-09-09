@@ -104,11 +104,6 @@ func buildHost(e Element, ctx *Context) (gooey.Component, error) {
 	return nil, nil
 }
 
-// checkAttrs stands in for the general builder machinery. It reads off a
-// variable that is NOT its own element parameter, which is what makes it
-// discriminating: the receiver split alone would file such a read as the
-// host's own and hide it, so only the deny-list keeps "Smuggled" out of
-// the child set.
 // optDuration stands in for Bound / BoundColor / optDuration — the
 // helper idiom where the attribute name is an argument.
 func optDuration(e Element, name string) any { return nil }
@@ -145,6 +140,11 @@ func ctxFirst[T any](ctx *Context, e Element, name string) (T, error) {
 	return zero, nil
 }
 
+// checkAttrs stands in for the general builder machinery. It reads off a
+// variable that is NOT its own element parameter, which is what makes it
+// discriminating: the receiver split alone would file such a read as the
+// host's own and hide it, so only the deny-list keeps "Smuggled" out of
+// the child set.
 func checkAttrs(e Element, ctx *Context) error {
 	for _, k := range e.Children {
 		_ = k.Attrs["Smuggled"]

@@ -591,6 +591,21 @@ func scan(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[string]
 			}
 		case *ast.CallExpr:
 			callee := calleeName(v.Fun)
+			// THE DENY-LIST GATES THE HARVEST, not just the recursion.
+			// scanChildAttrs was corrected this way earlier in this PR and
+			// these two were not — the fix landed in one of three walks.
+			//
+			// The direction here is worse than in the child walk. A
+			// phantom read that happens to match a declared-but-unread
+			// attribute SUPPRESSES the over-declared finding, which this
+			// package's doc comment says nothing else catches; the
+			// phantom-nobody-declared case is the loud one. Latent today
+			// (no generic call in markup passes `e` beside a capitalised
+			// literal), so this is about the next one. Raised in review of
+			// #454.
+			if generic[callee] {
+				return true
+			}
 			// A literal naming an attribute: Bound(e, ctx, "Text"),
 			// BoundColor(e, ctx, "Background"), optDuration(e, "Tick").
 			for _, arg := range v.Args {
@@ -600,7 +615,7 @@ func scan(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[string]
 					}
 				}
 			}
-			if generic[callee] || depth >= 4 || visiting[callee] || !passesElement(v) {
+			if depth >= 4 || visiting[callee] || !passesElement(v) {
 				return true
 			}
 			fd := funcs[callee]
@@ -633,6 +648,21 @@ func scanWith(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[str
 			}
 		case *ast.CallExpr:
 			callee := calleeName(v.Fun)
+			// THE DENY-LIST GATES THE HARVEST, not just the recursion.
+			// scanChildAttrs was corrected this way earlier in this PR and
+			// these two were not — the fix landed in one of three walks.
+			//
+			// The direction here is worse than in the child walk. A
+			// phantom read that happens to match a declared-but-unread
+			// attribute SUPPRESSES the over-declared finding, which this
+			// package's doc comment says nothing else catches; the
+			// phantom-nobody-declared case is the loud one. Latent today
+			// (no generic call in markup passes `e` beside a capitalised
+			// literal), so this is about the next one. Raised in review of
+			// #454.
+			if generic[callee] {
+				return true
+			}
 			for _, arg := range v.Args {
 				if lit, isLit := arg.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
 					if s, err := strconv.Unquote(lit.Value); err == nil && isAttrName(s) && passesElement(v) {
@@ -640,7 +670,7 @@ func scanWith(n ast.Node, funcs map[string]*ast.FuncDecl, read, visiting map[str
 					}
 				}
 			}
-			if generic[callee] || depth >= 4 || visiting[callee] || !passesElement(v) {
+			if depth >= 4 || visiting[callee] || !passesElement(v) {
 				return true
 			}
 			if fd := funcs[callee]; fd != nil {
