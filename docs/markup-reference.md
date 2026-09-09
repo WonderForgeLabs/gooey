@@ -189,8 +189,20 @@ framework enforces. What is NOT a rule you can break: a row template's
 `<Frozen AllowError>` used to PANIC — the row `Context` is built outside
 `document.build`, so the armed-sink set arrived nil — and it now builds,
 with the set scoped to the row. Two `<Frozen>` in one template sharing a
-sink still collide; two ROWS arming the same template sink do not, because
-each row's values carry their own handle.
+sink still collide, and so does a row `<Frozen>` arming a sink the PAGE
+already armed — the row's set is separate but the check consults the
+page's, so registration stays row-local while a page-versus-row collision
+is still refused.
+
+Two ROWS arming the same template sink do not collide, because a row's
+values normally carry their own handle. **Normally, and it is not
+enforced**: a projection that hands every row one shared
+`*prop.Property[string]` passes it through unchanged, and then the rows
+overwrite each other's message with no load-time signal at all — the same
+rule-you-keep as the paragraph above, for the same reason. This said
+"because each row's values carry their own handle", stating an assumption
+about the projection as a property of the framework. Corrected in review
+of #459.
 
 `AllowError` is refused at load in **every case that would otherwise read as
 configured and report nothing forever** — the number is deliberately not

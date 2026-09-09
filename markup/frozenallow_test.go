@@ -1444,3 +1444,321 @@ func TestAValueCallThatDoesNotAliasStillLoads(t *testing.T) {
 		t.Fatalf("a value call naming a DIFFERENT property is refused: %v", err)
 	}
 }
+
+// TestTheAliasGuardReadsPastABacktickLiteral is the miss the regexp
+// scanner had and the package's own scanner does not.
+//
+// scan.go says it in as many words: "a backtick literal may legally
+// contain a brace: {{str:Replace .S `}}` `--`}} has to find the LAST
+// }} , not the first." allPaths was a `\{\{[^}]*\}\}` scan, so the
+// expression ENDED at the backtick's brace pair and .X — the alias —
+// was never looked at. The page built clean and the priming publish
+// erased the author's Allow source during Build, which is the original
+// #459 harm reached by a third spelling.
+//
+// THE SECOND ASSERTION IS THE DAMAGE, not the refusal, for the reason
+// the sibling test above gives. Raised in review of #459.
+func TestTheAliasGuardReadsPastABacktickLiteral(t *testing.T) {
+	withValues(t, &echoProvider{})
+
+	const page = `<Gooey xmlns:v="` + valueURI + `">
+  <VStack>
+    <Frozen Allow="{{v:Echo ` + "`}}`" + ` .X}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("Focus")
+
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("an Allow whose alias sits after a backtick literal containing " +
+			"`}}` built clean; the scan stopped at the literal's braces and the " +
+			"publication overwrites the set it just read")
+	}
+	if !strings.Contains(err.Error(), "cannot be both") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+	if got := ctx.Values["X"].(*prop.Property[string]).Get(); got != "Focus" {
+		t.Errorf("the allow set was destroyed before the refusal: X=%q, want \"Focus\"", got)
+	}
+}
+
+// TestAPathInsideABacktickLiteralIsNotAnAlias is the other direction,
+// and without it "read every path" licenses refusing text that only
+// LOOKS like one.
+//
+// `.X` inside backticks is a string argument. The regexp scanner could
+// not tell the difference — tokenRe matched anywhere in the expression —
+// so this page was refused although its Allow never reads the sink at
+// all. A guard that refuses correct markup is the failure the declared
+// vocabulary exists to prevent, one level up. Raised in review of #459.
+func TestAPathInsideABacktickLiteralIsNotAnAlias(t *testing.T) {
+	withValues(t, &echoProvider{})
+
+	const page = `<Gooey xmlns:v="` + valueURI + `">
+  <VStack>
+    <Frozen Allow="{{v:Echo ` + "`.X`" + `}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("Focus")
+
+	if _, err := Build([]byte(page), ctx); err != nil {
+		t.Errorf("a page whose Allow mentions .X only inside a backtick LITERAL "+
+			"is refused as an alias:\n\t%v\nThe argument is a string; nothing "+
+			"there reads the sink.", err)
+	}
+}
+
+// TestAllPathsReadsTheCallsIntoTarget keeps the `| into .Target` clause
+// of allPaths alive. Nothing else reaches it: no Allow in the tree pipes
+// into anything, so deleting that line is silent against every other
+// test here. It is a unit test rather than a page because the state it
+// pins is a parse, not a load. Raised in review of #459.
+func TestAllPathsReadsTheCallsIntoTarget(t *testing.T) {
+	got := allPaths("{{v:Echo `x` | into .Target}}")
+	var found bool
+	for _, p := range got {
+		if p == "Target" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("allPaths(%q) = %v; a call whose result is WRITTEN INTO the sink "+
+			"aliases it as surely as one that reads it",
+			"{{v:Echo `x` | into .Target}}", got)
+	}
+}
+
+// TestAllPathsIgnoresProseOutsideBraces replaces a comment that called
+// this state unreachable.
+//
+// The claim was that only a bound Allow reaches the scan, so there is
+// never text outside the braces. A bound Allow may be INTERPOLATED —
+// `Allow="{{.Allow}} .X"` builds today, and its runtime parse failing on
+// `.X` is the entire point of the attribute — so the state is reachable
+// and the mutation dropping the brace requirement was silent for the
+// ordinary reason: a missing test. Raised in review of #459; this is
+// that test.
+func TestAllPathsIgnoresProseOutsideBraces(t *testing.T) {
+	for _, p := range allPaths("{{.Allow}} .X") {
+		if p == "X" {
+			t.Error("allPaths read `.X` from prose OUTSIDE the braces, so an " +
+				"interpolated Allow whose text happens to name the sink would " +
+				"be refused although nothing in it binds")
+		}
+	}
+}
+
+// TestAPageAndARowCannotArmTheSameSink is the collision row scope left
+// open, and it erases at LOAD rather than on some later change.
+//
+// The page map and the row map are disjoint by construction — which is
+// right, because a shared map would accumulate an entry per row
+// realization and refuse the list's own second row. What was missing is
+// that the row map could not SEE the page's arms, so a <Frozen> on the
+// page and a <Frozen> in an item template could arm one handle with
+// neither guard looking, and the row's priming publish wrote "" over the
+// page's live failure inside Build. That is round four's two-writer
+// failure arriving through round five's scope change.
+//
+// Not exotic: components/itemsview.go passes a *prop.Property[string]
+// found in a row map straight through, so a projection handing rows the
+// page's own handle is an ordinary thing to write — and
+// docs/markup-reference.md tells the author the sink must be page-owned,
+// which is exactly this shape.
+//
+// SECOND ASSERTION IS THE DAMAGE. A guard that refuses after the page's
+// message is already gone is not a refusal. Raised in review of #459.
+func TestAPageAndARowCannotArmTheSameSink(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <ItemsView Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	// UNPARSEABLE on the page, so the page arm has a message to lose.
+	ctx := errAllowCtx("Nonsense")
+	shared := ctx.Values["Err"].(*prop.Property[string])
+	rows := prop.NewSource([]post{{Title: "one"}, {Title: "two"}})
+	// THE PROJECTION HANDS BACK THE PAGE'S OWN HANDLE, which is the whole
+	// fixture — the row's Values entry for Err is not a per-row source.
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   shared,
+		}
+	})
+
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("a page <Frozen> and a row <Frozen> armed the same handle and the " +
+			"page built clean; the row's priming publish erases the page's message")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the refusal is not the duplicate-sink one:\n\t%v", err)
+	}
+	if got := shared.Get(); got == "" {
+		t.Error("the page's failure message was erased before the refusal " +
+			"arrived, so the guard refused a page it had already damaged")
+	}
+}
+
+// TestEveryRowStillArmsTheSameTemplateSink is the discrimination half.
+// Without it, "check the page's map too" could be satisfied by sharing
+// one map with the rows — which refuses the list's own second row, the
+// exact regression row scope was introduced to avoid. Raised in review
+// of #459.
+func TestEveryRowStillArmsTheSameTemplateSink(t *testing.T) {
+	const page = `<Gooey>
+  <ItemsView Name="list" Items="{{.Rows}}">
+    <ItemsView.ItemTemplate>
+      <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+        <Text>{{.Label}}</Text>
+      </Frozen>
+    </ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	rows := prop.NewSource([]post{{Title: "one"}, {Title: "two"}, {Title: "three"}})
+	// The handles are allocated ONCE and looked up, not minted inside the
+	// projection. That is the realistic shape — a row's error property
+	// lives in the model beside the row — and it is what makes this test
+	// discriminate: registration is keyed by the HANDLE, so a projection
+	// that mints a fresh property on every call gives every realization a
+	// different key and passes whatever the map's scope is. Realizing one
+	// row TWICE is the case that separates them, and it is not exotic:
+	// ItemsView.Validate builds a throwaway row 0 at load and composition
+	// then builds row 0 again, so it happens on the first frame of every
+	// non-empty list. Raised in review of #459.
+	errs := map[string]*prop.Property[string]{}
+	for _, name := range []string{"one", "two", "three"} {
+		errs[name] = prop.NewSource("")
+	}
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   errs[x.Title],
+		}
+	})
+
+	// COMPOSED, not merely built: ItemsView.Validate realizes ONE
+	// throwaway row at load, so a build alone cannot show that the second
+	// row was allowed to arm — which is the whole claim. Arrange is what
+	// realizes the rest.
+	w, err := Build([]byte(page), ctx)
+	if err != nil {
+		t.Fatalf("rows arming their own per-row sink are refused at load: %v", err)
+	}
+	c := gooey.NewComposer(w, 30, 8)
+	t.Cleanup(c.Close)
+	c.Frame()
+
+	list, ok := ctx.Named["list"].(*components.ItemsView)
+	if !ok {
+		t.Fatalf("the ItemsView is not reachable by name: %T", ctx.Named["list"])
+	}
+	if err := list.Err(); err != nil {
+		t.Errorf("realizing the rows is refused, so the template can arm at most "+
+			"once across the whole list:\n\t%v", err)
+	}
+	// NON-VACUITY. list.Err() is nil for a list that realized nothing at
+	// all, so the assertion above passes against a broken fixture.
+	armed := 0
+	for _, e := range errs {
+		if e.Get() != "" {
+			armed++
+		}
+	}
+	if armed < 2 {
+		t.Fatalf("only %d row sink(s) carry a message, so nothing here shows "+
+			"that the SECOND row was allowed to arm", armed)
+	}
+}
+
+// TestARowRealizedAfterLoadStillSeesThePagesArms is why the page's map is
+// captured OUTSIDE the factory rather than read through ctx when a row is
+// built.
+//
+// document.build's defer restores ctx.armedSinks to what it found, and
+// for the outermost document that is nil — so by the time a row is
+// realized, ctx.armedSinks is nil and armedOuter would be an empty
+// lookup. The sibling test above cannot see this: ItemsView.Validate
+// realizes one throwaway row at LOAD, while build is still on the stack
+// and ctx.armedSinks is still the page's map, so both spellings pass
+// there. A collection that is empty at load and filled by a timer is the
+// discriminating shape, and it is the ordinary one — the same asymmetry
+// the ns/res captures above are written up for.
+//
+// The factory's error surfaces on ItemsView.Err(); the second assertion
+// is again the damage, because a refusal that arrives after the page's
+// message is gone is not a refusal.
+func TestARowRealizedAfterLoadStillSeesThePagesArms(t *testing.T) {
+	const page = `<Gooey>
+  <VStack>
+    <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+    <ItemsView Name="list" Items="{{.Rows}}">
+      <ItemsView.ItemTemplate>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+      </ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Nonsense")
+	shared := ctx.Values["Err"].(*prop.Property[string])
+	// EMPTY at load, so Validate realizes no row and the row factory runs
+	// for the first time below, after build returned.
+	rows := prop.NewSource([]post{})
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   shared,
+		}
+	})
+
+	c := allowPage(t, page, ctx)
+	t.Cleanup(c.Close)
+	if shared.Get() == "" {
+		t.Fatal("the page's own arm published nothing, so this fixture cannot " +
+			"show a row erasing it")
+	}
+
+	rows.Set([]post{{Title: "one"}})
+	c.Frame()
+
+	list, ok := ctx.Named["list"].(*components.ItemsView)
+	if !ok {
+		t.Fatalf("the ItemsView is not reachable by name: %T", ctx.Named["list"])
+	}
+	err := list.Err()
+	if err == nil {
+		t.Fatal("a row realized after load armed a handle the page had already " +
+			"armed, and the template reported no error")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the template error is not the duplicate-sink one:\n\t%v", err)
+	}
+	if got := shared.Get(); got == "" {
+		t.Error("the page's failure message was erased by the row's priming " +
+			"publish before the refusal arrived")
+	}
+}

@@ -54,10 +54,12 @@ configured and report nothing forever:
   added in round two, and before the guard it did not read as configured,
   it PANICKED inside `Build`;
 - an **`Allow` that aliases the sink** — the priming publish would destroy
-  the set it had just read. Round three added it; round five widened it
-  from whole-body bindings to every path in any position, because
-  `Allow="{{v:Echo .X}}"` carries the alias into an argument where the
-  original scan could not see it;
+  the set it had just read. **Round four** added it (see that section);
+  **round five** widened it from binding TEXT to the resolved HANDLE, so
+  two names for one property are caught; and the **value-call round**
+  below widened it again from whole-body bindings to every path in any
+  position, because `Allow="{{v:Echo .X}}"` carries the alias into an
+  argument the original scan could not see;
 - a **second arm on one sink** — two `<Frozen>` publishing to one handle,
   where whichever fires last wins and neither says so.
 
@@ -372,3 +374,72 @@ navigational aid, not a historical claim, so they send a reader today to
 the wrong function. That is the hazard line-numbered citations always carry
 and the reason the other three in `frozenerror.go` were each re-checked.
 
+
+## Round six: one scanner, and the collision row scope left open
+
+Two attributions in the refusals list above pointed at the wrong
+sections, and the round that produced the newest guard had no section at
+all — the third correction of this kind this record has taken, and the
+reason the list now names sections rather than round numbers alone.
+A reader following "round three" for the alias guard landed in a section
+about something else.
+
+### The alias scan had a second grammar, and it was the wrong one
+
+Round five widened the alias check from `bindRe` to a pair of regexps:
+`braceRe` to find each `{{ … }}` and `tokenRe` to rescan it for paths.
+`markup/scan.go` had already written down why that cannot work here —
+*"a backtick literal may legally contain a brace … has to find the LAST
+`}}`, not the first"* — and both halves reproduced:
+
+```
+Allow="{{v:Echo `}}` .X}}"    MISSED — built clean, and the priming
+                              publish erased the Allow source in Build
+Allow="{{v:Echo `.X`}}"       FALSELY REFUSED — a path spelled inside a
+                              backtick literal is not a path
+```
+
+The fix is not a better pattern. `scanBindings` splits correctly and
+returns typed segments, and a call's arguments are already lexed into
+tokens, so `allPaths` reads `segPath` segments plus each `segCall`'s
+`tokPath` arguments and its `| into` target. `braceRe` and `tokenRe` are
+gone, and so is the two-pass reasoning that only existed because a regexp
+with one capture group yields one match per expression.
+
+The comment that called the outside-the-braces case **unreachable** went
+with them. It argued that only a bound `Allow` reaches the scan, which is
+true, and concluded there is never text outside the braces — which does
+not follow, because a bound `Allow` may be interpolated:
+`Allow="{{.Allow}} .X"` builds today, and its runtime parse failing on
+`.X` is the whole point of the attribute. The mutation dropping the brace
+requirement was silent for the ordinary reason, a missing test, which is
+the reading the comment ruled out. That test exists now.
+
+### A page and a row could arm one sink, and it erased at load
+
+Round five scoped the armed-sink map to the ItemsView row, which is
+right: the factory runs per row realization and never unregisters, so a
+shared map would accumulate an entry per row and refuse the list's own
+second row. What it left is that the row map could not SEE the page's
+arms. A `<Frozen>` on the page and a `<Frozen>` in an item template could
+arm the same handle with neither guard looking, and the row's priming
+publish wrote `""` over the page's live failure **inside `Build`** —
+round four's two-writer failure, arriving through round five's fix.
+
+Not exotic: `components/itemsview.go` passes a `*prop.Property[string]`
+found in a row map straight through, so a projection handing rows the
+page's own handle is an ordinary thing to write, and
+`docs/markup-reference.md` tells the author the sink must be page-owned,
+which is exactly that shape.
+
+`Context.armedOuter` splits the two halves: the duplicate CHECK consults
+the page's set as well, while REGISTRATION stays row-local. Both
+directions are pinned, because the fix has an obvious wrong form — share
+one map — that refuses correct markup.
+
+The residual hole is stated rather than closed: two rows sharing one
+handle through the projection has no load-time signal, and the handles
+are indistinguishable by the time they reach this package. The reference
+said "because each row's values carry their own handle", which is an
+assumption about the projection presented as a property of the framework.
+It now says what is enforced and what is not.

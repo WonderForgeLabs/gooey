@@ -490,7 +490,18 @@ var defFrozen = &ElementDef{
 			}
 			// A SECOND arm on the same sink. Two <Frozen> publishing to
 			// one property erase each other — see Context.armedSinks.
-			if was, dup := ctx.armedSinks[sink]; dup {
+			//
+			// armedOuter as well, because an ItemsView row's map is
+			// deliberately row-local and would otherwise not see the
+			// PAGE's arms. Checking both while registering only in
+			// armedSinks is what lets every row arm the same template
+			// sink — not a collision — while a row arming a page-owned
+			// handle still is. Raised in review of #459.
+			was, dup := ctx.armedSinks[sink]
+			if !dup {
+				was, dup = ctx.armedOuter[sink]
+			}
+			if dup {
 				return nil, fmt.Errorf(
 					"markup: <Frozen AllowError=%q>: already the failure channel for "+
 						"<Frozen AllowError=%q> in this document — two sealed subtrees "+

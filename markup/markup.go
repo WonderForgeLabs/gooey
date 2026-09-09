@@ -215,6 +215,23 @@ type Context struct {
 	// designer — starts clean instead of refusing its own previous
 	// generation. document.build owns that scoping.
 	armedSinks map[*prop.Property[string]]string
+	// armedOuter is the map a NESTED scope must also check but must not
+	// write to. Today its one setter is the ItemsView row factory, whose
+	// armedSinks is deliberately row-local: the factory runs per row
+	// realization and never unregisters, so a shared map would accumulate
+	// an entry per row and refuse the list's own second row.
+	//
+	// Row-local registration alone left a page-versus-row collision with
+	// nobody looking, and it erases at LOAD: a <Frozen> on the page and a
+	// <Frozen> in an item template can arm the same handle — measured,
+	// with the page's message going to "" inside Build — because a
+	// projection may hand every row the page's own property.
+	// components/itemsview.go returns a *prop.Property[string] found in a
+	// row map straight through, so "each row carries its own handle" is a
+	// fact about the projection and not something this package enforces.
+	// Splitting check from registration refuses that shape and keeps row
+	// reuse working. Raised in review of #459.
+	armedOuter map[*prop.Property[string]]string
 	// ns is the document's xmlns prefix → URI table, captured by Build.
 	// It is per-document, not per-app: a UserControl's markup declares
 	// its own namespaces, so an included file cannot borrow a prefix

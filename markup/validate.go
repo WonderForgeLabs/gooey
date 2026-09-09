@@ -315,8 +315,8 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 	return other, nil
 }
 
-// allPaths asks a strictly wider question than bindRe: every `.Path`
-// TOKEN inside a `{{ … }}` expression, wherever it sits.
+// allPaths is every `.Path` an attribute names, in any position, read
+// with THE PACKAGE'S OWN SCANNER.
 //
 // bindRe matches a whole-body binding and nothing else, so a path that
 // appears as an ARGUMENT is invisible to it: `Allow="{{v:Echo .X}}"`
@@ -324,46 +324,65 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 // The alias guard using bindRe therefore missed exactly that spelling,
 // and the priming publish went on destroying the author's Allow source
 // during Build — the harm the guard was added to stop, reachable by
-// writing the same alias a different way. Reported in review of #459,
-// with the damage measured against the in-repo echoProvider harness.
+// writing the same alias a different way.
+//
+// THE REGEXP THAT REPLACED bindRe WAS ALSO WRONG, in both directions,
+// and scan.go had already written down why: "a backtick literal may
+// legally contain a brace … has to find the LAST `}}`, not the first."
+// A `\{\{[^}]*\}\}` scan stops at the first `}`, so
+//
+//	Allow="{{v:Echo `}}` .X}}"   MISSED the alias — built clean, and the
+//	                             priming publish erased the Allow source
+//	Allow="{{v:Echo `.X`}}"      FALSELY refused — a path spelled inside
+//	                             a backtick literal is not a path
+//
+// Both measured against this package's echoProvider in review of #459.
+// The fix is not a better regexp: it is to stop having a second grammar.
+// scanBindings splits correctly (closingBraces skips backtick literals)
+// and hands back typed segments, so a path is a segPath and a call's
+// arguments are already lexed into tokens. There is nothing left for a
+// pattern to get wrong, and no second pass to reason about — the lexer
+// yields every argument by construction, where a regexp with one capture
+// group yielded one match per expression and missed `{{v:Pick .A .X}}`.
 //
 // `| into .Target` is deliberately INCLUDED: a call whose result is
 // written into the sink aliases it just as surely as one that reads it.
 //
-// The braces are required so the scan cannot be fooled by attribute
-// PROSE, and that half is unreachable rather than untested: the only
-// caller passes `Allow`, and an absent-or-literal `Allow` is already a
-// load error forty lines above (`without a BOUND Allow`), so what
-// arrives here is always a binding expression. A mutation dropping the
-// brace requirement is correctly SILENT — noted because a silent
-// mutation usually means a missing test, and here it means the state
-// cannot be built.
-//
-// TWO PASSES, and the second is not redundant. A regex with one capture
-// group yields one match per EXPRESSION, so a single pass over
-// `{{v:Pick .A .B}}` would report only .A and miss the alias in the
-// second argument — the same "first match only" defect this guard was
-// already fixed for once, at the level of expressions instead of
-// attributes. So braceRe finds the expressions and tokenRe rescans each
-// one for its own paths.
+// An unparseable attribute yields NO paths rather than an error. Every
+// caller has already had its attribute parsed by the builder, and a
+// guard is not the place a syntax error should first be reported.
 func allPaths(attr string) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, expr := range braceRe.FindAllString(attr, -1) {
-		for _, m := range tokenRe.FindAllStringSubmatch(expr, -1) {
-			if !seen[m[1]] {
-				seen[m[1]] = true
-				out = append(out, m[1])
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	segs, err := scanBindings(attr)
+	if err != nil {
+		return nil
+	}
+	for _, seg := range segs {
+		switch seg.kind {
+		case segPath:
+			add(seg.text)
+		case segCall:
+			if seg.call == nil {
+				continue
 			}
+			for _, t := range seg.call.Args {
+				if t.kind == tokPath {
+					add(t.text)
+				}
+			}
+			add(strings.TrimPrefix(seg.call.Into, "."))
 		}
 	}
 	return out
 }
-
-var (
-	braceRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
-	tokenRe = regexp.MustCompile(`\.([A-Za-z0-9_.]+)`)
-)
 
 // aliasesSink reports whether ANY path in attr resolves to the same
 // *prop.Property[string] as sink, and names the path that does.

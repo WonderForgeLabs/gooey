@@ -72,6 +72,13 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// catch the error at load — but a table fed by a timer is empty at
 	// load, and the same typo surfaces on first scroll instead.
 	res := ctx.res
+	// The PAGE's armed set, captured here for the same reason as the two
+	// above: a row is realized long after this build finished, and
+	// document.build restores ctx.armedSinks to the outer map when it
+	// returns — so reading it inside the factory would consult whatever
+	// scope happens to be current then, not the page whose arms matter.
+	// Raised in review of #459.
+	pageArmed := ctx.armedSinks
 	factory := func(values map[string]any) (gooey.Component, error) {
 		item := &Context{
 			Values:     values,
@@ -101,11 +108,28 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// fresh map per row keeps the guard meaningful WITHIN a row —
 			// two <Frozen> in one template sharing a sink still collide,
 			// which is the real page-shape — and lets each row arm the
-			// same template sink, which is not a collision because each
-			// row's Values carry their own handle.
+			// same template sink, whose handle a projection normally makes
+			// per-row.
 			//
-			// Raised in review of #459.
+			// NORMALLY, and the qualifier is the residual hole: nothing
+			// here enforces it. components/itemsview.go passes a
+			// *prop.Property[string] found in a row map straight through,
+			// so a projection that hands every row ONE shared handle gets
+			// no load-time signal and the rows overwrite each other's
+			// message at runtime. That is not fixable from this side — the
+			// handles are indistinguishable by the time they arrive — and
+			// docs/markup-reference.md states it rather than claiming it
+			// cannot happen.
+			//
+			// The PAGE's arms are visible through armedOuter, which is the
+			// collision this scoping left open: a <Frozen> on the page and
+			// a <Frozen> in the template arming one handle built clean,
+			// and the row's priming publish erased the page's message
+			// during Build.
+			//
+			// Raised in review of #459, twice.
 			armedSinks: map[*prop.Property[string]]string{},
+			armedOuter: pageArmed,
 			ns:         ns,
 			res:        res,
 		}
