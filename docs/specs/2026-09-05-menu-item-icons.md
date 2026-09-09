@@ -182,6 +182,13 @@ helper on a child element found all three on its first day.
 
 ## How the claims here are checked
 
+This table is maintained by hand, and review round one of #455 found it
+missing 8 of that PR's 25 new tests. Nothing checks that a name here
+resolves to a real test, so a rename orphans a row silently and the table
+still reads as evidence — 33 names across six specs already point at
+nothing. A derived guard is [#468](https://github.com/WonderForgeLabs/gooey/issues/468),
+which carries the measurement and the reason it could not land here.
+
 | Claim | Test | Mutation that fires it |
 |---|---|---|
 | The gutter measures the same in both tiers | `TestTheIconGutterIsReservedInBothTiers` | reserve only when `pixel` |
@@ -284,8 +291,9 @@ Both were caught by mutation, not by review:
   up whether or not the descent runs — so it could not see a skipped
   descent at all. It reaches the bug only with a helper reading a
   *hardcoded* index, called in both roles.
-- `TestAToastIsNotHiddenByAnOpenMenu` in the PR above this one had the
-  same disease geometrically.
+- `TestAToastIsNotHiddenByAnOpenMenu` ([#456](https://github.com/WonderForgeLabs/gooey/pull/456),
+  the PR above this one in the stack, so the name resolves there and not
+  here) had the same disease geometrically.
 
 The pattern is worth naming: **a test for a fix inside a walk must
 exercise the branch the fix is in**, and "the attribute shows up in the
