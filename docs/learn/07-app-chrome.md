@@ -74,13 +74,22 @@ The rest of this tutorial adds chrome, and every piece of chrome is an
 **overlay**: something that paints *above* the content. The recipe is
 operational and short:
 
-> **Declare overlay elements LAST in their container.** Document order
-> is z-order — a later sibling paints above what it covers. In a
-> `Grid`, `Grid.Row` still places the element wherever it belongs, so
-> "last child, top row" is an ordinary thing to write.
+> **Declare overlay elements wherever they belong.** A subtree whose
+> root implements `gooey.Overlay` is lifted out of document order into
+> a paint layer of its own, so it paints above the page from anywhere.
+> In a `Grid`, `Grid.Row` places the element where it belongs and
+> nothing about z-order argues with that.
 
-Why document order is z-order — and what happens when an overlay is
-dismissed and the cells under it come back — is the subject of
+**"Declare overlay elements LAST" is what this box used to say**, and
+the shape survives in this tutorial's own example, where the overlays
+sit at the end of the `Grid` because that is where they read best. It
+is harmless there and no longer load-bearing. Corrected in review of
+#455, which caught this box teaching the rule the paragraph forty lines
+below calls "specifically the thing that did not work" — a page that
+says both leaves the reader no way to tell which half is current.
+
+How the lift works — and what happens when an overlay is dismissed and
+the cells under it come back — is the subject of
 [concepts/overlays.md](concepts/overlays.md). Here we just use the
 rule.
 

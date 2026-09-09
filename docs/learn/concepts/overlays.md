@@ -1,18 +1,31 @@
 # Concept: overlays and z-order
 
 gooey has no z-index property and no overlay registry. **Z-order is
-document order**: the Composer keeps its paint nodes in depth-first
-pre-order, so children paint after (above) their parents and later
-siblings after earlier ones. An overlay is nothing more than a later
-sibling with a covering paint — a leaf's pre-clear, or a container's
-background fill.
+document order in TWO layers.** The Composer keeps its paint nodes in
+depth-first pre-order — children paint after (above) their parents,
+later siblings after earlier ones — and then lifts every subtree whose
+root implements `gooey.Overlay` out of that order and onto the end.
+`c.nodes` stays the structure; `c.paint` is the answer to what is in
+front of what.
 
-That makes overlay hosting a declaration, not machinery: **declare the
-overlay element as the LAST child**. In a `Grid`, an element's position
-(`Grid.Row`) is independent of its document order, so "last child, top
-row" is spellable directly — `cmd/toolkit`'s markup declares its
-`MenuBar`, `ToastHost`, and `AdornmentLayer` as the Grid's last children
-with `Grid.Row="0"` keeping the bar on the top row.
+So an overlay paints above the page **from wherever it is declared**. In
+a `Grid`, `Grid.Row` places it where it belongs and nothing about
+z-order argues with that — `cmd/toolkit` declares its `MenuBar`,
+`ToastHost` and `AdornmentLayer` at the end of the Grid because that
+reads best, not because it decides anything.
+
+**This page opened with "Z-order is document order" and instructed
+"declare the overlay element as the LAST child"** until review of #455,
+which is the rule
+[#430](https://github.com/WonderForgeLabs/gooey/issues/430) disproved:
+being last among your OWNER's children buys being above the owner's
+other children and nothing else, so anything declared after the owner
+painted over an open dropdown and the forward-only pass could not put it
+back. The lift landed in
+[#437](https://github.com/WonderForgeLabs/gooey/issues/437). Ordering
+*within* the layer — so a toast is never hidden by an open menu — is
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439) and is not
+described here yet.
 
 ## The forward pass keeps the stack honest
 
@@ -32,8 +45,8 @@ restore). The pass and both exemptions landed in
 ## Dismissal is the reverse half
 
 The forward pass can only force nodes *later* in z-order than a painter
-— and an overlay is the last node, so when it goes away, nothing after
-it can fix the hole. `Composer.restoreUnder`
+— and the lift puts an overlay at the end of the paint order, so when it
+goes away, nothing after it can fix the hole. `Composer.restoreUnder`
 ([PR #93](https://github.com/WonderForgeLabs/gooey/pull/93)) is the
 missing half: when a rect **leaves the screen**, the sweep clears the
 vacated cells and force-dirties every still-visible node intersecting
@@ -68,8 +81,9 @@ Two conventions ride along with the z-hosting, both visible in the
   else stops at the overlay.
 
 One trap for page-spanning hosts: hit-testing treats every bounded
-container as opaque, so a full-page `ToastHost` declared last would eat
-every click on the page. Hosts like it implement `HitTestTransparent` —
+container as opaque, so a full-page `ToastHost` would eat every click on
+the page — and here position genuinely does still order things, because
+the lift moves PAINT and not input. Hosts like it implement `HitTestTransparent` —
 the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).

@@ -579,11 +579,22 @@ func (m *MenuBar) OpenIndex() int {
 // not enough, and reading it as if it were is the "goes deaf to that
 // property" trap one level up.
 func (m *MenuBar) DropdownBounds() gooey.Rect {
-	// m.pop directly rather than m.popup(): the accessor must not
-	// allocate the surface as a side effect of being asked a question,
-	// and a bar whose popup does not exist yet has certainly not
-	// arranged one.
-	if !m.showing() || m.pop == nil {
+	// m.pop FIRST, and the order is the whole point: the accessor must
+	// not allocate the surface as a side effect of being asked a
+	// question, and a bar whose popup does not exist yet has certainly
+	// not arranged one.
+	//
+	// This read `!m.showing() || m.pop == nil`, which is the same
+	// sentence with the guarantee removed. showing() calls popup(), the
+	// LAZY CONSTRUCTOR — it allocates m.pop, sets Modal and assigns
+	// m.kids — so by the time the second conjunct ran m.pop could never
+	// be nil, and DropdownBounds on a fresh MenuBar built the surface it
+	// was only being asked about. Nothing misbehaved, because
+	// ChildComponents calls popup() anyway; what was wrong was a comment
+	// describing protection that the code had put on the wrong side of
+	// an `||`. Raised in review of #455, pinned by
+	// TestAskingForTheBoundsDoesNotBuildTheSurface.
+	if m.pop == nil || !m.showing() {
 		return gooey.Rect{}
 	}
 	b := m.pop.SurfaceBounds()

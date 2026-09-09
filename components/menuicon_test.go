@@ -65,8 +65,17 @@ func plainBar() *MenuBar {
 	}}}
 }
 
-// openWidth is the dropdown's arranged width, which is what the tier
+// openWidth is the width popupRect MEASURES, which is what the tier
 // rule is about.
+//
+// Not "the arranged width", which is what this said until review of
+// #455: popupRect is the computation and SurfaceBounds is the arranged
+// surface, and this PR's own
+// TestTheReportedBoundsDescribeTheArrangedSurfaceNotAFreshComputation
+// exists because the two come apart. No assertion here was wrong — the
+// claims in this file are about measurement — but a helper labelled
+// "arranged" reading the computation, in the file whose sibling test
+// proves they differ, is the drift that test was written against.
 func openWidth(t *testing.T, bar *MenuBar, pixel bool) int {
 	t.Helper()
 	c := gooey.NewComposer(bar, 40, 16)
@@ -452,5 +461,40 @@ func TestASeparatorCarryingAnIconReservesNoGutter(t *testing.T) {
 	if real <= plain {
 		t.Errorf("an icon on a REAL item did not widen the dropdown (%d vs %d), so the "+
 			"separator assertion above proves nothing", real, plain)
+	}
+}
+
+// TestAskingForTheBoundsDoesNotBuildTheSurface pins DropdownBounds'
+// order of evaluation, which is the whole of its no-side-effects claim.
+//
+// showing() calls popup(), the lazy constructor, so `!m.showing() ||
+// m.pop == nil` allocated the surface before testing whether it existed
+// — the comment promised the opposite and the `||` was the only thing
+// deciding. Reverting the two conjuncts is otherwise SILENT: every other
+// test in this package composes first, and ChildComponents calls popup()
+// anyway, so m.pop is non-nil everywhere the suite looks.
+//
+// A FRESH BAR, therefore, with no Composer anywhere near it. Raised in
+// review of #455.
+func TestAskingForTheBoundsDoesNotBuildTheSurface(t *testing.T) {
+	bar := iconBar()
+	if bar.pop != nil {
+		t.Fatal("the fixture arrives with a surface already built, so this test " +
+			"cannot see what it exists for")
+	}
+
+	if got := bar.DropdownBounds(); got != (gooey.Rect{}) {
+		t.Errorf("DropdownBounds on a bar that has never composed = %v, want the "+
+			"zero rect", got)
+	}
+	if bar.pop != nil {
+		t.Error("asking a MenuBar for its dropdown bounds BUILT the dropdown. An " +
+			"accessor that allocates as a side effect of being asked a question " +
+			"is one a decorator cannot call safely, and the comment on " +
+			"DropdownBounds says it does not.")
+	}
+	if bar.kids != nil {
+		t.Error("asking for the bounds populated kids, so the visual tree changed " +
+			"under a read")
 	}
 }
