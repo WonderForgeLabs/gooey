@@ -78,10 +78,9 @@ func swapClipboard(t *testing.T, err error) *string {
 	// sets ed.addrs.caveatFn explicitly and is unaffected — that seam
 	// overrides this, and is set after addrPage returns.
 	//
-	// t.Setenv also marks the test as non-parallel, which these are.
-	// Issue #463.
-	t.Setenv("TMUX", "")
-	t.Setenv("STY", "")
+	// Issue #463. The two lines are in statePlainTerminal now, and the
+	// reasons they are where they are live there.
+	statePlainTerminal(t)
 
 	var got string
 	prev := writeSystemClipboard
@@ -95,6 +94,61 @@ func swapClipboard(t *testing.T, err error) *string {
 
 // okCopy makes the copy succeed and reports what was handed over.
 func okCopy(t *testing.T) *string { return swapClipboard(t, nil) }
+
+// statePlainTerminal says what terminal these tests are running in,
+// rather than inheriting the developer's.
+//
+// THE CAVEAT IS A SECOND AXIS. Stubbing the clipboard WRITE leaves it
+// reading the shell: term.ClipboardCaveat consults $TMUX and $STY, and
+// the strip reports copyUnverified whenever it answers non-empty, even
+// though the stubbed write always succeeds. Three tests asserting a
+// CONFIRMED copy therefore passed in CI and failed for anyone running
+// the suite inside tmux or screen — green where nobody is watching, red
+// where everybody is, which is the worst way round.
+//
+// A test that stubs the clipboard is by definition not testing the real
+// terminal, so it has to state its environment. That is the discipline
+// term/clipboard_test.go already uses on the same two variables.
+//
+// CALLED FROM BOTH WRITE STUBS, which is the fix: this package stubs the
+// same package-level writeSystemClipboard from two places — swapClipboard
+// here and clipEditor in clipboard_test.go — and hanging the environment
+// on one of them made the property true for whoever remembered to call
+// okCopy. The clipEditor tests were left reading the shell, and their
+// consumer is worse off, because editor.sayCopiedOut calls
+// term.ClipboardCaveat DIRECTLY and has no caveatFn seam to opt out with.
+// They passed under $TMUX only by luck of phrasing — one asserted
+// Contains("system clipboard"), which the caveat tail still satisfies.
+// Raised in review of #467.
+//
+// NOT ON addrPage, though the review suggested the two constructors.
+// Measured: removing it from addrPage while the two write stubs keep it
+// reddens nothing, because the caveat only reaches an assertion where a
+// stubbed write is being reported as an outcome, and every such test
+// goes through okCopy. The tests that stub nothing are immune for a
+// different reason — the error branch of sayCopiedOut precedes the
+// caveat branch — so a call there would have been an unfireable line
+// claiming coverage it did not have. The write stub is the seam.
+//
+// A test that WANTS a caveat states that instead: the strip's tests set
+// ed.addrs.caveatFn, which overrides this and is assigned after addrPage
+// returns, and the two that need the real detector set the variables
+// themselves AFTER the stub has run.
+//
+// t.Setenv CANNOT UNSET. $TMUX and $STY are left present-but-empty, which
+// is neutral only because term.ClipboardCaveat compares os.Getenv against
+// "" rather than using os.LookupEnv. A detector that switched would
+// re-break every one of these tests — and the guard below,
+// TestSwapClipboardNeutralisesTheAmbientEnvironment, is what catches that.
+//
+// t.Setenv also marks the test non-parallel. There is no t.Parallel in
+// this package today, so nothing panics; whoever adds the first one has
+// to come here.
+func statePlainTerminal(t *testing.T) {
+	t.Helper()
+	t.Setenv("TMUX", "")
+	t.Setenv("STY", "")
+}
 
 // noticeText is what the CLIPBOARD is saying. There is one notice for
 // the whole strip rather than a flash per chip, which is the point: the
@@ -1337,7 +1391,20 @@ func TestTheCaveatIsWiredToTheRealDetector(t *testing.T) {
 		t.Fatal("the builder left caveatFn nil, so the tmux/screen check never runs in " +
 			"the shipped app")
 	}
-	if got, want := ed.addrs.caveat(), term.ClipboardCaveat(); got != want {
+	// THE HOSTILE ENVIRONMENT IS SET HERE, and that is what makes this a
+	// wiring check rather than "" == "". In a clean shell — CI, always —
+	// both sides were empty and the comparison held for a strip wired to
+	// anything at all, so the one test guarding the wiring was the one
+	// test that could not fail. It passed for the same reason the three
+	// copy tests failed: it inherited an environment instead of stating
+	// one. Raised in review of #467.
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	want := term.ClipboardCaveat()
+	if want == "" {
+		t.Fatal("the detector reports no caveat with $TMUX set, so this test cannot " +
+			"tell a wired strip from an unwired one")
+	}
+	if got := ed.addrs.caveat(); got != want {
 		t.Errorf("the strip reports caveat %q, the detector says %q", got, want)
 	}
 }
@@ -1419,15 +1486,29 @@ func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
 // t.Setenv pair in swapClipboard this fails here, and the three copy
 // tests fail with their own messages.
 func TestSwapClipboardNeutralisesTheAmbientEnvironment(t *testing.T) {
+	// NON-VACUITY, ONE VARIABLE AT A TIME. Checking both together is half
+	// a guard: ClipboardCaveat returns on the $TMUX branch first, so a
+	// detector that stopped reading $STY would still answer non-empty and
+	// this test would still declare it live. term/clipboard_test.go
+	// already checks per-variable, and this is that shape. Raised in
+	// review of #467.
+	for _, v := range []struct{ name, value string }{
+		{"TMUX", "/tmp/tmux-1000/default,4242,0"},
+		{"STY", "1234.pts-0.host"},
+	} {
+		t.Run("detector reads $"+v.name, func(t *testing.T) {
+			statePlainTerminal(t)
+			t.Setenv(v.name, v.value)
+			if term.ClipboardCaveat() == "" {
+				t.Fatalf("term.ClipboardCaveat() is empty with $%s alone set, so the "+
+					"detector stopped reading it and the neutralisation below would "+
+					"be about nothing", v.name)
+			}
+		})
+	}
+
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
 	t.Setenv("STY", "1234.pts-0.host")
-
-	// NON-VACUITY: the detector must actually be reporting a caveat from
-	// those variables, or the assertion below is about nothing.
-	if term.ClipboardCaveat() == "" {
-		t.Fatal("term.ClipboardCaveat() is empty with $TMUX and $STY set, so this test " +
-			"cannot see what it exists for — the detector stopped reading them")
-	}
 
 	okCopy(t)
 
@@ -1437,5 +1518,18 @@ func TestSwapClipboardNeutralisesTheAmbientEnvironment(t *testing.T) {
 			"terminal, so it must state its environment rather than inherit one: "+
 			"every copy test that asserts a CONFIRMED copy goes red inside tmux "+
 			"or screen. Issue #463.", got)
+	}
+
+	// THE OTHER DOOR. This package stubs the same writeSystemClipboard var
+	// from two places, and a guard that only reaches one of them leaves
+	// the defect live in the other file while reporting it fixed. Raised
+	// in review of #467.
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	clipEditor(t)
+	if got := term.ClipboardCaveat(); got != "" {
+		t.Errorf("clipEditor left the ambient clipboard environment in place "+
+			"(caveat %q). Its tests run through editor.sayCopiedOut, which reads "+
+			"term.ClipboardCaveat directly and has no caveatFn seam, so they cannot "+
+			"opt out of the environment even deliberately.", got)
 	}
 }
