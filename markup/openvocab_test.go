@@ -136,8 +136,15 @@ func TestTheMenuFamilyKeepsItsExactSet(t *testing.T) {
 		want       []string
 	}{
 		{"Menu", "MenuBar", []string{"Title"}},
+		// Icon and IconRune arrived with this PR, and this line is the
+		// decision that had to be made in a failing test rather than a
+		// side effect: the pin landed one PR down the stack and went red
+		// here on the rebase, naming both attributes. That is what the
+		// literal set is for — a derived one would have absorbed them
+		// silently, which is the whole defect it guards.
 		{"MenuItem", "Menu", []string{
-			"Checked", "Command", "Gesture", "Separator", "Text"}},
+			"Checked", "Command", "Gesture", "Icon", "IconRune",
+			"Separator", "Text"}},
 	} {
 		t.Run(tc.el, func(t *testing.T) {
 			spec, ok := specs[tc.el]
