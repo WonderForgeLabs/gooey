@@ -31,6 +31,36 @@ type Encoder interface {
 	Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error
 }
 
+// OpaqueEncoder is an Encoder whose wire format carries NO ALPHA. A
+// translucent pixel cannot be sent, so the protocol decides for itself
+// what becomes of one, and sixel's decision is the harsh one: sixel.go
+// writes no pixel below half alpha, so a faint stroke is not dimmed on
+// the way out — it is DISCARDED, and the drawing that produced it
+// silently loses a line.
+//
+// A caller that wants a faint line on every tier has to ask this
+// question, because the two answers are different DRAWINGS rather than
+// different encodings of one: alpha where the terminal composites — the
+// kitty and iTerm2 encoders transmit through png.Encode, which
+// un-premultiplies, so the terminal does the compositing against a
+// background this process never learns — and a dimmer OPAQUE colour
+// where it cannot, computed against a ground the drawing has to guess.
+// That is the panel hairline in apps/wysiwyg (#254), and it is why the
+// question lives here rather than as a type switch at the call site: a
+// fourth alpha-less protocol would otherwise take the composited branch
+// silently, which is the failure this whole interface exists to make
+// impossible.
+//
+// A second interface rather than another method on Encoder, matching
+// IDEncoder above: capability questions here are type assertions, the
+// same no-reflection shape as the rest of the tree.
+type OpaqueEncoder interface {
+	Encoder
+	// OpaqueOnly carries no value — the type assertion IS the answer, the
+	// way gooey.Overlay's empty method is.
+	OpaqueOnly()
+}
+
 // IDEncoder is an Encoder whose images have IDENTITY: one transmitted
 // image can later be re-placed, replaced, or removed by referring to it,
 // without the pixels going down the wire again. Only the Kitty protocol

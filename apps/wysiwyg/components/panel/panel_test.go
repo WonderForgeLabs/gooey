@@ -331,18 +331,18 @@ func TestCellTierIsChosenByTheTierTest(t *testing.T) {
 func TestArtCachesBySizeCellSizeAndColour(t *testing.T) {
 	a := NewArt()
 	fg := render.RGB(0x6c, 0x9c, 0xff)
-	first, err := a.frame(20, 6, 8, 16, fg, render.Color{})
+	first, err := a.frame(20, 6, 8, 16, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := a.frame(20, 6, 8, 16, fg, render.Color{})
+	again, err := a.frame(20, 6, 8, 16, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first != again {
 		t.Error("the same size and colour rasterized twice")
 	}
-	other, err := a.frame(20, 6, 8, 16, render.RGB(0xff, 0, 0), render.Color{})
+	other, err := a.frame(20, 6, 8, 16, render.RGB(0xff, 0, 0), render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,11 +353,11 @@ func TestArtCachesBySizeCellSizeAndColour(t *testing.T) {
 	// The one that a pixel-sized key would have got wrong: 40 cells of 8px
 	// and 20 cells of 16px are the same 320-pixel canvas, and they slice
 	// into different rings.
-	wide, err := a.frame(40, 6, 8, 16, fg, render.Color{})
+	wide, err := a.frame(40, 6, 8, 16, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tall, err := a.frame(20, 6, 16, 16, fg, render.Color{})
+	tall, err := a.frame(20, 6, 16, 16, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestArtCachesBySizeCellSizeAndColour(t *testing.T) {
 // frame of empty images, and the message has to name the cause.
 func TestFrameRefusesAnUnprobedTerminal(t *testing.T) {
 	a := NewArt()
-	fr, err := a.frame(20, 6, 0, 0, render.RGB(1, 2, 3), render.Color{})
+	fr, err := a.frame(20, 6, 0, 0, render.RGB(1, 2, 3), render.Color{}, true)
 	if err == nil {
 		t.Fatal("a zero cell size produced a frame")
 	}
@@ -399,7 +399,7 @@ func TestFrameRefusesAnUnprobedTerminal(t *testing.T) {
 func TestDrawnCanvasIsInkedOnTheEdgeAndClearInside(t *testing.T) {
 	const cw, ch = 8, 16
 	const cols, rows = 40, 12
-	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0x6c, 0x9c, 0xff), render.Color{})
+	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0x6c, 0x9c, 0xff), render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestDrawnCanvasIsInkedOnTheEdgeAndClearInside(t *testing.T) {
 func TestTheHairlineHasFlatEnds(t *testing.T) {
 	const cw, ch = 8, 16
 	const cols, rows = 40, 6
-	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,11 +559,11 @@ func TestTheRuleIsComposedAgainstTheGroundNotAgainstBlack(t *testing.T) {
 	// AND THE GROUND REACHES THE CANVAS, not just the helper. A colour
 	// function nothing calls with the pane's background is the same
 	// defect one level down.
-	dark, err := drawCanvas(40, 12, 8, 16, fg, render.RGB(0x1e, 0x1e, 0x2e))
+	dark, err := drawCanvas(40, 12, 8, 16, fg, render.RGB(0x1e, 0x1e, 0x2e), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	black, err := drawCanvas(40, 12, 8, 16, fg, render.RGB(0, 0, 0))
+	black, err := drawCanvas(40, 12, 8, 16, fg, render.RGB(0, 0, 0), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,11 +602,11 @@ func TestTheGroundReachesTheArtAndItsCacheKey(t *testing.T) {
 
 	// ---- the key. One Art, two grounds, two frames.
 	a := NewArt()
-	onBlack, err := a.frame(20, 6, 8, 16, fg, render.Color{})
+	onBlack, err := a.frame(20, 6, 8, 16, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	onDark, err := a.frame(20, 6, 8, 16, fg, dark)
+	onDark, err := a.frame(20, 6, 8, 16, fg, dark, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestTheGroundReachesTheArtAndItsCacheKey(t *testing.T) {
 func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 	fg := render.RGB(140, 140, 150)
 	for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
-		s := hairlineStroke(fg, bg)
+		s := hairlineStroke(fg, bg, true)
 		want := over(fg, bg, hairlineFade)
 		if s.Fallback != want {
 			t.Errorf("bg %v: the stroke's Fallback is %v and its Brush paints %v — "+
@@ -724,7 +724,7 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 		return buf
 	}
 
-	withRule, err := drawCanvas(cols, rows, cw, ch, fg, render.Color{})
+	withRule, err := drawCanvas(cols, rows, cw, ch, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,19 +742,251 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 				"no-hairline canvas to compare against")
 		}
 	}
-	without, err := drawCanvas(cols, rows, cw, short, fg, render.Color{})
+	without, err := drawCanvas(cols, rows, cw, short, fg, render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, bare := encode(t, withRule), encode(t, without)
+	// THE CONTROLLED ARM, at IDENTICAL geometry. The `without` canvas
+	// above changes the cell height, so it changes the canvas height too
+	// (192 pixels against 24 here) — the corner arcs happen to agree
+	// because the radius clamps to 6.0 on both, but that is luck, not
+	// construction. Drop `rows` in this test and they diverge, and
+	// because the assertion is an INEQUALITY the test would then pass on
+	// a geometry difference while the rule was silently gone again. That
+	// is the same shape as the sixelKeep problem this test was written to
+	// replace. Raised in review of #474.
+	//
+	// So the discriminating comparison is the two STROKES on one canvas
+	// size: translucent against opaque, same cols, same rows, same cell.
+	// Nothing differs but the alpha, which is the whole subject.
+	alpha, err := drawCanvas(cols, rows, cw, ch, fg, render.Color{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, bare, faint := encode(t, withRule), encode(t, without), encode(t, alpha)
 	if len(got) == len(bare) {
 		t.Errorf("the sixel stream is %d bytes with the hairline and %d without: "+
 			"the encoder is writing nothing for the rule, which is exactly the "+
 			"state this PR found — the line drawn, measured, cached and never "+
 			"put on the wire", len(got), len(bare))
 	}
-	t.Logf("sixel bytes: with the rule %d, without %d", len(got), len(bare))
+	// AND THE TRANSLUCENT STROKE IS STILL DROPPED, byte for byte. This is
+	// the positive half: it says the extra bytes above are the RULE and
+	// not the geometry, because the only thing changed here is the
+	// stroke's alpha and the stream falls back to exactly the no-rule
+	// one.
+	if !bytes.Equal(faint, bare) {
+		t.Errorf("the translucent stroke put %d bytes on the sixel wire against %d "+
+			"for a canvas with no rule at all. If sixel has started carrying alpha "+
+			"then the opaque tier is no longer needed and graphics.OpaqueEncoder "+
+			"is wrong about it; if it has not, this canvas differs from the bare "+
+			"one for some reason that is not the hairline, and the byte counts "+
+			"below are not measuring what they say", len(faint), len(bare))
+	}
+	if len(got) <= len(faint) {
+		t.Errorf("the opaque rule is %d bytes and the translucent one %d on the "+
+			"SAME canvas geometry — the tier split buys nothing", len(got), len(faint))
+	}
+	t.Logf("sixel bytes: opaque rule %d, translucent rule %d, no rule %d",
+		len(got), len(faint), len(bare))
+}
+
+// TestTheEncoderDecidesWhichPictureIsDrawn is the tier split itself, and
+// it is the finding that #474's first fix spent two working tiers to
+// mend a third.
+//
+// Sixel drops a translucent stroke outright, so it needs the rule as a
+// dimmer OPAQUE colour composited against a ground. Kitty and iTerm2
+// transmit through png.Encode, which un-premultiplies, so the TERMINAL
+// composites the translucent stroke against its own background — a
+// colour this process never learns and therefore cannot better. Drawing
+// one opaque picture for all three replaced the terminal's answer with a
+// guess, and in this repo the guess is always black, because no element
+// declares a Background at all.
+//
+// Raised in review of #474.
+func TestTheEncoderDecidesWhichPictureIsDrawn(t *testing.T) {
+	fg := render.RGB(140, 140, 150)
+
+	// ---- the stroke. Two colours, and neither is the other.
+	faint := hairlineStroke(fg, render.Color{}, false)
+	solid := hairlineStroke(fg, render.Color{}, true)
+	_, _, _, fa := faint.Brush.ColorAt(0, 0).RGBA()
+	_, _, _, sa := solid.Brush.ColorAt(0, 0).RGBA()
+	// A LITERAL, not 255*hairlineFade. Derived, this arm moves with the
+	// constant it is meant to pin and stays green through any change to
+	// it; 102 is what alpha 0.4 premultiplies to, and a change to that
+	// number is a change to how faint the rule is, which belongs in a
+	// failing test rather than in a constant edit.
+	const wantA = 102
+	if fa>>8 != wantA {
+		t.Errorf("the composited tier's stroke is alpha %d, not %d — a stroke the "+
+			"terminal is meant to composite has to arrive translucent",
+			fa>>8, wantA)
+	}
+	if sa>>8 != 255 {
+		t.Errorf("the opaque tier's stroke is alpha %d, not 255 — sixel drops "+
+			"anything under half and the rule vanishes again", sa>>8)
+	}
+	// AND THE CHANNELS, which the alpha alone does not pin. gg's pattern
+	// painter wants PREMULTIPLIED colour: hand it a straight fg at alpha
+	// 102 and it paints a line too bright by 1/0.4, a washed-out rule
+	// that is still translucent and still passes the arm above.
+	//
+	// The two brushes agree on RGB by arithmetic and not by coincidence —
+	// premultiplying by 0.4 IS scaling the channels by 0.4, which is what
+	// compositing onto black does — so asserting them equal says the
+	// composited stroke is premultiplied without restating the formula.
+	fr, fgn, fb, _ := faint.Brush.ColorAt(0, 0).RGBA()
+	sr, sgn, sb, _ := solid.Brush.ColorAt(0, 0).RGBA()
+	if fr != sr || fgn != sgn || fb != sb {
+		t.Errorf("the composited stroke paints (%d,%d,%d) and the opaque one "+
+			"(%d,%d,%d). Over black they are the same arithmetic, so a difference "+
+			"here means the translucent brush is not premultiplied and paints "+
+			"1/%.1f too bright",
+			fr>>8, fgn>>8, fb>>8, sr>>8, sgn>>8, sb>>8, hairlineFade)
+	}
+	// AND THE FALLBACK IS THE OPAQUE COLOUR ON BOTH. It is what the
+	// stroke becomes where there are no pixels at all, and a terminal
+	// with no protocol has nothing to composite against either.
+	if want := over(fg, render.Color{}, hairlineFade); faint.Fallback != want {
+		t.Errorf("the composited tier's Fallback is %v, want %v: the cell tier has "+
+			"no alpha to hand anybody", faint.Fallback, want)
+	}
+
+	// ---- and Render asks the ENCODER, not a constant. One pane painted
+	// under each protocol; its Art holds exactly the picture it asked
+	// for, so the cached frame is the answer.
+	paint1 := func(t *testing.T, enc graphics.Encoder) *frame {
+		t.Helper()
+		pane := &Pane{
+			Title: "Files",
+			Child: &components.Text{Content: components.Str("inside")},
+			art:   NewArt(),
+			style: render.Style{Fg: fg},
+		}
+		pane.LayoutProps().Height = 8
+		c := gooey.NewComposer(&components.VStack{Children: []gooey.Component{pane}}, 30, 10)
+		t.Cleanup(c.Close)
+		c.SetCaps(term8x16(30, 10))
+		c.SetGraphics(enc)
+		c.Frame()
+		if n := len(pane.art.cache); n != 1 {
+			t.Fatalf("%s: the pane's Art holds %d frames after one paint, so there "+
+				"is no single picture to read", enc.Name(), n)
+		}
+		for _, fr := range pane.art.cache {
+			return fr
+		}
+		return nil
+	}
+	y, ok := hairlineY(16)
+	if !ok {
+		t.Fatal("no hairline at a 16-pixel cell")
+	}
+	row := int(y - hairlineWidth/2)
+	x := 30 * 8 / 2
+
+	onSixel := paint1(t, graphics.Sixel{})
+	onKitty := paint1(t, graphics.Kitty{})
+	_, _, _, salpha := onSixel.top.At(x, row).RGBA()
+	_, _, _, kalpha := onKitty.top.At(x, row).RGBA()
+	if salpha>>8 != 255 {
+		t.Errorf("under sixel the rule's pixel is alpha %d, not 255 — Render is "+
+			"not asking the encoder, and sixel will drop this line", salpha>>8)
+	}
+	if kalpha>>8 == 255 {
+		t.Errorf("under kitty the rule's pixel is opaque. Render is drawing the " +
+			"sixel picture on a protocol that carries alpha, which throws away " +
+			"the terminal's own compositing for a ground this process guessed")
+	}
+	if kalpha == 0 {
+		t.Error("under kitty the rule's pixel is fully transparent, so there is no " +
+			"rule at all and the two tiers agree for the wrong reason")
+	}
+}
+
+// TestTheUnsetGroundIsOneCacheEntry is finding 2 of the same review: a
+// key finer than the picture buys a second 1.4ms raster for identical
+// bytes.
+//
+// over() maps an unset ground to black, so render.Color{} and
+// RGB(0,0,0) draw the SAME canvas — and the key carried bg.Set, which
+// said they were different pictures. The ground does not reach the
+// drawing at all on the composited tier, so two grounds are one picture
+// there too.
+func TestTheUnsetGroundIsOneCacheEntry(t *testing.T) {
+	fg := render.RGB(140, 140, 150)
+	dark := render.RGB(0x1e, 0x1e, 0x2e)
+
+	a := NewArt()
+	if _, err := a.frame(20, 6, 8, 16, fg, render.Color{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.frame(20, 6, 8, 16, fg, render.RGB(0, 0, 0), true); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(a.cache); n != 1 {
+		t.Errorf("an unset ground and an explicit black are %d cache entries. "+
+			"over() composites them identically, so this is one picture under two "+
+			"keys — a second rasterization and a second entry for the same bytes", n)
+	}
+
+	// AND ON THE COMPOSITED TIER THE GROUND IS NOT IN THE PICTURE AT ALL,
+	// so keying two grounds apart there is the same waste for a stronger
+	// reason: the stroke carries its own alpha and the terminal supplies
+	// the ground.
+	b := NewArt()
+	if _, err := b.frame(20, 6, 8, 16, fg, render.Color{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.frame(20, 6, 8, 16, fg, dark, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(b.cache); n != 1 {
+		t.Errorf("two grounds are %d cache entries on the tier that composites in "+
+			"the terminal, where the ground reaches no pixel of the drawing", n)
+	}
+
+	// NON-VACUITY: the key still separates the two pictures it must.
+	//
+	// WITH NO DECLARED GROUND, which is the case that pins the tier bit
+	// and the only one that does. Given a ground, the normalization above
+	// already keys the two apart as a side effect — an unset ground
+	// becomes black on the opaque tier and is erased to black on the
+	// composited one, so the two keys differ in the bg field and the tier
+	// bit could be dropped with every arm still green. Measured: without
+	// this arm, hardcoding the tier in the key is SILENT. And no element
+	// in apps/wysiwyg declares a Background at all, so this is not the
+	// exotic case — it is every pane in the app.
+	c := NewArt()
+	if _, err := c.frame(20, 6, 8, 16, fg, render.Color{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.frame(20, 6, 8, 16, fg, render.Color{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(c.cache); n != 2 {
+		t.Errorf("the opaque and composited strokes share %d cache entry for a pane "+
+			"with no declared ground. They are different pictures — one carries "+
+			"alpha and one does not — so a pane whose protocol changed would be "+
+			"handed the other tier's slices", n)
+	}
+
+	// AND WITH ONE, for the same reason stated the other way.
+	d := NewArt()
+	if _, err := d.frame(20, 6, 8, 16, fg, dark, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.frame(20, 6, 8, 16, fg, dark, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(d.cache); n != 2 {
+		t.Errorf("the opaque and composited strokes share %d cache entry on a "+
+			"declared ground", n)
+	}
 }
 
 // TestTheWholeHairlineClearsTheSixelThreshold is the finding measured on
@@ -768,7 +1000,7 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 // what puts it on the wire.
 func TestTheWholeHairlineClearsTheSixelThreshold(t *testing.T) {
 	const cols, rows, cw, ch = 40, 12, 8, 16
-	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -803,8 +1035,10 @@ func TestTheWholeHairlineClearsTheSixelThreshold(t *testing.T) {
 	}
 
 	// AND STILL DIMMER THAN THE BORDER, measured at the DRAW SITE and not
-	// on the constant. TestTheHairlineIsDimAndOPAQUE checks what dim
-	// returns; it cannot see drawCanvas passing it the wrong fraction,
+	// on the constant. TestTheHairlineIsDimAndOPAQUE checks what over
+	// returns (it was `dim` until the ground was threaded through it, and
+	// this sentence went on naming the old one — raised in review of
+	// #474); it cannot see drawCanvas passing it the wrong fraction,
 	// and "opaque" has an obvious wrong way to satisfy it — stroke the
 	// line at full fg, which sixel keeps happily and which is the second
 	// border the fade exists to avoid. Measured: without this arm that
@@ -847,7 +1081,7 @@ func TestTheHairlineSurvivesTheRing(t *testing.T) {
 	for _, ch := range []int{8, 12, 16, 20, 24, 32} {
 		const cw = 8
 		const cols, rows = 40, 6
-		f, err := drawFrame(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+		f, err := drawFrame(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 		if err != nil {
 			t.Fatalf("cell height %d: %v", ch, err)
 		}
@@ -954,7 +1188,7 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 		// stroke lands on exactly one row: antialiasing would spill it
 		// across two. Raised in review of #474.
 		const cols, cw = 40, 8
-		dc, err := drawCanvas(cols, 6, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+		dc, err := drawCanvas(cols, 6, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 		if err != nil {
 			t.Fatalf("cell height %d: %v", ch, err)
 		}
@@ -1002,7 +1236,7 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 	// which errors nowhere and lands on top of the border.
 	const cw, ch = 4, 2
 	const cols = 10
-	dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+	dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 	if err != nil {
 		t.Fatalf("a pane with %dx%d cells does not draw at all: %v", cw, ch, err)
 	}
@@ -1038,9 +1272,13 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 			"carry the same coverage as the sample at x=%d",
 			outside, radius, borderWidth, inside)
 	}
-	if outside >= int(hairlineInset) || outside < 0 {
-		t.Fatalf("the reference sample at x=%d is not a reference: it must be off "+
-			"the hairline's span, which starts at %d, and on the canvas",
+	// ONLY THE LIVE HALF. This read `outside >= int(hairlineInset) ||
+	// outside < 0`, and the first disjunct is structurally x-2 >= x —
+	// false for every value of hairlineInset, not merely for 5 >= 7. A
+	// guard's text should say what it can do. Raised in review of #474.
+	if outside < 0 {
+		t.Fatalf("the reference sample is at x=%d, off the canvas: hairlineInset "+
+			"(%d) has dropped below the 2 columns this sample steps back by",
 			outside, int(hairlineInset))
 	}
 	bare, span := alpha(outside, 0), alpha(inside, 0)
@@ -1089,7 +1327,7 @@ func TestTheHairlineTracksTheCellNotTheCanvas(t *testing.T) {
 	// Through the real seam, because the bug was about what drawCanvas
 	// passed it and not about the helper.
 	ink := func(rows int) bool {
-		dc, err := drawCanvas(40, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{})
+		dc, err := drawCanvas(40, rows, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
