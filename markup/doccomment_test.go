@@ -38,7 +38,13 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	}
 
 	var files int
-	var checked int
+	// EXAMINED, not "found" — the population this rule can judge, which
+	// is every documented function with another declaration below it.
+	// The counter here before was incremented on the ERROR branch and
+	// never read: it could only ever have said "the guard fired n
+	// times", which the failures themselves already say, and it was zero
+	// in exactly the case a count is for. Raised in review of #470.
+	var examined int
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
 			files++
@@ -47,12 +53,12 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 				if !ok || fn.Doc == nil || fn.Recv != nil || i+1 >= len(f.Decls) {
 					continue
 				}
+				examined++
 				first, _, _ := strings.Cut(strings.TrimSpace(fn.Doc.Text()), " ")
 				first = strings.TrimRight(first, ",.:")
 				if first == "" || first == fn.Name.Name || !declares(f.Decls[i+1], first) {
 					continue
 				}
-				checked++
 				t.Errorf("%s: the doc comment on %s opens by naming %s, which is the "+
 					"declaration DIRECTLY BELOW it. That is a doc comment that was "+
 					"separated from what it documents — either %s was inserted between "+
@@ -66,7 +72,15 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	if files == 0 {
 		t.Fatal("no files parsed: this guard would pass vacuously")
 	}
-	t.Logf("checked the doc comments in %d files", files)
+	// FILES IS NOT THE FLOOR. A parse that yielded only files with no
+	// documented functions in them would satisfy the check above and
+	// judge nothing — the count that says this guard did work is the
+	// number of doc comments it could have ruled on.
+	if examined == 0 {
+		t.Fatal("no documented function has a declaration below it, so this guard " +
+			"ruled on nothing: the walk is not reaching the package's functions")
+	}
+	t.Logf("examined %d doc comments across %d files", examined, files)
 }
 
 // declares reports whether d introduces the top-level name want.

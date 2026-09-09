@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -183,8 +182,26 @@ var defButton = &ElementDef{
 // element has no bounds to place, and that omission is preserved by
 // TakesLayout rather than by this list.
 var defCompanion = &ElementDef{
-	Name:  "Companion",
-	Icon:  "terminal",
+	Name: "Companion",
+	Icon: "terminal",
+	// PATH="TRUE" IS A REAL DEPENDENCY ON THE MACHINE, and it is named
+	// here rather than left for somebody to discover.
+	//
+	// companionPath resolves a bare name through exec.LookPath and a
+	// pathful one through os.Stat, so EVERY loadable value of this
+	// attribute has to exist — there is no placeholder that merely
+	// parses. A seed must load (TestEverySeededElementLoadsAndOccupies
+	// Space), so the seed names something a POSIX box has. `./job` was
+	// tried and fails on the stat.
+	//
+	// What that cost was invisible: probeElement reads this seed for the
+	// required Path, so on a box without coreutils every <Companion>
+	// probe in every sweep arm came back UNVERIFIED — which reads as
+	// "the harness cannot construct this element" and is not what
+	// happened, and unverified is not a failure. TestNoSweepProbe
+	// DependsOnAnInstalledBinary is the guard: it fails BY CAUSE, naming
+	// the missing binary, instead of letting a whole element go quietly
+	// unchecked. Raised in review of #470.
 	Seed:  "<Companion Name=\"job\" Path=\"true\" Exited=\"{{.Exited}}\"/>",
 	Proto: &components.Companion{},
 	Known: true,
@@ -1154,13 +1171,19 @@ var defToastHost = &ElementDef{
 			return nil, err
 		}
 		h := &components.ToastHost{Style: st}
-		if raw, ok := e.Attrs["Duration"]; ok {
-			d, err := time.ParseDuration(strings.TrimSpace(raw))
-			if err != nil {
-				return nil, fmt.Errorf("markup: <ToastHost Duration=%q>: %w", raw, err)
-			}
-			h.Duration = d
+		// optDuration, NOT a hand-rolled ParseDuration. This one read
+		// the attribute itself and refused NOTHING but an unparseable
+		// value: <ToastHost Duration="-5s"> parsed cleanly and set a
+		// negative dismissal delay, which every other KindDuration
+		// attribute in the vocabulary refuses, and an empty value
+		// answered with time's own wording rather than the sentence
+		// that tells the author omitting it is how to ask for the
+		// default. Raised in review of #470.
+		d, err := optDuration(e, "Duration")
+		if err != nil {
+			return nil, err
 		}
+		h.Duration = d
 		return h, nil
 	},
 }
@@ -1296,16 +1319,19 @@ var defTimer = &ElementDef{
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		// Non-visual like KeyBinding: buildChildren routes it to the
 		// parent as an attachment, and the Composer starts it.
-		raw := strings.TrimSpace(e.Attrs["Interval"])
-		if raw == "" {
+		// REQUIRED, so absence is this element's own answer; everything
+		// else is optDuration's. The hand-rolled reader this replaced
+		// gave the same three refusals in different words, and treated
+		// PRESENT-AND-EMPTY as absent — so <Timer Interval=""> got "needs
+		// an Interval" where the seven other KindDuration attributes say
+		// an empty one is a typo and name the spelling that asks for the
+		// default. Raised in review of #470.
+		if _, ok := e.Attrs["Interval"]; !ok {
 			return nil, fmt.Errorf("markup: <Timer> needs an Interval (e.g. Interval=\"600ms\")")
 		}
-		d, err := time.ParseDuration(raw)
+		d, err := optDuration(e, "Interval")
 		if err != nil {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: %w", raw, err)
-		}
-		if d <= 0 {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: must be positive", raw)
+			return nil, err
 		}
 		tick, err := ctx.Command(e.Attrs["Tick"])
 		if err != nil {
@@ -1486,6 +1512,28 @@ func litInt(e Element, name string) (int, error) {
 	if !ok {
 		return 0, nil
 	}
+	return litIntGrammar(e, name, raw)
+}
+
+// litIntGrammar is the grammar alone, on an attribute already known to
+// be PRESENT. litInt owns absence; cellCount owns required-ness and the
+// binding alternative; the rules about what a present literal may say
+// live here once.
+//
+// SPLIT BECAUSE THERE WERE TWO OF THEM. <Image Cols> and <Image Rows>
+// went through cellCount, which read its value with a bare strconv.Atoi
+// — so `Cols="007"` loaded and meant 7, `Cols="+7"` loaded and meant 7,
+// and `Cols=" 3 "` was quoted back to the author tidied. Every one of
+// those is refused three lines away for <VStack Gap>, and the whole
+// argument of #460 is that one vocabulary may not answer two ways. The
+// helper being shaped for litInt's OWN call shape — absent means the
+// declared default — is what kept cellCount out of it, since a cell
+// count is required and may also be a binding.
+//
+// Raised in review of #470, which is where the second grammar was found:
+// the sweep could not see it, because <Image Cols> is declared
+// KindBinding and the literal sweep reads Kind.
+func litIntGrammar(e Element, name, raw string) (int, error) {
 	trimmed := strings.TrimSpace(raw)
 	n, err := strconv.Atoi(trimmed)
 	if err != nil {
@@ -1541,7 +1589,13 @@ func gridLens(e Element, name string) ([]components.GridLen, error) {
 	raw := e.Attrs[name]
 	ls, err := components.ParseGridLens(raw)
 	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %v", e.Name, name, raw, err)
+		// %w, NOT %v. Every sibling wrap in this file carries the cause
+		// forward, and this one dropped it — so errors.Is and errors.As
+		// stopped at the markup layer for track lists alone, while the
+		// text looked identical. A caller cannot tell those apart by
+		// reading the message, which is why it survived. Raised in
+		// review of #470.
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, name, raw, err)
 	}
 	return ls, nil
 }

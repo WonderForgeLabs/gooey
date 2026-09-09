@@ -111,6 +111,35 @@ Deliberately excluded, with reasons:
   after the note below it said so; a supersede note under a stale subject line
   is still a stale subject line, which is the whole failure mode this spec
   directory keeps re-learning.
+
+  **Amended again 2026-09-09, in review of
+  [#470](https://github.com/WonderForgeLabs/gooey/pull/470): the premise
+  is false, and the counterexample is in this repo.** The bullet's whole
+  argument is "*a third-party builder receives its attributes already
+  parsed*". A builder registered through `Context.Elements` receives
+  `markup.Element`, whose `Attrs` is a `map[string]string` of raw text —
+  nothing has been parsed for it, and the four exported `Bound*` helpers
+  answer the binding question only. So the dialect's literal grammar is
+  reachable by built-ins and unreachable by everyone else, which is the
+  opposite of the "one spelling of each rule" property the section above
+  is written to defend.
+
+  `apps/introdeck` is the in-tree demonstration, and it is not
+  hypothetical: `<Terminal Cols>` and `<Terminal Rows>` go through its
+  own `attrInt` (`terminal.go:665`), which accepts a leading zero and a
+  leading `+`; `<Terminal Loop>` is read as `case "", "false":`, so an
+  empty value means false — verbatim the silent drop `litBool` exists to
+  refuse and #460 was filed for. It is a third-party element by
+  construction, living in the same tree as the rule it cannot reach.
+
+  **The conclusion still holds, and the reason has moved again.** It is
+  no longer "they receive parsed attributes" — they do not — but that
+  exporting four more parsers is a surface decision worth taking
+  deliberately rather than as a side effect of a bug fix, and the cost
+  of *not* taking it is now written down: every third-party int and bool
+  is its own grammar, and no sweep in `markup/` can see one. The
+  answer, if it is taken, is `markup.LitInt` / `markup.LitBool` beside
+  the `Bound*` four, with `apps/introdeck` as the first caller.
 - **An `Opt`/optional variant of `Bound[T]`.** The built-ins that want
   one write `if raw, ok := e.Attrs[attr]; ok && strings.TrimSpace(raw) != ""`
   first (`buildTabs`); a third party can write the same three tokens.

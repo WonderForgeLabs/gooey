@@ -3,7 +3,6 @@ package markup
 import (
 	"fmt"
 	"image"
-	"strconv"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -68,12 +67,22 @@ func cellCount(e Element, ctx *Context, attr string) (*prop.Property[int], error
 	if bindRe.MatchString(raw) {
 		return Bound[int](e, ctx, attr)
 	}
-	n, err := strconv.Atoi(raw)
+	// THE SHARED INT GRAMMAR, not a second one. This was
+	// `strconv.Atoi(raw)`, which accepted `Cols="007"` and `Cols="+7"`
+	// and reported an unreadable value with strconv's own wording —
+	// three answers <VStack Gap> gives differently, in the vocabulary
+	// whose whole point is that it gives one. litIntGrammar owns
+	// readable / non-negative / one-spelling; the zero refusal below is
+	// the only rule that is this attribute's own.
+	n, err := litIntGrammar(e, attr, e.Attrs[attr])
 	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
+		return nil, err
 	}
-	if n <= 0 {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: must be positive", e.Name, attr, raw)
+	if n == 0 {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: a cell count of zero places "+
+			"nothing — %s is the picture's size on screen, and an image nought "+
+			"cells wide is not a smaller picture, it is an absent one",
+			e.Name, attr, raw, attr)
 	}
 	return components.Cells(n), nil
 }

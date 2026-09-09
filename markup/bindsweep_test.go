@@ -3,8 +3,11 @@ package markup
 import (
 	"errors"
 	"fmt"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // #460. An AttrSpec's Kind and Binds were verified for ELEVEN attributes
@@ -630,7 +633,22 @@ func TestBindSweepCountsOnlyTheRightRefusal(t *testing.T) {
 // already names, so this cannot go stale the way a list of attributes
 // does — a new Kind fails to compile its way past the switch, a new
 // attribute does not need a row.
-func validLiteralFor(a AttrSpec) string {
+// validLiteralFor is a CLOSED set over Kind, and the closing is the
+// point.
+//
+// It ended in `return "x"`, which answered for every Kind nobody had
+// thought about — including KindBinding, where "x" is not a literal of
+// anything. <Image Cols> is KindBinding/BindsEither with an int GoType,
+// so the literal sweep probed a cell count with the letter x, got a
+// refusal that was nothing to do with Binds, and moved on: a probe that
+// looks like coverage and asks no question. A new Kind would have
+// inherited the same silence.
+//
+// So an unanswered Kind is a FAILURE now rather than a default, and for
+// KindBinding the answer comes from GoType — which is where that Kind
+// records what its literal has to be. Raised in review of #470.
+func validLiteralFor(t *testing.T, a AttrSpec) string {
+	t.Helper()
 	switch a.Kind {
 	case KindDuration:
 		return "50ms"
@@ -651,8 +669,193 @@ func validLiteralFor(a AttrSpec) string {
 			return a.Enum[0]
 		}
 		return ""
+	case KindText, KindString, KindCommand, KindIdentity:
+		// Any non-empty text is a literal of these. KindCommand's will
+		// be refused for want of a registered handler, which is a
+		// harness limit the callers report as unverified rather than as
+		// coverage.
+		return "x"
+	case KindBinding:
+		// THE KIND SAYS "A HANDLE" AND Binds SAYS "OR A LITERAL", so
+		// GoType is the only thing left that knows what the literal is.
+		switch a.GoType {
+		case "int":
+			return "1"
+		case "[]string":
+			return "a,b"
+		case "image.Image":
+			return "probe.png"
+		}
+		t.Fatalf("<%s> is KindBinding with GoType %q and takes a literal, and this "+
+			"function has no literal of that type — so it would be probed with "+
+			"whatever the fallthrough said and the declaration would go unchecked",
+			a.Name, a.GoType)
+		return ""
 	}
-	return "x"
+	t.Fatalf("validLiteralFor has no answer for Kind %q (attribute %s). A Kind "+
+		"added without one used to fall through to \"x\", which is a literal of "+
+		"nothing in particular: the probe still ran, still looked like coverage, "+
+		"and asked no question", a.Kind, a.Name)
+	return ""
+}
+
+// TestValidLiteralForAnswersInTheAttributesOwnGrammar is the other half
+// of finding 3, and it is the half that fails when the closed set is
+// closed WRONGLY rather than left open.
+//
+// Making an unanswered Kind a t.Fatal stops a NEW Kind falling through
+// to "x". It does nothing about an existing Kind whose answer is not a
+// literal of the type it claims: <Image Cols> answered "x" for as long
+// as KindBinding fell through, and the probe still ran, still produced a
+// refusal, and still counted as a look at the declaration. Measured —
+// putting "x" back for KindBinding's int arm is silent in every sweep,
+// because the refusal it earns simply lands in the unverified bucket.
+//
+// So the value is checked against the grammar it claims to be in, by the
+// same parser the loader uses. Kinds whose literal is any text are not
+// listed: there is nothing to check, and listing them would be a second
+// closed set to keep in step with the first.
+func TestValidLiteralForAnswersInTheAttributesOwnGrammar(t *testing.T) {
+	var checked int
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds == BindsBinding {
+			continue
+		}
+		v := validLiteralFor(t, a)
+		if v == "" {
+			continue
+		}
+		// THE TYPE THE PROBE CLAIMS TO BE. KindBinding says "a handle",
+		// and where a literal is also allowed its GoType is the only
+		// statement of what that literal has to be — which is exactly
+		// the place the fallthrough used to answer for.
+		want := string(a.Kind)
+		if a.Kind == KindBinding {
+			want = a.GoType
+		}
+		var err error
+		switch want {
+		case string(KindInt): // KindInt and GoType "int" are the same text
+			_, err = strconv.Atoi(v)
+		case string(KindBool): // likewise KindBool and GoType "bool"
+			if v != "true" && v != "false" {
+				err = fmt.Errorf("%q is neither \"true\" nor \"false\"", v)
+			}
+		case string(KindDuration):
+			_, err = time.ParseDuration(v)
+		case string(KindEnum):
+			err = fmt.Errorf("%q is not one of %v", v, a.Enum)
+			for _, o := range a.Enum {
+				if o == v {
+					err = nil
+				}
+			}
+		default:
+			continue // any text is a literal of these
+		}
+		checked++
+		if err != nil {
+			t.Errorf("validLiteralFor gives <%s %s> the probe %q, which is not a "+
+				"%s: %v.\nThe probe still runs and still earns a refusal, so it "+
+				"lands in the unverified bucket and looks like a harness limit — "+
+				"the declaration goes unchecked and every count stays the same",
+				tg.def.Name, a.Name, v, want, err)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no probe value had a grammar to check it against: this arm is vacuous")
+	}
+	t.Logf("checked %d probe values against their own grammar", checked)
+}
+
+// TestTheLiteralArmCountsVerificationsAndNotProbes is finding 2, and it
+// is the only thing that can see the difference.
+//
+// The counter was incremented BEFORE the build, so a probe the harness
+// could not construct an element for counted as coverage: 114 logged
+// where 92 attributes had actually taken a literal. Nothing could
+// notice, because a count is a log line — the arm passes either way, and
+// the number is exactly the argument offered for the arm being real.
+//
+// So it is asserted the way bindSweep's is: drive the sweep with values
+// NOTHING can accept and require the verified count to be zero. Under
+// the old counting it equals the number of probes, which is every
+// literal-taking attribute with a grammar.
+func TestTheLiteralArmCountsVerificationsAndNotProbes(t *testing.T) {
+	// GRAMMAR KINDS ONLY. A KindText or KindString attribute accepts any
+	// non-empty text by definition, so it would be verified here and the
+	// arm would be asserting nothing about counting. These seven have a
+	// value grammar that this string is outside of.
+	unacceptable := func(t *testing.T, a AttrSpec) string {
+		t.Helper()
+		switch a.Kind {
+		case KindInt, KindBool, KindDuration, KindColor, KindGesture, KindGridLens:
+			return "\u00a1not a value\u00a1"
+		}
+		return ""
+	}
+	verified, unverified := literalAcceptSweep(t, unacceptable, false)
+	if len(unverified) == 0 {
+		t.Fatal("no probe was even built, so this arm cannot tell counting from " +
+			"verifying")
+	}
+	if verified != 0 {
+		t.Errorf("%d of %d probes counted as VERIFIED while being handed a value "+
+			"no grammar accepts. The count is being incremented for making a "+
+			"probe rather than for the probe answering, which is the number "+
+			"offered as evidence that the sweep is real", verified, verified+len(unverified))
+	}
+}
+
+// TestNoSweepProbeDependsOnAnInstalledBinary is the floor under the
+// UNVERIFIED buckets, and it exists because "unverified" is a category
+// that absorbs everything.
+//
+// <Companion Path> resolves through exec.LookPath, and the element's
+// Seed — which probeElement reads for required literals — named a real
+// binary. On a machine without it every <Companion> probe in every arm
+// came back unverified, indistinguishable from an element the harness
+// genuinely cannot construct, and the arms stayed GREEN because
+// unverified is not a failure. The sweep would have gone quiet about a
+// whole element on somebody else's box and said so nowhere.
+//
+// Derived rather than a check on that one seed: any future probe value
+// that has to exist on the machine fails here by its cause, not by its
+// name. Raised in review of #470.
+func TestNoSweepProbeDependsOnAnInstalledBinary(t *testing.T) {
+	var probed int
+	for _, tg := range sweepTargets(t) {
+		a := tg.attr
+		if a.Binds == BindsBinding {
+			continue
+		}
+		v := validLiteralFor(t, a)
+		if v == "" {
+			continue
+		}
+		probed++
+		src := harnessFor(a.Name, probeElement(t, tg.def, a.Name, v))
+		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
+		// THE ATTRIBUTE UNDER TEST IS ALLOWED TO NEED ONE. <Companion
+		// Path="x"> is supposed to fail this way — that is the rule
+		// working. What may not depend on the environment is the REST of
+		// the probe: the required attributes probeElement fills in from
+		// the element's Seed, which every other attribute of that
+		// element rides on.
+		if a.Name == "Path" {
+			continue
+		}
+		if errors.Is(err, exec.ErrNotFound) {
+			t.Errorf("the probe for <%s %s> fails because a binary is not installed:"+
+				"\n\t%v\nThat comes from another attribute's seed value, so on a "+
+				"machine without it this declaration is silently unverified in every "+
+				"sweep arm rather than checked", tg.def.Name, a.Name, err)
+		}
+	}
+	if probed == 0 {
+		t.Fatal("no probes were built: this floor is vacuous")
+	}
 }
 
 // TestEveryAttributeThatSaysItTakesALiteralAcceptsOne is the arm that
@@ -691,31 +894,63 @@ func validLiteralFor(a AttrSpec) string {
 // only because omitting them is a load error. The gate excluded the
 // attributes whose declaration matters most. Raised in review of #470.
 func TestEveryAttributeThatSaysItTakesALiteralAcceptsOne(t *testing.T) {
-	var checked int
+	// VERIFIED AND UNVERIFIED, counted apart.
+	//
+	// This was one `checked` incremented BEFORE the build, so a probe
+	// the harness could not even construct an element for counted as
+	// coverage: it logged 114 where 92 attributes had actually taken a
+	// literal. The gap is not noise — it is exactly the set an author
+	// would look at the log and believe was checked. A probe verifies
+	// the declaration when the literal is ACCEPTED, or when the loader
+	// gives the one refusal this arm is about; every other error is the
+	// harness failing to reach the element and is now reported as such.
+	// Raised in review of #470.
+	verified, unverified := literalAcceptSweep(t, validLiteralFor, true)
+	if verified == 0 {
+		t.Fatal("no literal-taking attribute actually took a literal: this sweep " +
+			"would pass vacuously")
+	}
+	t.Logf("verified %d literal-taking attributes; %d unverified (the harness could "+
+		"not reach the element):\n\t%s",
+		verified, len(unverified), strings.Join(unverified, "\n\t"))
+}
+
+// literalAcceptSweep is the arm's body, EXTRACTED so the classification
+// can be driven by a caller that knows the answer — the same reason
+// bindSweep is a function, stated in its own doc.
+//
+// `report` is what separates the two callers: the real arm reports a
+// declaration that demands a binding, and the self-test below must not,
+// because it is feeding values nothing can accept on purpose.
+func literalAcceptSweep(t *testing.T, value func(*testing.T, AttrSpec) string, report bool) (verified int, unverified []string) {
+	t.Helper()
 	for _, tg := range sweepTargets(t) {
 		a := tg.attr
 		if a.Binds != BindsLiteral && a.Binds != BindsEither {
 			continue
 		}
-		v := validLiteralFor(a)
+		v := value(t, a)
 		if v == "" {
 			continue
 		}
-		checked++
 		src := harnessFor(a.Name, probeElement(t, tg.def, a.Name, v))
 		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), defaultsContext())
 		if err == nil {
+			verified++
 			continue
 		}
 		if strings.Contains(err.Error(), "is not a binding expression") {
-			t.Errorf("<%s %s=%q> is declared Binds=%q, but the loader requires "+
-				"a binding:\n\t%v", tg.def.Name, a.Name, v, a.Binds, err)
+			verified++
+			if report {
+				t.Errorf("<%s %s=%q> is declared Binds=%q, but the loader requires "+
+					"a binding:\n\t%v", tg.def.Name, a.Name, v, a.Binds, err)
+			}
+			continue
 		}
+		unverified = append(unverified,
+			fmt.Sprintf("<%s %s=%q>: %v", tg.def.Name, a.Name, v, err))
 	}
-	if checked == 0 {
-		t.Fatal("no literal-taking attributes were checked: this sweep would pass vacuously")
-	}
-	t.Logf("checked %d literal-taking attributes", checked)
+	return verified, unverified
 }
 
 // TestTheRefusalNamesTheAttributeAndTheSilentConsequence. A load error
