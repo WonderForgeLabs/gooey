@@ -31,29 +31,22 @@ import (
 // claim made anywhere else, so this one has no path in it: it walks the
 // tree and asks the question of every sentence that makes it.
 //
-// WHY ONLY THE SELF-MARKED HOSTS, and the answer is a measurement rather
-// than a preference. Run the same matcher over all four names in
-// liftedSurfaceByName and it examines 17 sentences and flags one, and
-// that one is CORRECT prose:
+// WHY ONLY THE SELF-MARKED HOSTS, and the reason is TRUTH rather than
+// noise — which is worth separating, because the first draft of this
+// comment had it the other way round.
 //
-//	docs/specs/2026-08-30-overlay-layer.md — "**The lift is global, not
-//	within the overlay's parent.** 'Above my own siblings' is not enough
-//	and never could be: a `MenuBar` three containers deep still has to
-//	drop its menu over a dock …"
-//
-// A MenuBar genuinely does not lift — its dropdown's surface does — so
-// "MenuBar is not lifted" is true of the bar and false of the menu, and
-// no amount of pattern is going to separate those in English. A guard
-// that fires on correct prose is noise, and noise is how a guard gets
-// deleted, so the scope is the names where the distinction does not
-// exist: hosts that carry gooey.Overlay THEMSELVES.
+// Widened to all four names in liftedSurfaceByName the matcher examines
+// 16 sentences at the stack tip and flags none, so the restriction is
+// not buying quiet. It is buying correctness: a MenuBar genuinely does
+// NOT lift — its dropdown's surface does, which is why Grid.Row still
+// places the bar — so "a MenuBar is not lifted" is a true sentence, and
+// a guard that flags it is wrong rather than merely noisy. The scope is
+// the names where there is no host-versus-surface distinction to lose:
+// hosts that carry gooey.Overlay THEMSELVES.
 //
 // That scope is DERIVED, not listed. selfMarkedHosts asks the type
 // system, so a host that adopts the marker directly comes under the
 // guard on the commit that adopts it, and one that loses it drops out.
-//
-// Measured on this branch: 8 sentences examined, none flagged, and both
-// defects above flagged when fed in as fixtures below.
 func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	hosts := selfMarkedHosts(t)
 	if len(hosts) == 0 {
@@ -63,6 +56,23 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	}
 	t.Logf("hosts checked: %v", hosts)
 	nameRe := regexp.MustCompile(`\b(` + strings.Join(hosts, "|") + `)\b`)
+	// THE NEGATION HAS TO ATTACH TO THE HOST, not merely share a sentence
+	// with it, and that distinction is the whole guard. See attachedNeg.
+	attachedRe := regexp.MustCompile(`(?i)` + "`?" + `\b(?:` +
+		strings.Join(hosts, "|") + `)\b` + "`?" +
+		`(?:\s+[\w()` + "`" + `']+){0,3}\s+` + negSpellings)
+	// flagged is the whole question, in one place, so the tree walk and
+	// every fixture below ask it identically. A fixture that reimplements
+	// the predicate is a fixture that can agree with a broken one.
+	flagged := func(text string) bool {
+		for _, s := range proseUnits(text) {
+			if liftVerbRe.MatchString(s) && nameRe.MatchString(s) &&
+				attachedRe.MatchString(s) {
+				return true
+			}
+		}
+		return false
+	}
 
 	var examined int
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -107,7 +117,7 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				continue
 			}
 			examined++
-			if !unliftedRe.MatchString(s) {
+			if !attachedRe.MatchString(s) {
 				continue
 			}
 			t.Errorf("%s says a host that implements gooey.Overlay does not lift:\n\t%s\n"+
@@ -133,9 +143,10 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// sentences the docs happen to contain, which is not a policy and
 	// moves whenever anyone writes a paragraph. Pinning it exactly makes
 	// every prose edit a failing test, and a guard that fires on correct
-	// prose gets deleted. Measured at 8 on the branch that added this;
-	// the floor sits under that with room to edit, and far enough above
-	// zero that deleting the paragraphs which make the claim fails.
+	// prose gets deleted. Measured at 9 on the branch that added this and
+	// 9 at the stack tip above it; the floor sits under that with room to
+	// edit, and far enough above zero that deleting the paragraphs which
+	// make the claim fails.
 	const wantExamined = 5
 	if examined < wantExamined {
 		t.Errorf("only %d sentences in the tree make a lift claim about %v, want at "+
@@ -158,16 +169,39 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				`out of document order; ToastHost and AdornmentLayer do not</Text>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var hit bool
-			for _, s := range proseUnits(tc.text) {
-				if liftVerbRe.MatchString(s) && nameRe.MatchString(s) &&
-					unliftedRe.MatchString(s) {
-					hit = true
-				}
-			}
-			if !hit {
+			if !flagged(tc.text) {
 				t.Errorf("the matcher does not flag the sentence it was written for:\n\t%s",
 					tc.text)
+			}
+		})
+	}
+
+	// AND THE TWO IT MUST NOT FLAG, which is the arm the first version of
+	// this guard lacked and paid for. Both are live at the stack tip and
+	// both are CORRECT: the negation belongs to a dropdown's position in
+	// one and to the MenuBar in the other. They are quoted here so that
+	// tightening the sentence rule back into an attachment-free one goes
+	// red in this package rather than four PRs later.
+	for _, tc := range []struct{ name, text string }{
+		{"architecture.md — the negation is a dropdown's position",
+			"Z-order is document order **in two layers**: the ordinary tree, " +
+				"and then every component implementing `gooey.Overlay` — a popup " +
+				"surface, a `ToastHost`, an `AdornmentLayer` — lifted to the end " +
+				"with its subtree, because a dropdown is not at a position in the " +
+				"document, it is on top of it."},
+		{"demos.md — the negation is the MenuBar",
+			"the `MenuBar`'s dropdown, the `ToastHost` and the `AdornmentLayer` " +
+				"are lifted out of document order into a paint layer of their own " +
+				"and ranked within it, so they paint above every tab from wherever " +
+				"their hosts sit — the BAR is not lifted and never was, which is " +
+				"why `Grid.Row` still keeps it on the top row."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if flagged(tc.text) {
+				t.Errorf("the matcher flags correct prose:\n\t%s\n"+
+					"The negation in this sentence belongs to another subject. A "+
+					"guard that fires on prose like this is noise, and noise is "+
+					"how a guard gets deleted.", tc.text)
 			}
 		})
 	}
@@ -195,19 +229,12 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		want bool
 	}{
 		{"a negation in the NEXT paragraph is not this claim's",
-			heading + "Grid.Row is not what decides that.", false},
+			heading + "It is not what decides that.", false},
 		{"a negation in the SAME paragraph is",
 			"## Overlays\n\nAn AdornmentLayer is not lifted, so declare it last.", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var hit bool
-			for _, s := range proseUnits(tc.text) {
-				if liftVerbRe.MatchString(s) && nameRe.MatchString(s) &&
-					unliftedRe.MatchString(s) {
-					hit = true
-				}
-			}
-			if hit != tc.want {
+			if hit := flagged(tc.text); hit != tc.want {
 				t.Errorf("flagged=%v, want %v, for:\n\t%q\nunits: %q",
 					hit, tc.want, tc.text, proseUnits(tc.text))
 			}
@@ -215,20 +242,54 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	}
 }
 
-var (
-	liftVerbRe = regexp.MustCompile(`(?i)\blift(?:s|ed|ing)?\b`)
-	// unliftedRe is the polarity, and it is a LIST OF SPELLINGS rather
-	// than anything cleverer — English negation is not a regular
-	// language and pretending otherwise would buy the false positives
-	// this guard's scope exists to avoid. Its incompleteness is the
-	// accepted cost: a new way to spell "does not lift" goes unnoticed
-	// until someone adds it. What it does buy is that the two spellings
-	// this repo actually shipped cannot come back.
-	unliftedRe = regexp.MustCompile(
-		`(?i)\b(?:do not|does not|don't|doesn't|no such|not lifted|` +
-			`never lifted|is not|are not|neither|nor)\b`)
-	tableRowRe = regexp.MustCompile(`^\s*\|`)
-)
+var liftVerbRe = regexp.MustCompile(`(?i)\blift(?:s|ed|ing)?\b`)
+
+// negSpellings is a LIST rather than anything cleverer — English negation
+// is not a regular language and pretending otherwise buys false
+// positives. Its incompleteness is the accepted cost: a new way to spell
+// "does not lift" goes unnoticed until someone writes it down here. What
+// it buys is that the two spellings this repo actually shipped cannot
+// come back.
+const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
+	`not lifted|never lifted|is not|are not|was not|were not)`
+
+// ATTACHMENT, and this is the correction that matters most in this file.
+//
+// The first version of this guard asked only whether a negation appeared
+// in the same SENTENCE as a host name. It measured clean — and it was
+// measured on the wrong base. #456's own tree does not yet contain the
+// prose the sweep above it adds, and against the stack tip that rule
+// flags two sentences that are entirely CORRECT:
+//
+//	docs/architecture.md — "… a `ToastHost`, an `AdornmentLayer` —
+//	lifted to the end with its subtree, because a dropdown IS NOT at a
+//	position in the document, it is on top of it."
+//
+//	docs/demos.md — "… the `ToastHost` and the `AdornmentLayer` are
+//	lifted … — the BAR IS NOT lifted and never was …"
+//
+// In both the negation belongs to a different subject: a dropdown's
+// position in the first, the MenuBar in the second. An absence proof
+// inherits its base, and the base here is what main will look like.
+//
+// So the negation must FOLLOW the host name within three words of no
+// consequence, with nothing that ends a clause in between — the
+// character class admits no comma, semicolon, colon or dash. That is
+// what separates
+//
+//	"`ToastHost` has no such lift yet"                (attached, wrong)
+//	"ToastHost and AdornmentLayer do not"             (attached, wrong)
+//
+// from the two above, where the nearest host name is nine and thirty
+// words back behind a dash. Measured against the stack tip — which is
+// the base that matters, and the one the first version skipped: 9
+// sentences examined, none flagged, and both defective spellings flagged
+// as fixtures below.
+//
+// It is an approximation of "whose subject is this", and the shape of
+// what it gives up is stated rather than left to be discovered: a
+// negation that PRECEDES its host ("nothing lifts a ToastHost") or sits
+// further than three words after it goes unseen.
 
 // proseUnits cuts a file into the units a polarity question can be asked
 // of. Two things decide the cuts and both were forced by a measurement.
@@ -239,14 +300,16 @@ var (
 // unrelated paragraphs into one unit and a negation from one lands in a
 // lift claim from another.
 //
-// A MARKDOWN TABLE ROW IS ITS OWN BLOCK. README.md's feature table has
-// no blank lines in it, so block-flattening alone made the entire table
-// a single unit — which flagged the ranks spec's check table for a
-// negation four rows away from the word "lift".
-//
-// Both of those were live false positives before the split was written
-// this way, which is why the shape is spelled out here rather than left
-// to read as fussiness.
+// A MARKDOWN TABLE ROW USED TO BE ITS OWN BLOCK HERE and is not any
+// more, which is worth recording because the rule was load-bearing until
+// it wasn't. README.md's feature table has no blank lines in it, so
+// block-flattening made the whole table one unit, and under the old
+// sentence-level polarity rule that flagged the ranks spec's check table
+// for a negation four rows from the word "lift". The attachment rule
+// subsumes it: a negation thirty words and four table cells away from a
+// host name is no longer that host's. Measured — removing the row split
+// leaves the tree at 0 flagged and every fixture green, so it is gone
+// rather than kept as a mechanism nothing can falsify.
 func proseUnits(body string) []string {
 	var out []string
 	add := func(s string) {
@@ -257,15 +320,7 @@ func proseUnits(body string) []string {
 		out = append(out, splitSentences(flat)...)
 	}
 	for _, block := range strings.Split(body, "\n\n") {
-		var rest []string
-		for _, line := range strings.Split(block, "\n") {
-			if tableRowRe.MatchString(line) {
-				add(line)
-				continue
-			}
-			rest = append(rest, line)
-		}
-		add(strings.Join(rest, " "))
+		add(block)
 	}
 	return out
 }
