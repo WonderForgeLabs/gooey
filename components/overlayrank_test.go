@@ -333,8 +333,9 @@ func TestANegativeRankLandsOnTheFloor(t *testing.T) {
 	f2, _ := c2.Frame()
 	if got := render.RowText(f2.Cells, at.Y); !strings.HasPrefix(got, strings.Repeat("N", at.W)) {
 		t.Errorf("a negative OverlayRank painted below a popup-rank overlay declared "+
-			"BEFORE it: row %q. OverlayRankPopup is documented as the floor in four "+
-			"places, so either the clamp is gone or the docs are wrong", got)
+			"BEFORE it: row %q. OverlayRankPopup is called the floor by OverlayRanker's "+
+			"doc, by its own, by overlayRank's, by the ranks spec and by this message, "+
+			"so either the clamp is gone or all five are wrong", got)
 	}
 }
 

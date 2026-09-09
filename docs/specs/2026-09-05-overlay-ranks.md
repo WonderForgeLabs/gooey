@@ -143,6 +143,19 @@ change would have revealed it.
 document order and knows nothing about ranks either. An overlay that does
 not take pointer capture is still responsible for its own routing.
 
+**The one-shot path is not ranked, and was not lifted either.**
+`gooey.Compose` — which builds no Composer, and is what `cmd/typeahead
+--dump` and `cmd/pixels` render through — walks `renderTree`
+(`component.go`) in pure document order: no lift, no rank. So the two
+public paint paths now disagree in *two* ways rather than one, and a
+fixture asserted through `Compose` answers "what is on top" differently
+from the same tree under `Composer.Frame`. This is deliberate scope, not
+an oversight: the lift is what has to arrive first, and it does, in
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438) — the rank
+follows it through the same `overlayOf` seam or the divergence hardens.
+Worth stating for the reason the pixel-plane note above is: nothing in
+this change would have revealed it.
+
 ## How the claims here are checked
 
 | Claim | Test | Mutation that fires it |

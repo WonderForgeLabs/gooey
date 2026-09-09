@@ -4,9 +4,9 @@ gooey has no z-index property and no overlay registry. **Z-order is
 document order in TWO layers.** The Composer keeps its paint nodes in
 depth-first pre-order — children paint after (above) their parents,
 later siblings after earlier ones — and then lifts every subtree whose
-root implements `gooey.Overlay` out of that order and onto the end.
-`c.nodes` stays the structure; `c.paint` is the answer to what is in
-front of what.
+root implements `gooey.Overlay` out of that order and onto the end,
+**bucketed by rank within it**. `c.nodes` stays the structure; `c.paint`
+is the answer to what is in front of what.
 
 So a lifted overlay paints above the page **from wherever it is
 declared**. In a `Grid`, `Grid.Row` places it where it belongs and
@@ -39,9 +39,17 @@ paragraph said they did *not* implement `gooey.Overlay` and that their
 position was still load bearing, which was true and is the reason the
 sentence existed at all — #455's first draft claimed position decided
 nothing for all three, when it decided everything for two of them. The
-correction expired on schedule: `TestTheHostsThisPageCallsPosition-
-DependentStillAre` was written to fail the moment either host adopted
-the marker, it did, and it has been deleted along with the claim.
+correction expired on schedule: the guard over that claim was written
+to fail the moment either host adopted the marker, it did, and it has
+been deleted along with the claim.
+`components/overlayclaims_test.go`'s file comment records which guard
+that was, what it asked for, and which of its two neighbours does *not*
+expire.
+
+(The name was spelled out here, hyphenated across the 72-column wrap —
+so neither the broken spelling nor the whole one could be grepped, and
+the test it named no longer exists in either form. A name is only worth
+writing where a reader can find what it points at.)
 
 **Within the layer, rank orders — not declaration.** A toast is never
 hidden by an open menu, whichever an app happens to type last. See
@@ -57,8 +65,15 @@ painted over an open dropdown and the forward-only pass could not put it
 back. The lift landed in
 [#437](https://github.com/WonderForgeLabs/gooey/issues/437). Ordering
 *within* the layer — so a toast is never hidden by an open menu — is
-[#439](https://github.com/WonderForgeLabs/gooey/issues/439) and is not
-described here yet.
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439), and it is
+the rank paragraph above.
+
+(This sentence ended "and is not described here yet" while the paragraph
+above it already described the ranks — the two landed in one diff and
+only the newer half was written. `docs/architecture.md` took a
+forward-hedge in the same diff and this page did not; a reader who
+reaches the older sentence first concludes the ordering is still
+undefined and declares for it.)
 
 ## The forward pass keeps the stack honest
 

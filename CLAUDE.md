@@ -314,8 +314,9 @@ between two — and `appendByRank` (`composer.go:402`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
-reads as the floor, because the constant was called "the floor" in five
-places while the comparison was a plain `int`. Two things make this
+reads as the floor, because every doc that named the constant called it
+"the floor" while the comparison was a plain `int` — `overlayRank`'s own
+comment enumerates them, and is the place to keep that list. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
 not to each node, so `orderPaint` tests `inherited` BEFORE the marker —
 swap those two switch arms and a rank-2 container's rank-0 child lands in

@@ -107,7 +107,7 @@ type Composer struct {
 	// frame pins one inner array per rank rather than one overall.
 	//
 	// Not a correctness bug; a node is unreachable from the tree either
-	// way. It is cleared to CAP in #438, the PR directly above this one,
+	// way. It is cleared to CAP in PR #457 (issue #438), directly above this one,
 	// which is where the measurement lives (18 items held across a
 	// shrinking rank set). Raised in review of #456.
 	buckets []rankBucket
@@ -1065,8 +1065,13 @@ func (c *Composer) Frame() (*Frame, int) {
 			}
 		}
 	}
-	// Paint in z-order (depth-first pre-order), forcing the repaint of
-	// anything that sits ABOVE a rect somebody below just painted. The
+	// Paint in z-order — c.paint, which is depth-first pre-order followed
+	// by the lifted overlay layer, rank-bucketed within it — forcing the
+	// repaint of anything that sits ABOVE a rect somebody below just
+	// painted. Both halves are load-bearing here: this parenthetical said
+	// "(depth-first pre-order)" and named only the first, while the
+	// forward-pass argument four lines down is sound precisely BECAUSE
+	// the lifted tail comes last. The
 	// forcing happens here in the loop — a Set between evaluations, never
 	// inside one — so the evaluation-only-reads discipline holds. One
 	// forward pass is enough: paint can only damage nodes later in

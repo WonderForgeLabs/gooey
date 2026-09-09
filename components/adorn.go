@@ -300,8 +300,12 @@ func attachAdornment(host gooey.Component, mgr *gooey.FocusManager, pop Adornmen
 	return layer
 }
 
-// findAdornmentLayer walks the live tree for the page's layer. Overlays
-// are declared last, so the walk searches later siblings first.
+// findAdornmentLayer walks the live tree for the page's layer,
+// searching later siblings first. That is a HEURISTIC and not a
+// requirement: it is where apps still put the layer, out of the habit
+// document-order z-order left behind, so looking there first usually
+// wins on the first probe. A layer declared anywhere is found just the
+// same, one subtree later.
 func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
 	if l, ok := w.(*AdornmentLayer); ok {
 		return l
