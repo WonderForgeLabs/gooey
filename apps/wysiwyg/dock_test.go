@@ -745,10 +745,25 @@ func TestOneCollapsedPaneDoesNotShortenAStripThatStillHasAnOpenOne(t *testing.T)
 			"cannot be partly short — whatever this pane draws below row "+
 			"%d is clipped", open.H, got, headerH)
 	}
-	if got := ed.dock.laidOutExtent(dockBottom); got != ed.dock.slotExtent(dockBottom) {
-		t.Errorf("laidOutExtent(bottom) = %d with one pane still open, want "+
-			"the slot's full extent %d",
-			got, ed.dock.slotExtent(dockBottom))
+	// THE EXTENT IS WHAT THE OPEN PANE ASKS FOR, and this used to compare
+	// against slotExtent — the slot's max over EVERY pane, collapsed ones
+	// included. On this fixture the two agree, because the pane collapsed
+	// here is the shorter one, so the assertion held while the rule it
+	// spelled was wrong. Collapsing the TALLER pane is the discriminating
+	// direction and it belongs to TestTheStripFallsToWhatIsStillOpen in
+	// dockcollapse_test.go; this one asserts the rule it is really about,
+	// so the coincidence cannot stand in for it. Raised in review of #480.
+	//
+	// AND THIS EDIT IS NOT A STRENGTHENING — measured. Putting slotExtent
+	// back is a SILENT mutation: the two expressions are equal in this
+	// configuration, which is the whole reason the wrong one survived. It
+	// buys a claim that is true rather than a test that catches more, and
+	// saying otherwise would be crediting a guard that does not fire.
+	if got, want := ed.dock.laidOutExtent(dockBottom), second.size.Get(); got != want {
+		t.Errorf("laidOutExtent(bottom) = %d with one pane still open, want %d — "+
+			"what that pane asks for. (slotExtent says %d, which is the same "+
+			"number here only because the collapsed pane is the shorter one.)",
+			got, want, ed.dock.slotExtent(dockBottom))
 	}
 
 	// AND THE OTHER SIDE OF THE RULE: collapse the second one too, and

@@ -685,26 +685,67 @@ func (d *dockModel) slotExtent(s dockSlot) int {
 // declared Size. That is issue #431 as reported — "collapsing the bottom
 // panel doesn't collapse everything, it just hides its contents".
 //
-// ALL, not any. A strip is as tall as its tallest pane needs, so one
-// expanded pane keeps the strip open and the collapsed ones beside it
-// simply have room to spare. That is a real limit rather than a
-// simplification: a horizontal strip cannot be partly short. Making
-// "all collapsed" the condition is what keeps the rule honest — the
-// alternative, shrinking on any, would clip whatever stayed open.
-// THE RESTRICTION IS STRUCTURAL, not a sentence asking the next caller
-// to be careful. headerH is a ROW count, and returning it for a slot
-// that measures columns is the exact unit confusion this function was
-// written to remove: laidOutExtent(dockLeft) with both left panes
+// THE MAX IS OVER WHAT IS STILL OPEN, and this was an all-or-nothing
+// test against allCollapsed until review of #480.
+//
+// The sentence justifying that read "a strip is as tall as its tallest
+// pane needs, so one expanded pane keeps the strip open". True, and not
+// what the code did: it delegated to slotExtent, which maxes over EVERY
+// pane's declared Size, collapsed ones included — so the strip was held
+// open by a pane that no longer needed anything. Measured on the shipped
+// page's own panes: explorer (Size=34) docked into Bottom beside panel
+// (Size=10), explorer collapsed. The columns came back exactly as #441
+// promises; the rows did not, and the only pane with a body was asking
+// for 10 under a strip 34 rows tall. That is #441's own picture on the
+// other axis.
+//
+// A horizontal strip still cannot be partly short — it is ONE height —
+// and that is preserved rather than traded away. "Shrink on any" would
+// have clipped whatever stayed open; a max over the panes that are still
+// open cannot, because every open pane is inside that max.
+//
+// THE FLOOR IS headerH, not the open max alone: a pane declaring a Size
+// below one row would otherwise leave a strip too short to draw the
+// headers that are still there.
+//
+// AND ALL-COLLAPSED FALLS OUT of the same expression rather than needing
+// a second branch — with nothing open the max is 0 and the floor answers
+// headerH, which is what allCollapsed was asked for here. allCollapsed
+// stays because Minimum asks it a different question.
+//
+// THE SLOT RESTRICTION IS STRUCTURAL, not a sentence asking the next
+// caller to be careful. headerH is a ROW count, and returning it for a
+// slot that measures columns is the exact unit confusion this function
+// was written to remove: laidOutExtent(dockLeft) with both left panes
 // collapsed answered 1, i.e. a one-column rail. The early return makes
 // the wrong answer unreachable rather than merely documented. Found in
 // review of #436.
 func (d *dockModel) laidOutExtent(s dockSlot) int {
-	if s != dockBottom || !d.allCollapsed(s) {
+	if s != dockBottom {
 		// Collapse is on the STACKING axis in every other slot, and
 		// place owns it there — the slot's extent does not change.
 		return d.slotExtent(s)
 	}
-	return headerH
+	panes := d.slotPanes(s)
+	if len(panes) == 0 {
+		// An empty slot disappears rather than leaving a stripe; see
+		// slotExtent, and allCollapsed's doc for why "all of nothing"
+		// must not answer headerH.
+		return 0
+	}
+	open := 0
+	for _, p := range panes {
+		if p.collapsedNow() {
+			continue
+		}
+		if v := p.size.Get(); v > open {
+			open = v
+		}
+	}
+	if open < headerH {
+		return headerH
+	}
+	return open
 }
 
 // allCollapsed reports whether s holds panes and every one of them is
@@ -780,21 +821,36 @@ func (d *dockModel) allCollapsed(s dockSlot) bool {
 // Measured on the bare two-pane strip dockcollapse_test.go builds
 // ("世界世界" and "B"): 6x4 open, 14x4 with the wide one collapsed.
 //
-// It is charged anyway because Minimum answers a different question from
-// the gesture. Minimum is "below this the shell is not usable", and
-// place() genuinely needs those columns: a collapsed pane's header is
-// drawn at its full title width and cannot be squeezed, so a Minimum
-// that reported starMin for it would report less than the layout
-// requires and hand the cram screen a size it cannot honour. The one
-// invariant that has to hold is Minimum >= what place needs, and
+// It is charged anyway, and IT IS A POLICY — which is the correction.
+// Minimum answers "below this the shell is not usable", and the judgement
+// being made is that a shell whose collapsed headers are clipped is not
+// usable: a chevron with no title beside it is not a pane anyone can find
+// again.
+//
+// THIS PARAGRAPH USED TO CLAIM place() REQUIRED THOSE COLUMNS — "a
+// collapsed pane's header is drawn at its full title width and cannot be
+// squeezed". trimHeaders, added in this same PR forty lines up, squeezes
+// exactly that header: to the shared cap, to one column, and to zero in
+// the n > budget branch. place degrades gracefully at any width; it does
+// not require headerCols. Borrowing authority from a mechanism the code
+// does not follow is the defect this file's own standard names, and it is
+// the fourth comment on this branch to do it.
+//
+// THE POLICY HAS AN OBSERVABLE COST and it is currently masked. A
+// collapse pushes the reported minimum UP, so checkFit can raise the cram
+// screen immediately after the gesture documented as reclaiming room. On
+// the shipped page that is unreachable, because the rails dominate the
+// column term — 40 + 46 + 3 against a strip term of 8 to 14 — and the
+// masking is written down here precisely because nothing goes red for it.
+//
+// The one invariant that has to hold is Minimum >= what place needs, and
 // TestTheUsableMinimumCoversACollapsedHeaderBesideAnOpenPane is where it
 // is pinned.
 //
-// What the gesture reclaims is ROWS, which is the axis it is about. That
-// the column floor moves the other way is a consequence of the header
-// being incompressible, not a policy about what "usable" means. Raised
-// in review of #480, twice: once to make the term collapse-aware and
-// once because this paragraph still denied it.
+// What the gesture reclaims is ROWS, which is the axis it is about.
+// Raised in review of #480 three times: once to make the term
+// collapse-aware, once because this paragraph denied that it was, and
+// once because it then defended it with a mechanism trimHeaders breaks.
 //
 // ROWS: the bottom strip's laid-out extent, plus the tallest of the three
 // upper slots. A slot stacking n panes VERTICALLY needs
@@ -941,13 +997,13 @@ func (h *dockHost) layout(b gooey.Rect, arrange bool) {
 	bottom = min(bottom, b.H)
 
 	top := b.H - bottom
-	h.place(dockLeft, gooey.Rect{X: b.X, Y: b.Y, W: left, H: top}, true, arrange)
-	h.place(dockRight, gooey.Rect{X: b.X + b.W - right, Y: b.Y, W: right, H: top}, true, arrange)
+	h.place(dockLeft, gooey.Rect{X: b.X, Y: b.Y, W: left, H: top}, arrange)
+	h.place(dockRight, gooey.Rect{X: b.X + b.W - right, Y: b.Y, W: right, H: top}, arrange)
 	h.place(dockCenter, gooey.Rect{
 		X: b.X + left, Y: b.Y,
 		W: max(0, b.W-left-right), H: top,
-	}, true, arrange)
-	h.place(dockBottom, gooey.Rect{X: b.X, Y: b.Y + top, W: b.W, H: bottom}, false, arrange)
+	}, arrange)
+	h.place(dockBottom, gooey.Rect{X: b.X, Y: b.Y + top, W: b.W, H: bottom}, arrange)
 }
 
 // place lays a slot's panes out along its axis. vertical says which axis
@@ -957,7 +1013,27 @@ func (h *dockHost) layout(b gooey.Rect, arrange bool) {
 // The share rule: collapsed panes take their header row and no more,
 // everything left over is split evenly between the rest — hidden panes
 // INCLUDED, because a hidden pane keeps its size.
-func (h *dockHost) place(s dockSlot, r gooey.Rect, vertical, arrange bool) {
+// slotIsVertical is which axis a slot STACKS its panes along. Left,
+// right and centre stack down their own length; the bottom strip stacks
+// across. It is one function because "which axis" is one fact, and
+// because it used to be a `vertical bool` PARAMETER that a caller could
+// get wrong beside a slot it got right.
+//
+// That is not hypothetical. TestTheUsableMinimumFallsWhenTheStripCollapses
+// read its slot off panel.slot at run time and passed the literal false
+// beside it — correct only while panel is Slot="Bottom" in
+// wysiwyg.gooey. One half said the assertion did not depend on where the
+// pane lives and the other said it did, and had panel moved, a
+// row-stacking slot would have been laid out as a column-stacking one and
+// its WIDTH compared against headerCols: an assertion passing or failing
+// for reasons unrelated to its name. Deriving the axis from the slot
+// makes that unrepresentable rather than merely documented, which is the
+// same move laidOutExtent's early return made for the unit confusion in
+// #436. Raised in review of #480.
+func slotIsVertical(s dockSlot) bool { return s != dockBottom }
+
+func (h *dockHost) place(s dockSlot, r gooey.Rect, arrange bool) {
+	vertical := slotIsVertical(s)
 	panes := h.slotPanes(s)
 	if len(panes) == 0 {
 		return

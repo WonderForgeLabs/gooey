@@ -77,6 +77,71 @@ func TestACollapsedPaneInAColumnStripGivesItsColumnsBack(t *testing.T) {
 	}
 }
 
+// TestTheStripFallsToWhatIsStillOpen is the other axis of the same bug,
+// and the suite could not see it.
+//
+// laidOutExtent is all-or-nothing, and the sentence justifying that says
+// "a strip is as tall as its tallest pane needs, so one expanded pane
+// keeps the strip open". True — but it delegates to slotExtent, which
+// maxes over EVERY pane's declared Size including the collapsed ones. So
+// the strip is held open by a pane that no longer needs anything.
+//
+// Measured on the shipped page's own panes before the fix: explorer
+// (Size=34) docked into Bottom beside panel (Size=10), explorer
+// collapsed. Columns came back exactly as this PR promises; rows did not.
+//
+//	both open:     panel={X:5 Y:9 W:73  H:34}  explorer={X:78  Y:9 W:72 H:34}
+//	explorer shut: panel={X:5 Y:9 W:134 H:34}  explorer={X:139 Y:9 W:11 H:34}
+//
+// The only pane with a body asks for 10, and the user is left looking at
+// #441's original picture on the other axis — a header over 33 empty
+// rows.
+//
+// WHY THE SUITE WAS BLIND, and it is worth stating because the arm that
+// exists looks like it covers this. The columns-back test above
+// collapses `panel`, the SHORTER pane, so its
+// "gotSecond.H == wasSecond.H" arm holds under either rule: the strip
+// stays at 34 because the pane still open is the one asking for 34.
+// Collapsing the TALLER pane is the discriminating direction, and nothing
+// did it. Raised in review of #480.
+func TestTheStripFallsToWhatIsStillOpen(t *testing.T) {
+	ed, c := dockFixture(t)
+	short, tall := bottomPair(t, ed, c)
+
+	// THE FIXTURE'S PREMISE, asserted rather than assumed: the pane being
+	// collapsed has to be the one declaring the larger Size, or the rule
+	// under test is not exercised and the assertions below pass on the
+	// bug. These are the shipped page's own numbers, and a Size edit in
+	// wysiwyg.gooey that inverts them must fail here rather than quietly
+	// turn this into a copy of the test above.
+	if short.size.Get() >= tall.size.Get() {
+		t.Fatalf("this test collapses the TALLER pane, and the fixture no longer "+
+			"has one: %s asks for %d rows, %s asks for %d. Swap them, or point "+
+			"bottomPair at two panes whose Sizes differ", short.Title,
+			short.size.Get(), tall.Title, tall.size.Get())
+	}
+	was := short.Bounds()
+
+	ed.dock.ToggleCollapsed(tall)
+	settle(t, c)
+
+	got := short.Bounds()
+	if want := short.size.Get(); got.H != want {
+		t.Errorf("the strip is %d rows after the only pane that wanted more "+
+			"collapsed, want %d — what the pane still open asks for. It was %d "+
+			"before, so the collapse reclaimed %d of the %d rows nothing needs "+
+			"any more. A header over empty rows is #441 on the row axis",
+			got.H, want, was.H, was.H-got.H, was.H-want)
+	}
+	// AND THE COLLAPSED PANE SHARES THE STRIP'S NEW HEIGHT. Without this
+	// the arm above passes against a fix that shortened only the open
+	// pane and left the collapsed one standing at its old extent.
+	if tallGot := tall.Bounds(); tallGot.H != got.H {
+		t.Errorf("the collapsed pane is %d rows and the open one %d; a horizontal "+
+			"strip is one height", tallGot.H, got.H)
+	}
+}
+
 // TestACollapsedHeaderStillReadsItsTitle is what separates this fix from
 // the behaviour it restores reclamation from.
 //
@@ -268,7 +333,7 @@ func TestAStripNarrowerThanItsHeadersStaysInsideItsSlot(t *testing.T) {
 		t.Fatalf("the two headers fit in %d columns, so this test cannot see an "+
 			"overrun", w)
 	}
-	h.place(dockBottom, slot, false, true)
+	h.place(dockBottom, slot, true)
 
 	for _, p := range panes {
 		b := p.Bounds()
@@ -315,7 +380,7 @@ func TestTheSharesSumToTheSlotAtEveryWidth(t *testing.T) {
 	}
 	matched := 0
 	for w := 0; w <= 60; w++ {
-		h.place(dockBottom, gooey.Rect{X: 3, Y: 7, W: w, H: headerH}, false, true)
+		h.place(dockBottom, gooey.Rect{X: 3, Y: 7, W: w, H: headerH}, true)
 		sum := 0
 		for _, p := range panes {
 			sum += p.Bounds().W
@@ -403,19 +468,40 @@ func TestTheUsableMinimumFallsWhenTheStripCollapses(t *testing.T) {
 	// That arm stood here and was VACUOUS on this fixture: the shipped
 	// page's rails dominate the column term, so a strip that widened by
 	// 8 could not move the total. It was also FALSE as a claim — the
-	// column term IS collapse-aware, deliberately, because a collapsed
-	// header is drawn at its full title width and cannot be squeezed.
-	// Minimum answers "below this the shell is not usable", so it may
-	// not report less than the layout requires; that it rises on the
-	// column axis while the gesture reclaims rows is a consequence of
-	// the header being incompressible. Raised in review of #480.
+	// column term IS collapse-aware, deliberately, and Minimum charges a
+	// collapsed pane its full header width as a POLICY: a shell whose
+	// collapsed headers are clipped is not a usable one. (The comment
+	// here used to defend it as a mechanism, "the header cannot be
+	// squeezed", which trimHeaders in this same PR breaks. See Minimum's
+	// doc in dock.go. Raised in review of #480.)
 	//
 	// The check is the CONSEQUENCE rather than the arithmetic: lay the
 	// dock out at exactly the width it reports, and the collapsed pane's
 	// header must not be clipped.
+	//
+	// THE AXIS IS NO LONGER PASSED. `slot` was read off panel.slot at run
+	// time while `vertical` was the literal false — correct only because
+	// panel is Slot="Bottom" in wysiwyg.gooey. One half said the assertion
+	// did not depend on where the pane lives and the other said it did.
+	// place derives the axis from the slot now (slotIsVertical), so the
+	// disagreement is unrepresentable; see its doc. Raised in review of
+	// #480.
+	//
+	// The FATAL below is the half deriving the axis does NOT fix: this
+	// assertion compares a WIDTH against headerCols, which is the bound
+	// for a slot that stacks in columns and not for one that stacks in
+	// rows. A moved pane would be laid out correctly and asserted about
+	// wrongly, so the premise is stated rather than assumed.
 	slot := dockSlot(panel.slot.Get())
+	if slot != dockBottom {
+		t.Fatalf("this assertion is about the bottom strip's column axis and %s "+
+			"is now in %v. Either point it at a Bottom pane or write the arm "+
+			"for the slot it moved to — a collapsed pane in a vertically "+
+			"stacking slot gives back ROWS, and headerCols is not the bound",
+			panel.Title, slot)
+	}
 	panel.host.place(slot, gooey.Rect{W: after.Cols,
-		H: ed.dock.laidOutExtent(slot)}, false, true)
+		H: ed.dock.laidOutExtent(slot)}, true)
 	if got, want := panel.Bounds().W, panel.headerCols(); got < want {
 		t.Errorf("at the reported minimum of %d columns the collapsed pane is %d "+
 			"wide and its header needs %d. Minimum reports less than place "+
@@ -515,7 +601,7 @@ func TestTheUsableMinimumCoversACollapsedHeaderBesideAnOpenPane(t *testing.T) {
 			m.Cols, old)
 	}
 
-	h.place(dockBottom, gooey.Rect{W: m.Cols, H: headerH + starMin}, false, true)
+	h.place(dockBottom, gooey.Rect{W: m.Cols, H: headerH + starMin}, true)
 	if got := open.Bounds().W; got < starMin {
 		t.Errorf("at the reported minimum of %d columns the open pane is %d wide, "+
 			"want at least starMin=%d. The collapsed pane beside it takes %d for "+
@@ -541,7 +627,7 @@ func TestACollapsedPaneCannotStarveAnOpenOne(t *testing.T) {
 	// Narrower than the collapsed header alone, so the trim must engage.
 	w := shut.headerCols() - 2
 	slot := gooey.Rect{X: 3, Y: 7, W: w, H: headerH + starMin}
-	h.place(dockBottom, slot, false, true)
+	h.place(dockBottom, slot, true)
 
 	if got := open.Bounds().W; got < 1 {
 		t.Errorf("in a %d-column strip the open pane is %d wide: the collapsed "+
@@ -666,7 +752,7 @@ func TestTheTrimComesOffTheWidestHeader(t *testing.T) {
 
 	// Over budget by enough that the wide pane alone can absorb it.
 	total := narrow.headerCols() + wide.headerCols() - 5
-	h.place(dockBottom, gooey.Rect{W: total, H: headerH}, false, true)
+	h.place(dockBottom, gooey.Rect{W: total, H: headerH}, true)
 
 	if got := narrow.Bounds().W; got != narrow.headerCols() {
 		t.Errorf("the narrow pane was cut to %d of its %d columns while the wide "+
