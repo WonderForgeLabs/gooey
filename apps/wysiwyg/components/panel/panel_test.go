@@ -1396,14 +1396,30 @@ func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 			}
 		}
 	}
-	// TWO IS THE COUNT TODAY AND THE FLOOR IS THE POINT. A walk that
-	// found none would pass every assertion above, and a walk that found
-	// one would be the guard this replaced.
-	if found < 2 {
-		t.Fatalf("found the Background-authorable sentence in %d file(s); "+
-			"panel.go and apps/wysiwyg/panelground_test.go both carry it, so "+
-			"either the phrase was reworded — re-anchor this guard — or the walk "+
-			"is not reaching the module", found)
+	// ZERO IS THE FLOOR, AND IT WAS TWO — which made this guard fire on
+	// the edit its own commit argues for.
+	//
+	// That argument is that two files carrying the same claim about
+	// somebody else's registry IS the defect: "the two files then
+	// DISAGREED with each other, which is worse than either being wrong
+	// alone". Acting on it — deleting the duplicated sentence from
+	// apps/wysiwyg/panelground_test.go and leaving panel.go as the single
+	// home — made this t.Fatal with a message naming two causes that were
+	// both FALSE: the phrase was not reworded, and the walk was reaching
+	// the module. Same shape as the reflow trap this test's own history
+	// removed, which is a guard handing a maintainer a reason to work
+	// around it for a legitimate edit. Raised in review of #474.
+	//
+	// THE TWO PROPERTIES ARE SEPARABLE AND THIS FILE ALREADY HAS BOTH.
+	// "The walk reaches the whole module, not just this package" is
+	// pinned by the len(srcs) corpus floor above, which is unaffected by
+	// how many files happen to state the claim. What the SENTENCE check
+	// needs is only non-vacuity: zero copies means the anchor broke, and
+	// one copy is a legal state — arguably the better one.
+	if found < 1 {
+		t.Fatal("found the Background-authorable sentence in no file at all. " +
+			"panel.go carries it, so either the phrase was reworded — " +
+			"re-anchor this guard — or the walk is not reaching the module")
 	}
 	t.Logf("checked the Background-authorable sentence in %d files", found)
 }
@@ -1420,19 +1436,42 @@ func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 // which is a real terminal (a 4-pixel cell is an 80x24 pane on a small
 // font) and passes every arm this file had.
 //
-// IT SAMPLES COLOUR, NOT ALPHA, for the reason the round-7 arm below
-// records: at these cell heights the row the hairline occupies also
-// carries the border's own stroke, so alpha is 255 with or without a
-// rule and only the COLOUR moves. Measured on the opaque tier at cell
-// width 8, ten columns, reading the row `cellH-1`:
+// IT SAMPLES COLOUR, NOT ALPHA, because the row the hairline occupies
+// at these cell heights also carries the border's own stroke — so alpha
+// says "something is here", which is true either way, and only the
+// COLOUR says which.
 //
-//	cellH 1  outside [255 255 255 255]  inside [255 255 255 255]  no rule
-//	cellH 2  outside [128 128 128 128]  inside [128 128 128 128]  no rule
-//	cellH 3  outside [  0   0   0   0]  inside [102 102 102 255]  RULE
+// AND IT COMPARES AGAINST THE RULE'S OWN COLOUR rather than against a
+// second sample on the same row. The second-sample idiom is borrowed
+// from TestACellTooShortForBothGetsNoHairline, and review of #474 showed
+// it cannot be made valid here. Measured at cols=10, rows=4, cw=8,
+// reading row cellH-1:
 //
-// Two samples on the same row rather than one against a constant: what
-// the border paints there changes with the cell height, so an absolute
-// expectation would encode the border and not the rule.
+//	cellH  radius+borderWidth  outside(x=5)       inside(x=40)
+//	1      2.75                [255 255 255 255]  [255 255 255 255]
+//	2      4.75                [128 128 128 128]  [128 128 128 128]
+//	3      6.75                [  0   0   0   0]  [102 102 102 255]
+//
+// At cellH = 3 — the first height that fits, and the non-vacuity arm the
+// whole test exists for — the reference sample carries NO INK: x=5 is
+// inside the clamped corner arc, and the sibling test declares exactly
+// that state a t.Fatal. Porting the sibling's radius guard cannot repair
+// it either, because at cellH=3 there is no integer column between
+// radius+borderWidth = 6.75 and hairlineInset = 7.0.
+//
+// Worse, the border's coverage along this row is not constant in x, so a
+// geometry change turns the negative arm into a FALSE FAILURE. Measured
+// with rows dropped from 4 to 2, nothing else changed and no rule drawn
+// at cellH=2: alpha over x0..19 runs [0 0 128 128 … 136 144] while
+// x36..43 is all 255, so the two samples differ and the arm printed "a
+// 2-pixel cell draws a rule … it lands ON the border" about a correct
+// implementation.
+//
+// over(fg, bg, hairlineFade) is what hairlineStroke paints on the opaque
+// tier, so asking whether the mid-span pixel IS that colour is a question
+// about the rule and nothing else. There is no reference sample, so there
+// is no second geometry to go wrong; and a border that happened to match
+// would have to match the FADED colour rather than fg.
 func TestTheHairlineNeedsBothStrokesToFitTheCell(t *testing.T) {
 	// The first cell height that can hold the border's stroke and the
 	// hairline's half stacked, derived from the constants rather than
@@ -1449,20 +1488,27 @@ func TestTheHairlineNeedsBothStrokesToFitTheCell(t *testing.T) {
 			"report the wrong axis", cols*cw)
 	}
 
+	// The colour hairlineStroke paints on the opaque tier, taken from the
+	// same expression it uses: a literal here would agree with itself if
+	// hairlineFade moved.
+	fg := render.RGB(0xff, 0xff, 0xff)
+	rule := over(fg, render.Color{}, hairlineFade)
+
 	ruled := func(t *testing.T, ch int) bool {
 		t.Helper()
-		dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff),
-			render.Color{}, true)
+		dc, err := drawCanvas(cols, 4, cw, ch, fg, render.Color{}, true)
 		if err != nil {
 			t.Fatalf("a pane of %dx%d cells does not draw at all: %v", cw, ch, err)
 		}
-		px := func(x int) [4]int {
-			r, g, b, a := dc.Image().At(x, ch-1).RGBA()
-			return [4]int{int(r >> 8), int(g >> 8), int(b >> 8), int(a >> 8)}
-		}
-		// One sample left of where the rule starts and one mid-span, on
-		// the same row — hairlineInset is the boundary between them.
-		return px(int(hairlineInset)-2) != px(cols*cw/2)
+		// cellH-1 is the row the unguarded arithmetic puts the line on:
+		// hairlineY answers cellH - hairlineWidth/2 when it answers at
+		// all, and the stroke is centred there. Computed here rather than
+		// by calling hairlineY, deliberately — below the floor hairlineY
+		// returns no y, and this arm has to look at the row a rule WOULD
+		// have landed on.
+		r, g, b, a := dc.Image().At(cols*cw/2, ch-1).RGBA()
+		return uint8(a>>8) == 0xff && uint8(r>>8) == rule.R &&
+			uint8(g>>8) == rule.G && uint8(b>>8) == rule.B
 	}
 
 	for ch := 1; ch < first; ch++ {

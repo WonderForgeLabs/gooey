@@ -2,6 +2,7 @@ package graphics
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
@@ -68,6 +69,42 @@ func TestOnlySixelIsAlphaLess(t *testing.T) {
 				"whether its wire carries alpha. The default — not implementing "+
 				"OpaqueEncoder — is the composited branch: a decision nobody made, "+
 				"about a protocol nobody asked", name)
+			continue
+		}
+		// THE ROW'S VALUE MUST BE THE TYPE ITS KEY NAMES, and nothing
+		// said so until review of #474 measured it.
+		//
+		// The walk derives the NAMES. Each row's enc was a hand-written
+		// literal beside one, and the check below asks tc.enc while
+		// reporting about name — the two-hand-lists shape round 6 removed
+		// from this test, one level further down, inside the guard that
+		// replaced it.
+		//
+		// Measured at the commit this fixes. With the row changed to
+		// "Kitty": {ITerm2{}, false} and `func (Kitty) OpaqueOnly() {}`
+		// added to kitty.go, this test was GREEN: the loop found Kitty,
+		// found its row, and asked ITerm2 the question. Kitty became
+		// alpha-less — which round 5's own comment says "changes the
+		// picture every kitty user gets" — and the only thing that went
+		// red was apps/wysiwyg's pixel test, which ci.yml VETS rather
+		// than runs. So CI was entirely green on it, and the guard that
+		// exists precisely because "a claim about which encoders answer a
+		// capability belongs where the capability is declared, not only
+		// in one consumer's pixel test" was the one that stayed quiet.
+		//
+		// The realistic path is not a deliberate mutation: it is a fourth
+		// encoder added by copying a row and not changing the value,
+		// which leaves the new protocol's answer untested while the row
+		// count looks right.
+		//
+		// %T RATHER THAN reflect, because this repo's rule is no
+		// reflection outside generated protobuf and fmt's verb imports
+		// none here.
+		if got := fmt.Sprintf("%T", tc.enc); got != "graphics."+name {
+			t.Errorf("the row filed under %q holds a %s. The check below asks "+
+				"that value and reports about %q, so this row answers for the "+
+				"wrong encoder and nothing at all answers for %s", name, got,
+				name, name)
 			continue
 		}
 		_, got := tc.enc.(OpaqueEncoder)
