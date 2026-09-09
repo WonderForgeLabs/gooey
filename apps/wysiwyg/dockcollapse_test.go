@@ -240,8 +240,16 @@ func TestACollapsedHeaderStillShowsThePin(t *testing.T) {
 // `fixed` used to be a count of header ROWS — n*headerH, which only
 // exceeds the slot in a terminal too short to run in. It is now a sum of
 // TITLE WIDTHS, and a strip of panes with long titles in a narrow window
-// is an ordinary size. Without the clamp the last pane is arranged past
-// the slot's right edge and its header paints into the next slot's cells.
+// is an ordinary size.
+//
+// WHAT HOLDS THE INVARIANT IS THE TRIM, not the `left` clamp this test
+// was written for, and review of #480 measured the difference: after the
+// widest-first trim the shares sum to exactly the slot width, so `left`
+// never bites and this arm was green either way. The arm is kept and
+// widened rather than deleted — it asserts the CONSEQUENCE (no pane
+// outside the slot), which is what a reader wants pinned however it is
+// achieved — and TestTheSharesSumToTheSlotAtEveryWidth below is the mechanism, so a
+// change that breaks the trim names the trim.
 func TestAStripNarrowerThanItsHeadersStaysInsideItsSlot(t *testing.T) {
 	h := &dockHost{dock: newDockModel()}
 	panes := []*dockPane{
@@ -270,6 +278,62 @@ func TestAStripNarrowerThanItsHeadersStaysInsideItsSlot(t *testing.T) {
 				"slot boundary — the neighbour repaints over it whenever it happens "+
 				"to repaint, and not before", p.Title, b, slot)
 		}
+	}
+}
+
+// TestTheSharesSumToTheSlotAtEveryWidth is the mechanism finding 2 named,
+// pinned as a mechanism.
+//
+// The `left` clamp reads as the thing keeping the panes inside the slot,
+// and it is unreachable: the widest-first trim leaves
+// fixed <= max(0, total-flex), so the per-pane shares sum to EXACTLY the
+// slot width and `n > left` cannot hold. A review swept w = 0..60 over
+// this fixture and the sum never exceeded w; this is that sweep, so the
+// property is asserted rather than remembered.
+//
+// It is a SUM, not a containment check. The arm above already asserts
+// that no pane escapes the slot, and it passes whether the trim or the
+// clamp got it there — which is exactly why it could not see the clamp
+// going dead. A total that falls short means somebody's columns went
+// nowhere; a total that overshoots means the clamp is doing real work
+// and the trim has a hole.
+func TestTheSharesSumToTheSlotAtEveryWidth(t *testing.T) {
+	h := &dockHost{dock: newDockModel()}
+	panes := []*dockPane{
+		newDockPane("a", "A LONG PANE TITLE", dockBottom, 4, false),
+		newDockPane("b", "ANOTHER LONG ONE", dockBottom, 4, false),
+	}
+	for _, p := range panes {
+		p.host = h
+		h.dock.add(p)
+		p.collapsed.Set(true)
+	}
+	wide := panes[0].headerCols() + panes[1].headerCols()
+	if wide > 60 {
+		t.Fatalf("the two headers need %d columns and the sweep stops at 60, so it "+
+			"never reaches the width where they fit", wide)
+	}
+	matched := 0
+	for w := 0; w <= 60; w++ {
+		h.place(dockBottom, gooey.Rect{X: 3, Y: 7, W: w, H: headerH}, false, true)
+		sum := 0
+		for _, p := range panes {
+			sum += p.Bounds().W
+		}
+		if sum > w {
+			t.Errorf("at slot width %d the shares sum to %d. The clamp then has to "+
+				"take the overflow off whichever pane is arranged last, which is a "+
+				"pane silently narrower than the trim decided", w, sum)
+		}
+		if sum == w {
+			matched++
+		}
+	}
+	// NON-VACUITY: a place() that arranged nothing would satisfy the
+	// loop above at every width.
+	if matched == 0 {
+		t.Errorf("the shares never summed to the slot width at any of 61 widths, " +
+			"so the loop above passed on panes that were not laid out at all")
 	}
 }
 
@@ -333,15 +397,30 @@ func TestTheUsableMinimumFallsWhenTheStripCollapses(t *testing.T) {
 			"needs is laidOutExtent", after, before,
 			ed.dock.slotExtent(dockBottom)-ed.dock.laidOutExtent(dockBottom))
 	}
-	// AND IT DID NOT WIDEN. The columns are not expected to fall — the
-	// strip's column term is a body allowance per pane and says nothing
-	// about collapse, for the reason Minimum records — but a "reclaim"
-	// that raised the minimum on the other axis would be worse than the
-	// blindness it replaced. The first attempt at this fix did exactly
-	// that, charging a collapsed pane its header's 8 columns where an
-	// open one is charged starMin's 3.
-	if after.Cols > before.Cols {
-		t.Errorf("collapsing WIDENED the usable minimum, %s to %s", before, after)
+	// AND THE COLUMNS STILL COVER WHAT place NEEDS, which is the
+	// invariant, and "it did not widen" is not.
+	//
+	// That arm stood here and was VACUOUS on this fixture: the shipped
+	// page's rails dominate the column term, so a strip that widened by
+	// 8 could not move the total. It was also FALSE as a claim — the
+	// column term IS collapse-aware, deliberately, because a collapsed
+	// header is drawn at its full title width and cannot be squeezed.
+	// Minimum answers "below this the shell is not usable", so it may
+	// not report less than the layout requires; that it rises on the
+	// column axis while the gesture reclaims rows is a consequence of
+	// the header being incompressible. Raised in review of #480.
+	//
+	// The check is the CONSEQUENCE rather than the arithmetic: lay the
+	// dock out at exactly the width it reports, and the collapsed pane's
+	// header must not be clipped.
+	slot := dockSlot(panel.slot.Get())
+	panel.host.place(slot, gooey.Rect{W: after.Cols,
+		H: ed.dock.laidOutExtent(slot)}, false, true)
+	if got, want := panel.Bounds().W, panel.headerCols(); got < want {
+		t.Errorf("at the reported minimum of %d columns the collapsed pane is %d "+
+			"wide and its header needs %d. Minimum reports less than place "+
+			"requires, so checkFit says a window is big enough for a header it "+
+			"then clips", after.Cols, got, want)
 	}
 }
 
@@ -598,5 +677,66 @@ func TestTheTrimComesOffTheWidestHeader(t *testing.T) {
 	}
 	if got := narrow.Bounds().W + wide.Bounds().W; got != total {
 		t.Errorf("the two panes occupy %d columns of the %d-column slot", got, total)
+	}
+}
+
+// TestTheStripRowPastACollapsedHeaderIsBlank is finding 4, and it is
+// about a row that now belongs to nobody.
+//
+// An all-collapsed one-pane strip used to span the full width, so the
+// whole row carried the header style. It is headerCols wide now and the
+// remainder is owned by no component — which is the shape a stale glyph
+// survives in, because no node's Render covers those cells to overwrite
+// them. The visibility sweep does clear them today; nothing said so, and
+// nothing would go red if it stopped.
+//
+// It reads through render.RowText rather than the package's own
+// rune-per-cell helper, for CLAUDE.md's reason: a helper that renders
+// the continuation marker as a literal rune cannot hold a wide glyph.
+func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
+	ed, c := dockFixture(t)
+	panel := pane(t, ed, "panel")
+	ed.dock.Move(panel, dockBottom)
+	settle(t, c)
+
+	// A BODY WORTH LOSING. The row is only interesting if the pane
+	// spanned it before the collapse, so the arm can tell "cleared" from
+	// "never painted".
+	b := panel.Bounds()
+	if b.W <= panel.headerCols() {
+		t.Fatalf("the open pane is %d columns and its header needs %d, so no part "+
+			"of the row is vacated by collapsing and this arm checks nothing",
+			b.W, panel.headerCols())
+	}
+	f, _ := c.Frame()
+	if b.Y < 0 || b.Y >= f.Cells.H {
+		t.Fatalf("the pane is at row %d, outside the %d-row frame", b.Y, f.Cells.H)
+	}
+	if body := render.RowText(f.Cells, b.Y+1); strings.TrimSpace(body) == "" {
+		t.Fatalf("the open pane's body row %d is already blank, so a blank row "+
+			"after the collapse says nothing", b.Y+1)
+	}
+
+	ed.dock.ToggleCollapsed(panel)
+	settle(t, c)
+	f, _ = c.Frame()
+
+	got := panel.Bounds()
+	if got.W != panel.headerCols() {
+		t.Fatalf("the collapsed pane is %d columns and its header is %d; the "+
+			"remainder this arm is about is not where it thinks",
+			got.W, panel.headerCols())
+	}
+	line := []rune(render.RowText(f.Cells, got.Y))
+	past := got.X + got.W
+	if past >= len(line) {
+		t.Fatalf("the header reaches column %d of a %d-column row, so there is "+
+			"nothing to its right to assert about", past, len(line))
+	}
+	if rest := strings.TrimRight(string(line[past:]), " "); rest != "" {
+		t.Errorf("the strip row past the collapsed header at column %d reads %q, "+
+			"want blank. Those cells belong to no component now, so nothing "+
+			"repaints them — a leftover there is the pane's old body, still on "+
+			"screen after the gesture that removed it", past, rest)
 	}
 }
