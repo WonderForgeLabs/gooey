@@ -361,7 +361,7 @@ func main() {
 	// the reason the panes read from disk rather than from an embed.
 	app := gooey.NewApp(markup.Page(root, PageFile, ed.ctx, paneFiles...), opts...)
 	ed.app = app
-	ed.ctx.Dispatcher = app.Dispatcher()
+	ed.setDispatcher(app.Dispatcher())
 	ed.watchFit(app)
 	ed.bindClipboard(app)
 	// Click-to-select. The composer is resolved per press rather than
@@ -587,6 +587,37 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 //
 // Read from ed.palette rather than a fresh Catalog() call, for the same
 // reason bodySpec does: the palette IS the document's vocabulary.
+// contexts is every markup.Context the editor builds trees with.
+//
+// It exists so the wiring below can LOOP rather than name one context and
+// miss the other, which is the whole of #462: docCtx — the context the
+// DOCUMENT BEING EDITED is built with — never got the Dispatcher, so the
+// canvas refused markup that is legal in a real app, at load, while the
+// palette went on offering the attribute. The properties pane is driven
+// from ElementDef.Attrs and knows nothing about the context a thing will
+// be built in, so nothing anywhere connected the two.
+//
+// A CONTEXT ADDED LATER MUST BE ADDED HERE. That is a real obligation and
+// not a wish: TestTheContextListCoversTheOnesTheEditorActuallyUses fails
+// if either known context goes missing, and the general wiring test reads
+// this list rather than naming fields, so anything in it is wired by
+// construction.
+func (ed *editor) contexts() []*markup.Context { return []*markup.Context{ed.ctx, ed.docCtx} }
+
+// setDispatcher wires the app's dispatcher into every context.
+//
+// ONE dispatcher across all of them, not one each: handler results are
+// Set on the UI goroutine (markup/handlers.go:193), and two dispatchers
+// would be two routes to a graph that tolerates exactly one.
+//
+// Separate from newEditor because the dispatcher does not exist yet when
+// the contexts are built — gooey.NewApp comes after.
+func (ed *editor) setDispatcher(d *gooey.Dispatcher) {
+	for _, c := range ed.contexts() {
+		c.Dispatcher = d
+	}
+}
+
 func (ed *editor) grantOf(elem string) markup.Grant {
 	for _, e := range ed.palette {
 		if e.Name == elem {
@@ -1544,6 +1575,10 @@ func newEditor(fsys fs.FS) *editor {
 	// docCtx shares the bindings and styles — a document authored here
 	// binds the same names — but deliberately NOT Components. Every
 	// entry there is editor chrome; see the comment above.
+	//
+	// It does NOT get the Dispatcher here, because there is no app yet:
+	// newEditor runs before gooey.NewApp, so the wiring is an assignment
+	// afterwards. See setDispatcher.
 	ed.docCtx = &markup.Context{
 		Values: ed.ctx.Values,
 		Styles: ed.ctx.Styles,
