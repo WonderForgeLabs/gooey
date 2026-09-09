@@ -158,16 +158,29 @@ func TestACollapsedPanesWidthIsColumnsNotRunes(t *testing.T) {
 // once. The mechanism (both sides of the boundary, wide glyphs, the
 // reclamation arithmetic) is derived everywhere else.
 func TestAHeadersColumnBudgetIsItsTextPlusThePin(t *testing.T) {
-	p := newDockPane("x", "PANEL", dockBottom, 4, false)
-	// 1 chevron + 1 space + 5 for "PANEL" + 1 for the pin the header
-	// always draws at its right edge.
-	const want = 8
-	if got := p.headerCols(); got != want {
-		t.Errorf("headerCols() for a %q header is %d, want %d = 1 chevron + 1 "+
-			"space + %d title + 1 pin. A collapsed pane laid out at this width "+
-			"draws exactly its header and nothing is clipped", p.Title, got, want,
-			len(p.Title))
+	// TWO TITLES OF THE SAME RUNE COUNT AND DIFFERENT COLUMN COUNTS is
+	// what makes the wide row an assertion rather than a restatement:
+	// "世界" and "ab" are both two runes, and the answers differ by two.
+	// A fixture that agreed with itself under either rule is the trap
+	// CLAUDE.md names, and the ASCII row alone was one.
+	for _, tc := range []struct {
+		title string
+		want  int // 1 chevron + 1 space + the title's COLUMNS + 1 pin
+	}{
+		{"PANEL", 8},
+		{"ab", 5},
+		{"世界", 7},
+	} {
+		p := newDockPane("x", tc.title, dockBottom, 4, false)
+		if got := p.headerCols(); got != tc.want {
+			t.Errorf("headerCols() for a %q header is %d, want %d = 1 chevron + 1 "+
+				"space + %d columns of title + 1 pin. A collapsed pane laid out at "+
+				"this width draws exactly its header and nothing is clipped",
+				tc.title, got, tc.want, render.StringWidth(tc.title))
+		}
 	}
+
+	p := newDockPane("x", "PANEL", dockBottom, 4, false)
 	// AND THE PIN IS WHY IT IS NOT 7. Without the extra column the
 	// header's last cell is the title's last character and the pin — the
 	// only thing that says a pane survives HideUnpinned — is clipped off
@@ -184,10 +197,19 @@ func TestAHeadersColumnBudgetIsItsTextPlusThePin(t *testing.T) {
 //
 // The WIDE case is the one that fails if only headerCols was converted
 // and Render was left counting runes. A collapsed pane titled "世界" is
-// laid out at 6 columns; a rune-counted pad then adds two spaces too
-// many, the clip cuts what it must, and the pin — the last thing on the
-// line — is what falls off. Both halves have to be columns or the two
-// disagree at exactly the width the first half chose.
+// laid out at SEVEN columns — chevron 1, space 1, 世界 4, pin 1, which
+// is headerCols' own arithmetic — and a rune-counted pad then adds two
+// spaces too many, the clip cuts what it must, and the pin, being the
+// last thing on the line, is what falls off. Both halves have to be
+// columns or the two disagree at exactly the width the first half
+// chose.
+//
+// The number said 6 for one review round, which is the rune count of
+// the lead plus the pin: the wrong rule, written into the prose
+// explaining why the wrong rule is wrong. Corrected in review of #480 —
+// and it is a comment rather than an assertion, which is why nothing
+// went red for it. TestAHeadersColumnBudgetIsItsTextPlusThePin asserts
+// the 7 directly.
 func TestACollapsedHeaderStillShowsThePin(t *testing.T) {
 	for _, title := range []string{"PANEL", "世界"} {
 		t.Run(title, func(t *testing.T) {
@@ -360,5 +382,221 @@ func TestTheBottomStripsRowFloorDoesNotMultiplyByItsPaneCount(t *testing.T) {
 	if got.Cols <= want.Cols {
 		t.Errorf("two bottom panes need %d columns and one needs %d; the pane "+
 			"count has to reach the axis they actually stack on", got.Cols, want.Cols)
+	}
+}
+
+// stripOf is a bare host with a collapsed pane and an open one in the
+// bottom strip, which is the arrangement all three findings of #480's
+// review live in. Bare rather than the shipped page for the reason
+// TestTheBottomStripsRowFloorDoesNotMultiplyByItsPaneCount gives: on the
+// real dock the edge slots move at the same time and the term under test
+// is never on its own.
+//
+// The collapsed pane is DECLARED FIRST and its title is WIDE. Both are
+// load-bearing: document order is what the starvation finding is about,
+// and a header narrower than starMin cannot outrun anything.
+func stripOf(t *testing.T) (*dockHost, *dockPane, *dockPane) {
+	t.Helper()
+	h := &dockHost{dock: newDockModel()}
+	shut := newDockPane("a", "世界世界", dockBottom, 4, false)
+	open := newDockPane("b", "B", dockBottom, 4, false)
+	for _, p := range []*dockPane{shut, open} {
+		p.host = h
+		h.dock.add(p)
+	}
+	shut.collapsed.Set(true)
+	if shut.headerCols() <= starMin {
+		t.Fatalf("the collapsed header is %d columns and starMin is %d, so it "+
+			"cannot outweigh an open pane's share and nothing below discriminates",
+			shut.headerCols(), starMin)
+	}
+	return h, shut, open
+}
+
+// TestTheUsableMinimumCoversACollapsedHeaderBesideAnOpenPane is finding 1
+// of review #480, and the assertion is the CONSEQUENCE rather than the
+// arithmetic: lay the strip out at exactly the width Minimum reports and
+// the open pane must still be usable.
+//
+// Minimum charged len(strip)*starMin — one body allowance per pane,
+// collapsed or not — while place charges a collapsed pane the full width
+// of the header it draws. So the reported minimum was below the width
+// place needs, and inside that gap the open pane is arranged at W=0.
+// checkFit's whole job is to say "this window is too small", and it said
+// the window was fine.
+func TestTheUsableMinimumCoversACollapsedHeaderBesideAnOpenPane(t *testing.T) {
+	h, shut, open := stripOf(t)
+
+	m := h.dock.Minimum()
+	// NON-VACUITY, against the formula this replaces. If the old count
+	// happened to be large enough the test would pass on the bug.
+	if old := 2 * starMin; m.Cols <= old {
+		t.Fatalf("Minimum reports %d columns and the count-based formula gave %d; "+
+			"the two agree here, so this test cannot see the difference",
+			m.Cols, old)
+	}
+
+	h.place(dockBottom, gooey.Rect{W: m.Cols, H: headerH + starMin}, false, true)
+	if got := open.Bounds().W; got < starMin {
+		t.Errorf("at the reported minimum of %d columns the open pane is %d wide, "+
+			"want at least starMin=%d. The collapsed pane beside it takes %d for "+
+			"its header, so a minimum that charges both panes starMin is short by "+
+			"%d — and the fit check reports the window is big enough",
+			m.Cols, got, starMin, shut.headerCols(),
+			shut.headerCols()-starMin)
+	}
+}
+
+// TestACollapsedPaneCannotStarveAnOpenOne is finding 2, and it is about
+// a width BELOW the minimum — which is an ordinary window, since Minimum
+// is a usable minimum and not a floor the layout enforces.
+//
+// The clamp in place walks in document order, so with the collapsed
+// panes over budget the ones declared FIRST take their full header and
+// whatever is declared after gets nothing. Nothing, for an open pane, is
+// a rect of zero extent. The pane that gave up its body is the one that
+// should go short.
+func TestACollapsedPaneCannotStarveAnOpenOne(t *testing.T) {
+	h, shut, open := stripOf(t)
+
+	// Narrower than the collapsed header alone, so the trim must engage.
+	w := shut.headerCols() - 2
+	slot := gooey.Rect{X: 3, Y: 7, W: w, H: headerH + starMin}
+	h.place(dockBottom, slot, false, true)
+
+	if got := open.Bounds().W; got < 1 {
+		t.Errorf("in a %d-column strip the open pane is %d wide: the collapsed "+
+			"pane declared before it took %d for its header and left nothing. A "+
+			"pane of zero extent is not a narrow pane, it is an absent one — and "+
+			"collapse is the gesture that gives room BACK",
+			w, got, shut.Bounds().W)
+	}
+	// AND THE SLOT STILL HOLDS THEM. The trim must not be paid for by
+	// running past the edge, which is the failure the clamp exists for.
+	for _, p := range []*dockPane{shut, open} {
+		b := p.Bounds()
+		if b.X < slot.X || b.X+b.W > slot.X+slot.W {
+			t.Errorf("pane %q was arranged at %+v, outside the slot %+v",
+				p.Title, b, slot)
+		}
+	}
+}
+
+// TestTheUsableMinimumFallsWhenAnEdgeSlotCollapses is finding 3, and it
+// is the row half of the same mistake: Minimum wrote out place's
+// arithmetic a second time, from the pane COUNT, which cannot see a pane.
+//
+// n*(headerH+starMin) charges every pane a body allowance whether or not
+// it has a body, so collapsing panes in the left, right or centre slot
+// lowered nothing. That is verbatim the failure Minimum's own doc
+// comment describes — the user performs the operation documented as
+// reclaiming room, the rows come free, and the cram screen stays up.
+func TestTheUsableMinimumFallsWhenAnEdgeSlotCollapses(t *testing.T) {
+	m := newDockModel()
+	first := newDockPane("a", "A", dockLeft, headerH+starMin, false)
+	second := newDockPane("b", "B", dockLeft, headerH+starMin, false)
+	m.add(first)
+	m.add(second)
+
+	before := m.Minimum()
+	first.collapsed.Set(true)
+	after := m.Minimum()
+
+	// EXACTLY starMin, not merely "less". A collapsed pane keeps its
+	// header row and gives up its body, which is starMin — an assertion
+	// of "it fell" would pass for a fix that dropped the header too, and
+	// then the pane could not be re-opened because its chevron is the
+	// hit target.
+	if got := before.Rows - after.Rows; got != starMin {
+		t.Errorf("collapsing one of two panes in the LEFT slot moved the usable "+
+			"minimum by %d rows (%s to %s), want %d — the body allowance it gave "+
+			"up. The row term counts panes rather than asking each one, so the "+
+			"rows come free and the fit check cannot see them",
+			got, before, after, starMin)
+	}
+}
+
+// TestANarrowedHeaderLeavesNoStaleGlyph is finding 4 of review #480, and
+// it needs two paints into one buffer because a stale cell is by
+// definition what the SECOND paint did not write.
+//
+// render.ClipCols stops BEFORE a glyph that would overrun, so where the
+// pane's last column would hold half a wide glyph it comes back a column
+// short. A dockPane is a chrome-only container — its bounds enclose
+// children whose own clean nodes will not repaint — so the framework
+// pre-clears nothing for it, and that column keeps whatever was in it.
+func TestANarrowedHeaderLeavesNoStaleGlyph(t *testing.T) {
+	h := &dockHost{dock: newDockModel()}
+	p := newDockPane("a", "ABC", dockBottom, 4, false)
+	p.host = h
+	h.dock.add(p)
+
+	buf := render.NewBuffer(10, 2)
+	f := &gooey.Frame{Cells: buf}
+	// THREE COLUMNS, which is the width at which the two titles clip to
+	// different lengths: "> A" is exactly 3, and "> 世" would be 4, so
+	// the wide one stops at 2 and leaves column 2 unwritten.
+	p.Base.Arrange(gooey.Rect{X: 0, Y: 0, W: 3, H: headerH})
+	p.Render(f)
+	stale := buf.At(2, 0).Rune
+	if stale == ' ' || stale == 0 {
+		t.Fatalf("the ASCII header left column 2 as %q, so there is nothing for "+
+			"the second paint to fail to overwrite", stale)
+	}
+
+	p.Title = "世界"
+	if render.StringWidth(render.ClipCols("> "+p.Title, 3)) != 2 {
+		t.Fatal("the wide title no longer clips a column short of the pane, so " +
+			"this test cannot see the cell the clip leaves behind")
+	}
+	p.Render(f)
+
+	if got := buf.At(2, 0).Rune; got == stale {
+		t.Errorf("column 2 still holds %q from the previous title. ClipCols "+
+			"returned 2 columns for a 3-column pane, and a chrome-only container "+
+			"pre-clears nothing — so the old glyph sits on the header row under "+
+			"the new one until something else happens to repaint that cell", got)
+	}
+}
+
+// TestTheTrimComesOffTheWidestHeader is the other half of finding 2, and
+// it needs the narrow pane declared FIRST — otherwise "off the widest"
+// and "off the first" pick the same pane and agree.
+//
+// Both rules keep an open pane alive, so the starvation test above
+// passes either way. What separates them is what the collapsed panes
+// look like afterwards: taking the shortfall in document order empties
+// the narrow pane completely while its wide neighbour keeps ten of its
+// eleven columns, and a collapsed pane at zero has no chevron — which is
+// the hit target that re-opens it. Taking it off the widest each pass
+// leaves every header as readable as the room allows.
+func TestTheTrimComesOffTheWidestHeader(t *testing.T) {
+	h := &dockHost{dock: newDockModel()}
+	narrow := newDockPane("a", "B", dockBottom, 4, false)
+	wide := newDockPane("b", "\u4e16\u754c\u4e16\u754c", dockBottom, 4, false)
+	for _, p := range []*dockPane{narrow, wide} {
+		p.host = h
+		h.dock.add(p)
+		p.collapsed.Set(true)
+	}
+	if narrow.headerCols() >= wide.headerCols() {
+		t.Fatalf("the two headers are %d and %d columns; with the first no "+
+			"narrower than the second, document order and widest-first choose "+
+			"the same pane", narrow.headerCols(), wide.headerCols())
+	}
+
+	// Over budget by enough that the wide pane alone can absorb it.
+	total := narrow.headerCols() + wide.headerCols() - 5
+	h.place(dockBottom, gooey.Rect{W: total, H: headerH}, false, true)
+
+	if got := narrow.Bounds().W; got != narrow.headerCols() {
+		t.Errorf("the narrow pane was cut to %d of its %d columns while the wide "+
+			"one kept %d of %d. The shortfall is being taken in declaration "+
+			"order, so the pane that could least afford it paid — and a collapsed "+
+			"pane with no chevron cannot be re-opened",
+			got, narrow.headerCols(), wide.Bounds().W, wide.headerCols())
+	}
+	if got := narrow.Bounds().W + wide.Bounds().W; got != total {
+		t.Errorf("the two panes occupy %d columns of the %d-column slot", got, total)
 	}
 }
