@@ -330,41 +330,71 @@ func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, err
 
 	// The hairline inside the top edge — the one flourish, and the detail
 	// that reads as "modern" rather than "boxed".
-	y := hairlineY(dc.Height())
-	dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
-	s := stroke(fg, hairlineWidth)
-	s.Brush = gg.NewSolidPattern(fade(fg, hairlineOpacity))
-	s.Apply(dc)
-	dc.Stroke()
+	//
+	// Conditional, because a pane whose cells are shorter than the border
+	// and the hairline stacked has nowhere to put it. Drawing it anyway
+	// would put it under the border, where it is either invisible or a
+	// thickening of it — and an invisible flourish is the defect this
+	// arithmetic was fixed for.
+	//
+	// MEASURED, and the measurement is that ignoring `ok` here changes NO
+	// PIXEL: the guard only fires for a cell 2 pixels tall or less, and
+	// the border's 1.5-pixel stroke already saturates row 0 at every x
+	// the hairline would reach, so compositing a 40%-opacity line at y=0
+	// over it is a no-op. An A/B of the two canvases at cellH 1 and 2
+	// differs by zero pixels. So this branch is not load-bearing for the
+	// output today; it is load-bearing for the CONTRACT, which hairlineY
+	// states and TestACellTooShortForBothGetsNoHairline asserts directly,
+	// and it stops being a no-op the moment borderWidth or hairlineInset
+	// moves.
+	// Written down rather than left for the next person to re-derive.
+	if y, ok := hairlineY(cellH); ok {
+		dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
+		s := stroke(fg, hairlineWidth)
+		s.Brush = gg.NewSolidPattern(fade(fg, hairlineOpacity))
+		s.Apply(dc)
+		dc.Stroke()
+	}
 
 	return dc, nil
 }
 
 // hairlineY is where the title hairline sits, in pixels down from the top
-// of the canvas.
+// of the canvas, and whether there is room for it at all.
 //
-// This reproduces the arithmetic frame.svg was given, DELIBERATELY and
-// including its consequence: h is the canvas height in PIXELS, so for any
-// pane taller than eight pixels — which is all of them — the line lands at
-// h/8, three cell rows down in an 80x24 pane. The ring's top slice is one
-// cell tall, so all but a pixel at each extreme end of the line is sliced
-// away and never placed. The flourish is, in practice, invisible.
+// IT TAKES THE CELL HEIGHT, NOT THE CANVAS HEIGHT, and that is the whole
+// of #254. frame.svg was given h/8 where h is the canvas in PIXELS, so on
+// an 80x24 pane of 8x16 cells the line landed at y=48 — three cell rows
+// down. Ring's top slice is `crop(img, 0, 0, w, cellH)`, exactly one cell
+// tall, so the line was cut away and never placed: the flourish the
+// package comment describes at length had been invisible for its whole
+// life, except for a one-pixel stub at each end where it crossed the side
+// slices. PR #253 ported the arithmetic verbatim on purpose — that change
+// claimed "same output", and fixing the picture inside it would have made
+// the claim unfalsifiable — and split the fix out as #254.
 //
-// Porting the bug rather than fixing it is the point: this change is about
-// how the pane draws, not how it looks, and a rewrite that silently
-// changed the picture would make "same output" unfalsifiable. It is
-// reported as a finding against epic #241; whoever fixes it wants
-// canvasH/cellH-style arithmetic, or simply cellH, and a test that asserts
-// the line survives the ring.
-func hairlineY(canvasH int) float64 {
-	y := 2
-	if canvasH > 8 {
-		y = canvasH / 8
-		if y < 2 {
-			y = 2
-		}
+// WHICH PICTURE IS THE INTENT was the open question, and the answer is
+// the code's own name for it. drawTitle puts the title on the CELL plane
+// over the top edge's placement (components.DrawBoxTitle), so the title
+// lives in the top cell row — the same row Ring's top slice covers. A
+// "title hairline" is the rule under that row, so it sits at the BOTTOM
+// of the top cell: inside the top edge, below the title, and a division
+// rather than a second border. The package comment's description is the
+// intent; the arithmetic was the accident.
+//
+// The stroke is CENTRED on the returned y, so both halves have to fit:
+// the top half clear of the border's stroke, the bottom half inside the
+// slice. Returning a bool rather than clamping is deliberate — a clamped
+// value would place the line somewhere it does not belong and look like a
+// decision, where "no room" is the honest answer for a cell that cannot
+// hold both.
+func hairlineY(cellH int) (float64, bool) {
+	lo := borderWidth + hairlineWidth/2
+	hi := float64(cellH) - hairlineWidth/2
+	if hi < lo {
+		return 0, false
 	}
-	return float64(y)
+	return hi, true
 }
 
 // stroke is the pen shared by both figures. Cap and Join are stated rather

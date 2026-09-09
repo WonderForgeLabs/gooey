@@ -445,14 +445,18 @@ func TestDrawnCanvasIsInkedOnTheEdgeAndClearInside(t *testing.T) {
 // omitted attribute, is flat. Measured at the hairline's left end.
 func TestTheHairlineHasFlatEnds(t *testing.T) {
 	const cw, ch = 8, 16
-	// Six rows keeps the hairline (h/8 = 12) clear of the top stroke, so
-	// what is measured is the hairline and not the border.
 	const cols, rows = 40, 6
 	dc, err := drawCanvas(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
 	if err != nil {
 		t.Fatal(err)
 	}
-	y := int(hairlineY(rows * ch))
+	// A 16-pixel cell has room for the border and the hairline both, so
+	// what is measured below is the hairline and not the border.
+	yf, ok := hairlineY(ch)
+	if !ok {
+		t.Fatalf("no hairline at all for a cell %d pixels tall", ch)
+	}
+	y := int(yf)
 	alpha := func(x int) int {
 		_, _, _, a := dc.Image().At(x, y).RGBA()
 		return int(a >> 8)
@@ -487,5 +491,167 @@ func TestHairlineOpacityIsPremultiplied(t *testing.T) {
 	if got := r >> 8; got != a>>8 {
 		t.Errorf("white at 40%% has red %d and alpha %d; premultiplied, an opaque "+
 			"channel equals the alpha", got, a>>8)
+	}
+}
+
+// TestTheHairlineSurvivesTheRing is #254, and it is the assertion the
+// package had never made.
+//
+// The flourish drawFrame draws is only a flourish if it is PLACED. Ring
+// cuts the canvas into four rectangles and the interior is never placed
+// at all, so a line drawn below the top slice is generated, measured,
+// cached — and thrown away. hairlineY was given the canvas height in
+// pixels and returned h/8, three cell rows down on an 80x24 pane, so for
+// its entire life the line existed everywhere except on screen.
+//
+// MEASURED THROUGH Ring, not through drawCanvas. A test that reads the
+// full canvas passes against the bug: the ink is there, it is just not in
+// any slice. That is the distinction the whole issue is about, and the
+// reason drawCanvas's own comment warns that re-widening a slice silently
+// hands the slice back.
+func TestTheHairlineSurvivesTheRing(t *testing.T) {
+	const cw, ch = 8, 16
+	const cols, rows = 40, 6
+	f, err := drawFrame(cols, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, ok := hairlineY(ch)
+	if !ok {
+		t.Fatalf("no hairline at all for a cell %d pixels tall", ch)
+	}
+	row := int(y)
+
+	b := f.top.Bounds()
+	if row < b.Min.Y || row >= b.Max.Y {
+		t.Fatalf("the hairline is at y=%d and the ring's top slice covers y in "+
+			"[%d,%d) — the line is drawn onto a part of the canvas no placement "+
+			"ever shows, which is exactly #254", row, b.Min.Y, b.Max.Y)
+	}
+
+	// MID-SPAN, away from both corners and both side slices: the old
+	// arithmetic left a stub at each extreme end where the line crossed
+	// the left and right slices, so a sample near an end passes against
+	// the bug.
+	x := cols * cw / 2
+	if _, _, _, a := f.top.At(x, row).RGBA(); a>>8 == 0 {
+		t.Errorf("the ring's top slice has no ink at x=%d,y=%d, so the hairline is "+
+			"absent from the only rectangle that gets placed", x, row)
+	}
+}
+
+// TestTheHairlineClearsTheBorder is the other side of the placement: the
+// line has to be INSIDE the top slice and BELOW the border's stroke, and
+// a fix that satisfies the first by merging the two into one thick edge
+// is not a fix. The border is inset by half its width, so its stroke
+// occupies y in [0, borderWidth]; the hairline's own stroke is centred on
+// hairlineY, so its top edge must clear that.
+func TestTheHairlineClearsTheBorder(t *testing.T) {
+	for _, ch := range []int{8, 12, 16, 20, 24, 32} {
+		y, ok := hairlineY(ch)
+		if !ok {
+			t.Errorf("cell height %d: no hairline, though there is room for one", ch)
+			continue
+		}
+		if top := y - hairlineWidth/2; top < borderWidth {
+			t.Errorf("cell height %d: the hairline's top edge is at %.2f and the "+
+				"border's stroke reaches %.2f — they overlap, so the flourish "+
+				"reads as a thicker border rather than a division", ch, top, borderWidth)
+		}
+		if bot := y + hairlineWidth/2; bot > float64(ch) {
+			t.Errorf("cell height %d: the hairline's bottom edge is at %.2f, past the "+
+				"end of the ring's top slice at %d — the line is clipped", ch, bot, ch)
+		}
+	}
+}
+
+// TestACellTooShortForBothGetsNoHairline pins the third state.
+//
+// hairlineY returns a bool rather than clamping, and this is why: at a
+// cell height where the border's stroke and the hairline's cannot both
+// fit, a clamped value would place the line under the border, where it
+// either does not show or thickens it. "No room" is the honest answer,
+// and drawCanvas skips the stroke entirely — an invisible flourish is the
+// defect #254 exists for, and reintroducing it at small cell sizes would
+// be the same bug in a corner.
+func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
+	// borderWidth 1.5 + hairlineWidth 1.0 needs 2.5 pixels; a 2-pixel
+	// cell cannot hold both.
+	if y, ok := hairlineY(2); ok {
+		t.Errorf("a 2-pixel cell reports a hairline at %.2f, but the border's stroke "+
+			"alone reaches %.2f", y, borderWidth)
+	}
+	// And the canvas still draws, with no line on it. "It did not error"
+	// is not that assertion: ignoring the bool draws the hairline at y=0,
+	// which errors nowhere and lands on top of the border.
+	const cw, ch = 4, 2
+	const cols = 10
+	dc, err := drawCanvas(cols, 4, cw, ch, render.RGB(0xff, 0xff, 0xff))
+	if err != nil {
+		t.Fatalf("a pane with %dx%d cells does not draw at all: %v", cw, ch, err)
+	}
+	alpha := func(x, y int) int {
+		_, _, _, a := dc.Image().At(x, y).RGBA()
+		return int(a >> 8)
+	}
+	// TWO POINTS ON THE SAME BORDER STROKE, one of them inside the span a
+	// hairline would cover and one outside it. The rounded rectangle's
+	// straight top segment runs between the corner arcs, so both samples
+	// sit on identical coverage; hairlineInset is where the line would
+	// start, so only the second can gain ink from one.
+	const outside, inside = int(hairlineInset) - 2, cols * cw / 2
+	if outside >= int(hairlineInset) {
+		t.Fatalf("the reference sample at x=%d is inside the hairline's own span, "+
+			"so it cannot be a reference", outside)
+	}
+	bare, span := alpha(outside, 0), alpha(inside, 0)
+	if bare == 0 {
+		t.Fatalf("no border ink at x=%d,y=%d, so there is nothing to compare "+
+			"against and this assertion is vacuous", outside, 0)
+	}
+	if span != bare {
+		t.Errorf("the top row has alpha %d at x=%d and %d at x=%d — the extra ink is "+
+			"a hairline drawn where hairlineY reported there was no room for one, "+
+			"which puts it under the border where it thickens the edge instead of "+
+			"dividing anything", span, inside, bare, outside)
+	}
+}
+
+// TestTheHairlineTracksTheCellNotTheCanvas is the discriminating arm, and
+// it is the one that would have caught #254 the day it was written.
+//
+// The old arithmetic read the CANVAS height, so the line moved when the
+// pane grew rows — which is precisely what put it outside the top slice.
+// Two panes of the same cell size and different heights must place it in
+// the same place, because the slice it has to land in is the same size in
+// both.
+func TestTheHairlineTracksTheCellNotTheCanvas(t *testing.T) {
+	const cw, ch = 8, 16
+	short, ok1 := hairlineY(ch)
+	tall, ok2 := hairlineY(ch)
+	if !ok1 || !ok2 {
+		t.Fatal("no hairline for a 16-pixel cell")
+	}
+	if short != tall {
+		t.Fatalf("hairlineY is not a function of the cell height alone: %.2f vs %.2f",
+			short, tall)
+	}
+
+	// Through the real seam as well, because the assertion above is about
+	// the helper and the bug was about what drawCanvas passed it.
+	ink := func(rows int) bool {
+		dc, err := drawCanvas(40, rows, cw, ch, render.RGB(0xff, 0xff, 0xff))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, a := dc.Image().At(40*cw/2, int(short)).RGBA()
+		return a>>8 > 0
+	}
+	for _, rows := range []int{4, 6, 12, 24, 40} {
+		if !ink(rows) {
+			t.Errorf("a %d-row pane has no hairline at y=%.0f, where a 6-row pane of "+
+				"the same cell size does — the line is following the canvas again",
+				rows, short)
+		}
 	}
 }
