@@ -136,8 +136,11 @@ func (ed *editor) duplicateSelected() bool {
 	// only thing that can decide it. Issue #403.
 	prev := ed.sel
 	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
-	// claiming the same alt gesture is unreachable by keyboard, and
-	// unshadowMnemonic is the one place all three insertion routes share.
+	// claiming the same alt gesture is unreachable by keyboard, and so is
+	// a second <MenuItem> in a <Menu> claiming the same letter — the
+	// guard covers BOTH levels since round 11, and these three comments
+	// still named only the first. unshadowMnemonic is the one place all
+	// three insertion routes share.
 	unshadowMnemonic(p, c)
 	insertAt(p, i+1, c)
 	ed.sel = c

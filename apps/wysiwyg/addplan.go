@@ -197,6 +197,7 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 // leaving the repeated text alone. The text repeat stays a documented
 // cosmetic limit; the accelerator collision does not, because it makes a
 // menu the user just created impossible to open.
+//
 // A NAME, not a *node. The parameter was widened to *node for the
 // sibling mnemonic scan that round 10 moved out to unshadowMnemonic, and
 // the body has read nothing but .Elem since — a signature saying this
@@ -225,8 +226,43 @@ func (ed *editor) wrapperNode(parent, wrap string) *node {
 	return bare
 }
 
+// mnemonicAttr is the attribute an accelerator is spelled in, keyed by
+// the PARENT element.
+//
+// THE PARENT IS THE KEY, because the parent is what makes the letters
+// compete: <Menu> titles compete within a <MenuBar>, <MenuItem> texts
+// within their own <Menu>. That the dispatching component is the MenuBar
+// in both cases is why a rule keyed on the DISPATCHER could not see
+// items at all.
+//
+// IT IS A TABLE OF TWO NAMES, and the previous version's attempt to
+// DERIVE the attribute is what excluded the item case. It asked for
+// Required && KindString, and <MenuItem Text> is neither:
+// markup/elements.go declares it KindText, and it is optional because
+// Separator makes it so. A predicate over AttrSpec cannot answer "is
+// this attribute an accelerator" — the catalog carries no such fact,
+// ElementDef.ParsedBy is not on its surface — so the derivation was
+// answering a different question that happened to agree at one row.
+//
+// Naming elements here rather than deriving them is deliberate for the
+// reason mnemonic.go gives: the rule is menu-flavoured, and a guard
+// about buttons must not reach for this answer. Two names is the whole
+// vocabulary that has it.
+var mnemonicAttr = map[string]string{
+	"MenuBar": "Title", // <Menu Title="File"> inside it
+	"Menu":    "Text",  // <MenuItem Text="Open"> inside it
+}
+
 // unshadowMnemonic keeps a node about to be inserted from stealing a
 // sibling's keyboard accelerator.
+//
+// THIS COMMENT DOCUMENTED mnemonicAttr UNTIL REVIEW OF #454. The table
+// was declared between the prose and the function with no blank line
+// after it, so the whole block became the VAR's doc and `go doc
+// unshadowMnemonic` printed nothing — the exact theft CLAUDE.md records
+// under "a function inserted after a doc comment steals it", in a file
+// whose own findings are about comments describing something else. gofmt
+// and vet are both blind to it; `go doc` is the instrument.
 //
 // AT THE INSERTION SEAM, called once beside each append, and that is the
 // half review round 10 corrected. It used to live inside wrapperNode,
@@ -262,33 +298,8 @@ func (ed *editor) wrapperNode(parent, wrap string) *node {
 // one a fact about tree order the markup does not show. Both direct
 // gestures reproduce it on a <MenuItem>.
 //
-// mnemonicAttr IS A TABLE OF TWO NAMES, and the previous version's
-// attempt to derive the attribute is what excluded the item case. It
-// asked for Required && KindString, and <MenuItem Text> is neither:
-// markup/elements.go declares it KindText, and it is optional because
-// Separator makes it so. A predicate over AttrSpec cannot answer "is
-// this attribute an accelerator" — the catalog carries no such fact,
-// ElementDef.ParsedBy is not on its surface — so the derivation was
-// answering a different question that happened to agree at one row.
-//
-// THE PARENT IS THE KEY, because the parent is what makes the letters
-// compete: <Menu> titles compete within a <MenuBar>, <MenuItem> texts
-// within their own <Menu>. That the dispatching component is the
-// MenuBar in both cases is why a rule keyed on the DISPATCHER could not
-// see items at all.
-//
-// Naming elements here rather than deriving them is deliberate for the
-// reason mnemonic.go gives: the rule is menu-flavoured, and a guard
-// about buttons must not reach for this answer. Two names is the whole
-// vocabulary that has it.
-//
-// SEPARATORS NEED NO CASE. components.MenuMnemonic("") reports no
-// claim, which is what itemWithAccel does with them too.
-var mnemonicAttr = map[string]string{
-	"MenuBar": "Title", // <Menu Title="File"> inside it
-	"Menu":    "Text",  // <MenuItem Text="Open"> inside it
-}
-
+// WHAT ATTRIBUTE, and why it is a table rather than a derivation, is on
+// mnemonicAttr above.
 func unshadowMnemonic(into, n *node) {
 	if into == nil || n == nil || n.Attrs == nil {
 		return
@@ -297,7 +308,7 @@ func unshadowMnemonic(into, n *node) {
 	if !ok {
 		return
 	}
-	want, has := components.MenuMnemonic(n.Attrs[attr])
+	want, has := mnemonicClaim(n.Attrs[attr])
 	if !has {
 		return
 	}
@@ -315,7 +326,7 @@ func unshadowMnemonic(into, n *node) {
 		if sib == n || sib.Elem != n.Elem {
 			continue
 		}
-		if r, ok := components.MenuMnemonic(sib.Attrs[attr]); ok {
+		if r, ok := mnemonicClaim(sib.Attrs[attr]); ok {
 			claimed[r] = true
 		}
 	}
@@ -325,6 +336,45 @@ func unshadowMnemonic(into, n *node) {
 	if marked, ok := markUnclaimed(n.Attrs[attr], claimed); ok {
 		n.Attrs[attr] = marked
 	}
+}
+
+// mnemonicClaim is which letter a value claims, or no claim.
+//
+// SEPARATORS NEED NO CASE. components.MenuMnemonic("") reports no
+// claim, which is what itemWithAccel does with them too.
+//
+// NEITHER DOES A BOUND LABEL, and that was a live corruption rather than
+// a gap. <MenuItem Text="{{.Label}}"> is a template the markup resolves
+// at build time; MenuMnemonic read the LITERAL and answered "L", and
+// markUnclaimed then wrote the marker into the template itself —
+// "{{._Label}}" or "_{{.Label}}" — which either fails to build or
+// silently binds a path nobody declared. ctrl+d and paste both reach it.
+//
+// So a value carrying "{{" is left alone AND ignored as a claim. The
+// second half is not symmetry for its own sake: counting a phantom claim
+// off a bound sibling would mark a node that nothing is actually
+// shadowing, which is the same wrong answer wearing a fix. What the
+// label resolves to is not knowable here — the binding's value lives in
+// the document's context, not in the tree this walks — so "no claim
+// either way" is the honest answer, and a collision between two bound
+// labels is a runtime fact the designer shows rather than one this can
+// pre-empt. Raised in review of #454.
+//
+// ANY "{{", not bindingRef's whole-attribute form. A composite like
+// "Open {{.Name}}" is still a template, and a marker written into its
+// literal half moves the accelerator onto text the user did not choose
+// to accelerate.
+//
+// DECLARED AFTER unshadowMnemonic, not before it, and that is not
+// style: a function inserted between a doc block and the function it
+// documents STEALS the block, which is the finding this same round
+// raised about mnemonicAttr. `go doc` is the only instrument that sees
+// it — gofmt and vet are both blind.
+func mnemonicClaim(raw string) (rune, bool) {
+	if strings.Contains(raw, "{{") {
+		return 0, false
+	}
+	return components.MenuMnemonic(raw)
 }
 
 // markUnclaimed puts a `_` before the first letter or digit of title that

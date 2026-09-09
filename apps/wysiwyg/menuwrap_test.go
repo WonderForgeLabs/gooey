@@ -438,6 +438,105 @@ func TestPastingAMenuItemDoesNotStealItsAccelerator(t *testing.T) {
 	}
 }
 
+// TestABoundLabelIsLeftAloneByTheAcceleratorGuard is finding 1 of round
+// 12, and it is a CORRUPTION rather than a missed collision.
+//
+// <MenuItem Text="{{.Label}}"> is a template the markup resolves at
+// build time. components.MenuMnemonic read the literal and answered "L";
+// markUnclaimed then wrote the marker into the template — "{{._Label}}"
+// or "_{{.Label}}" — which either fails to build or silently binds a
+// path nobody declared. ctrl+d and paste both reach it.
+//
+// TWO ARMS, AND THE SECOND IS THE ONE THAT WOULD HAVE BEEN MISSED. The
+// first is the obvious one: the duplicate's own bound Text must come out
+// byte-for-byte. The second is the phantom claim — a bound SIBLING must
+// not be counted as claiming a letter, or an unbound item that collides
+// with nothing gets marked anyway, which is the same wrong answer
+// wearing a fix. A guard that only refused to WRITE into a template
+// would pass the first arm and fail the second.
+func TestABoundLabelIsLeftAloneByTheAcceleratorGuard(t *testing.T) {
+	t.Run("the duplicate's own binding survives", func(t *testing.T) {
+		ed, _ := buildPage(t)
+		menu := menuBarPage(t, ed)
+		item := menu.Kids[0]
+		// A REAL BINDING, registered the way the editor registers one —
+		// ctx.Values is where a viewmodel entry lives. Without it the
+		// document does not build at all and the arm would pass on a
+		// refusal rather than on the guard.
+		//
+		// A PLAIN STRING, not a property handle: <MenuItem Text> is
+		// resolved once at load, and markup refuses a *prop.Property
+		// there with a diagnostic saying exactly that. Which is itself
+		// worth knowing here — the value being static does not make the
+		// EXPRESSION literal, and the expression is what the guard was
+		// writing into.
+		ed.ctx.Values["Label"] = "Open"
+		item.Attrs["Text"] = "{{.Label}}"
+
+		ed.setSelection(item)
+		if !ed.duplicateSelected() {
+			t.Fatalf("ctrl+d on the bound <MenuItem> was refused: %s", ed.status.Get())
+		}
+		if n := len(menu.Kids); n != 2 {
+			t.Fatalf("the menu holds %d children after a duplicate, want 2", n)
+		}
+		for i, k := range menu.Kids {
+			if got := k.Attrs["Text"]; got != "{{.Label}}" {
+				t.Errorf("item %d reads Text=%q after ctrl+d, want %q unchanged. A "+
+					"marker written into a binding expression either fails to "+
+					"build or binds a path nobody declared — and the letter it "+
+					"was placed on came from the template's own source text",
+					i, got, "{{.Label}}")
+			}
+		}
+	})
+
+	t.Run("a bound insertion is never marked", func(t *testing.T) {
+		// THE ARM THE FIRST TWO LEAVE OPEN, and it was measured: with
+		// both items bound, no sibling claims anything, so the write
+		// never runs and reading the inserted node's own template
+		// literally is SILENT. What separates them is a real collision
+		// — an UNBOUND sibling holding the letter the template's source
+		// text starts with, which is the state where the marker
+		// actually gets written into "{{.Label}}".
+		ed, _ := buildPage(t)
+		menu := menuBarPage(t, ed)
+		menu.Kids[0].Attrs["Text"] = "Label"
+		bound := &node{Elem: "MenuItem", Attrs: map[string]string{"Text": "{{.Label}}"}}
+
+		unshadowMnemonic(menu, bound)
+
+		if got := bound.Attrs["Text"]; got != "{{.Label}}" {
+			t.Errorf("the inserted item reads Text=%q, want %q unchanged. Its "+
+				"sibling claims \"L\", and \"L\" is the first letter of the "+
+				"TEMPLATE'S SOURCE rather than of anything the user will see — "+
+				"so the marker lands inside the binding expression and the "+
+				"document either fails to build or binds a path nobody declared",
+				got, "{{.Label}}")
+		}
+	})
+
+	t.Run("a bound sibling claims nothing", func(t *testing.T) {
+		ed, _ := buildPage(t)
+		menu := menuBarPage(t, ed)
+		// The existing item is bound; the one being inserted is not, and
+		// its literal first letter is the one the BINDING's source text
+		// would have claimed. Nothing here actually collides — what the
+		// template resolves to is not knowable from this tree.
+		menu.Kids[0].Attrs["Text"] = "{{.Label}}"
+		plain := &node{Elem: "MenuItem", Attrs: map[string]string{"Text": "Label"}}
+
+		unshadowMnemonic(menu, plain)
+
+		if got := plain.Attrs["Text"]; got != "Label" {
+			t.Errorf("the inserted item reads Text=%q, want %q. Its only sibling's "+
+				"Text is a binding, so no letter is claimed here — marking one "+
+				"puts a stray underscore in front of the user for a collision "+
+				"that does not exist", got, "Label")
+		}
+	})
+}
+
 // TestAnItemInAMenuThatCollidesWithNothingKeepsItsText is the other side,
 // matching TestAWrapperInAnEmptyBarKeepsTheSeedsTitle one level down.
 // "Make the accelerator unique" is satisfied by marking every item, which
