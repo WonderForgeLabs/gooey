@@ -49,18 +49,24 @@
 // The picture is NOT bit-identical to the old one and cannot be — two
 // rasterizers antialias differently.
 //
-// A PIXEL-DIFF AGAINST THE SVG USED TO BE QUOTED HERE and it has been
-// retired rather than updated, because neither half of it can be stood
-// behind any more. It was measured in #253 against frame.svg, a file this
-// tree no longer contains, so nobody can re-run it; and #254 then moved
-// the hairline from the canvas's h/8 to the bottom of the top CELL, which
-// invalidates the two figures that were about the hairline directly ("no
-// pixel now blank" and the two ends gaining faint ink) and the corner
-// count along with them, since the diff was one measurement. A number
-// nobody can reproduce, describing a picture the code no longer draws, is
-// worse than no number: it reads as evidence. What survives is the claim
-// above it, which is a property of the two rasterizers and not of any
-// one frame.
+// A PIXEL-DIFF AGAINST THE SVG USED TO BE QUOTED HERE and it is gone
+// rather than updated. It was measured in #253 against frame.svg, a file
+// this tree no longer contains, so nobody can re-run it; and #254 then
+// moved the hairline from the canvas's h/8 to the bottom of the top
+// CELL, which invalidates the figures about the hairline and the corner
+// count with them, since the diff was one measurement. A number nobody
+// can reproduce, describing a picture the code no longer draws, reads as
+// evidence and is worse than no number.
+//
+// THESE ARE RE-RUNNABLE FROM THIS TREE, which is what a figure here has
+// to be. On a 40x12 pane of 8x16 cells the hairline is 306 pixels wide
+// between the side strokes; before #254's colour fix all 306 were below
+// sixel's keep-threshold and the encoder's byte stream was IDENTICAL to
+// the same canvas with no hairline drawn at all (80 bytes either way).
+// It is 107 bytes now. TestTheHairlineReachesTheSixelStream runs exactly
+// that comparison through graphics.Sixel.Encode, so the figures above
+// are a description of a test rather than a memory of a session.
+// Raised in review of #474.
 //
 // # The cell tier is not a fallback
 //
@@ -74,7 +80,6 @@ package panel
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"sync"
 
 	"github.com/fogleman/gg"
@@ -237,7 +242,7 @@ func (p *Pane) Render(f *gooey.Frame) {
 		p.renderCells(f)
 		return
 	}
-	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg)
+	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg, p.style.Bg)
 	if err != nil {
 		// A canvas that cannot be built must not leave a pane with no edges
 		// at all; the cell tier is the same shape in runes.
@@ -289,17 +294,24 @@ func (p *Pane) renderCells(f *gooey.Frame) {
 // 16px are the same 320-pixel canvas but slice into different rings, and
 // the old key — which was written in pixels — would have handed the first
 // pane's slices to the second.
-func (a *Art) frame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
+func (a *Art) frame(cols, rows, cellW, cellH int, fg, bg render.Color) (*frame, error) {
 	if fg == (render.Color{}) {
 		fg = defaultStroke
 	}
-	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x", cols, rows, cellW, cellH, fg.R, fg.G, fg.B)
+	// THE GROUND IS PART OF THE KEY, because the hairline is composited
+	// against it at draw time now (see over). Two panes with the same
+	// foreground on different backgrounds are different pictures, and a
+	// key that omitted the ground would hand the first one's slices to
+	// the second — the same defect the cell size in this key was added
+	// for. Raised in review of #474.
+	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x/%02x%02x%02x%t",
+		cols, rows, cellW, cellH, fg.R, fg.G, fg.B, bg.R, bg.G, bg.B, bg.Set)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if fr, ok := a.cache[key]; ok {
 		return fr, nil
 	}
-	fr, err := drawFrame(cols, rows, cellW, cellH, fg)
+	fr, err := drawFrame(cols, rows, cellW, cellH, fg, bg)
 	if err != nil {
 		return nil, err
 	}
@@ -320,8 +332,8 @@ func (a *Art) frame(cols, rows, cellW, cellH int, fg render.Color) (*frame, erro
 // A gg context starts fully transparent and nothing here fills it, so that
 // property holds by construction; a Clear() or a background fill would end
 // it.
-func drawFrame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
-	dc, err := drawCanvas(cols, rows, cellW, cellH, fg)
+func drawFrame(cols, rows, cellW, cellH int, fg, bg render.Color) (*frame, error) {
+	dc, err := drawCanvas(cols, rows, cellW, cellH, fg, bg)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +346,7 @@ func drawFrame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
 // and re-widening one of them back to the canvas silently returns the
 // slice, which is exactly the harness bug that made an early A/B of this
 // change agree with itself.
-func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, error) {
+func drawCanvas(cols, rows, cellW, cellH int, fg, bg render.Color) (*gg.Context, error) {
 	dc, err := paint.Canvas(cols, rows, cellW, cellH)
 	if err != nil {
 		return nil, fmt.Errorf("panel: %w", err)
@@ -374,8 +386,7 @@ func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, err
 	// Written down rather than left for the next person to re-derive.
 	if y, ok := hairlineY(cellH); ok {
 		dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
-		s := stroke(fg, hairlineWidth)
-		s.Brush = gg.NewSolidPattern(dim(fg, hairlineFade))
+		s := hairlineStroke(fg, bg)
 		s.Apply(dc)
 		dc.Stroke()
 	}
@@ -437,30 +448,76 @@ func stroke(fg render.Color, thickness float64) paint.Stroke {
 	}
 }
 
-// dim returns an OPAQUE colour at the given fraction of c: the value a
-// translucent stroke of that opacity composites to over a dark ground,
-// stated directly instead of asked for through an alpha channel.
+// hairlineStroke is the rule's stroke, extracted so both of its colour
+// fields can be asserted together.
 //
-// The channels are the same arithmetic the alpha version used, because
-// color.RGBA is alpha-premultiplied and premultiplying by 0.4 IS scaling
-// the channels by 0.4. Only A moves, from 102 to 255, and that one field
-// is the difference between a line sixel keeps and a line it discards
-// wholesale. Over the dark ground this palette is drawn for, the
-// composited result is unchanged; what changes is that the three tiers
-// now draw the same picture rather than two of them drawing nothing.
+// THEY HAVE TO AGREE, and they did not. Setting Brush alone left
+// Fallback at full-brightness fg — paint.Stroke.Fallback is documented as
+// "the single colour this stroke becomes on a terminal with no pixel
+// protocol", and Apply never reads it, so it is dormant while this
+// package's cell tier goes through DrawBoxRunes. Dormant is exactly why
+// it would be wrong the day somebody gives the cell tier a rule: nothing
+// would have been drawing it, so nothing would have noticed it was the
+// border's colour. Raised in review of #474, and unobservable through
+// the canvas — which is why this is a function a test can hold rather
+// than three lines inside drawCanvas.
+func hairlineStroke(fg, bg render.Color) paint.Stroke {
+	rule := over(fg, bg, hairlineFade)
+	s := stroke(fg, hairlineWidth)
+	s.Brush = gg.NewSolidPattern(paint.Color(rule))
+	s.Fallback = rule
+	return s
+}
+
+// over is the hairline's colour: fg composited onto the pane's own ground
+// at the given fraction, OPAQUE.
+//
+// Opaque because sixel has no alpha channel — graphics/sixel.go writes no
+// pixel below half alpha, so the old 0.4-alpha stroke was discarded
+// wholesale, which is #254's own symptom on the protocol most terminals
+// reach for. A kept pixel is painted at its un-premultiplied colour, so
+// the only way to carry a fainter line there is a dimmer COLOUR.
+//
+// AGAINST THE GROUND, not against black. This function scaled the
+// channels and called the result "unchanged over the dark ground this
+// palette is drawn for" — true only for a ground that is pure black.
+// Measured on the app's own "dim" pane colour (140,140,150): against
+// #1e1e2e the alpha stroke composited to (74,74,88) and the scaled one
+// gives (56,56,60), roughly half the contrast against the ground, on the
+// tiers where the flourish already worked. Compositing here reaches the
+// same answer as the terminal did, for every ground rather than one of
+// them. An unset Bg means black, which is what the terminal would have
+// composited against anyway.
+//
+// WHAT EACH TIER ACTUALLY DRAWS, since the sentence this replaced was
+// wrong about it and measurably so:
+//
+//   - sixel now writes the rule; before this change it wrote nothing.
+//   - kitty/iTerm transmit through png.Encode, which un-premultiplies, so
+//     the terminal composited the old stroke itself. Same picture, now
+//     computed here.
+//   - halfblock is UNCHANGED — it discards alpha and reads the
+//     premultiplied channels, so the old stroke and this one differ by
+//     zero cells. It drew a ~3% darkening then and draws it now, because
+//     a one-pixel rule averaged into a cell's worth of source rows keeps
+//     a fraction of its strength.
+//   - the rune tier draws no hairline at all.
 //
 // The cost is stated rather than hidden: an opaque rule COVERS what it
 // crosses instead of tinting it, and the top cell row it sits in is the
 // row DrawBoxTitle writes the title into. That was already true of the
-// border's own 1.5-pixel stroke at the top of the same cell — line art
-// over a cell of text crosses the glyphs at both ends of the row, and
-// this package's rule is that only the drawing differs between tiers,
-// which is now true of the hairline too.
-func dim(c render.Color, f float64) color.Color {
-	return color.RGBA{
-		R: uint8(float64(c.R)*f + 0.5),
-		G: uint8(float64(c.G)*f + 0.5),
-		B: uint8(float64(c.B)*f + 0.5),
-		A: 255,
+// border's own 1.5-pixel stroke at the top of the same cell.
+func over(fg, bg render.Color, f float64) render.Color {
+	if !bg.Set {
+		bg = render.RGB(0, 0, 0)
+	}
+	mix := func(a, b uint8) uint8 {
+		return uint8(float64(a)*f + float64(b)*(1-f) + 0.5)
+	}
+	return render.Color{
+		R:   mix(fg.R, bg.R),
+		G:   mix(fg.G, bg.G),
+		B:   mix(fg.B, bg.B),
+		Set: true,
 	}
 }
