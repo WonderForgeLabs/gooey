@@ -173,7 +173,7 @@ type Overlay interface{ OverlaysPage() }
 // EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
 // they were declared rather than the order they were opened; the rank
 // orders KINDS, and #437's limit survives untouched within each one.
-// Composer.appendByRank is a bucket pass rather than a sort so that this
+// appendByRank is a bucket pass rather than a sort so that this
 // is structural rather than a claim the suite has to check.
 type OverlayRanker interface {
 	Overlay

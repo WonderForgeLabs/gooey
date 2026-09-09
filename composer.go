@@ -97,6 +97,19 @@ type Composer struct {
 	// buckets is orderPaint's rank ordering, one entry per DISTINCT rank
 	// in ascending order — three in the framework today, plus whatever an
 	// app adds. Reused like `lifted`, inner slices included.
+	// RETAINS PAST ITS OWN LENGTH, deliberately noted rather than left
+	// for the next reader to re-derive. appendByRank does bs :=
+	// (*buckets)[:0] and reuses the backing arrays, which is what makes
+	// the pass allocation-free — and what keeps *paintNode from earlier
+	// frames reachable in two dimensions: bucket slots past the new len,
+	// and elements past each inner slice's new len. c.lifted and c.over
+	// have the same shape, but this is a slice OF slices, so a large
+	// frame pins one inner array per rank rather than one overall.
+	//
+	// Not a correctness bug; a node is unreachable from the tree either
+	// way. It is cleared to CAP in #438, the PR directly above this one,
+	// which is where the measurement lives (18 items held across a
+	// shrinking rank set). Raised in review of #456.
 	buckets []rankBucket
 
 	// The wire. flusher owns the previous cell buffer; the placement

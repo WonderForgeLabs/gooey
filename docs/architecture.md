@@ -1018,8 +1018,12 @@ siblings before earlier ones; `Collapsed` subtrees, zero-size
 components, and `HitTestTransparent` components are not hit.
 
 That sibling preference used to be justified as "they paint on top",
-and that reason is gone: paint order is the two ranked layers above,
-and this walk knows nothing about either. **The two planes can now
+and that reason is gone: paint order is the ordinary tree plus a
+RANKED overlay layer (`gooey.OverlayRanker` — popup 0, toast 10,
+adornment 20, equal ranks keeping document order), and this walk knows
+about neither half. The § above still describes that second layer as
+plain document order; it is corrected in the #443 sweep, which lands
+directly on top of this. **The two planes can now
 disagree, and the disagreement is silent.** A ranked overlay host
 declared FIRST paints its toasts above a button and leaves the click to
 the button, because the button is the later sibling.

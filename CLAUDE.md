@@ -310,7 +310,8 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `Composer.appendByRank` buckets by it, so equal ranks
+between two — and `appendByRank` (`composer.go:402`, a package-level
+function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
 reads as the floor, because the constant was called "the floor" in five
@@ -325,8 +326,8 @@ rank that changes with state is read once and silently stale — that is
 also why it is a method and not a `Property`, which would need `Frozen`'s
 observer machinery to be honest.
 
-**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:143`)
-walks `ChildComponents` in reverse and knows about neither layer nor
+**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:131`;
+the reverse child walk is `mouse.go:157`) knows about neither layer nor
 rank, so the two planes can now disagree: a ranked host declared FIRST
 paints above a button and leaves the click to the button. Under the
 retired "declare it last" rule they agreed, which is why the divergence
