@@ -107,6 +107,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// Context. Raised in review of #459.
 	pagePending := ctx.armPending
 	factory := func(values map[string]any) (gooey.Component, error) {
+		rowPending := &deferredArms{open: true}
 		item := &Context{
 			Values:     values,
 			Styles:     ctx.Styles,
@@ -178,18 +179,52 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// pointer whose flag is false once the build returns, so
 			// scroll-time rows record nothing. Raised in review of #459.
 			armedNested: pageNested,
-			// AND THE PENDING ARMS, by pointer. During the page build the
-			// carrier is open, so a <Frozen AllowError=…> in a template
-			// realized at load time is dropped with a build that fails.
-			// At scroll time the carrier is closed and the arm runs where
-			// it is built — a row realized then has no build to fail and
-			// nothing that would ever run a queued closure.
-			// Raised in review of #459.
-			armPending: pagePending,
+			// AND A CARRIER OF ITS OWN, because a ROW is a build that
+			// can fail like any other and the page's carrier answers the
+			// wrong question for it.
+			//
+			// Two discarded rows were arming, and both are the same
+			// mistake — a subscription outliving the tree it was made
+			// for. Sharing pagePending made the load-time row's arm run
+			// whenever the PAGE succeeded; the load-time row is
+			// ItemsView.Validate's throwaway probe, which is discarded
+			// however well it builds, so its <Frozen> was left publishing
+			// into the row's sink with an observer subscribed to a
+			// component nothing holds. And at scroll time pagePending is
+			// closed, so add() reported false and the arm ran WHERE IT
+			// WAS BUILT — before the rest of the row could fail. A row
+			// refused halfway left the same debris.
+			//
+			// A per-row carrier answers both: nothing is armed until the
+			// row is a row. Raised in review of #459.
+			armPending: rowPending,
 			ns:         ns,
 			res:        res,
 		}
-		return build(row, item)
+		w, err := build(row, item)
+		if err != nil {
+			// DROPPED, not run. The row is not going into any tree, so
+			// neither is its subscription.
+			return nil, err
+		}
+		// THE PROBE IS NOT A ROW. ItemsView.Validate realizes one
+		// throwaway row during the page build to fail a bad template
+		// binding at load, and discards it; the only factory call that
+		// happens while the page's carrier is still open IS that probe,
+		// because every real row is realized by the composer after Build
+		// has returned. So the page's own open/closed flag answers "am I
+		// the probe" without a second piece of state to keep in step.
+		//
+		// The probe still RECORDS, which is the half that must not be
+		// dropped with it: armedNested.record and the collide check run
+		// where the <Frozen> is built, not here, so a page-versus-
+		// template collision is still a load error. What the probe no
+		// longer does is subscribe and publish.
+		if !pagePending.inFlight() {
+			rowPending.open = false
+			rowPending.run()
+		}
+		return w, nil
 	}
 
 	v := &components.ItemsView{

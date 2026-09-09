@@ -1266,7 +1266,8 @@ func TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle(t *testing.T) {
 	// the weak one left a regression that turns a row-template AllowError
 	// into a load error looking exactly like a pass, including one in the
 	// guard chain this round touched.
-	if _, err := Build([]byte(page), ctx); err != nil {
+	w, err := Build([]byte(page), ctx)
+	if err != nil {
 		t.Fatalf("an AllowError inside an item template is a load error: %v", err)
 	}
 	if len(errs) == 0 {
@@ -1275,9 +1276,38 @@ func TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle(t *testing.T) {
 	}
 	ctx.Dispatcher.Drain()
 
-	// AT LEAST ONE, not all: how many rows Validate realizes during Build
-	// is ItemsView's business, and pinning it here would make this test
-	// fail on a change that has nothing to do with AllowError.
+	// THE PROBE ARMED NOTHING, asserted BEFORE the composer runs, and
+	// this half is the newer claim.
+	//
+	// The only row realized by Build is ItemsView.Validate's throwaway
+	// probe, which is discarded however well it builds. It used to arm:
+	// the sink carried a message published by a component nothing holds,
+	// and its observer stayed subscribed to a computed over a dead
+	// <Frozen> — so every later change to that row's Allow ran two arms,
+	// one of them a ghost, each with its own last-published value. That
+	// is the same defect a refused build has, arriving down a path where
+	// the build SUCCEEDED. Raised in review of #459.
+	for i, e := range errs {
+		if got := e.Get(); got != "" {
+			t.Errorf("row %d's sink already reads %q after Build alone. Only the "+
+				"validation probe has been realized, and it is thrown away — an arm "+
+				"it left behind is a subscription to a component that is not in any "+
+				"tree", i, got)
+		}
+	}
+
+	// AND THE REAL ROWS DO ARM. Arrange is what realizes them, which is
+	// why this test composes rather than building alone: a build-only
+	// assertion could not tell "the template reaches its row's handle"
+	// from "the probe published on its way to the bin".
+	c := gooey.NewComposer(w, 30, 8)
+	t.Cleanup(c.Close)
+	c.Frame()
+	ctx.Dispatcher.Drain()
+
+	// AT LEAST ONE, not all: how many rows the view realizes for a given
+	// size is ItemsView's business, and pinning it here would make this
+	// test fail on a change that has nothing to do with AllowError.
 	published := false
 	for _, e := range errs {
 		if e.Get() != "" {
@@ -1853,6 +1883,134 @@ func TestEveryRowStillArmsTheSameTemplateSink(t *testing.T) {
 		t.Fatalf("only %d row sink(s) carry a message, so nothing here shows "+
 			"that the SECOND row was allowed to arm", armed)
 	}
+}
+
+// TestARefusedRowArmsNothing is TestARefusedBuildArmsNothing one scope
+// in, and the scope is where the rule had a hole.
+//
+// A ROW IS A BUILD, and until review round nine it was the only build
+// whose failure left a subscription behind. The page's carrier is closed
+// by the time the composer realizes a row, so add() reported false and
+// the arm ran WHERE IT WAS BUILT — before the rest of the row could
+// fail. A <Frozen AllowError> early in a template, a sibling further
+// down that does not resolve, and the row is discarded with a live
+// observer on a computed over a component in no tree, having already
+// published into the caller's own handle.
+//
+// The sibling is what makes this reachable at all: defFrozen builds its
+// child BEFORE it arms, so a failure INSIDE the sealed subtree returns
+// too early to show anything. The failing element has to come after.
+//
+// Raised in review of #459.
+func TestARefusedRowArmsNothing(t *testing.T) {
+	const page = `<Gooey>
+  <ItemsView Name="list" Items="{{.Rows}}">
+    <ItemsView.ItemTemplate>
+      <VStack>
+        <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+          <Text>{{.Label}}</Text>
+        </Frozen>
+        <Text>{{.Extra}}</Text>
+      </VStack>
+    </ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	rows := prop.NewSource([]post{{Title: "one"}, {Title: "two"}})
+	errs := map[string]*prop.Property[string]{
+		"one": prop.NewSource(""), "two": prop.NewSource(""),
+	}
+	// ROW "two" IS MISSING Extra, and row "one" is not. The asymmetry is
+	// the fixture: row 0 has to build, because ItemsView.Validate probes
+	// it during Build and a load error would put this test on the wrong
+	// path entirely — the same vacuous pass the sibling test above
+	// records for an Items that <ItemsView> refuses outright.
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		m := map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   errs[x.Title],
+		}
+		if x.Title != "two" {
+			m["Extra"] = prop.NewSource("fine")
+		}
+		return m
+	})
+
+	w, err := Build([]byte(page), ctx)
+	if err != nil {
+		t.Fatalf("the page does not load, so no row is ever realized: %v", err)
+	}
+	c := gooey.NewComposer(w, 30, 8)
+	t.Cleanup(c.Close)
+	c.Frame()
+	ctx.Dispatcher.Drain()
+
+	// NON-VACUITY FIRST, and it is two claims. The good row must have
+	// armed — otherwise "the bad row did not arm" is satisfied by a list
+	// that realized nothing — and the list must actually be reporting the
+	// refusal, or the bad row was never attempted.
+	if errs["one"].Get() == "" {
+		t.Fatalf("the row that builds published nothing, so this test cannot tell " +
+			"a dropped arm from a list that realized no rows at all")
+	}
+	list, ok := ctx.Named["list"].(*components.ItemsView)
+	if !ok {
+		t.Fatalf("the ItemsView is not reachable by name: %T", ctx.Named["list"])
+	}
+	if list.Err() == nil {
+		t.Fatalf("the list reports no error, so the row with the unresolvable " +
+			"binding was never built and there was no refused build to drop an " +
+			"arm from")
+	}
+
+	// THE CLAIM. The refused row's own handle is untouched.
+	if got := errs["two"].Get(); got != "" {
+		t.Errorf("the refused row left %q in its caller's handle. A row that does "+
+			"not become a component may not publish, and may not leave an observer "+
+			"on a computed over a <Frozen> nothing holds", got)
+	}
+
+	// AND THE OBSERVER, which the value alone cannot see: a dropped arm
+	// and an arm that published "" are the same empty string. Moving the
+	// refused row's Allow re-invalidates the ghost computed if one is
+	// still subscribed, and its publish lands on the next Drain.
+	cats := rowValue[string](t, ctx, rows, "two", "Cats")
+	cats.Set("AlsoNotACategory")
+	ctx.Dispatcher.Drain()
+	if got := errs["two"].Get(); got != "" {
+		t.Errorf("changing the refused row's Allow published %q into its handle. "+
+			"The subscription outlived the build that made it, which is the half "+
+			"a value check cannot see", got)
+	}
+}
+
+// rowValue digs a single row's projected value back out, so a test can
+// move the input a discarded row was built from. It re-runs the
+// projection rather than caching it during the build, because the point
+// is to reach the SAME handle the row was given — a projection that
+// minted a fresh property per call would defeat that, and the fixtures
+// here deliberately do not.
+func rowValue[T any](t *testing.T, ctx *Context, rows *prop.Property[[]post], title, key string) *prop.Property[T] {
+	t.Helper()
+	handle, ok := ctx.Values["Rows"].(*prop.Property[components.ItemSource])
+	if !ok {
+		t.Fatalf("Values[\"Rows\"] is %T, not a bound ItemSource", ctx.Values["Rows"])
+	}
+	src := handle.Get()
+	for i := range rows.Get() {
+		v := src.At(i)
+		if lbl, _ := v["Label"].(*prop.Property[string]); lbl != nil && lbl.Get() != title {
+			continue
+		}
+		p, ok := v[key].(*prop.Property[T])
+		if !ok {
+			t.Fatalf("row %q has no %s of that type: %T", title, key, v[key])
+		}
+		return p
+	}
+	t.Fatalf("no row titled %q", title)
+	return nil
 }
 
 // TestARowRealizedAfterLoadStillSeesThePagesArms is why the page's map is

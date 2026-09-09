@@ -457,3 +457,91 @@ seam scoped at `:248`. A reader of the old sentence concluded the hole was
 closed by nature. Round five retired the identical "pointer identity
 cannot catch it" reasoning for the alias guard, and it survived here in a
 second file.
+
+### The judgement is made at the end of the build, not at the arm
+
+`Context.armedOuter` above is the round-six mechanism, and on its own it
+is **document-order dependent**. `armedOuter` is the page's *live* map,
+so a row that arms BEFORE the page's own `<Frozen>` is built finds it
+empty and sees no collision — and `ItemsView.Validate` realizes its
+throwaway row during the build, which for a list declared above the
+`<Frozen>` is exactly that order. The same page written the other way
+round was refused. A guard that depends on which element the author typed
+first is not a guard.
+
+So registration and judgement are separated. A nested scope records what
+it armed on `Context.armedNested`, a `*nestedArms` whose lifetime is the
+outermost build's; the page's own arms keep going into `armedSinks`; and
+`document.build` asks `nested.collide(ctx.armedSinks)` once, after the
+whole tree is built and before it returns. By then both halves are
+complete, so the answer cannot depend on the order they arrived in.
+
+`nestedArms.record` also **reports** a second nested arm on one sink,
+rather than dropping it. Two `<ItemsView>` item templates on one page
+arming the same page-owned handle are two NESTED arms, so neither is in
+the page's map and `collide` sees nothing — the collision one scope
+further out than `armedOuter` reaches. Both land while the record is
+open, because each list realizes one probe row during the build, so it is
+catchable at load and is.
+
+### An arm is a subscription and a publish, and neither is undoable
+
+`armAllowError` does two irreversible things: it subscribes an observer
+to a computed over the `<Frozen>`, and it publishes the current parse
+state into the caller's handle. A build that then fails cannot take
+either back. That is how a REFUSED page came to erase a live message —
+the row's priming publish wrote `""` over the page's failure and the load
+error arrived afterwards, so the user lost the message and got a page
+that did not load.
+
+`Context.armPending` is the answer: a `*deferredArms` collected during
+one outermost build and run only on the line after the last error path.
+`add` reports whether it took the arm, so the one call site reads
+
+```go
+arm := func() { armAllowError(f, sink, ctx.Dispatcher) }
+if !ctx.armPending.add(arm) {
+    arm()
+}
+```
+
+and cannot forget the immediate case. The carrier is CLOSED in
+`document.build`'s defer rather than after `run()`, which is what makes a
+`Context` reused for row realization arm immediately instead of appending
+to a slice nothing will ever run.
+
+### Round nine: a row is a build too
+
+The rule above was stated for the page and had a hole exactly one scope
+in. A row is also a build that can fail, and until round nine two kinds
+of discarded row left an arm behind:
+
+- **The validation probe.** `ItemsView.Validate` realizes one throwaway
+  row during the page build to fail a bad template binding at load, and
+  discards it however well it builds. Sharing the page's carrier made its
+  arm run whenever the PAGE succeeded — leaving an observer subscribed to
+  a computed over a `<Frozen>` nothing holds, and a message in the row's
+  handle published by a component that is in no tree.
+- **A row refused halfway.** At scroll time the page's carrier is closed,
+  so `add` reports false and the arm runs WHERE IT WAS BUILT. A
+  `<Frozen AllowError>` early in a template and a sibling further down
+  that does not resolve leaves the same debris, with the build failing
+  immediately afterwards.
+
+The factory now gives each row a carrier of its own, run only when the
+row survives its build **and** is not the probe. Telling the probe from a
+real row needs no new state: the only factory call that happens while the
+page's carrier is still open IS the probe, because every real row is
+realized by the composer after `Build` has returned — so
+`pagePending.inFlight()` is the question, asked of the flag the design
+already keeps.
+
+The probe still RECORDS. `armedNested.record` and the `collide` check run
+where the `<Frozen>` is built, not where the arm runs, so a page-versus-
+template collision is still a load error. What the probe no longer does
+is subscribe and publish.
+
+`TestARefusedRowArmsNothing` pins both halves, and its second assertion
+is the one a value check cannot make: a dropped arm and an arm that
+published `""` are the same empty string, so it moves the refused row's
+`Allow` afterwards and requires that nothing lands.

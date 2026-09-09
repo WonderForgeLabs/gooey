@@ -256,11 +256,10 @@ one this whole list exists to prevent — the rows overwrite each other's
 message — so give each row its own handle, or hand the list one shared handle
 and accept that it reports the last row to fail.
 
-  The template and nested-list clauses are from review of #459: a child
-  `Context` inherited the page's armed set but not the two fields saying *"you
-  are inside a row"*, a second nested arm on one sink was dropped on the floor,
-  and a list built inside a row captured that row's map while calling it the
-  page's.
+The template and nested-list clauses above exist because a child `Context`
+inherited the page's armed set but not the two fields saying *"you are inside
+a row"*: a second nested arm on one sink was dropped on the floor, and a list
+built inside a row captured that row's map while calling it the page's.
 
 #### Changing the set at runtime
 

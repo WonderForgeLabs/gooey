@@ -570,6 +570,13 @@ func (a *deferredArms) add(fn func()) bool {
 	return true
 }
 
+// inFlight reports whether a build is still collecting. It is how an
+// ItemsView row tells ItemsView.Validate's throwaway probe — realized
+// while the page build is open — from a real row, which the composer
+// realizes only after Build has returned. Nil-safe for the same reason
+// add is.
+func (a *deferredArms) inFlight() bool { return a != nil && a.open }
+
 // run performs the collected arms in the order they were asked for, so
 // the priming publishes land in document order — the order they landed in
 // when each arm ran where it was built.
