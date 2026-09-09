@@ -1406,15 +1406,13 @@ func TestTheCaveatIsWiredToTheRealDetector(t *testing.T) {
 	// empty and the comparison held for a strip wired to anything at all,
 	// so the one test guarding the wiring was the one test that could not
 	// fail. It passed for the same reason the three copy tests failed: it
-	// inherited an environment instead of stating one. Raised in review
-	// of #467.
+	// inherited an environment instead of stating one.
 	//
 	// statePlainTerminal FIRST, then the hostile variable. This was the
 	// one caveat test in the file that did not state its terminal, in a
 	// change whose whole argument is that a test must — it happened to
 	// work because ClipboardCaveat returns on the $TMUX branch before it
-	// reads $STY, which is luck, not a property. Raised in review of
-	// #467, twice.
+	// reads $STY, which is luck, not a property.
 	statePlainTerminal(t)
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
 	want := term.ClipboardCaveat()
@@ -1491,11 +1489,6 @@ func TestASqueezedChipPaintsItsDotAndNothingElse(t *testing.T) {
 // TestTheClipboardStubsNeutraliseTheAmbientEnvironment pins the contract
 // the three copy tests silently depended on, and is the guard for #463.
 //
-// RENAMED from TestSwapClipboardNeutralisesTheAmbientEnvironment, which
-// named one of the two helpers it asserts: a reader looking for the
-// clipEditor guard found nothing by that name and had to read the body
-// of a test named after the other door.
-//
 // WHY a stub must state its terminal, and where "green" is actually
 // measured, are both on statePlainTerminal and are not restated here.
 // This one asserts the property that argument asks for.
@@ -1524,11 +1517,13 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 		})
 	}
 
-	// BOTH DOORS, each in its own subtest so a failure names the helper.
+	// EVERY DOOR, each in its own subtest so a failure names the helper.
 	// This package stubs the same package-level writeSystemClipboard from
 	// two places, and a guard that only reaches one leaves the defect live
 	// in the other file while reporting it fixed — which is how #463
-	// survived its first fix.
+	// survived its first fix. The rows are checked against the walk below,
+	// so "every" is derived rather than asserted.
+	named := map[string]bool{}
 	for _, d := range []struct {
 		name string
 		call func(*testing.T)
@@ -1541,6 +1536,7 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 				"directly and has no caveatFn seam, so they cannot opt out of the " +
 				"environment even deliberately"},
 	} {
+		named[d.name] = true
 		t.Run(d.name, func(t *testing.T) {
 			t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
 			t.Setenv("STY", "1234.pts-0.host")
@@ -1552,6 +1548,36 @@ func TestTheClipboardStubsNeutraliseTheAmbientEnvironment(t *testing.T) {
 					"inherit one: %s. Issue #463.", d.name, got, d.why)
 			}
 		})
+	}
+
+	// AND THE TABLE IS CHECKED AGAINST THE WALK, which is the half that
+	// keeps it from being the written list CLAUDE.md refuses.
+	//
+	// The arms above cannot be derived: each one CALLS its door, and a
+	// name parsed out of an AST is not callable. What can be derived is
+	// the SET, and clipboardStubs already derives it — so a third door
+	// that joins the package gets the syntactic guard automatically and
+	// this failure telling whoever added it to write the behavioural arm
+	// too. Without this the two guards would drift the moment they
+	// disagreed, which is the shape #463 survived its first fix in.
+	stubs, _ := clipboardStubs(t, ".")
+	for _, fn := range sortedStubNames(stubs) {
+		if !named[fn] {
+			t.Errorf("%s (%s) stubs writeSystemClipboard and no arm above calls it, "+
+				"so it is covered only by TestEveryClipboardStubStatesItsTerminal — "+
+				"which reads the SOURCE. That check passes on a door that calls "+
+				"statePlainTerminal and then re-sets $TMUX, or calls it before a "+
+				"helper that overwrites it. Add an arm here that calls %s and "+
+				"asserts the caveat is gone afterwards. Issue #463.", fn, stubs[fn], fn)
+		}
+	}
+	for fn := range named {
+		if _, ok := stubs[fn]; !ok {
+			t.Errorf("the table names %s as a clipboard stub and the walk does not "+
+				"find it assigning writeSystemClipboard. Either the helper was "+
+				"renamed and this row is pointing at nothing, or the walk has a "+
+				"hole — and a hole in the walk is the third door going uncovered", fn)
+		}
 	}
 }
 
@@ -1635,16 +1661,47 @@ func clipboardStubs(t *testing.T, dir string) (files map[string]string, states m
 		// what a "door" is.
 		record := func(name string, file string, body ast.Node) {
 			assigns, calls := false, false
+			// saved is the identifiers this declaration has taken a copy
+			// of the seam INTO — `prev := writeSystemClipboard`. Putting
+			// one of them back is a RESTORE, not a stub, and the
+			// distinction is not academic: every correct stub ends with
+			// `t.Cleanup(func() { writeSystemClipboard = prev })`, so a
+			// walk that counts any assignment to the name would attribute
+			// a door to a helper that only cleans up after one — a #463
+			// accusation against code doing the right thing, which is the
+			// way a guard loses its reader.
+			//
+			// The rule is conservative in the direction that matters: an
+			// assignment from anything OTHER than a saved identifier is
+			// treated as a stub, so `writeSystemClipboard = fakeWriter`
+			// still counts.
+			saved := map[string]bool{}
 			ast.Inspect(body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.AssignStmt:
+					for i, rhs := range x.Rhs {
+						id, ok := rhs.(*ast.Ident)
+						if !ok || id.Name != "writeSystemClipboard" || i >= len(x.Lhs) {
+							continue
+						}
+						if lhs, ok := x.Lhs[i].(*ast.Ident); ok {
+							saved[lhs.Name] = true
+						}
+					}
 					// The STUB is `writeSystemClipboard = func...`, not the
 					// `prev := writeSystemClipboard` that saves it, so the
 					// name has to be on the LEFT.
-					for _, lhs := range x.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && id.Name == "writeSystemClipboard" {
-							assigns = true
+					for i, lhs := range x.Lhs {
+						id, ok := lhs.(*ast.Ident)
+						if !ok || id.Name != "writeSystemClipboard" {
+							continue
 						}
+						if i < len(x.Rhs) {
+							if r, ok := x.Rhs[i].(*ast.Ident); ok && saved[r.Name] {
+								continue // a restore
+							}
+						}
+						assigns = true
 					}
 				case *ast.CallExpr:
 					if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
@@ -1704,6 +1761,17 @@ func unstated(files map[string]string, states map[string]bool) []string {
 	return out
 }
 
+// sortedStubNames is the door names in a stable order, so a failure list
+// reads the same twice.
+func sortedStubNames(files map[string]string) []string {
+	out := make([]string, 0, len(files))
+	for fn := range files {
+		out = append(out, fn)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // TestTheClipboardStubGuardCatchesWhatItIsFor drives the walk and the
 // comparison against a corpus that is deliberately NOT compliant, because
 // the package's own is — and a guard checked only against a clean corpus
@@ -1718,21 +1786,36 @@ func TestTheClipboardStubGuardCatchesWhatItIsFor(t *testing.T) {
 	}
 
 	// A COMPLIANT door, a NON-COMPLIANT one, a function that merely READS
-	// the variable (the save-and-restore idiom, which is not a stub), and
-	// a function that calls statePlainTerminal without stubbing anything.
-	// The last two are the false positives a looser walk would invent.
+	// the variable, one that RESTORES a saved copy (the t.Cleanup idiom
+	// every correct stub ends with — not a door), a function that calls
+	// statePlainTerminal without stubbing anything, and a door that assigns
+	// a NAMED function rather than a literal.
+	//
+	// The middle three are the false positives a looser walk invents; the
+	// last is the false negative a walk over-corrected against them would
+	// invent, and both directions need a row or the exclusion is only
+	// half stated.
 	write("good_test.go", `func goodStub(t *T) {
 	statePlainTerminal(t)
-	writeSystemClipboard = func(string) error { return nil }
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
 }
 `)
 	write("bad_test.go", `func badStub(t *T) {
-	writeSystemClipboard = func(string) error { return nil }
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
 }
 
 func onlyReads(t *T) {
 	prev := writeSystemClipboard
 	_ = prev
+}
+
+func restoresOnly(t *T) {
+	prev := writeSystemClipboard
+	t.Cleanup(func() { writeSystemClipboard = prev })
+}
+
+func namedStub(t *T) {
+	writeSystemClipboard = fakeWriter
 }
 
 func onlyStates(t *T) { statePlainTerminal(t) }
@@ -1744,26 +1827,27 @@ func onlyStates(t *T) { statePlainTerminal(t) }
 	// than only in the walk because a walk is only checked by a corpus
 	// that contains what it must not miss.
 	write("var_test.go", `var varStub = func(t *T) {
-	writeSystemClipboard = func(string) error { return nil }
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
 }
 
 var statedVarStub = func(t *T) {
 	statePlainTerminal(t)
-	writeSystemClipboard = func(string) error { return nil }
+	writeSystemClipboard = func(ed *editor, text string) error { return nil }
 }
 `)
 
 	files, states := clipboardStubs(t, dir)
 	wantFiles := map[string]string{
 		"goodStub": "good_test.go", "badStub": "bad_test.go",
-		"varStub": "var_test.go", "statedVarStub": "var_test.go",
+		"namedStub": "bad_test.go",
+		"varStub":   "var_test.go", "statedVarStub": "var_test.go",
 	}
 	if !maps.Equal(files, wantFiles) {
 		t.Errorf("clipboardStubs found %v, want %v — the walk either misses an "+
 			"assignment or counts a plain read of writeSystemClipboard as a stub",
 			files, wantFiles)
 	}
-	if got, want := unstated(files, states), []string{"badStub", "varStub"}; !slices.Equal(got, want) {
+	if got, want := unstated(files, states), []string{"badStub", "namedStub", "varStub"}; !slices.Equal(got, want) {
 		t.Errorf("unstated = %v, want %v — the comparison is not comparing, so "+
 			"TestEveryClipboardStubStatesItsTerminal would pass over a door that "+
 			"never states its terminal", got, want)

@@ -387,24 +387,12 @@ func TestCopyWritesTheSubtreeMarkupToTheSystemClipboard(t *testing.T) {
 // confirmsTheCopy reports whether a status line claims the copy reached
 // the terminal WITHOUT a caveat.
 //
-// THE END OF THE STATUS, not Contains("system clipboard"). The loose form
-// is satisfied by the caveat tail "→ system clipboard (inside tmux: …)"
-// as well, so it passed under $TMUX while asserting a confirmed copy —
-// #463 living on in a second file, one substring away.
-//
-// HasSuffix rather than a pair of Contains checks, which is the same
-// lesson one turn further on: sayCopiedOut appends its tail at the END of
-// the status (clipboard.go), so "ends with the bare confirmation" states
-// the claim once and rejects EVERY tail. The pair rejected only a
-// parenthesised one, and would pass again the day the caveat is spelled
-// with brackets.
-//
-// EXTRACTED so the tightening is testable at all. Written inline, both
-// forms agree on every status these tests actually produce — the copy
-// tests neutralise the environment, so there is no tail for the loose
-// form to let through, and loosening it back was measured SILENT against
-// the whole package. TestOnlyABareTailConfirmsTheCopy is what makes it
-// not.
+// A SUFFIX, not Contains("system clipboard"): sayCopiedOut appends its
+// caveat at the END (clipboard.go), so the loose form is satisfied by
+// "→ system clipboard (inside tmux: …)" too — #463 one substring away.
+// Stating the claim once as a suffix also rejects a caveat re-spelled
+// with brackets, which a pair of Contains checks would let through.
+// TestOnlyABareTailConfirmsTheCopy drives both.
 func confirmsTheCopy(status string) bool {
 	return strings.HasSuffix(status, "→ system clipboard")
 }
