@@ -1,6 +1,7 @@
 package gooey
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -8,7 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -345,4 +348,294 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("git listed no nested go.mod at all; the pathspec is wrong, not the tree")
 	}
+}
+
+// A line number in prose is a sample taken once, and it decays faster
+// than the counts this file already refuses to write down: any edit ABOVE
+// a cited line moves it, so a citation rots without anyone touching the
+// thing it describes. CLAUDE.md carries ~31 of them, and by the time #466
+// was filed seven pointed at the wrong place and three named a file that
+// does not exist — in the file whose stated purpose is "the rules whose
+// violation is silent".
+//
+// It happened inside a single edit while the issue was being written: a
+// 13-line comment added to composer.go moved a symbol and invalidated a
+// citation written four minutes earlier.
+//
+// The alternative considered and rejected was dropping line numbers for
+// the identifier alone (`hitTest` (`mouse.go`)), which removes the class
+// outright. Several citations point INSIDE a function at the specific
+// line carrying the argument, which an identifier cannot address, so the
+// precision is worth a guard.
+
+// citation matches `path/to/file.go:NNN`, optionally a range.
+var citation = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(?:go|yml|yaml|md)):(\\d+)(?:-(\\d+))?`")
+
+// citeForms are the three spellings CLAUDE.md actually uses to attach an
+// identifier to a citation. Only these get the second check; a citation
+// in any other shape gets the mechanical half alone.
+//
+// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
+// guard took the nearest backticked identifier on either side, which
+// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
+// following sentence and `components/timer.go:55` against the word
+// `done` — a test that cries wolf gets suppressed, so the rule is the
+// two forms or nothing.
+//
+// Each carries its own field extractor rather than a shared one, because
+// the identifier and the path swap group positions between them and
+// deciding which is which by sniffing for ".go" is the kind of guess this
+// guard exists to remove.
+var citeForms = []struct {
+	name string
+	re   *regexp.Regexp
+	// fields pulls (ident, path, lo, hi) out of one match; hi == lo for a
+	// citation that names a single line.
+	fields func([]string) (string, string, int, int)
+}{
+	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
+	// which is what keeps the identifier the one being cited.
+	{
+		name: "`Ident` (`path:N`)",
+		re: regexp.MustCompile("`(" + reIdent + ")(?:\\([^`]*\\))?`[^`]{0,48}?\\(`(" +
+			rePath + "):(\\d+)(?:-(\\d+))?`"),
+		fields: identFirst,
+	},
+	// (`Ident`, `path:NNN`)
+	{
+		name:   "(`Ident`, `path:N`)",
+		re:     regexp.MustCompile("\\(`(" + reIdent + ")`,\\s*`(" + rePath + "):(\\d+)(?:-(\\d+))?`"),
+		fields: identFirst,
+	},
+	// (`path:NNN`, in `Ident`)
+	{
+		name:   "(`path:N`, in `Ident`)",
+		re:     regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`,\\s*in\\s+`(" + reIdent + ")`"),
+		fields: pathFirst,
+	},
+}
+
+const (
+	reIdent = "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*"
+	rePath  = "[A-Za-z0-9_./-]+\\.(?:go|yml|yaml|md)"
+)
+
+func identFirst(m []string) (ident, path string, lo, hi int) {
+	lo = mustAtoi(m[3])
+	hi = lo
+	if m[4] != "" {
+		hi = mustAtoi(m[4])
+	}
+	return m[1], m[2], lo, hi
+}
+
+func pathFirst(m []string) (ident, path string, lo, hi int) {
+	lo = mustAtoi(m[2])
+	hi = lo
+	if m[3] != "" {
+		hi = mustAtoi(m[3])
+	}
+	return m[4], m[1], lo, hi
+}
+
+// citeWindow is how far from the cited line the identifier may sit. Small
+// on purpose: the point of a line number is that it is precise, and a
+// window wide enough to always find the symbol is a window that has
+// stopped checking anything.
+const citeWindow = 3
+
+// citationProblems is the check itself, over a document and a way to
+// read the files it cites. It is separate from the test so the guard can
+// be pointed at a SYNTHETIC document with a known defect —
+// TestTheCitationGuardCatchesWhatItIsFor below. Without that arm, a
+// widened citeWindow or a downgraded error silently turns the whole
+// thing into a no-op that still reports PASS.
+//
+// It returns descriptions rather than calling t.Errorf so both callers
+// can decide what a problem means: one requires none, the other requires
+// some.
+func citationProblems(md string, read func(string) ([]string, error)) (problems, forms []string) {
+	lines := map[string][]string{}
+	missing := map[string]bool{}
+	src := func(path string) []string {
+		if s, ok := lines[path]; ok {
+			return s
+		}
+		s, err := read(path)
+		if err != nil {
+			missing[path] = true
+			lines[path] = nil
+			return nil
+		}
+		lines[path] = s
+		return s
+	}
+
+	// ---- half one: every citation names a real place ----
+	for _, m := range citation.FindAllStringSubmatch(md, -1) {
+		path, lo := m[1], mustAtoi(m[2])
+		hi := lo
+		if m[3] != "" {
+			hi = mustAtoi(m[3])
+		}
+		s := src(path)
+		if s == nil {
+			problems = append(problems, fmt.Sprintf(
+				"cites %s:%d, and there is no such file. A bare `spinner.go:113` "+
+					"for `components/spinner.go:113` reads as a path and resolves "+
+					"to nothing.", path, lo))
+			continue
+		}
+		if hi > len(s) {
+			problems = append(problems, fmt.Sprintf(
+				"cites %s:%d but the file has %d lines; the citation outlived what "+
+					"it pointed at", path, hi, len(s)))
+		}
+	}
+
+	// ---- half two: where the doc names a symbol, the line holds it ----
+	seen := map[string]bool{}
+	for _, form := range citeForms {
+		hits := 0
+		for _, m := range form.re.FindAllStringSubmatch(md, -1) {
+			ident, path, lo, hi := form.fields(m)
+			hits++
+			key := path + ":" + strconv.Itoa(lo)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			s := src(path)
+			if s == nil || hi > len(s) {
+				continue // half one already reported it
+			}
+			// The LEAF of a dotted name: the doc writes `Composer.Frame`
+			// and the file writes `func (c *Composer) Frame(`.
+			leaf := ident
+			if i := strings.LastIndex(ident, "."); i >= 0 {
+				leaf = ident[i+1:]
+			}
+			from, to := max(0, lo-1-citeWindow), min(len(s), hi+citeWindow)
+			if !strings.Contains(strings.Join(s[from:to], "\n"), leaf) {
+				problems = append(problems, fmt.Sprintf(
+					"cites %s:%d for %s, but %q is nowhere within %d lines of it — "+
+						"line %d holds %q. Any edit above a cited line moves it, so "+
+						"the citation rots without anyone touching what it describes.",
+					path, lo, ident, leaf, citeWindow, lo, strings.TrimSpace(s[lo-1])))
+			}
+		}
+		if hits > 0 {
+			forms = append(forms, form.name)
+		}
+	}
+	return problems, forms
+}
+
+func TestCLAUDEMDCitationsResolve(t *testing.T) {
+	b, err := os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatalf("reading %s: %v", claudeMD, err)
+	}
+	md := string(b)
+	if len(citation.FindAllString(md, -1)) == 0 {
+		t.Fatalf("%s carries no `file:line` citation at all, so this test checks "+
+			"nothing — the pattern has drifted from the file", claudeMD)
+	}
+
+	problems, forms := citationProblems(md, readLines)
+	for _, p := range problems {
+		t.Errorf("%s %s (#466)", claudeMD, p)
+	}
+
+	// NON-VACUITY, per FORM rather than as a fraction: a ratio would be
+	// the "number in prose" this file argues against, and it would pass
+	// while one form's regexp quietly matched nothing.
+	for _, f := range citeForms {
+		if !slices.Contains(forms, f.name) {
+			t.Errorf("no citation in %s matches the form %s, so that pattern is "+
+				"checking nothing. If the doc genuinely stopped using the form, "+
+				"delete it here — but first check the regexp has not simply rotted "+
+				"against a change in the prose around it.", claudeMD, f.name)
+		}
+	}
+}
+
+// TestTheCitationGuardCatchesWhatItIsFor points the guard at documents
+// whose defects are known, and is the arm that keeps the guard honest.
+//
+// A checker like this fails OPEN in every direction that matters: widen
+// citeWindow and every identifier is "near" its line; make a form's
+// regexp match nothing and that shape stops being checked; downgrade the
+// missing-file report and a bare filename sails through. None of those
+// shows up against a document that is already correct — the real
+// CLAUDE.md passes just as well with the check disabled.
+//
+// So each case here is a document the guard MUST reject.
+func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
+	// A fake tree, so the cases do not move when the repo does.
+	files := map[string][]string{
+		"fake.go": {
+			"package fake",   // 1
+			"",               // 2
+			"func Alpha() {", // 3
+			"}",              // 4
+			"",               // 5
+			"// twenty lines of nothing so a wide window is visibly wide", // 6
+			"", "", "", "", "", "", "", "", "", "", "", "", "", "", // 7-20
+			"func Beta() {", // 21
+			"}",             // 22
+		},
+	}
+	read := func(path string) ([]string, error) {
+		s, ok := files[path]
+		if !ok {
+			return nil, fs.ErrNotExist
+		}
+		return s, nil
+	}
+
+	for _, tc := range []struct{ name, md string }{
+		{"a drifted line, form A", "`Alpha` (`fake.go:21`) does the thing."},
+		{"a drifted line, form C", "the sweep (`Alpha`, `fake.go:21`) does the thing."},
+		{"a drifted line, form B", "the sweep (`fake.go:21`, in `Alpha`) does the thing."},
+		{"a file that does not exist", "`Alpha` (`nosuch.go:3`) does the thing."},
+		{"a line past the end of the file", "`Alpha` (`fake.go:900`) does the thing."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems, _ := citationProblems(tc.md, read)
+			if len(problems) == 0 {
+				t.Errorf("the guard accepted %q. It reports PASS against a correct "+
+					"document whether or not it is checking anything, so an arm "+
+					"that cannot fail here is a guard that has stopped working.",
+					tc.md)
+			}
+		})
+	}
+
+	// And the other direction, so "reject everything" is not a passing
+	// strategy: the same identifier at the line it really occupies.
+	if problems, _ := citationProblems("`Alpha` (`fake.go:3`) does the thing.", read); len(problems) > 0 {
+		t.Errorf("the guard rejected a CORRECT citation: %v", problems)
+	}
+}
+
+// readLines is citationProblems' production reader.
+func readLines(path string) ([]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(string(b), "\n"), nil
+}
+
+// mustAtoi is total for this caller: the regexps only ever hand it a
+// digit run, so a failure is a bug in a pattern rather than in the
+// document, and a zero would silently become "line 0".
+func mustAtoi(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		panic("citation pattern produced a non-numeric line " + s)
+	}
+	return n
 }
