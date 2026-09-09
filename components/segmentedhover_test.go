@@ -57,7 +57,7 @@ func TestSegmentedReportsWhichSegmentIsHovered(t *testing.T) {
 // THE LEAVE EDGE IS THE HALF MOTION CANNOT REACH, and it is the one a
 // naive implementation gets wrong.
 //
-// FocusManager.setHover (mouse.go:473) drives hover on the hit, so when
+// FocusManager.setHover (mouse.go:611) drives hover on the hit, so when
 // the pointer moves from this strip onto a SIBLING, the motion event
 // routes to the sibling and this control never hears another one. Without
 // the SetHovered(false) hook the index stays pointing at whichever
@@ -88,7 +88,7 @@ func TestLeavingTheStripClearsTheHoveredSegment(t *testing.T) {
 }
 
 // Motion is OBSERVED, NEVER CONSUMED. Returning true would stop the event
-// bubbling to ancestors (mouse.go:267) — which is what a drag, a marquee
+// bubbling to ancestors (mouse.go:391) — which is what a drag, a marquee
 // or an outer hover watcher is listening for. A control that reports its
 // own hover has no business ending someone else's gesture.
 func TestHoverTrackingDoesNotConsumeMotion(t *testing.T) {

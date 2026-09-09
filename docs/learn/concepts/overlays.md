@@ -84,13 +84,22 @@ subtree always comes up whole.
 The values are spaced by ten so somebody else's overlay can sit between
 two of them without a framework change.
 
-## What the lift does NOT move
+## Input moves with it
 
-**`Overlay` moves paint, not input.** Hit-testing still walks plain
-document order, last sibling first — it is not lifted and it is not
-ranked. The two agree only when an overlay happens to be late in the
-document, which is why "declare it last" survives as a *convention* in
-this repo's own markup even though it stopped deciding paint.
+**The lift is asked by hit-testing too, since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).**
+`FocusManager.HitTest` calls the same `overlayOf` the paint order is
+derived from, so an overlay takes the press from wherever it is
+declared, and a rank decides between two overlapping overlays exactly as
+it decides which one paints on top.
+
+This section was headed *"What the lift does NOT move"* and said
+`Overlay` moved paint and not input — that hit-testing "still walks
+plain document order, last sibling first". True from #437 until #465,
+and the reason the two planes could disagree in silence: under the
+retired "declare it last" rule the thing on top was also the thing the
+walk found first, so the divergence arrived with the freedom rather than
+with the layer.
 
 That divergence got easier to fall into with the fix, not harder. Being
 last used to be the only thing keeping an overlay on top, so nobody

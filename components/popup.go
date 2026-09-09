@@ -93,6 +93,15 @@ func NewPopup(owner gooey.Component, draw func(*gooey.Frame, gooey.Rect)) *Popup
 // (#437) and, since #465, hit-testing asks the same rule and finds it in
 // the same place. Returning it last is convention now and nothing more.
 //
+// ONE CAVEAT, and this type is the shape it is about: the hit walk
+// prunes on every ANCESTOR's bounds, where paint clips each node to its
+// own. ArrangeSurface routinely places the surface outside the owner's
+// rect — that is its whole job — so a surface there paints and cannot be
+// hit. An open Popup holds pointer capture, so no press reaches the walk
+// and nothing shipped depends on this; a future Overlay that places
+// itself outside its parent AND wants clicks would.
+// See gooey.FocusManager.HitTest. Raised in review of #478.
+//
 // This paragraph said position was what an overlay's INPUT order rode
 // on, which was true until the two walks were made to ask one function.
 // For a Popup it was belt-and-braces even then: an open popup holds the

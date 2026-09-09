@@ -54,6 +54,78 @@ import (
 //
 // Raised in review of #458.
 func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
+	scanForRetiredRule(t, statesTheRetiredRule, prefilterWords, qualifierRes, scanAdvice)
+}
+
+// scanAdvice is NAMED rather than written at the call, because
+// TestTheScanItselfReportsAFixtureFile drives the same scan and would
+// otherwise be pinning a different string from the one the repo sees.
+const scanAdvice = "Overlays are lifted out of document order into a paint " +
+	"layer (#437) and ranked within it (#439), so declaring " +
+	"one last decides nothing. Since #465 that is true of " +
+	"HIT-TESTING TOO — naming the hit walk used to earn a line " +
+	"an exemption here and no longer does. Either state the " +
+	"current rule, or mark the sentence as history; the " +
+	"markers this test accepts are in qualifierRes."
+
+// TestNoFileTeachesTheRetiredInputRule is the same guard on the INPUT
+// plane, and its absence is what let four live sites survive #465.
+//
+// The paint rule retired in #437; the input rule — "hit-testing walks
+// document order, so a later sibling takes the press" — retired in #465,
+// and this file closed the exemption that used to wave such a line
+// through WITHOUT adding a pattern for the claim that had just become
+// wrong. Removing a hole is not the same as guarding what fell into it:
+// component.go's own Overlay doc, this file's qualifierRes comment,
+// docs/learn/07-app-chrome.md and components/toast_test.go all still
+// taught it, and none was reachable by retiredRule. They were found with
+// a grep the suite does not run, which is the definition of unguarded.
+//
+// SHARES THE EPITAPHS AND NOT THE CORRECTIONS, which is not where this
+// started. "Used to say", "superseded", "no longer" bury whichever rule
+// stands beside them, so those are one list. The CORRECTION markers are
+// not interchangeable, and two of the paint ones exempt the very
+// sentence the input guard exists to catch — see qualifierRes, and
+// TestThePaintCorrectionDoesNotExemptTheInputClaim, which measures it.
+// Raised in review of #478.
+func TestNoFileTeachesTheRetiredInputRule(t *testing.T) {
+	scanForRetiredRule(t, statesTheRetiredInputRule, inputPrefilterWords, inputQualifierRes,
+		"FocusManager.HitTest asks overlayOf since #465 — the same "+
+			"membership-and-rank rule paint derives its order from — so "+
+			"the hit walk is lifted, it does know about the marker, and "+
+			"a later ordinary sibling does not take the press from an "+
+			"overlay. Either state the current rule, or mark the "+
+			"sentence as history; the markers this test accepts are in "+
+			"inputQualifierRes — note that a #437/#439 citation or the "+
+			"bare word \"lifted\" is NOT one of them, because a paint "+
+			"correction says nothing about the hit walk and \"is not "+
+			"lifted\" would qualify itself.")
+}
+
+// scanForRetiredRule is the walk both guards run, differing only in the
+// patterns, the prefilter, and the advice in the failure.
+//
+// It was the body of TestNoFileTeachesTheRetiredOverlayRule until #478
+// needed a second plane. Copying it would have copied the join, the span
+// arithmetic, the superseded-head exemption and the prefilter contract —
+// four subtleties this file spent a review each on — into a place where
+// only one copy would receive the next fix.
+// PARALLEL OVER THE FILES, because between them these two guards are
+// the most expensive thing in the root package — 11.9s of 26s for the
+// paint one alone, measured — and the work is embarrassingly parallel:
+// read a file, match it, produce findings. Nothing shared is written.
+//
+// The findings are collected into a slice INDEXED BY FILE and reported
+// after the join, not sent to t.Errorf from the workers. Two reasons,
+// and the first is correctness: t.Fatalf outside the test's own
+// goroutine does not fail the test, it is a bare runtime.Goexit and the
+// message is lost. The second is that a test whose failures arrive in
+// scheduler order is a test whose output changes between runs for no
+// reason anybody can act on.
+//
+// Raised in review of #458, generalised to two planes in review of #478.
+func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []string, quals []*regexp.Regexp, advice string) {
+	t.Helper()
 	files := docFiles(t)
 	found := make([][]string, len(files))
 	errs := make([]error, len(files))
@@ -66,7 +138,7 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			found[i], errs[i] = retiredRuleProblems(f)
+			found[i], errs[i] = retiredRuleProblems(f, states, prefilter, quals, advice)
 		}()
 	}
 	wg.Wait()
@@ -85,7 +157,7 @@ func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
 
 // retiredRuleProblems is the per-file half, pure so it can run off the
 // test's goroutine: it returns what it found rather than reporting it.
-func retiredRuleProblems(f string) ([]string, error) {
+func retiredRuleProblems(f string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, advice string) ([]string, error) {
 	var problems []string
 	{
 		body, err := os.ReadFile(f)
@@ -129,7 +201,7 @@ func retiredRuleProblems(f string) ([]string, error) {
 		// patterns added in this same review needed "bottom" and
 		// "end of", and the new check caught it before they shipped.
 		low := strings.ToLower(string(body))
-		if !containsAnyPrefilterWord(low) {
+		if !containsAny(low, prefilter) {
 			return nil, nil
 		}
 		lines := strings.Split(string(body), "\n")
@@ -168,9 +240,9 @@ func retiredRuleProblems(f string) ([]string, error) {
 			// names line i, because that is where a reader starts fixing
 			// it.
 			hit, span := line, i
-			if !statesTheRetiredRule(hit) {
+			if !states(hit) {
 				hit = joinWrapped(lines, i)
-				if !statesTheRetiredRule(hit) {
+				if !states(hit) {
 					continue
 				}
 				// The statement OCCUPIES two lines, so the window runs
@@ -194,7 +266,7 @@ func retiredRuleProblems(f string) ([]string, error) {
 				// statement are passed now. Raised in review of #458.
 				span = i + 1
 			}
-			if qualifiedNearSpan(lines, i, span) {
+			if qualifiedIn(lines, i, span, quals) {
 				continue
 			}
 			if reported[span] {
@@ -210,16 +282,9 @@ func retiredRuleProblems(f string) ([]string, error) {
 				at = span
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s:%d states the retired overlay rule with nothing "+
-					"nearby to qualify it:\n\t%s\n"+
-					"Overlays are lifted out of document order into a paint "+
-					"layer (#437) and ranked within it (#439), so declaring "+
-					"one last decides nothing. Since #465 that is true of "+
-					"HIT-TESTING TOO — naming the hit walk used to earn a "+
-					"line an exemption here and no longer does. Either state "+
-					"the current rule, or mark the sentence as history; the "+
-					"markers this test accepts are in qualifierRes.",
-				f, at+1, strings.TrimSpace(lines[at])))
+				"%s:%d states a retired z-order rule with nothing "+
+					"nearby to qualify it:\n\t%s\n%s",
+				f, at+1, strings.TrimSpace(lines[at]), advice))
 		}
 	}
 	return problems, nil
@@ -241,14 +306,29 @@ func retiredRuleProblems(f string) ([]string, error) {
 // this filter, so the two cannot drift apart silently.
 var prefilterWords = []string{"order", "last", "bottom", "end of"}
 
-func containsAnyPrefilterWord(low string) bool {
-	for _, w := range prefilterWords {
+func containsAnyPrefilterWord(low string) bool { return containsAny(low, prefilterWords) }
+
+func containsAny(low string, words []string) bool {
+	for _, w := range words {
 		if strings.Contains(low, w) {
 			return true
 		}
 	}
 	return false
 }
+
+// inputPrefilterWords is the same contract as prefilterWords, for the
+// input plane, and TestTheRetiredInputRuleGuardCanActuallyFire holds it
+// to the same check: every sample retiredInputRule is pinned against has
+// to survive this filter, or the pattern that catches it can never run.
+//
+// "marker" is in the list because of ONE sentence — component.go's
+// "knows nothing about this marker" — which contains neither "hit" nor
+// "input" nor "sibling". That is the whole reason the contract is
+// checked rather than asserted: the word was missing from the first
+// draft of this list and the guard would have skipped the single most
+// important file in the finding.
+var inputPrefilterWords = []string{"hit", "input", "sibling", "marker", "press", "click", "routing"}
 
 // retiredRule matches a line ASSERTING the hosting rule. Both halves have
 // to be there: "z-order" alone is fine (the forward pass, the restore
@@ -343,13 +423,66 @@ func joinWrapped(lines []string, i int) string {
 // reading the regexp. Raised in review of #458.
 var continuationRe = regexp.MustCompile(`^\s*(//+|#{1,6}\s|>+|[-*+]\s)\s*`)
 
-func statesTheRetiredRule(line string) bool {
-	for _, re := range retiredRule {
+func statesTheRetiredRule(line string) bool { return matchesAny(line, retiredRule) }
+
+func statesTheRetiredInputRule(line string) bool { return matchesAny(line, retiredInputRule) }
+
+func matchesAny(line string, res []*regexp.Regexp) bool {
+	for _, re := range res {
 		if re.MatchString(line) {
 			return true
 		}
 	}
 	return false
+}
+
+// retiredInputRule matches a line asserting that HIT-TESTING answers by
+// document order — the claim #465 retired, and the one this file had no
+// pattern for until #478.
+//
+// The asymmetry with retiredRule is deliberate and worth naming. The
+// paint rule was an INSTRUCTION ("declare it last"), so its patterns
+// hunt imperatives. The input rule was a CAVEAT — every corrected paint
+// site added a sentence explaining that the freedom it had just granted
+// applied to paint only — so its patterns hunt the shapes a caveat
+// takes: what the walk does ("walks document order", "prefers later
+// siblings"), what it is not ("not lifted"), what it does not know
+// ("knows nothing about this marker"), and what the marker therefore
+// buys ("moves paint, not input", "responsible for its own routing").
+//
+// That is why the four surviving sites were invisible: none of them
+// instructs anybody to declare anything. Raised in review of #478.
+var retiredInputRule = []*regexp.Regexp{
+	// What the walk was said to do.
+	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,60}?\bwalks? (the )?(plain |ordinary )?(document|tree) order`),
+	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,60}?\b(prefers|takes|favou?rs) (the )?(later|last) sibling`),
+	regexp.MustCompile(`(?i)(later|last) sibling still (takes|wins|gets) (a|the) (press|click)`),
+	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,40}?\blast sibling first`),
+	// What it was said not to be.
+	regexp.MustCompile(`(?i)(hit-?test(ing)?|input|clicks?|presses?|the hit walk)\b.{0,40}?\b(is|are|was|were) not lifted`),
+	regexp.MustCompile(`(?i)input (was|is) not lifted`),
+	// What it was said not to know.
+	regexp.MustCompile(`(?i)knows nothing about (this|the) marker`),
+	regexp.MustCompile(`(?i)knows nothing about (the )?(overlay )?ranks?`),
+	regexp.MustCompile(`(?i)hit-?test(ing)? ignores the overlay layer`),
+	// What the marker was therefore said to buy — and not buy.
+	//
+	// There is no separate `moves paint,? not input` entry: the pattern
+	// below matches everything it did and more, so keeping both meant one
+	// that could never be the reason a line was caught. Deleting it was
+	// SILENT under mutation — which is what a subsumed pattern always is,
+	// and why the per-pattern loop in the fire test cannot see the
+	// difference between subsumed and working. Found in review of #478,
+	// the same finding retiredRule's `document order is z-?order` entry
+	// produced in review of #458.
+	regexp.MustCompile(`(?i)paint,? not (the )?(input|clicks?|presses?)\b`),
+	regexp.MustCompile(`(?i)responsible for its own routing`),
+	// IMPERATIVE FORMS, none of which is live today. Added now for the
+	// reason retiredRule's imperatives were: a list drafted only from the
+	// sentences you can see is a sample of the ways the thing can be
+	// said, and this file has been caught by that three times.
+	regexp.MustCompile(`(?i)declar(e|es|ed|ing)\b.{0,40}\blast\b.{0,40}\bto (be hit|take the (press|click))`),
+	regexp.MustCompile(`(?i)to (be hit|get the (press|click)) first,? declare it last`),
 }
 
 // qualifiers are the phrases that make a statement of the old rule
@@ -360,16 +493,49 @@ func statesTheRetiredRule(line string) bool {
 //   - the EPITAPH — the sentence is quoting the old rule in order to say
 //     it is dead, which every good comment about this does.
 //
-// A third family is admitted grudgingly: hit-testing genuinely still walks
-// document order, so a line about the hit walk may say "last" and mean it.
-// It has to name the walk to get the exemption.
+// A THIRD FAMILY USED TO BE ADMITTED and is gone: naming the hit walk
+// earned a line an exemption, on the ground that hit-testing genuinely
+// answered by document order. #465 made FocusManager.HitTest ask
+// overlayOf, so that premise died and the exemption went with it — see
+// TestNamingTheHitWalkNoLongerExemptsALine thirty lines below, and
+// retiredInputRule, which now catches the claim the exemption used to
+// wave through.
+//
+// This paragraph described the deleted family as live for a whole review
+// round after the slice stopped carrying it: the header outliving the
+// function, in the file whose thesis is that a description outlives its
+// subject. Corrected in review of #478.
 // Compiled ONCE, like retiredRule above — and a plain slice literal, like
 // retiredRule. This was a function returning a fresh slice, recompiling
 // nine regexps on every call; the recompile was fixed by hoisting, and the
 // closure it was extracted from lingered for a release. Raised in review
 // of #458.
-var qualifierRes = []*regexp.Regexp{
-	// The correction.
+// THE TWO HALVES ARE SPLIT because the input guard can share exactly
+// one of them, and finding out which was the interesting part of #478.
+//
+// The EPITAPH half is plane-agnostic: "used to say", "no longer",
+// "superseded" bury whichever rule the sentence beside them states, and
+// a corrected site reads the same on either plane.
+//
+// The CORRECTION half is NOT, and sharing it whole would have made the
+// input guard useless in the one place it was most needed. Two of these
+// patterns exempt the very sentence they should catch:
+//
+//   - `\blifted\b` matches "hit-testing, WHICH IS NOT LIFTED" — the
+//     retired input claim qualifies itself, on its own line, every time
+//     it is written;
+//   - `#4(37|38|39)` marks a PAINT correction, and this sweep's house
+//     style is to state the paint rule and the input divergence in one
+//     comment — so the citation two lines up waved through the caveat
+//     beside it. docs/learn/07-app-chrome.md:91 was live, in the tree,
+//     and invisible to the first draft of the input guard for both
+//     reasons at once.
+//
+// So the input guard gets inputCorrectionRes: the things that can only
+// be said by someone describing the CURRENT walk.
+var qualifierRes = append(append([]*regexp.Regexp{}, paintCorrectionRes...), epitaphRes...)
+
+var paintCorrectionRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)two layers|second (paint )?layer|overlay layer`),
 	regexp.MustCompile(`(?i)gooey\.Overlay|OverlaysPage|OverlayRank|\bis a gooey\.Overlay\b`),
 	regexp.MustCompile(`(?i)\blifted\b|\blifts\b`),
@@ -383,13 +549,31 @@ var qualifierRes = []*regexp.Regexp{
 	// below carry the meaning the bare word does not.
 	// Raised in review of #458.
 	regexp.MustCompile(`(?i)OverlayRank|overlay rank|rank(s|ed)? (it|them|the layer|above|over|beats|higher|lower)|by rank|rank order|equal ranks?`),
-	regexp.MustCompile(`#4(37|38|39)|#430`),
-	// The epitaph.
+	// #465 alongside the paint issues: a sentence correcting either
+	// plane cites it, and the input guard shares this list.
+	regexp.MustCompile(`#4(37|38|39|65)|#430`),
+}
+
+// inputCorrectionRes is the correction half for the INPUT plane, and
+// every entry names something only the post-#465 walk does. None of them
+// can be written by a sentence stating the retired rule, which is the
+// property paintCorrectionRes turned out not to have.
+var inputCorrectionRes = []*regexp.Regexp{
+	regexp.MustCompile(`#465`),
+	regexp.MustCompile(`(?i)overlayOf|asks the same (rule|question|two questions|membership)`),
+	regexp.MustCompile(`(?i)hit-?test(ing)?\b.{0,40}?\b(asks|is lifted|is layer-aware|is rank-aware)`),
+	regexp.MustCompile(`(?i)(input|the click|the press) (agrees|asks the same|is lifted too)`),
+	regexp.MustCompile(`(?i)membership-and-rank`),
+}
+
+var epitaphRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
 	regexp.MustCompile(`(?i)superseded|no longer|stopped being|was never|not any more|retired`),
 	regexp.MustCompile(`(?i)by convention|convention,? not|incidental|heuristic|arbitrary`),
 	regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
 }
+
+var inputQualifierRes = append(append([]*regexp.Regexp{}, inputCorrectionRes...), epitaphRes...)
 
 // THE HIT-TEST EXEMPTION IS GONE, and its removal is part of #465
 // rather than a tidy-up.
@@ -508,6 +692,13 @@ func qualifiedNear(lines []string, i int) bool {
 // things: the scan passes the span it matched on, the guard's own
 // fixtures pass a line.
 func qualifiedNearSpan(lines []string, first, last int) bool {
+	return qualifiedIn(lines, first, last, qualifierRes)
+}
+
+// qualifiedIn is the same window against a GIVEN pattern list, which is
+// what the input plane needs: the two guards share the epitaphs and not
+// the corrections, so a caller has to be able to say which list.
+func qualifiedIn(lines []string, first, last int, res []*regexp.Regexp) bool {
 	const window = 2
 	lo, hi := first-window, last+window
 	if lo < 0 {
@@ -529,7 +720,7 @@ func qualifiedNearSpan(lines []string, first, last int) bool {
 		parts = append(parts, continuationRe.ReplaceAllString(l, ""))
 	}
 	block := strings.Join(parts, " ")
-	for _, re := range qualifierRes {
+	for _, re := range res {
 		if re.MatchString(block) {
 			return true
 		}
@@ -729,6 +920,234 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 	}
 }
 
+// TestEveryStatementOfTheHitContractNamesTheAncestorClause is the prose
+// half of §1, and it is derived rather than a list of the sites the
+// review happened to find.
+//
+// The contract read "the one that paints last among those whose arranged
+// bounds contain the cell" in four files. The walk prunes on bounds at
+// EVERY node, so what it returns is the one that paints last among those
+// whose bounds — and every ancestor's — contain the cell. A child
+// arranged outside its parent's rect paints and can never be hit;
+// TestAnOverlayOutsideItsParentPaintsAndIsNotHit measures it.
+//
+// The behaviour is pinned there. This pins the SENTENCE, because the
+// sentence is what a reader acts on and prose fails open: restoring the
+// unqualified form breaks nothing and misleads everyone. Any file
+// stating the contract in the repo's own words has to carry the
+// qualification within the same few lines.
+//
+// It covers the two sites that use this phrasing (mouse.go and
+// docs/architecture.md) and NOT the two that paraphrase it —
+// components/popup.go and components/menu.go say it in their own words,
+// and a pattern loose enough to catch those would catch every sentence
+// about painting order in the repo. Those two are named here so the gap
+// is recorded rather than assumed closed. Raised in review of #478.
+func TestEveryStatementOfTheHitContractNamesTheAncestorClause(t *testing.T) {
+	claim := regexp.MustCompile(`(?i)paints? last among those whose`)
+	ancestor := regexp.MustCompile(`(?i)ancestor`)
+	found := 0
+	for _, f := range docFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		// "among those whose", not "paints last among": the claim wraps
+		// at 72 columns in mouse.go ("THE ONE THAT PAINTS / LAST among
+		// those whose"), so a prefilter keyed on the whole phrase skips
+		// the file the contract is defined in — and the guard reports
+		// nothing rather than reporting a miss.
+		if !strings.Contains(strings.ToLower(string(body)), "among those whose") {
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		for i, line := range lines {
+			if !claim.MatchString(joinWrapped(lines, i)) {
+				continue
+			}
+			found++
+			lo, hi := i, i+4
+			if hi >= len(lines) {
+				hi = len(lines) - 1
+			}
+			if !ancestor.MatchString(strings.Join(lines[lo:hi+1], " ")) {
+				t.Errorf("%s:%d states the hit-test contract without the ancestor "+
+					"clause:\n\t%s\n"+
+					"FocusManager.HitTest prunes on bounds at EVERY node, so a "+
+					"component arranged outside its parent's rect paints and is "+
+					"never hit — say \"whose bounds, and every ancestor's bounds, "+
+					"contain the cell\", or change the walk and this test with it.",
+					f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no file states the hit-test contract in the repo's own words, so " +
+			"this guard passed vacuously. Either the phrasing changed — update the " +
+			"pattern — or the contract is now written down nowhere.")
+	}
+}
+
+// TestTheRetiredInputRuleGuardCanActuallyFire is the non-vacuity arm for
+// the input plane, held to the same three checks as its paint twin: every
+// sample is recognised, every PATTERN has a sample, every sample survives
+// the prefilter, and correct sentences do not fire.
+//
+// The third check is not ceremony, and the samples had to be chosen for
+// it rather than merely passing it. "marker" was in inputPrefilterWords
+// with a rationale saying a sample needed it — and dropping the word was
+// measured SILENT, because the one sentence naming the marker also says
+// "sibling". A justification written before it was measured; the sample
+// below is now a line that carries ONLY "marker", so the word is
+// load-bearing and the claim is true. Same for "routing", which one
+// sample carries alone.
+//
+// A guard switched off by adding to it is exactly the defect
+// prefilterWords' own contract loop was written for.
+func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
+	// Sentences this change actually removed. The list carries a factual
+	// claim, so nothing invented goes in it.
+	removed := []string{
+		"// IT MOVES PAINT, NOT INPUT. FocusManager.HitTest walks document order",
+		"// and knows nothing about this marker, so a later sibling still takes a",
+		"// So an overlay that does NOT take capture is responsible for its own routing.",
+		"// pointer. Hit-testing prefers later siblings (they paint on top),",
+		"still load-bearing is **hit-testing**, which is not lifted — so an",
+		"**`Overlay` moves paint, not input.** Hit-testing still walks plain document order, last sibling first.",
+		"3. **Input was not lifted.** Hit-testing still walks plain document",
+		"`FocusManager.HitTest` walks document order and knows nothing about ranks either.",
+		"- **`Overlay` still moves paint, not input.** Neither path consults it",
+	}
+	// Phrasings the repo never shipped, kept apart for the reason the
+	// paint twin keeps its own: inventing entries for `removed` would
+	// falsify the provenance claim that list makes. These exist so the
+	// patterns guarding a sentence nobody has written yet still have
+	// something to fire on — which is the argument for adding imperative
+	// forms NOW, given that every pattern above was drafted from a
+	// phrasing that already existed.
+	neverShipped := []string{
+		"// Hit-testing ignores the overlay layer, so position still decides.",
+		"// To be hit first, declare it last.",
+		"// Declare the ToastHost last to take the press.",
+		"// The later sibling still wins the click.",
+		"// Clicks are not lifted.",
+		// CARRIES ONLY "marker" among the prefilter words, deliberately:
+		// it is what makes that entry load-bearing rather than decorative.
+		"// It knows nothing about the marker.",
+		"// HitTest knows nothing about ranks.",
+		"// hit-testing takes the last sibling first, whatever paints on top.",
+		"// The marker moves paint, not the clicks.",
+	}
+	for _, line := range removed {
+		if !statesTheRetiredInputRule(line) {
+			t.Errorf("the guard does not recognize a line this change actually "+
+				"removed, so it would not have caught it:\n\t%s", line)
+		}
+	}
+	for _, line := range neverShipped {
+		if !statesTheRetiredInputRule(line) {
+			t.Errorf("the guard does not recognize a phrasing it exists to catch:\n\t%s", line)
+		}
+	}
+	samples := append(append([]string{}, removed...), neverShipped...)
+
+	for _, re := range retiredInputRule {
+		matched := false
+		for _, line := range samples {
+			if re.MatchString(line) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("retiredInputRule pattern %v matches none of the sample lines: "+
+				"it is either dead or subsumed by another pattern, and deleting it "+
+				"would redden nothing. Add the sentence it exists to catch.", re)
+		}
+	}
+
+	for _, line := range samples {
+		if !containsAny(strings.ToLower(line), inputPrefilterWords) {
+			t.Errorf("the prefilter would skip a file containing this line, so the "+
+				"pattern that catches it can never run:\n\t%s\n"+
+				"Either add a word to inputPrefilterWords or keep the pattern "+
+				"inside it.", line)
+		}
+	}
+
+	// Correct sentences about the CURRENT walk. A predicate that fired on
+	// these would pass every loop above while making the real guard noise.
+	kept := []string{
+		"// FocusManager.HitTest asks overlayOf, so the hit walk is lifted and ranked.",
+		"// a later sibling paints over an earlier one.",
+		"// HitTest returns the component that paints last among those whose bounds contain the cell.",
+		"// Popup holds pointer capture while open, so presses never reach the walk.",
+	}
+	for _, line := range kept {
+		if statesTheRetiredInputRule(line) && !qualifiedIn([]string{line}, 0, 0, inputQualifierRes) {
+			t.Errorf("the guard fires on a correct sentence, which makes it noise "+
+				"rather than a check:\n\t%s", line)
+		}
+	}
+}
+
+// TestThePaintCorrectionDoesNotExemptTheInputClaim is the finding that
+// made the two qualifier lists different, and it is measured rather than
+// argued.
+//
+// This sweep's house style states the paint rule and the input caveat in
+// one comment, so a "#439" or a "lifted" two lines up sits beside every
+// input claim in the repo. Sharing qualifierRes whole therefore exempted
+// the claim from its own neighbour's correction — and worse, a sentence
+// saying "hit-testing is NOT LIFTED" matched the `\blifted\b` qualifier
+// on its own line, qualifying itself every time it was written.
+//
+// docs/learn/07-app-chrome.md:91 was live in the tree and invisible to
+// the first draft of the input guard for both reasons at once. Raised in
+// review of #478.
+func TestThePaintCorrectionDoesNotExemptTheInputClaim(t *testing.T) {
+	// The shape from 07-app-chrome.md: a paint correction, then the
+	// input caveat beneath it.
+	beside := []string{
+		"position stopped deciding paint in #437 and stopped deciding order",
+		"among overlays in #439. Where it is still load-bearing is",
+		"hit-testing, which is not lifted — so an overlay that wants presses",
+		"still cares.",
+	}
+	if !statesTheRetiredInputRule(joinWrapped(beside, 2)) {
+		t.Fatal("the fixture is not caught by retiredInputRule, so this test proves nothing")
+	}
+	if qualifiedIn(beside, 2, 2, inputQualifierRes) {
+		t.Error("a retired INPUT claim was waved through by a PAINT correction beside " +
+			"it (#437/#439) or by the word 'lifted' in its own negation. Neither says " +
+			"anything about the hit walk, and this sweep writes the two rules in one " +
+			"comment as a matter of style — so sharing the correction half makes the " +
+			"input guard blind exactly where it is needed.")
+	}
+	// AND THE CORRECTED FORM STILL PASSES, so the guard asks for a
+	// rewrite that can be written.
+	corrected := []string{
+		"position stopped deciding paint in #437 and stopped deciding",
+		"hit-testing in #465, where the walk was made to ask the same",
+		"membership-and-rank question the paint order is derived from.",
+		"It used to say hit-testing is not lifted.",
+	}
+	if !qualifiedIn(corrected, 3, 3, inputQualifierRes) {
+		t.Error("the corrected sentence is still reported, so every comment about " +
+			"this walk becomes unwritable")
+	}
+	// The PAINT guard must keep accepting what it always accepted: the
+	// split must not have narrowed it.
+	paint := []string{
+		"// The MenuBar is declared LAST here, which decides nothing:",
+		"// it is a gooey.Overlay and is lifted into the overlay layer (#437).",
+	}
+	if !qualifiedIn(paint, 0, 0, qualifierRes) {
+		t.Error("splitting qualifierRes narrowed the PAINT guard, which was not the " +
+			"point: a lift-and-#437 correction still has to exempt a paint-rule line")
+	}
+}
+
 // TestAWrappedRuleStatementIsStillCaught pins the two-line join, and
 // nothing else in the file can: every sample in
 // TestTheRetiredRuleGuardCanActuallyFire is a single line, so deleting
@@ -923,7 +1342,8 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 
 	bad := write("bad.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top.\n\nMore prose.\n")
-	got, err := retiredRuleProblems(bad)
+	got, err := retiredRuleProblems(bad, statesTheRetiredRule, prefilterWords,
+		qualifierRes, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -938,7 +1358,8 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 
 	good := write("good.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top — that is what this used to say.\n\nMore prose.\n")
-	got, err = retiredRuleProblems(good)
+	got, err = retiredRuleProblems(good, statesTheRetiredRule, prefilterWords,
+		qualifierRes, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -963,7 +1384,8 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 		"LAST or the toasts go behind the page.\n"+
 		"\n"+
 		"More prose.\n")
-	got, err = retiredRuleProblems(wrapped)
+	got, err = retiredRuleProblems(wrapped, statesTheRetiredRule, prefilterWords,
+		qualifierRes, scanAdvice)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}

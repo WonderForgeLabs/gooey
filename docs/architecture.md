@@ -1040,8 +1040,17 @@ structural rather than a rule every caller has to remember.
 Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns **the component that paints last** among
-those whose arranged `Bounds()` contain the cell; `Collapsed` subtrees,
-zero-size components, and `HitTestTransparent` components are not hit.
+those whose arranged `Bounds()` — and every ancestor's `Bounds()` —
+contain the cell; `Collapsed` subtrees, zero-size components, and
+`HitTestTransparent` components are not hit.
+
+The ancestor clause is the one place the two planes still differ, and it
+is deliberate rather than an oversight: the hit walk prunes on bounds at
+every node, while paint clips each node to *its own* rect. A surface
+arranged outside its owner's rectangle therefore paints and cannot be
+hit. Nothing shipped is in that position without also holding pointer
+capture; `FocusManager.HitTest` carries the measurement and the
+alternative resolution.
 
 **That is one sentence on purpose, and for a while it was two.**
 "Deepest component, children before ancestors and later siblings before

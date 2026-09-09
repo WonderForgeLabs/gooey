@@ -87,9 +87,13 @@ that is where they read best. It is harmless and no longer load-bearing:
 position stopped deciding paint in
 [#437](https://github.com/WonderForgeLabs/gooey/issues/437) and stopped
 deciding order *among* overlays in
-[#439](https://github.com/WonderForgeLabs/gooey/issues/439). Where it is
-still load-bearing is **hit-testing**, which is not lifted — so an
-overlay that wants presses (none of the built-in ones do) still cares.
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439), and stopped
+deciding **hit-testing** in
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465), where the
+walk was made to ask the same membership-and-rank question the paint
+order is derived from. This sentence used to end "where it is still
+load-bearing is hit-testing, which is not lifted" — an overlay that
+wants presses now gets them from wherever it is declared.
 
 How the layer works — and what happens when an overlay is dismissed and
 the cells under it come back — is the subject of

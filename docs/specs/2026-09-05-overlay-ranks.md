@@ -139,9 +139,15 @@ iterated `c.nodes`, this change would have given the two planes different
 answers to "what is on top" — worth stating because nothing in this
 change would have revealed it.
 
-**`Overlay` moves paint, not input.** `FocusManager.HitTest` walks
-document order and knows nothing about ranks either. An overlay that does
-not take pointer capture is still responsible for its own routing.
+**`Overlay` moves paint, not input** — no longer true, see below.
+`FocusManager.HitTest` walks document order and knows nothing about
+ranks either; an overlay that does not take pointer capture is still
+responsible for its own routing. Those are what was true on 2026-09-05
+and were superseded by
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465), which made
+the hit walk ask `overlayOf` — the same membership-and-rank rule this
+change gave the paint order. It is lifted and ranked too, and nothing is
+left routing its own presses.
 
 **The one-shot path is not ranked, and was not lifted either.**
 `gooey.Compose` — which builds no Composer, and is what `cmd/typeahead

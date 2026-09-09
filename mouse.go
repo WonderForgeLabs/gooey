@@ -105,9 +105,32 @@ type HitTestTransparent interface{ HitTestTransparent() bool }
 type PointerFollower interface{ FollowsPointer() bool }
 
 // HitTest returns the component the pointer is over: THE ONE THAT PAINTS
-// LAST among those whose arranged bounds contain the cell. Collapsed
-// subtrees, zero-size components, and HitTestTransparent components are
-// not hit. The walk allocates nothing — it runs on every motion event.
+// LAST among those whose arranged bounds — AND EVERY ANCESTOR'S BOUNDS —
+// contain the cell. Collapsed subtrees, zero-size components, and
+// HitTestTransparent components are not hit. The walk allocates nothing
+// — it runs on every motion event.
+//
+// THE ANCESTOR CLAUSE IS THE ONE PLACE THE TWO PLANES STILL DIVERGE, and
+// it is stated rather than fixed. This walk prunes on bounds at every
+// node; paint walks c.paint flat and clips each node to ITS OWN rect, so
+// a child arranged outside its parent's rectangle paints and can never
+// be hit. Measured, with an overlay child arranged one row below its
+// owner:
+//
+//	row 1 painted = the overlay's cells
+//	HitTest(0, 1) = the page underneath
+//
+// That is the dropdown shape — Popup.ArrangeSurface exists to place a
+// surface at a rect the owner chooses, and MenuBar.Arrange hands it a
+// popupRect() below the bar row. No live bug follows, because
+// popupSurface is the only non-transparent shipped Overlay whose bounds
+// can escape its parent and Popup.Open takes capture; the sentence had
+// to change anyway, because four files were claiming more than the code
+// does. Descending into a lifted subtree regardless of the ancestor
+// prune is the other resolution, and it is a behaviour change that wants
+// its own PR. Pinned by TestAnOverlayOutsideItsParentPaintsAndIsNotHit
+// so the divergence cannot quietly become something else.
+// Raised in review of #478.
 //
 // "Paints last" is one sentence and it is deliberately the SAME sentence
 // the Composer's paint order is derived from, because the two used to be
