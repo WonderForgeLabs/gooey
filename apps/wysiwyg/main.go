@@ -601,7 +601,7 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 // them all, which is #418's defect returning through the fix for #429's.
 // Found in review of #454.
 func (ed *editor) grantOf(elem string) markup.Grant {
-	e, ok := ed.specs[elem]
+	e, ok := ed.specOf(elem)
 	if !ok {
 		return markup.Grant{}
 	}
@@ -2187,6 +2187,16 @@ func (ed *editor) addSelected() {
 	// than an illegal child that stops the document building.
 	plan := ed.planAdd(spec.Name)
 	into := plan.into
+	// planAdd REFUSES rather than landing a nested element on the root
+	// (addplan.go:222), and a refusal is an empty addPlan. Today
+	// loadPalette keeps Nested elements out of the palette so this arm is
+	// unreachable from here; the dereference below is one `ed.specs`
+	// range away from a nil panic the moment that stops being true, and
+	// "currently unreachable" is not a thing to leave a deref resting on.
+	if into == nil {
+		ed.status.Set("✗ <" + spec.Name + "> has no legal parent on this page")
+		return
+	}
 	// The name comes from what is IN USE, never from a count. Counting
 	// children re-issues a live name as soon as one is deleted from the
 	// middle: three adds then a delete then an add produced two
@@ -2399,22 +2409,41 @@ func (ed *editor) deleteSelected() {
 		// selected.
 		return
 	}
-	for i, k := range p.Kids {
-		if k != n {
-			continue
-		}
-		p.Kids = append(p.Kids[:i], p.Kids[i+1:]...)
-		switch {
-		case len(p.Kids) == 0:
-			ed.sel = nil
-		case i < len(p.Kids):
-			ed.sel = p.Kids[i]
-		default:
-			ed.sel = p.Kids[len(p.Kids)-1]
-		}
-		break
+	at := unlink(p, n)
+	if at < 0 {
+		return
+	}
+	switch {
+	case len(p.Kids) == 0:
+		ed.sel = nil
+	case at < len(p.Kids):
+		ed.sel = p.Kids[at]
+	default:
+		ed.sel = p.Kids[len(p.Kids)-1]
 	}
 	ed.rebuild()
+	// TRANSACTIONAL, the same way promote, demote, move, paste and add
+	// are — and delete was the last mutator without it. A container's
+	// legal children are enforced INSIDE its builder, so REMOVING a child
+	// can break the parent just as adding an illegal one can:
+	// `<Tab Header=… needs exactly one content child, got 0`
+	// (markup/toolkit.go:190) fires on one ctrl+x against a node the
+	// outline offers you. Without the revert that delete reported success
+	// and left docRoot nil, which kills click-to-select for the WHOLE
+	// document while the last good tree stays on screen looking pressable
+	// — #403's shape, reached through the one door it was not fixed at.
+	//
+	// The selection goes back to n, not to whatever took its place: the
+	// node was not deleted, so leaving the cursor on its neighbour would
+	// report the refusal against something the user did not act on.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		insertAt(p, at, n)
+		ed.sel = n
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> cannot be deleted from <" + p.Elem +
+			">: " + refused)
+	}
 }
 
 // retype is the experiment. Changing the container changes which

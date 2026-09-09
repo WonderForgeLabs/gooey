@@ -695,3 +695,73 @@ func TestPastingIntoAContainerThatRefusesItRevertsTheDocument(t *testing.T) {
 		t.Errorf("the refused paste was left in the tree: %d children, want %d", got, before)
 	}
 }
+
+// TestAddingANestedElementThePaletteOffersIsRefusedRatherThanPanicking.
+//
+// planAdd refuses a Nested element with no legal home on the page by
+// returning an empty addPlan (addplan.go:222), and addSelected dereferences
+// `plan.into` a few lines later. Today loadPalette keeps Nested elements out
+// of the palette, so the two never meet and the deref is safe by an accident
+// of a filter in a different function.
+//
+// This test removes that accident: it puts a Nested element into the palette
+// directly, which is the state one relaxed filter away, and asserts a refusal
+// rather than a nil dereference. Without the guard the call PANICS, so this
+// is not a status-line assertion wearing a safety hat — the panic is the
+// failure, and the message check only pins which refusal was reported.
+func TestAddingANestedElementThePaletteOffersIsRefusedRatherThanPanicking(t *testing.T) {
+	ed, _ := buildPage(t)
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	// The same three-level shape TestANestedParentsGrantStillReachesTheGrid
+	// uses: markNested marks an element Nested only when some other
+	// element NAMES it in an Only list.
+	ed.docCtx.Elements["LonelyOwner"] = &markup.ElementDef{
+		Name: "LonelyOwner", Icon: "list-unordered", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"LonelyHost"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["LonelyHost"] = &markup.ElementDef{
+		Name: "LonelyHost", Icon: "list-unordered", ParsedBy: "LonelyOwner", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.loadPalette()
+
+	spec, ok := ed.specOf("LonelyHost")
+	if !ok {
+		t.Fatal("the registered host is not in the catalog: nothing below was tested")
+	}
+	if !spec.Nested {
+		t.Fatal("the registered host is not Nested, so planAdd would not refuse it " +
+			"and this test cannot reach the guard")
+	}
+	// The premise, stated so the test fails loudly if planAdd stops
+	// refusing rather than passing against a guard that never runs.
+	if ed.planAdd("LonelyHost").into != nil {
+		t.Fatal("planAdd found a home for the nested host, so `into` is not nil " +
+			"and the guard under test is unreachable from here")
+	}
+
+	// The state one relaxed filter away: the palette offering it.
+	ed.palette = append(ed.palette, spec)
+	ed.paletteSel.Set(len(ed.palette) - 1)
+
+	before := ed.docRoot
+	ed.addSelected() // panics without the guard
+
+	if ed.docRoot != before {
+		t.Error("a refused add rebuilt the document; it should not have touched it")
+	}
+	if !strings.Contains(ed.status.Get(), "LonelyHost") {
+		t.Errorf("status is %q after a refused add, want it to name the element", ed.status.Get())
+	}
+	if !strings.HasPrefix(ed.status.Get(), "✗") {
+		t.Errorf("status is %q after a refused add, want a refusal", ed.status.Get())
+	}
+}
