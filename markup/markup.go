@@ -1160,10 +1160,10 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 				for _, a := range [...]string{"Text", "Gesture", "Checked", "Command", "Icon", "IconRune"} {
 					if v := strings.TrimSpace(ic.Attrs[a]); v != "" {
 						return nil, fmt.Errorf(
-							"markup: <MenuItem Separator=\"true\" %s=%q>: a separator is a rule "+
+							"markup: <MenuItem Separator=%q %s=%q>: a separator is a rule "+
 								"across the menu and carries nothing else — %s would be accepted "+
 								"and silently ignored; drop it, or drop Separator",
-							a, v, a)
+							strings.TrimSpace(ic.Attrs["Separator"]), a, v, a)
 					}
 				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
