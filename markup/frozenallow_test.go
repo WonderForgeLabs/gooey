@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -1129,5 +1130,196 @@ func TestAPublishDoesNotClobberAnotherWritersValue(t *testing.T) {
 	if got := errProp.Get(); got != "saving…" {
 		t.Errorf("a benign Allow change overwrote another writer's value: %q, want \"saving…\" — "+
 			"publish is reading the sink back instead of tracking what it last published", got)
+	}
+}
+
+// TestAllowErrorInsideAnItemTemplateDoesNotPanic is round five's
+// critical, and it was introduced by round four's own guard.
+//
+// document.build allocates ctx.armedSinks and its defer restores it to
+// nil on the way out. buildItemsView constructs the row Context
+// FIELD-BY-FIELD (markup/itemsview.go) and calls build(row, item)
+// directly — never document.build — so armedSinks is nil there and
+// elements.go's `ctx.armedSinks[sink] = raw` panics with "assignment to
+// entry in nil map". That row Context is the only *Context in this
+// package built outside document.build.
+//
+// A PANIC INSIDE Build is the exact defect the Settable() guard was
+// added to remove, reintroduced eighty lines from the comment arguing
+// against it. And the timing is worse than a load panic: ItemsView.
+// Validate builds one throwaway row at load, so a collection non-empty
+// at load panics during Build, while a table fed by a timer is empty at
+// load and the same markup panics on FIRST SCROLL — inside the composer,
+// where a panic skips Screen.Restore and takes the user's terminal modes
+// and unsaved work with it.
+//
+// Row scope is also the right answer rather than the cheap one: sharing
+// the page's map with rows would add an entry per row realization and
+// drop none, and two rows binding one sink is a real collision the page
+// guard should catch. Raised in review of #459.
+func TestAllowErrorInsideAnItemTemplateDoesNotPanic(t *testing.T) {
+	const page = `<Gooey>
+  <ItemsView Items="{{.Rows}}">
+    <ItemsView.ItemTemplate>
+      <Frozen Allow="{{.Cats}}" AllowError="{{.Err}}">
+        <Text>{{.Label}}</Text>
+      </Frozen>
+    </ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	// NON-EMPTY at load, so ItemsView.Validate realizes a throwaway row
+	// during Build and the panic (if any) lands here rather than on a
+	// scroll nothing in this test would perform.
+	//
+	// It must be a real ItemSource: the first version of this test handed
+	// Items a []map[string]any, which <ItemsView> refuses BEFORE it ever
+	// builds a row — so the test passed without reaching the line under
+	// test at all. A load error that arrives too early is the same
+	// vacuous pass as no assertion.
+	rows := prop.NewSource([]post{{Title: "one"}, {Title: "two"}})
+	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		return map[string]any{
+			"Label": x.Title,
+			"Cats":  prop.NewSource("Focus"),
+			"Err":   prop.NewSource(""),
+		}
+	})
+	if _, err := Build([]byte(page), ctx); err != nil {
+		// A load ERROR is a legitimate answer; a panic is not. But it has
+		// to be an error ABOUT this shape — anything earlier means the
+		// row was never built and this test proved nothing.
+		if strings.Contains(err.Error(), "ItemSource") || strings.Contains(err.Error(), "unknown element") {
+			t.Fatalf("the build failed before a row was ever realized, so the row "+
+				"Context was never constructed and this test is vacuous:\n\t%v", err)
+		}
+		t.Logf("built with an error (acceptable if deliberate): %v", err)
+	}
+}
+
+// TestTwoControlsCannotShareOneFailureChannel is the guarantee
+// Context.armedSinks' own doc comment makes and the code did not keep:
+// "a nested Load inherits the outermost map (so two controls sharing a
+// sink are still caught)".
+//
+// control() builds a fresh child *Context and propagates Declared,
+// Components, Handlers, Includes and Dispatcher — not armedSinks — so
+// the child's document.build finds nil and allocates its own. Two panes
+// over one status line is the surface <Frozen> exists for, and it is
+// what an <Include> is for, so this is the collision the page guard was
+// written to catch, one boundary over.
+//
+// The own-last-value compare does not save it: A's message genuinely
+// changes ("err" -> ""), and that is the value that erases B. Raised in
+// review of #459.
+func TestTwoControlsCannotShareOneFailureChannel(t *testing.T) {
+	const pane = `<Gooey>
+  <Frozen Allow="{{.Allow}}" AllowError="{{.Err}}">
+    <TextBox Text="{{.In}}"/>
+  </Frozen>
+</Gooey>`
+	const page = `<Gooey>
+  <VStack>
+    <Pane Allow="{{.AllowA}}" Err="{{.Err}}" In="{{.In}}"/>
+    <Pane Allow="{{.AllowB}}" Err="{{.Err}}" In="{{.In}}"/>
+  </VStack>
+</Gooey>`
+	fsys := fstest.MapFS{"pane.gooey": &fstest.MapFile{Data: []byte(pane)}}
+	ctx := errAllowCtx("Focus")
+	ctx.Values["AllowA"] = prop.NewSource("Focus")
+	ctx.Values["AllowB"] = prop.NewSource("Nonsense")
+	ctx.Includes = fsys
+	// Include is a Go-side Builder, not an element name: a markup-only
+	// control is registered under whatever tag the page uses for it.
+	ctx.Components = map[string]Builder{"Pane": Include(fsys, "pane.gooey")}
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("two controls armed one AllowError property. Each publishes its own " +
+			"transitions, so the parseable one going \"err\" -> \"\" erases the other's " +
+			"live failure and the other's computed is clean, so it never republishes: " +
+			"a sealed subtree with nothing to show for it")
+	}
+	if !strings.Contains(err.Error(), "already the failure channel") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+}
+
+// TestAliasIsCaughtByHandleNotByText: the alias guard compares
+// bindingPath TEXT where the dup-sink guard forty lines below compares
+// resolved handles, so two guards on one line of defence disagree about
+// what "the same property" means — and the weaker one is the one
+// protecting the author's page state.
+//
+// bindingPath is bindRe.FindStringSubmatch: the FIRST binding in the
+// string, string-compared. Both spellings below build cleanly today and
+// destroy the allow set during Build, which is precisely what
+// TestAllowCannotAliasItsOwnErrorChannel exists to refuse.
+//
+// This retires "Pointer identity cannot catch it … The binding PATHS are
+// what match." Pointer identity of the BoundText computed cannot — true,
+// it is a fresh computed per call. Pointer identity of the resolved
+// SOURCE handle can, and it is available: the check moves below the
+// Bound[string] call so `sink` exists. Safe, because Bound only reads
+// and armAllowError is still the last statement, so the "the author's
+// set must survive the refusal" assertion still holds. Raised in review
+// of #459.
+func TestAliasIsCaughtByHandleNotByText(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		page  string
+		setup func(*Context)
+		// read names the Values entry the allow set lives in, so the
+		// test can prove the refusal happened BEFORE anything wrote.
+		read string
+	}{{
+		// bindingPath takes the FIRST binding, so "{{.A}} {{.X}}" reads
+		// as "A" and never matches "X".
+		name: "alias is not the first binding in a multi-binding Allow",
+		page: `<Gooey>
+  <Frozen Allow="{{.A}} {{.X}}" AllowError="{{.X}}">
+    <TextBox Name="a" Text="{{.In}}"/>
+  </Frozen>
+</Gooey>`,
+		setup: func(c *Context) {
+			c.Values["A"] = prop.NewSource("Focus")
+			c.Values["X"] = prop.NewSource("Hover")
+		},
+		read: "X",
+	}, {
+		// Two NAMES, one handle. The text differs; the property does
+		// not — and the dup-sink guard already refuses exactly this
+		// shape for its own question, because it keys by pointer.
+		name: "two names resolving to one handle",
+		page: `<Gooey>
+  <Frozen Allow="{{.X}}" AllowError="{{.Y}}">
+    <TextBox Name="a" Text="{{.In}}"/>
+  </Frozen>
+</Gooey>`,
+		setup: func(c *Context) {
+			shared := prop.NewSource("Focus")
+			c.Values["X"] = shared
+			c.Values["Y"] = shared
+		},
+		read: "X",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := errAllowCtx("Focus")
+			tc.setup(ctx)
+			before := ctx.Values[tc.read].(*prop.Property[string]).Get()
+			_, err := Build([]byte(tc.page), ctx)
+			if err == nil {
+				t.Fatalf("Allow and AllowError resolve to ONE property and the build was "+
+					"accepted; the priming publish then overwrites the set it just read "+
+					"(%s: %q -> %q)", tc.read, before,
+					ctx.Values[tc.read].(*prop.Property[string]).Get())
+			}
+			if !strings.Contains(err.Error(), "cannot be both") {
+				t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+			}
+			if got := ctx.Values[tc.read].(*prop.Property[string]).Get(); got != before {
+				t.Errorf("the allow set was modified before the refusal: %s=%q, want %q",
+					tc.read, got, before)
+			}
+		})
 	}
 }

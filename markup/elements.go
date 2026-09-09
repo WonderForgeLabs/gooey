@@ -421,23 +421,49 @@ var defFrozen = &ElementDef{
 						"it can report is an unparseable set, and a set that is absent or "+
 						"literal cannot become one after load", raw)
 			}
-			// ALIASED to Allow. <Frozen Allow="{{.X}}" AllowError="{{.X}}">
-			// builds, and then the priming publish overwrites the author's
-			// own allow set with the parse message before the UI is live —
-			// measured: X goes "Focus" -> "" during Build. Pointer identity
-			// cannot catch it, because BoundText wraps a dynamic attribute
-			// in a FRESH computed every call, so the two handles differ
-			// even here. The binding PATHS are what match.
-			if ap := bindingPath(e.Attrs["Allow"]); ap != "" && ap == bindingPath(raw) {
-				return nil, fmt.Errorf(
-					"markup: <Frozen Allow=%q AllowError=%q>: one property cannot be both "+
-						"the allow set and the place its parse failure is reported — "+
-						"publishing would overwrite the set it just read",
-					e.Attrs["Allow"], raw)
-			}
 			sink, err := Bound[string](e, ctx, "AllowError")
 			if err != nil {
 				return nil, err
+			}
+			// ALIASED to Allow. <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+			// builds, and then the priming publish overwrites the author's
+			// own allow set with the parse message before the UI is live —
+			// measured: X goes "Focus" -> "" during Build.
+			//
+			// THIS COMPARES RESOLVED HANDLES, and it used to compare
+			// binding TEXT. The reasoning for the text compare was that
+			// "pointer identity cannot catch it, because BoundText wraps a
+			// dynamic attribute in a FRESH computed every call" — true of
+			// the computed, and the wrong handle to compare. The SOURCE
+			// the binding resolves to is stable, and it is available here.
+			//
+			// The text compare missed two spellings that both build
+			// cleanly and both destroy the allow set during Build:
+			//
+			//   Allow="{{.A}} {{.X}}" AllowError="{{.X}}"
+			//       bindingPath takes only the FIRST binding, reads "A",
+			//       never matches "X" (measured: X "Hover" -> "").
+			//   Allow="{{.X}}" AllowError="{{.Y}}", Values[X] == Values[Y]
+			//       two names, one property; the text differs and the
+			//       handle does not (measured: "Focus" -> "").
+			//
+			// The dup-sink guard forty lines below already refuses the
+			// second shape for its OWN question, because it keys by
+			// pointer — so the two guards on one line of defence
+			// disagreed about what "the same property" means, and the
+			// weaker one was the one protecting page state.
+			//
+			// It sits BELOW Bound so `sink` exists. Safe: Bound only
+			// reads, and armAllowError is still the last statement, so
+			// the author's set still survives every refusal above it.
+			// Raised in review of #459.
+			if ap, aliased := aliasesSink(ctx, e.Attrs["Allow"], sink); aliased {
+				return nil, fmt.Errorf(
+					"markup: <Frozen Allow=%q AllowError=%q>: one property cannot be both "+
+						"the allow set and the place its parse failure is reported — "+
+						"publishing would overwrite the set it just read "+
+						"(both resolve to %s)",
+					e.Attrs["Allow"], raw, ap)
 			}
 			// A WRITE target has to be writable, and Bound does not ask —
 			// it resolves handles for reading, which is what every other

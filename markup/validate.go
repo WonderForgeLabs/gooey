@@ -317,6 +317,37 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 
 // bindingPath is the bare path of a single {{.Path}} binding attribute,
 // or "" — what Into derivation works from.
+// aliasesSink reports whether ANY binding in attr resolves to the same
+// *prop.Property[string] as sink, and names the path that does.
+//
+// EVERY binding, not the first: bindingPath below takes only
+// FindStringSubmatch, so `Allow="{{.A}} {{.X}}"` reads as "A" and an
+// alias in the second position went unseen. And by HANDLE, not by text:
+// two Values entries may name one property, which the text compare
+// cannot see and which the dup-sink guard in elements.go already refuses
+// for its own question.
+//
+// An unresolvable path is not an alias. Reporting one here would turn a
+// typo into the wrong load error; the binder that runs after this
+// reports it as what it is.
+//
+// Raised in review of #459.
+func aliasesSink(ctx *Context, attr string, sink *prop.Property[string]) (string, bool) {
+	if attr == "" || sink == nil {
+		return "", false
+	}
+	for _, m := range bindRe.FindAllStringSubmatch(attr, -1) {
+		v, err := resolve(ctx.Values, m[1])
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok && p == sink {
+			return m[1], true
+		}
+	}
+	return "", false
+}
+
 func bindingPath(attr string) string {
 	m := bindRe.FindStringSubmatch(attr)
 	if m == nil {

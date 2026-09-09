@@ -182,6 +182,28 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
 		}
+		// THE ARMED-SINK SET IS PAGE-WIDE, so it crosses this boundary
+		// the same way Declared does — and Context.armedSinks' own doc
+		// comment already promised it did ("a nested Load inherits the
+		// outermost map, so two controls sharing a sink are still
+		// caught"). It did not: this function built a fresh child and
+		// propagated everything but, so the child's document.build found
+		// nil and allocated its own.
+		//
+		// Two panes over one status line is the surface <Frozen> was
+		// built for and exactly what an <Include> is for, so it is the
+		// collision the page guard exists to catch — one boundary over,
+		// where nothing looked. The own-last-value compare does not
+		// cover it either: A's message genuinely changes ("err" -> ""),
+		// and that is the value that erases B.
+		//
+		// UNCONDITIONAL, not `if child.armedSinks == nil`. A child
+		// Context is constructed fresh here, so the field is always nil
+		// — but a guard would read as though a caller could supply one
+		// and be honoured, and a control that arrived with its own map
+		// is precisely the case that must NOT be allowed to opt out of
+		// the page's set. Raised in review of #459.
+		child.armedSinks = parent.armedSinks
 		// A control's literal asset paths (Image Src) resolve against
 		// the FS its OWN markup came from, the same isolation its
 		// bindings get: the file that names the asset is the file the

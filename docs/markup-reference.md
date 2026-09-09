@@ -94,7 +94,7 @@ Wraps exactly one visual child in a region that **renders but does not act**. Th
 |---|---|
 | `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
 | `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
-| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. Every one of these is a load error — see the four-case list below. |
+| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. Every one of these is a load error — see the list below. |
 
 ```xml
 <Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
@@ -185,14 +185,30 @@ is clean, so the compare-guarded publish never restores it. The subtree
 stays sealed and the reader shows `""`, which is the exact failure this
 attribute exists to remove, one layer down. There is no load-time signal
 that separates the two, so this is a rule you keep rather than one the
-framework enforces.
+framework enforces. What is NOT a rule you can break: a row template's
+`<Frozen AllowError>` used to PANIC — the row `Context` is built outside
+`document.build`, so the armed-sink set arrived nil — and it now builds,
+with the set scoped to the row. Two `<Frozen>` in one template sharing a
+sink still collide; two ROWS arming the same template sink do not, because
+each row's values carry their own handle.
 
-`AllowError` is refused at load in four cases, all of which would otherwise read
-as configured and report nothing forever: a literal (`AllowError="oops"` has
-nowhere to put the message), an absent or literal `Allow` (there is no runtime
-parse to report), a missing `Context.Dispatcher` (the publication has no route),
-and a **computed** target (no setter — this one used to panic inside `Build`
-rather than fail to load).
+`AllowError` is refused at load in **every case that would otherwise read as
+configured and report nothing forever** — the number is deliberately not
+written here, because it has now drifted twice in three commits and the list
+is the thing to read:
+
+- a **literal** (`AllowError="oops"` has nowhere to put the message);
+- an **absent or literal `Allow`** (there is no runtime parse to report);
+- a missing **`Context.Dispatcher`** (the publication has no route);
+- a **computed** target (no setter — this one used to panic inside `Build`
+  rather than fail to load);
+- `Allow` and `AllowError` **resolving to one property**, which would publish
+  over the set it just read — compared by resolved handle, so two names for
+  one property and an alias anywhere in a multi-binding `Allow` are both
+  caught;
+- a **second `<Frozen>`** binding a sink another already armed, anywhere on the
+  page including across an `Include` or `UserControl` boundary — they would
+  erase each other's message and leave a subtree sealed with nothing to show.
 
 #### Changing the set at runtime
 

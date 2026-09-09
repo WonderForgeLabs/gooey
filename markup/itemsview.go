@@ -6,6 +6,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/prop"
 )
 
 // buildItemsView is the markup side of DataTemplates, and the one place
@@ -80,6 +81,31 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			Includes:   ctx.Includes,
 			Dispatcher: ctx.Dispatcher,
 			Named:      map[string]gooey.Component{},
+			// ROW-SCOPED, and not merely non-nil. This is the only
+			// *Context in the package built outside document.build, so it
+			// is the one place armedSinks arrives nil — and elements.go
+			// WRITES to it, which panicked with "assignment to entry in
+			// nil map" for a <Frozen AllowError> in a template. A panic
+			// inside Build is the exact defect the Settable() guard was
+			// added to remove, and the timing here is worse: Validate
+			// realizes one throwaway row at load, so a collection that is
+			// non-empty then panics during Build, while a table fed by a
+			// timer is empty at load and the same markup panics on FIRST
+			// SCROLL — inside the composer, where a panic skips
+			// Screen.Restore.
+			//
+			// Sharing the PAGE's map would be the wrong scope rather than
+			// the expensive one: this factory runs per row realization
+			// and never unregisters, so a scrolling list would accumulate
+			// an entry per row and then refuse its own second row. A
+			// fresh map per row keeps the guard meaningful WITHIN a row —
+			// two <Frozen> in one template sharing a sink still collide,
+			// which is the real page-shape — and lets each row arm the
+			// same template sink, which is not a collision because each
+			// row's Values carry their own handle.
+			//
+			// Raised in review of #459.
+			armedSinks: map[*prop.Property[string]]string{},
 			ns:         ns,
 			res:        res,
 		}

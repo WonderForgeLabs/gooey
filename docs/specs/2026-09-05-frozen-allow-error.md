@@ -206,6 +206,29 @@ a regression introduced here. It is recorded because `AllowError` is the
 first WRITE target and the next one multiplies it; a detach seam is the
 right fix and it belongs with the second consumer, not the first.
 
+**And it is what makes the per-build reset load-bearing rather than
+merely convenient**, which the paragraph above states too generically to
+catch. `TestASecondBuildMayReuseASinkTheFirstArmed` exists because the
+watcher and the designer must be allowed to re-arm a sink — so the
+armed-sink set is restored on the way out of the outermost
+`document.build`. Combine that with non-detachment and the rebuild path
+HOLDS, across generations, exactly the two-writer configuration the load
+guard refuses within one build: generation one's `errC` observer is still
+live when generation two arms the same sink.
+
+It is harmless while both generations read the same `Allow` source —
+they compute the same message and write the same value, and the compare
+guard makes the second a no-op. It becomes reachable the moment a reload
+rebinds `Allow` to a different property: two live arms, different
+messages, one sink, and the last invalidation wins. That is the same
+symptom `armedSinks` was added to prevent, arriving through the escape
+hatch that guard needed in order not to break the watcher.
+
+So the escape hatch and the missing detach are one decision, not two.
+Whoever adds the detach seam should delete the per-build restore in the
+same commit — with detachment, a rebuild's arms are genuinely gone and
+the set could stay page-lifetime. Found in review of #459.
+
 ### One reviewer suggestion that did not survive its own mutation
 
 Review proposed that the new `Active="{{.Off}}"` test would also guard
@@ -244,7 +267,10 @@ panes over one status line is the surface `Frozen` was built for.
 
 Fixed twice over, because the two halves cover different writers.
 `Context.armedSinks` makes a second arm on the same handle a **load error**,
-which is the real fix and matches how the other four spellings are refused.
+which is the real fix and matches how every other spelling in the class is
+refused. (An ordinal here said "the other four" while the section below said
+"the fifth" — off by one against each other, which is why neither says a
+number now. `docs/markup-reference.md` carries the list.)
 And `publish` now compares against **this arm's own last published value**
 rather than reading the sink back, so an arm with nothing new to say writes
 nothing whatever the sink holds — that half reaches writers the load guard
@@ -262,10 +288,20 @@ hosts, and the failure reads as the user's markup being wrong.
 `<Frozen Allow="{{.X}}" AllowError="{{.X}}">` built, and the priming
 publish then overwrote the author's own set with the parse message before
 the UI was live — measured, `X` went `"Focus"` → `""` during `Build`.
-Pointer identity cannot catch it: `BoundText` wraps a dynamic attribute in
-a fresh computed on every call, so the two handles differ even here. The
-binding PATHS match, and `bindingPath` already existed for exactly this.
-The fifth spelling of the class, refused the same way.
+
+**Compared by resolved HANDLE, and the first version compared text.** The
+reasoning for text was that "pointer identity cannot catch it: `BoundText`
+wraps a dynamic attribute in a fresh computed on every call, so the two
+handles differ even here" — true of the computed, and the wrong handle to
+compare. The SOURCE a binding resolves to is stable and available at the
+check. The text compare missed two spellings that both built cleanly and
+both destroyed the allow set during `Build`: an alias that is not the FIRST
+binding (`Allow="{{.A}} {{.X}}" AllowError="{{.X}}"` — `bindingPath` is
+`FindStringSubmatch`, so it reads `A`), and two Values names for one
+property. The dup-sink guard forty lines below already refused the second
+shape for its own question, because it keys by pointer — so two guards on
+one line of defence disagreed about what "the same property" means, and the
+weaker one was the one protecting page state. Found in review of #459.
 
 ### The citation, and where it came from
 
