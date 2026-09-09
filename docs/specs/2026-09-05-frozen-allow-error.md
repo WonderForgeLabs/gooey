@@ -42,7 +42,7 @@ renders it like any other, and the framework Sets it. The publication is
 arranged in `markup/frozenerror.go`, at build time; `components.Frozen` is
 untouched.
 
-Four load-time refusals, because each is a spelling that would read as
+The load-time refusals, because each is a spelling that would read as
 configured and report nothing forever:
 
 - a **literal** in the attribute — a write target has nowhere to put the
@@ -50,9 +50,63 @@ configured and report nothing forever:
 - an **absent or literal `Allow`** — with no parse, or a parse that
   already happened at load, the channel could never carry anything;
 - a nil **`Context.Dispatcher`** — the publication has no route;
-- a **computed** target — it derives its value and has no setter. This one
-  is the worst of the four and was added in round two: before the guard it
-  did not read as configured, it PANICKED inside `Build`.
+- a **computed** target — it derives its value and has no setter. It was
+  added in round two, and before the guard it did not read as configured,
+  it PANICKED inside `Build`;
+- an **`Allow` that aliases the sink** — the priming publish would destroy
+  the set it had just read. Round three added it; round five widened it
+  from whole-body bindings to every path in any position, because
+  `Allow="{{v:Echo .X}}"` carries the alias into an argument where the
+  original scan could not see it;
+- a **second arm on one sink** — two `<Frozen>` publishing to one handle,
+  where whichever fires last wins and neither says so.
+
+**THIS SENTENCE NO LONGER OPENS WITH A NUMBER**, and that is the third
+time the count in it has been wrong. It said "Four" over a four-item list
+while six were implemented; the paragraph near the end of this record
+already said "which is why neither says a number now" and this line
+falsified it, which is worse than either alone — a record that both states
+a rule and breaks it teaches the rule is optional.
+`docs/markup-reference.md` got it right by never writing one. Count the
+list if you need the number.
+
+## Round five
+
+Two defects, both introduced by the guard round four added, and both
+invisible to every test that existed for it.
+
+**`ctx.armedSinks` arrived nil in an item template's row.** `elements.go`
+WRITES to that map to arm a sink, and a write to a nil map panics.
+`document.build` allocates it, and for one construction site that was
+enough — but `buildItemsView` builds its row `Context` field by field, and
+it is the only `*Context` in the package constructed outside
+`document.build`. So `<Frozen AllowError>` inside an
+`<ItemsView.ItemTemplate>` panicked: at LOAD for a non-empty collection,
+because `ItemsView.Validate` realizes a throwaway row during `Build`, and
+on FIRST SCROLL for one fed by a timer — inside the composer, where
+`Screen.Restore` is skipped, so the terminal is left in raw mode with the
+alternate screen up and no trace.
+
+The map is per-ROW rather than the page's, which is the decision worth
+recording. Rows are realized and discarded as the view scrolls, so a page
+map would accumulate an entry per realization and refuse the second row
+for aliasing the first — a guard that fires on correct markup the moment a
+list is longer than one. The question the guard asks is "does this
+document arm one sink twice", and a row is the scope where that question
+has an answer.
+
+**`armedSinks` did not cross the control boundary**, though its own doc
+comment promised it did: "a nested Load inherits the outermost map (so two
+controls sharing a sink are still caught)". `control()` builds a fresh
+child `Context` and propagates `Declared` but not this, so two
+`<UserControl>`s could arm the same handle with nothing to notice. Fixed
+by propagating it unconditionally — the comment described the intended
+behaviour accurately, and the code simply did not have it.
+
+The pattern across rounds four and five is worth naming: **a load-time
+guard that writes to shared state inherits every construction site of that
+state as a dependency**, and the sites are not all in the file where the
+guard lives.
 
 ## The two subtleties
 

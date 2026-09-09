@@ -315,17 +315,68 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 	return other, nil
 }
 
-// bindingPath is the bare path of a single {{.Path}} binding attribute,
-// or "" — what Into derivation works from.
-// aliasesSink reports whether ANY binding in attr resolves to the same
+// allPaths asks a strictly wider question than bindRe: every `.Path`
+// TOKEN inside a `{{ … }}` expression, wherever it sits.
+//
+// bindRe matches a whole-body binding and nothing else, so a path that
+// appears as an ARGUMENT is invisible to it: `Allow="{{v:Echo .X}}"`
+// carries .X into a value provider, and bindRe sees no binding at all.
+// The alias guard using bindRe therefore missed exactly that spelling,
+// and the priming publish went on destroying the author's Allow source
+// during Build — the harm the guard was added to stop, reachable by
+// writing the same alias a different way. Reported in review of #459,
+// with the damage measured against the in-repo echoProvider harness.
+//
+// `| into .Target` is deliberately INCLUDED: a call whose result is
+// written into the sink aliases it just as surely as one that reads it.
+//
+// The braces are required so the scan cannot be fooled by attribute
+// PROSE, and that half is unreachable rather than untested: the only
+// caller passes `Allow`, and an absent-or-literal `Allow` is already a
+// load error forty lines above (`without a BOUND Allow`), so what
+// arrives here is always a binding expression. A mutation dropping the
+// brace requirement is correctly SILENT — noted because a silent
+// mutation usually means a missing test, and here it means the state
+// cannot be built.
+//
+// TWO PASSES, and the second is not redundant. A regex with one capture
+// group yields one match per EXPRESSION, so a single pass over
+// `{{v:Pick .A .B}}` would report only .A and miss the alias in the
+// second argument — the same "first match only" defect this guard was
+// already fixed for once, at the level of expressions instead of
+// attributes. So braceRe finds the expressions and tokenRe rescans each
+// one for its own paths.
+func allPaths(attr string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, expr := range braceRe.FindAllString(attr, -1) {
+		for _, m := range tokenRe.FindAllStringSubmatch(expr, -1) {
+			if !seen[m[1]] {
+				seen[m[1]] = true
+				out = append(out, m[1])
+			}
+		}
+	}
+	return out
+}
+
+var (
+	braceRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
+	tokenRe = regexp.MustCompile(`\.([A-Za-z0-9_.]+)`)
+)
+
+// aliasesSink reports whether ANY path in attr resolves to the same
 // *prop.Property[string] as sink, and names the path that does.
 //
-// EVERY binding, not the first: bindingPath below takes only
+// EVERY path, not the first: bindingPath below takes only
 // FindStringSubmatch, so `Allow="{{.A}} {{.X}}"` reads as "A" and an
 // alias in the second position went unseen. And by HANDLE, not by text:
 // two Values entries may name one property, which the text compare
 // cannot see and which the dup-sink guard in elements.go already refuses
 // for its own question.
+//
+// EVERY POSITION, not only a whole-body binding — see pathRe. That is
+// what closes the value-call spelling round five measured.
 //
 // An unresolvable path is not an alias. Reporting one here would turn a
 // typo into the wrong load error; the binder that runs after this
@@ -336,18 +387,20 @@ func aliasesSink(ctx *Context, attr string, sink *prop.Property[string]) (string
 	if attr == "" || sink == nil {
 		return "", false
 	}
-	for _, m := range bindRe.FindAllStringSubmatch(attr, -1) {
-		v, err := resolve(ctx.Values, m[1])
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
 		if err != nil {
 			continue
 		}
 		if p, ok := v.(*prop.Property[string]); ok && p == sink {
-			return m[1], true
+			return path, true
 		}
 	}
 	return "", false
 }
 
+// bindingPath is the bare path of a single {{.Path}} binding attribute,
+// or "" — what Into derivation works from.
 func bindingPath(attr string) string {
 	m := bindRe.FindStringSubmatch(attr)
 	if m == nil {

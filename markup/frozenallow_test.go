@@ -1068,9 +1068,6 @@ func TestASecondBuildMayReuseASinkTheFirstArmed(t *testing.T) {
 // author's own allow set with the parse message BEFORE the UI was live —
 // measured: X went "Focus" -> "" during Build.
 //
-// Pointer identity does not catch it. BoundText wraps a dynamic attribute
-// in a fresh computed on every call, so the two handles differ even when
-// the markup names one property twice; the binding PATHS are what match.
 // Raised in review of #459.
 func TestAllowCannotAliasItsOwnErrorChannel(t *testing.T) {
 	const page = `<Gooey>
@@ -1133,7 +1130,7 @@ func TestAPublishDoesNotClobberAnotherWritersValue(t *testing.T) {
 	}
 }
 
-// TestAllowErrorInsideAnItemTemplateDoesNotPanic is round five's
+// TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle is round five's
 // critical, and it was introduced by round four's own guard.
 //
 // document.build allocates ctx.armedSinks and its defer restores it to
@@ -1157,7 +1154,7 @@ func TestAPublishDoesNotClobberAnotherWritersValue(t *testing.T) {
 // the page's map with rows would add an entry per row realization and
 // drop none, and two rows binding one sink is a real collision the page
 // guard should catch. Raised in review of #459.
-func TestAllowErrorInsideAnItemTemplateDoesNotPanic(t *testing.T) {
+func TestAllowErrorInsideAnItemTemplateReachesItsRowsHandle(t *testing.T) {
 	const page = `<Gooey>
   <ItemsView Items="{{.Rows}}">
     <ItemsView.ItemTemplate>
@@ -1178,22 +1175,56 @@ func TestAllowErrorInsideAnItemTemplateDoesNotPanic(t *testing.T) {
 	// test at all. A load error that arrives too early is the same
 	// vacuous pass as no assertion.
 	rows := prop.NewSource([]post{{Title: "one"}, {Title: "two"}})
+	// THE ROW'S OWN Err HANDLE IS KEPT, so the test can assert the arm
+	// actually PUBLISHED rather than only that it did not panic. Each row
+	// gets its own — that is the point of row scope — so the mapping func
+	// records them as it goes.
+	//
+	// An UNPARSEABLE Cats, because a publication of "" is indistinguishable
+	// from never publishing at all: prop.Set does not compare, but the
+	// zero value a fresh source already holds does not say who wrote it.
+	var errs []*prop.Property[string]
 	ctx.Values["Rows"] = components.Items(rows, func(x post) map[string]any {
+		e := prop.NewSource("")
+		errs = append(errs, e)
 		return map[string]any{
 			"Label": x.Title,
-			"Cats":  prop.NewSource("Focus"),
-			"Err":   prop.NewSource(""),
+			"Cats":  prop.NewSource("NoSuchCategory"),
+			"Err":   e,
 		}
 	})
+
+	// err == nil, not "any error that is not about ItemSource". The row
+	// reaches the arm today, so the strong assertion is available — and
+	// the weak one left a regression that turns a row-template AllowError
+	// into a load error looking exactly like a pass, including one in the
+	// guard chain this round touched.
 	if _, err := Build([]byte(page), ctx); err != nil {
-		// A load ERROR is a legitimate answer; a panic is not. But it has
-		// to be an error ABOUT this shape — anything earlier means the
-		// row was never built and this test proved nothing.
-		if strings.Contains(err.Error(), "ItemSource") || strings.Contains(err.Error(), "unknown element") {
-			t.Fatalf("the build failed before a row was ever realized, so the row "+
-				"Context was never constructed and this test is vacuous:\n\t%v", err)
+		t.Fatalf("an AllowError inside an item template is a load error: %v", err)
+	}
+	if len(errs) == 0 {
+		t.Fatal("no row was ever realized, so the row Context was never " +
+			"constructed and this test is vacuous")
+	}
+	ctx.Dispatcher.Drain()
+
+	// AT LEAST ONE, not all: how many rows Validate realizes during Build
+	// is ItemsView's business, and pinning it here would make this test
+	// fail on a change that has nothing to do with AllowError.
+	published := false
+	for _, e := range errs {
+		if e.Get() != "" {
+			published = true
+			if !strings.Contains(e.Get(), "NoSuchCategory") {
+				t.Errorf("the row published %q, which does not name the "+
+					"unparseable category", e.Get())
+			}
 		}
-		t.Logf("built with an error (acceptable if deliberate): %v", err)
+	}
+	if !published {
+		t.Error("no row published its parse failure — the arm inside an item " +
+			"template does not reach its own Err handle, so AllowError is " +
+			"silent exactly where a row cannot report any other way")
 	}
 }
 
@@ -1321,5 +1352,95 @@ func TestAliasIsCaughtByHandleNotByText(t *testing.T) {
 					tc.read, got, before)
 			}
 		})
+	}
+}
+
+// TestTheAliasGuardSeesAPathInsideAValueCall.
+//
+// The guard walked bindRe, which matches only a WHOLE-BODY `{{.Path}}`.
+// A path carried as an ARGUMENT is invisible to it, so
+// `Allow="{{v:Echo .X}}"` aliased the sink with nothing to notice, and
+// the priming publish destroyed the author's Allow source during Build —
+// the exact harm the guard was added for, reached by writing the same
+// alias a different way. Measured in review of #459 against this
+// package's own echoProvider; this is that probe, kept.
+//
+// THE SECOND ASSERTION IS THE DAMAGE, not the refusal. A guard that
+// refuses but has already scribbled on X is not a refusal, and the
+// original bug's whole signature was X going "Focus" -> "" during Build.
+func TestTheAliasGuardSeesAPathInsideAValueCall(t *testing.T) {
+	withValues(t, &echoProvider{})
+
+	const page = `<Gooey xmlns:v="` + valueURI + `">
+  <VStack>
+    <Frozen Allow="{{v:Echo .X}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("Focus")
+
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("an Allow reading the sink through a value call built clean; " +
+			"the publication overwrites the set it just read")
+	}
+	if !strings.Contains(err.Error(), "cannot be both") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+	if got := ctx.Values["X"].(*prop.Property[string]).Get(); got != "Focus" {
+		t.Errorf("the allow set was destroyed before the refusal: X=%q, want \"Focus\"", got)
+	}
+}
+
+// TestTheAliasGuardSeesEveryArgumentOfAValueCall. One capture group
+// yields one match per EXPRESSION, so a single-pass scan of
+// `{{v:Echo .A .X}}` reports only .A — the "first match only" defect this
+// guard was already fixed for once, returning one level down.
+func TestTheAliasGuardSeesEveryArgumentOfAValueCall(t *testing.T) {
+	withValues(t, &echoProvider{})
+
+	const page = `<Gooey xmlns:v="` + valueURI + `">
+  <VStack>
+    <Frozen Allow="{{v:Echo .Other .X}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("Focus")
+	ctx.Values["Other"] = prop.NewSource("Alpha")
+
+	_, err := Build([]byte(page), ctx)
+	if err == nil {
+		t.Fatal("an alias in the SECOND argument built clean")
+	}
+	if !strings.Contains(err.Error(), "cannot be both") {
+		t.Errorf("the refusal is not the one this test is about:\n\t%v", err)
+	}
+	if got := ctx.Values["X"].(*prop.Property[string]).Get(); got != "Focus" {
+		t.Errorf("the allow set was destroyed before the refusal: X=%q", got)
+	}
+}
+
+// TestAValueCallThatDoesNotAliasStillLoads is what stops the two above
+// being satisfied by refusing every value call in an Allow.
+func TestAValueCallThatDoesNotAliasStillLoads(t *testing.T) {
+	withValues(t, &echoProvider{})
+
+	const page = `<Gooey xmlns:v="` + valueURI + `">
+  <VStack>
+    <Frozen Allow="{{v:Echo .Other}}" AllowError="{{.X}}">
+      <TextBox Name="a" Text="{{.In}}"/>
+    </Frozen>
+  </VStack>
+</Gooey>`
+	ctx := errAllowCtx("Focus")
+	ctx.Values["X"] = prop.NewSource("")
+	ctx.Values["Other"] = prop.NewSource("Focus")
+
+	if _, err := Build([]byte(page), ctx); err != nil {
+		t.Fatalf("a value call naming a DIFFERENT property is refused: %v", err)
 	}
 }
