@@ -176,8 +176,7 @@ func (ed *editor) cutSelected() {
 		return
 	}
 	src := n.markup("")
-	msg := "cut " + describeNode(n) + ed.sayCopiedOut(src)
-	// THE CLIPBOARD IS WRITTEN ONLY IF THE DELETE STANDS. deletable()
+	// NEITHER CLIPBOARD IS WRITTEN UNLESS THE DELETE STANDS. deletable()
 	// above answers the refusals deleteSelected can see BEFORE trying, but
 	// not the one only the loader can: removing a child can make its
 	// parent illegal (`<Tab Header=… needs exactly one content child,
@@ -185,6 +184,18 @@ func (ed *editor) cutSelected() {
 	// anyway would leave the node on the page and on the clipboard, so the
 	// next paste duplicates it under a colliding Name. Reported in review
 	// of #454.
+	//
+	// BOTH, and the first version of this fix withheld only one. The
+	// message was built above the guard, and sayCopiedOut is not a
+	// formatter — it calls copyToSystem, which writes the OSC 52. So a
+	// refused cut left the node on the page and its markup on the SYSTEM
+	// clipboard, which is a live route back into the document through the
+	// terminal's own paste key (bindClipboardTo → pasteMarkup →
+	// insertSubtree). It also overwrote the user's clipboard while the
+	// status line read "✗ … cannot be deleted", against sayCopiedOut's own
+	// "never silent in either direction". Reported in review of #454,
+	// twice. The fix is ordering: nothing above this line touches a
+	// clipboard.
 	//
 	// deleteSelected rebuilds, and rebuild sets the build status — so the
 	// message goes on AFTER it or it is overwritten in the same frame by
@@ -196,7 +207,7 @@ func (ed *editor) cutSelected() {
 		return
 	}
 	ed.clip = clipboard{node: n.deepCopy(), markup: src}
-	ed.status.Set(msg)
+	ed.status.Set("cut " + describeNode(n) + ed.sayCopiedOut(src))
 }
 
 // deletable mirrors deleteSelected's own refusal. It is a separate
@@ -287,7 +298,7 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// exist to hold it.
 	add := n
 	if plan.wrap != "" {
-		w := ed.wrapperNode(into.Elem, plan.wrap)
+		w := ed.wrapperNode(into, plan.wrap)
 		w.Kids = []*node{n}
 		add = w
 	}

@@ -554,17 +554,31 @@ type node struct {
 // element that gains a body is offered one here without this file
 // changing.
 //
-// Read from ed.palette rather than from a fresh Catalog() call because
-// the palette IS the document's vocabulary — the editor's own chrome is
-// deliberately not in it, and a body row on <Preview> would be a row on
-// something the user cannot author.
+// Asked of the CATALOG (ed.specs), not of the palette, and it is the
+// fourth reader of that class to be corrected — after target(),
+// specFor/specOrBare and grantOf, each for the same sentence: the palette
+// is the catalog minus what may not be PLACED on its own, and this asks
+// what may be SET. bodySpec is asked of target.Elem, which since this
+// PR's alt+enter can be a Nested element the palette does not contain, so
+// a nested element declaring a Body would lose its body row from the
+// inspector with no error.
+//
+// Latent today and measured rather than assumed: <Text> is the only
+// element in the catalog declaring a Body, and it is neither Nested nor
+// NonVisual, so ed.specs gives an identical answer. The old comment
+// justified the palette by "the editor's own chrome is deliberately not
+// in it" — true, and a property of ed.docCtx, which ed.specs comes from
+// too, so it never separated the two.
+//
+// It is also a map lookup where the palette was a linear scan, and
+// attrRows calls this inside a prop.NewComputed's evaluation. Found in
+// review of #454.
 func (ed *editor) bodySpec(elem string) *markup.BodySpec {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e.Body
-		}
+	e, ok := ed.specOf(elem)
+	if !ok {
+		return nil
 	}
-	return nil
+	return e.Body
 }
 
 // takesBody is the boolean form. Nothing on the seeding path calls it any
@@ -576,8 +590,9 @@ func (ed *editor) bodySpec(elem string) *markup.BodySpec {
 func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
 // grantOf is the catalog's answer to "what geometry does this element
-// give its children", and it is the ONLY thing in this editor that
-// decides what dragging means.
+// give its children" — the attached-property surface a parent
+// contributes — and it is the ONLY thing in this editor that decides what
+// dragging means.
 //
 // THIS USED TO BE `switch p.Elem { case "Canvas": ...; case "Grid": ... }`
 // in dragKind, with everything else falling through to "reorder". The
@@ -588,8 +603,8 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 // palette is built from means a third-party <Table> declaring
 // GrantCell is designable here with no change to this file.
 //
-// grantOf is the attached-property surface a parent contributes, asked
-// of the CATALOG rather than of the palette.
+// THE CATALOG RATHER THAN THE PALETTE, which is the second half of the
+// opening above and not a second definition of the function.
 //
 // Same distinction target() was just corrected for, one line away and
 // missed: the palette is the catalog minus what may not be PLACED on its
@@ -1895,13 +1910,21 @@ func (ed *editor) attrRows() []attrRow {
 			body:  true,
 		})
 	}
-	// THE PARENT'S GRANT, resolved in the PALETTE. markup.AttrsFor takes a
+	// THE PARENT'S GRANT, resolved in the CATALOG. markup.AttrsFor takes a
 	// parent NAME and resolves it in the builtin registry, which answers
 	// "no attached attributes" for a container the host registered — so
 	// the drag wrote Table.R onto a child and the properties grid had no
-	// row for it, in the same editor. ed.grantOf reads the palette, which
+	// row for it, in the same editor. ed.grantOf reads the catalog, which
 	// IS the document's vocabulary, so the inspector and the drag now ask
 	// one question. Found in review of #390 (issue #418).
+	//
+	// THE CATALOG AND NOT THE PALETTE, which is a distinction this
+	// paragraph got wrong for two rounds after grantOf itself was
+	// corrected: a <MenuItem>'s parent is a <Menu>, which is Nested and
+	// therefore absent from the palette, so a palette lookup returns the
+	// empty grant and every attached row vanishes with no error. The
+	// comment described the defect as the design. Found in review of
+	// #454.
 	for _, a := range ed.grantOf(parent).AttrsFor(spec) {
 		v := target.Attrs[a.Name]
 		rows = append(rows, attrRow{
@@ -2282,7 +2305,7 @@ func (ed *editor) addSelected() {
 		// as the USER's insert being illegal, which it was not. The
 		// attributes come from the container's own seed instead; see
 		// wrapperNode.
-		w := ed.wrapperNode(into.Elem, plan.wrap)
+		w := ed.wrapperNode(into, plan.wrap)
 		w.Kids = []*node{n}
 		add = w
 	}

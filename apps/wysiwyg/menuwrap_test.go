@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/WonderForgeLabs/gooey/components"
 )
 
 // TestWrappingAMenuItemRepeatsTheSeedsTitle.
@@ -16,10 +18,19 @@ import (
 //
 // The behaviour is the wrapper's documented KNOWN LIMIT: the clone carries
 // the seed's attributes verbatim, so a second <Menu> repeats the first's
-// Title. This pins it rather than fixing it, because the fix needs a
-// notion of "the attribute that labels this element" the catalog does not
-// have — but it pins the part that makes it merely cosmetic, which is the
-// half that could stop being true.
+// Title TEXT. That half stays — the fix needs a notion of "the attribute
+// that labels this element" the catalog does not have.
+//
+// WHAT DOES NOT STAY IS THE ACCELERATOR, and the first version of this
+// test asked the wrong question about it. It read
+// strings.Contains(title, "_") and concluded the clone claimed nothing —
+// a fourth local re-derivation of a rule components/mnemonic.go owns and
+// says must not be re-derived, and wrong in the same direction this
+// module was already wrong once (review of #428): menus fall back to the
+// FIRST LETTER, so <Menu Title="File"> claims alt+f with no marker at
+// all, MenuBar.titleWithAccel takes the first match, and the new menu
+// never opens. It asks components.MenuMnemonic now, which is the function
+// exported for exactly this. Raised in review of #454.
 func TestWrappingAMenuItemRepeatsTheSeedsTitle(t *testing.T) {
 	ed, _ := buildPage(t)
 
@@ -30,7 +41,14 @@ func TestWrappingAMenuItemRepeatsTheSeedsTitle(t *testing.T) {
 			"longer on the single-candidate branch and this test cannot see its case", got)
 	}
 
-	w := ed.wrapperNode("MenuBar", "Menu")
+	// The parent as the real gesture supplies it: a <MenuBar> that
+	// already holds the seed's <Menu>. Passing an EMPTY MenuBar would
+	// pass whatever unshadowMnemonic did, because there is nothing to
+	// collide with.
+	bar := &node{Elem: "MenuBar", Kids: []*node{
+		{Elem: "Menu", Attrs: map[string]string{"Title": "File"}},
+	}}
+	w := ed.wrapperNode(bar, "Menu")
 	if w.Elem != "Menu" {
 		t.Fatalf("wrapper is <%s>, want <Menu>", w.Elem)
 	}
@@ -40,17 +58,44 @@ func TestWrappingAMenuItemRepeatsTheSeedsTitle(t *testing.T) {
 			"a wrapper that does not build is worse than a repeated label")
 	}
 
-	// THE COSMETIC/SHADOWING LINE, and it is the whole reason this test
-	// exists. A repeated LABEL is cosmetic. A repeated MNEMONIC is not: two
-	// menus claiming alt+F means one of them never opens, and which one is
-	// a fact about tree order no reader of the markup can see. MenuBar's
-	// seed carries no "_" today, so the clone claims no accelerator. If a
-	// seed grows one, this fails and the limit has to be fixed rather than
-	// documented.
-	if strings.Contains(title, "_") {
-		t.Errorf("the cloned wrapper's Title is %q, which carries a mnemonic marker — "+
-			"every wrapper built this way would claim the same accelerator, and all "+
-			"but one would silently never open", title)
+	// THE TEXT REPEAT IS THE DOCUMENTED LIMIT and stays: strip the marker
+	// and the clone still reads "File". Pinned so the fix below cannot be
+	// mistaken for a rename.
+	if strings.ReplaceAll(title, "_", "") != "File" {
+		t.Errorf("the cloned wrapper's Title is %q; the documented limit is that it "+
+			"repeats the seed's text, and something has changed that without "+
+			"changing the paragraph that says so", title)
+	}
+
+	// THE SHADOWING LINE, asked of the owner of the rule. Two menus
+	// claiming alt+f means one of them never opens, and which one is a
+	// fact about tree order no reader of the markup can see.
+	got, has := components.MenuMnemonic(title)
+	if !has {
+		t.Fatalf("components.MenuMnemonic(%q) claims nothing at all; menus fall back "+
+			"to the first letter, so this fixture no longer exercises the rule", title)
+	}
+	seed, _ := components.MenuMnemonic("File")
+	if got == seed {
+		t.Errorf("the cloned wrapper's Title is %q, which claims accelerator %q — the "+
+			"same one the <Menu> already in the bar claims. MenuBar.titleWithAccel "+
+			"takes the first match, so the menu the user just created never opens.",
+			title, string(got))
+	}
+}
+
+// TestAWrapperInAnEmptyBarKeepsTheSeedsTitle is the other side of the
+// de-shadowing: it must not rewrite a title that collides with nothing.
+// Without this, "make the accelerator unique" is satisfied by marking
+// every wrapper, which would put a stray underscore in the first menu a
+// user ever adds. Raised in review of #454.
+func TestAWrapperInAnEmptyBarKeepsTheSeedsTitle(t *testing.T) {
+	ed, _ := buildPage(t)
+	w := ed.wrapperNode(&node{Elem: "MenuBar"}, "Menu")
+	if got := w.Attrs["Title"]; got != "File" {
+		t.Errorf("the wrapper's Title is %q, want the seed's %q unchanged — nothing "+
+			"in the bar claims an accelerator, so there is nothing to avoid",
+			got, "File")
 	}
 }
 
@@ -83,7 +128,7 @@ func TestTheWrapperStillBuildsWhatItWraps(t *testing.T) {
 		t.Fatal("planAdd climbed past the selected <MenuBar>")
 	}
 
-	w := ed.wrapperNode("MenuBar", "Menu")
+	w := ed.wrapperNode(&node{Elem: "MenuBar"}, "Menu")
 	w.Kids = []*node{{Elem: "MenuItem", Attrs: map[string]string{"Text": "New"}}}
 	plan.into.Kids = append(plan.into.Kids, w)
 	ed.rebuild()

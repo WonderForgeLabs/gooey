@@ -150,3 +150,238 @@ func TestUndoStillUndoesTheEditBeforeARefusedOne(t *testing.T) {
 			"got:\n%s\nwant:\n%s", got, beforeReal)
 	}
 }
+
+// nodeNamed finds a node by its Name attribute. The tests below cannot
+// hold pointers across an undo: restore replaces ed.root wholesale with a
+// fresh clone, so every pointer taken before it dangles.
+func nodeNamed(root *node, name string) *node {
+	var found *node
+	walkNode(root, func(n *node) {
+		if found == nil && n.Attrs["Name"] == name {
+			found = n
+		}
+	})
+	return found
+}
+
+// TestARefusedCutLeavesTheSYSTEMClipboardAlone is the half the first fix
+// missed, and it is the half that routes back into the document.
+//
+// cutSelected built its status message above the delete guard, and
+// sayCopiedOut is not a formatter — it calls copyToSystem, which writes
+// the OSC 52. So a refused cut left the node on the page and its markup
+// on the SYSTEM clipboard, which the terminal's own paste key feeds
+// straight back through bindClipboardTo → pasteMarkup → insertSubtree.
+// The quieter half: the user's clipboard was overwritten while the status
+// line read "✗ … cannot be deleted", against sayCopiedOut's own "never
+// silent in either direction".
+//
+// COUNTING CALLS, not comparing text. Asserting the captured text is not
+// the cut markup passes when the writer was called with something else,
+// and this fixture's document has only one thing worth copying. Raised in
+// review of #454.
+func TestARefusedCutLeavesTheSYSTEMClipboardAlone(t *testing.T) {
+	ed, f := clipEditor(t)
+	only := &node{Elem: "Text", Body: "inside", Attrs: map[string]string{"Name": "Inside"}}
+	tabs := &node{Elem: "Tabs", Attrs: map[string]string{"Name": "Tabs1"}, Kids: []*node{
+		{Elem: "Tab", Attrs: map[string]string{"Name": "Tab1", "Header": "One"}, Kids: []*node{only}},
+	}}
+	ed.doc().Kids = []*node{tabs}
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("fixture does not build: %s", ed.status.Get())
+	}
+	before := f.calls
+
+	ed.sel = only
+	ed.cutSelected()
+
+	if !strings.HasPrefix(ed.status.Get(), "✗") {
+		t.Fatalf("status is %q after the cut, want a refusal — the loader accepted "+
+			"this delete and the test is about nothing", ed.status.Get())
+	}
+	if f.calls != before {
+		t.Errorf("a refused cut wrote the system clipboard %d time(s) with %q. The "+
+			"node is still on the page, so the terminal's paste key duplicates it "+
+			"under a colliding Name — and the user's clipboard was replaced while "+
+			"the status line reported a refusal.", f.calls-before, f.last)
+	}
+}
+
+// TestAnAcceptedCutStillWritesTheSystemClipboard stops the guard above
+// being satisfied by never writing at all.
+func TestAnAcceptedCutStillWritesTheSystemClipboard(t *testing.T) {
+	ed, f := clipEditor(t)
+	target := &node{Elem: "Text", Body: "b", Attrs: map[string]string{"Name": "B"}}
+	ed.doc().Kids = []*node{
+		{Elem: "Text", Body: "a", Attrs: map[string]string{"Name": "A"}},
+		target,
+	}
+	ed.rebuild()
+	before := f.calls
+
+	ed.sel = target
+	ed.cutSelected()
+
+	if ed.clip.node == nil {
+		t.Fatalf("an accepted cut put nothing on the internal clipboard: %s",
+			ed.status.Get())
+	}
+	if f.calls != before+1 {
+		t.Errorf("an accepted cut made %d system-clipboard write(s), want 1",
+			f.calls-before)
+	}
+	if !strings.Contains(f.last, "Name=\"B\"") {
+		t.Errorf("the system clipboard got %q, which is not the cut node's markup", f.last)
+	}
+}
+
+// TestARefusedMutationLeavesTheRedoBranchAlone is round 8's "a revert
+// must leave the history where it found it", applied to the OTHER stack.
+//
+// record clears h.redo in its push branch — the one place it is cleared,
+// and correctly so — and the refused mutation's own rebuild goes through
+// that branch, so the branch was already gone by the time the mutator
+// reverted. abort popped the undo entry and never touched redo. So a
+// gesture that was refused AND reported as refused still destroyed a
+// state that was reachable a keystroke earlier: ctrl+y answered "nothing
+// to redo".
+//
+// The existing revert tests assert through undo() only, so none of them
+// can see this. Raised in review of #454.
+func TestARefusedMutationLeavesTheRedoBranchAlone(t *testing.T) {
+	ed, _ := moveFixture(t)
+	only := &node{Elem: "Text", Body: "inside", Attrs: map[string]string{"Name": "Inside"}}
+	tabs := &node{Elem: "Tabs", Attrs: map[string]string{"Name": "Tabs1"}, Kids: []*node{
+		{Elem: "Tab", Attrs: map[string]string{"Name": "Tab1", "Header": "One"}, Kids: []*node{only}},
+	}}
+	ed.doc().Kids = []*node{tabs}
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("fixture does not build: %s", ed.status.Get())
+	}
+
+	// A real edit, then a real undo — which is what puts something on the
+	// redo stack in the first place.
+	ed.applyEdit("rename", func() { only.Attrs["Name"] = "Renamed" })
+	ed.undo()
+	if !ed.CanRedo() {
+		t.Fatal("nothing on the redo stack after an undo; the fixture cannot show " +
+			"a refusal destroying one")
+	}
+	depth := len(ed.history().redo)
+
+	// The refusal: deleting the <Tab>'s only child leaves the parent
+	// illegal, which only the loader can see.
+	ed.sel = nodeNamed(ed.root, "Inside")
+	if ed.sel == nil {
+		t.Fatal("the undo did not bring the node back under a findable name")
+	}
+	if ed.deleteSelected() {
+		t.Fatalf("the delete was accepted, so nothing here is a refusal: %s",
+			ed.status.Get())
+	}
+
+	if !ed.CanRedo() {
+		t.Error("a REFUSED mutation destroyed the redo branch: ctrl+y now answers " +
+			"\"nothing to redo\" over a state that was reachable a keystroke ago, " +
+			"and the gesture that took it was reported as refused")
+	}
+	if got := len(ed.history().redo); got != depth {
+		t.Errorf("the redo stack is %d deep after a refused mutation, was %d", got, depth)
+	}
+}
+
+// TestARealEditStillAbandonsTheRedoBranch is the invalidation half, and
+// it is why record resets h.cleared on EVERY call rather than only where
+// it clears redo. A stash that outlived the record that made it would let
+// a later abort restore a branch the user had already edited past —
+// which is the classic bug record's own comment describes from the other
+// side, arriving through the fix for it. Raised in review of #454.
+func TestARealEditStillAbandonsTheRedoBranch(t *testing.T) {
+	ed, _ := moveFixture(t)
+	only := &node{Elem: "Text", Body: "inside", Attrs: map[string]string{"Name": "Inside"}}
+	tabs := &node{Elem: "Tabs", Attrs: map[string]string{"Name": "Tabs1"}, Kids: []*node{
+		{Elem: "Tab", Attrs: map[string]string{"Name": "Tab1", "Header": "One"}, Kids: []*node{only}},
+	}}
+	ed.doc().Kids = []*node{tabs}
+	ed.rebuild()
+
+	ed.applyEdit("rename", func() { only.Attrs["Name"] = "Renamed" })
+	ed.undo()
+	if !ed.CanRedo() {
+		t.Fatal("nothing on the redo stack after an undo")
+	}
+
+	// A real edit that STANDS. This is what abandons the branch.
+	ed.applyEdit("retitle", func() {
+		nodeNamed(ed.root, "Tabs1").Attrs["Name"] = "Tabs2"
+	})
+	if ed.CanRedo() {
+		t.Fatal("a real edit did not abandon the redo branch; the assertion below " +
+			"cannot distinguish a stale stash from a live one")
+	}
+
+	// Now a refusal. It must NOT resurrect the branch the edit abandoned.
+	// "Inside", not "Renamed": the undo above put the rename back.
+	ed.sel = nodeNamed(ed.root, "Inside")
+	if ed.sel == nil {
+		t.Fatal("the fixture lost the node the refusal is aimed at")
+	}
+	if ed.deleteSelected() {
+		t.Fatalf("the delete was accepted: %s", ed.status.Get())
+	}
+	if ed.CanRedo() {
+		t.Errorf("a refused mutation resurrected a redo branch the user had already "+
+			"edited past: %d state(s) came back", len(ed.history().redo))
+	}
+}
+
+// TestAnUnchangedRebuildDoesNotLeaveAStaleRedoStash is the arm for the
+// reset at the top of record, and it is deliberately a unit test on
+// history rather than a gesture.
+//
+// Measured first: driving this through the editor does NOT fire. Every
+// abortHistory in the tree is preceded by the refused mutator's own
+// rebuild, which changes the tree, so record reaches its push branch and
+// re-stashes — cleared is freshly correct whether or not the reset is
+// there, and the mutation removing it was SILENT against the whole
+// wysiwyg suite. The reset is what makes that a property rather than a
+// coincidence about today's call sites: a record that STANDS and is then
+// followed by a rebuild changing nothing leaves an older branch in the
+// stash, and the next abort restores it — the classic redo bug arriving
+// through the fix for the other half of it.
+//
+// So the sequence below is stated directly: push, abandon the branch,
+// rebuild-with-no-change, abort. Raised in review of #454.
+func TestAnUnchangedRebuildDoesNotLeaveAStaleRedoStash(t *testing.T) {
+	h := &history{limit: 10}
+	one := &node{Elem: "VStack", Attrs: map[string]string{"Name": "A"}}
+	two := &node{Elem: "VStack", Attrs: map[string]string{"Name": "B"}}
+	three := &node{Elem: "VStack", Attrs: map[string]string{"Name": "C"}}
+
+	h.record(one, nil, false) // the baseline
+	h.record(two, nil, false) // an edit
+	// The history half of ed.undo(), inline: the editor's version also
+	// restores the tree, which is not what this is about.
+	h.redo = append(h.redo, h.base)
+	h.base = h.undo[len(h.undo)-1]
+	h.undo = h.undo[:len(h.undo)-1]
+	if len(h.redo) == 0 {
+		t.Fatal("nothing on the redo stack; the fixture cannot show a stale stash")
+	}
+	h.record(three, nil, false) // a real edit: the branch is abandoned
+	if len(h.redo) != 0 {
+		t.Fatal("the real edit did not abandon the redo branch")
+	}
+
+	// A rebuild that changes nothing — record returns early, and must
+	// still have cleared the stash on its way in.
+	h.record(three, nil, false)
+	h.abort(three)
+
+	if len(h.redo) != 0 {
+		t.Errorf("abort resurrected %d redo state(s) from a branch the user had "+
+			"already edited past", len(h.redo))
+	}
+}

@@ -2,7 +2,9 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
@@ -171,21 +173,32 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 //
 // KNOWN LIMIT, stated rather than hidden: every wrapper built this way
 // carries the same attribute values, so a second added tab repeats the
-// first's header, and adding a <MenuItem> with a <MenuBar> selected
-// builds a second <Menu Title="File"> beside the first. That is cosmetic
-// — a header and a title are labels, not addresses, so nothing is
-// shadowed and nothing fails to build — but it is real, and fixing it
-// needs a notion of "the attribute that labels this element" that the
-// catalog does not have today.
+// first's header. That much is cosmetic — a header is a label, not an
+// address, so nothing is shadowed and nothing fails to build — and
+// fixing it needs a notion of "the attribute that labels this element"
+// that the catalog does not have today.
 //
-// The MENU case is new with this PR and was checked rather than assumed,
-// because a menu title CAN carry a mnemonic and a duplicated mnemonic
-// would be shadowing rather than cosmetic. It does not here: MenuBar's
-// seed is `<Menu Title="File">` with no `_` marker, so the clone claims
-// no accelerator. TestWrappingAMenuItemRepeatsTheSeedsTitle pins both
-// halves — the repeat, and the absence of a mnemonic in it — so a seed
-// that later grows one turns this from cosmetic into a bug loudly.
-func (ed *editor) wrapperNode(parent, wrap string) *node {
+// THE MENU CASE IS NOT COSMETIC, and reading it as one was wrong against
+// a rule this same PR documents. A menu title with no `_` marker does
+// not claim nothing — menus fall back to the FIRST LETTER
+// (components/mnemonic.go, and the per-component doctrine at the top of
+// that file: buttons take only an explicit marker, menus do not). So a
+// second <Menu Title="File"> claims alt+f exactly as the first does, and
+// MenuBar.titleWithAccel takes the first match: the new menu is
+// unreachable from the keyboard, and which one loses is a fact about
+// tree order no reader of the markup can see. The previous version of
+// this paragraph said "the clone claims no accelerator", derived from
+// the absence of an underscore — the same local re-derivation of the
+// mnemonic rule that mnemonic.go records this module getting wrong in
+// review of #428. Found in review of #454.
+//
+// unshadowMnemonic below is the fix, and it is deliberately narrow: it
+// gives the clone an EXPLICIT marker on a letter no sibling claims,
+// leaving the repeated text alone. The text repeat stays a documented
+// cosmetic limit; the accelerator collision does not, because it makes a
+// menu the user just created impossible to open.
+func (ed *editor) wrapperNode(into *node, wrap string) *node {
+	parent := into.Elem
 	bare := &node{Elem: wrap, Attrs: map[string]string{}}
 	spec, ok := ed.specOf(parent)
 	if !ok || strings.TrimSpace(spec.Seed) == "" {
@@ -203,9 +216,92 @@ func (ed *editor) wrapperNode(parent, wrap string) *node {
 		for name, v := range k.Attrs {
 			attrs[name] = v
 		}
+		ed.unshadowMnemonic(into, wrap, attrs)
 		return &node{Elem: wrap, Attrs: attrs}
 	}
 	return bare
+}
+
+// unshadowMnemonic keeps a cloned wrapper from stealing a sibling's
+// keyboard accelerator.
+//
+// It asks components.MenuMnemonic rather than looking for an underscore,
+// which is the whole point: that function is EXPORTED FOR THE COLLISION
+// GUARDS, and a local re-derivation of the rule is the defect
+// mnemonic.go records this module shipping once already (review of
+// #428 — it required an explicit marker, so every menu relying on the
+// first-letter fallback was invisible to it, which is exactly the case
+// here).
+//
+// "MenuBar" IS NAMED, and it is the only element name in this file. The
+// rule being applied is menu-flavoured — mnemonic.go says so, and says a
+// guard about buttons must not reach for this answer — so it may not be
+// applied to whatever element happens to be a single-candidate wrapper.
+// The PARENT is what the name tests, because the parent is what
+// dispatches the alt gesture (MenuBar.HandleMnemonic); that is the rule
+// itself rather than a proxy for it.
+//
+// Named rather than derived because markup.ElementSpec carries no "this
+// attribute is an accelerator" fact — ElementDef.ParsedBy is not on the
+// catalog's surface, and reading it would only move the name. That gap is
+// the one the KNOWN LIMIT above names for labels, and closing it is what
+// would let this lose the name. Found in review of #454.
+func (ed *editor) unshadowMnemonic(into *node, wrap string, attrs map[string]string) {
+	if into.Elem != "MenuBar" {
+		return
+	}
+	spec, ok := ed.specOf(wrap)
+	if !ok {
+		return
+	}
+	for _, a := range spec.Attrs {
+		if !a.Required || a.Kind != markup.KindString {
+			continue
+		}
+		want, has := components.MenuMnemonic(attrs[a.Name])
+		if !has {
+			continue
+		}
+		claimed := map[rune]bool{}
+		for _, sib := range into.Kids {
+			if sib.Elem != wrap {
+				continue
+			}
+			if r, ok := components.MenuMnemonic(sib.Attrs[a.Name]); ok {
+				claimed[r] = true
+			}
+		}
+		if !claimed[want] {
+			continue
+		}
+		if marked, ok := markUnclaimed(attrs[a.Name], claimed); ok {
+			attrs[a.Name] = marked
+		}
+	}
+}
+
+// markUnclaimed puts a `_` before the first letter or digit of title that
+// no sibling has claimed, and reports whether it found one.
+//
+// It reports false rather than marking arbitrarily when every letter is
+// taken: a wrapper carrying the seed's title unchanged is a repeat the
+// user can see and fix, while one carrying a marker on a letter someone
+// else already owns would be the same shadowing wearing a fix.
+//
+// The scan is over RUNES and skips a `_` already present, so a title that
+// arrives marked is re-marked rather than double-marked.
+func markUnclaimed(title string, claimed map[rune]bool) (string, bool) {
+	runes := []rune(strings.ReplaceAll(title, "_", ""))
+	for i, r := range runes {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			continue
+		}
+		if claimed[unicode.ToLower(r)] {
+			continue
+		}
+		return string(runes[:i]) + "_" + string(runes[i:]), true
+	}
+	return title, false
 }
 
 // addPlan is where the insert goes and what wraps it.
