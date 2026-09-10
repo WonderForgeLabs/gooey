@@ -377,7 +377,18 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 // identifier half matching a shape the mechanical half never counted,
 // and the non-vacuity guard below watching the wrong pattern. Raised in
 // review of #475.
-var citation = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
+// citationRe, not `citation`: specclaims_test.go declares `type
+// citation` in this same package, and a bare noun is the better name
+// for "one backticked test name in prose" than for the pattern that
+// finds one.
+//
+// The two names collided on MAIN and in neither PR. #475 added this var
+// and #476 added that type; each was green against a main that did not
+// yet have the other, and they squash-merged four seconds apart into a
+// root package that would not compile. Nothing in CI could have caught
+// it — a required check runs against the PR's own merge commit, not
+// against the main its neighbour is about to create.
+var citationRe = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 
 // citeForms are the spellings CLAUDE.md actually uses to attach an
 // identifier to a citation. Only these get the second check; a citation
@@ -418,7 +429,7 @@ type citeForm struct {
 	// citation that names a single line.
 	fields func([]string) (string, string, int, int)
 	// sample renders a citation IN THIS FORM, and it is what lets
-	// TestTheCitationGuardCatchesWhatItIsFor derive its cases from this
+	// TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor derive its cases from this
 	// slice instead of hand-writing one per form.
 	//
 	// It earns its place twice over: the hand-written cases had form B
@@ -517,7 +528,7 @@ const citeWindow = 3
 // citationProblems is the check itself, over a document and a way to
 // read the files it cites. It is separate from the test so the guard can
 // be pointed at a SYNTHETIC document with a known defect —
-// TestTheCitationGuardCatchesWhatItIsFor below. Without that arm, a
+// TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor below. Without that arm, a
 // widened citeWindow or a downgraded error silently turns the whole
 // thing into a no-op that still reports PASS.
 //
@@ -575,7 +586,7 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 	}
 
 	// ---- half one: every citation names a real place ----
-	for _, m := range citation.FindAllStringSubmatch(md, -1) {
+	for _, m := range citationRe.FindAllStringSubmatch(md, -1) {
 		path := m[1]
 		// HALF ONE OWNS EVERY MALFORMED LINE NUMBER, because it is the
 		// only place holding the RAW text — `fields` has already
@@ -916,7 +927,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 		// markup-reference.md carries exactly one, so that is a live
 		// possibility rather than a hypothetical. Raised in review of
 		// #475.
-		n := len(citation.FindAllString(md, -1))
+		n := len(citationRe.FindAllString(md, -1))
 		cited += n
 		if n == 0 {
 			t.Errorf("%s carries no `file:line` citation, so it contributes nothing "+
@@ -989,7 +1000,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // addition in the same commit.
 const wantIdentChecked = 22
 
-// TestTheCitationGuardCatchesWhatItIsFor points the guard at documents
+// TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.
 //
 // A checker like this fails OPEN in every direction that matters: widen
@@ -1000,7 +1011,7 @@ const wantIdentChecked = 22
 // CLAUDE.md passes just as well with the check disabled.
 //
 // So each case here is a document the guard MUST reject.
-func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
+func TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor(t *testing.T) {
 	// THE WINDOW IS PINNED BY VALUE, and that is finding 2 of review
 	// #475 — including the half my first fix got wrong.
 	//
@@ -1395,7 +1406,7 @@ func TestTheProductionReaderCountsRealLines(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	path := dir + "/three.go"
-	if !citation.MatchString("`" + path + ":3`") {
+	if !citationRe.MatchString("`" + path + ":3`") {
 		t.Fatalf("the fixture path %q is outside the citation grammar, so the "+
 			"checks below would see no citation and pass on that", path)
 	}
