@@ -1636,7 +1636,7 @@ func TestEveryClipboardStubStatesItsTerminal(t *testing.T) {
 // legal Go: keyed by name the second file parsed OVERWRITES the first, so
 // a compliant door masks a non-compliant one — and the non-vacuity floor
 // below cannot notice, because it still counts one entry per name. Use
-// doorName to get the identifier back out. Raised in review of #467.
+// doorName to get the identifier back out.
 //
 // It takes a DIRECTORY rather than hardcoding ".", and that is the half
 // that makes the guard above falsifiable. On a corpus where every stub
@@ -1664,11 +1664,55 @@ func clipboardStubs(t *testing.T, dir string) map[string]bool {
 	}
 	fset := token.NewFileSet()
 	states := map[string]bool{}
+
+	// PARSED FIRST, WALKED SECOND, because one of the two things a walk
+	// needs is package-wide. A save can live at package scope:
+	//
+	//	var origWrite = writeSystemClipboard
+	//	func restoreWrite() { writeSystemClipboard = origWrite }
+	//
+	// and a `saved` set rebuilt per declaration has never heard of
+	// origWrite, so restoreWrite assigns the seam from an unknown
+	// identifier and is reported as a stub that never states its
+	// terminal — the false accusation restoresOnly exists to prevent,
+	// one SCOPE over rather than one spelling over. Nothing in the
+	// fixture could catch it, because both restore rows kept the save
+	// inside the function.
+	type parsed struct {
+		file string
+		f    *ast.File
+	}
+	var files []parsed
+	pkgSaved := map[string]bool{}
 	for _, name := range names {
 		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
+		files = append(files, parsed{filepath.Base(name), f})
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, v := range vs.Values {
+					id, ok := v.(*ast.Ident)
+					if !ok || id.Name != "writeSystemClipboard" || i >= len(vs.Names) {
+						continue
+					}
+					pkgSaved[vs.Names[i].Name] = true
+				}
+			}
+		}
+	}
+
+	for _, pf := range files {
+		f := pf.f
 		// record attributes one body to the name that owns it. Both
 		// callers below hand it a node and a name; nothing else decides
 		// what a "door" is.
@@ -1699,6 +1743,9 @@ func clipboardStubs(t *testing.T, dir string) map[string]bool {
 			// that worked, which is why nothing saw it. Raised in review
 			// of #467.
 			saved := map[string]bool{}
+			// Seeded with the package-level saves collected above, so a
+			// restore reading one of them is still a restore.
+			maps.Copy(saved, pkgSaved)
 			ast.Inspect(body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.ValueSpec:
@@ -1719,55 +1766,53 @@ func clipboardStubs(t *testing.T, dir string) map[string]bool {
 							saved[lhs.Name] = true
 						}
 					}
-					// The STUB is `writeSystemClipboard = func...`, not the
-					// `prev := writeSystemClipboard` that saves it, so the
-					// name has to be on the LEFT.
-					for i, lhs := range x.Lhs {
-						id, ok := lhs.(*ast.Ident)
-						if !ok || id.Name != "writeSystemClipboard" {
-							continue
-						}
-						if i < len(x.Rhs) {
-							if r, ok := x.Rhs[i].(*ast.Ident); ok && saved[r.Name] {
-								continue // a restore
-							}
-						}
-						assigns = true
-					}
 				}
 				return true
 			})
-			// THE CALL HAS TO BE A TOP-LEVEL STATEMENT OF THIS
-			// DECLARATION'S OWN BODY, not a match anywhere in its
-			// subtree. ast.Inspect descends into nested literals, so
+			// THE CALL HAS TO BE IN THE SAME BLOCK AS THE STUB, and
+			// the two halves used to be scoped differently: the
+			// assignment was found anywhere in the subtree and the call
+			// was required at depth zero.
+			//
+			// That rejected a correct door. A stub inside a subtest —
+			//
+			//	t.Run("case", func(t *testing.T) {
+			//		statePlainTerminal(t)
+			//		writeSystemClipboard = …
+			//	})
+			//
+			// assigns (the walk descends into the closure) and does not
+			// call (the closure's own statements are never scanned), so
+			// the guard failed it with a message naming #463 for doing
+			// exactly the right thing. A guard that accuses correct code
+			// loses the reader it needs, which is the same cost the
+			// restore exclusion was added to avoid.
+			//
+			// Same-block keeps the t.Cleanup rejection intact for free:
 			//
 			//	t.Cleanup(func() { statePlainTerminal(t) })
 			//
-			// scored compliant while every test behind the door read the
-			// developer's shell: the call is registered, not made, and
-			// t.Cleanup runs it after the test it was supposed to
-			// protect. Both real doors call it as a plain statement, so
-			// requiring that costs nothing and closes the shape. Raised
-			// in review of #467.
-			calls := false
-			for _, st := range topLevelStmts(body) {
-				es, ok := st.(*ast.ExprStmt)
-				if !ok {
-					continue
+			// registers the call rather than making it, and the
+			// closure's block is not the block the assignment is in. So
+			// one rule closes the shape and stops inventing the false
+			// positive, where two scopes did neither cleanly.
+			assigns, compliant := false, true
+			ast.Inspect(body, func(n ast.Node) bool {
+				blk, ok := n.(*ast.BlockStmt)
+				if !ok || !blockStubs(blk, saved) {
+					return true
 				}
-				call, ok := es.X.(*ast.CallExpr)
-				if !ok {
-					continue
+				assigns = true
+				if !blockStates(blk) {
+					compliant = false
 				}
-				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
-					calls = true
-				}
-			}
+				return true
+			})
 			if assigns {
-				states[file+":"+name] = calls
+				states[file+":"+name] = compliant
 			}
 		}
-		base := filepath.Base(name)
+		base := pf.file
 		for _, d := range f.Decls {
 			switch decl := d.(type) {
 			case *ast.FuncDecl:
@@ -1810,6 +1855,61 @@ func topLevelStmts(body ast.Node) []ast.Stmt {
 		return b.Body.List
 	}
 	return nil
+}
+
+// blockStubs reports whether blk assigns writeSystemClipboard as one of
+// its OWN statements, from something other than a saved copy.
+//
+// The STUB is `writeSystemClipboard = func…`, not the
+// `prev := writeSystemClipboard` that saves it, so the name has to be on
+// the LEFT — and an assignment FROM a saved identifier is a restore, the
+// t.Cleanup idiom every correct stub ends with. The rule is conservative
+// in the direction that matters: an assignment from anything other than
+// a saved name is treated as a stub, so `writeSystemClipboard =
+// fakeWriter` still counts.
+//
+// Its own statements rather than its subtree, because a nested block is
+// visited on its own terms by the caller — which is what makes "the call
+// must be in the same block" a rule at all.
+func blockStubs(blk *ast.BlockStmt, saved map[string]bool) bool {
+	for _, st := range blk.List {
+		as, ok := st.(*ast.AssignStmt)
+		if !ok {
+			continue
+		}
+		for i, lhs := range as.Lhs {
+			id, ok := lhs.(*ast.Ident)
+			if !ok || id.Name != "writeSystemClipboard" {
+				continue
+			}
+			if i < len(as.Rhs) {
+				if r, ok := as.Rhs[i].(*ast.Ident); ok && saved[r.Name] {
+					continue // a restore
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// blockStates reports whether blk CALLS statePlainTerminal as one of its
+// own statements — made, not registered.
+func blockStates(blk *ast.BlockStmt) bool {
+	for _, st := range blk.List {
+		es, ok := st.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := es.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "statePlainTerminal" {
+			return true
+		}
+	}
+	return false
 }
 
 // doorName is the identifier out of a "file:name" key.
@@ -1858,13 +1958,8 @@ func TestTheClipboardStubGuardCatchesWhatItIsFor(t *testing.T) {
 	// walk over-corrected against them would invent, and both need a row
 	// or the exclusion is only half stated.
 	//
-	// TWO RESTORE ROWS, AND THAT IS THE POINT OF THE SECOND. The
-	// exclusion is spelling-sensitive: `prev := writeSystemClipboard` is
-	// an AssignStmt and `var prev = writeSystemClipboard` is a ValueSpec,
-	// and the walk recorded only the first — so the second was accused of
-	// being a door, in a message naming #463, for doing the right thing.
-	// The fixture carried only the spelling that worked, which is exactly
-	// why nothing could see it. Raised in review of #467.
+	// The restore rows are TWO because the exclusion is
+	// spelling-sensitive; see clipboardStubs for why.
 	write("good_test.go", `func goodStub(t *T) {
 	statePlainTerminal(t)
 	writeSystemClipboard = func(ed *editor, text string) error { return nil }
@@ -1899,13 +1994,33 @@ func namedStub(t *T) {
 }
 
 func onlyStates(t *T) { statePlainTerminal(t) }
+
+func subtestStub(t *T) {
+	t.Run("case", func(t *T) {
+		statePlainTerminal(t)
+		writeSystemClipboard = func(ed *editor, text string) error { return nil }
+	})
+}
+
+func subtestUnstated(t *T) {
+	t.Run("case", func(t *T) {
+		writeSystemClipboard = func(ed *editor, text string) error { return nil }
+	})
+}
 `)
-	// A DOOR THAT IS NOT A FuncDecl. This is the shape the walk used to
-	// miss entirely: a reviewer wrote one, asserted a confirmed copy
-	// behind it, and watched TestEveryClipboardStubStatesItsTerminal pass
-	// while the new test went red under $TMUX. It is in the fixture rather
-	// than only in the walk because a walk is only checked by a corpus
-	// that contains what it must not miss.
+	// THE SAVE AT PACKAGE SCOPE. `saved` is rebuilt per declaration, so
+	// a var bound outside every function was invisible to it and the
+	// restore reading it was scored as a door — restoresOnly's false
+	// accusation one SCOPE over. Both existing restore rows keep the
+	// save inside the function, which is why nothing could see it.
+	write("pkgsave_test.go", `var origWrite = writeSystemClipboard
+
+func restoreWrite(t *T) { writeSystemClipboard = origWrite }
+`)
+	// A DOOR THAT IS NOT A FuncDecl, which is the shape the walk walks
+	// declarations rather than functions to reach; see clipboardStubs.
+	// It is here because a walk is only checked by a corpus that
+	// contains what it must not miss.
 	write("var_test.go", `var varStub = func(t *T) {
 	writeSystemClipboard = func(ed *editor, text string) error { return nil }
 }
@@ -1924,6 +2039,12 @@ var statedVarStub = func(t *T) {
 		"bad_test.go:lateStub":      false,
 		"var_test.go:varStub":       false,
 		"var_test.go:statedVarStub": true,
+		// The subtest pair. subtestStub is the row that was FAILING
+		// before the same-block rule: it states its terminal in the
+		// block that stubs, and the old scoping found the assignment at
+		// any depth while requiring the call at depth zero.
+		"bad_test.go:subtestStub":     true,
+		"bad_test.go:subtestUnstated": false,
 	}
 	if !maps.Equal(states, want) {
 		t.Errorf("clipboardStubs found %v, want %v — the walk either misses an "+
@@ -1933,7 +2054,7 @@ var statedVarStub = func(t *T) {
 	}
 	wantUnstated := []string{
 		"bad_test.go:badStub", "bad_test.go:lateStub", "bad_test.go:namedStub",
-		"var_test.go:varStub",
+		"bad_test.go:subtestUnstated", "var_test.go:varStub",
 	}
 	if got := unstated(states); !slices.Equal(got, wantUnstated) {
 		t.Errorf("unstated = %v, want %v — the comparison is not comparing, so "+
