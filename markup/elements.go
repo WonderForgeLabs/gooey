@@ -402,6 +402,11 @@ var defFrozen = &ElementDef{
 		// "always frozen".
 		{Name: "Active", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin},
 		{Name: "Allow", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+		// Bind-only, and for a different reason than Active above: this
+		// is a WRITE target. The framework Sets it, so a literal has
+		// nowhere for the message to go — it would read as configured
+		// and report nothing forever.
+		{Name: "AllowError", Kind: KindBinding, Binds: BindsBinding, GoType: "string", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeOne},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -420,7 +425,13 @@ var defFrozen = &ElementDef{
 			}
 			f.Active = active
 		}
+		// Whether Allow is BOUND is asked twice: here, to decide whether
+		// it is checkable at load, and again by AllowError, which accepts
+		// nothing else. Spelled twice, the two guards have to agree or the
+		// second one is wrong about the first — so it is computed once.
+		allowBound := false
 		if raw := e.Attrs["Allow"]; raw != "" {
+			allowBound = strings.Contains(raw, "{{")
 			// A LITERAL Allow is checked here, at load time, which is the
 			// bargain the rest of markup makes: everything resolvable
 			// resolves before the UI is live. An interpolated one cannot
@@ -429,7 +440,7 @@ var defFrozen = &ElementDef{
 			// AllowError. Checking only what is checkable is the point;
 			// pretending the bound case is checkable would be worse than
 			// admitting it is not.
-			if !strings.Contains(raw, "{{") {
+			if !allowBound {
 				if _, err := gooey.ParseAllow(raw); err != nil {
 					return nil, fmt.Errorf("markup: <Frozen Allow=%q>: %w", raw, err)
 				}
@@ -439,6 +450,148 @@ var defFrozen = &ElementDef{
 				return nil, err
 			}
 			f.Allow = allow
+			// RECORDED FOR EVERY <Frozen> THAT BINDS ONE, whether or not
+			// this element also has an AllowError. The collision is
+			// "somebody else's sink is my source", so the element that
+			// gets erased need not be arming anything itself — see
+			// armScope.allows, and document.build for where the two maps
+			// meet. Raised in review of #459.
+			for h, path := range allowSources(ctx, raw) {
+				if _, seen := ctx.arms.allows[h]; !seen {
+					ctx.arms.allows[h] = path
+				}
+			}
+		}
+		if raw := e.Attrs["AllowError"]; raw != "" {
+			// It reports the parse of a BOUND Allow, and only that. With
+			// no Allow there is no parse; with a LITERAL one the parse
+			// already happened, twenty lines up, and produced a load
+			// error naming the attribute — so the channel could never
+			// carry anything and would read as configured forever.
+			//
+			// ONE term, not two. allowBound is false whenever Allow is
+			// absent (it is only assigned inside the branch that also
+			// assigns f.Allow), so it already covers both the absent and
+			// the literal case. Spelling it as `f.Allow == nil || …`
+			// read as two independent conditions and invited the next
+			// reader to delete whichever looked redundant.
+			if !allowBound {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> without a BOUND Allow: the only failure "+
+						"it can report is an unparseable set, and a set that is absent or "+
+						"literal cannot become one after load", raw)
+			}
+			sink, err := Bound[string](e, ctx, "AllowError")
+			if err != nil {
+				return nil, err
+			}
+			// ALIASED to Allow. <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+			// builds, and then the priming publish overwrites the author's
+			// own allow set with the parse message before the UI is live —
+			// measured: X goes "Focus" -> "" during Build.
+			//
+			// THIS COMPARES RESOLVED HANDLES, and it used to compare
+			// binding TEXT. The reasoning for the text compare was that
+			// "pointer identity cannot catch it, because BoundText wraps a
+			// dynamic attribute in a FRESH computed every call" — true of
+			// the computed, and the wrong handle to compare. The SOURCE
+			// the binding resolves to is stable, and it is available here.
+			//
+			// The text compare missed two spellings that both build
+			// cleanly and both destroy the allow set during Build:
+			//
+			//   Allow="{{.A}} {{.X}}" AllowError="{{.X}}"
+			//       bindingPath takes only the FIRST binding, reads "A",
+			//       never matches "X" (measured: X "Hover" -> "").
+			//   Allow="{{.X}}" AllowError="{{.Y}}", Values[X] == Values[Y]
+			//       two names, one property; the text differs and the
+			//       handle does not (measured: "Focus" -> "").
+			//
+			// The dup-sink guard forty lines below already refuses the
+			// second shape for its OWN question, because it keys by
+			// pointer — so the two guards on one line of defence
+			// disagreed about what "the same property" means, and the
+			// weaker one was the one protecting page state.
+			//
+			// It sits BELOW Bound so `sink` exists. Safe: Bound only
+			// reads, and armAllowError is still the last statement, so
+			// the author's set still survives every refusal above it.
+			// Raised in review of #459.
+			if ap, aliased := aliasesSink(ctx, e.Attrs["Allow"], sink); aliased {
+				return nil, fmt.Errorf(
+					"markup: <Frozen Allow=%q AllowError=%q>: one property cannot be both "+
+						"the allow set and the place its parse failure is reported — "+
+						"publishing would overwrite the set it just read "+
+						"(both resolve to %s)",
+					e.Attrs["Allow"], raw, ap)
+			}
+			// A WRITE target has to be writable, and Bound does not ask —
+			// it resolves handles for reading, which is what every other
+			// attribute on this element wants. A computed derives its
+			// value and has no setter, so armAllowError's priming Set
+			// would panic INSIDE Build: in the one package whose contract
+			// is that everything resolvable resolves before the UI is
+			// live, and under the os.DirFS watcher a rebuild panic takes
+			// the app down instead of showing a load error.
+			//
+			// markup/cond.go names this gap and says the fix belongs in
+			// the two-way binders. AllowError is the package's first
+			// write target, so this is the first place to honour it.
+			if !sink.Settable() {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> is a COMPUTED property: it derives its "+
+						"value and has no setter, so the failure has nowhere to go", raw)
+			}
+			if ctx.Dispatcher == nil {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> needs ctx.Dispatcher: the failure is "+
+						"published from an invalidation, and a Set from inside one would "+
+						"mutate the graph mid-invalidation", raw)
+			}
+			// A SECOND arm on the same sink. Two <Frozen> publishing to
+			// one property erase each other — see armScope.sinks.
+			//
+			// arms.outer as well, because an ItemsView row's map is
+			// deliberately row-local and would otherwise not see the
+			// PAGE's arms. Checking both while registering only in
+			// arms.sinks is what lets every row arm the same template
+			// sink — not a collision — while a row arming a page-owned
+			// handle still is. Raised in review of #459.
+			was, dup := ctx.arms.sinks[sink]
+			if !dup {
+				was, dup = ctx.arms.outer[sink]
+			}
+			if dup {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q>: already the failure channel for "+
+						"<Frozen AllowError=%q> in this document — two sealed subtrees "+
+						"writing one property erase each other's message, leaving a "+
+						"subtree sealed with nothing to show for it", raw, was)
+			}
+			ctx.arms.sinks[sink] = raw
+			// AND, when this is a nested scope, on the document's record.
+			// The immediate arms.outer check above catches a row realized
+			// AFTER the page's <Frozen>; this is what catches one realized
+			// before, which ItemsView.Validate's throwaway row always is
+			// when the list is declared first. Raised in review of #459.
+			if ctx.arms.outer != nil {
+				if was, dup := ctx.arms.nested.record(sink, raw); dup {
+					return nil, fmt.Errorf(
+						"markup: <Frozen AllowError=%q>: already the failure channel for "+
+							"<Frozen AllowError=%q> in another item template on this page "+
+							"— two sealed subtrees writing one property erase each other's "+
+							"message, and neither template is the page, so nothing else in "+
+							"this build can see the pair", raw, was)
+				}
+			}
+			// THROUGH arms.pending, so a load error later in this build
+			// takes the arm with it. armAllowError both subscribes and
+			// PUBLISHES, and neither is undoable — see armScope.pending
+			// for what a refused build used to leave behind. A row is a
+			// build too: the ItemsView factory opens a carrier per
+			// realization, so this reaches an open one whether it is the
+			// page being loaded or a row being scrolled into view.
+			ctx.arms.pending.arm(func() { armAllowError(f, sink, ctx.Dispatcher) })
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err
