@@ -343,16 +343,28 @@ func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
 	for _, tc := range []struct {
 		name, attrs string
 		sep, load   bool
+		// want is the phrase the refusal has to carry, for rows refused
+		// by a rule other than the bool grammar. Empty means Separator.
+		want string
 	}{
 		{name: `"true"`, attrs: `Separator="true"`, sep: true, load: true},
-		// EVERY SPELLING ParseBool TAKES. Each of these rendered as an
-		// ordinary item, silently, when Text was present.
-		{name: `"True"`, attrs: `Separator="True" Text="Open"`, sep: true, load: true},
-		{name: `"1"`, attrs: `Separator="1" Text="Open"`, sep: true, load: true},
-		{name: `"T"`, attrs: `Separator="T" Text="Open"`, sep: true, load: true},
+		// EVERY SPELLING ParseBool TAKES, each on its own. They rendered
+		// as ordinary items, silently, back when a Text could ride
+		// along; #455's "a separator carries nothing else" is what makes
+		// that document loud now, and the row below asserts it.
+		{name: `"True"`, attrs: `Separator="True"`, sep: true, load: true},
+		{name: `"1"`, attrs: `Separator="1"`, sep: true, load: true},
+		{name: `"T"`, attrs: `Separator="T"`, sep: true, load: true},
 		{name: `"false"`, attrs: `Separator="false" Text="Open"`, sep: false, load: true},
 		{name: `"0"`, attrs: `Separator="0" Text="Open"`, sep: false, load: true},
 		{name: "absent", attrs: `Text="Open"`, sep: false, load: true},
+		// THE TWO RULES COMPOSE, and this is the row that says so.
+		// Reading the bool properly is what routes this document into
+		// the separator branch at all; #455's refusal is what names the
+		// real mistake there. Read as == "true" it was neither — a
+		// silently ordinary item.
+		{name: `"True" with a Text`, attrs: `Separator="True" Text="Open"`,
+			want: "carries nothing else"},
 		// PRESENT AND UNREADABLE is the case that must not be guessed
 		// at. "yes" reads as a separator to a person and as false to
 		// ParseBool.
@@ -366,8 +378,12 @@ func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
 					t.Fatal("loaded. An unreadable bool falls back to false, which " +
 						"turns a typo into an ordinary item where the author wrote a rule")
 				}
-				if !strings.Contains(err.Error(), "Separator") {
-					t.Errorf("the error does not name the attribute: %v", err)
+				want := tc.want
+				if want == "" {
+					want = "Separator"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the error does not carry %q: %v", want, err)
 				}
 				return
 			}
