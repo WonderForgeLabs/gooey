@@ -1,9 +1,14 @@
 package markup
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/png"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -44,7 +49,13 @@ const (
 func defaultsContext() *Context {
 	return &Context{
 		Values: map[string]any{
-			"S":   prop.NewSource("sample"),
+			"S": prop.NewSource("sample"),
+			// A SECOND string handle, distinct from S. probePrereqs
+			// needs one: <Frozen> refuses Allow and AllowError resolving
+			// to the same property, so a prerequisite seeded from the
+			// same source as the attribute under test is rejected by the
+			// guard after the one being probed.
+			"S2":  prop.NewSource("other"),
 			"I":   prop.NewSource(1),
 			"B":   prop.NewSource(true),
 			"F64": prop.NewSource([]float64{1, 4, 2, 5, 3}),
@@ -59,9 +70,50 @@ func defaultsContext() *Context {
 			// attribute it is probing.
 			"Pct":  prop.NewSource(85),
 			"Noop": gooey.Command(func() {}),
+			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
-		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
+		// A DISPATCHER, because the probe environment has to be able to
+		// build everything the vocabulary declares. <Frozen AllowError>
+		// refuses to load without one ("the failure is published from an
+		// invalidation, and a Set from inside one would mutate the graph
+		// mid-invalidation"), so an attribute the catalog declares
+		// bindable was unbindable in every generic probe. It is never
+		// drained here: nothing in a load-time probe posts, and a
+		// Dispatcher that is only constructed starts no goroutine.
+		Dispatcher: gooey.NewDispatcher(),
+		Styles:     map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
+		// A REGISTERED HANDLER. Every KindCommand attribute in the
+		// vocabulary — eleven of them — was probed with "x", which
+		// Context.Command refuses with "no handler \"x\" registered"
+		// (usercontrol.go:338). That is the context being empty, not the
+		// declaration being wrong, so all eleven landed in the sweep's
+		// unverified bucket and no arm ever saw whether they take a
+		// literal. Raised in review of #470.
+		Handlers: map[string]gooey.Action{"probe": gooey.Command(func() {})},
+		// PRESENT, AND NOT EMPTY. <FileWatcher> refuses to build without
+		// an FS at all, so its three declarations came back UNVERIFIED in
+		// every sweep arm — refused, but by a message about the context
+		// rather than about the attribute under test.
+		//
+		// Empty was enough for that and not for <Image Src>, the one
+		// literal in the vocabulary that has to name something in this
+		// FS: an empty FS refused it with "file does not exist", the
+		// context again. The bytes are encoded here rather than checked
+		// in under testdata because buildImage reads through
+		// Context.Includes, so they belong beside the FS they are served
+		// from. Both raised in review of #470.
+		Includes: fstest.MapFS{"probe.png": &fstest.MapFile{Data: probePNG()}},
 	}
+}
+
+// probePNG is a 1x1 image encoded as PNG, for the one attribute whose
+// literal must be a decodable file rather than merely a path.
+func probePNG() []byte {
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }
 
 // bindingFor is the placeholder binding for a required attribute of a
@@ -90,10 +142,29 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 		return "{{.C}}"
 	case "components.ItemSource":
 		return "{{.IS}}"
+	case "image.Image":
+		// Added for the #460 sweeps, which reach elements the defaults
+		// probe never did: <Image Src> is required and bind-only, so
+		// without a placeholder the whole element drops out — which is
+		// the failure this function's Fatalf exists to make loud.
+		return "{{.Img}}"
 	}
 	t.Fatalf("no placeholder for required attribute %s of type %q — "+
 		"add one, or the element silently stops being checked", a.Name, a.GoType)
 	return ""
+}
+
+// attrSpec finds a declared attribute by name. It exists so probePrereqs
+// is checked against the declaration rather than trusted: a row naming an
+// attribute the element does not declare is a stale table, and a stale
+// table here reads as coverage.
+func attrSpec(def *ElementDef, name string) (AttrSpec, bool) {
+	for _, a := range def.Attrs {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return AttrSpec{}, false
 }
 
 // literalFor is the placeholder literal for a required non-binding
@@ -116,6 +187,39 @@ func literalFor(a AttrSpec) string {
 	return "x"
 }
 
+// probePrereqs names attributes an element needs present before ANY of
+// its other attributes can be probed, keyed by element and valued with
+// the attribute text to write. The attribute under test is never seeded
+// from here — that is the value the probe is varying.
+//
+// Required is the declaration for "this element does not build without
+// it", and <MenuItem Text> is not that: an item with Separator="true" is
+// a rule and wants no text, so Text is required only in the OTHER arm of
+// a choice the declaration has no way to express. The builder says so at
+// load — "<MenuItem> needs Text (or Separator=\"true\")" — and every
+// probe of Checked, Command and Gesture failed on that instead of on the
+// rule being swept, landing in the UNVERIFIED bucket rather than in a
+// count.
+//
+// A table with a reason per row rather than a rule, because there is no
+// rule: this is one element's own either/or. It is deliberately awkward
+// to add to, so the next entry has to argue for itself.
+var probePrereqs = map[string]map[string]string{
+	"MenuItem": {"Text": "Open"},
+	// <Frozen AllowError> is refused without a BOUND Allow beside it —
+	// "the only failure it can report is an unparseable set" (#459) —
+	// and that guard runs before the bind-only check, so the sweep never
+	// reached the rule it was asking about.
+	//
+	// A DIFFERENT HANDLE from the one the probe binds, which is why the
+	// row writes the expression rather than deriving it from the type:
+	// <Frozen>'s next guard refuses Allow and AllowError resolving to
+	// one property ("publishing would overwrite the set it just read"),
+	// so seeding {{.S}} here would trade one unverified row for another.
+	// Measured both ways.
+	"Frozen": {"Allow": "{{.S2}}"},
+}
+
 // probeElement writes the element under test with every required
 // attribute, slot and child seeded, plus the one attribute the probe is
 // varying. An empty value omits the attribute, which is the whole point
@@ -124,15 +228,68 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
+	// EVERY PROBE NAMES ITSELF, and it is not decoration.
+	//
+	// Name is a UNIVERSAL attribute and is not declared Required, because
+	// for almost every element it is not — but <Companion> refuses to
+	// build without one ("it is what errors call the service"). Required
+	// is declared per element and Name lives in the universal table, so
+	// there is nowhere for that requirement to be written today, and the
+	// loop below — which reads def.Attrs — could not learn it. Every
+	// <Companion> probe therefore failed on the missing Name and came
+	// back UNVERIFIED in all five sweep arms, including the one whose own
+	// comment argues from <Companion CleanEnv> being a security switch.
+	//
+	// A name is harmless everywhere else: it is KindIdentity, it renders
+	// nothing, and each probe is its own single-element document, so
+	// there is no uniqueness to collide with. Skipped only when Name is
+	// the attribute under test. Raised in review of #470.
+	//
+	// AND NOT ON AN ELEMENT ITS PARENT PARSES. A ParsedBy element is
+	// read by the parent's builder, not by the generic attribute path,
+	// so the universal table does not apply to it: <MenuItem Name="probe">
+	// is refused outright with "no such attribute; this element takes
+	// Checked, Command, Gesture, Separator, Text". Every probe of every
+	// <Menu> and <MenuItem> attribute failed on the harness's own seed
+	// rather than on the rule — five in one arm, two in another — which
+	// is precisely what the UNVERIFIED bucket exists to surface, and it
+	// surfaced this. Found merging #460's sweep into #429, the branch
+	// that declares those two elements.
+	if attr != "Name" && def.ParsedBy == "" {
+		b.WriteString(` Name="probe"`)
+	}
 	for _, a := range def.Attrs {
 		if !a.Required || a.Name == attr {
 			continue
 		}
 		if a.Binds == BindsLiteral {
-			fmt.Fprintf(&b, " %s=%q", a.Name, literalFor(a))
+			// THE SEED FIRST. literalFor answers by KIND, which is a
+			// shape and not a value: "x" is a fine string for a Label and
+			// useless for a <Companion Path>, which has to resolve to an
+			// executable. The element's own Seed is markup that loads by
+			// construction, so where it states a value for a required
+			// attribute that value is the one to write. Declaring a
+			// Default instead is not available — a declared default is
+			// checked by RENDERING it, which a non-visual element cannot
+			// do. Raised in review of #470.
+			v := seedValue(def.Seed, a.Name)
+			if v == "" {
+				v = literalFor(a)
+			}
+			fmt.Fprintf(&b, " %s=%q", a.Name, v)
 			continue
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
+	}
+	for name, v := range probePrereqs[def.Name] {
+		if name == attr {
+			continue // the probe is varying it
+		}
+		if _, ok := attrSpec(def, name); !ok {
+			t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
+				def.Name, name, def.Name)
+		}
+		fmt.Fprintf(&b, " %s=%q", name, v)
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)
@@ -159,12 +316,88 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		// unobservable.
 		b.WriteString("<Text>one</Text><Text>seven</Text>")
 	case ModeRestricted:
-		for _, only := range def.Children.Only {
-			fmt.Fprintf(&b, "<%s Header=\"h\"><Text>one</Text></%s>", only, only)
+		// ONLY WHEN THE ELEMENT DECLARES NO SLOTS, and the exclusion is
+		// the fix for a blind spot rather than a shortcut.
+		//
+		// <Companion> is ModeRestricted over {Arg, Var} AND declares the
+		// slots <Companion.Args> and <Companion.Env>; buildCompanion
+		// requires the children to be inside them. Writing them as
+		// DIRECT children made every <Companion> probe fail with a
+		// message about children, so <Companion CleanEnv> came back
+		// UNVERIFIED in all five sweep arms — including the one whose own
+		// comment argues from CleanEnv being a security switch. Measured
+		// in review of #470.
+		//
+		// The harness cannot place them correctly either, and that is a
+		// fact about the catalog rather than a limitation here: NOTHING
+		// DECLARES WHICH SLOT HOSTS WHICH CHILD. <Arg> goes in Args and
+		// <Var> in Env because companion.go says so in Go. So the probe
+		// omits them — legal, since neither slot is Required — and the
+		// element builds, which is what the attribute sweeps need.
+		if len(def.Slots) == 0 {
+			// THE ELEMENT'S OWN SEED SUPPLIES THE CHILDREN, and
+			// fabricating them is what this replaced.
+			//
+			// The old line wrote `<%s Header="h">` for every name in
+			// Only. `Header` is <Tab>'s required attribute; <Menu> needs
+			// a Title, so every <MenuBar> probe failed with "<Menu>
+			// needs a Title" — the harness's own fabricated child
+			// refusing, in an arm about MenuBar's attributes.
+			//
+			// A restricted child cannot be built the way the parent is,
+			// either: <Menu> and <MenuItem> have no ElementDef at all
+			// (markup.go:1112 reads them in MenuBar's builder), so there
+			// is no declaration to seed from. The Seed is markup that
+			// loads by construction and states the children the element
+			// actually wants — the same argument seedValue makes for
+			// required attributes, one level down. Raised in review of
+			// #470.
+			b.WriteString(seedChildren(t, def))
 		}
 	}
 	fmt.Fprintf(&b, "</%s>", def.Name)
 	return b.String()
+}
+
+// seedChildren is the body of an element's Seed — everything between its
+// root open and close tags.
+//
+// EMPTY IS A FAILURE, not a skip: an element that restricts its children
+// and whose seed shows none would silently probe as childless, and a
+// builder that needs one would refuse for that reason in every arm.
+func seedChildren(t *testing.T, def *ElementDef) string {
+	t.Helper()
+	open := "<" + def.Name
+	close := "</" + def.Name + ">"
+	i := strings.Index(def.Seed, open)
+	j := strings.Index(def.Seed, ">")
+	k := strings.LastIndex(def.Seed, close)
+	if i != 0 || j < 0 || k < j {
+		t.Fatalf("<%s> restricts its children to %v and its Seed %q has no body to "+
+			"take them from", def.Name, def.Children.Only, def.Seed)
+	}
+	body := def.Seed[j+1 : k]
+	if strings.TrimSpace(body) == "" {
+		t.Fatalf("<%s> restricts its children to %v and its Seed %q shows none, so "+
+			"every probe of its attributes builds a childless element",
+			def.Name, def.Children.Only, def.Seed)
+	}
+	return body
+}
+
+// seedValue is the literal an element's own Seed writes for attr, or ""
+// when the seed does not mention it or writes a binding there.
+//
+// A regexp over the seed rather than a parse: the seed is one element
+// with quoted attributes, the test only needs a literal, and reaching for
+// the document parser here would make the harness depend on the thing it
+// exists to probe.
+func seedValue(seed, attr string) string {
+	m := regexp.MustCompile(`\b` + regexp.QuoteMeta(attr) + `="([^"]*)"`).FindStringSubmatch(seed)
+	if len(m) != 2 || strings.Contains(m[1], "{{") {
+		return ""
+	}
+	return m[1]
 }
 
 // renderProbe builds src and composes it into a fixed rect, returning the
@@ -199,6 +432,42 @@ func cellsDiffer(a, b *render.Buffer) (int, int, bool) {
 // means nothing to an element that is the only thing in its slot.
 func harnessFor(attr, el string) string {
 	switch {
+	case strings.HasPrefix(el, "<Validate"):
+		// A HOST, NOT A CONTAINER. <Validate> is an attachment whose
+		// builder is the input's: attachAll refuses one nobody wired,
+		// with "does not support <Validate>; it belongs on an input
+		// element with a bound text source". Inside the default <HStack>
+		// harness EVERY probe of a Validate attribute therefore failed
+		// for that reason, and an arm counting "the build failed" as
+		// "the rule refused" counted seven vacuous checks — which is
+		// exactly the defect bindSweep's refusal-text discriminator
+		// exists to make visible. TextBox is the element whose builder
+		// calls wireValidate (elements.go). Raised in review of #470.
+		return `<TextBox Text="{{.S}}">` + el + `</TextBox>`
+	case strings.HasPrefix(el, "<TypeAhead"):
+		// THE SAME GAP ONE ATTACHMENT OVER. <TypeAhead> belongs on an
+		// <ItemsView> — attachAll refuses one anywhere else with "does
+		// not support <TypeAhead>; it belongs on an <ItemsView>" — so
+		// inside the default harness every probe of a TypeAhead
+		// attribute failed for the host's reason and not the rule's.
+		// Found by the KindDuration sweep, which is the first arm to
+		// reach this element at all. Raised in review of #470, the
+		// second time.
+		return `<ItemsView Items="{{.IS}}">` + el +
+			`<ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate></ItemsView>`
+	case strings.HasPrefix(el, "<MenuItem"):
+		// THE SAME GAP AS <Validate> AND <TypeAhead>, one vocabulary
+		// tier down: <MenuItem>'s own Build is a refusal ("only valid
+		// directly inside <Menu>") because <MenuBar>'s builder parses
+		// the whole menu tree itself. Probed loose, every arm counted
+		// that refusal instead of the rule's.
+		//
+		// Ordered BEFORE the <Menu> arm below, which its name also
+		// prefixes — and both after nothing that could match "<MenuBar",
+		// which is a real element with a Proto and needs no host.
+		return `<MenuBar><Menu Title="F">` + el + `</Menu></MenuBar>`
+	case strings.HasPrefix(el, "<Menu ") || strings.HasPrefix(el, "<Menu>"):
+		return `<MenuBar>` + el + `</MenuBar>`
 	case strings.HasPrefix(attr, "Grid."):
 		return `<Grid Rows="1*,1*" Cols="1*,1*">` + el + `<Text Grid.Row="1" Grid.Col="1">z</Text></Grid>`
 	case strings.HasPrefix(attr, "Canvas."):

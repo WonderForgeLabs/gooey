@@ -1010,6 +1010,105 @@ func TestTheStepperMovesANumberWithoutATextBox(t *testing.T) {
 	}
 }
 
+// TestTheStepperStopsAtZero is the floor, driven through the pane's own
+// dispatch rather than at stepperKey.
+//
+// ◂ on a number at zero wrote -1. Every literal int in the vocabulary is
+// a measurement in cells and markup.litInt refuses a negative one, so the
+// pane whose entire job is to emit markup that LOADS emitted markup that
+// does not — and the user cannot walk it back with the opposite arrow,
+// because ▸ from -1 spends a press returning to 0. Raised in review of
+// #470.
+func TestTheStepperStopsAtZero(t *testing.T) {
+	ed, c, p := propsPane(t)
+	ed.sel = ed.doc().Kids[1]
+	ed.rebuild()
+	c.Frame()
+	rowAt(t, ed, c, "Width")
+
+	ed.beginEdit()
+	c.Frame()
+	if p.Mode() != editStepper {
+		t.Fatalf("Width opened %v, want the stepper", p.Mode())
+	}
+	// THREE presses, not one. One ◂ from an unset value lands on the
+	// floor by arithmetic alone — 0 + -1 clamped is the same string a
+	// broken clamp would write on the second press — so the assertion has
+	// to survive being pushed past it.
+	for i := 0; i < 3; i++ {
+		p.PreviewKey(input.Named(input.KeyLeft))
+	}
+	if got := ed.sel.Attrs["Width"]; got != "0" {
+		t.Errorf("◂ walked Width to %q. A literal int is a measurement in cells and "+
+			"the loader refuses a negative one, so the stepper's floor is the "+
+			"loader's rule, not this editor's taste", got)
+	}
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Errorf("the document does not build after stepping down: %s", ed.status.Get())
+	}
+	// NON-VACUITY: a stepper clamped to zero in both directions satisfies
+	// everything above.
+	p.PreviewKey(input.Named(input.KeyRight))
+	if got := ed.sel.Attrs["Width"]; got != "1" {
+		t.Errorf("▸ off the floor wrote %q, want \"1\": the assertions above would "+
+			"pass for a stepper that writes 0 whatever you press", got)
+	}
+}
+
+// TestTheStepperFloorMatchesTheLoadersRule reads the floor's PREMISE out
+// of the catalog instead of trusting the comment that states it.
+//
+// stepperKey clamps unconditionally, which is only correct while the
+// stepper opens on KindInt alone and every KindInt attribute is declared
+// BindsLiteral — the two facts that make markup.litInt the reader for
+// every value this editor can write. Either could change without a test
+// failing anywhere: a KindInt attribute widened to BindsEither reads
+// through Bound[int] instead, and a second Kind mapped to editStepper
+// hands the clamp a value litInt never sees. Both leave the clamp
+// silently wrong about somebody's attribute.
+func TestTheStepperFloorMatchesTheLoadersRule(t *testing.T) {
+	ed, _, _ := propsPane(t)
+
+	var ints int
+	check := func(where string, a markup.AttrSpec) {
+		if a.Kind != markup.KindInt {
+			return
+		}
+		ints++
+		if a.Binds != markup.BindsLiteral {
+			t.Errorf("%s %s is KindInt and Binds=%q. The stepper clamps every value "+
+				"it writes at zero because markup.litInt reads every literal int and "+
+				"refuses a negative one; an int that binds is read by Bound[int] "+
+				"instead, and the clamp is then this editor's opinion rather than "+
+				"the loader's rule", where, a.Name, a.Binds)
+		}
+	}
+	for _, e := range ed.docCtx.Catalog() {
+		for _, a := range markup.AttrsFor(e, "") {
+			check("<"+e.Name+">", a)
+		}
+	}
+	for _, a := range markup.UniversalAttrs() {
+		check("the universal table:", a)
+	}
+	for _, parent := range markup.AttachedParents() {
+		for _, a := range markup.AttachedAttrs(parent) {
+			check("<"+parent+">'s attached table:", a)
+		}
+	}
+	if ints == 0 {
+		t.Fatal("no KindInt attributes were found, so this test is vacuous")
+	}
+
+	for k, e := range editors {
+		if e == editStepper && k != markup.KindInt {
+			t.Errorf("Kind %q opens the stepper, but the clamp at zero is litInt's "+
+				"rule for a literal int and says nothing about a %s", k, k)
+		}
+	}
+	t.Logf("checked %d KindInt declarations against the stepper's floor", ints)
+}
+
 // TestAKindWithNoEditorSaysSoRatherThanDoingNothing is the runtime half
 // of the exhaustiveness rule. The table is checked at test time; this is
 // what a user would see if one ever slipped through, and it must not be

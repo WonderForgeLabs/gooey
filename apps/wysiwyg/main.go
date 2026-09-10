@@ -364,7 +364,7 @@ func main() {
 	// the reason the panes read from disk rather than from an embed.
 	app := gooey.NewApp(markup.Page(root, PageFile, ed.ctx, paneFiles...), opts...)
 	ed.app = app
-	ed.ctx.Dispatcher = app.Dispatcher()
+	ed.setDispatcher(app.Dispatcher())
 	ed.watchFit(app)
 	ed.bindClipboard(app)
 	// Click-to-select. The composer is resolved per press rather than
@@ -850,8 +850,15 @@ type editor struct {
 	// and the review of #426 found them sitting under that paragraph
 	// still plain: docsBody reads both, so a refresh that changed either
 	// without also writing docList would invalidate nothing. That every
-	// refresh happens to write all three today is a coupling nobody had
+	// refresh happens to write all three today was a coupling nobody had
 	// written down, which is what the docsItems defect was made of.
+	//
+	// IT IS WRITTEN DOWN NOW, AND ENFORCED (#442): setDocsTree in docs.go
+	// is the only writer of the three, and TestTheDocsTreeHasOneWriter
+	// derives that from the source rather than asking anyone to keep the
+	// rule in mind. A second writer is a red test naming the function it
+	// found. Do not Set these directly — go through setDocsTree, which
+	// is what makes "the tree changed" one event rather than three.
 	docsRoot    *prop.Property[fs.FS]
 	docList     *prop.Property[[]docPage]
 	docsSkipped *prop.Property[int]
@@ -1280,11 +1287,15 @@ func newEditor(fsys fs.FS) *editor {
 	// THE DOCS TREE, resolved once. docsRoot is nil when there is none
 	// beside the editor, which is a legal state the pane says out loud
 	// rather than a startup failure — see docsFS.
-	docsRootFS := docsFS()
-	pages, skipped := docsPages(docsRootFS)
-	ed.docsRoot = prop.NewSource(docsRootFS)
-	ed.docList = prop.NewSource(pages)
-	ed.docsSkipped = prop.NewSource(skipped)
+	// The three handles are minted EMPTY and filled by setDocsTree, so
+	// that function is the only writer from the first frame rather than
+	// from the second — see docs.go for why one writer is the whole
+	// point (#442). A construction that wrote the values directly would
+	// be an exception to the rule on the line that establishes it.
+	ed.docsRoot = prop.NewSource[fs.FS](nil)
+	ed.docList = prop.NewSource[[]docPage](nil)
+	ed.docsSkipped = prop.NewSource(0)
+	ed.setDocsTree(docsFS())
 	ed.docsItems = prop.NewComputed(func() components.ItemSource {
 		return components.ItemsOf(ed.docList.Get(), func(d docPage) map[string]any {
 			return map[string]any{"Name": d.Label, "Bar": "▌"}
@@ -1582,6 +1593,10 @@ func newEditor(fsys fs.FS) *editor {
 	// docCtx shares the bindings and styles — a document authored here
 	// binds the same names — but deliberately NOT Components. Every
 	// entry there is editor chrome; see the comment above.
+	//
+	// It does NOT get the Dispatcher here, because there is no app yet:
+	// newEditor runs before gooey.NewApp, so the wiring is an assignment
+	// afterwards. See setDispatcher.
 	ed.docCtx = &markup.Context{
 		Values: ed.ctx.Values,
 		Styles: ed.ctx.Styles,
@@ -1671,6 +1686,96 @@ func newEditor(fsys fs.FS) *editor {
 	ed.loadPalette()
 
 	return ed
+}
+
+// contexts is every markup.Context the editor builds trees with.
+//
+// It exists so the wiring below can LOOP rather than name one context and
+// miss the other, which is the whole of #462: docCtx — the context the
+// DOCUMENT BEING EDITED is built with — never got the Dispatcher, so the
+// canvas refused markup that is legal in a real app, at load, while the
+// palette went on offering the attribute. The properties pane is driven
+// from ElementDef.Attrs and knows nothing about the context a thing will
+// be built in, so nothing anywhere connected the two.
+//
+// EVERY ENTRY IS CONSTRUCTED IN newEditor, and that is a contract rather
+// than an observation: setDispatcher writes through each pointer without
+// checking it, so a lazily-built context left nil here panics on the
+// first line of main's wiring. That is deliberate and is not an oversight
+// to be patched with a nil skip — skipping a nil entry silently is
+// exactly #462 again, a context that exists and is never wired, arriving
+// this time through the guard meant to prevent it. A startup panic names
+// the field on the first run; a silent skip is found by a user typing a
+// handler expression into the canvas. The obligation is enforced by
+// TestEveryContextTheEditorBuildsWithGetsTheDispatcher, which fails on a
+// nil entry before it wires anything. Raised in review of #469.
+//
+// A CONTEXT ADDED LATER MUST BE ADDED HERE, which is why this sits
+// directly under newEditor rather than in the palette neighbourhood it
+// was first written in: the instruction has to be in front of the person
+// adding the field, and it was three hundred lines away from the two
+// literals it is about. Raised in review of #469, which also caught what
+// the misplacement did to gofmt-invisible prose — the block landed with
+// no blank line after grantOf's comment, so `go doc` read the two as one
+// and served grantOf's drag-geometry rationale as the reason for the
+// dispatcher seam.
+//
+// The obligation is ENFORCED for the shape the bug arrived in, and that
+// qualifier is load-bearing. TestEveryContextFieldIsInTheList parses this
+// file and fails if the editor struct grows a plain `*markup.Context`
+// field this body does not name. What it cannot see is a context held in
+// a slice or a map, one stored by value, one reached through an embedded
+// struct, or an editor field declared in another file of the package —
+// its own doc comment enumerates those. So "green" means "no new plain
+// pointer field", not "every context is wired", and the unqualified
+// sentence that used to be here read as the second. Corrected in review
+// of #469, which is the same PR that added the test the sentence
+// overclaimed for.
+//
+// The literal list below cannot enforce anything itself: a field absent
+// from both the list and a hand-written test is invisible to both, and
+// add-and-forget is precisely the direction #462 came from — a context
+// that existed and was never wired. Enumerating hardens against the
+// mutation a reviewer would make and leaves the one history made.
+//
+// EVERY ENTRY MUST BE CONSTRUCTED IN newEditor. That is a requirement on
+// what may go in this list, not an observation about what is in it today
+// — see setDispatcher, which skips a nil rather than crashing, and says
+// why a lazily built context needs its own wiring point instead of a slot
+// here.
+func (ed *editor) contexts() []*markup.Context { return []*markup.Context{ed.ctx, ed.docCtx} }
+
+// setDispatcher wires the app's dispatcher into every context.
+//
+// ONE dispatcher across all of them, not one each: handler results are
+// Set on the UI goroutine (markup/handlers.go:193), and two dispatchers
+// would be two routes to a graph that tolerates exactly one.
+//
+// Separate from newEditor because the dispatcher does not exist yet when
+// the contexts are built — gooey.NewApp comes after.
+//
+// THE NIL SKIP IS NOT DEFENSIVE, and it is the difference between a
+// diagnostic and a crash. Both entries are non-nil today, and
+// TestEveryContextTheEditorBuildsWithGetsTheDispatcher asserts that. But
+// TestEveryContextFieldIsInTheList tells the next author to add any new
+// *markup.Context field to contexts(), and a field built LAZILY is nil
+// at this moment — so the seam that exists to turn add-and-forget into a
+// red test would instead turn it into a nil dereference in main(), before
+// the screen comes up. A seam may not convert the mistake it catches into
+// a worse one.
+//
+// Skipping is the honest half, and contexts()' own comment carries the
+// other: a context this list names must be constructed in newEditor, and
+// one built later needs its own wiring point rather than a slot here —
+// because a nil skipped here is a context that silently never gets a
+// dispatcher, which is #462 again. Raised in review of #469.
+func (ed *editor) setDispatcher(d *gooey.Dispatcher) {
+	for _, c := range ed.contexts() {
+		if c == nil {
+			continue
+		}
+		c.Dispatcher = d
+	}
 }
 
 // loadPalette derives the palette from the document context's catalog.

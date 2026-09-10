@@ -1,0 +1,34 @@
+# Every SVG in this directory, with the SHA-256 of the bytes that were
+# COMPARED BYTE FOR BYTE against src/icons/<same name>.svg on
+# microsoft/vscode-codicons main, on 2026-09-09. Every file matched. The
+# recipe is in the LICENSE beside this file, and it was run rather than
+# quoted.
+#
+# THIS FILE IS WHAT STOPS THAT DATE OUTLIVING ITS EVIDENCE, which is the
+# defect issue #442 records: the LICENSE carried a dated one-time check
+# three paragraphs above its own argument that one-time checks are what
+# rot. A date attached to a DIRECTORY silently covers whatever is added
+# to it afterwards — and something already had been. book.svg arrived in
+# d712a28c, the same commit that wrote "VERIFIED 2026-08-30", so the
+# claim was stamped two days before the file it covered existed. The
+# prose was consistent about book.svg being re-fetched; nothing
+# connected the sentence to the bytes.
+#
+# So the verification is recorded against BYTES.
+# TestTheVerifiedIconsAreStillTheVerifiedBytes fails the moment the
+# directory and this file stop agreeing, in EITHER direction: an added
+# icon is not covered, a changed icon is not the one that was compared,
+# and a removed icon leaves a line describing nothing.
+#
+# When that test goes red, run the LICENSE's diff for the file it names
+# and then update the line here. Editing this file to make the test pass
+# without running the diff converts a checked claim back into an
+# asserted one, which is the whole thing being fixed.
+#
+# No count is written here, deliberately — see the LICENSE.
+
+book.svg  cb4431b90f05a017a86548652ab149c38371324b9b12d1d8cb6f197b65bb0e88
+code.svg  14f4b4b93285aabf5df0c93f955d6b3c1d4060cf61a5f7adb1ddc1a1c3e54c0d
+layout.svg  c0effe8e7775bba381b341eeb3e542492b0b61f454254cec1a64908338eb809c
+library.svg  3c869faf1ad45e0c815b03f62a87d8966445ce121af881d8a49d1899147ed65b
+warning.svg  e3e4cb7573830716be647b7c930595daca925dd6c2bc3ff99a5b2a6b087cc060

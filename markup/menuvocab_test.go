@@ -317,10 +317,22 @@ func TestAHostElementWithNoProtoIsNotPseudo(t *testing.T) {
 //
 // This PR is what declares <MenuItem Separator> KindBool — it is what
 // puts the row in the designer's property grid — and the builder read it
-// as == "true". toolkit.go states the contract a bool literal carries in
-// this dialect: strconv.ParseBool, so "1", "TRUE" and "T" all work, and
-// anything unreadable is a LOAD ERROR rather than a guess, because
-// falling back to false turns a typo into the silently less safe branch.
+// as == "true". A declared bool has to go through the literal reader, so
+// that a value the reader cannot take is a LOAD ERROR rather than a
+// guess: falling back to false turns a typo into the silently less safe
+// branch.
+//
+// THE GRAMMAR IS "true" OR "false" AND NOTHING ELSE, and this comment
+// said strconv.ParseBool — "so \"1\", \"TRUE\" and \"T\" all work" — until
+// #460 narrowed it on every literal bool in the dialect (litBool,
+// elements.go; the reasoning is in docs/markup-reference.md's CleanEnv
+// row, where the laxer grammar on a security switch was the worse one).
+// The branch was written against the old contract and merged forward
+// into the new one, which is exactly the case where a test that agrees
+// with its own doc comment and with nothing else is the failure mode.
+// Four arms moved from "loads" to "load error" here, and the sweep in
+// bindsweep_test.go is what holds the rule across the whole vocabulary —
+// this test only pins that Separator is IN it.
 //
 // <MenuItem Separator="True"/> alone was loud by accident: it fell
 // through to "needs Text (or Separator=\"true\")". Give it a Text and it
@@ -348,23 +360,34 @@ func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
 		want string
 	}{
 		{name: `"true"`, attrs: `Separator="true"`, sep: true, load: true},
-		// EVERY SPELLING ParseBool TAKES, each on its own. They rendered
-		// as ordinary items, silently, back when a Text could ride
-		// along; #455's "a separator carries nothing else" is what makes
-		// that document loud now, and the row below asserts it.
-		{name: `"True"`, attrs: `Separator="True"`, sep: true, load: true},
-		{name: `"1"`, attrs: `Separator="1"`, sep: true, load: true},
-		{name: `"T"`, attrs: `Separator="T"`, sep: true, load: true},
 		{name: `"false"`, attrs: `Separator="false" Text="Open"`, sep: false, load: true},
-		{name: `"0"`, attrs: `Separator="0" Text="Open"`, sep: false, load: true},
 		{name: "absent", attrs: `Text="Open"`, sep: false, load: true},
 		// THE TWO RULES COMPOSE, and this is the row that says so.
 		// Reading the bool properly is what routes this document into
 		// the separator branch at all; #455's refusal is what names the
-		// real mistake there. Read as == "true" it was neither — a
+		// real mistake once there. Read as == "true" it was neither — a
 		// silently ordinary item.
-		{name: `"True" with a Text`, attrs: `Separator="True" Text="Open"`,
+		//
+		// SPELLED "true", NOT "True". This row arrived on #456 with the
+		// laxer spelling, which reached the composition through
+		// ParseBool; #470 narrowed the grammar, so "True" is now refused
+		// by the bool rule and never gets as far as the one this row
+		// exists for. A composition test written against the first of
+		// two rules stops testing the second the moment that first rule
+		// tightens, and passes throughout.
+		{name: `"true" with a Text`, attrs: `Separator="true" Text="Open"`,
 			want: "carries nothing else"},
+		// THE FOUR SPELLINGS ParseBool TAKES AND litBool DOES NOT. Each
+		// of these rendered as an ordinary item, silently, when Text was
+		// present — that is the bug this test was written for — and each
+		// is now refused outright, which is the stronger answer to it.
+		// "T" and "1" are kept as arms rather than deleted because a
+		// reader coming from Go will expect them to work; the arm is
+		// where they find out they do not.
+		{name: `"True"`, attrs: `Separator="True" Text="Open"`},
+		{name: `"1"`, attrs: `Separator="1" Text="Open"`},
+		{name: `"T"`, attrs: `Separator="T" Text="Open"`},
+		{name: `"0"`, attrs: `Separator="0" Text="Open"`},
 		// PRESENT AND UNREADABLE is the case that must not be guessed
 		// at. "yes" reads as a separator to a person and as false to
 		// ParseBool.
