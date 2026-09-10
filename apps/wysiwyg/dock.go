@@ -749,15 +749,26 @@ func (d *dockModel) laidOutExtent(s dockSlot) int {
 }
 
 // allCollapsed reports whether s holds panes and every one of them is
-// collapsed. An EMPTY slot is false, because "all of nothing" would make
-// laidOutExtent answer headerH for a slot with no panes and leave a
-// one-row stripe where the whole point is that the slot disappears.
+// collapsed. An EMPTY slot is false, because "all of nothing" is not a
+// claim this predicate should make on a slot that has no panes to be
+// collapsed.
 //
-// Extracted so laidOutExtent and Minimum ask the same question once
-// rather than each spelling the loop. They disagreed before #441 — the
-// fit check read slotExtent and could not see a collapse at all — and
-// two hand-written copies of "is this strip shut" is how that comes
-// back.
+// MINIMUM'S ROW FLOOR IS THE ONLY CALLER, and the doc used to name
+// laidOutExtent as the other one. That stopped being true in the commit
+// that made laidOutExtent derive its answer from a max over the OPEN
+// panes: it returns 0 from its own len(panes) == 0 guard and never asks
+// this question at all. The empty-slot answer is therefore unreachable
+// from production code — Minimum's caller is itself guarded by
+// len(strip) > 0 — so the rule above is a contract this predicate keeps
+// for a future caller rather than a live behaviour. laidOutExtent's own
+// doc already recorded the split ("allCollapsed stays because Minimum
+// asks it a different question"); this one had not. Corrected in review
+// of #480.
+//
+// Extracted so the two callers ask the same question once rather than
+// each spelling the loop. They disagreed before #441 — the fit check
+// read slotExtent and could not see a collapse at all — and two
+// hand-written copies of "is this strip shut" is how that comes back.
 func (d *dockModel) allCollapsed(s dockSlot) bool {
 	panes := d.slotPanes(s)
 	if len(panes) == 0 {
@@ -892,13 +903,13 @@ func (d *dockModel) Minimum() fitSize {
 	}
 	cols := d.slotExtent(dockLeft) + d.slotExtent(dockRight) + starMin
 	strip := d.slotPanes(dockBottom)
-	if w := slotMinimum(strip, false); w > cols {
+	if w := slotMinimum(strip, slotIsVertical(dockBottom)); w > cols {
 		cols = w
 	}
 
 	upper := 0
 	for _, s := range []dockSlot{dockLeft, dockCenter, dockRight} {
-		if n := slotMinimum(d.slotPanes(s), true); n > upper {
+		if n := slotMinimum(d.slotPanes(s), slotIsVertical(s)); n > upper {
 			upper = n
 		}
 	}
@@ -1006,13 +1017,6 @@ func (h *dockHost) layout(b gooey.Rect, arrange bool) {
 	h.place(dockBottom, gooey.Rect{X: b.X, Y: b.Y + top, W: b.W, H: bottom}, arrange)
 }
 
-// place lays a slot's panes out along its axis. vertical says which axis
-// stacks: left, right and centre stack top-to-bottom, the bottom strip
-// stacks left-to-right, which is how a panel of tabs reads.
-//
-// The share rule: collapsed panes take their header row and no more,
-// everything left over is split evenly between the rest — hidden panes
-// INCLUDED, because a hidden pane keeps its size.
 // slotIsVertical is which axis a slot STACKS its panes along. Left,
 // right and centre stack down their own length; the bottom strip stacks
 // across. It is one function because "which axis" is one fact, and
@@ -1032,6 +1036,22 @@ func (h *dockHost) layout(b gooey.Rect, arrange bool) {
 // #436. Raised in review of #480.
 func slotIsVertical(s dockSlot) bool { return s != dockBottom }
 
+// place lays a slot's panes out along its axis, which it derives from
+// the slot rather than being told.
+//
+// THE SHARE RULE: collapsed panes take their header row and no more,
+// everything left over is split evenly between the rest — hidden panes
+// INCLUDED, because a hidden pane keeps its size. That last clause is
+// the only written statement of why hiding a pane does not reflow its
+// neighbours, and laidOutExtent agrees with it from the other side.
+//
+// This comment was absorbed into slotIsVertical's godoc by the commit
+// that introduced that function: there was no blank line between the
+// two blocks, so `go doc slotIsVertical` rendered a paragraph about a
+// `vertical` parameter place no longer takes, and place — the largest
+// function in this file — had no doc at all. gofmt and go vet are both
+// silent on it; only the rendered godoc shows it. Raised in review of
+// #480.
 func (h *dockHost) place(s dockSlot, r gooey.Rect, arrange bool) {
 	vertical := slotIsVertical(s)
 	panes := h.slotPanes(s)

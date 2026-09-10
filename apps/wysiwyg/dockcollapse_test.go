@@ -408,10 +408,33 @@ func TestTheSharesSumToTheSlotAtEveryWidth(t *testing.T) {
 //
 // slotExtent's promise is that an empty slot is ZERO — "which is what
 // makes a slot that everything was dragged out of disappear rather than
-// leave a blank stripe". Vacuous truth would make allCollapsed say yes to
-// a slot with no panes, laidOutExtent hand back headerH, and the strip
-// keep a one-row stripe across the bottom of the editor for as long as
-// nothing is docked there.
+// leave a blank stripe".
+//
+// THE CHAIN THIS TEST USED TO NAME IS SEVERED, and the doc went on
+// crediting it. It read: a vacuous true makes allCollapsed say yes to an
+// empty slot, laidOutExtent hands back headerH, and a one-row stripe
+// stays across the bottom of the editor. laidOutExtent no longer asks
+// allCollapsed anything — it returns 0 from its own len(panes) == 0
+// guard — so under that mutation the extent assertion below still reads
+// 0 and does not discriminate the arm its own comment named. Raised in
+// review of #480.
+//
+// NO PRODUCTION PATH REACHES THE EMPTY-SLOT ANSWER ANY MORE, and that
+// is the honest statement of what is left. Minimum's row floor is
+// allCollapsed's only remaining caller and is itself guarded by
+// len(strip) > 0, so it never asks about an empty slot either.
+// Measured: with allCollapsed returning true for an empty slot, the
+// ONLY assertion in this file that fires is the direct one below.
+//
+// So the direct assertion is not belt-and-braces here — it is the whole
+// guard, and the empty-slot rule is a contract this predicate keeps for
+// a future caller rather than a live behaviour. Saying so is the point:
+// a test that credits an assertion which has stopped firing is how a
+// guard quietly becomes decoration.
+//
+// The two assertions that follow the direct one pin things that ARE
+// live: the ZERO extent contract on its own terms, and that an empty
+// strip costs the usable minimum less than an occupied one.
 func TestAnEmptyStripIsNotAStripOfNoHeaders(t *testing.T) {
 	ed, c := dockFixture(t)
 	panel := pane(t, ed, "panel")
@@ -431,6 +454,24 @@ func TestAnEmptyStripIsNotAStripOfNoHeaders(t *testing.T) {
 	}
 	if ed.dock.allCollapsed(dockBottom) {
 		t.Error("allCollapsed says an empty slot is fully collapsed")
+	}
+
+	// THROUGH MINIMUM. This does NOT catch a vacuous allCollapsed —
+	// Minimum's row floor is guarded by len(strip) > 0 and never asks —
+	// and it is here for the neighbouring property it does catch: an
+	// empty strip must cost fewer rows than one holding a pane, which is
+	// what "the slot disappears" means to checkFit rather than to the
+	// layout.
+	rows := ed.dock.Minimum().Rows
+	ed.dock.Move(panel, dockBottom)
+	settle(t, c)
+	withPane := ed.dock.Minimum().Rows
+	if withPane <= rows {
+		t.Errorf("the usable minimum is %d rows with a collapsed pane in the "+
+			"bottom strip and %d with the strip EMPTY, so Minimum charges the "+
+			"empty slot as much as an occupied one — which is what a vacuous "+
+			"allCollapsed buys, and the extent assertion above can no longer "+
+			"see", withPane, rows)
 	}
 }
 
