@@ -9,6 +9,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
 // clipEditor is an editor whose system-clipboard write is captured
@@ -17,6 +18,13 @@ import (
 // because the failure path is the one that has to be exercised.
 func clipEditor(t *testing.T) (*editor, *fakeClip) {
 	t.Helper()
+	// The clipboard is TWO axes, and this is the second one. See
+	// statePlainTerminal in statusaddr_test.go: these tests run through
+	// editor.sayCopiedOut, which reads term.ClipboardCaveat directly and
+	// has no seam to override, so the environment has to be stated here or
+	// not at all. A test that wants the caveat sets $TMUX after this
+	// returns.
+	statePlainTerminal(t)
 	ed := newEditor(editorFS())
 	f := &fakeClip{}
 	prev := writeSystemClipboard
@@ -369,8 +377,101 @@ func TestCopyWritesTheSubtreeMarkupToTheSystemClipboard(t *testing.T) {
 	if f.last != ed.clip.markup {
 		t.Error("the two clipboards were given different text")
 	}
-	if s := ed.status.Get(); !strings.Contains(s, "system clipboard") {
-		t.Errorf("status = %q, want it to mention the system clipboard", s)
+	if s := ed.status.Get(); !confirmsTheCopy(s) {
+		t.Errorf("status = %q, want it to END with a bare confirmation that the copy "+
+			"reached the terminal — any tail after it is a caveat, not a "+
+			"confirmation", s)
+	}
+}
+
+// confirmsTheCopy reports whether a status line claims the copy reached
+// the terminal WITHOUT a caveat.
+//
+// A SUFFIX, not Contains("system clipboard"): sayCopiedOut appends its
+// caveat at the END (clipboard.go), so the loose form is satisfied by
+// "→ system clipboard (inside tmux: …)" too — #463 one substring away.
+// Stating the claim once as a suffix also rejects a caveat re-spelled
+// with brackets, which a pair of Contains checks would let through.
+// TestOnlyABareTailConfirmsTheCopy drives both.
+func confirmsTheCopy(status string) bool {
+	return strings.HasSuffix(status, "→ system clipboard")
+}
+
+// TestOnlyABareTailConfirmsTheCopy drives the predicate over the statuses
+// sayCopiedOut can actually produce, plus the one it would produce if the
+// caveat were ever re-spelled. It is the arm that fails when the check
+// goes back to a substring.
+func TestOnlyABareTailConfirmsTheCopy(t *testing.T) {
+	const head = "copied <Button> "
+	for _, c := range []struct {
+		status string
+		want   bool
+		why    string
+	}{
+		{head + "→ system clipboard", true,
+			"the bare tail sayCopiedOut returns when the write succeeded and no " +
+				"caveat applies"},
+		{head + "→ system clipboard (inside tmux: needs `set -g set-clipboard on`)", false,
+			"the caveat tail as spelled today — the substring form let this through, " +
+				"which is #463 in this file"},
+		{head + "→ system clipboard [inside tmux: needs `set -g set-clipboard on`]", false,
+			"the same caveat re-spelled with brackets. A pair of Contains checks " +
+				"rejecting only \"(\" passes here, which is why the claim is stated " +
+				"once as a suffix"},
+		{head + "(system clipboard: no terminal)", false,
+			"the failure tail — it does not confirm anything"},
+	} {
+		if got := confirmsTheCopy(c.status); got != c.want {
+			t.Errorf("confirmsTheCopy(%q) = %v, want %v: %s", c.status, got, c.want, c.why)
+		}
+	}
+}
+
+// TestInsideTmuxTheStatusDoesNotClaimSuccess is the positive complement
+// of TestTheClipboardStubsNeutraliseTheAmbientEnvironment, and the branch
+// it covers had no test at all.
+//
+// The strip has TestInsideTmuxTheChipDoesNotClaimSuccess for exactly this
+// and reaches it through the injectable caveatFn. The editor's own copy
+// path reads term.ClipboardCaveat DIRECTLY (clipboard.go, sayCopiedOut),
+// which is why it has no such test and why the two axes were free to
+// drift apart unnoticed. The environment is the only seam it has, so the
+// environment is what this sets — AFTER clipEditor, which states the
+// plain-terminal default every other test in this file wants.
+func TestInsideTmuxTheStatusDoesNotClaimSuccess(t *testing.T) {
+	ed, f := clipEditor(t)
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	if term.ClipboardCaveat() == "" {
+		t.Fatal("term.ClipboardCaveat() is empty with $TMUX set, so this test cannot " +
+			"see what it exists for — the detector stopped reading it")
+	}
+
+	ed.sel = findNode(ed, "B1")
+	ed.copySelected()
+
+	// The write itself still happened. The caveat is about whether the
+	// multiplexer passed it on, which nothing here can know.
+	if f.calls != 1 {
+		t.Fatalf("the system clipboard was written %d times, want 1", f.calls)
+	}
+	s := ed.status.Get()
+	// THE SAME PREDICATE, from the other side. Asserting "contains tmux"
+	// alone would pass for a status that ALSO ended in a bare
+	// confirmation, and the two tests would be free to disagree about
+	// what confirmation means — which is how the two axes drifted apart
+	// in the first place.
+	if confirmsTheCopy(s) {
+		t.Errorf("status = %q inside tmux ends in a bare confirmation; it claims a "+
+			"copy that tmux swallows by default", s)
+	}
+	if !strings.Contains(s, "tmux") {
+		t.Errorf("status = %q inside tmux; it confirms a copy that tmux swallows by "+
+			"default, with nothing to connect a green line to an unchanged clipboard", s)
+	}
+	if !strings.Contains(s, term.ClipboardCaveat()) {
+		t.Errorf("status = %q does not carry the detector's own sentence %q, which is "+
+			"the half that tells the user what to change",
+			s, term.ClipboardCaveat())
 	}
 }
 

@@ -94,6 +94,7 @@ Wraps exactly one visual child in a region that **renders but does not act**. Th
 |---|---|
 | `Active` | **Bind-only**: `Active="{{.DesignMode}}"`. Omitted means always frozen. A literal is a load error — a constant `false` is a `<Frozen>` that should be deleted rather than written. |
 | `Allow` | The interaction categories that still act inside, as names separated by spaces or commas. Omitted means `None`. Literal or bound. |
+| `AllowError` | **Bind-only, and a WRITE target**: `AllowError="{{.FreezeErr}}"` names a `*prop.Property[string]` the framework Sets with a bound `Allow`'s parse failure, or `""` when it parses. Requires a **bound** `Allow` — with an absent or literal one the parse either does not happen or already happened at load, so the channel could never carry anything — and requires `Context.Dispatcher`. It must also name a **settable** property: a computed derives its value and has no setter, so it is refused too. Every one of these is a load error — see the list below. |
 
 ```xml
 <Frozen Active="{{.DesignMode}}" Allow="Hover Mnemonics">
@@ -138,7 +139,28 @@ Two rules are built into the **constants** rather than applied by a pass, so no 
 
 `TestAllowBindingsAloneFiresNothing` in `markup/frozenallow_test.go` pins it.
 
-**A bound `Allow` that fails to parse fails CLOSED and says nothing.** A literal one is checked at load time, so a typo in the markup is a load error naming the attribute. An interpolated one cannot be — its value does not exist yet — so `components.Frozen` parses it at runtime, answers `None` on failure, and records why in `AllowError()`. Nothing reads that today, so the symptom is a subtree that has silently stopped responding: [#424](https://github.com/WonderForgeLabs/gooey/issues/424).
+**A bound `Allow` that fails to parse fails CLOSED, and `AllowError=` is how a page hears about it.** A literal `Allow` is checked at load time, so a typo in the markup is a load error naming the attribute. An interpolated one cannot be — its value does not exist yet — so `components.Frozen` parses it at runtime, answers `None` on failure, and records why. Without a channel the only symptom was a subtree that had silently stopped responding, which is [#424](https://github.com/WonderForgeLabs/gooey/issues/424). Bind a property and render it:
+
+```xml
+<Frozen Allow="{{.Categories}}" AllowError="{{.FreezeErr}}">
+  <VStack> … the document being edited … </VStack>
+</Frozen>
+<Text>{{.FreezeErr}}</Text>
+```
+
+It is published from an observer rather than read per frame, which is why it needs `Context.Dispatcher`: the parse failure surfaces during an invalidation, and Setting from inside one would mutate the graph mid-invalidation. The Set is posted and lands on the next drain.
+
+The Set also **compares first**, so a benign edit to `Allow` — one spelling of a
+parseable set to another — republishes nothing and repaints nothing. `prop.Set`
+does not compare on its own, and `Allow` changes far more often than it breaks.
+
+**It reports the PARSE, not the seal**, and the distinction shows when `Active`
+is bound. `gooey`'s freeze walk asks `FrozenAllow()` before `Frozen()` — it has
+to, or the observer goes deaf to an allow-set change on exactly the frames where
+it starts mattering — so an unparseable set publishes its message even while
+`Active` is false and nothing is sealed. Read the property as *"this allow set
+did not parse"*, which is true either way, rather than *"the subtree is frozen
+because…"*.
 
 `Start` is the one category nothing implies. `Companion.Start` spawns a child process, so a grant that turned starting on as a side effect of wanting hover would launch a subprocess from an editing gesture; it must always be asked for by name.
 
@@ -147,6 +169,91 @@ Two rules are built into the **constants** rather than applied by a pass, so no 
 #### Errors
 
 A **literal** `Allow` is checked at load time — `<Frozen Allow="Clicks">` fails to load, naming the vocabulary. A **bound** one cannot be, so it fails *closed*: an unparseable value becomes `None`, the strictest answer, and `components.Frozen.AllowError()` reports why.
+
+**One sink, one `<Frozen>`.** Two sealed subtrees publishing to the same
+property erase each other — the parseable one going quiet writes `""` over
+the other's live failure, and the other's observer is clean so it never
+republishes. That is a load error naming both attributes. So is binding
+`Allow` and `AllowError` to the *same* property, which would overwrite the
+allow set with the message describing it.
+
+**The sink must be a PAGE-OWNED property, and nothing checks that.** Inside
+an `<ItemsView>` item template `{{.Err}}` resolves to the per-row source the
+row creates, not to a page property, and row reuse re-Sets every row handle
+from the collection — overwriting the published message while the computed
+is clean, so the compare-guarded publish never restores it. The subtree
+stays sealed and the reader shows `""`, which is the exact failure this
+attribute exists to remove, one layer down. There is no load-time signal
+that separates the two, so this is a rule you keep rather than one the
+framework enforces. What is NOT a rule you can break: a row template's
+`<Frozen AllowError>` used to PANIC — the row `Context` is built outside
+`document.build`, so the armed-sink set arrived nil — and it now builds,
+with the set scoped to the row. Two `<Frozen>` in one template sharing a
+sink still collide, and so does a row `<Frozen>` arming a sink the PAGE
+already armed: registration stays row-local, and the page-versus-row
+question is settled **once, at the end of the document build**, against
+everything both sides armed.
+
+The judgement cannot read the page's **live** map, because
+`ItemsView.Validate` realizes one throwaway row while the `<ItemsView>`
+is still building — so a `<Frozen>` written **below**
+the list had armed nothing yet when the row looked, and the identical
+document loaded clean one way round and was refused the other. Deferring
+the judgement is what makes the answer the same either way.
+
+Two ROWS arming the same template sink do not collide, because a row's
+values normally carry their own handle. **Normally, and it is not
+enforced**: a projection that hands every row one shared
+`*prop.Property[string]` passes it through unchanged, and then the rows
+overwrite each other's message with no load-time signal at all — the same
+rule-you-keep as the paragraph above, for the same reason. Whether each
+row carries its own handle is a property of **your projection**, not one
+the framework enforces.
+
+`AllowError` is refused at load in **every case that would otherwise read as
+configured and report nothing forever**. The list is the thing to read; a
+count of it is deliberately not written here:
+
+- a **literal** (`AllowError="oops"` has nowhere to put the message);
+- an **absent or literal `Allow`** (there is no runtime parse to report);
+- a missing **`Context.Dispatcher`** (the publication has no route);
+- a **computed** target (no setter — this one used to panic inside `Build`
+  rather than fail to load);
+- `Allow` and `AllowError` **resolving to one property**, which would publish
+  over the set it just read — compared by resolved handle, so two names for
+  one property and an alias anywhere in a multi-binding `Allow` are both
+  caught;
+- a **second `<Frozen>`** binding a sink another already armed — they would
+  erase each other's message and leave a subtree sealed with nothing to show.
+
+**What "already armed" reaches**, exactly. Refused: two `<Frozen>` in one scope; a
+page and an item template; a page and a control instantiated from a template,
+across an `Include` or `UserControl` boundary; **two sibling item templates**;
+and a template of a list nested inside another list's template. All of them in
+either document order — the judgement is made at the end of the build, not at
+the moment of the arm.
+
+**With one condition on the template cases, and it is the same mechanism as the
+exemption below.** A template is judged through the one row `ItemsView.Validate`
+realizes during the build, and it realizes none for a list that is **empty at
+load**. So two sibling templates arming one sink are refused when both lists
+have items, and build clean when either is empty — the second list's arm then
+happens at scroll time, after the record that would judge it has closed. Same
+for a page-and-template pair whose list is empty.
+
+**Not refused, and it is a rule the author keeps:** two *rows of one list*
+sharing a single handle, where the projection hands every row the same
+`*prop.Property[string]` instead of one of its own. `ItemsView.Validate`
+realizes exactly one row during the build, so the second arm happens at scroll
+time, after the record that would judge it has closed. The symptom is the same
+one this whole list exists to prevent — the rows overwrite each other's
+message — so give each row its own handle, or hand the list one shared handle
+and accept that it reports the last row to fail.
+
+The template and nested-list clauses above exist because a child `Context`
+inherited the page's armed set but not the two fields saying *"you are inside
+a row"*: a second nested arm on one sink was dropped on the floor, and a list
+built inside a row captured that row's map while calling it the page's.
 
 #### Changing the set at runtime
 
