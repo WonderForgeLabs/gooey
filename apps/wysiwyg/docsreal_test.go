@@ -92,10 +92,8 @@ func TestAStaleSelectionStillShowsAPage(t *testing.T) {
 
 	// The refresh: one page left, and a selection pointing past it.
 	one := fstest.MapFS{"architecture.md": {Data: []byte("# Architecture\nonly page")}}
-	pages, skipped := docsPages(one)
-	ed.docsRoot.Set(one)
-	ed.docsSkipped.Set(skipped)
-	ed.docList.Set(pages)
+	ed.setDocsTree(one)
+	pages, _ := docsPages(one)
 
 	got := ed.docsBody.Get()
 	if got == "" {

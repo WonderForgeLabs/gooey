@@ -1243,11 +1243,15 @@ func newEditor(fsys fs.FS) *editor {
 	// THE DOCS TREE, resolved once. docsRoot is nil when there is none
 	// beside the editor, which is a legal state the pane says out loud
 	// rather than a startup failure — see docsFS.
-	docsRootFS := docsFS()
-	pages, skipped := docsPages(docsRootFS)
-	ed.docsRoot = prop.NewSource(docsRootFS)
-	ed.docList = prop.NewSource(pages)
-	ed.docsSkipped = prop.NewSource(skipped)
+	// The three handles are minted EMPTY and filled by setDocsTree, so
+	// that function is the only writer from the first frame rather than
+	// from the second — see docs.go for why one writer is the whole
+	// point (#442). A construction that wrote the values directly would
+	// be an exception to the rule on the line that establishes it.
+	ed.docsRoot = prop.NewSource[fs.FS](nil)
+	ed.docList = prop.NewSource[[]docPage](nil)
+	ed.docsSkipped = prop.NewSource(0)
+	ed.setDocsTree(docsFS())
 	ed.docsItems = prop.NewComputed(func() components.ItemSource {
 		return components.ItemsOf(ed.docList.Get(), func(d docPage) map[string]any {
 			return map[string]any{"Name": d.Label, "Bar": "▌"}
