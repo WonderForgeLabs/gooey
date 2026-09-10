@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/WonderForgeLabs/gooey/graphics/internal/encoderfixture"
 )
 
 // OpaqueEncoder's doc called a mis-classified fourth protocol "the
@@ -97,10 +99,18 @@ func TestOnlySixelIsAlphaLess(t *testing.T) {
 		// which leaves the new protocol's answer untested while the row
 		// count looks right.
 		//
-		// %T RATHER THAN reflect, because this repo's rule is no
-		// reflection outside generated protobuf and fmt's verb imports
-		// none here.
-		if got := fmt.Sprintf("%T", tc.enc); got != "graphics."+name {
+		// %T RATHER THAN reflect. Not because this avoids reflection
+		// — it does not: fmt calls reflect.TypeOf to answer the verb.
+		// It avoids the IMPORT, which is what CLAUDE.md's rule is
+		// stated in terms of and all its check can see. Saying "no
+		// reflection happens here" would be false, and would send the
+		// next reader looking for a violation the grep is blind to.
+		// Corrected in review of #474.
+		//
+		// THE POINTER IS STRIPPED, because the two halves spell the
+		// same type differently and demanding both at once left the
+		// table with no satisfying state — see rowType.
+		if got := rowType(tc.enc); got != "graphics."+name {
 			t.Errorf("the row filed under %q holds a %s. The check below asks "+
 				"that value and reports about %q, so this row answers for the "+
 				"wrong encoder and nothing at all answers for %s", name, got,
@@ -438,6 +448,7 @@ func receiverName(e ast.Expr) string {
 //	Wrapped  embeds the INTERFACE             → an encoder
 //	Boxed    embeds an interface embedding it → an encoder
 //	Named    the interface doing that         → an encoder, not a TYPE
+//	Pointed  declares both ON THE POINTER     → an encoder, named bare
 //	Partial  declares Encode and not Name     → NOT an encoder
 //	Shaped   declares Encode with other types → NOT an encoder
 //
@@ -459,7 +470,7 @@ func receiverName(e ast.Expr) string {
 // TestTheEncoderWalkDropsTheInterfacesThemselves is that half.
 func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
 	got := encodersIn(t, "internal/encoderfixture")
-	want := []string{"Boxed", "Chained", "Derived", "Full", "Wrapped"}
+	want := []string{"Boxed", "Chained", "Derived", "Full", "Pointed", "Wrapped"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the walk reports %v over the fixture package; want %v.\n"+
 			"Partial declares Encode and no Name, and Shaped declares an Encode "+
@@ -469,6 +480,94 @@ func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
 			"by embedding the interface and an interface that embeds it — miss "+
 			"one and a real encoder ships with no opacity row",
 			got, want)
+	}
+}
+
+// rowType is the row value's type name with any leading pointer
+// stripped.
+//
+// The strip is the whole point, and it exists because the two halves of
+// the table name a type differently. receiverName reports the name a
+// method is DECLARED on, pointer removed, so the walk demands a row
+// keyed "Pointed" for an encoder whose methods sit on *Pointed. But the
+// row's field is Encoder-typed, and the only value that satisfies it is
+// &Pointed{}, which %T prints as "*graphics.Pointed".
+//
+// Measured at the commit this fixes, with a pointer-receiver encoder
+// compiled into graphics/:
+//
+//	no row       → "PtrEnc implements Encoder and has no row here…"
+//	{PtrEnc{}}   → BUILD FAILURE, method Encode has pointer receiver
+//	{&PtrEnc{}}  → "the row filed under \"PtrEnc\" holds a *graphics.PtrEnc…"
+//
+// Three states, no satisfying one. That is worse than a guard that
+// misses a case: it hands whoever adds a pointer-receiver encoder a
+// reason to DELETE the check, which panel_test.go's own reflow comment
+// names as the outcome to avoid. Raised in review of #474.
+func rowType(enc Encoder) string {
+	return strings.TrimPrefix(fmt.Sprintf("%T", enc), "*")
+}
+
+// TestAPointerReceiverEncoderHasARowItCanFill is the pin for that fix,
+// and it asserts the RELATION rather than either half.
+//
+// Checking rowType(&Pointed{}) == "encoderfixture.Pointed" alone would
+// pass with the walk reporting anything at all; checking the walk
+// reports "Pointed" alone would pass with the comparison demanding a
+// star. The defect was that the two DISAGREED, so the test derives the
+// walk's answer and the table's answer from the fixture and requires
+// them to meet — which is the question the table asks of every row.
+//
+// encoderfixture.Pointed is reached through graphics.Encoder without an
+// import cycle or a cast because Go interfaces are structural: *Pointed
+// declares the same two methods, so it satisfies graphics.Encoder as
+// well as the fixture's own.
+func TestAPointerReceiverEncoderHasARowItCanFill(t *testing.T) {
+	const bare = "Pointed"
+
+	walked := encodersIn(t, "internal/encoderfixture")
+	if !slices.Contains(walked, bare) {
+		t.Fatalf("the walk reports %v over the fixture package and does not "+
+			"name %q, so this test is not measuring the disagreement it "+
+			"exists for", walked, bare)
+	}
+
+	// AND THE PREMISE, which is the arm this test is worthless without.
+	// Everything below holds just as well for a VALUE-receiver encoder,
+	// where the two halves agree anyway and there was never a defect —
+	// so moving Pointed's methods onto the value leaves this test green
+	// while it measures nothing at all. Asserted through `any` because
+	// the compiler cannot state a negative: `var _ Encoder = Pointed{}`
+	// would simply fail to build, which is not a test.
+	var val any = encoderfixture.Pointed{}
+	if _, ok := val.(Encoder); ok {
+		t.Fatal("Pointed{} satisfies Encoder, so its methods are declared on " +
+			"the VALUE. The disagreement this test measures only exists for a " +
+			"pointer receiver — with a value one the walk's name and the row's " +
+			"type string already match, and every assertion here passes without " +
+			"exercising the fix. Put the methods back on *Pointed")
+	}
+
+	// The value half. Spelled &Pointed{} because Pointed{} does not
+	// implement Encoder — that is the constraint that makes the two
+	// halves disagree, not an incidental choice.
+	var enc Encoder = &encoderfixture.Pointed{}
+	// THE WHOLE RENDERED NAME, not the part after the dot. Cutting at
+	// the dot and comparing the suffix was measured SILENT against
+	// rowType losing its TrimPrefix: "*encoderfixture.Pointed" cuts into
+	// "*encoderfixture" and "Pointed", and the star — the entire defect
+	// — lands in the half being thrown away. The comparison has to be
+	// the one the table itself makes, which is against a package-
+	// qualified name built from the walked key.
+	want := "encoderfixture." + bare
+	if got := rowType(enc); got != want {
+		t.Errorf("the walk demands a row keyed %q, so the table compares the "+
+			"row's value against %q — and the only value that can fill it "+
+			"types as %q. While those disagree a pointer-receiver encoder has "+
+			"no satisfying row: keyed anything else it is reported missing, "+
+			"valued Pointed{} it does not compile, and valued &Pointed{} it is "+
+			"reported as answering for the wrong type",
+			bare, want, got)
 	}
 }
 

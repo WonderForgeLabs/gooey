@@ -89,7 +89,6 @@
 // designer renders one today. Two paragraphs in one file disagreeing
 // about the same fact is worse than either being wrong alone, so this
 // one is now the narrow claim and `over` carries the general one.
-// Raised in review of #474.
 //
 // Two tiers that were already right were spent to mend the one that was
 // not. Learning the terminal's own background — an OSC 11 query — is
@@ -161,7 +160,7 @@ const (
 	// iTerm2 it is an ALPHA handed to fade(), which is what it was
 	// before #254 and is again. The reader most likely to meet this
 	// comment is the one changing 0.4, and both readings move together
-	// when they do. Raised in review of #474.
+	// when they do.
 	hairlineInset = 7.0
 	hairlineWidth = 1.0
 	hairlineFade  = 0.4
@@ -563,13 +562,34 @@ func stroke(fg render.Color, thickness float64) paint.Stroke {
 // THEY HAVE TO AGREE, and they did not. Setting Brush alone left
 // Fallback at full-brightness fg — paint.Stroke.Fallback is documented as
 // "the single colour this stroke becomes on a terminal with no pixel
-// protocol", and Apply never reads it, so it is dormant while this
-// package's cell tier goes through DrawBoxRunes. Dormant is exactly why
-// it would be wrong the day somebody gives the cell tier a rule: nothing
-// would have been drawing it, so nothing would have noticed it was the
-// border's colour. It is unobservable through the canvas, which is why
-// this is a function a test can hold rather than three lines inside
-// drawCanvas.
+// protocol".
+//
+// NOTHING READS IT, AND NOT ONLY HERE. Stroke.Apply makes gg calls and
+// consults it nowhere (paint/paint.go), this package's cell tier goes
+// through DrawBoxRunes, and paint/shapes' parseShape deliberately
+// REMOVED the identical assignment on the finding that the field has no
+// consumer anywhere in the tree. That is the tree-wide fact, and the
+// sentence this comment used to carry — "dormant while this package's
+// cell tier goes through DrawBoxRunes" — read as a local property and
+// implied some other cell tier consumes it. None does. Corrected in
+// review of #474, which found the two packages documenting opposite
+// answers about the same dead field with neither citing the other.
+//
+// SO WHY SET IT HERE WHEN shapes CHOSE NOT TO. Because the two cases
+// differ in the way the field's own definition cares about. A shape has
+// TWO brushes, and its cell fallback has to cover the fill as well, so
+// shapes takes it from Brush.Solid through brushPattern and a pen-only
+// field would be the wrong mechanism — shapes' comment says exactly
+// that. A hairline rule is a pen and nothing else: Stroke.Fallback
+// describes precisely what it is, and there is no second brush for a
+// better answer to come from.
+//
+// Which leaves the reason to set a field nobody reads. Dormant is
+// exactly why it would be wrong the day somebody gives the cell tier a
+// rule: nothing would have been drawing it, so nothing would have
+// noticed it was the border's colour. It is unobservable through the
+// canvas, which is why this is a function a test can hold rather than
+// three lines inside drawCanvas.
 func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 	s := stroke(fg, hairlineWidth)
 	if !opaque {
@@ -632,8 +652,7 @@ func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
 // ever name different sets — in THIS file and in every other file of
 // the app that makes the same claim, because the first version of that
 // guard read only this one and the copy in
-// apps/wysiwyg/panelground_test.go stayed at three of five. Raised in
-// review of #474, twice.
+// apps/wysiwyg/panelground_test.go stayed at three of five.
 //
 // THERE IS NO SEAM TO FIX IT WITH TODAY, and that is the fact worth
 // carrying rather than the apology. Composer.clearStyle is unexported

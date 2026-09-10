@@ -1,10 +1,16 @@
 // Package encoderfixture is a FIXTURE, not code: it exists to be parsed
-// by graphics/opaque_test.go's encoder walk, and nothing imports it.
+// by graphics/opaque_test.go's encoder walk. Nothing in the non-test
+// build imports it — `go list -deps ./...` does not name it — and the
+// one importer is that test file, which needs Pointed as a VALUE and
+// not only as source text.
 //
 // It holds the types graphics/ cannot: two that satisfy Encoder wrongly,
-// which the walk has to refuse, and four that satisfy it by embedding,
-// which it has to accept. Both rules are unobservable through graphics/
-// itself, because stating them needs a type that gets them wrong. It is
+// which the walk has to refuse, four that satisfy it by embedding, which
+// it has to accept, and one that satisfies it ON THE POINTER, where the
+// walk's answer and the table's answer have to be made to agree. The
+// first two rules are unobservable through graphics/ itself because
+// stating them needs a type that gets them wrong; the third is
+// unobservable because stating it needs a real encoder nobody ships. It is
 // under internal/ so that no consumer can reach these types, and in a
 // package of its own so they stay out of the walk over ".".
 //
@@ -28,7 +34,7 @@ package encoderfixture
 
 import "image"
 
-// THE POSITIVE HALF, ASSERTED BY THE COMPILER. These five lines are the
+// THE POSITIVE HALF, ASSERTED BY THE COMPILER. These lines are the
 // ground truth the walk is checked against; if embedding does not work
 // the way this file claims, the package does not build.
 //
@@ -43,6 +49,7 @@ var (
 	_ Encoder = Chained{}
 	_ Encoder = Wrapped{}
 	_ Encoder = Boxed{}
+	_ Encoder = &Pointed{}
 )
 
 // Encoder is the same SHAPE as graphics.Encoder — two methods, one of
@@ -89,6 +96,28 @@ type Boxed struct{ Named }
 type Partial struct{}
 
 func (Partial) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error {
+	return nil
+}
+
+// Pointed declares both methods ON THE POINTER, which is the ordinary
+// shape for an encoder holding a palette cache or a reusable scratch
+// buffer. It is here because it is the one satisfier graphics/ itself
+// cannot hold: the walk reports the name with the pointer STRIPPED
+// (receiverName), while only &Pointed{} can be assigned to an
+// Encoder-typed field. Until review of #474 measured it, the table in
+// opaque_test.go demanded both spellings at once and had no satisfying
+// state — a row keyed "Pointed" whose value printed as
+// "*graphics.Pointed" was rejected, and the value that printed without
+// the star did not compile.
+//
+// Note the assertion above is on &Pointed{}, not Pointed{}. That is not
+// a style choice: Pointed{} does not implement Encoder, so writing it
+// there would not build.
+type Pointed struct{ scratch []byte }
+
+func (p *Pointed) Name() string { return "pointed" }
+
+func (p *Pointed) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error {
 	return nil
 }
 

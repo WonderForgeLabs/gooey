@@ -678,7 +678,7 @@ func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 	// branch as BLACK regardless of what the pane declared, because
 	// frame() erased bg before drawCanvas — dormant, computed and
 	// discarded, which is exactly the argument this test exists to
-	// reject. Raised in review of #474.
+	// reject.
 	for _, opaque := range []bool{true, false} {
 		for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
 			if got, want := hairlineStroke(fg, bg, opaque).Fallback,
@@ -696,7 +696,7 @@ func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 	// one check drift apart; the one that is left is the one the loop
 	// above cannot make, because on the composited tier the Brush carries
 	// alpha and an equality between the two fields is false by
-	// construction. Raised in review of #474.
+	// construction.
 	for _, bg := range []render.Color{{}, render.RGB(0x1e, 0x1e, 0x2e)} {
 		s := hairlineStroke(fg, bg, true)
 		want := over(fg, bg, hairlineFade)
@@ -726,7 +726,7 @@ func TestTheHairlineStrokesBothColourFieldsTheSame(t *testing.T) {
 // threshold that rose would have left both green while the line was
 // silently dropped again. TestTheHairlineReachesTheSixelStream runs the
 // encoder, so this constant is now a convenience for a readable failure
-// message rather than the evidence. Raised in review of #474.
+// message rather than the evidence.
 const sixelKeep = 0x8000
 
 // TestTheHairlineReachesTheSixelStream is the discriminating assertion:
@@ -778,9 +778,9 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 	// and the arcs happen to agree, which is luck rather than
 	// construction: at 12.0 the short canvas clamps to 11.25 and the
 	// tall one does not, so the streams differ in their CORNERS while
-	// the assertion below reports on the rule. Raised in review of #474
-	// — the same shape as the sixelKeep problem this test replaced,
-	// which is why it is fixed rather than annotated.
+	// the assertion below reports on the rule — the same shape as the
+	// sixelKeep problem this test replaced, which is why it is fixed
+	// rather than annotated.
 	if (rows*ch)%short != 0 {
 		t.Fatalf("a %d-pixel canvas does not divide into %d-pixel cells, so the "+
 			"no-rule canvas cannot be built at the same size", rows*ch, short)
@@ -803,7 +803,7 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 	// because the assertion is an INEQUALITY the test would then pass on
 	// a geometry difference while the rule was silently gone again. That
 	// is the same shape as the sixelKeep problem this test was written to
-	// replace. Raised in review of #474.
+	// replace.
 	//
 	// So the discriminating comparison is the two STROKES on one canvas
 	// size: translucent against opaque, same cols, same rows, same cell.
@@ -857,8 +857,6 @@ func TestTheHairlineReachesTheSixelStream(t *testing.T) {
 // image, so no Panel sits under it. The stronger claim, "no element in
 // apps/wysiwyg", was written here and was false; raised in review of
 // #474.)
-//
-// Raised in review of #474.
 func TestTheEncoderDecidesWhichPictureIsDrawn(t *testing.T) {
 	fg := render.RGB(140, 140, 150)
 
@@ -1238,7 +1236,7 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 		// measurement the test's name promises, and they are what would
 		// change if the y ever came off the half-pixel where a 1.0
 		// stroke lands on exactly one row: antialiasing would spill it
-		// across two. Raised in review of #474.
+		// across two.
 		const cols, cw = 40, 8
 		dc, err := drawCanvas(cols, 6, cw, ch, render.RGB(0xff, 0xff, 0xff), render.Color{}, true)
 		if err != nil {
@@ -1272,23 +1270,25 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 //
 // `over`'s doc argues that the black ground is provably wrong in a
 // document, and the argument turns on Background being AUTHORABLE — so
-// it names the elements that carry the attribute. It named three of the
-// five for a review round: Border and HStack had declared it all along,
-// and nothing went red, because prose about another package's registry
-// is exactly the claim nothing checks.
+// it names the elements that carry the attribute. Prose about another
+// package's registry is exactly the claim nothing checks: the sentence
+// named three of the five elements, and nothing went red.
 //
-// EVERY FILE, NOT panel.go. The first version of this guard read
-// os.ReadFile("panel.go") and nothing else, so when panel.go was
-// corrected and derived, apps/wysiwyg/panelground_test.go went on saying
-// "VStack/Grid/Canvas" — the identical error, in the identical argument,
-// about the identical registry, one directory up and structurally out of
-// reach. The two files then DISAGREED with each other, which panel.go's
-// own package doc calls worse than either being wrong alone. So the
-// corpus is a walk of the module and the floor is two: a third copy is
-// covered the day it is written. Raised in review of #474, twice.
+// WHAT IT READS: every .go file in this module, against
+// markup.BuiltinElements(). Both directions per file — a name in the
+// comment the registry does not carry is as wrong as one it carries and
+// the comment omits.
 //
-// Both directions per file: a name in the comment that the registry does
-// not carry is as wrong as one it carries and the comment omits.
+// WHY A WALK RATHER THAN panel.go. A second copy of the sentence went
+// stale exactly as the first had, one directory up in
+// apps/wysiwyg/panelground_test.go, and a guard reading a single named
+// file cannot reach it. The corpus floor (len(srcs)) is what pins the
+// walk's reach; the sentence count is only checked for non-vacuity,
+// because one copy is a legal state and arguably the better one.
+//
+// WHY THE SOURCE IS FLATTENED BEFORE MATCHING: see the `cont` regexp
+// below — a legal re-wrap of the comment broke a raw-bytes match and
+// made this test report the sentence as gone.
 //
 // AND IT RUNS OUTSIDE CI, like its neighbour in panelground_test.go and
 // for the same reason — ci.yml maps `apps/*` to vet, so this file is
@@ -1297,7 +1297,7 @@ func TestTheHairlineCostsExactlyOnePixelRowOfTheTitleCell(t *testing.T) {
 // is a DOC COMMENT, so the person most likely to trip it is somebody
 // editing prose, who has no reason to run a 25-module loop and will see
 // a green PR. The asymmetry is CLAUDE.md's deliberate one; it is written
-// down so the red arrives explained. Raised in review of #474.
+// down so the red arrives explained.
 func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 	want := map[string]bool{}
 	for _, e := range markup.BuiltinElements() {
@@ -1354,7 +1354,7 @@ func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 	// to delete it for reflowing a comment is worse than no guard, and
 	// the block it reads needed re-wrapping in the same round. It is
 	// wrapped after "on" today, so this is load-bearing rather than
-	// defensive. Raised in review of #474.
+	// defensive.
 	//
 	// ONE MECHANISM, not two. `\s+` in place of the literal spaces would
 	// also survive the wrap, and having both meant neither could be shown
@@ -1396,26 +1396,15 @@ func TestTheBackgroundElementsAreTheOnesTheRegistrySays(t *testing.T) {
 			}
 		}
 	}
-	// ZERO IS THE FLOOR, AND IT WAS TWO — which made this guard fire on
-	// the edit its own commit argues for.
+	// ONE, NOT TWO, and the difference is a guard firing on the edit its
+	// own argument asks for. Deduplicating the sentence down to a single
+	// home is the correct edit here; a floor of two made that t.Fatal,
+	// naming two causes that were both false.
 	//
-	// That argument is that two files carrying the same claim about
-	// somebody else's registry IS the defect: "the two files then
-	// DISAGREED with each other, which is worse than either being wrong
-	// alone". Acting on it — deleting the duplicated sentence from
-	// apps/wysiwyg/panelground_test.go and leaving panel.go as the single
-	// home — made this t.Fatal with a message naming two causes that were
-	// both FALSE: the phrase was not reworded, and the walk was reaching
-	// the module. Same shape as the reflow trap this test's own history
-	// removed, which is a guard handing a maintainer a reason to work
-	// around it for a legitimate edit. Raised in review of #474.
-	//
-	// THE TWO PROPERTIES ARE SEPARABLE AND THIS FILE ALREADY HAS BOTH.
-	// "The walk reaches the whole module, not just this package" is
-	// pinned by the len(srcs) corpus floor above, which is unaffected by
-	// how many files happen to state the claim. What the SENTENCE check
-	// needs is only non-vacuity: zero copies means the anchor broke, and
-	// one copy is a legal state — arguably the better one.
+	// The two properties are separable and this file has both. "The walk
+	// reaches the whole module" is the len(srcs) floor above, unaffected
+	// by how many files state the claim. What the SENTENCE check needs is
+	// only non-vacuity: zero means the anchor broke.
 	if found < 1 {
 		t.Fatal("found the Background-authorable sentence in no file at all. " +
 			"panel.go carries it, so either the phrase was reworded — " +
@@ -1592,7 +1581,7 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 	// sample lands on partial or zero coverage — at which point the
 	// `bare == 0` fatal fires with a message about missing border ink
 	// that would be a lie. Derived from the same expression drawCanvas
-	// uses, so the two cannot disagree. Raised in review of #474.
+	// uses, so the two cannot disagree.
 	rw, rh := float64(cols*cw)-borderWidth, float64(4*ch)-borderWidth
 	radius := min(cornerRadius, min(rw/2, rh/2))
 	if float64(outside) <= radius+borderWidth {
@@ -1604,7 +1593,7 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 	// ONLY THE LIVE HALF. This read `outside >= int(hairlineInset) ||
 	// outside < 0`, and the first disjunct is structurally x-2 >= x —
 	// false for every value of hairlineInset, not merely for 5 >= 7. A
-	// guard's text should say what it can do. Raised in review of #474.
+	// guard's text should say what it can do.
 	if outside < 0 {
 		t.Fatalf("the reference sample is at x=%d, off the canvas: hairlineInset "+
 			"(%d) has dropped below the 2 columns this sample steps back by",
@@ -1641,7 +1630,7 @@ func TestACellTooShortForBothGetsNoHairline(t *testing.T) {
 // threshold, and nothing between the two arms could see it. The boundary
 // belongs to TestTheHairlineNeedsMoreThanANonReversedSpan below, which
 // walks the pixels either side of the threshold rather than sampling one
-// canvas twice. Raised in review of #474, round 7.
+// canvas twice.
 func TestAPaneTooNarrowForTheInsetsGetsNoHairline(t *testing.T) {
 	const cw, ch = 6, 16
 	const cols = 2
