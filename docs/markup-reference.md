@@ -625,7 +625,9 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 | `Changed` | Optional command, run after the selection moves (the property is already `Set`). |
 | `Style` | Named style or a bound style for the strip. |
 
-Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child. A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so the universal attributes are a load error on it, `Name` included: there is nothing for `Name` to address and nothing for `Margin` to lay out. Put them on the content inside:
+Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child.
+
+**A universal attribute on a `<Tab>` is now a load error, and this is a breaking change.** A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so there is nothing for `Name` to address and nothing for `Margin` to lay out. All eight universals are refused, `Name` included, where they were previously accepted and silently dropped. Landing this had to strip `Name` from seven fixtures in this repo, which is fair warning for a page written against an older gooey. Put them on the content inside:
 
 ```xml
 <Tabs Selected="{{.Tab}}">
@@ -637,6 +639,8 @@ Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`);
   </Tab>
 </Tabs>
 ```
+
+**Unlike `<Menu>` and `<MenuItem>` below, an UNRECOGNIZED attribute on a `<Tab>` is still accepted.** `<Tab Frobnicate="yes">` loads. The two rules look alike and are not: the menu elements declare an exhaustive attribute surface, so anything outside it is a typo the loader can name, while a `<Tab>`'s own vocabulary is whatever `<Tabs>` chooses to read and the catalog cannot enumerate it. What is refused here is the *universal* set specifically — the attributes the framework applies beside the element rather than through it — because those are answered by the element's structure rather than by its surface.
 
 Switching is the bindable-Visibility machinery, not a structural rebuild: every page is a permanent child whose `Visibility` the Tabs binds to "selected == me", so a `Set` on `Selected` erases the outgoing page through the composer's sweep, repaints the incoming page and the strip, and touches nothing else. Because the Tabs owns that binding, a `Visibility` attribute on a page root is a load error. Hidden pages are `Collapsed`: out of layout, out of focus order, out of hit-testing.
 

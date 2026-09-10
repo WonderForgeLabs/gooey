@@ -257,6 +257,20 @@ type ElementSpec struct {
 	// Opaque, when set, is the reason the generator could not enumerate
 	// this element — the text of its //gooey:catalog-opaque annotation.
 	Opaque string
+	// ParsedBy names the element whose Build consumes this one, for a
+	// pseudo-element that has no Build of its own worth speaking of —
+	// <Menu> and <MenuItem> are both read by <MenuBar>. Empty for a
+	// pseudo-element that says why through Opaque instead, and empty
+	// for everything that builds a component.
+	//
+	// It is carried onto the spec rather than consumed and dropped at
+	// ElementDef because a diagnostic wants to NAME the reader:
+	// "<MenuBar> reads <Menu> as data" tells an author where the
+	// attribute went, and "its parent reads it as data" does not.
+	// Raised in review of #486 — refuseUniversal's reason clause leaned
+	// on this field while the type it reads did not carry it, so the
+	// message it could actually produce was the generic one.
+	ParsedBy string
 	// Open reports that the attribute set is extensible at runtime, so
 	// entries may carry an Origin different from the element's.
 	Open  bool
@@ -586,18 +600,29 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// load.
 		//
 		// THE AGREEMENT WAS ONCE CONDITIONED ON AttrsKnown, and is not
-		// any more (#461). checkAttrs returns early on !AttrsKnown, so
+		// any more (#461). checkAttrs returned early on !AttrsKnown, so
 		// for an OPAQUE pseudo-element this gate dropped the row while
 		// the loader accepted it: <Tab Name="Zonk"> loaded clean and was
-		// dropped, with no designer surface left to reveal it. The early
-		// return now refuses the universal set first (refuseUniversal,
-		// attrcheck.go), because the universal set belongs to no element
-		// and so survives not knowing the element's own. The two gates
-		// agree for every pseudo-element, and
-		// TestNoPseudoElementAcceptsAUniversalAttribute plus
-		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert
-		// both halves over the catalog rather than over a list, so a
-		// fourth pseudo-element is covered without either being edited.
+		// dropped, with no designer surface left to reveal it.
+		// checkAttrs now refuses the universal set BEFORE either of its
+		// gates, because the universal set belongs to no element and so
+		// survives not knowing the element's own (refuseUniversal,
+		// attrcheck.go).
+		//
+		// TestNoPseudoElementAcceptsAUniversalAttribute and
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert the
+		// two halves over the catalog rather than over a list, so a
+		// fourth pseudo-element joins both without an edit.
+		//
+		// THAT IS TRUE OF THE GATES AND WAS NOT TRUE OF THE WIRING, and
+		// the distinction is worth keeping because the sentence above
+		// used to be written without it. Both of those tests call
+		// checkAttrs themselves, so neither can see a BUILDER that never
+		// calls it — which is the defect #461 actually was.
+		// TestEveryPseudoElementIsRefusedThroughAWholeLoad covers that,
+		// and its cases are hand-written markup with a derived
+		// completeness check, because a document cannot be generated
+		// from a spec. Raised in review of #486.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)

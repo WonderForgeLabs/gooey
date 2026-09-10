@@ -36,17 +36,41 @@ import (
 // beside checkProps, which does the same job for property elements.
 func checkAttrs(e Element, ctx *Context) error {
 	spec, ok := ctx.spec(e.Name)
+
+	// THE UNIVERSAL SET IS NOT PART OF ANY ELEMENT'S OWN VOCABULARY, so
+	// this runs BEFORE the two gates below rather than inside either.
+	//
+	// It began inside the !AttrsKnown early return, where <Tab> was the
+	// only pseudo-element that could reach it — <Menu> and <MenuItem>
+	// are AttrsKnown and fell through to the exhaustive check, which
+	// refuses a universal with "no such attribute; this element takes
+	// Title". refuseUniversal's own comment calls that wording a lie,
+	// and it was being told by two of the three elements the argument
+	// was written for. Raised in review of #486; the three now share
+	// one sentence, and TestEveryPseudoElementRefusesAUniversalTheSameWay
+	// is what keeps them sharing it.
+	//
+	// A MISPLACED ELEMENT IS SOMEBODY ELSE'S ERROR TO REPORT. checkAttrs
+	// runs before the element's own Build, so on
+	// `<VStack><Tab Name="Z">…` this refusal preempted defTab.Build's
+	// "<Tab> is only valid directly inside <Tabs>" and told the author
+	// to move an attribute — a remedy that leaves the document just as
+	// broken, while the diagnosis that would fix it never printed. The
+	// placement fault is the larger one and is answerable from the
+	// catalog, so it is deferred to rather than raced. See
+	// acceptedByParent, whose comment records why it cannot ask
+	// spec.Nested for the answer.
+	if ok && spec.Pseudo && acceptedByParent(e, ctx) {
+		if err := refuseUniversal(e, spec); err != nil {
+			return err
+		}
+	}
+
 	if !ok || !spec.AttrsKnown {
 		// A registered Go builder interprets attributes however it
 		// likes, and an opaque element's vocabulary was never
 		// enumerable. Claiming to validate either would be inventing a
 		// rule the catalog cannot support.
-		//
-		// THE UNIVERSAL SET IS NOT PART OF THAT VOCABULARY, which is
-		// why one check survives the early return. See refuseUniversal.
-		if ok && spec.Pseudo {
-			return refuseUniversal(e, spec)
-		}
 		return nil
 	}
 	if spec.Open {
@@ -104,11 +128,23 @@ func checkAttrs(e Element, ctx *Context) error {
 // or applyLayout() with it.
 //
 // !TakesLayout is NOT interchangeable here, and reaching for it would
-// break working apps. It is absent-by-default: a host's
-// Context.Components builder has no Proto, so TakesLayout is false for
-// it while the framework applies Margin to the component it returns
-// exactly as it would to a builtin's. Only the affirmative fact
-// entails the refusal.
+// break working apps. It is absent-by-default, and the construct that
+// shows the difference is a HOST'S Context.Elements ElementDef with a
+// real Build and no Proto: ctx.spec resolves it, AttrsKnown is false,
+// TakesLayout is false — and Pseudo is false, because no reason is
+// stated. build() runs applyLayout on the component it returns, so its
+// universals are honoured, and refusing them off the absence would
+// break it.
+//
+// NOT Context.Components, which this comment used to cite. ctx.spec
+// returns ok=false for one of those, so both gates short-circuit alike
+// and such an element never reaches this function at all — a reader
+// checking the claim would find it does not hold and could conclude
+// the gate is over-cautious. The fixture in
+// TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals is the
+// discriminating shape, and it is a Context.Elements def for exactly
+// this reason; the first attempt at that test used Components and could
+// not tell the two gates apart. Corrected in review of #486.
 //
 // Grant.AttrsFor already implements the same rule on the other side —
 // it withholds the layout rows on !TakesLayout and the identity row on
@@ -133,24 +169,87 @@ func refuseUniversal(e Element, spec ElementSpec) error {
 			// The message names the MECHANISM, not just the fault. "no
 			// such attribute" would be a lie — the attribute exists
 			// everywhere else — and the author's real question is where
-			// to put it instead, which is one element down.
-			return fmt.Errorf("markup: <%s %s=%q>: %s builds no component of its own (%s), so %s would be applied to nothing; put it on the content inside instead",
-				e.Name, name, e.Attrs[name], e.Name,
-				describePseudo(spec), name)
+			// to put it instead.
+			return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
+				e.Name, name, e.Attrs[name],
+				readsAsData(spec), name, pseudoRemedy(spec))
 		}
 	}
 	return nil
 }
 
-// describePseudo is the reason clause of the message above, taken from
-// the def rather than written twice. Opaque and ParsedBy are the two
-// spellings Pseudo derives from, and one of them is always set — that
-// conjunct is what Pseudo means.
-func describePseudo(spec ElementSpec) string {
-	if spec.Opaque != "" {
-		return spec.Opaque
+// readsAsData is the reason clause of the message above: who consumes
+// this element, when the catalog knows.
+//
+// IT NO LONGER SPLICES spec.Opaque, and that is finding 5 of #486's
+// round 1. Opaque is a CATALOG-GENERATOR annotation — <Tab>'s reads "a
+// pseudo-element: <Tabs> parses a <Tab>'s Header and content itself, so
+// this definition exists only to reject one used anywhere else" —
+// written to explain to a tool why an element could not be enumerated.
+// Dropped into a load error it restated the clause beside it, trailed
+// off into registry bookkeeping that means nothing to somebody editing
+// a page, and coupled the error's wording to prose with nothing pinning
+// it as error copy.
+//
+// ParsedBy is the half worth keeping, because it names the reader:
+// "<MenuBar> reads <Menu> as data" tells an author where the attribute
+// went. It reaches here because ElementSpec now carries the field —
+// before #486 the type did not have it, so this function could only
+// ever return the generic clause however the def was declared.
+func readsAsData(spec ElementSpec) string {
+	if spec.ParsedBy != "" {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", spec.ParsedBy, spec.Name)
 	}
-	return "its parent reads it as data"
+	return fmt.Sprintf("<%s>'s parent reads it as data, ", spec.Name)
+}
+
+// pseudoRemedy is the "put it somewhere else" tail, and it is offered
+// only when there IS a somewhere else.
+//
+// <Tab> and <Menu> hold content, so naming it is a real instruction.
+// <MenuItem> is ModeLeaf and holds none; prescribing a move to nowhere
+// is the same shape as finding 1 of #486's round 1, where a remedy was
+// printed for a document whose actual defect was elsewhere.
+func pseudoRemedy(spec ElementSpec) string {
+	switch spec.Children.Mode {
+	case ModeLeaf, ModeNone:
+		return ""
+	}
+	return "; put it on the content inside instead"
+}
+
+// acceptedByParent reports that this element sits in a container that
+// names it, which is the precondition for its ATTRIBUTES being the
+// interesting fault. Where it is false the element's own Build is about
+// to say something more useful — "<Tab> is only valid directly inside
+// <Tabs>" — and checkAttrs, which runs first, must not talk over it.
+//
+// ASKED OF THE PARENT, NOT OF spec.Nested, and that distinction is the
+// whole reason this function is not two lines shorter. Nested says
+// exactly what is wanted here — "builds nothing AND some container
+// names it" — but it is DERIVED BY markNested OVER THE ASSEMBLED
+// CATALOG, and ctx.spec returns a per-def spec that markNested has
+// never touched. So ctx.spec("Tab").Nested is false for the one element
+// the field was added for, while ctx.Catalog()'s entry for the same
+// name is true.
+//
+// The first version of this check read spec.Nested and was therefore
+// dead: it returned false for every element, the refusal fired
+// regardless of placement, and the finding it was written for was
+// unfixed with every test green. Measured, not reasoned about. If a
+// later reader wants the field here, the fix is to make ctx.spec derive
+// it — not to assume it is set.
+func acceptedByParent(e Element, ctx *Context) bool {
+	parent, ok := ctx.spec(e.parent)
+	if !ok || parent.Children.Mode != ModeRestricted {
+		return false
+	}
+	for _, n := range parent.Children.Only {
+		if n == e.Name {
+			return true
+		}
+	}
+	return false
 }
 
 func describeParent(parent string) string {
