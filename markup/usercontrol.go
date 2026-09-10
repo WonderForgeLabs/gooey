@@ -173,14 +173,60 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Components == nil {
 			child.Components = parent.Components
 		}
+		// THE DECLARED HALF OF THE SAME SEAM, and it was missing while
+		// Components above was not (issue #314). Context.Elements is a
+		// host element that DECLARES its surface; Context.Components is
+		// the same registration without a schema. Only the second
+		// crossed, so `<Meter Level="{{.N}}"/>` inside any control
+		// failed to load with `unknown element <Meter>` while the
+		// undeclared spelling of the same component worked — the
+		// incentive exactly backwards from the one the catalog exists to
+		// create.
+		if child.Elements == nil {
+			child.Elements = parent.Elements
+		}
 		if child.Handlers == nil {
 			child.Handlers = parent.Handlers
+		}
+		// docs/markup-reference.md calls extending the <Validate>
+		// vocabulary "a registration, exactly like Components and
+		// Handlers". It was not one: an Include always starts from
+		// &Context{}, so Rules was nil inside every control and
+		// <Validate Email="true"/> failed naming only the built-ins.
+		if child.Rules == nil {
+			child.Rules = parent.Rules
 		}
 		if child.Includes == nil {
 			child.Includes = parent.Includes
 		}
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
+		}
+		// Dir is the DOCUMENT DIRECTORY <Companion> resolves Dir/Log
+		// against. Unpropagated it was "", and hostPath falls back to
+		// filepath.Clean — the process working directory — so a
+		// companion declared in a control file quietly ran somewhere
+		// else. Nothing restricts <Companion> to page level, so this was
+		// reachable (issue #314).
+		if child.Dir == "" {
+			child.Dir = parent.Dir
+		}
+		// Variant is the PIXEL-PROTOCOL SPECIALIZATION, and this arm is
+		// not redundant with the resolveVariant call above even though
+		// that one reads parent.Variant directly.
+		//
+		// AT DEPTH 1 IT LOOKS REDUNDANT, WHICH IS WHY IT WAS MISSING. A
+		// page instantiating <Inner/> resolves inner.sixel.gooey off the
+		// PAGE's Variant and everything is right. One level down the
+		// parent IS this child context, so a <Card/> that includes a
+		// <Panel/> resolved the panel against "" — the plain file, on an
+		// app that asked for sixel, with no error anywhere. Measured:
+		// depth 1 gave SIXEL and depth 2 gave PLAIN. #314's own text
+		// says "Variant is read off the parent directly, so only Dir
+		// actually breaks", which is true at one level and false below
+		// it.
+		if child.Variant == "" {
+			child.Variant = parent.Variant
 		}
 		// A control's literal asset paths (Image Src) resolve against
 		// the FS its OWN markup came from, the same isolation its

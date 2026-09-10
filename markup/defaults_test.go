@@ -2,6 +2,7 @@ package markup
 
 import (
 	"fmt"
+	"image"
 	"strings"
 	"testing"
 
@@ -59,6 +60,8 @@ func defaultsContext() *Context {
 			// attribute it is probing.
 			"Pct":  prop.NewSource(85),
 			"Noop": gooey.Command(func() {}),
+			"Sty":  prop.NewSource(render.Style{Fg: render.RGB(10, 20, 30)}),
+			"Img":  prop.NewSource(image.Image(image.NewRGBA(image.Rect(0, 0, 2, 2)))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 	}
@@ -90,6 +93,14 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 		return "{{.C}}"
 	case "components.ItemSource":
 		return "{{.IS}}"
+	case "image.Image":
+		// <Image Src> is REQUIRED and binding-only, so probeElement has
+		// to seed it before any of Image's other attributes can be
+		// probed at all. Until this arm existed the Fatalf below fired
+		// and took the whole run with it — which is what that message
+		// asks for, and it went unanswered because nothing had reason
+		// to probe <Image> generically. Added by #314's Binds sweep.
+		return "{{.Img}}"
 	}
 	t.Fatalf("no placeholder for required attribute %s of type %q — "+
 		"add one, or the element silently stops being checked", a.Name, a.GoType)
