@@ -177,7 +177,10 @@ type PointerFollower interface{ FollowsPointer() bool }
 func (m *FocusManager) HitTest(x, y int) Component {
 	var best hitCandidate
 	order := 0
-	hitTest(m.root, x, y, 0, false, 0, &order, &best)
+	// aborted is the bound on TOTAL WORK, and giving up the early return
+	// on a hit is what made it necessary. See hitTest.
+	aborted := false
+	hitTest(m.root, x, y, 0, false, 0, &order, &best, &aborted)
 	return best.w
 }
 
@@ -230,9 +233,50 @@ func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
 // SUBTREE, so a node's answer is its lifting ancestor's, and asking each
 // node on its own would let a nested Overlay sort out of its parent's
 // run.
-func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, order *int, best *hitCandidate) {
+// THE DEPTH CAP ABORTS THE WHOLE WALK, not just the branch it fired on,
+// and that is the difference between a bound and a decoration.
+//
+// Every other walk in this package unwinds a cycle in MaxLayoutDepth
+// steps because it takes one branch at a time — Measure follows a
+// container's children in order and returns up; a cycle through a
+// single-child container is a LINE. This walk gave up the early return on
+// a hit (an earlier sibling can out-rank a later one, so every subtree
+// whose bounds contain the point has to be visited), and that early
+// return was the only thing bounding total work. On a container that is
+// its own child TWICE, each level then visits both children instead of
+// unwinding on the first hit: 2^MaxLayoutDepth visits.
+//
+// Measured in review of #478 — the base branch returned in 11ms, this
+// walk had not returned after 10 SECONDS, with the `depth >
+// MaxLayoutDepth` line below still present, still recording a fault, and
+// still looking like the bound. A cap that reports a fault and then hangs
+// is worse than no cap, because the fault says "handled".
+//
+// ON A LEGAL TREE THE CAP NEVER FIRES, so aborting everything costs
+// nothing and changes no answer. What it must NOT become is a budget on
+// total VISITS: a wide legal tree — 2^12 nodes at depth 12 — would then be
+// truncated, and every ordering assertion in this package would still
+// pass, because truncation drops candidates rather than mis-comparing
+// them. TestABranchingTreeUnderTheCapIsFullyVisited is what holds that
+// apart, and TestHitTestOnABranchingCycleTerminates the other side.
+//
+// CLAUDE.md's layout-cycle paragraph claims all seven ChildComponents
+// walks in this package are bounded. It was true of six.
+func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, order *int, best *hitCandidate, aborted *bool) {
+	// ONE CHECK, HERE, and the sibling loop below deliberately has no
+	// second one. A `if *aborted { return }` after each recursive call
+	// looks like the belt to this braces and is a SILENT mutation:
+	// measured, removing it fails nothing, because this line already
+	// turns every remaining sibling into an immediate return. What it
+	// would save is one no-op call per sibling on a walk that is
+	// unwinding anyway. Two mechanisms where removing either is silent is
+	// a state to resolve, not to ship.
+	if *aborted {
+		return
+	}
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("HitTest", w, depth)
+		*aborted = true
 		return
 	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
@@ -262,14 +306,23 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	if c, ok := w.(Container); ok {
 		// DELIBERATELY no Frozen check here, and it is not an oversight.
 		// Freezing constrains DISPATCH, not this query: hit-testing must
-		// keep returning the deepest component so a design surface can
+		// keep descending INTO a frozen subtree so a design surface can
 		// call HitTest, find the actual <Button> under the pointer and
 		// select it, while DispatchMouse hands the press to the frozen
 		// host (see FocusManager.target). Stopping the descent here would
 		// make click-to-select impossible, and every freeze test would
 		// stay green while it broke.
+		//
+		// THE WORD "DEEPEST" CAME OUT OF THIS COMMENT in review of #478.
+		// It read "must keep returning the deepest component", which is
+		// the pre-#465 contract, twelve lines above the comparison that
+		// retired it — and the guard could not see it because
+		// deepestClaim matched `returns?` and not `returning`. The claim
+		// the sentence makes is fine; what a design surface recovers is
+		// the component the document put under the pointer, which is now
+		// the one that paints last there.
 		for _, kid := range c.ChildComponents() {
-			hitTest(kid, x, y, depth+1, overlay, rank, order, best)
+			hitTest(kid, x, y, depth+1, overlay, rank, order, best, aborted)
 		}
 	}
 	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {

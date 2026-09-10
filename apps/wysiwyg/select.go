@@ -5,11 +5,22 @@ package main
 // The framework already does the hard part, and the shape of this file is
 // dictated by which part that is. In DESIGN mode the designer is a
 // gooey.Frozen host, so a press anywhere inside the document is retargeted
-// to the pane (mouse.go:358) and the document's own components never act —
-// that is the mode. But hit-testing is deliberately NOT retargeted
-// (component.go:86-93 says so in as many words: "Stopping the descent here
-// would make click-to-select impossible"), so the deepest component under
-// the pointer is still recoverable by asking for it.
+// to the pane (frozenHostFor, in mouse.go) and the document's own
+// components never act — that is the mode. But hit-testing is deliberately
+// NOT retargeted: hitTest's own comment in mouse.go says so in as many
+// words, "Stopping the descent here would make click-to-select
+// impossible", so the component the document put under the pointer is
+// still recoverable by asking for it.
+//
+// TWO THINGS WERE WRONG HERE and each hid the other, both found in review
+// of #478. The quoted sentence was cited to `component.go:86-93`, which is
+// the "declare it last was never an answer" paragraph and does not contain
+// it — and because deepestClaim's gap cannot span a `.`, that wrong
+// citation is what kept the guard from seeing the second: "the deepest
+// component under the pointer" is the pre-#465 wording, corrected thirty
+// lines below in this same file by this same PR and left standing here.
+// A stale citation does not merely fail to help; it shields the sentence
+// it is attached to.
 //
 // So there are exactly two things left to do, and both are here:
 //

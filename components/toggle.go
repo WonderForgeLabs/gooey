@@ -583,7 +583,7 @@ func (s *Segmented) setHoveredIndex(i int) {
 // leaving the strip has to clear the index, and the LEAVE EDGE IS THE
 // ONLY PLACE IT CAN BE DONE.
 //
-// Motion cannot do it. FocusManager.setHover (mouse.go:611) drives this
+// Motion cannot do it. FocusManager.setHover (mouse.go) drives this
 // on the hit, so when the pointer moves from this strip onto a sibling,
 // the motion event routes to the sibling and this control never hears
 // another one — its index would stay pointing at whichever segment the
@@ -599,7 +599,8 @@ func (s *Segmented) SetHovered(v bool) {
 //
 // It returns FALSE always: motion here is observed, never consumed.
 // Consuming it would stop the event bubbling to ancestors
-// (mouse.go:391), which is what a drag, a marquee or an outer hover
+// (DispatchMouse's MouseMove arm, in mouse.go), which is what a drag, a
+// marquee or an outer hover
 // watcher is listening for — a control that reports its own hover has no
 // business ending someone else's gesture.
 func (s *Segmented) HandleMouseMove(ev input.MouseEvent) bool {

@@ -1107,9 +1107,13 @@ anything:
 - **The frozen retarget**, once, at the top: a frozen subtree does not
   act, so for every routing purpose the effective hit is the frozen host
   — it takes the event, the implicit capture, the focus a press moves,
-  and the click synthesized on release. `HitTest` still returns the
-  deepest component (it is a query, not dispatch); `MouseTarget` is the
-  query that models where an event would actually route.
+  and the click synthesized on release. `HitTest` still answers with the
+  component the document put under the pointer (it is a query, not
+  dispatch) — since [#465](https://github.com/WonderForgeLabs/gooey/issues/465)
+  that is the one that PAINTS last there rather than the deepest one, and
+  the bullet's argument turns on the retarget rather than on which
+  component the query returns; `MouseTarget` is the query that models
+  where an event would actually route.
 - **Focus-follows-click**: a press moves focus to the nearest focusable
   component at or above the hit — or, when there is none, the first
   focusable *below* it, so clicking a pane's border or title focuses

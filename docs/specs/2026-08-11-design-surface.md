@@ -17,6 +17,12 @@ to those files and would be wrong again within the month. The symbol
 names are stable and are what a reader searches for; a line number here
 was never carrying anything the name did not.
 
+THE THIRD PASS FOUND TWO MORE, and the count is the finding rather than
+the citations: `composer.go:398,403` (itself stale — 398 and 403 are
+comment lines about bucket reuse) and `wysiwyg.gooey:69`. A banner
+asserting EVERY is a claim about a set, and each pass has corrected it by
+one. Raised in review of #478.
+
 THE FIRST PASS STRIPPED ONLY mouse.go's, which is the same mistake one
 size smaller: the argument above is about hand-maintained numbers, not
 about that file, and the thirteen citations left behind were stale for
@@ -76,7 +82,7 @@ It is four:
 | damage | `Composer.build` (`composer.go`) | each child gets its own paint node |
 | input | `FocusManager.walk` (`input.go`), `hitTest` (`mouse.go`) | focus order, key bindings, hit-testing |
 | adornment | `visiblyReachable` (`components/adorn.go`) | an adornment's anchor must be reachable from the root |
-| lifecycle | `Composer` startable discovery (`composer.go:398,403`) | timers, spinners, progress bars tick |
+| lifecycle | `Composer` startable discovery (`Composer.build`, in `composer.go`) | timers, spinners, progress bars tick |
 
 A design surface wants five things from its subtree:
 
@@ -830,7 +836,7 @@ Notes 2–4, done in the editor, no framework change:
   blank nine rows in ten;
 - a description pane shows `Doc` where the catalog has prose and the
   legal values where it does not, so it is never blank while `Doc` is
-  unpopulated (`examples/wysiwyg/wysiwyg.gooey:69`).
+  unpopulated (the properties pane in `examples/wysiwyg/wysiwyg.gooey`).
 
 Then `Default` and `Category`, which are model changes and are described
 in full above:

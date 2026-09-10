@@ -380,7 +380,24 @@ var retiredRule = []*regexp.Regexp{
 	// the ways the thing can be said, and this is the third time that
 	// has been the finding. Raised in review of #458.
 	regexp.MustCompile(`(?i)declar(e|es|ed|ing)\b.{0,40}\bLAST\b`),
-	regexp.MustCompile(`(?i)(as|is) the LAST child`),
+	// THE Z-ORDER COMPANION IS REQUIRED, and this entry read
+	// `(as|is) the LAST child` alone until review of #478. That is
+	// broader than this list's own doc four paragraphs up — "'last
+	// child' alone is fine (a VStack's last child gets the remainder)" —
+	// and the one live counter-example was WRAPPED, so the join hid it
+	// until joinWrapped started collapsing whitespace:
+	//
+	//	cmd/browser/infopane.gooey — "It is / the last child, so the
+	//	VStack hands it the remainder."
+	//
+	// which is a claim about SIZE. A QUALIFIER WAS THE WRONG FIX and was
+	// measured to be: a "remainder" exemption would wave through a line
+	// stating the retired rule that also happened to mention one, and a
+	// sentence about extent has no business exempting a sentence about
+	// order. Narrowing costs nothing — every sample this entry exists
+	// for has the companion, because a z-order claim is what the entry
+	// IS.
+	regexp.MustCompile(`(?i)(as|is) the LAST child\b[^.\n]{0,60}?\b(top|above|over|behind|under|paints?|z-?order)\b`),
 	regexp.MustCompile(`(?i)last child of the (root|Grid|page)`),
 	regexp.MustCompile(`(?i)last child = top`),
 	// WITHOUT the word "child". components/menu_test.go said
@@ -419,6 +436,91 @@ var retiredRule = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)the order is the z-?order`),
 }
 
+// TestAStrippedCitationBannerIsTrue is finding 9 of the review of #478,
+// and the reason it is a TEST rather than a fourth correction is the
+// count: the banner in docs/specs/2026-08-11-design-surface.md has
+// asserted that line numbers were stripped from EVERY citation in the
+// file for three review rounds, and each round has found one more.
+//
+//	round 4  — mouse.go:233 still had one
+//	round 5  — composer.go:398,403 still had one
+//	this one — wysiwyg.gooey:69 still had one
+//
+// An absolute quantifier in prose is a claim about a SET, which is the
+// one kind of claim a reader cannot check by reading the sentence. So the
+// sentence is now checked.
+//
+// THE CORPUS IS DERIVED FROM THE CLAIM, not listed: any file asserting it
+// is checked, so a second document adopting the banner comes under this
+// guard on the commit that adopts it. A path here would be the same
+// mistake one level up.
+//
+// THE BANNER ITSELF IS EXEMPT, and it has to be — a banner that records
+// WHICH citations it stripped necessarily quotes them, and that is the
+// epitaph form this whole file is built around. The exemption is the
+// leading HTML comment block, which is where the banner lives; a numbered
+// citation anywhere else in the file is a live one.
+func TestAStrippedCitationBannerIsTrue(t *testing.T) {
+	const claim = "LINE NUMBERS WERE STRIPPED FROM EVERY CITATION IN THIS FILE"
+	// A citation is a source path with a line number on it. Anchored on
+	// the extension rather than on a backtick, because the form appears
+	// both backticked and bare in this repo's prose.
+	cite := regexp.MustCompile(`[A-Za-z0-9_./-]+\.(?:go|md|gooey|ya?ml):\d+`)
+
+	var checked int
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); n == "vendor" || n == "node_modules" ||
+				(strings.HasPrefix(n, ".") && n != ".") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		text := string(body)
+		if !strings.Contains(text, claim) {
+			return nil
+		}
+		checked++
+		// Drop the leading HTML comment block — the banner — and check
+		// what is left.
+		rest := text
+		if strings.HasPrefix(strings.TrimSpace(rest), "<!--") {
+			if i := strings.Index(rest, "-->"); i >= 0 {
+				rest = rest[i+len("-->"):]
+			}
+		}
+		for _, m := range cite.FindAllString(rest, -1) {
+			t.Errorf("%s says line numbers were stripped from EVERY citation in it "+
+				"and still carries %q. Strip it — a dated decision record must not "+
+				"be edited to track the tree, so the number will be wrong again "+
+				"within the month, and the symbol name is what a reader searches "+
+				"for. This banner has been wrong in three consecutive review "+
+				"rounds; that is why this test exists rather than a fourth "+
+				"correction.", path, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("no document claims its citations were stripped, so this guard is " +
+			"checking nothing. Either the banner was reworded — re-anchor the " +
+			"claim string — or the walk is not reaching docs/specs/")
+	}
+	t.Logf("checked %d document(s) claiming stripped citations", checked)
+}
+
 // joinWrapped is line i and line i+1 as one string, with the comment or
 // list marker that opens the continuation stripped so the two halves meet
 // as prose. `// LAST or it paints underneath.` has to become
@@ -430,11 +532,30 @@ var retiredRule = []*regexp.Regexp{
 // phrases, and joining more would let a rule statement on line i be
 // completed by an unrelated sentence three lines down. Raised in review
 // of #458.
+//
+// WHITESPACE IS COLLAPSED, and leaving it uncollapsed made every literal
+// space in this file a blind spot. continuationRe strips a `//`, `#`, `>`
+// or `- ` marker — but a markdown LIST-ITEM BODY continuation has no
+// marker, only indentation, so the join preserved it and produced
+//
+//	"…still returns the" + " " + "  deepest component…"
+//
+// with three spaces where every pattern here writes one. That is not one
+// pattern's blind spot: it is retiredRule, retiredInputRule AND
+// hitContractProblems at once, which makes it the widest instance yet of
+// the class this file has recorded three times (the \blifted\b
+// self-exemption, the whose/containing widening). Measured — the guard
+// reported found=0 for docs/architecture.md, whose frozen-retarget bullet
+// states the retired hit contract in exactly that shape.
+// TestAWrappedRuleStatementIsStillCaught and
+// TestAWrappedQualifierStillExempts both used UNINDENTED fixtures, so
+// neither could see it. Raised in review of #478.
 func joinWrapped(lines []string, i int) string {
 	if i+1 >= len(lines) {
-		return lines[i]
+		return strings.Join(strings.Fields(lines[i]), " ")
 	}
-	return lines[i] + " " + continuationRe.ReplaceAllString(lines[i+1], "")
+	return strings.Join(strings.Fields(
+		lines[i]+" "+continuationRe.ReplaceAllString(lines[i+1], "")), " ")
 }
 
 // The markers a wrapped line can open with: a Go/`.gooey` comment, a
@@ -1260,6 +1381,12 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 		"a later sibling paints over an earlier one.",
 		"// Adornments is what the layer is currently showing, in z-order.",
 		"// It is the row's last child, so its node runs after the template's,",
+		// THE LIVE ONE, from cmd/browser/infopane.gooey, and it is here
+		// because collapsing whitespace in joinWrapped surfaced it: a
+		// markdown/comment continuation is indented, so the un-normalized
+		// join produced multiple spaces and no pattern reached it. A
+		// sentence about which child gets the REMAINDER is about extent.
+		"It is the last child, so the VStack hands it the remainder.",
 	}
 	// EVERY PATTERN needs a sample, not just every sample a pattern.
 	//
@@ -1477,8 +1604,29 @@ var (
 	// subject entirely) both carry the adjective and neither states this
 	// contract; keying on the bare word made the guard report four sites
 	// that were correct.
+	// INFLECTIONS AND THE HYPHENATED FORM, both added in review of #478
+	// and both had a live site the previous spelling could not reach:
+	//
+	//   - `returns?` could not match "must keep RETURNING the deepest
+	//     component" — mouse.go's own no-Frozen-check comment, inside the
+	//     function this PR rewrote, twelve lines above the comparison
+	//     that retired it. hitContractProblems reported found=1 for
+	//     mouse.go: the doc comment, which is qualified, and never this;
+	//   - `the deepest (component|node|hit)` could not match
+	//     "the framework's DEEPEST-COMPONENT query" — apps/wysiwyg/main.go
+	//     — and hyphenating it was only half: the leading `the` is what
+	//     blocked it, because a POSSESSIVE sits where the article would
+	//     ("the framework's deepest-component"). Adding the hyphen alone
+	//     left that site silent, measured. The article carried nothing
+	//     the noun does not, so it is gone.
+	//
+	// A guard assembled from the spellings you can see is a sample of the
+	// ways the thing can be said, which is the fourth time that has been
+	// the finding in this file. The inflection alternation is written out
+	// rather than suffixed with \w* because "returned"/"returning" are the
+	// two that occur and `return\w*` would also match "returns nothing".
 	deepestClaim = regexp.MustCompile(
-		`(?i)\b(hit-?test\w*|the walk|hit)\b[^.\n]{0,50}?\b(returns?|is|gives?|answers? with)\b[^.\n]{0,25}?\bthe deepest (component|node|hit)\b`)
+		`(?i)\b(hit-?test\w*|the walk|hit)\b[^.\n]{0,50}?\b(returns?|returning|returned|is|gives?|giving|answers? with|answering with)\b[^.\n]{0,25}?\bdeepest[- ](component|node|hit)\b`)
 	// ONE QUALIFIER PER PHRASING, and sharing one list between them was a
 	// self-exemption — the class this file has now recorded three times
 	// over (\blifted\b matching "hit-testing is NOT lifted" is the other).
@@ -1765,6 +1913,57 @@ func TestAWrappedRuleStatementIsStillCaught(t *testing.T) {
 	// And the last line of a file has no successor.
 	if got := joinWrapped(wrapped, 1); got != wrapped[1] {
 		t.Errorf("joinWrapped past the end = %q, want the line itself", got)
+	}
+}
+
+// TestAnIndentedContinuationIsStillCaught is finding 2 of the review of
+// #478, and the fixture is the whole of it: the continuation line is
+// INDENTED AND CARRIES NO MARKER.
+//
+// continuationRe strips `//`, `#`, `>` and `- `. A markdown LIST-ITEM
+// BODY continuation has none of those — the list marker was on the FIRST
+// line — so what wraps is bare indentation, which the strip leaves alone
+// and the join then preserved. The result was
+//
+//	"…still returns the" + " " + "  deepest component…"
+//
+// with three spaces where every pattern in this file writes one. That is
+// not one pattern's blind spot: retiredRule, retiredInputRule and
+// hitContractProblems are all built from literal phrases, so all three
+// went blind at once, and docs/architecture.md's frozen-retarget bullet
+// sat in the tree stating the retired hit contract with the guard
+// reporting found=0 for the file.
+//
+// TestAWrappedRuleStatementIsStillCaught and
+// TestAWrappedQualifierStillExempts both use comment-marker fixtures, so
+// neither could see it — which is the recurring shape here: a fixture
+// built to the mechanism's own model tests the model.
+//
+// THE SECOND ARM IS THE ONE THAT MAKES IT A MEASUREMENT. "Still caught"
+// alone passes if joinWrapped starts returning something that matches
+// everything. The literal check on the joined text is what says the
+// spaces are actually gone.
+func TestAnIndentedContinuationIsStillCaught(t *testing.T) {
+	wrapped := []string{
+		"- **The frozen retarget**: `HitTest` still returns the",
+		"  deepest component (it is a query, not dispatch);",
+	}
+	states := func(span string) bool { w, _ := hitContractWant(span); return w != "" }
+	if states(wrapped[0]) || states(wrapped[1]) {
+		t.Fatal("the fixture is not actually wrapped — one of its lines states " +
+			"the contract on its own, so this test would pass without the join")
+	}
+	got := joinWrapped(wrapped, 0)
+	if strings.Contains(got, "  ") {
+		t.Errorf("joinWrapped left the continuation's indentation in: %q\n"+
+			"Every pattern in this file is a literal phrase with single "+
+			"spaces, so a run of them is a blind spot in all three guards at "+
+			"once", got)
+	}
+	if !states(got) {
+		t.Errorf("a hit-contract statement wrapped across an INDENTED "+
+			"continuation is invisible to the guard:\n\t%s\n\t%s",
+			wrapped[0], wrapped[1])
 	}
 }
 
