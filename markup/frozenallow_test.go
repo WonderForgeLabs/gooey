@@ -2534,3 +2534,146 @@ func TestTheNestedRecordCloses(t *testing.T) {
 		t.Error("a nil record reported a collision")
 	}
 }
+
+// TestOneFrozensChannelIsNotAnothersAllowSet is the cross-element half
+// of the alias guard, and it is #424's own symptom manufactured by the
+// framework.
+//
+// aliasesSink refuses <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+// because one element cannot publish into the set it just read. It is
+// called with THIS element's Allow, so the same erasure one element over
+// was not refused at all. Measured on the parent commit:
+//
+//	<Frozen Allow="{{.A}}" AllowError="{{.B}}"> … </Frozen>
+//	<Frozen Allow="{{.B}}" AllowError="{{.C}}"> … </Frozen>
+//	build err = <nil>;  A="Focus"  B=""  C=""
+//
+// B is the second element's allow set. The first element's priming
+// publish wrote "" into it during Build, and gooey.ParseAllow("")
+// returns AllowNone with a NIL error — so the second subtree sealed to
+// EVERYTHING and its own failure channel had nothing to publish. No load
+// error, no runtime message, nothing on any channel, from a page that
+// spells its guards correctly by every rule the reference states.
+//
+// BOTH DOCUMENT ORDERS, because the check is at end-of-build precisely
+// so the answer cannot depend on which element the author wrote first.
+// At the arm it would have refused one order and accepted the other —
+// the sink is armed before the second element binds Allow to it — which
+// is the document-order dependence round six removed from the
+// page-versus-row check.
+//
+// AND THE ALLOW SET MUST SURVIVE THE REFUSAL. A guard that refuses the
+// build after the priming publish has already run would leave the
+// author's property erased on a Context that outlives the failed load,
+// which is most of the damage with none of the convenience. Raised in
+// review of #459.
+func TestOneFrozensChannelIsNotAnothersAllowSet(t *testing.T) {
+	for _, tc := range []struct{ name, first, second string }{
+		{
+			name:   "the reader is declared second",
+			first:  `<Frozen Allow="{{.A}}" AllowError="{{.B}}"><Text>x</Text></Frozen>`,
+			second: `<Frozen Allow="{{.B}}" AllowError="{{.C}}"><Text>y</Text></Frozen>`,
+		},
+		{
+			name:   "the reader is declared first",
+			first:  `<Frozen Allow="{{.B}}" AllowError="{{.C}}"><Text>y</Text></Frozen>`,
+			second: `<Frozen Allow="{{.A}}" AllowError="{{.B}}"><Text>x</Text></Frozen>`,
+		},
+		{
+			// NOT THE FIRST BINDING. bindingPath takes only
+			// FindStringSubmatch, so an allow set spelled from two
+			// handles reads as its first one and a collision in the
+			// second position goes unseen — the same shape aliasesSink's
+			// own comment records for the intra-element guard, which is
+			// why allowSources walks allPaths rather than bindingPath.
+			// Without this case that difference is unobservable: it was
+			// measured SILENT.
+			name:   "the collision is the second binding of a two-handle Allow",
+			first:  `<Frozen Allow="{{.A}}" AllowError="{{.B}}"><Text>x</Text></Frozen>`,
+			second: `<Frozen Allow="{{.C}} {{.B}}" AllowError="{{.D}}"><Text>y</Text></Frozen>`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := prop.NewSource("Focus")
+			b := prop.NewSource("Hover")
+			c := prop.NewSource("")
+			d := prop.NewSource("")
+			ctx := &Context{
+				Values:     map[string]any{"A": a, "B": b, "C": c, "D": d},
+				Dispatcher: gooey.NewDispatcher(),
+			}
+			src := `<Gooey><VStack>` + tc.first + tc.second + `</VStack></Gooey>`
+			_, err := Build([]byte(src), ctx)
+			if err == nil {
+				t.Fatalf("the document loaded clean. B is one element's failure "+
+					"channel and another's allow set, so the priming publish "+
+					"erased it during Build: A=%q B=%q C=%q — and an empty set "+
+					"is ALLOW NOTHING with no error, so nothing reports it",
+					a.Get(), b.Get(), c.Get())
+			}
+			if !strings.Contains(err.Error(), "Allow set") {
+				t.Errorf("the refusal does not say the collision is with an "+
+					"allow set, so an author cannot tell it from the "+
+					"two-sinks refusal: %v", err)
+			}
+			if got := b.Get(); got != "Hover" {
+				t.Errorf("the allow set reads %q after the refused build, want "+
+					"%q. The guard has to refuse BEFORE the priming publish "+
+					"runs, or it reports the defect having already caused it "+
+					"on a Context that outlives the load", got, "Hover")
+			}
+		})
+	}
+}
+
+// TestTwoFrozensMayShareAnAllowSet is the must-load half, and without it
+// the guard above is satisfied by refusing every second <Frozen>.
+//
+// Two subtrees READING one allow set is an ordinary page — one property
+// saying "these are the interactions permitted right now", two sealed
+// regions honouring it. Nothing is written, so nothing is erased.
+func TestTwoFrozensMayShareAnAllowSet(t *testing.T) {
+	a := prop.NewSource("Focus")
+	b := prop.NewSource("")
+	c := prop.NewSource("")
+	ctx := &Context{
+		Values:     map[string]any{"A": a, "B": b, "C": c},
+		Dispatcher: gooey.NewDispatcher(),
+	}
+	src := `<Gooey><VStack>` +
+		`<Frozen Allow="{{.A}}" AllowError="{{.B}}"><Text>x</Text></Frozen>` +
+		`<Frozen Allow="{{.A}}" AllowError="{{.C}}"><Text>y</Text></Frozen>` +
+		`</VStack></Gooey>`
+	if _, err := Build([]byte(src), ctx); err != nil {
+		t.Fatalf("two subtrees reading one allow set is an ordinary page and "+
+			"was refused: %v", err)
+	}
+	if got := a.Get(); got != "Focus" {
+		t.Errorf("the shared allow set reads %q, want %q — nothing writes it, "+
+			"so nothing should have moved it", got, "Focus")
+	}
+
+	// AND TWO DIFFERENT SETS, which is the commoner page and the one a
+	// count-based guard breaks. Refusing on "this document has more than
+	// one allow set" satisfies every collision arm above and rejects an
+	// ordinary document; it was measured SILENT until this fixture
+	// existed, because the case above shares ONE set between both
+	// elements.
+	d := prop.NewSource("Hover")
+	e := prop.NewSource("")
+	ctx2 := &Context{
+		Values:     map[string]any{"A": a, "B": b, "C": c, "D": d, "E": e},
+		Dispatcher: gooey.NewDispatcher(),
+	}
+	two := `<Gooey><VStack>` +
+		`<Frozen Allow="{{.A}}" AllowError="{{.B}}"><Text>x</Text></Frozen>` +
+		`<Frozen Allow="{{.D}}" AllowError="{{.E}}"><Text>y</Text></Frozen>` +
+		`</VStack></Gooey>`
+	if _, err := Build([]byte(two), ctx2); err != nil {
+		t.Fatalf("two subtrees with their own allow sets and their own failure "+
+			"channels is the ordinary page, and it was refused: %v", err)
+	}
+	if got, want := d.Get(), "Hover"; got != want {
+		t.Errorf("the second allow set reads %q, want %q", got, want)
+	}
+}

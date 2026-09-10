@@ -401,6 +401,17 @@ var defFrozen = &ElementDef{
 				return nil, err
 			}
 			f.Allow = allow
+			// RECORDED FOR EVERY <Frozen> THAT BINDS ONE, whether or not
+			// this element also has an AllowError. The collision is
+			// "somebody else's sink is my source", so the element that
+			// gets erased need not be arming anything itself — see
+			// armScope.allows, and document.build for where the two maps
+			// meet. Raised in review of #459.
+			for h, path := range allowSources(ctx, raw) {
+				if _, seen := ctx.arms.allows[h]; !seen {
+					ctx.arms.allows[h] = path
+				}
+			}
 		}
 		if raw := e.Attrs["AllowError"]; raw != "" {
 			// It reports the parse of a BOUND Allow, and only that. With

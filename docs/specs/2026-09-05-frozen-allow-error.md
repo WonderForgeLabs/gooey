@@ -72,44 +72,6 @@ a rule and breaks it teaches the rule is optional.
 `docs/markup-reference.md` got it right by never writing one. Count the
 list if you need the number.
 
-## Round five
-
-Two defects, both introduced by the guard round four added, and both
-invisible to every test that existed for it.
-
-**`ctx.arms.sinks` arrived nil in an item template's row.** `elements.go`
-WRITES to that map to arm a sink, and a write to a nil map panics.
-`document.build` allocates it, and for one construction site that was
-enough — but `buildItemsView` builds its row `Context` field by field, and
-it is the only `*Context` in the package constructed outside
-`document.build`. So `<Frozen AllowError>` inside an
-`<ItemsView.ItemTemplate>` panicked: at LOAD for a non-empty collection,
-because `ItemsView.Validate` realizes a throwaway row during `Build`, and
-on FIRST SCROLL for one fed by a timer — inside the composer, where
-`Screen.Restore` is skipped, so the terminal is left in raw mode with the
-alternate screen up and no trace.
-
-The map is per-ROW rather than the page's, which is the decision worth
-recording. Rows are realized and discarded as the view scrolls, so a page
-map would accumulate an entry per realization and refuse the second row
-for aliasing the first — a guard that fires on correct markup the moment a
-list is longer than one. The question the guard asks is "does this
-document arm one sink twice", and a row is the scope where that question
-has an answer.
-
-**`arms.sinks` did not cross the control boundary**, though its own doc
-comment promised it did: "a nested Load inherits the outermost map (so two
-controls sharing a sink are still caught)". `control()` builds a fresh
-child `Context` and propagates `Declared` but not this, so two
-`<UserControl>`s could arm the same handle with nothing to notice. Fixed
-by propagating it unconditionally — the comment described the intended
-behaviour accurately, and the code simply did not have it.
-
-The pattern across rounds four and five is worth naming: **a load-time
-guard that writes to shared state inherits every construction site of that
-state as a dependency**, and the sites are not all in the file where the
-guard lives.
-
 ## The two subtleties
 
 **The re-read is what re-arms the observer.** A computed invalidates once
@@ -375,6 +337,44 @@ the wrong function. That is the hazard line-numbered citations always carry
 and the reason the other three in `frozenerror.go` were each re-checked.
 
 
+## Round five
+
+Two defects, both introduced by the guard round four added, and both
+invisible to every test that existed for it.
+
+**`ctx.arms.sinks` arrived nil in an item template's row.** `elements.go`
+WRITES to that map to arm a sink, and a write to a nil map panics.
+`document.build` allocates it, and for one construction site that was
+enough — but `buildItemsView` builds its row `Context` field by field, and
+it is the only `*Context` in the package constructed outside
+`document.build`. So `<Frozen AllowError>` inside an
+`<ItemsView.ItemTemplate>` panicked: at LOAD for a non-empty collection,
+because `ItemsView.Validate` realizes a throwaway row during `Build`, and
+on FIRST SCROLL for one fed by a timer — inside the composer, where
+`Screen.Restore` is skipped, so the terminal is left in raw mode with the
+alternate screen up and no trace.
+
+The map is per-ROW rather than the page's, which is the decision worth
+recording. Rows are realized and discarded as the view scrolls, so a page
+map would accumulate an entry per realization and refuse the second row
+for aliasing the first — a guard that fires on correct markup the moment a
+list is longer than one. The question the guard asks is "does this
+document arm one sink twice", and a row is the scope where that question
+has an answer.
+
+**`arms.sinks` did not cross the control boundary**, though its own doc
+comment promised it did: "a nested Load inherits the outermost map (so two
+controls sharing a sink are still caught)". `control()` builds a fresh
+child `Context` and propagates `Declared` but not this, so two
+`<UserControl>`s could arm the same handle with nothing to notice. Fixed
+by propagating it unconditionally — the comment described the intended
+behaviour accurately, and the code simply did not have it.
+
+The pattern across rounds four and five is worth naming: **a load-time
+guard that writes to shared state inherits every construction site of that
+state as a dependency**, and the sites are not all in the file where the
+guard lives.
+
 ## Round six: one scanner, and the collision row scope left open
 
 Two attributions in the refusals list above pointed at the wrong
@@ -595,3 +595,59 @@ the failure mode of whatever call site is added next. A total function
 states that once instead of asking every call site to remember it. Four
 comments describing an unreachable path as the live one is the defect
 that was actually costing something, and it is gone.
+
+## Round ten: the guard was per-element, and the erasure is not
+
+`aliasesSink` refuses `<Frozen Allow="{{.X}}" AllowError="{{.X}}">` — one
+element cannot publish into the set it just read. It is called with
+**this** element's `Allow`, and nothing asked whether the sink is some
+*other* `<Frozen>`'s source. It can be, and then the framework
+manufactures #424's exact symptom:
+
+```xml
+<Frozen Allow="{{.A}}" AllowError="{{.B}}"> … </Frozen>
+<Frozen Allow="{{.B}}" AllowError="{{.C}}"> … </Frozen>
+```
+
+Measured on the parent commit: `build err = <nil>`, and `B` went
+`"Hover"` → `""` during `Build`. `B` is the second element's allow set,
+so that subtree is reconfigured behind the author's back — and
+`gooey.ParseAllow("")` returns `AllowNone` with a **nil** error, so `C`,
+the second element's own failure channel, has nothing to publish. A
+subtree sealed to everything, no load error, no runtime message, nothing
+on any channel, from a page that spells its guards correctly by every
+rule the reference states.
+
+Neither documented "rule the author keeps" covers it. Both are about
+**sinks** being shared; this is a correctly unique sink that happens to
+be somebody else's source.
+
+`armScope` gains `allows`, recorded for every `<Frozen>` that binds one
+— whether or not that element also has an `AllowError`, because the
+element that gets erased need not be arming anything itself. The
+judgement is `document.build`'s, beside `nested.collide`, and it has to
+be there rather than at the arm for the reason round six established:
+the sink can be armed **before** the other element binds `Allow` to it,
+so an at-the-arm check refuses one document order and accepts the other.
+`TestOneFrozensChannelIsNotAnothersAllowSet` asserts both orders, and
+asserts the author's set **survives the refusal** — a guard that fires
+after the priming publish has run would report the defect having already
+caused it, on a `Context` that outlives the failed load.
+
+`TestTwoFrozensMayShareAnAllowSet` is the must-load half: two subtrees
+*reading* one set is an ordinary page, and without that arm the guard is
+satisfied by refusing every second `<Frozen>`.
+
+**The gap this leaves, named rather than left to be found.** `allows` is
+row-local in the `ItemsView` factory for the same reason `sinks` is, so
+a row whose `Allow` set is the page's failure channel is not judged. The
+sink direction of page-versus-row *is* covered, through `outer` and the
+nested record. Closing the other direction means a second nested record,
+and it is not built here.
+
+`allPaths`' `| into` branch is now described as defensive rather than as
+live protection. A value expression carrying `| into` is a load error
+raised by the `BoundText` call above the `AllowError` block, so the
+guard never sees one; `TestAllPathsReadsTheCallsIntoTarget` calls
+`allPaths` directly, which is why the claim read as pinned. Same class
+as this branch's own headline fix.

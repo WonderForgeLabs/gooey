@@ -175,6 +175,15 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 				// the alias guard; docs/markup-reference.md states what
 				// is enforced. Raised in review of #459, twice.
 				sinks: map[*prop.Property[string]]string{},
+				// ROW-LOCAL for the same reason sinks is, and with the
+				// same consequence: a row's Allow is judged against the
+				// row's own sinks, not the page's. The page-versus-row
+				// direction that IS covered is the sink one, through
+				// outer and nested below. A row whose Allow set is the
+				// page's failure channel is the remaining gap, and it is
+				// named in the test file rather than left to be
+				// discovered.
+				allows: map[*prop.Property[string]]string{},
 				// The PAGE's arms, visible but not writable, which is
 				// the collision this row-local scoping left open: a
 				// <Frozen> on the page and a <Frozen> in the template

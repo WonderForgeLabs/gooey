@@ -345,8 +345,23 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 // yields every argument by construction, where a regexp with one capture
 // group yielded one match per expression and missed `{{v:Pick .A .X}}`.
 //
-// `| into .Target` is deliberately INCLUDED: a call whose result is
-// written into the sink aliases it just as surely as one that reads it.
+// `| into .Target` is included DEFENSIVELY, for a future caller, and the
+// distinction matters because the comment used to claim otherwise. It
+// read "deliberately INCLUDED: a call whose result is written into the
+// sink aliases it just as surely as one that reads it" — true as a
+// statement about aliasing, and not a spelling any caller can reach: a
+// value expression carrying `| into` is already a load error
+// (markup/values.go), raised by the BoundText call that runs before the
+// AllowError block, so the guard never sees one. Measured:
+//
+//	Allow="{{v:Echo `Focus` | into .B}}" AllowError="{{.B}}"
+//	-> markup: {{v:Echo … | into .B}}: a value expression delivers its
+//	   result by BEING the binding — drop the `| into` stage
+//
+// TestAllPathsReadsTheCallsIntoTarget calls allPaths directly, so it
+// passes without ever exercising the path through a guard, which is why
+// the claim read as pinned. Same class as this commit's own headline
+// fix. Corrected in review of #459.
 //
 // An unparseable attribute yields NO paths rather than an error. Every
 // caller has already had its attribute parsed by the builder, and a
@@ -378,7 +393,11 @@ func allPaths(attr string) []string {
 					add(t.text)
 				}
 			}
-			add(strings.TrimPrefix(seg.call.Into, "."))
+			// NO TrimPrefix: tokPath.text already excludes the dot
+			// (markup/expr.go), so trimming one was a no-op reading as
+			// a normalization somebody would have to verify. Removed in
+			// review of #459.
+			add(seg.call.Into)
 		}
 	}
 	return out
@@ -423,6 +442,37 @@ func aliasesSink(ctx *Context, attr string, sink *prop.Property[string]) (string
 		}
 	}
 	return "", false
+}
+
+// allowSources is every string property an Allow attribute READS, keyed
+// by handle and mapped to the path that named it.
+//
+// aliasesSink answers "is this element's own Allow the same handle as
+// this element's own sink"; this answers "which handles does this
+// element's Allow read", so the same collision can be judged ACROSS
+// elements at the end of the build. Both walk allPaths, because both
+// questions are about every path an attribute reads rather than about
+// the first one.
+//
+// Raised in review of #459: the per-element guard leaves
+// `<Frozen Allow="{{.A}}" AllowError="{{.B}}">` beside
+// `<Frozen Allow="{{.B}}" …>` building clean, and the first element's
+// priming publish erases the second's allow set during Build.
+func allowSources(ctx *Context, attr string) map[*prop.Property[string]]string {
+	out := map[*prop.Property[string]]string{}
+	if attr == "" {
+		return out
+	}
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok {
+			out[p] = path
+		}
+	}
+	return out
 }
 
 // bindingPath is the bare path of a single {{.Path}} binding attribute,

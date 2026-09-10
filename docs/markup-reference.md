@@ -194,10 +194,9 @@ already armed: registration stays row-local, and the page-versus-row
 question is settled **once, at the end of the document build**, against
 everything both sides armed.
 
-*"The check consults the page's set"* is what this said, and review of
-#459 showed it was document-order dependent. That check reads the page's
-**live** map, and `ItemsView.Validate` realizes one throwaway row while
-the `<ItemsView>` is still building — so a `<Frozen>` written **below**
+The judgement cannot read the page's **live** map, because
+`ItemsView.Validate` realizes one throwaway row while the `<ItemsView>`
+is still building — so a `<Frozen>` written **below**
 the list had armed nothing yet when the row looked, and the identical
 document loaded clean one way round and was refused the other. Deferring
 the judgement is what makes the answer the same either way.
@@ -207,15 +206,13 @@ values normally carry their own handle. **Normally, and it is not
 enforced**: a projection that hands every row one shared
 `*prop.Property[string]` passes it through unchanged, and then the rows
 overwrite each other's message with no load-time signal at all — the same
-rule-you-keep as the paragraph above, for the same reason. This said
-"because each row's values carry their own handle", stating an assumption
-about the projection as a property of the framework. Corrected in review
-of #459.
+rule-you-keep as the paragraph above, for the same reason. Whether each
+row carries its own handle is a property of **your projection**, not one
+the framework enforces.
 
 `AllowError` is refused at load in **every case that would otherwise read as
-configured and report nothing forever** — the number is deliberately not
-written here, because it has now drifted twice in three commits and the list
-is the thing to read:
+configured and report nothing forever**. The list is the thing to read; a
+count of it is deliberately not written here:
 
 - a **literal** (`AllowError="oops"` has nowhere to put the message);
 - an **absent or literal `Allow`** (there is no runtime parse to report);
@@ -229,8 +226,7 @@ is the thing to read:
 - a **second `<Frozen>`** binding a sink another already armed — they would
   erase each other's message and leave a subtree sealed with nothing to show.
 
-**What "already armed" reaches** is worth stating exactly, because this list
-has been ahead of the code three times. Refused: two `<Frozen>` in one scope; a
+**What "already armed" reaches**, exactly. Refused: two `<Frozen>` in one scope; a
 page and an item template; a page and a control instantiated from a template,
 across an `Include` or `UserControl` boundary; **two sibling item templates**;
 and a template of a list nested inside another list's template. All of them in
@@ -243,9 +239,7 @@ realizes during the build, and it realizes none for a list that is **empty at
 load**. So two sibling templates arming one sink are refused when both lists
 have items, and build clean when either is empty — the second list's arm then
 happens at scroll time, after the record that would judge it has closed. Same
-for a page-and-template pair whose list is empty. This paragraph said "two
-sibling item templates" without the condition, which is the third time this
-list has claimed more than the code does.
+for a page-and-template pair whose list is empty.
 
 **Not refused, and it is a rule the author keeps:** two *rows of one list*
 sharing a single handle, where the projection hands every row the same

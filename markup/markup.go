@@ -496,6 +496,33 @@ type armScope struct {
 	// the designer — starts clean instead of refusing its own previous
 	// generation. document.build owns that scoping.
 	sinks map[*prop.Property[string]]string
+	// allows is the set of properties some <Frozen> in this scope READS
+	// as its allow set, mapped to the attribute text that read it.
+	//
+	// It is the other half of the sinks question and it was missing.
+	// aliasesSink refuses `<Frozen Allow="{{.X}}" AllowError="{{.X}}">`
+	// because one element cannot publish into the set it just read — but
+	// it is called with THIS element's Allow, so the same erasure one
+	// element over was not refused at all:
+	//
+	//	<Frozen Allow="{{.A}}" AllowError="{{.B}}"> … </Frozen>
+	//	<Frozen Allow="{{.B}}" AllowError="{{.C}}"> … </Frozen>
+	//
+	// Measured on the parent commit: build error nil, and B went "Hover"
+	// -> "" during Build. B is the second element's allow set, so the
+	// second subtree is reconfigured behind the author's back — and
+	// gooey.ParseAllow("") returns AllowNone with a NIL error, so C, the
+	// second element's own failure channel, has nothing to publish. A
+	// subtree sealed to everything, no load error, no runtime message,
+	// nothing on any channel: #424's exact symptom manufactured by the
+	// framework, from a page that spells its guards correctly by every
+	// rule the reference states.
+	//
+	// The two documented "rules the author keeps" do not cover it —
+	// both are about SINKS being shared, and this is a correctly unique
+	// sink that happens to be somebody else's source. Raised in review
+	// of #459.
+	allows map[*prop.Property[string]]string
 	// outer is the map a NESTED scope must also check but must not write
 	// to. Today its one setter is the ItemsView row factory, whose sinks
 	// map is deliberately row-local: the factory runs per row
@@ -712,6 +739,7 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	outermost := prevArms.sinks == nil
 	if outermost {
 		ctx.arms.sinks = map[*prop.Property[string]]string{}
+		ctx.arms.allows = map[*prop.Property[string]]string{}
 		ctx.arms.nested = &nestedArms{open: true, m: map[*prop.Property[string]]string{}}
 		ctx.arms.pending = &deferredArms{open: true}
 	}
@@ -758,6 +786,35 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 				"priming publish erases the page's during Build, leaving a subtree "+
 				"sealed with nothing to show for it. Give the template its own handle "+
 				"through the projection", inner, outer)
+	}
+	// THE ALLOW-VERSUS-SINK JUDGEMENT, in the same place and for the
+	// same reason. One <Frozen>'s failure channel must not be another
+	// <Frozen>'s allow set: the arm's priming publish writes the parse
+	// result into it during Build, so the second element's set is
+	// replaced with "" before the UI is live, and ParseAllow("") is
+	// AllowNone with a NIL error — a subtree sealed to everything with
+	// nothing on any channel to say so.
+	//
+	// END-OF-BUILD, NOT AT THE ARM, and that is the same lesson round
+	// six learned for the page-versus-row check: the sink can be armed
+	// before the other element binds Allow to it, so an at-the-arm check
+	// would refuse one document order and accept the other. A guard
+	// whose answer depends on which line the author typed first is not a
+	// guard.
+	//
+	// The intra-element spelling never reaches here — aliasesSink
+	// refuses it before the arm is recorded — so any collision found now
+	// is across two elements, which is what the message says.
+	for sink, raw := range ctx.arms.sinks {
+		if path, ok := ctx.arms.allows[sink]; ok {
+			return nil, fmt.Errorf(
+				"markup: <Frozen AllowError=%q> publishes into .%s, which another "+
+					"<Frozen> on this page reads as its Allow set — the priming publish "+
+					"replaces that set with the parse message during Build, and an empty "+
+					"set parses as ALLOW NOTHING with no error, so the other subtree "+
+					"seals to everything and its own AllowError has nothing to report. "+
+					"Give the failure channel a handle no allow set uses", raw, path)
+		}
 	}
 	// THE ARMS, and only now. Every error path above returns without
 	// reaching this line, which is the whole mechanism: a build that does
