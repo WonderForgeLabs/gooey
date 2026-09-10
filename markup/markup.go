@@ -796,14 +796,55 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 	}
 	l := hl.LayoutProps()
 	for k, v := range e.Attrs {
+		// THE UNIVERSAL LITERAL INTS GO THROUGH litInt, the same helper
+		// every declared KindInt/BindsLiteral attribute uses, and this is
+		// the table #460 was about that the first fix left alone.
+		//
+		// Measured before the change, on this branch: <Border Width="-3">
+		// LOADED — and layout guards on l.Width > 0 (layout.go), so a
+		// negative width behaves exactly as if the attribute had been
+		// omitted, which is #460's own defect definition. <Border
+		// Width="+3"> loaded and meant 3. <Border Width=" 3 "> was a load
+		// error while <HStack Gap=" 3 "> loaded.
+		//
+		// Height is the sharpest case, because it sits in BOTH tables:
+		// <Sparkline Height="-2"/> was refused by litInt and <Border
+		// Height="-2"> loaded, and <Sparkline Height=" 2 "/> was a load
+		// error EVEN THOUGH litInt trims — applyLayout read the same
+		// attribute again, untrimmed, and litInt's trim was dead on it.
+		//
+		// Grid.* and Canvas.* are non-negative for the same reason and it
+		// is stated rather than inherited: Row/Col are indices into a
+		// track list and RowSpan/ColSpan are counts, so a negative
+		// addresses no cell; Left/Top are an offset from the Canvas's own
+		// top-left, so a negative one puts the child outside the rect
+		// that clips it — a silent drop rather than a placement. Nothing
+		// in this tree writes one, checked before the change.
+		if p := layoutInt(l, k); p != nil {
+			n, err := litInt(e, k)
+			if err != nil {
+				// litInt's message already names the element, the
+				// attribute, the raw value and the consequence. The wrap
+				// below would repeat the first three.
+				return err
+			}
+			*p = n
+			continue
+		}
 		var err error
 		switch k {
-		case "Width":
-			l.Width, err = strconv.Atoi(v)
-		case "Height":
-			l.Height, err = strconv.Atoi(v)
 		case "Margin":
-			l.Margin, err = parseThickness(v)
+			// thickness, not parseThickness: the generic wrap below
+			// names the attribute and the value and NOT the element, so
+			// a document with a dozen <Border>s reported "attribute
+			// Margin=\"x\"" and left the author to find which one.
+			// litInt three lines up does not have that problem, and
+			// Margin is the same grammar. Raised in review of #470.
+			var t gooey.Thickness
+			if t, err = thickness(e, k, v); err != nil {
+				return err
+			}
+			l.Margin = t
 		case "HAlign":
 			l.HAlign, err = parseAlign(v)
 		case "VAlign":
@@ -823,22 +864,40 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 				continue
 			}
 			l.Visibility, err = parseVisibility(v)
-		case "Grid.Row":
-			l.Row, err = strconv.Atoi(v)
-		case "Grid.Col":
-			l.Col, err = strconv.Atoi(v)
-		case "Grid.RowSpan":
-			l.RowSpan, err = strconv.Atoi(v)
-		case "Grid.ColSpan":
-			l.ColSpan, err = strconv.Atoi(v)
-		case "Canvas.Left":
-			l.Left, err = strconv.Atoi(v)
-		case "Canvas.Top":
-			l.Top, err = strconv.Atoi(v)
 		}
 		if err != nil {
 			return fmt.Errorf("markup: attribute %s=%q: %w", k, v, err)
 		}
+	}
+	return nil
+}
+
+// layoutInt is the field a universal literal int attribute writes, or nil
+// when the name is not one.
+//
+// A pointer rather than a second switch in applyLayout: the point is that
+// all eight share ONE grammar, and two switches over the same eight names
+// is how one of them comes to be edited without the other. It is also
+// what lets the sweep in bindsweep_test.go derive the list from this
+// function rather than repeating it.
+func layoutInt(l *gooey.Layout, name string) *int {
+	switch name {
+	case "Width":
+		return &l.Width
+	case "Height":
+		return &l.Height
+	case "Grid.Row":
+		return &l.Row
+	case "Grid.Col":
+		return &l.Col
+	case "Grid.RowSpan":
+		return &l.RowSpan
+	case "Grid.ColSpan":
+		return &l.ColSpan
+	case "Canvas.Left":
+		return &l.Left
+	case "Canvas.Top":
+		return &l.Top
 	}
 	return nil
 }
@@ -853,13 +912,64 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 // left/top, and the answer has to be the same in every element.
 func ParseThickness(s string) (gooey.Thickness, error) { return parseThickness(s) }
 
+// thickness is parseThickness in the house error form: the element, the
+// attribute, the raw value, and then what is wrong with it.
+//
+// It is a wrap rather than a second parser, for the reason ParseThickness
+// is exported at all — one parser decides what "1,2" means, and a
+// component outside this package spells its padding the same way. What
+// the wrap adds is the half a bare string parser cannot know.
+// Raised in review of #470.
+func thickness(e Element, name, raw string) (gooey.Thickness, error) {
+	t, err := parseThickness(raw)
+	if err != nil {
+		return gooey.Thickness{}, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, name, raw, err)
+	}
+	return t, nil
+}
+
 func parseThickness(s string) (gooey.Thickness, error) {
+	// AN EMPTY VALUE IS ITS OWN SENTENCE, and it used to fall out of the
+	// number reader as `"" is not a whole number of cells` — true, and
+	// no help at all to an author who wrote Margin="" meaning "none".
+	// litIntGrammar says the same thing about Gap="" now, in the same
+	// words, because it is the same mistake. Raised in review of #470.
+	if strings.TrimSpace(s) == "" {
+		return gooey.Thickness{}, fmt.Errorf("%s", emptyLiteralWhy)
+	}
 	parts := strings.Split(s, ",")
 	ns := make([]int, len(parts))
 	for i, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			return gooey.Thickness{}, err
+		// WHICH ONE. "4,2,x,2" reported only that "x" is not a number,
+		// and a four-value margin whose values are often equal gives the
+		// author nothing to search for. The position is named only when
+		// there is more than one, so the ordinary single value keeps the
+		// shorter sentence. Raised in review of #470.
+		where := ""
+		if len(parts) > 1 {
+			where = fmt.Sprintf(" (%s of %d)", thicknessSide(i, len(parts)), len(parts))
+		}
+		// THE SAME INT GRAMMAR AS EVERY OTHER LITERAL INT, and it read
+		// bare strconv.Atoi until review of #470. Three consequences,
+		// all silent: Margin="007" loaded and meant 7 where Gap="007" is
+		// a load error, Margin="-1" placed a child outside the rect that
+		// clips it, and an unreadable value leaked "strconv.Atoi:
+		// parsing \"x\": invalid syntax" into a message about markup.
+		n, canon, trimmed, ok := intSpelling(p)
+		if !ok {
+			if trimmed == "" {
+				return gooey.Thickness{}, fmt.Errorf("%s%s", emptyLiteralWhy, where)
+			}
+			return gooey.Thickness{}, fmt.Errorf("%q is not a whole number of cells%s", trimmed, where)
+		}
+		if n < 0 {
+			return gooey.Thickness{}, fmt.Errorf("%q%s: a margin is a gap in cells and "+
+				"cannot be negative — it parses, so nothing would refuse it, and the "+
+				"child is arranged outside the rect that clips it", trimmed, where)
+		}
+		if canon != trimmed {
+			return gooey.Thickness{}, fmt.Errorf("%q is spelled %q%s — two documents "+
+				"meaning the same layout should not differ in their text", trimmed, canon, where)
 		}
 		ns[i] = n
 	}
@@ -872,6 +982,18 @@ func parseThickness(s string) (gooey.Thickness, error) {
 		return gooey.Thickness{L: ns[0], T: ns[1], R: ns[2], B: ns[3]}, nil
 	}
 	return gooey.Thickness{}, fmt.Errorf("want 1, 2, or 4 values")
+}
+
+// thicknessSide names a position in MAUI's 1/2/4 spelling, because the
+// index alone would be a fourth thing for the author to look up.
+func thicknessSide(i, of int) string {
+	switch of {
+	case 2:
+		return [...]string{"horizontal", "vertical"}[i]
+	case 4:
+		return [...]string{"left", "top", "right", "bottom"}[i]
+	}
+	return fmt.Sprintf("value %d", i+1)
 }
 
 func parseAlign(s string) (gooey.Align, error) {
@@ -924,14 +1046,6 @@ func parseVisibility(s string) (gooey.Visibility, error) {
 	return 0, fmt.Errorf("unknown visibility")
 }
 
-// buildChildren builds an element's children, splitting them into the
-// visual ones the parent lays out and the non-visual ones (KeyBindings)
-// the framework hangs off the parent as attachments.
-//
-// The <X.Behaviors> property element is MAUI's explicit spelling of the
-// same slot: its children are attachments only, appended to the very
-// list the bare form feeds — two spellings, one downstream path. Bare
-// non-visual children stay as the terse shorthand.
 // BuildChildren builds an element's children for a REGISTERED component's
 // Builder, splitting them the way every builtin container gets them:
 // visual children in kids, non-visual ones (KeyBindings, Tooltips,
@@ -951,6 +1065,14 @@ func BuildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err
 	return buildChildren(e, ctx)
 }
 
+// buildChildren builds an element's children, splitting them into the
+// visual ones the parent lays out and the non-visual ones (KeyBindings)
+// the framework hangs off the parent as attachments.
+//
+// The <X.Behaviors> property element is MAUI's explicit spelling of the
+// same slot: its children are attachments only, appended to the very
+// list the bare form feeds — two spellings, one downstream path. Bare
+// non-visual children stay as the terse shorthand.
 func buildChildren(e Element, ctx *Context) (kids, attach []gooey.Component, err error) {
 	for _, c := range e.Children {
 		w, err := build(c, ctx)
@@ -1111,18 +1233,31 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			if err := checkAttrs(ic, ctx); err != nil {
 				return nil, err
 			}
-			// optBool, NOT == "true". Separator is declared KindBool by
-			// THIS PR — which is what puts the row in the designer's
-			// property grid — and toolkit.go states the contract a bool
-			// literal carries: strconv.ParseBool, and anything
-			// unreadable is a load error rather than a guess. Read as
-			// == "true", <MenuItem Separator="True" Text="Open"/> was
-			// silently an ordinary item; the Text-less form was loud
-			// only by accident, falling through to "needs Text". A
-			// declaration checked against what the code reads is this
-			// PR's own thesis, and catalogen cannot see this class
-			// because the name IS read. Raised in review of #454.
-			sep, err := optBool(ic, "Separator")
+			// litBool, NOT == "true". The string compare is the idiom #470
+			// removed in ten other places, and it is silent the same way
+			// here: <MenuItem Separator="1"> and Separator="yes" loaded as
+			// ORDINARY ITEMS, so a separator spelled the way half of Go
+			// spells a bool became a menu entry with no text. The Text-less
+			// form was loud only by accident, falling through to "needs
+			// Text".
+			//
+			// TWO REVIEWS FOUND THIS INDEPENDENTLY AND THAT IS THE POINT.
+			// Review of #454 reached it from the DECLARATION side: Separator
+			// is declared KindBool by this branch — which is what puts the
+			// row in the designer's property grid — and a declaration
+			// checked against what the code reads is this branch's own
+			// thesis. Review of #470 reached it from the SWEEP side, and
+			// recorded a third unswept category beyond the two
+			// bindsweep_test.go names: <Menu> and <MenuItem> are
+			// ModeRestricted children with no AttrSpec at all, so Separator
+			// is not a declaration that can be widened — it is a declaration
+			// that does not exist. Neither route's guard could see the other
+			// half, which is why the same line was written twice.
+			//
+			// litBool rather than the ParseBool spelling this branch first
+			// used: #470 made it the one house grammar for a component
+			// attribute, so optBool no longer exists to call.
+			sep, err := litBool(ic, "Separator")
 			if err != nil {
 				return nil, err
 			}

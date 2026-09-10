@@ -195,7 +195,7 @@ Sequential stacks: VStack lays children top to bottom at their desired heights, 
 
 | Attribute | Meaning |
 |---|---|
-| `Gap` | Cells of space between consecutive children. Defaults to 0. |
+| `Gap` | Cells of space between consecutive children. Defaults to 0. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Background` | Fill color: `#rgb`/`#rrggbb` literal or a color-property binding. The fill covers the gap cells no child owns. |
 
 ```xml
@@ -226,7 +226,7 @@ Indenting the document does *not* indent a body — the file's indentation lands
 | Attribute | Meaning |
 |---|---|
 | `Style` | Named style from `Context.Styles`. |
-| `Bold` | `"true"` sets bold on top of whatever the named style says. |
+| `Bold` | `"true"` sets bold on top of whatever the named style says. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 
 ```xml
 <Text Grid.Row="1" Style="dim">space: pause/follow   f: filter   q: quit</Text>
@@ -285,7 +285,7 @@ A declared gesture — a non-visual element:
 
 | Attribute | Meaning |
 |---|---|
-| `Gesture` | Key gesture, parsed by `input.ParseGesture` (syntax below). |
+| `Gesture` | **Required.** Key gesture, parsed by `input.ParseGesture` (syntax below). A `<KeyBinding>` with no gesture binds nothing and matches nothing, so its absence is a load error rather than an inert element. (`<MenuItem Gesture>` and `<Tooltip Gesture>` are display hints and stay optional.) |
 | `Command` | Binding or bare handler name, same resolution as `Click`. A command whose `When` condition is false does not match: the gesture is not consumed and the key keeps bubbling, so an outer binding can still have it. |
 
 Attachment and scoping semantics: a KeyBinding is never laid out or painted. The builder hangs it off its parent element as an attachment (any element that embeds `gooey.Base` can host one — a Grid, Border, stack, or custom component). Key dispatch starts at the focused component and walks up its ancestor chain to the root; at each level the KeyBindings attached there are matched first, then any **behaviour attachments** that handle keys (`<TypeAhead>`), then that component's own key handler. So:
@@ -323,7 +323,7 @@ Both forms satisfy `gooey.Action`, which is what every event field is typed as, 
 | Attribute | Meaning |
 |---|---|
 | `Src` | Required. A literal is a **file path resolved in the same `fs.FS` the page was loaded from** (`markup.Load`'s FS; inside a UserControl or markup-only control, the control's own FS) and decoded at build time — a missing or undecodable file is a load error naming the path and format, wrapping `*imaging.Error`. A binding shares the viewmodel's `*prop.Property[image.Image]` handle. |
-| `Cols`, `Rows` | Required size in cells: a positive int literal, or a binding to an int property. |
+| `Cols`, `Rows` | Required size in cells: a positive int literal, or a binding to an int property. The literal is the **house int rule** — a negative, a zero, a leading `+`, a leading zero or an empty value is a load error, not a silent 0; surrounding whitespace is trimmed, as it is everywhere else. Until [#470](https://github.com/WonderForgeLabs/gooey/pull/470) these two read their value with a bare `strconv.Atoi`, so `Cols="007"` loaded and meant 7 while `Gap="007"` was refused — the same second grammar the `Validate` rules had, in the one pair of attributes a sweep over `Kind` cannot see (they are declared `KindBinding`, and the int is in their `GoType`). |
 
 Literal `Src` decodes through the `imaging` registry: **png, jpeg, gif, bmp, ico** in core (GIF shows its first frame — animation is a player's job, see the browser demo's gifplay, and an animated player is [#105](https://github.com/WonderForgeLabs/gooey/issues/105); ICO decodes its largest entry). **SVG** needs the nested module — blank-import `github.com/WonderForgeLabs/gooey/imagefmt/svg` and `.svg` paths rasterize at their intrinsic size (capped at 1024 px). Formats are sniffed by content, not extension.
 
@@ -364,7 +364,7 @@ Overlap is safe under damage tracking: the Composer's z-ordered repaint means th
 |---|---|
 | `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
 | `Label` | Text before the bar. Bindable or literal. |
-| `BarWidth` | Preferred width in cells; absent = 34. |
+| `BarWidth` | Preferred width in cells; absent = 34. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Style` | Overrides the threshold ramp entirely when present. |
 
 ### Sparkline
@@ -374,8 +374,8 @@ Overlap is safe under damage tracking: the Composer's z-ordered repaint means th
 | Attribute | Meaning |
 |---|---|
 | `Values` | **Required binding** to a `*prop.Property[[]float64]`. |
-| `Height` | Rows tall; absent = 1. |
-| `BarWidth` | Preferred width in cells; absent = 40. |
+| `Height` | Rows tall; absent = 1. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
+| `BarWidth` | Preferred width in cells; absent = 40. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Style` | Overrides the threshold ramp. |
 
 The series is tail-cropped to the arranged width, so a narrower window shows recent history rather than compressing all of it.
@@ -389,9 +389,9 @@ The series is tail-cropped to the arranged width, so a narrower window shows rec
 | `Value` | **Required binding** to a `*prop.Property[int]`, clamped to 0-100 on read. |
 | `Indeterminate` | Optional binding to a `*prop.Property[bool]`. While true the bar animates a band instead of showing a number. Absent means the bar can never be indeterminate — and then it starts no goroutine at all. |
 | `Label` | Text before the bar. Bindable or literal. |
-| `BarWidth` | Preferred width in cells; absent = 34. |
-| `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Unparseable or non-positive is a load error. |
-| `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. |
+| `BarWidth` | Preferred width in cells; absent = 34. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
+| `Tick` | Animation step, any `time.ParseDuration` string; absent = 80ms. Empty, unparseable, or non-positive is a load error. |
+| `Thresholds` | `"true"` colors the bar with the shared good/warn/crit ramp. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 | `Style` | Overrides the coloring entirely when present. |
 
 ```xml
@@ -409,7 +409,7 @@ The animation follows the [`Timer`](#timer) discipline exactly: the ticker gorou
 | Attribute | Meaning |
 |---|---|
 | `Frames` | Frame set by name: `braille` (default), `line`, `arc`, `dot`. An unknown name is a load error. |
-| `Interval` | Frame interval, any `time.ParseDuration` string; absent = 100ms. |
+| `Interval` | Frame interval, any `time.ParseDuration` string; absent = 100ms. Empty, unparseable, or non-positive is a load error. |
 | `Label` | Text after the glyph. Bindable or literal. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always spinning. |
 | `Style` | Named style or a bound style. |
@@ -450,7 +450,7 @@ Space, enter and a click on the label flip it. What makes it a *rocker* rather t
 | `Options` | **Required.** Either a literal pipe-separated list (`Options="Day \| Week \| Month"`, whitespace trimmed) or a binding to a `*prop.Property[[]string]`. |
 | `Selected` | **Required binding** to a `*prop.Property[int]`, clamped into range on read. |
 | `Changed` | Optional command, run after the selection moves. |
-| `Wrap` | `"false"` stops the selection at the ends, restoring `Toggle`'s rocker rule. Absent or `"true"` cycles. Any other spelling is a load error, not a silent false. |
+| `Wrap` | `"false"` stops the selection at the ends, restoring `Toggle`'s rocker rule. Absent cycles, and so does `"true"`. Any other spelling — `"1"`, `"yes"`, an empty value — is a load error, not a silent false. |
 | `Style` | Named style or a bound style. |
 
 ```xml
@@ -490,8 +490,8 @@ It paints nothing of its own, and has no `Background`. A container's bounds encl
 
 | Attribute | Meaning |
 |---|---|
-| `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. |
-| `Uniform` | `"true"` gives every member the width of the widest one. |
+| `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
+| `Uniform` | `"true"` gives every member the width of the widest one. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
 | `Separator` | The rune drawn between members; absent draws none. |
 
 ```xml
@@ -591,7 +591,7 @@ While open the bar holds the pointer capture: clicks on items activate, motion t
 
 | Attribute | Meaning |
 |---|---|
-| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s, negative means sticky. |
+| `Duration` | Default lifetime for `Show`. Any `time.ParseDuration` string; absent means 3s. Empty or unparseable is a load error, like every other duration. **The one duration attribute where a negative value is meaningful** — it means sticky — so it is exempt from the must-be-positive rule alone: it reads through the same shared helper (`readDuration`, which owns empty-is-a-typo and unparseable-is-an-error) by way of `signedDuration`, which simply does not add positivity. One question asked one way; one rule that does not apply here. |
 | `Style` | Named style applied to the toasts; absent paints reverse-video. |
 
 The host takes no children — toasts are shown from code, through the named element:
@@ -635,7 +635,7 @@ The child form is a **non-visual attachment** like `KeyBinding` — it hangs off
 | Attribute | Meaning |
 |---|---|
 | `Text` | What the tip says. Literal or bound; bound text stays live while the tip is up. |
-| `Delay` | Hover-rest time before showing. Any `time.ParseDuration` string; absent means 600ms. |
+| `Delay` | Hover-rest time before showing. Any `time.ParseDuration` string; absent means 600ms. Empty, unparseable, or non-positive is a load error. |
 | `Gesture` | A **display hint** in the gesture syntax, validated at load and shown dim in the canonical spelling — the `MenuItem` rule. Absent, the tip renders the host's own `KeyBinding` gesture automatically. Display only; wiring the key stays a `KeyBinding`'s job. |
 | `Style` | Named style; absent paints reverse-video. |
 
@@ -725,6 +725,20 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 | `Message` | string | `ErrorMessage` | — (overrides every rule on this behavior) |
 | `Into` | name | — | — |
 
+**The `Type` column is the grammar, and it is the house one.** A `bool` rule
+takes only `"true"` or `"false"`, written literally; anything else, `"1"` and
+an empty value included, is a load error rather than a silent `"false"`. An
+`int` rule takes a whole number written literally, so a negative, a leading
+`+`, a leading zero, an empty value or a binding is a load error, not a silent
+0 — surrounding whitespace is trimmed, as it is everywhere else. That is the
+same sentence the `<Segmented Wrap>` and `<HStack Gap>` rows carry, and it is
+here because until [#470](https://github.com/WonderForgeLabs/gooey/pull/470)
+it was not true: these rules had their own readers, so `<Validate
+Required="1">` loaded while `<Segmented Wrap="1">` did not, and
+`<Validate MinLen=" 3 ">` was a load error where every other int in the
+vocabulary trims. One vocabulary, two answers, in the pair of files a form is
+written across.
+
 `Into` is the context name the error property publishes under, so later bindings — the inline error `<Text>`, a gate — reach it. The leading dot is optional. Omitted, it derives from the Text binding: `Text="{{.Name}}"` publishes `NameErr`. Publication overwrites an existing key (a hot reload re-registers on every rebuild).
 
 `Compare` names the *other* field — `Compare=".Password"` or `Compare="{{.Password}}"`, both accepted since the attribute names a property rather than carrying a value. The rule reads that property, and the read is what subscribes this field to it: editing the original re-validates the confirmation with no extra wiring.
@@ -801,7 +815,7 @@ The marker is persistent: it lives in the layer for as long as it is attached, s
 | `Items` | **Required.** Binding to a `*prop.Property[components.ItemSource]` — build one with `components.Items` (below). |
 | `Selected` | Optional binding to a `*prop.Property[int]`, shared with the viewmodel: the view Sets it on navigation and reads it to scroll and highlight. Absent means the list is not selectable. |
 | `SelectionChanged` | Optional command, resolved like `Click`. Runs after the **view** moves the selection — a key, a click, the wheel — not when the viewmodel Sets `Selected` itself, and not when a gesture clamps to the row already selected: it reports change, not intent. `handlers/temporal/cmd/temporalops` binds it to a describe call so the detail pane follows the selection. |
-| `Focusable` | `"false"` takes the view out of the tab order. For lists that are display surfaces for a selection some *other* component drives — finder's results pane, whose query line owns the keyboard fzf-style. A click still selects by hit-test. Anything other than `"true"`/`"false"` is a load error. |
+| `Focusable` | `"false"` takes the view out of the tab order. For lists that are display surfaces for a selection some *other* component drives — finder's results pane, whose query line owns the keyboard fzf-style. A click still selects by hit-test. Anything other than `"true"`/`"false"` is a load error — **including an empty value**, which loaded and meant `"false"` until [#470](https://github.com/WonderForgeLabs/gooey/pull/470). There is no empty bool, so `Focusable=""` is a typo; asking for the default already has a spelling, which is to omit the attribute. |
 | `Activate` | Command run on enter, on a double click, and on a second click of the already-selected row; resolved like `Click`. |
 
 `<ItemsView.ItemTemplate>` is required and takes exactly one child element. The view is a focus stop with the house list keys — `↑`/`↓`/`j`/`k`, `PgUp`/`PgDn`, `Home`/`End`, `enter` — plus wheel, click to select, and a second click to activate. Keys it does not use bubble, so page-level `<KeyBinding>`s still work while the list has focus.
@@ -853,7 +867,7 @@ rows := prop.NewComputed(func() components.ItemSource {
 | `Key` | **Required.** Which projected item value to match. A projection is a `map[string]any` and, with no reflection anywhere, nothing else can say which entry is the label. |
 | `Search` | Binding to a `string`: the live buffer. |
 | `NoMatch` | Binding to a `bool`: the last keystroke matched nothing. |
-| `Timeout` | Idle reset, default `1s`. |
+| `Timeout` | Idle reset, any `time.ParseDuration` string; absent = 1s. Empty, unparseable, or non-positive is a load error. |
 
 It **selects; it does not filter** — no row is ever hidden. That is what makes "any movement resets the search" coherent: a filter would make rows reappear underneath the user mid-gesture. Matching is case-insensitive **prefix**, not fuzzy (`dc` finds `dcache`, not `DocumentCache`), because "the first match in the current sort order" is not something subsequence matching has.
 
@@ -882,7 +896,7 @@ Binding `Search` is optional but recommended. Explorer displays nothing and surv
 
 | Attribute | Meaning |
 |---|---|
-| `Interval` | **Required.** Any `time.ParseDuration` string (`"600ms"`, `"2s"`). Missing, unparseable, or non-positive is a load error. |
+| `Interval` | **Required.** Any `time.ParseDuration` string (`"600ms"`, `"2s"`). Missing or empty, unparseable, or non-positive is a load error. |
 | `Tick` | The command, resolved like `Click` — a binding or a bare handler name. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`. Absent means always enabled. |
 
@@ -927,7 +941,7 @@ case ev := <-events:
 | `Paths` | **Required.** A binding to a `*prop.Property[[]string]`, or a literal pipe-separated list (`Paths="notes.md \| assets"`). Paths resolve against the page's `fs.FS`, so they are slash-separated and unrooted; a literal that is not is a load error. Written empty is a load error, but a **bound** list that resolves empty is legal and inert. |
 | `Changed` | The command, resolved like `Click` — a binding or a bare handler name. |
 | `Path` | Optional binding to a `*prop.Property[string]`, `Set` to the path that caused this hit immediately before `Changed` runs. |
-| `Interval` | Optional poll period. Absent means `components.DefaultWatchInterval` (300 ms — the framework's own hot-reload rate). Unparseable or non-positive is a load error. |
+| `Interval` | Optional poll period. Absent means `components.DefaultWatchInterval` (300 ms — the framework's own hot-reload rate). Empty, unparseable, or non-positive is a load error. |
 | `Enabled` | Optional binding to a `*prop.Property[bool]`, or a conditional (`Enabled="{{not .Paused}}"`). Absent means always enabled. |
 
 Three things about it are decisions rather than details.
@@ -976,9 +990,9 @@ An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher ove
 | `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory. Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
 | `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
 | `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
-| `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. |
-| `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. |
-| `CleanEnv` | Starts the child from an **empty** environment. Any `strconv.ParseBool` spelling works (`true`, `1`, `TRUE`, `T`); anything else is a **load error**, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell. Default is inherit-and-override. |
+| `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. Empty, unparseable, or non-positive is a load error. |
+| `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. Empty, unparseable, or non-positive is a load error. |
+| `CleanEnv` | Starts the child from an **empty** environment. `"true"` or `"false"`, and nothing else — `CleanEnv="1"` is a **load error**, as it is on every other literal bool. This row documented the `strconv.ParseBool` spellings (`1`, `TRUE`, `T`) until [#460](https://github.com/WonderForgeLabs/gooey/issues/460): on a security switch the laxer grammar is the worse one, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell, and five spellings of "yes" is five chances for a near-miss. Default is inherit-and-override. |
 | `Error` | Optional binding to a `*prop.Property[string]`. Receives a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden, and `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
 
@@ -1023,12 +1037,47 @@ Every **visual** element (all built-ins whose component embeds `gooey.Base`, and
 | Attribute | Values | Meaning |
 |---|---|---|
 | `Width`, `Height` | integer cells | Explicit size; 0/absent = auto. |
-| `Margin` | 1, 2, or 4 comma-separated integers | `"1"` = all four sides; `"2,0"` = horizontal, vertical; `"2,0,0,0"` = left, top, right, bottom. |
+| `Margin` | 1, 2, or 4 comma-separated integers | `"1"` = all four sides; `"2,0"` = horizontal, vertical; `"2,0,0,0"` = left, top, right, bottom. Each value follows the integer grammar below, and a refusal names the element and which side is wrong (`left`, `top`, `right`, `bottom`, or `horizontal`/`vertical` for the two-value form). |
 | `HAlign`, `VAlign` | `Stretch` (default), `Start`, `Center`, `End` | Alignment inside the layout slot. Stretch fills the slot; the others use the measured desired size. |
 | `Visibility` | `Visible` (default), `Hidden`, `Collapsed`, or a `{{...}}` binding | Hidden occupies space but does not paint; Collapsed occupies nothing (and its subtree is skipped by focus traversal). The bound form accepts a `*prop.Property[gooey.Visibility]` or a `*prop.Property[bool]` (true→Visible, false→Collapsed); a `Set` repaints exactly what the literal flip repaints. |
 | `Grid.Row`, `Grid.Col` | integer | Cell address when the parent is a Grid — the attached-property syntax. |
 | `Grid.RowSpan`, `Grid.ColSpan` | integer | Cells spanned; 0/absent means 1. |
 | `Canvas.Left`, `Canvas.Top` | integer cells | Offset from the parent Canvas's top-left corner — the attached-property syntax again. |
+
+**The integer grammar, once, for every row above that says "integer".**
+A literal integer attribute is a measurement in cells — an extent, a
+count, an index or an offset — and one rule reads all of them, so the
+table is stated once rather than eight times. It refuses **four** things
+as load errors rather than silent misreadings, each naming the attribute
+and quoting what you wrote:
+
+- **Unreadable.** `Width="wide"`, and `Height="{{.Rows}}"` — a binding is
+  not a literal here.
+- **Empty.** `Width=""` is an attribute nobody finished writing, not a
+  zero, and reading it as one would make a half-typed document
+  indistinguishable from a deliberate default. Omitting the attribute is
+  how you ask for the default.
+- **Negative.** It parses, so nothing downstream refuses it: layout
+  overlaps what it was meant to separate, `Grid.Row="-1"` addresses no
+  cell, or a child is arranged outside the rect that clips it.
+- **A second spelling.** `Gap="007"` and `Width="+8"` are refused; the
+  canonical form is `strconv.Itoa`'s, so two documents meaning the same
+  layout cannot differ in their text.
+
+Surrounding whitespace is trimmed, and the refusal quotes the value
+**untrimmed**, so it matches what is in the file.
+
+Until [#460](https://github.com/WonderForgeLabs/gooey/issues/460) all four
+were `strconv.Atoi` with the error discarded, so every one of them laid
+out as if the attribute had been omitted — the silent drop this reference
+exists to document, in the rows nobody reads twice.
+
+*(This section stated the rule twice, in adjacent paragraphs, one of them
+opening "the integer grammar, once" and listing three cases while the
+other listed four — in the passage whose argument is that the rule should
+be stated once. The four-case list is the complete one: the three-case
+version omitted the unreadable value, which is what the reader's main
+error message is about.)*
 
 The `Grid.*` and `Canvas.*` attributes live on the child, XAML-style; they are stored in the element's own `Layout` (Go has no attached-property store, so the element itself is it). A **misplaced** one is a load error naming the parent that would have contributed it — `Canvas.Left` under a `<VStack>`, or `Grid.Row` under a `<Canvas>`, does not load, rather than sitting there inert. The one position where all of them are accepted is a document or patch-fragment **root**, which has no layout parent to scope against. Both families are also excluded from the attribute hand-off into an Include, since they position the instance rather than describing it.
 
@@ -1042,7 +1091,7 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1158`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1227`) is:
 
 | Handle | Plain value | Rendered as |
 |---|---|---|
@@ -1509,11 +1558,13 @@ A control file can declare its own property surface. Declarations are direct chi
 | Attribute | Meaning |
 |---|---|
 | `Name` | Required. The attribute callers set, and the path the control's own markup binds (`{{.Title}}`). Cannot be `Name`, `Tooltip`, or a layout attribute — those belong to the element. |
-| `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any`. |
+| `Type` | Required. One of `string`, `int`, `bool`, `float`, `duration`, `color`, `any` — or one of the **bind-only** kinds `style`, `image`, `series`, which accept a `{{...}}` handle and refuse a literal. |
 | `Default` | The literal used when the attribute is absent, coerced by `Type`. A bad default fails the load of the *control*, not of the page. |
 | `Required` | `true` makes an absent attribute a load error. Exclusive with `Default` — a default is what makes an attribute optional. |
 
 Literal syntax per type is the obvious one: `strconv` for `int`/`bool`/`float`, `time.ParseDuration` for `duration` (`600ms`), `#rgb`/`#rrggbb` for `color`. `any` is the escape hatch for app types that have no markup literal; it accepts whatever handle the parent holds, unchecked, and takes no `Default`.
+
+The three **bind-only** kinds refuse a literal for one shared reason: `Declarations()` is a pure function of the control's bytes — it doubles as the wire schema — so it has no page context to resolve one against. A `style` literal is a name looked up in `Context.Styles`, an `image` literal is a path resolved against the instantiating page's `fs.FS`, and a `series` literal would let a declared property accept text the `<Sparkline Values>` it feeds refuses. Half a literal — one checked on whichever page happens to omit the attribute — is worse than none, and passing the handle loses nothing. They take no `Default`; the zero handle is the empty state.
 
 ### What happens at the instantiation site
 
