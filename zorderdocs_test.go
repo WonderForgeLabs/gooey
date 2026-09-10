@@ -1029,6 +1029,23 @@ func TestTheDocGuardsFireOnAFixtureTree(t *testing.T) {
 // CONTAINING" and reported nothing for two review rounds. Widening the
 // pattern against the repo alone proves nothing once the repo has been
 // corrected to the phrasing the pattern already matched.
+// guardPad is 25 lines of nothing, enough to push what follows it past
+// declaresItselfSuperseded's 20-line head window. Its content is inert:
+// no phrase in it is a claim, a qualifier or a prefilter word.
+const guardPad = "A fixture document.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n" +
+	"Nothing here states a rule.\n\n"
+
 func TestTheContractGuardFiresOnAFixtureTree(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -1044,6 +1061,36 @@ func TestTheContractGuardFiresOnAFixtureTree(t *testing.T) {
 		{"either phrasing with the clause",
 			"the one that paints last among those whose arranged bounds — and every\n" +
 				"ancestor's bounds — contain the cell.\n", false},
+		// THE QUALIFIER ABOVE THE CLAIM. Both arms above put it after,
+		// so the window's missing upward reach was unpinned — see
+		// spanWindow. This is the shape a dated record takes when its
+		// epitaph is repositioned to lead the paragraph rather than
+		// trail it, which is a live phrasing in docs/specs/.
+		//
+		// PADDED PAST THE HEAD, and the first spelling of these two arms
+		// was not. An epitaph on line 1 is a HEAD BANNER, which exempts
+		// the whole file through declaresItselfSuperseded — so both arms
+		// passed for a reason that had nothing to do with the window,
+		// and the must-fire one failed outright. Measured, not reasoned
+		// about. The pad puts the epitaph below the 20-line head so the
+		// only thing that can qualify the claim is proximity.
+		{"the epitaph leads the paragraph",
+			guardPad +
+				"Superseded by #465, which made the walk answer by overlay layer.\n" +
+				"\n" +
+				"the one that paints last among those whose arranged bounds\n" +
+				"contain the cell.\n", false},
+		// ...and the paired must-fire arm, because a negative assertion
+		// passes for any reason: push the same epitaph out of reach and
+		// the identical claim has to be reported again. Without this the
+		// arm above would go green on a guard that reported nothing at
+		// all.
+		{"the epitaph too far above to count",
+			guardPad +
+				"Superseded by #465, which made the walk answer by overlay layer.\n" +
+				"\n\n\n\n" +
+				"the one that paints last among those whose arranged bounds\n" +
+				"contain the cell.\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -1205,33 +1252,60 @@ func qualifiedNearSpan(lines []string, first, last int) bool {
 // what the input plane needs: the two guards share the epitaphs and not
 // the corrections, so a caller has to be able to say which list.
 func qualifiedIn(lines []string, first, last int, res []*regexp.Regexp) bool {
-	const window = 2
-	lo, hi := first-window, last+window
-	if lo < 0 {
-		lo = 0
-	}
-	if hi >= len(lines) {
-		hi = len(lines) - 1
-	}
-	// JOINED AS PROSE, not with newlines. The qualifiers are phrases —
-	// "no longer", "used to say", "does not decide" — and a 72-column
-	// comment splits them exactly as readily as it splits the rule
-	// statements the scan above now joins for the same reason. It split
-	// one in the tree: components/menu_test.go wrapped "Last is no /
-	// longer what puts the dropdown above the content", so the correction
-	// the sweep wrote was invisible to the guard checking for it.
-	// Raised in review of #458.
-	parts := make([]string, 0, hi-lo+1)
-	for _, l := range lines[lo : hi+1] {
-		parts = append(parts, continuationRe.ReplaceAllString(l, ""))
-	}
-	block := unemphasize(strings.Join(parts, " "))
+	block := spanWindow(lines, first, last, 2, 2)
 	for _, re := range res {
 		if re.MatchString(block) {
 			return true
 		}
 	}
 	return false
+}
+
+// spanWindow is the neighbourhood of a matched span, normalised: `before`
+// lines above its FIRST line and `after` below its LAST, comment and list
+// markers stripped, emphasis removed, joined as one string.
+//
+// JOINED AS PROSE, not with newlines. The qualifiers are phrases — "no
+// longer", "used to say", "does not decide" — and a 72-column comment
+// splits them exactly as readily as it splits the rule statements the
+// scan joins for the same reason. It split one in the tree:
+// components/menu_test.go wrapped "Last is no / longer what puts the
+// dropdown above the content", so the correction the sweep wrote was
+// invisible to the guard checking for it. Raised in review of #458.
+//
+// EXTRACTED SO THE TWO GUARDS CANNOT DRIFT APART, which they had.
+// hitContractProblems computed its own window inline as `i, at+3` — zero
+// lines ABOVE the claim — while qualifiedNearSpan's doc, twenty lines up
+// in this same file, argues the window "belongs either side of the WHOLE
+// of it ... silently dropping the line above, where a correction sits at
+// least as often as below". The newest guard in the file had the shape
+// the older one spent a round removing, and the cost is a FALSE POSITIVE:
+// a correctly-marked statement whose epitaph leads its paragraph gets
+// reported. That is a live phrasing here — repositioning an epitaph to
+// LEAD a paragraph is what #458's own round did to a spec. Raised in
+// review of #478.
+//
+// `before` and `after` are separate rather than one symmetric constant
+// because the input-plane caller genuinely needs a longer reach below:
+// its second obligation reads the ENUMERATION half of the sentence ("...
+// are not hit"), which trails the claim by up to three wrapped lines in
+// docs/architecture.md. Narrowing it to two to make the call look tidy
+// would drop the enumeration out of the window and take that whole
+// obligation with it. Asymmetry that is argued for is not the defect;
+// asymmetry nobody chose is.
+func spanWindow(lines []string, first, last, before, after int) string {
+	lo, hi := first-before, last+after
+	if lo < 0 {
+		lo = 0
+	}
+	if hi >= len(lines) {
+		hi = len(lines) - 1
+	}
+	parts := make([]string, 0, hi-lo+1)
+	for _, l := range lines[lo : hi+1] {
+		parts = append(parts, continuationRe.ReplaceAllString(l, ""))
+	}
+	return unemphasize(strings.Join(parts, " "))
 }
 
 // docFiles is every file in the tree that can teach somebody the rule:
@@ -1514,7 +1588,23 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 		// nothing rather than reporting a miss. Trimmed further, past
 		// "whose", when CLAUDE.md turned out to say "among those
 		// containing".
-		low := strings.ToLower(string(body))
+		// WHITESPACE-NORMALISED, and it was not. The prefilter looks for
+		// "among those " in the raw body, so a statement that wraps
+		// between the two words carries "among\nthose" and the file is
+		// skipped ENTIRELY — not the statement, the file.
+		//
+		// docs/architecture.md is that file, and it is the architecture
+		// document: "returns **the component that paints last** among /
+		// those whose arranged `Bounds()`". It survived this filter only
+		// because it says "deepest" somewhere else, and then failed the
+		// pattern for a second reason (see hitContractWant). Measured,
+		// not reasoned about: the guard reported found=0 over it.
+		//
+		// The line loop below already joins wrapped lines. The prefilter
+		// is what decides whether that loop runs at all, so it has to be
+		// at least as forgiving as the thing it gates. Raised in review
+		// of #478.
+		low := strings.Join(strings.Fields(strings.ToLower(string(body))), " ")
 		if !containsAny(low, hitContractPrefilter) {
 			continue
 		}
@@ -1545,30 +1635,74 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 				}
 			}
 			found++
-			lo, hi := i, at+3
-			if hi >= len(lines) {
-				hi = len(lines) - 1
+			window := spanWindow(lines, i, at, 2, 3)
+
+			// TWO OBLIGATIONS, CHECKED INDEPENDENTLY, and the second is
+			// finding 1 of review #478.
+			//
+			// The clause obligation attaches to the CLAIM half of the
+			// sentence and the Hidden one to its ENUMERATION half, so a
+			// statement can satisfy either and owe the other. Running
+			// the second only where the first failed would have been
+			// the natural shape and is wrong in the direction that
+			// matters: every one of the six live statements already
+			// carried the ancestor clause, so all six would have been
+			// skipped before the enumeration was ever read.
+			if !qual.MatchString(window) && !reported[at] {
+				reported[at] = true
+				problems = append(problems, fmt.Sprintf(
+					"%s:%d states the hit-test contract without the clause that makes "+
+						"it true:\n\t%s\n"+
+						"FocusManager.HitTest prunes on bounds at EVERY node, so a "+
+						"component arranged outside its parent's rect paints and is "+
+						"never hit; and since #465 it answers by the OVERLAY LAYER "+
+						"first, then rank, then document order — so the winner is not "+
+						"the deepest hit. Say %q, or change the walk and this test "+
+						"with it.", f, i+1, strings.TrimSpace(lines[at]), want))
 			}
-			if qual.MatchString(strings.Join(lines[lo:hi+1], " ")) {
-				continue
+
+			// Where a statement goes on to enumerate what is NOT hit,
+			// the enumeration has to name Hidden. It did not, and the
+			// walk did not skip it either: a Hidden component paints
+			// nothing and was still taking the press from a visible
+			// sibling beneath it, at all six sites stating the contract.
+			//
+			// Anchored on the enumeration rather than on the claim,
+			// because that is where the exceptions live — a statement
+			// that makes the claim and lists nothing owes the clause
+			// above, not this.
+			if hitExceptionList.MatchString(window) &&
+				!hitNamesHidden.MatchString(window) && !reported[at] {
+				reported[at] = true
+				problems = append(problems, fmt.Sprintf(
+					"%s:%d enumerates what HitTest does not hit and omits "+
+						"Hidden:\n\t%s\n"+
+						"A Hidden component occupies space and paints nothing "+
+						"(layout.go), and hitTest asks paintable() — so it is not "+
+						"hit, exactly as a Collapsed subtree is not. An exception "+
+						"list missing one exception reads as complete, which is "+
+						"how this one came to promise the press goes to what "+
+						"painted while a Hidden component took it.",
+					f, i+1, strings.TrimSpace(lines[at])))
 			}
-			if reported[at] {
-				continue
-			}
-			reported[at] = true
-			problems = append(problems, fmt.Sprintf(
-				"%s:%d states the hit-test contract without the clause that makes "+
-					"it true:\n\t%s\n"+
-					"FocusManager.HitTest prunes on bounds at EVERY node, so a "+
-					"component arranged outside its parent's rect paints and is "+
-					"never hit; and since #465 it answers by the OVERLAY LAYER "+
-					"first, then rank, then document order — so the winner is not "+
-					"the deepest hit. Say %q, or change the walk and this test "+
-					"with it.", f, i+1, strings.TrimSpace(lines[at]), want))
 		}
 	}
 	return problems, found
 }
+
+var (
+	// hitExceptionList matches the ENUMERATION half of the contract
+	// sentence — "… are not hit" — rather than the claim half, because
+	// that is where the exceptions are listed and therefore the only
+	// place omitting one is a defect.
+	hitExceptionList = regexp.MustCompile(`(?i)are not hit`)
+	// hitNamesHidden is satisfied by the word alone. Deliberately loose:
+	// this guard's job is to stop the exception being dropped from a
+	// sentence, not to police how it is phrased — and a tighter pattern
+	// is the shape that goes silent when somebody rewords, which this
+	// file has now recorded three times.
+	hitNamesHidden = regexp.MustCompile(`(?i)\bhidden\b`)
+)
 
 // hitContractClaim and deepestClaim are the TWO phrasings of one
 // contract, and the second is finding 5 of review #478.
@@ -1625,6 +1759,19 @@ var (
 	// the finding in this file. The inflection alternation is written out
 	// rather than suffixed with \w* because "returned"/"returning" are the
 	// two that occur and `return\w*` would also match "returns nothing".
+	// THE NOUN IS THE HALF THAT VARIES, and the pattern's tail is where
+	// its reach ends: `deepest[- ](component|node|hit)` does not match
+	// "deepest-component QUERY", which is how apps/wysiwyg/main.go spelled
+	// the retired contract in a struct field's godoc. Widening the tail
+	// was not the repair — the phrasing an English writer can reach for is
+	// open-ended, and a guard that chases it grows a list nobody can
+	// audit. The sentence was rewritten to stop making the claim, which
+	// is what the guard is for.
+	//
+	// Recorded here rather than at the site, because a note about this
+	// regexp's reach in a field's documentation is meta-commentary about
+	// a test, sitting in the godoc of an editor field. Raised in review
+	// of #478.
 	deepestClaim = regexp.MustCompile(
 		`(?i)\b(hit-?test\w*|the walk|hit)\b[^.\n]{0,50}?\b(returns?|returning|returned|is|gives?|giving|answers? with|answering with)\b[^.\n]{0,25}?\bdeepest[- ](component|node|hit)\b`)
 	// ONE QUALIFIER PER PHRASING, and sharing one list between them was a
@@ -1653,6 +1800,25 @@ var (
 // the clause it is missing, and the pattern whose presence nearby would
 // supply it. "" when the span makes neither statement.
 func hitContractWant(span string) (string, *regexp.Regexp) {
+	// EMPHASIS IS NOT A WORD BOUNDARY THE PATTERNS CAN SEE. Both docs
+	// state the contract as "**the component that paints last** among
+	// those whose …", and `paints? last among` does not match
+	// `paints last** among` — so the two files that teach this rule to a
+	// human reader were the two the guard never judged.
+	//
+	// Stripping the markers rather than threading `[*_]*` between every
+	// token: the patterns are already hard to read, and a guard whose
+	// pattern is harder to check than the prose it guards is the shape
+	// that goes quietly wrong. Raised in review of #478, measured on
+	// docs/architecture.md and docs/learn/concepts/input-routing.md.
+	//
+	// unemphasize, not a hand-rolled strip of `*` alone: this file
+	// already owns the normaliser every other pattern list is matched
+	// through, and it covers `_` and backticks as well. Two spellings of
+	// "normalise emphasis" in one file is the shape where one of them
+	// gets a fix and the other does not — the same argument the window
+	// above is extracted for.
+	span = unemphasize(span)
 	switch {
 	case hitContractClaim.MatchString(span):
 		return "whose bounds, and every ancestor's bounds, contain the cell",

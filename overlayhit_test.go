@@ -68,6 +68,88 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 	})
 }
 
+// TestAHiddenComponentPaintsNothingAndIsNotHit is the PAINTS half of
+// the contract, and it was the half nothing checked.
+//
+// Measured before the fix, with a Hidden component declared after a
+// visible sibling at the same rect:
+//
+//	later sibling Visible   → hit = the later one
+//	later sibling Hidden    → hit = the later one   ← paints nothing
+//	later sibling Collapsed → hit = the earlier, visible one
+//
+// So a component that painted nothing beat one that did, which is the
+// one thing the contract sentence promises cannot happen. A Hidden
+// button silently eating the presses on what is behind it is the shape
+// that costs. Raised in review of #478.
+//
+// THREE ARMS, because any two of them pass against a wrong walk. Without
+// the Visible arm a walk that never returned the later sibling would
+// pass; without Collapsed the two visibilities are not distinguished
+// from each other; and Hidden alone says nothing about whether the
+// fixture can produce a later-sibling win at all.
+func TestAHiddenComponentPaintsNothingAndIsNotHit(t *testing.T) {
+	for _, tc := range []struct {
+		vis  Visibility
+		want string // "later" or "earlier"
+	}{
+		{Visible, "later"},
+		{Hidden, "earlier"},
+		{Collapsed, "earlier"},
+	} {
+		under := &stripe{ch: 'U'}
+		over := &stripe{ch: 'O'}
+		over.LayoutProps().Visibility = tc.vis
+		root := &twoKids{kids: []Component{under, over}}
+
+		c := NewComposer(root, 12, 3)
+		c.Frame()
+		hit := NewFocusManager(root).HitTest(0, 0)
+		c.Close()
+
+		got := "neither"
+		switch hit {
+		case Component(over):
+			got = "later"
+		case Component(under):
+			got = "earlier"
+		}
+		if got != tc.want {
+			t.Errorf("a %v component declared after a visible one: HitTest "+
+				"returned the %s one, want the %s. HitTest answers with what "+
+				"PAINTS last, and a Hidden component paints nothing",
+				tc.vis, got, tc.want)
+		}
+	}
+}
+
+// TestAVisibleChildOfAHiddenParentIsStillHit is the bound on the fix
+// above, and it is the arm that keeps it from being the Collapsed check
+// written twice.
+//
+// Hidden is ONE NODE'S property. A hidden container still has its
+// children painted over its own erasure — apps/wysiwyg/dock.go's "one
+// sharp edge" paragraph is about exactly that, and it is why hiding a
+// pane there is two facts rather than one. So skipping the SUBTREE would
+// take a child that is on screen out of input, which is the same defect
+// in the other direction.
+func TestAVisibleChildOfAHiddenParentIsStillHit(t *testing.T) {
+	kid := &stripe{ch: 'K'}
+	parent := &twoKids{kids: []Component{kid}}
+	parent.LayoutProps().Visibility = Hidden
+	root := &twoKids{kids: []Component{parent}}
+
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
+
+	if hit := NewFocusManager(root).HitTest(0, 0); hit != Component(kid) {
+		t.Errorf("HitTest returned %T, want the visible CHILD of the hidden "+
+			"container. Hidden hides one node, not a subtree: the child is "+
+			"painted over its parent's erasure and is on screen", hit)
+	}
+}
+
 // TestPositionStillDecidesInsideTheOrdinaryLayer is the half #465 must
 // not have broken.
 //

@@ -600,9 +600,8 @@ func (s *Segmented) SetHovered(v bool) {
 // It returns FALSE always: motion here is observed, never consumed.
 // Consuming it would stop the event bubbling to ancestors
 // (DispatchMouse's MouseMove arm, in mouse.go), which is what a drag, a
-// marquee or an outer hover
-// watcher is listening for — a control that reports its own hover has no
-// business ending someone else's gesture.
+// marquee or an outer hover watcher is listening for — a control that
+// reports its own hover has no business ending someone else's gesture.
 func (s *Segmented) HandleMouseMove(ev input.MouseEvent) bool {
 	if s.disabled() {
 		s.setHoveredIndex(-1)

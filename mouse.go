@@ -106,8 +106,8 @@ type PointerFollower interface{ FollowsPointer() bool }
 
 // HitTest returns the component the pointer is over: THE ONE THAT PAINTS
 // LAST among those whose arranged bounds — AND EVERY ANCESTOR'S BOUNDS —
-// contain the cell. Collapsed subtrees, zero-size components, and
-// HitTestTransparent components are not hit. The walk allocates nothing
+// contain the cell. Collapsed subtrees, HIDDEN components, zero-size
+// components, and HitTestTransparent components are not hit. The walk allocates nothing
 // — it runs on every motion event.
 //
 // THE ANCESTOR CLAUSE IS THE ONE PLACE THE TWO PLANES STILL DIVERGE, and
@@ -328,6 +328,39 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {
 		return
 	}
+	// A COMPONENT THAT PAINTS NOTHING IS NOT UNDER THE POINTER, and this
+	// walk let a Hidden one win. Measured, with a Hidden component
+	// declared after a visible sibling at the same rect:
+	//
+	//	later sibling Visible   → hit = the later one
+	//	later sibling Hidden    → hit = the later one   ← paints nothing
+	//	later sibling Collapsed → hit = the earlier, visible one
+	//
+	// The contract this branch wrote into six files turns on the word
+	// PAINTS, and a Hidden component paints nothing — layout.go calls it
+	// "occupies space, does not paint", and paintable() is what every
+	// paint path gates the Render on — so it cannot be the one that
+	// painted last, and a Hidden button silently eating the presses on
+	// what is behind it is the shape that costs. Raised in review of
+	// #478.
+	//
+	// THE NODE, NOT THE SUBTREE, and that difference is the whole reason
+	// this is not the Collapsed check thirty lines up. Collapsed is out
+	// of layout and takes its children with it. Hidden is one node's
+	// property: a hidden CONTAINER still has its children painted over
+	// its own erasure — apps/wysiwyg/dock.go's "one sharp edge"
+	// paragraph is about exactly that — so a Visible child of a Hidden
+	// parent is on screen and must stay hittable. Skipping the subtree
+	// here would take it out of input while it is still under the
+	// pointer.
+	//
+	// paintable() rather than a second Visibility test, because this is
+	// the same question the paint path asks and asking it the same way
+	// is what keeps the two from drifting — which is this branch's whole
+	// thesis.
+	if !paintable(w) {
+		return
+	}
 	if best.beatenBy(overlay, rank, mine) {
 		*best = hitCandidate{w: w, rank: rank, overlay: overlay, order: mine}
 	}
@@ -411,9 +444,16 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// hit is what ROUTES, hov is what HOVERS, and they are equal for every
 	// host that answers the bool — AllowNone withholds both, so both walks
 	// stop at the same ancestor.
-	deepest := m.HitTest(ev.X, ev.Y)
-	hit := m.frozenHostFor(deepest, AllowPointer)
-	hov := m.frozenHostFor(deepest, AllowHover)
+	// `under`, not `deepest`. #465 made HitTest answer by overlay layer
+	// first, then rank, then document order, and this PR took the word
+	// out of every comment in the tree and added deepestClaim to hunt it
+	// in prose — while the one production call site went on naming its
+	// result after the contract that had just been retired. No guard
+	// reaches it: they all scan prose, and an identifier is not prose.
+	// Raised in review of #478.
+	under := m.HitTest(ev.X, ev.Y)
+	hit := m.frozenHostFor(under, AllowPointer)
+	hov := m.frozenHostFor(under, AllowHover)
 	// Every kind carries a position, so every kind updates it — a drag
 	// ghost raised inside a press handler must find the pointer already
 	// where the press was, not one motion event later. MouseTarget

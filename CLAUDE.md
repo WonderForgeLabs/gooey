@@ -359,7 +359,16 @@ freedom is what made it reachable.
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
-same membership-and-rank rule `orderPaint` and `gooey.Compose` ask. The
+same membership-and-rank rule `orderPaint` and `gooey.Compose` ask.
+
+PAINTS is literal, and that half arrived a round later: a `Hidden`
+component occupies space and paints nothing, so it is not hit either.
+`hitTest` asks `paintable()` rather than testing `Visibility` a second
+way — the same question the paint path asks, which is what keeps the two
+from drifting — and it skips the NODE, not the subtree, because a hidden
+container still has its children painted over its own erasure.
+
+The
 ancestor half is not a detail: the walk prunes on bounds at every node,
 so a surface arranged outside its parent's rect paints and can never be
 hit. That is the point: not a second ordering, the same

@@ -23,6 +23,18 @@ comment lines about bucket reuse) and `wysiwyg.gooey:69`. A banner
 asserting EVERY is a claim about a set, and each pass has corrected it by
 one. Raised in review of #478.
 
+THE FOURTH PASS FOUND AN ORPHAN, which is the worse shape and is what
+the strip itself made: the `named` citation in "What was measured" read
+"`markup/markup.go`, `:699`, `:708`, `named` at `:766`" — the file was
+taken off the first number and the other three were left with nothing
+to anchor them. A stale citation at least says what it indexes; three
+bare colons say only that a reader is missing something. All three were
+also wrong by six hundred lines (`named` is a function in
+`markup/markup.go`; the arms that return through it are near the top of
+`buildComponent`). They are gone. Four passes, four corrections, each
+one to a banner that had just asserted the set was closed — the claim
+this record is now mostly about. Raised in review of #478.
+
 THE FIRST PASS STRIPPED ONLY mouse.go's, which is the same mistake one
 size smaller: the argument above is about hand-maintained numbers, not
 about that file, and the thirteen citations left behind were stale for
@@ -394,7 +406,7 @@ if ctx.Decorate != nil { w = ctx.Decorate(e, w) }       // return OUTER
 ```
 
 The funnel is real — `buildComponent`'s three arms all return through
-`named` (`markup/markup.go`, `:699`, `:708`, `named` at `:766`). The
+`named` (`markup/markup.go`). The
 seam would work. **It breaks patching, which is measured, not argued.**
 
 ### What was measured

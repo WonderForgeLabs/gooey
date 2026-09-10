@@ -1041,8 +1041,9 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns **the component that paints last** among
 those whose arranged `Bounds()` — and every ancestor's `Bounds()` —
-contain the cell; `Collapsed` subtrees, zero-size components, and
-`HitTestTransparent` components are not hit.
+contain the cell; `Collapsed` subtrees, `Hidden` components,
+zero-size components, and `HitTestTransparent` components are not
+hit.
 
 The ancestor clause is the one place the two planes still differ, and it
 is deliberate rather than an oversight: the hit walk prunes on bounds at

@@ -46,7 +46,8 @@ keeps them.
 A mouse event finds its target by hit-testing the retained tree, then
 bubbles up the same ancestor chain. The target is the component that
 **paints last** among those whose bounds — and every ancestor's bounds —
-contain the cell.
+contain the cell. `Collapsed` subtrees, `Hidden` components, zero-size
+components and `HitTestTransparent` components are not hit.
 
 **The click asks the same question the paint does.** Both orderings come
 from one rule (`overlayOf`): the lifted `gooey.Overlay` layer sits above
