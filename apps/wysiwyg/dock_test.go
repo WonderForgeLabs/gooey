@@ -655,13 +655,27 @@ func TestCollapsingTheBottomStripGivesItsRowsBack(t *testing.T) {
 		t.Errorf("the collapsed bottom strip is %d rows tall, want %d — its rows "+
 			"are still off the editor, which is the bug as reported", got.H, headerH)
 	}
-	// THE WIDTH — the tell. A pane in a horizontal strip collapses along
-	// the OTHER axis, so it keeps every column it had.
-	if got.W != was.W {
-		t.Errorf("collapsing narrowed the pane from %d columns to %d. In a strip that "+
-			"stacks left to right, headerH is the wrong axis to spend: the header has "+
-			"no room left for its title and the user is looking at a lone chevron",
-			was.W, got.W)
+	// THE WIDTH — the tell, and it is the HEADER'S width rather than the
+	// pane's old one.
+	//
+	// This asserted `got.W == was.W` until #441: a pane in a horizontal
+	// strip collapsed along the other axis only, and kept every column it
+	// had. That was a PROXY for the property it names in its own message
+	// — "the header has no room left for its title" — and the proxy is
+	// what forbade the reclamation the doctrine promises: with a second
+	// pane beside it, the collapsed one sat at a full even share with a
+	// blank body and the neighbour got nothing.
+	//
+	// The property itself is asserted directly by
+	// TestACollapsedHeaderStillReadsItsTitle, which reads the row back
+	// and finds the chevron and the title in it. So this one can say the
+	// narrower, truer thing: the pane gives back everything it cannot
+	// use, and keeps exactly the columns its header draws in.
+	if want := panel.headerCols(); got.W != want {
+		t.Errorf("the collapsed pane is %d columns wide, want %d — the width of the "+
+			"header it still draws. It was %d before, so headerH (a ROW count) is "+
+			"being spent on the width if this reads 1, and nothing was reclaimed "+
+			"if it reads %d", got.W, want, was.W, was.W)
 	}
 	// AND SOMEBODY GOT THE ROOM. Reclaiming space is the whole purpose of
 	// collapse; a strip that shrank while the centre stayed put would
@@ -731,10 +745,25 @@ func TestOneCollapsedPaneDoesNotShortenAStripThatStillHasAnOpenOne(t *testing.T)
 			"cannot be partly short — whatever this pane draws below row "+
 			"%d is clipped", open.H, got, headerH)
 	}
-	if got := ed.dock.laidOutExtent(dockBottom); got != ed.dock.slotExtent(dockBottom) {
-		t.Errorf("laidOutExtent(bottom) = %d with one pane still open, want "+
-			"the slot's full extent %d",
-			got, ed.dock.slotExtent(dockBottom))
+	// THE EXTENT IS WHAT THE OPEN PANE ASKS FOR, and this used to compare
+	// against slotExtent — the slot's max over EVERY pane, collapsed ones
+	// included. On this fixture the two agree, because the pane collapsed
+	// here is the shorter one, so the assertion held while the rule it
+	// spelled was wrong. Collapsing the TALLER pane is the discriminating
+	// direction and it belongs to TestTheStripFallsToWhatIsStillOpen in
+	// dockcollapse_test.go; this one asserts the rule it is really about,
+	// so the coincidence cannot stand in for it. Raised in review of #480.
+	//
+	// AND THIS EDIT IS NOT A STRENGTHENING — measured. Putting slotExtent
+	// back is a SILENT mutation: the two expressions are equal in this
+	// configuration, which is the whole reason the wrong one survived. It
+	// buys a claim that is true rather than a test that catches more, and
+	// saying otherwise would be crediting a guard that does not fire.
+	if got, want := ed.dock.laidOutExtent(dockBottom), second.size.Get(); got != want {
+		t.Errorf("laidOutExtent(bottom) = %d with one pane still open, want %d — "+
+			"what that pane asks for. (slotExtent says %d, which is the same "+
+			"number here only because the collapsed pane is the shorter one.)",
+			got, want, ed.dock.slotExtent(dockBottom))
 	}
 
 	// AND THE OTHER SIDE OF THE RULE: collapse the second one too, and

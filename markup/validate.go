@@ -474,6 +474,166 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 	return other, nil
 }
 
+// allPaths is every `.Path` an attribute names, in any position, read
+// with THE PACKAGE'S OWN SCANNER.
+//
+// bindRe matches a whole-body binding and nothing else, so a path that
+// appears as an ARGUMENT is invisible to it: `Allow="{{v:Echo .X}}"`
+// carries .X into a value provider, and bindRe sees no binding at all.
+// The alias guard using bindRe therefore missed exactly that spelling,
+// and the priming publish went on destroying the author's Allow source
+// during Build — the harm the guard was added to stop, reachable by
+// writing the same alias a different way.
+//
+// THE REGEXP THAT REPLACED bindRe WAS ALSO WRONG, in both directions,
+// and scan.go had already written down why: "a backtick literal may
+// legally contain a brace … has to find the LAST `}}`, not the first."
+// A `\{\{[^}]*\}\}` scan stops at the first `}`, so
+//
+//	Allow="{{v:Echo `}}` .X}}"   MISSED the alias — built clean, and the
+//	                             priming publish erased the Allow source
+//	Allow="{{v:Echo `.X`}}"      FALSELY refused — a path spelled inside
+//	                             a backtick literal is not a path
+//
+// Both measured against this package's echoProvider in review of #459.
+// The fix is not a better regexp: it is to stop having a second grammar.
+// scanBindings splits correctly (closingBraces skips backtick literals)
+// and hands back typed segments, so a path is a segPath and a call's
+// arguments are already lexed into tokens. There is nothing left for a
+// pattern to get wrong, and no second pass to reason about — the lexer
+// yields every argument by construction, where a regexp with one capture
+// group yielded one match per expression and missed `{{v:Pick .A .X}}`.
+//
+// `| into .Target` is included DEFENSIVELY, for a future caller, and the
+// distinction matters because the comment used to claim otherwise. It
+// read "deliberately INCLUDED: a call whose result is written into the
+// sink aliases it just as surely as one that reads it" — true as a
+// statement about aliasing, and not a spelling any caller can reach: a
+// value expression carrying `| into` is already a load error
+// (markup/values.go), raised by the BoundText call that runs before the
+// AllowError block, so the guard never sees one. Measured:
+//
+//	Allow="{{v:Echo `Focus` | into .B}}" AllowError="{{.B}}"
+//	-> markup: {{v:Echo … | into .B}}: a value expression delivers its
+//	   result by BEING the binding — drop the `| into` stage
+//
+// TestAllPathsReadsTheCallsIntoTarget calls allPaths directly, so it
+// passes without ever exercising the path through a guard, which is why
+// the claim read as pinned. Same class as this commit's own headline
+// fix. Corrected in review of #459.
+//
+// An unparseable attribute yields NO paths rather than an error. Every
+// caller has already had its attribute parsed by the builder, and a
+// guard is not the place a syntax error should first be reported.
+func allPaths(attr string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	segs, err := scanBindings(attr)
+	if err != nil {
+		return nil
+	}
+	for _, seg := range segs {
+		switch seg.kind {
+		case segPath:
+			add(seg.text)
+		case segCall:
+			if seg.call == nil {
+				continue
+			}
+			for _, t := range seg.call.Args {
+				if t.kind == tokPath {
+					add(t.text)
+				}
+			}
+			// NO TrimPrefix: tokPath.text already excludes the dot
+			// (markup/expr.go), so trimming one was a no-op reading as
+			// a normalization somebody would have to verify. Removed in
+			// review of #459.
+			add(seg.call.Into)
+		}
+	}
+	return out
+}
+
+// aliasesSink reports whether ANY path in attr resolves to the same
+// *prop.Property[string] as sink, and names the path that does.
+//
+// EVERY path, not the first: bindingPath below takes only
+// FindStringSubmatch, so `Allow="{{.A}} {{.X}}"` reads as "A" and an
+// alias in the second position went unseen. And by HANDLE, not by text:
+// two Values entries may name one property, which the text compare
+// cannot see and which the dup-sink guard in elements.go already refuses
+// for its own question.
+//
+// EVERY POSITION, not only a whole-body binding — see allPaths, which
+// runs scanBindings over the attribute. That is what closes the
+// value-call spelling round five measured.
+//
+// NOT pathRe, which this cited until review of #459. pathRe is
+// `^\.([A-Za-z0-9_.]+)$` (scan.go) — anchored at both ends, so it is
+// precisely the WHOLE-BODY matcher, the thing this paragraph says is not
+// enough. A citation naming the opposite of its own claim sends the next
+// reader to check the wrong function and find it correct.
+//
+// An unresolvable path is not an alias. Reporting one here would turn a
+// typo into the wrong load error; the binder that runs after this
+// reports it as what it is.
+//
+// Raised in review of #459.
+func aliasesSink(ctx *Context, attr string, sink *prop.Property[string]) (string, bool) {
+	if attr == "" || sink == nil {
+		return "", false
+	}
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok && p == sink {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+// allowSources is every string property an Allow attribute READS, keyed
+// by handle and mapped to the path that named it.
+//
+// aliasesSink answers "is this element's own Allow the same handle as
+// this element's own sink"; this answers "which handles does this
+// element's Allow read", so the same collision can be judged ACROSS
+// elements at the end of the build. Both walk allPaths, because both
+// questions are about every path an attribute reads rather than about
+// the first one.
+//
+// Raised in review of #459: the per-element guard leaves
+// `<Frozen Allow="{{.A}}" AllowError="{{.B}}">` beside
+// `<Frozen Allow="{{.B}}" …>` building clean, and the first element's
+// priming publish erases the second's allow set during Build.
+func allowSources(ctx *Context, attr string) map[*prop.Property[string]]string {
+	out := map[*prop.Property[string]]string{}
+	if attr == "" {
+		return out
+	}
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok {
+			out[p] = path
+		}
+	}
+	return out
+}
+
 // bindingPath is the bare path of a single {{.Path}} binding attribute,
 // or "" — what Into derivation works from.
 func bindingPath(attr string) string {
