@@ -187,10 +187,17 @@ func literalFor(a AttrSpec) string {
 	return "x"
 }
 
-// probePrereqs names attributes an element needs present before ANY of
-// its other attributes can be probed, keyed by element and valued with
-// the attribute text to write. The attribute under test is never seeded
-// from here — that is the value the probe is varying.
+// probePrereqs names attributes a probe of ANOTHER attribute cannot be
+// built without, keyed "Element.Attribute" and valued with the attribute
+// text to write beside it.
+//
+// KEYED PER ATTRIBUTE, NOT PER ELEMENT, and the difference is not
+// bookkeeping. <MenuItem> needs a Text for Checked, Command and Gesture
+// to be reachable — and must NOT have one when Separator is what is
+// being probed, because a separator carries nothing else and the Text
+// would be the refusal instead of the rule. An element-wide row cannot
+// say both. Measured: the element-keyed spelling this table was first
+// written in traded three unverified declarations for one.
 //
 // Required is the declaration for "this element does not build without
 // it", and <MenuItem Text> is not that: an item with Separator="true" is
@@ -205,7 +212,15 @@ func literalFor(a AttrSpec) string {
 // rule: this is one element's own either/or. It is deliberately awkward
 // to add to, so the next entry has to argue for itself.
 var probePrereqs = map[string]map[string]string{
-	"MenuItem": {"Text": "Open"},
+	// <MenuItem> needs Text OR Separator="true" — one arm of a choice,
+	// which Required cannot express. The builder says so at load,
+	// "<MenuItem> needs Text (or Separator=\"true\")", and every probe
+	// of the three attributes below failed on that rather than on the
+	// rule being swept. Separator has no row, deliberately: it is the
+	// other arm.
+	"MenuItem.Checked": {"Text": "Open"},
+	"MenuItem.Command": {"Text": "Open"},
+	"MenuItem.Gesture": {"Text": "Open"},
 	// <Frozen AllowError> is refused without a BOUND Allow beside it —
 	// "the only failure it can report is an unparseable set" (#459) —
 	// and that guard runs before the bind-only check, so the sweep never
@@ -217,7 +232,7 @@ var probePrereqs = map[string]map[string]string{
 	// one property ("publishing would overwrite the set it just read"),
 	// so seeding {{.S}} here would trade one unverified row for another.
 	// Measured both ways.
-	"Frozen": {"Allow": "{{.S2}}"},
+	"Frozen.AllowError": {"Allow": "{{.S2}}"},
 }
 
 // probeElement writes the element under test with every required
@@ -281,10 +296,7 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
 	}
-	for name, v := range probePrereqs[def.Name] {
-		if name == attr {
-			continue // the probe is varying it
-		}
+	for name, v := range probePrereqs[def.Name+"."+attr] {
 		if _, ok := attrSpec(def, name); !ok {
 			t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
 				def.Name, name, def.Name)
