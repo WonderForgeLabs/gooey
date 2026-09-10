@@ -118,8 +118,10 @@ func TestASuppliedOptionalAttributeStillBinds(t *testing.T) {
 // comes back, and it would come back silently.
 //
 // What makes a guard wrong is not its shape alone but where it LEADS: a
-// bare key check in front of BoundStyle or optBool is fine, because
-// neither reaches requiredAttr. So this pairs the guard with the call it
+// bare key check in front of BoundStyle or litBool is fine, because
+// neither reaches requiredAttr. (It said optBool until review of #470 —
+// the function this change deleted, in the file arguing that a
+// description outlives its subject.) So this pairs the guard with the call it
 // opens, rather than flagging every `e.Attrs[…]; ok` in the file — the
 // first draft did that and reported five guards on Prompt, AccentStyle,
 // InvalidStyle, Frames and Duration that resolve literals and have

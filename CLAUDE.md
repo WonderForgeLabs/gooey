@@ -184,7 +184,16 @@ The `-race` where CI applies it is not a nicety: what those tests prove is
 that no RPC, tool body, activity goroutine, or child-process callback
 touches the property graph off the UI goroutine, and without the detector
 that assertion is only half made. `.github/workflows/ci.yml` is the
-authority on what CI runs.
+authority on what CI runs, and `gooey.TestCIWorkflowRaceTierMatchesCLAUDEMD`
+is what keeps the `case` arm above identical to the one in it.
+
+That sentence exists so the citation is visible. The name was written
+only inside the fenced block above, unbackticked, and both of those
+exclusions apply at once — so the guard over this file's citations
+(`gooey.TestEveryCitedTestNameResolves`) could not see it, and a rename would
+have left the `case` arm's authority pointing at nothing. Its sibling
+`TestCIWorkflowAndCLAUDEMDShareOneDiscovery` was safe only by accident,
+because an earlier paragraph happens to name it in prose too.
 
 One gap CI leaves you to cover by hand, and one it no longer does. CI now
 discovers every module, so a core API change that breaks `apps/gitui` or
@@ -229,20 +238,20 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:651`, in
+deliberately outside any evaluation context (`composer.go:825`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:418`).
+separate observer for that (`Composer.armVisibility`, `composer.go:537`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:349`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:380`), so reading a property while painting *is* the damage
+(`composer.go:409`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:440`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
 **Containers paint only their own chrome, through `MeasureChild` /
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
-(`component.go:38`) — the framework walks children, never the container.
+(`component.go:39`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
 (`layout.go:283`) and `ArrangeChild` (`layout.go:340`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
@@ -270,7 +279,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:383-420`; the design record is the container-backgrounds and
+(`composer.go:442-479`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -399,9 +408,10 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 `embed.FS` (release) the same code path.
 
 **One ordered `input.Event` stream.** Keys and SGR mouse reports arrive
-interleaved on one wire and stay on one channel (`input/mouse.go:52`),
-because two channels could reorder them. `FocusManager.Dispatch`
-(`input.go:701`) routes a key in phases, and it **tunnels before it
+interleaved on one wire and stay on one ordered stream — ONE channel,
+`evs` (`term/term.go:61`), fed by a single decoder — because two channels
+could reorder them. `FocusManager.Dispatch`
+(`input.go:757`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends
 dispatch. Then the bubble, focused → ancestors, **three steps per level**
@@ -411,7 +421,7 @@ middle step's position is load-bearing and silently breakable: swapping it
 past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
-arrow fall through to focus navigation (`FocusDir`, `input.go:813`).
+arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
 `DispatchMouse` (`mouse.go`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
@@ -425,12 +435,12 @@ tunnel is [#34](https://github.com/WonderForgeLabs/gooey/issues/34)).
 **UI-goroutine confinement, via the Dispatcher.** Properties are unlocked
 by design, so nothing off the main loop may `Get` or `Set`. Async work
 posts a closure (`Dispatcher.Post`, safe anywhere) and the loop runs it
-(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:477`. A
+(`Drain`, UI goroutine only) — see `App.Run`'s select at `app.go:512`. A
 `Startable` gets `post` as the *only* legal route to the graph, and nothing
 in the framework will catch a violation.
 
 **No `Screen` teardown may leave a goroutine reading the terminal.**
-`Screen.Restore` (`term/term.go:238`) restores modes, closes the tty, then
+`Screen.Restore` (`term/term.go:272`) restores modes, closes the tty, then
 **joins** the decoder while draining its channel, bounded by
 `term.DecoderTimeout`, with `Screen.DecoderLeaked` as the tripwire.
 
@@ -495,7 +505,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:101`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:117`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 
@@ -559,7 +569,7 @@ needs justifying rather than updating.
 `gooey.Command(...)` or `gooey.NewCommand(...).When(canProp)`. Never test
 one with `!= nil`; use `gooey.CanExecute(a)` (`input.go:49`), which is
 nil-tolerant and also consults `CanExecute()`. A disabled binding keeps
-bubbling rather than being consumed (`input.go:714` — the `CanExecute`
+bubbling rather than being consumed (`input.go:786` — the `CanExecute`
 conjunct simply falls through to the next binding, then the next
 ancestor).
 
@@ -569,17 +579,19 @@ flake. Joining is what makes stop a barrier: Close ⇒ no further posts, ever.
 The idiom now lives in `startable.go`, not hand-rolled per component:
 `gooey.Every` (`startable.go:42`) owns it for periodic ticks — Timer,
 Spinner, and ProgressBar all delegate to it (`components/timer.go:55`,
-`spinner.go:113`, `progressbar.go:96`) rather than writing their own
+`components/spinner.go:113`, `components/progressbar.go:90`) rather than
+writing their own
 `done`/`stopped` channels. `gooey.Delays` (`startable.go:80`) owns the same
 contract for a group of one-shot delays that stop together — Tooltip and
-ToastHost embed it (`components/tooltip.go:65`, `toast.go:47`) for
+ToastHost embed it (`components/tooltip.go:65`, `components/toast.go:47`) for
 per-hover shows and per-toast dismissals, where the count in flight is
 unbounded and a single ticker doesn't fit. It was written out by hand in
 seven controls until
 [PR #281](https://github.com/WonderForgeLabs/gooey/pull/281) collapsed
 them, and `App.Every` shipped the signal-no-join defect in the runtime
 itself until [PR #282](https://github.com/WonderForgeLabs/gooey/pull/282)
-delegated it too (`app.go:376`). A `Startable` that still hand-rolls its
+delegated it too (`App.Every`, `app.go:404`). A `Startable` that still
+hand-rolls its
 own `done`/`stopped` pair is a claim that neither shape fits —
 `Companion.Start` (`components/companion.go:133`) is the one legitimate
 case, joining a subprocess `Wait()` rather than a ticker.
@@ -587,7 +599,7 @@ case, joining a subprocess `Wait()` rather than a ticker.
 **Never call `Fd()` on the tty.** `os.File.Fd()` puts the file in blocking
 mode and removes it from Go's netpoller; after that a pending `Read` is an
 uninterruptible syscall that `Close` cannot cancel, and `SetReadDeadline`
-fails with `ErrNoDeadline`. `Screen.control` (`term/term.go:96`) routes
+fails with `ErrNoDeadline`. `Screen.control` (`term/term.go:104`) routes
 every ioctl through `SyscallConn().Control` for exactly this reason. The
 bug record, including the A/B evidence and the ordering subtlety that made
 it look intermittent, is `docs/specs/2026-08-10-tty-read-lifecycle.md`.

@@ -136,6 +136,67 @@ func TestBothPaintPathsAgree(t *testing.T) {
 	}
 }
 
+// TestBothPaintPathsAgreeOnAVisibleHiddenOrCollapsedRoot is finding 1 of
+// #457's round 2, and it is the arm that catches the last picture
+// difference between the paths.
+//
+// A ROOT IS THE ONLY PLACE THIS IS OBSERVABLE. Compose and Composer both
+// call root.Arrange directly, bypassing the ArrangeChild sandwich, so a
+// root keeps full-screen bounds whatever its Visibility says and its
+// children keep theirs. Below the root ArrangeChild zeroes a Collapsed
+// child's rect, every fill in paintOne becomes a no-op, and the two
+// paths cannot be told apart — which is why a differential harness over
+// random trees only found this once the ROOT carried a visibility.
+//
+// ALL THREE VISIBILITIES, not Collapsed alone. Collapsed was the one
+// that diverged, but asserting it by itself would pass against a
+// Compose that painted nothing for any of them. Visible and Hidden are
+// what say the fixture paints at all, and the Hidden row carries the
+// argument for the fix chosen: neither path honours a visibility on a
+// root, so Hidden does not hide the child either. Collapsed pruning the
+// subtree was the single exception to that rule, on one path only.
+//
+// The child's rune is what is compared, not the root's: the root is a
+// container whose own Render is gated by paintable(), so on Hidden and
+// Collapsed only the child can put anything on the row. A fixture whose
+// root painted would agree for the wrong reason.
+func TestBothPaintPathsAgreeOnAVisibleHiddenOrCollapsedRoot(t *testing.T) {
+	build := func(v Visibility) Component {
+		root := &oneShotStripe{ch: 'k', kids: []Component{
+			&oneShotStripe{ch: 'c'},
+		}}
+		root.LayoutProps().Visibility = v
+		return root
+	}
+	caps := oneShotCaps()
+
+	for _, v := range []Visibility{Visible, Hidden, Collapsed} {
+		one := render.RowText(Compose(build(v), caps, nil).Cells, 0)
+
+		c := NewComposer(build(v), caps.Cols, caps.Rows)
+		fr, _ := c.Frame()
+		retained := render.RowText(fr.Cells, 0)
+		c.Close()
+
+		// NON-VACUITY, per visibility. Two blank rows compare equal, so
+		// without this a fixture that stopped painting would satisfy
+		// every assertion below.
+		if strings.TrimSpace(one) == "" && strings.TrimSpace(retained) == "" {
+			t.Errorf("both paths painted an empty row for a %v root, so the "+
+				"comparison is vacuous — the fixture is no longer exercising "+
+				"anything", v)
+			continue
+		}
+		if one != retained {
+			t.Errorf("the two paint paths disagree on a %v root:\n"+
+				"  gooey.Compose  %q\n  Composer.Frame %q\n"+
+				"Neither path applies the ArrangeChild sandwich to a root, so "+
+				"neither honours its Visibility — a prune on one side only is "+
+				"a blank frame against a painted one", v, one, retained)
+		}
+	}
+}
+
 // TestBothPaintPathsAgreeOnRanks is finding 8's gap, and it is the arm
 // that discriminates the two ORDERINGS rather than the two lifts.
 //

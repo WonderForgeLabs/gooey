@@ -577,8 +577,14 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // TestBothPaintPathsBlankAHiddenContainersBounds compare them against
 // Composer rather than against this paragraph.
 //
-// TestBothPaintPathsAgree compares z-order and nothing else, so nothing
-// in the suite would catch the remaining sentences being read literally.
+// TestBothPaintPathsAgree compares two whole rendered rows, so it can
+// see ANY picture difference and not only z-order — the wording this
+// paragraph carried until review of #457, eight lines under an argument
+// that a doc wrong about its own function is worse than a silent one.
+//
+// What no test in the suite pins is the Cells.Clip divergence, because
+// every fixture fills exactly its own rect; a Render that overran b.W
+// would split the paths immediately. Tracked as #493.
 // Narrowed in review of #457, corrected in the round after.
 //
 // It BRACKETS the pass with TakeLayoutFault, and both halves are load
@@ -664,15 +670,44 @@ type paintItem struct {
 }
 
 // collectPaint walks the tree in depth-first pre-order and partitions it
-// into the two layers, carrying the depth cap and the Collapsed prune
-// that renderTree has always applied.
+// into the two layers, carrying the depth cap renderTree has always
+// applied.
+//
+// AND NOT A Collapsed PRUNE, which this walk carried until review of
+// #457 measured what it cost. Composer has no such prune — every
+// component gets a paint node and only the Render inside it is gated —
+// so the prune was the two paths' last picture difference.
+//
+// BELOW THE ROOT IT BOUGHT NOTHING. ArrangeChild zeroes a Collapsed
+// child's rect, and a zero rect makes every fill in paintOne a no-op and
+// leaves a Render nothing to write; the subtree beneath it is arranged
+// from that zero rect and is equally empty. The prune was a second belt
+// on a rule the rects already enforce.
+//
+// AT THE ROOT IT DIVERGED, because Compose and Composer both call
+// root.Arrange directly and bypass the ArrangeChild sandwich, so a
+// collapsed root keeps full-screen bounds and its children keep theirs.
+// Measured on a root with one child:
+//
+//	root Visible:    Compose="cccccccc"  Composer="cccccccc"  agree
+//	root Hidden:     Compose="cccccccc"  Composer="cccccccc"  agree
+//	root Collapsed:  Compose="        "  Composer="cccccccc"  DISAGREE
+//
+// A blank frame against a painted one, reachable from any fixture that
+// composes a control the test marked Collapsed.
+//
+// THE Hidden ROW IS WHY THE PRUNE GOES rather than Composer gaining one.
+// Neither path honours a visibility on the ROOT — a root gets no
+// sandwich, so Hidden does not hide its children either — and Collapsed
+// was the single exception to that. Removing the prune makes the two
+// visibilities agree with each other as well as the two paths, and
+// changes nothing on the retained path, which never had it.
+// TestBothPaintPathsAgreeOnAVisibleHiddenOrCollapsedRoot pins all six
+// cells.
 func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, parentClear render.Style, ordinary, lifted *[]paintItem) {
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("Render", w, depth)
 		return
-	}
-	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
-		return // collapsed subtrees paint nothing at all
 	}
 	overlay, rank := overlayOf(w, parentOverlay, parentRank)
 	// EVERY component becomes an item, hidden ones included, because

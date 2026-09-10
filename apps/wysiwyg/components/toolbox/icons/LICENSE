@@ -17,11 +17,18 @@ name IS a filename here. TestShippedIconsAreDistinctAssets hashes this
 directory and carries that pair as its one recorded allowance, so a
 genuinely mis-copied glyph still reddens.
 
-VERIFIED 2026-08-30: every file here was fetched from src/icons/ on that
-repository's main branch and compared byte for byte, and every one
-matched. The recipe is in components/activitybar/icons/LICENSE, which
-carries the same claim for the icons beside it; running it there without
-running it here would verify the smaller half.
+VERIFIED, most recently on 2026-09-09: every file here was fetched from
+src/icons/ on that repository's main branch and compared byte for byte,
+and every one matched. The recipe is in
+components/activitybar/icons/LICENSE, which carries the same claim for
+the icons beside it; running it there without running it here would
+verify the smaller half.
+
+The result is recorded per-file in VERIFIED.sha256 beside this one, and
+TestTheVerifiedIconsAreStillTheVerifiedBytes checks both directories
+against theirs — so the date above cannot come to cover an icon nobody
+compared. That is issue #442's second finding; the reasoning is in the
+activitybar LICENSE, with the case that had already slipped through.
 
 Neither file writes down how many icons it covers. That is not laziness:
 a count in prose is a sample taken once, it goes stale the first time

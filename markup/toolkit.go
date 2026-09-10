@@ -2,7 +2,6 @@ package markup
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,42 +39,88 @@ func literalOrBound(raw string, ctx *Context) (*prop.Property[string], error) {
 // means "the component's default"; present and wrong is a load error,
 // because a mistyped interval that silently became zero would look like
 // a component that does not animate.
+//
+// PRESENT AND EMPTY IS ALSO A LOAD ERROR, since review of #470. It fell
+// through to the default before, which is precisely the silent fallback
+// the sentence above refuses one line up: Interval="" is a typo, not a
+// way of asking for the default, and asking for the default already has
+// a spelling — omit the attribute. litInt and litBool draw the line in
+// the same place; suppliedAttr deliberately does not, and carries the
+// reconciliation.
 func optDuration(e Element, attr string) (time.Duration, error) {
-	raw := strings.TrimSpace(e.Attrs[attr])
-	if raw == "" {
-		return 0, nil
+	d, ok, err := readDuration(e, attr)
+	if err != nil || !ok {
+		return 0, err
 	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
-	}
+	// ABSENT AND ZERO ARE DIFFERENT ANSWERS, which is why readDuration
+	// returns a bool rather than letting 0 stand for both. Interval="0s"
+	// parses, means a busy loop, and was accepted as "the component's
+	// default" for as long as the two were collapsed.
 	if d <= 0 {
-		return 0, fmt.Errorf("markup: <%s %s=%q>: must be positive", e.Name, attr, raw)
+		return 0, fmt.Errorf("markup: <%s %s=%q>: must be positive",
+			e.Name, attr, strings.TrimSpace(e.Attrs[attr]))
 	}
 	return d, nil
 }
 
-// optBool reads an optional bool attribute the way every other markup
-// literal reads one — strconv.ParseBool, so "1", "true", "TRUE" and "T"
-// all work — and makes anything else a LOAD ERROR.
+// signedDuration is optDuration WITHOUT the positivity rule, for the one
+// attribute where a negative duration MEANS something.
 //
-// Erroring matters more here than for most attributes. A bool attribute
-// that fell back to false on an unrecognized spelling would turn a typo
-// into the silently less safe branch: <Companion CleanEnv="yes"> would
-// look like "start this child with an empty environment" and actually
-// hand it os.Environ() in full. Absent still means false; PRESENT AND
-// UNREADABLE is the case that must not be guessed at.
-func optBool(e Element, attr string) (bool, error) {
+// components.ToastHost documents it at the field: "Zero means
+// DefaultToastDuration; negative means sticky — toasts stay until
+// dismissed". Routing <ToastHost Duration> through optDuration in the
+// first pass at #460 made Duration="-5s" a load error and deleted that
+// feature, which is the opposite of the unification's point — one
+// vocabulary is not one RULE, it is one rule per question, asked the
+// same way everywhere it applies. Raised in review of #470.
+//
+// It is a separate function rather than a bool parameter for litInt's
+// reason: an exemption written as an argument at the call site is an
+// exemption nobody reviews. This one has a name, a doc, and exactly one
+// caller.
+func signedDuration(e Element, attr string) (time.Duration, error) {
+	d, _, err := readDuration(e, attr)
+	return d, err
+}
+
+// readDuration is the two rules every duration attribute shares:
+// present-and-empty is a typo, and unparseable is a load error. Absence
+// returns 0 with no error, which every caller reads as "the component's
+// default".
+//
+// SPLIT OUT because the third rule — positive — is not universal, and
+// discovering that by deleting a feature is how it came to be split.
+//
+// The bool is PRESENCE, not success. A duration that parses to zero is
+// present and is a value; without the bool it is indistinguishable from
+// an absent attribute, and Interval="0s" — a busy loop — rides in as
+// "the component's default".
+func readDuration(e Element, attr string) (time.Duration, bool, error) {
+	if _, ok := e.Attrs[attr]; !ok {
+		return 0, false, nil
+	}
 	raw := strings.TrimSpace(e.Attrs[attr])
 	if raw == "" {
-		return false, nil
+		return 0, false, fmt.Errorf("markup: <%s %s=\"\">: %s takes a duration "+
+			"written literally (e.g. %s=\"250ms\") — an empty one is a typo, and "+
+			"omitting the attribute is how you ask for the default",
+			e.Name, attr, attr, attr)
 	}
-	b, err := strconv.ParseBool(raw)
+	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return false, fmt.Errorf("markup: <%s %s=%q>: want a bool (true/false, 1/0)", e.Name, attr, raw)
+		return 0, false, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
 	}
-	return b, nil
+	return d, true, nil
 }
+
+// optBool IS GONE. It read a component's bool attribute through
+// strconv.ParseBool while litBool (elements.go) read the same kind of
+// attribute strictly, so <Segmented Wrap="1"> loaded and
+// <ProgressBar Thresholds="1"> did not — one vocabulary, two answers,
+// which is the class #460 is about. Its two call sites use litBool now
+// and its doc comment, which claimed ParseBool was "the way every other
+// markup literal reads one", stopped being true the moment the ten
+// silent-drop fixes landed. Removed in review of #470.
 
 // optionList resolves <Segmented Options=…>, which takes either form: a
 // binding to the viewmodel's own []string handle, or a literal

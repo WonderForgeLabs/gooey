@@ -1186,16 +1186,19 @@ leaf child returned last from `ChildComponents`, and — since
 implements `gooey.Overlay`, which lifts it into the paint layer.
 Its opacity is a SEPARATE mechanism and worth keeping apart: `Overlay` is
 a marker with an empty method and clears nothing. The popup covers what is
-beneath it because `Composer.build` pre-clears every *leaf* to the nearest
-ancestor's background, and the surface is a leaf. Reading the occlusion as
-something the marker does is the mistake that let `gooey.Compose` ship
-lifting overlays without clearing behind them — position without
-occlusion, and a see-through popup on that path until
-[#438](https://github.com/WonderForgeLabs/gooey/issues/438). Being last
-among the owner's children was the whole story until it turned out not
-to be one: it buys being above the owner's *other* children, and nothing
-else. Forcing runs forward only, so a
-component declared after the *owner* painted over an open popup with
+beneath it because BOTH paint paths pre-clear every *leaf* to the nearest
+ancestor's background — `Composer.build` on the retained path and
+`paintOne` on the one-shot one — and the surface is a leaf. Reading the
+occlusion as something the marker does is the mistake that let
+`gooey.Compose` ship lifting overlays without clearing behind them —
+position without occlusion, and a see-through popup on that path until
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438), which is
+why naming only the Composer here would re-encode the reading this
+paragraph exists to correct. Being last among the owner's children was
+the whole story until it turned out not to be one: it buys being above
+the owner's *other* children, and nothing else. Forcing runs forward
+only, so a component declared after the *owner* painted over an open
+popup with
 nothing able to put it back — reported as a menu that vanished on a
 design canvas, where a `MenuBar` sits among a `Gauge`, an `ItemsView`
 and a `Border`. The `Overlay` marker is what actually puts the surface

@@ -1,0 +1,62 @@
+# Every SVG in this directory, with the SHA-256 of the bytes that were
+# COMPARED BYTE FOR BYTE against src/icons/<same name>.svg on
+# microsoft/vscode-codicons main, on 2026-09-09. Every file matched. The
+# recipe is in the LICENSE beside this file, and it was run rather than
+# quoted.
+#
+# THIS FILE IS WHAT STOPS THAT DATE OUTLIVING ITS EVIDENCE, which is the
+# defect issue #442 records: the LICENSE carried a dated one-time check
+# three paragraphs above its own argument that one-time checks are what
+# rot. A date attached to a DIRECTORY silently covers whatever is added
+# to it afterwards — and something already had been. book.svg arrived in
+# d712a28c, the same commit that wrote "VERIFIED 2026-08-30", so the
+# claim was stamped two days before the file it covered existed. The
+# prose was consistent about book.svg being re-fetched; nothing
+# connected the sentence to the bytes.
+#
+# So the verification is recorded against BYTES.
+# TestTheVerifiedIconsAreStillTheVerifiedBytes fails the moment the
+# directory and this file stop agreeing, in EITHER direction: an added
+# icon is not covered, a changed icon is not the one that was compared,
+# and a removed icon leaves a line describing nothing.
+#
+# When that test goes red, run the LICENSE's diff for the file it names
+# and then update the line here. Editing this file to make the test pass
+# without running the diff converts a checked claim back into an
+# asserted one, which is the whole thing being fixed.
+#
+# No count is written here, deliberately — see the LICENSE.
+
+arrow-swap.svg  2aa8e59d456037a62c545a1640aaba486743eaa7ad0ffda5e75bc76a3ff36e67
+bell.svg  15ec03f36a7d06d32de0525ce73351ef1b7a6763f8a89f95b1198481e8195543
+browser.svg  bfefd029b0e961ca7d985422bf12a44a6522707d909781d51252757dd21d414c
+check.svg  58e1762d74142ee78ee2422ae46498c1059e4f4812f9c7514e422a1f8d80235d
+checklist.svg  bb110b499cff17eed4e3685bbf05fb980f3bfa334876fdfd3ebad5f233336d20
+comment.svg  1a3a9e749deaf48bcc0a17b6647fd2dc70bf689cba58eee80e469c447f2f9d22
+dashboard.svg  90838ee15c926272472d00fc464a7218cdb908d2e4a62ccf7fc5f0623e8f4d52
+edit.svg  4a4b4824674b57ab7389f0cdee73b56566136c754e8ddacf232c99834ec6085f
+file-media.svg  8a2d1fc64078aa290cbffca9c0877fbbba15c11eea999bd46be99b8f44f76528
+graph-line.svg  9be5999f39bfec768fd9f9cfadff6d1e18fc82e1090c70f399d115e75f34c4fd
+layers.svg  1fda7c6c3d0c8338bca758e2228980e5e624e5de9584f75d30eed32b21d417b0
+layout-activitybar-left.svg  132eb95180e480cddc6c084aeb8eec0bbc19df24e0e5068a6b29d22a30659ac6
+layout-menubar.svg  df416f3fb426d128081753d566b0b6a86891f521c8a817955614473b4c526df0
+layout-statusbar.svg  465f1bee014acf9a67c516f73720cb2c29ff80667d30584c792260f7d45e491f
+list-selection.svg  0abb351f050d7a372bfc04d129a031d39720a6153a82e825155a7834aea8be3c
+list-unordered.svg  8cf1c6cea7b0f4bac289cb95f62e7879581252bd08c3c97383d42539192f0d1c
+loading.svg  68b3641c14fcc66001ac8e939df29f2a7922239be64907f4bd95c1f8edbdbbea
+multiple-windows.svg  8774b611b57df5d151bdb9b91cb7994e1e94c5d28a04a659c34aa6c360c84733
+primitive-square.svg  93bbec3112345245ec34ca156d0c10cbb9a5d56bc9950af21fcc9545b37ebf5d
+record-keys.svg  2cd4e947ee6e518d8bda5633bfa2a130a492913c6fcd21188bb0530a24480dda
+search.svg  ea26083bb6dd49a42a1a6fe13cd9613022442a002f11c8247476c32b7eab7dfe
+split-horizontal.svg  329ac127b76c970e283e8c573b71e6cafd8f555c9198d9b41ab2cb99ad88d9bc
+split-vertical.svg  82c749b8c70e229dfaf051d855b9aa51e124bef527bbe46f137351e7d40932c8
+symbol-color.svg  af9d1f9f43469e5116004839d12b4ca38d5a9cc757b0883d8ca46072b0c47cf2
+symbol-ruler.svg  5074b7ddb8ff271c2b55bad3fd909d451469a8f7bf82c5540b1c2ebf8c082753
+symbol-string.svg  75774cceadbbb17425ae68a6b56443d0c1f8fc9709252cbb59eef4a67909e3a1
+sync.svg  3423d94a76e84061f67cc6172692bd5cc330a13985a2090c25669659918f583e
+table.svg  ce801155af36837ea30062c669b0d3d067d744b0a452cc34e97351ddc4b34ba8
+terminal.svg  bf5fc03cccc11da088c2339eb30c06f2fb583fd1a1f1880d0512e06bf36b3290
+tools.svg  bc2d0bc5e39c82458d99b0fd730d0b7346f9c82087d6edf50db6439fe56f5c20
+warning.svg  e3e4cb7573830716be647b7c930595daca925dd6c2bc3ff99a5b2a6b087cc060
+watch.svg  b0cff2e216f0b6c0429cccb18d3dc5009bee0f6a7e4defcdf540c87dac69f59e
+window.svg  bfefd029b0e961ca7d985422bf12a44a6522707d909781d51252757dd21d414c
