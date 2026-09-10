@@ -823,8 +823,15 @@ type editor struct {
 	// and the review of #426 found them sitting under that paragraph
 	// still plain: docsBody reads both, so a refresh that changed either
 	// without also writing docList would invalidate nothing. That every
-	// refresh happens to write all three today is a coupling nobody had
+	// refresh happens to write all three today was a coupling nobody had
 	// written down, which is what the docsItems defect was made of.
+	//
+	// IT IS WRITTEN DOWN NOW, AND ENFORCED (#442): setDocsTree in docs.go
+	// is the only writer of the three, and TestTheDocsTreeHasOneWriter
+	// derives that from the source rather than asking anyone to keep the
+	// rule in mind. A second writer is a red test naming the function it
+	// found. Do not Set these directly — go through setDocsTree, which
+	// is what makes "the tree changed" one event rather than three.
 	docsRoot    *prop.Property[fs.FS]
 	docList     *prop.Property[[]docPage]
 	docsSkipped *prop.Property[int]

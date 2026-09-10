@@ -93,13 +93,12 @@ func TestAStaleSelectionStillShowsAPage(t *testing.T) {
 	// The refresh: one page left, and a selection pointing past it.
 	one := fstest.MapFS{"architecture.md": {Data: []byte("# Architecture\nonly page")}}
 	ed.setDocsTree(one)
-	pages, _ := docsPages(one)
 
 	got := ed.docsBody.Get()
 	if got == "" {
 		t.Fatalf("docsSel=%d over a list of %d renders a BLANK pane while the "+
 			"list highlights a row — the two read the same index and disagree "+
-			"about what it means", ed.docsSel.Get(), len(pages))
+			"about what it means", ed.docsSel.Get(), len(ed.docList.Get()))
 	}
 	if want := "# Architecture\nonly page"; got != want {
 		t.Errorf("the pane shows %q, want the nearest real page %q", got, want)

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -39,7 +40,9 @@ var docsTreeFields = []string{"docsRoot", "docList", "docsSkipped"}
 // list length: the fixture is built so both differ from the tree the
 // editor started with.
 func TestSettingTheDocsTreeCarriesTheListWithIt(t *testing.T) {
-	ed, _ := docsPage(t, fakeDocs())
+	ed, c := docsPage(t, fakeDocs())
+	ed.activitySel.Set(4)
+	c.Frame() // settle on the docs pane before counting
 	before := len(ed.docList.Get())
 	if before < 2 {
 		t.Fatalf("the starting fixture holds %d pages, so a refresh to one "+
@@ -68,6 +71,49 @@ func TestSettingTheDocsTreeCarriesTheListWithIt(t *testing.T) {
 		t.Errorf("the pane shows %q — docsBody resolves docList's paths "+
 			"against docsRoot, so a list left over from the old tree "+
 			"renders as a page that cannot be read", got)
+	}
+
+	// AND WHAT REPAINTED, which none of the assertions above can say.
+	// CLAUDE.md is explicit that a value assertion passes just as well
+	// when the entire tree repainted, so it proves nothing about damage
+	// — and three Sets on a coupled group is precisely where an
+	// over-broad invalidation would hide. Raised in review of #487.
+	//
+	// A RANGE RATHER THAN A NUMBER, deliberately. The floor is what the
+	// change is: a refresh that repainted nothing would mean the pane
+	// went on showing the old tree, and the value assertions above
+	// cannot distinguish "the property moved" from "the screen did". The
+	// ceiling is the claim worth guarding — that the refresh does not
+	// invalidate panes which read none of these three properties.
+	//
+	// THE BOUND IS MEASURED, not guessed, and the three numbers are why
+	// 12 discriminates. On this fixture a refresh repaints 8; the docs
+	// pane's own first paint is 29; a whole-tree repaint (forced by a
+	// resize) is 179. So the ceiling sits above the real cost with room
+	// for the pane to gain a component or two, and an order of magnitude
+	// below the regression it exists to catch. It is deliberately slack
+	// rather than exact: an exact count would turn any change to the
+	// docs pane's composition into a red test with nothing wrong, and
+	// CLAUDE.md's rule about damage counts is that a moved number needs
+	// justifying, which is a different thing from never moving.
+	painted := 0
+	for range 2 {
+		// Twice: the first Frame carries the damage, the second must be
+		// quiet. A count taken from one frame cannot tell a repaint
+		// from a tree that never settles.
+		_, n := c.Frame()
+		painted += n
+	}
+	if painted == 0 {
+		t.Error("no component repainted across the refresh, so the three " +
+			"properties moved and the screen did not — which is the defect " +
+			"these assertions are blind to")
+	}
+	if painted > 12 {
+		t.Errorf("%d components repainted for a docs-tree refresh. The list "+
+			"and the body are what read these three properties; a count "+
+			"this size means the refresh is invalidating panes that do not "+
+			"read them", painted)
 	}
 }
 
@@ -180,6 +226,29 @@ func docsTreeWrites(t *testing.T, dir string) map[string][]string {
 					return true
 				}
 				out[fn] = append(out[fn], inner.Sel.Name)
+			case *ast.AssignStmt:
+				// THE HANDLE ESCAPING IS A WRITE. `p := ed.docsRoot;
+				// p.Set(v)` makes the Set receiver an *ast.Ident, which
+				// the arm above cannot see, and so does handing the
+				// field to a helper that sets it. Both walk straight
+				// around this guard, whose whole value is that a second
+				// writer cannot satisfy it — and mutation D went silent
+				// through a hole of exactly this shape once already.
+				// Raised in review of #487.
+				//
+				// An ALIAS is counted rather than chased: proving what a
+				// local does with the handle is a data-flow question,
+				// and this scan is syntax (see the paragraph above on
+				// why). Counting it is the conservative direction — the
+				// guard reports a writer that might only read, which is
+				// a red test asking for a comment, not a silent pass.
+				for _, r := range v.Rhs {
+					f, ok := r.(*ast.SelectorExpr)
+					if !ok || !want[f.Sel.Name] {
+						continue
+					}
+					out[fn] = append(out[fn], f.Sel.Name+" (aliased)")
+				}
 			}
 			return true
 		})
@@ -224,24 +293,69 @@ func docsLabelCols(t *testing.T) int {
 	ed.activitySel.Set(4)
 	f, _ := c.Frame()
 
-	best := 0
-	for y := 0; y < f.Cells.H; y++ {
+	// ANCHORED TO THE LIST, not to the widest run on the frame.
+	//
+	// This used to take the max over every row, which found the list row
+	// only by luck of what else the frame drew. The body pane renders
+	// `cannot read <path>` from the same fixture, at a width that moves
+	// with the length of that prefix — shorten it, or add any pane that
+	// echoes a page path, and the max silently moves to a WIDER control.
+	// The helper would then report more columns than the list has,
+	// docsLabelCollisions would find fewer collisions, and the test
+	// would pass for the wrong reason. Which is the exact silent pass
+	// this measurement exists to rule out. The best >= 200 guard does
+	// not catch it, because the body is clipped too. Raised in review of
+	// #487.
+	//
+	// The ItemsView is reached by NAME through the page's own context,
+	// so the bounds are the ones the Composer actually arranged rather
+	// than a row number worked out here — the arithmetic this helper's
+	// doc comment already refuses to write down.
+	lv, ok := ed.ctx.Named["DocsList"].(gooey.Bounded)
+	if !ok {
+		t.Fatalf("the docs list is not reachable by name from the page's "+
+			"context (%T), so this probe cannot tell the list's rows from "+
+			"any other pane's", ed.ctx.Named["DocsList"])
+	}
+	b := lv.Bounds()
+	if b.H <= 0 || b.W <= 0 {
+		t.Fatalf("the docs list arranged to %+v, so it drew nothing and the "+
+			"scan below would range over no rows", b)
+	}
+
+	best, rows := 0, 0
+	for y := b.Y; y < b.Y+b.H && y < f.Cells.H; y++ {
 		row := render.RowText(f.Cells, y)
-		run := 0
+		run, this := 0, 0
 		for _, r := range row {
 			if string(r) == marker {
 				run++
-				if run > best {
-					best = run
+				if run > this {
+					this = run
 				}
 				continue
 			}
 			run = 0
 		}
+		if this == 0 {
+			continue
+		}
+		rows++
+		if this > best {
+			best = this
+		}
 	}
 	if best == 0 {
-		t.Fatal("no row on the composed frame carries the fixture's label at " +
+		t.Fatal("no row inside the docs list carries the fixture's label at " +
 			"all, so this probe measured nothing")
+	}
+	// ONE ROW, because the fixture has one page. More than one means the
+	// scan has reached past the list into something else drawing the
+	// same run, and the number below would not be the list's width.
+	if rows != 1 {
+		t.Fatalf("%d rows inside the docs list's bounds carry the label run; "+
+			"the fixture declares one page, so the scan is measuring "+
+			"something other than the list", rows)
 	}
 	if best >= 200 {
 		t.Fatalf("the label was not clipped at %d columns, so the frame is "+

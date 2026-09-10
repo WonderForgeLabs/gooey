@@ -53,35 +53,8 @@ func TestTheVerifiedIconsAreStillTheVerifiedBytes(t *testing.T) {
 			onDisk := digestDir(t, dir)
 			total += len(onDisk)
 
-			names := make([]string, 0, len(onDisk))
-			for n := range onDisk {
-				names = append(names, n)
-			}
-			sort.Strings(names)
-			for _, n := range names {
-				want, ok := recorded[n]
-				if !ok {
-					t.Errorf("%s is in the directory and not in %s — nobody "+
-						"compared it against src/icons/%s, and the LICENSE's "+
-						"dated claim does not cover it. Run the diff the "+
-						"LICENSE gives, then add the line",
-						n, verifiedManifest, n)
-					continue
-				}
-				if want != onDisk[n] {
-					t.Errorf("%s does not hash to the bytes that were "+
-						"compared:\n\trecorded %s\n\ton disk  %s\n"+
-						"Either the file was replaced without re-running the "+
-						"diff, or upstream moved and the copy here is now the "+
-						"old one. The LICENSE's recipe says which",
-						n, want, onDisk[n])
-				}
-			}
-			for n := range recorded {
-				if _, ok := onDisk[n]; !ok {
-					t.Errorf("%s records %s, which is not in the directory — "+
-						"a verification of a file that is gone", verifiedManifest, n)
-				}
+			for _, m := range verifiedMismatches(recorded, onDisk) {
+				t.Error(m)
 			}
 		})
 	}
@@ -121,11 +94,123 @@ func TestTheVerificationManifestCanActuallyFail(t *testing.T) {
 		t.Fatal("no icon is both on disk and in the manifest, so the check " +
 			"above has nothing to compare and this arm cannot perturb it")
 	}
-	recorded[one] = strings.Repeat("0", 64)
-	if recorded[one] == onDisk[one] {
-		t.Fatalf("%s hashes to a run of zeroes, which means digestDir is not "+
-			"hashing anything", one)
+
+	// THE ARM AIMS THE REAL FUNCTION, and the first version did not.
+	// It perturbed the map and then asserted `recorded[one] !=
+	// onDisk[one]` — a run of zeroes against a real digest, which proves
+	// digestDir hashes SOMETHING and proves nothing about the comparison
+	// in the test above, whose loops were inline in the subtest and were
+	// never called here. Invert that comparison or key it on the wrong
+	// name and this arm still passed: the exact "a negative assertion
+	// passes for any reason" it was written against, one level down.
+	// Raised in review of #487. verifiedMismatches is now the shared
+	// function both aim at, the way docsLabelCollisions already was.
+	if got := verifiedMismatches(recorded, onDisk); len(got) != 0 {
+		t.Fatalf("the manifest and the directory disagree BEFORE this arm "+
+			"perturbs anything, so what it measures below is not the "+
+			"perturbation:\n\t%s", strings.Join(got, "\n\t"))
 	}
+	// ALL THREE DIRECTIONS, because the baseline exercises none of them.
+	// Every icon in the tree has a line and every line has an icon, so
+	// the two set-difference branches never run on real data — deleting
+	// either was measured SILENT with only the digest arm here. A branch
+	// no arm reaches is a branch that can be removed without a test
+	// noticing, which is what this whole function exists to prevent.
+	for _, tc := range []struct {
+		name    string
+		perturb func(rec, disk map[string]string)
+		wants   string
+	}{
+		{
+			name: "a digest that no longer matches",
+			perturb: func(rec, _ map[string]string) {
+				rec[one] = strings.Repeat("0", 64)
+			},
+			wants: one,
+		},
+		{
+			name: "an icon in the directory with no line",
+			perturb: func(rec, _ map[string]string) {
+				delete(rec, one)
+			},
+			wants: one,
+		},
+		{
+			name: "a line for an icon that is gone",
+			perturb: func(rec, _ map[string]string) {
+				rec["zzz-not-an-icon.svg"] = strings.Repeat("0", 64)
+			},
+			wants: "zzz-not-an-icon.svg",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := make(map[string]string, len(recorded))
+			for k, v := range recorded {
+				rec[k] = v
+			}
+			tc.perturb(rec, onDisk)
+			got := verifiedMismatches(rec, onDisk)
+			if len(got) == 0 {
+				t.Fatalf("the comparison reported nothing for %q, so that "+
+					"branch of it could be deleted and every assertion in "+
+					"the test above would stay green", tc.name)
+			}
+			if len(got) != 1 || !strings.Contains(got[0], tc.wants) {
+				t.Errorf("one perturbation should report exactly one problem "+
+					"naming %s, and the comparison reported %d: %s",
+					tc.wants, len(got), strings.Join(got, "; "))
+			}
+		})
+	}
+}
+
+// verifiedMismatches is the set comparison itself, extracted so the
+// must-fire arm can aim it rather than aiming a restatement of it.
+//
+// BOTH DIRECTIONS, because the two failures are different mistakes: an
+// icon in the directory with no line is one nobody compared, and a line
+// with no icon is a claim about a file that is gone. Returns one message
+// per problem, ordered, so a caller can report them all rather than
+// stopping at the first.
+func verifiedMismatches(recorded, onDisk map[string]string) []string {
+	var out []string
+
+	names := make([]string, 0, len(onDisk))
+	for n := range onDisk {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		want, ok := recorded[n]
+		if !ok {
+			out = append(out, fmt.Sprintf("%s is in the directory and not in "+
+				"%s — nobody compared it against src/icons/%s, and the "+
+				"LICENSE's dated claim does not cover it. Run the diff the "+
+				"LICENSE gives, then add the line", n, verifiedManifest, n))
+			continue
+		}
+		if want != onDisk[n] {
+			out = append(out, fmt.Sprintf("%s does not hash to the bytes that "+
+				"were compared:\n\trecorded %s\n\ton disk  %s\nEither the "+
+				"file was replaced without re-running the diff, or upstream "+
+				"moved and the copy here is now the old one. The LICENSE's "+
+				"recipe says which", n, want, onDisk[n]))
+		}
+	}
+
+	gone := make([]string, 0, len(recorded))
+	for n := range recorded {
+		if _, ok := onDisk[n]; !ok {
+			gone = append(gone, n)
+		}
+	}
+	sort.Strings(gone)
+	for _, n := range gone {
+		out = append(out, fmt.Sprintf("%s records %s, which is not in the "+
+			"directory — a verification of a file that is gone",
+			verifiedManifest, n))
+	}
+	return out
 }
 
 // readVerified parses a VERIFIED.sha256 into name -> digest. Blank lines
