@@ -2,6 +2,7 @@ package markup
 
 import (
 	"image"
+	"slices"
 	"sort"
 	"testing"
 
@@ -150,36 +151,68 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // binding and drop it: issue #488. Not a suppression — the test above
 // fails BOTH ways, so an entry that gets fixed must be deleted and one
 // that appears must be added deliberately.
+//
+// NINE OF THE ELEVEN ARE GONE, and they went the other way than this
+// list expected. #470 swept `e.Attrs["X"] == "true"` and its integer
+// twin into litBool/litInt, which make an unreadable value a LOAD ERROR
+// — so ButtonBar.Gap, ButtonBar.Uniform, Gauge.BarWidth, HStack.Gap,
+// ProgressBar.BarWidth, ProgressBar.Thresholds, Sparkline.BarWidth,
+// Text.Bold and VStack.Gap now REFUSE `{{.S}}` rather than honouring
+// it. Refusing is the better half of #488's "decide which": a binding
+// the catalog says is not a binding should not load, and honouring it
+// would have made BindsLiteral a lie in the other direction.
+//
+// The ones that remain are the ones that route through neither helper:
+// TypeAhead.Key reads a rune, ButtonBar.Separator a string, and
+// Companion.Log a string — none of which litBool or litInt can refuse,
+// because every one of those spellings is a readable value. Deleting
+// the nine is what the test above demands, and it is why it demands it:
+// a note about a bug that is gone spends the attention that would find
+// the next one.
+//
+// "DROP IT" IS TOO NARROW A NAME FOR WHAT THEY DO. Measured on
+// ButtonBar.Separator, whose three states are visible on the row:
+//
+//	<ButtonBar>                    "[ a ][ b ]"
+//	<ButtonBar Separator="x">      "[ a ] x [ b ]"
+//	<ButtonBar Separator="{{.S}}"> "[ a ] { [ b ]"
+//
+// The binding is not honoured and not dropped — the template text is
+// taken verbatim and then cut to the separator's one column, so the
+// page gets a stray brace. Whether an attribute drops the value or
+// paints a fragment of the template is a detail of the consumer; the
+// defect this list tracks is the one thing they share, that a document
+// the catalog says cannot bind is accepted as if it could.
 var silentlyBindable = []string{
 	"TypeAhead.Key",
-	"ButtonBar.Gap",
 	"ButtonBar.Separator",
-	"ButtonBar.Uniform",
-	"Gauge.BarWidth",
-	"HStack.Gap",
-	"ProgressBar.BarWidth",
-	"ProgressBar.Thresholds",
-	"Sparkline.BarWidth",
-	"Text.Bold",
-	"VStack.Gap",
+	"Companion.Log",
 }
 
 // unseedable is every element probeElement cannot construct, with the
-// reason. All four are the SAME underlying gap and it is worth naming:
-// AttrSpec.Required does not match what the loader actually demands, so
-// seeding "every required attribute" is not enough to build the element.
+// reason: AttrSpec.Required does not match what the loader actually
+// demands, so seeding "every required attribute" is not enough to build
+// the element.
 //
 // That is a defect in its own right rather than a quirk of this test —
 // the wysiwyg palette seeds an inserted element from exactly this data,
 // so <FileWatcher/> dropped from a palette produces markup that will not
 // load, naming an attribute the user was never offered. It is issue
-// #489, and these entries are its measured list.
-var unseedable = map[string]string{
-	"FileWatcher": "the loader needs Paths; the spec marks nothing Required",
-	"Companion":   "the loader needs Path; the spec marks nothing Required",
-	"KeyBinding":  "the loader takes Gesture, and Key is not an attribute at all",
-	"MenuBar":     "Style is only reachable with a <Menu> child probeElement does not emit",
-}
+// #489.
+//
+// IT IS EMPTY NOW, and that is a result rather than a deletion. The four
+// entries — FileWatcher, Companion, KeyBinding, MenuBar — all build
+// since this branch met main: #470's sweeps reached elements the
+// defaults probe never did and seeded them, and the test above fails on
+// an entry naming an element the probe now constructs, which is how
+// these were found rather than guessed.
+//
+// The map stays, with its type and its Skip, because #489 is still open
+// and the NEXT element to fall out of the probe should arrive as an
+// entry here rather than as a silently unchecked element. An empty map
+// makes the must-fire arm above range over nothing, which the arm
+// itself reports.
+var unseedable = map[string]string{}
 
 // elementOf splits "Element.Attr" back to the element.
 func elementOf(qualified string) string {
@@ -357,31 +390,86 @@ func bindsHarness(t *testing.T, a attrProbe, attr, value string) string {
 // handle holding that same literal's value. A working attribute makes
 // the second and third agree and both differ from the first; a dropped
 // one makes the FIRST and third agree.
+//
+// DERIVED FROM silentlyBindable, and it was pinned to HStack.Gap until
+// #470 landed. That is the churn worth designing against rather than
+// re-pointing at: Gap stopped accepting a binding at all, so the
+// hardcoded fixture did not report a fixed bug — it made Build return a
+// load error inside a helper that Fatalf's on one, and the test died
+// with a message about the wrong thing. Reading the list means the
+// entries and their evidence move together.
+//
+// A FOURTH STATE EXISTS NOW and is handled rather than assumed away: an
+// attribute may REFUSE the binding. That belongs to the test above,
+// which names the entry to delete, so this one skips it instead of
+// re-reporting it in a worse message.
 func TestABoundValueActuallyArrives(t *testing.T) {
-	shot := func(src string) *render.Buffer {
+	shot := func(t *testing.T, src string) (*render.Buffer, error) {
 		w, err := Build([]byte("<Gooey>"+src+"</Gooey>"), bindsContext())
 		if err != nil {
-			t.Fatalf("%s: %v", src, err)
+			return nil, err
 		}
-		return gooey.Compose(w, term.Caps{Cols: defaultsCols, Rows: defaultsRows}, nil).Cells
+		return gooey.Compose(w, term.Caps{Cols: defaultsCols, Rows: defaultsRows}, nil).Cells, nil
 	}
-	// defaultsContext binds I to 1, so the literal is "1".
-	absent := shot(`<HStack><Text>a</Text><Text>b</Text></HStack>`)
-	literal := shot(`<HStack Gap="1"><Text>a</Text><Text>b</Text></HStack>`)
-	bound := shot(`<HStack Gap="{{.I}}"><Text>a</Text><Text>b</Text></HStack>`)
 
-	if _, _, differs := cellsDiffer(absent, literal); !differs {
-		t.Fatal("Gap=\"1\" renders like no Gap at all, so this test cannot " +
-			"tell a dropped binding from a working one")
+	var observed int
+	for _, a := range literalAttrs(t) {
+		name := a.el + "." + a.attr.Name
+		if !slices.Contains(silentlyBindable, name) || !reachable(t, a) {
+			continue
+		}
+
+		absent, err := shot(t, bindsHarness(t, a, "", ""))
+		if err != nil {
+			t.Errorf("%s: the element does not build without the attribute "+
+				"under test, so nothing here is measuring it: %v", name, err)
+			continue
+		}
+		literal, err := shot(t, bindsHarness(t, a, a.attr.Name, literalFor(a.attr)))
+		if err != nil {
+			t.Errorf("%s: the element does not build with a LITERAL value, "+
+				"which is the one spelling its spec promises: %v", name, err)
+			continue
+		}
+		bound, err := shot(t, bindsHarness(t, a, a.attr.Name, "{{.S}}"))
+		if err != nil {
+			continue // refused: the test above owns this, and names it
+		}
+
+		// NON-VACUITY, PER ATTRIBUTE. If the literal paints exactly what
+		// its absence paints, the comparison below cannot tell a dropped
+		// binding from a working one — and the count at the end is what
+		// stops every entry being skipped in silence.
+		if _, _, differs := cellsDiffer(absent, literal); !differs {
+			continue
+		}
+		observed++
+
+		// THE CLAIM IS "NOT HONOURED", and asserting "dropped" was too
+		// narrow. A bound BindsLiteral attribute may drop the value or
+		// may take the template TEXT verbatim and render a fragment of
+		// it — ButtonBar.Separator paints a bare "{" — and which one
+		// happens is the consumer's business. What every entry here
+		// shares is that the binding is accepted and its VALUE never
+		// arrives, so that is what is asserted.
+		if _, _, differs := cellsDiffer(literal, bound); !differs {
+			t.Errorf("%s now HONOURS its binding — delete it from "+
+				"silentlyBindable and from #488", name)
+			continue
+		}
+		if _, _, dropped := cellsDiffer(absent, bound); !dropped {
+			t.Logf("%s: dropped (bound renders as if absent)", name)
+		} else {
+			t.Logf("%s: accepted and mangled (bound renders as neither the "+
+				"literal nor its absence — the template text reaches the "+
+				"consumer)", name)
+		}
 	}
-	if _, _, differs := cellsDiffer(literal, bound); !differs {
-		t.Log("HStack.Gap now honours its binding — delete it from " +
-			"silentlyBindable and from #488")
-		return
-	}
-	if _, _, differs := cellsDiffer(absent, bound); differs {
-		t.Error("HStack.Gap bound to 1 renders like neither Gap=\"1\" nor no " +
-			"Gap: the value is neither honoured nor dropped, which is a third " +
-			"state this test does not model")
+
+	if observed == 0 {
+		t.Skipf("no entry in silentlyBindable (%v) paints differently with "+
+			"its literal than without it, so the drop is not observable on "+
+			"the cell plane for any of them. That is a gap in the FIXTURE, "+
+			"not a pass: the claim is unmeasured", silentlyBindable)
 	}
 }

@@ -457,6 +457,13 @@ schema. Noted, not built, matching that spec's precedent.
 
 ## Implementation plan
 
+<!-- spec-tests: planned -->
+<!-- Names below are tests this section PROPOSES, not ones the tree
+     holds. TestEveryCitedTestNameResolves skips a marked section for
+     exactly that reason; without the marker it would fail, and the
+     only way to land it green would be an allowlist — the
+     hand-maintained known-bad list CLAUDE.md forbids. See #468. -->
+
 PR-sized, in dependency order; each stays green at `go test ./...`
 (plus `cd handlers/temporal && go test ./...` — nested module).
 

@@ -108,12 +108,19 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// Focusable is XAML's spelling; the Go field is the zero-defaulted
 	// inverse. Only the two boolean words are accepted — a typo here
 	// would otherwise silently leave the view in the tab order.
-	switch e.Attrs["Focusable"] {
-	case "", "true":
-	case "false":
-		v.NoFocus = true
-	default:
-		return nil, fmt.Errorf("markup: <ItemsView Focusable=%q>: want \"true\" or \"false\"", e.Attrs["Focusable"])
+	//
+	// Through litBool since review of #470, which is the same two words
+	// and one more agreement: this accepted Focusable="" as true while
+	// every other literal bool in the vocabulary now refuses an empty
+	// value. It was written before that helper existed, and the hand-rolled
+	// switch is exactly how one attribute comes to answer differently from
+	// its siblings.
+	focusable, err := litBool(e, "Focusable")
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := e.Attrs["Focusable"]; ok {
+		v.NoFocus = !focusable
 	}
 	if err := attachAll(e, v, attach); err != nil {
 		return nil, err
