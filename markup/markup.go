@@ -1651,12 +1651,29 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			// rendered twice rather than two states kept in step. A
 			// literal is refused — there is no such thing as a check
 			// item whose box can never change.
+			//
+			// THROUGH Bound[bool], not through a bindRe pre-check that
+			// says the same thing in its own words. The pre-check was
+			// redundant — Bound refuses a non-binding on the next line —
+			// and the words were the cost: #460's vocabulary-wide sweep
+			// discriminates a real refusal from an incidental build
+			// failure by the loader's own phrase ("is not a binding
+			// expression") plus the attribute name, so this one
+			// declaration refused correctly and still came back
+			// UNVERIFIED. An attribute that opts out of the shared
+			// wording opts out of the shared guard.
 			if raw, ok := ic.Attrs["Checked"]; ok && raw != "" {
-				if !bindRe.MatchString(raw) {
-					return nil, fmt.Errorf("markup: <MenuItem Checked=%q>: Checked must bind a bool handle ({{.Name}}); a literal check can never change", raw)
-				}
 				if it.Checked, err = Bound[bool](ic, ctx, "Checked"); err != nil {
-					return nil, fmt.Errorf("markup: <MenuItem Text=%q Checked=%q>: %w", it.Text, raw, err)
+					// NO SECOND PREFIX. Bound already names the element and
+					// the attribute, so re-wrapping with them printed
+					// "markup: <MenuItem Checked=...>" twice. Only the
+					// guidance is added, and it keeps the words two
+					// different readers look for: the loader's own phrase,
+					// which is what #460's sweep discriminates on, and
+					// "bool handle", which TestALiteralCheckedIsALoadError
+					// asks for because it is what an author has to write.
+					return nil, fmt.Errorf("%w — Checked needs a bool handle "+
+						"({{.Name}}); a literal check can never change", err)
 				}
 			}
 			cmd, err := ctx.Command(ic.Attrs["Command"])

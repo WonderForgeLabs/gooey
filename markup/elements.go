@@ -1371,13 +1371,21 @@ var defMenuBar = &ElementDef{
 var defMenu = &ElementDef{
 	Name: "Menu",
 	Icon: "list-unordered",
-	// NO SEED, as <Tab> has none, and for the reason this file argues
-	// three times over: seed_test's walk skips every def with a nil
-	// Proto and the palette skips every Nested one, so a seed here
-	// would be built by nothing and composed by nothing — an
-	// unexercised second copy of the vocabulary above it. It belongs
-	// with the gesture that would use it, when adding menu entries
-	// from the designer exists (the gap #429 names and does not fill).
+	// A SEED, WHICH THIS DEF ARGUED AGAINST UNTIL SOMETHING READ IT.
+	// The argument was that seed_test's walk skips every def with a nil
+	// Proto and the palette skips every Nested one, so a seed here would
+	// be built by nothing and composed by nothing. That was true when it
+	// was written and stopped being true when #460's attribute sweep
+	// landed: probeElement seeds a ModeRestricted element's children
+	// FROM ITS SEED (defaults_test.go's seedChildren), so with none,
+	// every probe of <Menu Title> builds a childless menu and the sweep
+	// fails rather than covering it.
+	//
+	// Kept minimal and identical in shape to <MenuBar>'s: one child, the
+	// one the restriction names. It is still not a palette entry — that
+	// is the gap #429 names and does not fill — and nothing above needs
+	// changing for it, because seedable() filters on a nil Proto.
+	Seed:     "<Menu Title=\"File\"><MenuItem Text=\"Open\"/></Menu>",
 	ParsedBy: "MenuBar",
 	Known:    true,
 	Attrs: []AttrSpec{
