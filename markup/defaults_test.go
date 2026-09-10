@@ -49,7 +49,13 @@ const (
 func defaultsContext() *Context {
 	return &Context{
 		Values: map[string]any{
-			"S":   prop.NewSource("sample"),
+			"S": prop.NewSource("sample"),
+			// A SECOND string handle, distinct from S. probePrereqs
+			// needs one: <Frozen> refuses Allow and AllowError resolving
+			// to the same property, so a prerequisite seeded from the
+			// same source as the attribute under test is rejected by the
+			// guard after the one being probed.
+			"S2":  prop.NewSource("other"),
 			"I":   prop.NewSource(1),
 			"B":   prop.NewSource(true),
 			"F64": prop.NewSource([]float64{1, 4, 2, 5, 3}),
@@ -67,7 +73,18 @@ func defaultsContext() *Context {
 			"Sty":  prop.NewSource(render.Style{Fg: render.RGB(10, 20, 30)}),
 			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
-		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
+		// A DISPATCHER, because the probe environment has to be able to
+		// build everything the vocabulary declares. <Frozen AllowError>
+		// refuses to load without one ("the failure is published from an
+		// invalidation, and a Set from inside one would mutate the graph
+		// mid-invalidation"), so an attribute the catalog says is
+		// bindable was unbindable in every generic probe — the sweep
+		// reporting it as UNVERIFIED rather than as a pass is the whole
+		// point of that distinction. It is never drained here: nothing
+		// in a load-time probe posts, and a Dispatcher that is only
+		// constructed starts no goroutine.
+		Dispatcher: gooey.NewDispatcher(),
+		Styles:     map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
 		// vocabulary — eleven of them — was probed with "x", which
 		// Context.Command refuses with "no handler \"x\" registered"
@@ -149,6 +166,19 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 	return ""
 }
 
+// attrSpec finds a declared attribute by name. It exists so probePrereqs
+// is checked against the declaration rather than trusted: a row naming an
+// attribute the element does not declare is a stale table, and a stale
+// table here reads as coverage.
+func attrSpec(def *ElementDef, name string) (AttrSpec, bool) {
+	for _, a := range def.Attrs {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return AttrSpec{}, false
+}
+
 // literalFor is the placeholder literal for a required non-binding
 // attribute.
 func literalFor(a AttrSpec) string {
@@ -167,6 +197,39 @@ func literalFor(a AttrSpec) string {
 		}
 	}
 	return "x"
+}
+
+// probePrereqs names attributes that a probe of ANOTHER attribute cannot
+// reach without, keyed "Element.Attribute" and valued with the
+// attributes to seed as BINDINGS.
+//
+// Required is the declaration for "this element does not build without
+// it", and it is per element, not per probe. A prerequisite here is the
+// narrower thing Required cannot say: <Frozen> builds perfectly well
+// with neither Allow nor AllowError, but AllowError alone is refused —
+// "without a BOUND Allow: the only failure it can report is an
+// unparseable set" (elements.go) — and that guard runs BEFORE the
+// bind-only check, so <Frozen AllowError="x"> never reaches the rule the
+// sweep is asking about and comes back UNVERIFIED.
+//
+// Kept as a table with a reason per row rather than a rule, because
+// there is no rule: this is one element's ordering of its own two
+// guards. It is the same class as the Name seeding below — a
+// requirement with nowhere in the vocabulary to be written — and it is
+// deliberately awkward to add to, so that the next entry has to argue
+// for itself. Found by merging #459 into #314: the sweep is what
+// reported it, which is the sweep working.
+//
+// THE ROW WRITES THE BINDING, rather than asking bindingFor for one, and
+// DISTINCTNESS IS WHY. Seeding Allow from the same handle the probe
+// binds AllowError to is refused by <Frozen>'s next guard — "one
+// property cannot be both the allow set and the place its parse failure
+// is reported" — so a prerequisite derived from the attribute's type
+// would trade one unverified row for another. Measured: bindingFor gave
+// both `{{.S}}` and the sweep went red on the aliasing check. S2 exists
+// for this.
+var probePrereqs = map[string]map[string]string{
+	"Frozen.AllowError": {"Allow": "{{.S2}}"},
 }
 
 // probeElement writes the element under test with every required
@@ -218,6 +281,17 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 			continue
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
+	}
+	for name, expr := range probePrereqs[def.Name+"."+attr] {
+		a, ok := attrSpec(def, name)
+		if !ok {
+			t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
+				def.Name, name, def.Name)
+		}
+		if a.Required {
+			continue // already seeded by the loop above
+		}
+		fmt.Fprintf(&b, " %s=%q", a.Name, expr)
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)
