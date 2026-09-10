@@ -6,11 +6,13 @@
 //
 // It holds the types graphics/ cannot: two that satisfy Encoder wrongly,
 // which the walk has to refuse, four that satisfy it by embedding, which
-// it has to accept, and one that satisfies it ON THE POINTER, where the
-// walk's answer and the table's answer have to be made to agree. The
-// first two rules are unobservable through graphics/ itself because
-// stating them needs a type that gets them wrong; the third is
-// unobservable because stating it needs a real encoder nobody ships. It is
+// it has to accept, one that satisfies it ON THE POINTER, where the
+// walk's answer and the table's answer have to be made to agree, and one
+// whose method set is SPLIT across both receivers, which the table has to
+// refuse because it cannot answer for it. The first two rules are
+// unobservable through graphics/ itself because stating them needs a type
+// that gets them wrong; the last two are unobservable because stating
+// them needs a real encoder nobody ships. It is
 // under internal/ so that no consumer can reach these types, and in a
 // package of its own so they stay out of the walk over ".".
 //
@@ -41,8 +43,10 @@ import "image"
 // Partial and Shaped deliberately have no line here, and the omission is
 // the point: "does not implement" is the half the compiler cannot state
 // — a missing assertion is not an assertion — and it is exactly the half
-// the walk exists for. graphics/opaque_test.go:26 already splits
-// `var _ OpaqueEncoder = Sixel{}` the same way.
+// the walk exists for. graphics/opaque_test.go already splits
+// `var _ OpaqueEncoder = Sixel{}` the same way — cited by its spelling
+// rather than by a line, which was three lines out by the time anyone
+// followed it.
 var (
 	_ Encoder = Full{}
 	_ Encoder = Derived{}
@@ -50,6 +54,7 @@ var (
 	_ Encoder = Wrapped{}
 	_ Encoder = Boxed{}
 	_ Encoder = &Pointed{}
+	_ Encoder = Split{}
 )
 
 // Encoder is the same SHAPE as graphics.Encoder — two methods, one of
@@ -120,6 +125,34 @@ func (p *Pointed) Name() string { return "pointed" }
 func (p *Pointed) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error {
 	return nil
 }
+
+// Split declares the Encoder methods on the VALUE and a further method
+// on the POINTER, so Split and *Split have DIFFERENT METHOD SETS. It is
+// an ordinary shape — a stateless encode beside a Reset that clears a
+// scratch buffer — and it is the one the opacity table cannot answer
+// for.
+//
+// The table keys a row by the name the walk reports, and receiverName
+// strips the pointer; rowType strips it from the row's value too, so a
+// row keyed "Split" accepts Split{} and &Split{} alike. Give the
+// capability method a pointer receiver and the two spellings give
+// OPPOSITE answers — Split{} is not an OpaqueEncoder, &Split{} is — with
+// both rows green. That is a silent mis-classification in the guard that
+// exists to prevent one, so a split method set is refused outright
+// rather than answered by whichever spelling somebody typed. Raised in
+// review of #474.
+type Split struct{ scratch []byte }
+
+func (Split) Name() string { return "split" }
+
+func (Split) Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error {
+	return nil
+}
+
+// Reset is the pointer-receiver method, and it is a real one rather than
+// a marker: the split is what a scratch buffer costs you, not something
+// an author does on purpose.
+func (s *Split) Reset() { s.scratch = s.scratch[:0] }
 
 // Shaped declares both names and the WRONG Encode signature.
 type Shaped struct{}

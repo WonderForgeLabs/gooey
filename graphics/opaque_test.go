@@ -64,7 +64,30 @@ func TestOnlySixelIsAlphaLess(t *testing.T) {
 	}
 
 	declared := declaredEncoders(t)
+	// A SPLIT METHOD SET HAS NO ANSWER, so it is refused rather than
+	// answered by whichever spelling the row happens to hold.
+	//
+	// receiverName strips the pointer and rowType strips it too, so a row
+	// keyed "Sixel" accepts Sixel{} and &Sixel{} alike. For an encoder
+	// whose methods all sit on one receiver kind those are the same
+	// question. They stop being the same the moment Name and Encode sit
+	// on the value and OpaqueOnly on the pointer: the walk reports
+	// "Sixel" either way, the assertion below gives OPPOSITE verdicts,
+	// and both spellings of the row are green. SetGraphics takes an
+	// Encoder, so a Frame can hold either one — the mis-classification
+	// this whole test exists to stop, arriving through the strip that
+	// makes the pointer case writable at all. Raised in review of #474.
+	split := splitReceivers(t, ".")
 	for _, name := range declared {
+		if slices.Contains(split, name) {
+			t.Errorf("%s declares methods on BOTH a value and a pointer "+
+				"receiver, so %s and *%s have different method sets and the "+
+				"row below cannot answer for it: rowType strips the pointer, "+
+				"so whichever spelling is written there is accepted, and the "+
+				"two give opposite answers about OpaqueEncoder. Put every "+
+				"method on one receiver kind", name, name, name)
+			continue
+		}
 		tc, ok := table[name]
 		if !ok {
 			t.Errorf("%s implements Encoder and has no row here, so nothing says "+
@@ -421,6 +444,12 @@ func funcSig(fset *token.FileSet, ft *ast.FuncType) []string {
 // latent only because graphics/ embeds nothing qualified today —
 // resolving one would mean resolving imports, which is a type checker
 // rather than an AST walk. Noted in review of #474.
+//
+// THE POINTER IS STRIPPED, AND THAT LOSES A DISTINCTION. T and *T have
+// different method sets when a type declares methods on both, and this
+// reports one name for the two. The table cannot answer for such a type
+// at all — see splitReceivers, which reads the star this deliberately
+// discards, and the refusal it feeds in TestOnlySixelIsAlphaLess.
 func receiverName(e ast.Expr) string {
 	switch t := e.(type) {
 	case *ast.StarExpr:
@@ -433,6 +462,99 @@ func receiverName(e ast.Expr) string {
 		return t.Name
 	}
 	return ""
+}
+
+// splitReceivers is every type in dir that declares at least one method
+// on a VALUE receiver and at least one on a POINTER receiver.
+//
+// EVERY method, not only Encoder's: the capability that decides the
+// opacity branch is OpaqueOnly, which is not in Encoder's method set at
+// all, so a walk restricted to the interface's methods would report no
+// split for precisely the shape that matters — Name and Encode on the
+// value, OpaqueOnly on the pointer.
+//
+// The star is read off the receiver expression rather than through
+// receiverName, which strips it; that strip is what the two halves of
+// the table need and what makes this walk necessary beside it.
+func splitReceivers(t *testing.T, dir string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", dir, err)
+	}
+	value, ptr := map[string]bool{}, map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok || fd.Recv == nil || len(fd.Recv.List) == 0 {
+					continue
+				}
+				rt := fd.Recv.List[0].Type
+				n := receiverName(rt)
+				if n == "" {
+					continue
+				}
+				if _, star := rt.(*ast.StarExpr); star {
+					ptr[n] = true
+				} else {
+					value[n] = true
+				}
+			}
+		}
+	}
+	var out []string
+	for n := range value {
+		if ptr[n] {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestAMethodSetSplitAcrossReceiversIsSeen is the must-FIRE arm for the
+// refusal above, and it is the arm that arm cannot supply itself.
+//
+// graphics/ declares every method on a value receiver, so
+// splitReceivers(".") is empty and the check in TestOnlySixelIsAlphaLess
+// is a negative assertion — green whether the walk works or returns nil
+// unconditionally. The fixture is where the positive is stated.
+//
+// Both directions, because either alone is satisfied by a broken walk: a
+// walk returning every type it sees names Split and would pass a
+// contains-check, and a walk returning nothing passes the graphics/ half.
+func TestAMethodSetSplitAcrossReceiversIsSeen(t *testing.T) {
+	got := splitReceivers(t, "internal/encoderfixture")
+	want := []string{"Split"}
+	if !slices.Equal(got, want) {
+		t.Errorf("splitReceivers reports %v over the fixture package; want %v. "+
+			"Split declares Name and Encode on the value and Reset on the "+
+			"pointer; Pointed declares both of its on the pointer and is NOT "+
+			"split; Full and the embedders declare theirs on the value", got, want)
+	}
+
+	// AND THE PREMISE. A split type the walk does not count as an encoder
+	// never reaches the row loop, so the refusal would be unreachable and
+	// this test would still pass.
+	if walked := encodersIn(t, "internal/encoderfixture"); !slices.Contains(walked, "Split") {
+		t.Errorf("the walk reports %v and does not name Split, so a split "+
+			"method set would never reach the row check it is refused by",
+			walked)
+	}
+
+	// The must-NOT-fire half, stated here rather than left implicit in a
+	// green suite: this is the fact that makes the check in
+	// TestOnlySixelIsAlphaLess a negative assertion, and it is worth a
+	// message of its own the day it stops holding.
+	if here := splitReceivers(t, "."); len(here) != 0 {
+		t.Errorf("this package now splits a method set across receivers (%v). "+
+			"That is not itself wrong, but if one of those is an Encoder the "+
+			"opacity table cannot answer for it", here)
+	}
 }
 
 // TestTheEncoderWalkNeedsTheWHOLEInterface drives the walk against a
@@ -449,6 +571,7 @@ func receiverName(e ast.Expr) string {
 //	Boxed    embeds an interface embedding it → an encoder
 //	Named    the interface doing that         → an encoder, not a TYPE
 //	Pointed  declares both ON THE POINTER     → an encoder, named bare
+//	Split    Encoder's on the value, one on *T → an encoder, REFUSED a row
 //	Partial  declares Encode and not Name     → NOT an encoder
 //	Shaped   declares Encode with other types → NOT an encoder
 //
@@ -470,7 +593,7 @@ func receiverName(e ast.Expr) string {
 // TestTheEncoderWalkDropsTheInterfacesThemselves is that half.
 func TestTheEncoderWalkNeedsTheWHOLEInterface(t *testing.T) {
 	got := encodersIn(t, "internal/encoderfixture")
-	want := []string{"Boxed", "Chained", "Derived", "Full", "Pointed", "Wrapped"}
+	want := []string{"Boxed", "Chained", "Derived", "Full", "Pointed", "Split", "Wrapped"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the walk reports %v over the fixture package; want %v.\n"+
 			"Partial declares Encode and no Name, and Shaped declares an Encode "+

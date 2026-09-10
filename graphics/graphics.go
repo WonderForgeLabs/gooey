@@ -59,13 +59,27 @@ type Encoder interface {
 //
 // What holds the mapping is TestOnlySixelIsAlphaLess beside this file:
 // a compile-time assertion that Sixel implements it, a table saying the
-// others do not, and a count against the encoder list so a fourth
-// protocol cannot be added without answering the question. That is a
-// guard an author can still get wrong; it is not a type system.
+// others do not, and a go/ast walk of THIS PACKAGE'S OWN DECLARATIONS
+// that demands a row per encoder it finds — so a fourth protocol cannot
+// be added without answering the question.
 //
-// A second interface rather than another method on Encoder, matching
-// IDEncoder above: capability questions here are type assertions, the
-// same no-reflection shape as the rest of the tree.
+// The walk is the load-bearing word, and this paragraph used to say "a
+// count against the encoder list" instead. That is the design the test
+// deleted, and deleted on the grounds that it was two hand-written
+// lists: a count catches somebody editing one of them and says nothing
+// about a type added to neither. The floor the test still keeps
+// (len(declared) < 2) is a non-vacuity check that the walk found
+// declarations at all, not a count of them. Describing the weaker
+// mechanism here is how it gets re-simplified back into one, since this
+// is the paragraph a reader reaches from `go doc graphics.OpaqueEncoder`
+// and the test is the thing they will not read. Corrected in review of
+// #474.
+//
+// It is still a guard an author can get wrong; it is not a type system.
+//
+// A second interface rather than another method on Encoder, the same
+// shape IDEncoder in this file takes: capability questions here are type
+// assertions, the same no-reflection shape as the rest of the tree.
 type OpaqueEncoder interface {
 	Encoder
 	// OpaqueOnly carries no value — the type assertion IS the answer, the

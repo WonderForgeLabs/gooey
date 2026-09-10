@@ -358,14 +358,28 @@ func (a *Art) frame(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bo
 	// they were different pictures and they never were. fg has had the
 	// same treatment three lines up since before this.
 	//
-	// THE KEY IS NORMALIZED; THE GROUND PASSED DOWN IS NOT. Erasing bg
-	// before drawCanvas also erased it from hairlineStroke's Fallback,
-	// which is the colour the stroke becomes where there are no pixels —
-	// so a pane that declared a Bg got a black-composited Fallback on the
-	// composited tier. The picture is unaffected, the value being
-	// computed and discarded, which is exactly the argument
-	// hairlineStroke's own doc rejects for the opaque branch: dormant is
-	// why it would be wrong the day somebody gives the cell tier a rule.
+	// THE KEY IS NORMALIZED; THE GROUND PASSED DOWN IS NOT — and the
+	// difference buys nothing today. It is the real ground rather than
+	// the key's stand-in because that is what the parameter means, not
+	// because anything downstream can tell.
+	//
+	// This comment used to justify it by hairlineStroke's Fallback, and
+	// that justification does not hold. Fallback is assigned into a local
+	// paint.Stroke inside drawCanvas and never leaves the function —
+	// drawFrame returns the four ring images and nothing else — so on the
+	// composited tier the un-normalized bg reaches NOTHING, Fallback
+	// included. Passing keyBg down instead would be byte-identical, which
+	// is what round 5's arm E measured as SILENT and this comment then
+	// explained away. Corrected in review of #474.
+	//
+	// THE SENTENCE THAT IS LOAD-BEARING BELONGS AT THE KEY, one line
+	// down. The day a cell tier reads Fallback, the ground has to go back
+	// into the key IN THE SAME COMMIT: on the composited tier keyBg
+	// erases every ground to one entry, so the second pane on a different
+	// Bg is handed the FIRST one's cached frame. The "correct" Fallback
+	// it would then read is whichever pane rasterized first — a
+	// cross-pane bug, not a wrong constant, and invisible until two panes
+	// on different grounds are on screen at once.
 	keyBg := bg
 	if !opaque {
 		keyBg = render.Color{}
