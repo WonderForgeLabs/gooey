@@ -263,9 +263,21 @@ func (m Menu) checkBox(it MenuItem) string {
 // AdornmentLayer is above it and a notification raised while a menu is
 // open is still readable (#439).
 //
-// What position still decides is INPUT. Hit-testing is not lifted — it
-// walks document order — but the bar holds the pointer capture while
-// open, so every press routes here regardless. See MOUSE below.
+// INPUT AGREES ON THE ORDERING, since #465: FocusManager.HitTest asks
+// the same membership-and-rank rule the paint order is derived from. It
+// said "hit-testing is not lifted" here — true when written, and the bar
+// never depended on it either way, because it holds the pointer capture
+// while open and every press routes here regardless. See MOUSE below.
+//
+// NOT "the dropdown is hit where it paints", which is what this said
+// next and is the one claim the walk does not support. The surface is
+// arranged at popupRect(), BELOW the bar row and outside the bar's own
+// bounds, and the hit walk prunes on every ancestor's bounds — so on
+// geometry alone the dropdown paints and is not hit. The capture is what
+// makes that unobservable here, which is exactly why the sentence had to
+// go: it was the one this file could not have noticed being wrong.
+// Tracked as #482. See gooey.FocusManager.HitTest. Raised in review of
+// #478.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

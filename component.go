@@ -121,17 +121,33 @@ type ChildSetter interface {
 // because the two popups are the same KIND; that is exactly the
 // distinction the rank draws and the one it does not.
 //
-// IT MOVES PAINT, NOT INPUT. FocusManager.HitTest walks document order
-// and knows nothing about this marker, so a later sibling still takes a
-// press even where an overlay paints above it. Popup gets away with it
-// by holding pointer capture for as long as it is open, which routes
-// presses before the walk runs — but that is Popup's mechanism, not
-// something this interface provides.
+// IT MOVES PAINT AND, SINCE #465, INPUT. FocusManager.HitTest asks
+// overlayOf — this marker, plus OverlayRanker's rank — exactly as
+// orderPaint does, so an overlay takes the press from wherever it is
+// declared, and a nested one inherits its lifting root's answer on both
+// planes.
 //
-// So an overlay that does NOT take capture is responsible for its own
-// routing. Implementing this alone will paint you on top and leave the
-// clicks to whoever is underneath. Stated in review of #437; the same
-// gap is named in docs/specs/2026-08-30-overlay-layer.md.
+// THIS PARAGRAPH SAID THE OPPOSITE, and it was true from #437 until
+// #465: "FocusManager.HitTest walks document order and knows nothing
+// about this marker, so a later sibling still takes a press even where
+// an overlay paints above it… an overlay that does NOT take capture is
+// responsible for its own routing." Paint got the freedom in #437 and
+// input kept the old rule, so the two planes disagreed for every overlay
+// without capture — silently, because under the retired "declare it
+// last" rule the thing on top was also the thing the walk found first.
+// The divergence arrived with the freedom, not with the layer.
+//
+// Popup is why it took so long to be noticed: it holds pointer capture
+// for as long as it is open, which routes presses before the walk runs.
+// That is still Popup's own mechanism rather than something this
+// interface provides — it just no longer has to be.
+//
+// ONE RESIDUAL DIVERGENCE, and it is documented where the walk is
+// (FocusManager.HitTest, mouse.go): the hit walk prunes on bounds at
+// EVERY ancestor, where paint clips each node to its own rect. A surface
+// arranged outside its owner's rectangle therefore paints and cannot be
+// hit. Nothing shipped is in that position without also holding capture.
+// Tracked as #482.
 type Overlay interface{ OverlaysPage() }
 
 // OverlayRanker is an Overlay that says where in the overlay layer it

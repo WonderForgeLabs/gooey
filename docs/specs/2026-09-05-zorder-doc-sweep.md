@@ -21,6 +21,14 @@ three parts:
    the lifting root only.
 3. **Input was not lifted.** Hit-testing still walks plain document
    order, last sibling first. `Overlay` moves paint, not input.
+   ([#465](https://github.com/WonderForgeLabs/gooey/issues/465): this
+   item is what was true on 2026-09-05 and is superseded — that change
+   made `FocusManager.HitTest` ask `overlayOf`, the same membership-and-rank
+   rule the paint order is derived from, so the hit walk is lifted and
+   ranked too. It is left in place because this heading enumerates the
+   three facts the sweep was written against — deleting the third would
+   make the sweep's own reasoning unreadable — but a reader landing on
+   this section must not take item 3 as current.)
 
 The retired rule — *"declare the overlay LAST, because document order is
 z-order"* — is false about (1), silent about (2), and only ever

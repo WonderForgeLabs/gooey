@@ -43,30 +43,34 @@ keeps them.
 
 ## The pointer hit-tests instead
 
-A mouse event finds its target by hit-testing the retained tree — deepest
-component first, later siblings before earlier ones — then bubbles up the
-same ancestor chain.
+A mouse event finds its target by hit-testing the retained tree, then
+bubbles up the same ancestor chain. The target is the component that
+**paints last** among those whose bounds — and every ancestor's bounds —
+contain the cell.
 
-**Document order still decides this, and it is the one place a LIFT
-does not intervene.** It was "the one place document order still
-decides" for a round, which is an overclaim: document order is still the
-whole rule for paint among ordinary components, and still the tiebreak
-between equal ranks inside the overlay layer. What is different here is
-that the hit walk does no lifting at all — a `gooey.Overlay` is lifted
-out into a second layer and ranked within it, so an overlay paints above
-content it was declared before, and the hit walk walks the tree as
-written. So for an overlay the two orders genuinely
-disagree, and a popup that visibly covers a button is not necessarily the
-thing a click at that point reaches. `components.Popup` handles this by
-capturing the pointer while it is open rather than by relying on position.
-See [overlays](overlays.md) for the paint side.
+**The click asks the same question the paint does.** Both orderings come
+from one rule (`overlayOf`): the lifted `gooey.Overlay` layer sits above
+the ordinary one, a higher `OverlayRank` sits above a lower one within
+that layer, and document order separates only two candidates that tie on
+both — which is the one place document order still decides anything. So a
+popup in the overlay layer is what a click over it reaches, whether or
+not it was declared last and whether or not it holds capture.
+`components.Popup` takes the pointer while it is open anyway, but that is
+Popup's own mechanism rather than a repair for the walk. See
+[overlays](overlays.md) for the paint side.
+
+The walk therefore does not stop at the first hit: an earlier sibling can
+out-rank a later one, so every subtree whose bounds contain the point is
+visited. Bounds still prune at every node, so a component arranged
+outside its parent's rect paints and is never hit.
 
 Four framework behaviors run before your code sees anything:
 
 - **The frozen retarget**, first, because everything below is measured
   against its result. A component may declare its subtree frozen (a design
-  surface). `HitTest` still returns the deepest component — that is a
-  query — but dispatch routes to the outermost frozen ancestor, which takes
+  surface). `HitTest` still answers with the component that paints last
+  under the cell — that is a query — but dispatch routes to the outermost
+  frozen ancestor, which takes
   the event, the capture, the focus a press moves, and the click
   synthesized on release. A frozen subtree is also out of focus order,
   scoped bindings, mnemonics and hover watchers. See the

@@ -353,7 +353,8 @@ const hoverWatchPage = `<Gooey>
 //
 //  1. the walk declines to register the watcher (input.go:436), so
 //     updateWatchers returns on its len(m.watchers) == 0 fast path;
-//  2. DispatchMouse retargets the hit to the frozen host (mouse.go:176),
+//  2. DispatchMouse retargets the hit to the frozen host (frozenHostFor,
+//     in mouse.go),
 //     so m.within(hw.host, hit) is false for any host inside the subtree.
 //
 // Verified by deleting each on its own and running this test: green both

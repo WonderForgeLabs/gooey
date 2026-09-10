@@ -87,9 +87,13 @@ that is where they read best. It is harmless and no longer load-bearing:
 position stopped deciding paint in
 [#437](https://github.com/WonderForgeLabs/gooey/issues/437) and stopped
 deciding order *among* overlays in
-[#439](https://github.com/WonderForgeLabs/gooey/issues/439). Where it is
-still load-bearing is **hit-testing**, which is not lifted — so an
-overlay that wants presses (none of the built-in ones do) still cares.
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439), and stopped
+deciding **hit-testing** in
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465), where the
+walk was made to ask the same membership-and-rank question the paint
+order is derived from. This sentence used to end "where it is still
+load-bearing is hit-testing, which is not lifted" — an overlay that
+wants presses now gets them from wherever it is declared.
 
 How the layer works — and what happens when an overlay is dismissed and
 the cells under it come back — is the subject of
@@ -360,8 +364,10 @@ so `tab` never lands on a button nobody can see.
 - Overlays are **lifted out of document order** into a paint layer of
   their own and ranked within it, so where you declare one does not
   decide what it paints over; `Grid.Row` places it independently either
-  way. Hit-testing is *not* lifted — that divergence is the one thing
-  position still decides.
+  way — and since
+  [#465](https://github.com/WonderForgeLabs/gooey/issues/465) that is
+  true of the CLICK as well as the paint: hit-testing asks the same
+  layer and the same ranks, so the two planes cannot disagree.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.

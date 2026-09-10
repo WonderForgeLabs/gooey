@@ -111,11 +111,18 @@ func TestToastsStackDownTheCorner(t *testing.T) {
 
 // The host spans the whole page and sits on top of the z-order, but it
 // paints nothing — so its empty space must be transparent to the
-// pointer. Hit-testing prefers later siblings (they paint on top),
-// which without the opt-out makes a full-page toast layer shadow every
+// pointer. Without the opt-out a full-page toast layer shadows every
 // component beneath it: no hover, no press, no click, anywhere. That is
 // the bug reported as "the pixel button gives no mouse feedback" — the
 // button never saw the mouse.
+//
+// THE REASON IS NOW STRONGER, AND DIFFERENT. This said "hit-testing
+// prefers later siblings (they paint on top)", which made the shadowing
+// conditional on where the host was declared — an app that put it first
+// was fine. Since #465 the hit walk asks overlayOf, so the host is
+// lifted for input as well and beats the page on every axis from
+// anywhere. HitTestTransparent is the only thing left standing between
+// an empty toast layer and every click on the page.
 func TestEmptyToastHostDoesNotShadowThePointer(t *testing.T) {
 	clicked := 0
 	b := &Button{Content: Str("Save"), Click: gooey.Command(func() { clicked++ })}

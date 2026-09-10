@@ -936,7 +936,11 @@ type editor struct {
 	pv  *preview.Pane
 	app *gooey.App
 
-	// hitTest is the framework's deepest-component query, and docRoot /
+	// hitTest is the framework's under-the-pointer query — since #465 the
+	// component that PAINTS last where you clicked, not the deepest one,
+	// and this comment said "deepest-component query" until review of
+	// #478 (a spelling the guard's `the deepest (component|node|hit)`
+	// could not reach). docRoot /
 	// nodeOf are what make its answer mean something: the tree rebuild
 	// BUILT for this document, and which design node every component in it
 	// came from. Together they are click-to-select — see select.go.

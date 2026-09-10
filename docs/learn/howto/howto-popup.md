@@ -38,8 +38,9 @@ The four lines of wiring:
 1. return `pop.Surface()` from `ChildComponents`. It is a
    `gooey.Overlay`, so it is lifted out of document order and paints
    above the page from wherever your owner sits — returning it last is
-   convention, not mechanism (hit-testing is *not* lifted, and an open
-   popup holds the capture anyway);
+   convention, not mechanism (since #465 the hit walk asks the same
+   question the paint does, so a press over the surface reaches it; an
+   open popup holds the capture anyway);
 2. forward `SetFocusManager` (the `gooey.FocusHost` call) to the popup;
 3. call `pop.ArrangeSurface(show, rect)` from your `Arrange`;
 4. end your key and mouse handlers with `pop.HandleKey` /

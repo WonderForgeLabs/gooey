@@ -84,22 +84,41 @@ subtree always comes up whole.
 The values are spaced by ten so somebody else's overlay can sit between
 two of them without a framework change.
 
-## What the lift does NOT move
+## Input moves with it
 
-**`Overlay` moves paint, not input.** Hit-testing still walks plain
-document order, last sibling first — it is not lifted and it is not
-ranked. The two agree only when an overlay happens to be late in the
-document, which is why "declare it last" survives as a *convention* in
-this repo's own markup even though it stopped deciding paint.
+**The lift is asked by hit-testing too, since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).**
+`FocusManager.HitTest` calls the same `overlayOf` the paint order is
+derived from, so an overlay takes the press from wherever it is
+declared, and a rank decides between two overlapping overlays exactly as
+it decides which one paints on top.
 
-That divergence got easier to fall into with the fix, not harder. Being
-last used to be the only thing keeping an overlay on top, so nobody
-could get the paint right and the input wrong. Now paint no longer needs
-it and hit-testing still does. None of the framework's own overlays care
-— a `Popup` takes the pointer capture while open, and `ToastHost`,
+This section was headed *"What the lift does NOT move"* and said
+`Overlay` moved paint and not input — that hit-testing "still walks
+plain document order, last sibling first". True from #437 until #465,
+and the reason the two planes could disagree in silence: under the
+retired "declare it last" rule the thing on top was also the thing the
+walk found first, so the divergence arrived with the freedom rather than
+with the layer.
+
+For those eight days the divergence was easier to fall into than it had
+been before the lift, not harder. Being last used to be the only thing
+keeping an overlay on top, so nobody could get the paint right and the
+input wrong; once paint stopped needing it and the walk still did, the
+two could disagree. None of the framework's own overlays cared — a
+`Popup` takes the pointer capture while open, and `ToastHost`,
 `AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
-`HitTestTransparent`, so no press was ever theirs to lose — but an
-interactive adorner somebody else writes is where it bites.
+`HitTestTransparent`, so no press was ever theirs to lose — which is
+exactly why nothing in the suite went red and the gap sat open. An
+interactive adorner somebody else writes is where it would have bitten,
+and since #465 it does not: that adorner receives the presses its
+painted position implies.
+
+The paragraph above used to say the gap was live, ending on the words
+"hit-testing still does". Since #465 the hit walk asks `overlayOf`, so
+it does not; corrected in review of #478, eight lines below a heading
+the same PR had already rewritten. A doc can contradict itself inside
+one section, and only a guard notices.
 
 The two layers are one function, `overlayOf` in `component.go`, asked by
 both the retained path (`Composer.orderPaint`) and the one-shot path
