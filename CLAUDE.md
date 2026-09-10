@@ -238,14 +238,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:825`, in
+deliberately outside any evaluation context (`composer.go:1013`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:537`).
+separate observer for that (`Composer.armVisibility`, `composer.go:725`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:409`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:440`), so reading a property while painting *is* the damage
+(`composer.go:597`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:628`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -422,7 +422,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:423`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

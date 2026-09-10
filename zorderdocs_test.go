@@ -379,7 +379,28 @@ var retiredRule = []*regexp.Regexp{
 	// predicate assembled from the phrasings you can see is a sample of
 	// the ways the thing can be said, and this is the third time that
 	// has been the finding. Raised in review of #458.
-	regexp.MustCompile(`(?i)declar(e|es|ed|ing)\b.{0,40}\bLAST\b`),
+	// NOT INSIDE A HYPHENATED COMPOUND, which is the one narrowing this
+	// entry needed and the broadest one it can take.
+	// apps/wysiwyg/dock.go says
+	//
+	//	components.clampToExtent, which keep the first-declared and
+	//	starve the last
+	//
+	// about how a HEADER BUDGET is shared between panes — which pane
+	// keeps its chevron — and the bare `\bdeclar` matched it with 24
+	// characters between "declared" and "last". "first-declared" is a
+	// compound ADJECTIVE naming which item survives, the opposite of an
+	// instruction to declare something last, and the two cannot be told
+	// apart by anything nearer than the hyphen.
+	//
+	// REQUIRING A Z-ORDER COMPANION was tried first, the way the "last
+	// child" entry below took one, and it is measured WRONG here: this
+	// entry's own sample list holds `Declare the MenuBar as the LAST
+	// child of its container`, a real removed line with no such word in
+	// the sentence at all. The instruction form does not need to say
+	// what it buys. So the narrowing is the hyphen and nothing more.
+	// Raised by merging #456, where the guard first reached that file.
+	regexp.MustCompile(`(?i)(^|[^\w-])declar(e|es|ed|ing)\b.{0,40}\bLAST\b`),
 	// THE Z-ORDER COMPANION IS REQUIRED, and this entry read
 	// `(as|is) the LAST child` alone until review of #478. That is
 	// broader than this list's own doc four paragraphs up — "'last

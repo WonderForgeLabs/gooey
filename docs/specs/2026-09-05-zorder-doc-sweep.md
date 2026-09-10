@@ -122,7 +122,7 @@ any reason at all, including a regex that matches nothing.
 | a CORRECTION is wrapped and stops exempting | the qualifier window is joined as prose rather than with newlines, pinned by `TestAWrappedQualifierStillExempts` — otherwise the join above turns the sweep's own corrected comments into failures |
 | the walk visits no files | a floor asserted before any line is read |
 | a qualifier is accepted from too far away | mutations Z1/Z2/Z3 re-introduce a stale line into Go, markdown and `.gooey` next to correct prose |
-| the hit-test exemption excuses a paint claim beside it | `TestTheHitTestExemptionIsLineScoped` — that one qualifier reads a single line, not the ±2 window, and reverting it to the window is otherwise silent |
+| the hit-test exemption excuses a paint claim beside it | ~~TestTheHitTestExemptionIsLineScoped~~ — that one qualifier read a single line, not the ±2 window, and reverting it to the window was otherwise silent. EXPIRED: [#465](https://github.com/WonderForgeLabs/gooey/issues/465) made the hit walk rank-aware, so the exemption it guarded was deleted and the guard with it. Spelled without backticks for the reason specclaims_test.go gives — a live citation to a dead test reads as a check while checking nothing |
 
 All of them fire. Z1 and Z3 **passed** against the six-line version,
 which is how the window got narrowed.
