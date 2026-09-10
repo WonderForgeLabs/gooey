@@ -60,8 +60,25 @@ func checkAttrs(e Element, ctx *Context) error {
 	// catalog, so it is deferred to rather than raced. See
 	// acceptedByParent, whose comment records why it cannot ask
 	// spec.Nested for the answer.
-	if ok && spec.Pseudo && acceptedByParent(e, ctx) {
-		if err := refuseUniversal(e, spec); err != nil {
+	if ok && spec.Pseudo {
+		if !acceptedByParent(e, ctx) {
+			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
+			// reached only <Tab> when it did not. <Menu> and <MenuItem>
+			// are AttrsKnown, so standing down from the universal
+			// refusal alone dropped them into the gate below, which
+			// answered `<VStack><Menu Name="Zonk">` with "no such
+			// attribute; this element takes Title" — the wording
+			// refuseUniversal's comment calls a lie, about the smaller
+			// of two faults, while defMenu.Build's "<Menu> is only
+			// valid directly inside <MenuBar>" never printed.
+			//
+			// Measured, not reasoned about: all three misplaced forms
+			// were probed through Build before and after. Raised in
+			// review of #486 round 2, which is round 1's finding 1 one
+			// gate over.
+			return nil
+		}
+		if err := refuseUniversal(e, spec, ctx); err != nil {
 			return err
 		}
 	}
@@ -155,7 +172,7 @@ func checkAttrs(e Element, ctx *Context) error {
 // <Tab> in $EDITOR was accepted, dropped, and had no surface anywhere
 // that would reveal it — strictly less discoverable than the state
 // #454 improved.
-func refuseUniversal(e Element, spec ElementSpec) error {
+func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 	names := make([]string, 0, len(e.Attrs))
 	for name := range e.Attrs {
 		names = append(names, name)
@@ -172,7 +189,7 @@ func refuseUniversal(e Element, spec ElementSpec) error {
 			// to put it instead.
 			return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
 				e.Name, name, e.Attrs[name],
-				readsAsData(spec), name, pseudoRemedy(spec))
+				readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx))
 		}
 	}
 	return nil
@@ -196,26 +213,90 @@ func refuseUniversal(e Element, spec ElementSpec) error {
 // went. It reaches here because ElementSpec now carries the field —
 // before #486 the type did not have it, so this function could only
 // ever return the generic clause however the def was declared.
-func readsAsData(spec ElementSpec) string {
+//
+// AND THE CATALOG KNOWS BY A SECOND ROUTE, which is what <Tab> needs —
+// the element this branch exists for, which was getting the vaguer
+// clause. defTab carries Opaque rather than ParsedBy, so the lookup
+// above misses it; the element whose Children.Only names <Tab> is
+// <Tabs>, and that is the same answer.
+//
+// ParsedBy is not simply added to defTab, and this is the trap: it
+// would make catalogen red. checkPseudoPool pools d.declared across a
+// host's parsed elements, <Tab> declares nothing (Known: false), and
+// buildTabs reads "Header" off its children — so the pool check would
+// report <Tabs> reading an attribute no <Tabs>-parsed element declares.
+// Opaque is <Tab>'s annotation precisely because its surface is not
+// enumerable. Raised in review of #486 round 2.
+func readsAsData(spec ElementSpec, ctx *Context) string {
 	if spec.ParsedBy != "" {
 		return fmt.Sprintf("<%s> reads <%s> as data, ", spec.ParsedBy, spec.Name)
 	}
+	if p := namingParent(spec.Name, ctx); p != "" {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
+	}
 	return fmt.Sprintf("<%s>'s parent reads it as data, ", spec.Name)
+}
+
+// namingParent is the catalog element that lists name among the children
+// it accepts, or "" when none does.
+//
+// It answers the question ParsedBy answers, from the other side: a
+// pseudo-element is reachable only where some ModeRestricted container
+// names it, so that container IS the reader. Over the CATALOG rather
+// than over ctx.spec, because the question is about every element in
+// scope and not about one whose name is already in hand.
+func namingParent(name string, ctx *Context) string {
+	for _, p := range ctx.Catalog() {
+		if p.Children.Mode != ModeRestricted {
+			continue
+		}
+		for _, n := range p.Children.Only {
+			if n == name {
+				return p.Name
+			}
+		}
+	}
+	return ""
 }
 
 // pseudoRemedy is the "put it somewhere else" tail, and it is offered
 // only when there IS a somewhere else.
 //
-// <Tab> and <Menu> hold content, so naming it is a real instruction.
+// <Tab> holds arbitrary content, so naming it is a real instruction.
 // <MenuItem> is ModeLeaf and holds none; prescribing a move to nowhere
 // is the same shape as finding 1 of #486's round 1, where a remedy was
 // printed for a document whose actual defect was elsewhere.
-func pseudoRemedy(spec ElementSpec) string {
+//
+// AND "HOLDS CONTENT" WAS THE WRONG QUESTION FOR <Menu>. Its content is
+// ModeRestricted to <MenuItem>, which is itself a pseudo-element that
+// refuses the identical attribute — so an author who followed the
+// remedy landed on a second load error. Measured:
+//
+//	<MenuBar><Menu Name="Zonk">…      → …; put it on the content inside
+//	<MenuBar><Menu><MenuItem Name=…>  → …no component for Name to apply to
+//
+// The predicate is therefore "would the content inside ACCEPT this",
+// not "is there content inside". Derived over Children.Only rather than
+// spelled per element, so a fourth pseudo-element is covered by the
+// rule instead of by somebody remembering it. Raised in review of #486
+// round 2.
+func pseudoRemedy(spec ElementSpec, ctx *Context) string {
+	const move = "; put it on the content inside instead"
 	switch spec.Children.Mode {
 	case ModeLeaf, ModeNone:
 		return ""
+	case ModeRestricted:
+		for _, n := range spec.Children.Only {
+			// An unresolvable name is treated as accepting: the remedy
+			// is advice, and withholding it on a catalog gap is the
+			// worse failure of the two.
+			if s, ok := ctx.spec(n); !ok || !s.Pseudo {
+				return move
+			}
+		}
+		return ""
 	}
-	return "; put it on the content inside instead"
+	return move
 }
 
 // acceptedByParent reports that this element sits in a container that

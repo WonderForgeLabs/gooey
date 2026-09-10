@@ -212,23 +212,31 @@ type wholeLoad struct {
 	loads   string
 	refused string
 	attr    string // the universal that `refused` carries
+	// misplaced puts the element somewhere no container names it, still
+	// carrying `attr`. The two faults are present at once ON PURPOSE:
+	// the question is which one gets reported, and a document with only
+	// the placement fault cannot ask it.
+	misplaced string
 }
 
 var wholeLoadCases = map[string]wholeLoad{
 	"Tab": {
-		loads:   `<Gooey><Tabs><Tab Header="a"><Text>x</Text></Tab></Tabs></Gooey>`,
-		refused: `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`,
-		attr:    "Name",
+		loads:     `<Gooey><Tabs><Tab Header="a"><Text>x</Text></Tab></Tabs></Gooey>`,
+		refused:   `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`,
+		attr:      "Name",
+		misplaced: `<Gooey><VStack><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></VStack></Gooey>`,
 	},
 	"Menu": {
-		loads:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
-		refused: `<Gooey><MenuBar><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
-		attr:    "Name",
+		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
+		refused:   `<Gooey><MenuBar><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
+		attr:      "Name",
+		misplaced: `<Gooey><VStack><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></VStack></Gooey>`,
 	},
 	"MenuItem": {
-		loads:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
-		refused: `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open" Margin="2"/></Menu></MenuBar></Gooey>`,
-		attr:    "Margin",
+		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
+		refused:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open" Margin="2"/></Menu></MenuBar></Gooey>`,
+		attr:      "Margin",
+		misplaced: `<Gooey><VStack><MenuItem Text="Open" Margin="2"/></VStack></Gooey>`,
 	},
 }
 
@@ -270,6 +278,20 @@ func TestEveryPseudoElementIsRefusedThroughAWholeLoad(t *testing.T) {
 				"element over: the derived tests above would stay green while "+
 				"<%s Name=\"x\"> loaded, was dropped, and reported nothing. "+
 				"Add markup that loads and markup carrying a universal",
+				s.Name, s.Name)
+		}
+		// EVERY FIELD, not just the row. A row present with an empty
+		// misplaced document builds `""`, which errors for a reason
+		// that has nothing to do with placement — so
+		// TestAMisplacedPseudoElementReportsItsPlacement would range
+		// over it and report a pass. The completeness guard has to be
+		// as wide as the table is used. Raised in review of #486 round
+		// 2, alongside the finding that made misplaced derived at all.
+		if wholeLoadCases[s.Name].misplaced == "" {
+			t.Fatalf("<%s>'s row carries no `misplaced` document, so nothing "+
+				"checks that a <%s> in the wrong container reports its "+
+				"PLACEMENT rather than its attribute. Write markup that puts "+
+				"it somewhere no container names, still carrying the universal",
 				s.Name, s.Name)
 		}
 	}
@@ -439,34 +461,54 @@ func TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals(t *testing.T) {
 // still report the attribute — a gate that stood down always would
 // satisfy the first and silently undo #461.
 func TestAMisplacedPseudoElementReportsItsPlacement(t *testing.T) {
-	misplaced := `<Gooey><VStack><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></VStack></Gooey>`
-	_, err := Build([]byte(misplaced), &Context{})
-	if err == nil {
-		t.Fatal("a <Tab> inside a <VStack> loaded clean")
-	}
-	if !strings.Contains(err.Error(), "only valid directly inside") {
-		t.Errorf("the document's fault is that the <Tab> is in a <VStack>, "+
-			"and the error is about its attribute instead. The remedy it "+
-			"prescribes leaves the page just as broken and the one that "+
-			"would fix it is never printed:\n\t%v", err)
-	}
+	var checked int
+	for _, sp := range pseudoSpecs(t) {
+		checked++
+		tc := wholeLoadCases[sp.Name]
 
-	placed := `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`
-	_, err = Build([]byte(placed), &Context{})
-	if err == nil {
-		t.Fatal("standing down on placement also stood down on a correctly " +
-			"placed <Tab>, which is #461 undone")
+		_, err := Build([]byte(tc.misplaced), &Context{})
+		if err == nil {
+			t.Errorf("<%s> outside %s loaded clean", sp.Name,
+				describeParent(legalParent(t, sp)))
+			continue
+		}
+		if !strings.Contains(err.Error(), "only valid directly inside") {
+			t.Errorf("the document's fault is that the <%s> is somewhere it "+
+				"cannot be, and the error is about its attribute instead. The "+
+				"remedy it prescribes leaves the page just as broken and the "+
+				"one that would fix it is never printed:\n\t%v", sp.Name, err)
+		}
+
+		_, err = Build([]byte(tc.refused), &Context{})
+		if err == nil {
+			t.Errorf("standing down on placement also stood down on a "+
+				"correctly placed <%s>, which is #461 undone", sp.Name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.attr) {
+			t.Errorf("a correctly placed <%s> should still be refused %s, and "+
+				"this error does not name it: %v", sp.Name, tc.attr, err)
+		}
 	}
-	if !strings.Contains(err.Error(), "Name") {
-		t.Errorf("a correctly placed <Tab> should still be refused its "+
-			"universal, and this error does not name it: %v", err)
+	if checked == 0 {
+		t.Fatal("no pseudo-element in the catalog, so this test ranged over " +
+			"nothing")
 	}
 }
 
 // TestARefusalPrescribesOnlyAPlaceThatExists is finding 5's property
 // half. The message tells an author to "put it on the content inside",
-// which is a real instruction for <Tab> and <Menu> and a move to nowhere
-// for <MenuItem>, which is ModeLeaf and holds no content.
+// which is a real instruction for <Tab> and a move to nowhere for
+// <MenuItem>, which is ModeLeaf and holds none.
+//
+// THE PREDICATE IS ACCEPTANCE, NOT EXISTENCE, and the first version's
+// was existence — it filtered on ModeLeaf/ModeNone, so <Menu> (which is
+// ModeRestricted) was never looked at. <Menu>'s only legal content is
+// <MenuItem>, itself a pseudo-element refusing the identical attribute,
+// so the remedy landed the author on a second load error and this test
+// was green over it. Raised in review of #486 round 2; a place that
+// refuses the attribute is not a place that exists, which is what the
+// test is named for.
 //
 // The PROPERTY is asserted rather than the wording. Pinning the sentence
 // is what made TestAPseudoElementRefusesName go red for an improvement,
@@ -474,9 +516,7 @@ func TestAMisplacedPseudoElementReportsItsPlacement(t *testing.T) {
 func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 	var checked int
 	for _, sp := range pseudoSpecs(t) {
-		switch sp.Children.Mode {
-		case ModeLeaf, ModeNone:
-		default:
+		if acceptsAUniversal(t, sp) {
 			continue
 		}
 		checked++
@@ -487,30 +527,67 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 			continue
 		}
 		if strings.Contains(err.Error(), "content inside") {
-			t.Errorf("<%s> holds no content (%s), and its refusal tells the "+
-				"author to put the attribute on the content inside — a remedy "+
-				"with no destination:\n\t%v", sp.Name, sp.Children.Mode, err)
+			t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
+				"refusal tells the author to put the attribute on the content "+
+				"inside — a remedy whose destination refuses it too:\n\t%v",
+				sp.Name, sp.Children.Mode, tc.attr, err)
 		}
 	}
 	if checked == 0 {
-		t.Fatal("no pseudo-element in the catalog is childless, so this test " +
-			"ranged over nothing. It is not a pass — either the modes moved " +
-			"or the filter is wrong")
+		t.Fatal("every pseudo-element in the catalog can host a universal " +
+			"somewhere inside, so this test ranged over nothing. It is not a " +
+			"pass — either the modes moved or the filter is wrong")
 	}
+}
+
+// acceptsAUniversal reports whether the content inside sp could hold a
+// universal attribute, which is what makes "put it on the content
+// inside" a real instruction.
+//
+// Three answers, and the middle one is the finding. ModeLeaf/ModeNone
+// hold nothing. An unrestricted container holds anything, so it holds
+// something addressable. ModeRestricted holds a named set — and if every
+// name in it is a pseudo-element, the content inside refuses the
+// attribute for exactly the reason the outer element did.
+func acceptsAUniversal(t *testing.T, sp ElementSpec) bool {
+	t.Helper()
+	switch sp.Children.Mode {
+	case ModeLeaf, ModeNone:
+		return false
+	case ModeRestricted:
+		for _, n := range sp.Children.Only {
+			s, ok := (&Context{}).spec(n)
+			if !ok || !s.Pseudo {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // TestARefusalNamesTheReaderWhenTheCatalogKnowsIt is finding 6's half:
 // ElementSpec now carries ParsedBy, so the message can say WHO consumed
 // the element rather than "its parent".
 //
-// Derived from the field, so it checks the elements that have it and
-// says so when none does — the shape that stops this becoming a test
-// that passes because it looked at nothing.
+// EVERY READER THE CATALOG CAN NAME, not only those carrying ParsedBy,
+// and the narrower filter is what let <Tab> slip. defTab carries Opaque
+// instead of ParsedBy — for a reason readsAsData records — so the
+// element this whole branch exists for was the one element this test
+// skipped, and it was getting the generic "its parent reads it as data"
+// clause. Raised in review of #486 round 2.
+//
+// legalParent is the second route, and it is the SAME derivation
+// readsAsData falls back to: the ModeRestricted element whose
+// Children.Only names this one. Using the test's own helper rather than
+// calling namingParent keeps this an independent statement of the
+// answer instead of an echo of the implementation.
 func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 	var checked int
 	for _, sp := range pseudoSpecs(t) {
-		if sp.ParsedBy == "" {
-			continue
+		want := sp.ParsedBy
+		if want == "" {
+			want = legalParent(t, sp)
 		}
 		checked++
 		tc := wholeLoadCases[sp.Name]
@@ -519,17 +596,15 @@ func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 			t.Errorf("<%s %s=…> was not refused at all", sp.Name, tc.attr)
 			continue
 		}
-		if !strings.Contains(err.Error(), sp.ParsedBy) {
+		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the catalog says <%s> is read by <%s>, and the refusal "+
 				"does not name it — so the author is told the attribute went "+
 				"nowhere without being told where to look:\n\t%v",
-				sp.Name, sp.ParsedBy, err)
+				sp.Name, want, err)
 		}
 	}
 	if checked == 0 {
-		t.Fatal("no pseudo-element in the catalog carries ParsedBy, so this " +
-			"test ranged over nothing. ElementSpec.ParsedBy exists to be read " +
-			"here; if it stopped being populated this is the arm that should " +
-			"say so")
+		t.Fatal("no pseudo-element in the catalog, so this test ranged over " +
+			"nothing")
 	}
 }
