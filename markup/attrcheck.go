@@ -41,6 +41,12 @@ func checkAttrs(e Element, ctx *Context) error {
 		// likes, and an opaque element's vocabulary was never
 		// enumerable. Claiming to validate either would be inventing a
 		// rule the catalog cannot support.
+		//
+		// THE UNIVERSAL SET IS NOT PART OF THAT VOCABULARY, which is
+		// why one check survives the early return. See refuseUniversal.
+		if ok && spec.Pseudo {
+			return refuseUniversal(e, spec)
+		}
 		return nil
 	}
 	if spec.Open {
@@ -75,6 +81,76 @@ func checkAttrs(e Element, ctx *Context) error {
 			e.Name, name, e.Attrs[name], suggest(name, allowed, attached))
 	}
 	return nil
+}
+
+// refuseUniversal rejects a universal attribute on a pseudo-element,
+// and it exists because that is the one judgement an UNENUMERABLE
+// element still supports (issue #461).
+//
+// checkAttrs declines to judge an element whose Attrs are not
+// exhaustive, and that is right: the element's own vocabulary is
+// genuinely unknown, so any refusal from it would be invented. The
+// universal set is a different claim. Name is applied by named(), the
+// layout rows by applyLayout() and Tooltip by
+// applyTooltipShorthand() — all three beside the element switch, none
+// of them by the element — so whether they apply is answered by the
+// catalog's structure, not by the element's attribute list.
+//
+// Pseudo is that answer, and it is safe BECAUSE IT IS AFFIRMATIVE: it
+// is derived from a nil Proto *and* a stated reason (elementdef.go), so
+// it means "this builds no component of its own", not "we could not
+// tell". A pseudo-element's parent reads it as data — buildTabs reads a
+// <Tab>'s Header and content itself — so nothing ever reaches named()
+// or applyLayout() with it.
+//
+// !TakesLayout is NOT interchangeable here, and reaching for it would
+// break working apps. It is absent-by-default: a host's
+// Context.Components builder has no Proto, so TakesLayout is false for
+// it while the framework applies Margin to the component it returns
+// exactly as it would to a builtin's. Only the affirmative fact
+// entails the refusal.
+//
+// Grant.AttrsFor already implements the same rule on the other side —
+// it withholds the layout rows on !TakesLayout and the identity row on
+// Pseudo, so a property grid offers a pseudo-element no universal row
+// at all. Before this the two gates disagreed in OPPOSITE directions
+// for <Tab>, the one pseudo-element with AttrsKnown false: the designer
+// dropped the Name row and the loader accepted it. A Name typed into a
+// <Tab> in $EDITOR was accepted, dropped, and had no surface anywhere
+// that would reveal it — strictly less discoverable than the state
+// #454 improved.
+func refuseUniversal(e Element, spec ElementSpec) error {
+	names := make([]string, 0, len(e.Attrs))
+	for name := range e.Attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, u := range universalAttrs {
+			if u.Name != name {
+				continue
+			}
+			// The message names the MECHANISM, not just the fault. "no
+			// such attribute" would be a lie — the attribute exists
+			// everywhere else — and the author's real question is where
+			// to put it instead, which is one element down.
+			return fmt.Errorf("markup: <%s %s=%q>: %s builds no component of its own (%s), so %s would be applied to nothing; put it on the content inside instead",
+				e.Name, name, e.Attrs[name], e.Name,
+				describePseudo(spec), name)
+		}
+	}
+	return nil
+}
+
+// describePseudo is the reason clause of the message above, taken from
+// the def rather than written twice. Opaque and ParsedBy are the two
+// spellings Pseudo derives from, and one of them is always set — that
+// conjunct is what Pseudo means.
+func describePseudo(spec ElementSpec) string {
+	if spec.Opaque != "" {
+		return spec.Opaque
+	}
+	return "its parent reads it as data"
 }
 
 func describeParent(parent string) string {

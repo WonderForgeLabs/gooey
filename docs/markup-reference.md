@@ -625,7 +625,7 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 | `Changed` | Optional command, run after the selection moves (the property is already `Set`). |
 | `Style` | Named style or a bound style for the strip. |
 
-Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child:
+Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child. A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so the universal attributes are a load error on it, `Name` included: there is nothing for `Name` to address and nothing for `Margin` to lay out. Put them on the content inside:
 
 ```xml
 <Tabs Selected="{{.Tab}}">

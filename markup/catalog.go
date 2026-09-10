@@ -585,14 +585,19 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// these two must agree or the grid offers a row that fails to
 		// load.
 		//
-		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, which is the half a
-		// reader has to know: checkAttrs returns early on !AttrsKnown
-		// (attrcheck.go), so for an OPAQUE pseudo-element this gate drops
-		// the row and the loader does not refuse it. <Tab> is the one
-		// such element today, so <Tab Name="Zonk"> still loads clean and
-		// is still dropped — the same silent-drop class, one element
-		// over. Pre-existing, not fixed here, tracked in #461; if that
-		// issue is closed this paragraph is wrong and the code is right.
+		// THE AGREEMENT WAS ONCE CONDITIONED ON AttrsKnown, and is not
+		// any more (#461). checkAttrs returns early on !AttrsKnown, so
+		// for an OPAQUE pseudo-element this gate dropped the row while
+		// the loader accepted it: <Tab Name="Zonk"> loaded clean and was
+		// dropped, with no designer surface left to reveal it. The early
+		// return now refuses the universal set first (refuseUniversal,
+		// attrcheck.go), because the universal set belongs to no element
+		// and so survives not knowing the element's own. The two gates
+		// agree for every pseudo-element, and
+		// TestNoPseudoElementAcceptsAUniversalAttribute plus
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert
+		// both halves over the catalog rather than over a list, so a
+		// fourth pseudo-element is covered without either being edited.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
