@@ -327,6 +327,26 @@ rank that changes with state is read once and silently stale — that is
 also why it is a method and not a `Property`, which would need `Frozen`'s
 observer machinery to be honest.
 
+**There are TWO public paint paths and they share BOTH of those rules.**
+`gooey.Compose` — the one-shot path, which builds no App at all and is
+what `cmd/typeahead --dump` and `cmd/pixels` render through —
+lifts through `collectPaint` and orders through the same `appendByRank`
+bucket pass, and both consult one `overlayOf` for membership-and-rank, so
+a fixture asserted through `Compose` and one asserted through
+`Composer.Frame` agree about what is in front. Two implementations was
+the second copy the next change had to find.
+
+What they do NOT share is damage, and the difference is the reason
+`Compose` shipped a bug the retained path never had. `Compose` paints
+everything once, so it has no `covered` pass and no forcing — but it also
+had no equivalent of the LEAF PRE-CLEAR, which is what makes a popup
+opaque. It lifted overlays correctly and let the content beneath show
+through them: position without occlusion, until `collectPaint` was taught
+to carry the nearest ancestor's background down
+([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Sharing an
+ordering rule is not sharing a picture; if you add a paint path, the
+pre-clear is the half that will be forgotten.
+
 **The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:131`;
 the reverse child walk is `mouse.go:157`) knows about neither layer nor
 rank, so the two planes can now disagree: a ranked host declared FIRST

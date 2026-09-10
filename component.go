@@ -203,8 +203,7 @@ const (
 	OverlayRankAdornment = 20
 )
 
-// overlayRank is c.orderPaint's question: the component's declared rank,
-// or the floor.
+// overlayRank is the component's declared rank, or the floor.
 func overlayRank(w Component) int {
 	if r, ok := w.(OverlayRanker); ok {
 		// CLAMPED, because three doc comments, a spec heading and a test
@@ -230,6 +229,34 @@ func overlayRank(w Component) int {
 		return OverlayRankPopup
 	}
 	return OverlayRankPopup
+}
+
+// overlayOf is THE overlay-layer rule, and it is one function because
+// there are TWO PAINT PATHS. Composer.orderPaint asks it per paint node
+// and gooey.Compose's collectPaint asks it per component; #438 was those
+// two disagreeing, because only the first had ever implemented it.
+//
+// The issue proposed either implementing the lift in the one-shot path
+// or documenting that it does not have one, and named the cost of the
+// first: a second copy of the rule, which the next change to that rule
+// has to find. Extracting it retires that objection instead of paying
+// it — and #439 added ranks days later, which is precisely the change
+// that would have had to find both copies.
+//
+// MEMBERSHIP IS INHERITED, and the rank belongs to the lifting ROOT.
+// An overlay that is a container would otherwise leave its children in
+// the ordinary layer, painting them under the very surface they belong
+// to; and a nested Overlay answering for itself could sort out of its
+// parent's run, letting a parent that covers its bounds erase the child
+// it lifted. Both are why the parent's answer is consulted first.
+func overlayOf(w Component, parentOverlay bool, parentRank int) (overlay bool, rank int) {
+	if parentOverlay {
+		return true, parentRank
+	}
+	if _, isOverlay := w.(Overlay); isOverlay {
+		return true, overlayRank(w)
+	}
+	return false, 0
 }
 
 // HasBackground is implemented by containers that declare a background
@@ -497,6 +524,47 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // Compose lays out root into a fresh frame sized to caps — the one-shot
 // path (full repaint). The damage-tracked path is Composer.
 //
+// IT PAINTS IN THE SAME Z-ORDER Composer does, and that sentence is the
+// point rather than a pleasantry. "The one-shot path (full repaint)" is
+// all this used to say, which reads as the same picture and was not:
+// renderTree walked document order and never consulted Overlay, so #430
+// reproduced here verbatim long after Composer was fixed — on the path
+// that cmd/pixels, cmd/typeahead --dump and around nineteen test helpers
+// use. A fixture asserted through it would have looked green while
+// encoding the bug. Both paths now order through the one overlayOf rule
+// (#438) and through the one appendByRank bucket pass, and
+// TestBothPaintPathsAgree compares them rather than pinning each to a
+// string, so they cannot drift together either.
+//
+// Z-ORDER, THOUGH, AND NOT THE PICTURE — the claim above is scoped on
+// purpose, because two things this path does NOT do are easy to assume
+// from a wider one:
+//
+//   - Composer brackets every Render with Cells.Clip(bounds)
+//     (#357/#409); paintOne does not clip at all, so a component that
+//     overruns its rect reaches a neighbour's cells here and is cut off
+//     there.
+//   - `covered` and everything downstream of it — restoreUnder, the
+//     forced repaint of a filled container's subtree — is damage
+//     bookkeeping, and a one-shot compose has no damage.
+//
+// THE PRE-CLEAR RULES THEMSELVES ARE MIRRORED, which this comment
+// denied. It said they "have no counterpart here" while paintOne was
+// already clearing leaves — the same round added the clear and left the
+// sentence — and then the two remaining arms were built FROM the
+// sentence, so a container whose background had been cleared painted
+// nothing and a hidden container left its bounds alone. A doc that is
+// wrong about its own function is worse than one that is silent: this
+// one was read as a specification. All three arms are paintOne's now,
+// spelled in the same order as composer.go's chain, and
+// TestBothPaintPathsFillAContainerWhoseBackgroundIsCleared and
+// TestBothPaintPathsBlankAHiddenContainersBounds compare them against
+// Composer rather than against this paragraph.
+//
+// TestBothPaintPathsAgree compares z-order and nothing else, so nothing
+// in the suite would catch the remaining sentences being read literally.
+// Narrowed in review of #457, corrected in the round after.
+//
 // It BRACKETS the pass with TakeLayoutFault, and both halves are load
 // bearing because layoutFault is package-level state.
 //
@@ -527,7 +595,62 @@ func Compose(root Component, caps term.Caps, enc graphics.Encoder) *Frame {
 	return f
 }
 
+// renderTree paints the tree in Z-ORDER, which is document order with
+// every Overlay subtree lifted to the end and ranked — the same answer
+// Composer.paint carries, through the same overlayOf rule.
+//
+// COLLECT THEN PAINT, rather than painting during the walk, because a
+// lifted subtree cannot be painted at the moment it is reached: its
+// position depends on nodes the walk has not seen yet. That is the same
+// reason Composer keeps c.nodes (structure) apart from c.paint (order).
+// A tree with no Overlay in it collects one slice, buckets nothing, and
+// paints in exactly the order it always did.
 func renderTree(w Component, f *Frame, depth int) {
+	var ordinary, lifted []paintItem
+	collectPaint(w, depth, false, 0, render.Style{}, &ordinary, &lifted)
+	// THE SAME BUCKET PASS THE RETAINED PATH USES, not a sort. Equal
+	// ranks keep document order because they are appended in encounter
+	// order — a consequence of the construction rather than a claim about
+	// sort.SliceStable, which no mutation of this repo could falsify.
+	// Ordering is shared for the same reason membership-and-rank is:
+	// two implementations is the second copy the next change has to
+	// find. Raised in review of #457.
+	//
+	// No reuse across calls here — Compose is one-shot by definition, so
+	// the buckets are a local that dies with the frame.
+	// A SEPARATE DESTINATION, not lifted[:0]. Writing the result back
+	// over its own input happens to be safe — every item is copied into
+	// a bucket before the append loop starts — but appendByRank has
+	// already shipped one aliasing bug (its own comment records it), and
+	// Compose is one-shot, so a slice is the honest price for not being
+	// clever twice in the same function.
+	var buckets []rankBucket[paintItem]
+	ordered := appendByRank(make([]paintItem, 0, len(lifted)), lifted,
+		func(it paintItem) int { return it.rank }, &buckets)
+	for _, it := range ordinary {
+		paintOne(it.w, it.clear, f)
+	}
+	for _, it := range ordered {
+		paintOne(it.w, it.clear, f)
+	}
+}
+
+// paintItem is one component in paint order. rank is meaningless outside
+// the lifted slice, where it is the subtree root's.
+type paintItem struct {
+	w    Component
+	rank int
+	// clear is the nearest paintable ancestor's declared background —
+	// what this component pre-clears to if it is a leaf. It is the
+	// one-shot equivalent of Composer.clearStyle, computed on the way
+	// DOWN because Compose has no paint nodes to walk back up through.
+	clear render.Style
+}
+
+// collectPaint walks the tree in depth-first pre-order and partitions it
+// into the two layers, carrying the depth cap and the Collapsed prune
+// that renderTree has always applied.
+func collectPaint(w Component, depth int, parentOverlay bool, parentRank int, parentClear render.Style, ordinary, lifted *[]paintItem) {
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("Render", w, depth)
 		return
@@ -535,22 +658,126 @@ func renderTree(w Component, f *Frame, depth int) {
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
 		return // collapsed subtrees paint nothing at all
 	}
+	overlay, rank := overlayOf(w, parentOverlay, parentRank)
+	// EVERY component becomes an item, hidden ones included, because
+	// Composer gives every component a paint node and gates only the
+	// Render inside it. Collecting only the paintable ones dropped the
+	// hidden-container arm of the pre-clear chain entirely: a hidden
+	// container must BLANK its bounds, which is a thing to paint, and a
+	// path that never reaches paintOne cannot do it. paintOne asks
+	// paintable() again for the Render.
+	// Raised in review of #457.
+	it := paintItem{w: w, rank: rank, clear: parentClear}
+	if overlay {
+		*lifted = append(*lifted, it)
+	} else {
+		*ordinary = append(*ordinary, it)
+	}
+	// What THIS node's children clear to. Same rule as
+	// Composer.clearStyle walking up: the nearest PAINTABLE ancestor with
+	// a background whose colour is Set. A hidden panel's background is
+	// not on screen, so it does not count — matching clearStyle's
+	// `if !paintable(p.w) { continue }`.
+	childClear := parentClear
 	if paintable(w) {
 		if bp := backgroundProp(w); bp != nil {
 			if col := bp.Get(); col.Set {
-				if b, ok := w.(Bounded); ok {
-					fillRect(f.Cells, b.Bounds(), render.Style{Bg: col})
-				}
+				childClear = render.Style{Bg: col}
 			}
 		}
-		w.Render(f)
 	}
 	if c, ok := w.(Container); ok {
 		for _, ch := range c.ChildComponents() {
-			renderTree(ch, f, depth+1)
+			collectPaint(ch, depth+1, overlay, rank, childClear, ordinary, lifted)
 		}
 	}
 }
+
+// paintOne is the per-component half renderTree used to do inline, and
+// it is ONE if/else chain deliberately spelled in composer.go's order:
+// leaf, hidden container, declared background, then the component's own
+// Render. Reading the two side by side is the only check there is that
+// they still say the same thing, so the shape is part of the code.
+//
+// LEAVES PRE-CLEAR, which they did not until #457's review. Composer
+// clears every leaf's rect to the nearest ancestor's background
+// (composer.go, via clearStyle) and components.Popup's own doc cites that
+// as where popupSurface's opacity comes from: it writes a border and a
+// title and leaves the middle to the clear. Without it here, a lifted
+// popup rendered SEE-THROUGH under Compose while occluding under
+// Composer — measured on an overlay leaf that writes two runes of a
+// twelve-column rect:
+//
+//	gooey.Compose   "XX@@@@@@@@@@"
+//	Composer.Frame  "XX          "
+//
+// which is position without occlusion, and exactly the kind of silent
+// divergence between the two paths that #438 was filed about.
+//
+// A CHROME-ONLY container is excluded for the reason Composer excludes
+// it: its bounds enclose children, so clearing would wipe siblings that
+// have already painted. A container states its opacity by declaring a
+// Background instead — and the arms either side of that are the two this
+// function was missing until the round after, both for the same reason.
+// Compose's doc said the pre-clear rules "have no counterpart here"
+// while the leaf clear above was already in it, and the missing arms
+// were written to match the sentence rather than composer.go:
+//
+//   - a declared background whose colour is UNSET still fills, with the
+//     ancestor's background. That is HasBackground's own documented
+//     contract, and without it a container that cleared its background
+//     at runtime painted nothing at all here;
+//   - a HIDDEN container blanks its bounds, because its chrome has to
+//     leave the screen the way a hidden leaf's content does. This one
+//     was not merely unwritten but unWRITABLE: collectPaint gated
+//     COLLECTION on paintable(w), so the component never reached this
+//     function. It gates Render, now, which is where Composer has always
+//     had it.
+//
+// Neither is observable on a blank buffer, which is what a one-shot
+// compose starts from — an overlapping earlier sibling is what makes
+// "fill with the ancestor's background" and "do nothing" different
+// answers, and it is what both fixtures put underneath.
+func paintOne(w Component, clear render.Style, f *Frame) {
+	if b, ok := w.(Bounded); ok {
+		r := b.Bounds()
+		switch {
+		case !isContainer(w):
+			fillRect(f.Cells, r, clear)
+		case !paintable(w):
+			// A hidden container's chrome has to leave the screen the
+			// way a hidden leaf's content does.
+			fillRect(f.Cells, r, clear)
+		default:
+			if bp := backgroundProp(w); bp != nil {
+				// An UNSET colour still fills, with the ancestor's
+				// background — the half this had missing. See
+				// HasBackground's own doc: that is what makes clearing a
+				// background at runtime erase the old fill.
+				if col := bp.Get(); col.Set {
+					fillRect(f.Cells, r, render.Style{Bg: col})
+				} else {
+					fillRect(f.Cells, r, clear)
+				}
+			}
+			// A chrome-only container fills nothing, because its bounds
+			// enclose its children's cells.
+		}
+	}
+	if paintable(w) {
+		w.Render(f)
+	}
+}
+
+// isContainer is the one spelling of the question paintOne and
+// Composer.build's pre-clear chain both open with. A bare type assertion
+// reads the same and is no longer; naming it is what makes the two
+// chains GREPPABLE as one rule, which is the same argument that put
+// overlayOf and appendByRank in one place rather than two.
+//
+// collectPaint does NOT use it, and that is not an oversight — it needs
+// the Container VALUE to walk ChildComponents, not the yes/no.
+func isContainer(w Component) bool { _, ok := w.(Container); return ok }
 
 // Flush writes the frame: cell plane first, then pixel placements. The
 // whole sequence is one synchronized update — cells and the images that

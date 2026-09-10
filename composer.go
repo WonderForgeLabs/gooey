@@ -97,20 +97,19 @@ type Composer struct {
 	// buckets is orderPaint's rank ordering, one entry per DISTINCT rank
 	// in ascending order — three in the framework today, plus whatever an
 	// app adds. Reused like `lifted`, inner slices included.
-	// RETAINS PAST ITS OWN LENGTH, deliberately noted rather than left
-	// for the next reader to re-derive. appendByRank does bs :=
-	// (*buckets)[:0] and reuses the backing arrays, which is what makes
-	// the pass allocation-free — and what keeps *paintNode from earlier
-	// frames reachable in two dimensions: bucket slots past the new len,
-	// and elements past each inner slice's new len. c.lifted and c.over
-	// have the same shape, but this is a slice OF slices, so a large
-	// frame pins one inner array per rank rather than one overall.
+	// REUSED ACROSS FRAMES, which is what makes the pass allocation-free
+	// and what made it RETAIN: items holds *paintNode, appendByRank does
+	// bs := (*buckets)[:0], and a dead node stayed reachable in two
+	// dimensions — bucket slots past the new len, and elements past each
+	// inner slice's len. c.lifted and c.over have the same shape, but
+	// this is a slice OF slices, so a large frame pinned one inner array
+	// per rank rather than one overall.
 	//
-	// Not a correctness bug; a node is unreachable from the tree either
-	// way. It is cleared to CAP in PR #457 (issue #438), directly above this one,
-	// which is where the measurement lives (18 items held across a
-	// shrinking rank set). Raised in review of #456.
-	buckets []rankBucket
+	// appendByRank clears to CAP before handing them back, which is the
+	// fix: len is what the next call resets, cap is what the collector
+	// sees. Measured at 18 items held without it. Raised in review of
+	// #456; fixed and measured in #438.
+	buckets []rankBucket[*paintNode]
 
 	// The wire. flusher owns the previous cell buffer; the placement
 	// fields own what the terminal is showing on the pixel plane.
@@ -343,35 +342,34 @@ func (c *Composer) orderPaint() {
 	c.paint = c.paint[:0]
 	c.lifted = c.lifted[:0]
 	for _, n := range c.nodes {
-		_, isOverlay := n.w.(Overlay)
-		inherited := n.parent != nil && n.parent.overlay
-		n.overlay = isOverlay || inherited
-		switch {
-		case inherited:
-			// ALREADY INSIDE A LIFTED SUBTREE, so the lifting root owns
-			// the rank even if this node declares its own. Checked
-			// BEFORE the marker for exactly that reason — a popup
-			// nested in a toast must not sort out of its parent's run.
-			n.rank = n.parent.rank
-		case isOverlay:
-			n.rank = overlayRank(n.w)
-		default:
-			n.rank = 0
+		// THE SHARED RULE. overlayOf is the one implementation of
+		// overlay membership and rank; gooey.Compose's collectPaint
+		// asks the same function. #438 was these two disagreeing,
+		// because the one-shot path had never implemented it at all —
+		// so the repair was to extract the rule rather than write a
+		// second copy of it. It is also where "the lifting ROOT owns
+		// the rank" lives: a nested Overlay that answered for itself
+		// could sort out of its parent's run.
+		var parentOverlay bool
+		var parentRank int
+		if n.parent != nil {
+			parentOverlay, parentRank = n.parent.overlay, n.parent.rank
 		}
+		n.overlay, n.rank = overlayOf(n.w, parentOverlay, parentRank)
 		if n.overlay {
 			c.lifted = append(c.lifted, n)
 		} else {
 			c.paint = append(c.paint, n)
 		}
 	}
-	c.paint = appendByRank(c.paint, c.lifted, &c.buckets)
+	c.paint = appendByRank(c.paint, c.lifted, func(n *paintNode) int { return n.rank }, &c.buckets)
 }
 
 // rankBucket is one distinct overlay rank and the nodes carrying it, in
 // the order the walk met them.
-type rankBucket struct {
+type rankBucket[T any] struct {
 	rank  int
-	nodes []*paintNode
+	items []T
 }
 
 // appendByRank appends lifted to dst in ascending rank, EQUAL RANKS IN
@@ -399,14 +397,25 @@ type rankBucket struct {
 // The insertion is linear in the number of DISTINCT ranks, not in the
 // number of nodes: three in the framework today. buckets is reused
 // across calls, inner slices included.
-func appendByRank(dst, lifted []*paintNode, buckets *[]rankBucket) []*paintNode {
+//
+// GENERIC BECAUSE THE ORDERING IS SHARED, not for reuse in the abstract.
+// gooey.Compose lifts []paintItem where the Composer lifts []*paintNode,
+// and the one-shot path originally ordered its own with
+// sort.SliceStable — which put the unfalsifiable-stability claim back one
+// file over, and reflect.Swapper back on a paint path, days after this
+// function was written to remove both. Sharing membership-and-rank while
+// leaving ORDERING as two implementations of different character is
+// exactly the second copy #438 set out to retire. Raised in review of
+// #457.
+func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBucket[T]) []T {
 	bs := (*buckets)[:0]
 	for _, n := range lifted {
+		r := rankOf(n)
 		i := 0
-		for i < len(bs) && bs[i].rank < n.rank {
+		for i < len(bs) && bs[i].rank < r {
 			i++
 		}
-		if i == len(bs) || bs[i].rank != n.rank {
+		if i == len(bs) || bs[i].rank != r {
 			// Grow by one, then open a gap at i.
 			//
 			// THE SPARE SLICE IS TAKEN BEFORE THE COPY, and that is the
@@ -425,16 +434,76 @@ func appendByRank(dst, lifted []*paintNode, buckets *[]rankBucket) []*paintNode 
 			if len(bs) < cap(bs) {
 				bs = bs[:len(bs)+1]
 			} else {
-				bs = append(bs, rankBucket{})
+				// APPEND ON A FULL SLICE REALLOCATES, and from here bs
+				// and the caller's old header are different arrays. The
+				// clear loop at the end is written not to care; the
+				// comment there is where that is argued.
+				bs = append(bs, rankBucket[T]{})
 			}
-			spare := bs[len(bs)-1].nodes[:0]
+			spare := bs[len(bs)-1].items[:0]
 			copy(bs[i+1:], bs[i:])
-			bs[i] = rankBucket{rank: n.rank, nodes: spare}
+			bs[i] = rankBucket[T]{rank: r, items: spare}
 		}
-		bs[i].nodes = append(bs[i].nodes, n)
+		bs[i].items = append(bs[i].items, n)
 	}
 	for _, b := range bs {
-		dst = append(dst, b.nodes...)
+		dst = append(dst, b.items...)
+	}
+	// DROP THE STALE REFERENCES BEFORE HANDING THE BUCKETS BACK.
+	//
+	// The reuse that makes this pass allocation-free is also what makes it
+	// retain: items holds *paintNode on the Composer's path, and the
+	// buckets outlive the frame. Two ways a dead node stays reachable —
+	// a bucket this call did not reach (last frame had five ranks, this
+	// one has two), and the TAIL of a bucket it did reach (last frame put
+	// ten nodes in a rank, this one put three, and seven pointers sit
+	// past len in the same backing array). Neither is overwritten until
+	// the slot happens to be used again, which for a rank that stops
+	// occurring is never.
+	//
+	// Clearing to cap rather than to len is the point: len is what the
+	// next call resets, cap is what the garbage collector sees.
+	// Pre-existing — the pass has always reused — and surfaced when it
+	// became generic. Raised in review of #457.
+	//
+	// PAIRING prev[i] WITH bs[i] BY INDEX IS ONLY VALID WHILE THEY ARE
+	// THE SAME ARRAY, and the first version of this loop did it
+	// unconditionally. That is a PANIC, not a leak: once the bucket list
+	// has grown, bs is a copy and prev no longer tracks it, so
+	// `keep := len(bs[i].items)` is a length from one array applied to a
+	// capacity from another. Three items where the previous frame put
+	// one gives `items[3:1]` — slice bounds out of range, on the
+	// retained paint path, every frame.
+	//
+	// It needs a rank REVISITED after the growth to fire, which is why
+	// it survived the round that introduced it: grouping the ranks lets
+	// every append happen before the list moves. Document order does not
+	// group them — a popup, a toast, then more of the popup's subtree is
+	// an ordinary page. TestTheBucketPassSurvivesGrowingItsBucketList is
+	// that shape. Raised in review of #457.
+	//
+	// So: clear the tail of every LIVE bucket, which needs no pairing at
+	// all — each bucket knows its own len and cap.
+	for i := range bs {
+		items := bs[i].items
+		clear(items[len(items):cap(items)])
+	}
+	// And the buckets this call did not reach — last frame had five
+	// ranks, this one has two — still hold last frame's items and have
+	// to be emptied whole.
+	//
+	// This one DOES read the old header, and that is safe rather than
+	// lucky. bs starts at (*buckets)[:0], so an append can only fire
+	// once len(bs) has reached the capacity it inherited, which is at
+	// least len(prev); a call that reallocated therefore ends with
+	// len(bs) >= len(prev) and this range is empty. Guarding it on "did
+	// it reallocate" would be a branch no input can take — an
+	// unfalsifiable claim, which is the thing this package deleted a
+	// clipCols guard over rather than ship.
+	prev := *buckets
+	for i := len(bs); i < len(prev); i++ {
+		items := prev[i].items
+		clear(items[:cap(items)])
 	}
 	*buckets = bs
 	return dst
@@ -561,7 +630,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		n.covered = false
 		if b, ok := w.(Bounded); ok {
 			r := b.Bounds()
-			if _, isContainer := w.(Container); !isContainer {
+			if !isContainer(w) {
 				// Leaves pre-clear to the nearest ancestor's background,
 				// not to the terminal default — a Text inside a colored
 				// panel must not punch a default-colored hole when it
