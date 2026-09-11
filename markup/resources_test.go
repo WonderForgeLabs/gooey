@@ -269,7 +269,10 @@ func TestSubtreeOverrideShadows(t *testing.T) {
 		t.Fatalf("after Set the outer Fg is %v, want %v", got, want)
 	}
 	if got, want := namedStyle(t, ctx, "Inner").Fg, render.RGB(0x22, 0x22, 0x22); got != want {
-		t.Fatalf("after Set the inner Fg is %v, want %v — the shadow shares the outer handle", got, want)
+		t.Fatalf("after Set the inner Fg is %v, want %v — the inner scope's own "+
+			"handle is what its readers follow, so a Set on the OUTER handle must "+
+			"not reach them. This message used to say \"the shadow shares the outer "+
+			"handle\", which is what the assertion requires NOT to be true", got, want)
 	}
 }
 
