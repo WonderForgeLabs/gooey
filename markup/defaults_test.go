@@ -238,6 +238,23 @@ var probePrereqs = map[string]map[string]string{
 // of the omission side of the comparison.
 func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
+	return probeElementSeeded(t, def, attr, value, true)
+}
+
+// probeElementBare is probeElement with the probePrereqs seeding turned
+// off, and it exists for ONE caller: the counterfactual half of
+// TestEveryPrereqRowIsReached. Nothing else should use it — a probe that
+// skips the prerequisites is the broken probe the table was added to
+// fix.
+func probeElementBare(t *testing.T, def *ElementDef, attr, value string) string {
+	t.Helper()
+	return probeElementSeeded(t, def, attr, value, false)
+}
+
+// probeElementSeeded is the body of both, with the one difference
+// between them as a parameter rather than a copy.
+func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prereqs bool) string {
+	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
 	// EVERY PROBE NAMES ITSELF, and it is not decoration.
@@ -282,16 +299,18 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
 	}
-	for name, expr := range probePrereqs[def.Name+"."+attr] {
-		a, ok := attrSpec(def, name)
-		if !ok {
-			t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
-				def.Name, name, def.Name)
+	if prereqs {
+		for name, expr := range probePrereqs[def.Name+"."+attr] {
+			a, ok := attrSpec(def, name)
+			if !ok {
+				t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
+					def.Name, name, def.Name)
+			}
+			if a.Required {
+				continue // already seeded by the loop above
+			}
+			fmt.Fprintf(&b, " %s=%q", a.Name, expr)
 		}
-		if a.Required {
-			continue // already seeded by the loop above
-		}
-		fmt.Fprintf(&b, " %s=%q", a.Name, expr)
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)

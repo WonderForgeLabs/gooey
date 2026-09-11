@@ -1216,6 +1216,70 @@ func TestEveryNarrowedLiteralIsReached(t *testing.T) {
 	}
 }
 
+// TestEveryPrereqRowIsReached is the guard probePrereqs needs, and it
+// asks both halves TestEveryNarrowedLiteralIsReached asks, for the same
+// reasons.
+//
+// A table that only ever ADDS attributes to a probe cannot fail loudly:
+// every row makes some probe load, and a row that has stopped mattering
+// makes it load just the same. So neither half is optional.
+//
+// The first half is that the row still names something real. A key
+// whose element or attribute the vocabulary no longer declares pairs
+// nothing, and probeElement's own t.Fatalf cannot say so — it fires only
+// when a probe for that exact key runs, which is precisely what stops
+// happening when the declaration goes away.
+//
+// The second half is the counterfactual, and it is the one with teeth: a
+// row whose prerequisite has stopped being required — the element's
+// guards were reordered, or the requirement moved into the declaration
+// where probeElement's own def.Attrs loop would find it — reads
+// identically to a row that is still load-bearing. probeElementBare is
+// the only thing that can put the question, and the answer has to be
+// that the bare probe FAILS.
+func TestEveryPrereqRowIsReached(t *testing.T) {
+	declared := map[string]sweepTarget{}
+	for _, tg := range sweepTargets(t) {
+		declared[tg.def.Name+"."+tg.attr.Name] = tg
+	}
+	if len(declared) == 0 {
+		t.Fatal("no declarations found: this guard would pass vacuously")
+	}
+	checked := 0
+	for key, seeds := range probePrereqs {
+		tg, ok := declared[key]
+		if !ok {
+			t.Errorf("probePrereqs has a row for %s, which no element declares as "+
+				"a sweepable attribute any more", key)
+			continue
+		}
+		// The value the row exists to let through. literalFor is what
+		// the bind-only arm probes with, and it is the arm the table was
+		// added for; a row added for a different arm would need its own
+		// case here rather than a wider net.
+		value := literalFor(tg.attr)
+		if value == "" {
+			continue
+		}
+		checked++
+		bare := harnessFor(tg.attr.Name, probeElementBare(t, tg.def, tg.attr.Name, value))
+		if _, err := Build([]byte("<Gooey>"+bare+"</Gooey>"), defaultsContext()); err == nil {
+			t.Errorf("probePrereqs seeds %v for %s on the grounds that the probe "+
+				"cannot be built without them — and the bare probe <%s %s=%q> loads. "+
+				"The row seeds nothing the element still needs and should go",
+				seeds, key, tg.def.Name, tg.attr.Name, value)
+		}
+	}
+	// NON-VACUITY, the same floor the narrowing guard carries: a
+	// sweepTargets that stopped producing these attributes would skip
+	// every row and report nothing.
+	if checked == 0 {
+		t.Errorf("no probePrereqs row was reached through sweepTargets, so the "+
+			"counterfactual above ran on nothing (%d rows declared)",
+			len(probePrereqs))
+	}
+}
+
 // literalAcceptSweep is the arm's body, EXTRACTED so the classification
 // can be driven by a caller that knows the answer — the same reason
 // bindSweep is a function, stated in its own doc.
