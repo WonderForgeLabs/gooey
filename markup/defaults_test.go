@@ -165,6 +165,20 @@ func literalFor(a AttrSpec) string {
 // of the omission side of the comparison.
 func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
+	return probeElementMaybeCompanion(t, def, attr, value, true)
+}
+
+// probeElementBare is the same probe with unreachableWithoutCompanion NOT
+// applied. It exists for one caller: the guard that asks whether a row in
+// that table is still load-bearing, which can only ask by building the
+// document the row was written to replace.
+func probeElementBare(t *testing.T, def *ElementDef, attr, value string) string {
+	t.Helper()
+	return probeElementMaybeCompanion(t, def, attr, value, false)
+}
+
+func probeElementMaybeCompanion(t *testing.T, def *ElementDef, attr, value string, companion bool) string {
+	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
 	// EVERY PROBE NAMES ITSELF, and it is not decoration.
@@ -208,6 +222,15 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 			continue
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
+	}
+	// A SECOND ATTRIBUTE THE ONE UNDER TEST NEEDS, and it is the same
+	// shape of gap as Name above: a requirement that is real, is enforced
+	// by the builder, and has nowhere in the declaration to be written,
+	// so the loop that reads def.Attrs cannot learn it. Without it the
+	// probe is refused for the companion's absence and the declaration
+	// under test is never reached. See unreachableWithoutCompanion.
+	if c, ok := unreachableWithoutCompanion[def.Name+"."+attr]; companion && ok {
+		fmt.Fprintf(&b, " %s=%q", c.attr, c.value)
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)

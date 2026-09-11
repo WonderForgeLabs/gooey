@@ -836,6 +836,41 @@ var narrowerThanItsKind = map[string]struct {
 // shape. See Companion.Path for the row that cannot be one.
 func lit(s string) func() string { return func() string { return s } }
 
+// unreachableWithoutCompanion names the attributes a probe cannot reach
+// without a SECOND attribute beside them on the same element, keyed
+// "<Element>.<Attr>", with the attribute to add and the reason.
+//
+// It is the Binds counterpart of narrowerThanItsKind, and it is a
+// different gap from a narrow value: the probe's value is fine, and the
+// element refuses before it is ever looked at. <Frozen AllowError> is
+// only meaningful beside a BOUND Allow — it reports that Allow's parse,
+// and elements.go checks the pairing first — so a probe that writes
+// AllowError alone is refused for the missing Allow, and the thing the
+// sweep is asking about goes unanswered. The pairing is enforced by the
+// builder and declared nowhere, which is exactly why probeElement's loop
+// over def.Attrs cannot learn it, and why this is the same shape of gap
+// as the universal Name that loop also cannot learn.
+//
+// The element is NOT wrong here and reordering it would be the wrong
+// fix: <Frozen Allow="{{.A}}" AllowError="oops"> already refuses with
+// "not a binding expression", which is the rule this sweep is checking —
+// pinned by TestAllowErrorRefusesWhatCannotReceiveASet's first arm. Only
+// the probe was incomplete.
+//
+// It is a per-attribute table, so it carries the guard a per-attribute
+// table needs: TestEveryCompanionRowIsReached fails both on a row whose
+// attributes the vocabulary no longer declares and on a row that has
+// stopped making a difference. Raised by #495, where the gap had main
+// red: the arm counted 23 and the twenty-fourth declaration was never
+// asked the question.
+var unreachableWithoutCompanion = map[string]struct {
+	attr, value, why string
+}{
+	"Frozen.AllowError": {"Allow", "{{.S}}",
+		"the channel reports a BOUND Allow's parse, so without one there is " +
+			"nothing it could ever carry and the element says so first"},
+}
+
 // validLiteralFor is a per-KIND table with a named per-attribute
 // exception list, and the split is the point. Kind is a closed set the
 // type system already names, so the table cannot go stale the way a list
@@ -1213,6 +1248,92 @@ func TestEveryNarrowedLiteralIsReached(t *testing.T) {
 		t.Errorf("no narrowed row was reached through sweepTargets, so the "+
 			"counterfactual above ran on nothing (%d rows declared)",
 			len(narrowerThanItsKind))
+	}
+}
+
+// TestEveryCompanionRowIsReached is the guard unreachableWithoutCompanion
+// needs, and it asks both halves TestEveryNarrowedLiteralIsReached asks.
+//
+// A row naming attributes the vocabulary no longer declares pairs
+// nothing, and a row whose companion has stopped mattering — the builder
+// relaxed, the pairing moved into the declaration where probeElement's
+// own loop would find it — is a considered-looking exception to a rule
+// that no longer needs one. Neither would be noticed: the sweep writes
+// the companion, the element loads, and the count reads the same either
+// way. So the second half is the counterfactual, and probeElementBare is
+// the only thing that can put the question.
+func TestEveryCompanionRowIsReached(t *testing.T) {
+	type target struct {
+		def  *ElementDef
+		attr AttrSpec
+	}
+	declared := map[string]target{}
+	for _, tg := range sweepTargets(t) {
+		declared[tg.def.Name+"."+tg.attr.Name] = target{tg.def, tg.attr}
+	}
+	if len(declared) == 0 {
+		t.Fatal("no declarations found: this guard would pass vacuously")
+	}
+	checked := 0
+	for key, c := range unreachableWithoutCompanion {
+		tg, ok := declared[key]
+		if !ok {
+			t.Errorf("unreachableWithoutCompanion has a row for %s (%s), which no "+
+				"element declares as a sweepable attribute any more", key, c.why)
+			continue
+		}
+		def, attr := tg.def, tg.attr.Name
+		if c.attr == attr {
+			t.Errorf("unreachableWithoutCompanion pairs %s with ITSELF, so the probe "+
+				"writes the attribute twice and the row states nothing", key)
+			continue
+		}
+		pairs := false
+		for _, a := range def.Attrs {
+			if a.Name == c.attr {
+				pairs = true
+				break
+			}
+		}
+		if !pairs {
+			t.Errorf("unreachableWithoutCompanion pairs %s with %q (%s), which <%s> "+
+				"does not declare", key, c.attr, c.why, def.Name)
+			continue
+		}
+
+		// THE COUNTERFACTUAL, and it is a COMPARISON rather than a
+		// failure. "the bare probe still fails" is what this asked
+		// first, and it is vacuous here in a way it is not for
+		// narrowerThanItsKind: every row in this table is on a bind-only
+		// attribute probed with a literal, so the bare probe fails
+		// whatever the companion does. The row's claim is not that the
+		// document breaks without it — it is that the document breaks
+		// DIFFERENTLY, for the companion's absence rather than for the
+		// rule under test. So compare the two refusals: a row that has
+		// stopped mattering produces the same message either way.
+		value := literalFor(tg.attr)
+		_, bare := Build([]byte("<Gooey>"+
+			harnessFor(attr, probeElementBare(t, def, attr, value))+"</Gooey>"), defaultsContext())
+		_, with := Build([]byte("<Gooey>"+
+			harnessFor(attr, probeElement(t, def, attr, value))+"</Gooey>"), defaultsContext())
+		switch {
+		case bare == nil:
+			t.Errorf("unreachableWithoutCompanion adds %s=%q to every %s probe on the "+
+				"grounds that %s — and <%s %s=%q> loads without it, so the probe was "+
+				"never blocked and the row pairs nothing",
+				c.attr, c.value, key, c.why, def.Name, attr, value)
+		case with != nil && bare.Error() == with.Error():
+			t.Errorf("unreachableWithoutCompanion adds %s=%q to every %s probe on the "+
+				"grounds that %s — and the refusal is the same either way (%v), so the "+
+				"companion changes nothing. The row should go, or the reason it states "+
+				"is no longer the reason", c.attr, c.value, key, c.why, bare)
+		}
+		checked++
+	}
+	if len(unreachableWithoutCompanion) > 0 && checked == 0 {
+		t.Errorf("no companion row was reached through sweepTargets, so the "+
+			"counterfactual above ran on nothing (%d rows declared)",
+			len(unreachableWithoutCompanion))
 	}
 }
 
