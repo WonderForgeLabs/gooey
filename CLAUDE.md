@@ -73,6 +73,42 @@ grep '^# ' vendor/modules.txt | awk '{print $2}' |
   grep -v '^github.com/WonderForgeLabs/gooey' | sort -u | wc -l
 ```
 
+## The root checkout holds `main`, and only `main`
+
+A branch can be checked out in **one** worktree at a time, and this repo
+routinely has five to fifteen agents live at once in their own. So the
+primary clone is `main`'s: branch work is `git worktree add`, never a
+`git checkout` at the root. A worktree bases on `origin/main` — not on
+`main`, which the root is holding:
+
+```sh
+git fetch origin main
+git worktree add ../gooey-worktrees/<name> -b <branch> origin/main
+```
+
+Both halves of that pin are enforced by git, and the error names the
+holder, so neither is the silent part:
+
+```
+fatal: 'main' is already used by worktree at '…/gooey'
+```
+
+What *is* silent is how the root stops holding `main`. Two ways, and the
+cost of each is that nobody can check `main` out until someone notices:
+
+- **A stray `git checkout` at the root**, which then also carries any
+  uncommitted edits onto whatever branch it lands on.
+- **A worktree whose directory is gone still holds its branch** — the
+  common case being one under `/tmp`, which does not survive a reboot.
+  `git worktree list` marks it `prunable` and `git worktree prune`
+  releases it. Until then `main` is checked out *nowhere you can reach*,
+  and the refusal above points at a path that no longer exists.
+
+Recovering a root found on a branch: archive the diff to a file **and**
+stash it with a message, then switch. Never a bare `git stash` (the stash
+is repo-global and shared with every one of those agents) and never
+`git reset --hard` — the edits at the root are the one copy.
+
 ## Verify
 
 ```sh
@@ -238,14 +274,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:825`, in
+deliberately outside any evaluation context (`composer.go:1013`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:537`).
+separate observer for that (`Composer.armVisibility`, `composer.go:725`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:409`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:440`), so reading a property while painting *is* the damage
+(`composer.go:597`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:628`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -319,7 +355,7 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `appendByRank` (`composer.go:402`, a package-level
+between two — and `appendByRank` (`composer.go:410`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
@@ -398,7 +434,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:209`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:223`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
