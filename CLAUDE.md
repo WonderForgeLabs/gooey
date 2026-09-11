@@ -73,6 +73,42 @@ grep '^# ' vendor/modules.txt | awk '{print $2}' |
   grep -v '^github.com/WonderForgeLabs/gooey' | sort -u | wc -l
 ```
 
+## The root checkout holds `main`, and only `main`
+
+A branch can be checked out in **one** worktree at a time, and this repo
+routinely has five to fifteen agents live at once in their own. So the
+primary clone is `main`'s: branch work is `git worktree add`, never a
+`git checkout` at the root. A worktree bases on `origin/main` — not on
+`main`, which the root is holding:
+
+```sh
+git fetch origin main
+git worktree add ../gooey-worktrees/<name> -b <branch> origin/main
+```
+
+Both halves of that pin are enforced by git, and the error names the
+holder, so neither is the silent part:
+
+```
+fatal: 'main' is already used by worktree at '…/gooey'
+```
+
+What *is* silent is how the root stops holding `main`. Two ways, and the
+cost of each is that nobody can check `main` out until someone notices:
+
+- **A stray `git checkout` at the root**, which then also carries any
+  uncommitted edits onto whatever branch it lands on.
+- **A worktree whose directory is gone still holds its branch** — the
+  common case being one under `/tmp`, which does not survive a reboot.
+  `git worktree list` marks it `prunable` and `git worktree prune`
+  releases it. Until then `main` is checked out *nowhere you can reach*,
+  and the refusal above points at a path that no longer exists.
+
+Recovering a root found on a branch: archive the diff to a file **and**
+stash it with a message, then switch. Never a bare `git stash` (the stash
+is repo-global and shared with every one of those agents) and never
+`git reset --hard` — the edits at the root are the one copy.
+
 ## Verify
 
 ```sh
