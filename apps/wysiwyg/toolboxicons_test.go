@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -312,23 +310,23 @@ func TestShippedIconsAreDistinctAssets(t *testing.T) {
 		return name
 	}
 
-	entries, err := os.ReadDir(toolbox.Dir)
-	if err != nil {
-		t.Fatalf("the icon directory does not read: %v", err)
-	}
-
+	// THROUGH digestDir, which is the same walk this test used to carry
+	// its own copy of — same directory, same .svg filter, same sha256.
+	//
+	// Sharing it is not only shorter. The browser/window alias allowed
+	// above is recorded in VERIFIED.sha256 as one digest against two
+	// names, so reading the digests from the same function makes the two
+	// claims agree BY CONSTRUCTION rather than by two hand-written
+	// assertions that could drift. Raised in review of #487. (The
+	// 31-hex-character digest in the paragraph above is upstream's own
+	// published id and is neither of these hashes; it is quoted as a
+	// provenance pointer, not as something to compare against.)
+	// digestDir keys by FILENAME; the alias map and this test's messages
+	// are in icon names, which is what a catalog entry carries.
+	onDisk := digestDir(t, toolbox.Dir)
 	byDigest := map[string][]string{}
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".svg" {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(toolbox.Dir, e.Name()))
-		if err != nil {
-			t.Errorf("%s does not read: %v", e.Name(), err)
-			continue
-		}
-		name := strings.TrimSuffix(e.Name(), ".svg")
-		d := fmt.Sprintf("%x", sha256.Sum256(b))
+	for file, d := range onDisk {
+		name := strings.TrimSuffix(file, ".svg")
 		byDigest[d] = append(byDigest[d], name)
 	}
 	if len(byDigest) == 0 {

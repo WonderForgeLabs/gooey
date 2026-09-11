@@ -100,12 +100,24 @@ regions. They should probably be designed together.
 
 ## Related
 
-`Canvas` (landed in the same pass) exposes the same underlying limit
+`Canvas` (landed in the same pass) exposed the same underlying limit
 without introducing it: overlapping children are legal there, and an
-occluded child repainting alone paints over its occluder. That is pinned
-by `TestCanvasOverlapRepaintLeavesOccluderDamaged` and documented in the
-`Canvas` doc comment. Both are the same missing capability — the composer
-has no notion of z-order — seen from two directions.
+occluded child repainting alone painted over its occluder.
+
+**That was fixed, and this paragraph outlived the fix by a rename.** It
+cited TestCanvasOverlapRepaintLeavesOccluderDamaged, which documented
+the artifact; the pin is now
+`TestCanvasOverlapRepaintRepaintsTheOccluderAbove`, which asserts the
+opposite — repainting the occluded child forces its occluder to repaint
+above it in the same frame, and the frame after settles to 0. The
+inversion is recorded at "Executed (2026-08-10)" below; only this
+sentence was left behind.
+
+Two things are still true. Ordinary siblings have no z-order beyond
+document order, and the covered/force mechanism is what stands in for one
+here; the single exception is the `Overlay` layer, which lifts an
+overlay subtree to the end of the paint order (`orderPaint`). Found by
+the orphaned-name sweep in #468.
 
 ---
 
@@ -236,7 +248,7 @@ intent: `TestChildRepaintAloneLeavesNoHoleInBackground` (1 component, no
 hole), `TestContainerRepaintOverBackgroundRepaintsSubtreeAndWipesNothing`
 (border + forced child, nothing wiped, settles to 0),
 `TestCanvasOverlapRepaintRepaintsTheOccluderAbove` (the inverted pin —
-formerly `TestCanvasOverlapRepaintLeavesOccluderDamaged`, which
+formerly TestCanvasOverlapRepaintLeavesOccluderDamaged, which
 documented the artifact). Plus
 `TestBackgroundChangeRepaintsTheLeavesThatClearAgainstIt` (the automatic
 dependency), `TestStackBackgroundFillsTheGapCells` (the gap cells that

@@ -905,6 +905,21 @@ func (p *valueEditor) listKey(ev input.KeyEvent) bool {
 
 // stepperKey is ◂ and ▸ on a number, written back on every press so the
 // document follows the key rather than waiting for enter.
+//
+// IT STOPS AT ZERO, and that is the loader's rule rather than this
+// editor's taste. Every literal int in the vocabulary is a measurement in
+// cells — an extent, a count, an index or an offset — so markup.litInt
+// refuses a negative one. Without the floor, one ◂ on <HStack Gap="0">
+// wrote Gap="-1" and the pane that exists to emit markup that LOADS
+// emitted markup that does not: the status line goes red on a keypress
+// the user cannot undo by pressing the opposite arrow, because ▸ from -1
+// lands back on 0 having spent two presses saying nothing.
+//
+// UNCONDITIONAL rather than per-attribute, because the stepper opens on
+// KindInt alone (see the editors table) and every KindInt declaration is
+// BindsLiteral — TestTheStepperFloorMatchesTheLoadersRule reads both
+// halves out of the catalog rather than trusting this sentence. Raised in
+// review of #470.
 func (p *valueEditor) stepperKey(ev input.KeyEvent) bool {
 	d := 0
 	switch ev {
@@ -923,7 +938,11 @@ func (p *valueEditor) stepperKey(ev input.KeyEvent) bool {
 	if err != nil {
 		n = 0
 	}
-	p.Write(strconv.Itoa(n + d))
+	n += d
+	if n < 0 {
+		n = 0
+	}
+	p.Write(strconv.Itoa(n))
 	return true
 }
 
