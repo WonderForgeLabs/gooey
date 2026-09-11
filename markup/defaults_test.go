@@ -221,6 +221,15 @@ var probePrereqs = map[string]map[string]string{
 	"MenuItem.Checked": {"Text": "Open"},
 	"MenuItem.Command": {"Text": "Open"},
 	"MenuItem.Gesture": {"Text": "Open"},
+	// AND ICON NEEDS TWO. An Icon without an IconRune is a load error by
+	// design — the gutter is reserved whatever the terminal can do, so
+	// an Icon alone would draw blank columns forever on a terminal with
+	// no graphics protocol (#400) — which is the same shape as the Text
+	// rows above: a requirement that holds only in the presence of
+	// another attribute. The path itself is narrowed in
+	// narrowerThanItsKind; this row is only what has to sit beside it.
+	"MenuItem.Icon":     {"Text": "Open", "IconRune": "O"},
+	"MenuItem.IconRune": {"Text": "Open"},
 	// <Frozen AllowError> is refused without a BOUND Allow beside it —
 	// "the only failure it can report is an unparseable set" (#459) —
 	// and that guard runs before the bind-only check, so the sweep never

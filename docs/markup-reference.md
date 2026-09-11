@@ -653,8 +653,9 @@ A Tabs sizes to its **active** page (plus one strip row). Pages of different hei
 ```xml
 <MenuBar Grid.Row="0" Style="accent">
   <Menu Title="Job">
-    <MenuItem Text="Start" Gesture="ctrl+s" Command="{{.Start}}"/>
-    <MenuItem Text="Abort" Gesture="ctrl+x" Command="{{.Abort}}"/>
+    <MenuItem Text="Start" Gesture="ctrl+s" Command="{{.Start}}"
+              Icon="assets/start.png" IconRune="▶"/>
+    <MenuItem Text="Abort" Gesture="ctrl+x" Command="{{.Abort}}" IconRune="■"/>
     <MenuItem Separator="true"/>
     <MenuItem Text="Quit" Gesture="q" Command="{{.Quit}}"/>
   </Menu>
@@ -676,11 +677,14 @@ They are nonetheless **declared elements** with the exhaustive attribute surface
 | `<MenuItem Text="…">` | One entry. Required unless `Separator="true"`. Takes the same mnemonic marker as `Title`; while the menu is open, typing the letter activates the item. |
 | `MenuItem Command` | Resolved like `Click` — a binding or a bare handler name. Absent is inert: activating just closes the menu. A conditional command (`Cmd.When`) paints the item `Dim` and refuses activation while its condition says no; the condition is read while painting, so the flip repaints the open dropdown by itself. |
 | `MenuItem Gesture` | A **display hint** in the gesture syntax, validated by `input.ParseGesture` at load (a typo is a load error) and shown right-aligned in the canonical spelling. It does not bind the key — declare a `KeyBinding` for that. |
-| `MenuItem Separator` | A bool: `"true"`, `"1"`, `"T"` and the rest of Go's spellings draw a rule. Anything unreadable is a load error rather than a silently ordinary item. |
+| `MenuItem Separator` | A bool — `"true"`, `"1"`, `"T"` and the rest of Go's spellings — and anything unreadable is a load error rather than a silently ordinary item. It draws a rule instead of an item, and it carries **nothing else**: `Text`, `Gesture`, `Checked`, `Command`, `Icon` and `IconRune` on a separator are load errors. A separator draws none of them, and an accepted-then-ignored attribute is the silent drop this vocabulary exists to refuse. |
+| `MenuItem Icon` / `IconRune` | The item's leading picture, in the framework's usual two tiers — **except that here the two tiers draw different things, not the same thing at two fidelities.** Elsewhere the cell-plane fallback is a halfblock rendering of the same image; a dropdown row is one cell tall, so that is two vertical samples for the whole glyph, and [#400](https://github.com/WonderForgeLabs/gooey/issues/400) measured two clearly different icons arriving as the same uniform `▀`. So `Icon` is drawn only where the terminal has a graphics protocol, and `IconRune` is what everywhere else shows — a glyph you choose, not a degraded picture. **Set both — an `Icon` without an `IconRune` is a load error.** The gutter is reserved whether or not a protocol exists, so an item carrying only the picture draws three blank columns on every terminal that has none, for the life of the program. `IconRune` alone is fine: the cell tier is a complete item, and only the pixel tier needs a partner. `Icon` is a **path in the page's own FS**, the same assets `<Image Src>` loads from, and unlike `Image` it takes no binding: `MenuItem.Icon` is a plain field read while painting, so a bound handle would be sampled once at load and never update, and it is refused at load rather than frozen at runtime. `IconRune` is exactly one glyph — a two-cell emoji is fine, two glyphs are a load error. A menu holding **any** icon gives *every* item a three-column gutter, whether or not a protocol exists, so the dropdown measures the same either way and does not reflow when the capability probe answers. |
 | `MenuItem Checked` | A bound **read** of a bool handle — source or computed — and bind-only: a literal `Checked="true"` is a load error, because a check that cannot change is a rule, not state. Not two-way, and the difference matters: unlike `Checkbox`/`Toggle`, nothing writes back through this binding. The write path is the item's own `Command`, which is why pointing `Checked` at a `prop.NewComputed` derived from that state is the intended shape — a check nothing can set by accident. Point it at the same state the item's `Command` (and any `KeyBinding` for the same action) writes, so the box and the key have one source between them rather than two that drift. It is read while the dropdown paints, so a flip from anywhere repaints the open dropdown and nothing else. A menu holding **any** checkable item gives *every* item a leading column, so plain items stay aligned instead of stepping one cell left. |
 | `Style` | Bar and dropdown style. Named or bound. |
 
-**Declare the `MenuBar` as the LAST child of its container.** Document order is z-order, so being last is what paints the dropdown above the content it drops over; in a `Grid`, `Grid.Row="0"` still places the bar on the top row — element order and layout position are independent, which is exactly what an overlay needs.
+**Declare the `MenuBar` wherever it belongs.** The dropdown surface is a `gooey.Overlay`, so the Composer lifts it out of document order into a paint layer above the page and it covers the content it drops over from anywhere in the tree; in a `Grid`, `Grid.Row="0"` places the bar on the top row as usual.
+
+*"Declare the `MenuBar` as the LAST child of its container"* is what this said, and [#430](https://github.com/WonderForgeLabs/gooey/issues/430) is the bug that disproved it: being last bought being above the bar's own siblings, so a `MenuBar` on the wysiwyg designer canvas — beside a `Gauge`, an `ItemsView` and a `Border` — had its dropdown painted over on the very next repaint. Position is free for the bar. It is **not** yet free for `ToastHost` or `AdornmentLayer`, which are not lifted; see their sections below.
 
 The bar is a focus stop. `enter`/`↓`/`space` open the highlighted menu; while open, `←`/`→` switch menus, `↑`/`↓` move the highlight (separators are skipped), `enter` activates, a plain **letter** activates the item wearing it as its accelerator (a disabled match moves the highlight and refuses), `alt+letter` switches to the matching menu, `esc` dismisses, and everything else is swallowed — an open menu is modal, so page gestures cannot fire underneath it. Dismissing **restores focus** to whatever had it when the menu opened: for a mouse-open that is the component focus-follows-click took it from, so clicking a menu while typing in a `TextBox` and pressing `esc` puts the caret back.
 
@@ -1198,7 +1202,7 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1773`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1952`) is:
 
 | Handle | Plain value | Rendered as |
 |---|---|---|

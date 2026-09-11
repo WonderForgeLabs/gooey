@@ -738,9 +738,17 @@
       <StatusBar.Right><ServeAddrs/></StatusBar.Right>
     </StatusBar>
 
-    <!-- THE MENUS, declared LAST for z-order and placed on row 0 by
-         Grid.Row — the two are independent, which is exactly what an
-         overlay needs.
+    <!-- THE MENUS. Declared last and placed on row 0 by Grid.Row —
+         but the DROPDOWN does not depend on the first half of that.
+         It is a Popup surface, so it implements gooey.Overlay and is
+         lifted out of document order into the paint layer above the
+         page. THIS FILE IS #430's OWN REPRODUCTION — a MenuBar beside
+         a Gauge, an ItemsView and a Border, whose menu was painted
+         over on the frame after it opened — so the stale rule surviving
+         here specifically is the one that costs a reader the most.
+
+         Position and z-order are independent here, which is exactly
+         what an overlay needs.
 
          VIEW → CODE IS FLATTENED, and that is a framework limit stated
          rather than worked around: components.Menu is ONE level (Menu →

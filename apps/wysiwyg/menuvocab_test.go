@@ -239,15 +239,59 @@ func TestASelectedMenuItemOffersItsAttributes(t *testing.T) {
 	for _, r := range ed.attrRows() {
 		got[r.name] = true
 	}
-	// Every attribute buildMenuBar reads off a <MenuItem>. Text is the
-	// one the issue asked for; the rest are here because a grid that
-	// offers the label and hides the accelerator is the same defect one
-	// row narrower.
-	for _, want := range []string{"Text", "Gesture", "Checked", "Command", "Separator"} {
-		if !got[want] {
-			t.Errorf("a selected <MenuItem> has no %q row: %v", want, got)
+	// EVERY ATTRIBUTE THE VOCABULARY DECLARES, taken from the catalog
+	// rather than written out.
+	//
+	// This was a hand-written list, and the argument in its comment —
+	// "worth extending rather than replacing with a count", because the
+	// feature ships when somebody can set the attribute without opening
+	// $EDITOR — is right about the CLAIM and was wrong about how to hold
+	// it. A list has to be extended by whoever adds an attribute, and
+	// nothing makes them; the catalog is what the loader and the palette
+	// both read, so deriving from it asserts the claim for attributes
+	// nobody has declared yet. Icon and IconRune, #400's designer half,
+	// are covered by construction rather than by having been remembered.
+	//
+	// It crosses a MODULE boundary, which is why it goes through
+	// markup.BuiltinElements() rather than defMenuItem: apps/wysiwyg is
+	// its own module and that is the exported seam. Raised in review of
+	// #455.
+	want := declaredAttrs(t, "MenuItem")
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("a selected <MenuItem> has no %q row: %v", w, got)
 		}
 	}
+}
+
+// declaredAttrs is the vocabulary's own answer to "what does this
+// element take", with the floors a derived list needs: the element has
+// to exist, and its attributes have to be EXHAUSTIVE — an element whose
+// AttrsKnown is false reports what could be discovered, which is a
+// different statement from what it declares, and asserting over it would
+// quietly weaken every caller.
+func declaredAttrs(t *testing.T, elem string) []string {
+	t.Helper()
+	for _, e := range markup.BuiltinElements() {
+		if e.Name != elem {
+			continue
+		}
+		if !e.AttrsKnown {
+			t.Fatalf("<%s> reports AttrsKnown=false, so its Attrs is what could be "+
+				"discovered rather than what it declares — deriving an assertion "+
+				"from it would pass for an incomplete set", elem)
+		}
+		if len(e.Attrs) == 0 {
+			t.Fatalf("<%s> declares no attributes, so this assertion is vacuous", elem)
+		}
+		out := make([]string, 0, len(e.Attrs))
+		for _, a := range e.Attrs {
+			out = append(out, a.Name)
+		}
+		return out
+	}
+	t.Fatalf("the catalog has no <%s>", elem)
+	return nil
 }
 
 // TestASelectedMenuOffersItsTitle is the sibling case, and it is not

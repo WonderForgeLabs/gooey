@@ -355,10 +355,28 @@ func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
 	for _, tc := range []struct {
 		name, attrs string
 		sep, load   bool
+		// want is the phrase the refusal has to carry, for rows refused
+		// by a rule other than the bool grammar. Empty means Separator.
+		want string
 	}{
 		{name: `"true"`, attrs: `Separator="true"`, sep: true, load: true},
 		{name: `"false"`, attrs: `Separator="false" Text="Open"`, sep: false, load: true},
 		{name: "absent", attrs: `Text="Open"`, sep: false, load: true},
+		// THE TWO RULES COMPOSE, and this is the row that says so.
+		// Reading the bool properly is what routes this document into
+		// the separator branch at all; #455's refusal is what names the
+		// real mistake once there. Read as == "true" it was neither — a
+		// silently ordinary item.
+		//
+		// SPELLED "true", NOT "True". This row arrived on #456 with the
+		// laxer spelling, which reached the composition through
+		// ParseBool; #470 narrowed the grammar, so "True" is now refused
+		// by the bool rule and never gets as far as the one this row
+		// exists for. A composition test written against the first of
+		// two rules stops testing the second the moment that first rule
+		// tightens, and passes throughout.
+		{name: `"true" with a Text`, attrs: `Separator="true" Text="Open"`,
+			want: "carries nothing else"},
 		// THE FOUR SPELLINGS ParseBool TAKES AND litBool DOES NOT. Each
 		// of these rendered as an ordinary item, silently, when Text was
 		// present — that is the bug this test was written for — and each
@@ -383,8 +401,12 @@ func TestTheSeparatorIsReadAsTheBoolItIsDeclared(t *testing.T) {
 					t.Fatal("loaded. An unreadable bool falls back to false, which " +
 						"turns a typo into an ordinary item where the author wrote a rule")
 				}
-				if !strings.Contains(err.Error(), "Separator") {
-					t.Errorf("the error does not name the attribute: %v", err)
+				want := tc.want
+				if want == "" {
+					want = "Separator"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the error does not carry %q: %v", want, err)
 				}
 				return
 			}
