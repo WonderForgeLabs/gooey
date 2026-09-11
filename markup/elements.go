@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
@@ -88,7 +87,11 @@ var defText = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		if e.Attrs["Bold"] == "true" {
+		bold, err := litBool(e, "Bold")
+		if err != nil {
+			return nil, err
+		}
+		if bold {
 			// Bold composes over either form of Style, so it wraps the
 			// handle rather than mutating a value — a bound style stays
 			// live and still gets its bold.
@@ -179,8 +182,26 @@ var defButton = &ElementDef{
 // element has no bounds to place, and that omission is preserved by
 // TakesLayout rather than by this list.
 var defCompanion = &ElementDef{
-	Name:  "Companion",
-	Icon:  "terminal",
+	Name: "Companion",
+	Icon: "terminal",
+	// PATH="TRUE" IS A REAL DEPENDENCY ON THE MACHINE, and it is named
+	// here rather than left for somebody to discover.
+	//
+	// companionPath resolves a bare name through exec.LookPath and a
+	// pathful one through os.Stat, so EVERY loadable value of this
+	// attribute has to exist — there is no placeholder that merely
+	// parses. A seed must load (TestEverySeededElementLoadsAndOccupies
+	// Space), so the seed names something a POSIX box has. `./job` was
+	// tried and fails on the stat.
+	//
+	// What that cost was invisible: probeElement reads this seed for the
+	// required Path, so on a box without coreutils every <Companion>
+	// probe in every sweep arm came back UNVERIFIED — which reads as
+	// "the harness cannot construct this element" and is not what
+	// happened, and unverified is not a failure. TestNoSweepProbe
+	// DependsOnAnInstalledBinary is the guard: it fails BY CAUSE, naming
+	// the missing binary, instead of letting a whole element go quietly
+	// unchecked. Raised in review of #470.
 	Seed:  "<Companion Name=\"job\" Path=\"true\" Exited=\"{{.Exited}}\"/>",
 	Proto: &components.Companion{},
 	Known: true,
@@ -192,7 +213,16 @@ var defCompanion = &ElementDef{
 		{Name: "Exited", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
 		{Name: "KillDelay", Kind: KindDuration, Binds: BindsLiteral, Origin: OriginBuiltin},
 		{Name: "Log", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
-		{Name: "Path", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
+		// REQUIRED, and declared so. buildCompanion refuses a
+		// <Companion> without one ("needs a Path (the executable)"), and
+		// this said otherwise — so every consumer that reads Required to
+		// decide what a new element must carry got it wrong, and the
+		// sweep harness could not build the element at all. No Default:
+		// TestDeclaredDefaultsRenderIdenticallyToOmission checks a
+		// declared default by RENDERING it, which a non-visual element
+		// cannot do, and there is no honest default for "which binary"
+		// anyway. Found in review of #470.
+		{Name: "Path", Kind: KindString, Binds: BindsLiteral, Required: true, Origin: OriginBuiltin},
 		{Name: "StopTimeout", Kind: KindDuration, Binds: BindsLiteral, Origin: OriginBuiltin},
 	},
 	Slots:    []SlotSpec{{Name: "Args"}, {Name: "Env"}},
@@ -238,12 +268,31 @@ var defValidate = &ElementDef{
 // disagree. The rule kinds differ (MinLen is an int, Required a bool,
 // Pattern a regexp) and are named here because the loop that consumes
 // them cannot say so.
+//
+// THE FALLTHROUGH IS PART OF THE ANSWER, and this comment used to read
+// as though every kind were named. Three are not: Pattern is a regular
+// expression, and MinValue/MaxValue are floating-point bounds. There is
+// no Kind for either, so they land on KindString — "literal only, used
+// verbatim", which is true and says nothing about the grammar.
+//
+// Inventing KindRegexp and KindFloat is not a local change: Kind is read
+// by the wysiwyg property grid, by catalogen, and by the reference
+// generator, and each would need to learn an editor and a validator for
+// a kind with three attributes in it. What the vocabulary loses by not
+// having them is one thing — a probe value the sweeps can derive — and
+// narrowerThanItsKind carries that instead, per attribute, with
+// TestEveryNarrowedLiteralIsReached keeping the rows honest. Recorded as
+// a decision rather than left as a default. Raised in review of #470.
 func validateBuiltinAttrs() []AttrSpec {
 	kinds := map[string]Kind{
 		"MinLen": KindInt, "MaxLen": KindInt,
 		"Required": KindBool, "EmailAddress": KindBool, "Url": KindBool,
 		"Phone": KindBool, "CreditCard": KindBool, "Digits": KindBool,
 		"Integer": KindBool,
+		// NO KIND OF THEIR OWN — see the paragraph above. Spelled out
+		// rather than left to the fallthrough, so the reader is not left
+		// deciding whether the omission was deliberate.
+		"Pattern": KindString, "MinValue": KindString, "MaxValue": KindString,
 	}
 	out := make([]AttrSpec, 0, len(validateBuiltins))
 	for _, n := range validateBuiltins {
@@ -353,6 +402,11 @@ var defFrozen = &ElementDef{
 		// "always frozen".
 		{Name: "Active", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin},
 		{Name: "Allow", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+		// Bind-only, and for a different reason than Active above: this
+		// is a WRITE target. The framework Sets it, so a literal has
+		// nowhere for the message to go — it would read as configured
+		// and report nothing forever.
+		{Name: "AllowError", Kind: KindBinding, Binds: BindsBinding, GoType: "string", Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeOne},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -371,7 +425,13 @@ var defFrozen = &ElementDef{
 			}
 			f.Active = active
 		}
+		// Whether Allow is BOUND is asked twice: here, to decide whether
+		// it is checkable at load, and again by AllowError, which accepts
+		// nothing else. Spelled twice, the two guards have to agree or the
+		// second one is wrong about the first — so it is computed once.
+		allowBound := false
 		if raw := e.Attrs["Allow"]; raw != "" {
+			allowBound = strings.Contains(raw, "{{")
 			// A LITERAL Allow is checked here, at load time, which is the
 			// bargain the rest of markup makes: everything resolvable
 			// resolves before the UI is live. An interpolated one cannot
@@ -380,7 +440,7 @@ var defFrozen = &ElementDef{
 			// AllowError. Checking only what is checkable is the point;
 			// pretending the bound case is checkable would be worse than
 			// admitting it is not.
-			if !strings.Contains(raw, "{{") {
+			if !allowBound {
 				if _, err := gooey.ParseAllow(raw); err != nil {
 					return nil, fmt.Errorf("markup: <Frozen Allow=%q>: %w", raw, err)
 				}
@@ -390,6 +450,148 @@ var defFrozen = &ElementDef{
 				return nil, err
 			}
 			f.Allow = allow
+			// RECORDED FOR EVERY <Frozen> THAT BINDS ONE, whether or not
+			// this element also has an AllowError. The collision is
+			// "somebody else's sink is my source", so the element that
+			// gets erased need not be arming anything itself — see
+			// armScope.allows, and document.build for where the two maps
+			// meet. Raised in review of #459.
+			for h, path := range allowSources(ctx, raw) {
+				if _, seen := ctx.arms.allows[h]; !seen {
+					ctx.arms.allows[h] = path
+				}
+			}
+		}
+		if raw := e.Attrs["AllowError"]; raw != "" {
+			// It reports the parse of a BOUND Allow, and only that. With
+			// no Allow there is no parse; with a LITERAL one the parse
+			// already happened, twenty lines up, and produced a load
+			// error naming the attribute — so the channel could never
+			// carry anything and would read as configured forever.
+			//
+			// ONE term, not two. allowBound is false whenever Allow is
+			// absent (it is only assigned inside the branch that also
+			// assigns f.Allow), so it already covers both the absent and
+			// the literal case. Spelling it as `f.Allow == nil || …`
+			// read as two independent conditions and invited the next
+			// reader to delete whichever looked redundant.
+			if !allowBound {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> without a BOUND Allow: the only failure "+
+						"it can report is an unparseable set, and a set that is absent or "+
+						"literal cannot become one after load", raw)
+			}
+			sink, err := Bound[string](e, ctx, "AllowError")
+			if err != nil {
+				return nil, err
+			}
+			// ALIASED to Allow. <Frozen Allow="{{.X}}" AllowError="{{.X}}">
+			// builds, and then the priming publish overwrites the author's
+			// own allow set with the parse message before the UI is live —
+			// measured: X goes "Focus" -> "" during Build.
+			//
+			// THIS COMPARES RESOLVED HANDLES, and it used to compare
+			// binding TEXT. The reasoning for the text compare was that
+			// "pointer identity cannot catch it, because BoundText wraps a
+			// dynamic attribute in a FRESH computed every call" — true of
+			// the computed, and the wrong handle to compare. The SOURCE
+			// the binding resolves to is stable, and it is available here.
+			//
+			// The text compare missed two spellings that both build
+			// cleanly and both destroy the allow set during Build:
+			//
+			//   Allow="{{.A}} {{.X}}" AllowError="{{.X}}"
+			//       bindingPath takes only the FIRST binding, reads "A",
+			//       never matches "X" (measured: X "Hover" -> "").
+			//   Allow="{{.X}}" AllowError="{{.Y}}", Values[X] == Values[Y]
+			//       two names, one property; the text differs and the
+			//       handle does not (measured: "Focus" -> "").
+			//
+			// The dup-sink guard forty lines below already refuses the
+			// second shape for its OWN question, because it keys by
+			// pointer — so the two guards on one line of defence
+			// disagreed about what "the same property" means, and the
+			// weaker one was the one protecting page state.
+			//
+			// It sits BELOW Bound so `sink` exists. Safe: Bound only
+			// reads, and armAllowError is still the last statement, so
+			// the author's set still survives every refusal above it.
+			// Raised in review of #459.
+			if ap, aliased := aliasesSink(ctx, e.Attrs["Allow"], sink); aliased {
+				return nil, fmt.Errorf(
+					"markup: <Frozen Allow=%q AllowError=%q>: one property cannot be both "+
+						"the allow set and the place its parse failure is reported — "+
+						"publishing would overwrite the set it just read "+
+						"(both resolve to %s)",
+					e.Attrs["Allow"], raw, ap)
+			}
+			// A WRITE target has to be writable, and Bound does not ask —
+			// it resolves handles for reading, which is what every other
+			// attribute on this element wants. A computed derives its
+			// value and has no setter, so armAllowError's priming Set
+			// would panic INSIDE Build: in the one package whose contract
+			// is that everything resolvable resolves before the UI is
+			// live, and under the os.DirFS watcher a rebuild panic takes
+			// the app down instead of showing a load error.
+			//
+			// markup/cond.go names this gap and says the fix belongs in
+			// the two-way binders. AllowError is the package's first
+			// write target, so this is the first place to honour it.
+			if !sink.Settable() {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> is a COMPUTED property: it derives its "+
+						"value and has no setter, so the failure has nowhere to go", raw)
+			}
+			if ctx.Dispatcher == nil {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q> needs ctx.Dispatcher: the failure is "+
+						"published from an invalidation, and a Set from inside one would "+
+						"mutate the graph mid-invalidation", raw)
+			}
+			// A SECOND arm on the same sink. Two <Frozen> publishing to
+			// one property erase each other — see armScope.sinks.
+			//
+			// arms.outer as well, because an ItemsView row's map is
+			// deliberately row-local and would otherwise not see the
+			// PAGE's arms. Checking both while registering only in
+			// arms.sinks is what lets every row arm the same template
+			// sink — not a collision — while a row arming a page-owned
+			// handle still is. Raised in review of #459.
+			was, dup := ctx.arms.sinks[sink]
+			if !dup {
+				was, dup = ctx.arms.outer[sink]
+			}
+			if dup {
+				return nil, fmt.Errorf(
+					"markup: <Frozen AllowError=%q>: already the failure channel for "+
+						"<Frozen AllowError=%q> in this document — two sealed subtrees "+
+						"writing one property erase each other's message, leaving a "+
+						"subtree sealed with nothing to show for it", raw, was)
+			}
+			ctx.arms.sinks[sink] = raw
+			// AND, when this is a nested scope, on the document's record.
+			// The immediate arms.outer check above catches a row realized
+			// AFTER the page's <Frozen>; this is what catches one realized
+			// before, which ItemsView.Validate's throwaway row always is
+			// when the list is declared first. Raised in review of #459.
+			if ctx.arms.outer != nil {
+				if was, dup := ctx.arms.nested.record(sink, raw); dup {
+					return nil, fmt.Errorf(
+						"markup: <Frozen AllowError=%q>: already the failure channel for "+
+							"<Frozen AllowError=%q> in another item template on this page "+
+							"— two sealed subtrees writing one property erase each other's "+
+							"message, and neither template is the page, so nothing else in "+
+							"this build can see the pair", raw, was)
+				}
+			}
+			// THROUGH arms.pending, so a load error later in this build
+			// takes the arm with it. armAllowError both subscribes and
+			// PUBLISHES, and neither is undoable — see armScope.pending
+			// for what a refused build used to leave behind. A row is a
+			// build too: the ItemsView factory opens a carrier per
+			// realization, so this reaches an open one whether it is the
+			// page being loaded or a row being scrolled into view.
+			ctx.arms.pending.arm(func() { armAllowError(f, sink, ctx.Dispatcher) })
 		}
 		if err := attachAll(e, f, attach); err != nil {
 			return nil, err
@@ -422,11 +624,11 @@ var defGrid = &ElementDef{
 		},
 	},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		rows, err := components.ParseGridLens(e.Attrs["Rows"])
+		rows, err := gridLens(e, "Rows")
 		if err != nil {
 			return nil, err
 		}
-		cols, err := components.ParseGridLens(e.Attrs["Cols"])
+		cols, err := gridLens(e, "Cols")
 		if err != nil {
 			return nil, err
 		}
@@ -459,7 +661,10 @@ var defVStack = &ElementDef{
 	Children: ChildSpec{Mode: ModeMany},
 	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		gap, _ := strconv.Atoi(e.Attrs["Gap"])
+		gap, err := litInt(e, "Gap")
+		if err != nil {
+			return nil, err
+		}
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {
 			return nil, err
@@ -489,7 +694,10 @@ var defHStack = &ElementDef{
 	Children: ChildSpec{Mode: ModeMany},
 	Grants:   Grant{Kind: GrantOrder},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
-		gap, _ := strconv.Atoi(e.Attrs["Gap"])
+		gap, err := litInt(e, "Gap")
+		if err != nil {
+			return nil, err
+		}
 		kids, attach, err := buildChildren(e, ctx)
 		if err != nil {
 			return nil, err
@@ -627,7 +835,9 @@ var defGauge = &ElementDef{
 			label = components.Str(e.Attrs["Label"])
 		}
 		g := &components.Gauge{Value: value, Label: label}
-		g.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		if g.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
 		// Style is an override for the threshold ramp, so it is applied
 		// only when the attribute is actually present.
 		if _, ok := e.Attrs["Style"]; ok {
@@ -658,8 +868,12 @@ var defSparkline = &ElementDef{
 			return nil, err
 		}
 		s := &components.Sparkline{Values: series}
-		s.Rows, _ = strconv.Atoi(e.Attrs["Height"])
-		s.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
+		if s.Rows, err = litInt(e, "Height"); err != nil {
+			return nil, err
+		}
+		if s.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
 		if _, ok := e.Attrs["Style"]; ok {
 			if s.Style, err = BoundStyle(e, ctx); err != nil {
 				return nil, err
@@ -814,8 +1028,12 @@ var defProgressBar = &ElementDef{
 			return nil, err
 		}
 		p := &components.ProgressBar{Value: value, Label: label}
-		p.Width, _ = strconv.Atoi(e.Attrs["BarWidth"])
-		p.Thresholds = e.Attrs["Thresholds"] == "true"
+		if p.Width, err = litInt(e, "BarWidth"); err != nil {
+			return nil, err
+		}
+		if p.Thresholds, err = litBool(e, "Thresholds"); err != nil {
+			return nil, err
+		}
 		// Indeterminate is optional, and its absence is load-bearing: a
 		// bar that can never be indeterminate starts no goroutine.
 		if suppliedAttr(e, "Indeterminate") {
@@ -988,12 +1206,15 @@ var defSegmented = &ElementDef{
 		// means on, so the attribute is never written for the default —
 		// which keeps "unset" and "set to the default" the same tree.
 		//
-		// optBool, not `== "true"`: a bool attribute that fell back to
+		// litBool, not `== "true"`: a bool attribute that fell back to
 		// false on an unrecognized spelling would turn Wrap="yes" into
 		// "stop cycling" silently, and this is the attribute where the two
-		// answers are hardest to tell apart by looking.
+		// answers are hardest to tell apart by looking. It was optBool
+		// until review of #470 — same intent, a laxer grammar, so Wrap="1"
+		// loaded here and the identical spelling of ProgressBar Thresholds
+		// did not.
 		if _, ok := e.Attrs["Wrap"]; ok {
-			w, err := optBool(e, "Wrap")
+			w, err := litBool(e, "Wrap")
 			if err != nil {
 				return nil, err
 			}
@@ -1069,8 +1290,12 @@ var defButtonBar = &ElementDef{
 			return nil, err
 		}
 		bar := &components.ButtonBar{Children: kids, Separator: e.Attrs["Separator"]}
-		bar.Gap, _ = strconv.Atoi(e.Attrs["Gap"])
-		bar.Uniform = e.Attrs["Uniform"] == "true"
+		if bar.Gap, err = litInt(e, "Gap"); err != nil {
+			return nil, err
+		}
+		if bar.Uniform, err = litBool(e, "Uniform"); err != nil {
+			return nil, err
+		}
 		if err := attachAll(e, bar, attach); err != nil {
 			return nil, err
 		}
@@ -1118,13 +1343,22 @@ var defToastHost = &ElementDef{
 			return nil, err
 		}
 		h := &components.ToastHost{Style: st}
-		if raw, ok := e.Attrs["Duration"]; ok {
-			d, err := time.ParseDuration(strings.TrimSpace(raw))
-			if err != nil {
-				return nil, fmt.Errorf("markup: <ToastHost Duration=%q>: %w", raw, err)
-			}
-			h.Duration = d
+		// signedDuration, and the SIGNED half is the point.
+		//
+		// This read the attribute itself, so an empty value answered
+		// with time's own wording rather than the sentence that tells
+		// the author omitting it is how to ask for the default. The
+		// first fix routed it through optDuration, which also brought
+		// the positivity rule — and a NEGATIVE Duration is documented
+		// behaviour here: components.ToastHost says "negative means
+		// sticky — toasts stay until dismissed". Unifying a vocabulary
+		// means asking one question one way, not giving every attribute
+		// the same answer. Raised in review of #470, twice.
+		d, err := signedDuration(e, "Duration")
+		if err != nil {
+			return nil, err
 		}
+		h.Duration = d
 		return h, nil
 	},
 }
@@ -1229,7 +1463,14 @@ var defKeyBinding = &ElementDef{
 	Known: true,
 	Attrs: []AttrSpec{
 		{Name: "Command", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin},
-		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Origin: OriginBuiltin},
+		// REQUIRED, and it always was in fact: the builder's first
+		// statement is ParseGesture, which refuses "" with "empty
+		// gesture". Undeclared, the probe harness had nothing to seed it
+		// from, so every probe of <KeyBinding Command> failed on the
+		// missing Gesture and the Command declaration went unverified in
+		// every sweep arm. <Tooltip Gesture> is genuinely optional and
+		// is left alone. Raised in review of #470.
+		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Required: true, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeLeaf},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
@@ -1260,16 +1501,19 @@ var defTimer = &ElementDef{
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		// Non-visual like KeyBinding: buildChildren routes it to the
 		// parent as an attachment, and the Composer starts it.
-		raw := strings.TrimSpace(e.Attrs["Interval"])
-		if raw == "" {
+		// REQUIRED, so absence is this element's own answer; everything
+		// else is optDuration's. The hand-rolled reader this replaced
+		// gave the same three refusals in different words, and treated
+		// PRESENT-AND-EMPTY as absent — so <Timer Interval=""> got "needs
+		// an Interval" where the seven other KindDuration attributes say
+		// an empty one is a typo and name the spelling that asks for the
+		// default. Raised in review of #470.
+		if _, ok := e.Attrs["Interval"]; !ok {
 			return nil, fmt.Errorf("markup: <Timer> needs an Interval (e.g. Interval=\"600ms\")")
 		}
-		d, err := time.ParseDuration(raw)
+		d, err := optDuration(e, "Interval")
 		if err != nil {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: %w", raw, err)
-		}
-		if d <= 0 {
-			return nil, fmt.Errorf("markup: <Timer Interval=%q>: must be positive", raw)
+			return nil, err
 		}
 		tick, err := ctx.Command(e.Attrs["Tick"])
 		if err != nil {
@@ -1332,15 +1576,21 @@ var defFileWatcher = &ElementDef{
 		// Interval is optional here where Timer's is required: a timer
 		// with no interval has no meaning, and a watcher with none has
 		// the framework's own 300ms hot-reload poll.
-		if raw := strings.TrimSpace(e.Attrs["Interval"]); raw != "" {
-			d, err := time.ParseDuration(raw)
-			if err != nil {
-				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: %w", raw, err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("markup: <FileWatcher Interval=%q>: must be positive", raw)
-			}
-			w.Interval = d
+		//
+		// THROUGH optDuration, not hand-rolled. This was
+		// `if raw != "" { … }`, which reads an EMPTY value as "use the
+		// default" — the silent fallback optDuration's own doc comment
+		// refuses, in the branch whose thesis is that one value has one
+		// grammar. Two of the eight duration declarations kept a third
+		// answer for an empty string while five were a load error and
+		// one was ParseDuration's. Raised in review of #470; the derived
+		// arm that finds it is TestALiteralDurationCannotBeEmpty.
+		iv, err := optDuration(e, "Interval")
+		if err != nil {
+			return nil, err
+		}
+		if iv > 0 {
+			w.Interval = iv
 		}
 		if suppliedAttr(e, "Path") {
 			if w.Path, err = Bound[string](e, ctx, "Path"); err != nil {
@@ -1396,6 +1646,226 @@ func watchPaths(e Element, ctx *Context) (*prop.Property[[]string], error) {
 	return components.Strs(parts), nil
 }
 
+// litInt reads a KindInt / BindsLiteral attribute, and REFUSES what it
+// cannot parse or cannot lay out.
+//
+// Every one of these was `n, _ := strconv.Atoi(e.Attrs["X"])`. Atoi
+// returns 0 on failure, so `Gap="wide"`, `BarWidth="8px"` and
+// `Height="{{.Rows}}"` all loaded clean and laid out as if the attribute
+// had been omitted — the silent drop this vocabulary exists to refuse,
+// in the one place nobody was looking, because the discarded error was
+// spelled `_`.
+//
+// ABSENT means the declared Default. PRESENT AND EMPTY does not: `Gap=""`
+// is a load error, the same answer the universal literal ints already
+// gave — `Width=""` and `Margin=""` fail inside applyLayout — so one
+// element could not answer two ways about the same empty string. The
+// first version of this helper accepted empty and justified it as "how
+// the designer writes 'not set'", which is not what the designer does:
+// apps/wysiwyg deletes the attribute on an empty value and never emits
+// `X=""`. A rationale that cited a mechanism doing the opposite was
+// worse than no rationale. Raised in review of #470.
+//
+// NEGATIVE IS REFUSED for the same reason unreadable is. Every call site
+// is a measured extent — a gap, a bar width, a row count, a grid index —
+// and `Gap="-3"` parses cleanly, reaches `y += v.Gap`, and overlaps the
+// children it was meant to separate; `BarWidth="-5"` hands layout a
+// gooey.Size{W: -5}. The error text already said "a whole number", and
+// accepting a negative was the same silent-wrong one arithmetic step
+// later. If a signed literal attribute ever exists, it needs its own
+// helper and its own reason — and apps/wysiwyg DERIVES the floor from
+// this rule (properties.go, stepperKey) rather than keeping a list, so
+// that helper is where the exemption would be recorded.
+//
+// ONE SPELLING PER VALUE is enforced below against strconv.Itoa's
+// canonical form, which is the parser's own inverse. It replaces a
+// hand-named refusal of a leading `+` that missed leading zeros — review
+// of #470 measured `Gap="007"` loading and meaning 7, which is verbatim
+// the argument the `+` refusal was making.
+//
+// The value is quoted UNTRIMMED, so an author who typed `Gap=" wide "`
+// is shown the spaces rather than a tidied version that does not match
+// their file.
+//
+// Found by the derived Kind/Binds sweep in #460 — the eleven-row
+// spot-check it replaces named none of these.
+func litInt(e Element, name string) (int, error) {
+	raw, ok := e.Attrs[name]
+	if !ok {
+		return 0, nil
+	}
+	return litIntGrammar(e, name, raw)
+}
+
+// emptyLiteralWhy is what BOTH literal-int readers say about an empty
+// value, in the same words, because it is the same mistake.
+//
+// They did not. litIntGrammar told the author their value "would
+// silently lay out as 0" — which is what would happen if it were
+// accepted, not what does happen — and parseThickness said `"" is not a
+// whole number of cells`, which is true and no help to somebody who
+// wrote Margin="" meaning "none". Review of #470 found the pair
+// disagreeing about the one value an author is most likely to leave
+// behind mid-edit.
+const emptyLiteralWhy = "an empty value is not a zero — it is an attribute " +
+	"nobody finished writing, and reading it as 0 would make a half-typed " +
+	"document indistinguishable from a deliberate default"
+
+// intSpelling parses a whole number and reports its ONE spelling.
+//
+// It is shared rather than copied because the two readers of a literal
+// int in this package ask the same question: litIntGrammar for every
+// declared count, extent, index and offset, and parseThickness for
+// Margin. Review of #470 found them answering differently — <Border
+// Margin="007"> loaded and meant 7 while <HStack Gap="007"> was refused,
+// which is the whole of the argument the Gap refusal makes, one
+// attribute across.
+//
+// The canonical form comes from strconv.Itoa, the parser's own inverse,
+// so it covers every second spelling there is and cannot drift from what
+// Atoi accepted. The MESSAGES are not shared: each caller knows what its
+// number is for and what a wrong one costs, and a sentence general
+// enough for both would say neither.
+func intSpelling(raw string) (n int, canon, trimmed string, ok bool) {
+	trimmed = strings.TrimSpace(raw)
+	n, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, "", trimmed, false
+	}
+	return n, strconv.Itoa(n), trimmed, true
+}
+
+// litIntGrammar is the grammar alone, on an attribute already known to
+// be PRESENT. litInt owns absence; cellCount owns required-ness and the
+// binding alternative; the rules about what a present literal may say
+// live here once.
+//
+// SPLIT BECAUSE THERE WERE TWO OF THEM. <Image Cols> and <Image Rows>
+// went through cellCount, which read its value with a bare strconv.Atoi
+// — so `Cols="007"` loaded and meant 7, `Cols="+7"` loaded and meant 7,
+// and `Cols=" 3 "` was quoted back to the author tidied. Every one of
+// those is refused three lines away for <VStack Gap>, and the whole
+// argument of #460 is that one vocabulary may not answer two ways. The
+// helper being shaped for litInt's OWN call shape — absent means the
+// declared default — is what kept cellCount out of it, since a cell
+// count is required and may also be a binding.
+//
+// Raised in review of #470, which is where the second grammar was found:
+// the sweep could not see it, because <Image Cols> is declared
+// KindBinding and the literal sweep reads Kind.
+func litIntGrammar(e Element, name, raw string) (int, error) {
+	n, canon, trimmed, ok := intSpelling(raw)
+	if !ok {
+		if trimmed == "" {
+			return 0, fmt.Errorf("markup: <%s %s=%q>: %s", e.Name, name, raw, emptyLiteralWhy)
+		}
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s takes a whole number written "+
+			"literally — it is not a binding, and an unreadable value would "+
+			"silently lay out as %s=\"0\"", e.Name, name, raw, name, name)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is a measurement in cells — an "+
+			"extent, a count, an index or an offset — and cannot be negative. It "+
+			"parses, so nothing would refuse it: layout overlaps what it was meant "+
+			"to separate, addresses no cell, or places a child outside the rect "+
+			"that clips it", e.Name, name, raw, name)
+	}
+	// ONE SPELLING PER VALUE, and it is a canonical-form check rather
+	// than a list of bad prefixes.
+	//
+	// The first version refused a leading `+` by name and shared the
+	// UNREADABLE message with it — which claimed the value "would
+	// silently lay out as 0", and +2 is perfectly readable and lays out
+	// as 2. Review of #470 caught both halves of that: a message stating
+	// a consequence that does not happen, and a rule that named one
+	// second spelling while `Gap="007"` went on loading and meaning 7 —
+	// verbatim the argument the `+` refusal was making.
+	//
+	// Comparing against strconv.Itoa's output covers every second
+	// spelling there is, including ones nobody has thought of, and it
+	// cannot drift from the parser because it IS the parser's inverse.
+	// It is intSpelling's job now, shared with parseThickness.
+	if canon != trimmed {
+		return 0, fmt.Errorf("markup: <%s %s=%q>: %s is spelled %q — %q is a second "+
+			"way to write the same number, and two documents meaning the same "+
+			"layout should not differ in their text", e.Name, name, raw, name,
+			canon, trimmed)
+	}
+	return n, nil
+}
+
+// gridLens reads a track list and NAMES the attribute when it will not
+// parse.
+//
+// components.ParseGridLens says only `grid: bad length "{{.B}}"`. That is
+// true of the value and silent about which attribute carried it — on an
+// element that always has both Rows and Cols, so the author is told a
+// string is bad and left to find it. Every other literal in this file
+// refuses in the house form, which names the element and the attribute.
+//
+// Found by the bindsweep discriminator, which requires the refusal to
+// name the attribute before it counts as one: <Grid Rows> and <Grid Cols>
+// were the only two declarations in the whole vocabulary it could not
+// verify. That is the discriminator earning its tightening — the arm was
+// green with the loose form and the message was still unusable.
+func gridLens(e Element, name string) ([]components.GridLen, error) {
+	raw := e.Attrs[name]
+	ls, err := components.ParseGridLens(raw)
+	if err != nil {
+		// %w, NOT %v. Every sibling wrap in this file carries the cause
+		// forward, and this one dropped it — so errors.Is and errors.As
+		// stopped at the markup layer for track lists alone, while the
+		// text looked identical. A caller cannot tell those apart by
+		// reading the message, which is why it survived. Raised in
+		// review of #470.
+		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, name, raw, err)
+	}
+	return ls, nil
+}
+
+// litBool reads a KindBool / BindsLiteral attribute, and REFUSES what is
+// neither "true" nor "false".
+//
+// Same defect as litInt in a different spelling: `e.Attrs["X"] == "true"`
+// makes every other value mean false, so `Uniform="yes"`,
+// `Thresholds="1"` and `Bold="{{.Loud}}"` were accepted and ignored.
+//
+// THE HOUSE BOOL GRAMMAR, and it is now the only one a component
+// attribute uses. optBool read the same attributes through
+// strconv.ParseBool, so `Wrap="1"` loaded while `Thresholds="1"` was a
+// load error — one vocabulary answering two ways, which is what #460 is
+// about. parseCondBool (cond.go) already made the argument for strict:
+// a document that can spell a bool five ways is a document where the
+// same predicate reads differently in two files, and text bindings
+// render a bool as exactly "true"/"false", so this is that round trip.
+// Raised in review of #470, which also caught that
+// docs/markup-reference.md was already documenting the strict rule for
+// <Segmented Wrap> that the code did not implement.
+//
+// ParseBool survives elsewhere and deliberately is not swept here:
+// property.go's kindOf("bool") and resources.go read x:Property and
+// resource literals, companion.go:61 reads an environment variable, and
+// validate.go reads a declared Default. Those are not component
+// attributes; whether they should agree is #473.
+//
+// Absent means false. PRESENT AND EMPTY is a load error, for litInt's
+// reason.
+func litBool(e Element, name string) (bool, error) {
+	raw, ok := e.Attrs[name]
+	if !ok {
+		return false, nil
+	}
+	switch strings.TrimSpace(raw) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("markup: <%s %s=%q>: %s takes \"true\" or \"false\" "+
+		"written literally — it is not a binding, and any other value would "+
+		"silently mean \"false\"", e.Name, name, raw, name)
+}
+
 var defTypeAhead = &ElementDef{
 	Name:  "TypeAhead",
 	Icon:  "search",
@@ -1418,17 +1888,15 @@ var defTypeAhead = &ElementDef{
 			return nil, fmt.Errorf("markup: <TypeAhead> needs a Key naming the item value to search (e.g. Key=\"Title\")")
 		}
 		t := &components.TypeAhead{Key: key}
-		if raw := strings.TrimSpace(e.Attrs["Timeout"]); raw != "" {
-			d, err := time.ParseDuration(raw)
-			if err != nil {
-				return nil, fmt.Errorf("markup: <TypeAhead Timeout=%q>: %w", raw, err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("markup: <TypeAhead Timeout=%q>: must be positive", raw)
-			}
-			t.Timeout = d
+		// THROUGH optDuration — see <FileWatcher Interval> for why the
+		// hand-rolled form was a third grammar for an empty value.
+		to, err := optDuration(e, "Timeout")
+		if err != nil {
+			return nil, err
 		}
-		var err error
+		if to > 0 {
+			t.Timeout = to
+		}
 		if suppliedAttr(e, "Search") {
 			if t.Search, err = Bound[string](e, ctx, "Search"); err != nil {
 				return nil, err

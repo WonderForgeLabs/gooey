@@ -1349,8 +1349,16 @@ Build the first consumer before declaring an interface settled.
   parent-scoping rule, end to end.
 - The editor's own `TextBox` survives every rebuild of the preview
   island, asserted structurally by
-  `TestEditorInputsAreSiblingsOfThePreview` and behaviourally by
-  `TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput`.
+  `TestEditorInputsAreSiblingsOfThePreview` — which walks the island and
+  fails on any `TextBox` inside it, with a discrimination half that
+  requires an input to exist outside it.
+
+  The behavioural half named here was
+  TestPreviewRebuildDoesNotDisturbTheEditorsOwnInput, and it was never
+  written: this row claimed an assertion the tree does not contain. The
+  structural pin is what holds today, which is weaker — it proves no
+  input is inside the rebuilt subtree, not that a caret survives a
+  rebuild. Found by the orphaned-name sweep in #468.
 
 ## The transport layer, and one guard that was not a guard
 
@@ -1416,7 +1424,7 @@ round 0: property = "round0-write14", want "round0-write59"
 The unary patch overtook between 21 and 47 pipelined acts. That is the
 unordered-channel hazard measured rather than argued, and
 `TestPatchIsOrderedAgainstPipelinedWrites` now fails without the
-barrier. (It was `TestPipelinedWritesAreDrainedBeforeAPatch` until the
+barrier. (It was TestPipelinedWritesAreDrainedBeforeAPatch until the
 name started describing a mechanism rather than the property, which is
 the same drift this document warns about one paragraph up.)
 
