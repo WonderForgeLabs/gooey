@@ -225,7 +225,24 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 		// adding to it. That happened immediately: the imperative
 		// patterns added in this same review needed "bottom" and
 		// "end of", and the new check caught it before they shipped.
-		low := strings.ToLower(string(body))
+		// NORMALIZED THE SAME WAY hitContractProblems normalizes, and
+		// for the same measured reason one plane over. prefilterWords
+		// carries a MULTI-WORD entry, "end of"; at this repo's 72-column
+		// comment width a wrap can fall between those two words, the
+		// substring is then absent, and the whole FILE is skipped — not
+		// the statement, the file. Two retiredRule patterns need it
+		// (`belongs at the (end|bottom) of`, `put it at the (end|bottom)
+		// of`), so in a wrapped file only their `bottom` spelling could
+		// ever fire.
+		//
+		// The fix was applied to the input plane in review of #478 and
+		// not to this one, which is the shape this file keeps recording:
+		// a lesson learned in one place does not protect its sibling.
+		// TestAWrappedPrefilterWordStillReachesTheLoop is the arm; the
+		// per-pattern fire tests cannot see it, because they hand the
+		// patterns single lines and never run the prefilter. Raised in
+		// review of #458.
+		low := strings.Join(strings.Fields(strings.ToLower(string(body))), " ")
 		if !containsAny(low, prefilter) {
 			return nil, nil
 		}
@@ -1143,6 +1160,94 @@ func TestTheContractGuardFiresOnAFixtureTree(t *testing.T) {
 	}
 }
 
+// TestAWrappedPrefilterWordStillReachesTheLoop is finding 3 of the
+// review of #458, and it is a whole-FILE failure rather than a
+// whole-statement one.
+//
+// prefilterWords carries one multi-word entry, "end of". The line loop
+// joins wrapped lines; the prefilter that decides whether that loop runs
+// at all did not, so a wrap falling between "end" and "of" made the
+// substring absent and the entire file was skipped. Two retiredRule
+// patterns need that word, and in a wrapped file only their "bottom"
+// spelling could ever fire.
+//
+// NEITHER EXISTING ARM COULD SEE IT. The per-pattern fire tests hand the
+// patterns single lines and never run the prefilter;
+// TestAWrappedRuleStatementIsStillCaught exercises the line loop, which
+// is downstream of the gate. So this one goes through the FILE scan, and
+// the unwrapped arm beside it is what says the fixture is caught for the
+// prefilter's sake rather than the pattern's.
+func TestAWrappedPrefilterWordStillReachesTheLoop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"wrapped between its two words",
+			guardPad +
+				"A MenuBar belongs at the end\n" +
+				"of its container so the dropdown paints on top.\n"},
+		// The control. If this one failed too, the fixture would be
+		// telling us about the pattern and not about the gate.
+		{"on one line",
+			guardPad +
+				"A MenuBar belongs at the end of its container so the dropdown paints on top.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The ONLY prefilter word in the body is the wrapped one —
+			// otherwise the gate opens for an unrelated reason and the
+			// arm measures nothing.
+			for _, w := range prefilterWords {
+				if w == "end of" {
+					continue
+				}
+				if strings.Contains(strings.ToLower(tc.body), w) {
+					t.Fatalf("the fixture carries the prefilter word %q, so the gate "+
+						"opens whatever happens to %q and this arm proves nothing", w, "end of")
+				}
+			}
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fixture.md"),
+				[]byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			found := scanFilesForRetiredRule(t, docFilesIn(t, dir), statesTheRetiredRule,
+				prefilterWords, qualifierRes, supersededOf, scanAdvice)
+			if len(found) == 0 {
+				t.Errorf("the paint scan reported nothing for:\n%s", tc.body)
+			}
+		})
+	}
+}
+
+// TestAnEmphasizedPrefilterPhraseStillReachesTheLoop is finding 4, the
+// same gate one plane over and one normalization short.
+//
+// hitContractWant unemphasizes before matching, for a measured reason:
+// `paints? last among` cannot match `paints last** among`, so the two
+// files that teach this rule to a human reader were the two the guard
+// never judged. The prefilter still read the raw body and looked for the
+// two-word "among those " — so `among **those** whose` skipped the file
+// entirely, and `found` stayed at whatever the other files contributed,
+// which means the vacuity floor did not notice either.
+func TestAnEmphasizedPrefilterPhraseStillReachesTheLoop(t *testing.T) {
+	body := guardPad +
+		"the one that paints last among **those** whose arranged bounds\n" +
+		"contain the cell.\n"
+	if strings.Contains(strings.ToLower(body), "deepest") {
+		t.Fatal("the fixture carries the other prefilter word, so the gate opens " +
+			"whatever happens to the emphasized one and this test proves nothing")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fixture.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found, _ := hitContractProblems(t, docFilesIn(t, dir))
+	if len(found) == 0 {
+		t.Errorf("the contract guard reported nothing for a claim whose only "+
+			"prefilter phrase carries emphasis inside it:\n%s", body)
+	}
+}
+
 // declaresItselfSuperseded exempts a whole file whose HEAD says the rule
 // below it is dead. That is for the dated decision records: a spec is a
 // record of what was decided on its date and rewriting its body would
@@ -1640,7 +1745,20 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 		// is what decides whether that loop runs at all, so it has to be
 		// at least as forgiving as the thing it gates. Raised in review
 		// of #478.
-		low := strings.Join(strings.Fields(strings.ToLower(string(body))), " ")
+		// AND UNEMPHASIZED, which the whitespace fix above left out.
+		// hitContractWant calls unemphasize for a measured reason —
+		// `paints? last among` cannot match `paints last** among`, so the
+		// two files that teach this rule to a human reader were the two
+		// the guard never judged. The prefilter that decides whether the
+		// loop runs at all was still reading the raw body and looking for
+		// the two-word `among those `: write `among **those** whose` and
+		// the file is skipped entirely, with `found` left at whatever the
+		// other files contributed, so the vacuity floor does not notice
+		// either. (`deepest` survives emphasis because it is one word —
+		// `**deepest**` still contains it. Only the multi-word entry is
+		// exposed, which is the same shape as the paint prefilter above.)
+		// Raised in review of #458.
+		low := strings.Join(strings.Fields(unemphasize(strings.ToLower(string(body)))), " ")
 		if !containsAny(low, hitContractPrefilter) {
 			continue
 		}
@@ -2236,7 +2354,107 @@ func TestNoDocCallsTheRankPassAStableSort(t *testing.T) {
 		}
 	}
 
-	claim := regexp.MustCompile(`(?i)stable sort|sort is \*{0,2}stable`)
+	var problems []string
+	for _, f := range docFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		problems = append(problems, stableSortProblems(f, string(body))...)
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+// TestTheStableSortGuardReadsWRAPPEDProse is the fixture arm the repo
+// scan cannot supply: once the tree is corrected, scanning it proves
+// nothing about what the guard can SEE.
+//
+// All three arms state the claim in a form the guard's first spelling
+// missed — wrapped across two comment lines, emphasized inside the
+// phrase, and behind a continuation marker — which is the whole of
+// finding 5 of #458's review. The fourth is the counterfactual: the
+// contrast form still has to pass, or the exemption widened into the
+// thing being caught.
+func TestTheStableSortGuardReadsWRAPPEDProse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		lines  []string
+		caught bool
+	}{
+		{"wrapped between the two words", []string{
+			"// appendByRank is fine because the sort is",
+			"// stable and equal ranks keep their order.",
+		}, true},
+		{"emphasis inside the phrase", []string{
+			"The overlay pass is a **stable** sort, so equal ranks keep order.",
+			"",
+		}, true},
+		{"emphasis in the spelled form", []string{
+			"- The overlay rank pass works because the sort is **stable**,",
+			"  so equal ranks keep their document order.",
+		}, true},
+		{"the contrast form is still buried", []string{
+			"// The overlay bucket pass was preferred to a stable sort,",
+			"// so there is no comparator to get wrong.",
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stableSortProblems("fixture.md", strings.Join(tc.lines, "\n"))
+			if (len(got) > 0) != tc.caught {
+				t.Errorf("reported=%v, want %v, for:\n\t%s", len(got) > 0, tc.caught,
+					strings.Join(tc.lines, "\n\t"))
+			}
+		})
+	}
+}
+
+// stableSortProblems is the scan, extracted so a fixture can drive it.
+// It was inline, which is why finding 5 could be true: a guard with no
+// seam has no fixture, and the only prose it had ever been measured
+// against was prose already corrected to suit it.
+func stableSortProblems(f, body string) []string {
+	if !strings.Contains(strings.ToLower(body), "stable") {
+		return nil
+	}
+	lines := strings.Split(body, "\n")
+	var problems []string
+	// joinWrapped AND spanWindow, not a hand-rolled window. This guard
+	// was the newest in the file and did both itself: it matched `claim`
+	// against ONE raw line and built its window with a plain Join over
+	// `//`-prefixed, still-emphasized lines. So "// the sort is" / "//
+	// stable" across two comment lines was invisible, `*stable* sort` was
+	// invisible, and the prose the subject/epitaph tests read was not the
+	// prose the other two scans read. spanWindow's own doc says it was
+	// EXTRACTED SO THE TWO GUARDS CANNOT DRIFT APART; a third that
+	// reimplements it has drifted before it starts. Raised in review of
+	// #458.
+	for i := range lines {
+		if !stableSortClaim.MatchString(unemphasize(joinWrapped(lines, i))) {
+			continue
+		}
+		window := spanWindow(lines, i, i, 2, 2)
+		if !stableSortSubject.MatchString(window) {
+			continue
+		}
+		if stableSortBuried.MatchString(window) {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"%s:%d calls the overlay rank pass a stable sort:\n\t%s\n"+
+				"appendByRank is a bucket pass — it appends into a bucket "+
+				"per rank and never reorders — so equal ranks keep document "+
+				"order structurally rather than on a comparator's promise. "+
+				"docs/architecture.md draws the distinction; say it the same "+
+				"way or bury the sentence as history.", f, i+1,
+			strings.TrimSpace(joinWrapped(lines, i))))
+	}
+	return problems
+}
+
+var (
+	stableSortClaim = regexp.MustCompile(`(?i)stable sort|sort is \*{0,2}stable`)
 	// SCOPED TO THE RANK PASS BY A POSITIVE REQUIREMENT, not by an
 	// exemption — the window must NAME the thing this rule is about.
 	// Without it the guard reported apps/wysiwyg/browser.go, which says
@@ -2244,55 +2462,24 @@ func TestNoDocCallsTheRankPassAStableSort(t *testing.T) {
 	// scanned order" about an entirely different and entirely correct
 	// sort. A guard that fires on somebody else's correct prose is noise
 	// twice over: wrong, and about a file its author will not recognise.
-	subject := regexp.MustCompile(`(?i)appendByRank|overlay|OverlayRank|\branks?\b`)
+	stableSortSubject = regexp.MustCompile(`(?i)appendByRank|overlay|OverlayRank|\branks?\b`)
 	// The epitaph: a sentence may say "stable sort" in order to say it is
 	// NOT one. Narrow on purpose — "not a", "rather than a", "was a
 	// claim" — because a loose exemption here would admit the very
 	// sentence this exists to catch.
-	buried := regexp.MustCompile(`(?i)not a stable sort|rather than a stable sort|` +
+	//
+	// `preferred to a stable sort` joined the list when the window fix
+	// above widened the guard enough to reach
+	// docs/specs/2026-09-05-one-shot-overlay-order.md:140 — a sentence
+	// that was never visible to the hand-rolled window and is CORRECT:
+	// "the bucket pass was preferred to a stable sort" can only be
+	// written by somebody saying it is not one. That is the counterfactual
+	// every entry here has to pass, and it is why the alternation stays a
+	// list of contrast forms rather than a bare `stable sort` exemption.
+	stableSortBuried = regexp.MustCompile(`(?i)not a stable sort|rather than a stable sort|` +
+		`preferred to a stable sort|instead of a stable sort|` +
 		`no sort|never a stable sort|"stable" was a claim`)
-
-	var problems []string
-	for _, f := range docFiles(t) {
-		body, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("reading %s: %v", f, err)
-		}
-		if !strings.Contains(strings.ToLower(string(body)), "stable") {
-			continue
-		}
-		lines := strings.Split(string(body), "\n")
-		for i, line := range lines {
-			if !claim.MatchString(line) {
-				continue
-			}
-			lo, hi := i-2, i+2
-			if lo < 0 {
-				lo = 0
-			}
-			if hi >= len(lines) {
-				hi = len(lines) - 1
-			}
-			window := strings.Join(lines[lo:hi+1], " ")
-			if !subject.MatchString(window) {
-				continue
-			}
-			if buried.MatchString(window) {
-				continue
-			}
-			problems = append(problems, fmt.Sprintf(
-				"%s:%d calls the overlay rank pass a stable sort:\n\t%s\n"+
-					"appendByRank is a bucket pass — it appends into a bucket "+
-					"per rank and never reorders — so equal ranks keep document "+
-					"order structurally rather than on a comparator's promise. "+
-					"docs/architecture.md draws the distinction; say it the same "+
-					"way or bury the sentence as history.", f, i+1, strings.TrimSpace(line)))
-		}
-	}
-	for _, p := range problems {
-		t.Error(p)
-	}
-}
+)
 
 // appendByRankBody is the source of that one function, so the assertion
 // above is about IT rather than about composer.go having no sort call

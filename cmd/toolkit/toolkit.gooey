@@ -204,9 +204,9 @@
               <Button Content="sticky toast" Click="{{.Sticky}}" Tooltip="ShowFor with a negative duration never expires"/>
               <Button Content="clear toasts" Click="{{.ClearToasts}}" Tooltip="takes the sticky one back down"/>
             </ButtonBar>
-            <Text Grid.Row="2" Style="dim">Tooltip — the child form carries a gesture hint; the Tooltip="…" shorthand works on any element</Text>
+            <Text Grid.Row="2" Style="dim">Tooltip — the child form carries a gesture hint; Tooltip="…" is the shorthand, on any element</Text>
 
-            <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a surface that lifts above the page, and a dismissal grammar: esc or an outside press</Text>
+            <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a lifted surface, and a dismissal grammar: esc or an outside press</Text>
             <Text Grid.Row="4" Style="dim">picking one sets the same property the ColorPicker on the visual tab edits</Text>
             <!-- The preset's dropped list paints above the rows it
                  covers because the Popup surface is a gooey.Overlay,

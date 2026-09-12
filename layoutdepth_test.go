@@ -304,6 +304,19 @@ func forkCycle() *forkbox {
 // budget is generous because it is not measuring speed — a correct walk
 // finishes in microseconds and a broken one never finishes, so any
 // threshold between those separates them.
+//
+// ON THE FAILURE THIS LEAKS THE GOROUTINE, and that cost is recorded
+// here rather than hidden because it is this file's standard everywhere
+// else. t.Fatal ends the TEST; the walk keeps going toward
+// 2^MaxLayoutDepth visits for the rest of the package run, pinning a core
+// while TestNoFileTeachesTheRetiredOverlayRule is fanning out to
+// GOMAXPROCS — on pools CLAUDE.md describes as shared with production
+// workloads and not autoscaling. There is no clean cancel: HitTest takes
+// no context and the abort it would need is the very thing under test, so
+// a cancellable variant would be a second implementation of the fix
+// asserting itself. The leak is therefore accepted, bounded by the
+// package run, and paid only on a red — which is a run somebody is
+// already looking at. Raised in review of #458.
 func TestHitTestOnABranchingCycleTerminates(t *testing.T) {
 	root := forkCycle()
 	root.Base.Arrange(Rect{0, 0, 8, 2})
@@ -348,10 +361,12 @@ func TestABranchingTreeUnderTheCapIsFullyVisited(t *testing.T) {
 	// A binary tree of legal depth, every node at the same bounds so the
 	// walk cannot prune on the point.
 	at := Rect{0, 0, 8, 2}
+	var lastBuilt Component
 	var build func(d int) Component
 	build = func(d int) Component {
 		b := &forkbox{}
 		b.Base.Arrange(at)
+		lastBuilt = b
 		if d == levels {
 			return b
 		}
@@ -362,8 +377,24 @@ func TestABranchingTreeUnderTheCapIsFullyVisited(t *testing.T) {
 	m := NewFocusManager(root)
 	TakeLayoutFault()
 
-	if got := m.HitTest(1, 1); got == nil {
+	// THE WINNER IS THE LAST NODE VISITED, and asserting that is what
+	// makes this arm mean what its name says. `got != nil` plus "no
+	// fault" is satisfied by a visit budget that stops after N nodes
+	// WITHOUT recording one — truncation returns a candidate, and records
+	// nothing — which is exactly the spelling the comment above says this
+	// arm exists to reject. The assertion was available for free: the
+	// build is DFS pre-order, every node sits at the same rect, none is
+	// lifted, so the rightmost depth-12 leaf is both the last built and
+	// the last visited. Raised in review of #458.
+	got := m.HitTest(1, 1)
+	if got == nil {
 		t.Fatal("a legal binary tree of depth 12 hit nothing at all")
+	}
+	if got != lastBuilt {
+		t.Fatalf("HitTest returned %T, want the rightmost depth-%d leaf — the LAST "+
+			"node in pre-order, since every node shares a rect and none is lifted. "+
+			"Anything else means the walk stopped early, which is the "+
+			"budget-on-total-visits spelling this arm exists to reject", got, levels)
 	}
 	if f := TakeLayoutFault(); f != nil {
 		t.Errorf("a legal tree recorded %v. The abort is for a tree that "+

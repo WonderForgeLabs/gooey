@@ -296,12 +296,19 @@ func TestATransparentOverlayHostPassesThePressToItsOwnChild(t *testing.T) {
 // W1 (ask membership per node instead of inheriting it) was caught. The
 // SEPARATE mutation
 //
-//	hitTest(kid, x, y, depth+1, overlay, 0, order, best)
+//	hitTest(kid, x, y, depth+1, overlay, 0, order, best, aborted)
 //
 // — inherit membership, drop the rank — was SILENT across the whole root
 // module. Every other fixture either has one rank in it or puts the
 // deciding component at the lifting root itself, so nothing saw a
 // rank-20 host's CHILD fall to rank 0.
+//
+// (The recipe above read EIGHT arguments until review of #458. `aborted`
+// was added by the branching-cycle fix in this same PR, so the line
+// stopped compiling in the commit that introduced it, and the next person
+// told to reproduce the mutation would have had to reconstruct the
+// intent. A mutation recipe is a description, and this change's thesis is
+// that a description outlives its subject.)
 //
 // The discriminating shape is the one TestALiftedSubtreeIsNotSplitBy-
 // ItsChildsRank uses for paint, asked of the click: a host at
