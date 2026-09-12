@@ -38,7 +38,8 @@ import (
 const endpointPath = "/mcp"
 
 const instructions = "This server drives a running gooey terminal app. " +
-	"tree_snapshot and screen_text show what is on screen; list_values shows the bindable " +
+	"tree_snapshot and screen_text show what is on screen and screen_size how big it is; " +
+	"list_values shows the bindable " +
 	"state and list_styles the registered style names; invoke_command, set_value, " +
 	"send_keys, send_mouse and focus act on it; register_properties grows the bindable " +
 	"state with new typed source properties and unregister_properties removes names " +

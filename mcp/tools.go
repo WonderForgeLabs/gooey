@@ -81,9 +81,11 @@ func (s *Server) v1Tools() []*Tool {
 		},
 		{
 			Name: "screen_size",
-			Description: "The size of the visible surface in cells, and the terminal's cell metrics in " +
-				"pixels. These are the coordinate bounds send_mouse takes. A session scoped to an " +
-				"island is told the island's size, because the island is its whole screen.",
+			Description: "The size of the visible surface in cells, its absolute origin on the " +
+				"screen, and the terminal's cell metrics in pixels. A session scoped to an island " +
+				"is told the island's size, because the island is its whole screen — but send_mouse " +
+				"takes ABSOLUTE screen cells, so add x/y to a position within the surface to get the " +
+				"coordinate it accepts. Cell metrics are 0 when the host never probed the terminal.",
 			Schema:       object(map[string]any{}),
 			OutputSchema: screenSizeSchema(),
 			Run:          s.screenSize,
@@ -288,6 +290,7 @@ func (s *Server) screenSize(args) (any, error) {
 	}
 	return map[string]any{
 		"cols": sz.Cols, "rows": sz.Rows,
+		"x": sz.X, "y": sz.Y,
 		"cellWidth": sz.CellW, "cellHeight": sz.CellH,
 	}, nil
 }

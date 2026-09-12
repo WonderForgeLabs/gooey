@@ -132,13 +132,24 @@ func validateMarkupSchema() map[string]any {
 
 // screenSizeSchema publishes what screen_size answers. Every field is
 // required: a client asking for the screen cannot act on a partial one,
-// and the cell metrics always have a value because term falls back to
-// DefaultCellW/H when the terminal reports none.
+// and a field nobody measured says so with 0 rather than going missing —
+// an absent key and a zero are different questions for a client, and only
+// one of them can be asked without branching on presence.
+//
+// cols/rows deliberately do NOT claim to be "the range send_mouse
+// accepts". For a scoped session they are the island's extent while
+// send_mouse takes absolute screen cells, so that sentence — which this
+// schema used to carry — was false exactly where it mattered: a guest
+// reading it computed coordinates its own pointer call would refuse. x/y
+// are what close the gap, so they are described as the conversion rather
+// than as decoration.
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{
-		"cols":       prop_("integer", "Width of the visible surface in cells — the x range send_mouse accepts."),
-		"rows":       prop_("integer", "Height of the visible surface in cells — the y range send_mouse accepts."),
-		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics."),
-		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics."),
-	}, "cols", "rows", "cellWidth", "cellHeight")
+		"cols":       prop_("integer", "Width of the visible surface in cells. For a scoped session this is the island's width, not the terminal's."),
+		"rows":       prop_("integer", "Height of the visible surface in cells. For a scoped session this is the island's height, not the terminal's."),
+		"x":          prop_("integer", "Absolute screen column of the surface's left edge — add it to a position within the surface to get the x send_mouse accepts. 0 when unscoped."),
+		"y":          prop_("integer", "Absolute screen row of the surface's top edge — add it to a position within the surface to get the y send_mouse accepts. 0 when unscoped."),
+		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it."),
+		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it."),
+	}, "cols", "rows", "x", "y", "cellWidth", "cellHeight")
 }

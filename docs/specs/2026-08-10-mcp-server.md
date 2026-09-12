@@ -35,12 +35,24 @@ Read:
   Container/Attacher: type names, Name= identities, bounds, layout,
   visibility, focus/hover flags. Type-switch serialization; no
   reflection.
-- `screen_size` — the visible surface in cells (`cols`, `rows`) plus the
-  terminal's cell metrics in pixels. The coordinate bounds `send_mouse`
-  takes, stated rather than inferred from the root's arranged bounds
-  ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)); a scoped
+- `screen_size` — the visible surface in cells (`cols`, `rows`), its
+  absolute origin (`x`, `y`), plus the terminal's cell metrics in pixels
+  ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)). A scoped
   session is told its island's size, the same fiction `screen_text`
-  maintains by cropping.
+  maintains by cropping — and the origin is what keeps that fiction
+  actionable, because `send_mouse` takes ABSOLUTE screen cells and refuses
+  anything outside the island. The size alone would hand a guest
+  coordinates its own pointer call rejects.
+
+  Two limits stated rather than implied. The cell metrics are `0` when the
+  host never ran the capability probe, which is opt-in and so the usual
+  case for a cell-plane app; the tool reports the zero rather than
+  substituting `term.DefaultCellW/H`, because inventing a measurement is
+  the habit this tool exists to replace. And **#204 is closed on the MCP
+  surface only** — `control.Service.ScreenSize` is where both transports
+  could call it, but `grpc/controlserver.go` has a `Screen` RPC and no
+  size verb, so a gRPC client still infers the screen. Adding it is a
+  proto change and its own decision.
 - `screen_text` — the current cell buffer as plain text (+ an option
   for styled/SGR form): the "screenshot".
 - `list_values` — the markup Context's value names and kinds

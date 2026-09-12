@@ -169,12 +169,11 @@ func (s *Service) VisibleDamage(rects []gooey.Rect) []gooey.Rect {
 	if !s.scoped() {
 		return rects
 	}
-	var clip gooey.Rect
-	if root := s.islandRoot(); root != nil {
-		if b, ok := root.(gooey.Bounded); ok {
-			clip = b.Bounds()
-		}
-	}
+	// The error is deliberately dropped: this returns a filtered slice
+	// rather than a result, and a scoped session whose island cannot be
+	// resolved shows no damage — which the zero Rect already produces
+	// through the W/H check below.
+	clip, _ := s.islandRect()
 	if clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}

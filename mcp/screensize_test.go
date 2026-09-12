@@ -1,33 +1,182 @@
 package mcp
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/control"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/term"
 )
 
-// TestScreenSizeStatesWhatTreeSnapshotCouldOnlyImply is #204: a client
-// computing send_mouse coordinates had to infer the screen from the root
-// component's arranged bounds, which equals the terminal only while the
-// root happens to fill it.
-//
-// The numbers are the test app's own terminal (60x14), read from the
-// fixture rather than written twice, so a harness that resizes moves both
-// sides together.
-func TestScreenSizeStatesWhatTreeSnapshotCouldOnlyImply(t *testing.T) {
-	app, _, _, c := setup(t)
+// screenSizeRootMarkup declares every shape that is supposed to detach a
+// root from the screen — a fixed size on the root itself.
+const screenSizeRootMarkup = `<Gooey>
+  <Border Name="Inset" Width="20" Height="5" Margin="2">
+    <Text Name="InsetText">inset</Text>
+  </Border>
+</Gooey>`
 
-	got := c.json("screen_size", nil)
-	if int(got["cols"].(float64)) != app.cols || int(got["rows"].(float64)) != app.rows {
+// TestTheRootAlwaysFillsTheScreen corrects this feature's own stated
+// rationale, and is the reason the correction cannot rot.
+//
+// ScreenSize's doc comment and issue #204 both said the root-bounds
+// inference "equals the terminal only while the root happens to fill it —
+// give the root a margin, a fixed Width or a non-stretch alignment and
+// the client silently computes coordinates against a screen that is not
+// there." That is FALSE, and measurably so: Composer.Frame arranges the
+// root with `c.root.Arrange(Rect{0, 0, c.cols, c.rows})` and Base.Arrange
+// is `e.bounds = b`, so the root stores the screen whatever it declares.
+// Margin, Width and Height are applied by MeasureChild/ArrangeChild — the
+// sandwich the root, being nobody's child, never passes through.
+//
+// So the inference was RELIABLE for an unscoped session, and screen_size
+// earns its place for the other three reasons instead: a scoped session's
+// island genuinely is not the screen (the case with a wrong answer, not
+// merely an unproven one), screen_text's lines are trailing-trimmed so
+// the width it implies is the longest PAINTED line, and learning two
+// integers should not cost a whole tree.
+//
+// If someone ever makes the root honour its own size, this test fails and
+// the old justification becomes true again — which is the point of
+// pinning it rather than deleting the sentence.
+func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
+	app := newTestApp(t, screenSizeRootMarkup, nil)
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := newClient(t, s)
+
+	b := rootBounds(t, c.json("tree_snapshot", nil))
+	if b.W != app.cols || b.H != app.rows {
+		t.Errorf("a root declaring Width=20 Height=5 Margin=2 reports bounds %dx%d; "+
+			"want the full %dx%d, because Composer.Frame arranges the root to the "+
+			"screen and Base.Arrange stores what it is given",
+			b.W, b.H, app.cols, app.rows)
+	}
+
+	sz := c.json("screen_size", nil)
+	if int(sz["cols"].(float64)) != app.cols || int(sz["rows"].(float64)) != app.rows {
 		t.Errorf("screen_size reports %vx%v, want the terminal's %dx%d",
-			got["cols"], got["rows"], app.cols, app.rows)
+			sz["cols"], sz["rows"], app.cols, app.rows)
 	}
-	// THE CELL METRICS COME WITH IT because the graphics layer needs them
-	// and a client that has to ask twice will ask once. They are terminal
-	// capabilities, so they are reported whatever the scope.
-	if got["cellWidth"] == nil || got["cellHeight"] == nil {
-		t.Errorf("screen_size reports no cell metrics: %v", got)
+}
+
+// TestTheCellMetricsSayWhenNobodyMeasured pins BOTH arms, because the
+// interesting one is the zero.
+//
+// The probe that fills these is opt-in (gooey.WithCapabilityProbe), and
+// App's backfill to term.DefaultCellW/H fires only for a pixel-plane app,
+// so an ordinary cell-plane host reports 0 — and a client doing
+// `pixels = cols * cellWidth` gets 0 while one doing `cols / cellWidth`
+// divides by zero. The schema says 0 means "never probed"; this is what
+// makes that a checked claim rather than a sentence.
+//
+// The earlier version of this assertion was `got["cellWidth"] == nil`,
+// which a JSON 0 satisfies — so it was green over exactly the case it
+// looked like it was covering.
+func TestTheCellMetricsSayWhenNobodyMeasured(t *testing.T) {
+	t.Run("unprobed reports zero", func(t *testing.T) {
+		_, _, _, c := setup(t)
+		got := c.json("screen_size", nil)
+		if w, ok := got["cellWidth"].(float64); !ok || w != 0 {
+			t.Errorf("cellWidth = %v on a host that never probed, want 0", got["cellWidth"])
+		}
+		if h, ok := got["cellHeight"].(float64); !ok || h != 0 {
+			t.Errorf("cellHeight = %v on a host that never probed, want 0", got["cellHeight"])
+		}
+	})
+
+	t.Run("probed reports what the terminal said", func(t *testing.T) {
+		app, _, _, c := setup(t)
+		const wantW, wantH = 7, 15
+		done := make(chan struct{})
+		app.Post(func() {
+			app.comp.SetCaps(term.Caps{CellW: wantW, CellH: wantH})
+			close(done)
+		})
+		<-done
+
+		got := c.json("screen_size", nil)
+		if int(got["cellWidth"].(float64)) != wantW || int(got["cellHeight"].(float64)) != wantH {
+			t.Errorf("cell metrics %vx%v, want the probed %dx%d — the values are passed "+
+				"through from Composer.Caps, so a zero here means they were dropped",
+				got["cellWidth"], got["cellHeight"], wantW, wantH)
+		}
+	})
+}
+
+// islandOffOriginMarkup puts the island SECOND, so its origin is not
+// (0,0).
+//
+// mcpIslandMarkup puts the Border first, which makes the island's origin
+// (0,0) — and there the island-relative and absolute coordinate spaces
+// coincide, so every origin bug is invisible. This is the same fixture
+// blind spot in the other axis.
+const islandOffOriginMarkup = `<Gooey>
+  <VStack Gap="0">
+    <Text Name="Theirs">{{.Host.Secret}}</Text>
+    <Border Name="Mine" Title="mine">
+      <Text Name="MineText">{{.Mine.Body}}</Text>
+    </Border>
+  </VStack>
+</Gooey>`
+
+// TestAGuestIsToldWhereItsIslandIs is the half that makes the size
+// actionable rather than merely honest.
+//
+// SendPointer takes ABSOLUTE screen cells and mayPoint refuses anything
+// landing outside the island. So a guest told "your screen is 60x3", with
+// an island that actually starts at y=1, has one row it cannot reach and
+// one the host refuses — the tool would be handing out coordinates its
+// own pointer call rejects. The origin is what closes that, and the
+// assertion below is the round trip: convert with x/y, and send_mouse
+// must accept every corner.
+func TestAGuestIsToldWhereItsIslandIs(t *testing.T) {
+	mine := prop.NewSource("m0")
+	secret := prop.NewSource("hunter2")
+	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
+		"Mine": map[string]any{"Body": mine},
+		"Host": map[string]any{"Secret": secret},
+	})
+	gs, err := New(app, Options{
+		Context: app.ctx,
+		Timeout: 5 * time.Second,
+		Grant:   control.Island("Mine", "Mine"),
+	})
+	if err != nil {
+		t.Fatalf("New (guest): %v", err)
 	}
+	guest := newClient(t, gs)
+
+	sz := guest.json("screen_size", nil)
+	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
+	cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64))
+
+	if y0 == 0 {
+		t.Fatalf("the island reports origin y=0, so this fixture cannot tell an "+
+			"origin-aware answer from one that assumes (0,0); sz=%v", sz)
+	}
+	// Every corner of the island, converted through the reported origin,
+	// must be a coordinate send_mouse accepts. Without x/y a guest can
+	// only guess these, and the guess is wrong by exactly y0.
+	for _, p := range [][2]int{{0, 0}, {cols - 1, 0}, {0, rows - 1}, {cols - 1, rows - 1}} {
+		guest.ok("send_mouse", map[string]any{
+			"kind": "click", "x": x0 + p[0], "y": y0 + p[1],
+		})
+	}
+	// And the row directly above the island is NOT the guest's, which is
+	// what proves the conversion is a translation rather than a blanket
+	// permit.
+	guest.fails("send_mouse", map[string]any{
+		"kind": "click", "x": x0, "y": y0 - 1,
+	}, "outside this session's island")
 }
 
 // TestAGuestIsToldItsIslandsSize is the half that makes the tool safe to
@@ -75,22 +224,71 @@ func TestAGuestIsToldItsIslandsSize(t *testing.T) {
 // leaving a tutorial that is quietly missing one. The reverse direction
 // is deliberately NOT asserted: the page is free to mention a name that
 // is not a tool.
+//
+// It SKIPS rather than fails when the page is absent, because `mcp` is
+// its own module: the zip a proxy serves contains mcp/ and nothing above
+// it, so `../docs` does not exist for anyone consuming the module
+// standalone. A guard that cannot run there must say so rather than
+// report the repo's docs as broken on someone else's machine.
 func TestTheTutorialsToolInventoryIsComplete(t *testing.T) {
 	const page = "../docs/learn/08-remote-control.md"
 	body, err := os.ReadFile(page)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s is outside this module and absent, so this guard only runs "+
+			"inside the repo checkout", page)
+	}
 	if err != nil {
 		t.Fatalf("reading %s: %v", page, err)
 	}
+	assertNamesEveryTool(t, string(body), page)
+}
+
+// TestTheServerInstructionsNameEveryTool is the same guard one surface
+// closer to the client.
+//
+// `instructions` is a hand-written prose enumeration shipped to every MCP
+// client, and an agent reads it BEFORE the tutorial. It omitted
+// screen_size for as long as nothing checked it — the identical failure
+// TestTheTutorialsToolInventoryIsComplete exists to end, in the string
+// that reaches clients first. Unlike the tutorial this lives in the
+// module, so it never skips.
+func TestTheServerInstructionsNameEveryTool(t *testing.T) {
+	assertNamesEveryTool(t, instructions, "the server instructions string")
+}
+
+// assertNamesEveryTool derives the expectation from v1Tools, which is
+// what keeps both callers from becoming lists of their own.
+func assertNamesEveryTool(t *testing.T, body, what string) {
+	t.Helper()
 	s := &Server{}
 	tools := s.v1Tools()
 	if len(tools) == 0 {
 		t.Fatal("v1Tools is empty, so this guard would pass vacuously")
 	}
 	for _, tl := range tools {
-		if !strings.Contains(string(body), "`"+tl.Name+"`") {
-			t.Errorf("%s never names `%s`. The page's inventory is what a reader uses to "+
-				"find a tool, and a tool missing from it does not exist as far as they "+
-				"are concerned", page, tl.Name)
+		if !strings.Contains(body, tl.Name) {
+			t.Errorf("%s never names %s. The inventory is what a reader uses to find a "+
+				"tool, and a tool missing from it does not exist as far as they are "+
+				"concerned", what, tl.Name)
 		}
+	}
+}
+
+// rootBounds reads the root component's arranged bounds out of a
+// tree_snapshot — the inference #204 exists to replace, kept here only so
+// a test can assert screen_size is NOT it.
+func rootBounds(t *testing.T, snap map[string]any) gooey.Rect {
+	t.Helper()
+	tree, ok := snap["tree"].(map[string]any)
+	if !ok {
+		t.Fatalf("tree_snapshot carries no tree: %v", snap)
+	}
+	b, ok := tree["bounds"].(map[string]any)
+	if !ok {
+		t.Fatalf("tree_snapshot root carries no bounds: %v", tree)
+	}
+	return gooey.Rect{
+		X: int(b["x"].(float64)), Y: int(b["y"].(float64)),
+		W: int(b["w"].(float64)), H: int(b["h"].(float64)),
 	}
 }

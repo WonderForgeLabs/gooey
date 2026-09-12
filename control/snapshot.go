@@ -243,6 +243,27 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 	return out
 }
 
+// islandRect resolves a scoped session's island to its bounds, in
+// ABSOLUTE screen cells.
+//
+// Three callers wanted the same four steps — islandRoot, the nil check,
+// the gooey.Bounded assertion, Bounds() — and wrote them out separately,
+// with denial messages that had already drifted apart ("its screen region
+// cannot be read" against "its size cannot be read") for what is one
+// rule. The duplication is the reason the rule could drift: there was no
+// single place for "what does this island occupy" to be answered.
+func (s *Service) islandRect() (gooey.Rect, error) {
+	root := s.islandRoot()
+	if root == nil {
+		return gooey.Rect{}, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+	}
+	b, ok := root.(gooey.Bounded)
+	if !ok {
+		return gooey.Rect{}, preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+	}
+	return b.Bounds(), nil
+}
+
 // Screen reads the retained cell plane as of the last composed frame.
 // It NEVER composes a frame of its own: doing so would mark dirty nodes
 // clean and steal the repaint from the app's own next frame — the
@@ -267,18 +288,14 @@ func (s *Service) Screen(styled bool) (string, error) {
 		return "", err
 	}
 	if s.scoped() {
-		root := s.islandRoot()
-		if root == nil {
-			return "", deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
-		}
-		b, ok := root.(gooey.Bounded)
-		if !ok {
-			return "", preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+		r, err := s.islandRect()
+		if err != nil {
+			return "", err
 		}
 		if styled {
-			return croppedStyled(c.Cells(), b.Bounds(), c.Caps().Color)
+			return croppedStyled(c.Cells(), r, c.Caps().Color)
 		}
-		return cropped(c.Cells(), b.Bounds()), nil
+		return cropped(c.Cells(), r), nil
 	}
 	if styled {
 		var sb strings.Builder
@@ -408,19 +425,39 @@ func str(p *prop.Property[string]) string {
 // A client that had to ask twice would ask once and guess the rest.
 type ScreenSize struct {
 	Cols, Rows   int
+	X, Y         int
 	CellW, CellH int
 }
 
 // ScreenSize reports the screen this session is allowed to see.
 //
 // It exists because the only way to learn the screen was to INFER it
-// from the root component's arranged bounds (issue #204), which equals
-// the terminal only while the root happens to fill it — give the root a
-// margin, a fixed Width or a non-stretch alignment and the client
-// silently computes coordinates against a screen that is not there.
-// screen_text was the other workaround and is worse: it costs the whole
-// screen to learn two integers, and its lines are trailing-trimmed, so
-// the width it implies is the longest PAINTED line.
+// from the root component's arranged bounds (issue #204), or to read it
+// off screen_text.
+//
+// #204 and an earlier draft of this comment justified the tool by saying
+// the root-bounds inference "equals the terminal only while the root
+// happens to fill it — give the root a margin, a fixed Width or a
+// non-stretch alignment". That is FALSE. Frame arranges the root with
+// Arrange(Rect{0, 0, c.cols, c.rows}) and Base.Arrange stores what it is
+// handed, so the root reports the screen whatever it declares; margin,
+// size and alignment are applied by MeasureChild/ArrangeChild, the
+// sandwich the root — being nobody's child — never passes through. All
+// three were measured against a root declaring them, and it reported the
+// full terminal every time (mcp.TestTheRootAlwaysFillsTheScreen pins
+// that, so this paragraph fails rather than rots if the root ever starts
+// honouring its own size).
+//
+// The reasons that survive measurement:
+//
+//   - A SCOPED session's island genuinely is not the screen. That is the
+//     case where the inference returns a wrong answer rather than an
+//     unproven one, and it is what this tool is really for.
+//   - screen_text's lines are trailing-trimmed, so the width it implies
+//     is the longest PAINTED line, not the terminal's.
+//   - Both workarounds cost a whole tree or a whole screen to learn two
+//     integers.
+//   - Neither carries the cell metrics at all.
 //
 // A SCOPED SESSION IS TOLD ITS ISLAND'S SIZE, which is the same fiction
 // Screen maintains by cropping to the island: a guest's whole screen is
@@ -430,9 +467,34 @@ type ScreenSize struct {
 // cannot reach, and SendMouse answers those with silence rather than an
 // error.
 //
+// X and Y carry the island's ORIGIN, and they are what make that fiction
+// usable rather than merely comfortable. SendPointer (control/input.go)
+// takes ABSOLUTE screen cells and mayPoint refuses anything landing
+// outside the island, so size alone is not enough to act: an island at
+// y=1 h=3 is told rows=3, and a guest that believes its rows run 0..2
+// has one refused row and one unreachable one. The size says how big the
+// region is; the origin is how the guest turns a position inside it into
+// the coordinate SendPointer accepts. Disclosing it costs nothing that is
+// not already disclosed — a scoped tree_snapshot returns the island
+// root's bounds in absolute coordinates, and the residual "a guest can
+// infer host geometry" is already booked in
+// docs/specs/2026-08-14-island-grants.md.
+//
+// For an UNSCOPED session the origin is (0,0): the screen is the region.
+//
 // The CELL METRICS are not scoped, because they are a property of the
 // terminal rather than of the region: a pixel is the same size inside an
 // island as outside it.
+//
+// They are ZERO when nobody has measured them, and a client must branch
+// on that rather than divide by it. The probe that fills them is opt-in
+// (gooey.WithCapabilityProbe — "a round trip that only graphics apps
+// need"), and App's own backfill to term.DefaultCellW/H fires only for a
+// pixel-plane app (app.go, `c.CellW <= 0 && a.pixelPlane(c)`), so an
+// ordinary cell-plane app reports 0/0. Substituting the defaults here
+// would answer a question nobody asked the terminal — the same
+// make-it-up-so-the-field-is-populated move this tool exists to replace,
+// since inventing 10x20 is not better than the root-bounds inference.
 func (s *Service) ScreenSize() (ScreenSize, error) {
 	c, err := s.composer()
 	if err != nil {
@@ -441,16 +503,12 @@ func (s *Service) ScreenSize() (ScreenSize, error) {
 	caps := c.Caps()
 	size := ScreenSize{CellW: caps.CellW, CellH: caps.CellH}
 	if s.scoped() {
-		root := s.islandRoot()
-		if root == nil {
-			return ScreenSize{}, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		r, err := s.islandRect()
+		if err != nil {
+			return ScreenSize{}, err
 		}
-		b, ok := root.(gooey.Bounded)
-		if !ok {
-			return ScreenSize{}, preconditionf("element %q exposes no bounds, so its size cannot be read", s.grant.Island)
-		}
-		r := b.Bounds()
 		size.Cols, size.Rows = r.W, r.H
+		size.X, size.Y = r.X, r.Y
 		return size, nil
 	}
 	buf := c.Cells()
