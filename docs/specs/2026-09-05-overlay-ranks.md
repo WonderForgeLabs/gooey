@@ -146,18 +146,33 @@ change would have revealed it.
 document order and knows nothing about ranks either. An overlay that does
 not take pointer capture is still responsible for its own routing.
 
-**The one-shot path is not ranked, and was not lifted either.**
-`gooey.Compose` — which builds no Composer, and is what `cmd/typeahead
---dump` and `cmd/pixels` render through — walks `renderTree`
-(`component.go`) in pure document order: no lift, no rank. So the two
-public paint paths now disagree in *two* ways rather than one, and a
-fixture asserted through `Compose` answers "what is on top" differently
-from the same tree under `Composer.Frame`. This is deliberate scope, not
-an oversight: the lift is what has to arrive first, and it does, in
-[#438](https://github.com/WonderForgeLabs/gooey/issues/438) — the rank
-follows it through the same `overlayOf` seam or the divergence hardens.
-Worth stating for the reason the pixel-plane note above is: nothing in
-this change would have revealed it.
+**The one-shot path IS ranked now, and this section used to say it was
+not.** `gooey.Compose` — which builds no Composer, and is what
+`cmd/typeahead --dump` and `cmd/pixels` render through — walked
+`renderTree` (`component.go`) in pure document order, so the two public
+paint paths disagreed in *two* ways rather than one and a fixture
+asserted through `Compose` answered "what is on top" differently from
+the same tree under `Composer.Frame`. That was written as deliberate
+scope, with the lift named as the thing that had to arrive first — and
+it arrived, in [#438](https://github.com/WonderForgeLabs/gooey/issues/438),
+which merged down into this branch. `renderTree` now calls `collectPaint`
+and the same `appendByRank` bucket pass, through the same `overlayOf`
+seam, and `docs/specs/2026-09-05-one-shot-overlay-order.md` is the record
+of it.
+
+The paragraph is rewritten rather than deleted because the
+divergence it described was real for the length of a stack, and the
+sentence it replaced is the reason the two paths share a rule instead of
+having two implementations of one. What remains different is
+**clipping**, not order: `Composer.Frame` brackets every `Render` with
+`Cells.Clip(bounds)` and `paintOne` does not
+([#493](https://github.com/WonderForgeLabs/gooey/issues/493)).
+
+Repaired the way the menu-item-icons spec's row was when its name started
+resolving here: a section titled "what is NOT changed" that outlives the
+change is the exact artifact this whole sweep exists to remove, and it
+sat one file away from the spec saying the opposite. Raised in review of
+#456.
 
 ## How the claims here are checked
 

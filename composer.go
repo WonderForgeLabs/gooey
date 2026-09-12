@@ -101,14 +101,23 @@ type Composer struct {
 	// and what made it RETAIN: items holds *paintNode, appendByRank does
 	// bs := (*buckets)[:0], and a dead node stayed reachable in two
 	// dimensions — bucket slots past the new len, and elements past each
-	// inner slice's len. c.lifted and c.over have the same shape, but
-	// this is a slice OF slices, so a large frame pinned one inner array
-	// per rank rather than one overall.
+	// inner slice's len. This one is worse than its neighbours because it
+	// is a slice OF slices, so a large frame pinned one inner array per
+	// rank rather than one overall.
 	//
 	// appendByRank clears to CAP before handing them back, which is the
 	// fix: len is what the next call resets, cap is what the collector
 	// sees. Measured at 18 items held without it. Raised in review of
 	// #456; fixed and measured in #438.
+	//
+	// THE NEIGHBOURS RETAINED TOO, and this comment named two of them
+	// while reading as though they had been considered and were fine.
+	// c.paint, c.lifted, c.nodes and c.over were all reset with [:0] and
+	// never cleared, so a Dynamic list shrinking from ten thousand rows to
+	// ten pinned ~9,990 *paintNode — the same retention, one array instead
+	// of one per rank, and reachable from an ordinary app rather than from
+	// a five-rank frame. They go through clearToCap at their own resets
+	// now. Raised in review of #456.
 	buckets []rankBucket[*paintNode]
 
 	// The wire. flusher owns the previous cell buffer; the placement
@@ -353,8 +362,14 @@ func (c *Composer) HandleMouse(ev input.MouseEvent) bool { return c.focus.Dispat
 // depth-first pre-order, so a node's parent has already been visited and
 // its answer is ready — one pass, no ancestor walk.
 func (c *Composer) orderPaint() {
-	c.paint = c.paint[:0]
-	c.lifted = c.lifted[:0]
+	// CLEARED TO CAP, not merely truncated. Both hold *paintNode, and a
+	// tree that shrinks leaves the dead ones reachable past len until the
+	// slot is reused — which for a list that never grows back is never.
+	// orderPaint runs on structural re-sync rather than per frame, so the
+	// clear is paid when the tree changes shape, which is exactly when
+	// there is something dead to release.
+	c.paint = clearToCap(c.paint)
+	c.lifted = clearToCap(c.lifted)
 	for _, n := range c.nodes {
 		// THE SHARED RULE. overlayOf is the one implementation of
 		// overlay membership and rank; gooey.Compose's collectPaint
@@ -416,6 +431,27 @@ type rankBucket[T any] struct {
 // gooey.Compose lifts []paintItem where the Composer lifts []*paintNode,
 // and the one-shot path originally ordered its own with
 // sort.SliceStable — which put the unfalsifiable-stability claim back one
+// clearToCap truncates a reused slice to zero length AND releases what
+// it still points at past that length.
+//
+// `s = s[:0]` is what every reuse here used to write, and it leaves the
+// backing array holding every element the last pass put there. For
+// []*paintNode that is a tree that no longer exists, held until the slot
+// is written again — never, for a list that shrinks and stays small. len
+// is what the next pass resets; cap is what the garbage collector sees.
+//
+// One function rather than the loop written out at four resets, because
+// four copies is how the first three came to be missing it. Raised in
+// review of #456.
+func clearToCap[T any](s []T) []T {
+	var zero T
+	full := s[:cap(s)]
+	for i := range full {
+		full[i] = zero
+	}
+	return s[:0]
+}
+
 // file over, and reflect.Swapper back on a paint path, days after this
 // function was written to remove both. Sharing membership-and-rank while
 // leaving ORDERING as two implementations of different character is
@@ -546,7 +582,7 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 func (c *Composer) walkNodes() {
 	prev := c.nodeOf
 	c.nodeOf = make(map[Component]*paintNode, len(prev))
-	c.nodes = c.nodes[:0]
+	c.nodes = clearToCap(c.nodes)
 	c.startable = c.startable[:0]
 	c.build(c.root, prev, nil)
 	c.orderPaint()
@@ -1161,7 +1197,11 @@ func (c *Composer) Frame() (*Frame, int) {
 	// z-order, and by the time the loop reaches them every painter below
 	// is already in c.over.
 	c.frameSeq++
-	c.over = c.over[:0]
+	// Per FRAME rather than per re-sync, so this one is not free — but it
+	// is the same order as the loop immediately below that fills it, and
+	// the alternative is holding every node a shrunk tree used to have
+	// until the frame after it grows back.
+	c.over = clearToCap(c.over)
 	for _, n := range c.paint {
 		// A non-paintable node is never forced from below: it has nothing
 		// on screen to restore, and forcing it would run its pre-clear

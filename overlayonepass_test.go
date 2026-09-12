@@ -693,3 +693,67 @@ func TestTheBucketPassRetainsNothingPastItsOwnItems(t *testing.T) {
 			"exists, held until the slot happens to be reused", held)
 	}
 }
+
+// TestTheComposerSlicesRetainNothingPastTheirOwnNodes is the same leak as
+// TestTheBucketPassRetainsNothingPastItsOwnItems in the three places the
+// comment beside `buckets` named without checking.
+//
+// c.paint, c.lifted, c.nodes and c.over were reset with `[:0]` and never
+// cleared, so every *paintNode a shrunk tree used to have stayed
+// reachable past len until its slot was written again — which for a list
+// that shrinks and stays small is never. The buckets case was worse per
+// rank and this one is worse per APP: a Dynamic list going from ten
+// thousand rows to ten is an ordinary thing to do, and a five-rank frame
+// is not.
+//
+// Reading past len is what a leak check has to do, so this slices to cap
+// deliberately. The non-vacuity arm is the one that matters: without a
+// real shrink there is nothing that COULD be retained and the assertion
+// passes for the wrong reason. Raised in review of #456.
+func TestTheComposerSlicesRetainNothingPastTheirOwnNodes(t *testing.T) {
+	root := &oneShotStripe{ch: '.'}
+	for i := 0; i < 40; i++ {
+		root.kids = append(root.kids, &oneShotOverlay{oneShotStripe{ch: 'o'}})
+	}
+	c := NewComposer(root, 12, 3)
+	c.SetCaps(oneShotCaps())
+	c.Frame()
+
+	wideNodes := len(c.nodes)
+	root.kids = root.kids[:1]
+	c.InvalidateStructure()
+	c.Frame()
+	if len(c.nodes) >= wideNodes {
+		t.Fatalf("the tree did not shrink (%d nodes, was %d), so nothing could be "+
+			"retained and this test cannot see the leak", len(c.nodes), wideNodes)
+	}
+
+	live := map[*paintNode]bool{}
+	for _, n := range c.nodes {
+		live[n] = true
+	}
+	for _, tc := range []struct {
+		name string
+		s    []*paintNode
+	}{
+		{"c.nodes", c.nodes},
+		{"c.paint", c.paint},
+		{"c.lifted", c.lifted},
+		{"c.over", c.over},
+	} {
+		if cap(tc.s) <= len(tc.s) {
+			continue // nothing past len; no slot to hold anything
+		}
+		held := 0
+		for _, n := range tc.s[:cap(tc.s)][len(tc.s):] {
+			if n != nil && !live[n] {
+				held++
+			}
+		}
+		if held != 0 {
+			t.Errorf("%s still references %d *paintNode past its own length — nodes "+
+				"from a tree that no longer exists, held until the slot happens to "+
+				"be reused. Reset it with clearToCap", tc.name, held)
+		}
+	}
+}
