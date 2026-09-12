@@ -48,27 +48,6 @@ func PasteOf(p PasteEvent) Event { return Event{Kind: EventPaste, Paste: p} }
 
 func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 
-// decodePaste is called from decodeCSI once the opening bracket has been
-// recognised. rest is everything after it, and n is how many bytes the
-// bracket itself took.
-//
-// The one deliberate departure from the rest of this decoder: an
-// unterminated paste keeps WAITING even when idle is true, where a
-// truncated CSI resolves to the Esc key. idle exists to resolve an
-// AMBIGUITY — a lone ESC and the start of a sequence are the same byte —
-// and there is no ambiguity here. ESC [ 200 ~ is six bytes that nothing
-// else spells and that no keyboard can produce, so the only reading is
-// "a paste whose end has not arrived yet", and a large paste crossing
-// many 128-byte reads will routinely take longer than the 40ms escape
-// timeout to complete.
-//
-// The cost of that choice, stated plainly: a terminal that sends an
-// opening bracket and never closes it wedges the decoder, which then
-// holds every subsequent keystroke in the pending buffer. The
-// alternative — giving up after some cap and delivering the prefix — is
-// worse, because it silently TRUNCATES a paste, and a user who pastes
-// 40KB of markup and gets 8KB of it has no way to tell. A wedge is at
-// least visible.
 // splitPasteMarker reports whether b is an incomplete bracket — a strict
 // prefix of one of the two markers, long enough to be nothing else.
 //
@@ -94,6 +73,27 @@ func splitPasteMarker(b []byte) bool {
 		len(s) < len(pasteStart)
 }
 
+// decodePaste is called from decodeCSI once the opening bracket has been
+// recognised. rest is everything after it, and n is how many bytes the
+// bracket itself took.
+//
+// The one deliberate departure from the rest of this decoder: an
+// unterminated paste keeps WAITING even when idle is true, where a
+// truncated CSI resolves to the Esc key. idle exists to resolve an
+// AMBIGUITY — a lone ESC and the start of a sequence are the same byte —
+// and there is no ambiguity here. ESC [ 200 ~ is six bytes that nothing
+// else spells and that no keyboard can produce, so the only reading is
+// "a paste whose end has not arrived yet", and a large paste crossing
+// many 128-byte reads will routinely take longer than the 40ms escape
+// timeout to complete.
+//
+// The cost of that choice, stated plainly: a terminal that sends an
+// opening bracket and never closes it wedges the decoder, which then
+// holds every subsequent keystroke in the pending buffer. The
+// alternative — giving up after some cap and delivering the prefix — is
+// worse, because it silently TRUNCATES a paste, and a user who pastes
+// 40KB of markup and gets 8KB of it has no way to tell. A wedge is at
+// least visible.
 func decodePaste(rest []byte, n int) (Event, int, bool) {
 	// bytes.Index, NOT strings.Index(string(rest), …), and the
 	// conversion is the whole point rather than a style preference.

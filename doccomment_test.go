@@ -1,88 +1,184 @@
-package markup
+package gooey
 
 import (
 	"fmt"
 	"go/ast"
 	goparser "go/parser"
 	gotoken "go/token"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // TestNoDocCommentNamesTheDeclarationBelowIt is the guard for a mistake
-// with NO OTHER INSTRUMENT: inserting a function between a doc comment
-// and the function it documents.
+// with NO OTHER INSTRUMENT: inserting a declaration between a doc comment
+// and the thing it documents.
 //
 // gofmt reformats it happily and `go vet` says nothing, because the
-// result is valid Go — the comment simply becomes the new function's doc.
-// Review of #470 found gridLens sitting above litInt with litInt's
-// thirty-line rationale attached to it, which `go doc -u ./markup litInt`
-// showed and nothing in the suite did. Writing this guard immediately
-// found a SECOND one in the same branch: refusedTheEmptyValue had been
-// inserted above ruleRefusedIt with no blank line, so one comment group
-// covered both and ruleRefusedIt went bare.
+// result is valid Go — the comment simply becomes the newcomer's doc. The
+// original goes bare, the newcomer gains a comment describing something
+// else, and `go doc` is the only tool that shows it. Nobody runs `go doc`
+// on a test file.
 //
-// EVERY DOCUMENTED DECLARATION, not just functions. The first version
-// walked *ast.FuncDecl alone, which left out the shape this package is
-// most made of: elements.go is 40-odd `var defX = &ElementDef{...}`
-// blocks, most of them documented, and inserting a new element between
-// one of those comments and its var is the same mistake with the same
-// silence. `declares` below already understood a GenDecl on the receiving
-// end — it was only the SUBJECT that was narrow, so the guard could see
-// a var being stolen from and not a var being stolen from by. Raised in
-// review of #470.
+// TREE-WIDE, AND THAT IS THE POINT OF THIS VERSION (#483). The rule was
+// written in #470 scoped to markup/, which is where it was first needed
+// and not where the mistake lives: the overlay/z-order story alone
+// produced three, in markup/markup.go, in zorderdocs_test.go and in
+// overlayhit_test.go — two of them outside the one package that was
+// guarded. A guard that only watches the package it was born in reports
+// green for the whole tree, which is worse than no guard, because the
+// green is read as an answer about the tree.
+//
+// EVERY .go FILE, parsed rather than built, which is what lets ONE test
+// in the root module rule on the nested ones too. Nothing here needs a
+// package to compile or a module to resolve, so the module boundary that
+// stops `./...` is not a boundary for this.
 //
 // THE SIGNATURE, not the convention. "A doc comment opens with the name
 // of what it documents" is Go's convention, and asserting it directly
-// flags six honest sentences in this package — a test whose name starts
-// with the function it exercises, a wrapper whose comment opens by naming
-// the unexported form it calls. What theft actually looks like is
-// narrower and unambiguous: the comment names X, and X is the very next
-// top-level declaration in the file. Nothing legitimate has that shape,
-// because a comment about the thing below it would be that thing's
-// comment.
+// flags honest sentences — a test whose name starts with the function it
+// exercises, a wrapper whose comment opens by naming the unexported form
+// it calls. What theft actually looks like is narrower and unambiguous:
+// the comment names X, and X is the very next declaration. Nothing
+// legitimate has that shape, because a comment about the thing below it
+// would be that thing's comment.
 func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
-	fset := gotoken.NewFileSet()
-	pkgs, err := goparser.ParseDir(fset, ".", nil, goparser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse markup/: %v", err)
-	}
-
-	var files int
-	// EXAMINED, not "found" — the population this rule can judge, which
-	// is every documented function with another declaration below it.
-	// The counter here before was incremented on the ERROR branch and
-	// never read: it could only ever have said "the guard fired n
-	// times", which the failures themselves already say, and it was zero
-	// in exactly the case a count is for. Raised in review of #470.
-	var examined int
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			files++
-			for _, s := range stolenComments(fset, f) {
-				t.Error(s)
-			}
-			examined += docsExamined(f)
+	var files, examined int
+	seen := map[string]bool{} // directories that contributed a parsed file
+	for _, path := range goFilesInTree(t) {
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
+		if err != nil {
+			// A file that does not parse is not this guard's business —
+			// the compiler is already the instrument for that, and a
+			// testdata fixture is allowed to be deliberately broken.
+			continue
 		}
+		files++
+		seen[filepath.Dir(path)] = true
+		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
+			t.Error(s)
+		}
+		examined += docsExamined(f)
 	}
 	if files == 0 {
 		t.Fatal("no files parsed: this guard would pass vacuously")
 	}
-	// FILES IS NOT THE FLOOR. A parse that yielded only files with no
-	// documented functions in them would satisfy the check above and
-	// judge nothing — the count that says this guard did work is the
-	// number of doc comments it could have ruled on.
+	// FILES IS NOT THE FLOOR. A walk that yielded only files with no
+	// documented declarations would satisfy the check above and judge
+	// nothing — the count that says this guard did work is the number of
+	// doc comments it could have ruled on.
 	if examined == 0 {
-		t.Fatal("no documented function has a declaration below it, so this guard " +
-			"ruled on nothing: the walk is not reaching the package's functions")
+		t.Fatal("no documented declaration has another below it, so this guard ruled " +
+			"on nothing: the walk is not reaching the tree's source")
+	}
+	// AND NEITHER IS A COUNT. The failure this widening exists to prevent
+	// is a walk that silently stops at a module boundary — exactly what
+	// the markup/-scoped version did — and no total, however large, can
+	// see that: the root module alone would satisfy any number worth
+	// writing down. So the floor is DERIVED from the tree: every module
+	// in it must have contributed at least one parsed file. A module
+	// added tomorrow is covered without anyone editing this test, which
+	// is the same discipline CLAUDE.md's verify loop uses against the
+	// same mistake.
+	for _, mod := range moduleDirsInTree(t) {
+		if !anyUnder(seen, mod) {
+			t.Errorf("the walk parsed no file under %q, which is a module of this tree: "+
+				"a guard that stops at a module boundary reports green for code it "+
+				"never read", mod)
+		}
 	}
 	t.Logf("examined %d doc comments across %d files", examined, files)
+}
+
+// goFilesInTree is every .go file this guard rules on.
+//
+// PRUNED AT EVERY DEPTH, and a top-anchored filter is not enough — the
+// same trap CLAUDE.md documents for its verify loop, for the same two
+// offenders, both of them untracked so neither shows up in a fresh
+// clone: .claude/worktrees/ holds whole checkouts of this repo (a theft
+// on somebody else's branch is not this branch's failure) and
+// apps/kanban/worker/.venv vendors Go of its own. vendor/ is skipped
+// because it is other people's code, and testdata is NOT: a fixture is
+// still a file someone reads.
+func goFilesInTree(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == "." {
+				return nil
+			}
+			if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree: %v", err)
+	}
+	return out
+}
+
+// moduleDirsInTree is every directory holding a go.mod, which is the
+// population the coverage floor above is derived from. Same pruning, same
+// reasons.
+func moduleDirsInTree(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == "." {
+				return nil
+			}
+			if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == "go.mod" {
+			out = append(out, filepath.Dir(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree for modules: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("found no go.mod at all, not even the root module's: the module floor " +
+			"below would pass vacuously")
+	}
+	return out
+}
+
+// anyUnder reports whether any parsed file's directory is dir or beneath
+// it. A module whose own directory holds no .go file — only packages
+// below it — is still covered.
+func anyUnder(seen map[string]bool, dir string) bool {
+	for d := range seen {
+		if d == dir || strings.HasPrefix(d, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestTheDocCommentGuardCatchesWhatItIsFor is the arm that makes the
 // guard above falsifiable, and its absence is a finding of its own.
 //
-// The package is clean, which is the point of the guard and the problem
+// The tree is clean, which is the point of the guard and the problem
 // with checking it: a walk that applies the rule and a walk that returns
 // nil are the same green against a corpus with no theft in it. So the
 // rule is pointed at documents whose contents are known, and the
@@ -167,7 +263,7 @@ func gamma() {}
 			if err != nil {
 				t.Fatalf("parsing the fixture: %v", err)
 			}
-			got := stolenComments(fset, f)
+			got := stolenComments(fset, f, "fake")
 			switch {
 			case tc.want == "" && len(got) != 0:
 				t.Errorf("reported %v on a document with no theft in it", got)
@@ -205,15 +301,15 @@ func gamma() {}
 // is 30-odd documented Kind and Category constants in exactly that shape
 // and the guard could not see any of them, because it walked f.Decls and
 // a block is ONE decl. Raised in review of #470.
-func stolenComments(fset *gotoken.FileSet, f *ast.File) []string {
+func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	var out []string
 	report := func(pos gotoken.Pos, name, first, where string) {
 		out = append(out, fmt.Sprintf("%s: the doc comment on %s opens by naming %s, "+
 			"which is the %s DIRECTLY BELOW it. That is a doc comment that was "+
 			"separated from what it documents — either %s was inserted between the "+
 			"two, or the blank line between two comment groups was lost, and either "+
-			"way %s is now undocumented. Confirm with `go doc -u ./markup %s`",
-			fset.Position(pos), name, first, where, first, name, first))
+			"way %s is now undocumented. Confirm with `go doc -u ./%s %s`",
+			fset.Position(pos), name, first, where, first, name, pkg, first))
 	}
 	for i, d := range f.Decls {
 		if name, doc, ok := documented(d); ok && i+1 < len(f.Decls) {

@@ -219,11 +219,10 @@ var hostByName = map[string]func(*testing.T) any{
 	},
 }
 
-// unliftedHostsNamed reads the CLAUSE that makes the claim and returns
-// the backticked names inside it.
+// unliftedRe matches the run of backticked names immediately before the
+// page's "do **not** implement `gooey.Overlay`" clause.
 //
-// The window is the run of names immediately before "do **not**
-// implement `gooey.Overlay`", not a fixed number of characters before
+// The window is that run, not a fixed number of characters before
 // it. A 200-byte lookback was the first spelling and it was WRONG in the
 // direction that passes: the preceding sentence names `components.Popup`,
 // `MenuBar` and `Tooltip` as the surfaces that ARE lifted, so the guard
@@ -239,6 +238,8 @@ var hostByName = map[string]func(*testing.T) any{
 var unliftedRe = regexp.MustCompile(
 	"((?:`[A-Za-z][A-Za-z0-9]*`(?:,)?(?: and)?\\s+)+)do \\*\\*not\\*\\*\\s+implement `gooey\\.Overlay`")
 
+// unliftedHostsNamed reads the CLAUSE that makes the claim and returns
+// the backticked names inside it.
 func unliftedHostsNamed(t *testing.T, path string) []string {
 	t.Helper()
 	body, err := os.ReadFile(path)
