@@ -47,12 +47,56 @@
 // and the thing this whole approach exists to avoid.
 //
 // The picture is NOT bit-identical to the old one and cannot be — two
-// rasterizers antialias differently. Measured against the SVG it replaces,
-// at 40x12, 80x24 and 24x6 cells of 8x16 pixels: no pixel the SVG inked is
-// now blank; two pixels gain faint ink, both of them the hairline's
-// butt-capped ends; exactly 80 pixels, twenty per rounded corner, differ
-// by more than 1/255, worst case 24/255; and every remaining difference is
-// exactly 1/255 on a half-covered edge pixel that rounds the other way.
+// rasterizers antialias differently.
+//
+// EVERY FIGURE HERE IS RE-RUNNABLE FROM THIS TREE, which is the bar a
+// number in a comment has to clear: a measurement nobody can reproduce,
+// describing a picture the code no longer draws, reads as evidence and
+// is worse than no number. (The pixel-diff against frame.svg that used
+// to stand here failed that bar twice over — the file is gone and the
+// hairline has moved since.)
+//
+// On a 40x12 pane of 8x16 cells the hairline is 306 pixels wide
+// between the side strokes; a translucent stroke puts all 306 below
+// sixel's keep-threshold and the encoder's byte stream is IDENTICAL to
+// the same canvas with no hairline drawn at all — 80 bytes either way,
+// against 107 for the opaque one. TestTheHairlineReachesTheSixelStream
+// runs exactly that comparison through graphics.Sixel.Encode, at one
+// canvas geometry with only the stroke's alpha changed, so the figures
+// above are a description of a test rather than a memory of a session.
+//
+// # Two strokes, chosen by the encoder
+//
+// The rule is the one place the tiers draw different PICTURES rather
+// than the same picture through different wires, and the reason is the
+// paragraph above: sixel discards a translucent pixel instead of dimming
+// it. So the pane asks graphics.OpaqueEncoder and strokes accordingly —
+// a dimmer opaque colour where alpha cannot travel, the translucent
+// stroke where the terminal will composite it.
+//
+// The first fix for #254 made every tier opaque, and that was the wrong
+// trade in both directions. Kitty and iTerm2 transmit through
+// png.Encode, which un-premultiplies, so the terminal composites the
+// rule against ITS OWN background — an answer no arithmetic here can
+// improve on, because Pane has no BackgroundProperty and the only ground
+// this package can name is black.
+//
+// THE APP'S OWN CHROME IS WHERE THAT IS TRUE, and this paragraph used to
+// state it flat: "no ANCESTOR of a Panel in apps/wysiwyg declares a
+// Background". `over` retracts that fifteen hundred lines down, for the
+// case that matters — main.go registers "Panel" on docCtx, so a DOCUMENT
+// may put a Panel inside a Background-bearing container, and the
+// designer renders one today. Two paragraphs in one file disagreeing
+// about the same fact is worse than either being wrong alone, so this
+// one is now the narrow claim and `over` carries the general one.
+//
+// Two tiers that were already right were spent to mend the one that was
+// not. Learning the terminal's own background — an OSC 11 query — is
+// filed on #259.
+//
+// The cost of the split is one more bit in the Art cache key, which is
+// where every "same shape, different picture" question in this package
+// ends up.
 //
 // # The cell tier is not a fallback
 //
@@ -91,11 +135,35 @@ const (
 	// too small to carry it.
 	cornerRadius = 6.0
 	// hairlineInset is how far in from each side the title hairline
-	// starts, and hairlineOpacity is what makes it read as a division
+	// starts, and hairlineFade is what makes it read as a division
 	// rather than a second border.
-	hairlineInset   = 7.0
-	hairlineWidth   = 1.0
-	hairlineOpacity = 0.4
+	//
+	// A FADE, NOT AN OPACITY, and the difference is the whole of one
+	// review finding. It used to be an alpha, and sixel has no alpha
+	// channel at all: graphics/sixel.go keeps a pixel only at
+	// a >= 0x8000 and writes nothing for the rest, so a 0.4-alpha
+	// stroke is 102/255 and every pixel of it was discarded. Measured
+	// on a 40x12 pane of 8x16 cells: 306 hairline pixels, 306 dropped,
+	// none kept — the flourish stayed invisible under sixel after the
+	// y-coordinate fix, which is #254's own symptom on that protocol.
+	//
+	// Raising the alpha does not help and it is worth knowing why
+	// before someone tries it. A kept pixel is painted OPAQUE at its
+	// un-premultiplied colour, so any alpha at or above the threshold
+	// renders the line at FULL fg — a second border, which is the thing
+	// the fade exists to avoid. Sixel can only carry a fainter line as
+	// a DIMMER COLOUR.
+	//
+	// SO THE CONSTANT HAS TWO READINGS, one per tier, and the sentence
+	// that stood here gave it one ("so that is what the line now is").
+	// On sixel it is a MIX FRACTION handed to over(); on kitty and
+	// iTerm2 it is an ALPHA handed to fade(), which is what it was
+	// before #254 and is again. The reader most likely to meet this
+	// comment is the one changing 0.4, and both readings move together
+	// when they do.
+	hairlineInset = 7.0
+	hairlineWidth = 1.0
+	hairlineFade  = 0.4
 )
 
 // defaultStroke is the frame's colour when the style carries none. It was
@@ -213,7 +281,16 @@ func (p *Pane) Render(f *gooey.Frame) {
 		p.renderCells(f)
 		return
 	}
-	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg)
+	// THE ENCODER DECIDES WHICH PICTURE THIS IS. Sixel carries no alpha
+	// and drops a translucent stroke outright, so it needs the rule as a
+	// dimmer OPAQUE colour; kitty and iTerm2 transmit through png.Encode,
+	// which un-premultiplies, so the terminal composites the translucent
+	// stroke against its OWN background — a colour this process never
+	// learns and therefore cannot better. Drawing one opaque picture for
+	// all three spent the two tiers that already worked to fix the one
+	// that did not. See graphics.OpaqueEncoder.
+	_, opaque := f.Graphics.(graphics.OpaqueEncoder)
+	fr, err := p.art.frame(b.W, b.H, cw, ch, p.style.Fg, p.style.Bg, opaque)
 	if err != nil {
 		// A canvas that cannot be built must not leave a pane with no edges
 		// at all; the cell tier is the same shape in runes.
@@ -265,17 +342,60 @@ func (p *Pane) renderCells(f *gooey.Frame) {
 // 16px are the same 320-pixel canvas but slice into different rings, and
 // the old key — which was written in pixels — would have handed the first
 // pane's slices to the second.
-func (a *Art) frame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
+func (a *Art) frame(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bool) (*frame, error) {
 	if fg == (render.Color{}) {
 		fg = defaultStroke
 	}
-	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x", cols, rows, cellW, cellH, fg.R, fg.G, fg.B)
+	// THE GROUND IS NORMALIZED BEFORE IT IS KEYED, both ways, because a
+	// key finer than the picture buys a second 1.4ms raster and a second
+	// cache entry for the identical bytes.
+	//
+	// It reaches the PICTURE only on the opaque tier, so everywhere else
+	// it is normalized out of the KEY: two panes on different backgrounds
+	// are the same canvas when the stroke carries its own alpha. And
+	// over() maps an unset ground to black, so render.Color{} and
+	// RGB(0,0,0) were two keys for one canvas — the `%t` on bg.Set said
+	// they were different pictures and they never were. fg has had the
+	// same treatment three lines up since before this.
+	//
+	// THE KEY IS NORMALIZED; THE GROUND PASSED DOWN IS NOT — and the
+	// difference buys nothing today. It is the real ground rather than
+	// the key's stand-in because that is what the parameter means, not
+	// because anything downstream can tell.
+	//
+	// This comment used to justify it by hairlineStroke's Fallback, and
+	// that justification does not hold. Fallback is assigned into a local
+	// paint.Stroke inside drawCanvas and never leaves the function —
+	// drawFrame returns the four ring images and nothing else — so on the
+	// composited tier the un-normalized bg reaches NOTHING, Fallback
+	// included. Passing keyBg down instead would be byte-identical, which
+	// is what round 5's arm E measured as SILENT and this comment then
+	// explained away. Corrected in review of #474.
+	//
+	// THE SENTENCE THAT IS LOAD-BEARING BELONGS AT THE KEY, one line
+	// down. The day a cell tier reads Fallback, the ground has to go back
+	// into the key IN THE SAME COMMIT: on the composited tier keyBg
+	// erases every ground to one entry, so the second pane on a different
+	// Bg is handed the FIRST one's cached frame. The "correct" Fallback
+	// it would then read is whichever pane rasterized first — a
+	// cross-pane bug, not a wrong constant, and invisible until two panes
+	// on different grounds are on screen at once.
+	keyBg := bg
+	if !opaque {
+		keyBg = render.Color{}
+	}
+	if !keyBg.Set {
+		keyBg = render.RGB(0, 0, 0)
+	}
+	key := fmt.Sprintf("%dx%d@%dx%d#%02x%02x%02x/%02x%02x%02x/%t",
+		cols, rows, cellW, cellH, fg.R, fg.G, fg.B,
+		keyBg.R, keyBg.G, keyBg.B, opaque)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if fr, ok := a.cache[key]; ok {
 		return fr, nil
 	}
-	fr, err := drawFrame(cols, rows, cellW, cellH, fg)
+	fr, err := drawFrame(cols, rows, cellW, cellH, fg, bg, opaque)
 	if err != nil {
 		return nil, err
 	}
@@ -296,8 +416,8 @@ func (a *Art) frame(cols, rows, cellW, cellH int, fg render.Color) (*frame, erro
 // A gg context starts fully transparent and nothing here fills it, so that
 // property holds by construction; a Clear() or a background fill would end
 // it.
-func drawFrame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
-	dc, err := drawCanvas(cols, rows, cellW, cellH, fg)
+func drawFrame(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bool) (*frame, error) {
+	dc, err := drawCanvas(cols, rows, cellW, cellH, fg, bg, opaque)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +430,7 @@ func drawFrame(cols, rows, cellW, cellH int, fg render.Color) (*frame, error) {
 // and re-widening one of them back to the canvas silently returns the
 // slice, which is exactly the harness bug that made an early A/B of this
 // change agree with itself.
-func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, error) {
+func drawCanvas(cols, rows, cellW, cellH int, fg, bg render.Color, opaque bool) (*gg.Context, error) {
 	dc, err := paint.Canvas(cols, rows, cellW, cellH)
 	if err != nil {
 		return nil, fmt.Errorf("panel: %w", err)
@@ -330,41 +450,108 @@ func drawCanvas(cols, rows, cellW, cellH int, fg render.Color) (*gg.Context, err
 
 	// The hairline inside the top edge — the one flourish, and the detail
 	// that reads as "modern" rather than "boxed".
-	y := hairlineY(dc.Height())
-	dc.DrawLine(hairlineInset, y, w-hairlineInset, y)
-	s := stroke(fg, hairlineWidth)
-	s.Brush = gg.NewSolidPattern(fade(fg, hairlineOpacity))
-	s.Apply(dc)
-	dc.Stroke()
+	//
+	// Conditional, because a pane whose cells are shorter than the border
+	// and the hairline stacked has nowhere to put it. Drawing it anyway
+	// would put it under the border, where it is either invisible or a
+	// thickening of it — and an invisible flourish is the defect this
+	// arithmetic was fixed for.
+	//
+	// BOTH GUARDS DECIDE THE PICTURE, on their own axis, and neither is
+	// a formality.
+	//
+	// tall: the rule sits at the bottom of the top CELL, so a cell two
+	// pixels tall or less has no room under the border for it. On sixel
+	// the rule is opaque and COVERS what it crosses rather than tinting
+	// it — drawn without this guard, the top row's red goes 255 → 102
+	// across the hairline's span.
+	//
+	// wide: the line runs inset-to-inset, so a narrow canvas gives
+	// DrawLine an x1 near or left of its x0 — a dot or a reversed
+	// segment, which gg strokes as a short dash floating in a pane that
+	// was supposed to have a rule under its title. hairlineSpan carries
+	// the threshold and why it is where it is.
+	y, tall := hairlineY(cellH)
+	x0, x1, wide := hairlineSpan(w)
+	if tall && wide {
+		dc.DrawLine(x0, y, x1, y)
+		s := hairlineStroke(fg, bg, opaque)
+		s.Apply(dc)
+		dc.Stroke()
+	}
 
 	return dc, nil
 }
 
 // hairlineY is where the title hairline sits, in pixels down from the top
-// of the canvas.
+// of the canvas, and whether there is room for it at all.
 //
-// This reproduces the arithmetic frame.svg was given, DELIBERATELY and
-// including its consequence: h is the canvas height in PIXELS, so for any
-// pane taller than eight pixels — which is all of them — the line lands at
-// h/8, three cell rows down in an 80x24 pane. The ring's top slice is one
-// cell tall, so all but a pixel at each extreme end of the line is sliced
-// away and never placed. The flourish is, in practice, invisible.
+// IT TAKES THE CELL HEIGHT, NOT THE CANVAS HEIGHT, and that is the whole
+// of #254. frame.svg was given h/8 where h is the canvas in PIXELS, so on
+// an 80x24 pane of 8x16 cells the line landed at y=48 — three cell rows
+// down. Ring's top slice is `crop(img, 0, 0, w, cellH)`, exactly one cell
+// tall, so the line was cut away and never placed: the flourish the
+// package comment describes at length had been invisible for its whole
+// life, except for a one-pixel stub at each end where it crossed the side
+// slices. PR #253 ported the arithmetic verbatim on purpose — that change
+// claimed "same output", and fixing the picture inside it would have made
+// the claim unfalsifiable — and split the fix out as #254.
 //
-// Porting the bug rather than fixing it is the point: this change is about
-// how the pane draws, not how it looks, and a rewrite that silently
-// changed the picture would make "same output" unfalsifiable. It is
-// reported as a finding against epic #241; whoever fixes it wants
-// canvasH/cellH-style arithmetic, or simply cellH, and a test that asserts
-// the line survives the ring.
-func hairlineY(canvasH int) float64 {
-	y := 2
-	if canvasH > 8 {
-		y = canvasH / 8
-		if y < 2 {
-			y = 2
-		}
+// WHICH PICTURE IS THE INTENT was the open question, and the answer is
+// the code's own name for it. drawTitle puts the title on the CELL plane
+// over the top edge's placement (components.DrawBoxTitle), so the title
+// lives in the top cell row — the same row Ring's top slice covers. A
+// "title hairline" is the rule under that row, so it sits at the BOTTOM
+// of the top cell: inside the top edge, below the title, and a division
+// rather than a second border. The package comment's description is the
+// intent; the arithmetic was the accident.
+//
+// The stroke is CENTRED on the returned y, so both halves have to fit:
+// the top half clear of the border's stroke, the bottom half inside the
+// slice. Returning a bool rather than clamping is deliberate — a clamped
+// value would place the line somewhere it does not belong and look like a
+// decision, where "no room" is the honest answer for a cell that cannot
+// hold both.
+func hairlineY(cellH int) (float64, bool) {
+	lo := borderWidth + hairlineWidth/2
+	hi := float64(cellH) - hairlineWidth/2
+	if hi < lo {
+		return 0, false
 	}
-	return float64(y)
+	return hi, true
+}
+
+// hairlineSpan is how far the rule reaches across the canvas, and
+// whether it reaches at all — hairlineY's counterpart on the other axis,
+// and written to the same shape on purpose.
+//
+// The rule is inset from both sides, so a canvas narrower than the two
+// insets together has x1 LEFT OF x0. gg does not refuse that: it strokes
+// the segment between them, which paints a short dash centred in a pane
+// whose title has no rule under it — a mark that looks like a rendering
+// fault rather than an absent flourish.
+//
+// A LEGIBILITY FLOOR, NOT A DEGENERACY ONE, and the first version was
+// the latter. `x1 > x0` refuses only the reversed span, which draws the
+// SAME dash one pixel the other side of the threshold: review of #474
+// measured a 15-pixel canvas drawing a 1-pixel rule and a 16-pixel one
+// (2 columns at cellW 8, the size every fixture in this package uses)
+// drawing 2 — a dot centred in the top cell row, under a title that
+// cannot be drawn at all, since DrawBoxTitle starts two columns in. The
+// guard refused the picture on one side of its boundary and drew it on
+// the other, which is a boundary in the wrong place rather than a rule.
+//
+// The floor is hairlineInset itself, and it is derived rather than
+// chosen: a mark shorter than the gap holding it off each edge reads as
+// a dot between two spaces, not as a line across a pane. It needs no new
+// constant, and it moves with the inset if the inset ever moves.
+//
+// Returning a bool rather than clamping, for hairlineY's reason: a
+// clamped span would place a line somewhere it does not belong and look
+// like a decision, where "no room" is the honest answer.
+func hairlineSpan(w float64) (x0, x1 float64, ok bool) {
+	x0, x1 = hairlineInset, w-hairlineInset
+	return x0, x1, x1-x0 >= hairlineInset
 }
 
 // stroke is the pen shared by both figures. Cap and Join are stated rather
@@ -383,10 +570,170 @@ func stroke(fg render.Color, thickness float64) paint.Stroke {
 	}
 }
 
+// hairlineStroke is the rule's stroke, extracted so both of its colour
+// fields can be asserted together.
+//
+// THEY HAVE TO AGREE, and they did not. Setting Brush alone left
+// Fallback at full-brightness fg — paint.Stroke.Fallback is documented as
+// "the single colour this stroke becomes on a terminal with no pixel
+// protocol".
+//
+// NOTHING READS IT, AND NOT ONLY HERE. Stroke.Apply makes gg calls and
+// consults it nowhere (paint/paint.go), this package's cell tier goes
+// through DrawBoxRunes, and paint/shapes' parseShape deliberately
+// REMOVED the identical assignment on the finding that the field has no
+// consumer anywhere in the tree. That is the tree-wide fact, and the
+// sentence this comment used to carry — "dormant while this package's
+// cell tier goes through DrawBoxRunes" — read as a local property and
+// implied some other cell tier consumes it. None does. Corrected in
+// review of #474, which found the two packages documenting opposite
+// answers about the same dead field with neither citing the other.
+//
+// SO WHY SET IT HERE WHEN shapes CHOSE NOT TO. Because the two cases
+// differ in the way the field's own definition cares about. A shape has
+// TWO brushes, and its cell fallback has to cover the fill as well, so
+// shapes takes it from Brush.Solid through brushPattern and a pen-only
+// field would be the wrong mechanism — shapes' comment says exactly
+// that. A hairline rule is a pen and nothing else: Stroke.Fallback
+// describes precisely what it is, and there is no second brush for a
+// better answer to come from.
+//
+// Which leaves the reason to set a field nobody reads. Dormant is
+// exactly why it would be wrong the day somebody gives the cell tier a
+// rule: nothing would have been drawing it, so nothing would have
+// noticed it was the border's colour. It is unobservable through the
+// canvas, which is why this is a function a test can hold rather than
+// three lines inside drawCanvas.
+func hairlineStroke(fg, bg render.Color, opaque bool) paint.Stroke {
+	s := stroke(fg, hairlineWidth)
+	if !opaque {
+		// TRANSLUCENT, where the terminal composites. gg's pattern
+		// painter wants ALPHA-PREMULTIPLIED channels, which is why the
+		// RGB is scaled here as well as A being set: handing it a
+		// straight colour at low alpha paints a line too bright by
+		// 1/alpha.
+		//
+		// Fallback is the OPAQUE colour, not this one. It is the single
+		// colour the stroke becomes where there are no pixels at all, and
+		// a terminal with no protocol has nothing to composite against
+		// either.
+		s.Brush = gg.NewSolidPattern(fade(fg, hairlineFade))
+		s.Fallback = over(fg, bg, hairlineFade)
+		return s
+	}
+	rule := over(fg, bg, hairlineFade)
+	s.Brush = gg.NewSolidPattern(paint.Color(rule))
+	s.Fallback = rule
+	return s
+}
+
+// over is the hairline's colour ON THE OPAQUE TIER ONLY: fg composited
+// onto a ground at the given fraction, with no alpha left in it.
+//
+// It exists because sixel has no alpha channel — sixel.go writes no pixel
+// below half alpha, so the 0.4-alpha stroke was discarded wholesale,
+// which is #254's own symptom on the protocol most terminals reach for. A
+// kept pixel is painted at its un-premultiplied colour, so the only way
+// to carry a fainter line there is a dimmer COLOUR.
+//
+// THE GROUND HERE IS A GUESS, in every case, and black is the guess.
+//
+// Pane is not a gooey.HasBackground, so nothing fills its bounds: on the
+// pixel tier the only cells in the top row that ever receive p.style.Bg
+// are the ones DrawBoxTitle writes (`cells.SetString(r.X+2, r.Y,
+// " "+t+" ", style)`, components/box.go). Mid-span — where the rule
+// lives, and where every sample in this package's tests reads — what is
+// behind it is Composer.clearStyle's answer, the nearest ANCESTOR with a
+// background, or the terminal's own default when there is none.
+//
+// IN A DOCUMENT THE GUESS IS PROVABLY WRONG, not merely unpinned.
+// main.go registers "Panel" on docCtx deliberately ("a document is
+// entitled to a framed region"), and Background is authorable on
+// Border, Canvas, Grid, HStack and VStack — so
+// `<VStack Background="#282c34"><Panel/></VStack>` is a document the
+// designer renders today. The framework fills the pane's cells with
+// #282c34 and this function composites against black anyway:
+// (56,56,60) laid over (40,44,52). That is #254's own contrast
+// complaint, in the tree the app exists to render. Measured in review
+// of #474.
+//
+// THAT LIST IS DERIVED, not remembered: it read "VStack, Grid and
+// Canvas" for a review round while Border and HStack had carried the
+// attribute all along, which is a hand-written list doing what a
+// hand-written list does.
+// TestTheBackgroundElementsAreTheOnesTheRegistrySays reads
+// markup.BuiltinElements() and fails if this sentence and the registry
+// ever name different sets — in THIS file and in every other file of
+// the app that makes the same claim, because the first version of that
+// guard read only this one and the copy in
+// apps/wysiwyg/panelground_test.go stayed at three of five.
+//
+// THERE IS NO SEAM TO FIX IT WITH TODAY, and that is the fact worth
+// carrying rather than the apology. Composer.clearStyle is unexported
+// and takes a *paintNode; and a component cannot read the answer back
+// off the frame either, because Pane has ChildComponents — a chrome-only
+// container pre-clears NOTHING, so the cells under it at Render time
+// hold whatever was there rather than its ancestor's ground. Closing
+// this needs a framework accessor for "the ground my bounds will clear
+// to", which is a core change and not a panel one. Learning the
+// TERMINAL's background — an OSC 11 query, the other half of the same
+// question — is filed on #259.
+//
+// What keeps the guess from being a regression is that this colour now
+// reaches only the tier that forces one: kitty and iTerm2 composite in
+// the terminal and never call this.
+//
+// WHAT EACH TIER DRAWS:
+//
+//   - sixel takes this colour, opaque, and writes the rule where it used
+//     to write nothing.
+//   - kitty/iTerm2 take fade() instead and are UNCHANGED from before
+//     #254: they transmit through png.Encode, which un-premultiplies, so
+//     the terminal composites the translucent stroke against its own
+//     background. That is a better answer than anything computable here,
+//     and drawing one opaque picture for all three threw it away.
+//   - there is NO halfblock tier here. Halfblock IS the nil encoder,
+//     and Pane.Render returns to renderCells the moment f.Graphics is
+//     nil — before any placement — so graphics.DrawHalfblock is never
+//     reached from this package.
+//   - the rune tier, which is where a terminal with no protocol actually
+//     lands, draws no hairline at all.
+//
+// The cost is stated rather than hidden: an opaque rule COVERS what it
+// crosses instead of tinting it, and the top cell row it sits in is the
+// row DrawBoxTitle writes the title into. That was already true of the
+// border's own 1.5-pixel stroke at the top of the same cell, and it is
+// now true on sixel only.
+func over(fg, bg render.Color, f float64) render.Color {
+	if !bg.Set {
+		bg = render.RGB(0, 0, 0)
+	}
+	mix := func(a, b uint8) uint8 {
+		return uint8(float64(a)*f + float64(b)*(1-f) + 0.5)
+	}
+	return render.Color{
+		R:   mix(fg.R, bg.R),
+		G:   mix(fg.G, bg.G),
+		B:   mix(fg.B, bg.B),
+		Set: true,
+	}
+}
+
 // fade returns a colour at the given opacity, ALPHA-PREMULTIPLIED, which
 // is what color.RGBA means and what gg's pattern painter composites with.
-// Handing it a straight colour with a low alpha paints a washed-out line
+// Handing it a straight colour at a low alpha paints a washed-out line
 // too bright by 1/opacity.
+//
+// This is the stroke for a protocol that can carry alpha, and it is what
+// the pane drew before #254's sixel fix made every tier opaque. It came
+// back when that fix turned out to have spent kitty and iTerm2 — where
+// the TERMINAL composites, against its own background — to buy sixel a
+// line it was discarding. See graphics.OpaqueEncoder and over above.
+//
+// A doc comment separated from what it documents is invisible to gofmt
+// and to vet, and `go doc -all -u` is what shows it; the guard is #470's
+// TestNoDocCommentNamesTheDeclarationBelowIt, scoped to markup/ today
+// and widened to the tree in #483.
 func fade(c render.Color, a float64) color.Color {
 	return color.RGBA{
 		R: uint8(float64(c.R)*a + 0.5),
