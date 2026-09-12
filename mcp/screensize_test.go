@@ -74,6 +74,20 @@ func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
 		t.Errorf("screen_size reports %vx%v, want the terminal's %dx%d",
 			sz["cols"], sz["rows"], wantCols, wantRows)
 	}
+	// THE ORIGIN IS THE OTHER HALF OF THE CONTRACT, and it was the half
+	// no test read. The schema promises x/y are 0 for an unscoped
+	// session — "the screen is the region" — and a client adds them to
+	// every coordinate it sends, so a non-zero pair here would displace
+	// every press by the same offset, silently. Its scoped twin is
+	// TestAGuestIsToldWhereItsIslandIs. Raised in review of #504.
+	if x, ok := sz["x"].(float64); !ok || x != 0 {
+		t.Errorf("x = %v on an unscoped session, want 0: the whole screen is the "+
+			"region, so its origin is the screen's", sz["x"])
+	}
+	if y, ok := sz["y"].(float64); !ok || y != 0 {
+		t.Errorf("y = %v on an unscoped session, want 0: the whole screen is the "+
+			"region, so its origin is the screen's", sz["y"])
+	}
 }
 
 // TestTheCellMetricsSayWhenNobodyMeasured pins BOTH arms, because the
@@ -266,6 +280,22 @@ func TestTheServerInstructionsNameEveryTool(t *testing.T) {
 
 // assertNamesEveryTool derives the expectation from v1Tools, which is
 // what keeps both callers from becoming lists of their own.
+//
+// IT ASKS FOR THE NAME IN BACKTICKS, and that is the finding rather than
+// a style preference. `strings.Contains` was the first spelling and it
+// passed vacuously for two of the fifteen names: `register_properties`
+// is a substring of the `unregister_properties` that sits beside it in
+// both surfaces, and `focus` is an ordinary English word that appears in
+// prose about focus whether or not a tool has that name. So a guard
+// written to end prose inventories going stale was itself checking
+// thirteen of fifteen — the same shape of defect, one level up.
+//
+// A non-identifier BOUNDARY closes the first half and not the second:
+// "…, send_mouse and focus act on it" delimits the word exactly as a
+// tool name would be delimited. The backtick is the mark that means "this
+// is a name and not a word", the tutorial already used it on every one of
+// them, and mcp/transport.go now does too. TestTheToolNameMatchIsDelimited
+// pins both halves. Raised in review of #504.
 func assertNamesEveryTool(t *testing.T, body, what string) {
 	t.Helper()
 	s := &Server{}
@@ -274,11 +304,39 @@ func assertNamesEveryTool(t *testing.T, body, what string) {
 		t.Fatal("v1Tools is empty, so this guard would pass vacuously")
 	}
 	for _, tl := range tools {
-		if !strings.Contains(body, tl.Name) {
-			t.Errorf("%s never names %s. The inventory is what a reader uses to find a "+
-				"tool, and a tool missing from it does not exist as far as they are "+
-				"concerned", what, tl.Name)
+		if !namesTool(body, tl.Name) {
+			t.Errorf("%s never names %s in backticks. The inventory is what a reader "+
+				"uses to find a tool, and a tool missing from it does not exist as far "+
+				"as they are concerned. Backticks because an unmarked name cannot be "+
+				"told from the prose around it — see assertNamesEveryTool", what, tl.Name)
 		}
+	}
+}
+
+func namesTool(body, name string) bool {
+	return strings.Contains(body, "`"+name+"`")
+}
+
+// TestTheToolNameMatchIsDelimited measures the two vacuous passes rather
+// than asserting they are gone, because both are still a `strings.Contains`
+// away.
+func TestTheToolNameMatchIsDelimited(t *testing.T) {
+	const nested = "`unregister_properties` removes names again"
+	if namesTool(nested, "register_properties") {
+		t.Error("a body naming only unregister_properties reports register_properties " +
+			"as documented, which is the substring pass this match exists to close")
+	}
+	if !namesTool("`register_properties` grows the bindable state", "register_properties") {
+		t.Error("the marked form is not recognized, so the guard asks for something " +
+			"nobody can write")
+	}
+	if namesTool("keys go to whatever has focus at the time", "focus") {
+		t.Error("ordinary prose about focus satisfies the focus tool's entry, which is " +
+			"the word-not-name pass this match exists to close")
+	}
+	if !namesTool("send_mouse and `focus` act on it", "focus") {
+		t.Error("the marked form of a name that is also an English word is not " +
+			"recognized")
 	}
 }
 

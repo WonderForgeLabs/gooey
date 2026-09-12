@@ -243,15 +243,6 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 	return out
 }
 
-// islandRect resolves a scoped session's island to its bounds, in
-// ABSOLUTE screen cells.
-//
-// Three callers wanted the same four steps — islandRoot, the nil check,
-// the gooey.Bounded assertion, Bounds() — and wrote them out separately,
-// with denial messages that had already drifted apart ("its screen region
-// cannot be read" against "its size cannot be read") for what is one
-// rule. The duplication is the reason the rule could drift: there was no
-// single place for "what does this island occupy" to be answered.
 // islandGoneFmt is the denial every island-addressed call gives when the
 // grant names an element the running tree no longer has.
 //
@@ -261,10 +252,41 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 // literally shared. It is a format string and not a constructor because
 // deniedf returns *Error, whose Kind callers switch on; wrapping it would
 // change the type for the sake of tidiness.
+//
+// The two blocks this one was merged with are now where they belong. A
+// doc comment that grows a second subject documents whichever declaration
+// happens to follow it, silently: go doc rendered this paragraph for the
+// const and left islandRect with none. Raised in review of #504.
 const islandGoneFmt = "this session is scoped to island %q, which names no element in the running tree"
 
+// islandGone is islandGoneFmt applied to this session's grant — the one
+// form every caller wants, since the island name is never anything else.
 func (s *Service) islandGone() *Error { return deniedf(islandGoneFmt, s.grant.Island) }
 
+// islandRect resolves a scoped session's island to its bounds, in
+// ABSOLUTE screen cells.
+//
+// Three callers wanted the same four steps — islandRoot, the nil check,
+// the gooey.Bounded assertion, Bounds() — and wrote them out separately,
+// with denial messages that had already drifted apart ("its screen region
+// cannot be read" against "its size cannot be read") for what is one
+// rule. The duplication is the reason the rule could drift: there was no
+// single place for "what does this island occupy" to be answered.
+//
+// THE preconditionf ARM IS UNREACHABLE for any component in this repo,
+// and is kept rather than dropped. gooey.Bounded is satisfied by the
+// Bounds() method gooey.Base carries (base.go:13), and every component
+// here embeds Base — but gooey.Component does not REQUIRE Bounds: the
+// interface is Measure/Arrange/Render and nothing else (component.go:26).
+// A component that does not embed Base is therefore a legal Component
+// and not Bounded, and an island grant naming one would reach the type
+// assertion. That is why the comma-ok is here and not a bare assertion.
+//
+// It has no test for the same reason it cannot fire here: a fixture would
+// have to declare a type this tree cannot hold, and pinning an arm with a
+// state the subject cannot reach measures the fixture. The honest record
+// is this sentence — and if Component ever grows Bounds, the arm and this
+// paragraph go together. Raised in review of #504.
 func (s *Service) islandRect() (gooey.Rect, error) {
 	root := s.islandRoot()
 	if root == nil {
@@ -529,18 +551,29 @@ func (s *Service) ScreenSize() (ScreenSize, error) {
 		size.X, size.Y = r.X, r.Y
 		return size, nil
 	}
-	// c.Cells(), NOT Composer.Size(), and the difference is only visible
-	// in the window this tool exists to be correct in.
+	// c.Cells(), NOT Composer.Size() — and NOT because the two can
+	// differ. They cannot.
 	//
-	// Size() returns the cols/rows the composer was last TOLD; Cells() is
-	// the plane as of the last composed frame. Across a pending resize
-	// they differ — and screen_text renders that same buffer, so taking
-	// Size() here would let a client read a width from screen_size that
-	// the screen_text it fetched in the same breath does not have. A
-	// review asked for Size() as the tidier source; it is the wrong one,
-	// and an earlier review asked for exactly this instead. The invariant
-	// is not "buffer tracks cols/rows" — it is that these two tools
-	// answer from one place.
+	// c.cols/c.rows are written in exactly two places and each replaces
+	// the buffer in the same breath: NewComposer (composer.go:187) builds
+	// a render.Buffer of the dimensions it was handed, and Composer.Resize
+	// (composer.go:1029) assigns the pair and swaps in a new buffer of
+	// exactly those dimensions. Resize runs on the UI goroutine, and so
+	// does every tool body (through control.Bridge), so Size() and
+	// Cells().W/H are equal at every point this function can observe
+	// them.
+	//
+	// The reason to read the buffer is that screen_text renders THAT
+	// buffer: one source that cannot drift by construction, rather than
+	// two that are kept equal. Either would be correct today; this one
+	// stays correct if the pair ever stops being swapped together.
+	//
+	// The sentence this replaces said they "differ across a pending
+	// resize", and there is no such window. It was written to decline a
+	// review asking for Size(), and declining on the merits is fine —
+	// inventing a mechanism to do it with is not, least of all in the
+	// change whose other commits exist to retire exactly that. Raised in
+	// review of #504.
 	buf := c.Cells()
 	size.Cols, size.Rows = buf.W, buf.H
 	return size, nil
