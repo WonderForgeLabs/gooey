@@ -61,11 +61,58 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	attachedRe := regexp.MustCompile(`(?i)` + "`?" + `\b(?:` +
 		strings.Join(hosts, "|") + `)\b` + "`?" +
 		`(?:\s+[\w()` + "`" + `']+){0,3}\s+` + negSpellings)
+	// THE PRESCRIPTIVE SPELLING, which is the half this guard shipped
+	// without and which three live sites then walked through.
+	//
+	// Everything above keys on liftVerbRe — the sentence must contain the
+	// word "lift" — so it only ever sees the DENIAL of the lift ("does not
+	// lift", "no such lift"). The retired rule's other form does not argue
+	// about lifting at all; it just tells the reader where to put the
+	// element. Both sentences below are RETIRED — quoted as history, not
+	// stated — since #437 lifted overlays into a layer and #439 ranked it:
+	//
+	//	README.md          "an `AdornmentLayer` (last child of the root)"
+	//	howto-forms.md     "<AdornmentLayer/>   <!-- last child of the root -->"
+	//
+	// Both are false for a host carrying gooey.Overlay — position is
+	// exactly what the marker stops mattering — and both were invisible
+	// here, because neither contains "lift". A guard that only catches the
+	// spelling that argues with it misses the spelling that simply
+	// instructs, and the instruction is the one a reader follows.
+	// THE SPELLINGS ARE INSTRUCTIONS, not descriptions, and "declared
+	// last" is deliberately absent from them. components/toast.go's doc
+	// comment says "a `ToastHost` declared last still landed BENEATH every
+	// open dropdown — #439", which is a TRUE account of the bug the ranks
+	// fixed. A guard that flags it is wrong rather than noisy, the same
+	// distinction the attachment rule below was added for. What is caught
+	// is prose telling a reader where to PUT one.
+	//
+	// The gap is `.{0,80}?` and NOT `[^.!?]{0,80}?`, which is what the
+	// first draft used to mean "in the same sentence". That class cannot
+	// cross an exclamation mark, and the second site this arm exists to
+	// catch is an HTML comment quoting the rule #437 retired —
+	// `<!-- last child of the root -->` — whose
+	// `<!--` contains one. (That quotation is history, not a claim.) The constraint was redundant as well as wrong:
+	// proseUnits has already cut the text into sentences, so every string
+	// reaching this regex is one, and 80 characters is the proximity rule.
+	positionRe := regexp.MustCompile(`(?i)` + "`?" + `\b(?:` +
+		strings.Join(hosts, "|") + `)\b` + "`?" +
+		// The alternation below is a list of RETIRED spellings — #437
+		// lifted these hosts and #439 ranked them, so each is a rule to
+		// catch, never one this file states.
+		`.{0,80}?` +
+		`(?:last child|declare it last|must be last|` +
+		// Retired likewise (#437/#439): specimens, not claims.
+		`last element|at the end of the root|bottom of the root)`)
+
 	// flagged is the whole question, in one place, so the tree walk and
 	// every fixture below ask it identically. A fixture that reimplements
 	// the predicate is a fixture that can agree with a broken one.
 	flagged := func(text string) bool {
 		for _, s := range proseUnits(text) {
+			if nameRe.MatchString(s) && positionRe.MatchString(s) {
+				return true
+			}
 			if liftVerbRe.MatchString(s) && nameRe.MatchString(s) &&
 				attachedRe.MatchString(s) {
 				return true
@@ -113,7 +160,34 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			return rerr
 		}
 		for _, s := range proseUnits(string(body)) {
-			if !liftVerbRe.MatchString(s) || !nameRe.MatchString(s) {
+			if !nameRe.MatchString(s) {
+				continue
+			}
+			// docs/specs/ is exempt from THIS arm, and only this one.
+			//
+			// A spec is a dated decision record — CLAUDE.md's convention,
+			// and the reason they are named by the date of the decision
+			// rather than of the commit. Four of them describe the
+			// AdornmentLayer and ToastHost of 2026-08-10 — before #437
+			// lifted them — when "the last
+			// child of the root" was how those hosts got on top, and that
+			// is a true account, superseded since, of what was decided then. Rewriting them
+			// to match today would be falsifying the record; flagging
+			// them would make this guard cry wolf on every historical
+			// design note until someone did.
+			//
+			// The negation arm above needs no such exemption, because a
+			// spec saying a host "does not lift" would still be wrong
+			// about its own date — the marker predates none of them.
+			if positionRe.MatchString(s) && !strings.HasPrefix(path, "../docs/specs/") {
+				examined++
+				t.Errorf("%s ties a host that implements gooey.Overlay to a POSITION:\n\t%s\n"+
+					"The marker is what lifts it, from wherever it is declared, so a "+
+					"placement rule here is an instruction a reader can follow and "+
+					"still be wrong.", path, s)
+				continue
+			}
+			if !liftVerbRe.MatchString(s) {
 				continue
 			}
 			examined++
@@ -167,6 +241,14 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		{"the toolkit's on-screen caption",
 			`<Text Grid.Row="0" Style="dim">MenuBar dropdowns and Popups lift ` +
 				`out of document order; ToastHost and AdornmentLayer do not</Text>`},
+		// Both fixtures quote sentences RETIRED by #437 and #439; they are
+		// specimens the matcher must catch, not rules this file states.
+		{"README's adornment row — the prescriptive spelling",
+			"WPF's adorner plane: an `AdornmentLayer` (last child of the root) " +
+				"hosts components positioned against a *target's* arranged bounds."},
+		// Retired likewise (#437): quoted so the arm cannot pass vacuously.
+		{"howto-forms' markup comment — the prescriptive spelling",
+			"<AdornmentLayer/>   <!-- last child of the root -->"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !flagged(tc.text) {
