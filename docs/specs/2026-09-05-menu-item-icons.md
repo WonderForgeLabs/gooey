@@ -250,7 +250,7 @@ which carries the measurement and the reason it could not land here.
 | A separator does not widen the check gutter | `TestASeparatorDoesNotWidenTheCheckGutter` | count separators in `lead()` |
 | Asking for the bounds does not BUILD the surface | `TestAskingForTheBoundsDoesNotBuildTheSurface` | put `m.pop == nil` after `showing()` — no behavioural observable, the allocation is the whole symptom |
 | …nor does asking which menu is open | `TestAskingWhichMenuIsOpenDoesNotBuildTheSurface` | the same swap in `OpenIndex` |
-| The hosts this page calls position-dependent still are | `TestTheHostsThisPageCallsPositionDependentStillAre` | adopt `gooey.Overlay` on `ToastHost` — EXPIRING, and the commit that turns it red is the one that should delete it ([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) |
+| The hosts this page calls position-dependent still are | ~~TestTheHostsThisPageCallsPositionDependentStillAre~~ (no backticks: the test is gone, and a live citation to a dead one reads as a check while checking nothing) | EXPIRED as designed: [#439](https://github.com/WonderForgeLabs/gooey/issues/439) adopted the marker on both hosts, the guard went red naming its own three paragraphs, and it was deleted with them in [#456](https://github.com/WonderForgeLabs/gooey/pull/456) |
 | …and the ones it calls lifted actually are | `TestTheHostsThisPageCallsLiftedActuallyAre` | name `Tooltip` on the lifted side — which the page did, contradicting its own next sentence |
 
 `TestAWideIconRuneDoesNotOverrunItsGutter` is worth one more line, because
@@ -316,13 +316,13 @@ Both were caught by mutation, not by review:
   up whether or not the descent runs — so it could not see a skipped
   descent at all. It reaches the bug only with a helper reading a
   *hardcoded* index, called in both roles.
-- TestAToastIsNotHiddenByAnOpenMenu ([#456](https://github.com/WonderForgeLabs/gooey/pull/456),
-  the PR above this one in the stack, so the name resolves there and not
-  here) had the same disease geometrically. Spelled without backticks
-  for the reason specclaims_test.go gives: a backticked name is a LIVE
-  citation and is checked against this tree, where it does not exist —
-  the sentence beside it was already saying so, and the guard reads the
-  backticks, not the sentence.
+- `TestAToastIsNotHiddenByAnOpenMenu` had the same disease
+  geometrically. It arrived with the overlay ranks in
+  [#456](https://github.com/WonderForgeLabs/gooey/pull/456), which is
+  why the sentence here used to say the name resolved there and not in
+  this tree — it does resolve here now, so the backticks are a LIVE
+  citation and are checked, which is the spelling a resolvable name
+  should have.
 
 The pattern is worth naming: **a test for a fix inside a walk must
 exercise the branch the fix is in**, and "the attribute shows up in the

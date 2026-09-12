@@ -274,14 +274,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:839`, in
+deliberately outside any evaluation context (`composer.go:1063`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:551`).
+separate observer for that (`Composer.armVisibility`, `composer.go:775`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:423`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:454`), so reading a property while painting *is* the damage
+(`composer.go:647`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:678`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -315,7 +315,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:442-479`; the design record is the container-backgrounds and
+(`composer.go:681-718`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -350,6 +350,65 @@ four unbounded `ChildComponents` walks outside this package
 ([#375](https://github.com/WonderForgeLabs/gooey/issues/375)) do not know
 about layers and never needed to — none of them paints.
 
+**Inside that second layer the order is a RANK, not the document**
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439);
+`docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
+optional companion to the marker — `OverlayRankPopup` 0,
+`OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
+between two — and `appendByRank` (`composer.go:460`, a package-level
+function, not a method) buckets by it, so equal ranks
+keep document order and nothing else does. An `Overlay` that does not
+implement it is rank 0, and `overlayRank` **clamps**: a negative rank
+reads as the floor, because every doc that named the constant called it
+"the floor" while the comparison was a plain `int` — `overlayRank`'s own
+comment COUNTS them by category (three doc comments, a spec heading, a
+test message) rather than listing them; derive the sites with a grep for
+`floor` rather than expecting a list to be there. Two things make this
+breakable in silence. The rank belongs to the **lifted subtree's root**,
+not to each node, so `overlayOf` (`component.go`) answers the parent's
+`inherited` BEFORE testing the marker — reverse those two `if`s and a
+rank-2 container's rank-0 child lands in an earlier bucket, the parent
+paints after it, and a parent that covers its bounds erases the child it
+lifted. And `OverlayRank()` must return a
+**constant**: it is sampled on structural re-sync, not per frame, so a
+rank that changes with state is read once and silently stale — that is
+also why it is a method and not a `Property`, which would need `Frozen`'s
+observer machinery to be honest.
+
+**There are TWO public paint paths and they share BOTH of those rules.**
+`gooey.Compose` — the one-shot path, which builds no App at all and is
+what `cmd/typeahead --dump` and `cmd/pixels` render through —
+lifts through `collectPaint` and orders through the same `appendByRank`
+bucket pass, and both consult one `overlayOf` for membership-and-rank, so
+a fixture asserted through `Compose` and one asserted through
+`Composer.Frame` agree about what is in front. Two implementations was
+the second copy the next change had to find.
+
+What they do NOT share is damage, and the difference is the reason
+`Compose` shipped a bug the retained path never had. `Compose` paints
+everything once, so it has no `covered` pass and no forcing — but it also
+had no equivalent of the LEAF PRE-CLEAR, which is what makes a popup
+opaque. It lifted overlays correctly and let the content beneath show
+through them: position without occlusion, until `collectPaint` was taught
+to carry the nearest ancestor's background down
+([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Sharing an
+ordering rule is not sharing a picture; if you add a paint path, the
+pre-clear is the half that will be forgotten.
+
+**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:131`;
+the reverse child walk is `mouse.go:157`) knows about neither layer nor
+rank, so the two planes can now disagree: a ranked host declared FIRST
+paints above a button and leaves the click to the button. Under the
+retired "declare it last" rule they agreed, which is why the divergence
+arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
+hit-testing ever becomes rank-aware, so the caveat in
+`components/toast.go`, `docs/markup-reference.md`, `docs/architecture.md`
+and `mouse.go` cannot outlive the behaviour it describes. `Popup` is
+exempt because it holds pointer capture while open, which routes presses
+before the walk runs — that is Popup's mechanism, not the marker's.
+Closing the gap is
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
 *become* the child context, with them they are type-checked against the
@@ -378,7 +437,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:209`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:223`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

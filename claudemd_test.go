@@ -998,7 +998,14 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // two, and it is a VALUE rather than a floor for the reason the
 // assertion above gives: a >= would let a demotion hide behind an
 // addition in the same commit.
-const wantIdentChecked = 22
+//
+// 22 → 24 with #439's overlay ranks: the z-order section gained lined
+// citations for appendByRank and for the rank-ordered hit walk, and a
+// lined citation in this file is a CHECKED one — the guard verifies the
+// line still holds the symbol. Raising the number is the half that says
+// so; the six numbers it sits beside all moved in the same change and
+// were corrected rather than stripped, for the same reason.
+const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.

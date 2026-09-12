@@ -833,9 +833,9 @@ var narrowerThanItsKind = map[string]struct {
 	// A FILE IN THE PAGE'S OWN FS, which is what makes it narrower than
 	// KindString: <MenuItem Icon> is a path resolved through
 	// Context.Includes at load, exactly as <Image Src> is, so the
-	// generic "x" is refused with "imaging: x: open x: file does not
+	// generic "x" was refused with "imaging: x: open x: file does not
 	// exist" — the FS being empty of that name, not the declaration
-	// being wrong, and the arm records it as unverified. probe.png is
+	// being wrong, and the arm recorded it as unverified. probe.png is
 	// the image defaultsContext already serves for <Image>.
 	"MenuItem.Icon": {lit("probe.png"),
 		"a path resolved against the page's own FS when the element builds"},

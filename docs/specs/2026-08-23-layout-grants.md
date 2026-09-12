@@ -242,7 +242,9 @@ and every leaf in that subtree pre-clears its bounds, so the tree would
 **erase** the guides rather than merely cover them.
 
 **It must be a chrome-only container.** The pre-clear branch turns on
-exactly `if _, isContainer := w.(Container); !isContainer`. Implementing
+exactly `if !isContainer(w)` — `isContainer` (`component.go`) being the
+named form of `_, ok := w.(Container)`, extracted in #456 so the two
+chains that ask this question are greppable as one rule. Implementing
 `ChildComponents()` and returning nil means it pre-clears nothing. As a
 leaf it fills its rect first and blanks the tree beneath. It must also
 never declare a `Background`, which would fill its bounds and mark it

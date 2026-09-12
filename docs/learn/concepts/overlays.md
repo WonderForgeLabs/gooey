@@ -4,42 +4,56 @@ gooey has no z-index property and no overlay registry. **Z-order is
 document order in TWO layers.** The Composer keeps its paint nodes in
 depth-first pre-order — children paint after (above) their parents,
 later siblings after earlier ones — and then lifts every subtree whose
-root implements `gooey.Overlay` out of that order and onto the end.
-`c.nodes` stays the structure; `c.paint` is the answer to what is in
-front of what.
+root implements `gooey.Overlay` out of that order and onto the end,
+**bucketed by rank within it**. `c.nodes` stays the structure; `c.paint`
+is the answer to what is in front of what.
 
 So a lifted overlay paints above the page **from wherever it is
 declared**. In a `Grid`, `Grid.Row` places it where it belongs and
 nothing about z-order argues with that.
 
-**Which surfaces are lifted, exactly.** `MenuBar` and `Popup` **are**
-lifted — both paint through `components.Popup`'s surface, which is the
-one type implementing `gooey.Overlay` today. A `Tooltip` is not one of
-them, and it reads as if it should be: its tip is `tipPopup`, an ordinary
-leaf hosted by the `AdornmentLayer`, so the layer's position decides
-where the tip lands. `Tooltip`, `ToastHost` and `AdornmentLayer` do
-**not** implement `gooey.Overlay` yet, so for those three the old rule
-still holds: they are in the ordinary layer, and their position in document
-order is what decides whether a toast paints over an open menu or under
-it. `cmd/toolkit` declares its `MenuBar`, `ToastHost` and
-`AdornmentLayer` at the end of its Grid; for the `MenuBar` that is now
-only house style, and for the other two it is still load bearing, so do
-not move them.
+**Which surfaces are lifted, exactly.** `MenuBar`, `Popup`, `ToastHost`
+and `AdornmentLayer` **are** lifted. That is every overlay host the
+framework ships, so `cmd/toolkit` declaring its `MenuBar`, `ToastHost`
+and `AdornmentLayer` at the end of its Grid is house style and decides
+nothing.
 
-(That sentence named "all three" and then "the bar", and neither had an
-antecedent it could take: the nearest three were `Tooltip`, `ToastHost`
-and `AdornmentLayer` — and `cmd/toolkit` declares no `Tooltip` at the end
-of its Grid, its tips being inside the job and overlays tabs — while "the
-bar" had appeared nowhere. Naming the three makes the sentence say what
-the file does.)
+(That sentence used to say "all three" and then "the bar", and neither
+had an antecedent it could take — the nearest three were `Tooltip`,
+`ToastHost` and `AdornmentLayer`, and `cmd/toolkit` declares no `Tooltip`
+at the end of its Grid, its tips being inside the job and overlays tabs.
+Naming them makes it say what the file does.)
 
-That is [#439](https://github.com/WonderForgeLabs/gooey/issues/439),
-which adopts the marker on both hosts and ranks the layer so a toast is
-never hidden by a menu; this paragraph comes out with it.
-`TestTheHostsThisPageCallsPositionDependentStillAre` (components) fails
-when they adopt it, so the sentence cannot outlive the fact. Stated in
-review of #455, which found this page saying position decided nothing
-for three hosts when it decided everything for two of them.
+A `Tooltip` is **not** one of them, and it reads as if it should be: its
+tip is `tipPopup`, an ordinary leaf the `AdornmentLayer` hosts, so the
+tip is lifted by the layer rather than on its own account. Nothing about
+the `Tooltip`'s own position decides anything either way. This page named
+"the `Tooltip` popup" among the lifted surfaces for two rounds, one
+sentence after saying the opposite, and review of #455 caught it —
+`TestTheHostsThisPageCallsLiftedActuallyAre` reads the names out of the
+list above and refuses one whose surface does not implement the marker.
+
+The two hosts were the exception until
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439). This
+paragraph said they did *not* implement `gooey.Overlay` and that their
+position was still load bearing, which was true and is the reason the
+sentence existed at all — #455's first draft claimed position decided
+nothing for all three, when it decided everything for two of them. The
+correction expired on schedule: the guard over that claim was written
+to fail the moment either host adopted the marker, it did, and it has
+been deleted along with the claim.
+`components/overlayclaims_test.go`'s file comment records which guard
+that was, what it asked for, and which of its two neighbours does *not*
+expire.
+
+(The name was spelled out here, hyphenated across the 72-column wrap —
+so neither the broken spelling nor the whole one could be grepped, and
+the test it named no longer exists in either form. A name is only worth
+writing where a reader can find what it points at.)
+
+**Within the layer, rank orders — not declaration.** A toast is never
+hidden by an open menu, whichever an app happens to type last. See
+`docs/specs/2026-09-05-overlay-ranks.md`.
 
 **This page opened with "Z-order is document order" and instructed
 "declare the overlay element as the LAST child"** until review of #455,
@@ -51,8 +65,15 @@ painted over an open dropdown and the forward-only pass could not put it
 back. The lift landed in
 [#437](https://github.com/WonderForgeLabs/gooey/issues/437). Ordering
 *within* the layer — so a toast is never hidden by an open menu — is
-[#439](https://github.com/WonderForgeLabs/gooey/issues/439) and is not
-described here yet.
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439), and it is
+the rank paragraph above.
+
+(This sentence ended "and is not described here yet" while the paragraph
+above it already described the ranks — the two landed in one diff and
+only the newer half was written. `docs/architecture.md` took a
+forward-hedge in the same diff and this page did not; a reader who
+reaches the older sentence first concludes the ordering is still
+undefined and declares for it.)
 
 ## The forward pass keeps the stack honest
 

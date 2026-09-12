@@ -852,3 +852,77 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 		}
 	})
 }
+
+// TestNoDocTeachesTheRetiredContainerTest is the check the `isContainer`
+// extraction shipped without, and the review of #456 found both sites it
+// was missing.
+//
+// The whole stated reason for naming the helper (`component.go`) is that
+// "naming it is what makes the two chains GREPPABLE as one rule". A grep
+// for `isContainer` landed on docs/architecture.md's quoted
+// `Composer.build` block showing the spelling that had just been
+// retired, and on docs/specs/2026-08-23-layout-grants.md telling an
+// implementer of a chrome-only container that the branch turns on
+// "exactly" the old form. A greppable rule whose top grep hit is the
+// retired spelling is not greppable.
+//
+// THE MECHANISM IS ASSERTED FIRST, so this cannot outlive its subject:
+// if composer.go stops calling the helper, the prose rule below is
+// guarding a claim that stopped being wrong and this test says so
+// instead of failing every doc.
+//
+// The ONE exemption is derived, not listed. A record whose own head says
+// it was never implemented is describing code that never shipped, and
+// rewriting its body would falsify the history it exists to keep —
+// docs/specs/2026-08-10-container-backgrounds.md is "deferred —
+// analyzed, not implemented" and its block also shows a `clearRect` that
+// no longer exists. Every other spec here is `executed` or
+// `implemented`, so the discriminator is a status and not a filename.
+func TestNoDocTeachesTheRetiredContainerTest(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("reading composer.go: %v", err)
+	}
+	if !strings.Contains(string(src), "if !isContainer(w) {") {
+		t.Skipf("composer.go no longer spells the pre-clear branch `if !isContainer(w)`, " +
+			"so the docs below are not being measured against anything. Re-derive " +
+			"this guard from the current spelling or delete it with the paragraphs " +
+			"it polices")
+	}
+
+	const retired = "isContainer := w.(Container)"
+	for _, f := range proseFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if !strings.Contains(string(body), retired) {
+			continue
+		}
+		if recordsUnshippedCode(string(body)) {
+			continue
+		}
+		t.Errorf("%s shows `%s`, the spelling #456 retired. composer.go now reads "+
+			"`if !isContainer(w)`, and the helper exists so a grep for it finds one "+
+			"rule rather than two chains — which this page defeats by being the top "+
+			"hit. Update it, or, if the page is a record of code that never shipped, "+
+			"say so in its **Status:** head the way "+
+			"docs/specs/2026-08-10-container-backgrounds.md does", f, retired)
+	}
+}
+
+// recordsUnshippedCode reports whether a document's HEAD declares that
+// what it describes was never built. Scoped to the head for the reason
+// every banner check here is: a status buried mid-document does not
+// reach a reader who lands on a section.
+func recordsUnshippedCode(body string) bool {
+	lines := strings.Split(body, "\n")
+	if len(lines) > 20 {
+		lines = lines[:20]
+	}
+	head := strings.ToLower(strings.Join(lines, " "))
+	if !strings.Contains(head, "**status:**") {
+		return false
+	}
+	return strings.Contains(head, "deferred") || strings.Contains(head, "not implemented")
+}
