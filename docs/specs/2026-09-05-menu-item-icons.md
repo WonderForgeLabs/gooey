@@ -316,9 +316,13 @@ Both were caught by mutation, not by review:
   up whether or not the descent runs — so it could not see a skipped
   descent at all. It reaches the bug only with a helper reading a
   *hardcoded* index, called in both roles.
-- `TestAToastIsNotHiddenByAnOpenMenu` ([#456](https://github.com/WonderForgeLabs/gooey/pull/456),
-  the PR above this one in the stack, so the name resolves there and not
-  here) had the same disease geometrically.
+- `TestAToastIsNotHiddenByAnOpenMenu` had the same disease
+  geometrically. It arrived with the overlay ranks in
+  [#456](https://github.com/WonderForgeLabs/gooey/pull/456), which is
+  why the sentence here used to say the name resolved there and not in
+  this tree — it does resolve here now, so the backticks are a LIVE
+  citation and are checked, which is the spelling a resolvable name
+  should have.
 
 The pattern is worth naming: **a test for a fix inside a walk must
 exercise the branch the fix is in**, and "the attribute shows up in the
