@@ -228,7 +228,7 @@ func TestANameWhoseBindingKeysSurviveIsNotReused(t *testing.T) {
 // moving one moves the other. Silent.
 func TestPastedPerInstanceBindingsAreRekeyed(t *testing.T) {
 	ed, _ := clipEditor(t)
-	spec := ed.specFor("Gauge")
+	spec := ed.specOrBare("Gauge")
 	if spec.Seed == "" {
 		t.Skip("no <Gauge> in this build's palette")
 	}
@@ -678,7 +678,7 @@ func mustBuildDoc(t *testing.T, ed *editor) gooey.Component {
 // red, and its message says what else has to change.
 func TestSlotInteriorsAreNotSelectableWhichIsWhatMakesParentInSafe(t *testing.T) {
 	ed, _ := clipEditor(t)
-	spec := ed.specFor("ItemsView")
+	spec := ed.specOrBare("ItemsView")
 	if spec.Seed == "" {
 		t.Skip("no <ItemsView> in this build's palette")
 	}

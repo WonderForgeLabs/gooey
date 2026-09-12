@@ -91,7 +91,24 @@ func describeParent(parent string) string {
 // misplaced one can be reported as misplaced rather than as unknown.
 func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map[string]bool, attached map[string]string) {
 	allowed = make(map[string]bool, len(spec.Attrs)+len(universalAttrs)+4)
-	allowed["Name"] = true
+	// NAME IS UNIVERSAL EXCEPT WHERE THERE IS NOTHING TO ADDRESS —
+	// hoisted above the TakesLayout gate because every element that
+	// BUILDS one can be named, which a pseudo-element does not.
+	// buildMenuBar reads <Menu> and <MenuItem> as data and never calls
+	// named(), so <MenuItem Name="Save"> loaded clean and ctx.Named
+	// stayed empty forever: accepted, dropped, no error anywhere.
+	//
+	// THE WRITE IS GUARDED RATHER THAN COMPUTED, and that is not style.
+	// This map's contract is ABSENT-means-disallowed, because suggest()
+	// ranges over its KEYS and never reads the value. So
+	// `allowed["Name"] = false` refuses correctly while both messages go
+	// on advertising Name — "did you mean Name?" on the element that had
+	// just started refusing it. Every other write here is a bare
+	// `= true`, so the contract held implicitly until this line asked a
+	// question whose answer could be false.
+	if !spec.Pseudo {
+		allowed["Name"] = true
+	}
 	for _, a := range spec.Attrs {
 		allowed[a.Name] = true
 	}

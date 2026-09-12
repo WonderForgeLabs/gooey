@@ -178,6 +178,25 @@ type history struct {
 	// pending is the label applyEdit attached to the edit in flight. It
 	// is consumed by the next record, whether or not that record pushes.
 	pending string
+	// cleared is the redo branch the MOST RECENT record destroyed, held
+	// only so abort can put it back after a refused mutation. record
+	// resets it on every call — see the comment there, which is the half
+	// that keeps a stale branch from being resurrected.
+	//
+	// It is not a second redo stack: nothing reads it except abort, and
+	// nothing but record writes it.
+	cleared []snapshot
+	// stashed says the most recent record actually cleared redo, and it
+	// is what makes the restore symmetric with the undo half of abort.
+	//
+	// A nil `cleared` is two different states — "this record nilled an
+	// empty redo" and "this record never got as far as nilling one" —
+	// and abort has to tell them apart. record takes an early return when
+	// the attempt changed no document state, which is one of the three
+	// cases abort's own fallback branch enumerates; without this flag the
+	// unconditional swap there assigns h.redo = nil and destroys a branch
+	// that attempt never touched. Found in review of #454.
+	stashed bool
 }
 
 // history returns the editor's stacks, creating them on first use.
@@ -222,6 +241,77 @@ func (ed *editor) applyEdit(label string, fn func()) {
 	ed.rebuild()
 }
 
+// abortHistory unrecords the mutation the loader just refused.
+//
+// Every mutator ends in a rebuild and rebuild is where history is
+// recorded, so a TRANSACTIONAL revert records twice: once for the broken
+// intermediate the loader rejected, once for the restore. The stack then
+// holds the broken state, and one ctrl+z after a refusal walks the user
+// straight back into it — docRoot nil, click-to-select dead, which is the
+// crash the revert existed to prevent, reached through the undo key.
+// Reported in review of #454, where it applies to delete, paste, promote
+// and demote alike.
+//
+// It cannot be derived at the choke point the recording itself is. record
+// already pops a step that "came back to where it started", but only
+// inside the COALESCING branch, where the run is one attribute of one
+// node. Generalising that to structural edits would be wrong: adding a
+// node and then deleting it also returns the tree to where it started,
+// and ctrl+z there must still bring the node back. The difference is not
+// visible in the trees — it is whether the mutation was REFUSED, which
+// only the mutator knows. So this is called, not inferred.
+//
+// IT RESTORES THE REDO BRANCH TOO, and that half is not symmetric with
+// the undo half: abort cannot recompute it. record clears h.redo in the
+// push branch — the one place it is cleared, and correctly so — and the
+// refused mutation's rebuild goes through that branch, so the branch is
+// already gone by the time the mutator reverts. record therefore hands
+// it over (h.cleared) and this puts it back. Without it a refusal that
+// was reported AS a refusal still destroys the redo branch: edit,
+// ctrl+z, one refused delete, and ctrl+y answers "nothing to redo" over
+// a state that was reachable a keystroke earlier. Reported in review of
+// #454, which is round 8's "a revert must leave the history where it
+// found it" applied to the other stack.
+//
+// Call it AFTER restoring the tree and BEFORE the rebuild that follows:
+// base is left naming the restored document, so that rebuild's record
+// sees no change and adds nothing.
+func (ed *editor) abortHistory() { ed.history().abort(ed.root) }
+
+func (h *history) abort(root *node) {
+	if !h.started {
+		return
+	}
+	// The label belonged to an edit that no longer exists.
+	h.pending = ""
+	// The redo branch the refused mutation's own rebuild cleared. record
+	// resets the stash on EVERY call, so this is what the most recent
+	// record destroyed and nothing older — which is what stops a later
+	// abort resurrecting a branch the user has since edited past, the
+	// classic bug record's own comment describes from the other side.
+	//
+	// GUARDED, like the undo half below. record's "changed no document
+	// state" early return never reaches the line that nils redo, so an
+	// unconditional swap here would assign h.redo = nil and throw away a
+	// branch the attempt did not clear. Unreachable through today's six
+	// call sites — each reverts a mutation that did change the tree — but
+	// the asymmetry is the shape the last two rounds were about.
+	if h.stashed {
+		h.redo, h.cleared, h.stashed = h.cleared, nil, false
+	}
+	if n := len(h.undo); n > 0 && h.undo[n-1].root.equal(root) {
+		h.base = h.undo[n-1]
+		h.undo[n-1] = snapshot{}
+		h.undo = h.undo[:n-1]
+		return
+	}
+	// Nothing was pushed for this attempt — history is off, the bound
+	// evicted the entry, or the attempt changed no document state. Base
+	// still names the broken intermediate either way, so re-baseline it on
+	// the document as it actually stands.
+	h.base = snapshot{root: root.clone(), sel: h.base.sel, hasSel: h.base.hasSel}
+}
+
 // recordHistory is the hook, and it runs at the TOP of rebuild.
 //
 // The top rather than the bottom, for two reasons that are both about
@@ -256,6 +346,14 @@ func (ed *editor) recordHistory() {
 func (h *history) record(root *node, sel []int, hasSel bool) {
 	label := h.pending
 	h.pending = ""
+	// INVALIDATED HERE, ON EVERY CALL, and that is the load-bearing half
+	// of the stash. h.cleared exists so an abort immediately after this
+	// rebuild can put the redo branch back; a stash that outlived the
+	// record that made it would let a much later abort restore a branch
+	// the user abandoned by editing, which is exactly the state the
+	// "THE ONE PLACE REDO IS CLEARED" comment below exists to prevent.
+	// Reset first, set only where redo is actually nilled.
+	h.cleared, h.stashed = nil, false
 
 	if !h.started {
 		// The state the editor opens with. It becomes the baseline and
@@ -316,7 +414,7 @@ func (h *history) record(root *node, sel []int, hasSel bool) {
 	if key != "" && key == h.base.key {
 		h.base = snapshot{root: root.clone(), sel: sel, hasSel: hasSel,
 			label: h.base.label, key: key}
-		h.redo = nil
+		h.cleared, h.redo, h.stashed = h.redo, nil, true
 		// AND IF THE RUN CAME BACK TO WHERE IT STARTED, it was not an
 		// edit at all. Esc in the properties pane restores the value the
 		// row held when the editor opened, and it does so by WRITING it —
@@ -355,7 +453,7 @@ func (h *history) record(root *node, sel []int, hasSel bool) {
 	// undo/redo cannot be alternated) or too late (so ctrl+y after an
 	// edit replays a state from a branch the user abandoned, silently
 	// discarding the edit they just made).
-	h.redo = nil
+	h.cleared, h.redo, h.stashed = h.redo, nil, true
 }
 
 // push adds a state and enforces the bound.
