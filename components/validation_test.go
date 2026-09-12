@@ -346,3 +346,45 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 		t.Fatalf("row 1 = %q, want the adopted message floating below", got)
 	}
 }
+
+// TestAValidationMarkerPlacesItsAdornmentWhileFrozen holds the one claim
+// worth keeping out of the superseded #444: Frozen gates INPUT, not
+// adornment placement.
+//
+// It is salvaged rather than rewritten because its discriminating half is
+// the part that is easy to leave out. A marker showing over a frozen
+// field is exactly what a test with no <Frozen> in the tree would also
+// report, so the name would be a claim about a wrapper that was doing
+// nothing. Asking the FocusManager to focus the field first, and
+// requiring the refusal, is what makes the rest of the test mean what it
+// says.
+//
+// The correction this holds down lives in
+// apps/wysiwyg/components/preview/overlay.go.
+func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
+	name := prop.NewSource("")
+	errP := validate.Field(name, validate.Required("required"))
+	tb := &TextBox{Text: name, Error: errP}
+	m := &ValidationMarker{}
+	tb.Attach(m)
+	// A plain <Frozen> is AllowNone — the strongest freeze there is.
+	root := &VStack{Children: []gooey.Component{
+		&Frozen{Child: tb},
+		&AdornmentLayer{},
+	}}
+	c := gooey.NewComposer(root, 30, 5)
+	c.Frame()
+	// Discriminating half: without this the test passes just as well
+	// with no Frozen in the tree at all, and its name would be a claim
+	// about a wrapper that was doing nothing.
+	if c.Focus().SetFocus(tb) {
+		t.Fatal("the TextBox took focus, so the subtree is not frozen and " +
+			"this test proves nothing about Frozen")
+	}
+	if !m.IsShown() {
+		t.Fatal("the marker did not place while frozen — if Frozen has " +
+			"grown a gate on the input-tree walk that is a real change, " +
+			"and preview/overlay.go's comment can drop the correction " +
+			"this test exists to hold")
+	}
+}
