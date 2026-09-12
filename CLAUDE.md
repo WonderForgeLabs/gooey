@@ -400,7 +400,7 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:177`) now returns the component that
+`FocusManager.HitTest` (`mouse.go:185`) now returns the component that
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
@@ -458,7 +458,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:423`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:451`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

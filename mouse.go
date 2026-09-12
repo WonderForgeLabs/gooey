@@ -166,8 +166,16 @@ type PointerFollower interface{ FollowsPointer() bool }
 // every node, which is where the work actually was — a sibling that does
 // not contain the point costs the same rectangle test it always did, and
 // siblings that do overlap were already both visited by the reverse
-// walk on a miss. What is gone is the early exit on a HIT, and that is
-// one extra rectangle test per remaining sibling on the path.
+// walk on a miss. What is gone is the early exit on a HIT.
+//
+// AND THAT IS NOT "one extra rectangle test per remaining sibling",
+// which is what this said and is an understatement. A sibling that does
+// not contain the point still costs one test. A sibling that DOES is now
+// descended in full — its whole subtree is visited to find whatever
+// out-ranks the hit already in hand — where the early exit used to stop
+// the walk dead. The cost is bounded by the containing subtrees, not by
+// the sibling count, and overlapping containers are exactly where it is
+// paid.
 //
 // Popup never depended on any of this: it holds pointer capture while
 // open (Popup.Open), so presses never reach the walk. That is Popup's
@@ -261,7 +269,27 @@ func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
 // apart, and TestHitTestOnABranchingCycleTerminates the other side.
 //
 // CLAUDE.md's layout-cycle paragraph claims all seven ChildComponents
-// walks in this package are bounded. It was true of six.
+// walks in this package are bounded, and this comment used to answer "it
+// was true of six". That is the wrong reading of what the other six buy,
+// and it flattered them.
+//
+// TWO of the seven — Compose and Focus — bound by IDENTITY: they already
+// key a map by component, so a cycle terminates however it is shaped.
+// The other five (Measure, Arrange, HitTest, Focusable, Render) bound by
+// DEPTH against MaxLayoutDepth, and a depth cap bounds the length of a
+// path, not the number of them. On a cycle that BRANCHES — a container
+// including itself twice — the visit count is exponential in the cap
+// rather than linear, so the walk terminates in the same sense that
+// 2^512 node visits terminate. TestHitTestOnABranchingCycleTerminates is
+// this walk's answer and TestABranchingTreeUnderTheCapIsFullyVisited is
+// what stops that answer from being truncation.
+//
+// So the scope of this change is "hitTest gained a node budget", not
+// "hitTest caught up with six walks that were already safe". The other
+// four depth-bounded walks are unchanged and still explode on a
+// branching cycle; that is #375's seam, and the reason it is not fixed
+// here is that a budget belongs in one walk-the-children primitive
+// rather than in five copies. Raised in review of #458.
 func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, order *int, best *hitCandidate, aborted *bool) {
 	// ONE CHECK, HERE, and the sibling loop below deliberately has no
 	// second one. A `if *aborted { return }` after each recursive call

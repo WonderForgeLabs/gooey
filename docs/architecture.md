@@ -1101,8 +1101,9 @@ adornments inside stay hittable.
 overlays differing only in rank, declares the higher-ranked one first,
 and requires paint and the hit walk to return the same one. It is the
 inversion of the guard that pinned the divergence and named the four
-files whose caveats came out with it — TestARankOrdersPaintAndNotHit
-Testing, spelled here without backticks because #465 deleted it along
+files whose caveats came out with it —
+TestARankOrdersPaintAndNotHitTesting, spelled here without backticks
+because #465 deleted it along
 with the divergence, and a live citation to a dead test reads as a check
 while checking nothing.
 

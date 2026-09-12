@@ -649,6 +649,21 @@ func matchesAny(line string, res []*regexp.Regexp) bool {
 var retiredInputRule = []*regexp.Regexp{
 	// What the walk was said to do.
 	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,60}?\bwalks? (the )?(plain |ordinary )?(document|tree) order`),
+	// THE NOUN FORM. Every pattern above conjugates the walk as a VERB
+	// — "hit-testing walks document order" — and the claim reads the
+	// same with the walk as the SUBJECT instead: "the HIT-TEST walk,
+	// which runs in document order". apps/wysiwyg/statusaddr.go:539 said
+	// exactly that, live in the tree, through the whole of #478's sweep,
+	// and the guard reported nothing. A predicate assembled from the
+	// phrasings you can see is a sample of the ways the thing can be
+	// said — the fourth time this file has recorded that finding.
+	// Raised in review of #458.
+	//
+	// `hit-?test` and NOT a bare `hit walk`: correctionResidueRule's
+	// sample "The hit walk still uses document order" belongs to the
+	// residue family, which is scanned with a STRICTER qualifier set,
+	// and catching it here would move it into the laxer one.
+	regexp.MustCompile(`(?i)hit-?test(ing)?[ -]walk\b.{0,40}?\b(runs?|proceeds?|goes|happens|is|are) in (plain |ordinary )?(document|tree) order`),
 	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,60}?\b(prefers|takes|favou?rs) (the )?(later|last) sibling`),
 	regexp.MustCompile(`(?i)(later|last) sibling still (takes|wins|gets) (a|the) (press|click)`),
 	regexp.MustCompile(`(?i)hit-?test(ing|s)?\b.{0,40}?\blast sibling first`),
@@ -1645,7 +1660,14 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 		// through the join and once at i+1 on its own, and the first
 		// report names a blank line — which reads as a second violation
 		// somewhere else.
-		reported := map[int]bool{}
+		// ONE MAP PER OBLIGATION, and that is the correction. A single
+		// `reported` map shared by both checks below re-creates, through
+		// the back door, exactly the "run the second only where the first
+		// failed" shape the comment further down argues against: the
+		// clause check sets the flag, and the Hidden check then skips a
+		// statement that owes BOTH. Raised in review of #458.
+		reportedClause := map[int]bool{}
+		reportedHidden := map[int]bool{}
 		for i, line := range lines {
 			span, at := line, i
 			want, qual := hitContractWant(span)
@@ -1669,8 +1691,8 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 			// matters: every one of the six live statements already
 			// carried the ancestor clause, so all six would have been
 			// skipped before the enumeration was ever read.
-			if !qual.MatchString(window) && !reported[at] {
-				reported[at] = true
+			if !qual.MatchString(window) && !reportedClause[at] {
+				reportedClause[at] = true
 				problems = append(problems, fmt.Sprintf(
 					"%s:%d states the hit-test contract without the clause that makes "+
 						"it true:\n\t%s\n"+
@@ -1693,8 +1715,8 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 			// that makes the claim and lists nothing owes the clause
 			// above, not this.
 			if hitExceptionList.MatchString(window) &&
-				!hitNamesHidden.MatchString(window) && !reported[at] {
-				reported[at] = true
+				!hitNamesHidden.MatchString(window) && !reportedHidden[at] {
+				reportedHidden[at] = true
 				problems = append(problems, fmt.Sprintf(
 					"%s:%d enumerates what HitTest does not hit and omits "+
 						"Hidden:\n\t%s\n"+
@@ -1897,6 +1919,13 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 		// guard can actually hold.
 		"**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:131`;",
 		"hit-testing ever becomes rank-aware, so the caveat in",
+		// THE NOUN FORM, and the only sample here that is a JOINED pair
+		// rather than one source line: apps/wysiwyg/statusaddr.go wrapped
+		// the claim between "runs in" and "document order", so joinWrapped
+		// is what the scan actually hands the pattern and a single line of
+		// it states nothing. Removed by this change.
+		"// this slice. Position still orders the HIT-TEST walk, which runs in " +
+			"document order, and an open popup takes the pointer capture — so",
 	}
 	// Phrasings the repo never shipped, kept apart for the reason the
 	// paint twin keeps its own: inventing entries for `removed` would

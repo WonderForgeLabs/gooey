@@ -536,9 +536,12 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	}
 	// Last by convention, not by necessity: the surface is a
 	// gooey.Overlay and paints over whatever it covers from anywhere in
-	// this slice. Position still orders the HIT-TEST walk, which runs in
-	// document order, and an open popup takes the pointer capture — so
-	// neither half depends on this being the append that comes last.
+	// this slice. Since #465 the hit walk asks overlayOf as well, so
+	// membership and rank order it too and position is only the tiebreak
+	// inside one layer — this append decides nothing on either plane.
+	// What carries a press to the surface at all is the capture an open
+	// popup holds, because it is arranged outside this strip's rect
+	// (#482).
 	s.kids = append(s.kids, p.Surface())
 	return s.kids
 }

@@ -55,9 +55,16 @@ the ordinary one, a higher `OverlayRank` sits above a lower one within
 that layer, and document order separates only two candidates that tie on
 both — which is the one place document order still decides anything. So a
 popup in the overlay layer is what a click over it reaches, whether or
-not it was declared last and whether or not it holds capture.
-`components.Popup` takes the pointer while it is open anyway, but that is
-Popup's own mechanism rather than a repair for the walk. See
+not it was declared last.
+
+**Capture is a different question, and this page used to answer it
+wrongly.** The walk prunes on bounds at every node, so a surface arranged
+OUTSIDE its owner's rect — which is what `components.Popup` and
+`components.Menu` arrange — is never descended into on the way down,
+whatever its layer or rank. For those, capture is not "Popup's own
+mechanism rather than a repair for the walk": it is the reason the click
+arrives at all. The layer-and-rank rule decides between candidates the
+walk REACHES; #482 is the gap for the ones it does not. See
 [overlays](overlays.md) for the paint side.
 
 The walk therefore does not stop at the first hit: an earlier sibling can
