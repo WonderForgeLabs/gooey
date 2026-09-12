@@ -248,6 +248,20 @@ func (c *Composer) SetCaps(caps term.Caps) {
 // from capabilities — a nil encoder forces the halfblock fallback, where
 // pixel content degrades into cells. For a host that knows better than
 // the probe, and for the demos that show the protocols side by side.
+//
+// Call it before the first Frame, for the reason SetCaps carries and now
+// for a second one: the protocol no longer decides only how a picture
+// travels. A drawer may branch the PICTURE on the encoder's capabilities
+// — apps/wysiwyg's panel asks graphics.OpaqueEncoder and draws its
+// hairline in a different colour on a wire with no alpha (#254) — and
+// c.frame.Graphics is a plain field, not a property, so swapping it
+// neither subscribes nor invalidates. Already-clean paint nodes keep the
+// previous protocol's drawing until something else damages them.
+//
+// Nothing in the tree can hit it today: App.attach sets it on a fresh
+// Composer, and cmd/colors passes it as a start-up option. The caller
+// that would is the one the paragraph above invites — a demo showing the
+// protocols side by side.
 func (c *Composer) SetGraphics(enc graphics.Encoder) {
 	c.frame.Graphics = enc
 	c.gfxForced = true

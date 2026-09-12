@@ -60,6 +60,13 @@ type Sixel struct{}
 
 func (Sixel) Name() string { return "sixel" }
 
+// OpaqueOnly marks sixel as the alpha-less protocol. The `a < 0x8000`
+// test in Encode below is the whole reason: a pixel under half alpha is
+// not written at all, so a caller drawing a faint line has to draw a
+// different picture for this encoder rather than trust the wire to dim
+// one. See graphics.OpaqueEncoder.
+func (Sixel) OpaqueOnly() {}
+
 // maxRegisters is the sixel register count this encoder will use. 256 is
 // the number every sixel implementation supports; some support more, and
 // none can be relied on to.
