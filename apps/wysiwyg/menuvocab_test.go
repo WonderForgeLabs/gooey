@@ -1,0 +1,811 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/markup"
+)
+
+// The designer's half of #429 — "why don't I see the child properties to
+// set content for menu item?"
+//
+// The report reads like one missing panel and is two independent holes,
+// which is why fixing either alone leaves the same screen. The
+// vocabulary did not declare <Menu> or <MenuItem> at all, so there was
+// nothing for a property grid to show; and NOTHING COULD SELECT ONE
+// EITHER, because selection runs through the pointer and these elements
+// put no component under it. A grid with rows nobody can reach and a
+// selection that lands on an element with no rows look identical from
+// the outside: an empty inspector.
+//
+// So this file pins both ends and the join. menuFixture is shared
+// because the fixture is the point — a <MenuBar> is the only element in
+// the box today whose children are DATA.
+
+// menuFixture is a document holding one populated <MenuBar>.
+//
+// Canvas offsets because the design surface is a <Canvas>: without them
+// every node stacks at the origin, which does not affect selection but
+// makes any geometry assertion a coincidence.
+func menuFixture(t *testing.T) (ed *editor, root gooey.Component, bar, menu, item *node) {
+	t.Helper()
+	ed, root = buildPage(t)
+	item = &node{Elem: "MenuItem", Attrs: map[string]string{"Text": "Open"}}
+	menu = &node{Elem: "Menu", Attrs: map[string]string{"Title": "File"}, Kids: []*node{item}}
+	bar = &node{
+		Elem:  "MenuBar",
+		Attrs: map[string]string{"Name": "Bar1", "Canvas.Left": "0", "Canvas.Top": "0"},
+		Kids:  []*node{menu},
+	}
+	ed.doc().Kids = append(ed.doc().Kids, bar)
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("the <MenuBar> fixture does not build: %q", ed.status.Get())
+	}
+	return ed, root, bar, menu, item
+}
+
+// TestTheMenuVocabularyIsNotOfferedInThePalette is the half a name list
+// could not keep.
+//
+// The filter was `e.NonVisual || e.Name == "Tab"` — correct when it was
+// written, and wrong the moment a second nested element existed, in the
+// way a hardcoded name always goes wrong: not with an error, but by
+// quietly offering a <Menu> whose insertion produces markup the loader
+// refuses. Nothing anywhere would have gone red.
+//
+// The assertion is therefore about the DERIVATION, not about three
+// names: every element some other entry restricts itself to is absent,
+// and the container that restricts them is present. A fourth nested
+// element added tomorrow is covered by the same loop.
+func TestTheMenuVocabularyIsNotOfferedInThePalette(t *testing.T) {
+	ed, _ := buildPage(t)
+	offered := map[string]bool{}
+	for _, e := range ed.palette {
+		offered[e.Name] = true
+	}
+	// Derived from the catalog rather than listed here, so this test
+	// cannot be the second copy of the fact it is checking.
+	restricted := map[string]string{}
+	hosts := map[string]markup.ElementSpec{}
+	specs := map[string]markup.ElementSpec{}
+	for _, e := range ed.docCtx.Catalog() {
+		specs[e.Name] = e
+		if e.Children.Mode != markup.ModeRestricted {
+			continue
+		}
+		hosts[e.Name] = e
+		for _, only := range e.Children.Only {
+			restricted[only] = e.Name
+		}
+	}
+	if len(restricted) == 0 {
+		t.Fatal("no element in the catalog restricts its children: the palette filter has nothing to exclude and this test proves nothing")
+	}
+	// THE RULE IS Nested, NOT "named in an Only list", and the
+	// difference is the whole of markNested's doc comment. "Named in an
+	// Only list" is the one-conjunct converse it spends two paragraphs
+	// rejecting, and markup/menuvocab_test.go's
+	// TestARestrictedContainerDoesNotHideARealElement builds a fixture
+	// specifically to forbid it — a host with Only: ["Button"] must
+	// leave <Button> on offer.
+	//
+	// Asserting the converse here made the two tests contradict each
+	// other about one derivation. It passed only because every Only name
+	// in the shipped catalog happens to be Pseudo or NonVisual, so
+	// adding that host would turn this red while blaming a palette
+	// filter that is right. Found in review of #454.
+	for name, parent := range restricted {
+		spec, ok := specs[name]
+		if !ok {
+			// UNDECLARED, which is #429's symptom one element over and
+			// not something this test can assert about the palette: an
+			// element with no catalog entry has no Nested flag to
+			// compare against. <Companion> restricts to <Arg> and
+			// <Var>, and buildCompanion validates both by hand
+			// (markup/companion.go:289, :322) — so nothing is silently
+			// dropped, but no property grid can show them either.
+			//
+			// Declaring them is exactly what ParsedBy is for and is
+			// deliberately NOT done here: it is a new public surface,
+			// beyond the findings this commit answers, and it belongs
+			// with the same tests and docs <Menu>/<MenuItem> got.
+			// Logged rather than skipped silently, so the next reader
+			// finds it.
+			t.Logf("gap: <%s> is named in <%s>'s Only list but is not a declared element — "+
+				"its properties are unreachable from any tool, the way <MenuItem>'s were", name, parent)
+			continue
+		}
+		if offered[name] == spec.Nested {
+			if spec.Nested {
+				t.Errorf("the palette offers <%s>, which is Nested — legal only inside <%s>: adding it produces markup that will not load", name, parent)
+			} else {
+				t.Errorf("the palette withholds <%s>, which <%s> restricts to but which is NOT Nested: an element placeable on its own has been hidden", name, parent)
+			}
+		}
+	}
+	// The other direction, so the filter cannot pass by emptying the
+	// palette: the containers themselves stay on offer.
+	//
+	// Unless the container is excluded on its OWN account, and both
+	// exclusions are real rather than defensive. <Companion> restricts
+	// its children to <Arg> and <Var> and is non-visual, so it belongs
+	// to the attachment gesture rather than to "add a child". <Menu>
+	// restricts its children to <MenuItem> and is itself restricted to
+	// <MenuBar> — a container and a nested element at once, which is
+	// exactly why "may this be placed on its own" had to become a
+	// question about the element rather than about its role.
+	checked := 0
+	for _, parent := range restricted {
+		h := hosts[parent]
+		if h.NonVisual || h.Nested {
+			continue
+		}
+		checked++
+		if !offered[parent] {
+			t.Errorf("the palette does not offer <%s>, the container the nested elements belong in", parent)
+		}
+	}
+	if checked == 0 {
+		t.Error("every restricted container is itself excluded: the second half of this test asserted nothing")
+	}
+}
+
+// TestThePointerCannotReachAMenuItem is why the keyboard route exists,
+// and it is stated as a test rather than as a comment because it is the
+// premise the next two rest on. If a press ever COULD select a
+// <MenuItem>, selectChild would be a convenience instead of the only
+// way in, and this failing is how someone finds that out.
+//
+// The mechanism: buildMenuBar consumes <Menu> and <MenuItem> as data —
+// they never enter the visual tree — so mapNodes finds the bar's built
+// children do not correspond to its document children and stops. Every
+// component inside the bar's rect maps to the bar.
+func TestThePointerCannotReachAMenuItem(t *testing.T) {
+	ed, _, bar, menu, item := menuFixture(t)
+	if ed.compOf[menu] != nil {
+		t.Error("a <Menu> now has a component of its own; selectChild is no longer the only route and its comment is stale")
+	}
+	if ed.compOf[item] != nil {
+		t.Error("a <MenuItem> now has a component of its own; selectChild is no longer the only route and its comment is stale")
+	}
+	// The bar itself IS mapped — otherwise the two checks above would
+	// pass for a fixture that simply failed to build.
+	if ed.compOf[bar] == nil {
+		t.Fatal("the <MenuBar> has no component either: the fixture did not build and nothing above was tested")
+	}
+}
+
+// TestEnterDescendsIntoTheMenuVocabulary is the join.
+//
+// Driven through the page's own KeyBinding rather than by calling
+// ed.selectChild, for the reason pressEsc gives: a binding declared on
+// the wrong element never fires, and a direct call passes for a page
+// that has no binding at all. That is not hypothetical here — this went
+// red twice, once on bare enter (eaten by the toolbox) and once on a
+// binding scoped to the design pane (which is not in the focus order at
+// all), and both would have passed against ed.selectChild.
+func TestEnterDescendsIntoTheMenuVocabulary(t *testing.T) {
+	ed, root, bar, menu, item := menuFixture(t)
+	c := gooey.NewComposer(root, 160, 48)
+	t.Cleanup(c.Close)
+	c.Frame()
+	ed.setSelection(bar)
+	if !pressEnter(c) {
+		t.Fatal("enter was not handled: the page has no SelectChild binding")
+	}
+	if ed.sel != menu {
+		t.Fatalf("enter on the <MenuBar> selected %v, want the <Menu>", elemOf(ed.sel))
+	}
+	pressEnter(c)
+	if ed.sel != item {
+		t.Fatalf("enter on the <Menu> selected %v, want the <MenuItem>", elemOf(ed.sel))
+	}
+	// A leaf is a no-op, not a clear: enter at the bottom must not
+	// deselect, or the gesture means two things depending on depth.
+	pressEnter(c)
+	if ed.sel != item {
+		t.Fatalf("enter on a leaf moved the selection to %v", elemOf(ed.sel))
+	}
+	// And the round trip, because a descent nobody can climb out of is
+	// worse than none.
+	pressEsc(c)
+	if ed.sel != menu {
+		t.Fatalf("esc from the <MenuItem> selected %v, want the <Menu>", elemOf(ed.sel))
+	}
+	pressEsc(c)
+	if ed.sel != bar {
+		t.Fatalf("esc from the <Menu> selected %v, want the <MenuBar>", elemOf(ed.sel))
+	}
+}
+
+// TestASelectedMenuItemOffersItsAttributes is the reported symptom,
+// asserted at the grid rather than at the catalog.
+//
+// Reading markup.AttrsFor directly would pass on the state this change
+// found: the vocabulary declared the attributes and ed.target() resolved
+// the selection in ed.palette, which no longer contains a <MenuItem> —
+// so the catalog knew and the grid still showed nothing.
+func TestASelectedMenuItemOffersItsAttributes(t *testing.T) {
+	ed, _, _, _, item := menuFixture(t)
+	ed.setSelection(item)
+	got := map[string]bool{}
+	for _, r := range ed.attrRows() {
+		got[r.name] = true
+	}
+	// EVERY ATTRIBUTE THE VOCABULARY DECLARES, taken from the catalog
+	// rather than written out.
+	//
+	// This was a hand-written list, and the argument in its comment —
+	// "worth extending rather than replacing with a count", because the
+	// feature ships when somebody can set the attribute without opening
+	// $EDITOR — is right about the CLAIM and was wrong about how to hold
+	// it. A list has to be extended by whoever adds an attribute, and
+	// nothing makes them; the catalog is what the loader and the palette
+	// both read, so deriving from it asserts the claim for attributes
+	// nobody has declared yet. Icon and IconRune, #400's designer half,
+	// are covered by construction rather than by having been remembered.
+	//
+	// It crosses a MODULE boundary, which is why it goes through
+	// markup.BuiltinElements() rather than defMenuItem: apps/wysiwyg is
+	// its own module and that is the exported seam. Raised in review of
+	// #455.
+	want := declaredAttrs(t, "MenuItem")
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("a selected <MenuItem> has no %q row: %v", w, got)
+		}
+	}
+}
+
+// declaredAttrs is the vocabulary's own answer to "what does this
+// element take", with the floors a derived list needs: the element has
+// to exist, and its attributes have to be EXHAUSTIVE — an element whose
+// AttrsKnown is false reports what could be discovered, which is a
+// different statement from what it declares, and asserting over it would
+// quietly weaken every caller.
+func declaredAttrs(t *testing.T, elem string) []string {
+	t.Helper()
+	for _, e := range markup.BuiltinElements() {
+		if e.Name != elem {
+			continue
+		}
+		if !e.AttrsKnown {
+			t.Fatalf("<%s> reports AttrsKnown=false, so its Attrs is what could be "+
+				"discovered rather than what it declares — deriving an assertion "+
+				"from it would pass for an incomplete set", elem)
+		}
+		if len(e.Attrs) == 0 {
+			t.Fatalf("<%s> declares no attributes, so this assertion is vacuous", elem)
+		}
+		out := make([]string, 0, len(e.Attrs))
+		for _, a := range e.Attrs {
+			out = append(out, a.Name)
+		}
+		return out
+	}
+	t.Fatalf("the catalog has no <%s>", elem)
+	return nil
+}
+
+// TestASelectedMenuOffersItsTitle is the sibling case, and it is not
+// redundant: <Menu> and <MenuItem> are separate declarations read by one
+// Build, which is exactly the arrangement catalogen cannot attribute
+// reads across (see checkPseudo). Its guard catches an attribute NOBODY
+// reads; this catches Title going to the wrong declaration of the two.
+func TestASelectedMenuOffersItsTitle(t *testing.T) {
+	ed, _, _, menu, _ := menuFixture(t)
+	ed.setSelection(menu)
+	rows := ed.attrRows()
+	for _, r := range rows {
+		if r.name == "Title" {
+			if r.value != "File" {
+				t.Errorf("the Title row shows %q, want the document's %q", r.value, "File")
+			}
+			return
+		}
+	}
+	t.Errorf("a selected <Menu> has no Title row: %v", rows)
+}
+
+// pressEnter is the SelectChild gesture, through the page's binding.
+//
+// ALT is not decoration. Bare enter never reaches a root KeyBinding in
+// this app — the toolbox, the inspector and every caret editor claim it
+// first — so a test that pressed enter would be testing whichever of
+// those happened to hold focus. The markup carries the full reasoning.
+func pressEnter(c *gooey.Composer) bool {
+	return c.Handle(input.KeyOf(input.KeyEvent{Key: input.KeyEnter, Mods: input.ModAlt}))
+}
+
+// elemOf names a node for a failure message, nil included.
+func elemOf(n *node) string {
+	if n == nil {
+		return "nothing"
+	}
+	return "<" + n.Elem + ">"
+}
+
+// TestARebuildDoesNotRebuildTheCatalogPerNode is the pin on a cost that
+// is invisible in every other assertion here.
+//
+// pairAgrees answers "is this element pseudo?" once per document node,
+// and the obvious way to answer it — ed.specOf — ranges over
+// ed.docCtx.Catalog(), which is not a getter: it re-derives every
+// builtin spec with fresh Attrs copies, re-runs markNested and sorts.
+// Measured at ~87 allocations per call. mapNodes runs from rebuild(),
+// which fires on every drag frame, every move and every property edit,
+// so a per-node catalog read is O(nodes) of that on the inner loop —
+// and NOTHING ELSE WOULD NOTICE. Every correctness test here passes
+// either way; a rebuild simply gets slower and allocates megabytes.
+//
+// So the assertion is allocations, and the ceiling is set where the two
+// implementations cannot both fit: the document below has enough nodes
+// that a per-node catalog read costs thousands of allocations more than
+// the whole rest of the rebuild. It is deliberately loose — this is a
+// guard against a regression of a known shape, not a budget for
+// rebuild() to be held to.
+func TestARebuildDoesNotRebuildTheCatalogPerNode(t *testing.T) {
+	// DIFFERENTIAL, NOT AN ABSOLUTE CEILING, and the change is the point.
+	//
+	// This was `AllocsPerRun(...) > 8000` against a measured 6,630 — a
+	// fifth of headroom over its own baseline. The number encoded today's
+	// TOTAL rebuild cost, so any unrelated change adding 20% to rebuild()
+	// turned it red, in a nested module CI only VETS: the failure would
+	// surface first in the CLAUDE.md loop, in a file named for menu
+	// vocabulary, where it is easy to misattribute.
+	//
+	// The claim is "the catalog is not read per node". Measuring the same
+	// rebuild at N and 2N nodes and asserting the PER-NODE delta stays
+	// small says exactly that, and is invariant to rebuild() getting
+	// cheaper or dearer overall. A catalog read per node shows up as a
+	// delta of ~87 allocations per node — the cost of one Catalog() —
+	// against single digits when the snapshot is doing its job.
+	// Raised in review of #454.
+	measure := func(t *testing.T, nodes int) float64 {
+		t.Helper()
+		ed, _ := buildPage(t)
+		for i := 0; i < nodes; i++ {
+			ed.doc().Kids = append(ed.doc().Kids, &node{
+				Elem:  "VStack",
+				Attrs: map[string]string{"Canvas.Left": "0", "Canvas.Top": "0"},
+				Kids:  []*node{{Elem: "Text", Body: "x"}},
+			})
+		}
+		ed.rebuild()
+		if ed.docRoot == nil {
+			t.Fatalf("the fixture does not build: %q", ed.status.Get())
+		}
+		// The set must actually be populated, or the cheap path is cheap
+		// because it answers nothing.
+		if !ed.pseudo["MenuItem"] || !ed.pseudo["Menu"] || !ed.pseudo["Tab"] {
+			t.Fatalf("ed.pseudo does not hold the pseudo-elements: %v", ed.pseudo)
+		}
+		return testing.AllocsPerRun(3, func() { ed.rebuild() })
+	}
+
+	const n = 60
+	small := measure(t, n)
+	large := measure(t, 2*n)
+	// Each added node is a VStack AND a Text, so the document grows by
+	// 2*n nodes between the two measurements.
+	perNode := (large - small) / float64(2*n)
+
+	// THE CEILING IS SET FROM THE MEASURED PAIR, not from a guess about
+	// what the work "should" cost — which is the correction round 3 of
+	// this review already forced on the two absolute pins, and which I
+	// got wrong again here on the first attempt by assuming the healthy
+	// per-node cost was single digits. Measured on this checkout:
+	//
+	//	healthy                       52.6 allocations per node
+	//	catalog read per node        141.7 allocations per node
+	//
+	// (the regression arm produced by replacing ed.pseudo[k.Elem] in
+	// select.go with a scan of ed.docCtx.Catalog()). 90 sits between
+	// them with room for ordinary per-node work to grow, and still
+	// catches a partial regression that reads the catalog for only some
+	// nodes.
+	const perNodeCeiling = 90
+	if perNode > perNodeCeiling {
+		t.Errorf("rebuild() allocates %.1f times per additional document node "+
+			"(%.0f at %d nodes, %.0f at %d; ceiling %d): a Catalog() read is ~87 "+
+			"allocations, so something on the per-node path is asking again — see loadPalette",
+			perNode, small, 2*n, large, 4*n, perNodeCeiling)
+	}
+	t.Logf("rebuild(): %.0f allocs at %d nodes, %.0f at %d — %.1f per node",
+		small, 2*n, large, 4*n, perNode)
+}
+
+// TestAttrRowsDoesNotRebuildTheCatalog is the SECOND allocation pin, and
+// it is not a duplicate of the one above — the two watch different
+// paths, and the first is blind to what this catches.
+//
+// attrRows() reaches the catalog through target(). That is O(1) per
+// call, so a rebuild-ceiling test cannot see it; but attrRows is
+// evaluated by ed.attrItems, a prop.NewComputed bound to
+// <ItemsView Items="{{.AttrItems}}">, which means it runs INSIDE that
+// ItemsView's paint node on every repaint after an ed.rev bump — every
+// property edit, every selection change — and again per keypress from
+// selectedRow() and per commit from valueEditor.Write.
+//
+// Context.Catalog() re-derives every builtin spec with fresh Attrs
+// copies, re-runs markNested and sorts, at ~89 allocations. Worse, it
+// globs *.gooey and runs Declarations on every include file when a
+// context has them: filesystem I/O and XML parsing inside a Render,
+// which has nowhere to put an error. docCtx sets no Includes today and
+// this is a workspace editor.
+//
+// DIFFERENTIAL, NOT AN ABSOLUTE CEILING, and the first version of this
+// test had the shape its sibling was corrected out of. It read
+// `ceiling = 135` against a measured 90 — but the cost is per attribute
+// KIND, not per row (~18 allocations for a MenuItem-shaped attribute
+// against ~1.6 for a layout row), so 45 of headroom is about two and a
+// half more <MenuItem> attributes. #400, the next PR in this stack, adds
+// Icon to <MenuItem> and takes it to ~108. The failure would have landed
+// in a nested module CI only vets, in a file named for menu vocabulary,
+// on a change that added an attribute — an absolute budget on the
+// vocabulary this PR exists to grow.
+//
+// What the claim actually is: a Catalog() read scales with CATALOG SIZE
+// and row-building does not. So register K and 2K extra elements and
+// assert the per-element delta is ~0. That is invariant to the row cost
+// entirely, which is why it survives every future attribute on
+// <MenuItem> — and it measures the regression directly rather than
+// inferring it from a total. Found in review of #454.
+func TestAttrRowsDoesNotRebuildTheCatalog(t *testing.T) {
+	ed, _, _, _, item := menuFixture(t)
+	ed.setSelection(item)
+	if len(ed.attrRows()) == 0 {
+		t.Fatal("the selected <MenuItem> has no rows: this test would measure nothing")
+	}
+
+	// grow registers n synthetic elements and re-derives, then measures.
+	grow := func(n int) float64 {
+		if ed.docCtx.Elements == nil {
+			ed.docCtx.Elements = map[string]*markup.ElementDef{}
+		}
+		for i := len(ed.docCtx.Elements); i < n; i++ {
+			name := fmt.Sprintf("Synthetic%d", i)
+			ed.docCtx.Elements[name] = &markup.ElementDef{
+				Name:  name,
+				Known: true,
+				Attrs: []markup.AttrSpec{{Name: "Alpha"}, {Name: "Beta"}},
+				Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+					return nil, errors.New("synthetic")
+				},
+			}
+		}
+		ed.loadPalette()
+		return testing.AllocsPerRun(5, func() { _ = ed.attrRows() })
+	}
+
+	const k = 40
+	atK := grow(k)
+	at2K := grow(2 * k)
+	perElement := (at2K - atK) / float64(k)
+
+	// NON-VACUITY: the registrations must actually have reached the
+	// catalog, or both arms measure the same thing and the delta is
+	// trivially zero.
+	if len(ed.specs) < 2*k {
+		t.Fatalf("only %d specs after registering %d synthetic elements: the arms are "+
+			"not distinguishable and this test would pass for the wrong reason",
+			len(ed.specs), 2*k)
+	}
+
+	// A Catalog() call costs ~1 allocation per registered element, so a
+	// regression shows as a per-element slope near 1. Row-building has no
+	// term in catalog size at all, so the honest expectation is 0; the
+	// threshold is loose enough to absorb measurement noise and tight
+	// enough that a restored Catalog() read cannot hide under it.
+	if perElement > 0.5 {
+		t.Errorf("attrRows() costs %.2f allocations per REGISTERED ELEMENT "+
+			"(%.0f at %d elements, %.0f at %d): its cost scales with the catalog, so "+
+			"something on it is rebuilding the catalog — and it runs inside the "+
+			"properties ItemsView's paint node. See target().",
+			perElement, atK, k, at2K, 2*k)
+	}
+	t.Logf("attrRows(): %.0f allocs at %d elements, %.0f at %d (%.2f per element)",
+		atK, k, at2K, 2*k, perElement)
+}
+
+// TestANestedParentsGrantStillReachesTheGrid is finding 3 of the review
+// of #454, and it is the palette-vs-catalog mistake that target() had
+// just been corrected for, one function away.
+//
+// grantOf scanned ed.palette, which is the catalog MINUS what may not be
+// placed on its own — so a Nested parent was simply absent and the scan
+// returned the empty Grant. Every attached row vanished from the
+// inspector with no error: #418's defect returning through the fix for
+// #429's.
+//
+// It is inert in the shipped catalog because defMenu grants nothing,
+// which is why this registers its own pair. A nested container that
+// grants an attached property is the whole case, and nothing in the
+// vocabulary is one yet.
+func TestANestedParentsGrantStillReachesTheGrid(t *testing.T) {
+	ed, _ := buildPage(t)
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	// THREE LEVELS, mirroring MenuBar -> Menu -> MenuItem, because
+	// markNested marks an element Nested only when it is NAMED in some
+	// other element's Only list. The granting container must be the
+	// nested one — that is the whole case — so it needs an owner above
+	// it that restricts to it.
+	ed.docCtx.Elements["GrantOwner"] = &markup.ElementDef{
+		Name: "GrantOwner", Icon: "list-unordered", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"GrantHost"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["GrantHost"] = &markup.ElementDef{
+		Name: "GrantHost", Icon: "list-unordered", ParsedBy: "GrantOwner", Known: true,
+		Grants:   markup.Grant{Attached: []markup.AttrSpec{{Name: "GrantHost.Slot", Kind: markup.KindInt, Binds: markup.BindsLiteral}}},
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"GrantKid"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["GrantKid"] = &markup.ElementDef{
+		Name: "GrantKid", Icon: "list-selection", ParsedBy: "GrantOwner", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.loadPalette()
+
+	// The premise: GrantHost really is Nested, so it really is absent
+	// from the palette. Without this the assertion below passes for a
+	// host the palette happened to contain.
+	spec, ok := ed.specOf("GrantHost")
+	if !ok {
+		t.Fatal("the registered host is not in the catalog: nothing below was tested")
+	}
+	if !spec.Nested {
+		t.Fatal("the registered host is not Nested, so it is in the palette and this test cannot see the bug")
+	}
+	for _, e := range ed.palette {
+		if e.Name == "GrantHost" {
+			t.Fatal("the palette offers the nested host: same")
+		}
+	}
+
+	if got := ed.grantOf("GrantHost"); len(got.Attached) != 1 {
+		t.Errorf("a nested parent's grant resolved to %d attached attributes, want 1: "+
+			"the inspector drops every attached row for a nested container", len(got.Attached))
+	}
+}
+
+var errNotStandalone = errors.New("markup: only valid inside its parent")
+
+// TestTheCatalogSnapshotMatchesTheCatalog is the enforcement the snapshot
+// shipped without.
+//
+// specOf, target(), grantOf and pairAgrees moved off a live
+// docCtx.Catalog() read and onto ed.specs / ed.pseudo, which loadPalette
+// fills. That is correct as shipped — loadPalette runs once at the end of
+// newEditor and docCtx is never reassigned — and the paint-path reason
+// for moving is sound: Catalog() re-derives every builtin spec with fresh
+// Attrs copies, and mapNodes asks per document node on every rebuild.
+//
+// WHAT MADE IT WORTH PINNING is that both failure modes are SILENT, and
+// both are the symptoms the change exists to remove: a missing ed.specs
+// entry sends target() to the markup.ElementSpec{Name: n.Elem} fallback,
+// which is #429's empty property grid, and grantOf returns
+// markup.Grant{}, which is #418's missing attached rows. Neither errors,
+// and a nil map reads exactly like an empty one.
+//
+// WHAT THIS CANNOT CATCH, stated so nobody reads more into it: it cannot
+// see a future caller that changes the vocabulary and forgets to
+// re-derive, because a test only exercises the paths it calls. It pins
+// that loadPalette's derivation IS the catalog — so a divergence in the
+// derivation itself is red rather than blank. The stronger fix is one
+// seam owning both halves (mutate docCtx and re-derive in one step), and
+// it is worth taking the day docCtx.Includes is wired, which target()'s
+// own comment calls "one feature away". Raised in review of #454.
+func TestTheCatalogSnapshotMatchesTheCatalog(t *testing.T) {
+	ed, _ := buildPage(t)
+	check := func(when string) {
+		t.Helper()
+		cat := ed.docCtx.Catalog()
+		if len(ed.specs) != len(cat) {
+			t.Errorf("%s: ed.specs has %d entries, the catalog has %d — a name missing here "+
+				"is an empty property grid and an empty Grant, with no error on either path",
+				when, len(ed.specs), len(cat))
+		}
+		for _, e := range cat {
+			if _, ok := ed.specs[e.Name]; !ok {
+				t.Errorf("%s: <%s> is in the catalog and not in ed.specs", when, e.Name)
+			}
+			if e.Pseudo && !ed.pseudo[e.Name] {
+				t.Errorf("%s: <%s> is Pseudo in the catalog and not in ed.pseudo", when, e.Name)
+			}
+		}
+	}
+	check("after newEditor")
+
+	// And after the vocabulary changes — the path
+	// TestANestedParentsGrantStillReachesTheGrid exercises, where the
+	// re-derive has to be remembered by hand.
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	ed.docCtx.Elements["SnapshotProbe"] = &markup.ElementDef{
+		Name:  "SnapshotProbe",
+		Proto: &components.Border{},
+		Known: true,
+		Build: func(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+			return &components.Border{}, nil
+		},
+	}
+	ed.loadPalette()
+	check("after a vocabulary change and loadPalette")
+	if _, ok := ed.specs["SnapshotProbe"]; !ok {
+		t.Error("the re-derive did not pick up the new element, so the check above is vacuous")
+	}
+}
+
+// TestPastingANestedElementIsRefusedRatherThanKillingTheDocument is the
+// regression this PR opened and the review caught.
+//
+// selectChild is the first gesture that can select a <Menu>, <MenuItem>
+// or <Tab> — that is the feature. Selection is also the entry condition
+// for y / ctrl+x / p, and the paste path had no gate that knew about
+// Nested: canHold answers from the PARENT's Children.Mode alone, so its
+// permissive tail said canHold("Canvas", "MenuItem") is true. The node
+// landed at the root, the rebuild failed, docRoot went nil, and the
+// status line said "pasted <MenuItem>". That is #403's exact failure —
+// click-to-select dead for the whole document while the last good tree
+// stays on screen looking pressable.
+//
+// Measured before the fix, for all three:
+//
+//	canHold(Canvas, MenuItem) = true  [Nested=true]
+//	status="pasted <MenuItem>" docRoot==nil? true
+//
+// The assertion is docRoot, not the status text: a refusal that still
+// nils docRoot is the same dead editor with a better message.
+func TestPastingANestedElementIsRefusedRatherThanKillingTheDocument(t *testing.T) {
+	for _, elem := range []string{"MenuItem", "Menu", "Tab"} {
+		t.Run(elem, func(t *testing.T) {
+			ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
+
+			// NON-VACUITY: the element must really be Nested, or this
+			// test is about an ordinary element and proves nothing.
+			spec, ok := ed.specOf(elem)
+			if !ok || !spec.Nested {
+				t.Fatalf("<%s> is not a Nested element in the catalog (known=%v); "+
+					"this test cannot see the gap it exists for", elem, ok)
+			}
+			if ed.canHold("Canvas", elem) {
+				t.Errorf("canHold(Canvas, %s) is true: a Nested element is legal only "+
+					"inside a parent that names it, so a permissive container must "+
+					"refuse it", elem)
+			}
+
+			before := len(ed.doc().Kids)
+			ed.sel = ed.doc()
+			ed.insertSubtree(&node{Elem: elem, Attrs: map[string]string{"Text": "Open"}}, "pasted")
+
+			if ed.docRoot == nil {
+				t.Fatalf("pasting a <%s> left docRoot nil: click-to-select is dead for "+
+					"the WHOLE document while the last good tree stays on screen "+
+					"(#403). status=%q", elem, ed.status.Get())
+			}
+			if got := len(ed.doc().Kids); got != before {
+				t.Errorf("pasting a <%s> changed the document: %d children, want %d",
+					elem, got, before)
+			}
+			if !strings.HasPrefix(ed.status.Get(), "✗") {
+				t.Errorf("a refused paste reported success: status=%q", ed.status.Get())
+			}
+		})
+	}
+}
+
+// TestPastingIntoAContainerThatRefusesItRevertsTheDocument is the
+// backstop, and it is a SEPARATE test because it pins a different seam.
+//
+// The canHold gate above makes the Nested case unreachable, so it can
+// never exercise insertSubtree's revert. But canHold answers "as far as
+// the catalog knows", and a rebuild can still fail for reasons the
+// catalog cannot see — which is why promoteSelected and demoteSelected
+// both carry this guard (move.go) and this path did not. Without the
+// revert the tree keeps the child that broke it.
+func TestPastingIntoAContainerThatRefusesItRevertsTheDocument(t *testing.T) {
+	ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
+
+	// A node whose ELEMENT is unknown to the loader: canHold cannot
+	// refuse it (specOf misses, so planAdd never finds a holder and the
+	// root fallback takes it), and the rebuild then fails.
+	before := len(ed.doc().Kids)
+	ed.sel = ed.doc()
+	ed.insertSubtree(&node{Elem: "NoSuchElementAnywhere"}, "pasted")
+
+	if ed.docRoot == nil {
+		t.Fatalf("a paste the loader refused left docRoot nil rather than reverting; "+
+			"status=%q", ed.status.Get())
+	}
+	if got := len(ed.doc().Kids); got != before {
+		t.Errorf("the refused paste was left in the tree: %d children, want %d", got, before)
+	}
+}
+
+// TestAddingANestedElementThePaletteOffersIsRefusedRatherThanPanicking.
+//
+// planAdd refuses a Nested element with no legal home on the page by
+// returning an empty addPlan (addplan.go:222), and addSelected dereferences
+// `plan.into` a few lines later. Today loadPalette keeps Nested elements out
+// of the palette, so the two never meet and the deref is safe by an accident
+// of a filter in a different function.
+//
+// This test removes that accident: it puts a Nested element into the palette
+// directly, which is the state one relaxed filter away, and asserts a refusal
+// rather than a nil dereference. Without the guard the call PANICS, so this
+// is not a status-line assertion wearing a safety hat — the panic is the
+// failure, and the message check only pins which refusal was reported.
+func TestAddingANestedElementThePaletteOffersIsRefusedRatherThanPanicking(t *testing.T) {
+	ed, _ := buildPage(t)
+	if ed.docCtx.Elements == nil {
+		ed.docCtx.Elements = map[string]*markup.ElementDef{}
+	}
+	// The same three-level shape TestANestedParentsGrantStillReachesTheGrid
+	// uses: markNested marks an element Nested only when some other
+	// element NAMES it in an Only list.
+	ed.docCtx.Elements["LonelyOwner"] = &markup.ElementDef{
+		Name: "LonelyOwner", Icon: "list-unordered", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeRestricted, Only: []string{"LonelyHost"}},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.docCtx.Elements["LonelyHost"] = &markup.ElementDef{
+		Name: "LonelyHost", Icon: "list-unordered", ParsedBy: "LonelyOwner", Known: true,
+		Children: markup.ChildSpec{Mode: markup.ModeLeaf},
+		Build: func(markup.Element, *markup.Context) (gooey.Component, error) {
+			return nil, errNotStandalone
+		},
+	}
+	ed.loadPalette()
+
+	spec, ok := ed.specOf("LonelyHost")
+	if !ok {
+		t.Fatal("the registered host is not in the catalog: nothing below was tested")
+	}
+	if !spec.Nested {
+		t.Fatal("the registered host is not Nested, so planAdd would not refuse it " +
+			"and this test cannot reach the guard")
+	}
+	// The premise, stated so the test fails loudly if planAdd stops
+	// refusing rather than passing against a guard that never runs.
+	if ed.planAdd("LonelyHost").into != nil {
+		t.Fatal("planAdd found a home for the nested host, so `into` is not nil " +
+			"and the guard under test is unreachable from here")
+	}
+
+	// The state one relaxed filter away: the palette offering it.
+	ed.palette = append(ed.palette, spec)
+	ed.paletteSel.Set(len(ed.palette) - 1)
+
+	before := ed.docRoot
+	ed.addSelected() // panics without the guard
+
+	if ed.docRoot != before {
+		t.Error("a refused add rebuilt the document; it should not have touched it")
+	}
+	if !strings.Contains(ed.status.Get(), "LonelyHost") {
+		t.Errorf("status is %q after a refused add, want it to name the element", ed.status.Get())
+	}
+	if !strings.HasPrefix(ed.status.Get(), "✗") {
+		t.Errorf("status is %q after a refused add, want a refusal", ed.status.Get())
+	}
+}
