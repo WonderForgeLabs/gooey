@@ -49,7 +49,13 @@ const (
 func defaultsContext() *Context {
 	return &Context{
 		Values: map[string]any{
-			"S":   prop.NewSource("sample"),
+			"S": prop.NewSource("sample"),
+			// A SECOND string handle, distinct from S. probePrereqs
+			// needs one: <Frozen> refuses Allow and AllowError resolving
+			// to the same property, so a prerequisite seeded from the
+			// same source as the attribute under test is rejected by the
+			// guard after the one being probed.
+			"S2":  prop.NewSource("other"),
 			"I":   prop.NewSource(1),
 			"B":   prop.NewSource(true),
 			"F64": prop.NewSource([]float64{1, 4, 2, 5, 3}),
@@ -62,22 +68,9 @@ func defaultsContext() *Context {
 			// good/warn/crit ramp, where Thresholds="true" and the plain
 			// style paint the same colour — a probe that cannot see the
 			// attribute it is probing.
-			"Pct": prop.NewSource(85),
-			// A SEPARATE STRING SOURCE FROM S, and the separation is the
-			// whole reason it exists. unreachableWithoutCompanion writes a
-			// bound Allow beside the AllowError under test, and <Frozen>
-			// refuses the two bound to the SAME property — "one property
-			// cannot be both the allow set and the place its parse failure
-			// is reported". bindingFor answers {{.S}} for every string, so
-			// a companion spelled {{.S}} would collide with the valid
-			// binding a future arm probes AllowError with, and the arm
-			// would read as the declaration refusing rather than the
-			// harness aliasing it. "Focus" over "sample" for the same
-			// reason narrowerThanItsKind states for a literal Allow: it is
-			// a category from a closed vocabulary, not free text.
-			"AllowSet": prop.NewSource("Focus"),
-			"Noop":     gooey.Command(func() {}),
-			"Img":      prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
+			"Pct":  prop.NewSource(85),
+			"Noop": gooey.Command(func() {}),
+			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
@@ -152,6 +145,19 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 	return ""
 }
 
+// attrSpec finds a declared attribute by name. It exists so probePrereqs
+// is checked against the declaration rather than trusted: a row naming an
+// attribute the element does not declare is a stale table, and a stale
+// table here reads as coverage.
+func attrSpec(def *ElementDef, name string) (AttrSpec, bool) {
+	for _, a := range def.Attrs {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return AttrSpec{}, false
+}
+
 // literalFor is the placeholder literal for a required non-binding
 // attribute.
 func literalFor(a AttrSpec) string {
@@ -172,25 +178,51 @@ func literalFor(a AttrSpec) string {
 	return "x"
 }
 
+// probePrereqs names attributes that a probe of ANOTHER attribute cannot
+// reach without them, keyed "Element.Attribute".
+//
+// SHAPE AND NAME ARE #454/#490'S, deliberately. That table arrived first
+// and from a different direction — the menu vocabulary — and it maps to a
+// SET because <MenuItem Icon> needs both Text and IconRune. This PR first
+// spelled the same idea as a one-companion struct, which cannot express
+// that row. Two tables for one idea is the duplicate-local-patch shape,
+// so this is the same table, carrying only the row main is red on; the
+// MenuItem rows land with their own PR and slot straight in.
+//
+// <Frozen AllowError> is refused without a BOUND Allow beside it —
+// "the only failure it can report is an unparseable set" (#459) —
+// and that guard runs before the bind-only check, so the sweep never
+// reached the rule it was asking about.
+//
+// A DIFFERENT HANDLE from the one the probe binds, which is why the
+// row writes the expression rather than deriving it from the type:
+// <Frozen>'s next guard refuses Allow and AllowError resolving to
+// one property ("publishing would overwrite the set it just read"),
+// so seeding {{.S}} here would trade one unverified row for another.
+// Measured both ways.
+var probePrereqs = map[string]map[string]string{
+	"Frozen.AllowError": {"Allow": "{{.S2}}"},
+}
+
 // probeElement writes the element under test with every required
 // attribute, slot and child seeded, plus the one attribute the probe is
 // varying. An empty value omits the attribute, which is the whole point
 // of the omission side of the comparison.
 func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
-	return probeElementMaybeCompanion(t, def, attr, value, true)
+	return probeElementMaybePrereqs(t, def, attr, value, true)
 }
 
-// probeElementBare is the same probe with unreachableWithoutCompanion NOT
-// applied. It exists for one caller: the guard that asks whether a row in
-// that table is still load-bearing, which can only ask by building the
-// document the row was written to replace.
+// probeElementBare is the same probe with probePrereqs NOT applied. It
+// exists for one caller: the guard that asks whether a row is still
+// load-bearing, which can only ask by building the document the row was
+// written to replace.
 func probeElementBare(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
-	return probeElementMaybeCompanion(t, def, attr, value, false)
+	return probeElementMaybePrereqs(t, def, attr, value, false)
 }
 
-func probeElementMaybeCompanion(t *testing.T, def *ElementDef, attr, value string, companion bool) string {
+func probeElementMaybePrereqs(t *testing.T, def *ElementDef, attr, value string, prereqs bool) string {
 	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
@@ -236,14 +268,14 @@ func probeElementMaybeCompanion(t *testing.T, def *ElementDef, attr, value strin
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
 	}
-	// A SECOND ATTRIBUTE THE ONE UNDER TEST NEEDS, and it is the same
-	// shape of gap as Name above: a requirement that is real, is enforced
-	// by the builder, and has nowhere in the declaration to be written,
-	// so the loop that reads def.Attrs cannot learn it. Without it the
-	// probe is refused for the companion's absence and the declaration
-	// under test is never reached. See unreachableWithoutCompanion.
-	if c, ok := unreachableWithoutCompanion[def.Name+"."+attr]; companion && ok {
-		fmt.Fprintf(&b, " %s=%q", c.attr, c.value)
+	if prereqs {
+		for name, v := range probePrereqs[def.Name+"."+attr] {
+			if _, ok := attrSpec(def, name); !ok {
+				t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
+					def.Name, name, def.Name)
+			}
+			fmt.Fprintf(&b, " %s=%q", name, v)
+		}
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)
