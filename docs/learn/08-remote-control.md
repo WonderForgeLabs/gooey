@@ -120,14 +120,19 @@ Code:
 claude mcp add --transport http kanban http://127.0.0.1:7778/mcp
 ```
 
-The tool inventory: `tree_snapshot`, `screen_text`, `list_values`,
-`list_styles`, `invoke_command`, `set_value`, `send_keys`, `send_mouse`,
-`focus`, `swap_markup`, `patch_markup`, `validate_markup`,
+The tool inventory: `tree_snapshot`, `screen_size`, `screen_text`,
+`list_values`, `list_styles`, `invoke_command`, `set_value`, `send_keys`,
+`send_mouse`, `focus`, `swap_markup`, `patch_markup`, `validate_markup`,
 `register_properties`, `unregister_properties`. The rest of this tutorial exercises the
 important ones; the calls below all use the same `tools/call` shape.
-`send_mouse` coordinates can currently only be inferred — no tool
-reports terminal size, tracked in
-[#204](https://github.com/WonderForgeLabs/gooey/issues/204).
+
+`screen_size` is what `send_mouse` coordinates are measured against —
+`{cols, rows}` in cells, plus the terminal's cell metrics in pixels for
+sizing graphics. Before it existed the screen had to be inferred from the
+root component's arranged bounds in `tree_snapshot`, which equals the
+terminal only while the root happens to fill it ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)).
+A session scoped to an island is told the island's size, because the
+island is that session's whole screen.
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \

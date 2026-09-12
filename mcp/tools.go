@@ -80,6 +80,15 @@ func (s *Server) v1Tools() []*Tool {
 			Run:          s.treeSnapshot,
 		},
 		{
+			Name: "screen_size",
+			Description: "The size of the visible surface in cells, and the terminal's cell metrics in " +
+				"pixels. These are the coordinate bounds send_mouse takes. A session scoped to an " +
+				"island is told the island's size, because the island is its whole screen.",
+			Schema:       object(map[string]any{}),
+			OutputSchema: screenSizeSchema(),
+			Run:          s.screenSize,
+		},
+		{
 			Name: "screen_text",
 			Description: "The current screen as text — one line per terminal row, trailing blanks " +
 				"trimmed. This is the retained cell plane as of the last composed frame, i.e. exactly " +
@@ -266,6 +275,20 @@ func (s *Server) treeSnapshot(a args) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"tree": renderNode(n)}, nil
+}
+
+// screenSize is the adapter for control.Service.ScreenSize. The wire
+// names are snake_case like every other field on this surface; the Go
+// struct is not sent directly for that reason.
+func (s *Server) screenSize(args) (any, error) {
+	sz, err := s.svc.ScreenSize()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"cols": sz.Cols, "rows": sz.Rows,
+		"cell_width": sz.CellW, "cell_height": sz.CellH,
+	}, nil
 }
 
 func (s *Server) screenText(a args) (any, error) {

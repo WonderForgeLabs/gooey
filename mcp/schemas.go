@@ -129,3 +129,16 @@ func validateMarkupSchema() map[string]any {
 		},
 	}, "valid")
 }
+
+// screenSizeSchema publishes what screen_size answers. Every field is
+// required: a client asking for the screen cannot act on a partial one,
+// and the cell metrics always have a value because term falls back to
+// DefaultCellW/H when the terminal reports none.
+func screenSizeSchema() map[string]any {
+	return object(map[string]any{
+		"cols":        prop_("integer", "Width of the visible surface in cells — the x range send_mouse accepts."),
+		"rows":        prop_("integer", "Height of the visible surface in cells — the y range send_mouse accepts."),
+		"cell_width":  prop_("integer", "Width of one cell in pixels, for sizing graphics."),
+		"cell_height": prop_("integer", "Height of one cell in pixels, for sizing graphics."),
+	}, "cols", "rows", "cell_width", "cell_height")
+}

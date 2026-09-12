@@ -398,3 +398,62 @@ func str(p *prop.Property[string]) string {
 	}
 	return p.Get()
 }
+
+// ScreenSize is the size of the surface this session may see, in cells,
+// plus the terminal's cell metrics in pixels.
+//
+// CELLS AND PIXELS BOTH, because the two callers are different and
+// neither can derive the other: coordinates for SendMouse are cells, and
+// the graphics layer sizes a picture in pixels (term.Caps.CellW/CellH).
+// A client that had to ask twice would ask once and guess the rest.
+type ScreenSize struct {
+	Cols, Rows   int
+	CellW, CellH int
+}
+
+// ScreenSize reports the screen this session is allowed to see.
+//
+// It exists because the only way to learn the screen was to INFER it
+// from the root component's arranged bounds (issue #204), which equals
+// the terminal only while the root happens to fill it — give the root a
+// margin, a fixed Width or a non-stretch alignment and the client
+// silently computes coordinates against a screen that is not there.
+// screen_text was the other workaround and is worse: it costs the whole
+// screen to learn two integers, and its lines are trailing-trimmed, so
+// the width it implies is the longest PAINTED line.
+//
+// A SCOPED SESSION IS TOLD ITS ISLAND'S SIZE, which is the same fiction
+// Screen maintains by cropping to the island: a guest's whole screen is
+// its island. Answering with the terminal would break it in the
+// direction that costs something — a guest told the screen is 60x14 when
+// it may only touch a 60x3 border computes coordinates for cells it
+// cannot reach, and SendMouse answers those with silence rather than an
+// error.
+//
+// The CELL METRICS are not scoped, because they are a property of the
+// terminal rather than of the region: a pixel is the same size inside an
+// island as outside it.
+func (s *Service) ScreenSize() (ScreenSize, error) {
+	c, err := s.composer()
+	if err != nil {
+		return ScreenSize{}, err
+	}
+	caps := c.Caps()
+	size := ScreenSize{CellW: caps.CellW, CellH: caps.CellH}
+	if s.scoped() {
+		root := s.islandRoot()
+		if root == nil {
+			return ScreenSize{}, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		}
+		b, ok := root.(gooey.Bounded)
+		if !ok {
+			return ScreenSize{}, preconditionf("element %q exposes no bounds, so its size cannot be read", s.grant.Island)
+		}
+		r := b.Bounds()
+		size.Cols, size.Rows = r.W, r.H
+		return size, nil
+	}
+	buf := c.Cells()
+	size.Cols, size.Rows = buf.W, buf.H
+	return size, nil
+}
