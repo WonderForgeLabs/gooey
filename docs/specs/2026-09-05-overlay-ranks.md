@@ -104,8 +104,11 @@ test. The day something needs a below-popup band it can have one.
 
 The rank belongs to the lifted subtree's **root**, not to each node — a
 nested `Overlay` inside an already-lifted subtree keeps the *outer* rank.
-`orderPaint` tests `inherited` *before* the marker for exactly this, and
-the ordering of those two switch arms is the whole of it.
+`overlayOf` (`component.go`) returns the parent's answer *before* testing
+the marker for exactly this, and the ordering of those two `if`s is the
+whole of it. It was a pair of switch arms in `Composer.orderPaint` when
+this spec was written; #438 extracted the rule so `gooey.Compose` could
+ask the same question, and the mutation moved with it.
 
 Ranks that varied inside one subtree would let `appendByRank` separate a
 container from its children. A rank-2 container holding a rank-0
@@ -149,18 +152,33 @@ the hit walk ask `overlayOf` — the same membership-and-rank rule this
 change gave the paint order. It is lifted and ranked too, and nothing is
 left routing its own presses.
 
-**The one-shot path is not ranked, and was not lifted either.**
-`gooey.Compose` — which builds no Composer, and is what `cmd/typeahead
---dump` and `cmd/pixels` render through — walks `renderTree`
-(`component.go`) in pure document order: no lift, no rank. So the two
-public paint paths now disagree in *two* ways rather than one, and a
-fixture asserted through `Compose` answers "what is on top" differently
-from the same tree under `Composer.Frame`. This is deliberate scope, not
-an oversight: the lift is what has to arrive first, and it does, in
-[#438](https://github.com/WonderForgeLabs/gooey/issues/438) — the rank
-follows it through the same `overlayOf` seam or the divergence hardens.
-Worth stating for the reason the pixel-plane note above is: nothing in
-this change would have revealed it.
+**The one-shot path IS ranked now, and this section used to say it was
+not.** `gooey.Compose` — which builds no Composer, and is what
+`cmd/typeahead --dump` and `cmd/pixels` render through — walked
+`renderTree` (`component.go`) in pure document order, so the two public
+paint paths disagreed in *two* ways rather than one and a fixture
+asserted through `Compose` answered "what is on top" differently from
+the same tree under `Composer.Frame`. That was written as deliberate
+scope, with the lift named as the thing that had to arrive first — and
+it arrived, in [#438](https://github.com/WonderForgeLabs/gooey/issues/438),
+which merged down into this branch. `renderTree` now calls `collectPaint`
+and the same `appendByRank` bucket pass, through the same `overlayOf`
+seam, and `docs/specs/2026-09-05-one-shot-overlay-order.md` is the record
+of it.
+
+The paragraph is rewritten rather than deleted because the
+divergence it described was real for the length of a stack, and the
+sentence it replaced is the reason the two paths share a rule instead of
+having two implementations of one. What remains different is
+**clipping**, not order: `Composer.Frame` brackets every `Render` with
+`Cells.Clip(bounds)` and `paintOne` does not
+([#493](https://github.com/WonderForgeLabs/gooey/issues/493)).
+
+Repaired the way the menu-item-icons spec's row was when its name started
+resolving here: a section titled "what is NOT changed" that outlives the
+change is the exact artifact this whole sweep exists to remove, and it
+sat one file away from the spec saying the opposite. Raised in review of
+#456.
 
 ## How the claims here are checked
 
@@ -169,7 +187,7 @@ this change would have revealed it.
 | A higher rank beats a later declaration | `TestAHigherRankPaintsOverALowerOneDeclaredLater` | reverse the bucket order (M2) |
 | Equal ranks keep document order | `TestEqualRanksKeepDocumentOrder` | prepend within a bucket (M3) |
 | An unranked `Overlay` is rank 0 | `TestAnUnrankedOverlayIsRankZero` | M2, and M4 (don't rank at all) |
-| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap `case inherited:` and `case isOverlay:` in `Composer.orderPaint` (`composer.go`); M3 |
+| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | reverse the two `if`s in `overlayOf` (`component.go`) so the marker is tested before the parent's answer; M3 |
 | The layer still clears the page | `TestTheOverlayLayerStillClearsThePage` | — (guards #437) |
 | **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |

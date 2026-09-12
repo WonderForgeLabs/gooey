@@ -44,9 +44,22 @@ import (
 // the names where there is no host-versus-surface distinction to lose:
 // hosts that carry gooey.Overlay THEMSELVES.
 //
-// That scope is DERIVED, not listed. selfMarkedHosts asks the type
-// system, so a host that adopts the marker directly comes under the
-// guard on the commit that adopts it, and one that loses it drops out.
+// That scope is DERIVED OVER THE NAMES overlayHostByName KNOWS, and the
+// qualifier is the correction. selfMarkedHosts asks the type system
+// which of those names carries the marker, so a host that adopts or
+// loses it moves in or out of scope on the commit that changes it — but
+// the derivation cannot bring in a FIFTH name, and the len(hosts) == 0
+// floor cannot see a missing one, because ToastHost and AdornmentLayer
+// still answer. That is fail-OPEN, the opposite polarity from
+// liftedSurfaceByName next door, and it is the exact failure the guard
+// this replaced recorded about itself: "a written list guarding a
+// written list, and dropping a name from it was measured SILENT."
+//
+// So the map is pinned against source by
+// TestEveryExportedOverlayHostIsNamed, which reads the receivers of
+// OverlaysPage out of components/*.go. The map stays a VALUE lookup —
+// constructing a host is something no scan can do — and stops being the
+// thing that decides scope. Raised in review of #456.
 func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	hosts := selfMarkedHosts(t)
 	if len(hosts) == 0 {
@@ -217,10 +230,15 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// sentences the docs happen to contain, which is not a policy and
 	// moves whenever anyone writes a paragraph. Pinning it exactly makes
 	// every prose edit a failing test, and a guard that fires on correct
-	// prose gets deleted. Measured at 9 on the branch that added this and
-	// 9 at the stack tip above it; the floor sits under that with room to
-	// edit, and far enough above zero that deleting the paragraphs which
-	// make the claim fails.
+	// prose gets deleted.
+	//
+	// Measured at 11 here. It was 9 when this guard shipped with one arm,
+	// and the positional arm added two more counted hits — so the number
+	// moved because the COUNTING changed, not the docs, which is the way
+	// a recorded measurement most easily becomes false of its own commit.
+	// It was, until review of #456 caught it still saying 9. The floor
+	// sits under that with room to edit, and far enough above zero that
+	// deleting the paragraphs which make the claim fails.
 	const wantExamined = 5
 	if examined < wantExamined {
 		t.Errorf("only %d sentences in the tree make a lift claim about %v, want at "+
@@ -365,8 +383,9 @@ const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
 // from the two above, where the nearest host name is nine and thirty
 // words back behind a dash. Measured against the stack tip — which is
 // the base that matters, and the one the first version skipped: 9
-// sentences examined, none flagged, and both defective spellings flagged
-// as fixtures below.
+// sentences examined by THIS arm, none flagged, and both defective
+// spellings flagged as fixtures below. (The test's own total is 11 now;
+// the extra two are the positional arm's, counted separately above.)
 //
 // It is an approximation of "whose subject is this", and the shape of
 // what it gives up is stated rather than left to be discovered: a
@@ -452,3 +471,82 @@ func selfMarkedHosts(t *testing.T) []string {
 	slices.Sort(out)
 	return out
 }
+
+// TestEveryExportedOverlayHostIsNamed makes overlayHostByName's coverage
+// a checked claim instead of a hand-written one.
+//
+// overlayHostByName decides which names TestNoDocSaysASelfMarkedHostStays-
+// InDocumentOrder examines, and its len(hosts) == 0 floor cannot see a
+// name that was never added: ToastHost and AdornmentLayer keep answering,
+// so a page-spanning host added next quarter is silently out of scope and
+// nothing reddens. Fail-open, next door to liftedSurfaceByName, which is
+// fail-closed because its names come from the doc and an unresolvable one
+// is an error.
+//
+// So the SOURCE decides. Every type in this package that implements the
+// gooey.Overlay marker — which is one method, so the receivers of
+// `OverlaysPage()` are the complete list — must be reachable from the
+// map, and this fails by NAME when one is not.
+//
+// UNEXPORTED RECEIVERS ARE EXCLUDED, and that is a rule about what a
+// document can say rather than a convenience: popupSurface is the marked
+// type behind Popup, and no page names it, because a reader has no way to
+// write it down. Popup is in the map as the thing documents DO call, and
+// is out of the polarity guard's scope for the separate and correct
+// reason that it is not itself an Overlay. Raised in review of #456.
+func TestEveryExportedOverlayHostIsNamed(t *testing.T) {
+	marked := overlayMarkedReceivers(t)
+	if len(marked) == 0 {
+		t.Fatal("no type in this package implements OverlaysPage, so this guard " +
+			"would pass vacuously — either the marker moved or the scan stopped " +
+			"recognizing the method")
+	}
+	for _, name := range marked {
+		if name == "" || !isExportedName(name) {
+			continue
+		}
+		if _, ok := overlayHostByName[name]; !ok {
+			t.Errorf("%s carries gooey.Overlay and overlayHostByName does not name "+
+				"it, so it is outside the scope of the polarity guard and nothing "+
+				"reddens when a page says it stays in document order. Add it — the "+
+				"map is a value lookup, not the definition of scope", name)
+		}
+	}
+}
+
+// overlayMarkedReceivers is every receiver type of an OverlaysPage
+// method in this package's non-test source, sorted.
+//
+// A textual scan rather than go/types: the question is "which types
+// declare this method", one method on one line per implementor by the
+// convention this package already follows, and a loader here would pull
+// the whole package graph into a guard whose subject is three lines.
+var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
+
+func overlayMarkedReceivers(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
+			strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if m := overlaysPageRe.FindStringSubmatch(line); m != nil {
+				out = append(out, m[1])
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func isExportedName(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }

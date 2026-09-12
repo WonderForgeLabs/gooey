@@ -556,7 +556,7 @@ n.node = prop.NewComputed(func() int {
     n.covered = false
     if b, ok := w.(Bounded); ok {
         r := b.Bounds()
-        if _, isContainer := w.(Container); !isContainer {
+        if !isContainer(w) {
             fillRect(c.frame.Cells, r, c.clearStyle(n)) // a leaf
             n.covered = true
         } else if !paintable(w) {

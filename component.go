@@ -678,11 +678,27 @@ type paintItem struct {
 // component gets a paint node and only the Render inside it is gated —
 // so the prune was the two paths' last picture difference.
 //
-// BELOW THE ROOT IT BOUGHT NOTHING. ArrangeChild zeroes a Collapsed
-// child's rect, and a zero rect makes every fill in paintOne a no-op and
-// leaves a Render nothing to write; the subtree beneath it is arranged
-// from that zero rect and is equally empty. The prune was a second belt
-// on a rule the rects already enforce.
+// BELOW THE ROOT IT BOUGHT NOTHING, with one exception named below.
+// ArrangeChild zeroes a Collapsed child's rect, and a zero rect makes
+// every fill in paintOne a no-op and leaves a Render nothing to write;
+// the subtree beneath it is arranged from that zero rect and is equally
+// empty. The prune was a second belt on a rule the rects already
+// enforce.
+//
+// THE EXCEPTION IS A Render THAT IGNORES ITS RECT, and it widens #493
+// rather than adding a new difference. paintOne does not clip and
+// Composer brackets every Render with Cells.Clip(bounds), so a component
+// writing outside its own rect already splits the two paths anywhere in
+// the tree. What the prune did was mask that ONE region of the input
+// space: beneath a Collapsed container the one-shot walk never reached
+// the overrunning Render at all, so the paths agreed there by not
+// painting rather than by clipping. Removing it makes that region
+// reachable like every other.
+//
+// It is not re-added for that, because the prune bought the agreement at
+// the cost of the root divergence measured above — a blank frame against
+// a painted one, reachable from any fixture — and #493 is the defect
+// that actually needs closing. Raised in review of #456.
 //
 // AT THE ROOT IT DIVERGED, because Compose and Composer both call
 // root.Arrange directly and bypass the ArrangeChild sandwich, so a
