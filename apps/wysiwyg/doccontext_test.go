@@ -98,16 +98,19 @@ func TestTheContextListCoversTheOnesTheEditorActuallyUses(t *testing.T) {
 // test pins the property on main instead of on the PR that exposed it.
 //
 // WHAT IT DOES NOT SAY is that a user can type this into the designer.
-// The page here is handed to markup.Build directly, and it carries an
-// xmlns the editor's own canvas path cannot produce: ed.rebuild emits the
-// literal "<Gooey>" envelope with no declarations, and nodeOf — what
-// openWorkspaceFile parses a real document with — drops xmlns attributes
-// as it reads. So handler markup opened through the file browser still
-// fails to load, now with "undeclared namespace prefix" rather than a
-// missing Dispatcher. Two different bugs that produce the same screen;
-// this test is about the first, and the comment used to read as though it
-// were about both. Raised in review of #469, which reproduced the second
-// one; the xmlns gap is separate work.
+// The page here is handed to markup.Build directly. When this was
+// written the editor's own canvas path could not even carry the xmlns —
+// nodeOf dropped declarations as it read, so a document opened through
+// the file browser failed on "undeclared namespace prefix" instead. That
+// was #472, and it is closed: the round trip is pinned by
+// xmlnsroundtrip_test.go, and the rebuild-driven dispatcher assertion
+// that gap made impossible is
+// TestARebuildCarriesAHandlerNamespaceAndPinsTheDispatcher, which is
+// what replaced the latch that used to sit below this test.
+//
+// What a user still cannot do is ADD a declaration from the properties
+// pane: the pane is driven from ElementDef.Attrs and xmlns is not a
+// declared attribute of anything. See #500.
 func TestTheCanvasBuildsMarkupARealAppAccepts(t *testing.T) {
 	const uri = "urn:gooey:test:462"
 	markup.RegisterHandlers(uri, markup.HandlerFunc(
@@ -129,67 +132,6 @@ func TestTheCanvasBuildsMarkupARealAppAccepts(t *testing.T) {
 		t.Fatalf("the canvas refuses markup a real app accepts: %v", err)
 	}
 
-}
-
-// TestARebuildCannotCarryAHandlerNamespaceYet is the limitation above,
-// LATCHED — the review of #469 asked for an assertion driven through
-// ed.rebuild, and this is the honest form of one.
-//
-// A rebuild that merely loads clean would not do: the shipped default
-// document contains no handler expression, so an unwired context cannot
-// make it fail, and the assertion would pass for a reason unrelated to
-// its name. That is the trap the fifth test in the previous round fell
-// into and was deleted for.
-//
-// So this asserts the REFUSAL instead, which is real and reproducible:
-// put a handler expression on a node, rebuild, and the load fails on the
-// namespace before the Dispatcher is ever consulted, because ed.rebuild
-// emits a bare "<Gooey>" envelope and nodeOf drops xmlns declarations as
-// it reads. Two bugs, one screen. #462 is the one this PR fixes; the
-// second is why no rebuild-driven test can pin the first today.
-//
-// The second bug is tracked as #472. WHEN THAT IS CLOSED THIS TEST GOES
-// RED, which is the point of writing it as a latch rather than as a
-// comment: the person who fixes it is told, here, that a dispatcher
-// assertion through rebuild has become possible and should replace this.
-func TestARebuildCannotCarryAHandlerNamespaceYet(t *testing.T) {
-	// The provider is INERT and deliberately so. Registration is by URI,
-	// while the refusal below happens on the PREFIX `t:` — which the
-	// rebuilt envelope never declares, so nothing ever resolves to this
-	// URI and the handler body cannot run. It is here to remove the
-	// alternative reading of a red result: without it, "the namespace is
-	// undeclared" and "no handler is registered for it" are two
-	// explanations for one message, and only the first is the gap #472
-	// tracks. Registering it makes the second impossible. Raised in
-	// review of #469.
-	const uri = "urn:gooey:test:462:rebuild"
-	markup.RegisterHandlers(uri, markup.HandlerFunc(
-		func(c *markup.Call) (gooey.Command, error) {
-			return gooey.Command(func() {}), nil
-		}))
-	t.Cleanup(func() { markup.RegisterHandlers(uri, nil) })
-
-	ed := newEditor(editorFS())
-	ed.setDispatcher(gooey.NewDispatcher())
-	ed.doc().Kids = append(ed.doc().Kids, &node{
-		Elem: "Button",
-		Attrs: map[string]string{
-			"Name": "B", "Content": "go", "Click": "{{t:Fire}}",
-		},
-	})
-	ed.rebuild()
-
-	got := ed.status.Get()
-	if !strings.Contains(got, "undeclared namespace prefix") {
-		t.Errorf("rebuilding a document with a handler expression reports %q.\n"+
-			"If it now LOADS, the xmlns gap (#472) is closed and this test has done its "+
-			"job: replace it with one that asserts the rebuild built, which finally "+
-			"pins the Dispatcher through the path the running editor takes.\n"+
-			"If it fails some other way, the canvas has a third problem.", got)
-	}
-	if ed.docRoot != nil {
-		t.Error("the canvas built a document whose load it reported as failed")
-	}
 }
 
 // TestTheEditorsOwnContextWasNeverTheBrokenOne pins the asymmetry the

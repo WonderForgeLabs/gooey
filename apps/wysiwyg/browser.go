@@ -362,6 +362,26 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
 			return
 		}
+		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT.
+		// <Gooey> is not a node — it is re-emitted as a literal by
+		// ed.rebuild — so a declaration left on it is discarded by the
+		// unwrap below, which is the half of #472 that survived nodeOf
+		// keeping them. Saved documents put xmlns on the envelope,
+		// because that is where markup's error tells the author to put
+		// it, so this is the spelling the editor must read.
+		//
+		// The child WINS a prefix it declares itself: that is what XML
+		// scoping says an inner declaration does, and re-deriving it
+		// any other way here would make the editor disagree with the
+		// loader about a document both can read.
+		for k, v := range n.Attrs {
+			if !strings.HasPrefix(k, "xmlns") {
+				continue
+			}
+			if _, ok := n.Kids[0].Attrs[k]; !ok {
+				n.Kids[0].Attrs[k] = v
+			}
+		}
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}

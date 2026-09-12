@@ -699,7 +699,35 @@ func nodeOf(src string) (*node, error) {
 		case xml.StartElement:
 			n := &node{Elem: t.Name.Local, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
-				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
+				// ATTRIBUTE, and that spelling is the whole fix for
+				// #472 rather than an implementation detail.
+				//
+				// node.markup already writes every entry in Attrs back
+				// out verbatim, so a declaration that survives the read
+				// survives the write, the save and the properties pane
+				// — which can add one by setting an attribute called
+				// "xmlns:t" like any other. Dropping it here was the
+				// only end that leaked: a document opened through the
+				// file browser lost its prefixes before it became a
+				// node tree, and the canvas then refused the handler
+				// expression it had just read with "undeclared
+				// namespace prefix".
+				//
+				// KEPT ON THE ELEMENT THAT DECLARED IT rather than
+				// hoisted to a document-wide list, because XML scoping
+				// already means what the editor needs it to mean:
+				// verified, not assumed — a prefix declared on the
+				// user's root resolves for its whole subtree, which is
+				// where every attribute the designer can edit lives.
+				// The envelope is the one place that is not a node, and
+				// openWorkspaceFile carries its declarations down.
+				if a.Name.Space == "xmlns" {
+					n.Attrs["xmlns:"+a.Name.Local] = a.Value
+					continue
+				}
+				if a.Name.Local == "xmlns" && a.Name.Space == "" {
+					n.Attrs["xmlns"] = a.Value
 					continue
 				}
 				// The namespace is dropped by the same key-by-Local
