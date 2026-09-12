@@ -70,16 +70,19 @@ func defaultsContext() *Context {
 			// attribute it is probing.
 			"Pct":  prop.NewSource(85),
 			"Noop": gooey.Command(func() {}),
+			"Sty":  prop.NewSource(render.Style{Fg: render.RGB(10, 20, 30)}),
 			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		// A DISPATCHER, because the probe environment has to be able to
 		// build everything the vocabulary declares. <Frozen AllowError>
 		// refuses to load without one ("the failure is published from an
 		// invalidation, and a Set from inside one would mutate the graph
-		// mid-invalidation"), so an attribute the catalog declares
-		// bindable was unbindable in every generic probe. It is never
-		// drained here: nothing in a load-time probe posts, and a
-		// Dispatcher that is only constructed starts no goroutine.
+		// mid-invalidation"), so an attribute the catalog says is
+		// bindable was unbindable in every generic probe — the sweep
+		// reporting it as UNVERIFIED rather than as a pass is the whole
+		// point of that distinction. It is never drained here: nothing
+		// in a load-time probe posts, and a Dispatcher that is only
+		// constructed starts no goroutine.
 		Dispatcher: gooey.NewDispatcher(),
 		Styles:     map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
@@ -143,10 +146,19 @@ func bindingFor(t *testing.T, a AttrSpec) string {
 	case "components.ItemSource":
 		return "{{.IS}}"
 	case "image.Image":
-		// Added for the #460 sweeps, which reach elements the defaults
-		// probe never did: <Image Src> is required and bind-only, so
-		// without a placeholder the whole element drops out — which is
-		// the failure this function's Fatalf exists to make loud.
+		// <Image Src> is REQUIRED and binding-only, so probeElement has
+		// to seed it before any of Image's other attributes can be
+		// probed at all. Until this arm existed the Fatalf below fired
+		// and took the whole run with it — which is what that message
+		// asks for, and it went unanswered because nothing had reason
+		// to probe <Image> generically.
+		//
+		// TWO SWEEPS ARRIVED HERE INDEPENDENTLY, #314's Binds sweep and
+		// #460's, and each wrote this arm on its own branch. That they
+		// needed the same placeholder for the same reason is the
+		// argument for the arm, not a duplication to pick a winner
+		// from: an element that drops out of a generic probe drops out
+		// of every one.
 		return "{{.Img}}"
 	}
 	t.Fatalf("no placeholder for required attribute %s of type %q — "+
@@ -250,6 +262,23 @@ var probePrereqs = map[string]map[string]string{
 // of the omission side of the comparison.
 func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	t.Helper()
+	return probeElementSeeded(t, def, attr, value, true)
+}
+
+// probeElementBare is probeElement with the probePrereqs seeding turned
+// off, and it exists for ONE caller: the counterfactual half of
+// TestEveryPrereqRowIsReached. Nothing else should use it — a probe that
+// skips the prerequisites is the broken probe the table was added to
+// fix.
+func probeElementBare(t *testing.T, def *ElementDef, attr, value string) string {
+	t.Helper()
+	return probeElementSeeded(t, def, attr, value, false)
+}
+
+// probeElementSeeded is the body of both, with the one difference
+// between them as a parameter rather than a copy.
+func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prereqs bool) string {
+	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s", def.Name)
 	// EVERY PROBE NAMES ITSELF, and it is not decoration.
@@ -305,12 +334,18 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 		}
 		fmt.Fprintf(&b, " %s=%q", a.Name, bindingFor(t, a))
 	}
-	for name, v := range probePrereqs[def.Name+"."+attr] {
-		if _, ok := attrSpec(def, name); !ok {
-			t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
-				def.Name, name, def.Name)
+	if prereqs {
+		for name, expr := range probePrereqs[def.Name+"."+attr] {
+			a, ok := attrSpec(def, name)
+			if !ok {
+				t.Fatalf("probePrereqs names <%s %s>, which %s does not declare",
+					def.Name, name, def.Name)
+			}
+			if a.Required {
+				continue // already seeded by the loop above
+			}
+			fmt.Fprintf(&b, " %s=%q", a.Name, expr)
 		}
-		fmt.Fprintf(&b, " %s=%q", name, v)
 	}
 	if value != "" {
 		fmt.Fprintf(&b, " %s=%q", attr, value)
