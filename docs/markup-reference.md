@@ -625,7 +625,9 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 | `Changed` | Optional command, run after the selection moves (the property is already `Set`). |
 | `Style` | Named style or a bound style for the strip. |
 
-Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child:
+Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child.
+
+**A universal attribute on a `<Tab>` is now a load error, and this is a breaking change.** A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so there is nothing for `Name` to address and nothing for `Margin` to lay out. Every universal attribute is refused, `Name` included, where they were previously accepted and silently dropped. Landing this had to strip `Name` from seven fixtures in this repo, which is fair warning for a page written against an older gooey. Put them on the content inside:
 
 ```xml
 <Tabs Selected="{{.Tab}}">
@@ -637,6 +639,8 @@ Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`);
   </Tab>
 </Tabs>
 ```
+
+**Unlike `<Menu>` and `<MenuItem>` below, an UNRECOGNIZED attribute on a `<Tab>` is still accepted.** `<Tab Frobnicate="yes">` loads. The two rules look alike and are not: the menu elements declare an exhaustive attribute surface, so anything outside it is a typo the loader can name, while a `<Tab>`'s own vocabulary is whatever `<Tabs>` chooses to read and the catalog cannot enumerate it. What is refused here is the *universal* set specifically — the attributes the framework applies beside the element rather than through it — because those are answered by the element's structure rather than by its surface.
 
 Switching is the bindable-Visibility machinery, not a structural rebuild: every page is a permanent child whose `Visibility` the Tabs binds to "selected == me", so a `Set` on `Selected` erases the outgoing page through the composer's sweep, repaints the incoming page and the strip, and touches nothing else. Because the Tabs owns that binding, a `Visibility` attribute on a page root is a load error. Hidden pages are `Collapsed`: out of layout, out of focus order, out of hit-testing.
 
@@ -669,7 +673,9 @@ A Tabs sizes to its **active** page (plus one strip row). Pages of different hei
 
 They are nonetheless **declared elements** with the exhaustive attribute surface in the table below, which is what lets a tool offer it: the wysiwyg designer shows a selected `<MenuItem>`'s properties from the same catalog it shows a `<Button>`'s. Two consequences follow from their being data. Neither is offered in the designer's palette — an element legal only inside a named parent is never placed on its own — and neither can be selected with the pointer, because there is no component under the cursor that belongs to it; `alt+enter` selects the first child of the selection and is the way in. See [#429](https://github.com/WonderForgeLabs/gooey/issues/429).
 
-**Exhaustive cuts both ways, and this half is a breaking change.** An attribute not in the table below is now a **load error** on these two elements, where it was previously accepted and silently ignored. That includes `Name`: every other element in this reference takes it, and these two do not — they are consumed as data and never reach `named()`, so a `Name` on one addressed nothing and the loader now says so instead of dropping it. No markup in this repo is affected, so this is about a page written against an older gooey.
+**Exhaustive cuts both ways, and this half is a breaking change.** An attribute not in the table below is now a **load error** on these two elements, where it was previously accepted and silently ignored. No markup in this repo is affected, so this is about a page written against an older gooey.
+
+**A universal attribute is refused by a different rule**, the same one that refuses it on a `<Tab>` above: these elements are consumed as data and never reach `named()` or `applyLayout()`, so there is nothing for the attribute to apply to. It is worth separating from exhaustiveness because the two give different messages — an unrecognized attribute is answered with this element's vocabulary, while a universal is answered with who reads the element and where to put the attribute instead. `Name` is the case most likely to be typed: every other element in this reference takes it, and these do not.
 
 | Element / attribute | Meaning |
 |---|---|

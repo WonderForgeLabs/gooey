@@ -26,7 +26,11 @@ func TestDeletingTheLastChildOfATabIsRefusedRatherThanKillingTheDocument(t *test
 	ed, _ := moveFixture(t)
 	only := &node{Elem: "Text", Body: "inside", Attrs: map[string]string{"Name": "Inside"}}
 	tabs := &node{Elem: "Tabs", Attrs: map[string]string{"Name": "Tabs1"}, Kids: []*node{
-		{Elem: "Tab", Attrs: map[string]string{"Name": "Tab1", "Header": "One"}, Kids: []*node{only}},
+		// NO Name ON THE <Tab>: it is a pseudo-element, so the universal
+		// set is a load error on it (#461). It carried one until that
+		// landed, accepted and dropped, and nothing here ever read it —
+		// these tests select by node pointer.
+		{Elem: "Tab", Attrs: map[string]string{"Header": "One"}, Kids: []*node{only}},
 	}}
 	ed.doc().Kids = []*node{tabs}
 	ed.rebuild()

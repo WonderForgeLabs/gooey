@@ -224,6 +224,30 @@ func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 			}
 			return nil, fmt.Errorf("markup: <Tabs> children must be <Tab> elements; got <%s>", c.Name)
 		}
+		// THE ATTRIBUTE NAMES ARE CHECKED HERE BECAUSE NOTHING ELSE
+		// WILL — the same call buildMenuBar makes on its <Menu> and
+		// <MenuItem> children, for the same reason. checkAttrs runs
+		// inside build(), and a <Tab> never reaches it: this loop reads
+		// it straight off e.Children, which is what "consumed as DATA"
+		// means.
+		//
+		// What it can say here is NARROWER than what it says for a
+		// <Menu>, and the difference is <Tab>'s //gooey:catalog-opaque:
+		// with AttrsKnown false, checkAttrs declines to judge the
+		// element's own vocabulary and refuses only the UNIVERSAL set,
+		// which belongs to no element. So <Tab Name="Zonk"> is a load
+		// error and <Tab Frobnicate="yes"> is still accepted. See
+		// refuseUniversal (attrcheck.go) for why Pseudo is the gate and
+		// !TakesLayout could not be.
+		//
+		// BEFORE the Header requirement, not after: "needs a Header" is
+		// loud on its own, and this call is the only thing that can
+		// report the silent class at all. Issue #461, split out of the
+		// review of #454, which closed this for <Menu>/<MenuItem> and
+		// left <Tab> open by name.
+		if err := checkAttrs(c, ctx); err != nil {
+			return nil, err
+		}
 		if _, ok := c.Attrs["Header"]; !ok {
 			return nil, fmt.Errorf(`markup: <Tab> needs a Header (e.g. Header="log")`)
 		}

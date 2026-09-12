@@ -74,9 +74,9 @@ func TestAnUnknownMenuAttributeIsALoadError(t *testing.T) {
 // sorts into CategoryDesign at rank 0), so the fix for #429 turned a
 // latent hole into an inviting one. Found in review of #454.
 func TestAPseudoElementRefusesName(t *testing.T) {
-	for _, tc := range []struct{ name, doc string }{
-		{"menu", `<Menu Title="_File" Name="Zonk"><MenuItem Text="Open" Command="{{.Op}}"/></Menu>`},
-		{"item", `<Menu Title="_File"><MenuItem Text="Open" Name="Zork" Command="{{.Op}}"/></Menu>`},
+	for _, tc := range []struct{ name, elem, doc string }{
+		{"menu", "Menu", `<Menu Title="_File" Name="Zonk"><MenuItem Text="Open" Command="{{.Op}}"/></Menu>`},
+		{"item", "MenuItem", `<Menu Title="_File"><MenuItem Text="Open" Name="Zork" Command="{{.Op}}"/></Menu>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fsys := fstest.MapFS{"p.gooey": {Data: []byte(
@@ -86,28 +86,33 @@ func TestAPseudoElementRefusesName(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Name was accepted on a pseudo-element; ctx.Named has %d entries and neither is it", len(ctx.Named))
 			}
-			// THE ASSERTION IS ON THE TAIL, and the obvious one is
-			// unfireable. The format is
-			// `markup: <%s %s=%q>: no such attribute%s`, so the message
-			// ALWAYS echoes the offending attribute — for this input
-			// strings.Contains(err, "Name") is true whatever suggest()
-			// does, and it passed identically before and after the
-			// attrcheck fix. It was checking the message prefix, not the
-			// vocabulary.
+			// THE ASSERTION IS ON THE ADVERTISEMENT, and the obvious
+			// one is unfireable: every refusal echoes the offending
+			// attribute, so strings.Contains(err, "Name") is true
+			// whatever the message does and passed identically before
+			// and after the #454 fix.
 			//
-			// What has to hold is that nothing AFTER "no such attribute"
-			// mentions Name: not the near-miss suggestion, not the
-			// exhaustive listing. That is the half that regressed —
+			// What has to hold is that nothing in the message OFFERS
+			// Name as available — not the near-miss suggestion, not the
+			// exhaustive listing. That is the half that regressed:
 			// suggest() ranges over allowed's KEYS and the key was
-			// present at value false — and it is what keeps the two
-			// halves, refusing it and not advertising it, from drifting
-			// apart again. Found in review of #454.
+			// present at value false. Found in review of #454.
+			//
+			// IT NO LONGER ANCHORS ON "no such attribute". Cutting on
+			// that literal and Fatal-ing when it was absent pinned the
+			// vocabulary wording in place, so unifying the three
+			// pseudo-elements onto refuseUniversal's sentence turned
+			// this test red FOR THE IMPROVEMENT — a test change was the
+			// price of a better message. Raised in review of #486. The
+			// property is what is asserted now, and it holds under
+			// either wording.
 			msg := err.Error()
-			_, tail, ok := strings.Cut(msg, "no such attribute")
-			if !ok {
-				t.Fatalf("the refusal is not the vocabulary one, so the tail below means nothing: %v", err)
+			if !strings.Contains(msg, "Name") || !strings.Contains(msg, tc.elem) {
+				t.Errorf("the refusal names neither the attribute nor the "+
+					"element, so a reader cannot tell what was rejected "+
+					"where:\n\t%s", msg)
 			}
-			if strings.Contains(tail, "Name") {
+			if advertises(msg, "Name") {
 				t.Errorf("the message advertises Name on the element that just refused it — "+
 					"a reader who follows it lands back on the same error:\n\t%s", msg)
 			}
