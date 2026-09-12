@@ -204,7 +204,7 @@ func (s *Service) mayAddress(name string) error {
 		return notFoundf("no element named %q; SnapshotTree lists the named elements", name)
 	}
 	if s.islandRoot() == nil {
-		return deniedf("this session is scoped to island %q, which names no element in the running tree; every address is refused until it exists again", s.grant.Island)
+		return deniedf(islandGoneFmt+"; every address is refused until it exists again", s.grant.Island)
 	}
 	if !s.islandSet()[w] {
 		return deniedf("element %q is outside this session's island %q; a session may only address its own subtree", name, s.grant.Island)

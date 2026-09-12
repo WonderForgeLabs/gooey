@@ -136,6 +136,14 @@ func validateMarkupSchema() map[string]any {
 // an absent key and a zero are different questions for a client, and only
 // one of them can be asked without branching on presence.
 //
+// Nothing here promises ACCEPTANCE, and that is the second correction.
+// An earlier draft said adding x/y yields "the coordinate send_mouse
+// accepts", which overshoots: mayPoint gates on what the pointer would
+// actually reach — hit-test order, an active captor, a frozen host — not
+// on the island rectangle. A point inside the rect can still be refused.
+// What x/y buy is the right coordinate SPACE; the routing is its own
+// question.
+//
 // cols/rows deliberately do NOT claim to be "the range send_mouse
 // accepts". For a scoped session they are the island's extent while
 // send_mouse takes absolute screen cells, so that sentence — which this
@@ -147,9 +155,9 @@ func screenSizeSchema() map[string]any {
 	return object(map[string]any{
 		"cols":       prop_("integer", "Width of the visible surface in cells. For a scoped session this is the island's width, not the terminal's."),
 		"rows":       prop_("integer", "Height of the visible surface in cells. For a scoped session this is the island's height, not the terminal's."),
-		"x":          prop_("integer", "Absolute screen column of the surface's left edge — add it to a position within the surface to get the x send_mouse accepts. 0 when unscoped."),
-		"y":          prop_("integer", "Absolute screen row of the surface's top edge — add it to a position within the surface to get the y send_mouse accepts. 0 when unscoped."),
-		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it."),
-		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it."),
+		"x":          prop_("integer", "Absolute screen column of the surface's left edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it."),
+		"y":          prop_("integer", "Absolute screen row of the surface's top edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it."),
+		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it. Non-zero means usable, not necessarily measured: it may be the host's substituted default."),
+		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it. Non-zero means usable, not necessarily measured: it may be the host's substituted default."),
 	}, "cols", "rows", "x", "y", "cellWidth", "cellHeight")
 }

@@ -15,9 +15,15 @@ import (
 )
 
 // screenSizeRootMarkup declares every shape that is supposed to detach a
-// root from the screen — a fixed size on the root itself.
+// root from the screen: a margin, a fixed size, and a non-stretch
+// alignment on both axes.
+//
+// All five, because the claim this fixture backs names all five. An
+// earlier version declared Width/Height/Margin while the prose said
+// alignment had been measured too — an overclaim of exactly the kind
+// this test exists to retire, caught in review of #504.
 const screenSizeRootMarkup = `<Gooey>
-  <Border Name="Inset" Width="20" Height="5" Margin="2">
+  <Border Name="Inset" Width="20" Height="5" Margin="2" HAlign="Start" VAlign="Start">
     <Text Name="InsetText">inset</Text>
   </Border>
 </Gooey>`
@@ -53,18 +59,20 @@ func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
 	}
 	c := newClient(t, s)
 
+	wantCols, wantRows := screenOf(t, app)
 	b := rootBounds(t, c.json("tree_snapshot", nil))
-	if b.W != app.cols || b.H != app.rows {
-		t.Errorf("a root declaring Width=20 Height=5 Margin=2 reports bounds %dx%d; "+
+	if b.W != wantCols || b.H != wantRows {
+		t.Errorf("a root declaring Width=20 Height=5 Margin=2 HAlign=Start VAlign=Start "+
+			"reports bounds %dx%d; "+
 			"want the full %dx%d, because Composer.Frame arranges the root to the "+
 			"screen and Base.Arrange stores what it is given",
-			b.W, b.H, app.cols, app.rows)
+			b.W, b.H, wantCols, wantRows)
 	}
 
 	sz := c.json("screen_size", nil)
-	if int(sz["cols"].(float64)) != app.cols || int(sz["rows"].(float64)) != app.rows {
+	if int(sz["cols"].(float64)) != wantCols || int(sz["rows"].(float64)) != wantRows {
 		t.Errorf("screen_size reports %vx%v, want the terminal's %dx%d",
-			sz["cols"], sz["rows"], app.cols, app.rows)
+			sz["cols"], sz["rows"], wantCols, wantRows)
 	}
 }
 
@@ -291,4 +299,57 @@ func rootBounds(t *testing.T, snap map[string]any) gooey.Rect {
 		X: int(b["x"].(float64)), Y: int(b["y"].(float64)),
 		W: int(b["w"].(float64)), H: int(b["h"].(float64)),
 	}
+}
+
+// screenOf reads the test app's terminal size THROUGH the UI loop.
+//
+// testApp documents cols/rows as "written and read only by run(), or by a
+// closure run() drained", and a test reading them directly commits the
+// same violation the tools are forbidden — it just happens not to race
+// today because nothing resizes. Asserting against a value fetched the
+// illegal way would make this file the one place the contract is not
+// kept. Raised in review of #504.
+func screenOf(t *testing.T, app *testApp) (cols, rows int) {
+	t.Helper()
+	done := make(chan struct{})
+	app.Post(func() {
+		cols, rows = app.cols, app.rows
+		close(done)
+	})
+	<-done
+	return cols, rows
+}
+
+// TestAnIslandThatIsGoneIsDeniedByName covers islandRect's first error
+// path, which had no test anywhere in the repo — the extraction that
+// created it moved three copies of the check into one place and left the
+// one place uncovered, which is the usual way a refactor loses an
+// assertion.
+//
+// It is asserted on screen_size AND screen_text because islandRect is
+// what both now call: a regression that broke the resolution would
+// otherwise show up on whichever tool nobody tested.
+func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
+	mine := prop.NewSource("m0")
+	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
+		"Mine": map[string]any{"Body": mine},
+		"Host": map[string]any{"Secret": prop.NewSource("s")},
+	})
+	gs, err := New(app, Options{
+		Context: app.ctx,
+		Timeout: 5 * time.Second,
+		// A name the tree does not contain. The grant is well-formed;
+		// the element simply is not there, which is the state a swap or
+		// a patch can produce at runtime.
+		Grant: control.Island("Ghost", "Ghost"),
+	})
+	if err != nil {
+		t.Fatalf("New (guest): %v", err)
+	}
+	guest := newClient(t, gs)
+
+	// The message names the island, because a client that cannot see the
+	// tree has no other way to tell "you may not" from "it is gone".
+	guest.fails("screen_size", nil, `island "Ghost", which names no element`)
+	guest.fails("screen_text", nil, `island "Ghost", which names no element`)
 }

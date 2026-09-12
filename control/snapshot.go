@@ -91,7 +91,7 @@ func (s *Service) Tree(depth int) (*Node, error) {
 	if s.scoped() {
 		root = s.islandRoot()
 		if root == nil {
-			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+			return nil, s.islandGone()
 		}
 	}
 	return s.walk(root, treeNames(s.bind), c.Focus(), depth, 1), nil
@@ -252,10 +252,23 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 // cannot be read" against "its size cannot be read") for what is one
 // rule. The duplication is the reason the rule could drift: there was no
 // single place for "what does this island occupy" to be answered.
+// islandGoneFmt is the denial every island-addressed call gives when the
+// grant names an element the running tree no longer has.
+//
+// A shared FORMAT rather than five copies of one sentence: it was written
+// out at each site and had begun to drift, and one site appends a clause
+// — which stays a deliberate difference only while the shared half is
+// literally shared. It is a format string and not a constructor because
+// deniedf returns *Error, whose Kind callers switch on; wrapping it would
+// change the type for the sake of tidiness.
+const islandGoneFmt = "this session is scoped to island %q, which names no element in the running tree"
+
+func (s *Service) islandGone() *Error { return deniedf(islandGoneFmt, s.grant.Island) }
+
 func (s *Service) islandRect() (gooey.Rect, error) {
 	root := s.islandRoot()
 	if root == nil {
-		return gooey.Rect{}, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		return gooey.Rect{}, s.islandGone()
 	}
 	b, ok := root.(gooey.Bounded)
 	if !ok {
@@ -442,9 +455,9 @@ type ScreenSize struct {
 // Arrange(Rect{0, 0, c.cols, c.rows}) and Base.Arrange stores what it is
 // handed, so the root reports the screen whatever it declares; margin,
 // size and alignment are applied by MeasureChild/ArrangeChild, the
-// sandwich the root — being nobody's child — never passes through. All
-// three were measured against a root declaring them, and it reported the
-// full terminal every time (mcp.TestTheRootAlwaysFillsTheScreen pins
+// sandwich the root — being nobody's child — never passes through. A
+// root declaring Margin, Width, Height, HAlign and VAlign together was
+// measured, and it reported the full terminal (mcp.TestTheRootAlwaysFillsTheScreen pins
 // that, so this paragraph fails rather than rots if the root ever starts
 // honouring its own size).
 //
@@ -487,7 +500,12 @@ type ScreenSize struct {
 // island as outside it.
 //
 // They are ZERO when nobody has measured them, and a client must branch
-// on that rather than divide by it. The probe that fills them is opt-in
+// on that rather than divide by it. The converse does NOT hold and the
+// schema says so: a non-zero pair may be a real probe OR App's
+// substituted term.DefaultCellW/H, which it fills in for a pixel-plane
+// app. So 0 means "certainly unmeasured"; non-zero means "usable", not
+// "measured". Reporting which would need a provenance bit the caps
+// struct does not carry. The probe that fills them is opt-in
 // (gooey.WithCapabilityProbe — "a round trip that only graphics apps
 // need"), and App's own backfill to term.DefaultCellW/H fires only for a
 // pixel-plane app (app.go, `c.CellW <= 0 && a.pixelPlane(c)`), so an
@@ -511,6 +529,18 @@ func (s *Service) ScreenSize() (ScreenSize, error) {
 		size.X, size.Y = r.X, r.Y
 		return size, nil
 	}
+	// c.Cells(), NOT Composer.Size(), and the difference is only visible
+	// in the window this tool exists to be correct in.
+	//
+	// Size() returns the cols/rows the composer was last TOLD; Cells() is
+	// the plane as of the last composed frame. Across a pending resize
+	// they differ — and screen_text renders that same buffer, so taking
+	// Size() here would let a client read a width from screen_size that
+	// the screen_text it fetched in the same breath does not have. A
+	// review asked for Size() as the tidier source; it is the wrong one,
+	// and an earlier review asked for exactly this instead. The invariant
+	// is not "buffer tracks cols/rows" — it is that these two tools
+	// answer from one place.
 	buf := c.Cells()
 	size.Cols, size.Rows = buf.W, buf.H
 	return size, nil
