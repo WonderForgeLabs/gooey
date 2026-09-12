@@ -1,0 +1,151 @@
+# Dependabot for a multi-module workspace with ONE vendor directory.
+#
+# Until this file existed the repo got Dependabot SECURITY updates only —
+# those need no config — and they arrived one PR per module. A single grpc
+# advisory opened #449, #450 and #451 within minutes, each bumping the same
+# version in a different go.mod, and all three red for the same reason (see
+# the vendoring note at the bottom).
+#
+# ── WHAT THIS FILE CAN AND CANNOT DO ────────────────────────────────────────
+#
+# It CANNOT collapse that fan-out. Combining one dependency across several
+# directories into a single PR is `group-by: dependency-name`, and GitHub
+# documents that as version-updates only. Security updates are still raised
+# per directory whatever is written here. Worth stating plainly, because
+# "add grouping" reads like it would have prevented #449/#450/#451 and it
+# would not have.
+#
+# What it DOES do is stop the same thing happening for routine bumps: with
+# version updates on and grouped by dependency name, a weekly grpc bump comes
+# as ONE pull request touching every module that requires it, rather than as
+# a dozen.
+
+# ── THE RISK THIS FILE CARRIES ──────────────────────────────────────────────
+#
+# Today this repo has NO dependabot.yml and still receives SECURITY updates —
+# those need no config. Adding this file puts that on the line: if Dependabot
+# rejects the config, it does not fall back to the previous behaviour, it
+# stops. Security updates included.
+#
+# THAT RISK IS LARGELY RETIRED, and by measurement rather than by reading.
+# GitHub runs its own config validation as a PR check —
+# `.github/dependabot.yml`, served by dependabot-api.githubapp.com — and it
+# PASSED on this file, `group-by: dependency-name` included. An earlier
+# version of this comment said "the parser cannot be consulted until this is
+# on the default branch"; that was wrong, the PR check IS the parser, and it
+# has now been consulted. Corrected on the evidence in #453.
+#
+# What that check does NOT cover is RUNTIME behaviour: a config can parse and
+# still have an updater error on a particular directory. That is the question
+# the `/` decision below settles.
+#
+# The residual failure is silent either way — a Dependabot config error
+# produces no notification and turns nothing red; it appears only under
+# Insights → Dependency graph → Dependabot. So "check it after merging" needs
+# a person and a sitting, not a good intention. Best is to merge and check in
+# the same one.
+#
+# THE ROOT `/` IS DELIBERATELY NOT IN THE LIST BELOW, and this is settled
+# rather than cautious. Two measurements, both re-runnable in a checkout:
+#
+#   $ go mod vendor -o /tmp/probe
+#   go: 'go mod vendor' cannot be run in workspace mode. Run 'go work vendor'
+#       to vendor the workspace or set 'GOWORK=off' to exit workspace mode.
+#
+#   $ find . -mindepth 1 -name '.?*' -prune -o -name modules.txt -print
+#   ./vendor/modules.txt
+#
+# A flat refusal, not a degraded result — and exactly ONE vendor/modules.txt
+# in the tree, sitting beside the ROOT go.mod. Dependabot's gomod updater
+# takes its vendoring path when a vendor/modules.txt sits in the manifest's
+# own directory, which is true of `/` and of no other entry here.
+#
+# That makes the answer the same under both hypotheses. If workspace mode
+# engages at `/`, vendoring there cannot succeed. If Dependabot ignores
+# go.work entirely, `/` is merely the root module and the globbed entries
+# were never redundant with it. Either way the globbed entries are the ones
+# already demonstrated to work — #449/#450/#451 all landed against NESTED
+# modules, which never enter the vendoring path and are therefore not
+# evidence about the root.
+#
+# THE COST, stated where every other cost in this file is: the root module's
+# own direct requires (golang.org/x/term, golang.org/x/image, rivo/uniseg,
+# gopkg.in/yaml.v3) get no version updates until somebody revisits this.
+# Security updates for them are unaffected — those need no config at all.
+# Settled in review of #453.
+#
+# So: land this separately from the vendor workflows, and CHECK IT AFTER
+# MERGING. Repository → Insights → Dependency graph → Dependabot shows the
+# config error if there is one. If it is unhappy, revert this file; nothing
+# else in the repo depends on it, which is the property being bought by
+# keeping it in its own commit. Raised in review of #452.
+
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    # `directories` (plural) rather than `directory`, because only the plural
+    # form takes globs — and globs are what keep this from being a hand-kept
+    # path list that goes stale the first time somebody adds a module.
+    # That is the same reasoning CLAUDE.md's verify loop gives for discovering
+    # modules instead of enumerating them; a glob is the nearest thing a
+    # static config file has to a discovery. Note there is deliberately no
+    # COUNT written here either — CLAUDE.md's rule about numbers in prose
+    # applies to config comments exactly as much, and an earlier draft of
+    # this file said "26 modules" three days after that would stop being
+    # true. Run the find in CLAUDE.md's Verify section for the number.
+    #
+    # A NEW TOP-LEVEL NAMESPACE STILL NEEDS A LINE HERE. `packs/temporal-foo`
+    # is covered; a new `widgets/` tree is not, and nothing will say so — it
+    # will simply never be updated. That is the one maintenance edge.
+    directories:
+      - '/apps/*'
+      - '/grpc'
+      - '/handlers/*'
+      - '/imagefmt/*'
+      - '/mcp'
+      - '/packs/*'
+      - '/paint'
+      - '/tools'
+    schedule:
+      interval: weekly
+    # Every module here shares the one root vendor/, so N separate PRs would
+    # each need their own `go work vendor` and would conflict with each other
+    # on the same files. One grouped PR per dependency is not just tidier, it
+    # is the only shape that vendors cleanly.
+    groups:
+      go-modules:
+        applies-to: version-updates
+        group-by: dependency-name
+        patterns:
+          - '*'
+    # Deliberately low, and it WILL be saturated immediately rather than only
+    # under load — a workspace this size has more than three dependencies
+    # behind on some version at any moment, so expect a steady three open and
+    # a queue behind them. That is the intended shape: each grouped PR carries
+    # a whole dependency across the tree and costs a full CI run on
+    # self-hosted pools that do not autoscale (see ci.yml on why legs are
+    # packed per tier). Raise it deliberately, knowing that is the cost.
+    open-pull-requests-limit: 3
+
+# ── THE PART THIS FILE DOES NOT SOLVE ───────────────────────────────────────
+#
+# Grouped or not, Dependabot edits go.mod and go.sum and never runs
+# `go work vendor`, so the committed vendor/ goes stale and `go` refuses with
+# "inconsistent vendoring" on the next command — surfacing in whichever job
+# runs Go first, which for #449/#450/#451 was a protobuf step.
+#
+# PR #452 proposes the two workflows that check and repair that
+# (vendor-freshness.yml, vendor-autofix.yml). They are NOT on main as this is
+# written, and this file must not read as though they are.
+#
+# WHAT TO EXPECT IF THIS LANDS FIRST is a JAM, not a queue, and the two
+# halves of this file only produce it together. Every grouped PR arrives
+# with a stale vendor/ and is therefore RED until somebody runs
+# `go work vendor` on it; and Dependabot will not open a fourth while three
+# are open. So the steady state is three permanently-red PRs occupying every
+# slot until a human intervenes on each, weekly, forever. A reader who has
+# not joined those two facts will read the red as this config being broken.
+#
+# Land #452 first. If it cannot go first, `interval: monthly` here keeps the
+# jam from re-forming weekly. Raised in review of #453.
