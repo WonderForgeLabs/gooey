@@ -534,7 +534,13 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	for _, c := range s.chips {
 		s.kids = append(s.kids, c)
 	}
-	// LAST, because document order is z-order: the menu must paint over
+	// APPENDED LAST AS HOUSE STYLE. This said "because document order is
+	// z-order", which stopped being the reason: what is appended here is
+	// a Popup surface, and a Popup surface implements gooey.Overlay, so
+	// it is lifted out of document order into the paint layer and paints
+	// above the page from any position. Kept last because a reader
+	// looking for the overlay expects it there, not because the position
+	// decides what paints over
 	// whatever it covers.
 	s.kids = append(s.kids, p.Surface())
 	return s.kids
