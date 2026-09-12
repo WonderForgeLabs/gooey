@@ -210,10 +210,15 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// sentences the docs happen to contain, which is not a policy and
 	// moves whenever anyone writes a paragraph. Pinning it exactly makes
 	// every prose edit a failing test, and a guard that fires on correct
-	// prose gets deleted. Measured at 9 on the branch that added this and
-	// 9 at the stack tip above it; the floor sits under that with room to
-	// edit, and far enough above zero that deleting the paragraphs which
-	// make the claim fails.
+	// prose gets deleted.
+	//
+	// Measured at 11 here. It was 9 when this guard shipped with one arm,
+	// and the positional arm added two more counted hits — so the number
+	// moved because the COUNTING changed, not the docs, which is the way
+	// a recorded measurement most easily becomes false of its own commit.
+	// It was, until review of #456 caught it still saying 9. The floor
+	// sits under that with room to edit, and far enough above zero that
+	// deleting the paragraphs which make the claim fails.
 	const wantExamined = 5
 	if examined < wantExamined {
 		t.Errorf("only %d sentences in the tree make a lift claim about %v, want at "+
@@ -355,8 +360,9 @@ const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
 // from the two above, where the nearest host name is nine and thirty
 // words back behind a dash. Measured against the stack tip — which is
 // the base that matters, and the one the first version skipped: 9
-// sentences examined, none flagged, and both defective spellings flagged
-// as fixtures below.
+// sentences examined by THIS arm, none flagged, and both defective
+// spellings flagged as fixtures below. (The test's own total is 11 now;
+// the extra two are the positional arm's, counted separately above.)
 //
 // It is an approximation of "whose subject is this", and the shape of
 // what it gives up is stated rather than left to be discovered: a

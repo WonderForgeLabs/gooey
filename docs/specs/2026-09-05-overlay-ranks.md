@@ -104,8 +104,11 @@ test. The day something needs a below-popup band it can have one.
 
 The rank belongs to the lifted subtree's **root**, not to each node — a
 nested `Overlay` inside an already-lifted subtree keeps the *outer* rank.
-`orderPaint` tests `inherited` *before* the marker for exactly this, and
-the ordering of those two switch arms is the whole of it.
+`overlayOf` (`component.go`) returns the parent's answer *before* testing
+the marker for exactly this, and the ordering of those two `if`s is the
+whole of it. It was a pair of switch arms in `Composer.orderPaint` when
+this spec was written; #438 extracted the rule so `gooey.Compose` could
+ask the same question, and the mutation moved with it.
 
 Ranks that varied inside one subtree would let `appendByRank` separate a
 container from its children. A rank-2 container holding a rank-0
@@ -163,7 +166,7 @@ this change would have revealed it.
 | A higher rank beats a later declaration | `TestAHigherRankPaintsOverALowerOneDeclaredLater` | reverse the bucket order (M2) |
 | Equal ranks keep document order | `TestEqualRanksKeepDocumentOrder` | prepend within a bucket (M3) |
 | An unranked `Overlay` is rank 0 | `TestAnUnrankedOverlayIsRankZero` | M2, and M4 (don't rank at all) |
-| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | swap `case inherited:` and `case isOverlay:` in `Composer.orderPaint` (`composer.go`); M3 |
+| A lifted subtree is never split | `TestALiftedSubtreeIsNotSplitByItsChildsRank` | reverse the two `if`s in `overlayOf` (`component.go`) so the marker is tested before the parent's answer; M3 |
 | The layer still clears the page | `TestTheOverlayLayerStillClearsThePage` | — (guards #437) |
 | **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |

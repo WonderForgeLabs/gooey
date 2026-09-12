@@ -361,12 +361,15 @@ keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
 reads as the floor, because every doc that named the constant called it
 "the floor" while the comparison was a plain `int` — `overlayRank`'s own
-comment enumerates them, and is the place to keep that list. Two things make this
+comment COUNTS them by category (three doc comments, a spec heading, a
+test message) rather than listing them; derive the sites with a grep for
+`floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
-not to each node, so `orderPaint` tests `inherited` BEFORE the marker —
-swap those two switch arms and a rank-2 container's rank-0 child lands in
-an earlier bucket, the parent paints after it, and a parent that covers
-its bounds erases the child it lifted. And `OverlayRank()` must return a
+not to each node, so `overlayOf` (`component.go`) answers the parent's
+`inherited` BEFORE testing the marker — reverse those two `if`s and a
+rank-2 container's rank-0 child lands in an earlier bucket, the parent
+paints after it, and a parent that covers its bounds erases the child it
+lifted. And `OverlayRank()` must return a
 **constant**: it is sampled on structural re-sync, not per frame, so a
 rank that changes with state is read once and silently stale — that is
 also why it is a method and not a `Property`, which would need `Frozen`'s
