@@ -74,13 +74,22 @@ The rest of this tutorial adds chrome, and every piece of chrome is an
 **overlay**: something that paints *above* the content. The recipe is
 operational and short:
 
-> **Declare overlay elements LAST in their container.** Document order
-> is z-order — a later sibling paints above what it covers. In a
-> `Grid`, `Grid.Row` still places the element wherever it belongs, so
-> "last child, top row" is an ordinary thing to write.
+> **Declare overlay elements wherever they belong.** A subtree whose
+> root implements `gooey.Overlay` is lifted out of document order into
+> a paint layer of its own, so it paints above the page from anywhere.
+> In a `Grid`, `Grid.Row` places the element where it belongs and
+> nothing about z-order argues with that.
 
-Why document order is z-order — and what happens when an overlay is
-dismissed and the cells under it come back — is the subject of
+**"Declare overlay elements LAST" is what this box used to say**, and
+the shape survives in this tutorial's own example, where the overlays
+sit at the end of the `Grid` because that is where they read best. It
+is harmless there and no longer load-bearing. Corrected in review of
+#455, which caught this box teaching the rule the paragraph forty lines
+below calls "specifically the thing that did not work" — a page that
+says both leaves the reader no way to tell which half is current.
+
+How the lift works — and what happens when an overlay is dismissed and
+the cells under it come back — is the subject of
 [concepts/overlays.md](concepts/overlays.md). Here we just use the
 rule.
 
@@ -104,9 +113,18 @@ bindings — and it becomes the top row of the app:
 
 `<Menu>` and `<MenuItem>` are **data, not components** — like a Grid's
 track list, they declare the bar's contents and never enter the visual
-tree. The dropdown that appears below an open title is the reason the
-bar must be a late sibling: it paints over the progress row and the
-sparkline, and being later in document order is the entire mechanism.
+tree. The dropdown that appears below an open title paints over the
+progress row and the sparkline, and **document order is not what does
+it**: the popup surface implements `gooey.Overlay`, so the Composer
+lifts it out of the ordinary layer entirely and paints it above the
+page wherever the bar is declared.
+
+"Declare the bar last" is what this page used to say, and it was
+specifically the thing that did not work — a component declared *after*
+the bar painted over an open dropdown and nothing could put it back,
+because the z-ordered pass forces forward only
+([#430](https://github.com/WonderForgeLabs/gooey/issues/430)). Position
+is free now.
 
 **Mnemonics.** The underscore in `Title="_Job"` marks the accelerator:
 `alt+j` opens the Job menu from anywhere on the page, whatever holds
@@ -337,8 +355,12 @@ so `tab` never lands on a button nobody can see.
 
 ## What you learned
 
-- Overlays are declared **last in their container** because document
-  order is z-order; `Grid.Row` places them independently of that order.
+- A `MenuBar`'s dropdown is a `gooey.Overlay`: the Composer lifts it
+  above the page **wherever the bar is declared**. "Declare it last" is
+  what this line said, and it is the rule
+  [#430](https://github.com/WonderForgeLabs/gooey/issues/430) disproved —
+  see the box above. `ToastHost` and `AdornmentLayer` are not lifted yet,
+  so for those two, position still decides.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.
@@ -349,7 +371,9 @@ so `tab` never lands on a button nobody can see.
 - Toasts are imperative: the host is markup, `Show` is code through
   `markup.Find`, looked up per fire so hot reload cannot strand it.
 - Tooltips (both spellings) need an `AdornmentLayer` on the page, and
-  the layer's position in document order decides what tips paint over.
+  the layer's position in document order decides what tips paint over —
+  the layer is not lifted, so this one is not the retired rule but the
+  live one.
 - The wave-1 widgets share the framework's rules rather than inventing
   their own: arrows are consumed only when they move something, and
   disabled is always "a command whose condition says no".

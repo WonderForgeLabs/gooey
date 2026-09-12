@@ -30,6 +30,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/imaging"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
@@ -1525,6 +1526,40 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		if c.Name != "Menu" {
 			return nil, fmt.Errorf("markup: <MenuBar> children must be <Menu> elements, got <%s>", c.Name)
 		}
+		// THE ATTRIBUTE NAMES ARE CHECKED HERE BECAUSE NOTHING ELSE
+		// WILL. checkAttrs runs inside build() (see the call above the
+		// buildComponent switch), and these children never reach it —
+		// this function reads them straight off e.Children, which is
+		// what "consumed as DATA" means. So until this call existed,
+		// <Menu Bogus="x"> and <MenuItem Frobnicate="yes"> LOADED
+		// CLEAN: the loop below reads the names it knows and every
+		// other attribute was accepted and silently dropped, which is
+		// the exact defect the declared vocabulary exists to prevent.
+		//
+		// It works with no other change because both elements declare
+		// Known: true, so ctx.spec finds an exhaustive Attrs set, and
+		// Element.parent is already stamped at parse time. Neither
+		// carries a Layout — a nil Proto makes TakesLayout false — so
+		// the layout half of the universal set is not offered on them.
+		//
+		// THAT WAS TRUE OF SEVEN UNIVERSALS AND FALSE OF THE EIGHTH.
+		// Name is hoisted ABOVE the TakesLayout gate in both vocabulary
+		// and AttrsFor, because addressability is not a layout
+		// property — so <MenuItem Name="Save"> loaded clean while
+		// nothing here ever called named(), and ctx.Named stayed empty.
+		// Accepted, silently dropped: the exact class this declaration
+		// exists to close. Both gates now ask !spec.Pseudo, which is the
+		// declared form of "there is nothing to address". Found in
+		// review of #454.
+		//
+		// This is also what makes catalogen's half-check sound. Its
+		// comment says the under-declared direction "stays loud the
+		// ordinary way"; that sentence was false for exactly these two
+		// elements until now, which left them the only elements in the
+		// vocabulary with NEITHER direction guarded.
+		if err := checkAttrs(c, ctx); err != nil {
+			return nil, err
+		}
 		title := strings.TrimSpace(c.Attrs["Title"])
 		if title == "" {
 			return nil, fmt.Errorf("markup: <Menu> needs a Title")
@@ -1534,24 +1569,93 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			if ic.Name != "MenuItem" {
 				return nil, fmt.Errorf("markup: <Menu> children must be <MenuItem> elements, got <%s>", ic.Name)
 			}
-			// litBool, not == "true". The string compare is the idiom
-			// this branch removed in ten other places, and it is silent
-			// in the same way: <MenuItem Separator="1"> and
-			// Separator="yes" loaded as ORDINARY ITEMS, so a separator
-			// spelled the way half of Go spells a bool became a menu
-			// entry with no text.
+			// Before the Separator short-circuit, so a typo on a
+			// separator is reported rather than skipped past.
+			if err := checkAttrs(ic, ctx); err != nil {
+				return nil, err
+			}
+			// litBool, NOT == "true". The string compare is the idiom #470
+			// removed in ten other places, and it is silent the same way
+			// here: <MenuItem Separator="1"> and Separator="yes" loaded as
+			// ORDINARY ITEMS, so a separator spelled the way half of Go
+			// spells a bool became a menu entry with no text. The Text-less
+			// form was loud only by accident, falling through to "needs
+			// Text".
 			//
-			// No sweep arm can reach this one, and the reason is a THIRD
-			// unswept category beyond the two bindsweep_test.go records:
-			// <Menu> and <MenuItem> are ModeRestricted children with no
-			// AttrSpec at all, so Separator is not a declaration that
-			// can be widened — it is a declaration that does not exist.
-			// Raised in review of #470.
+			// TWO REVIEWS FOUND THIS INDEPENDENTLY AND THAT IS THE POINT.
+			// Review of #454 reached it from the DECLARATION side: Separator
+			// is declared KindBool by this branch — which is what puts the
+			// row in the designer's property grid — and a declaration
+			// checked against what the code reads is this branch's own
+			// thesis. Review of #470 reached it from the SWEEP side, and
+			// recorded a third unswept category beyond the two
+			// bindsweep_test.go names: <Menu> and <MenuItem> are
+			// ModeRestricted children with no AttrSpec at all, so Separator
+			// is not a declaration that can be widened — it is a declaration
+			// that does not exist. Neither route's guard could see the other
+			// half, which is why the same line was written twice.
+			//
+			// litBool rather than the ParseBool spelling this branch first
+			// used: #470 made it the one house grammar for a component
+			// attribute, so optBool no longer exists to call.
 			sep, err := litBool(ic, "Separator")
 			if err != nil {
 				return nil, err
 			}
 			if sep {
+				// A SEPARATOR CARRIES NOTHING ELSE, and saying so is new.
+				// This short-circuit used to run before every other
+				// attribute was read, so `<MenuItem Separator="true"
+				// Icon="assets/nope.png"/>` loaded clean — the same Icon
+				// on a non-separator item is a load error naming the path
+				// (TestAMissingIconAssetIsALoadError). One spelling of
+				// the same markup kept the "everything resolvable fails
+				// at load" posture and the other silently dropped it,
+				// which reads as "my icon doesn't show up" with nothing
+				// anywhere to explain it.
+				//
+				// Pre-existing for Text, Gesture, Checked and Command;
+				// #455 is what added an attribute whose value is a FILE,
+				// which is where a silent drop stops being cosmetic.
+				// Reported in review of that PR. Every separator in this
+				// repo is a bare <MenuItem Separator="true"/>, so
+				// rejecting costs nothing and makes the trap loud.
+				// ON A NON-EMPTY VALUE, not on presence. Every other read
+				// in this builder treats an empty attribute as absent
+				// (`if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw !=
+				// ""`), and gating on `_, ok :=` made `Icon=""` fatal here
+				// and a no-op three lines down — one spelling meaning two
+				// things. The error text is the tell: it promises the
+				// attribute "would be accepted and silently ignored", and
+				// for an empty value there is nothing to ignore, so the
+				// diagnostic described a consequence that cannot happen.
+				// Reported in review of #455.
+				// DERIVED FROM THE DECLARATION, not enumerated. This
+				// was a hand-written [...]string of exactly
+				// defMenuItem.Attrs minus "Separator", in the same
+				// package as defMenuItem — so the next attribute added
+				// there would be silently accepted-and-ignored on a
+				// separator, which is PRECISELY the defect this loop
+				// exists to make loud. A guard whose staleness mode is
+				// the bug it guards against is the one shape CLAUDE.md's
+				// derive-never-enumerate rule is about.
+				//
+				// The declared order decides which attribute a
+				// multi-attribute separator is reported for, and that is
+				// stable because Attrs is a slice. Raised in review of
+				// #455.
+				for _, a := range defMenuItem.Attrs {
+					if a.Name == "Separator" {
+						continue
+					}
+					if v := strings.TrimSpace(ic.Attrs[a.Name]); v != "" {
+						return nil, fmt.Errorf(
+							"markup: <MenuItem Separator=%q %s=%q>: a separator is a rule "+
+								"across the menu and carries nothing else — %s would be accepted "+
+								"and silently ignored; drop it, or drop Separator",
+							strings.TrimSpace(ic.Attrs["Separator"]), a.Name, v, a.Name)
+					}
+				}
 				menu.Items = append(menu.Items, components.MenuItem{Separator: true})
 				continue
 			}
@@ -1601,13 +1705,33 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			// rendered twice rather than two states kept in step. A
 			// literal is refused — there is no such thing as a check
 			// item whose box can never change.
+			//
+			// THROUGH Bound[bool], not through a bindRe pre-check that
+			// says the same thing in its own words. The pre-check was
+			// redundant — Bound refuses a non-binding on the next line —
+			// and the words were the cost: #460's vocabulary-wide sweep
+			// discriminates a real refusal from an incidental build
+			// failure by the loader's own phrase ("is not a binding
+			// expression") plus the attribute name, so this one
+			// declaration refused correctly and still came back
+			// UNVERIFIED. An attribute that opts out of the shared
+			// wording opts out of the shared guard.
 			if raw, ok := ic.Attrs["Checked"]; ok && raw != "" {
-				if !bindRe.MatchString(raw) {
-					return nil, fmt.Errorf("markup: <MenuItem Checked=%q>: Checked must bind a bool handle ({{.Name}}); a literal check can never change", raw)
-				}
 				if it.Checked, err = Bound[bool](ic, ctx, "Checked"); err != nil {
-					return nil, fmt.Errorf("markup: <MenuItem Text=%q Checked=%q>: %w", it.Text, raw, err)
+					// NO SECOND PREFIX. Bound already names the element and
+					// the attribute, so re-wrapping with them printed
+					// "markup: <MenuItem Checked=...>" twice. Only the
+					// guidance is added, and it keeps the words two
+					// different readers look for: the loader's own phrase,
+					// which is what #460's sweep discriminates on, and
+					// "bool handle", which TestALiteralCheckedIsALoadError
+					// asks for because it is what an author has to write.
+					return nil, fmt.Errorf("%w — Checked needs a bool handle "+
+						"({{.Name}}); a literal check can never change", err)
 				}
+			}
+			if err := menuItemIcon(ic, ctx, &it); err != nil {
+				return nil, err
 			}
 			cmd, err := ctx.Command(ic.Attrs["Command"])
 			if err != nil {
@@ -1619,6 +1743,128 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		menus = append(menus, menu)
 	}
 	return &components.MenuBar{Menus: menus, Style: style}, nil
+}
+
+// menuItemIcon reads the two icon attributes onto the item.
+//
+// THEY ARE TWO ATTRIBUTES BECAUSE THE TWO TIERS DRAW DIFFERENT THINGS,
+// which is the whole finding behind #400 and the reason this is not
+// modelled as one Src with a fallback. Everywhere else in the framework
+// the cell-plane tier is graphics.DrawHalfblock over the same image; a
+// dropdown row is ONE CELL TALL, so that is two vertical samples for the
+// entire glyph, and the issue measured two clearly different icons
+// coming back as the same uniform '▀'. There is no rendering of Icon
+// that works here, so the second tier is a rune the author chooses.
+//
+// Icon is LITERAL ONLY, where <Image Src> takes either form. Not an
+// omission and not a smaller feature: components.Image.Src is a
+// *prop.Property[image.Image] and tracks its source, MenuItem.Icon is a
+// plain field read while painting. A handle resolved here would be
+// sampled once and silently freeze — the same trap Text spells out two
+// screens up, refused for the same reason and in the same place.
+func menuItemIcon(ic Element, ctx *Context, it *components.MenuItem) error {
+	if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != "" {
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q Icon=%q>: Icon takes a file path, not a binding — "+
+					"a menu item's icon is a plain field read while painting, so a bound handle "+
+					"would be sampled once at load and never update again",
+				it.Text, raw)
+		}
+		fsys := ctx.assets()
+		if fsys == nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: no file system to load from — this tree was built from bytes; use markup.Load or set Context.Includes", raw)
+		}
+		img, err := imaging.Load(fsys, raw)
+		if err != nil {
+			return fmt.Errorf("markup: <MenuItem Icon=%q>: %w", raw, err)
+		}
+		it.Icon = img
+	}
+	// IconRune is ONE rune, counted in runes and not bytes, because the
+	// question here is how many glyphs — the gutter's three CELLS are
+	// components.Menu's arithmetic, and an emoji is one glyph in two of
+	// them. Refusing a second glyph at load beats clipping it to a half
+	// a glyph at paint, which is not drawable.
+	if raw := strings.TrimSpace(ic.Attrs["IconRune"]); raw != "" {
+		// THE SAME REFUSAL Icon gets, and for the same reason — the field
+		// is read while painting, so a bound handle freezes at load.
+		//
+		// Without it a binding fell through to the glyph count below and
+		// was refused by a message describing a DIFFERENT MISTAKE: the
+		// author tried to bind, and `IconRune="{{.Glyph}}"` came back
+		// "IconRune is one glyph … and 10 were given". Nothing in
+		// checkAttrs enforces BindsLiteral — it validates attribute NAMES
+		// — so this function is the only place the declared Binds is
+		// enforced at all, and for IconRune it was being enforced by
+		// accident. Found in review of #455.
+		if bindRe.MatchString(raw) {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune takes one literal glyph, not a "+
+					"binding — a menu item's icon rune is a plain field read while painting, so a "+
+					"bound handle would be sampled once at load and never update again",
+				it.Text, raw)
+		}
+		rs := []rune(raw)
+		if len(rs) != 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune is one glyph — the icon gutter "+
+					"holds exactly one, and %d were given",
+				it.Text, raw, len(rs))
+		}
+		// AND IT HAS TO OCCUPY A CELL. One rune is not one column: a
+		// combining mark survives TrimSpace, passes the count above, and
+		// measures ZERO — while Buffer.SetString still consumes a cell
+		// for it. The gutter then measures three columns and paints
+		// four, so every label sits right of where popupRect sized for
+		// it, the row overruns its own width and loses its right border
+		// to the clip, and the mnemonic rule — placed at
+		// StringWidth(lead) — lands a cell left of the accelerator.
+		//
+		// Refusing at load rather than coping at paint, for the reason
+		// the count check beside it exists: a glyph that cannot be drawn
+		// is an author mistake, and this is the last place anyone can
+		// still be told about it. Found in review of #455.
+		if render.StringWidth(string(rs[0])) < 1 {
+			return fmt.Errorf(
+				"markup: <MenuItem Text=%q IconRune=%q>: IconRune must be a glyph that occupies "+
+					"a cell — %q is one rune but measures zero columns, so it would consume a "+
+					"cell the gutter did not reserve and shift every label in the dropdown",
+				it.Text, raw, raw)
+		}
+		it.IconRune = rs[0]
+	}
+	// THE PIXEL TIER NEEDS ITS CELL-TIER PARTNER, and this is last so the
+	// two refusals above keep their own messages: a missing asset and a
+	// bound Icon each describe a different mistake and must not be
+	// reported as this one.
+	//
+	// The gutter is reserved unconditionally — three cells the moment any
+	// item carries either field, protocol or no protocol — and the spec
+	// is right that it must be, because the capability probe answers
+	// after the first frame and a conditional reservation would visibly
+	// reflow the dropdown. What that leaves uncovered is an item carrying
+	// ONLY an Icon on a terminal that never gets a protocol: iconGutter
+	// falls through to spaces(w), so those three columns stay blank for
+	// the life of the program, not for one frame, and nothing anywhere
+	// says why. That is the separator case's shape exactly — markup
+	// accepted, then silently drawing nothing — and it gets the separator
+	// case's answer.
+	//
+	// This does NOT make IconRune a fallback. The spec is explicit that
+	// neither field degrades to the other and that the tiers draw
+	// different things; requiring both is what authoring two tiers means,
+	// and it is resolvable at load, where this repo answers every
+	// question it can. Reported in review of #455.
+	if it.Icon != nil && it.IconRune == 0 {
+		return fmt.Errorf(
+			"markup: <MenuItem Text=%q Icon=%q>: an Icon needs an IconRune beside it — the icon "+
+				"gutter is reserved whether or not the terminal has a graphics protocol, and "+
+				"without a rune this item draws three blank columns on every terminal that "+
+				"has none",
+			it.Text, strings.TrimSpace(ic.Attrs["Icon"]))
+	}
+	return nil
 }
 
 func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Component, error) {

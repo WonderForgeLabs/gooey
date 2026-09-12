@@ -2,7 +2,9 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
@@ -46,17 +48,29 @@ import (
 // specOf is the catalog entry for an element name.
 //
 // The CATALOG, not ed.palette. The palette is the catalog minus the
-// non-visual elements and minus <Tab>, and <Tab> is precisely the entry
-// this file has to be able to reason about — asking the palette would
-// make a tab's own child rule unknowable, which is how the hole above
-// stayed open.
+// non-visual elements and minus the NESTED ones, and a nested element is
+// precisely what this file has to be able to reason about — <Tab> is the
+// example, and asking the palette would make a tab's own child rule
+// unknowable, which is how the hole above stayed open.
+//
+// This sentence used to name <Tab> as the filter rather than as the
+// example, which was true until markup.ElementSpec.Nested replaced the
+// hardcoded name. Deleting that hardcode is the point of the field, so a
+// comment still quoting it is the same staleness in prose.
+//
+// A LOOKUP, not a Catalog() call. Context.Catalog is not a getter — it
+// re-derives every builtin spec with fresh Attrs copies, re-runs
+// markNested and sorts, and globs and parses every include file when a
+// context has them. This is asked three times inside one add gesture
+// (planAdd, canHold, wrapperNode) and once per property-grid row build
+// from target(), which runs inside a paint node. ed.specs is that
+// catalog by name, taken once in loadPalette — where the vocabulary
+// actually changes — alongside the palette and the pseudo set, so all
+// three are answers to one read rather than three reads that could
+// disagree.
 func (ed *editor) specOf(elem string) (markup.ElementSpec, bool) {
-	for _, e := range ed.docCtx.Catalog() {
-		if e.Name == elem {
-			return e, true
-		}
-	}
-	return markup.ElementSpec{}, false
+	e, ok := ed.specs[elem]
+	return e, ok
 }
 
 // canHold reports whether an element named parent may take a child named
@@ -64,6 +78,16 @@ func (ed *editor) specOf(elem string) (markup.ElementSpec, bool) {
 func (ed *editor) canHold(parent, elem string) bool {
 	spec, ok := ed.specOf(parent)
 	if !ok {
+		return false
+	}
+	// A NESTED ELEMENT HAS EXACTLY ONE LEGAL HOME, so the permissive
+	// modes have to refuse it; ModeRestricted below already asks the
+	// right question by name. Without this, canHold("Canvas",
+	// "MenuItem") is true, paste lands the node at the root, the rebuild
+	// fails and docRoot goes nil while the status line says it worked —
+	// issue #403's failure mode, reached by the gesture selectChild
+	// opens. Found in review of #454.
+	if e, ok := ed.specOf(elem); ok && e.Nested && spec.Children.Mode != markup.ModeRestricted {
 		return false
 	}
 	switch spec.Children.Mode {
@@ -91,9 +115,22 @@ func (ed *editor) canHold(parent, elem string) bool {
 //
 // EXACTLY ONE CANDIDATE, or nothing. A restricted container naming two
 // permitted children has no single right answer, and picking the first
-// would be a coin toss the user cannot see; <MenuBar> is that case today
-// (Only: Menu, MenuItem). Better to climb and let them place it
-// deliberately than to guess.
+// would be a coin toss the user cannot see. Better to climb and let the
+// user place it deliberately than to guess.
+//
+// THIS PARAGRAPH USED TO CITE <MenuBar> AS THAT CASE, "(Only: Menu,
+// MenuItem)", and this PR is what made it false: the list is {"Menu"}
+// now, because the two-entry version declared a child the builder refuses
+// ("<MenuBar> children must be <Menu> elements"). So MenuBar moved from
+// the example of the DECLINE path to a live user of the WRAP path, and
+// the comment went on describing the old world. Reported in review of
+// #454 — a doc citing a data structure it does not read is exactly the
+// drift that stays resolvable while meaning something else.
+//
+// No restricted container names two children today, so the decline branch
+// has no example in the shipped vocabulary. It is kept because the
+// vocabulary is open — a host registers its own elements — not because
+// something in this repo reaches it.
 func (ed *editor) wrapperFor(parent, elem string) string {
 	spec, ok := ed.specOf(parent)
 	if !ok || spec.Children.Mode != markup.ModeRestricted {
@@ -136,10 +173,36 @@ func (ed *editor) wrapperFor(parent, elem string) string {
 //
 // KNOWN LIMIT, stated rather than hidden: every wrapper built this way
 // carries the same attribute values, so a second added tab repeats the
-// first's header. That is cosmetic — a header is a label, not an address,
-// so nothing is shadowed and nothing fails to build — but it is real, and
+// first's header. That much is cosmetic — a header is a label, not an
+// address, so nothing is shadowed and nothing fails to build — and
 // fixing it needs a notion of "the attribute that labels this element"
 // that the catalog does not have today.
+//
+// THE MENU CASE IS NOT COSMETIC, and reading it as one was wrong against
+// a rule this same PR documents. A menu title with no `_` marker does
+// not claim nothing — menus fall back to the FIRST LETTER
+// (components/mnemonic.go, and the per-component doctrine at the top of
+// that file: buttons take only an explicit marker, menus do not). So a
+// second <Menu Title="File"> claims alt+f exactly as the first does, and
+// MenuBar.titleWithAccel takes the first match: the new menu is
+// unreachable from the keyboard, and which one loses is a fact about
+// tree order no reader of the markup can see. The previous version of
+// this paragraph said "the clone claims no accelerator", derived from
+// the absence of an underscore — the same local re-derivation of the
+// mnemonic rule that mnemonic.go records this module getting wrong in
+// review of #428. Found in review of #454.
+//
+// unshadowMnemonic below is the fix, and it is deliberately narrow: it
+// gives the clone an EXPLICIT marker on a letter no sibling claims,
+// leaving the repeated text alone. The text repeat stays a documented
+// cosmetic limit; the accelerator collision does not, because it makes a
+// menu the user just created impossible to open.
+//
+// A NAME, not a *node. The parameter was widened to *node for the
+// sibling mnemonic scan that round 10 moved out to unshadowMnemonic, and
+// the body has read nothing but .Elem since — a signature saying this
+// function reasons about the container's children when it does not.
+// Raised in review of #454, round 11.
 func (ed *editor) wrapperNode(parent, wrap string) *node {
 	bare := &node{Elem: wrap, Attrs: map[string]string{}}
 	spec, ok := ed.specOf(parent)
@@ -161,6 +224,230 @@ func (ed *editor) wrapperNode(parent, wrap string) *node {
 		return &node{Elem: wrap, Attrs: attrs}
 	}
 	return bare
+}
+
+// mnemonicAttr is the attribute an accelerator is spelled in, keyed by
+// the PARENT element.
+//
+// THE PARENT IS THE KEY, because the parent is what makes the letters
+// compete: <Menu> titles compete within a <MenuBar>, <MenuItem> texts
+// within their own <Menu>. That the dispatching component is the MenuBar
+// in both cases is why a rule keyed on the DISPATCHER could not see
+// items at all.
+//
+// IT IS A TABLE OF TWO NAMES, and the previous version's attempt to
+// DERIVE the attribute is what excluded the item case. It asked for
+// Required && KindString, and <MenuItem Text> is neither:
+// markup/elements.go declares it KindText, and it is optional because
+// Separator makes it so. A predicate over AttrSpec cannot answer "is
+// this attribute an accelerator" — the catalog carries no such fact,
+// ElementDef.ParsedBy is not on its surface — so the derivation was
+// answering a different question that happened to agree at one row.
+//
+// Naming elements here rather than deriving them is deliberate for the
+// reason mnemonic.go gives: the rule is menu-flavoured, and a guard
+// about buttons must not reach for this answer. Two names is the whole
+// vocabulary that has it.
+var mnemonicAttr = map[string]string{
+	"MenuBar": "Title", // <Menu Title="File"> inside it
+	"Menu":    "Text",  // <MenuItem Text="Open"> inside it
+}
+
+// unshadowMnemonic keeps a node about to be inserted from stealing a
+// sibling's keyboard accelerator.
+//
+// THIS COMMENT DOCUMENTED mnemonicAttr UNTIL REVIEW OF #454. The table
+// was declared between the prose and the function with no blank line
+// after it, so the whole block became the VAR's doc and `go doc
+// unshadowMnemonic` printed nothing — the exact theft CLAUDE.md records
+// under "a function inserted after a doc comment steals it", in a file
+// whose own findings are about comments describing something else. gofmt
+// and vet are both blind to it; `go doc` is the instrument.
+//
+// AT THE INSERTION SEAM, called once beside each append, and that is the
+// half review round 10 corrected. It used to live inside wrapperNode,
+// which covered the ONE route to a <MenuBar> that cannot be reached from
+// the palette: wrapperFor("MenuBar", elem) needs canHold("Menu", elem),
+// and <Menu>'s Only is {"MenuItem"}, which loadPalette drops as Nested —
+// so addSelected never produces wrap == "Menu". Both direct gestures were
+// unguarded and both reproduce it: ctrl+d on a selected <Menu>
+// (duplicateSelected, which <Menu> became selectable for IN THIS PR), and
+// y-then-p (insertSubtree, where a <Menu> into a <MenuBar> needs no
+// wrapper at all).
+//
+// It sits beside the renameInto/clone rename at each of those seams,
+// which solves the same collision problem for Name. MOVES are not seams:
+// promote and demote relocate a node that was already in the document,
+// and a <Menu> can only live in a <MenuBar>, which cannot nest — so
+// neither can produce a second claimant.
+//
+// It asks components.MenuMnemonic rather than looking for an underscore,
+// which is the whole point: that function is EXPORTED FOR THE COLLISION
+// GUARDS, and a local re-derivation of the rule is the defect
+// mnemonic.go records this module shipping once already (review of
+// #428 — it required an explicit marker, so every menu relying on the
+// first-letter fallback was invisible to it, which is exactly the case
+// here).
+//
+// BOTH LEVELS, and covering only the top one is what review round 11
+// found. The rule is identical a level down: components.itemWithAccel
+// (components/menu.go:394) is first-match-wins exactly the way
+// titleWithAccel is, docs/markup-reference.md states the consequence —
+// "while the menu is open, typing the letter activates the item" — and
+// two items claiming "o" leaves one unreachable by letter, with which
+// one a fact about tree order the markup does not show. Both direct
+// gestures reproduce it on a <MenuItem>.
+//
+// WHAT ATTRIBUTE, and why it is a table rather than a derivation, is on
+// mnemonicAttr above.
+func unshadowMnemonic(into, n *node) {
+	if into == nil || n == nil || n.Attrs == nil {
+		return
+	}
+	attr, ok := mnemonicAttr[into.Elem]
+	if !ok {
+		return
+	}
+	want, has := mnemonicClaim(n.Attrs[attr])
+	if !has {
+		return
+	}
+	claimed := map[rune]bool{}
+	for _, sib := range into.Kids {
+		// sib != n is DEFENSIVE, and the sentence here used to claim it
+		// was load-bearing — "two seams call it before the append and
+		// one after a wrapper is built". All three call it before
+		// insertion (main.go, clipboard.go, duplicate.go), so the branch
+		// is unreachable today; it stays because a node that claimed its
+		// own letter would look shadowed and be marked twice, which is
+		// a silent wrong answer rather than a crash. Corrected in review
+		// of #454, the same class as the two comments this PR already
+		// fixed for citing code that does not exist.
+		if sib == n || sib.Elem != n.Elem {
+			continue
+		}
+		if r, ok := mnemonicClaim(sib.Attrs[attr]); ok {
+			claimed[r] = true
+		}
+	}
+	if !claimed[want] {
+		return
+	}
+	if marked, ok := markUnclaimed(n.Attrs[attr], claimed); ok {
+		n.Attrs[attr] = marked
+	}
+}
+
+// mnemonicClaim is which letter a value claims, or no claim.
+//
+// SEPARATORS NEED NO CASE. components.MenuMnemonic("") reports no
+// claim, which is what itemWithAccel does with them too.
+//
+// NEITHER DOES A BOUND LABEL, and that was a live corruption rather than
+// a gap. <MenuItem Text="{{.Label}}"> is a template the markup resolves
+// at build time; MenuMnemonic read the LITERAL and answered "L", and
+// markUnclaimed then wrote the marker into the template itself —
+// "{{._Label}}" or "_{{.Label}}" — which either fails to build or
+// silently binds a path nobody declared. ctrl+d and paste both reach it.
+//
+// So a value carrying "{{" is left alone AND ignored as a claim. The
+// second half is not symmetry for its own sake: counting a phantom claim
+// off a bound sibling would mark a node that nothing is actually
+// shadowing, which is the same wrong answer wearing a fix. What the
+// label resolves to is not knowable here — the binding's value lives in
+// the document's context, not in the tree this walks — so "no claim
+// either way" is the honest answer, and a collision between two bound
+// labels is a runtime fact the designer shows rather than one this can
+// pre-empt. Raised in review of #454.
+//
+// ANY "{{", not bindingRef's whole-attribute form. A composite like
+// "Open {{.Name}}" is still a template, and a marker written into its
+// literal half moves the accelerator onto text the user did not choose
+// to accelerate.
+//
+// DECLARED AFTER unshadowMnemonic, not before it, and that is not
+// style: a function inserted between a doc block and the function it
+// documents STEALS the block, which is the finding this same round
+// raised about mnemonicAttr. `go doc` is the only instrument that sees
+// it — gofmt and vet are both blind.
+func mnemonicClaim(raw string) (rune, bool) {
+	if strings.Contains(raw, "{{") {
+		return 0, false
+	}
+	return components.MenuMnemonic(raw)
+}
+
+// markUnclaimed puts a `_` before the first letter or digit of title that
+// no sibling has claimed, and reports whether it found one.
+//
+// It reports false rather than marking arbitrarily when every letter is
+// taken: a wrapper carrying the seed's title unchanged is a repeat the
+// user can see and fix, while one carrying a marker on a letter someone
+// else already owns would be the same shadowing wearing a fix.
+//
+// THE STRING IT WALKS IS ENCODED, and that is the correction round 10
+// asked for. The first version did strings.ReplaceAll(title, "_", "") and
+// scanned the result, which deletes a LITERAL `__` as readily as a
+// marker: markUnclaimed("Sa__ve", {'s'}) returned "S_ave", so a label the
+// user wrote to read `Sa_ve` came back reading `Save`. `__` is a literal
+// underscore in this convention — components/mnemonic.go's
+// splitExplicitMnemonic, and the <Menu Title> row in
+// docs/markup-reference.md.
+//
+// There is no exported encoder to borrow and this is not a re-derivation
+// of the parse: mnemonic.go owns reading a marker, and nothing in the
+// framework ever WRITES one, because a marker is authored. So the loop
+// below normalises rather than interprets — it drops the first marker,
+// leaves every literal escaped as `__`, and escapes a bare `_` the parser
+// would have shown literally, which is what makes inserting one `_` in
+// front of a chosen rune unambiguous. components.MenuMnemonic stays the
+// authority on what a title CLAIMS; this only has to find a letter it
+// does not.
+func markUnclaimed(title string, claimed map[rune]bool) (string, bool) {
+	in := []rune(title)
+	out := make([]rune, 0, len(in)+2)
+	// spots are the candidate accelerators: the rune, and where it sits
+	// in out, so the marker goes in front of the letter and not in front
+	// of an escape.
+	type spot struct {
+		at int
+		r  rune
+	}
+	var spots []spot
+	dropped := false
+	for i := 0; i < len(in); i++ {
+		r := in[i]
+		if r == '_' && i+1 < len(in) && in[i+1] == '_' {
+			out = append(out, '_', '_')
+			i++
+			continue
+		}
+		if r == '_' && i+1 < len(in) && !dropped {
+			// The existing marker. It goes, so the one this adds is the
+			// first — only the first counts — and the letter it named
+			// stays a candidate.
+			dropped = true
+			continue
+		}
+		if r == '_' {
+			// A second marker's underscore, or a trailing one: the parser
+			// shows both literally, so they are escaped here and the
+			// display text is unchanged.
+			out = append(out, '_', '_')
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			spots = append(spots, spot{len(out), r})
+		}
+		out = append(out, r)
+	}
+	for _, s := range spots {
+		if claimed[unicode.ToLower(s.r)] {
+			continue
+		}
+		return string(out[:s.at]) + "_" + string(out[s.at:]), true
+	}
+	return title, false
 }
 
 // addPlan is where the insert goes and what wraps it.
@@ -191,6 +478,14 @@ func (ed *editor) planAdd(elem string) addPlan {
 		if w := ed.wrapperFor(n.Elem, elem); w != "" {
 			return addPlan{into: n, wrap: w}
 		}
+	}
+	// THE FALLBACK ASKS TOO. Fixing canHold alone still lands the node
+	// here: the loop finds nothing that can hold it and drops to the
+	// root, which is the illegal parent by another route. A refusal is
+	// the honest answer for an element with one legal home and no
+	// instance of it on the page.
+	if e, ok := ed.specOf(elem); ok && e.Nested && !ed.canHold(ed.doc().Elem, elem) {
+		return addPlan{}
 	}
 	return addPlan{into: ed.doc()}
 }

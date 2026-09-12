@@ -199,36 +199,60 @@ func literalFor(a AttrSpec) string {
 	return "x"
 }
 
-// probePrereqs names attributes that a probe of ANOTHER attribute cannot
-// reach without, keyed "Element.Attribute" and valued with the
-// attributes to seed as BINDINGS.
+// probePrereqs names attributes a probe of ANOTHER attribute cannot be
+// built without, keyed "Element.Attribute" and valued with the attribute
+// text to write beside it.
+//
+// KEYED PER ATTRIBUTE, NOT PER ELEMENT, and the difference is not
+// bookkeeping. <MenuItem> needs a Text for Checked, Command and Gesture
+// to be reachable — and must NOT have one when Separator is what is
+// being probed, because a separator carries nothing else and the Text
+// would be the refusal instead of the rule. An element-wide row cannot
+// say both. Measured: the element-keyed spelling this table was first
+// written in traded three unverified declarations for one.
 //
 // Required is the declaration for "this element does not build without
-// it", and it is per element, not per probe. A prerequisite here is the
-// narrower thing Required cannot say: <Frozen> builds perfectly well
-// with neither Allow nor AllowError, but AllowError alone is refused —
-// "without a BOUND Allow: the only failure it can report is an
-// unparseable set" (elements.go) — and that guard runs BEFORE the
-// bind-only check, so <Frozen AllowError="x"> never reaches the rule the
-// sweep is asking about and comes back UNVERIFIED.
+// it", and <MenuItem Text> is not that: an item with Separator="true" is
+// a rule and wants no text, so Text is required only in the OTHER arm of
+// a choice the declaration has no way to express. The builder says so at
+// load — "<MenuItem> needs Text (or Separator=\"true\")" — and every
+// probe of Checked, Command and Gesture failed on that instead of on the
+// rule being swept, landing in the UNVERIFIED bucket rather than in a
+// count.
 //
-// Kept as a table with a reason per row rather than a rule, because
-// there is no rule: this is one element's ordering of its own two
-// guards. It is the same class as the Name seeding below — a
-// requirement with nowhere in the vocabulary to be written — and it is
-// deliberately awkward to add to, so that the next entry has to argue
-// for itself. Found by merging #459 into #314: the sweep is what
-// reported it, which is the sweep working.
-//
-// THE ROW WRITES THE BINDING, rather than asking bindingFor for one, and
-// DISTINCTNESS IS WHY. Seeding Allow from the same handle the probe
-// binds AllowError to is refused by <Frozen>'s next guard — "one
-// property cannot be both the allow set and the place its parse failure
-// is reported" — so a prerequisite derived from the attribute's type
-// would trade one unverified row for another. Measured: bindingFor gave
-// both `{{.S}}` and the sweep went red on the aliasing check. S2 exists
-// for this.
+// A table with a reason per row rather than a rule, because there is no
+// rule: this is one element's own either/or. It is deliberately awkward
+// to add to, so the next entry has to argue for itself.
 var probePrereqs = map[string]map[string]string{
+	// <MenuItem> needs Text OR Separator="true" — one arm of a choice,
+	// which Required cannot express. The builder says so at load,
+	// "<MenuItem> needs Text (or Separator=\"true\")", and every probe
+	// of the three attributes below failed on that rather than on the
+	// rule being swept. Separator has no row, deliberately: it is the
+	// other arm.
+	"MenuItem.Checked": {"Text": "Open"},
+	"MenuItem.Command": {"Text": "Open"},
+	"MenuItem.Gesture": {"Text": "Open"},
+	// AND ICON NEEDS TWO. An Icon without an IconRune is a load error by
+	// design — the gutter is reserved whatever the terminal can do, so
+	// an Icon alone would draw blank columns forever on a terminal with
+	// no graphics protocol (#400) — which is the same shape as the Text
+	// rows above: a requirement that holds only in the presence of
+	// another attribute. The path itself is narrowed in
+	// narrowerThanItsKind; this row is only what has to sit beside it.
+	"MenuItem.Icon":     {"Text": "Open", "IconRune": "O"},
+	"MenuItem.IconRune": {"Text": "Open"},
+	// <Frozen AllowError> is refused without a BOUND Allow beside it —
+	// "the only failure it can report is an unparseable set" (#459) —
+	// and that guard runs before the bind-only check, so the sweep never
+	// reached the rule it was asking about.
+	//
+	// A DIFFERENT HANDLE from the one the probe binds, which is why the
+	// row writes the expression rather than deriving it from the type:
+	// <Frozen>'s next guard refuses Allow and AllowError resolving to
+	// one property ("publishing would overwrite the set it just read"),
+	// so seeding {{.S}} here would trade one unverified row for another.
+	// Measured both ways.
 	"Frozen.AllowError": {"Allow": "{{.S2}}"},
 }
 
@@ -273,7 +297,18 @@ func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prere
 	// nothing, and each probe is its own single-element document, so
 	// there is no uniqueness to collide with. Skipped only when Name is
 	// the attribute under test. Raised in review of #470.
-	if attr != "Name" {
+	//
+	// AND NOT ON AN ELEMENT ITS PARENT PARSES. A ParsedBy element is
+	// read by the parent's builder, not by the generic attribute path,
+	// so the universal table does not apply to it: <MenuItem Name="probe">
+	// is refused outright with "no such attribute; this element takes
+	// Checked, Command, Gesture, Separator, Text". Every probe of every
+	// <Menu> and <MenuItem> attribute failed on the harness's own seed
+	// rather than on the rule — five in one arm, two in another — which
+	// is precisely what the UNVERIFIED bucket exists to surface, and it
+	// surfaced this. Found merging #460's sweep into #429, the branch
+	// that declares those two elements.
+	if attr != "Name" && def.ParsedBy == "" {
 		b.WriteString(` Name="probe"`)
 	}
 	for _, a := range def.Attrs {
@@ -476,6 +511,19 @@ func harnessFor(attr, el string) string {
 		// second time.
 		return `<ItemsView Items="{{.IS}}">` + el +
 			`<ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate></ItemsView>`
+	case strings.HasPrefix(el, "<MenuItem"):
+		// THE SAME GAP AS <Validate> AND <TypeAhead>, one vocabulary
+		// tier down: <MenuItem>'s own Build is a refusal ("only valid
+		// directly inside <Menu>") because <MenuBar>'s builder parses
+		// the whole menu tree itself. Probed loose, every arm counted
+		// that refusal instead of the rule's.
+		//
+		// Ordered BEFORE the <Menu> arm below, which its name also
+		// prefixes — and both after nothing that could match "<MenuBar",
+		// which is a real element with a Proto and needs no host.
+		return `<MenuBar><Menu Title="F">` + el + `</Menu></MenuBar>`
+	case strings.HasPrefix(el, "<Menu ") || strings.HasPrefix(el, "<Menu>"):
+		return `<MenuBar>` + el + `</MenuBar>`
 	case strings.HasPrefix(attr, "Grid."):
 		return `<Grid Rows="1*,1*" Cols="1*,1*">` + el + `<Text Grid.Row="1" Grid.Col="1">z</Text></Grid>`
 	case strings.HasPrefix(attr, "Canvas."):

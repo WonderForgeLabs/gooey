@@ -51,6 +51,8 @@ func init() {
 		defTabs,
 		defButtonBar,
 		defMenuBar,
+		defMenu,
+		defMenuItem,
 		defToastHost,
 		defAdornmentLayer,
 		defTooltip,
@@ -1312,7 +1314,13 @@ var defMenuBar = &ElementDef{
 	Attrs: []AttrSpec{
 		{Name: "Style", Kind: KindStyle, Binds: BindsEither, Origin: OriginBuiltin},
 	},
-	Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Menu", "MenuItem"}},
+	// ONLY <Menu>. The list used to read {"Menu", "MenuItem"}, which
+	// declared a child the builder refuses one function below
+	// ("<MenuBar> children must be <Menu> elements") — so the vocabulary
+	// permitted markup that could not load, and an editor offering it
+	// was offering a load error. <MenuItem> is a child of <Menu>, and
+	// defMenu below is where it is now declared.
+	Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Menu"}},
 	// GrantOrder, for the reason <Tabs> carries it: a menu's position on
 	// the bar is its index among its siblings, and nothing else about it
 	// is geometry.
@@ -1320,6 +1328,111 @@ var defMenuBar = &ElementDef{
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		bar, err := buildMenuBar(e, ctx)
 		return bar, err
+	},
+}
+
+// defMenu and defMenuItem declare the menu vocabulary that <MenuBar>
+// consumes as DATA.
+//
+// Neither builds a component — buildMenuBar reads them into
+// []components.Menu and the bar draws the items itself — so both are
+// pseudo-elements in exactly the sense <Tab> is, and their Build refuses
+// a standalone use the same way.
+//
+// WHAT IS NEW IS THAT THEY ARE DECLARED AT ALL. They existed only as two
+// strings inside MenuBar's ChildSpec.Only, so nothing in the vocabulary
+// knew a <MenuItem> has a Text: AttrsFor returned an empty set, the
+// designer's property grid had nothing to show for a selected item, and
+// the only way to give a menu item its label was to type it in $EDITOR.
+// That is #429 as reported — "why don't I see the child properties to
+// set content for menu item?"
+//
+// Known is TRUE, unlike <Tab>'s, and the difference is real rather than
+// an oversight either way. <Tab>'s attributes are whatever <Tabs> cares
+// to read out of the element and its content is an arbitrary subtree, so
+// its vocabulary genuinely is not knowable from here. A <MenuItem>'s is:
+// buildMenuBar reads exactly the attributes below and rejects anything
+// else about them at load. Declaring an exhaustive set is what
+// lets the property grid offer it.
+//
+// Every Kind and Binds below is READ OFF buildMenuBar rather than
+// chosen, which is why two of them are not what they look like:
+//
+//   - Text is KindText/BindsEither, but a binding resolves to a STATIC
+//     string at load and a property HANDLE is refused. The motivating
+//     case is a label the markup cannot know ("$EDITOR (nvim)"); the
+//     refusal is there because MenuItem.Text is a plain field read while
+//     painting, so a handle would be sampled once and never update.
+//   - Checked is BindsBinding, not BindsEither, and the builder says why
+//     in an error rather than by omission: "a literal check can never
+//     change". The same handle the accelerator's KeyBinding writes is
+//     the one the box renders, so the check and the key are one state
+//     shown twice.
+//   - Icon is BindsLiteral where <Image Src> — the same GoType, the same
+//     loader, the same fs.FS — is BindsEither. The difference is the
+//     FIELD, not the attribute: components.Image.Src is a
+//     *prop.Property[image.Image] and can track, MenuItem.Icon is a
+//     plain image.Image read while painting and cannot. Declaring
+//     BindsEither here would put a binding in a designer's dropdown that
+//     the loader then refuses.
+var defMenu = &ElementDef{
+	Name: "Menu",
+	Icon: "list-unordered",
+	// A SEED, WHICH THIS DEF ARGUED AGAINST UNTIL SOMETHING READ IT.
+	// The argument was that seed_test's walk skips every def with a nil
+	// Proto and the palette skips every Nested one, so a seed here would
+	// be built by nothing and composed by nothing. That was true when it
+	// was written and stopped being true when #460's attribute sweep
+	// landed: probeElement seeds a ModeRestricted element's children
+	// FROM ITS SEED (defaults_test.go's seedChildren), so with none,
+	// every probe of <Menu Title> builds a childless menu and the sweep
+	// fails rather than covering it.
+	//
+	// Kept minimal and identical in shape to <MenuBar>'s: one child, the
+	// one the restriction names. It is still not a palette entry — that
+	// is the gap #429 names and does not fill — and nothing above needs
+	// changing for it, because seedable() filters on a nil Proto.
+	Seed:     "<Menu Title=\"File\"><MenuItem Text=\"Open\"/></Menu>",
+	ParsedBy: "MenuBar",
+	Known:    true,
+	Attrs: []AttrSpec{
+		{Name: "Title", Kind: KindString, Binds: BindsLiteral, Required: true, Origin: OriginBuiltin,
+			Doc: "The name on the menu bar. Required: a menu with no title has nothing to click."},
+	},
+	// NO GRANT. Order would read as "these can be dragged around", and a
+	// menu item is not a component to drag — the bar draws the list
+	// itself from data. TestOnlyMultiChildElementsGrantGeometry says the
+	// same thing from the other side.
+	Children: ChildSpec{Mode: ModeRestricted, Only: []string{"MenuItem"}},
+	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		return nil, fmt.Errorf("markup: <Menu> is only valid directly inside <MenuBar>")
+	},
+}
+
+var defMenuItem = &ElementDef{
+	Name:     "MenuItem",
+	Icon:     "list-selection",
+	ParsedBy: "MenuBar", // and no Seed, for the reason on defMenu
+	Known:    true,
+	Attrs: []AttrSpec{
+		{Name: "Checked", Kind: KindBinding, Binds: BindsBinding, GoType: "bool", Origin: OriginBuiltin,
+			Doc: "Makes this a check item. Binds only — a literal check can never change, and this is the same handle the accelerator's KeyBinding writes."},
+		{Name: "Command", Kind: KindCommand, Binds: BindsEither, Origin: OriginBuiltin,
+			Doc: "What choosing the item does."},
+		{Name: "Gesture", Kind: KindGesture, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "The accelerator shown beside the item. Parsed at load, so a typo is a startup error rather than a key that never fires."},
+		{Name: "Icon", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "A picture for the item, as a path in the page's own FS — the same assets <Image Src> loads from. Drawn only where the terminal has a graphics protocol. Set IconRune as well: an Icon without one is a LOAD ERROR, because the gutter is reserved whatever the terminal can do, so an Icon alone would draw blank columns forever on a terminal with no protocol."},
+		{Name: "IconRune", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "One glyph for the item, drawn on the cell plane when there is no graphics protocol. Not a fallback rendering of Icon — a one-cell-tall halfblock is two vertical samples, so the two tiers draw different things (#400)."},
+		{Name: "Separator", Kind: KindBool, Binds: BindsLiteral, Origin: OriginBuiltin,
+			Doc: "A rule instead of an item, and it carries nothing else: EVERY other attribute this element declares is a load error on a separator, because a separator draws none of them. Phrased that way rather than listing them, so the sentence cannot fall behind the declaration it describes — which is what the refusal in markup.go had done."},
+		{Name: "Text", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin,
+			Doc: "The label. A binding resolves to a static string ONCE at load — enough for a value the markup cannot know, but a property handle is refused because the label would never update."},
+	},
+	Children: ChildSpec{Mode: ModeLeaf},
+	Build: func(e Element, ctx *Context) (gooey.Component, error) {
+		return nil, fmt.Errorf("markup: <MenuItem> is only valid directly inside <Menu>")
 	},
 }
 
