@@ -246,24 +246,38 @@ func (m Menu) checkBox(it MenuItem) string {
 // overlay below the open title.
 //
 // Z-ORDER: the dropdown must paint above the page content, and it does
-// so FROM WHEREVER THE BAR IS DECLARED. The surface is a
-// gooey.Overlay (components/popup.go), so the Composer lifts its whole
-// subtree out of document order into a second paint layer above the
-// page.
+// so WHEREVER THE BAR IS DECLARED. The dropdown is the bar's Popup
+// surface, a gooey.Overlay, lifted out of document order into the
+// overlay layer (#437); the Composer's restore pass repaints the content
+// underneath when the menu closes or moves.
 //
-// "Declare the MenuBar as the LAST child of its container" is what this
-// comment said, and #430 is the bug that disproved it: being last buys
-// being above your OWNER's other siblings and nothing else, so a
-// MenuBar on the wysiwyg designer canvas — beside a Gauge, an ItemsView
-// and a Border — had its dropdown painted over on the very next repaint,
-// because the z-ordered pass forces FORWARD ONLY and could not reach
-// back. The lift landed in #437; position is free now. Corrected in
-// review of #455, which found this comment still teaching the rule the
-// rest of the change had already retired.
+// "DECLARE THE MENUBAR AS THE LAST CHILD OF ITS CONTAINER" is what this
+// used to say, and it is the sentence #430 was filed against. It bought
+// being above the bar's own SIBLINGS and nothing more: an owner three
+// containers deep still drops its menu over a dock that is a sibling of
+// its great-grandparent, and anything declared after that owner painted
+// straight over the open dropdown. Position is free now.
 //
-// The dropdown is a child of the bar arranged BELOW the bar's own
-// bounds, and the Composer's restore pass repaints the content beneath
-// it when the menu closes or moves.
+// Ranks order the layer against ITSELF: a dropdown is at
+// gooey.OverlayRankPopup, the floor, so a ToastHost or an
+// AdornmentLayer is above it and a notification raised while a menu is
+// open is still readable (#439).
+//
+// INPUT AGREES ON THE ORDERING, since #465: FocusManager.HitTest asks
+// the same membership-and-rank rule the paint order is derived from. It
+// said "hit-testing is not lifted" here — true when written, and the bar
+// never depended on it either way, because it holds the pointer capture
+// while open and every press routes here regardless. See MOUSE below.
+//
+// NOT "the dropdown is hit where it paints", which is what this said
+// next and is the one claim the walk does not support. The surface is
+// arranged at popupRect(), BELOW the bar row and outside the bar's own
+// bounds, and the hit walk prunes on every ancestor's bounds — so on
+// geometry alone the dropdown paints and is not hit. The capture is what
+// makes that unobservable here, which is exactly why the sentence had to
+// go: it was the one this file could not have noticed being wrong.
+// Tracked as #482. See gooey.FocusManager.HitTest. Raised in review of
+// #478.
 //
 // FOCUS: the bar is a focus stop. Opening remembers what had focus —
 // for a mouse open, the component focus-follows-click just took it from

@@ -10,7 +10,9 @@ import (
 )
 
 // A page with an adornment layer: a tooltipped Text host over a filler
-// row, hosted the way an app declares it (layer last = top of z-order).
+// row, hosted the way an app declares it. The layer is last by
+// convention only — it ranks itself to OverlayRankAdornment, the top of
+// the overlay layer, wherever it sits.
 // The host is a Text on purpose — no HoverState — so the damage pins
 // below count the tooltip alone, not the host's own hover repaint.
 func tipPage(w int) (*Tooltip, gooey.Component, *AdornmentLayer, *Canvas) {

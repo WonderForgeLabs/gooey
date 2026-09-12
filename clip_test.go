@@ -22,7 +22,10 @@ import (
 // content does without virtualizing.
 //
 // Overflowing BACKWARDS is deliberate and the test does not work without
-// it. Document order is paint order, so a component that overflows
+// it. Document order is paint order WITHIN A LAYER — these are ordinary
+// siblings, neither is a gooey.Overlay, so the ordinary rule is the one
+// that applies (#437 lifted overlays into a second layer; #439 ranks it).
+// So a component that overflows
 // FORWARD is painted over by the neighbour it corrupted, and the
 // neighbour's cells end up correct whether or not anything clipped — the
 // first version of this test asserted exactly that and passed with the

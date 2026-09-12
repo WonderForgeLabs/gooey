@@ -4,6 +4,16 @@
 
 **Date:** 2026-08-10
 
+> **The hosting shape below is superseded.** "A chrome-less,
+> background-less last child of the root" was how the layer got on top,
+> and it is not any more: `AdornmentLayer` is a `gooey.OverlayRanker` at
+> `OverlayRankAdornment`, so it is above the page — and above toasts and
+> open dropdowns — from anywhere. See
+> `2026-08-30-overlay-layer.md` and `2026-09-05-overlay-ranks.md`. The
+> `HitTestTransparent` argument here is *not* superseded and is now
+> load-bearing for a second reason: hit-testing was never lifted, so the
+> layer is still found exactly where it is declared.
+
 ## What was asked for
 
 Elan asked for tooltips, and tooltips force a concept: WPF's adorner
@@ -99,7 +109,13 @@ now hands attachments the same seams components get, plus one new one:
 The first integration test failed for a reason worth recording: a
 full-page overlay host declared LAST is the FIRST thing hit-testing
 finds — an invisible layer that ate every click and starved every hover
-beneath it. ToastHost has had this bug since wave 2 (any page hosting
+beneath it. (The *reason* is what was true in August. Since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) the host is
+found first because it is LIFTED, not because it is last, so the bug
+below no longer depends on where the host is declared and
+`HitTestTransparent` is the only thing preventing it. The head banner
+exempts this file from the guard; the parenthetical is here because a
+reader lands on a section, not on a head.) ToastHost has had this bug since wave 2 (any page hosting
 the toast layer routed all pointer events to it). New opt-in interface:
 
 ```go

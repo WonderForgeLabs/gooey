@@ -78,7 +78,13 @@ func (o *toyOwner) HandleMouse(ev input.MouseEvent) bool {
 }
 
 // toyPage: content under where the popup drops, two buttons elsewhere,
-// the owner declared LAST (document order is z-order).
+// the owner declared LAST — which no longer buys the z-order it was
+// arranged for (the surface is a gooey.Overlay and is lifted whatever
+// its position), and is kept only so this file's damage numbers stay
+// comparable with the ones it was calibrated against. zOrderPage in
+// popupzorder_test.go is the same page with the owner moved off the
+// end, and that difference is now invisible to paint. Read the head of
+// that file before changing this one.
 func toyPage() (*toyOwner, *Button, *Button, gooey.Component) {
 	owner := &toyOwner{}
 	under := gooey.L(&Text{Content: Str(strings.Repeat("#", 20))}, gooey.Layout{Top: 1})

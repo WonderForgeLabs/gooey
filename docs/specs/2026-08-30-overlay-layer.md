@@ -5,15 +5,46 @@ Date: 2026-08-30
 Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
 **Superseded in part by:** `docs/specs/2026-09-05-overlay-ranks.md`
 ([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) — ordering
-*within* the layer is now RANKED, not document order. Everything else
-below still holds. `component.go`'s `Overlay` doc points readers here
-for the hit-testing gap, which is why the pointer has to run both ways.
+*within* the layer is now RANKED, not document order.
+
+**And the hit-testing gap this spec records as open is superseded by
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465)** — the hit
+walk asks `overlayOf` now, so "the marker moves paint, not input" is
+history. That sentence is marked as such where it appears below rather
+than deleted, because this is a dated record of what was decided on
+2026-08-30.
+
+The head used to add "Everything else below still holds" and
+"`component.go`'s `Overlay` doc points readers here for the hit-testing
+gap". Both stopped being true in #465 — the second doubly so, since that
+PR rewrote the doc comment being cited — and a banner that vouches for a
+body it no longer matches is worse than no banner. Raised in review of
+#478.
 
 ## The problem
 
-`Popup`'s doc comment stated the rule as a fact of the design: the surface is
-"a leaf child the owner returns from `ChildComponents` (**LAST**, because
-document order is z-order)". Every customer followed it, and the test page in
+`Popup`'s doc comment stated the rule as a fact of the design — the sentence
+below is quoted as history and no longer appears anywhere in the tree AS AN
+ASSERTION. It survives only inside quotations of itself, which is what
+`declaresItselfSuperseded` and the epitaph qualifier exist to permit. Do not
+read the following as a list to trust; it is derived, and the command is the
+authority:
+
+```sh
+grep -rn "because document order is z-order" . --exclude-dir=vendor
+```
+
+Today that is `components/popupzorder_test.go`,
+`docs/specs/2026-09-05-zorder-doc-sweep.md`, the guard's own fixtures and
+prose in `zorderdocs_test.go` — **and this file, at the quotation four lines
+down.** (This line said "anywhere in the tree", full stop, which was a
+checkable absolute and was wrong — the exact failure #443 was filed about.
+Its replacement was then a checkable list that omitted the file it was
+written in, which is the same defect one size smaller: both corrected in
+review of #458.) The sentence: the
+surface was "a leaf child the owner returns from `ChildComponents` (**LAST**,
+because document order is z-order)".
+Every customer followed it, and the test page in
 `components/popup_test.go` was built to satisfy it — `toyPage` declares the
 owner last, with that reason written in a comment beside it.
 
@@ -107,22 +138,41 @@ the Composer maintains — is worth writing when something does.
 > `docs/specs/2026-09-05-overlay-ranks.md`. Two overlapping popups are still
 > declaration-ordered, because they are equal-ranked.
 
-Hit-testing is untouched, and that is a gap rather than a non-event. A popup
-takes held pointer capture while open (`Popup.Open`), which routes presses to it
-regardless of where it sits in any order — so nothing about input needed to
-change *for the overlay this framework ships*.
+**Everything in this section was true on 2026-08-30 and is superseded by
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).** It is
+quoted rather than deleted, because the gap it records is why #465
+exists. The hit walk asks `overlayOf` now: it is lifted, it does know
+about the marker, and a later ordinary sibling does not take the press
+from an overlay. Read the paragraph below as the state of the tree on
+this spec's date.
 
-But `Overlay` is a public interface, and `FocusManager.HitTest` walks document
-order knowing nothing about it. **The marker moves paint, not input.** An
-overlay that does not take capture will paint above a later sibling while that
-sibling takes the press. `TestAnOverlayLiftsItsWholeSubtree` exists precisely to
-support container overlays the framework does not ship yet, so this is reachable
-by the first adopter rather than hypothetical.
+> Hit-testing is untouched, and that is a gap rather than a non-event. A popup
+> takes held pointer capture while open (`Popup.Open`), which routes presses to it
+> regardless of where it sits in any order — so nothing about input needed to
+> change *for the overlay this framework ships*.
+>
+> But `Overlay` is a public interface, and `FocusManager.HitTest` walks document
+> order knowing nothing about it. **The marker moves paint, not input.** An
+> overlay that does not take capture will paint above a later sibling while that
+> sibling takes the press. `TestAnOverlayLiftsItsWholeSubtree` exists precisely to
+> support container overlays the framework does not ship yet, so this is reachable
+> by the first adopter rather than hypothetical.
+>
+> The interface's own doc comment says so, and `HitTest`'s comment no longer
+> claims "later siblings paint on top" as its reason. Closing it properly means
+> teaching the hit-test walk the same two layers — worth doing when a
+> non-capturing overlay actually exists. Named in review of #437.
 
-The interface's own doc comment says so, and `HitTest`'s comment no longer
-claims "later siblings paint on top" as its reason. Closing it properly means
-teaching the hit-test walk the same two layers — worth doing when a
-non-capturing overlay actually exists. Named in review of #437.
+The last sentence is the one that dated fastest: a non-capturing overlay
+did not have to exist first. `MenuBar` on the designer canvas
+([#430](https://github.com/WonderForgeLabs/gooey/issues/430)) was already
+one, and the divergence between where a surface painted and where it was
+hit shipped from #437 (merged 2026-09-01) until #465 (2026-09-09) — a
+week and a day. "Worth doing when somebody needs it" is a schedule, not
+a bound, and it does not become false loudly. The first draft of this
+paragraph said FIVE WEEKS, which is a number nobody measured: the two
+merge dates are eight days apart, and the sentence was making the gap
+sound like negligence it was not. Corrected in review of #478.
 
 ## Damage
 

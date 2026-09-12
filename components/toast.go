@@ -157,19 +157,37 @@ func (h *ToastHost) PassesCellsThrough() {}
 // — a page with a toast layer would otherwise never receive a click.
 // The toasts themselves stay hittable; they own visible cells.
 //
-// WHICH IS THE CAVEAT ON "DECLARE IT ANYWHERE", and it belongs here
-// rather than only in the spec, because this is the file that grants the
-// freedom. The rank frees the host's position for PAINT. Hit-testing is
-// a separate walk that takes later siblings first and knows nothing
-// about ranks, so a host declared FIRST paints its toasts over a button
-// and leaves the click to the button. Toasts are informational and
-// mostly nobody clicks them, so this is a caveat and not a bug — but if
-// yours must be clickable where it overlaps something interactive,
-// declare the host late. Making Toast itself HitTestTransparent would
-// close it and is a behaviour change for another PR; the divergence is
-// pinned by TestARankOrdersPaintAndNotHitTesting in the root package and
-// tracked in #465, which weighs that against making hitTest layer-aware.
-// Raised in review of #456.
+// THE HOST'S POSITION IS FREE, FULL STOP — and this paragraph used to
+// carry the caveat that it was free for PAINT only. It said hit-testing
+// was a separate walk that took later siblings first and knew nothing
+// about ranks, so a host declared FIRST painted its toasts over a button
+// and left the click to the button. #465 closed that: FocusManager.HitTest
+// asks overlayOf, the same membership-and-rank rule the paint order is
+// derived from, so a toast that paints over a button now takes the press
+// as well. A clickable toast needs no declaration discipline, because
+// there is nothing left for position to decide.
+//
+// AND THE COST, WHICH IS THE SAME SENTENCE READ THE OTHER WAY. Toast is
+// an ordinary leaf and is NOT HitTestTransparent — only this host is —
+// so a toast NOBODY WANTS TO CLICK also takes the press on whatever it
+// covers, for its whole lifetime, and the button underneath does not get
+// it. That was true before #465 only when the host happened to be
+// declared last; it is true from everywhere now. A three-second toast
+// over a button is three seconds of that button being unclickable.
+//
+// This is deliberate and consistent with paint — a component that owns
+// the cells owns the clicks in them, which is the rule everywhere else
+// in the framework — so the transparency is not being widened here.
+// Making Toast itself HitTestTransparent is the alternative, and it is
+// the intended follow-up if the swallowing is reported: it would let a
+// press fall through to whatever the toast is covering while the toast
+// is still visible, which is a different semantic and wants its own
+// damage-count evidence and its own answer for a toast that IS meant to
+// be clicked. Named in review of #478, where the consequence was stated
+// nowhere and the upside was stated twice, and filed as #481 in the next
+// round — every other deferred decision in this file carries a number,
+// and a promise in prose with none is what CLAUDE.md's "A red suite is
+// yours" section calls a claim that outlives the thing it describes.
 func (h *ToastHost) HitTestTransparent() bool { return true }
 
 // Toast is one transient message — an ordinary leaf, so its paint node

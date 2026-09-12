@@ -88,7 +88,12 @@ func rankRow(t *testing.T, f *Frame) string {
 // The higher-ranked one is declared FIRST, which is the WORST case for
 // declaration order: it is exactly the arrangement in which the document
 // would put the lower-ranked one on top, so a rank that did not work
-// shows up as the wrong rune.
+// shows up as the wrong rune. It is also the arrangement an app actually
+// has — a MenuBar somewhere in the page and a page-wide ToastHost after
+// it. The framework USED to tell you to declare the MenuBar last; #437's
+// global lift already made that irrelevant and #443 retired the wording,
+// so the fixture's shape is the worst case rather than an instruction
+// being followed.
 func TestAHigherRankPaintsOverALowerOneDeclaredLater(t *testing.T) {
 	top := &rankedStripe{stripe{ch: 'T', rank: 2}}
 	bottom := &rankedStripe{stripe{ch: 'B', rank: 1}}
@@ -179,26 +184,21 @@ func TestTheOverlayLayerStillClearsThePage(t *testing.T) {
 	}
 }
 
-// TestARankOrdersPaintAndNotHitTesting is the divergence the ranks
-// CREATE, pinned rather than described.
+// TestARankOrdersHitTestingAsWellAsPaint is the INVERSION of
+// TestARankOrdersPaintAndNotHitTesting, which pinned the divergence
+// while it stood.
 //
-// #437 lifted overlays out of document order for paint and left
-// hit-testing alone, calling that a gap. A rank widens it into a
-// contradiction an author can hit: paint answers by rank, hitTest still
-// walks ChildComponents in REVERSE (mouse.go), so the later sibling
-// wins the click. Declare a ranked host FIRST — which every
-// author-facing doc now says is free — and the two planes disagree.
+// That test said: paint answers by rank, hitTest walks ChildComponents
+// in reverse, so declare a ranked host first — which every author-facing
+// doc says is free — and the two planes disagree. It ended by naming the
+// four files whose caveats would come out if hit-testing ever became
+// rank-aware, and #465 is that change; the caveats came out with it.
 //
-// Under the retired "declare it last" rule they agreed, because the
-// thing on top was also the thing hit-testing found first. That is why
-// this test arrives with the ranks and not with #437: the freedom is
-// what makes the disagreement reachable.
-//
-// It is a TEST and not a paragraph because the two answers live in
-// different files with no shared symbol between them — nothing about
-// changing one drags the other into review. Raised in review of #456,
-// where the docs granted the freedom and said nothing about the click.
-func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
+// It stays a TEST and not a paragraph for the reason the old one gave:
+// the two answers live in different files with no shared symbol between
+// them, so nothing about changing one drags the other into review. What
+// changed is the direction, not the argument.
+func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 	// BOTH are overlays, and that is what makes the paint arm about the
 	// RANK rather than about the lift. A plain leaf as the loser was the
 	// first version of this fixture, and mutating overlayRank to return
@@ -221,19 +221,21 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 		t.Fatalf("PAINT: the ranked overlay was declared first and lost the cells: row %q", got)
 	}
 
-	// Same tree, same frame, opposite answer. If this ever returns `over`
-	// the divergence closed — which would be good news, and would make
-	// the caveats in components/toast.go, docs/markup-reference.md,
-	// docs/architecture.md and mouse.go wrong rather than merely stale.
+	// SAME TREE, SAME FRAME, SAME ANSWER — which is the whole claim.
+	// `under` is the later sibling and the lower rank, so a walk that
+	// still preferred document order returns it and a walk that asks
+	// overlayOf returns `over`. Nothing else in the fixture separates
+	// them.
 	m := NewFocusManager(root)
 	hit := m.HitTest(0, 0)
-	if hit == Component(over) {
-		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the cell it " +
-			"paints. Delete the divergence caveats in components/toast.go, " +
-			"docs/markup-reference.md, docs/architecture.md and mouse.go rather than this test")
+	if hit == Component(under) {
+		t.Fatalf("HIT: the later-declared, lower-ranked overlay took the press for a cell " +
+			"`over` paints. Hit-testing is back on document order alone, which is #465 — " +
+			"and the caveats deleted with it (components/toast.go, " +
+			"docs/markup-reference.md, docs/architecture.md, mouse.go) are wrong again")
 	}
-	if hit != Component(under) {
-		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+
-			"document order in reverse and knows nothing about ranks", hit)
+	if hit != Component(over) {
+		t.Errorf("hit-testing returned %T, want the higher-ranked overlay — the same one "+
+			"paint put on top", hit)
 	}
 }

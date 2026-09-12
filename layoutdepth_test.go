@@ -3,6 +3,7 @@ package gooey
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -248,6 +249,158 @@ func TestEveryTreeWalkRefusesACycle(t *testing.T) {
 				t.Errorf("fault phase %q, want %q", f.Phase, tc.phase)
 			}
 		})
+	}
+}
+
+// forkbox is selfCycle's other shape, and the difference is the whole of
+// the finding below: TWO children rather than one.
+//
+// depthbox has a single kid, so a cycle through it is a LINE. Every walk
+// in this package unwinds it in MaxLayoutDepth steps whether or not it
+// stops at the cap, because there is only ever one branch to take. That
+// is why TestEveryTreeWalkRefusesACycle's HitTest arm passes against a
+// walk with no bound on total work at all: the arm cannot express the
+// case that costs anything.
+type forkbox struct {
+	Base
+	kids []Component
+}
+
+func (b *forkbox) ChildComponents() []Component { return b.kids }
+func (b *forkbox) Render(*Frame)                {}
+func (b *forkbox) Measure(avail Size) Size      { return avail }
+
+// forkCycle is a container that is its own child TWICE.
+func forkCycle() *forkbox {
+	b := &forkbox{}
+	b.kids = []Component{b, b}
+	return b
+}
+
+// TestHitTestOnABranchingCycleTerminates is finding 1 of the review of
+// #478, and it is a bound on TOTAL WORK rather than on depth.
+//
+// Ranked hit-testing gave up the early return on a hit — an earlier
+// sibling can out-rank a later one, so every subtree whose bounds contain
+// the point has to be visited. That early return was also the only thing
+// bounding total work, and nothing noticed: MaxLayoutDepth bounds DEPTH.
+// On a branching cycle each level now visits both children instead of
+// unwinding on the first hit, so the walk costs 2^MaxLayoutDepth visits.
+//
+// Measured: the base branch returned in 11ms and the ranked walk had not
+// returned after 10 SECONDS. The `depth > MaxLayoutDepth` line was still
+// there, still recording a fault, and still looked like the bound — which
+// is the worst version of this, because the fault says "handled" and then
+// the process hangs.
+//
+// REACHABILITY IS NARROW AND NOT ZERO. Composer.build makes a cyclic tree
+// a load error, so a live composition cannot get here. FocusManager.HitTest
+// is public and NewFocusManager(root) builds nothing, which is the path
+// this test takes — and is exactly why noteLayoutFaultAt("HitTest", …) is
+// in the function at all.
+//
+// THE TIMEOUT IS THE ASSERTION, and a goroutine is the only way to write
+// it: on the bug the call does not return, so nothing after it runs. The
+// budget is generous because it is not measuring speed — a correct walk
+// finishes in microseconds and a broken one never finishes, so any
+// threshold between those separates them.
+//
+// ON THE FAILURE THIS LEAKS THE GOROUTINE, and that cost is recorded
+// here rather than hidden because it is this file's standard everywhere
+// else. t.Fatal ends the TEST; the walk keeps going toward
+// 2^MaxLayoutDepth visits for the rest of the package run, pinning a core
+// while TestNoFileTeachesTheRetiredOverlayRule is fanning out to
+// GOMAXPROCS — on pools CLAUDE.md describes as shared with production
+// workloads and not autoscaling. There is no clean cancel: HitTest takes
+// no context and the abort it would need is the very thing under test, so
+// a cancellable variant would be a second implementation of the fix
+// asserting itself. The leak is therefore accepted, bounded by the
+// package run, and paid only on a red — which is a run somebody is
+// already looking at. Raised in review of #458.
+func TestHitTestOnABranchingCycleTerminates(t *testing.T) {
+	root := forkCycle()
+	root.Base.Arrange(Rect{0, 0, 8, 2})
+	m := NewFocusManager(root)
+	TakeLayoutFault() // NewFocusManager walks; Focus is not under test
+
+	done := make(chan Component, 1)
+	go func() { done <- m.HitTest(1, 1) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HitTest did not return on a container that is its own child " +
+			"twice. MaxLayoutDepth bounds depth, and the ranked walk visits " +
+			"every branch, so the cost is 2^MaxLayoutDepth visits rather than " +
+			"MaxLayoutDepth — the cap fires, records a fault, and the walk " +
+			"keeps going in the sibling")
+	}
+
+	f := TakeLayoutFault()
+	if f == nil {
+		t.Fatal("no LayoutFault recorded, so the walk terminated for some other " +
+			"reason than refusing the cycle")
+	}
+	if f.Phase != "HitTest" {
+		t.Errorf("fault phase %q, want HitTest", f.Phase)
+	}
+}
+
+// TestABranchingTreeUnderTheCapIsFullyVisited is the arm that stops the
+// fix above from being "stop early".
+//
+// Aborting the whole walk once the cap fires is only correct because a
+// legal tree never fires it. A budget on total visits — the other obvious
+// spelling — would truncate a WIDE legal tree instead, and every ordering
+// assertion in this package would still pass, because truncation drops
+// candidates rather than mis-comparing them. 2^12 is 4096 nodes, well past
+// any visit budget somebody might think MaxLayoutDepth justifies, and
+// every leaf still has to be reachable.
+func TestABranchingTreeUnderTheCapIsFullyVisited(t *testing.T) {
+	const levels = 12
+	// A binary tree of legal depth, every node at the same bounds so the
+	// walk cannot prune on the point.
+	at := Rect{0, 0, 8, 2}
+	var lastBuilt Component
+	var build func(d int) Component
+	build = func(d int) Component {
+		b := &forkbox{}
+		b.Base.Arrange(at)
+		lastBuilt = b
+		if d == levels {
+			return b
+		}
+		b.kids = []Component{build(d + 1), build(d + 1)}
+		return b
+	}
+	root := build(0)
+	m := NewFocusManager(root)
+	TakeLayoutFault()
+
+	// THE WINNER IS THE LAST NODE VISITED, and asserting that is what
+	// makes this arm mean what its name says. `got != nil` plus "no
+	// fault" is satisfied by a visit budget that stops after N nodes
+	// WITHOUT recording one — truncation returns a candidate, and records
+	// nothing — which is exactly the spelling the comment above says this
+	// arm exists to reject. The assertion was available for free: the
+	// build is DFS pre-order, every node sits at the same rect, none is
+	// lifted, so the rightmost depth-12 leaf is both the last built and
+	// the last visited. Raised in review of #458.
+	got := m.HitTest(1, 1)
+	if got == nil {
+		t.Fatal("a legal binary tree of depth 12 hit nothing at all")
+	}
+	if got != lastBuilt {
+		t.Fatalf("HitTest returned %T, want the rightmost depth-%d leaf — the LAST "+
+			"node in pre-order, since every node shares a rect and none is lifted. "+
+			"Anything else means the walk stopped early, which is the "+
+			"budget-on-total-visits spelling this arm exists to reject", got, levels)
+	}
+	if f := TakeLayoutFault(); f != nil {
+		t.Errorf("a legal tree recorded %v. The abort is for a tree that "+
+			"exceeds MaxLayoutDepth, and a WIDE tree is not a deep one — if this "+
+			"fires, the bound became a budget on total visits and a wide legal "+
+			"tree is being truncated", f)
 	}
 }
 

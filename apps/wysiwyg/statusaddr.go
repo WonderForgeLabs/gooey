@@ -534,14 +534,14 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	for _, c := range s.chips {
 		s.kids = append(s.kids, c)
 	}
-	// APPENDED LAST AS HOUSE STYLE. This said "because document order is
-	// z-order", which stopped being the reason: what is appended here is
-	// a Popup surface, and a Popup surface implements gooey.Overlay, so
-	// it is lifted out of document order into the paint layer and paints
-	// above the page from any position. Kept last because a reader
-	// looking for the overlay expects it there, not because the position
-	// decides what paints over
-	// whatever it covers.
+	// Last by convention, not by necessity: the surface is a
+	// gooey.Overlay and paints over whatever it covers from anywhere in
+	// this slice. Since #465 the hit walk asks overlayOf as well, so
+	// membership and rank order it too and position is only the tiebreak
+	// inside one layer — this append decides nothing on either plane.
+	// What carries a press to the surface at all is the capture an open
+	// popup holds, because it is arranged outside this strip's rect
+	// (#482).
 	s.kids = append(s.kids, p.Surface())
 	return s.kids
 }

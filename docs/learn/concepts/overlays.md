@@ -55,25 +55,80 @@ writing where a reader can find what it points at.)
 hidden by an open menu, whichever an app happens to type last. See
 `docs/specs/2026-09-05-overlay-ranks.md`.
 
-**This page opened with "Z-order is document order" and instructed
-"declare the overlay element as the LAST child"** until review of #455,
-which is the rule
-[#430](https://github.com/WonderForgeLabs/gooey/issues/430) disproved:
-being last among your OWNER's children buys being above the owner's
-other children and nothing else, so anything declared after the owner
-painted over an open dropdown and the forward-only pass could not put it
-back. The lift landed in
-[#437](https://github.com/WonderForgeLabs/gooey/issues/437). Ordering
-*within* the layer — so a toast is never hidden by an open menu — is
-[#439](https://github.com/WonderForgeLabs/gooey/issues/439), and it is
-the rank paragraph above.
+## Within the layer, a rank decides
 
-(This sentence ended "and is not described here yet" while the paragraph
-above it already described the ranks — the two landed in one diff and
-only the newer half was written. `docs/architecture.md` took a
-forward-hedge in the same diff and this page did not; a reader who
-reaches the older sentence first concludes the ordering is still
-undefined and declares for it.)
+Lifting alone left the three hosts fighting over position among
+themselves, which is a real bug and not a tidiness issue: a toast raised
+while a menu was open landed *under* the dropdown, so a notification the
+user had to see was simply not shown. `gooey.OverlayRanker` sorts the
+lifted layer:
+
+| rank | value | who |
+|---|---|---|
+| `OverlayRankPopup` | 0 | a `Popup` surface — a menu dropdown, a picker, a color list |
+| `OverlayRankToast` | 10 | `ToastHost` |
+| `OverlayRankAdornment` | 20 | `AdornmentLayer` — tooltips, validation markers, drag ghosts |
+
+There is no sort. `appendByRank` is a **bucket pass** — it walks the
+lifted nodes once and appends each into its rank's bucket — so equal
+ranks keep document order *structurally*, by never being reordered,
+rather than on a comparator's promise to be stable. A plain `Overlay`
+that names no rank lands in the popup bucket. `docs/architecture.md`
+carries the same distinction and the reason it is worth drawing: a claim
+about the standard library's guarantee is one no mutation of this repo
+could falsify. The rank is asked of the
+**lifting root only**: a popup nested inside a toast inherits the
+toast's rank rather than sorting out of its parent's run, so a lifted
+subtree always comes up whole.
+
+The values are spaced by ten so somebody else's overlay can sit between
+two of them without a framework change.
+
+## Input moves with it
+
+**The lift is asked by hit-testing too, since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).**
+`FocusManager.HitTest` calls the same `overlayOf` the paint order is
+derived from, so an overlay takes the press from wherever it is
+declared, and a rank decides between two overlapping overlays exactly as
+it decides which one paints on top.
+
+This section was headed *"What the lift does NOT move"* and said
+`Overlay` moved paint and not input — that hit-testing "still walks
+plain document order, last sibling first". True from #437 until #465,
+and the reason the two planes could disagree in silence: under the
+retired "declare it last" rule the thing on top was also the thing the
+walk found first, so the divergence arrived with the freedom rather than
+with the layer.
+
+For those eight days the divergence was easier to fall into than it had
+been before the lift, not harder. Being last used to be the only thing
+keeping an overlay on top, so nobody could get the paint right and the
+input wrong; once paint stopped needing it and the walk still did, the
+two could disagree. None of the framework's own overlays cared — a
+`Popup` takes the pointer capture while open, and `ToastHost`,
+`AdornmentLayer`, `tipPopup`, `markerPopup` and `DragGhost` are all
+`HitTestTransparent`, so no press was ever theirs to lose — which is
+exactly why nothing in the suite went red and the gap sat open. An
+interactive adorner somebody else writes is where it would have bitten,
+and since #465 it does not: that adorner receives the presses its
+painted position implies.
+
+The paragraph above used to say the gap was live, ending on the words
+"hit-testing still does". Since #465 the hit walk asks `overlayOf`, so
+it does not; corrected in review of #478, eight lines below a heading
+the same PR had already rewritten. A doc can contradict itself inside
+one section, and only a guard notices.
+
+The two layers are one function, `overlayOf` in `component.go`, asked by
+both the retained path (`Composer.orderPaint`) and the one-shot path
+(`gooey.Compose`). They answered differently until
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438).
+
+Decision records:
+[the layer](../../specs/2026-08-30-overlay-layer.md),
+[the ranks](../../specs/2026-09-05-overlay-ranks.md),
+[one rule for both paths](../../specs/2026-09-05-one-shot-overlay-order.md).
 
 ## The forward pass keeps the stack honest
 
@@ -93,8 +148,12 @@ restore). The pass and both exemptions landed in
 ## Dismissal is the reverse half
 
 The forward pass can only force nodes *later* in z-order than a painter
-— and the lift puts an overlay at the end of the paint order, so when it
-goes away, nothing after it can fix the hole. `Composer.restoreUnder`
+— and the lifted layer is the end of that order, so when an overlay goes
+away, nothing after it can fix the hole. (This is also why the lift has
+to be global rather than within the overlay's own parent: forcing runs
+FORWARD ONLY, so putting a surface last among its owner's children
+bought being above the owner's *other* children and nothing else.)
+`Composer.restoreUnder`
 ([PR #93](https://github.com/WonderForgeLabs/gooey/pull/93)) is the
 missing half: when a rect **leaves the screen**, the sweep clears the
 vacated cells and force-dirties every still-visible node intersecting
@@ -129,8 +188,8 @@ Two conventions ride along with the z-hosting, both visible in the
   else stops at the overlay.
 
 One trap for page-spanning hosts: hit-testing treats every bounded
-container as opaque, so a full-page `ToastHost` would eat every click on
-the page. Hosts like it implement `HitTestTransparent` —
+container as opaque, so a full-page `ToastHost` would eat every click
+that reaches it. Hosts like it implement `HitTestTransparent` —
 the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).
