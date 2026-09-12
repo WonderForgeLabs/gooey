@@ -190,6 +190,7 @@ Every v1 MCP tool, argument-for-argument:
 |---|---|---|---|
 | `tree_snapshot` | `depth` | `ControlService.SnapshotTree` | `depth` → `depth`; JSON tree → `TreeNode` |
 | `screen_text` | `styled` | `ControlService.ScreenText` | identical semantics, Snapshot-not-Flush preserved |
+| `screen_size` | — | **none yet** | the one row with no RPC: `control.Service.ScreenSize` is where both transports would call, and `grpc/controlserver.go` has a `Screen` verb and no size verb. That gap is the unclosed half of [#204](https://github.com/WonderForgeLabs/gooey/issues/204) — a proto change and its own decision. Recorded here rather than omitted, because this table asserts its own completeness |
 | `list_values` | — | `ControlService.ListValues` | `values` → `ValueInfo[]`, `named` → `named` |
 | `invoke_command` | `name` | `ControlService.InvokeCommand` | |
 | `set_value` | `name`, `value` (JSON) | `ControlService.SetProperty` | untyped JSON value becomes `TypedValue`; the type-switch check becomes the oneof case check |
@@ -209,7 +210,18 @@ gained its MCP face, `register_properties`, with #89's execution).
 When #112 lands, the MCP tools become a thin adapter over the same
 in-process service implementation the gRPC server exposes (not a
 loopback network hop) — one path; MCP is a transport skin, and any new
-tool must name the RPC it fronts.
+tool must name the RPC it fronts, or say plainly that there is not one
+yet and where the gap is tracked. `screen_size` is the first to take the
+second option, and the row is the point: a tool with no RPC is exactly
+what someone implementing the rest of #112 needs to find here, and it is
+invisible if the answer to "no RPC yet" is to leave the row out.
+
+The completeness this table claims is CHECKED, not asserted:
+`mcp.TestTheGRPCContractTableNamesEveryTool` derives the expectation
+from `v1Tools()`, so a tool added tomorrow reddens rather than quietly
+leaving the sentence above false — which is what happened to
+`screen_size` until the review of
+[#504](https://github.com/WonderForgeLabs/gooey/pull/504) caught it.
 
 ## How the absorbed issues map
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +265,65 @@ func TestTheTutorialsToolInventoryIsComplete(t *testing.T) {
 	}
 	assertNamesEveryTool(t, string(body), page)
 }
+
+// TestTheGRPCContractTableNamesEveryTool is the third surface, and the
+// one that states its own completeness out loud.
+//
+// docs/specs/2026-08-10-grpc-contract.md's "#112 table" opens "Every v1
+// MCP tool, argument-for-argument" and closes with the rule that any new
+// tool must name the RPC it fronts. screen_size had no row — so the
+// reader most in need of it, somebody implementing the rest of #112
+// looking for which tools still lack an RPC, would find the ONE tool
+// that lacks one missing from the list of tools. A doc that asserts
+// completeness more loudly than the tutorial did went stale in exactly
+// the way this change exists to stop. Raised in review of #504.
+//
+// It reads the TOOL COLUMN rather than the whole page: this file names
+// tools in prose elsewhere, and a page-wide Contains would be satisfied
+// by a mention outside the table, which is the vacuous pass one surface
+// over. Skips when the file is absent, for the module-boundary reason
+// TestTheTutorialsToolInventoryIsComplete gives.
+func TestTheGRPCContractTableNamesEveryTool(t *testing.T) {
+	const page = "../docs/specs/2026-08-10-grpc-contract.md"
+	body, err := os.ReadFile(page)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s is outside this module and absent, so this guard only runs "+
+			"inside the repo checkout", page)
+	}
+	if err != nil {
+		t.Fatalf("reading %s: %v", page, err)
+	}
+	rows := toolColumn(string(body))
+	if len(rows) == 0 {
+		t.Fatalf("found no tool rows in %s, so this guard would pass vacuously — "+
+			"the table's shape changed and toolColumn no longer recognizes it", page)
+	}
+	s := &Server{}
+	for _, tl := range s.v1Tools() {
+		if !rows[tl.Name] {
+			t.Errorf("%s claims \"Every v1 MCP tool\" and has no row for %s. A tool "+
+				"with no RPC behind it yet still needs the row — that is what somebody "+
+				"implementing #112 reads the table to find", page, tl.Name)
+		}
+	}
+}
+
+// toolColumn returns the backticked name in the first cell of every
+// markdown table row on the page. It is deliberately not anchored to one
+// heading: a second table would only ADD names, and the assertion is one
+// of coverage, so a looser read cannot produce a false pass.
+func toolColumn(body string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		m := tableToolRe.FindStringSubmatch(line)
+		if m != nil {
+			out[m[1]] = true
+		}
+	}
+	return out
+}
+
+var tableToolRe = regexp.MustCompile("^\\|\\s*`([a-z_]+)`\\s*\\|")
 
 // TestTheServerInstructionsNameEveryTool is the same guard one surface
 // closer to the client.
