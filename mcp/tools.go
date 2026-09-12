@@ -277,9 +277,10 @@ func (s *Server) treeSnapshot(a args) (any, error) {
 	return map[string]any{"tree": renderNode(n)}, nil
 }
 
-// screenSize is the adapter for control.Service.ScreenSize. The wire
-// names are snake_case like every other field on this surface; the Go
-// struct is not sent directly for that reason.
+// screenSize is the adapter for control.Service.ScreenSize. The Go struct
+// is not sent directly because the wire names are camelCase — the
+// convention this surface already uses in `goType` and
+// `childrenElided`, checked against schemas.go rather than assumed.
 func (s *Server) screenSize(args) (any, error) {
 	sz, err := s.svc.ScreenSize()
 	if err != nil {
@@ -287,7 +288,7 @@ func (s *Server) screenSize(args) (any, error) {
 	}
 	return map[string]any{
 		"cols": sz.Cols, "rows": sz.Rows,
-		"cell_width": sz.CellW, "cell_height": sz.CellH,
+		"cellWidth": sz.CellW, "cellHeight": sz.CellH,
 	}, nil
 }
 

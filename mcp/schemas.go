@@ -136,9 +136,9 @@ func validateMarkupSchema() map[string]any {
 // DefaultCellW/H when the terminal reports none.
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{
-		"cols":        prop_("integer", "Width of the visible surface in cells — the x range send_mouse accepts."),
-		"rows":        prop_("integer", "Height of the visible surface in cells — the y range send_mouse accepts."),
-		"cell_width":  prop_("integer", "Width of one cell in pixels, for sizing graphics."),
-		"cell_height": prop_("integer", "Height of one cell in pixels, for sizing graphics."),
-	}, "cols", "rows", "cell_width", "cell_height")
+		"cols":       prop_("integer", "Width of the visible surface in cells — the x range send_mouse accepts."),
+		"rows":       prop_("integer", "Height of the visible surface in cells — the y range send_mouse accepts."),
+		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics."),
+		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics."),
+	}, "cols", "rows", "cellWidth", "cellHeight")
 }

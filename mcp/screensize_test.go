@@ -25,7 +25,7 @@ func TestScreenSizeStatesWhatTreeSnapshotCouldOnlyImply(t *testing.T) {
 	// THE CELL METRICS COME WITH IT because the graphics layer needs them
 	// and a client that has to ask twice will ask once. They are terminal
 	// capabilities, so they are reported whatever the scope.
-	if got["cell_width"] == nil || got["cell_height"] == nil {
+	if got["cellWidth"] == nil || got["cellHeight"] == nil {
 		t.Errorf("screen_size reports no cell metrics: %v", got)
 	}
 }
