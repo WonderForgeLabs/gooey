@@ -211,7 +211,27 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 
 // TestTheCheckBoxIsDrawn — the state has to be VISIBLE, in the cell
 // plane, or a pty transcript can never show it.
+//
+// THE ENVIRONMENT IS STATED, NOT INHERITED, and that is #477 rather than
+// tidiness: the $EDITOR row's text resolves the program, so a test that
+// sets nothing asserts against whatever the developer happened to export
+// — green on their machine, red on the next one. It is the same defect
+// #463 shipped, one variable over from the $TMUX/$STY doors #467 closed.
+// `/usr/bin/env -i` is the value the sibling test uses, for the same
+// reason: it exists on any machine that can run this suite, and it
+// resolves to the basename "env".
+//
+// AND THE ASSERTIONS ARE PER ROW. They were a Contains over nineteen
+// joined rows, which cannot say WHICH row carries the box — a menu that
+// drew the item twice, or put the box on its neighbour, passed. The
+// negative arm was worse than imprecise: it looked for "  $EDITOR" in a
+// blob where the only line holding "$EDITOR" begins "│[ ] ", so no
+// rendering of this menu could have produced it and the arm could not
+// fail. What replaces it reads the four cells in front of the label,
+// which tells "[x] " (wrong state), "[ ] " (right) and "    " (no box at
+// all) apart by their text instead of by their absence.
 func TestTheCheckBoxIsDrawn(t *testing.T) {
+	t.Setenv("EDITOR", "/usr/bin/env -i")
 	ed, root := buildPage(t)
 	c := gooey.NewComposer(root, 150, 44)
 	c.Frame()
@@ -229,18 +249,102 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 	for y := b.Y + 1; y < b.Y+20 && y < 44; y++ {
 		dropdown = append(dropdown, rowText(f, y, 0, 60))
 	}
-	all := strings.Join(dropdown, "\n")
-	if !strings.Contains(all, "[x] Built in") {
-		t.Errorf("the open View menu does not show a checked \"Built in\"; got:\n%s", all)
-	}
-	if !strings.Contains(all, "[ ] $EDITOR") {
-		t.Errorf("the open View menu does not show an unchecked $EDITOR item; got:\n%s", all)
+	if got := boxBefore(t, dropdown, "Built in"); got != "[x] " {
+		t.Errorf("the \"Built in\" row carries %q in front of its label, want a checked "+
+			"\"[x] \"; the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
 	}
 	// The unchecked box must be a real box, not blank: "[ ]" and nothing
 	// at all read very differently to a user deciding which is selected.
-	if strings.Contains(all, "  $EDITOR") {
-		t.Error("the $EDITOR item has no check box at all, only indentation")
+	if got := boxBefore(t, dropdown, "$EDITOR"); got != "[ ] " {
+		t.Errorf("the $EDITOR row carries %q in front of its label, want an unchecked "+
+			"\"[ ] \"; the row reads %q", got, dropdownRow(t, dropdown, "$EDITOR"))
 	}
+}
+
+// TestTheCheckBoxFollowsTheSelection is the other half, and it is what
+// makes the test above fireable. A pair of assertions that only ever run
+// against one selection cannot tell "the box is drawn from the state"
+// from "the box is a constant in the template": both rows would read the
+// same on every frame and both tests would pass. Flipping the selection
+// swaps which row carries "[x] ", so a constant fails here by
+// construction.
+//
+// Measured rather than assumed: with the selection flipped and the
+// EXPECTATIONS left as the built-in case, both arms below fail — "[x] "
+// against a $EDITOR row reading "[ ] " and the reverse. That is the
+// mutation this test exists to catch.
+func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
+	t.Setenv("EDITOR", "/usr/bin/env -i")
+	ed, root := buildPage(t)
+	c := gooey.NewComposer(root, 150, 44)
+	c.Frame()
+	settle(t, c)
+
+	bar := theMenuBar(t, ed)
+	i, _ := menuNamed(t, bar, "View")
+	ed.codeView.Set(codeExternal)
+	bar.Open(i, nil)
+	settle(t, c)
+	f, _ := c.Frame()
+
+	b := bar.Bounds()
+	var dropdown []string
+	for y := b.Y + 1; y < b.Y+20 && y < 44; y++ {
+		dropdown = append(dropdown, rowText(f, y, 0, 60))
+	}
+	if got := boxBefore(t, dropdown, "$EDITOR"); got != "[x] " {
+		t.Errorf("with $EDITOR selected its row carries %q, want \"[x] \"; the row reads %q",
+			got, dropdownRow(t, dropdown, "$EDITOR"))
+	}
+	if got := boxBefore(t, dropdown, "Built in"); got != "[ ] " {
+		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want \"[ ] \"; "+
+			"the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
+	}
+}
+
+// dropdownRow returns the ONE row of an open menu whose text contains
+// want, and fails if there is any other number of them.
+//
+// Exactly one is the assertion, not a convenience: zero and two are both
+// real defects a Contains over the joined rows reports as a pass — an
+// item drawn twice, or a label that has migrated to a neighbouring row,
+// or a search string loose enough to also match the chrome around the
+// menu. "$EDITOR" and "EDITOR" are that last case in this very file: the
+// pane title on the right of the same screen reads "EDITOR", so the
+// dollar is what makes the row unique and dropping it would match two.
+func dropdownRow(t *testing.T, rows []string, want string) string {
+	t.Helper()
+	var hits []string
+	for _, r := range rows {
+		if strings.Contains(r, want) {
+			hits = append(hits, r)
+		}
+	}
+	if len(hits) != 1 {
+		t.Fatalf("%d rows of the open menu contain %q, want exactly 1:\n%s",
+			len(hits), want, strings.Join(rows, "\n"))
+	}
+	return hits[0]
+}
+
+// boxBefore returns the four cells immediately in front of want on its
+// row — the check box, if the menu drew one there.
+//
+// Returned as TEXT so the caller compares it against the box it expects,
+// rather than testing for a box's absence. "    " is a real answer and a
+// distinct failure from "[x] ": one is a missing box, the other is the
+// wrong state, and a negative Contains reports both as the same thing
+// while also passing when the label has moved somewhere the search never
+// looked.
+func boxBefore(t *testing.T, rows []string, want string) string {
+	t.Helper()
+	row := dropdownRow(t, rows, want)
+	i := strings.Index(row, want)
+	if i < 4 {
+		t.Fatalf("%q starts at column %d of %q, with no room for a check box in front of it",
+			want, i, row)
+	}
+	return row[i-4 : i]
 }
 
 // TestEditorLabelResolvesTheProgram is the second thing that was
