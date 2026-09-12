@@ -866,7 +866,7 @@ func lit(s string) func() string { return func() string { return s } }
 var unreachableWithoutCompanion = map[string]struct {
 	attr, value, why string
 }{
-	"Frozen.AllowError": {"Allow", "{{.S}}",
+	"Frozen.AllowError": {"Allow", "{{.AllowSet}}",
 		"the channel reports a BOUND Allow's parse, so without one there is " +
 			"nothing it could ever carry and the element says so first"},
 }

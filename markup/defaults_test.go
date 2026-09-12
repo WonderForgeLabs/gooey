@@ -62,9 +62,22 @@ func defaultsContext() *Context {
 			// good/warn/crit ramp, where Thresholds="true" and the plain
 			// style paint the same colour — a probe that cannot see the
 			// attribute it is probing.
-			"Pct":  prop.NewSource(85),
-			"Noop": gooey.Command(func() {}),
-			"Img":  prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
+			"Pct": prop.NewSource(85),
+			// A SEPARATE STRING SOURCE FROM S, and the separation is the
+			// whole reason it exists. unreachableWithoutCompanion writes a
+			// bound Allow beside the AllowError under test, and <Frozen>
+			// refuses the two bound to the SAME property — "one property
+			// cannot be both the allow set and the place its parse failure
+			// is reported". bindingFor answers {{.S}} for every string, so
+			// a companion spelled {{.S}} would collide with the valid
+			// binding a future arm probes AllowError with, and the arm
+			// would read as the declaration refusing rather than the
+			// harness aliasing it. "Focus" over "sample" for the same
+			// reason narrowerThanItsKind states for a literal Allow: it is
+			// a category from a closed vocabulary, not free text.
+			"AllowSet": prop.NewSource("Focus"),
+			"Noop":     gooey.Command(func() {}),
+			"Img":      prop.NewSource[image.Image](image.NewRGBA(image.Rect(0, 0, 2, 2))),
 		},
 		Styles: map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
