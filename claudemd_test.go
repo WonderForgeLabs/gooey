@@ -390,30 +390,6 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 // against the main its neighbour is about to create.
 var citationRe = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 
-// citeForms are the spellings CLAUDE.md actually uses to attach an
-// identifier to a citation. Only these get the second check; a citation
-// in any other shape gets the mechanical half alone.
-//
-// NO COUNT, deliberately. This said "the three spellings" and the
-// paragraph below said "the two forms or nothing" — a count in prose
-// gone stale inside the guard written to stop counts in prose going
-// stale, and the two disagreed with each other as well as with the
-// slice. The honesty arm iterates this slice, so a fourth form is
-// covered by construction rather than by somebody remembering to add a
-// case. Raised in review of #475.
-//
-// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
-// guard took the nearest backticked identifier on either side, which
-// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
-// following sentence and `components/timer.go:55` against the word
-// `done` — a test that cries wolf gets suppressed, so the rule is one of
-// the forms below or nothing.
-//
-// Each carries its own field extractor rather than a shared one, because
-// the identifier and the path swap group positions between them and
-// deciding which is which by sniffing for ".go" is the kind of guess this
-// guard exists to remove.
-//
 // A NAMED TYPE, because citeRange restated this field list as an
 // anonymous struct and that is a second copy of a fact in the test whose
 // thesis is that second copies drift. Adding a field here would have
@@ -440,6 +416,29 @@ type citeForm struct {
 	sample func(ident, path string, line int) string
 }
 
+// citeForms are the spellings CLAUDE.md actually uses to attach an
+// identifier to a citation. Only these get the second check; a citation
+// in any other shape gets the mechanical half alone.
+//
+// NO COUNT, deliberately. This said "the three spellings" and the
+// paragraph below said "the two forms or nothing" — a count in prose
+// gone stale inside the guard written to stop counts in prose going
+// stale, and the two disagreed with each other as well as with the
+// slice. The honesty arm iterates this slice, so a fourth form is
+// covered by construction rather than by somebody remembering to add a
+// case. Raised in review of #475.
+//
+// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
+// guard took the nearest backticked identifier on either side, which
+// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
+// following sentence and `components/timer.go:55` against the word
+// `done` — a test that cries wolf gets suppressed, so the rule is one of
+// the forms below or nothing.
+//
+// Each carries its own field extractor rather than a shared one, because
+// the identifier and the path swap group positions between them and
+// deciding which is which by sniffing for ".go" is the kind of guess this
+// guard exists to remove.
 var citeForms = []citeForm{
 	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
 	// which is what keeps the identifier the one being cited.
