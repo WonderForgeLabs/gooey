@@ -80,6 +80,9 @@
 //	x                delete the selected element
 //	ctrl+n, ctrl+p   select the next / previous element
 //	esc              select the PARENT of the selection
+//	alt+enter        select the FIRST CHILD — the inverse, and the only
+//	                 way to reach a <Menu> or <MenuItem>, which build no
+//	                 component for the pointer to hit
 //	alt+k, alt+j     move the selection up / down among its siblings
 //	alt+h            PROMOTE — lift the selection out to its grandparent
 //	alt+l            DEMOTE — nest the selection into the sibling above it
@@ -551,17 +554,31 @@ type node struct {
 // element that gains a body is offered one here without this file
 // changing.
 //
-// Read from ed.palette rather than from a fresh Catalog() call because
-// the palette IS the document's vocabulary — the editor's own chrome is
-// deliberately not in it, and a body row on <Preview> would be a row on
-// something the user cannot author.
+// Asked of the CATALOG (ed.specs), not of the palette, and it is the
+// fourth reader of that class to be corrected — after target(),
+// specFor/specOrBare and grantOf, each for the same sentence: the palette
+// is the catalog minus what may not be PLACED on its own, and this asks
+// what may be SET. bodySpec is asked of target.Elem, which since this
+// PR's alt+enter can be a Nested element the palette does not contain, so
+// a nested element declaring a Body would lose its body row from the
+// inspector with no error.
+//
+// Latent today and measured rather than assumed: <Text> is the only
+// element in the catalog declaring a Body, and it is neither Nested nor
+// NonVisual, so ed.specs gives an identical answer. The old comment
+// justified the palette by "the editor's own chrome is deliberately not
+// in it" — true, and a property of ed.docCtx, which ed.specs comes from
+// too, so it never separated the two.
+//
+// It is also a map lookup where the palette was a linear scan, and
+// attrRows calls this inside a prop.NewComputed's evaluation. Found in
+// review of #454.
 func (ed *editor) bodySpec(elem string) *markup.BodySpec {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e.Body
-		}
+	e, ok := ed.specOf(elem)
+	if !ok {
+		return nil
 	}
-	return nil
+	return e.Body
 }
 
 // takesBody is the boolean form. Nothing on the seeding path calls it any
@@ -573,8 +590,9 @@ func (ed *editor) bodySpec(elem string) *markup.BodySpec {
 func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil }
 
 // grantOf is the catalog's answer to "what geometry does this element
-// give its children", and it is the ONLY thing in this editor that
-// decides what dragging means.
+// give its children" — the attached-property surface a parent
+// contributes — and it is the ONLY thing in this editor that decides what
+// dragging means.
 //
 // THIS USED TO BE `switch p.Elem { case "Canvas": ...; case "Grid": ... }`
 // in dragKind, with everything else falling through to "reorder". The
@@ -585,15 +603,24 @@ func (ed *editor) takesBody(elem string) bool { return ed.bodySpec(elem) != nil 
 // palette is built from means a third-party <Table> declaring
 // GrantCell is designable here with no change to this file.
 //
-// Read from ed.palette rather than a fresh Catalog() call, for the same
-// reason bodySpec does: the palette IS the document's vocabulary.
+// THE CATALOG RATHER THAN THE PALETTE, which is the second half of the
+// opening above and not a second definition of the function.
+//
+// Same distinction target() was just corrected for, one line away and
+// missed: the palette is the catalog minus what may not be PLACED on its
+// own, and this asks what may be SET. A <MenuItem>'s parent is a <Menu>,
+// which is Nested and therefore absent from the palette — so the scan
+// returned the empty grant and every attached row vanished from the
+// inspector with no error. Inert only because defMenu grants nothing;
+// the first nested container that grants an attached property would lose
+// them all, which is #418's defect returning through the fix for #429's.
+// Found in review of #454.
 func (ed *editor) grantOf(elem string) markup.Grant {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e.Grants
-		}
+	e, ok := ed.specOf(elem)
+	if !ok {
+		return markup.Grant{}
 	}
-	return markup.Grant{}
+	return e.Grants
 }
 
 func (n *node) markup(indent string) string {
@@ -949,6 +976,16 @@ type editor struct {
 	// the same point — so the inverse cannot disagree with nodeOf
 	// without mapNodes being wrong about both.
 	compOf map[*node]gooey.Component
+	// pseudo is the set of element names that build no component of
+	// their own, derived with the palette from one Catalog() read. See
+	// loadPalette for why it is not asked per node, and pairAgrees for
+	// what it answers.
+	pseudo map[string]bool
+	// specs is the catalog BY NAME, from the same read. It is what
+	// specOf and target() answer from — see loadPalette. The catalog
+	// itself is a rebuild, not a lookup, and both of those are on paths
+	// that must not pay for one.
+	specs map[string]markup.ElementSpec
 
 	// drag is the move gesture in flight, and invalidateFn is what asks
 	// for the frame it needs — see drag.go. invalidateFn is injected for
@@ -1470,6 +1507,7 @@ func newEditor(fsys fs.FS) *editor {
 			"NextEl":       gooey.Command(func() { ed.selectNext(1) }),
 			"PrevEl":       gooey.Command(func() { ed.selectNext(-1) }),
 			"SelectParent": gooey.Command(func() { ed.selectParent() }),
+			"SelectChild":  gooey.Command(func() { ed.selectChild() }),
 			"MoveUp":       gooey.Command(func() { ed.moveSelected(-1) }),
 			"MoveDown":     gooey.Command(func() { ed.moveSelected(1) }),
 			"Promote":      gooey.Command(func() { ed.promoteSelected() }),
@@ -1751,9 +1789,33 @@ func (ed *editor) loadPalette() {
 	// The palette IS the catalog. Only elements that can appear in a
 	// container are offered; the non-visual ones are attachments and
 	// belong to a different gesture than "add a child".
+	//
+	// Nested replaces a hardcoded `e.Name == "Tab"`. The name was right
+	// when it was written and wrong by the time <Menu> and <MenuItem>
+	// were declared, in the way a name list always goes wrong: it did
+	// not fail, it just started offering a <Menu> that produces markup
+	// refusing to load. The catalog answers this now — see
+	// markup.ElementSpec.Nested — so the second one costs nothing here.
 	ed.palette = ed.palette[:0]
+	ed.pseudo = map[string]bool{}
+	ed.specs = map[string]markup.ElementSpec{}
+	// ONE Catalog() CALL, and that is load-bearing rather than tidy.
+	// Catalog() is not a getter: it re-derives every builtin spec with
+	// fresh Attrs copies, re-runs markNested and sorts — 73us and 52KB
+	// on this checkout — and it globs and parses every include file when
+	// a context has them. mapNodes asks "is this element pseudo?" once
+	// per document node on every rebuild, which is every drag frame,
+	// every alt+k and every property edit, so asking the catalog there
+	// would put that cost and that garbage on the inner loop. The set is
+	// derived HERE because this is where the vocabulary changes: the
+	// palette and the pseudo set answer two questions about one catalog
+	// read, and cannot come from different reads of it.
 	for _, e := range ed.docCtx.Catalog() {
-		if e.NonVisual || e.Name == "Tab" {
+		ed.specs[e.Name] = e
+		if e.Pseudo {
+			ed.pseudo[e.Name] = true
+		}
+		if e.NonVisual || e.Nested {
 			continue
 		}
 		ed.palette = append(ed.palette, e)
@@ -1953,13 +2015,21 @@ func (ed *editor) attrRows() []attrRow {
 			body:  true,
 		})
 	}
-	// THE PARENT'S GRANT, resolved in the PALETTE. markup.AttrsFor takes a
+	// THE PARENT'S GRANT, resolved in the CATALOG. markup.AttrsFor takes a
 	// parent NAME and resolves it in the builtin registry, which answers
 	// "no attached attributes" for a container the host registered — so
 	// the drag wrote Table.R onto a child and the properties grid had no
-	// row for it, in the same editor. ed.grantOf reads the palette, which
+	// row for it, in the same editor. ed.grantOf reads the catalog, which
 	// IS the document's vocabulary, so the inspector and the drag now ask
 	// one question. Found in review of #390 (issue #418).
+	//
+	// THE CATALOG AND NOT THE PALETTE, which is a distinction this
+	// paragraph got wrong for two rounds after grantOf itself was
+	// corrected: a <MenuItem>'s parent is a <Menu>, which is Nested and
+	// therefore absent from the palette, so a palette lookup returns the
+	// empty grant and every attached row vanishes with no error. The
+	// comment described the defect as the design. Found in review of
+	// #454.
 	for _, a := range ed.grantOf(parent).AttrsFor(spec) {
 		v := target.Attrs[a.Name]
 		rows = append(rows, attrRow{
@@ -2025,11 +2095,27 @@ func (ed *editor) target() (markup.ElementSpec, string, *node) {
 	if p := ed.parentOf(n); p != nil {
 		parent = p.Elem
 	}
-	for _, e := range ed.palette {
-		if e.Name == n.Elem {
-			return e, parent, n
-		}
+	// THE CATALOG, NOT ed.palette. The palette is the catalog minus what
+	// may not be PLACED on its own; this asks what may be SET on what is
+	// already there, and those stopped being one question the moment a
+	// nested element could be selected. Asking the palette for a
+	// <MenuItem> finds nothing and falls through to the bare spec below,
+	// so the grid shows an empty list for a node whose vocabulary this
+	// same change declared.
+	//
+	// THE MAP, THOUGH, NOT Catalog(), BECAUSE THIS IS ON THE PAINT PATH.
+	// attrRows reaches here from ed.attrItems, a prop.NewComputed bound
+	// to <ItemsView Items="{{.AttrItems}}">, so it evaluates inside that
+	// ItemsView's paint node on every repaint after an ed.rev bump. A
+	// Catalog() call there rebuilds every builtin spec while painting,
+	// and does filesystem I/O and XML parsing the moment a document
+	// context sets Includes.
+	if e, ok := ed.specOf(n.Elem); ok {
+		return e, parent, n
 	}
+	// Still reachable, and it is not dead code: an element the document
+	// names and the catalog does not. The node is returned so the grid
+	// says which element is selected rather than going blank.
 	return markup.ElementSpec{Name: n.Elem}, parent, n
 }
 
@@ -2229,6 +2315,16 @@ func (ed *editor) addSelected() {
 	// than an illegal child that stops the document building.
 	plan := ed.planAdd(spec.Name)
 	into := plan.into
+	// planAdd REFUSES rather than landing a nested element on the root
+	// (planAdd, in addplan.go), and a refusal is an empty addPlan. Today
+	// loadPalette keeps Nested elements out of the palette so this arm is
+	// unreachable from here; the dereference below is one `ed.specs`
+	// range away from a nil panic the moment that stops being true, and
+	// "currently unreachable" is not a thing to leave a deref resting on.
+	if into == nil {
+		ed.status.Set("✗ <" + spec.Name + "> has no legal parent on this page")
+		return
+	}
 	// The name comes from what is IN USE, never from a count. Counting
 	// children re-issues a live name as soon as one is deleted from the
 	// middle: three adds then a delete then an add produced two
@@ -2318,6 +2414,13 @@ func (ed *editor) addSelected() {
 		w.Kids = []*node{n}
 		add = w
 	}
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and so is
+	// a second <MenuItem> in a <Menu> claiming the same letter — the
+	// guard covers BOTH levels since round 11, and these three comments
+	// still named only the first. unshadowMnemonic is the one place all
+	// three insertion routes share.
+	unshadowMnemonic(into, add)
 	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	ed.rebuild()
@@ -2329,6 +2432,10 @@ func (ed *editor) addSelected() {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
 		ed.sel = prev
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		// AFTER the second rebuild, which sets the status to "✓ builds":
 		// the document is whole again, and the sentence explaining what
@@ -2347,16 +2454,26 @@ func (ed *editor) addSelected() {
 // PREFER canHold (addplan.go) FOR ANY NEW CALLER. This function answers a
 // coarser question and gets two things wrong for a restricted container:
 // it never consults ChildSpec.Only, so it says yes to putting a <Text> in
-// a <Tabs>; and it scans ed.palette rather than the catalog, so an
-// element the palette filters out — <Tab> is exactly that — is
-// unknowable to it. The doc comment that used to sit above this one
-// described `addTarget`, which moved to addplan.go and now climbs and
-// wraps rather than checking one node and its parent; the explanation
-// lives in that file's header.
+// a <Tabs>; and it scans ed.palette rather than the catalog, so every
+// element loadPalette filters out is unknowable to it. The doc comment
+// that used to sit above this one described `addTarget`, which moved to
+// addplan.go and now climbs and wraps rather than checking one node and
+// its parent; the explanation lives in that file's header.
 //
-// It remains because the FIT check (fit.go) asks the coarse question
-// legitimately — "could this element ever nest anything" — where Only
-// does not enter into it.
+// TWO CORRECTIONS FROM REVIEW OF #454, and the second is the one worth
+// reading. The filter used to be `e.Name == "Tab"` and this paragraph
+// named <Tab> as "exactly that"; this PR generalised it to `e.Nested`,
+// which is three elements today and derived — so naming one was a count
+// in prose that had already gone stale.
+//
+// And it does NOT remain because fit.go asks it. That sentence was here
+// and it is false: a grep for this name finds surface_test.go and this
+// definition, and nothing else. It is a test-facing predicate — two
+// fixtures use it to state "this element is/is not a leaf" before
+// asserting anything, and TestEveryPaletteElementIsClassifiedForContainment
+// pins the classification across the whole toolbox. That is a real use and
+// a smaller one than the old sentence claimed, so it says what it is
+// rather than reading like production wiring. It goes when they go.
 func (ed *editor) holdsChildren(elem string) bool {
 	for _, e := range ed.palette {
 		if e.Name != elem {
@@ -2420,17 +2537,25 @@ func (ed *editor) seed(spec markup.ElementSpec, name string) (*node, error) {
 	return n, nil
 }
 
-// deleteSelected removes the selected node from whatever holds it.
+// deleteSelected removes the selected node from whatever holds it, and
+// reports whether the delete STOOD.
+//
+// The bool is not decoration: cut is copy-then-delete, and a cut that
+// reports success for a delete the loader refused leaves the node on the
+// page AND on the clipboard, so the next paste duplicates it — with a
+// colliding Name, which is the one thing markup.Find cannot resolve.
+// promoteSelected and demoteSelected already return this for the same
+// reason. Reported in review of #454.
 //
 // What it selects afterwards is the node that took the deleted one's
 // place, or the last one when the end was deleted, or NOTHING when the
 // parent is now empty. That last case is the one an index could not
 // express: the old code left selected at -1, which meant "the container",
 // so deleting the last child silently promoted the selection to the root.
-func (ed *editor) deleteSelected() {
+func (ed *editor) deleteSelected() bool {
 	n := ed.sel
 	if n == nil {
-		return
+		return false
 	}
 	p := ed.parentOf(n)
 	if p == nil || ed.isSurface(p) {
@@ -2439,24 +2564,50 @@ func (ed *editor) deleteSelected() {
 		// doc() still expected a child. Deleting the surface is not
 		// expressible at all — it is not in the outline and cannot be
 		// selected.
-		return
+		return false
 	}
-	for i, k := range p.Kids {
-		if k != n {
-			continue
-		}
-		p.Kids = append(p.Kids[:i], p.Kids[i+1:]...)
-		switch {
-		case len(p.Kids) == 0:
-			ed.sel = nil
-		case i < len(p.Kids):
-			ed.sel = p.Kids[i]
-		default:
-			ed.sel = p.Kids[len(p.Kids)-1]
-		}
-		break
+	at := unlink(p, n)
+	if at < 0 {
+		return false
+	}
+	switch {
+	case len(p.Kids) == 0:
+		ed.sel = nil
+	case at < len(p.Kids):
+		ed.sel = p.Kids[at]
+	default:
+		ed.sel = p.Kids[len(p.Kids)-1]
 	}
 	ed.rebuild()
+	// TRANSACTIONAL, the same way promote, demote, move, paste and add
+	// are — and delete was the last mutator without it. A container's
+	// legal children are enforced INSIDE its builder, so REMOVING a child
+	// can break the parent just as adding an illegal one can:
+	// `<Tab Header=… needs exactly one content child, got 0`
+	// (markup/toolkit.go:190) fires on one ctrl+x against a node the
+	// outline offers you. Without the revert that delete reported success
+	// and left docRoot nil, which kills click-to-select for the WHOLE
+	// document while the last good tree stays on screen looking pressable
+	// — #403's shape, reached through the one door it was not fixed at.
+	//
+	// The selection goes back to n, not to whatever took its place: the
+	// node was not deleted, so leaving the cursor on its neighbour would
+	// report the refusal against something the user did not act on.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		insertAt(p, at, n)
+		ed.sel = n
+		// BEFORE the rebuild, so the rebuild's own recordHistory sees a
+		// document identical to the baseline and adds nothing. Without it
+		// the refused delete stays on the undo stack and one ctrl+z walks
+		// back into the docRoot==nil state this revert exists to prevent.
+		ed.abortHistory()
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> cannot be deleted from <" + p.Elem +
+			">: " + refused)
+		return false
+	}
+	return true
 }
 
 // retype is the experiment. Changing the container changes which
@@ -2479,13 +2630,22 @@ func (ed *editor) retype(elem string) {
 		// rather than left to be ignored. Leaving them is what the old
 		// loader did, and it is the defect this whole change deletes.
 		//
-		// OVER THE PALETTE, for the reason attrRows reads it:
-		// markup.AttachedParents lists BUILTINS, so a child retyped out
-		// of a third-party container kept that container's attributes,
-		// which the new parent discards in silence — the exact defect
-		// this loop exists to delete, surviving for every element the
-		// host registered.
-		for _, e := range ed.palette {
+		// OVER THE CATALOG, and the two reasons stack.
+		//
+		// Not markup.AttachedParents, which lists BUILTINS: a child
+		// retyped out of a third-party container kept that container's
+		// attributes, which the new parent discards in silence — the
+		// exact defect this loop exists to delete, surviving for every
+		// element the host registered.
+		//
+		// And not ed.palette either, which is the correction round 10
+		// asked for and a DIFFERENT distinction from the one above. The
+		// palette is what may be PLACED from the toolbox; loadPalette
+		// drops every Nested and NonVisual element from it, so a child
+		// retyped out of one of those kept its grants — the same silent
+		// leftover, through the other filter. This asks what elements
+		// DECLARE, so it reads the declarations.
+		for _, e := range ed.specs {
 			if e.Name == elem {
 				continue
 			}
