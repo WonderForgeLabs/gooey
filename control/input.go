@@ -67,7 +67,7 @@ func (s *Service) SendKeys(text string, gestures []string) ([]bool, error) {
 	}
 	if s.scoped() {
 		if s.islandRoot() == nil {
-			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+			return nil, s.islandGone()
 		}
 		f := c.Focus().Focused()
 		if f == nil {
@@ -182,7 +182,7 @@ func (s *Service) mayPoint(c *gooey.Composer, ev input.MouseEvent) error {
 		return nil
 	}
 	if s.islandRoot() == nil {
-		return deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+		return s.islandGone()
 	}
 	target := c.Focus().MouseTarget(ev)
 	if target == nil {

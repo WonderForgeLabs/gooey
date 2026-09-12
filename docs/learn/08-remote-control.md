@@ -120,14 +120,35 @@ Code:
 claude mcp add --transport http kanban http://127.0.0.1:7778/mcp
 ```
 
-The tool inventory: `tree_snapshot`, `screen_text`, `list_values`,
-`list_styles`, `invoke_command`, `set_value`, `send_keys`, `send_mouse`,
-`focus`, `swap_markup`, `patch_markup`, `validate_markup`,
+The tool inventory: `tree_snapshot`, `screen_size`, `screen_text`,
+`list_values`, `list_styles`, `invoke_command`, `set_value`, `send_keys`,
+`send_mouse`, `focus`, `swap_markup`, `patch_markup`, `validate_markup`,
 `register_properties`, `unregister_properties`. The rest of this tutorial exercises the
 important ones; the calls below all use the same `tools/call` shape.
-`send_mouse` coordinates can currently only be inferred — no tool
-reports terminal size, tracked in
-[#204](https://github.com/WonderForgeLabs/gooey/issues/204).
+
+`screen_size` reports the visible surface — `{cols, rows}` in cells, its
+absolute origin `{x, y}`, and the terminal's cell metrics in pixels for
+sizing graphics ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)).
+
+A session scoped to an island is told the island's size, because the
+island is that session's whole screen. **`send_mouse` still takes
+absolute screen cells**, so add `x`/`y` to a position within your surface
+to get the coordinate it accepts: an island at `y=1` is told `rows=3`, and
+a guest that sends `y=0` is refused while the island's last row goes
+unreachable. Unscoped, the origin is `(0,0)` and the conversion is a
+no-op.
+
+The cell metrics are `0` when the host never probed the terminal — the
+probe is opt-in, so this is the common case for a cell-plane app. Branch
+on the zero rather than dividing by it.
+
+Before this tool the screen had to be read off `screen_text`, whose lines
+are trailing-trimmed (so the width it implies is the longest *painted*
+line), or inferred from the root's arranged bounds in `tree_snapshot`.
+That inference is reliable for an unscoped session — the composer arranges
+the root to the whole screen whatever it declares — but it says nothing
+about a scoped one, costs a whole tree to learn two integers, and cannot
+report the cell metrics at all.
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \

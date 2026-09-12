@@ -169,12 +169,11 @@ func (s *Service) VisibleDamage(rects []gooey.Rect) []gooey.Rect {
 	if !s.scoped() {
 		return rects
 	}
-	var clip gooey.Rect
-	if root := s.islandRoot(); root != nil {
-		if b, ok := root.(gooey.Bounded); ok {
-			clip = b.Bounds()
-		}
-	}
+	// The error is deliberately dropped: this returns a filtered slice
+	// rather than a result, and a scoped session whose island cannot be
+	// resolved shows no damage — which the zero Rect already produces
+	// through the W/H check below.
+	clip, _ := s.islandRect()
 	if clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}
@@ -205,7 +204,7 @@ func (s *Service) mayAddress(name string) error {
 		return notFoundf("no element named %q; SnapshotTree lists the named elements", name)
 	}
 	if s.islandRoot() == nil {
-		return deniedf("this session is scoped to island %q, which names no element in the running tree; every address is refused until it exists again", s.grant.Island)
+		return deniedf(islandGoneFmt+"; every address is refused until it exists again", s.grant.Island)
 	}
 	if !s.islandSet()[w] {
 		return deniedf("element %q is outside this session's island %q; a session may only address its own subtree", name, s.grant.Island)
