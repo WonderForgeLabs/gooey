@@ -433,6 +433,77 @@ func TestAPastedConflictingDeclarationIsRefused(t *testing.T) {
 	}
 }
 
+// TestAPastedDefaultNamespaceIsNotAConflict is the arm the refusal above
+// must NOT cover, and it was covering it.
+//
+// isNamespaceAttr matches the plain "xmlns" as well as "xmlns:"+local,
+// so a default declaration went through the conflict arm and a paste
+// between two documents carrying different version strings was refused
+// — with a message built by TrimPrefix(k, "xmlns:"), which returns
+// "xmlns" unchanged for this key and so asked the author to rename a
+// prefix that does not exist.
+//
+// There is nothing to rebind. markup.parse skips a plain xmlns outright
+// ("the default namespace is decorative versioning"), so it never
+// reaches the flat prefix map that makes a PREFIX conflict dangerous,
+// and XML scoping confines it to the subtree that declares it.
+//
+// THE PREFIX ARM IS ASSERTED IN THE SAME BREATH, because the fix is an
+// exemption and an exemption that swallowed the neighbouring case would
+// pass every assertion above it. Raised in review of #501.
+func TestAPastedDefaultNamespaceIsNotAConflict(t *testing.T) {
+	const ours, theirs = "wonderforge.io/gooey/2026", "wonderforge.io/gooey/2027"
+	const prefixURI = "urn:gooey:test:472:default-arm"
+	handlerNS(t, prefixURI)
+
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="` + ours + `" xmlns:t="` + prefixURI + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="Existing" Content="go" Click="{{t:Existing}}"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "default.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("default.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+
+	// A DIFFERENT default, and the same prefix binding the document
+	// already has — so the only thing that differs is the one key the
+	// exemption is about.
+	ed.pasteMarkup(`<Gooey xmlns="` + theirs + `" xmlns:t="` + prefixURI + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	// NOT a "✓" test: a successful paste reports "pasted markup: <…>".
+	// The refusal is the one with a mark on it.
+	if got := ed.status.Get(); strings.HasPrefix(got, "✗") {
+		t.Fatalf("pasting a subtree whose DEFAULT namespace differs reports %q. "+
+			"markup.parse discards a plain xmlns without recording it, so there "+
+			"is no prefix for it to rebind and nothing for this to refuse", got)
+	}
+	src := ed.source.Get()
+	if !strings.Contains(src, `Name="Pasted"`) {
+		t.Errorf("the paste reported success and the node is not in the document:\n%s", src)
+	}
+
+	// AND THE NEIGHBOUR STILL REFUSES. A fix that exempted every
+	// namespace attribute would pass everything above.
+	ed.pasteMarkup(`<Gooey xmlns:t="urn:gooey:test:472:default-arm-other">` + "\n" +
+		`  <Button Name="Rebinder" Content="go" Click="{{t:Rebinder}}"/>` + "\n" +
+		`</Gooey>` + "\n")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("a pasted PREFIX conflict now reports %q — the default-namespace "+
+			"exemption swallowed the case this whole step exists for", got)
+	}
+}
+
 // TestARedundantPastedDeclarationIsDropped is the benign half of the
 // same missing step. Copying a button out of the CODE tab and pasting it
 // ten times left ten redundant xmlns:t attributes in the user's file —

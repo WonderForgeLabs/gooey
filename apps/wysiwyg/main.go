@@ -676,9 +676,13 @@ func (n *node) markup(indent string) string {
 // (the two envelope literals in ed.rebuild) — so a declaration left on
 // it is discarded by the
 // unwrap, which is the half of #472 that survived nodeOf keeping them.
-// Saved documents put xmlns on the envelope, because that is where
-// markup's error tells the author to put it, so this is the spelling
-// the editor has to read.
+// A hand-written document puts xmlns on the envelope, because that is
+// where markup's error tells the author to put it, and so does every
+// file saved before this change — so this is the spelling the editor
+// has to read. It is not the spelling the editor now WRITES: this
+// function is what moves the declaration down onto the root, and
+// ed.rebuild and saveOpenFile emit the envelope bare. Raised in review
+// of #501.
 //
 // THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
 // subtree scoping — markup.parse keeps one flat, document-wide ns map
@@ -725,7 +729,7 @@ func (n *node) markup(indent string) string {
 // in review of #501.
 func carryDeclarations(env, root *node) {
 	for k, v := range env.Attrs {
-		if k != "xmlns" && !strings.HasPrefix(k, "xmlns:") {
+		if !isNamespaceAttr(k) {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
@@ -831,7 +835,7 @@ func nodeOf(src string) (*node, error) {
 				}
 				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
 				// answer markup's own parser gives — namespacedAttrError
-				// (markup/markup.go:955, defined at :993). Neither side
+				// (markup/markup.go:956, defined at :993). Neither side
 				// drops it and neither keys by Local.
 				//
 				// This comment said "the namespace is dropped by the

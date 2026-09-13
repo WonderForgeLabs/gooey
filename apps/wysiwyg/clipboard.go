@@ -695,12 +695,20 @@ func (ed *editor) pasteMarkup(src string) {
 // (mutation-checked). The reason is narrower and real: the round trip is
 // a second parse that can FAIL, and a failure there would report a paste
 // as unparseable after it had already parsed once.
-// THE ENVELOPE'S DECLARATIONS COME WITH IT. <Gooey> is where a saved
-// document carries its xmlns — the CODE tab emits exactly that — so
-// dropping the envelope dropped the declarations, and #472's own bug
-// survived through paste while the open path had been fixed. The rule
-// lives in carryDeclarations (main.go) because openWorkspaceFile does
-// the same unwrap. Raised in review of #501.
+// THE ENVELOPE'S DECLARATIONS COME WITH IT. <Gooey> is where a
+// hand-written document puts its xmlns — it is where markup's own error
+// tells the author to put it — and where every file saved before this
+// change has it, so dropping the envelope dropped the declarations and
+// #472's own bug survived through paste while the open path had been
+// fixed. The rule lives in carryDeclarations (main.go) because
+// openWorkspaceFile does the same unwrap.
+//
+// NOT because the CODE tab emits that shape: it no longer does. This
+// branch moves the declaration down onto the user's root, and
+// TestReopeningTheRebuiltSourceIsStable asserts the root carries it. A
+// paste of this editor's own output therefore arrives with the
+// declaration already on the child and nothing to carry — the carry is
+// for the documents the editor did not write. Raised in review of #501.
 func unwrapGooey(n *node) (*node, bool) {
 	if n.Elem != "Gooey" || len(n.Kids) != 1 || len(n.Slots) != 0 {
 		return nil, false
@@ -740,9 +748,18 @@ func unwrapGooey(n *node) (*node, bool) {
 //     is a decision about expressions the pasted markup does not
 //     contain, so it is not one this editor can take on the author's
 //     behalf.
+//
+// ed.doc(), NOT ed.root. ed.root is the design SURFACE, and
+// saveOpenFile serialises ed.doc() inside a literal <Gooey> envelope —
+// so a declaration held by the surface is one the saved file does not
+// carry. Collecting it would make a pasted duplicate look redundant,
+// delete it, and write a document whose expressions have no binding.
+// No surface declares anything today, so this is the latent half rather
+// than a live bug; the two scopes are one level apart and the choice
+// belongs written down. Raised in review of #501.
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
-	collectNamespaces(ed.root, doc)
+	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc)
 }
 
@@ -756,6 +773,23 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 			continue
 		}
 		if bound != v {
+			// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and the
+			// hazard this function exists for cannot reach it.
+			// markup.parse skips a plain xmlns outright — "the default
+			// namespace is decorative versioning" — so it never enters the
+			// flat prefix map and there is nothing for a later one to
+			// re-point. XML scoping confines it to the subtree that
+			// declares it, which is where it stays.
+			//
+			// Refusing it was two faults at once: a paste out of one
+			// document's CODE tab into another on a different version
+			// string was blocked, and the message was built with
+			// TrimPrefix(k, "xmlns:") — which returns "xmlns" unchanged for
+			// this key, so it asked the author to rename a prefix that does
+			// not exist. Raised in review of #501.
+			if k == "xmlns" {
+				continue
+			}
 			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
 				"already declares it as %q. One flat prefix map covers the whole "+
 				"document and the later declaration wins, so accepting this would "+
@@ -797,9 +831,13 @@ func collectNamespaces(n *node, into map[string]string) {
 }
 
 // isNamespaceAttr matches the TWO SHAPES nodeOf writes — "xmlns" and
-// "xmlns:"+local — and nothing else, the same test carryDeclarations
-// makes. HasPrefix(k, "xmlns") would also match a plain attribute
-// spelled xmlnsFoo.
+// "xmlns:"+local — and nothing else; HasPrefix(k, "xmlns") would also
+// match a plain attribute spelled xmlnsFoo.
+//
+// carryDeclarations CALLS THIS rather than repeating it. It carried its
+// own copy and this comment claimed the two agreed, which is the
+// maintenance burden a shared function exists to remove — and only the
+// copy in main.go had a test. Raised in review of #501.
 func isNamespaceAttr(k string) bool {
 	return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
 }
