@@ -652,10 +652,19 @@ func parseShape(e markup.Element) (Shape, error) {
 	// future reader that the field drives the degrade, which is exactly
 	// the wrong place to start looking when the degrade is wrong.
 	//
-	// So paint.Stroke.Fallback now has no consumer anywhere in the tree,
+	// So paint.Stroke.Fallback now has no READER anywhere in the tree,
 	// which is a stronger form of the finding this PR already filed
 	// against #241: the package doc lists Fallback as one of four things
 	// paint carries, and its first real caller found no use for it.
+	//
+	// One package does still SET it, deliberately, and the two answers
+	// are not in conflict: apps/wysiwyg/components/panel's
+	// hairlineStroke keeps the assignment because its stroke is a pen
+	// and nothing else, so Stroke.Fallback describes what it draws. The
+	// argument above is about a SHAPE, which has two brushes and a cell
+	// fallback that has to cover the fill too. Cross-referenced in
+	// review of #474 — before it, these two comments reached opposite
+	// conclusions about the same field and neither knew of the other.
 	return s, nil
 }
 
