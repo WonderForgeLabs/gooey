@@ -165,3 +165,46 @@ func TestARebuildCarriesAHandlerNamespaceAndPinsTheDispatcher(t *testing.T) {
 		t.Error("the status says it builds but no tree was swapped in")
 	}
 }
+
+// TestOnlyARealDeclarationComesDownFromTheEnvelope pins the carry-down's
+// SET, which is the half a round-trip test cannot see.
+//
+// nodeOf writes exactly two shapes — "xmlns" and "xmlns:"+local — so the
+// reader in openWorkspaceFile has exactly two to accept. It tested
+// HasPrefix(k, "xmlns"), which also matches an ordinary attribute
+// spelled xmlnsFoo: that would be copied onto the user's root, where the
+// canvas reports it as an unknown attribute of the CHILD element rather
+// than as the envelope-level mistake it is. Nothing in the suite was red
+// for the loose form, which is why this exists. Raised in review of #501.
+func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
+	const uri = "urn:gooey:test:501:set"
+	handlerNS(t, uri)
+
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:t="` + uri + `" xmlnsFoo="not a declaration">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go" Click="{{t:Fire}}"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "set.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("set.gooey")
+
+	// NON-VACUITY: the real declaration beside it must have come down,
+	// or this test passes for a carry-down that copies nothing at all.
+	if src := ed.source.Get(); !strings.Contains(src, uri) {
+		t.Fatalf("the declaration did not come down, so nothing here is "+
+			"measuring which keys do:\n%s", src)
+	}
+	if src := ed.source.Get(); strings.Contains(src, "xmlnsFoo") {
+		t.Errorf("an ordinary attribute spelled xmlnsFoo was carried onto the "+
+			"user's root as if it were a declaration. openWorkspaceFile must "+
+			"accept the two shapes nodeOf writes, \"xmlns\" and \"xmlns:\"+local, "+
+			"and nothing else:\n%s", src)
+	}
+}

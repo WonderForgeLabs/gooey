@@ -705,23 +705,39 @@ func nodeOf(src string) (*node, error) {
 				//
 				// node.markup already writes every entry in Attrs back
 				// out verbatim, so a declaration that survives the read
-				// survives the write, the save and the properties pane
-				// — which can add one by setting an attribute called
-				// "xmlns:t" like any other. Dropping it here was the
-				// only end that leaked: a document opened through the
-				// file browser lost its prefixes before it became a
-				// node tree, and the canvas then refused the handler
-				// expression it had just read with "undeclared
-				// namespace prefix".
+				// survives the write, the save, and an edit made
+				// through the properties pane. What the pane cannot do
+				// is ADD one: valueEditor.Write only ever writes
+				// p.name (properties.go:798) and p.name comes from the
+				// element's DECLARED attributes, so there is nowhere to
+				// type a free-form attribute name — that is #500. This
+				// comment claimed the opposite until review of #501,
+				// contradicting both the PR body and
+				// doccontext_test.go's own note, in a repo that treats
+				// a comment as a claim under test.
+				//
+				// Dropping it here was the only end that leaked: a
+				// document opened through the file browser lost its
+				// prefixes before it became a node tree, and the canvas
+				// then refused the handler expression it had just read
+				// with "undeclared namespace prefix".
 				//
 				// KEPT ON THE ELEMENT THAT DECLARED IT rather than
-				// hoisted to a document-wide list, because XML scoping
-				// already means what the editor needs it to mean:
-				// verified, not assumed — a prefix declared on the
-				// user's root resolves for its whole subtree, which is
-				// where every attribute the designer can edit lives.
-				// The envelope is the one place that is not a node, and
-				// openWorkspaceFile carries its declarations down.
+				// hoisted to a document-wide list. The reason is NOT
+				// XML subtree scoping, which this comment used to
+				// claim: markup.parse keeps ONE FLAT, document-wide ns
+				// map and merges every declaration into it in document
+				// order (markup/markup.go:949), so a redeclared prefix
+				// wins by being parsed later rather than by being
+				// inner, and two sibling subtrees cannot bind one
+				// prefix to two URIs. The outcomes coincide for every
+				// shape this editor writes — the envelope is always
+				// parsed before its child, so "child wins" and "last
+				// wins" agree — and keeping the declaration where the
+				// author put it is what makes the editor round-trip the
+				// document rather than rewrite it. The envelope is the
+				// one place that is not a node, and openWorkspaceFile
+				// carries its declarations down.
 				if a.Name.Space == "xmlns" {
 					n.Attrs["xmlns:"+a.Name.Local] = a.Value
 					continue

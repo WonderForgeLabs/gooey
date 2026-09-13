@@ -370,12 +370,24 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// because that is where markup's error tells the author to put
 		// it, so this is the spelling the editor must read.
 		//
-		// The child WINS a prefix it declares itself: that is what XML
-		// scoping says an inner declaration does, and re-deriving it
-		// any other way here would make the editor disagree with the
-		// loader about a document both can read.
+		// THE CHILD'S OWN DECLARATION IS LEFT ALONE, and the reason is
+		// not XML subtree scoping — markup.parse keeps one flat,
+		// document-wide ns map and takes the LAST declaration of a
+		// prefix in document order (markup/markup.go:949). The envelope
+		// is parsed before its child, so last-wins and child-wins give
+		// the same answer for every document this path sees; not
+		// overwriting is what keeps the editor agreeing with the loader
+		// about which URI a prefix has. Corrected in review of #501,
+		// which measured the loader rather than reading the comment.
+		//
+		// THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits
+		// "xmlns" and "xmlns:"+local (main.go:742, main.go:746) and
+		// nothing else, while HasPrefix(k, "xmlns") also matches a
+		// plain attribute spelled xmlnsFoo — which would be copied onto
+		// the user's root and turn an envelope-level mistake into an
+		// unknown-attribute error reported against the child.
 		for k, v := range n.Attrs {
-			if !strings.HasPrefix(k, "xmlns") {
+			if k != "xmlns" && !strings.HasPrefix(k, "xmlns:") {
 				continue
 			}
 			if _, ok := n.Kids[0].Attrs[k]; !ok {
