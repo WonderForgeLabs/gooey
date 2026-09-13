@@ -365,6 +365,35 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 	}
 }
 
+// frozenMarkerPage is the tree all three frozen-marker tests need: a
+// TextBox with a required validator, a ValidationMarker attached to it,
+// the pair inside a <Frozen>, and the AdornmentLayer that places the
+// popup beside them. A nil active gives a plain <Frozen> — AllowNone
+// from the first frame; a handle gives one whose freeze can be flipped.
+//
+// Written once because it was written three times, and the copies are
+// the kind that drift silently: a test whose fixture quietly lost its
+// <AdornmentLayer> still builds, still frames, and reports the marker
+// missing as though the freeze had dropped it. Raised in review of #498.
+//
+// The first frame is taken here, so a caller reads as its own claim and
+// nothing else.
+func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *ValidationMarker, *gooey.Composer) {
+	t.Helper()
+	name := prop.NewSource("")
+	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required("required"))}
+	m := &ValidationMarker{}
+	tb.Attach(m)
+	frozen := &Frozen{Child: tb}
+	if active != nil {
+		frozen.Active = active
+	}
+	root := &VStack{Children: []gooey.Component{frozen, &AdornmentLayer{}}}
+	c := gooey.NewComposer(root, 30, 5)
+	c.Frame()
+	return tb, m, c
+}
+
 // TestAValidationMarkerPlacesItsAdornmentWhileFrozen holds the one claim
 // worth keeping out of the superseded #444: Frozen gates INPUT, not
 // adornment placement.
@@ -379,10 +408,16 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 //
 // THE SEAM IT HOLDS DOWN IS IN THIS REPO, not in a comment somewhere
 // else. FocusManager.walk gates the focus order on the freeze —
-// `allow.Has(AllowFocus)` before appending to m.order (input.go:493) —
-// and calls SetFocusManager on ATTACHMENTS unconditionally a few lines
-// later (input.go:541-542). Those two lines are the whole of "Frozen
-// gates input, not adornment placement".
+// the `allow.Has(AllowFocus)` test before it appends to m.order — and
+// calls SetFocusManager on ATTACHMENTS unconditionally a few lines
+// later. Those two statements inside FocusManager.walk are the whole of
+// "Frozen gates input, not adornment placement".
+//
+// CITED BY SYMBOL. This named input.go:493 and input.go:541-542 until
+// review of #498: nothing in the suite checks a line number inside a Go
+// comment, so both would have gone on pointing at whatever moved into
+// those lines. The same reason the file path one paragraph down was
+// removed.
 //
 // TWO TESTS REDDEN when the second is gated the way the first is, not
 // one — this comment claimed "the only test in the tree" until review of
@@ -407,18 +442,9 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // citation nobody can tell has rotted, and the seam above needs no
 // second file.
 func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
-	name := prop.NewSource("")
-	errP := validate.Field(name, validate.Required("required"))
-	tb := &TextBox{Text: name, Error: errP}
-	m := &ValidationMarker{}
-	tb.Attach(m)
-	// A plain <Frozen> is AllowNone — the strongest freeze there is.
-	root := &VStack{Children: []gooey.Component{
-		&Frozen{Child: tb},
-		&AdornmentLayer{},
-	}}
-	c := gooey.NewComposer(root, 30, 5)
-	c.Frame()
+	// A nil Active is a plain <Frozen>: AllowNone, the strongest freeze
+	// there is, and frozen from the first frame.
+	tb, m, c := frozenMarkerPage(t, nil)
 	// Discriminating half: without this the test passes just as well
 	// with no Frozen in the tree at all, and its name would be a claim
 	// about a wrapper that was doing nothing.
@@ -444,9 +470,9 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, whe
 	t.Helper()
 	if !m.IsShown() {
 		t.Fatalf("the marker did not place %s — if Frozen has grown a gate on "+
-			"the input-tree walk that is a real change, and the SetFocusManager "+
-			"call at input.go:541-542 can take the `allow` check that guards "+
-			"m.order at input.go:493", when)
+			"the input-tree walk that is a real change, and FocusManager.walk's "+
+			"unconditional SetFocusManager call on attachments can take the "+
+			"`allow` check that guards m.order", when)
 	}
 	if got := row(c.Cells(), 1); !strings.Contains(got, "required") {
 		t.Fatalf("the marker reports itself shown %s but row 1 of the cell "+
@@ -461,7 +487,7 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, whe
 //
 // The test above freezes at build time. wysiwyg's Pane.BindDesignMode
 // makes Frozen() a property read, so the freeze FLIPS — and a flip runs
-// FocusManager.evictFrozen (input.go:430), which clears hover, captor,
+// FocusManager.evictFrozen, which clears hover, captor,
 // prev and lastClick. Nothing there drops adornments today.
 //
 // AND THE LAST PHASE IS ABOUT IDENTITY, because that is the only thing
@@ -484,18 +510,8 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, whe
 // by name. Two arms agreeing is a harness result, not a passing test.
 // Raised in review of #498.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
-	name := prop.NewSource("")
-	errP := validate.Field(name, validate.Required("required"))
-	tb := &TextBox{Text: name, Error: errP}
-	m := &ValidationMarker{}
-	tb.Attach(m)
 	active := prop.NewSource(false)
-	root := &VStack{Children: []gooey.Component{
-		&Frozen{Child: tb, Active: active},
-		&AdornmentLayer{},
-	}}
-	c := gooey.NewComposer(root, 30, 5)
-	c.Frame()
+	tb, m, c := frozenMarkerPage(t, active)
 	if !c.Focus().SetFocus(tb) {
 		t.Fatal("the TextBox refused focus while Active is false, so the " +
 			"freeze is already on and the flip below is not the thing " +
@@ -511,12 +527,46 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 			"about an unfrozen tree")
 	}
 	assertMarkerShows(t, c, m, "after the freeze turned on")
+}
 
-	// THE DROP POLICY, exercised: an anchor that is present but not
-	// visibly reachable is what sends the layer down the branch
-	// AdornmentPersists opts out of. Identity is the assertion, for the
-	// reason in the comment above — everything else is restored before
-	// anyone can look.
+// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden is the drop policy
+// on the frozen path, and it is its own test because it reddens for its
+// own reason.
+//
+// It was the last phase of the flip test above until review of #498:
+// that test is named for the FLIP, and a reader who saw it red had no
+// way to tell "the freeze dropped the marker" from "hiding the anchor
+// replaced the popup" without reading the body. Two causes behind one
+// name is the shape this file has already been corrected for once, in
+// TestMarkerPersistsThroughHiddenAnchor, whose name outran its
+// assertions.
+//
+// IDENTITY IS THE ASSERTION, because it is the only thing
+// markerPopup.AdornmentPersists changes. The drop is self-healing within
+// one frame — the layer calls orphaned(), which nils m.pop, and the same
+// frame's ensurePlaced builds a fresh popup — so on a hidden anchor:
+//
+//	                      pop != nil  IsShown  adornments  row 1
+//	AdornmentPersists()     true       true        1       "####…"
+//	          -> false      true       true        1       "####…"
+//
+// Every observable agrees; only the POINTER differs. Two arms agreeing
+// is a harness result, not a passing test.
+//
+// The unfrozen half of the same policy is
+// TestMarkerPersistsThroughHiddenAnchor. This one takes the frozen path
+// to it, which is the designer's case: a field that cannot be reached
+// and then goes invisible under a collapsing pane.
+func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
+	active := prop.NewSource(false)
+	tb, m, c := frozenMarkerPage(t, active)
+	active.Set(true)
+	c.Frame()
+	if c.Focus().SetFocus(tb) {
+		t.Fatal("the TextBox took focus after Active flipped to true, so this " +
+			"is not the frozen path and the unfrozen sibling already covers it")
+	}
+
 	kept := m.pop
 	if kept == nil {
 		t.Fatal("no popup to hold onto, so the identity check below would " +
