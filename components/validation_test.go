@@ -359,8 +359,22 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // requiring the refusal, is what makes the rest of the test mean what it
 // says.
 //
-// The correction this holds down lives in
-// apps/wysiwyg/components/preview/overlay.go.
+// THE SEAM IT HOLDS DOWN IS IN THIS REPO, not in a comment somewhere
+// else. FocusManager.walk gates the focus order on the freeze —
+// `allow.Has(AllowFocus)` before appending to m.order (input.go:493) —
+// and calls SetFocusManager on ATTACHMENTS unconditionally a few lines
+// later (input.go:541-542). Those two lines are the whole of "Frozen
+// gates input, not adornment placement": gate the second on `allow` the
+// way the first is, and this is the only test in the tree that goes red.
+//
+// It cited apps/wysiwyg/components/preview/overlay.go until review of
+// #498 pointed out that no such comment exists there — it lived in
+// #444's tree and was not salvaged with the test, and `git log -S Frozen`
+// on that path returns nothing. Nothing catches a dead file path inside
+// a Go comment: TestEveryCitedTestNameResolves reads Markdown and
+// resolves test NAMES. So a citation that leaves this package is a
+// citation nobody can tell has rotted, and the seam above needs no
+// second file.
 func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 	name := prop.NewSource("")
 	errP := validate.Field(name, validate.Required("required"))
@@ -381,10 +395,73 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 		t.Fatal("the TextBox took focus, so the subtree is not frozen and " +
 			"this test proves nothing about Frozen")
 	}
+	assertMarkerShows(t, c, m, "while frozen")
+}
+
+// assertMarkerShows is both halves of "the user can see it", and the
+// second half is the finding.
+//
+// IsShown() is `m.pop != nil && getStr(m.Error) != ""` (validation.go:98)
+// — placed in a layer, plus a non-empty string. It is not a cell. A
+// regression that placed the popup inside a frozen subtree and then
+// arranged or painted it to nothing keeps that green while the form
+// says nothing about what is wrong with it, which is the entire reason
+// the claim is worth salvaging. Both siblings in this file pair the two
+// already (TestValidationLoopDamage, TestMarkerAdoptsHostError). Raised
+// in review of #498.
+func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, when string) {
+	t.Helper()
 	if !m.IsShown() {
-		t.Fatal("the marker did not place while frozen — if Frozen has " +
-			"grown a gate on the input-tree walk that is a real change, " +
-			"and preview/overlay.go's comment can drop the correction " +
-			"this test exists to hold")
+		t.Fatalf("the marker did not place %s — if Frozen has grown a gate on "+
+			"the input-tree walk that is a real change, and the SetFocusManager "+
+			"call at input.go:541-542 can take the `allow` check that guards "+
+			"m.order at input.go:493", when)
 	}
+	if got := row(c.Cells(), 1); !strings.Contains(got, "required") {
+		t.Fatalf("the marker reports itself shown %s but row 1 of the cell "+
+			"plane is %q — placed in the layer and painting nothing is what "+
+			"the user experiences as the form refusing to say what is wrong",
+			when, got)
+	}
+}
+
+// TestAValidationMarkerSurvivesAFreezeTurningOn is the designer's actual
+// case, and it is a different code path.
+//
+// The test above freezes at build time. wysiwyg's Pane.BindDesignMode
+// makes Frozen() a property read, so the freeze FLIPS — and a flip runs
+// FocusManager.evictFrozen (input.go:430), which clears hover, captor,
+// prev and lastClick. Nothing there drops adornments today, and
+// markerPopup.AdornmentPersists (validation.go:129) is what keeps the
+// layer from dropping the popup on its own; this is what would notice if
+// either changed. It costs one prop.NewSource and passes as written.
+// Raised in review of #498.
+func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
+	name := prop.NewSource("")
+	errP := validate.Field(name, validate.Required("required"))
+	tb := &TextBox{Text: name, Error: errP}
+	m := &ValidationMarker{}
+	tb.Attach(m)
+	active := prop.NewSource(false)
+	root := &VStack{Children: []gooey.Component{
+		&Frozen{Child: tb, Active: active},
+		&AdornmentLayer{},
+	}}
+	c := gooey.NewComposer(root, 30, 5)
+	c.Frame()
+	if !c.Focus().SetFocus(tb) {
+		t.Fatal("the TextBox refused focus while Active is false, so the " +
+			"freeze is already on and the flip below is not the thing " +
+			"being measured")
+	}
+	assertMarkerShows(t, c, m, "before the freeze turned on")
+
+	active.Set(true)
+	c.Frame()
+	if c.Focus().SetFocus(tb) {
+		t.Fatal("the TextBox still took focus after Active flipped to true, " +
+			"so the freeze did not take effect and the assertion below is " +
+			"about an unfrozen tree")
+	}
+	assertMarkerShows(t, c, m, "after the freeze turned on")
 }
