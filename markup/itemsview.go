@@ -142,18 +142,47 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// exactly the #216 crash that check exists to turn into a
 			// load error, and a fatal skips Screen.Restore.
 			//
-			// Rules, Dir, Variant and Declared are the same class with
-			// smaller symptoms: a validation rule, a resource directory,
-			// a theme variant and a declared surface, all resolvable on
-			// the page and silently absent in a row of it.
+			// Rules, Dir and Variant are the same class with smaller
+			// symptoms: a validation rule, a resource directory and a
+			// theme variant, all resolvable on the page and silently
+			// absent in a row of it.
 			//
-			// What stays row-scoped is Named (a row's names are its own;
-			// see the uniqueness rule) and arms, below, whose four
-			// members each diverge for a reason spelled out there.
-			// Raised in review of #490.
+			// WHAT STAYS ROW-SCOPED, each because a reason says so and
+			// not because nobody looked — rowPartition in
+			// boundaryfields_test.go is the derived form of this list and
+			// fails on a field Context grows:
+			//
+			//   - Named. A row's names are its own; uniqueness is per
+			//     document and a scrolling list would collide with
+			//     itself.
+			//   - arms. Constructed member by member below, four members
+			//     diverging for four different reasons.
+			//   - declared. The dependency properties of the control
+			//     being instantiated, installed for the duration of ONE
+			//     runSetup call. A row is not that call, and runSetup's
+			//     save/restore exists precisely so a nested instantiation
+			//     cannot see the wrong declarations.
+			//   - Declared. This one was propagated in the previous round
+			//     and is TAKEN BACK, because page-wide visibility of a
+			//     row's declared surface cannot be bought this way:
+			//     usercontrol.go writes parent.Declared[w] for every
+			//     control with <x:Property> declarations, this factory
+			//     runs per row realization and never unregisters, and
+			//     nothing sweeps retired rows — control/markup.go's
+			//     delete is the PatchMarkup path and is keyed to one
+			//     named component. So a scrolling list over a declaring
+			//     template added one permanent entry per row ever shown,
+			//     keyed by the row's component, keeping every retired row
+			//     subtree reachable. That is the exact retention the
+			//     arms.sinks comment below reasons through and rejects,
+			//     and it was added above it without the same pass. With
+			//     the field absent, control() lazily gives each row its
+			//     own map, which is what happened before either round.
+			//
+			// Raised in review of #490, twice — the second time against
+			// the first time's answer.
 			Elements: ctx.Elements,
 			Rules:    ctx.Rules,
-			Declared: ctx.Declared,
 			Dir:      ctx.Dir,
 			Variant:  ctx.Variant,
 			// THE ROW'S ARM SCOPE, CONSTRUCTED rather than inherited,
@@ -259,6 +288,17 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// The ancestry, so the cycle check can see across a row. See
 			// the Elements block above.
 			controls: ctx.controls,
+			// THE DOCUMENT'S FS, because a row's markup came from the
+			// same document the <ItemsView> did. fsys is what
+			// Context.assets resolves a literal path against, and with it
+			// nil the fallback is Includes — so <Image Src="logo.png">
+			// inside a template failed with "no file system to load from
+			// — this tree was built from bytes; use markup.Load", advice
+			// the author had already taken, while the identical element
+			// one line outside the template worked. <MenuItem Icon> and
+			// <FileWatcher Paths> read the same seam. Raised in review of
+			// #490.
+			fsys: ctx.fsys,
 		}
 		w, err := build(row, item)
 		if err != nil {

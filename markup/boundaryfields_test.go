@@ -1,10 +1,14 @@
 package markup
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"image"
+	gopng "image/png"
 	"io/fs"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -96,6 +100,68 @@ var boundaryPartition = map[string]struct {
 		"borrow a prefix the page happened to declare"},
 	"declared": {false, "the dependency properties of the control being " +
 		"instantiated, installed for the duration of one setup call"},
+}
+
+// rowPartition is the SAME question at the other seam, and it exists
+// because that seam's answer was a six-entry literal in a test while
+// this one was a table over every field.
+//
+// The asymmetry is not academic. It is what left `Elements` and
+// `Variant` out of the row context in the first place — the defect the
+// previous round of this PR fixed — and then, one round later, left
+// `fsys` and `declared` scoped to the row with no reason written
+// anywhere, while the test's own error message asserted that "the only
+// fields itemsview.go may scope to a row are Named and arms". Sixteen of
+// eighteen accounted for and two decided by omission is the shape this
+// file exists to remove. Raised in review of #490.
+//
+// A ROW IS NOT A BOUNDARY, which is why most of this is `true`: the row
+// is the same document, so the default is "inherits" and every `false`
+// owes a reason. The control partition's defaults run the other way for
+// the fields that make a control a contract.
+var rowPartition = map[string]struct {
+	inherit bool
+	why     string
+}{
+	"Styles":     {true, "same document, same theme"},
+	"Components": {true, "a builder registration is app-wide"},
+	"Elements": {true, "the DECLARED vocabulary: without it <Meter> in a " +
+		"template was unknown while the undeclared spelling worked"},
+	"Handlers":   {true, "a code-behind name resolves the same in a row"},
+	"Rules":      {true, "a validation rule is a registration like the rest"},
+	"Includes":   {true, "a template may instantiate a control"},
+	"Dispatcher": {true, "one UI goroutine, one dispatcher"},
+	"Dir":        {true, "the row's markup is in the same document directory"},
+	"Variant":    {true, "the pixel protocol is a property of the app"},
+	"controls": {true, "the cycle ancestry: resetting it turned the #216 " +
+		"load error back into a stack overflow"},
+	"res": {true, "the resource chain is lexical and the row is lexically " +
+		"inside the document"},
+	"fsys": {true, "a row's markup CAME FROM the document's FS, so a literal " +
+		"<Image Src> must resolve the same inside a template as outside one"},
+	"ns": {true, "the xmlns table is per-DOCUMENT, and a template is part of " +
+		"the document that declared the prefixes — the opposite answer from " +
+		"the control seam, where an included file cannot borrow the page's. " +
+		"Found by this table rather than written into it: the walk reported " +
+		"ns unaccounted for on its first run"},
+
+	"Values": {false, "the row's Values ARE the item — that is what a template is"},
+	"Named": {false, "uniqueness is per DOCUMENT, and a scrolling list would " +
+		"collide with itself"},
+	"arms": {false, "CONSTRUCTED member by member rather than inherited: sinks " +
+		"and allows are row-local, outer and nested are the page's, and " +
+		"pending is the row's own. Four members, four reasons, in itemsview.go"},
+	"declared": {false, "the dependency properties of the control being " +
+		"instantiated, installed for the duration of one runSetup call. A row " +
+		"is not that call, and the save/restore exists so a nested " +
+		"instantiation cannot see the wrong declarations"},
+	"Declared": {false, "TAKEN BACK after one round of inheriting it. " +
+		"usercontrol.go writes parent.Declared[w] per declaring control, this " +
+		"factory runs per row realization and never unregisters, and nothing " +
+		"sweeps retired rows — so a scrolling list pinned one entry and one " +
+		"row subtree per row ever shown. Page-wide visibility of a row's " +
+		"declared surface is a real goal and cannot be bought with unbounded " +
+		"retention"},
 }
 
 // TestTheControlBoundaryPartitionsEveryContextField is the derived half:
@@ -382,27 +448,44 @@ func TestTheBoundaryProbeCanActuallySeeAFailure(t *testing.T) {
 //
 // Reading them is legal because this test is IN package markup; the
 // switch below names each one directly, no reflection.
+// IT WALKS THE PACKAGE rather than naming markup.go. Pinning the
+// filename meant that moving Context to another file in this package
+// tripped the len(out) == 0 fatal below, whose message diagnoses the
+// removed IsExported filter — a red test pointing at the wrong cause,
+// which costs more than the walk does. Raised in review of #490.
 func contextFields(t *testing.T) []string {
 	t.Helper()
-	file, err := parser.ParseFile(gotoken.NewFileSet(), "markup.go", nil, 0)
+	files, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("markup.go does not parse: %v", err)
+		t.Fatalf("globbing this package: %v", err)
 	}
 	var out []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		ts, ok := n.(*ast.TypeSpec)
-		if !ok || ts.Name.Name != "Context" {
-			return true
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
 		}
-		st, ok := ts.Type.(*ast.StructType)
-		if !ok {
+		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, 0)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", f, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != "Context" {
+				return true
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				return false
+			}
+			for _, fl := range st.Fields.List {
+				out = append(out, fieldNames(fl)...)
+			}
 			return false
+		})
+		if len(out) > 0 {
+			break
 		}
-		for _, f := range st.Fields.List {
-			out = append(out, fieldNames(f)...)
-		}
-		return false
-	})
+	}
 	if len(out) == 0 {
 		t.Fatal("no field was found on Context, so every loop over this list " +
 			"would pass over nothing. NOT \"no exported field\": this walk " +
@@ -517,17 +600,39 @@ func firstText(c gooey.Component) string {
 // recorded in itemsview.go. What this asserts is the six that had no
 // reason at all. Raised in review of #490.
 func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
+	// LOADED FROM AN FS, not built from bytes, because fsys is one of the
+	// fields under test and Build leaves it nil — which would read as
+	// "did not cross" for a correct implementation and prove nothing.
+	// The page also declares a RESOURCE SCOPE and an XMLNS PREFIX for the
+	// unexported arms, exactly as the control fixture next door does.
+	pageFS := fstest.MapFS{
+		"page.gooey": {Data: []byte(`<Gooey xmlns:probe="urn:boundary-probe">
+  <Gooey.Resources>
+    <Style Key="pageRes" Fg="#ffaa3c"/>
+  </Gooey.Resources>
+  <ItemsView Items="{{.Items}}">
+    <ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>
+  </ItemsView>
+</Gooey>`)},
+	}
+	ctlFS := fstest.MapFS{"card.gooey": {Data: []byte(`<Gooey><Text>x</Text></Gooey>`)}}
+
 	declSentinel := &components.Text{}
 	var row *Context
 	page := &Context{
 		Dir:      "/tmp/anchor",
 		Variant:  "sixel",
+		Includes: ctlFS,
+		Styles:   map[string]render.Style{"s": {}},
+		Handlers: map[string]gooey.Action{"H": gooey.Command(func() {})},
+		Named:    map[string]gooey.Component{"PageOnly": &components.Text{}},
 		Declared: map[gooey.Component]DeclaredSurface{declSentinel: {Control: "PageOnly"}},
 		Elements: map[string]*ElementDef{"Meter": meterDef()},
 		Rules: map[string]RuleFunc{
 			"Zonk": func(string) (validate.Rule[string], error) { return nil, nil },
 		},
 		Values: map[string]any{
+			"PageOnly": prop.NewSource("page"),
 			"Items": components.Items(prop.NewSource([]string{"a"}),
 				func(s string) map[string]any { return map[string]any{"S": s, "N": 1} }),
 		},
@@ -537,17 +642,14 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 				return &components.Text{}, nil
 			},
 		},
+		declared: map[string]any{"PageDecl": nil},
 	}
 	// The ancestry is normally pushed by control(); there is no control
 	// here, so it is set directly — the question is whether the ROW
 	// keeps it, not how it got onto the page.
 	page.controls = []string{"page.gooey"}
 
-	src := `<Gooey xmlns="wonderforge.io/gooey/2026">` +
-		`<ItemsView Items="{{.Items}}">` +
-		`<ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>` +
-		`</ItemsView></Gooey>`
-	if _, err := Build([]byte(src), page); err != nil {
+	if _, err := Load(pageFS, "page.gooey", page); err != nil {
 		t.Fatalf("the page did not load, so nothing below was observed: %v", err)
 	}
 	if row == nil {
@@ -556,24 +658,101 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 			"if that stopped happening this test sees nothing")
 	}
 
-	for _, c := range []struct {
-		field   string
-		crossed bool
-	}{
-		{"Elements", func() bool { _, ok := row.Elements["Meter"]; return ok }()},
-		{"Rules", func() bool { _, ok := row.Rules["Zonk"]; return ok }()},
-		{"Declared", func() bool { _, ok := row.Declared[declSentinel]; return ok }()},
-		{"Dir", row.Dir == page.Dir},
-		{"Variant", row.Variant == page.Variant},
-		{"controls", len(row.controls) > 0 && row.controls[len(row.controls)-1] == "page.gooey"},
-	} {
-		if !c.crossed {
-			t.Errorf("Context.%s did not reach an item-template row. A row is not "+
-				"a boundary — boundaryPartition says this inherits, and the only "+
-				"fields itemsview.go may scope to a row are Named and arms, each "+
-				"with its reason written beside it", c.field)
+	// EVERY FIELD, driven by contextFields — the same walk the control
+	// seam uses, so Context growing a field is red at BOTH seams. The
+	// six-entry literal this replaces could not have been red for fsys
+	// or declared, which is how they came to be row-scoped by omission.
+	for _, name := range contextFields(t) {
+		rule, ok := rowPartition[name]
+		if !ok {
+			t.Errorf("Context.%s is not in rowPartition, so nothing says "+
+				"whether an item-template row inherits it. That omission is "+
+				"how Elements and Variant came to be missing from the row "+
+				"context, and fsys and declared came to be scoped to it with "+
+				"no reason written anywhere", name)
+			continue
+		}
+		var crossed bool
+		switch name {
+		case "Styles":
+			_, crossed = row.Styles["s"]
+		case "Components":
+			_, crossed = row.Components["Probe"]
+		case "Elements":
+			_, crossed = row.Elements["Meter"]
+		case "Handlers":
+			_, crossed = row.Handlers["H"]
+		case "Rules":
+			_, crossed = row.Rules["Zonk"]
+		case "Declared":
+			_, crossed = row.Declared[declSentinel]
+		case "Includes":
+			crossed = row.Includes != nil
+		case "Dispatcher":
+			crossed = row.Dispatcher == page.Dispatcher
+		case "Dir":
+			crossed = row.Dir == page.Dir
+		case "Variant":
+			crossed = row.Variant == page.Variant
+		case "controls":
+			crossed = len(row.controls) > 0 &&
+				row.controls[len(row.controls)-1] == "page.gooey"
+		case "res":
+			crossed = row.res.cur != nil
+		case "fsys":
+			// The DOCUMENT's FS, asked a question only it answers —
+			// behind a nil check, because dropping the propagation leaves
+			// a nil interface and fs.ReadFile PANICS on one, taking the
+			// package's run with it instead of reporting. Same trap the
+			// Includes arm above carries.
+			if row.fsys != nil {
+				_, err := fs.ReadFile(row.fsys, "page.gooey")
+				crossed = err == nil
+			}
+		case "Values":
+			// The row's Values are the ITEM, so the page's own key must
+			// not be visible through them.
+			_, crossed = row.Values["PageOnly"]
+		case "Named":
+			_, crossed = row.Named["PageOnly"]
+		case "arms":
+			// Not "is it set" — the row builds its own — but whether the
+			// page's ROW-LOCAL halves came across. sinks is the one
+			// itemsview.go constructs fresh per row.
+			crossed = row.arms.sinks != nil && len(page.arms.sinks) > 0 &&
+				sameSinks(row.arms.sinks, page.arms.sinks)
+		case "ns":
+			_, crossed = row.ns["probe"]
+		case "declared":
+			_, crossed = row.declared["PageDecl"]
+		default:
+			t.Errorf("Context.%s is partitioned for a row but this switch does "+
+				"not read it, so its half of the contract is unchecked", name)
+			continue
+		}
+		if crossed != rule.inherit {
+			verb := "did not reach an item-template row"
+			if crossed {
+				verb = "reached an item-template row and must not have"
+			}
+			t.Errorf("Context.%s %s — %s", name, verb, rule.why)
 		}
 	}
+}
+
+// sameSinks is the arms arm's question: is the row's sink map the PAGE's
+// map, or one of its own? Compared by identity of the backing map, which
+// is what "inherited" would mean and what row-scoping refuses.
+func sameSinks(a, b map[*prop.Property[string]]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // TestADeclaredElementWorksInsideARow is the symptom, and it is the one
@@ -654,5 +833,53 @@ func TestARowCannotResetTheCycleAncestry(t *testing.T) {
 		t.Errorf("a control whose item template instantiates itself failed for "+
 			"some other reason than the cycle check, so this test is not "+
 			"reaching it: %v", err)
+	}
+}
+
+// TestAPageRelativeAssetPathWorksInsideARow is the symptom, and it is
+// the one an author reports.
+//
+// fsys is what Context.assets resolves a literal path against, falling
+// back to Includes when it is nil. With the row context leaving it nil,
+// <Image Src="logo.png"> inside an <ItemsView.ItemTemplate> failed with
+// "no file system to load from — this tree was built from bytes; use
+// markup.Load", which is advice the author had already taken, while the
+// identical element one line outside the template loaded. <MenuItem
+// Icon> and <FileWatcher Paths> read the same seam.
+//
+// BOTH ARMS, because the template arm alone would pass against a fixture
+// whose asset is simply unreadable everywhere. The page arm is what says
+// the FS and the file are fine and the SEAM is the difference. Raised in
+// review of #490.
+func TestAPageRelativeAssetPathWorksInsideARow(t *testing.T) {
+	var png bytes.Buffer
+	if err := gopng.Encode(&png, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatalf("building the fixture image: %v", err)
+	}
+	const el = `<Image Src="logo.png" Cols="2" Rows="1"/>`
+	fsys := fstest.MapFS{
+		"logo.png": {Data: png.Bytes()},
+		"page.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
+			el + `</Gooey>`)},
+		"row.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
+			`<ItemsView Items="{{.Items}}"><ItemsView.ItemTemplate>` + el +
+			`</ItemsView.ItemTemplate></ItemsView></Gooey>`)},
+	}
+	ctx := func() *Context {
+		return &Context{Values: map[string]any{
+			"Items": components.Items(prop.NewSource([]string{"a"}),
+				func(string) map[string]any { return map[string]any{} }),
+		}}
+	}
+	if _, err := Load(fsys, "page.gooey", ctx()); err != nil {
+		t.Fatalf("the same element failed at PAGE level, so this fixture cannot "+
+			"tell the seam from a broken asset: %v", err)
+	}
+	if _, err := Load(fsys, "row.gooey", ctx()); err != nil {
+		t.Errorf("a page-relative asset path did not resolve inside an item "+
+			"template, while the identical element at page level did: %v\n"+
+			"The row context is built in markup/itemsview.go and must carry "+
+			"the document's fsys — a row's markup came from the same "+
+			"document the <ItemsView> did", err)
 	}
 }

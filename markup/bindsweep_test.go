@@ -1271,8 +1271,37 @@ func TestEveryPrereqRowIsReached(t *testing.T) {
 			continue
 		}
 		checked++
+		// THE CONTROL, and without it this row scores vacuously. The
+		// assertion below is "the BARE probe must fail", which also holds
+		// when the probe fails for a reason the prereqs have nothing to
+		// do with — and then the row reads as load-bearing forever, which
+		// is the silent pass this test was written to remove.
+		//
+		// "THE SEEDED PROBE MUST BUILD" IS THE WRONG CONTROL, and
+		// measuring it is what said so: four rows fail it —
+		// MenuItem.Checked, .Command, .Icon and Frozen.AllowError — not
+		// because the harness cannot host them but because the sweep's
+		// whole subject is attributes that REJECT a literal. The seeded
+		// probe is supposed to fail there.
+		//
+		// So the control is the DIFFERENCE. If seeding the prereqs
+		// changes nothing about how the probe fails, the row is not what
+		// makes it build and the assertion below is measuring something
+		// else. Raised in review of #490, whose suggested one-liner this
+		// replaces for the reason above.
+		seeded := harnessFor(tg.attr.Name, probeElementSeeded(t, tg.def, tg.attr.Name, value, true))
+		_, seededErr := Build([]byte("<Gooey>"+seeded+"</Gooey>"), defaultsContext())
 		bare := harnessFor(tg.attr.Name, probeElementBare(t, tg.def, tg.attr.Name, value))
-		if _, err := Build([]byte("<Gooey>"+bare+"</Gooey>"), defaultsContext()); err == nil {
+		_, bareErr := Build([]byte("<Gooey>"+bare+"</Gooey>"), defaultsContext())
+		if seededErr != nil && bareErr != nil && seededErr.Error() == bareErr.Error() {
+			t.Errorf("probePrereqs seeds %v for %s, and the probe fails IDENTICALLY "+
+				"with and without them:\n\t%v\n"+
+				"So the row changes nothing about this probe and the assertion "+
+				"below is passing on a failure the prereqs did not cause",
+				seeds, key, bareErr)
+			continue
+		}
+		if err := bareErr; err == nil {
 			t.Errorf("probePrereqs seeds %v for %s on the grounds that the probe "+
 				"cannot be built without them — and the bare probe <%s %s=%q> loads. "+
 				"The row seeds nothing the element still needs and should go",
