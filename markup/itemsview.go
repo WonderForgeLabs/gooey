@@ -108,6 +108,27 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// the reply depend on what a caller left on the page's Context.
 	// Raised in review of #459.
 	pagePending := ctx.arms.pending
+	// AND THE DOCUMENT'S FS, captured here for the same reason as ns,
+	// res and pagePending above — read inside the factory it is nil for
+	// every row that matters.
+	//
+	// Load installs ctx.fsys and RESTORES IT IN A DEFER (markup.go:870),
+	// so the only factory call that sees it is ItemsView.Validate's
+	// load-time throwaway probe row; the composer realizes every real row
+	// after Load returned. Measured with a probe builder recording
+	// c.fsys != nil per realization, with `fsys: ctx.fsys` read inside
+	// the closure:
+	//
+	//	after Load:            [true]
+	//	after composing rows:  [true false false false]
+	//
+	// So the first round of this fix repaired the one realization nobody
+	// scrolls and left <Image Src="logo.png"> failing on every row a user
+	// sees. Raised in review of #490, against the previous round's own
+	// answer — and the test that was supposed to pin it could not, for
+	// exactly the same reason: it asserted only that Load succeeded, and
+	// the <Image> it exercised was built by the probe row.
+	docFS := ctx.fsys
 	factory := func(values map[string]any) (gooey.Component, error) {
 		rowPending := &deferredArms{open: true}
 		item := &Context{
@@ -298,7 +319,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			// one line outside the template worked. <MenuItem Icon> and
 			// <FileWatcher Paths> read the same seam. Raised in review of
 			// #490.
-			fsys: ctx.fsys,
+			fsys: docFS,
 		}
 		w, err := build(row, item)
 		if err != nil {

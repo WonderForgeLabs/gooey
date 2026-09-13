@@ -349,6 +349,31 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 		case "fsys":
 			// Not "is it set" but "is it the CONTROL's": the page's own
 			// file must not be readable through it.
+			//
+			// Behind a nil check, because dropping `child.fsys = fsys`
+			// from usercontrol.go leaves a nil interface and fs.ReadFile
+			// PANICS on one — taking the rest of the package's run with
+			// it instead of giving the report this arm exists for. Its
+			// two siblings (Includes above, the row's fsys below) already
+			// guard it; this one did not. Raised in review of #490.
+			//
+			// AND THE NIL CASE IS ITS OWN FAULT, not "did not cross".
+			// The guard alone would turn the panic into a SILENT PASS:
+			// the partition says fsys must not inherit, so `crossed =
+			// false` is the expected answer and a control handed no FS
+			// at all satisfies it. Measured — with only the guard,
+			// dropping `child.fsys = fsys` left this test green. A
+			// control always gets an FS; which one is the question the
+			// arm below asks.
+			if child.fsys == nil {
+				t.Errorf("the control context has NO file system at all, so its " +
+					"markup could not resolve an <Image Src> of its own. This is " +
+					"not the same as \"the page's did not cross\" — usercontrol.go " +
+					"must REPLACE fsys, and dropping the assignment reads as " +
+					"withheld to a partition that only asks whether the page's " +
+					"value arrived")
+				continue
+			}
 			_, viaCtl := fs.ReadFile(child.fsys, "card.gooey")
 			_, viaPage := fs.ReadFile(child.fsys, "page.gooey")
 			crossed = viaCtl != nil || viaPage == nil
@@ -610,14 +635,28 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
   <Gooey.Resources>
     <Style Key="pageRes" Fg="#ffaa3c"/>
   </Gooey.Resources>
-  <ItemsView Items="{{.Items}}">
-    <ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>
-  </ItemsView>
+  <VStack>
+    <PageProbe/>
+    <ItemsView Items="{{.Items}}">
+      <ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>
+    </ItemsView>
+  </VStack>
 </Gooey>`)},
 	}
 	ctlFS := fstest.MapFS{"card.gooey": {Data: []byte(`<Gooey><Text>x</Text></Gooey>`)}}
 
 	declSentinel := &components.Text{}
+	// THE ARMS SENTINEL, written into the page's sink map WHILE IT IS
+	// LIVE by a page-level probe that builds before the <ItemsView> does.
+	//
+	// Reading page.arms after Load cannot answer this: document.build
+	// restores the whole arm scope in its defer (markup.go:756), so
+	// page.arms.sinks is nil by the time the switch runs, and the arm's
+	// old form — `len(page.arms.sinks) > 0 && sameSinks(...)` — was
+	// therefore false whatever itemsview.go did. Measured in review of
+	// #490: giving the row the page's own map, exactly what this arm
+	// says must not happen, left the test PASSING.
+	armsSentinel := prop.NewSource("")
 	var row *Context
 	page := &Context{
 		Dir:      "/tmp/anchor",
@@ -639,6 +678,17 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		Components: map[string]Builder{
 			"Probe": func(e Element, c *Context) (gooey.Component, error) {
 				row = c
+				return &components.Text{}, nil
+			},
+			// Builds BEFORE the <ItemsView> — document order — so the
+			// sentinel is in the page's map before any row is realized.
+			// The fixture declares no <Frozen>, so the map may not exist
+			// yet; a row that reads the page's sinks would see this key.
+			"PageProbe": func(e Element, c *Context) (gooey.Component, error) {
+				if c.arms.sinks == nil {
+					c.arms.sinks = map[*prop.Property[string]]string{}
+				}
+				c.arms.sinks[armsSentinel] = "page"
 				return &components.Text{}, nil
 			},
 		},
@@ -687,7 +737,15 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		case "Declared":
 			_, crossed = row.Declared[declSentinel]
 		case "Includes":
-			crossed = row.Includes != nil
+			// THE FS ITSELF, asked a question only the page's answers.
+			// `!= nil` says "there is an FS here", not "it is the
+			// page's" — the weak form this file's control switch spent
+			// eight arms replacing, kept in the row switch by oversight.
+			// Raised in review of #490.
+			if row.Includes != nil {
+				_, err := fs.ReadFile(row.Includes, "card.gooey")
+				crossed = err == nil
+			}
 		case "Dispatcher":
 			crossed = row.Dispatcher == page.Dispatcher
 		case "Dir":
@@ -717,10 +775,12 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 			_, crossed = row.Named["PageOnly"]
 		case "arms":
 			// Not "is it set" — the row builds its own — but whether the
-			// page's ROW-LOCAL halves came across. sinks is the one
-			// itemsview.go constructs fresh per row.
-			crossed = row.arms.sinks != nil && len(page.arms.sinks) > 0 &&
-				sameSinks(row.arms.sinks, page.arms.sinks)
+			// page's map IS the row's. The sentinel is the whole answer:
+			// it was written into the page's live sink map by PageProbe,
+			// so a row sharing that map sees it and a row with its own
+			// does not. Two empty maps cannot fake agreement here, which
+			// is what the old membership comparison allowed.
+			_, crossed = row.arms.sinks[armsSentinel]
 		case "ns":
 			_, crossed = row.ns["probe"]
 		case "declared":
@@ -738,21 +798,6 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 			t.Errorf("Context.%s %s — %s", name, verb, rule.why)
 		}
 	}
-}
-
-// sameSinks is the arms arm's question: is the row's sink map the PAGE's
-// map, or one of its own? Compared by identity of the backing map, which
-// is what "inherited" would mean and what row-scoping refuses.
-func sameSinks(a, b map[*prop.Property[string]]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k := range b {
-		if _, ok := a[k]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // TestADeclaredElementWorksInsideARow is the symptom, and it is the one
@@ -862,24 +907,71 @@ func TestAPageRelativeAssetPathWorksInsideARow(t *testing.T) {
 		"page.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
 			el + `</Gooey>`)},
 		"row.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
-			`<ItemsView Items="{{.Items}}"><ItemsView.ItemTemplate>` + el +
+			`<ItemsView Name="List" Items="{{.Items}}"><ItemsView.ItemTemplate>` +
+			`<VStack><Probe/>` + el + `</VStack>` +
 			`</ItemsView.ItemTemplate></ItemsView></Gooey>`)},
 	}
-	ctx := func() *Context {
-		return &Context{Values: map[string]any{
-			"Items": components.Items(prop.NewSource([]string{"a"}),
+	src := prop.NewSource([]string{"a"})
+	var realized int
+	ctx := &Context{
+		Named: map[string]gooey.Component{},
+		Values: map[string]any{
+			"Items": components.Items(src,
 				func(string) map[string]any { return map[string]any{} }),
-		}}
+		},
+		Components: map[string]Builder{
+			// Beside the <Image> rather than instead of it: a row that
+			// fails on the Image still builds this first, so it counts
+			// the realizations that HAPPENED, which is what keeps the
+			// Err() check below from passing over an empty list.
+			"Probe": func(Element, *Context) (gooey.Component, error) {
+				realized++
+				return &components.Text{}, nil
+			},
+		},
 	}
-	if _, err := Load(fsys, "page.gooey", ctx()); err != nil {
+	if _, err := Load(fsys, "page.gooey", &Context{Values: ctx.Values}); err != nil {
 		t.Fatalf("the same element failed at PAGE level, so this fixture cannot "+
 			"tell the seam from a broken asset: %v", err)
 	}
-	if _, err := Load(fsys, "row.gooey", ctx()); err != nil {
-		t.Errorf("a page-relative asset path did not resolve inside an item "+
+	root, err := Load(fsys, "row.gooey", ctx)
+	if err != nil {
+		t.Fatalf("a page-relative asset path did not resolve inside an item "+
 			"template, while the identical element at page level did: %v\n"+
 			"The row context is built in markup/itemsview.go and must carry "+
 			"the document's fsys — a row's markup came from the same "+
 			"document the <ItemsView> did", err)
+	}
+
+	// AND THEN A ROW NOBODY REALIZED AT LOAD TIME, which is the arm that
+	// matters and the one this test did not have.
+	//
+	// Load succeeding proves only that ItemsView.Validate's throwaway
+	// probe row built, and that row is realized DURING the page build,
+	// while ctx.fsys is still installed. Every row a user scrolls to is
+	// realized by the composer after Load returned and its defer put
+	// ctx.fsys back — so with the FS read inside the factory rather than
+	// captured, the arm above passed against the bug. Raised in review of
+	// #490.
+	list, _ := ctx.Named["List"].(*components.ItemsView)
+	if list == nil {
+		t.Fatal("the <ItemsView> is not in the page's Named map, so the rows " +
+			"below cannot be asked whether they built")
+	}
+	c := gooey.NewComposer(root, 40, 10)
+	c.Frame()
+	src.Set([]string{"a", "b", "c"})
+	c.Frame()
+	if realized < 2 {
+		t.Fatalf("only %d template rows were realized, and one of those is the "+
+			"load-time probe: the composer never built a row after Load "+
+			"returned, so nothing here measures the seam", realized)
+	}
+	if err := list.Err(); err != nil {
+		t.Errorf("a row realized AFTER Load returned could not resolve a "+
+			"page-relative asset path: %v\n"+
+			"itemsview.go must CAPTURE ctx.fsys beside pagePending rather than "+
+			"read it inside the factory — Load restores it in a defer, so a "+
+			"row built at scroll time sees nil", err)
 	}
 }

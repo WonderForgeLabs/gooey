@@ -208,9 +208,20 @@ var silentlyBindable = []string{
 //
 // The map stays, with its type and its reason-per-entry, because #489 is
 // still open and the NEXT element to fall out of the probe should arrive
-// as an entry here rather than as a silently unchecked element. An empty
-// map makes the must-fire arm above range over nothing, which the arm
-// itself reports.
+// as an entry here rather than as a silently unchecked element.
+//
+// NOTHING FIRES ON THE EMPTINESS ITSELF, and the sentence that used to
+// sit here claimed otherwise — "an empty map makes the must-fire arm
+// above range over nothing, which the arm itself reports". Ranging over
+// an empty map is a no-op and reports nothing; the arm that does fire on
+// vacuity is `checked == 0`, which counts bindable ATTRIBUTES and would
+// be satisfied by this map being empty forever. The floor that matters
+// here is the must-fire arm's other direction: an entry naming an
+// element the probe now constructs fails, so the map cannot quietly
+// accumulate dead exemptions. An empty map is exempting nothing, which
+// is the state worth having. Raised in review of #490 — the second
+// unbacked claim found in this comment, after the Skip that was not
+// there.
 //
 // (This said "with its type and its Skip" until review of #490. There is
 // no skip attached to this map — the file's only t.Skipf belongs to
