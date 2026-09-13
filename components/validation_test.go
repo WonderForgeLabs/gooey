@@ -157,6 +157,15 @@ func TestValidationLoopDamage(t *testing.T) {
 // message (zero rect, cells restored) but does not drop it — no
 // re-adding gesture exists — and showing the field brings it back
 // through plain layout, no structural walk required.
+// ITS NAME OUTRUNS ITS ASSERTIONS, and that was measured rather than
+// suspected: flipping markerPopup.AdornmentPersists to false reddens
+// nothing here. The drop is self-healing within one frame — orphaned()
+// nils m.pop and the same frame's ensurePlaced builds a fresh popup — so
+// `m.pop == nil` cannot see it and neither can the cell plane. What this
+// test does hold is the FILLER and the message coming back, which is
+// worth keeping. The persist flag itself is pinned by identity in
+// TestAValidationMarkerSurvivesAFreezeTurningOn. Raised in review of
+// #498.
 func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	_, tb, m, _, page := formPage(30)
 	c := gooey.NewComposer(page, 30, 4)
@@ -364,8 +373,21 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // `allow.Has(AllowFocus)` before appending to m.order (input.go:493) —
 // and calls SetFocusManager on ATTACHMENTS unconditionally a few lines
 // later (input.go:541-542). Those two lines are the whole of "Frozen
-// gates input, not adornment placement": gate the second on `allow` the
-// way the first is, and this is the only test in the tree that goes red.
+// gates input, not adornment placement".
+//
+// TWO TESTS REDDEN when the second is gated the way the first is, not
+// one — this comment claimed "the only test in the tree" until review of
+// #498 measured it:
+//
+//	--- FAIL: TestAValidationMarkerPlacesItsAdornmentWhileFrozen  components
+//	--- FAIL: TestValidatorsStayLiveInsideAFrozenSubtree          markup
+//
+// The markup sibling (frozen_input_test.go:544) was already on main and
+// holds the same line. What is unique here is WHAT is asserted: that one
+// counts the layer's adornments, this one reads the rendered message off
+// the cell plane and refuses focus first. A reader who deleted the
+// markup test on the strength of the word "only" would have lost a pin,
+// which is why the word is gone.
 //
 // It cited apps/wysiwyg/components/preview/overlay.go until review of
 // #498 pointed out that no such comment exists there — it lived in
@@ -431,10 +453,26 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, whe
 // The test above freezes at build time. wysiwyg's Pane.BindDesignMode
 // makes Frozen() a property read, so the freeze FLIPS — and a flip runs
 // FocusManager.evictFrozen (input.go:430), which clears hover, captor,
-// prev and lastClick. Nothing there drops adornments today, and
-// markerPopup.AdornmentPersists (validation.go:129) is what keeps the
-// layer from dropping the popup on its own; this is what would notice if
-// either changed. It costs one prop.NewSource and passes as written.
+// prev and lastClick. Nothing there drops adornments today.
+//
+// AND THE LAST PHASE IS ABOUT IDENTITY, because that is the only thing
+// markerPopup.AdornmentPersists (validation.go:129) changes. This
+// comment cited it as a held seam until review of #498 measured the
+// mutation and found it reddened NOTHING in the root module — not this
+// test, and not TestMarkerPersistsThroughHiddenAnchor below, whose name
+// claims exactly that seam. The reason is that the drop is self-healing
+// within one frame: the layer calls orphaned(), which nils m.pop, and
+// the same frame's ensurePlaced builds a fresh popup. A/B on a hidden
+// anchor:
+//
+//	                      pop != nil  IsShown  adornments  row 1
+//	AdornmentPersists()     true       true        1       "####…"
+//	          -> false      true       true        1       "####…"
+//
+// Every observable agrees; only the POINTER differs — persisting keeps
+// the same *markerPopup, dropping replaces it. So this test hides the
+// anchor while frozen and compares identity, and the mutation reddens it
+// by name. Two arms agreeing is a harness result, not a passing test.
 // Raised in review of #498.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	name := prop.NewSource("")
@@ -464,4 +502,25 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 			"about an unfrozen tree")
 	}
 	assertMarkerShows(t, c, m, "after the freeze turned on")
+
+	// THE DROP POLICY, exercised: an anchor that is present but not
+	// visibly reachable is what sends the layer down the branch
+	// AdornmentPersists opts out of. Identity is the assertion, for the
+	// reason in the comment above — everything else is restored before
+	// anyone can look.
+	kept := m.pop
+	if kept == nil {
+		t.Fatal("no popup to hold onto, so the identity check below would " +
+			"compare two nils and pass over the policy it is here for")
+	}
+	gooey.LayoutOf(tb).Visibility = gooey.Hidden
+	c.Frame()
+	if m.pop != kept {
+		t.Error("hiding the frozen field's anchor REPLACED the marker's popup " +
+			"instead of keeping it. markerPopup.AdornmentPersists opts out of " +
+			"the adornment layer's drop-on-invisible policy; without it the " +
+			"layer calls orphaned() and the next ensurePlaced builds a new one, " +
+			"which every other observable — pop != nil, IsShown, the layer's " +
+			"count, the cell plane — cannot tell from the popup surviving")
+	}
 }
