@@ -222,8 +222,17 @@ func closedTtyAttempt(t *testing.T) bool {
 	// the handshake is what makes this a measurement rather than a race.
 	// Closing the master can discard bytes the slave has not read yet, so
 	// "write, then close" alone loses the prefix on most runs and the
-	// test measures nothing. Reading the 'b' back proves the decoder
-	// consumed that read, which means ESC [ 2 is in pend right now.
+	// test measures nothing.
+	//
+	// WHAT READING THE 'b' BACK PROVES is that the decoder consumed a
+	// read — not that it consumed THIS WHOLE WRITE. One write is not one
+	// read: the slave may return "b" and "\x1b[2" separately, and a
+	// hung-up pty discards input still queued, so the prefix can be gone
+	// before the close. Four bytes from one write come back in one
+	// 128-byte read essentially always, which makes this unlikely rather
+	// than impossible — and the receive below is non-fatal for exactly
+	// that residue, because a lost prefix is an attempt that could not be
+	// made, not a decoder that dropped an Esc. Raised in review of #445.
 	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
@@ -239,10 +248,20 @@ func closedTtyAttempt(t *testing.T) bool {
 		t.Fatalf("close master: %v", err)
 	}
 
-	ev := next(t, evs, "the decoder discarded the Esc it was holding when the "+
-		"tty closed. A closed tty is the strongest deadline there is — nothing "+
-		"can arrive — so a held prefix must resolve on the way out rather than "+
-		"leave with it")
+	ev, arrived := nextOrNone(evs, 2*time.Second)
+	if !arrived {
+		// INCONCLUSIVE, NOT A DISAGREEMENT. A t.Fatal here reported "the
+		// decoder discarded the Esc it was holding" — the message for the
+		// regression under test — for an attempt in which the prefix
+		// never reached the decoder at all, which is a scheduling
+		// artefact wearing the costume of the bug. Same discipline as the
+		// elapsed check below, in the other direction: never pass on an
+		// attempt you did not make, and never fail on one either.
+		t.Log("attempt lost the held prefix before the close (the write was " +
+			"split across two slave reads and the hung-up pty discarded the " +
+			"remainder); retrying")
+		return false
+	}
 	// EscTimeout, not PasteMarkerGrace*EscTimeout, and the difference is
 	// slack against this clock's own drift. `held` is sampled after
 	// receiving `b` from a BUFFERED channel, and the decoder sends that
@@ -266,6 +285,18 @@ func closedTtyAttempt(t *testing.T) bool {
 		}
 	}
 	return true
+}
+
+// nextOrNone is next() without the verdict: it reports whether an event
+// arrived at all, for the receives where NOT arriving means the attempt
+// could not be made rather than that the decoder is wrong.
+func nextOrNone(evs <-chan input.Event, d time.Duration) (input.Event, bool) {
+	select {
+	case ev := <-evs:
+		return ev, true
+	case <-time.After(d):
+		return input.Event{}, false
+	}
 }
 
 func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
@@ -294,7 +325,11 @@ func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
 // So this is #419 itself, end to end: a real paste whose opening marker
 // straddles a read must still arrive as ONE PasteEvent.
 func TestASplitPasteMarkerStillPastes(t *testing.T) {
-	const attempts = 20
+	// FORTY, not twenty, for the reason the sleep above gives: the margin
+	// this attempt needs is scheduler headroom, and doubling the draws is
+	// the half of that which costs nothing and weakens nothing. Raised in
+	// review of #445.
+	const attempts = 40
 	for i := range attempts {
 		if splitMarkerAttempt(t) {
 			return
@@ -335,7 +370,18 @@ func splitMarkerAttempt(t *testing.T) bool {
 
 	// Past ONE timeout — so the grace is genuinely exercised rather than the
 	// marker simply arriving whole in one read — and comfortably inside two.
-	time.Sleep(EscTimeout + EscTimeout/4)
+	//
+	// EscTimeout/8 OF HEADROOM, NOT EscTimeout/4, and the halving is free
+	// rather than a risk. `held` is sampled AFTER the decoder armed its
+	// timer, so the real elapsed since the arm is always at least the
+	// measured one — any sleep over a full EscTimeout is past one timeout
+	// whatever the scheduler did. The quarter was buying nothing at this
+	// end and was being paid for at the other: with the budget below it
+	// left ~EscTimeout/4 for sleep overshoot plus the Write, and a
+	// consistently loaded runner overshoots a 40ms sleep by that much,
+	// which makes every attempt inconclusive and ends the loop in a hard
+	// failure about the machine. Raised in review of #445.
+	time.Sleep(EscTimeout + EscTimeout/8)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}

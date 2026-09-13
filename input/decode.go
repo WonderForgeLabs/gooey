@@ -132,15 +132,33 @@ func DecodeFinal(b []byte) (Event, int, bool) { return decode(b, deadlineFinal) 
 // caller and no test moves for this.
 type deadline uint8
 
+// These three carry a `deadline` prefix rather than bare names, and the
+// last one is why: decodeCSI's local for the CSI final byte is also
+// called `final`, so a bare `final` means one thing above that
+// declaration and is a type error below it — inside the function every
+// arm of this change routes through. Prefixed all three rather than one,
+// so the set reads as a set. Raised in review of #445.
+//
+// It opens with "These" and not with a member's name for the same reason
+// it sits where it does: a group doc that opens by naming one of its own
+// entries is the shape an insertion at the top of a documented block
+// leaves behind, and gooey.TestNoDocCommentNamesTheDeclarationBelowIt
+// cannot tell the two apart.
+//
+// ABOVE THE `const (`, NOT INSIDE IT. Written between the paren and the
+// first entry, godoc attaches it to deadlineLive — a paragraph about
+// deadlineFinal rendered as documentation for a different constant, which
+// is the same misattribution this branch fixes in input/paste.go. Raised
+// in review of #445, the second time.
 const (
-	// deadlineFinal, not `final`: decodeCSI's local for the CSI final byte
-	// is also called `final`, so the bare name means one thing above that
-	// declaration and is a type error below it — inside the function every
-	// arm of this change routes through. Prefixed all three rather than one,
-	// so the set reads as a set. Raised in review of #445.
 	deadlineLive  deadline = iota // bytes may still be arriving
 	deadlineIdled                 // none arrived within the escape timeout
-	deadlineFinal                 // nor within a second one: nothing more is coming
+	// NOT "nor within a second one". That defines the value by elapsed
+	// timeouts, and the tty-close caller reaches it with zero elapsed:
+	// DecodeFinal's own doc and term/keys.go's drainFinal both say the
+	// precondition is about ARRIVAL. The wording here sent a reader
+	// hunting a bug on the close path. Raised in review of #445.
+	deadlineFinal // nothing more can arrive: a second timeout, or a closed tty
 )
 
 // idle reports whether the escape timeout has fired at least once, which
