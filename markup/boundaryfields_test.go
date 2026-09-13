@@ -6,11 +6,13 @@ import (
 	gotoken "go/token"
 	"io/fs"
 	"sort"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/validate"
 )
@@ -189,6 +191,16 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 		Handlers:   map[string]gooey.Action{"H": gooey.Command(func() {})},
 		Elements:   map[string]*ElementDef{"Meter": meterDef()},
 		Dispatcher: gooey.NewDispatcher(),
+		// THE LAST INERT ARM. declared was the one unexported field left
+		// on `!= nil` with nothing behind it: the fixture never set it,
+		// so the arm read false whatever control() did. Measured —
+		// adding `child.declared = parent.declared` to control() and the
+		// test still PASSED, which is the exact failure the rest of this
+		// fixture exists to remove. The leak it could not see is real:
+		// runSetup saves and restores declared so a setup that itself
+		// instantiates a control cannot see the wrong declarations, and
+		// a crossing declared breaks that. Raised in review of #490.
+		declared: map[string]any{"PageDecl": nil},
 		Rules: map[string]RuleFunc{
 			"Zonk": func(string) (validate.Rule[string], error) { return nil, nil },
 		},
@@ -235,9 +247,16 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 		case "Declared":
 			_, crossed = child.Declared[declSentinel]
 		case "Includes":
-			// The FS itself, asked a question only the page's answers.
-			_, err := fs.ReadFile(child.Includes, "card.gooey")
-			crossed = err == nil
+			// The FS itself, asked a question only the page's answers —
+			// behind a nil check, because dropping the propagation
+			// leaves a nil interface and fs.ReadFile PANICS on one. A
+			// panic takes the rest of the package's run with it, which
+			// is a worse answer than the report this arm was written to
+			// give. Raised in review of #490.
+			if child.Includes != nil {
+				_, err := fs.ReadFile(child.Includes, "card.gooey")
+				crossed = err == nil
+			}
 		case "Dispatcher":
 			// A POINTER COMPARE, which is available here and is the
 			// whole claim: there is one UI goroutine, so a control
@@ -272,7 +291,7 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 			// declares its own namespaces or has none.
 			_, crossed = child.ns["probe"]
 		case "declared":
-			crossed = child.declared != nil
+			_, crossed = child.declared["PageDecl"]
 		case "Dir":
 			crossed = child.Dir == page.Dir
 		case "Variant":
@@ -385,8 +404,12 @@ func contextFields(t *testing.T) []string {
 		return false
 	})
 	if len(out) == 0 {
-		t.Fatal("no exported field was found on Context, so every loop over " +
-			"this list would pass over nothing")
+		t.Fatal("no field was found on Context, so every loop over this list " +
+			"would pass over nothing. NOT \"no exported field\": this walk " +
+			"stopped filtering on IsExported when the unexported half of the " +
+			"boundary came under the partition, and a message naming the old " +
+			"filter is the strongest comment in the file pointing at the wrong " +
+			"rule")
 	}
 	sort.Strings(out)
 	return out
@@ -465,4 +488,171 @@ func firstText(c gooey.Component) string {
 		}
 	}
 	return ""
+}
+
+// TestEveryInheritedRegistrationReachesATemplateRow is the same contract
+// at the seam the partition forgot it had.
+//
+// boundaryPartition and docs/markup-reference.md both state the rule
+// globally — "everything a page registers inherits". control() honours
+// it. The ITEM-TEMPLATE row context did not: markup/itemsview.go built
+// its own literal, copied ten fields and dropped six, so a row was a
+// control boundary nobody had declared, with a different partition and
+// no statement of it anywhere.
+//
+// Two of the six cost more than a missing convenience. Elements is the
+// DECLARED vocabulary, so <Meter Level="{{.N}}"/> in a template failed
+// with `unknown element <Meter>` while the undeclared Components
+// spelling worked — the incentive backwards, which is the defect #314
+// exists to remove, reproduced one seam over from the one it fixed. And
+// controls is the cycle ancestry: dropping it RESET it, so a control
+// whose template instantiates itself recursed to `fatal error: stack
+// overflow` rather than the load error indexOf(parent.controls, name)
+// exists to give — and a fatal skips Screen.Restore.
+//
+// NOT A COPY OF THE SWITCH ABOVE, because a row is not a control and
+// three fields diverge for reasons of their own: Values IS the item,
+// Named is row-scoped (names are unique per document, not per row), and
+// arms is constructed member by member with four separate arguments
+// recorded in itemsview.go. What this asserts is the six that had no
+// reason at all. Raised in review of #490.
+func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
+	declSentinel := &components.Text{}
+	var row *Context
+	page := &Context{
+		Dir:      "/tmp/anchor",
+		Variant:  "sixel",
+		Declared: map[gooey.Component]DeclaredSurface{declSentinel: {Control: "PageOnly"}},
+		Elements: map[string]*ElementDef{"Meter": meterDef()},
+		Rules: map[string]RuleFunc{
+			"Zonk": func(string) (validate.Rule[string], error) { return nil, nil },
+		},
+		Values: map[string]any{
+			"Items": components.Items(prop.NewSource([]string{"a"}),
+				func(s string) map[string]any { return map[string]any{"S": s, "N": 1} }),
+		},
+		Components: map[string]Builder{
+			"Probe": func(e Element, c *Context) (gooey.Component, error) {
+				row = c
+				return &components.Text{}, nil
+			},
+		},
+	}
+	// The ancestry is normally pushed by control(); there is no control
+	// here, so it is set directly — the question is whether the ROW
+	// keeps it, not how it got onto the page.
+	page.controls = []string{"page.gooey"}
+
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">` +
+		`<ItemsView Items="{{.Items}}">` +
+		`<ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>` +
+		`</ItemsView></Gooey>`
+	if _, err := Build([]byte(src), page); err != nil {
+		t.Fatalf("the page did not load, so nothing below was observed: %v", err)
+	}
+	if row == nil {
+		t.Fatal("the probe builder never ran, so no row context was reached. " +
+			"ItemsView.Validate realizes one throwaway row during the build; " +
+			"if that stopped happening this test sees nothing")
+	}
+
+	for _, c := range []struct {
+		field   string
+		crossed bool
+	}{
+		{"Elements", func() bool { _, ok := row.Elements["Meter"]; return ok }()},
+		{"Rules", func() bool { _, ok := row.Rules["Zonk"]; return ok }()},
+		{"Declared", func() bool { _, ok := row.Declared[declSentinel]; return ok }()},
+		{"Dir", row.Dir == page.Dir},
+		{"Variant", row.Variant == page.Variant},
+		{"controls", len(row.controls) > 0 && row.controls[len(row.controls)-1] == "page.gooey"},
+	} {
+		if !c.crossed {
+			t.Errorf("Context.%s did not reach an item-template row. A row is not "+
+				"a boundary — boundaryPartition says this inherits, and the only "+
+				"fields itemsview.go may scope to a row are Named and arms, each "+
+				"with its reason written beside it", c.field)
+		}
+	}
+}
+
+// TestADeclaredElementWorksInsideARow is the symptom, and it is the one
+// a user reports.
+//
+// The test above reads the row's context, which is the strong form. This
+// is the weak form kept deliberately: <Meter> is registered in Elements
+// and nowhere else, so a row that cannot see Elements answers `unknown
+// element <Meter>` — the same message #314 was filed for, from the seam
+// that PR did not reach. An error-message probe alone would be a worse
+// test; beside the context read it is what ties the contract to the
+// complaint. Raised in review of #490.
+func TestADeclaredElementWorksInsideARow(t *testing.T) {
+	ctx := &Context{
+		Elements: map[string]*ElementDef{"Meter": meterDef()},
+		Values: map[string]any{
+			"Items": components.Items(prop.NewSource([]string{"a"}),
+				func(s string) map[string]any { return map[string]any{"N": 1} }),
+		},
+	}
+	src := `<Gooey xmlns="wonderforge.io/gooey/2026">` +
+		`<ItemsView Items="{{.Items}}">` +
+		`<ItemsView.ItemTemplate><Meter Level="{{.N}}"/></ItemsView.ItemTemplate>` +
+		`</ItemsView></Gooey>`
+	if _, err := Build([]byte(src), ctx); err != nil {
+		t.Fatalf("a DECLARED element was not usable inside an item template, "+
+			"while the same component registered under the undeclared "+
+			"Components spelling is: %v", err)
+	}
+}
+
+// TestARowCannotResetTheCycleAncestry is the sharp half of the row seam,
+// and the difference between a load error and a fatal.
+//
+// controls is the ancestry indexOf(parent.controls, name) reads to turn
+// "a control includes itself" into a load error naming the loop — the
+// #216 crash, caught. The item-template row context did not copy it, so
+// a row RESET it: every row started a fresh ancestry and the check could
+// not see across one.
+//
+// Both directions measured on this fixture, which is a passthrough
+// control whose own template instantiates it, fed a projection that
+// supplies itself at every depth:
+//
+//	with the propagation:    markup: control loop.gooey includes itself
+//	without it:              fatal error: stack overflow
+//
+// The second is not merely worse, it is unreportable: a Go fatal is not
+// a panic, so nothing recovers it and Screen.Restore never runs — the
+// terminal is left in raw mode with the alternate screen up. That is the
+// whole reason the load-time check exists. Raised in review of #490.
+func TestARowCannotResetTheCycleAncestry(t *testing.T) {
+	ctlFS := fstest.MapFS{
+		"loop.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
+			`<ItemsView Items="{{.Items}}">` +
+			`<ItemsView.ItemTemplate><Loop Items="{{.Items}}"/></ItemsView.ItemTemplate>` +
+			`</ItemsView></Gooey>`)},
+	}
+	// SELF-SUPPLYING, and it has to be. A projection that stops handing
+	// down an item source ends the recursion for a reason that has
+	// nothing to do with the ancestry — the build fails at depth two with
+	// `"Items" not found in context` and the test agrees with the bug.
+	var proj func(string) map[string]any
+	proj = func(string) map[string]any {
+		return map[string]any{"Items": components.Items(prop.NewSource([]string{"a"}), proj)}
+	}
+	ctx := &Context{
+		Includes: ctlFS,
+		Values:   map[string]any{"Items": components.Items(prop.NewSource([]string{"a"}), proj)},
+	}
+
+	_, err := Build([]byte(`<Gooey xmlns="wonderforge.io/gooey/2026">`+
+		`<Loop Items="{{.Items}}"/></Gooey>`), ctx)
+	if err == nil {
+		t.Fatal("a control whose item template instantiates itself built cleanly")
+	}
+	if !strings.Contains(err.Error(), "includes itself") {
+		t.Errorf("a control whose item template instantiates itself failed for "+
+			"some other reason than the cycle check, so this test is not "+
+			"reaching it: %v", err)
+	}
 }

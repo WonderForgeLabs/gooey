@@ -118,6 +118,44 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			Includes:   ctx.Includes,
 			Dispatcher: ctx.Dispatcher,
 			Named:      map[string]gooey.Component{},
+			// A ROW IS NOT A BOUNDARY, and this literal used to behave
+			// like one. It copied ten fields and dropped six, so a row
+			// was a control boundary nobody had declared — with a
+			// different partition from the one control() enforces and no
+			// statement of it anywhere.
+			//
+			// The six below are the drop, and two of them cost more than
+			// a missing convenience:
+			//
+			// Elements is the DECLARED element vocabulary. Without it
+			// <Meter Level="{{.N}}"/> inside an <ItemsView.ItemTemplate>
+			// failed with "unknown element <Meter>" while the same Meter
+			// registered under the undeclared Components spelling worked
+			// — the incentive backwards, which is the whole defect #314
+			// is about, reproduced one seam over from the one it fixed.
+			//
+			// controls is the load-time cycle ancestry, and dropping it
+			// RESET it. A control whose template instantiates the same
+			// control, fed an item source that supplies itself, reached
+			// indexOf(parent.controls, name) with an empty slice and
+			// recursed until `fatal error: stack overflow` — which is
+			// exactly the #216 crash that check exists to turn into a
+			// load error, and a fatal skips Screen.Restore.
+			//
+			// Rules, Dir, Variant and Declared are the same class with
+			// smaller symptoms: a validation rule, a resource directory,
+			// a theme variant and a declared surface, all resolvable on
+			// the page and silently absent in a row of it.
+			//
+			// What stays row-scoped is Named (a row's names are its own;
+			// see the uniqueness rule) and arms, below, whose four
+			// members each diverge for a reason spelled out there.
+			// Raised in review of #490.
+			Elements: ctx.Elements,
+			Rules:    ctx.Rules,
+			Declared: ctx.Declared,
+			Dir:      ctx.Dir,
+			Variant:  ctx.Variant,
 			// THE ROW'S ARM SCOPE, CONSTRUCTED rather than inherited,
 			// and this is the only place in the package that does not
 			// simply copy the parent's. Every member diverges from what
@@ -218,6 +256,9 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			},
 			ns:  ns,
 			res: res,
+			// The ancestry, so the cycle check can see across a row. See
+			// the Elements block above.
+			controls: ctx.controls,
 		}
 		w, err := build(row, item)
 		if err != nil {
