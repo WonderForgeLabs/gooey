@@ -31,6 +31,62 @@ type Encoder interface {
 	Encode(out *[]byte, img image.Image, cols, rows, cellW, cellH int) error
 }
 
+// OpaqueEncoder is an Encoder whose wire format carries NO ALPHA. A
+// translucent pixel cannot be sent, so the protocol decides for itself
+// what becomes of one, and sixel's decision is the harsh one: sixel.go
+// writes no pixel below half alpha, so a faint stroke is not dimmed on
+// the way out — it is DISCARDED, and the drawing that produced it
+// silently loses a line.
+//
+// A caller that wants a faint line on every tier has to ask this
+// question, because the two answers are different DRAWINGS rather than
+// different encodings of one: alpha where the terminal composites — the
+// kitty and iTerm2 encoders transmit through png.Encode, which
+// un-premultiplies, so the terminal does the compositing against a
+// background this process never learns — and a dimmer OPAQUE colour
+// where it cannot, computed against a ground the drawing has to guess.
+// That is the panel hairline in apps/wysiwyg (#254), and it is why the
+// question lives here rather than as a type switch at the call site: a
+// fourth alpha-less protocol would otherwise take the composited branch
+// silently.
+//
+// THE INTERFACE DOES NOT MAKE THAT IMPOSSIBLE, and this comment said it
+// did. The mapping is opt-in: an encoder that simply never declares
+// OpaqueOnly gets the composited branch by default and nothing notices.
+// Measured in review of #474 — adding OpaqueOnly to Kitty was caught by
+// a downstream pixel test, and adding it to ITerm2 left the entire root
+// suite green.
+//
+// What holds the mapping is TestOnlySixelIsAlphaLess beside this file:
+// a compile-time assertion that Sixel implements it, a table saying the
+// others do not, and a go/ast walk of THIS PACKAGE'S OWN DECLARATIONS
+// that demands a row per encoder it finds — so a fourth protocol cannot
+// be added without answering the question.
+//
+// The walk is the load-bearing word, and this paragraph used to say "a
+// count against the encoder list" instead. That is the design the test
+// deleted, and deleted on the grounds that it was two hand-written
+// lists: a count catches somebody editing one of them and says nothing
+// about a type added to neither. The floor the test still keeps
+// (len(declared) < 2) is a non-vacuity check that the walk found
+// declarations at all, not a count of them. Describing the weaker
+// mechanism here is how it gets re-simplified back into one, since this
+// is the paragraph a reader reaches from `go doc graphics.OpaqueEncoder`
+// and the test is the thing they will not read. Corrected in review of
+// #474.
+//
+// It is still a guard an author can get wrong; it is not a type system.
+//
+// A second interface rather than another method on Encoder, the same
+// shape IDEncoder in this file takes: capability questions here are type
+// assertions, the same no-reflection shape as the rest of the tree.
+type OpaqueEncoder interface {
+	Encoder
+	// OpaqueOnly carries no value — the type assertion IS the answer, the
+	// way gooey.Overlay's empty method is.
+	OpaqueOnly()
+}
+
 // IDEncoder is an Encoder whose images have IDENTITY: one transmitted
 // image can later be re-placed, replaced, or removed by referring to it,
 // without the pixels going down the wire again. Only the Kitty protocol
