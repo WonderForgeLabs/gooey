@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -362,6 +363,15 @@ func (s *sink) counts() (n, after int) {
 // that flips Enabled in between delivers it. That is the component's
 // contract working (it is Timer's, exactly), and it is only visible if
 // the test pumps the queue empty before it touches the property.
+//
+// IT IS A CLOCK, AND A CLOCK CANNOT COUNT CYCLES — see drainUntilPosts,
+// which replaced it wherever a test depends on the watcher having been
+// round. The two callers left are composer-driven: the watcher posts
+// through Composer.Start, so there is no Post for a counter to wrap.
+// Both are negative assertions, where too short a window makes the claim
+// vacuous rather than red — worth knowing before trusting one of them,
+// and the reason they were not converted rather than an argument that
+// they are fine.
 func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
@@ -369,6 +379,59 @@ func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 		time.Sleep(time.Millisecond)
 	}
 	disp.Drain()
+}
+
+// countingPost wraps the dispatcher's Post and counts what the watcher
+// hands it. It is a CLOCK MADE OF THE WATCHER'S OWN CYCLES, and the
+// reason it exists is that wall-clock waiting is not one.
+//
+// Each poll cycle posts the paths request; a cycle whose scan finds a
+// change posts the fire as well. So "the poll goroutine has been round
+// at least twice since I wrote the file" is a statement about this
+// counter, and it holds whatever the machine was doing in between.
+//
+// atomic because the posts come from the poll goroutine and the reads
+// from the test's.
+type countingPost struct {
+	n    atomic.Int64
+	post func(func())
+}
+
+func (c *countingPost) Post(f func()) {
+	c.n.Add(1)
+	c.post(f)
+}
+
+// drainUntilPosts pumps the dispatcher until the watcher has posted n
+// more times than it had at base, and it is what a test means by "let
+// the watcher get past this edit".
+//
+// The fixed 40ms window it replaces read as generous and was not: the
+// deadline is absolute, so it buys 40 poll cycles on an idle machine
+// and can buy ZERO on a loaded CI runner, where forty milliseconds of
+// wall clock may hold no scheduling slot for the poll goroutine at all.
+// A zero-cycle wait leaves the baseline where it was, so the change made
+// while disabled is still pending — and re-enabling then delivers it,
+// which is the assertion failing. Measured on #501's CI run 34786453065:
+// "re-enabling replayed 1 change(s) made while disabled", green on the
+// same commit locally at -count=20.
+//
+// Bounded by the same two seconds waitFor uses, so a watcher that has
+// genuinely stopped polling still fails rather than hanging.
+func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, base, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		disp.Drain()
+		if c.n.Load() >= base+n {
+			disp.Drain()
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("the watcher posted %d times in two seconds, want %d more than the "+
+		"%d it had — the poll goroutine is not running, so nothing below is "+
+		"measuring what it claims to", c.n.Load(), n, base)
 }
 
 // THE BARRIER PIN. close(done) alone lets a poll that already won its
@@ -509,11 +572,20 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 		Interval: time.Millisecond,
 		Changed:  gooey.Command(func() { hits++ }),
 	}
-	stop := w.Start(d.Post)
+	// COUNTED, because every wait below is really "the watcher has been
+	// round again" and a clock cannot say that on a loaded machine. See
+	// drainUntilPosts.
+	c := &countingPost{post: d.Post}
+	stop := w.Start(c.Post)
 	defer stop()
 
 	write(t, dir, "a.txt", "two", t2)
-	drainFor(d, 40*time.Millisecond) // forty polls, every one of them drained
+	// Three posts is at least two complete cycles — a cycle is one post
+	// without a hit and two with one — so the scan that sees this write
+	// has certainly run, and the baseline it advanced is what makes the
+	// change dropped rather than merely late.
+	base := c.n.Load()
+	drainUntilPosts(t, d, c, base, 3)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
 	}
@@ -526,7 +598,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// Re-enabling resumes with nothing torn down, and does NOT replay
 	// the edit that happened while it was off.
 	enabled.Set(true)
-	drainFor(d, 40*time.Millisecond)
+	drainUntilPosts(t, d, c, c.n.Load(), 3)
 	if hits != 0 {
 		t.Fatalf("re-enabling replayed %d change(s) made while disabled", hits)
 	}
@@ -591,12 +663,19 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 		Interval: time.Millisecond,
 		Changed:  gooey.Command(func() { hits++ }),
 	}
-	stop := w.Start(d.Post)
+	c := &countingPost{post: d.Post}
+	stop := w.Start(c.Post)
 	defer stop()
 
-	drainFor(d, 40*time.Millisecond)
+	// COUNTED FOR THE SAME REASON, and here it is the assertion's floor
+	// rather than its correctness: this is a NEGATIVE claim, so a window
+	// that bought no polls would pass it without the watcher having run
+	// at all. Forty posts is forty cycles over an unchanged file, which
+	// is what the message below says happened.
+	drainUntilPosts(t, d, c, c.n.Load(), 40)
 	if hits != 0 {
-		t.Fatalf("a watcher fired %d times over an unchanged file", hits)
+		t.Fatalf("a watcher fired %d times over %d polls of an unchanged file",
+			hits, 40)
 	}
 }
 
