@@ -152,6 +152,49 @@ const islandOffOriginMarkup = `<Gooey>
   </VStack>
 </Gooey>`
 
+// islandCollapsedMarkup is islandOffOriginMarkup with the island
+// collapsed, DERIVED rather than copied so the two fixtures cannot drift
+// into being two different pages — which would make "one reports 0x0 and
+// the other does not" a statement about the markup instead of about the
+// collapse. If the anchor below ever stops matching, Replace returns the
+// original and the collapsed arm reports a live size, which is a
+// failure, not a silent pass.
+var islandCollapsedMarkup = strings.Replace(islandOffOriginMarkup,
+	`<Border Name="Mine" Title="mine">`,
+	`<Border Name="Mine" Title="mine" Visibility="Collapsed">`, 1)
+
+// islandGuest builds a scoped session over src and returns its client.
+//
+// The three off-origin cases below each wrote out the same four steps —
+// two sources, newTestApp, New with an island grant, newClient — and the
+// copies had already begun to differ: one seeded Host.Secret with "s"
+// rather than "hunter2" for no reason it states. islandServer
+// (grant_test.go:30) is the same shape for the ORIGIN-AT-ZERO fixture and
+// cannot serve here; it hard-codes the markup and the island name and
+// returns a host client nothing here wants.
+//
+// BOTH the markup and the island name are parameters, because the cases
+// vary along both axes independently: "Ghost" over the ordinary fixture
+// is the island that is gone, "Mine" over the collapsed fixture is the
+// island that is merely degenerate, and those are the two answers
+// islandRect is careful to keep apart.
+func islandGuest(t *testing.T, src, island string) *client {
+	t.Helper()
+	app := newTestApp(t, src, map[string]any{
+		"Mine": map[string]any{"Body": prop.NewSource("m0")},
+		"Host": map[string]any{"Secret": prop.NewSource("hunter2")},
+	})
+	gs, err := New(app, Options{
+		Context: app.ctx,
+		Timeout: 5 * time.Second,
+		Grant:   control.Island(island, island),
+	})
+	if err != nil {
+		t.Fatalf("New (guest): %v", err)
+	}
+	return newClient(t, gs)
+}
+
 // TestAGuestIsToldWhereItsIslandIs is the half that makes the size
 // actionable rather than merely honest.
 //
@@ -163,21 +206,7 @@ const islandOffOriginMarkup = `<Gooey>
 // assertion below is the round trip: convert with x/y, and send_mouse
 // must accept every corner.
 func TestAGuestIsToldWhereItsIslandIs(t *testing.T) {
-	mine := prop.NewSource("m0")
-	secret := prop.NewSource("hunter2")
-	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
-		"Mine": map[string]any{"Body": mine},
-		"Host": map[string]any{"Secret": secret},
-	})
-	gs, err := New(app, Options{
-		Context: app.ctx,
-		Timeout: 5 * time.Second,
-		Grant:   control.Island("Mine", "Mine"),
-	})
-	if err != nil {
-		t.Fatalf("New (guest): %v", err)
-	}
-	guest := newClient(t, gs)
+	guest := islandGuest(t, islandOffOriginMarkup, "Mine")
 
 	sz := guest.json("screen_size", nil)
 	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
@@ -329,20 +358,39 @@ func declaresTool(body, name string) bool {
 		if !ok {
 			continue
 		}
-		i := strings.Index(head, "`"+name)
-		if i < 0 {
-			continue
-		}
-		rest := head[i+len(name)+1:]
-		if rest == "" || !isIdentByte(rest[0]) {
-			return true
+		// EVERY OCCURRENCE IN THE LEAD, not the first. This took
+		// strings.Index once and moved to the next LINE when the byte
+		// after it was an identifier byte — so an entry leading with a
+		// longer name that contains this one ("- `screen_size_v2` /
+		// `screen_size` — …") reported screen_size as undocumented,
+		// while the two-names-per-entry shape the record actually uses
+		// ("- `send_keys` / `send_mouse` — …") is the very reason this
+		// function reads the whole lead. One false match ended the line.
+		// Raised in review of #504.
+		for rest := head; ; {
+			i := strings.Index(rest, "`"+name)
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len(name)+1:]
+			if rest == "" || !isIdentByte(rest[0]) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// isIdentByte is what separates `screen_size` from a longer name that
+// merely starts with it. UPPERCASE INCLUDED: it was a-z, 0-9 and
+// underscore, so `screen_sizeV2` would have read as an entry for
+// screen_size. Tool names are lower_snake today, which is what made the
+// gap invisible — and a rule that is correct only for the names that
+// happen to exist is the kind that stops being correct silently. Raised
+// in review of #504.
 func isIdentByte(b byte) bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
 }
 
 // TestTheInventoryReadsAreNarrowerThanThePage is the counterfactual for
@@ -384,6 +432,26 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 	if declaresTool(record, "epsilon") {
 		t.Error("`unregister_epsilon` counts as an entry for epsilon — the same " +
 			"substring pass namesTool's backticks close one surface over")
+	}
+
+	// A LONGER NAME FIRST IN THE SAME LEAD. This read as undocumented
+	// while declaresTool took only the first backtick match on a line and
+	// moved on, which is the shape the two-names-per-entry rows in the
+	// real record would hit the moment a `screen_size_v2` joined them.
+	const shadowed = "- `alpha_v2` / `alpha` — the longer name leads\n"
+	if !declaresTool(shadowed, "alpha") {
+		t.Error("an entry whose lead opens with a LONGER name containing this " +
+			"one reads as no entry at all, so a tool listed second on its own " +
+			"row would be reported as undocumented")
+	}
+	if declaresTool(shadowed, "alpha_v3") {
+		t.Error("declaresTool matched a name the entry does not carry")
+	}
+	// The uppercase half of the same boundary.
+	if declaresTool("- `alphaV2` — a camel sibling\n", "alpha") {
+		t.Error("`alphaV2` counts as an entry for alpha: the identifier test " +
+			"stops at lowercase, so a camel-cased sibling reads as the name it " +
+			"merely starts with")
 	}
 }
 
@@ -623,28 +691,65 @@ func screenOf(t *testing.T, app *testApp) (cols, rows int) {
 // what both now call: a regression that broke the resolution would
 // otherwise show up on whichever tool nobody tested.
 func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
-	mine := prop.NewSource("m0")
-	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
-		"Mine": map[string]any{"Body": mine},
-		"Host": map[string]any{"Secret": prop.NewSource("s")},
-	})
-	gs, err := New(app, Options{
-		Context: app.ctx,
-		Timeout: 5 * time.Second,
-		// A name the tree does not contain. The grant is well-formed;
-		// the element simply is not there, which is the state a swap or
-		// a patch can produce at runtime.
-		Grant: control.Island("Ghost", "Ghost"),
-	})
-	if err != nil {
-		t.Fatalf("New (guest): %v", err)
-	}
-	guest := newClient(t, gs)
+	// "Ghost" is a name the tree does not contain. The grant is
+	// well-formed; the element simply is not there, which is the state a
+	// swap or a patch can produce at runtime.
+	guest := islandGuest(t, islandOffOriginMarkup, "Ghost")
 
 	// The message names the island, because a client that cannot see the
 	// tree has no other way to tell "you may not" from "it is gone".
 	guest.fails("screen_size", nil, `island "Ghost", which names no element`)
 	guest.fails("screen_text", nil, `island "Ghost", which names no element`)
+}
+
+// TestACollapsedIslandIsZeroSizedAndNotAnError is the OTHER arm of the
+// same resolution, and the one three surfaces describe and none pinned.
+//
+// islandRect deliberately does not test W/H: a collapsed or not-yet-
+// arranged island resolves SUCCESSFULLY to a zero-size rect, because it
+// is not gone and islandGone would be a lie about it. So screen_size
+// answers 0x0 and screen_text answers "" — both without an error.
+// islandRect's doc comment says so, and both screenSizeSchema's cols and
+// its rows tell clients "0 is a real answer, not an error". Nothing
+// asserted it, which means the next reader to see cols:0 in a trace is
+// free to "fix" it into a denial and every one of those three sentences
+// goes quietly false.
+//
+// THE LIVE ARM IS THE NON-VACUITY. Zero is what an app that never
+// composed reports too, and a fixture that never arranged would satisfy
+// every assertion below against a tool that answered 0x0 unconditionally.
+// The same markup with the island visible reports a real size, so the
+// zero is attributable to the collapse and to nothing else.
+func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
+	live := islandGuest(t, islandOffOriginMarkup, "Mine").json("screen_size", nil)
+	if int(live["cols"].(float64)) == 0 || int(live["rows"].(float64)) == 0 {
+		t.Fatalf("the uncollapsed fixture already reports a zero extent (%v), so this "+
+			"test cannot tell a collapsed island from one that never arranged", live)
+	}
+
+	guest := islandGuest(t, islandCollapsedMarkup, "Mine")
+
+	// Not fails(): the call must SUCCEED. An error here is the regression
+	// this exists to catch — islandRect learning to refuse a degenerate
+	// rect, which would deny a guest whose island is merely closed.
+	sz := guest.json("screen_size", nil)
+	if cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64)); cols != 0 || rows != 0 {
+		t.Errorf("a collapsed island reports %dx%d; islandRect and screenSizeSchema both "+
+			"say a collapsed island is 0x0", cols, rows)
+	}
+	// The cell metrics are the terminal's and have nothing to do with the
+	// island, so they must NOT have been zeroed along with it — which is
+	// what a blanket "return an empty ScreenSize" would do.
+	if _, ok := sz["cellWidth"]; !ok {
+		t.Errorf("the collapsed answer dropped cellWidth: %v", sz)
+	}
+
+	if txt := guest.ok("screen_text", nil); txt != "" {
+		t.Errorf("a collapsed island renders %q; it crops to nothing", txt)
+	}
+	if txt := guest.ok("screen_text", map[string]any{"styled": true}); txt != "" {
+		t.Errorf("a collapsed island renders %q styled; both forms crop to nothing", txt)
+	}
 }
 
 // TestATreeSnapshotBoundIsAlreadyAbsolute is the other half of the
@@ -668,21 +773,7 @@ func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
 // conversion walks off the bottom and must be refused. Raised in review
 // of #504.
 func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
-	mine := prop.NewSource("m0")
-	secret := prop.NewSource("hunter2")
-	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
-		"Mine": map[string]any{"Body": mine},
-		"Host": map[string]any{"Secret": secret},
-	})
-	gs, err := New(app, Options{
-		Context: app.ctx,
-		Timeout: 5 * time.Second,
-		Grant:   control.Island("Mine", "Mine"),
-	})
-	if err != nil {
-		t.Fatalf("New (guest): %v", err)
-	}
-	guest := newClient(t, gs)
+	guest := islandGuest(t, islandOffOriginMarkup, "Mine")
 
 	sz := guest.json("screen_size", nil)
 	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
