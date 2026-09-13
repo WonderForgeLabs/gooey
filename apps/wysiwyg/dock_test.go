@@ -45,7 +45,12 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
+		// Text(), NOT .Rune: a continuation cell — the second column of
+		// a wide glyph — carries render.Continuation, and writing that
+		// rune out puts a literal marker in the row. CLAUDE.md names this
+		// helper's shape as the reason no fixture in six packages could
+		// hold a wide glyph and be asserted on. Raised in review of #502.
+		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
 	return strings.TrimRight(sb.String(), " ")
 }

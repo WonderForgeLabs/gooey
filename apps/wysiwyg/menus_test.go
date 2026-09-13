@@ -212,15 +212,6 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 // TestTheCheckBoxIsDrawn — the state has to be VISIBLE, in the cell
 // plane, or a pty transcript can never show it.
 //
-// THE ENVIRONMENT IS STATED, NOT INHERITED, and that is #477 rather than
-// tidiness: the $EDITOR row's text resolves the program, so a test that
-// sets nothing asserts against whatever the developer happened to export
-// — green on their machine, red on the next one. It is the same defect
-// #463 shipped, one variable over from the $TMUX/$STY doors #467 closed.
-// `/usr/bin/env -i` is the value the sibling test uses, for the same
-// reason: it exists on any machine that can run this suite, and it
-// resolves to the basename "env".
-//
 // AND THE ASSERTIONS ARE PER ROW. They were a Contains over nineteen
 // joined rows, which cannot say WHICH row carries the box — a menu that
 // drew the item twice, or put the box on its neighbour, passed. The
@@ -231,24 +222,8 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 // which tells "[x] " (wrong state), "[ ] " (right) and "    " (no box at
 // all) apart by their text instead of by their absence.
 func TestTheCheckBoxIsDrawn(t *testing.T) {
-	t.Setenv("EDITOR", "/usr/bin/env -i")
-	ed, root := buildPage(t)
-	c := gooey.NewComposer(root, 150, 44)
-	c.Frame()
-	settle(t, c)
+	dropdown := viewMenuRows(t, codeBuiltin)
 
-	bar := theMenuBar(t, ed)
-	i, _ := menuNamed(t, bar, "View")
-	ed.codeView.Set(codeBuiltin)
-	bar.Open(i, nil)
-	settle(t, c)
-	f, _ := c.Frame()
-
-	b := bar.Bounds()
-	var dropdown []string
-	for y := b.Y + 1; y < b.Y+20 && y < 44; y++ {
-		dropdown = append(dropdown, rowText(f, y, 0, 60))
-	}
 	if got := boxBefore(t, dropdown, "Built in"); got != "[x] " {
 		t.Errorf("the \"Built in\" row carries %q in front of its label, want a checked "+
 			"\"[x] \"; the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
@@ -261,37 +236,28 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 	}
 }
 
-// TestTheCheckBoxFollowsTheSelection is the other half, and it is what
-// makes the test above fireable. A pair of assertions that only ever run
-// against one selection cannot tell "the box is drawn from the state"
-// from "the box is a constant in the template": both rows would read the
-// same on every frame and both tests would pass. Flipping the selection
-// swaps which row carries "[x] ", so a constant fails here by
-// construction.
+// TestTheCheckBoxFollowsTheSelection is the other half, and it is
+// STRONGER than this comment used to claim.
 //
-// Measured rather than assumed: with the selection flipped and the
-// EXPECTATIONS left as the built-in case, both arms below fail — "[x] "
-// against a $EDITOR row reading "[ ] " and the reverse. That is the
-// mutation this test exists to catch.
+// It said a single selection could not tell "drawn from the state" from
+// "a constant in the template". That is not so: a global constant is
+// already caught by the test above, which asserts "[x] " on one row and
+// "[ ] " on another IN THE SAME FRAME. Overstating what a test catches
+// is how the next reader comes to believe a case is covered when it is
+// not, so the real answer, measured by mutating Menu.checkBox to a
+// PER-ITEM constant that ignores it.Checked:
+//
+//	--- PASS: TestTheCheckBoxIsDrawn
+//	--- FAIL: TestTheCheckBoxFollowsTheSelection
+//
+// So what this buys is the two mutations one frame cannot reach: a
+// per-item constant, and an item bound to the WRONG
+// *prop.Property[bool]. Neither this test nor
+// TestTheCheckAndTheAcceleratorAreOneState covers those otherwise.
+// Raised in review of #502.
 func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
-	t.Setenv("EDITOR", "/usr/bin/env -i")
-	ed, root := buildPage(t)
-	c := gooey.NewComposer(root, 150, 44)
-	c.Frame()
-	settle(t, c)
+	dropdown := viewMenuRows(t, codeExternal)
 
-	bar := theMenuBar(t, ed)
-	i, _ := menuNamed(t, bar, "View")
-	ed.codeView.Set(codeExternal)
-	bar.Open(i, nil)
-	settle(t, c)
-	f, _ := c.Frame()
-
-	b := bar.Bounds()
-	var dropdown []string
-	for y := b.Y + 1; y < b.Y+20 && y < 44; y++ {
-		dropdown = append(dropdown, rowText(f, y, 0, 60))
-	}
 	if got := boxBefore(t, dropdown, "$EDITOR"); got != "[x] " {
 		t.Errorf("with $EDITOR selected its row carries %q, want \"[x] \"; the row reads %q",
 			got, dropdownRow(t, dropdown, "$EDITOR"))
@@ -300,6 +266,77 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want \"[ ] \"; "+
 			"the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
 	}
+}
+
+// viewMenuRows opens the View menu with the code viewer set to which,
+// and returns the dropdown's own rows — its interior, one string per
+// row, border excluded.
+//
+// THE WINDOW IS THE MENU'S, and that is the point of the helper rather
+// than the fourteen duplicated lines it replaces. Both tests read
+// `rowText(f, y, 0, 60)` for nineteen rows below the bar, which is a
+// 60x19 slab of the PAGE: the explorer pane, the "EDITOR" pane title,
+// the tools palette and the tab strip are all inside it. dropdownRow's
+// "exactly one" is then an assertion about the whole screen, and the day
+// any other pane renders "Built in" or "$EDITOR" it fails and blames the
+// menu for a change somewhere else. The helper's own doc comment
+// conceded one instance of the leak and worked around it by requiring
+// the dollar; the leak is general.
+//
+// MenuBar.DropdownBounds() is the rect the menu actually painted into,
+// and clipping to it also makes boxBefore's third answer real: with the
+// page's border out of the window, a row with no check box returns four
+// spaces instead of the border glyph plus one.
+//
+// THE ENVIRONMENT IS STATED, NOT INHERITED — but not for the reason
+// this comment used to give, and the correction is worth keeping because
+// the old reason was the same class of defect the negative arm below is
+// indicted for.
+//
+// It said the old test was "green on their machine, red on the next
+// one". It was not, and a reviewer measured it: editorItemText renders
+// `$EDITOR (…)`, so the substring the old arm searched for is a CONSTANT
+// PREFIX and the resolved program only ever appears inside the
+// parentheses, which no old arm read. Replayed under six values of
+// $EDITOR — unset, vim, `/usr/bin/env -i`, an uninstalled name, a long
+// path and `emacsclient -nw -a ”` — all three pre-PR arms returned
+// identical booleans every time.
+//
+// What the Setenv is actually for: the diagnostics below QUOTE the row,
+// so without it the failure message differs per machine, and the
+// assertion has to survive a future label that does interpolate the
+// program name — which is the direction #477 is pushing this row in.
+// resolveEditor reads only EDITOR (no VISUAL fallback), so setting the
+// one variable really does pin the label. `/usr/bin/env -i` is the value
+// the sibling test uses: it exists on any machine that can run this
+// suite, and it resolves to the basename "env". Raised in review of #502.
+func viewMenuRows(t *testing.T, which int) []string {
+	t.Helper()
+	// BEFORE buildPage, which is where resolveEditor runs — and here
+	// rather than in each test, so the two callers cannot drift.
+	t.Setenv("EDITOR", "/usr/bin/env -i")
+	ed, root := buildPage(t)
+	c := gooey.NewComposer(root, 150, 44)
+	c.Frame()
+	settle(t, c)
+
+	bar := theMenuBar(t, ed)
+	i, _ := menuNamed(t, bar, "View")
+	ed.codeView.Set(which)
+	bar.Open(i, nil)
+	settle(t, c)
+	f, _ := c.Frame()
+
+	d := bar.DropdownBounds()
+	if d.W <= 2 || d.H <= 2 {
+		t.Fatalf("the open View menu reports bounds %v; nothing was painted, so "+
+			"every assertion below would be about an empty window", d)
+	}
+	var rows []string
+	for y := d.Y + 1; y < d.Y+d.H-1; y++ {
+		rows = append(rows, rowText(f, y, d.X+1, d.W-2))
+	}
+	return rows
 }
 
 // dropdownRow returns the ONE row of an open menu whose text contains
@@ -335,16 +372,29 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // distinct failure from "[x] ": one is a missing box, the other is the
 // wrong state, and a negative Contains reports both as the same thing
 // while also passing when the label has moved somewhere the search never
-// looked.
+// looked. It is a REACHABLE answer now — the "Next Pane" row of this
+// same menu returns exactly that — which it was not while the window
+// included the page's border, where an unboxed label's four preceding
+// bytes were the border glyph plus a space.
+//
+// RUNES, NOT BYTES, and no false pass was ever possible: "[x] " and
+// "[ ] " are ASCII, and an ASCII byte cannot be part of a multi-byte
+// UTF-8 sequence, so a four-BYTE window equal to either really was four
+// ASCII cells. What byte slicing broke was the diagnostic, precisely
+// when the test finally fires — a label at an odd offset cut a box-
+// drawing rune in half and %q printed "\xe2\x94\x82 ". Raised in review
+// of #502.
 func boxBefore(t *testing.T, rows []string, want string) string {
 	t.Helper()
 	row := dropdownRow(t, rows, want)
-	i := strings.Index(row, want)
+	r := []rune(row)
+	i := len([]rune(row[:strings.Index(row, want)]))
 	if i < 4 {
-		t.Fatalf("%q starts at column %d of %q, with no room for a check box in front of it",
-			want, i, row)
+		t.Fatalf("%q starts at cell %d of %q, with no room for a check box in front "+
+			"of it — which is how a row with no box at all reads when the label sits "+
+			"within four cells of the start", want, i, row)
 	}
-	return row[i-4 : i]
+	return string(r[i-4 : i])
 }
 
 // TestEditorLabelResolvesTheProgram is the second thing that was
