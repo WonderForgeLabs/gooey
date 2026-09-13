@@ -663,12 +663,12 @@ func (ed *editor) pasteMarkup(src string) {
 		}
 	}
 	if err != nil {
-		// nodeOf's messages are written for SEEDS, which is this repo's
-		// own markup, so they say "seed" where a user needs "pasted
-		// markup". Re-labelled here rather than by adding a noun
-		// parameter to nodeOf, whose other caller genuinely is a seed.
-		ed.status.Set("✗ pasted text is not markup: " +
-			strings.Replace(err.Error(), "seed ", "pasted markup ", 1))
+		// The NOUN IS THIS CALLER'S, and it used to be patched into
+		// nodeOf's message with a strings.Replace of "seed " — which
+		// silently did nothing to the one refusal that never said it.
+		// nodeOf's messages name what is wrong and leave the noun here
+		// (review of #501).
+		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
 	ed.insertSubtree(n, "pasted markup:")
@@ -688,10 +688,17 @@ func (ed *editor) pasteMarkup(src string) {
 // (mutation-checked). The reason is narrower and real: the round trip is
 // a second parse that can FAIL, and a failure there would report a paste
 // as unparseable after it had already parsed once.
+// THE ENVELOPE'S DECLARATIONS COME WITH IT. <Gooey> is where a saved
+// document carries its xmlns — the CODE tab emits exactly that — so
+// dropping the envelope dropped the declarations, and #472's own bug
+// survived through paste while the open path had been fixed. The rule
+// lives in carryDeclarations (main.go) because openWorkspaceFile does
+// the same unwrap. Raised in review of #501.
 func unwrapGooey(n *node) (*node, bool) {
 	if n.Elem != "Gooey" || len(n.Kids) != 1 || len(n.Slots) != 0 {
 		return nil, false
 	}
+	carryDeclarations(n, n.Kids[0])
 	return n.Kids[0], true
 }
 

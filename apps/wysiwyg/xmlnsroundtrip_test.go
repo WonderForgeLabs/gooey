@@ -101,7 +101,7 @@ func TestReopeningTheRebuiltSourceIsStable(t *testing.T) {
 	// ed.source.Get() to a second file with os.WriteFile until review of
 	// #501 pointed out that a save does not write ed.source at all:
 	// saveOpenFile (browser.go:424) builds its OWN "<Gooey>\n" + doc +
-	// "</Gooey>\n" string, independently of rebuild's (main.go:2287),
+	// "</Gooey>\n" string, independently of rebuild's (main.go:2307),
 	// and nothing crossed the two. So of the four legs this PR claims —
 	// read, write, save, reopen — the save was the one no test touched,
 	// and an edit to either literal that dropped the declaration on the
@@ -318,5 +318,56 @@ func TestTheDesignerRefusesADocumentTheLoaderRefuses(t *testing.T) {
 		t.Errorf("the designer opened a document markup.Build refuses: %q. The "+
 			"carry-down is what makes the two agree — dropping the declaration "+
 			"made an unloadable document loadable in the editor only", got)
+	}
+}
+
+// TestAPastedEnvelopeCarriesItsDeclarations is the same bug through the
+// other unwrap, and it is the one this PR left open until review of
+// #501.
+//
+// The CODE tab hands you a whole document, envelope and all — copying
+// out of this editor and pasting back in is the round trip a user takes
+// without thinking about it. unwrapGooey threw the envelope away and
+// with it every xmlns on it, so the pasted subtree reached the canvas
+// with an undeclared prefix and was refused: #472's own symptom,
+// reported against markup the editor had just written.
+//
+// The document opened first declares NOTHING, so the declaration under
+// test can only have come down from the pasted envelope. Pasting into a
+// document that already declared the prefix would pass whether or not
+// the carry works.
+func TestAPastedEnvelopeCarriesItsDeclarations(t *testing.T) {
+	const uri = "urn:gooey:test:472:paste"
+	handlerNS(t, uri)
+
+	root := workspaceFixture(t)
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("main.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the plain fixture reports %q, want a build", got)
+	}
+	if src := ed.source.Get(); strings.Contains(src, uri) {
+		t.Fatalf("the opened document already declares the namespace, so the "+
+			"paste below would prove nothing:\n%s", src)
+	}
+
+	ed.pasteMarkup(`<Gooey xmlns:t="` + uri + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go" Click="{{t:Fire}}"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	if got := ed.status.Get(); strings.HasPrefix(got, "✗") {
+		t.Fatalf("pasting a document that declares its own handler namespace "+
+			"reports %q — the envelope's declaration was dropped with the "+
+			"envelope, so the canvas refused the expression it came with", got)
+	}
+	if ed.docRoot == nil {
+		t.Error("the status is not a refusal but no tree was swapped in")
+	}
+	// THE SOURCE, not just the screen: a paste that builds from a
+	// declaration the save would drop is a document that dies on reopen.
+	if src := ed.source.Get(); !strings.Contains(src, uri) {
+		t.Errorf("the rebuilt source does not declare the pasted namespace:\n%s", src)
 	}
 }

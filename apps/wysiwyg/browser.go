@@ -362,38 +362,11 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
 			return
 		}
-		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT.
-		// <Gooey> is not a node — it is re-emitted as a literal by
-		// ed.rebuild — so a declaration left on it is discarded by the
-		// unwrap below, which is the half of #472 that survived nodeOf
-		// keeping them. Saved documents put xmlns on the envelope,
-		// because that is where markup's error tells the author to put
-		// it, so this is the spelling the editor must read.
-		//
-		// THE CHILD'S OWN DECLARATION IS LEFT ALONE, and the reason is
-		// not XML subtree scoping — markup.parse keeps one flat,
-		// document-wide ns map and takes the LAST declaration of a
-		// prefix in document order (markup/markup.go:949). The envelope
-		// is parsed before its child, so last-wins and child-wins give
-		// the same answer for every document this path sees; not
-		// overwriting is what keeps the editor agreeing with the loader
-		// about which URI a prefix has. Corrected in review of #501,
-		// which measured the loader rather than reading the comment.
-		//
-		// THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits
-		// "xmlns" and "xmlns:"+local (main.go:752, main.go:756) and
-		// nothing else, while HasPrefix(k, "xmlns") also matches a
-		// plain attribute spelled xmlnsFoo — which would be copied onto
-		// the user's root and turn an envelope-level mistake into an
-		// unknown-attribute error reported against the child.
-		for k, v := range n.Attrs {
-			if k != "xmlns" && !strings.HasPrefix(k, "xmlns:") {
-				continue
-			}
-			if _, ok := n.Kids[0].Attrs[k]; !ok {
-				n.Kids[0].Attrs[k] = v
-			}
-		}
+		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT, and
+		// the rule for doing that is carryDeclarations (main.go) rather
+		// than a loop here: paste unwraps an envelope too, and this was
+		// the only one of the two that carried anything.
+		carryDeclarations(n, n.Kids[0])
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}

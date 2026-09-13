@@ -669,6 +669,49 @@ func (n *node) markup(indent string) string {
 	return b.String()
 }
 
+// carryDeclarations copies a <Gooey> envelope's namespace declarations
+// onto the document root about to be promoted in its place.
+//
+// The envelope is NOT a node — ed.rebuild re-emits it as a literal
+// (main.go:2307) — so a declaration left on it is discarded by the
+// unwrap, which is the half of #472 that survived nodeOf keeping them.
+// Saved documents put xmlns on the envelope, because that is where
+// markup's error tells the author to put it, so this is the spelling
+// the editor has to read.
+//
+// THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
+// subtree scoping — markup.parse keeps one flat, document-wide ns map
+// and takes the LAST declaration of a prefix in document order
+// (markup/markup.go:949). The envelope is parsed before its child, so
+// last-wins and child-wins give the same answer for every document
+// these paths see; not overwriting is what keeps the editor agreeing
+// with the loader about which URI a prefix has.
+//
+// THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits "xmlns" and
+// "xmlns:"+local (main.go:752, main.go:756) and nothing else, while
+// HasPrefix(k, "xmlns") also matches a plain attribute spelled
+// xmlnsFoo — which would be copied onto the user's root and turn an
+// envelope-level mistake into an unknown-attribute error reported
+// against the child.
+//
+// ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
+// this inline and unwrapGooey (clipboard.go) had nothing, so #472
+// survived through paste: the CODE tab's own output, copied whole and
+// pasted back, lost its prefixes and the canvas refused the handler
+// expression it had just rendered. A fix applied at one of two
+// identical seams is the shape that leaves the other one open. Raised
+// in review of #501.
+func carryDeclarations(env, root *node) {
+	for k, v := range env.Attrs {
+		if k != "xmlns" && !strings.HasPrefix(k, "xmlns:") {
+			continue
+		}
+		if _, ok := root.Attrs[k]; !ok {
+			root.Attrs[k] = v
+		}
+	}
+}
+
 // nodeOf parses markup into the editor's document model — a palette
 // seed's, and since #472 a USER'S DOCUMENT too.
 //
@@ -692,7 +735,15 @@ func (n *node) markup(indent string) string {
 // anything surprising in one is a bug in the seed and must surface as
 // an error the palette can show — not as a node tree that quietly
 // dropped half of it, which is the failure mode the whole catalog
-// effort exists to delete.
+// effort exists to delete. The strictness is right for a user's file
+// too; only the WORDING had to change. Five of the six refusals below
+// began "seed …", which is this repo's word for its own palette markup
+// and means nothing to someone who just opened a document — "seed does
+// not parse" for a file the user wrote. They now name the thing that is
+// wrong and leave the noun to the caller, which already supplies one:
+// the browser prefixes the path, paste prefixes "pasted text is not
+// markup", and the palette prefixes "<Button>". Raised in review of
+// #501.
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
@@ -703,7 +754,7 @@ func nodeOf(src string) (*node, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("seed does not parse: %w", err)
+			return nil, fmt.Errorf("markup does not parse: %w", err)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -782,7 +833,7 @@ func nodeOf(src string) (*node, error) {
 			}
 		case xml.EndElement:
 			if len(stack) == 0 {
-				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
+				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
@@ -802,13 +853,13 @@ func nodeOf(src string) (*node, error) {
 			// — which is a structured attribute, not a child.
 			if owner, slot, ok := strings.Cut(n.Elem, "."); ok {
 				if owner != p.Elem {
-					return nil, fmt.Errorf("seed has <%s> inside <%s>", n.Elem, p.Elem)
+					return nil, fmt.Errorf("<%s> is inside <%s>, and a property element belongs to the element it names", n.Elem, p.Elem)
 				}
 				if p.Slots == nil {
 					p.Slots = map[string]*node{}
 				}
 				if len(n.Kids) != 1 {
-					return nil, fmt.Errorf("seed slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
+					return nil, fmt.Errorf("slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
 				}
 				p.Slots[slot] = n.Kids[0]
 				continue
@@ -817,7 +868,7 @@ func nodeOf(src string) (*node, error) {
 		}
 	}
 	if root == nil {
-		return nil, fmt.Errorf("seed has no root element")
+		return nil, fmt.Errorf("no root element")
 	}
 	return root, nil
 }

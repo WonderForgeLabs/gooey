@@ -54,7 +54,7 @@ func TestNodeOfRejectsMalformedSeeds(t *testing.T) {
 			// shape this whole PR is about.
 			name: "unbalanced end tag (caught by the decoder, not by nodeOf)",
 			src:  `<Text>hi</Text></Text>`,
-			want: "seed does not parse",
+			want: "markup does not parse",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
