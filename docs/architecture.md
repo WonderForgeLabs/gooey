@@ -665,8 +665,14 @@ One function answers this for both paint paths. `overlayOf` in
 ([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Before
 that the one-shot path had never implemented the rule at all, so the two
 exported paint paths answered "what is on top" differently. The
-mouse-side paragraph below carries the same rule and the warning that
-hit-testing does not share it.
+mouse-side paragraph below carries the same rule — and since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) it is the
+SAME rule rather than a warning that hit-testing does not share it:
+`hitTest` asks `overlayOf` too, so all three walks answer "what is on
+top" alike. This sentence still said hit-testing was left out, three
+paragraphs above the mouse-side one that says it is not — the
+contradiction a reader resolves by believing whichever they read first.
+Raised in review of #458.
 
 The paint loop forces a repaint of every node above a rect somebody
 below just painted — the

@@ -1,9 +1,11 @@
 package gooey
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -305,54 +307,77 @@ func forkCycle() *forkbox {
 // finishes in microseconds and a broken one never finishes, so any
 // threshold between those separates them.
 //
-// ON THE FAILURE THIS LEAKS THE GOROUTINE, and that cost is recorded
-// here rather than hidden because it is this file's standard everywhere
-// else. t.Fatal ends the TEST; the walk keeps going toward
-// 2^MaxLayoutDepth visits for the rest of the package run, pinning a core
-// while TestNoFileTeachesTheRetiredOverlayRule is fanning out to
-// GOMAXPROCS — on pools CLAUDE.md describes as shared with production
-// workloads and not autoscaling. There is no clean cancel: HitTest takes
-// no context and the abort it would need is the very thing under test, so
-// a cancellable variant would be a second implementation of the fix
-// asserting itself. The leak is therefore accepted, bounded by the
-// package run, and paid only on a red — which is a run somebody is
-// already looking at. Raised in review of #458.
+// IT RUNS IN A CHILD PROCESS, and the reason is not the CPU. A goroutine
+// abandoned by t.Fatal keeps walking toward 2^MaxLayoutDepth visits —
+// that much was recorded here before — but the cost that matters is what
+// it TOUCHES on the way: noteLayoutFaultAt writes the package-level
+// layoutFault, which is deliberately unlocked because layout runs on the
+// UI goroutine and nowhere else (layout.go). Every sibling in this
+// package reads and clears that same variable through TakeLayoutFault.
+// So the failure path left a second goroutine writing a global that the
+// rest of the run depends on: a sibling could fail for a fault it never
+// caused, and under -race the write is a race report on top of the real
+// failure. A test whose RED can corrupt its neighbours is worse than the
+// leak it was documented as.
+//
+// There is no clean cancel — HitTest takes no context, and the abort it
+// would need is the very thing under test, so a cancellable variant
+// would be a second implementation of the fix asserting itself. A child
+// process is the cancel: on the bug it hangs, this process kills it, and
+// nothing it wrote was ever in this address space. Raised in review of
+// #458.
 func TestHitTestOnABranchingCycleTerminates(t *testing.T) {
+	if os.Getenv(cycleChildEnv) == "1" {
+		hitTestTheCycleOrHang()
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHitTestOnABranchingCycleTerminates$",
+		"-test.timeout=60s")
+	cmd.Env = append(os.Environ(), cycleChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	// The child exits 0 having asserted for itself; every other outcome
+	// is this test's to report, and a KILLED child is the bug.
+	if err != nil {
+		t.Fatalf("HitTest did not return on a container that is its own child "+
+			"twice, or answered wrongly. MaxLayoutDepth bounds depth, and the "+
+			"ranked walk visits every branch, so the cost is 2^MaxLayoutDepth "+
+			"visits rather than MaxLayoutDepth — the cap fires, records a "+
+			"fault, and the walk keeps going in the sibling.\n%v\n%s", err, out)
+	}
+}
+
+const cycleChildEnv = "GOOEY_HITTEST_CYCLE_CHILD"
+
+// hitTestTheCycleOrHang is the assertion itself, run only in the child.
+// It walks a cyclic tree that the fix must refuse; on the bug it never
+// returns and the parent's exec kills it.
+func hitTestTheCycleOrHang() {
 	root := forkCycle()
 	root.Base.Arrange(Rect{0, 0, 8, 2})
 	m := NewFocusManager(root)
 	TakeLayoutFault() // NewFocusManager walks; Focus is not under test
 
-	done := make(chan Component, 1)
-	go func() { done <- m.HitTest(1, 1) }()
-
-	select {
-	case got := <-done:
-		// AND IT ANSWERS NOTHING. A walk that gave up visited a prefix
-		// of the tree, and under ranking a prefix is not a subset of the
-		// answer — an unvisited node can out-rank everything in hand. So
-		// the partial best is not a worse answer, it is a different
-		// question, and DispatchMouse would route a press to it without
-		// consulting the fault. Raised in review of #458.
-		if got != nil {
-			t.Errorf("HitTest returned %T from an aborted walk; a walk that "+
-				"refused the tree has no answer", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("HitTest did not return on a container that is its own child " +
-			"twice. MaxLayoutDepth bounds depth, and the ranked walk visits " +
-			"every branch, so the cost is 2^MaxLayoutDepth visits rather than " +
-			"MaxLayoutDepth — the cap fires, records a fault, and the walk " +
-			"keeps going in the sibling")
+	// AND IT ANSWERS NOTHING. A walk that gave up visited a prefix of the
+	// tree, and under ranking a prefix is not a subset of the answer — an
+	// unvisited node can out-rank everything in hand. So the partial best
+	// is not a worse answer, it is a different question, and
+	// DispatchMouse would route a press to it without consulting the
+	// fault. Raised in review of #458.
+	if got := m.HitTest(1, 1); got != nil {
+		fmt.Printf("HitTest returned %T from an aborted walk; a walk that "+
+			"refused the tree has no answer\n", got)
+		os.Exit(3)
 	}
-
 	f := TakeLayoutFault()
 	if f == nil {
-		t.Fatal("no LayoutFault recorded, so the walk terminated for some other " +
-			"reason than refusing the cycle")
+		fmt.Println("no LayoutFault recorded, so the walk terminated for some " +
+			"other reason than refusing the cycle")
+		os.Exit(4)
 	}
 	if f.Phase != "HitTest" {
-		t.Errorf("fault phase %q, want HitTest", f.Phase)
+		fmt.Printf("fault phase %q, want HitTest\n", f.Phase)
+		os.Exit(5)
 	}
 }
 

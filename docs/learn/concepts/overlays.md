@@ -201,7 +201,7 @@ being true of the cells and not of the pointer — was true for as long as
 the hit walk read document order alone. It no longer does: it asks
 `overlayOf` and the same ranks paint asks, so two overlapping overlays
 cannot answer the two questions differently.
-`gooey.TestARankOrdersPaintAndNotHitTesting` is what holds that down,
+`gooey.TestARankOrdersHitTestingAsWellAsPaint` is what holds that down,
 and it fails by name if the walk ever goes back.
 
 ## An overlay pinned to the pointer, not the tree

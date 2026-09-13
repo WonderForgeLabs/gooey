@@ -204,10 +204,17 @@ func (m *FocusManager) HitTest(x, y int) Component {
 		// walk still answered. That is gone with the early exit, and
 		// pretending otherwise is what a partial return would do.
 		//
-		// Costs nothing on a legal tree: the cap never fires on one,
-		// and a tree that fires it is one Composer.build refuses. Read
-		// the report with Composer.LayoutFault. Raised in review of
-		// #458.
+		// Costs nothing on a legal tree: the cap never fires on one.
+		// What keeps a live composition off this branch is NOT
+		// Composer.build — build bounds by IDENTITY, so it refuses a
+		// control that includes itself and says nothing about depth.
+		// Depth is bounded by MeasureChild and ArrangeChild, which cap
+		// at MaxLayoutDepth (layout.go), so a tree deep enough to abort
+		// this walk has already failed to lay out. Citing build for it
+		// named the wrong mechanism, which is worse than naming none:
+		// somebody changing build's identity bound would read this as
+		// covering the walk. Read the report with Composer.LayoutFault.
+		// Raised in review of #458.
 		return nil
 	}
 	return best.w
@@ -544,7 +551,22 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// result after the contract that had just been retired. No guard
 	// reaches it: they all scan prose, and an identifier is not prose.
 	// Raised in review of #478.
-	under := m.HitTest(ev.X, ev.Y)
+	// NO WALK WHEN NOTHING READS IT. A captured MouseMove is a drag, and
+	// a drag routes to the captor: target() returns m.captor whatever the
+	// hit is, and the hover update below is skipped while captured. So
+	// every motion event of every drag paid for a full HitTest whose two
+	// results were both discarded — and the walk got dearer with #465,
+	// which took away the early exit on the first hit so that ranks could
+	// be compared across the whole tree.
+	//
+	// The skip is exactly the case where both consumers are dead, and
+	// nothing else changes: frozenHostFor(nil) is nil, and target(nil)
+	// with a captor is the captor. TestADragDoesNotWalkTheTreeOnEveryMove
+	// pins it by counting the walk. Raised in review of #458.
+	var under Component
+	if ev.Kind != input.MouseMove || m.captor == nil {
+		under = m.HitTest(ev.X, ev.Y)
+	}
 	hit := m.frozenHostFor(under, AllowPointer)
 	hov := m.frozenHostFor(under, AllowHover)
 	// Every kind carries a position, so every kind updates it — a drag

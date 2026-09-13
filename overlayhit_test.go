@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -528,5 +529,90 @@ func TestTheHitWalkAllocatesNothing(t *testing.T) {
 		t.Errorf("HitTest allocated %v times per call, want 0. It runs on every motion "+
 			"report — ?1003h sends one per cell crossed — so per-event garbage here is "+
 			"paid on every pointer move across the screen", n)
+	}
+}
+
+// countingBox reports how many times something asked it for its
+// children, which is the only way from outside the package to tell
+// whether a hit walk ran at all. Every walk in the framework goes
+// through ChildComponents, so the count is only meaningful as a DELTA
+// around one call with no frame in between.
+type countingBox struct {
+	Base
+	kids  []Component
+	walks int
+}
+
+func (c *countingBox) ChildComponents() []Component { c.walks++; return c.kids }
+func (c *countingBox) Render(*Frame)                {}
+func (c *countingBox) Measure(avail Size) Size      { return avail }
+func (c *countingBox) Arrange(b Rect) {
+	c.Base.Arrange(b)
+	for _, k := range c.kids {
+		ArrangeChild(k, b)
+	}
+}
+
+// dragSink is a captor that records the motion events it is routed.
+type dragSink struct {
+	stripe
+	moves int
+}
+
+func (d *dragSink) HandleMouseMove(input.MouseEvent) bool { d.moves++; return true }
+
+// TestADragDoesNotWalkTheTreeOnEveryMove is the cost #465 added, paid on
+// the one path that cannot use the result.
+//
+// A captured MouseMove is a drag, and a drag routes to the captor:
+// target() returns m.captor whatever the hit is, and the hover update is
+// skipped while captured. So both consumers of the walk are dead — and
+// the walk itself got dearer with #465, which took away the early exit
+// on the first hit so ranks could be compared across the whole tree.
+// ?1003h sends one motion report per cell crossed, so this is a
+// whole-tree walk per cell of every drag, for an answer nothing reads.
+//
+// THE DELTA, NOT THE TOTAL, and no frame between the two measurements:
+// Compose, layout and focus all walk ChildComponents too, so an absolute
+// count would be measuring the framework rather than this dispatch.
+//
+// The uncaptured arm is the non-vacuity floor. Without it a DispatchMouse
+// that had stopped walking entirely — or a fixture the walk never
+// reaches — would satisfy the captured arm and look like the
+// optimization working. Raised in review of #458.
+func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
+	sink := &dragSink{stripe: stripe{ch: 'S'}}
+	box := &countingBox{kids: []Component{sink}}
+	c := NewComposer(box, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
+	m := NewFocusManager(box)
+
+	move := input.MouseEvent{Kind: input.MouseMove, X: 0, Y: 0}
+
+	before := box.walks
+	m.DispatchMouse(move)
+	if box.walks == before {
+		t.Fatalf("an UNCAPTURED move asked the tree for its children %d times, "+
+			"want more than 0 — the walk this test is about does not reach this "+
+			"fixture, so the captured arm below would pass over nothing",
+			box.walks-before)
+	}
+
+	if !m.CaptureMouse(sink) {
+		t.Fatal("the captor refused the capture, so the arm below is not a drag")
+	}
+	before = box.walks
+	moves := sink.moves
+	m.DispatchMouse(move)
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a CAPTURED move walked the tree %d times for a hit nothing "+
+			"reads: target() answers with the captor and the hover update is "+
+			"skipped while captured, so every cell crossed in every drag pays "+
+			"for a whole-tree walk", n)
+	}
+	if sink.moves == moves {
+		t.Error("the captor was not routed the move, so skipping the walk changed " +
+			"the dispatch rather than only its cost")
 	}
 }
