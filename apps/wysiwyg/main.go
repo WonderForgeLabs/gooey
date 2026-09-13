@@ -673,7 +673,8 @@ func (n *node) markup(indent string) string {
 // onto the document root about to be promoted in its place.
 //
 // The envelope is NOT a node — ed.rebuild re-emits it as a literal
-// (main.go:2307) — so a declaration left on it is discarded by the
+// (the two envelope literals in ed.rebuild) — so a declaration left on
+// it is discarded by the
 // unwrap, which is the half of #472 that survived nodeOf keeping them.
 // Saved documents put xmlns on the envelope, because that is where
 // markup's error tells the author to put it, so this is the spelling
@@ -683,16 +684,37 @@ func (n *node) markup(indent string) string {
 // subtree scoping — markup.parse keeps one flat, document-wide ns map
 // and takes the LAST declaration of a prefix in document order
 // (markup/markup.go:949). The envelope is parsed before its child, so
-// last-wins and child-wins give the same answer for every document
-// these paths see; not overwriting is what keeps the editor agreeing
-// with the loader about which URI a prefix has.
+// for openWorkspaceFile last-wins and child-wins give the same answer;
+// not overwriting is what keeps the editor agreeing with the loader
+// about which URI a prefix has.
+//
+// THAT REASONING IS THE OPEN PATH'S AND DOES NOT CROSS TO PASTE, which
+// is the half this comment claimed for both call sites and had no right
+// to. unwrapGooey lands the declaration on a node INSIDE the open
+// document, later in document order than the root's own, so a pasted
+// prefix bound to a different URI wins for the whole document — every
+// expression already using it included. reconcileNamespaces
+// (clipboard.go) is where that is settled, before the subtree is
+// attached; this function's job is only to keep the envelope's
+// declaration from being lost with the envelope. Raised in review of
+// #501.
 //
 // THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits "xmlns" and
-// "xmlns:"+local (main.go:752, main.go:756) and nothing else, while
+// "xmlns:"+local (the two `continue` arms in nodeOf's attribute loop)
+// and nothing else, while
 // HasPrefix(k, "xmlns") also matches a plain attribute spelled
 // xmlnsFoo — which would be copied onto the user's root and turn an
 // envelope-level mistake into an unknown-attribute error reported
 // against the child.
+//
+// CITED BY SYMBOL, NOT BY LINE, and that is a measurement about this
+// file rather than a style: every self-referencing line number added in
+// the round before this one was stale by the next commit, because the
+// commit that added this function shifted main.go by 51 lines and
+// nothing in the suite checks a citation inside a Go comment
+// (claudemd_test.go and specclaims_test.go cover CLAUDE.md and
+// docs/specs/). A citation into the file you are currently growing is
+// the one that rots first. Raised in review of #501.
 //
 // ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
 // this inline and unwrapGooey (clipboard.go) had nothing, so #472
@@ -715,8 +737,8 @@ func carryDeclarations(env, root *node) {
 // nodeOf parses markup into the editor's document model — a palette
 // seed's, and since #472 a USER'S DOCUMENT too.
 //
-// It reads for openWorkspaceFile (browser.go:350) and for paste
-// (clipboard.go:659), which is why its strictness and its error wording
+// It reads for openWorkspaceFile (browser.go) and for pasteMarkup
+// (clipboard.go), which is why its strictness and its error wording
 // are a user-facing surface rather than an internal check on this
 // repo's own seeds: it is now the load-bearing reader for namespace
 // declarations in files somebody else wrote. The doc below described
@@ -822,7 +844,15 @@ func nodeOf(src string) (*node, error) {
 				// appearing is worth failing on rather than accepting
 				// into a model that cannot write it back out.
 				if a.Name.Space != "" {
-					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", a.Name.Local)
+					// NAMED THE WAY markup NAMES IT. This formatted
+					// a.Name.Local alone, so an author opening their own
+					// file was told `attribute "Thing" is namespaced`
+					// with no way to tell WHICH prefix — and the comment
+					// above claims this is the same answer markup's own
+					// parser gives, which formats {uri}local precisely
+					// so the attribute can be found. Raised in review of
+					// #501.
+					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", "{"+a.Name.Space+"}"+a.Name.Local)
 				}
 				n.Attrs[a.Name.Local] = a.Value
 			}

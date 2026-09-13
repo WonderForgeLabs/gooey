@@ -100,8 +100,8 @@ func TestReopeningTheRebuiltSourceIsStable(t *testing.T) {
 	// THROUGH THE SAVE PATH, not through ed.source. This wrote
 	// ed.source.Get() to a second file with os.WriteFile until review of
 	// #501 pointed out that a save does not write ed.source at all:
-	// saveOpenFile (browser.go:424) builds its OWN "<Gooey>\n" + doc +
-	// "</Gooey>\n" string, independently of rebuild's (main.go:2307),
+	// saveOpenFile builds its OWN "<Gooey>\n" + doc + "</Gooey>\n"
+	// string, independently of the one in rebuild,
 	// and nothing crossed the two. So of the four legs this PR claims —
 	// read, write, save, reopen — the save was the one no test touched,
 	// and an edit to either literal that dropped the declaration on the
@@ -247,7 +247,7 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 // TestTheUnprefixedDeclarationIsCarriedToo covers the SECOND of the two
 // shapes nodeOf writes, which every other test in this file misses.
 //
-// nodeOf (main.go:752, main.go:756) and the carry-down (browser.go:390) both accept
+// nodeOf's attribute loop and carryDeclarations both accept
 // exactly "xmlns" and "xmlns:"+local, and the decoy in
 // TestOnlyARealDeclarationComesDownFromTheEnvelope pins what is
 // REJECTED — leaving the plain form implemented twice and asserted
@@ -369,5 +369,109 @@ func TestAPastedEnvelopeCarriesItsDeclarations(t *testing.T) {
 	// declaration the save would drop is a document that dies on reopen.
 	if src := ed.source.Get(); !strings.Contains(src, uri) {
 		t.Errorf("the rebuilt source does not declare the pasted namespace:\n%s", src)
+	}
+}
+
+// TestAPastedConflictingDeclarationIsRefused is the hazard the carry
+// created, and it is newly reachable: before this branch the editor
+// could not hold two declarations of one prefix at all.
+//
+// markup.parse keeps ONE FLAT, document-wide prefix map and takes the
+// LAST declaration in document order. The envelope is parsed before its
+// child, so on the OPEN path carrying its declaration down is a no-op
+// either way — but a paste lands the envelope's declaration on a node
+// INSIDE the open document, later than the root's own. A pasted
+// `xmlns:t` whose URI differs therefore rebinds t for every expression
+// in the document, including ones the user never touched, and
+// saveOpenFile writes that to disk. Raised in review of #501.
+func TestAPastedConflictingDeclarationIsRefused(t *testing.T) {
+	const old, fresh = "urn:gooey:test:472:paste-old", "urn:gooey:test:472:paste-new"
+	handlerNS(t, old)
+	handlerNS(t, fresh)
+
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:t="` + old + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="Existing" Content="go" Click="{{t:Existing}}"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "conflict.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("conflict.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+
+	ed.pasteMarkup(`<Gooey xmlns:t="` + fresh + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("pasting a document that binds t to a DIFFERENT uri reports "+
+			"%q — the paste was accepted, so every {{t:…}} already in the "+
+			"document now resolves through the pasted provider", got)
+	}
+	if got := ed.status.Get(); !strings.Contains(got, "t") || !strings.Contains(got, fresh) {
+		t.Errorf("the refusal is %q, which does not name the prefix and the uri "+
+			"it would have been rebound to — the one thing the author needs to "+
+			"act on it", got)
+	}
+	// THE DOCUMENT, not just the status: a refusal that reported itself
+	// and mutated anyway is the failure mode insertSubtree's revert-on-a
+	// -failed-rebuild exists for.
+	src := ed.source.Get()
+	if strings.Contains(src, fresh) {
+		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+	}
+	if !strings.Contains(src, old) {
+		t.Errorf("the document lost its OWN declaration to a refused paste:\n%s", src)
+	}
+}
+
+// TestARedundantPastedDeclarationIsDropped is the benign half of the
+// same missing step. Copying a button out of the CODE tab and pasting it
+// ten times left ten redundant xmlns:t attributes in the user's file —
+// every one of them agreeing with the root's, and every one of them
+// noise the author did not write.
+func TestARedundantPastedDeclarationIsDropped(t *testing.T) {
+	const uri = "urn:gooey:test:472:paste-same"
+	handlerNS(t, uri)
+
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:t="` + uri + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="Existing" Content="go" Click="{{t:Existing}}"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "same.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("same.gooey")
+	before := strings.Count(ed.source.Get(), uri)
+	if before != 1 {
+		t.Fatalf("the opened document declares the uri %d times, want 1:\n%s",
+			before, ed.source.Get())
+	}
+
+	ed.pasteMarkup(`<Gooey xmlns:t="` + uri + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	if got := ed.status.Get(); strings.HasPrefix(got, "✗") {
+		t.Fatalf("pasting a document that binds t to the SAME uri reports %q", got)
+	}
+	if got := strings.Count(ed.source.Get(), uri); got != 1 {
+		t.Errorf("the document declares the uri %d times after a paste that "+
+			"added nothing new, want 1 — a redundant declaration is noise in "+
+			"a file the author writes:\n%s", got, ed.source.Get())
 	}
 }

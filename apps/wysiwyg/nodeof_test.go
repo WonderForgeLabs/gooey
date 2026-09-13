@@ -24,6 +24,19 @@ func TestNodeOfRejectsMalformedSeeds(t *testing.T) {
 			want: "is namespaced",
 		},
 		{
+			// THE PREFIX, in the same case one row up. The refusal
+			// formatted a.Name.Local alone, so an author opening their
+			// own file read `attribute "Width" is namespaced` and had
+			// nothing to search for — while the comment beside it
+			// claimed to give the same answer markup's own
+			// namespacedAttrError gives, which formats {uri}local for
+			// exactly this reason. The row above passes either way,
+			// which is why this one exists. Raised in review of #501.
+			name: "namespaced attribute names the uri, not just the local part",
+			src:  `<Text xmlns:x="urn:x" x:Width="10">hi</Text>`,
+			want: "urn:x",
+		},
+		{
 			name: "property element whose owner is not its parent",
 			src:  `<VStack><ItemsView.ItemTemplate><Text>x</Text></ItemsView.ItemTemplate></VStack>`,
 			want: "inside",

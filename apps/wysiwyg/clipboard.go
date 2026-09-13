@@ -271,6 +271,13 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		ed.status.Set("✗ " + err.Error())
 		return
 	}
+	// NAMESPACES ARE RECONCILED HERE, beside the two reconciliations
+	// above and BEFORE the mutation below, because a carried declaration
+	// is not the subtree's private business — see reconcileNamespaces.
+	if err := ed.reconcileNamespaces(n); err != nil {
+		ed.status.Set("✗ " + err.Error())
+		return
+	}
 	// Free geometry only where the PARENT gives it, the same rule
 	// addSelected follows: under a <Grid> or a <VStack> a Canvas.Left is
 	// silently discarded. A pasted node keeps whatever position it was
@@ -700,6 +707,101 @@ func unwrapGooey(n *node) (*node, bool) {
 	}
 	carryDeclarations(n, n.Kids[0])
 	return n.Kids[0], true
+}
+
+// reconcileNamespaces settles a pasted subtree's namespace declarations
+// against the document it is landing in, and it is the step
+// carryDeclarations needs on THIS side of the seam.
+//
+// The open path can carry a declaration down blind: the <Gooey>
+// envelope is the outermost element, so whether the loader reads
+// "child wins" or "last in document order wins" it gets the same
+// answer. A paste has neither property. It puts the pasted envelope's
+// declaration on a node INSIDE the open document — later in document
+// order than the root's own — and markup.parse keeps ONE FLAT,
+// document-wide prefix map in which the last declaration wins
+// (markup.parse). So a pasted xmlns:t binding t to a different URI
+// rebinds t for every expression in the document, including the ones
+// the user never touched, and saveOpenFile writes it to disk. Nothing
+// reports it, because nothing is wrong as far as the loader is
+// concerned: the document is well-formed and every prefix resolves.
+//
+// Newly reachable with the carry, too — before it the editor could not
+// hold two declarations of one prefix at all — which is why this lands
+// in the same branch. Raised in review of #501.
+//
+// Two answers, and the difference is whether the author loses
+// anything:
+//
+//   - the SAME URI: drop the declaration. It says what the document
+//     already says, and keeping it leaves a redundant xmlns on every
+//     node ever pasted out of the CODE tab.
+//   - a DIFFERENT URI: refuse the paste and name both URIs. Rebinding
+//     is a decision about expressions the pasted markup does not
+//     contain, so it is not one this editor can take on the author's
+//     behalf.
+func (ed *editor) reconcileNamespaces(n *node) error {
+	doc := map[string]string{}
+	collectNamespaces(ed.root, doc)
+	return reconcileNamespacesInto(n, doc)
+}
+
+func reconcileNamespacesInto(n *node, doc map[string]string) error {
+	for k, v := range n.Attrs {
+		if !isNamespaceAttr(k) {
+			continue
+		}
+		bound, ok := doc[k]
+		if !ok {
+			continue
+		}
+		if bound != v {
+			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
+				"already declares it as %q. One flat prefix map covers the whole "+
+				"document and the later declaration wins, so accepting this would "+
+				"re-point every %s expression already in the document at the "+
+				"pasted namespace — rename the prefix in what you are pasting, or "+
+				"change the document's own declaration deliberately", k, v, bound,
+				strings.TrimPrefix(k, "xmlns:"))
+		}
+		delete(n.Attrs, k)
+	}
+	for _, s := range n.Slots {
+		if err := reconcileNamespacesInto(s, doc); err != nil {
+			return err
+		}
+	}
+	for _, k := range n.Kids {
+		if err := reconcileNamespacesInto(k, doc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectNamespaces records every declaration in a subtree. A prefix
+// declared twice in one document is already last-wins to the loader, so
+// recording the last one here is agreeing with it rather than choosing.
+func collectNamespaces(n *node, into map[string]string) {
+	for k, v := range n.Attrs {
+		if isNamespaceAttr(k) {
+			into[k] = v
+		}
+	}
+	for _, s := range n.Slots {
+		collectNamespaces(s, into)
+	}
+	for _, k := range n.Kids {
+		collectNamespaces(k, into)
+	}
+}
+
+// isNamespaceAttr matches the TWO SHAPES nodeOf writes — "xmlns" and
+// "xmlns:"+local — and nothing else, the same test carryDeclarations
+// makes. HasPrefix(k, "xmlns") would also match a plain attribute
+// spelled xmlnsFoo.
+func isNamespaceAttr(k string) bool {
+	return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
 }
 
 // ---- shared ----
