@@ -274,14 +274,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:825`, in
+deliberately outside any evaluation context (`composer.go:839`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:537`).
+separate observer for that (`Composer.armVisibility`, `composer.go:551`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:409`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:440`), so reading a property while painting *is* the damage
+(`composer.go:423`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:454`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
