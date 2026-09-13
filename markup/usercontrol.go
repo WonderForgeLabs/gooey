@@ -194,6 +194,19 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// undeclared spelling of the same component worked — the
 		// incentive exactly backwards from the one the catalog exists to
 		// create.
+		//
+		// THE COST, and it is a document that used to load: a control
+		// whose setup registers Components["X"] privately, on a page
+		// that declares Elements["X"], now hits markup.build's
+		// both-maps refusal (markup.go:1509) instead of quietly
+		// winning. That refusal is the right answer — which of the two
+		// won would otherwise depend on the order of the ifs — but the
+		// error names a collision the control author did not create.
+		// The way out is to stop registering the private builder and
+		// let the declared element through, or to declare the control's
+		// own under a different name. Pinned by
+		// TestAControlCannotShadowAPageDeclaredElement; raised in review
+		// of #490.
 		if child.Elements == nil {
 			child.Elements = parent.Elements
 		}

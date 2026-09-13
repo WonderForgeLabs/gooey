@@ -650,7 +650,7 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 	// LIVE by a page-level probe that builds before the <ItemsView> does.
 	//
 	// Reading page.arms after Load cannot answer this: document.build
-	// restores the whole arm scope in its defer (markup.go:756), so
+	// restores the whole arm scope in its defer (markup.go:781), so
 	// page.arms.sinks is nil by the time the switch runs, and the arm's
 	// old form — `len(page.arms.sinks) > 0 && sameSinks(...)` — was
 	// therefore false whatever itemsview.go did. Measured in review of
@@ -973,5 +973,57 @@ func TestAPageRelativeAssetPathWorksInsideARow(t *testing.T) {
 			"itemsview.go must CAPTURE ctx.fsys beside pagePending rather than "+
 			"read it inside the factory — Load restores it in a defer, so a "+
 			"row built at scroll time sees nil", err)
+	}
+}
+
+// TestAControlCannotShadowAPageDeclaredElement is the behaviour change
+// that came free with inheriting Elements, stated rather than
+// discovered.
+//
+// Before this branch a control's context could not see the page's
+// Elements, so a setup registering Components["Meter"] privately, on a
+// page that declares Elements["Meter"], simply won: the two names lived
+// in different scopes. Now Elements crosses the boundary, and
+// markup.build refuses a name present in BOTH maps (markup.go:1509)
+// because one of them would be unreachable and which one would depend on
+// the order those ifs happen to be written in.
+//
+// That refusal is the intended answer — the alternative is a control
+// silently shadowing a declared element, which is the vocabulary problem
+// #314 exists to remove — but it is a document that used to load and now
+// does not, and the error names a collision the control author did not
+// create. So: pinned here, and the way out is written in the Elements
+// arm's comment in usercontrol.go. Raised in review of #490.
+func TestAControlCannotShadowAPageDeclaredElement(t *testing.T) {
+	ctlFS := fstest.MapFS{
+		"card.gooey": {Data: []byte(
+			`<Gooey xmlns="wonderforge.io/gooey/2026"><Meter/></Gooey>`)},
+	}
+	page := &Context{
+		Elements: map[string]*ElementDef{"Meter": meterDef()},
+		Components: map[string]Builder{
+			"Card": UserControl(ctlFS, "card.gooey",
+				func(e Element, parent *Context) (*Context, error) {
+					// The control's OWN idea of <Meter>, private to it.
+					return &Context{Components: map[string]Builder{
+						"Meter": func(Element, *Context) (gooey.Component, error) {
+							return &components.Text{}, nil
+						},
+					}}, nil
+				}),
+		},
+	}
+	_, err := Build([]byte(
+		`<Gooey xmlns="wonderforge.io/gooey/2026"><Card/></Gooey>`), page)
+	if err == nil {
+		t.Fatal("a control registered its own <Meter> builder on a page that " +
+			"DECLARES <Meter>, and the document loaded. One of the two is " +
+			"unreachable, and which one would depend on the order of the ifs " +
+			"in markup.build — that is the silent shadowing the declared " +
+			"vocabulary exists to prevent")
+	}
+	if !strings.Contains(err.Error(), "registered in both") {
+		t.Errorf("the load failed for some other reason than the both-maps "+
+			"collision, so this test is not reaching the seam it is about: %v", err)
 	}
 }

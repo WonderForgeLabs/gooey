@@ -112,7 +112,7 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// res and pagePending above — read inside the factory it is nil for
 	// every row that matters.
 	//
-	// Load installs ctx.fsys and RESTORES IT IN A DEFER (markup.go:870),
+	// Load installs ctx.fsys and RESTORES IT IN A DEFER (markup.go:896),
 	// so the only factory call that sees it is ItemsView.Validate's
 	// load-time throwaway probe row; the composer realizes every real row
 	// after Load returned. Measured with a probe builder recording

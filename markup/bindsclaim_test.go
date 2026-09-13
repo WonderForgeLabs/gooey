@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -101,9 +102,21 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 		known[s] = true
 	}
 	seen := map[string]bool{}
+	var offHarness []string
 	for _, a := range literalAttrs(t) {
 		name := a.el + "." + a.attr.Name
 		if !reachable(t, a) {
+			// REPORTED, NOT SWALLOWED, the same as the sibling above.
+			// This was a bare `continue` until review of #490: a
+			// BindsLiteral attribute whose element stopped building
+			// dropped out of the sweep with nothing said, which is the
+			// exact condition the sibling collects and errors on. It
+			// also defeated unseedable's stated purpose — that comment
+			// promises the next element to fall off the probe "should
+			// arrive as an entry here rather than as a silently
+			// unchecked element", and half the sweep was not routed
+			// through it.
+			offHarness = append(offHarness, name)
 			continue
 		}
 		src := bindsHarness(t, a, a.attr.Name, "{{.S}}")
@@ -142,6 +155,18 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 			t.Errorf("silentlyBindable names %s, which this run did not "+
 				"reach at all — the entry is describing something the probe "+
 				"no longer builds", s)
+		}
+	}
+	// The harness gap, named rather than counted — same rule, same
+	// escape hatch, so a gap closing in one sweep and not the other
+	// cannot hide.
+	sort.Strings(offHarness)
+	for _, name := range offHarness {
+		if _, ok := unseedable[elementOf(name)]; !ok {
+			t.Errorf("%s declares BindsLiteral and cannot be built by this "+
+				"probe, so nothing checked whether the loader accepts a "+
+				"binding for it. Either seed what its element needs, or add "+
+				"the element to unseedable with the reason", name)
 		}
 	}
 }
@@ -186,6 +211,27 @@ var silentlyBindable = []string{
 	"TypeAhead.Key",
 	"ButtonBar.Separator",
 	"Companion.Log",
+
+	// FOUND BY THE HARNESS REACHING FURTHER, not by anything changing in
+	// the loader. bindsHarness sent every attachment to an <ItemsView>
+	// host, which refuses <Validate> — so all seventeen of its
+	// attributes read as unreachable, and the literal-only sweep dropped
+	// unreachable names on the floor without saying so. Routing that
+	// sweep through offHarness (review of #490) made the gap loud, and
+	// dropping that host in favour of harnessFor's own put <Validate> on
+	// the input element it belongs to. These three were always in the
+	// #488 class; they were behind a harness gap, which is the failure
+	// mode the offHarness report exists to prevent.
+	//
+	// Pattern is the one with evidence on the cell plane, and getting it
+	// took fixing the instrument: see TestABoundValueActuallyArrives,
+	// which reported it as HONOURING its binding until the arm it
+	// compares against became the handle's own value. Compare and
+	// Message paint nothing either way here, so for those two the claim
+	// is the loader's acceptance and not a rendering.
+	"Validate.Compare",
+	"Validate.Message",
+	"Validate.Pattern",
 }
 
 // unseedable is every element probeElement cannot construct, with the
@@ -366,28 +412,41 @@ func reachable(t *testing.T, a attrProbe) bool {
 }
 
 // bindsHarness places the element under test somewhere it can legally
-// live, and the NON-VISUAL arm is why it exists rather than harnessFor
-// alone.
+// live: probeElement, then harnessFor. It stays a named function because
+// the sweeps in this file and the ones in bindsweep_test.go have to
+// agree about hosting — when they do not, the refusal a probe records
+// is the host's and not the attribute's.
 //
-// <TypeAhead>, <KeyBinding>, <Companion> and <FileWatcher> are
-// ATTACHMENTS: they occupy no space and a container refuses them as
-// visual children, so the generic <HStack> harness reported ten
-// attributes as unreachable when the only thing wrong was where they
-// were being put. NonVisual is a derived catalog fact, so this routes on
-// the catalog rather than on a list of element names.
+// IT GREW A SECOND ARM AND THE ARM WAS WRONG. <TypeAhead>, <KeyBinding>,
+// <Companion>, <FileWatcher> and <Validate> are ATTACHMENTS: they occupy
+// no space, and NonVisual is the derived catalog fact that says so. This
+// function used to consult it FIRST and send every one of them to an
+// <ItemsView> host. <Validate> is the element that does not fit there —
+// it belongs on an input with a bound text source, and the ItemsView
+// host refused it with
 //
-// An <ItemsView> is the host because it accepts attachments AND is what
-// <TypeAhead> specifically requires; the others are happy anywhere that
-// attaches.
+//	markup: <ItemsView> does not support <Validate>; it belongs on an
+//	input element with a bound text source
+//
+// so all seventeen of its attributes read as unreachable. Nothing said
+// so while the literal-only sweep dropped unreachable names on the
+// floor; routing that sweep through offHarness (review of #490) is what
+// made it audible, and it surfaced Validate.Url as unchecked.
+//
+// THE ARM IS GONE RATHER THAN REORDERED, and that is a measurement.
+// harnessFor already has the right host for every attachment the
+// vocabulary reaches — <Validate> on a <TextBox>, <TypeAhead> on an
+// <ItemsView>, <MenuItem> under a <Menu> — and with those taking
+// precedence the NonVisual branch became unreachable in practice:
+// deleting it outright leaves the whole markup suite green, because the
+// three attachments with no arm of their own (<Companion>,
+// <FileWatcher>, <KeyBinding>) build perfectly well inside the generic
+// harness. What guards the NEXT attachment that does not is the
+// offHarness report, which names it, and not a host guessed in advance
+// for elements that never needed one.
 func bindsHarness(t *testing.T, a attrProbe, attr, value string) string {
 	t.Helper()
-	el := probeElement(t, a.def, attr, value)
-	if spec, ok := (&Context{}).spec(a.el); ok && spec.NonVisual {
-		return `<ItemsView Items="{{.IS}}">` +
-			`<ItemsView.ItemTemplate><Text>{{.Label}}</Text></ItemsView.ItemTemplate>` +
-			el + `</ItemsView>`
-	}
-	return harnessFor(a.attr.Name, el)
+	return harnessFor(a.attr.Name, probeElement(t, a.def, attr, value))
 }
 
 // TestABoundValueActuallyArrives is what makes "silently bindable" a
@@ -399,6 +458,35 @@ func bindsHarness(t *testing.T, a attrProbe, attr, value string) string {
 // handle holding that same literal's value. A working attribute makes
 // the second and third agree and both differ from the first; a dropped
 // one makes the FIRST and third agree.
+//
+// "A HANDLE HOLDING THAT SAME LITERAL'S VALUE" HAD TO BE MADE TRUE. The
+// bound arm writes `{{.S}}` and S holds "sample"; the literal arm wrote
+// whatever the kind table answered, "x" for a string. The two arms
+// carried DIFFERENT values, so "the second and third agree" was never
+// the comparison this paragraph described. It survived because every
+// entry in the list drops the value, and a dropped value renders like
+// absence whatever the literal was.
+//
+// Validate.Pattern is the entry that collided, and it came out
+// INVERTED. Its whole visible effect is one bit — the host
+// <TextBox Text="{{.S}}"> paints red-and-underlined while a rule
+// rejects its text — so the probe literal "x" and the template text
+// `{{.S}}` both fail to match "sample" and paint identical cells.
+// literal == bound, which this test read as "honours". An honoured
+// binding would have compiled "sample", which MATCHES, and painted
+// exactly what absence paints: the one arm this test never took.
+//
+// So the honoured rendering is MEASURED rather than assumed. A fourth
+// shot writes the handle's own value as a literal, and that is what the
+// bound arm is compared against. Where that value is not a legal
+// literal for the attribute — a <TypeAhead Key> is one rune — the
+// generic literal stands in and the log says so, because a collision
+// there cannot be told from honouring either.
+//
+// Non-vacuity moves with it. "The literal differs from absence" is the
+// wrong floor for an attribute whose honoured value paints like
+// absence; what makes one observable at all is that two DIFFERENT
+// values paint differently, and either of the two differences will do.
 //
 // DERIVED FROM silentlyBindable, and it was pinned to HStack.Gap until
 // #470 landed. That is the churn worth designing against rather than
@@ -420,6 +508,7 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 		}
 		return gooey.Compose(w, term.Caps{Cols: defaultsCols, Rows: defaultsRows}, nil).Cells, nil
 	}
+	held := heldByS(t)
 
 	var observed int
 	for _, a := range literalAttrs(t) {
@@ -427,6 +516,14 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 		if !slices.Contains(silentlyBindable, name) || !reachable(t, a) {
 			continue
 		}
+		// THE NARROWED LITERAL, not the kind's generic one. <Validate
+		// Compare> takes a binding PATH resolved against the context, so
+		// "x" is refused with `"x" not found in context` — the probe
+		// value being wrong, not the element, and this test reported it
+		// as "the element does not build with a LITERAL value". The
+		// narrowed table already had the answer; the two sweeps were
+		// reading different ones.
+		lit := validLiteralFor(t, a.el, a.attr)
 
 		absent, err := shot(t, bindsHarness(t, a, "", ""))
 		if err != nil {
@@ -434,22 +531,41 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 				"under test, so nothing here is measuring it: %v", name, err)
 			continue
 		}
-		literal, err := shot(t, bindsHarness(t, a, a.attr.Name, literalFor(a.attr)))
+		literal, err := shot(t, bindsHarness(t, a, a.attr.Name, lit))
 		if err != nil {
 			t.Errorf("%s: the element does not build with a LITERAL value, "+
 				"which is the one spelling its spec promises: %v", name, err)
 			continue
+		}
+		// WHAT HONOURING WOULD LOOK LIKE: the handle's own value, written
+		// as a literal. Same value, spelled the other way — so any
+		// difference from the bound arm is the binding, not the value.
+		honoured := literal
+		if held != lit {
+			if h, err := shot(t, bindsHarness(t, a, a.attr.Name, held)); err == nil {
+				honoured = h
+			} else {
+				t.Logf("%s: the bound handle holds %q, which is not a legal "+
+					"literal here (%v) — so the comparison below is against "+
+					"the generic literal %q, and where those two paint alike "+
+					"honouring and mangling are indistinguishable", name, held, err, lit)
+			}
 		}
 		bound, err := shot(t, bindsHarness(t, a, a.attr.Name, "{{.S}}"))
 		if err != nil {
 			continue // refused: the test above owns this, and names it
 		}
 
-		// NON-VACUITY, PER ATTRIBUTE. If the literal paints exactly what
-		// its absence paints, the comparison below cannot tell a dropped
-		// binding from a working one — and the count at the end is what
-		// stops every entry being skipped in silence.
-		if _, _, differs := cellsDiffer(absent, literal); !differs {
+		// NON-VACUITY, PER ATTRIBUTE. If nothing this attribute can be
+		// set to paints differently from anything else it can be set to,
+		// the comparison below cannot tell a dropped binding from a
+		// working one — and the count at the end is what stops every
+		// entry being skipped in silence.
+		_, _, visible := cellsDiffer(absent, literal)
+		if _, _, d := cellsDiffer(literal, honoured); d {
+			visible = true
+		}
+		if !visible {
 			continue
 		}
 		observed++
@@ -461,7 +577,7 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 		// happens is the consumer's business. What every entry here
 		// shares is that the binding is accepted and its VALUE never
 		// arrives, so that is what is asserted.
-		if _, _, differs := cellsDiffer(literal, bound); !differs {
+		if _, _, differs := cellsDiffer(honoured, bound); !differs {
 			t.Errorf("%s now HONOURS its binding — delete it from "+
 				"silentlyBindable and from #488", name)
 			continue
@@ -477,8 +593,24 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 
 	if observed == 0 {
 		t.Skipf("no entry in silentlyBindable (%v) paints differently with "+
-			"its literal than without it, so the drop is not observable on "+
+			"one value than with another, so the drop is not observable on "+
 			"the cell plane for any of them. That is a gap in the FIXTURE, "+
 			"not a pass: the claim is unmeasured", silentlyBindable)
 	}
+}
+
+// heldByS is the value the bound arm's handle holds, spelled as a
+// literal — read out of the probe context rather than written here, so
+// a change to the fixture cannot leave this file asserting against a
+// value nothing holds. Every bound arm in this package writes `{{.S}}`,
+// so what S holds is precisely what an honoured binding would deliver.
+func heldByS(t *testing.T) string {
+	t.Helper()
+	s, ok := bindsContext().Values["S"].(*prop.Property[string])
+	if !ok {
+		t.Fatalf("the probe context's S is %T, not a string handle — every "+
+			"bound arm here writes {{.S}}, so there would be no value to "+
+			"compare an honoured binding against", bindsContext().Values["S"])
+	}
+	return s.Get()
 }
