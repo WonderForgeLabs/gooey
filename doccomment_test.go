@@ -46,7 +46,8 @@ import (
 func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	var files, examined int
 	seen := map[string]bool{} // directories that contributed a parsed file
-	for _, path := range goFilesInTree(t) {
+	paths, modules := treeWalk(t)
+	for _, path := range paths {
 		fset := gotoken.NewFileSet()
 		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
 		if err != nil {
@@ -82,7 +83,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// added tomorrow is covered without anyone editing this test, which
 	// is the same discipline CLAUDE.md's verify loop uses against the
 	// same mistake.
-	for _, mod := range moduleDirsInTree(t) {
+	for _, mod := range modules {
 		if !anyUnder(seen, mod) {
 			t.Errorf("the walk parsed no file under %q, which is a module of this tree: "+
 				"a guard that stops at a module boundary reports green for code it "+
@@ -92,7 +93,18 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	t.Logf("examined %d doc comments across %d files", examined, files)
 }
 
-// goFilesInTree is every .go file this guard rules on.
+// treeWalk is every .go file this guard rules on, and every directory
+// holding a go.mod — ONE walk, because they must share a prune policy.
+//
+// It was two near-identical walks until review of #503, in the file whose
+// neighbour (claudemd_test.go) argues that a second copy of a fact
+// drifts. The drift here is not symmetric and one direction is a silent
+// weakening of the floor itself: add a prune to the file walk alone and a
+// module beneath it becomes permanently unreachable, failing with a
+// message that blames the wrong thing; add it to the module walk alone
+// and a real module drops OUT of the floor — a guard that stopped at a
+// module boundary, reporting green, which is the precise failure #483
+// exists to prevent.
 //
 // PRUNED AT EVERY DEPTH, and a top-anchored filter is not enough — the
 // same trap CLAUDE.md documents for its verify loop, for the same two
@@ -102,9 +114,8 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 // apps/kanban/worker/.venv vendors Go of its own. vendor/ is skipped
 // because it is other people's code, and testdata is NOT: a fixture is
 // still a file someone reads.
-func goFilesInTree(t *testing.T) []string {
+func treeWalk(t *testing.T) (files, moduleDirs []string) {
 	t.Helper()
-	var out []string
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -118,55 +129,42 @@ func goFilesInTree(t *testing.T) []string {
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".go") {
-			out = append(out, path)
+		switch {
+		case strings.HasSuffix(path, ".go"):
+			files = append(files, path)
+		case d.Name() == "go.mod":
+			moduleDirs = append(moduleDirs, filepath.Dir(path))
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
-	return out
-}
-
-// moduleDirsInTree is every directory holding a go.mod, which is the
-// population the coverage floor above is derived from. Same pruning, same
-// reasons.
-func moduleDirsInTree(t *testing.T) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path == "." {
-				return nil
-			}
-			if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == "go.mod" {
-			out = append(out, filepath.Dir(path))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking the tree for modules: %v", err)
-	}
-	if len(out) == 0 {
+	if len(moduleDirs) == 0 {
 		t.Fatal("found no go.mod at all, not even the root module's: the module floor " +
-			"below would pass vacuously")
+			"would pass vacuously")
 	}
-	return out
+	return files, moduleDirs
 }
 
 // anyUnder reports whether any parsed file's directory is dir or beneath
 // it. A module whose own directory holds no .go file — only packages
 // below it — is still covered.
+//
+// THE ROOT MODULE IS ITS OWN CASE, and without this arm the sentence
+// above was false for exactly one module — the one the guard lives in.
+// filepath.WalkDir(".") yields paths with no "./" prefix, so
+// filepath.Dir("input/paste.go") is "input", and for dir == "." the
+// prefix test asked for "./…", which nothing the walk produces can
+// match. Measured: anyUnder({"input": true}, ".") answered false. It
+// fails CLOSED, so it was a latent spurious failure rather than a silent
+// pass — but a derived floor quietly meaning something narrower than its
+// own comment, inside the test whose thesis is that derived floors beat
+// written-down ones, is the finding. Raised in review of #503.
 func anyUnder(seen map[string]bool, dir string) bool {
+	if dir == "." {
+		return len(seen) > 0
+	}
 	for d := range seen {
 		if d == dir || strings.HasPrefix(d, dir+string(filepath.Separator)) {
 			return true
@@ -255,6 +253,41 @@ func gamma() {}
 `,
 			want: "alpha",
 		},
+		{
+			// THE BLOCK'S OWN DOC, naming an entry further down the same
+			// block. Nothing reported this until review of #503: the
+			// block answers documented() with its FIRST spec's name, and
+			// the spec-level arm cannot see it because the first spec's
+			// Doc is nil. It is the shape an insertion at the TOP of a
+			// documented block leaves behind.
+			name: "a block's doc names a later entry of itself",
+			src: `// fuzzyGap is per character skipped.
+const (
+	fuzzyRun      = 3
+	fuzzyBoundary = 8
+	fuzzyGap      = 3
+)
+`,
+			want: "fuzzyGap",
+		},
+		{
+			// THE SHAPE FIVE OF THE SIX REAL FINDINGS HAD, which is not
+			// an inserted declaration at all: two adjacent comment groups
+			// whose separating blank line was lost, so the upper group's
+			// subject is now declared below the merged comment. The AST
+			// signature is identical to a theft by insertion — which is
+			// the point of having it here, since a reader looking for
+			// their own case will be looking for this one.
+			name: "a lost blank line merged two comment groups",
+			src: `// alpha is the alpha thing, and this paragraph is about it.
+// beta is a different thing entirely, and the blank line that used to
+// separate these two groups is gone.
+func beta() {}
+
+func alpha() {}
+`,
+			want: "alpha",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fset := gotoken.NewFileSet()
@@ -264,13 +297,23 @@ func gamma() {}
 				t.Fatalf("parsing the fixture: %v", err)
 			}
 			got := stolenComments(fset, f, "fake")
+			// LENGTH FIRST, THEN THE NAME, UNCONDITIONALLY. The name
+			// check used to be guarded by len(got) == 1, so a fixture
+			// yielding TWO findings matched no arm at all and passed
+			// green with neither finding's identity ever examined — a
+			// switch that can go green on an unread result, in the test
+			// that exists because "a walk that applies the rule and a
+			// walk that returns nil are the same green". Raised in
+			// review of #503.
 			switch {
-			case tc.want == "" && len(got) != 0:
-				t.Errorf("reported %v on a document with no theft in it", got)
-			case tc.want != "" && len(got) == 0:
-				t.Errorf("reported nothing; %s is documented by a comment attached to "+
-					"the declaration above it, and `go doc` would show it bare", tc.want)
-			case tc.want != "" && len(got) == 1 && !strings.Contains(got[0], tc.want):
+			case tc.want == "":
+				if len(got) != 0 {
+					t.Errorf("reported %v on a document with no theft in it", got)
+				}
+			case len(got) != 1:
+				t.Errorf("reported %d findings, want exactly 1 naming %s: %v",
+					len(got), tc.want, got)
+			case !strings.Contains(got[0], tc.want):
 				t.Errorf("reported %q, which does not name %s", got[0], tc.want)
 			}
 			// AND THE POPULATION COUNT SEES THE SAME DOCUMENTS. A walk
@@ -303,22 +346,43 @@ func gamma() {}
 // a block is ONE decl. Raised in review of #470.
 func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	var out []string
-	report := func(pos gotoken.Pos, name, first, where string) {
+	report := func(pos gotoken.Pos, name, first, locator string) {
+		at := fset.Position(pos)
 		out = append(out, fmt.Sprintf("%s: the doc comment on %s opens by naming %s, "+
-			"which is the %s DIRECTLY BELOW it. That is a doc comment that was "+
-			"separated from what it documents — either %s was inserted between the "+
-			"two, or the blank line between two comment groups was lost, and either "+
-			"way %s is now undocumented. Confirm with `go doc -u ./%s %s`",
-			fset.Position(pos), name, first, where, first, name, pkg, first))
+			"which is %s. That is a doc comment that was separated from what it "+
+			"documents — either %s was inserted between the two, or the blank line "+
+			"between two comment groups was lost, and either way %s is now "+
+			"undocumented.%s",
+			at, name, first, locator, first, name, confirmHint(at.Filename, pkg, first)))
 	}
 	for i, d := range f.Decls {
-		if name, doc, ok := documented(d); ok && i+1 < len(f.Decls) {
-			if first := opensBy(doc); first != "" && first != name && declares(f.Decls[i+1], first) {
-				report(d.Pos(), name, first, "declaration")
+		g, block := d.(*ast.GenDecl)
+		block = block && g.Lparen.IsValid()
+		if name, doc, ok := documented(d); ok {
+			if first := opensBy(doc); first != "" && first != name {
+				switch {
+				case i+1 < len(f.Decls) && declares(f.Decls[i+1], first):
+					report(d.Pos(), name, first, "the declaration DIRECTLY BELOW it")
+				// A BLOCK'S DOC NAMING A LATER ENTRY OF ITS OWN BLOCK,
+				// which nothing reported until review of #503. documented
+				// answers for a block with its FIRST spec's name, and the
+				// spec-level arm below cannot cover this either — the
+				// first spec's own Doc is nil, because the comment
+				// belongs to the GenDecl. So inserting a const at the TOP
+				// of a documented block left the block's comment
+				// describing the newcomer and the guard silent, one
+				// keystroke from the apps/wysiwyg/browser.go theft this
+				// branch repaired. Measured on a fixture before the fix:
+				// nothing reported, and docsExamined counting it as ruled
+				// on — which inflated the non-vacuity floor with a case
+				// the rule could not judge.
+				case block && declaresIn(g.Specs[1:], first):
+					report(d.Pos(), name, first,
+						"a later entry of the very block it opens")
+				}
 			}
 		}
-		g, ok := d.(*ast.GenDecl)
-		if !ok || !g.Lparen.IsValid() {
+		if !block {
 			continue
 		}
 		for j, sp := range g.Specs {
@@ -327,11 +391,45 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 				continue
 			}
 			if first := opensBy(doc); first != "" && first != name && specDeclares(g.Specs[j+1], first) {
-				report(sp.Pos(), name, first, "entry of this block")
+				report(sp.Pos(), name, first, "the entry of this block DIRECTLY BELOW it")
 			}
 		}
 	}
 	return out
+}
+
+// declaresIn reports whether any of these specs introduces want.
+func declaresIn(specs []ast.Spec, want string) bool {
+	for _, sp := range specs {
+		if specDeclares(sp, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// confirmHint is the remediation instruction, WITHHELD for a test file
+// rather than printed wrong.
+//
+// `go doc` does not read _test.go files at all — `go doc -u . citeForms`
+// answers "no symbol in package" — and test files are much of the
+// population this guard was widened to reach: two of the six thefts this
+// branch repaired are in one, and the guard's own rationale is that
+// nobody runs `go doc` on a test file. A command that reports nothing
+// reads as a false alarm to whoever the guard just fired on, which is
+// worse than no command beside a position that already locates the line.
+// Raised in review of #503, which also caught the root package rendering
+// as "./.".
+func confirmHint(file, pkg, name string) string {
+	if strings.HasSuffix(file, "_test.go") {
+		return " The position above is the locator — `go doc` does not read _test.go " +
+			"files, so it would answer \"no symbol\" here."
+	}
+	target := "./" + pkg
+	if pkg == "." {
+		target = "."
+	}
+	return fmt.Sprintf(" Confirm with `go doc -u %s %s`", target, name)
 }
 
 // docsExamined is the population stolenComments could rule on: every
@@ -340,11 +438,17 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 func docsExamined(f *ast.File) int {
 	n := 0
 	for i, d := range f.Decls {
-		if _, _, ok := documented(d); ok && i+1 < len(f.Decls) {
+		g, block := d.(*ast.GenDecl)
+		block = block && g.Lparen.IsValid()
+		// A documented block with more than one entry is rulable even as
+		// the LAST declaration in the file, because its own doc can name
+		// a later entry of itself. Counting it only when something
+		// followed it is what let the fixture in review of #503 be
+		// counted as ruled on while the rule passed over it.
+		if _, _, ok := documented(d); ok && (i+1 < len(f.Decls) || (block && len(g.Specs) > 1)) {
 			n++
 		}
-		g, ok := d.(*ast.GenDecl)
-		if !ok || !g.Lparen.IsValid() {
+		if !block {
 			continue
 		}
 		for j, sp := range g.Specs {
@@ -443,4 +547,51 @@ func declares(d ast.Decl, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay pins the two halves
+// of this file that are prose everywhere else: the coverage floor's reach
+// and the remediation instruction.
+//
+// Both were wrong in the same direction — a comment claiming more than
+// the code does — and neither could go red, because the floor fails
+// closed only on a tree shaped differently from this one and the hint is
+// a string nobody asserts. Raised in review of #503.
+func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
+	// THE ROOT MODULE. Its directory is ".", and the walk never emits a
+	// "./" prefix, so the prefix arm alone answered false for a tree
+	// whose every file is in a subdirectory — which is every tree except
+	// this one, where a .go file happens to sit in the repo root.
+	if !anyUnder(map[string]bool{"input": true}, ".") {
+		t.Error("a file parsed under input/ does not count as covering the root " +
+			"module, so the floor means \"a .go file sits in the repo root\" rather " +
+			"than what anyUnder's comment says")
+	}
+	if anyUnder(map[string]bool{}, ".") {
+		t.Error("an empty walk covers the root module, which would make the floor " +
+			"pass over a walk that parsed nothing")
+	}
+	if !anyUnder(map[string]bool{"mcp/cmd/server": true}, "mcp") {
+		t.Error("a file parsed under mcp/cmd/server does not count as covering the " +
+			"mcp module, so a module whose own directory holds no .go file is not " +
+			"covered after all")
+	}
+	if anyUnder(map[string]bool{"mcpx": true}, "mcp") {
+		t.Error("a sibling directory whose name merely starts with the module's " +
+			"counts as covering it")
+	}
+
+	// THE HINT. `go doc` cannot answer for a _test.go file, and much of
+	// what this guard reaches is test files.
+	if got := confirmHint("markup/doc_test.go", "markup", "alpha"); strings.Contains(got, "go doc -u") {
+		t.Errorf("the failure message hands `go doc` to somebody whose finding is in "+
+			"a test file, where it answers \"no symbol\": %s", got)
+	}
+	if got := confirmHint("markup/doc.go", "markup", "alpha"); !strings.Contains(got, "go doc -u ./markup alpha") {
+		t.Errorf("the hint for an ordinary file is not the command that shows the "+
+			"theft: %s", got)
+	}
+	if got := confirmHint("app.go", ".", "alpha"); !strings.Contains(got, "go doc -u . alpha") {
+		t.Errorf("the root package renders as something other than \".\": %s", got)
+	}
 }

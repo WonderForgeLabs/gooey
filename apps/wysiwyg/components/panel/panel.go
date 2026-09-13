@@ -731,9 +731,11 @@ func over(fg, bg render.Color, f float64) render.Color {
 // line it was discarding. See graphics.OpaqueEncoder and over above.
 //
 // A doc comment separated from what it documents is invisible to gofmt
-// and to vet, and `go doc -all -u` is what shows it; the guard is #470's
-// TestNoDocCommentNamesTheDeclarationBelowIt, scoped to markup/ today
-// and widened to the tree in #483.
+// and to vet, and `go doc -all -u` is what shows it; the guard is
+// TestNoDocCommentNamesTheDeclarationBelowIt, written in #470 scoped to
+// markup/ and tree-wide since #483, which is where it lives now — the
+// root module's doccomment_test.go, parsing every .go file in the tree
+// rather than building one package of it.
 func fade(c render.Color, a float64) color.Color {
 	return color.RGBA{
 		R: uint8(float64(c.R)*a + 0.5),
