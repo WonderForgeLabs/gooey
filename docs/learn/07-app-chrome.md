@@ -362,7 +362,13 @@ so `tab` never lands on a button nobody can see.
   see the box above. `ToastHost` and `AdornmentLayer` are lifted too
   since [#439](https://github.com/WonderForgeLabs/gooey/issues/439), and
   within the layer a RANK orders them, so a toast is never hidden by an
-  open menu.
+  open menu. The rank orders **paint only** — `hitTest` still walks
+  document order in reverse — so where a ranked host overlaps another
+  overlay, the later-declared one takes the click whatever is on top
+  ([#465](https://github.com/WonderForgeLabs/gooey/issues/465);
+  `gooey.TestARankOrdersPaintAndNotHitTesting`). The `MenuBar` and
+  tooltip bullets below are exempt for their own reasons — a `Popup`
+  holds capture and `tipPopup` is `HitTestTransparent`.
 - `MenuBar` mnemonics come from underscores (`_Job`), default to first
   letters, and render underlined always; `alt+letter` works page-wide,
   and an open menu is modal.

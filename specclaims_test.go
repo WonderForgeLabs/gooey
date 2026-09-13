@@ -911,6 +911,72 @@ func TestNoDocTeachesTheRetiredContainerTest(t *testing.T) {
 	}
 }
 
+// TestNoDocTeachesTheRetiredSliceReset is its sibling, and it exists
+// because the sibling above did not catch the second retired spelling in
+// the SAME code block it polices.
+//
+// docs/architecture.md quotes Composer.build, and four lines below the
+// `if !isContainer(w) {` the guard above made it update, it went on
+// showing `n.places = n.places[:0]` — the reset clearToCap exists to
+// replace, presented as current source. Nothing saw it:
+// TestEveryReusedSliceInComposerClearsToCap reads composer.go only, and
+// the guard above keys on a different string. A rule this file already
+// states — "a greppable rule whose top grep hit is the retired spelling
+// is not greppable" — with one of its two spellings unguarded. Raised in
+// review of #456, the second time.
+//
+// The subject is `[:0]` on a COMPOSER slice, not on any slice anywhere:
+// `x = x[:0]` is ordinary Go and correct wherever retention does not
+// matter, so the names are the composer's own reused slices, read out of
+// the assertion that already enumerates them rather than written here
+// twice.
+//
+// Mechanism first, same as the sibling: if composer.go stops calling
+// clearToCap, the retirement is off and this guard says so rather than
+// failing every page.
+func TestNoDocTeachesTheRetiredSliceReset(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("reading composer.go: %v", err)
+	}
+	if !strings.Contains(string(src), "func clearToCap[") {
+		t.Skipf("composer.go no longer defines clearToCap, so the reset it retired " +
+			"is not retired any more. Re-derive this guard or delete it with the " +
+			"paragraphs it polices")
+	}
+
+	// The composer's reused slices, spelled as the retired reset would
+	// appear in a quoted block.
+	var retired []string
+	for _, name := range []string{
+		"c.nodes", "c.startable", "c.paint", "c.lifted", "c.over",
+		"n.places", "c.frame.placements",
+	} {
+		retired = append(retired, name+" = "+name+"[:0]")
+	}
+	for _, f := range proseFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if recordsUnshippedCode(string(body)) {
+			continue
+		}
+		for _, r := range retired {
+			if !strings.Contains(string(body), r) {
+				continue
+			}
+			t.Errorf("%s shows `%s`, the reset #456 retired. That slice is reused "+
+				"across frames, so truncating to [:0] keeps every element past len "+
+				"alive — dead *paintNodes and decoded images — which is why "+
+				"composer.go calls clearToCap instead. A page presenting the old "+
+				"spelling as current source teaches the leak. Update it, or, if the "+
+				"page is a record of code that never shipped, say so in its "+
+				"**Status:** head", f, r)
+		}
+	}
+}
+
 // recordsUnshippedCode reports whether a document's HEAD declares that
 // what it describes was never built. Scoped to the head for the reason
 // every banner check here is: a status buried mid-document does not

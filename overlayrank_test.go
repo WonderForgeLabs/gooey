@@ -224,13 +224,22 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 	// Same tree, same frame, opposite answer. If this ever returns `over`
 	// the divergence closed — which would be good news, and would make
 	// the caveats in components/toast.go, docs/markup-reference.md,
-	// docs/architecture.md and mouse.go wrong rather than merely stale.
+	// docs/architecture.md, mouse.go, docs/learn/concepts/overlays.md and
+	// docs/learn/07-app-chrome.md wrong rather than merely stale.
+	//
+	// THE LEARN PAGES JOINED THE LIST IN REVIEW OF #456, and they are the
+	// half that matters most: they are where the freedom is GRANTED to
+	// somebody meeting overlays for the first time, and they were the two
+	// surfaces this enumeration did not name — so closing the gap would
+	// have left the one grant a learner reads with nobody sent to it.
 	m := NewFocusManager(root)
 	hit := m.HitTest(0, 0)
 	if hit == Component(over) {
 		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the cell it " +
 			"paints. Delete the divergence caveats in components/toast.go, " +
-			"docs/markup-reference.md, docs/architecture.md and mouse.go rather than this test")
+			"docs/markup-reference.md, docs/architecture.md, mouse.go, " +
+			"docs/learn/concepts/overlays.md and docs/learn/07-app-chrome.md " +
+			"rather than this test")
 	}
 	if hit != Component(under) {
 		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+

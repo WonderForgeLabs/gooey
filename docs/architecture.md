@@ -567,7 +567,7 @@ n.node = prop.NewComputed(func() int {
         // a chrome-only container pre-clears nothing
     }
     outer := c.frame.sink // placements are filed under this node
-    n.places = n.places[:0]
+    n.places = clearToCap(n.places) // NOT n.places[:0]: see the retention note
     c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
     if paintable(w) {
         w.Render(c.frame)

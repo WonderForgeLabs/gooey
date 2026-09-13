@@ -135,6 +135,18 @@ the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).
 
+**The freedom above is about PAINT, and clicks still follow document
+order.** "From wherever it is declared" is true of the cells and not of
+the pointer: `hitTest` walks `ChildComponents` in reverse and knows
+nothing about the lift or the rank, so where two overlays overlap, the
+one declared LATER takes the click whatever the paint shows. Declaring a
+ranked host first — which this page tells you is free — is exactly the
+shape that makes the two planes disagree.
+`gooey.TestARankOrdersPaintAndNotHitTesting` pins the divergence, and
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) is where it
+is closed. Until then, keep overlapping overlays out of each other's
+cells, or declare the one you want clickable last.
+
 ## An overlay pinned to the pointer, not the tree
 
 An adornment is normally positioned against another *component's*
