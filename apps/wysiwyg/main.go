@@ -369,6 +369,16 @@ func main() {
 	ed.bindClipboard(app)
 	// Click-to-select. The composer is resolved per press rather than
 	// captured: a hot reload of the page builds a new one.
+	//
+	// A Visibility="Hidden" element on the canvas is NOT selectable this
+	// way, and that is the walk's decision rather than an oversight here:
+	// since #465 hitTest skips a node that renders no content, so a press
+	// over one selects the ancestor beneath it. Pointing at a component
+	// that draws nothing has no answer, and the alternative — the canvas
+	// resolving a click differently from the running app — is the
+	// divergence that work exists to remove. Reaching an element that is
+	// not on screen is a tree-pane job, the same as it has always been
+	// for Collapsed. See hitTest in mouse.go.
 	ed.bindPicking(func(x, y int) gooey.Component {
 		c := app.Composer()
 		if c == nil {

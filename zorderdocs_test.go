@@ -1850,7 +1850,7 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 				problems = append(problems, fmt.Sprintf(
 					"%s:%d enumerates what HitTest does not hit and omits "+
 						"Hidden:\n\t%s\n"+
-						"A Hidden component occupies space and paints nothing "+
+						"A Hidden component occupies space and renders no content "+
 						"(layout.go), and hitTest asks paintable() — so it is not "+
 						"hit, exactly as a Collapsed subtree is not. An exception "+
 						"list missing one exception reads as complete, which is "+

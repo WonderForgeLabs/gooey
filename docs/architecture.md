@@ -501,8 +501,9 @@ and the four walks outside the root package that remain unbounded are
 
 `Layout` itself is the FrameworkElement property set — margin
 (`Thickness`, in cells), explicit size, `HAlign`/`VAlign`, and
-`Visibility` (`Visible`, `Hidden` = occupies space but does not paint,
-`Collapsed` = occupies nothing, subtree skipped entirely). In Go
+`Visibility` (`Visible`, `Hidden` = occupies space, renders no content
+and is not hit-tested, `Collapsed` = occupies nothing, subtree skipped
+entirely). In Go
 composition it applies via `gooey.L`:
 
 ```go

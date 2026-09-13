@@ -377,21 +377,42 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {
 		return
 	}
-	// A COMPONENT THAT PAINTS NOTHING IS NOT UNDER THE POINTER, and this
-	// walk let a Hidden one win. Measured, with a Hidden component
+	// A COMPONENT THAT RENDERS NO CONTENT IS NOT UNDER THE POINTER, and
+	// this walk let a Hidden one win. Measured, with a Hidden component
 	// declared after a visible sibling at the same rect:
 	//
 	//	later sibling Visible   → hit = the later one
-	//	later sibling Hidden    → hit = the later one   ← paints nothing
+	//	later sibling Hidden    → hit = the later one   ← renders nothing
 	//	later sibling Collapsed → hit = the earlier, visible one
 	//
-	// The contract this branch wrote into six files turns on the word
-	// PAINTS, and a Hidden component paints nothing — layout.go calls it
-	// "occupies space, does not paint", and paintable() is what every
-	// paint path gates the Render on — so it cannot be the one that
-	// painted last, and a Hidden button silently eating the presses on
-	// what is behind it is the shape that costs. Raised in review of
-	// #478.
+	// The contract this branch wrote into six files turns on what a
+	// component CONTRIBUTES: paintable() is what every paint path gates
+	// the Render on, so a Hidden node contributes no content and cannot
+	// be the thing the user is pointing at. A Hidden button silently
+	// eating the presses on what is behind it is the shape that costs.
+	// Raised in review of #478.
+	//
+	// "RENDERS NO CONTENT", NOT "PAINTS NOTHING", and the earlier
+	// wording was false of the cell plane in a way that matters here.
+	// Composer.build pre-clears every LEAF's bounds unconditionally —
+	// before any paintable test — and marks the node covered, so a
+	// hidden leaf does write to its cells, and writes them LAST.
+	// Measured on this branch, same fixture, reading the cells rather
+	// than the hit:
+	//
+	//	later sibling Visible   → row0 "OOOOOOOOOOOO"  hit = the later one
+	//	later sibling Hidden    → row0 "            "  hit = the earlier one
+	//	later sibling Collapsed → row0 "UUUUUUUUUUUU"  hit = the earlier one
+	//
+	// So in the middle row this walk returns a component that owns NONE
+	// of the cells under the pointer, and the node that last wrote them
+	// is the one it skipped. The gate is still right — a hidden button
+	// must not take the press — but the erasure beneath it is a real
+	// defect in the damage model rather than a consequence of this
+	// walk, and forcing runs forward only so the node beneath cannot be
+	// repainted from here. It is
+	// https://github.com/WonderForgeLabs/gooey/issues/508. Raised in
+	// review of #458, which also measured the table above.
 	//
 	// THE NODE, NOT THE SUBTREE, and that difference is the whole reason
 	// this is not the Collapsed check thirty lines up. Collapsed is out
@@ -410,6 +431,29 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	if !paintable(w) {
 		return
 	}
+	// THE ONE CONSUMER THIS COSTS, decided rather than inherited. The
+	// comment above argues this walk must stay maximally permissive
+	// BECAUSE it is a query — it refuses a Frozen check so
+	// apps/wysiwyg's canvas can find the real <Button> under the pointer
+	// and select it — and the gate twelve lines up removes a whole class
+	// of component from that same query. Visibility is a first-class
+	// markup attribute with Hidden in its enum, so a designer canvas can
+	// hold one, and clicking it now selects the ancestor underneath.
+	//
+	// TAKEN: that is correct, and the two cases are not symmetric. A
+	// frozen subtree is on screen — the designer is pointing at pixels
+	// the user can see, and the walk owes them the component that drew
+	// them. A Hidden node draws nothing, so there are no pixels of its
+	// own to point at, and "select what is under the pointer" has no
+	// answer that names it. Selecting it would mean the canvas and the
+	// running app disagreeing about what a click means, which is the
+	// divergence this branch exists to remove.
+	//
+	// What a designer needs instead is a way to reach a component that
+	// is not on screen AT ALL, which is a tree-pane question rather than
+	// a pointer one and is the same need a Collapsed element already
+	// has — Collapsed has never been hittable and the canvas has always
+	// lived with it. Raised in review of #458.
 	if best.beatenBy(overlay, rank, mine) {
 		*best = hitCandidate{w: w, rank: rank, overlay: overlay, order: mine}
 	}

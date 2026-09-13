@@ -284,14 +284,24 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // layer being transparent only means the layer's own empty cells are;
 // each adornment decides for itself.
 //
-// Every adornment in this repo decides the same way — tipPopup,
-// markerPopup and DragGhost each declare HitTestTransparent, which is
-// the grep to run rather than a count to trust here — so nothing ships
-// with the defect. But Add is exported and Adornment is an interface,
-// so an adornment that simply omits the method is opaque, and nothing
-// says so at the point of writing one: no load error, no vet, no test.
-// It would take the press over the field it is pinned beside, at the
-// top rank, silently.
+// Every adornment in this repo decides the same way, and that is now a
+// CHECK rather than a grep: TestEveryAdornmentIsHitTestTransparent reads
+// this package's source for the types declaring both Anchor and Place —
+// which is what an Adornment is — and fails on one that does not also
+// declare HitTestTransparent. A fourth adornment comes under it on the
+// commit that adds it, where the sentence this replaces ("the grep to
+// run rather than a count to trust here") asked the reader to do the
+// walk by hand and would have gone on reading true while a new one
+// shipped opaque.
+//
+// What the check cannot reach is a third-party adornment: Add is
+// exported and Adornment is an interface, so one written outside this
+// package that simply omits the method is opaque, and nothing says so at
+// the point of writing it — no load error, no vet, no test. It would
+// take the press over the field it is pinned beside, at the top rank,
+// silently. That residue is the reason the remedy below is the right
+// one; a guard over this package's own types is the half that can be
+// enforced here.
 //
 // And the duration is the half that is worse here than for a toast.
 // toast.go weighs its swallowing as "three seconds of that button being

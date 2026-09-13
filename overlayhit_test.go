@@ -75,7 +75,7 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 // visible sibling at the same rect:
 //
 //	later sibling Visible   → hit = the later one
-//	later sibling Hidden    → hit = the later one   ← paints nothing
+//	later sibling Hidden    → hit = the later one   ← renders nothing
 //	later sibling Collapsed → hit = the earlier, visible one
 //
 // So a component that painted nothing beat one that did, which is the
@@ -117,9 +117,66 @@ func TestAHiddenComponentPaintsNothingAndIsNotHit(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("a %v component declared after a visible one: HitTest "+
 				"returned the %s one, want the %s. HitTest answers with what "+
-				"PAINTS last, and a Hidden component paints nothing",
+				"RENDERS last, and a Hidden component renders no content",
 				tc.vis, got, tc.want)
 		}
+	}
+}
+
+// TestAHiddenLeafStillWritesItsOwnCells is the arm the test above could
+// not be: it reads the CELLS.
+//
+// The gate's justification said "a Hidden component paints nothing".
+// True of Render, false of the node's cells — Composer.build pre-clears
+// every LEAF's bounds before any paintable test and marks it covered, so
+// a hidden leaf writes its rect last and a visible sibling underneath it
+// is erased. The test above reads only the hit, so the whole cell plane
+// was outside what any assertion here could see, and the wrong word went
+// into six files. Raised in review of #458.
+//
+// WHAT THIS ASSERTS IS STABLE ACROSS THE FIX, deliberately. #508 will
+// change the Hidden row from blank to the sibling's glyphs; pinning
+// "blank" would make this test fail ON the repair, which is the wrong
+// polarity for a defect somebody is expected to fix. So the assertions
+// are the two rows that are right today and stay right after it, plus
+// the invariant that survives either way — a Hidden leaf never puts its
+// OWN content on screen. The measurement itself is logged rather than
+// asserted, which is where a reader finds today's answer.
+func TestAHiddenLeafStillWritesItsOwnCells(t *testing.T) {
+	row0 := func(vis Visibility) string {
+		under := &stripe{ch: 'U'}
+		over := &stripe{ch: 'O'}
+		over.LayoutProps().Visibility = vis
+		root := &twoKids{kids: []Component{under, over}}
+		c := NewComposer(root, 12, 3)
+		f, _ := c.Frame()
+		defer c.Close()
+		return render.RowText(f.Cells, 0)
+	}
+
+	vis, hidden, collapsed := row0(Visible), row0(Hidden), row0(Collapsed)
+	t.Logf("row 0 — Visible %q  Hidden %q  Collapsed %q", vis, hidden, collapsed)
+
+	if !strings.Contains(vis, "O") {
+		t.Errorf("a Visible later sibling did not reach the cells: row 0 is %q. "+
+			"Without this the fixture cannot produce a later-sibling win at "+
+			"all and every arm below is vacuous", vis)
+	}
+	if !strings.Contains(collapsed, "U") {
+		t.Errorf("a Collapsed later sibling left row 0 as %q, want the earlier "+
+			"sibling's cells. Collapsed is out of layout, so there is no rect "+
+			"to pre-clear and nothing of the earlier sibling should be lost", collapsed)
+	}
+	if strings.Contains(hidden, "O") {
+		t.Errorf("a Hidden leaf put its own content on screen: row 0 is %q. "+
+			"paintable() gates the Render on every paint path, so Hidden must "+
+			"contribute no content — that is the claim hitTest's gate rests on", hidden)
+	}
+	if hidden == collapsed {
+		t.Logf("a Hidden leaf no longer erases the sibling beneath it — row 0 " +
+			"matches the Collapsed answer. If #508 was just fixed, this is the " +
+			"expected reading and the Hidden row in mouse.go's table, " +
+			"docs/architecture.md and issue #508 all need updating with it")
 	}
 }
 
