@@ -56,6 +56,26 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 			// testdata fixture is allowed to be deliberately broken.
 			continue
 		}
+		// GENERATED CODE IS NOT THIS RULE'S SUBJECT, and the reason is
+		// the rule's own premise. The defect is a declaration inserted
+		// between a comment and what it documents BY HAND; nobody edits
+		// a .pb.go, and a theft in one would be protoc's and would come
+		// back on the next generate. Excluding them is what keeps the
+		// report actionable.
+		//
+		// Measured, and it is the only reason this line exists: taking
+		// methods into the rule (review of #503) made protoc's
+		// "// Enum value maps for ValueKind." land directly above the
+		// generated `func (x ValueKind) Enum()`, so seven perfectly
+		// correct generated comments in types.pb.go read as theft. That
+		// also falsifies half a sentence above — "nothing legitimate has
+		// that shape" — for a doc that opens with an ordinary English
+		// word which is also the next declaration's name. In
+		// hand-written code the claim held across 4777 doc comments;
+		// generated code is where it does not.
+		if ast.IsGenerated(f) {
+			continue
+		}
 		files++
 		seen[filepath.Dir(path)] = true
 		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
@@ -288,6 +308,39 @@ func alpha() {}
 `,
 			want: "alpha",
 		},
+		{
+			// A METHOD, which the rule could not see until review of
+			// #503 and which cost it a real theft: panel.go had
+			// Measure's doc comment merged into inset's, three lines
+			// above the Measure it was written for, and the guard was
+			// green over it for as long as documented() checked
+			// d.Recv == nil.
+			name: "a method stolen from",
+			src: `type pane struct{}
+
+// Measure reserves the ring.
+func (p *pane) inset() int { return 1 }
+
+func (p *pane) Measure() int { return 2 }
+`,
+			want: "Measure",
+		},
+		{
+			// THE RECEIVER IS NOT PART OF THE QUESTION. A method's doc
+			// naming its own method is honest whatever it hangs off,
+			// and the exclusion this replaced was argued from telling
+			// two Measures apart — which this rule never has to do,
+			// because it only ever compares against the declaration
+			// directly below.
+			name: "an honest method that names itself",
+			src: `type pane struct{}
+
+// Measure reserves the ring.
+func (p *pane) Measure() int { return 2 }
+
+func (p *pane) inset() int { return 1 }
+`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fset := gotoken.NewFileSet()
@@ -503,17 +556,36 @@ func specDeclares(sp ast.Spec, want string) bool {
 }
 
 // documented is d's own name and doc comment, for the declarations this
-// rule can judge: a package-level func or a var/const/type block.
+// rule can judge: any func — method or not — or a var/const/type block.
 //
-// A method is excluded because its doc opens with the method name and
-// the receiver is what disambiguates it; an import block, because it
-// declares no name of its own. A parenthesised block answers with its
-// FIRST spec's name, which is the one a comment above the block would be
-// about.
+// METHODS USED TO BE EXCLUDED, on the grounds that a method's doc opens
+// with the method name and the receiver is what disambiguates it. That
+// is an argument about telling two Measures APART, and this rule never
+// needs to: it asks whether a doc comment names the declaration
+// DIRECTLY BELOW it, which is a question about adjacency in one file.
+// Excluding them cost a real theft, sitting in the tree while the guard
+// was green — apps/wysiwyg/components/panel/panel.go had Measure's doc
+// comment merged into inset's, so Measure was undocumented and
+// inset's comment opened by describing a method three lines down.
+// Raised in review of #503.
+//
+// An import block is still excluded, because it declares no name of its
+// own. A parenthesised block answers with its FIRST spec's name, which
+// is the one a comment above the block would be about.
+//
+// WHAT IS STILL OUT OF REACH, stated because a boundary nobody writes
+// down reads as coverage: this walks f.Decls, so it sees declarations
+// and not the names INSIDE them. A struct field's doc comment stolen by
+// the field below it, and the same in an interface's method list, are
+// the same defect one level down and nothing here looks at either. The
+// walk would have to descend into StructType.Fields and
+// InterfaceType.Methods to reach them, which is a different traversal
+// rather than a wider switch — recorded as a gap, not closed. Raised in
+// review of #503.
 func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
 	switch d := d.(type) {
 	case *ast.FuncDecl:
-		if d.Doc == nil || d.Recv != nil {
+		if d.Doc == nil {
 			return "", nil, false
 		}
 		return d.Name.Name, d.Doc, true
@@ -534,11 +606,12 @@ func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
 	return "", nil, false
 }
 
-// declares reports whether d introduces the top-level name want.
+// declares reports whether d introduces the name want — a method's own
+// name included, for the reason documented gives above.
 func declares(d ast.Decl, want string) bool {
 	switch d := d.(type) {
 	case *ast.FuncDecl:
-		return d.Recv == nil && d.Name.Name == want
+		return d.Name.Name == want
 	case *ast.GenDecl:
 		for _, sp := range d.Specs {
 			if specDeclares(sp, want) {
@@ -547,6 +620,59 @@ func declares(d ast.Decl, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestTheGeneratedFileSkipIsTheMarkerAndNotTheDirectory is the
+// counterfactual for the one exclusion the walk above makes, and it
+// exists because an exclusion is a hole in a guard: a skip that matched
+// too much would take hand-written files out of the rule and read as
+// green.
+//
+// It asks the same question the walk asks — ast.IsGenerated, which is
+// the "// Code generated … DO NOT EDIT." line before the package clause
+// — rather than a path test. That is the difference that matters:
+// grpc/gen/ is where this repo's generated code happens to live today,
+// and a directory rule would have gone on excluding it after somebody
+// hand-wrote a file there.
+//
+// The fixture carries the theft shape protoc actually produces, so the
+// skip is measured against the case it was added for rather than an
+// invented one.
+func TestTheGeneratedFileSkipIsTheMarkerAndNotTheDirectory(t *testing.T) {
+	const theft = `// Enum value maps for ValueKind.
+var (
+	ValueKind_name = map[int32]string{}
+)
+
+func (x ValueKind) Enum() *ValueKind { return &x }
+`
+	parse := func(t *testing.T, src string) *ast.File {
+		t.Helper()
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, "fixture.go", src, goparser.ParseComments)
+		if err != nil {
+			t.Fatalf("parsing the fixture: %v", err)
+		}
+		return f
+	}
+
+	gen := parse(t, "// Code generated by protoc-gen-go. DO NOT EDIT.\n\n"+
+		"package fake\n\ntype ValueKind int32\n\n"+theft)
+	if !ast.IsGenerated(gen) {
+		t.Error("the marker protoc writes does not read as generated, so the walk " +
+			"would report seven correct comments in types.pb.go as theft")
+	}
+	hand := parse(t, "package fake\n\ntype ValueKind int32\n\n"+theft)
+	if ast.IsGenerated(hand) {
+		t.Fatal("a file with no marker reads as generated, which would take " +
+			"hand-written code out of the rule")
+	}
+	fset := gotoken.NewFileSet()
+	if got := stolenComments(fset, parse(t, "package fake\n\ntype ValueKind int32\n\n"+theft), "fake"); len(got) != 1 {
+		t.Errorf("the same source reports %d findings when it is NOT generated, "+
+			"want 1 — the skip is what suppresses it, so without this the arm "+
+			"above would pass over a rule that never fired: %v", len(got), got)
+	}
 }
 
 // TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay pins the two halves

@@ -236,12 +236,12 @@ func (p *Pane) ChildComponents() []gooey.Component {
 	return []gooey.Component{p.Child}
 }
 
-// Measure reserves the ring: one cell on every side, exactly as a
-// <Border> does. The pixel and cell tiers agree on this, which is what
-// makes the two interchangeable without moving anything.
 // inset is the ring plus the padding, per side.
 func (p *Pane) inset() int { return 1 + max(0, p.Pad) }
 
+// Measure reserves the ring: one cell on every side, exactly as a
+// <Border> does. The pixel and cell tiers agree on this, which is what
+// makes the two interchangeable without moving anything.
 func (p *Pane) Measure(avail gooey.Size) gooey.Size {
 	if p.Child != nil {
 		d := 2 * p.inset()
