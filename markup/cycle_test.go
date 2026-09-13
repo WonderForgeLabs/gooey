@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 )
 
 // A markup control that is its own ancestor never stops instantiating.
@@ -168,5 +171,111 @@ func TestARegisteredElementKeyMustMatchItsName(t *testing.T) {
 	nilDef := &Context{Elements: map[string]*ElementDef{"Table": nil}}
 	if _, err := Load(fsys, "p.gooey", nilDef); err != nil {
 		t.Errorf("a Context holding a nil ElementDef failed to load: %v", err)
+	}
+}
+
+// TestAControlsAncestryIsNotAliasedByItsSiblings is the test the
+// three-index slice at usercontrol.go's `child.controls = append(...)`
+// did not have, and the reason it is worth having is not the load path
+// these other tests take.
+//
+// Every context built during a Load is used and dropped inside that
+// Load, so a sibling overwriting the slot a previous sibling wrote
+// cannot be observed there — the previous sibling's whole subtree is
+// already built, the walk being depth-first and single-goroutine. The
+// hazard is a context that OUTLIVES its build: markup/itemsview.go's row
+// context captures ctx.controls and builds rows from it at scroll time,
+// long after every sibling has appended. Rewrite that array in between
+// and the cycle guard reads an ancestry that names controls the row is
+// not inside — so a genuine cycle through the row's own control is not
+// found, and #216's `fatal error: stack overflow` comes back on a path
+// no test walks.
+//
+// The probe stands in for that retained context. It captures the LIVE
+// slice its control was handed and a copy of the contents at that
+// moment; if the two disagree once Load has returned, somebody
+// rewrote ancestry that was still being pointed at.
+//
+// THE DEPTH IS LOAD-BEARING AND IS NOT ARITHMETIC IN THE TEST. Append
+// only leaves spare capacity once growth has over-allocated, which does
+// not happen at the first two levels — a two-deep fixture passes against
+// the bug. Rather than write down what Go's growth rule does today, the
+// fixture nests until a spare slot exists and the assertion below
+// requires the observation to be there: if a future runtime allocates
+// differently, this fails as "the fixture no longer reaches the hazard"
+// rather than passing quietly.
+func TestAControlsAncestryIsNotAliasedByItsSiblings(t *testing.T) {
+	type shot struct {
+		at    string
+		live  []string // the slice the control was handed, still aliasing
+		taken []string // its contents at build time
+	}
+	var shots []shot
+	probe := &ElementDef{
+		Name:     "Probe",
+		Proto:    &components.Text{},
+		Known:    true,
+		Doc:      "Records the ancestry its enclosing control was built with.",
+		Attrs:    []AttrSpec{{Name: "At", Kind: KindString, Binds: BindsLiteral, Origin: OriginRegistered}},
+		Children: ChildSpec{Mode: ModeLeaf},
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			shots = append(shots, shot{
+				at:    e.Attrs["At"],
+				live:  ctx.controls,
+				taken: append([]string{}, ctx.controls...),
+			})
+			return &components.Text{}, nil
+		},
+	}
+
+	// Alpha and Beta are siblings deep enough that their parent's
+	// ancestry has a spare slot to fight over.
+	fsys := fstest.MapFS{}
+	for name, src := range map[string]string{
+		"app.gooey":   `<Gooey><Outer/></Gooey>`,
+		"outer.gooey": `<Gooey><Mid/></Gooey>`,
+		"mid.gooey":   `<Gooey><Inner/></Gooey>`,
+		"inner.gooey": `<Gooey><VStack><Alpha/><Beta/></VStack></Gooey>`,
+		"alpha.gooey": `<Gooey><Probe At="alpha"/></Gooey>`,
+		"beta.gooey":  `<Gooey><Probe At="beta"/></Gooey>`,
+	} {
+		fsys[name] = &fstest.MapFile{Data: []byte(src)}
+	}
+	if _, err := Load(fsys, "app.gooey", &Context{
+		Includes: fsys,
+		Elements: map[string]*ElementDef{"Probe": probe},
+	}); err != nil {
+		t.Fatalf("the fixture does not load: %v", err)
+	}
+
+	// Non-vacuity, in both directions. Two probes, each four controls
+	// deep, or the fixture is not the one this test describes — and a
+	// one-shot run would make the comparison below vacuous, since
+	// nothing would have appended after the capture.
+	if len(shots) != 2 {
+		t.Fatalf("the fixture built %d probes, not 2: %v", len(shots), shots)
+	}
+	for _, s := range shots {
+		if len(s.taken) != 4 {
+			t.Fatalf("the %s probe's control is %d deep, not 4, so its parent's "+
+				"ancestry has no spare slot for a sibling to write into and this "+
+				"test cannot see the bug: %v", s.at, len(s.taken), s.taken)
+		}
+	}
+
+	// The assertion. Beta appended after Alpha's context was captured;
+	// if that append landed in Alpha's backing array, Alpha's ancestry
+	// now says "Beta".
+	for _, s := range shots {
+		for i := range s.taken {
+			if s.live[i] != s.taken[i] {
+				t.Errorf("the %s control was built with ancestry %v and now reads %v — "+
+					"a sibling's append rewrote an array it was still pointing at. A "+
+					"context that outlives its build (itemsview.go's row context) would "+
+					"run the cycle guard against that, and miss a cycle through %q.",
+					s.at, s.taken, s.live, s.taken[len(s.taken)-1])
+				break
+			}
+		}
 	}
 }

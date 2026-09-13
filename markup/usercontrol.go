@@ -197,8 +197,8 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		//
 		// THE COST, and it is a document that used to load: a control
 		// whose setup registers Components["X"] privately, on a page
-		// that declares Elements["X"], now hits markup.build's
-		// both-maps refusal (markup.go:1509) instead of quietly
+		// that declares Elements["X"], now hits
+		// markup.buildComponent's both-maps refusal instead of quietly
 		// winning. That refusal is the right answer — which of the two
 		// won would otherwise depend on the order of the ifs — but the
 		// error names a collision the control author did not create.
@@ -304,12 +304,26 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// from it later — where a sibling appending in the meantime would
 		// rewrite ancestry the retained context still points at.
 		//
-		// No test in this package discriminates this line; it guards a
-		// deferred-build path, not the load path the cycle tests take.
+		// TestAControlsAncestryIsNotAliasedByItsSiblings is what
+		// discriminates it, and it has to reach past the load path to do
+		// so: a registered element records the slice its control was
+		// handed and the contents at that moment, standing in for the
+		// retained row context, and compares them once Load has returned.
+		// Four levels deep, because append leaves no spare slot to fight
+		// over until growth has over-allocated.
 		child.controls = append(parent.controls[:len(parent.controls):len(parent.controls)], name)
 		w, err := doc.build(child)
 		if err != nil {
-			return nil, err
+			// ATTRIBUTED TO THE CONTROL, the way the setup-error path
+			// above already is. The both-maps refusal this file's Elements
+			// arm describes is the case that made it necessary: the page
+			// declared Elements["X"], the control's setup registered
+			// Components["X"], and neither author wrote a duplicate — so a
+			// bare "<X> is registered in both" reaches the one person who
+			// can act on it as a sentence about a page they may not own.
+			// Nesting reads as a trace rather than a repetition: each level
+			// names the file whose markup failed to build.
+			return nil, fmt.Errorf("markup: control %s: %w", name, err)
 		}
 		if len(doc.decls.list) > 0 {
 			surface := DeclaredSurface{Control: name, Props: make([]DeclaredProp, 0, len(doc.decls.list))}

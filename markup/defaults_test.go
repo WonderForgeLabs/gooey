@@ -420,7 +420,7 @@ func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prere
 			//
 			// A restricted child cannot be built the way the parent is,
 			// either: <Menu> and <MenuItem> have no ElementDef at all
-			// (markup.go:1112 reads them in MenuBar's builder), so there
+			// (markup.buildMenuBar reads them as DATA), so there
 			// is no declaration to seed from. The Seed is markup that
 			// loads by construction and states the children the element
 			// actually wants — the same argument seedValue makes for

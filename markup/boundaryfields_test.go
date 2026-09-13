@@ -984,7 +984,7 @@ func TestAPageRelativeAssetPathWorksInsideARow(t *testing.T) {
 // Elements, so a setup registering Components["Meter"] privately, on a
 // page that declares Elements["Meter"], simply won: the two names lived
 // in different scopes. Now Elements crosses the boundary, and
-// markup.build refuses a name present in BOTH maps (markup.go:1509)
+// markup.buildComponent refuses a name present in BOTH maps
 // because one of them would be unreachable and which one would depend on
 // the order those ifs happen to be written in.
 //
@@ -1019,11 +1019,21 @@ func TestAControlCannotShadowAPageDeclaredElement(t *testing.T) {
 		t.Fatal("a control registered its own <Meter> builder on a page that " +
 			"DECLARES <Meter>, and the document loaded. One of the two is " +
 			"unreachable, and which one would depend on the order of the ifs " +
-			"in markup.build — that is the silent shadowing the declared " +
+			"in markup.buildComponent — that is the silent shadowing the declared " +
 			"vocabulary exists to prevent")
 	}
 	if !strings.Contains(err.Error(), "registered in both") {
 		t.Errorf("the load failed for some other reason than the both-maps "+
 			"collision, so this test is not reaching the seam it is about: %v", err)
+	}
+	// AND IT NAMES THE CONTROL. buildComponent's message is written for one
+	// author holding both maps; here they are two, and neither wrote a
+	// duplicate. Without the control's name the person who can act on it —
+	// whoever wrote card.gooey's setup — is handed a sentence about a page
+	// they may not own. Pinning only the refusal pins that the load fails,
+	// not that the report is usable. Raised in review of #490.
+	if !strings.Contains(err.Error(), "card.gooey") {
+		t.Errorf("the collision is reported as %q — it names neither the control "+
+			"nor its file, so it reads as a page-level duplicate that nobody wrote", err)
 	}
 }
