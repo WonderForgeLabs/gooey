@@ -287,16 +287,43 @@ func (s *Service) islandGone() *Error { return deniedf(islandGoneFmt, s.grant.Is
 // state the subject cannot reach measures the fixture. The honest record
 // is this sentence — and if Component ever grows Bounds, the arm and this
 // paragraph go together. Raised in review of #504.
-func (s *Service) islandRect() (gooey.Rect, error) {
+// islandBounds is islandRect without the error: the rect, and whether it
+// could be resolved at all. It exists because VisibleDamage wants exactly
+// that and nothing more — it filters a slice rather than returning a
+// result, and it runs once per composed frame on the UI goroutine, so it
+// must not format a denial it is going to drop.
+//
+// Splitting it out is what keeps ONE statement of "a missing island means
+// no damage". The first version of the allocation fix put an islandRoot()
+// nil check in VisibleDamage ahead of islandRect, which resolved the
+// island twice per frame and asserted the rule in two places — the same
+// drift islandRect was extracted to remove from five hand-copied denial
+// messages. Raised in review of #504.
+func (s *Service) islandBounds() (gooey.Rect, bool) {
 	root := s.islandRoot()
 	if root == nil {
-		return gooey.Rect{}, s.islandGone()
+		return gooey.Rect{}, false
 	}
 	b, ok := root.(gooey.Bounded)
 	if !ok {
-		return gooey.Rect{}, preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+		return gooey.Rect{}, false
 	}
-	return b.Bounds(), nil
+	return b.Bounds(), true
+}
+
+// islandRect is islandBounds plus the reason, for the callers that return
+// one. The failing arm is re-derived rather than carried out of
+// islandBounds, because that costs a second lookup only on the path that
+// is already building an error — and it keeps the resolution itself
+// written once.
+func (s *Service) islandRect() (gooey.Rect, error) {
+	if r, ok := s.islandBounds(); ok {
+		return r, nil
+	}
+	if s.islandRoot() == nil {
+		return gooey.Rect{}, s.islandGone()
+	}
+	return gooey.Rect{}, preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
 }
 
 // Screen reads the retained cell plane as of the last composed frame.
@@ -500,9 +527,9 @@ type ScreenSize struct {
 // size and alignment are applied by MeasureChild/ArrangeChild, the
 // sandwich the root — being nobody's child — never passes through. A
 // root declaring Margin, Width, Height, HAlign and VAlign together was
-// measured, and it reported the full terminal (mcp.TestTheRootAlwaysFillsTheScreen pins
-// that, so this paragraph fails rather than rots if the root ever starts
-// honouring its own size).
+// measured, and it reported the full terminal —
+// mcp.TestTheRootAlwaysFillsTheScreen pins that, so this paragraph fails
+// rather than rots if the root ever starts honouring its own size.
 //
 // The reasons that survive measurement:
 //

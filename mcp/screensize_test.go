@@ -580,3 +580,48 @@ func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
 		"kind": "click", "x": bx + x0, "y": last + y0,
 	}, "outside this session's island")
 }
+
+// TestTheAgentWorkflowsToolInventoriesAreComplete is the fifth and sixth
+// surfaces, and they are the ones whose readers drive the app.
+//
+// .claude/workflows/gooey-new-component.js and gooey-new-demo.js each
+// carry a "The tools:" line inside the prompt they hand an agent that
+// then prototypes a component over MCP — the audience with the most
+// direct use for the screen's size, and the one least able to discover a
+// tool the list omits, because the list IS its documentation. Both
+// omitted screen_size, and both had omitted unregister_properties since
+// before this change. Same class as the four surfaces already guarded
+// here, reached by the reviewer and not by me. Raised in review of #504.
+//
+// THE BACKTICKS ARE ESCAPED IN THE SOURCE, because the inventory sits
+// inside a JavaScript template literal: an unescaped ` would end the
+// string. \` is what the file holds and a backtick is what the agent
+// reads, so this unescapes before asking assertNamesEveryTool — the
+// alternative, a second matching rule, would let the two surfaces drift
+// apart from the other four.
+//
+// Skips when the files are absent, for the module-boundary reason
+// TestTheTutorialsToolInventoryIsComplete gives.
+func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
+	for _, page := range []string{
+		"../.claude/workflows/gooey-new-component.js",
+		"../.claude/workflows/gooey-new-demo.js",
+	} {
+		body, err := os.ReadFile(page)
+		if errors.Is(err, fs.ErrNotExist) {
+			t.Skipf("%s is outside this module and absent, so this guard only "+
+				"runs inside the repo checkout", page)
+		}
+		if err != nil {
+			t.Fatalf("reading %s: %v", page, err)
+		}
+		src := strings.ReplaceAll(string(body), "\\`", "`")
+		if !strings.Contains(src, "The tools:") {
+			t.Fatalf("%s no longer carries a \"The tools:\" line, so this guard "+
+				"would be asking about a page-wide mention rather than the "+
+				"inventory — either the prompt was restructured and this has to "+
+				"follow it, or the inventory is gone", page)
+		}
+		assertNamesEveryTool(t, src, page)
+	}
+}

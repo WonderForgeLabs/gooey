@@ -169,23 +169,17 @@ func (s *Service) VisibleDamage(rects []gooey.Rect) []gooey.Rect {
 	if !s.scoped() {
 		return rects
 	}
-	// THE MISSING ISLAND IS ANSWERED BEFORE islandRect, and that is about
-	// allocation rather than about the answer. grpc/session.go calls this
-	// once per composed frame on the UI goroutine; islandRect's nil arm
-	// builds an *Error through fmt.Sprintf, and this function drops it —
-	// so a scoped session whose island has been swapped away formatted
-	// and threw away a denial every frame. The code this extraction
-	// replaced took the islandRoot() nil path and allocated nothing.
-	// Raised in review of #504.
-	if s.islandRoot() == nil {
-		return nil
-	}
-	// The error is deliberately dropped: this returns a filtered slice
-	// rather than a result, and a scoped session whose island cannot be
-	// resolved shows no damage — which the zero Rect already produces
-	// through the W/H check below.
-	clip, _ := s.islandRect()
-	if clip.W <= 0 || clip.H <= 0 {
+	// islandBounds RATHER THAN islandRect, and that is about allocation
+	// rather than about the answer. grpc/session.go calls this once per
+	// composed frame on the UI goroutine; islandRect's failing arms build
+	// an *Error through fmt.Sprintf and this function would drop it, so a
+	// scoped session whose island has been swapped away formatted and
+	// threw away a denial every frame. Asking the question that has no
+	// error in it is the whole fix, and it leaves the rule stated once.
+	// Raised in review of #504, twice — the first answer put an
+	// islandRoot() nil check here instead and resolved the island twice.
+	clip, ok := s.islandBounds()
+	if !ok || clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}
 	out := make([]gooey.Rect, 0, len(rects))
