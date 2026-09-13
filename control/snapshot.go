@@ -452,15 +452,36 @@ func str(p *prop.Property[string]) string {
 }
 
 // ScreenSize is the size of the surface this session may see, in cells,
-// plus the terminal's cell metrics in pixels.
+// plus where that surface sits and the terminal's cell metrics in
+// pixels.
 //
 // CELLS AND PIXELS BOTH, because the two callers are different and
 // neither can derive the other: coordinates for SendMouse are cells, and
 // the graphics layer sizes a picture in pixels (term.Caps.CellW/CellH).
 // A client that had to ask twice would ask once and guess the rest.
+//
+// The ORIGIN is the half a Go caller meets here first — the method doc
+// below is a separate declaration, and the type is what `go doc
+// control.ScreenSize` prints. It is the half this type exists for, and
+// naming only four of these six fields is how it came to be described
+// nowhere on its own surface.
 type ScreenSize struct {
-	Cols, Rows   int
-	X, Y         int
+	// Cols, Rows is the extent of the surface in cells: the terminal for
+	// an unscoped session, the island's arranged rect for a scoped one.
+	Cols, Rows int
+	// X, Y is that surface's ABSOLUTE top-left on the host's page, which
+	// is the frame SendMouse and SendKeys take their coordinates in. It
+	// is (0, 0) for an unscoped session, and for a scoped one it is the
+	// island's own origin — so a guest that never asks lands every click
+	// Y rows too high.
+	//
+	// It does NOT apply to every coordinate a session can read. Bounds
+	// from a tree snapshot are already absolute; a position read off
+	// screen text is homed at (0, 0) and is the one that needs this
+	// added. See the ScreenSize method below.
+	X, Y int
+	// CellW, CellH is the terminal's cell size in pixels, for sizing a
+	// picture rather than for placing one.
 	CellW, CellH int
 }
 

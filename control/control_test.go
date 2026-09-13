@@ -278,3 +278,47 @@ func TestUnregisterLeavesNothingRemovedWhenItFails(t *testing.T) {
 		}
 	}
 }
+
+// TestVisibleDamageAllocatesNothingWhileTheIslandIsMissing is about a
+// cost, not an answer, and the answer was never wrong.
+//
+// grpc/session.go calls VisibleDamage once per composed frame on the UI
+// goroutine. Resolving the island through islandRect means the nil arm
+// runs islandGone — fmt.Sprintf into an *Error — and this function drops
+// the error on the floor, so a scoped session whose island had been
+// swapped away formatted and discarded a denial on every frame for as
+// long as it stayed away. The code the extraction replaced took the
+// islandRoot nil path and allocated nothing.
+//
+// AllocsPerRun rather than a benchmark, because the claim is a zero.
+// Raised in review of #504.
+func TestVisibleDamageAllocatesNothingWhileTheIslandIsMissing(t *testing.T) {
+	svc, bind := testService(nil)
+	bind.Named = map[string]gooey.Component{}
+	svc.grant = &Grant{Island: "gone"}
+
+	rects := []gooey.Rect{{X: 0, Y: 0, W: 4, H: 2}}
+	if got := svc.VisibleDamage(rects); got != nil {
+		t.Fatalf("a scoped session whose island is gone reported %v damage, want none", got)
+	}
+	if n := testing.AllocsPerRun(200, func() { svc.VisibleDamage(rects) }); n != 0 {
+		t.Errorf("VisibleDamage allocated %v times per call with the island "+
+			"missing — that is a formatted denial built and thrown away once "+
+			"per composed frame", n)
+	}
+
+	// NON-VACUITY, because "returns nil and allocates nothing" is also
+	// what a VisibleDamage that had stopped filtering anything would do
+	// on this fixture. The island resolves here, so the clip is real.
+	island := &leaf{}
+	island.Base.Arrange(gooey.Rect{X: 10, Y: 5, W: 4, H: 2})
+	bind.Named["gone"] = island
+	got := svc.VisibleDamage([]gooey.Rect{
+		{X: 0, Y: 0, W: 4, H: 2},
+		{X: 11, Y: 5, W: 1, H: 1},
+	})
+	if len(got) != 1 || got[0].X != 11 {
+		t.Fatalf("with the island present the filter returned %v, want only the "+
+			"rect inside it", got)
+	}
+}

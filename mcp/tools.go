@@ -52,9 +52,9 @@ type Tool struct {
 }
 
 // v1Tools is the tool inventory. Read: tree_snapshot, screen_size,
-// screen_text, list_values, list_styles. Act: invoke_command, set_value, send_keys,
-// send_mouse, focus. Grow and shrink the viewmodel: register_properties
-// (#89), unregister_properties.
+// screen_text, list_values, list_styles. Act: invoke_command,
+// set_value, send_keys, send_mouse, focus. Grow and shrink the
+// viewmodel: register_properties (#89), unregister_properties.
 // Mutate structure: swap_markup (optionally registering first),
 // patch_markup. Check: validate_markup.
 //
@@ -84,8 +84,10 @@ func (s *Server) v1Tools() []*Tool {
 			Description: "The size of the visible surface in cells, its absolute origin on the " +
 				"screen, and the terminal's cell metrics in pixels. A session scoped to an island " +
 				"is told the island's size, because the island is its whole screen — but send_mouse " +
-				"takes ABSOLUTE screen cells, so add x/y to a position within the surface to put it " +
-				"in the space send_mouse reads. That fixes the coordinate space, not the outcome. " +
+				"takes ABSOLUTE screen cells, so add x/y to a position read off screen_text, which is " +
+				"homed at (0,0). Bounds from tree_snapshot are already absolute — converting those " +
+				"twice is the same error one source over. That fixes the coordinate space, not the " +
+				"outcome. " +
 				"Cell metrics are 0 when the host never probed the terminal.",
 			OutputSchema: screenSizeSchema(),
 			Run:          s.screenSize,

@@ -266,6 +266,36 @@ func TestTheTutorialsToolInventoryIsComplete(t *testing.T) {
 	assertNamesEveryTool(t, string(body), page)
 }
 
+// TestTheMCPSpecsToolInventoryIsComplete is the fourth surface, and the
+// one this change edited by hand while closing the other three.
+//
+// docs/specs/2026-08-10-mcp-server.md is the decision record — its
+// "Tools (v1)" section is the same shape as the tutorial's, backticked
+// names in prose read only by humans. Adding screen_size to it and not
+// guarding it means the next tool lands with three surfaces reddening
+// and the record quietly wrong, which is the exact outcome the tutorial
+// guard exists to prevent.
+//
+// ADDITIVE, NOT A FIX: this passed as written before it was committed.
+// Saying so matters because a guard added beside a repair reads as the
+// repair's pin, and this one pins nothing that was broken. Raised in
+// review of #504.
+//
+// Skips when the file is absent, for the module-boundary reason
+// TestTheTutorialsToolInventoryIsComplete gives.
+func TestTheMCPSpecsToolInventoryIsComplete(t *testing.T) {
+	const page = "../docs/specs/2026-08-10-mcp-server.md"
+	body, err := os.ReadFile(page)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s is outside this module and absent, so this guard only runs "+
+			"inside the repo checkout", page)
+	}
+	if err != nil {
+		t.Fatalf("reading %s: %v", page, err)
+	}
+	assertNamesEveryTool(t, string(body), page)
+}
+
 // TestTheGRPCContractTableNamesEveryTool is the third surface, and the
 // one that states its own completeness out loud.
 //
@@ -470,4 +500,83 @@ func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
 	// tree has no other way to tell "you may not" from "it is gone".
 	guest.fails("screen_size", nil, `island "Ghost", which names no element`)
 	guest.fails("screen_text", nil, `island "Ghost", which names no element`)
+}
+
+// TestATreeSnapshotBoundIsAlreadyAbsolute is the other half of the
+// origin's contract, and the half a client can get wrong in the same
+// direction the tool exists to fix.
+//
+// A scoped session has TWO coordinate sources and they do not agree.
+// screen_text is homed at (0,0) deliberately — a guest's screen dump is
+// not a set of absolute cursor moves that betray where on the host's
+// page its island sits — so a position read off it is what x/y converts.
+// tree_snapshot emits Bounds() from the live tree, which are already
+// absolute even when the snapshot is rooted at the island. An agent that
+// obeys screen_size unconditionally adds y0 to a bound that already
+// carries it and clicks y0 rows low: on a real component, silently, or
+// outside the island, refused by a message saying the point is outside
+// an island whose own snapshot it came from.
+//
+// THE CONVERTED ARM IS WHAT MAKES THIS DISCRIMINATING. Accepting the raw
+// bound would pass just as well against a session that permitted the
+// whole screen; the fixture's island starts below y=0, so double
+// conversion walks off the bottom and must be refused. Raised in review
+// of #504.
+func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
+	mine := prop.NewSource("m0")
+	secret := prop.NewSource("hunter2")
+	app := newTestApp(t, islandOffOriginMarkup, map[string]any{
+		"Mine": map[string]any{"Body": mine},
+		"Host": map[string]any{"Secret": secret},
+	})
+	gs, err := New(app, Options{
+		Context: app.ctx,
+		Timeout: 5 * time.Second,
+		Grant:   control.Island("Mine", "Mine"),
+	})
+	if err != nil {
+		t.Fatalf("New (guest): %v", err)
+	}
+	guest := newClient(t, gs)
+
+	sz := guest.json("screen_size", nil)
+	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
+	if y0 == 0 {
+		t.Fatalf("the island reports origin y=0, so this fixture cannot tell an "+
+			"already-absolute bound from a converted one; sz=%v", sz)
+	}
+
+	node := findName(guest.json("tree_snapshot", nil)["tree"].(map[string]any), "Mine")
+	if node == nil {
+		t.Fatal("the guest's snapshot does not contain its own island")
+	}
+	b, ok := node["bounds"].(map[string]any)
+	if !ok {
+		t.Fatalf("the island node carries no bounds: %v", node)
+	}
+	bx, by := int(b["x"].(float64)), int(b["y"].(float64))
+	bh := int(b["h"].(float64))
+	if by != y0 {
+		t.Fatalf("the snapshot reports the island at y=%d and screen_size reports "+
+			"origin y=%d; if these ever diverge the advice in screenSizeSchema is "+
+			"wrong in a way no client can detect", by, y0)
+	}
+
+	// THE LAST ROW OF THE ISLAND, not the first. A double conversion of
+	// the TOP row lands y0 rows down and is still inside a 3-row island —
+	// silently wrong, and a fixture that cannot tell the two apart. The
+	// bottom row is the one that leaves the island when it is converted
+	// again, which is the whole point: a client obeying the rule
+	// unconditionally loses its own last row exactly the way a client
+	// that never heard of the origin loses its first.
+	last := by + bh - 1
+
+	// Unconverted: accepted, because the bound is already in send_mouse's
+	// frame.
+	guest.ok("send_mouse", map[string]any{"kind": "click", "x": bx, "y": last})
+
+	// Converted: refused, because it has been offset twice.
+	guest.fails("send_mouse", map[string]any{
+		"kind": "click", "x": bx + x0, "y": last + y0,
+	}, "outside this session's island")
 }

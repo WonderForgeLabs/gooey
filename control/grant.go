@@ -169,6 +169,17 @@ func (s *Service) VisibleDamage(rects []gooey.Rect) []gooey.Rect {
 	if !s.scoped() {
 		return rects
 	}
+	// THE MISSING ISLAND IS ANSWERED BEFORE islandRect, and that is about
+	// allocation rather than about the answer. grpc/session.go calls this
+	// once per composed frame on the UI goroutine; islandRect's nil arm
+	// builds an *Error through fmt.Sprintf, and this function drops it —
+	// so a scoped session whose island has been swapped away formatted
+	// and threw away a denial every frame. The code this extraction
+	// replaced took the islandRoot() nil path and allocated nothing.
+	// Raised in review of #504.
+	if s.islandRoot() == nil {
+		return nil
+	}
 	// The error is deliberately dropped: this returns a filtered slice
 	// rather than a result, and a scoped session whose island cannot be
 	// resolved shows no damage — which the zero Rect already produces

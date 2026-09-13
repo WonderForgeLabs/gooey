@@ -138,6 +138,18 @@ a guest that sends `y=0` is refused while the island's last row goes
 unreachable. Unscoped, the origin is `(0,0)` and the conversion is a
 no-op.
 
+**Only one of your two coordinate sources needs it.** `screen_text` is
+homed at `(0,0)` on purpose — a guest's screen dump is not a set of
+absolute cursor moves that betray where on the host's page its island
+sits — so a position read off it is the thing `x`/`y` converts.
+`tree_snapshot` emits each element's `bounds` from the live tree, which
+are **already absolute** even when the snapshot is rooted at your island.
+Adding the origin to those is the same off-by-`y0` this tool exists to
+fix, one source over, and it fails quietly: the converted point lands on
+a real component (wrong click, no error) or outside the island (refused,
+with a message saying the point is outside an island whose own snapshot
+you computed it from).
+
 The cell metrics are `0` when the host never probed the terminal — the
 probe is opt-in, so this is the common case for a cell-plane app. Branch
 on the zero rather than dividing by it.
