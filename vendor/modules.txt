@@ -89,23 +89,19 @@ github.com/Microsoft/go-winio/internal/stringbuffer
 github.com/Microsoft/go-winio/pkg/guid
 # github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61 => .
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/grpc v0.0.0 => ./grpc
+# github.com/WonderForgeLabs/gooey/grpc v0.0.0-20260913132232-e5cdb56ececd => ./grpc
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/handlers/exec v0.0.0 => ./handlers/exec
+# github.com/WonderForgeLabs/gooey/handlers/exec v0.0.0-20260913132232-e5cdb56ececd => ./handlers/exec
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/handlers/temporal v0.0.0 => ./handlers/temporal
+# github.com/WonderForgeLabs/gooey/handlers/temporal v0.0.0-20260913132232-e5cdb56ececd => ./handlers/temporal
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0-00010101000000-000000000000 => ./imagefmt/svg
+# github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0-20260913132232-e5cdb56ececd => ./imagefmt/svg
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0 => ./imagefmt/svg
+# github.com/WonderForgeLabs/gooey/mcp v0.0.0-20260913132232-e5cdb56ececd => ./mcp
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/mcp v0.0.0-00010101000000-000000000000 => ./mcp
+# github.com/WonderForgeLabs/gooey/packs/temporal-visibility v0.0.0-20260913132232-e5cdb56ececd => ./packs/temporal-visibility
 ## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/mcp v0.0.0 => ./mcp
-## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/packs/temporal-visibility v0.0.0 => ./packs/temporal-visibility
-## explicit; go 1.25.6
-# github.com/WonderForgeLabs/gooey/paint v0.0.0-00010101000000-000000000000 => ./paint
+# github.com/WonderForgeLabs/gooey/paint v0.0.0-20260913132232-e5cdb56ececd => ./paint
 ## explicit; go 1.25.6
 # github.com/antlr4-go/antlr/v4 v4.13.1
 ## explicit; go 1.22
@@ -942,8 +938,6 @@ golang.org/x/oauth2/internal
 ## explicit; go 1.25.0
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
-# golang.org/x/sys v0.45.0
-## explicit; go 1.25.0
 # golang.org/x/sys v0.47.0
 ## explicit; go 1.25.0
 golang.org/x/sys/cpu
@@ -953,8 +947,6 @@ golang.org/x/sys/windows
 # golang.org/x/term v0.45.0
 ## explicit; go 1.25.0
 golang.org/x/term
-# golang.org/x/text v0.37.0
-## explicit; go 1.25.0
 # golang.org/x/text v0.40.0
 ## explicit; go 1.25.0
 # golang.org/x/text v0.41.0
@@ -992,8 +984,6 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.15.0
 ## explicit; go 1.25.0
 golang.org/x/time/rate
-# google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478
-## explicit; go 1.25.0
 # google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
 ## explicit; go 1.25.0
 # google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d
@@ -1002,15 +992,11 @@ google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
 google.golang.org/genproto/googleapis/api/expr/v1alpha1
 google.golang.org/genproto/googleapis/api/httpbody
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478
-## explicit; go 1.25.0
 # google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
 ## explicit; go 1.25.0
 # google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.82.1
-## explicit; go 1.25.0
 # google.golang.org/grpc v1.83.2
 ## explicit; go 1.25.0
 google.golang.org/grpc

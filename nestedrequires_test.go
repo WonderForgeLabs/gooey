@@ -42,8 +42,26 @@ import (
 // with the network off. It checks the sentinel that can never resolve
 // under any conditions, which is the part that does not need a proxy to
 // know.
+//
+// EVERY MODULE IN THIS TREE, not just core. The guard read `r.Path !=
+// core` for its whole life, and the blind spot that left was not
+// hypothetical: handlers/temporal required
+// packs/temporal-visibility at `v0.0.0`, and nineteen more sibling
+// requires across apps/* said the same — one `go get` away from the
+// identical "unknown revision v0.0.0", and invisible here because the
+// path was not core's. The argument in the paragraphs above never
+// depended on WHICH module is required; it depends on the require being
+// read outside this workspace, which is true of a sibling exactly as it
+// is of core. Raised in review of #497.
 func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 	const core = "github.com/WonderForgeLabs/gooey"
+
+	// A sibling is core's path plus a directory. Prefixing with the
+	// slash is what keeps a future `github.com/WonderForgeLabs/gooeyfoo`
+	// from matching.
+	own := func(path string) bool {
+		return path == core || strings.HasPrefix(path, core+"/")
+	}
 
 	mods := discoverModules(t)
 	if len(mods) == 0 {
@@ -78,32 +96,38 @@ func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 		}
 
 		for _, r := range mf.Require {
-			if r.Path != core {
+			if !own(r.Path) {
 				continue
 			}
 			checked++
-			if r.Version == "v0.0.0" {
-				t.Errorf("%s requires %s v0.0.0, which is neither a tag nor a "+
-					"pseudo-version: `go get` of this module fails with "+
-					"\"unknown revision v0.0.0\" for everybody outside this "+
+			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
+			// on a module the workspace replaces writes the canonical
+			// spelling `v0.0.0-00010101000000-000000000000`, which is the
+			// same unservable revision wearing a pseudo-version's shape —
+			// and apps/wysiwyg carried three of them while the plain
+			// sentinel elsewhere carried the rest.
+			if r.Version == "v0.0.0" || strings.HasPrefix(r.Version, "v0.0.0-00010101000000-") {
+				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
+					"pseudo-version any proxy can serve: `go get` of this module "+
+					"fails with \"unknown revision\" for everybody outside this "+
 					"workspace. Point it at a published commit — "+
-					"`go mod edit -C %s -require=%s@$(git rev-parse --short HEAD)` "+
+					"`go mod edit -C %s -require=%s@$(git rev-parse --short origin/main)` "+
 					"resolves to a pseudo-version — and keep any `replace` line, "+
 					"which is what makes local development use the checkout.",
-					dir, core, dir, core)
+					dir, r.Path, r.Version, dir, r.Path)
 				continue
 			}
 			// Not a resolution check (no network here), just the shape: a
 			// version the proxy could be asked for at all.
 			if !strings.HasPrefix(r.Version, "v") {
-				t.Errorf("%s requires %s %q, which is not a version", dir, core, r.Version)
+				t.Errorf("%s requires %s %q, which is not a version", dir, r.Path, r.Version)
 			}
 		}
 	}
 
 	if checked == 0 {
-		t.Fatalf("none of the %d nested modules were found to require %s; "+
-			"either the requires moved or this test stopped reading them, and "+
-			"an empty check is not a passing one", len(mods), core)
+		t.Fatalf("none of the %d nested modules were found to require %s or a "+
+			"module under it; either the requires moved or this test stopped "+
+			"reading them, and an empty check is not a passing one", len(mods), core)
 	}
 }
