@@ -144,6 +144,14 @@ func validateMarkupSchema() map[string]any {
 // What x/y buy is the right coordinate SPACE; the routing is its own
 // question.
 //
+// A ZERO cols/rows IS AN ANSWER. A scoped session whose island is
+// collapsed or not yet arranged resolves successfully to a zero-size
+// rect — control.islandRect returns it rather than the islandGone denial,
+// because the island is not gone — so screen_size reports 0x0 and
+// screen_text is empty. The schema said 0 only for the cell metrics,
+// leaving a client to read cols:0 as a bug in the host. Raised in review
+// of #504.
+//
 // cols/rows deliberately do NOT claim to be "the range send_mouse
 // accepts". For a scoped session they are the island's extent while
 // send_mouse takes absolute screen cells, so that sentence — which this
@@ -153,8 +161,8 @@ func validateMarkupSchema() map[string]any {
 // than as decoration.
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{
-		"cols":       prop_("integer", "Width of the visible surface in cells. For a scoped session this is the island's width, not the terminal's."),
-		"rows":       prop_("integer", "Height of the visible surface in cells. For a scoped session this is the island's height, not the terminal's."),
+		"cols":       prop_("integer", "Width of the visible surface in cells. For a scoped session this is the island's width, not the terminal's. 0 is a real answer, not an error: a scoped session whose island is collapsed or not yet arranged reports 0x0 and shows nothing."),
+		"rows":       prop_("integer", "Height of the visible surface in cells. For a scoped session this is the island's height, not the terminal's. 0 is a real answer, not an error: a scoped session whose island is collapsed or not yet arranged reports 0x0 and shows nothing."),
 		"x":          prop_("integer", "Absolute screen column of the surface's left edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it. Applies to a position read off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are ALREADY absolute and must not be converted twice."),
 		"y":          prop_("integer", "Absolute screen row of the surface's top edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it. Applies to a position read off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are ALREADY absolute and must not be converted twice."),
 		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it. Non-zero means usable, not necessarily measured: it may be the host's substituted default."),

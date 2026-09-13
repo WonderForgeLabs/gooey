@@ -190,7 +190,7 @@ Every v1 MCP tool, argument-for-argument:
 |---|---|---|---|
 | `tree_snapshot` | `depth` | `ControlService.SnapshotTree` | `depth` → `depth`; JSON tree → `TreeNode` |
 | `screen_text` | `styled` | `ControlService.ScreenText` | identical semantics, Snapshot-not-Flush preserved |
-| `screen_size` | — | **none yet** | the one row with no RPC: `control.Service.ScreenSize` is where both transports would call, and `grpc/controlserver.go` has a `Screen` verb and no size verb. That gap is the unclosed half of [#204](https://github.com/WonderForgeLabs/gooey/issues/204) — a proto change and its own decision. Recorded here rather than omitted, because this table asserts its own completeness |
+| `screen_size` | — | **none yet** | the one row with no RPC: `control.Service.ScreenSize` is where both transports would call, and `grpc/controlserver.go` has a `ScreenText` verb and no size verb. That gap is the unclosed half of [#204](https://github.com/WonderForgeLabs/gooey/issues/204) — a proto change and its own decision. Recorded here rather than omitted, because this table asserts its own completeness |
 | `list_values` | — | `ControlService.ListValues` | `values` → `ValueInfo[]`, `named` → `named` |
 | `invoke_command` | `name` | `ControlService.InvokeCommand` | |
 | `set_value` | `name`, `value` (JSON) | `ControlService.SetProperty` | untyped JSON value becomes `TypedValue`; the type-switch check becomes the oneof case check |

@@ -50,7 +50,7 @@ Read:
   substituting `term.DefaultCellW/H`, because inventing a measurement is
   the habit this tool exists to replace. And **#204 is closed on the MCP
   surface only** — `control.Service.ScreenSize` is where both transports
-  could call it, but `grpc/controlserver.go` has a `Screen` RPC and no
+  could call it, but `grpc/controlserver.go` has a `ScreenText` RPC and no
   size verb, so a gRPC client still infers the screen. Adding it is a
   proto change and its own decision.
 - `screen_text` — the current cell buffer as plain text (+ an option

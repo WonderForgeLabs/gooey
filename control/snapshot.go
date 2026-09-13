@@ -263,30 +263,6 @@ const islandGoneFmt = "this session is scoped to island %q, which names no eleme
 // form every caller wants, since the island name is never anything else.
 func (s *Service) islandGone() *Error { return deniedf(islandGoneFmt, s.grant.Island) }
 
-// islandRect resolves a scoped session's island to its bounds, in
-// ABSOLUTE screen cells.
-//
-// Three callers wanted the same four steps — islandRoot, the nil check,
-// the gooey.Bounded assertion, Bounds() — and wrote them out separately,
-// with denial messages that had already drifted apart ("its screen region
-// cannot be read" against "its size cannot be read") for what is one
-// rule. The duplication is the reason the rule could drift: there was no
-// single place for "what does this island occupy" to be answered.
-//
-// THE preconditionf ARM IS UNREACHABLE for any component in this repo,
-// and is kept rather than dropped. gooey.Bounded is satisfied by the
-// Bounds() method gooey.Base carries (base.go:13), and every component
-// here embeds Base — but gooey.Component does not REQUIRE Bounds: the
-// interface is Measure/Arrange/Render and nothing else (component.go:26).
-// A component that does not embed Base is therefore a legal Component
-// and not Bounded, and an island grant naming one would reach the type
-// assertion. That is why the comma-ok is here and not a bare assertion.
-//
-// It has no test for the same reason it cannot fire here: a fixture would
-// have to declare a type this tree cannot hold, and pinning an arm with a
-// state the subject cannot reach measures the fixture. The honest record
-// is this sentence — and if Component ever grows Bounds, the arm and this
-// paragraph go together. Raised in review of #504.
 // islandBounds is islandRect without the error: the rect, and whether it
 // could be resolved at all. It exists because VisibleDamage wants exactly
 // that and nothing more — it filters a slice rather than returning a
@@ -311,11 +287,46 @@ func (s *Service) islandBounds() (gooey.Rect, bool) {
 	return b.Bounds(), true
 }
 
-// islandRect is islandBounds plus the reason, for the callers that return
-// one. The failing arm is re-derived rather than carried out of
-// islandBounds, because that costs a second lookup only on the path that
-// is already building an error — and it keeps the resolution itself
-// written once.
+// islandRect resolves a scoped session's island to its bounds, in
+// ABSOLUTE screen cells.
+//
+// Callers wanted the same four steps — islandRoot, the nil check, the
+// gooey.Bounded assertion, Bounds() — and wrote them out separately,
+// with denial messages that had already drifted apart ("its screen region
+// cannot be read" against "its size cannot be read") for what is one
+// rule. The duplication is the reason the rule could drift: there was no
+// single place for "what does this island occupy" to be answered. (This
+// said "three callers" until review of #504; the islandBounds split took
+// one of them, and a count written in prose is a sample taken once.)
+//
+// A RESOLVED ISLAND MAY STILL BE DEGENERATE, and neither this nor
+// islandBounds tests W/H. A collapsed or not-yet-arranged island resolves
+// successfully to a zero-size rect, so Screen crops to nothing and
+// ScreenSize answers 0x0 with no error. That is deliberate — the island
+// is not GONE, and islandGone would be a lie about it — but it means a
+// caller needing a DRAWABLE rect must say so itself. VisibleDamage's
+// W<=0 test (grant.go:182) is that, not a second copy of this rule, and
+// screenSizeSchema documents the 0x0 answer for clients. Raised in review
+// of #504.
+//
+// THE preconditionf ARM IS UNREACHABLE for any component in this repo,
+// and is kept rather than dropped. gooey.Bounded is satisfied by the
+// Bounds() method gooey.Base carries (base.go:13), and every component
+// here embeds Base — but gooey.Component does not REQUIRE Bounds: the
+// interface is Measure/Arrange/Render and nothing else (component.go:26).
+// A component that does not embed Base is therefore a legal Component
+// and not Bounded, and an island grant naming one would reach the type
+// assertion. That is why the comma-ok is here and not a bare assertion.
+//
+// It has no test for the same reason it cannot fire here: a fixture would
+// have to declare a type this tree cannot hold, and pinning an arm with a
+// state the subject cannot reach measures the fixture. The honest record
+// is this sentence — and if Component ever grows Bounds, the arm and this
+// paragraph go together. Raised in review of #504.
+//
+// THE REASON IS RE-DERIVED rather than carried out of islandBounds: that
+// costs a second lookup only on the path already building an error, and
+// it keeps the resolution itself written once.
 func (s *Service) islandRect() (gooey.Rect, error) {
 	if r, ok := s.islandBounds(); ok {
 		return r, nil
@@ -605,7 +616,7 @@ func (s *Service) ScreenSize() (ScreenSize, error) {
 	// c.cols/c.rows are written in exactly two places and each replaces
 	// the buffer in the same breath: NewComposer (composer.go:187) builds
 	// a render.Buffer of the dimensions it was handed, and Composer.Resize
-	// (composer.go:1029) assigns the pair and swaps in a new buffer of
+	// (composer.go:1043) assigns the pair and swaps in a new buffer of
 	// exactly those dimensions. Resize runs on the UI goroutine, and so
 	// does every tool body (through control.Bridge), so Size() and
 	// Cells().W/H are equal at every point this function can observe

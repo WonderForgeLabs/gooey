@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -590,38 +591,86 @@ func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
 // direct use for the screen's size, and the one least able to discover a
 // tool the list omits, because the list IS its documentation. Both
 // omitted screen_size, and both had omitted unregister_properties since
-// before this change. Same class as the four surfaces already guarded
-// here, reached by the reviewer and not by me. Raised in review of #504.
+// before this change.
+//
+// IT READS THE COMMITTED BLOB, not the working tree, and that is the
+// whole reason this still lives in the mcp module. These two files are
+// outside it and are rewritten by tooling: the review of #504 ran in a
+// checkout where both had been restored to origin/main's content, and
+// this test failed with thirty errors about a repo that was fine. The
+// fs.ErrNotExist skip could not help — the file was present, just not
+// ours. What the guard is actually about is whether the REPOSITORY's
+// inventory is complete, so HEAD's copy is the honest subject and a
+// dirty worktree is none of its business.
+//
+// Moving it to the root module, where .claude/ is in-tree, was the other
+// option and is worse: v1Tools() lives here, and a root-module copy would
+// have to enumerate the tools by hand — which is the defect all six of
+// these surfaces exist to prevent.
 //
 // THE BACKTICKS ARE ESCAPED IN THE SOURCE, because the inventory sits
 // inside a JavaScript template literal: an unescaped ` would end the
 // string. \` is what the file holds and a backtick is what the agent
 // reads, so this unescapes before asking assertNamesEveryTool — the
-// alternative, a second matching rule, would let the two surfaces drift
+// alternative, a second matching rule, would let these two surfaces drift
 // apart from the other four.
-//
-// Skips when the files are absent, for the module-boundary reason
-// TestTheTutorialsToolInventoryIsComplete gives.
 func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
-	for _, page := range []string{
-		"../.claude/workflows/gooey-new-component.js",
-		"../.claude/workflows/gooey-new-demo.js",
-	} {
-		body, err := os.ReadFile(page)
-		if errors.Is(err, fs.ErrNotExist) {
-			t.Skipf("%s is outside this module and absent, so this guard only "+
-				"runs inside the repo checkout", page)
-		}
-		if err != nil {
-			t.Fatalf("reading %s: %v", page, err)
-		}
-		src := strings.ReplaceAll(string(body), "\\`", "`")
-		if !strings.Contains(src, "The tools:") {
-			t.Fatalf("%s no longer carries a \"The tools:\" line, so this guard "+
-				"would be asking about a page-wide mention rather than the "+
-				"inventory — either the prompt was restructured and this has to "+
-				"follow it, or the inventory is gone", page)
-		}
-		assertNamesEveryTool(t, src, page)
+	pages := []string{
+		".claude/workflows/gooey-new-component.js",
+		".claude/workflows/gooey-new-demo.js",
 	}
+	read := 0
+	for _, page := range pages {
+		src, ok := committedBlob(t, page)
+		if !ok {
+			// PER FILE, not t.Skipf. Skipping inside the loop stopped
+			// the whole test at the first absent page and reported green
+			// while the second went unexamined. Raised in review of #504.
+			continue
+		}
+		read++
+		line, found := toolsLine(src)
+		if !found {
+			t.Errorf("%s no longer carries a \"The tools:\" line, so either the "+
+				"prompt was restructured and this guard has to follow it, or the "+
+				"inventory is gone", page)
+			continue
+		}
+		// THE LINE, not the page. assertNamesEveryTool used to be handed
+		// the whole file, which is the page-wide vacuous pass
+		// TestTheGRPCContractTableNamesEveryTool declines by name two
+		// tests up: these prompts mention tool names elsewhere, so a
+		// name could be "documented" by a sentence outside the
+		// inventory. Raised in review of #504.
+		assertNamesEveryTool(t, line, page)
+	}
+	if read == 0 {
+		t.Skipf("neither agent workflow is in HEAD (%v), so this guard only runs "+
+			"inside the repo checkout", pages)
+	}
+}
+
+// committedBlob reads one repo-root-relative path out of HEAD. It returns
+// false — rather than failing — when git cannot answer, which covers the
+// module being consumed standalone (the zip a proxy serves contains mcp/
+// and nothing above it) as well as a path not yet committed.
+func committedBlob(t *testing.T, path string) (string, bool) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", "..", "show", "HEAD:"+path).Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.ReplaceAll(string(out), "\\`", "`"), true
+}
+
+// toolsLine is the inventory itself: the one line beginning the "The
+// tools:" enumeration. Everything else in these prompts is prose that
+// happens to mention tools.
+func toolsLine(src string) (string, bool) {
+	for _, line := range strings.Split(src, "\n") {
+		if strings.Contains(line, "The tools:") {
+			return line, true
+		}
+	}
+	return "", false
 }
