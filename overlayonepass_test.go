@@ -1,6 +1,10 @@
 package gooey
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
 
@@ -755,5 +759,86 @@ func TestTheComposerSlicesRetainNothingPastTheirOwnNodes(t *testing.T) {
 				"from a tree that no longer exists, held until the slot happens to "+
 				"be reused. Reset it with clearToCap", tc.name, held)
 		}
+	}
+}
+
+// TestEveryReusedSliceInComposerClearsToCap is the derived half of
+// TestTheComposerSlicesRetainNothingPastTheirOwnNodes, and the half that
+// can fail on a site nobody thought of.
+//
+// That test reads four slices by name, and its element type is
+// []*paintNode — which structurally excludes c.startable and both
+// []graphics.Placement resets, the two that held decoded image.Image.
+// Three of the four sites this PR fixed were invisible to it. A table of
+// known slices only ever fails on the ones already known, so this reads
+// composer.go instead and fails on the NEXT one: any `x = x[:0]` is a
+// reset that keeps its backing array, and must be clearToCap or say in a
+// `retains nothing:` comment why the elements are safe to keep.
+//
+// The scan is over the AST, not the text, because `s = s[:0]` appears in
+// clearToCap's own doc comment describing the shape it replaces — a grep
+// for it reports the documentation as a violation.
+func TestEveryReusedSliceInComposerClearsToCap(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("read composer.go: %v", err)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "composer.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse composer.go: %v", err)
+	}
+	lines := strings.Split(string(src), "\n")
+	text := func(e ast.Expr) string {
+		return string(src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset])
+	}
+	// The justification may sit on the assignment's own line or on any of
+	// the comment lines immediately above it.
+	justified := func(line int) bool {
+		for i := line - 1; i >= 0; i-- {
+			if strings.Contains(lines[i], "retains nothing:") {
+				return true
+			}
+			if i != line-1 && !strings.HasPrefix(strings.TrimSpace(lines[i]), "//") {
+				return false
+			}
+		}
+		return false
+	}
+
+	cleared := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || as.Tok != token.ASSIGN || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		lhs := text(as.Lhs[0])
+		if call, ok := as.Rhs[0].(*ast.CallExpr); ok {
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "clearToCap" {
+				cleared++
+			}
+			return true
+		}
+		sl, ok := as.Rhs[0].(*ast.SliceExpr)
+		if !ok || sl.Low != nil || sl.Max != nil {
+			return true
+		}
+		hi, ok := sl.High.(*ast.BasicLit)
+		if !ok || hi.Value != "0" || text(sl.X) != lhs {
+			return true
+		}
+		pos := fset.Position(as.Pos())
+		if justified(pos.Line) {
+			return true
+		}
+		t.Errorf("composer.go:%d resets %s with %s[:0], which truncates len and leaves "+
+			"the backing array holding every element past it. Use clearToCap(%s), or "+
+			"say why the elements are safe to keep in a `retains nothing:` comment",
+			pos.Line, lhs, lhs, lhs)
+		return true
+	})
+	if cleared == 0 {
+		t.Errorf("found no clearToCap assignment in composer.go at all — the four this " +
+			"PR converted should be here, so the scan above proved nothing")
 	}
 }

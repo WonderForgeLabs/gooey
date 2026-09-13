@@ -634,9 +634,11 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, a `ToastHost`, an
-`AdornmentLayer` — lifted to the end with its subtree, because a
-dropdown is not at a position in the document, it is on top of it.
+implementing `gooey.Overlay` lifted to the end with its subtree, because
+a dropdown is not at a position in the document, it is on top of it. The
+marker decides membership and nothing else — which components carry it
+is a question for the source, not for a list here, and it is more than
+the popup surface this sentence used to name.
 
 Within the lifted layer, document order is **not** the whole rule.
 `gooey.OverlayRanker` orders it: `OverlayRankPopup` (0), then
@@ -661,7 +663,9 @@ One function answers this for both paint paths. `overlayOf` in
 `collectPaint` asks it per component
 ([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Before
 that the one-shot path had never implemented the rule at all, so the two
-exported paint paths answered "what is on top" differently.
+exported paint paths answered "what is on top" differently. The
+mouse-side paragraph below carries the same rule and the warning that
+hit-testing does not share it.
 
 The paint loop forces a repaint of every node above a rect somebody
 below just painted — the
