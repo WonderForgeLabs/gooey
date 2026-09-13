@@ -669,7 +669,17 @@ func (n *node) markup(indent string) string {
 	return b.String()
 }
 
-// nodeOf parses a seed's markup into the editor's document model.
+// nodeOf parses markup into the editor's document model — a palette
+// seed's, and since #472 a USER'S DOCUMENT too.
+//
+// It reads for openWorkspaceFile (browser.go:350) and for paste
+// (clipboard.go:659), which is why its strictness and its error wording
+// are a user-facing surface rather than an internal check on this
+// repo's own seeds: it is now the load-bearing reader for namespace
+// declarations in files somebody else wrote. The doc below described
+// only the seed half until review of #501, and the namespaced-attribute
+// error said "seeds are plain markup" to a user who had just opened a
+// file.
 //
 // markup.Seeded answers "what should a NEW <X> be" in MARKUP, because
 // the answer has to cover more than attributes — an empty <VStack>
@@ -746,12 +756,22 @@ func nodeOf(src string) (*node, error) {
 					n.Attrs["xmlns"] = a.Value
 					continue
 				}
-				// The namespace is dropped by the same key-by-Local
-				// rule markup's own parser uses; a seed has no
-				// prefixed attributes, and one appearing would be the
-				// bug worth failing on.
+				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
+				// answer markup's own parser gives — namespacedAttrError
+				// (markup/markup.go:955, defined at :993). Neither side
+				// drops it and neither keys by Local.
+				//
+				// This comment said "the namespace is dropped by the
+				// same key-by-Local rule markup's own parser uses" until
+				// review of #501, and both halves of that were false,
+				// inside the very loop the commit above it rewrote for
+				// claiming things the code does not do.
+				//
+				// Nothing authored here has a prefixed attribute, so one
+				// appearing is worth failing on rather than accepting
+				// into a model that cannot write it back out.
 				if a.Name.Space != "" {
-					return nil, fmt.Errorf("seed attribute %q is namespaced; seeds are plain markup", a.Name.Local)
+					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", a.Name.Local)
 				}
 				n.Attrs[a.Name.Local] = a.Value
 			}

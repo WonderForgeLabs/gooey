@@ -97,16 +97,51 @@ func TestReopeningTheRebuiltSourceIsStable(t *testing.T) {
 	ed.openWorkspaceFile("handler.gooey")
 	first := ed.source.Get()
 
-	// Write what a save would write, and open THAT.
-	if err := os.WriteFile(filepath.Join(root, "again.gooey"), []byte(first), 0o644); err != nil {
+	// THROUGH THE SAVE PATH, not through ed.source. This wrote
+	// ed.source.Get() to a second file with os.WriteFile until review of
+	// #501 pointed out that a save does not write ed.source at all:
+	// saveOpenFile (browser.go:424) builds its OWN "<Gooey>\n" + doc +
+	// "</Gooey>\n" string, independently of rebuild's (main.go:2287),
+	// and nothing crossed the two. So of the four legs this PR claims —
+	// read, write, save, reopen — the save was the one no test touched,
+	// and an edit to either literal that dropped the declaration on the
+	// way to disk would have left the suite green and the user's file
+	// without its xmlns.
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatalf("saving the open document: %v", err)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(root, "handler.gooey"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	ed.openWorkspaceFile("again.gooey")
-	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
-		t.Fatalf("reopening the document the editor itself wrote reports %q:\n%s", got, first)
+	if string(onDisk) != first {
+		t.Errorf("the bytes a save wrote are not the source the editor is "+
+			"showing, so the two envelope literals have drifted.\nrebuild:\n%s\n"+
+			"saveOpenFile:\n%s", first, onDisk)
 	}
-	if second := ed.source.Get(); second != first {
-		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s", first, second)
+
+	ed.openWorkspaceFile("handler.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("reopening the document the editor itself SAVED reports %q:\n%s",
+			got, first)
+	}
+	second := ed.source.Get()
+	if second != first {
+		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
+			first, second)
+	}
+	// AND WHERE IT LANDS, not only that it survived. The declaration
+	// MOVES on the first save: it is read off the <Gooey> envelope and
+	// re-emitted on the user's root, because the envelope is not a node.
+	// That is stable and consistent with an editor that regenerates the
+	// whole file anyway, but nothing said so — asserting it makes a
+	// future change back to envelope-emission a decision somebody made
+	// rather than a diff nobody read. Raised in review of #501.
+	if !strings.Contains(second, `<Canvas Name="Root" xmlns:t="`+uri+`">`) {
+		t.Errorf("the declaration is not on the user's root element, where the "+
+			"carry-down puts it. If it moved back onto <Gooey>, that is a "+
+			"deliberate change and this assertion is the place to record "+
+			"it:\n%s", second)
 	}
 }
 
@@ -206,5 +241,82 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 			"user's root as if it were a declaration. openWorkspaceFile must "+
 			"accept the two shapes nodeOf writes, \"xmlns\" and \"xmlns:\"+local, "+
 			"and nothing else:\n%s", src)
+	}
+}
+
+// TestTheUnprefixedDeclarationIsCarriedToo covers the SECOND of the two
+// shapes nodeOf writes, which every other test in this file misses.
+//
+// nodeOf (main.go:752, main.go:756) and the carry-down (browser.go:390) both accept
+// exactly "xmlns" and "xmlns:"+local, and the decoy in
+// TestOnlyARealDeclarationComesDownFromTheEnvelope pins what is
+// REJECTED — leaving the plain form implemented twice and asserted
+// nowhere. It is not cosmetic: Go's decoder applies a default namespace
+// to ELEMENT names, so keeping one sets Element.Space for the whole
+// subtree, and markup compares that against XNamespace
+// (markup/markup.go:1073). Raised in review of #501.
+func TestTheUnprefixedDeclarationIsCarriedToo(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="urn:x">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "plain.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("plain.gooey")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("a document with a default namespace does not open: %q", got)
+	}
+	if src := ed.source.Get(); !strings.Contains(src, `xmlns="urn:x"`) {
+		t.Errorf("the unprefixed declaration did not survive the round trip. It "+
+			"is the other half of the set nodeOf writes, and the reader must "+
+			"accept both:\n%s", src)
+	}
+}
+
+// TestTheDesignerRefusesADocumentTheLoaderRefuses is the same shape
+// pointed at the one namespace markup reserves.
+//
+// A default xmlns of wonderforge.io/gooey/x puts XNamespace on every
+// element beneath the root, and markup.build refuses those by name
+// (markup/markup.go:1073). Before the carry-down the editor dropped the
+// declaration and so opened a document markup.Build itself will not
+// load; now the two agree. That is an improvement rather than a
+// regression, which is exactly why it is worth an assertion — a later
+// change that silently went back to dropping the declaration would make
+// the editor generous again and nothing would say so. Raised in review
+// of #501.
+func TestTheDesignerRefusesADocumentTheLoaderRefuses(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root"/>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "reserved.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// THE LOADER'S OWN ANSWER FIRST, so a refusal below cannot be read as
+	// the editor being stricter than the framework.
+	if _, err := markup.Build([]byte(doc), &markup.Context{}); err == nil {
+		t.Fatal("markup.Build accepts a document whose default namespace is the " +
+			"reserved x namespace, so the editor refusing it below would be the " +
+			"editor disagreeing with the loader")
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("reserved.gooey")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("the designer opened a document markup.Build refuses: %q. The "+
+			"carry-down is what makes the two agree — dropping the declaration "+
+			"made an unloadable document loadable in the editor only", got)
 	}
 }

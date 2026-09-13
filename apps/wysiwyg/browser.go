@@ -381,7 +381,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// which measured the loader rather than reading the comment.
 		//
 		// THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits
-		// "xmlns" and "xmlns:"+local (main.go:742, main.go:746) and
+		// "xmlns" and "xmlns:"+local (main.go:752, main.go:756) and
 		// nothing else, while HasPrefix(k, "xmlns") also matches a
 		// plain attribute spelled xmlnsFoo — which would be copied onto
 		// the user's root and turn an envelope-level mistake into an
