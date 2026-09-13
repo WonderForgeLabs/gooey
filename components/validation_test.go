@@ -157,15 +157,16 @@ func TestValidationLoopDamage(t *testing.T) {
 // message (zero rect, cells restored) but does not drop it — no
 // re-adding gesture exists — and showing the field brings it back
 // through plain layout, no structural walk required.
-// ITS NAME OUTRUNS ITS ASSERTIONS, and that was measured rather than
-// suspected: flipping markerPopup.AdornmentPersists to false reddens
+// ITS NAME OUTRAN ITS ASSERTIONS, and that was measured rather than
+// suspected: flipping markerPopup.AdornmentPersists to false reddened
 // nothing here. The drop is self-healing within one frame — orphaned()
 // nils m.pop and the same frame's ensurePlaced builds a fresh popup — so
-// `m.pop == nil` cannot see it and neither can the cell plane. What this
-// test does hold is the FILLER and the message coming back, which is
-// worth keeping. The persist flag itself is pinned by identity in
-// TestAValidationMarkerSurvivesAFreezeTurningOn. Raised in review of
-// #498.
+// `m.pop == nil` could not see it, and neither can the cell plane or the
+// layer's count. The popup POINTER is the one observable that separates
+// the two states, so the check below is an identity comparison against
+// the popup taken before the anchor was hidden. Raised in review of
+// #498; the same seam is pinned from the freeze side in
+// TestAValidationMarkerSurvivesAFreezeTurningOn.
 func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	_, tb, m, _, page := formPage(30)
 	c := gooey.NewComposer(page, 30, 4)
@@ -174,13 +175,21 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 		t.Fatal("marker should be up")
 	}
 
+	kept := m.pop
+	if kept == nil {
+		t.Fatal("no popup to hold onto, so the identity check below would " +
+			"compare two nils and pass over the policy it is here for")
+	}
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
 	c.Frame()
 	if got := row(c.Cells(), 1); !strings.Contains(got, "####") {
 		t.Fatalf("row 1 = %q, want the filler restored while the field is hidden", got)
 	}
-	if m.pop == nil {
-		t.Fatal("hiding the anchor DROPPED the persistent marker; it must only hide it")
+	if m.pop != kept {
+		t.Fatal("hiding the anchor REPLACED the persistent marker's popup " +
+			"instead of keeping it — the layer dropped it and the same " +
+			"frame's ensurePlaced built a fresh one, which is the drop " +
+			"AdornmentPersists opts out of")
 	}
 
 	gooey.LayoutOf(tb).Visibility = gooey.Visible
