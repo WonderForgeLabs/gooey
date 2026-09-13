@@ -119,6 +119,8 @@ fixture that disagrees was asserting the divergence.
 | The rule is genuinely shared | *both* files' subtree tests | any mutation of `overlayOf` reddens both |
 | **The buckets retain nothing past their own items** | `TestTheBucketPassRetainsNothingPastItsOwnItems` | clear to `len` instead of `cap` |
 | **Both paths agree on a Visible, Hidden or Collapsed root** | `TestBothPaintPathsAgreeOnAVisibleHiddenOrCollapsedRoot` | restore the `Collapsed` prune in `collectPaint` |
+| **The composer's own slices retain nothing either** | `TestTheComposerSlicesRetainNothingPastTheirOwnNodes` | revert any of the `clearToCap` resets — 39 dead nodes held in each |
+| **Every reused slice in `composer.go` clears to cap** | `TestEveryReusedSliceInComposerClearsToCap` | write `x = x[:0]` at any reset in the file |
 
 The rank row said **"comparator returns false"** until review of #457
 caught it. There is no comparator: `0df26bac` replaced the `sort` with the
@@ -266,6 +268,39 @@ pruning the subtree was the single exception to that, on one path only.
 Removing the prune makes the two visibilities agree with each other as
 well as the two paths, and changes nothing on the retained path, which
 never had it.
+
+## Round seven: the buckets were the small half
+
+Round five fixed `appendByRank` and left a comment naming `c.lifted` and
+`c.over` as having "the same shape" — which read as though the
+neighbours had been considered and were fine. They had not been. Every
+reused slice in `composer.go` was reset with `[:0]` and never cleared:
+`c.paint`, `c.lifted`, `c.nodes` and `c.over` hold `*paintNode`, and two
+more hold `graphics.Placement`, whose elements each carry a decoded
+`image.Image`.
+
+By the measurement in round five's own terms this is the **larger** half.
+A bucket list is five entries on a busy frame; a `Dynamic` list going
+from ten thousand rows to ten is an ordinary thing for an app to do, and
+it pinned ~9,990 nodes — one array rather than one per rank, and reached
+from a real app rather than from a five-rank frame. Reverting the four
+resets holds **39 dead nodes in each** of the node slices on the shrink
+fixture.
+
+The fix is one helper, `clearToCap`, at every reset, because four copies
+of the same three-line loop is how the first three came to be missing it.
+
+Two tests, and the second is the point. `TestTheComposerSlicesRetainNothingPastTheirOwnNodes`
+reads four slices by name and past their own `len` — the behavioural
+proof — but its element type is `[]*paintNode`, which structurally
+excludes the two placement slices and `c.startable`. A table of known
+slices only ever fails on the ones already known.
+`TestEveryReusedSliceInComposerClearsToCap` parses `composer.go` and
+fails on the NEXT `x = x[:0]` written anywhere in it, with a
+`retains nothing:` comment as the documented escape. It reads the AST
+rather than the text because `s = s[:0]` appears in `clearToCap`'s own
+doc comment, describing the shape it replaces — a grep reports the
+documentation as a violation.
 
 ## What is still not shared
 

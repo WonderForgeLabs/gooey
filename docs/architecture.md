@@ -622,9 +622,16 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, and whatever grows one
-next — lifted to the end with its subtree, because a dropdown is not at
-a position in the document, it is on top of it. The paint loop forces a
+implementing `gooey.Overlay` lifted to the end with its subtree, because
+a dropdown is not at a position in the document, it is on top of it. The
+marker decides membership and nothing else — which components carry it
+is a question for the source, not for a list here, and it is more than
+the popup surface the sentence used to name. Inside the lifted layer the
+order is no longer arrival: `gooey.OverlayRanker` buckets it — popup 0,
+toast 10, adornment 20, equal ranks keeping document order — so a toast
+is above an open menu whichever was declared first. The mouse-side
+paragraph below carries the same rule and the warning that hit-testing
+does not share it. The paint loop forces a
 repaint of every node above a rect somebody below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping

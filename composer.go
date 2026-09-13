@@ -112,12 +112,18 @@ type Composer struct {
 	//
 	// THE NEIGHBOURS RETAINED TOO, and this comment named two of them
 	// while reading as though they had been considered and were fine.
-	// c.paint, c.lifted, c.nodes and c.over were all reset with [:0] and
-	// never cleared, so a Dynamic list shrinking from ten thousand rows to
-	// ten pinned ~9,990 *paintNode — the same retention, one array instead
-	// of one per rank, and reachable from an ordinary app rather than from
-	// a five-rank frame. They go through clearToCap at their own resets
-	// now. Raised in review of #456.
+	// Every reused slice in this file was reset with [:0] and never
+	// cleared, so a Dynamic list shrinking from ten thousand rows to ten
+	// pinned ~9,990 *paintNode — the same retention, one array instead of
+	// one per rank, and reachable from an ordinary app rather than from a
+	// five-rank frame. Two of them held decoded image.Image rather than
+	// nodes. They go through clearToCap at their own resets now.
+	//
+	// HOW MANY is deliberately not written here, and neither are their
+	// names: a list in a comment is what let the first round name two and
+	// miss five. TestEveryReusedSliceInComposerClearsToCap reads this file
+	// and fails on the next `x = x[:0]` added anywhere in it. Raised in
+	// review of #456.
 	buckets []rankBucket[*paintNode]
 
 	// The wire. flusher owns the previous cell buffer; the placement
@@ -401,6 +407,27 @@ type rankBucket[T any] struct {
 	items []T
 }
 
+// clearToCap truncates a reused slice to zero length AND releases what
+// it still points at past that length.
+//
+// `s = s[:0]` is what every reuse here used to write, and it leaves the
+// backing array holding every element the last pass put there. For
+// []*paintNode that is a tree that no longer exists, held until the slot
+// is written again — never, for a list that shrinks and stays small. len
+// is what the next pass resets; cap is what the garbage collector sees.
+//
+// One function rather than the loop written out at four resets, because
+// four copies is how the first three came to be missing it. Raised in
+// review of #456.
+func clearToCap[T any](s []T) []T {
+	var zero T
+	full := s[:cap(s)]
+	for i := range full {
+		full[i] = zero
+	}
+	return s[:0]
+}
+
 // appendByRank appends lifted to dst in ascending rank, EQUAL RANKS IN
 // ENCOUNTER ORDER — which is document order, the limit #437 documented
 // and ranks do not lift. A subtree is contiguous in the walk and shares
@@ -431,27 +458,6 @@ type rankBucket[T any] struct {
 // gooey.Compose lifts []paintItem where the Composer lifts []*paintNode,
 // and the one-shot path originally ordered its own with
 // sort.SliceStable — which put the unfalsifiable-stability claim back one
-// clearToCap truncates a reused slice to zero length AND releases what
-// it still points at past that length.
-//
-// `s = s[:0]` is what every reuse here used to write, and it leaves the
-// backing array holding every element the last pass put there. For
-// []*paintNode that is a tree that no longer exists, held until the slot
-// is written again — never, for a list that shrinks and stays small. len
-// is what the next pass resets; cap is what the garbage collector sees.
-//
-// One function rather than the loop written out at four resets, because
-// four copies is how the first three came to be missing it. Raised in
-// review of #456.
-func clearToCap[T any](s []T) []T {
-	var zero T
-	full := s[:cap(s)]
-	for i := range full {
-		full[i] = zero
-	}
-	return s[:0]
-}
-
 // file over, and reflect.Swapper back on a paint path, days after this
 // function was written to remove both. Sharing membership-and-rank while
 // leaving ORDERING as two implementations of different character is
@@ -583,7 +589,7 @@ func (c *Composer) walkNodes() {
 	prev := c.nodeOf
 	c.nodeOf = make(map[Component]*paintNode, len(prev))
 	c.nodes = clearToCap(c.nodes)
-	c.startable = c.startable[:0]
+	c.startable = clearToCap(c.startable)
 	c.build(c.root, prev, nil)
 	c.orderPaint()
 	// Taken here as well as in Frame, so a cycle in the tree a Composer is
@@ -722,7 +728,7 @@ func (c *Composer) build(w Component, prev map[Component]*paintNode, parent *pai
 		// cleared: a Render that evaluates another node would otherwise
 		// hand its placements to the wrong owner.
 		outer := c.frame.sink
-		n.places = n.places[:0]
+		n.places = clearToCap(n.places)
 		c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
 		// The clip is bracketed exactly like the sink, and for the same
 		// reason: both are "which component is painting right now", and a
@@ -1177,7 +1183,7 @@ func (c *Composer) Frame() (*Frame, int) {
 				// The cell clear cannot reach the pixel plane: dropping
 				// the node's recorded placements is what makes the next
 				// placement diff take its images off the screen.
-				n.places = n.places[:0]
+				n.places = clearToCap(n.places)
 				c.restoreUnder(old)
 			} else {
 				n.rev.Set(n.rev.Get() + 1)
@@ -1235,7 +1241,7 @@ func (c *Composer) Frame() (*Frame, int) {
 	// describes the whole composition and not just what repainted. The
 	// incremental emission works off the per-node lists; this is for
 	// anyone holding the Frame — Frame.Flush, a test, a screenshot.
-	c.frame.placements = c.frame.placements[:0]
+	c.frame.placements = clearToCap(c.frame.placements)
 	for _, n := range c.paint {
 		c.frame.placements = append(c.frame.placements, n.places...)
 	}

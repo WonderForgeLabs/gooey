@@ -274,14 +274,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:1063`, in
+deliberately outside any evaluation context (`composer.go:1069`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:775`).
+separate observer for that (`Composer.armVisibility`, `composer.go:781`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:647`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:678`), so reading a property while painting *is* the damage
+(`composer.go:653`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:684`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -315,7 +315,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:681-718`; the design record is the container-backgrounds and
+(`composer.go:687-724`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -355,7 +355,7 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `appendByRank` (`composer.go:460`, a package-level
+between two — and `appendByRank` (`composer.go:466`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
