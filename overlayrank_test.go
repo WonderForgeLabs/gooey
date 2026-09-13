@@ -222,6 +222,13 @@ func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 	}
 
 	// SAME TREE, SAME FRAME, SAME ANSWER — which is the whole claim.
+	//
+	// SIX FILES, not four: #456 added the caveat to the two LEARN pages
+	// while this branch was open, and they are the half that matters most
+	// — they are where the freedom is granted to somebody meeting
+	// overlays for the first time. This branch deletes all six, so all
+	// six are what goes wrong again if the walk returns to document
+	// order. Merged in from #456.
 	// `under` is the later sibling and the lower rank, so a walk that
 	// still preferred document order returns it and a walk that asks
 	// overlayOf returns `over`. Nothing else in the fixture separates
@@ -232,7 +239,9 @@ func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 		t.Fatalf("HIT: the later-declared, lower-ranked overlay took the press for a cell " +
 			"`over` paints. Hit-testing is back on document order alone, which is #465 — " +
 			"and the caveats deleted with it (components/toast.go, " +
-			"docs/markup-reference.md, docs/architecture.md, mouse.go) are wrong again")
+			"docs/markup-reference.md, docs/architecture.md, mouse.go, " +
+			"docs/learn/concepts/overlays.md and docs/learn/07-app-chrome.md) " +
+			"are wrong again")
 	}
 	if hit != Component(over) {
 		t.Errorf("hit-testing returned %T, want the higher-ranked overlay — the same one "+

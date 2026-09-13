@@ -194,6 +194,16 @@ the host opts out of hit-testing while its toasts stay hittable —
 introduced with the adornment layer in
 [PR #129](https://github.com/WonderForgeLabs/gooey/pull/129).
 
+**The freedom is about the click too, since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).** The
+caveat that stood here on #456's branch — "from wherever it is declared"
+being true of the cells and not of the pointer — was true for as long as
+the hit walk read document order alone. It no longer does: it asks
+`overlayOf` and the same ranks paint asks, so two overlapping overlays
+cannot answer the two questions differently.
+`gooey.TestARankOrdersPaintAndNotHitTesting` is what holds that down,
+and it fails by name if the walk ever goes back.
+
 ## An overlay pinned to the pointer, not the tree
 
 An adornment is normally positioned against another *component's*

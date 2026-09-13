@@ -475,9 +475,9 @@ func selfMarkedHosts(t *testing.T) []string {
 // TestEveryExportedOverlayHostIsNamed makes overlayHostByName's coverage
 // a checked claim instead of a hand-written one.
 //
-// overlayHostByName decides which names TestNoDocSaysASelfMarkedHostStays-
-// InDocumentOrder examines, and its len(hosts) == 0 floor cannot see a
-// name that was never added: ToastHost and AdornmentLayer keep answering,
+// overlayHostByName decides which names
+// TestNoDocSaysASelfMarkedHostStaysInDocumentOrder examines, and its
+// len(hosts) == 0 floor cannot see a name that was never added: ToastHost and AdornmentLayer keep answering,
 // so a page-spanning host added next quarter is silently out of scope and
 // nothing reddens. Fail-open, next door to liftedSurfaceByName, which is
 // fail-closed because its names come from the doc and an unresolvable one

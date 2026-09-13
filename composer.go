@@ -420,11 +420,13 @@ type rankBucket[T any] struct {
 // four copies is how the first three came to be missing it. Raised in
 // review of #456.
 func clearToCap[T any](s []T) []T {
-	var zero T
-	full := s[:cap(s)]
-	for i := range full {
-		full[i] = zero
-	}
+	// THE BUILTIN, not a loop that does the same thing. appendByRank in
+	// this file writes clear(items[…]) twice, so a grep for `clear(` in
+	// composer.go found two of the three retention sites and missed the
+	// function NAMED for the operation — which is the argument this
+	// change makes for isContainer and overlayOf, one file over from
+	// itself. Raised in review of #456.
+	clear(s[:cap(s)])
 	return s[:0]
 }
 
