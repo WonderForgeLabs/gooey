@@ -574,7 +574,7 @@ Each section takes either form, and giving one section both is a load error:
 
 | Form | Meaning |
 |---|---|
-| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal — though the exported element catalog still declares all three literal-only, so a property palette built on it will say otherwise ([#314](https://github.com/WonderForgeLabs/gooey/issues/314)). |
+| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal, and the exported element catalog now says so — it declared all three literal-only until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), so a property palette built on it disagreed with the loader, which had honoured the binding all along. |
 | `<StatusBar.Left>` / `.Center` / `.Right` | A property element holding exactly one component — anything at all. |
 
 ```xml
@@ -886,7 +886,7 @@ ctx.Rules = map[string]markup.RuleFunc{
 
 The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets. The built-ins cover the DataAnnotations vocabulary; `ctx.Rules` is for **domain** rules beyond it (an internal account-number format, a reserved-name list, a check against a lookup table).
 
-The registration is not *quite* like `Components` and `Handlers` in one respect: `Rules` does not yet cross the control boundary (tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314)). A page registering `ctx.Rules["Email"]` and then writing `<Validate Email="true"/>` inside an Include or UserControl gets "unknown rule", listing only the built-ins. Keep custom rules in the page, or have the control's setup copy `Rules` into the context it returns.
+The registration is exactly like `Components` and `Handlers`, including across the control boundary. It was not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314): `Rules` was nil inside every control, so a page registering `ctx.Rules["Email"]` and then writing `<Validate Email="true"/>` inside an Include or UserControl got "unknown rule" listing only the built-ins. No workaround is needed now, and the copy-into-the-context one this paragraph used to prescribe is not just unnecessary but misleading — it suggests the boundary is something a control has to opt into.
 
 ### ValidationMarker
 
@@ -1126,7 +1126,7 @@ ctx.Dir = dir
 
 `fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
 
-**Today that only holds for a companion declared in the page.** `Context.Dir` is not among the fields a UserControl or Include inherits from its parent, so a `<Companion>` inside a control file sees an empty `Dir` and resolves `Dir=`/`Log=` against the process's working directory even when the app set `ctx.Dir` — tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314). Declare companions in the page, or pass absolute paths, until it is fixed.
+**This holds at any depth.** `Context.Dir` is among the fields a UserControl or Include inherits from its parent, so a `<Companion>` inside a control file resolves `Dir=`/`Log=` against the same directory the page does. It did not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), where an uninherited `Dir` was empty and `hostPath` fell back to the process's working directory — silently, since nothing restricts `<Companion>` to page level.
 
 **Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic). A requested stop does **not** run `Exited`.
 
@@ -1601,7 +1601,7 @@ Context isolation is the contract: `setup(e, parent)` returns the instance's own
 - `parent.Command(e.Attrs["Open"])` resolves an event attribute the same way `Click` does; the control can then hand the command to a component or expose it in its own context (storylist puts `Open` in its context so its markup can attach it to a `<KeyBinding>`).
 - Literal attributes arrive as plain strings (`Title="stories"`).
 
-`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent context when the child leaves them nil; `Named` is scoped per instance (like `x:Name` in templates). Layout attributes on the instance element apply to the instance and are not passed through.
+Everything a page registers inherits from the parent context when the child leaves it nil — `Styles`, `Components`, `Elements`, `Handlers`, `Rules`, `Declared`, `Includes`, `Dispatcher`, `Dir` and `Variant`. What does NOT cross is `Values` and `Named`: values arrive only through the declared surface, which is what makes a control a contract rather than a macro, and `Named` is scoped per instance (like `x:Name` in templates). That partition is not maintained by hand — `markup.boundaryPartition` carries a row per field with the reason, and a test fails if `Context` grows a field the partition does not account for ([#314](https://github.com/WonderForgeLabs/gooey/issues/314) is what happens when a list like the one this sentence used to be goes stale: it named four of the ten). Layout attributes on the instance element apply to the instance and are not passed through.
 
 A control that also [declares properties](#declared-properties-xproperty) gets them resolved *before* setup runs and installed into the context setup returns; setup reads them through `parent.DeclaredProperties()` and extends the context with private members.
 

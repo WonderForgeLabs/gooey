@@ -342,7 +342,25 @@ func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prere
 					def.Name, name, def.Name)
 			}
 			if a.Required {
-				continue // already seeded by the loop above
+				// LOUD, not `continue`. Skipping the emit is right — a
+				// duplicate XML attribute is malformed, and the required
+				// loop above already wrote this one — but skipping it
+				// silently makes the row INERT: the bare and seeded
+				// probes become identical, so the counterfactual half of
+				// TestEveryPrereqRowIsReached reports nothing and the row
+				// reads as load-bearing forever.
+				//
+				// It also swallows a real need. Frozen.AllowError's row
+				// exists to seed a DIFFERENT handle than the
+				// type-derived default, because the aliasing guard
+				// rejects the same one twice; Allow simply happens not to
+				// be Required today. If it ever became one, the row would
+				// be ignored and the aliasing failure would come back
+				// with nothing pointing at why. Raised in review of #490.
+				t.Fatalf("probePrereqs names <%s %s>, which is Required and so is "+
+					"already seeded by the loop above — the row can never change "+
+					"the probe and is inert. Delete it, or give the prereq a "+
+					"handle the required seeding does not produce", def.Name, name)
 			}
 			fmt.Fprintf(&b, " %s=%q", a.Name, expr)
 		}

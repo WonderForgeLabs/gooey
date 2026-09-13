@@ -1,13 +1,12 @@
 package markup
 
 import (
-	"image"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
-	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
@@ -207,21 +206,22 @@ var silentlyBindable = []string{
 // an entry naming an element the probe now constructs, which is how
 // these were found rather than guessed.
 //
-// The map stays, with its type and its Skip, because #489 is still open
-// and the NEXT element to fall out of the probe should arrive as an
-// entry here rather than as a silently unchecked element. An empty map
-// makes the must-fire arm above range over nothing, which the arm
+// The map stays, with its type and its reason-per-entry, because #489 is
+// still open and the NEXT element to fall out of the probe should arrive
+// as an entry here rather than as a silently unchecked element. An empty
+// map makes the must-fire arm above range over nothing, which the arm
 // itself reports.
+//
+// (This said "with its type and its Skip" until review of #490. There is
+// no skip attached to this map — the file's only t.Skipf belongs to
+// TestABoundValueActuallyArrives — so a reader chasing it found nothing,
+// in a file whose whole argument is that a comment is evidence.)
 var unseedable = map[string]string{}
 
 // elementOf splits "Element.Attr" back to the element.
 func elementOf(qualified string) string {
-	for i := 0; i < len(qualified); i++ {
-		if qualified[i] == '.' {
-			return qualified[:i]
-		}
-	}
-	return qualified
+	el, _, _ := strings.Cut(qualified, ".")
+	return el
 }
 
 type attrProbe struct {
@@ -319,21 +319,19 @@ func bindSpelling(a AttrSpec) string {
 	return ""
 }
 
-// bindsContext extends defaultsContext with the handles this file needs
-// and that one does not: a bound STYLE and a bound IMAGE.
+// bindsContext is defaultsContext, and the wrapper is gone.
 //
-// It extends rather than edits, because defaultsContext is the fixture
-// TestDeclaredDefaultsRenderIdenticallyToOmission renders against and a
-// new key there is a new thing that could move a picture. Nothing here
-// renders — these tests only ask whether markup LOADS — so the extra
-// handles cost that test nothing by staying out of it.
-func bindsContext() *Context {
-	ctx := defaultsContext()
-	ctx.Values["Sty"] = prop.NewSource(render.Style{Fg: render.RGB(10, 20, 30)})
-	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	ctx.Values["Img"] = prop.NewSource(image.Image(img))
-	return ctx
-}
+// It used to add a bound STYLE and a bound IMAGE, with a comment arguing
+// that it "extends rather than edits, because defaultsContext is the
+// fixture TestDeclaredDefaultsRenderIdenticallyToOmission renders
+// against and a new key there is a new thing that could move a picture".
+// Both keys are in defaultsContext now — Img was already on main and Sty
+// arrived with this branch, at identical values — so the wrapper
+// re-assigned what it was handed and the comment described a separation
+// that the same change had removed two files over. A no-op wrapper whose
+// doc argues against an edit already made is worse than either half
+// alone. Raised in review of #490.
+func bindsContext() *Context { return defaultsContext() }
 
 // reachable reports whether the generic harness can build this element
 // at all, with the attribute under test ABSENT. Some elements cannot —

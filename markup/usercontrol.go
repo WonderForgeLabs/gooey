@@ -18,8 +18,20 @@ import (
 // never against the page. Data crosses the boundary through element
 // attributes, resolved in the PARENT context (see Context.BindingValue)
 // to property handles the setup wires into its context or components.
-// Styles and Components inherit from the parent when the child leaves
-// them nil; Named is scoped per instance (like x:Name in templates).
+// WHICH fields inherit is deliberately NOT written out here. This
+// sentence used to say "Styles and Components", and by #314 the real set
+// was ten — a hand-maintained list of two naming a partition of twelve,
+// in the doc comment for the function that implements it. The partition
+// lives in markup.boundaryPartition (boundaryfields_test.go), one row per
+// field with its reason, checked against Context's own declaration; read
+// that, and the assignments below, rather than a count in prose. Raised
+// in review of #490, which found this copy and the reference doc's both
+// stale in the change that fixed the behaviour.
+//
+// The two that do NOT cross are worth naming, because they are the
+// contract rather than a detail: Values isolate — data crosses only
+// through the declared surface — and Named is scoped per instance (like
+// x:Name in templates).
 //
 // If the control's markup declares dependency properties with
 // <x:Property>, they are resolved BEFORE setup runs and installed into
