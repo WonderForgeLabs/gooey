@@ -264,7 +264,127 @@ func TestTheTutorialsToolInventoryIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading %s: %v", page, err)
 	}
-	assertNamesEveryTool(t, string(body), page)
+	// THE INVENTORY PARAGRAPH, not the page. This handed over the whole
+	// tutorial until review of #504, which is the page-wide vacuous pass
+	// TestTheGRPCContractTableNamesEveryTool declines by name below: the
+	// paragraph after this one explains `screen_size`, so deleting the
+	// name from the inventory left the guard green on a mention that is
+	// not a list. An inventory is a list, and the assertion has to be
+	// made against the list.
+	para, ok := paragraphWith(string(body), inventoryLead)
+	if !ok {
+		t.Fatalf("%s no longer carries a %q paragraph, so either the tutorial "+
+			"was restructured and this guard has to follow it, or the inventory "+
+			"is gone", page, inventoryLead)
+	}
+	assertNamesEveryTool(t, para, page+"'s inventory paragraph")
+}
+
+// inventoryLead is how the tutorial opens its enumeration. Written once
+// because the guard and its own counterfactual both need it.
+const inventoryLead = "The tool inventory:"
+
+// paragraphWith returns the blank-line-delimited paragraph containing
+// marker. A prose inventory is a sentence, not a line — the tutorial's
+// wraps over four — so a line-wise read of it would see one comma-cut
+// fragment and call the rest undocumented.
+func paragraphWith(body, marker string) (string, bool) {
+	for _, para := range strings.Split(body, "\n\n") {
+		if strings.Contains(para, marker) {
+			return para, true
+		}
+	}
+	return "", false
+}
+
+// declaresTool reports whether body carries an ENTRY for name — a list
+// item or a bold lead-in that introduces the tool — rather than a
+// sentence that happens to mention it. The lead is everything before the
+// entry's em dash, which is the shape every inventory in this repo's
+// records uses:
+//
+//   - `screen_size` — the visible surface in cells
+//   - `send_keys` / `send_mouse` — inject input.Events
+//     **`validate_markup(source)`** — swap_markup's parse-and-bind
+//
+// The name has to be backtick-opened and may not run into another
+// identifier character, which is what keeps `register_properties` from
+// matching the `unregister_properties` beside it and lets
+// `validate_markup(source)` match all the same.
+//
+// THE LINE ALSO HAS TO LOOK LIKE AN ENTRY, and it did not until the
+// counterfactual below said so: an em dash is ordinary punctuation in
+// this repo's prose, so "Prose about `gamma` — which is a mention"
+// scored as an entry for gamma. An entry OPENS with its subject — a
+// list marker, a bold lead-in, or the backticked name itself — and a
+// sentence about something else does not.
+func declaresTool(body, name string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		l := strings.TrimSpace(line)
+		if !strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "* ") &&
+			!strings.HasPrefix(l, "**`") && !strings.HasPrefix(l, "`") {
+			continue
+		}
+		head, _, ok := strings.Cut(l, " — ")
+		if !ok {
+			continue
+		}
+		i := strings.Index(head, "`"+name)
+		if i < 0 {
+			continue
+		}
+		rest := head[i+len(name)+1:]
+		if rest == "" || !isIdentByte(rest[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+}
+
+// TestTheInventoryReadsAreNarrowerThanThePage is the counterfactual for
+// the two narrowings above, and it is the assertion neither guard can
+// make about itself: a slice that quietly returned the whole document,
+// or an entry test that matched any mention, would leave both of them
+// exactly as vacuous as they were — and green.
+func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
+	const page = "# Doc\n\n" + inventoryLead + " `alpha`, `beta`.\n\n" +
+		"`gamma` is explained down here, outside the list.\n"
+
+	para, ok := paragraphWith(page, inventoryLead)
+	if !ok {
+		t.Fatal("paragraphWith did not find the inventory it was pointed at")
+	}
+	if !namesTool(para, "beta") {
+		t.Error("the inventory paragraph lost a name that is in it")
+	}
+	if namesTool(para, "gamma") {
+		t.Error("the inventory paragraph reaches a name from the NEXT paragraph, " +
+			"so deleting a tool from the list would still read as documented")
+	}
+
+	const record = "- `alpha` — the first one\n" +
+		"- `send_keys` / `send_mouse` — two on one entry\n" +
+		"**`delta(source)`** — a bold lead-in with an argument\n" +
+		"Prose about `gamma` — which is a mention and not an entry.\n" +
+		"- `unregister_epsilon` — the inverse\n"
+	for _, name := range []string{"alpha", "send_mouse", "delta"} {
+		if !declaresTool(record, name) {
+			t.Errorf("declaresTool missed the entry for %s, so a record that "+
+				"documents a tool would read as omitting it", name)
+		}
+	}
+	if declaresTool(record, "gamma") {
+		t.Error("a sentence mentioning `gamma` counts as an entry, which is the " +
+			"page-wide vacuous pass this shape exists to close")
+	}
+	if declaresTool(record, "epsilon") {
+		t.Error("`unregister_epsilon` counts as an entry for epsilon — the same " +
+			"substring pass namesTool's backticks close one surface over")
+	}
 }
 
 // TestTheMCPSpecsToolInventoryIsComplete is the fourth surface, and the
@@ -294,7 +414,31 @@ func TestTheMCPSpecsToolInventoryIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading %s: %v", page, err)
 	}
-	assertNamesEveryTool(t, string(body), page)
+	// AN ENTRY, not a mention — and a SECTION SLICE IS THE WRONG
+	// NARROWING HERE, which is a measurement and not a preference.
+	// "## Tools (v1)" is the ORIGINAL set and this record extends
+	// itself in dated sections: list_styles, validate_markup,
+	// register_properties and unregister_properties are each
+	// introduced in one of them. Slicing to the v1 section reported
+	// four tools as undocumented in a record that documents all four,
+	// and the repair would have been to backdate them into a decision
+	// that did not include them. So the page stays the subject and the
+	// SHAPE does the narrowing: a tool has to be the subject of an
+	// entry, which a sentence in "Extended 2026-08-10" mentioning it
+	// is not. Raised in review of #504.
+	s := &Server{}
+	tools := s.v1Tools()
+	if len(tools) == 0 {
+		t.Fatal("v1Tools is empty, so this guard would pass vacuously")
+	}
+	for _, tl := range tools {
+		if !declaresTool(string(body), tl.Name) {
+			t.Errorf("%s mentions %s nowhere as an ENTRY of its own — no list item "+
+				"and no bold lead-in introducing it. The record is where somebody "+
+				"asks what the tool surface IS; a tool that only appears inside a "+
+				"sentence about another one is not in the inventory", page, tl.Name)
+		}
+	}
 }
 
 // TestTheGRPCContractTableNamesEveryTool is the third surface, and the
@@ -619,16 +763,28 @@ func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
 		".claude/workflows/gooey-new-component.js",
 		".claude/workflows/gooey-new-demo.js",
 	}
-	read := 0
+	// THE CHECKOUT QUESTION IS ASKED ONCE, AND OUT HERE. It is the only
+	// reason a blob may be missing without anybody having done anything
+	// wrong — the zip a proxy serves contains mcp/ and nothing above it
+	// — and asking it per file made the two answers indistinguishable:
+	// a bare continue covered "this module is being consumed
+	// standalone" and "somebody renamed a workflow and nothing follows
+	// it any more" with the same green. Raised in review of #504, which
+	// is the second time this loop has lost a page quietly.
+	if !inRepoCheckout(t) {
+		t.Skipf("HEAD is not readable from here, so this guard only runs inside "+
+			"the repo checkout (%v)", pages)
+	}
 	for _, page := range pages {
 		src, ok := committedBlob(t, page)
 		if !ok {
-			// PER FILE, not t.Skipf. Skipping inside the loop stopped
-			// the whole test at the first absent page and reported green
-			// while the second went unexamined. Raised in review of #504.
+			t.Errorf("%s is not in HEAD, and git can read HEAD here — so it was "+
+				"renamed, moved or deleted. The inventory it carries is what an "+
+				"agent driving this server reads, and a surface the guard cannot "+
+				"find is a surface nobody is checking: follow the file, or delete "+
+				"the entry deliberately", page)
 			continue
 		}
-		read++
 		line, found := toolsLine(src)
 		if !found {
 			t.Errorf("%s no longer carries a \"The tools:\" line, so either the "+
@@ -642,12 +798,22 @@ func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
 		// tests up: these prompts mention tool names elsewhere, so a
 		// name could be "documented" by a sentence outside the
 		// inventory. Raised in review of #504.
-		assertNamesEveryTool(t, line, page)
+		// NAMED AS WHAT WAS ACTUALLY READ. The label said
+		// ".claude/workflows/…", which is the path in the worktree, and
+		// this test deliberately does not read that file — so a
+		// developer with the fix already applied was told their own
+		// open editor was missing a tool. Raised in review of #504.
+		assertNamesEveryTool(t, line, "HEAD:"+page+"'s \"The tools:\" line")
 	}
-	if read == 0 {
-		t.Skipf("neither agent workflow is in HEAD (%v), so this guard only runs "+
-			"inside the repo checkout", pages)
-	}
+}
+
+// inRepoCheckout reports whether git can read HEAD from the parent
+// directory. It separates "this module was consumed standalone" — the
+// one blameless reason a committed blob is unreadable — from a path
+// that is simply no longer there.
+func inRepoCheckout(t *testing.T) bool {
+	t.Helper()
+	return exec.Command("git", "-C", "..", "rev-parse", "HEAD").Run() == nil
 }
 
 // committedBlob reads one repo-root-relative path out of HEAD. It returns
