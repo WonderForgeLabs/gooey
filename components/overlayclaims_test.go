@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -129,7 +130,11 @@ func TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
+		goSrc := strings.HasSuffix(f, ".go")
 		for i, line := range strings.Split(string(body), "\n") {
+			if goSrc && !strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
 			for _, host := range hosted {
 				at := hostLiftedClaim(host).FindStringIndex(line)
 				if at == nil {
@@ -202,11 +207,36 @@ var hostByName = map[string]func() any{
 //
 // A guard that fires on correct prose is noise, and noise is how a guard
 // gets deleted.
+// MEMOIZED, and that is not a micro-optimisation: the call site is
+// inside files x lines x hosts, so compiling here cost 189 prose files
+// times their lines times two hosted names — tens of thousands of
+// regexp.MustCompile calls. Measured on this tree,
+// TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs ran in 7.45s as written
+// and 0.58s memoized (the review measured 20.89s against 1.54s on its own
+// runner; the ratio is the portable part), which made it the most
+// expensive test in this package by a wide margin. Same defect class as the qualifiers() package
+// var and the parallelised tree scan; this is the third time. Raised in
+// review of #458.
+//
+// The lock rather than a package-level table built at init, because the
+// hosts come from hostsWhoseSurfaceCarriesTheMarker, which needs a *T.
+var (
+	hostLiftedClaimMu    sync.Mutex
+	hostLiftedClaimCache = map[string]*regexp.Regexp{}
+)
+
 func hostLiftedClaim(host string) *regexp.Regexp {
+	hostLiftedClaimMu.Lock()
+	defer hostLiftedClaimMu.Unlock()
+	if re, ok := hostLiftedClaimCache[host]; ok {
+		return re
+	}
 	const marker = `([Ll]ifted|LIFTED|gooey\.Overlay\b)`
-	return regexp.MustCompile(
+	re := regexp.MustCompile(
 		`(\b` + host + `\b[^.\n]{0,60}?` + marker +
 			`|` + marker + `[^.\n]{0,60}?\b` + host + `\b)`)
+	hostLiftedClaimCache[host] = re
+	return re
 }
 
 // surfaceNoun is what makes such a sentence true again: it names the
@@ -243,8 +273,18 @@ func nearSpan(line string, at []int) string {
 }
 
 // overlayProseFiles is every file that can teach somebody this, which is
-// the same scope question #443 asked: markdown, .gooey markup (it says
-// it ON SCREEN), and the README.
+// the same scope question #443 asked and the same answer it gave: "Go
+// doc comments, test comments and .gooey markup, not just docs/**".
+// Markdown, .gooey markup (it says it ON SCREEN), the README, and Go
+// source — components/menu.go's Z-ORDER block is exactly where such a
+// claim lands, and the corpus used to stop one directory short of it.
+//
+// Go files are scanned for their COMMENT lines only. A rule about what
+// prose teaches has nothing to say about an identifier, and a line of
+// code that happens to put a host name within sixty columns of the word
+// "lifted" is a false report on correct code — which is how a guard gets
+// deleted. _test.go is excluded because the fixtures BELOW state the
+// retired claim on purpose.
 //
 // Dot-directories are pruned at EVERY depth, not filtered at the top:
 // .claude/worktrees holds whole checkouts of this repo on a developer
@@ -269,6 +309,10 @@ func overlayProseFiles(t *testing.T, root string) []string {
 		switch filepath.Ext(p) {
 		case ".md", ".gooey":
 			out = append(out, p)
+		case ".go":
+			if !strings.HasSuffix(p, "_test.go") {
+				out = append(out, p)
+			}
 		}
 		return nil
 	})
@@ -276,9 +320,16 @@ func overlayProseFiles(t *testing.T, root string) []string {
 		t.Fatalf("walking %s: %v", root, err)
 	}
 	// A FLOOR, because a walk that found nothing passes every assertion
-	// above it. The number is deliberately far below the real count —
-	// what it catches is a broken walk, not a shrinking tree.
-	if len(out) < 40 {
+	// above it — and 40 was not that floor. The tree holds ~479 matching
+	// files, so 40 also passed with docs/, components/, apps/ and cmd/
+	// lost TOGETHER: the walk could go blind to four of the five places
+	// the rule is taught and still call itself intact. That is the exact
+	// argument this PR made about docFilesIn's floor in the sibling file,
+	// and this one did not get the lesson until the review pointed out
+	// that a lesson learned in one place does not protect its sibling.
+	// 300 is the same guarantee actually enforced, and still leaves room
+	// for the tree to shrink by a third. Raised in review of #458.
+	if len(out) < 300 {
 		t.Fatalf("the walk found %d prose files under %s, which is too few to be "+
 			"the tree — the guard is reading almost nothing", len(out), root)
 	}

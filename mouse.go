@@ -189,6 +189,27 @@ func (m *FocusManager) HitTest(x, y int) Component {
 	// on a hit is what made it necessary. See hitTest.
 	aborted := false
 	hitTest(m.root, x, y, 0, false, 0, &order, &best, &aborted)
+	if aborted {
+		// NO ANSWER, rather than the answer from the prefix that was
+		// visited. best.w at this point is whatever out-ranked the
+		// candidates the walk happened to reach before it gave up, and
+		// what makes that different from an ordinary partial result is
+		// the ranking: an unvisited node can out-rank everything in
+		// hand, so the prefix is not a subset of the answer, it is a
+		// different question. DispatchMouse routes a press to whatever
+		// comes back (see below) and consults no LayoutFault first.
+		//
+		// The pre-#465 walk returned early on the first hit, so a
+		// faulting branch cost only that branch and the rest of the
+		// walk still answered. That is gone with the early exit, and
+		// pretending otherwise is what a partial return would do.
+		//
+		// Costs nothing on a legal tree: the cap never fires on one,
+		// and a tree that fires it is one Composer.build refuses. Read
+		// the report with Composer.LayoutFault. Raised in review of
+		// #458.
+		return nil
+	}
 	return best.w
 }
 

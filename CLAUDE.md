@@ -297,13 +297,32 @@ that asked for it. [#216](https://github.com/WonderForgeLabs/gooey/issues/216)
 asked for a depth cap on `MeasureChild`; capping that alone would have left
 the very crash it was filed for, because `Composer.build` runs BEFORE layout
 exists and dies on the **heap**, with no fatal error and no trace. Seven
-walks over `ChildComponents()` recurse in this package and all seven are
-bounded now — Compose and Focus by identity (they already key a map by
-component), Measure/Arrange/HitTest/Focusable/Render by depth against
-`MaxLayoutDepth` (512, which is 73x the deepest tree this repo has ever laid
-out). A control that includes itself is a **load** error naming the loop.
-Nothing panics: read the report with `Composer.LayoutFault()` /
-`App.LayoutFault()`.
+walks over `ChildComponents()` recurse in this package, and what each one
+bounds is not the same thing — the sentence here used to say "all seven
+are bounded now" and that reading flattered five of them:
+
+- **Compose and Focus bound by IDENTITY.** They already key a map by
+  component, so a cycle terminates however it is shaped.
+- **HitTest bounds TOTAL WORK.** Depth against `MaxLayoutDepth` (512,
+  which is 73x the deepest tree this repo has ever laid out) *and* a
+  whole-walk abort, which it needed once the ranked overlay layer took
+  away its early return on a hit.
+- **Measure, Arrange, Focusable and Render bound DEPTH ONLY**, and a
+  depth cap bounds the length of a path, not the number of them. On a
+  cycle that BRANCHES — a container that is its own child twice — the
+  visit count is exponential in the cap, so the walk terminates in the
+  same sense that 2^512 visits terminate. Measured: `Measure` did not
+  return in 5s. A single-child self-cycle returns instantly, which is
+  why the existing fixtures are green — one kid makes a cycle a line.
+  Tracked as [#506](https://github.com/WonderForgeLabs/gooey/issues/506);
+  the fix belongs in [#375](https://github.com/WonderForgeLabs/gooey/issues/375)'s
+  one walk-the-children primitive rather than in four copies.
+
+A control that includes itself is a **load** error naming the loop.
+Nothing panics, and on the four above that is the trap rather than the
+reassurance: `Composer.LayoutFault()` / `App.LayoutFault()` record the
+breach and the walk keeps going, so the fault says "handled" while the
+process hangs.
 
 Four walks OUTSIDE this package are still unbounded — `components/adorn.go`,
 `components/buttonbar.go`, `control/markup.go`, `control/snapshot.go`. They
@@ -461,7 +480,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:451`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:472`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

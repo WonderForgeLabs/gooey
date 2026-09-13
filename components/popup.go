@@ -186,6 +186,15 @@ func (p *Popup) MouseOpenRestore() gooey.Component {
 // show is the owner's decision, not just IsOpen — a menu that is "open"
 // over zero items shows nothing. Reads here happen in layout, outside
 // any evaluation, so they record no dependencies.
+//
+// PASSING show EVERY FRAME IS LOAD-BEARING, and since #465 forgetting it
+// costs more than it used to. The surface is a gooey.Overlay and is not
+// HitTestTransparent, so whoever owns the cells owns the clicks: the hit
+// walk now prefers it over anything beneath its rect. A closed surface
+// collapses to {X, Y, 0, 0} and can win nothing — but an owner that
+// leaves a stale rect here does not merely paint something invisible any
+// more, it swallows every press inside that rect. Raised in review of
+// #458.
 func (p *Popup) ArrangeSurface(show bool, r gooey.Rect) {
 	if !show {
 		gooey.ArrangeChild(p.surf, gooey.Rect{X: r.X, Y: r.Y})

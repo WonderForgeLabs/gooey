@@ -315,12 +315,24 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 				continue
 			}
 			reported[span] = true
-			// ANCHORED ON THE LINE THAT SAYS SOMETHING. When the join is
-			// what matched and the first line is blank or bare comment
-			// marker, pointing a reader at it is pointing them at
-			// nothing.
+			// ANCHORED ON THE LINE THAT SAYS SOMETHING, and the first
+			// repair only covered half of when that is not line i.
+			//
+			// It tested whether line i was BLANK — so a join that
+			// matched because the rule is stated entirely on line i+1,
+			// under an ordinary sentence on line i, still reported line
+			// i and quoted a sentence containing no violation. That is
+			// the same defect the blank-line case was, narrowed to one
+			// shape: the anchor was chosen from what line i LOOKS like
+			// rather than from which line states the rule.
+			//
+			// Ask states() instead. i is known not to state it alone
+			// whenever span != i (that is what sent us to the join), so
+			// the only question is whether span does; if neither does,
+			// the statement genuinely spans both and i is where a
+			// reader starts fixing it. Raised in review of #458.
 			at := i
-			if strings.TrimSpace(continuationRe.ReplaceAllString(lines[i], "")) == "" {
+			if span != i && states(lines[span]) {
 				at = span
 			}
 			problems = append(problems, fmt.Sprintf(
@@ -2581,6 +2593,33 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 			"The window is being taken either side of the statement's SECOND "+
 			"line rather than either side of the whole of it, so it slid down "+
 			"by one and dropped the line above", got)
+	}
+
+	// THE ANCHOR, when the line above the violation is ordinary prose.
+	//
+	// The join reaches line i first, so the statement is found through
+	// [i, i+1] and reported[i+1] is claimed there. The anchor used to be
+	// line i unless line i was BLANK — which named a sentence containing
+	// no violation and quoted it back at the reader as the thing to fix.
+	// The qualifier arm above cannot see this: it is about which lines
+	// the window reaches, and this is about which line the report names.
+	// Raised in review of #458.
+	anchored := write("anchored.md", strings.Repeat("Padding prose.\n", 24)+
+		"Here is the rule, and it is simple:\n"+
+		"Declare the MenuBar LAST in its container.\n"+
+		"\nMore prose.\n")
+	got, err = retiredRuleProblems(anchored, statesTheRetiredRule, prefilterWords,
+		qualifierRes, supersededOf, scanAdvice)
+	if err != nil {
+		t.Fatalf("scanning the fixture: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the scan reported %d problems, want 1: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "anchored.md:26") {
+		t.Errorf("the report anchors somewhere other than the line that states "+
+			"the rule (line 26; line 25 is ordinary prose that contains no "+
+			"violation):\n\t%s", got[0])
 	}
 
 	// AND THE PREFILTER MUST NOT BE WHAT SAVED IT. A file carrying none

@@ -327,7 +327,17 @@ func TestHitTestOnABranchingCycleTerminates(t *testing.T) {
 	go func() { done <- m.HitTest(1, 1) }()
 
 	select {
-	case <-done:
+	case got := <-done:
+		// AND IT ANSWERS NOTHING. A walk that gave up visited a prefix
+		// of the tree, and under ranking a prefix is not a subset of the
+		// answer — an unvisited node can out-rank everything in hand. So
+		// the partial best is not a worse answer, it is a different
+		// question, and DispatchMouse would route a press to it without
+		// consulting the fault. Raised in review of #458.
+		if got != nil {
+			t.Errorf("HitTest returned %T from an aborted walk; a walk that "+
+				"refused the tree has no answer", got)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("HitTest did not return on a container that is its own child " +
 			"twice. MaxLayoutDepth bounds depth, and the ranked walk visits " +

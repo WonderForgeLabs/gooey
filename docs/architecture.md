@@ -479,6 +479,18 @@ layout exists and wedges the heap rather than the stack — so capping
 here alone would have turned the original crash into a hang. Compose and
 Focus detect the repeat by identity (they already key a map by
 component); Measure, Arrange, HitTest, Focusable and Render count depth.
+
+Counting depth is weaker than it sounds, and this page said otherwise
+until #458. A cap bounds the length of a path, not the number of them,
+so a cycle that BRANCHES — a container that is its own child twice —
+costs a number of visits exponential in the cap. `HitTest` carries a
+whole-walk abort as well, which it needed once the ranked overlay layer
+removed its early return on a hit; `Measure`, `Arrange`, `Focusable` and
+`Render` do not, and measurably do not return
+([#506](https://github.com/WonderForgeLabs/gooey/issues/506)). For those
+four the recorded fault is the trap rather than the reassurance: it says
+"handled" while the walk continues.
+
 A control that includes itself is caught earlier still, as a load error
 naming the loop. Nothing panics: read the report with
 `Composer.LayoutFault()`, `App.LayoutFault()`, or `Frame.LayoutFault()`
