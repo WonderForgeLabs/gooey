@@ -252,8 +252,10 @@ Getting the measurement itself right took three corrections, all from review:
   every attempt went inconclusive, and the test died pointing at the *runner*
   instead of at the number someone had just changed — with its carefully
   written #419 message two lines below, unreachable. It budgets `2*EscTimeout
-  - EscTimeout/2` literally now; `TestPasteMarkerGraceHasAFloor` is what makes
-  that safe to hardcode.
+  - EscTimeout/4` literally now; `TestPasteMarkerGraceHasAFloor` is what makes
+  that safe to hardcode. (This line said `EscTimeout/2` for one round after
+  the window was rebalanced in the code — a spec restating a constant is a
+  second copy of it, and this is what the second copy does.)
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement. The

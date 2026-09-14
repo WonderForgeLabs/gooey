@@ -193,23 +193,76 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 // — running out of attempts is a failure, never a pass.
 func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 	const attempts = 20
+	// TWO INCONCLUSIVE OUTCOMES, COUNTED SEPARATELY, because they carry
+	// opposite news and the loop used to report only one of them.
+	//
+	// A LATE Esc is a loaded machine: the timer resolved the prefix
+	// first, the attempt proves nothing, and a retry is expected to
+	// work. SILENCE is the regression's own symptom — the decoder
+	// discarded a prefix it was holding and nothing will ever arrive.
+	// The attempt cannot tell that from a lost prefix (the write split
+	// across two slave reads, the hung-up pty discarding the rest), so
+	// neither can fail on its own; but twenty of them in a row is not
+	// twenty scheduling artefacts, and saying "this machine is too
+	// loaded" over the defect under test is a false cause reported after
+	// forty seconds of waiting for it. Raised in review of #445.
+	// Enough silent attempts to rule out the benign reading, and no
+	// more; see the arm below for why the bound is on this outcome only.
+	const silentEnough = 5
+	var late, silent int
 	for i := range attempts {
-		if closedTtyAttempt(t) {
+		switch closedTtyAttempt(t) {
+		case attemptMeasured:
 			return
+		case attemptLate:
+			late++
+			t.Logf("attempt %d missed the grace window (the timer resolved the "+
+				"prefix first); retrying", i+1)
+		case attemptSilent:
+			silent++
+			t.Logf("attempt %d saw no event at all after the close; retrying", i+1)
 		}
-		t.Logf("attempt %d missed the grace window (the timer resolved the "+
-			"prefix first); retrying", i+1)
+		// SILENCE IS THE ONLY SLOW OUTCOME — it costs a full nextOrNone
+		// window, where a late Esc arrives in about a stall — so twenty
+		// of them is forty seconds spent re-establishing what the first
+		// few already showed. Stop at enough to make "every one of these
+		// lost its prefix to a split read" implausible, and no more.
+		if silent >= silentEnough {
+			break
+		}
 	}
-	t.Fatalf("could not close the tty inside the grace window in %d attempts. "+
-		"This machine is too loaded to attribute the resolution to the "+
-		"tty-close path, and passing on that basis would be a test that "+
-		"guards nothing", attempts)
+	if silent > 0 {
+		t.Fatalf("%d attempts produced NO event after the tty closed (%d "+
+			"more arrived too late to attribute). That is what the regression "+
+			"under test looks like: a held prefix discarded instead of drained, "+
+			"so the last keystrokes before the terminal went away are lost. The "+
+			"benign reading — every one of those attempts lost its prefix to a "+
+			"split read before the close — needs %d independent accidents, so "+
+			"read DecodeEvents' tty-close arm before blaming the runner",
+			silent, late, silent)
+	}
+	t.Fatalf("all %d attempts missed the grace window: the timer resolved the "+
+		"held prefix before the close every time. This machine is too loaded to "+
+		"attribute the resolution to the tty-close path, and passing on that "+
+		"basis would be a test that guards nothing", attempts)
 }
 
-// closedTtyAttempt runs one attempt. It returns false when the attempt
-// could not distinguish the two routes to drainFinal; every genuine
-// disagreement is a t.Fatal rather than a false.
-func closedTtyAttempt(t *testing.T) bool {
+// attemptOutcome is what one closedTtyAttempt could establish. Only
+// attemptMeasured is a pass; the other two are the two ways an attempt
+// can fail to be an attempt, and they are distinguished because the
+// caller's diagnosis differs — see the loop above.
+type attemptOutcome int
+
+const (
+	attemptMeasured attemptOutcome = iota
+	attemptLate
+	attemptSilent
+)
+
+// closedTtyAttempt runs one attempt. It returns a non-measured outcome
+// when the attempt could not distinguish the two routes to drainFinal;
+// every genuine disagreement is a t.Fatal rather than a return.
+func closedTtyAttempt(t *testing.T) attemptOutcome {
 	t.Helper()
 	master, slave := openPTY(t)
 	s := FromFile(slave)
@@ -270,10 +323,13 @@ func closedTtyAttempt(t *testing.T) bool {
 		// artefact wearing the costume of the bug. Same discipline as the
 		// elapsed check below, in the other direction: never pass on an
 		// attempt you did not make, and never fail on one either.
-		t.Log("attempt lost the held prefix before the close (the write was " +
-			"split across two slave reads and the hung-up pty discarded the " +
-			"remainder); retrying")
-		return false
+		// NOT DIAGNOSED HERE, and that is the change. This logged "the
+		// attempt lost the held prefix", which is one of the two causes
+		// of silence and the benign one; the other is the decoder
+		// discarding a prefix it was holding, which is the defect under
+		// test. One attempt cannot tell them apart, so it reports what
+		// it SAW and the loop above weighs the counts.
+		return attemptSilent
 	}
 	// EscTimeout, not PasteMarkerGrace*EscTimeout, and the difference is
 	// slack against this clock's own drift. `held` is sampled after
@@ -286,7 +342,7 @@ func closedTtyAttempt(t *testing.T) bool {
 	// above the close path's real latency — it resolves on a failed read,
 	// not on a deadline. Raised in review of #445.
 	if elapsed := time.Since(held); elapsed >= EscTimeout {
-		return false // the timer could have done this; attribute nothing
+		return attemptLate // the timer could have done this; attribute nothing
 	}
 	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
 		t.Fatalf("first event after the tty closed was %#v, want the Esc key", ev)
@@ -297,7 +353,7 @@ func closedTtyAttempt(t *testing.T) bool {
 			t.Fatalf("got %#v, want the %q key", ev, want)
 		}
 	}
-	return true
+	return attemptMeasured
 }
 
 // nextOrNone is next() without the verdict: it reports whether an event

@@ -91,10 +91,20 @@ func splitPasteMarker(b []byte) bool {
 // truncated CSI resolves to the Esc key. idle exists to resolve an
 // AMBIGUITY — a lone ESC and the start of a sequence are the same byte —
 // and there is no ambiguity here. ESC [ 200 ~ is six bytes that nothing
-// else spells and that no keyboard can produce, so the only reading is
-// "a paste whose end has not arrived yet", and a large paste crossing
-// many 128-byte reads will routinely take longer than the 40ms escape
-// timeout to complete.
+// else in a terminal's repertoire spells and that no single keystroke
+// produces, so the only reading is "a paste whose end has not arrived
+// yet", and a large paste crossing many 128-byte reads will routinely
+// take longer than the 40ms escape timeout to complete.
+//
+// NOT "no keyboard can produce", which this said and which is false: a
+// user typing Esc and then `[`, `2`, `0`, `0`, `~` writes exactly those
+// bytes, and nothing downstream can tell the two apart — the decoder
+// sees one wire. That is the same class of thing as a typed `ESC [ 2`
+// stranding the escape path, and it is a COST of the exception below
+// rather than a reason it is safe. What makes it acceptable is the
+// asymmetry in what the two readings lose: waiting costs a user who
+// typed that sequence by hand a stall, and not waiting costs every
+// paste its tail.
 //
 // It is also the one exception DecodeFinal does NOT withdraw, and this
 // is the reason splitPasteMarker's doc points at. The cost, stated
