@@ -495,8 +495,8 @@ func str(p *prop.Property[string]) string {
 //
 // CELLS AND PIXELS BOTH, because the two callers are different and
 // neither can derive the other: coordinates for SendPointer are cells,
-// and
-// the graphics layer sizes a picture in pixels (term.Caps.CellW/CellH).
+// and the graphics layer sizes a picture in pixels
+// (term.Caps.CellW/CellH).
 // A client that had to ask twice would ask once and guess the rest.
 //
 // The ORIGIN is the half a Go caller meets here first — the method doc

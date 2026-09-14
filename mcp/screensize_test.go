@@ -472,6 +472,24 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 				"every tool would be reported as missing one: %v", name, rows)
 		}
 	}
+
+	// AND THE TABLE READ IS NARROWED TO ONE TABLE. The contract spec
+	// carries two, and reading both folded the kinds column into the
+	// coverage map — so a tool sharing a name with a kind would read as
+	// documented with no row of its own.
+	const twoTables = "# Doc\n\n| kind | proto |\n|---|---|\n| `image` | `bytes` |\n\n" +
+		toolTableHeader + "\n|---|---|---|---|\n| `alpha` | — | none | |\n"
+	narrow, ok := tableRows(twoTables)
+	if !ok {
+		t.Fatal("tableRows did not find the table it is pointed at")
+	}
+	if !narrow["alpha"] {
+		t.Errorf("the narrowed read lost a row that is in the table: %v", narrow)
+	}
+	if narrow["image"] {
+		t.Error("a name from ANOTHER table on the page counts as a documented " +
+			"tool, so deleting a tool's own row would still read as covered")
+	}
 }
 
 // TestTheMCPSpecsToolInventoryIsComplete is the fourth surface, and the
@@ -533,18 +551,26 @@ func TestTheMCPSpecsToolInventoryIsComplete(t *testing.T) {
 // completeness more loudly than the tutorial did went stale in exactly
 // the way this change exists to stop. Raised in review of #504.
 //
-// It reads the TOOL COLUMN rather than the whole page: this file names
-// tools in prose elsewhere, and a page-wide Contains would be satisfied
-// by a mention outside the table, which is the vacuous pass one surface
-// over. Skips when the file is absent, for the module-boundary reason
+// It reads the tool column of THAT table, not of the whole page: this
+// file names tools in prose elsewhere, so a page-wide Contains would be
+// satisfied by a mention outside the table — and the page carries a
+// second table, the TypedValue kinds one, whose own first column would
+// otherwise be folded into the same coverage map. Skips when the file is
+// absent, for the module-boundary reason
 // TestTheTutorialsToolInventoryIsComplete gives.
 func TestTheGRPCContractTableNamesEveryTool(t *testing.T) {
 	const page = "../docs/specs/2026-08-10-grpc-contract.md"
 	body := pageOrSkip(t, page)
-	rows := toolColumn(string(body))
+	rows, ok := tableRows(string(body))
+	if !ok {
+		t.Fatalf("%s no longer carries a %q header, so either the #112 table was "+
+			"restructured and this guard has to follow it, or the table is gone",
+			page, toolTableHeader)
+	}
 	if len(rows) == 0 {
-		t.Fatalf("found no tool rows in %s, so this guard would pass vacuously — "+
-			"the table's shape changed and toolColumn no longer recognizes it", page)
+		t.Fatalf("found no tool rows in %s's #112 table, so this guard would pass "+
+			"vacuously — the row shape changed and toolColumn no longer recognizes "+
+			"it", page)
 	}
 	s := &Server{}
 	for _, tl := range s.v1Tools() {
@@ -556,10 +582,31 @@ func TestTheGRPCContractTableNamesEveryTool(t *testing.T) {
 	}
 }
 
+// tableRows narrows body to the #112 table and reads its tool column.
+// The narrowing and the read are one function because they are one
+// claim — a tool is documented when THAT table carries a row for it —
+// and because a call site that narrowed for itself could stop and no
+// counterfactual would see it.
+func tableRows(body string) (map[string]bool, bool) {
+	table, ok := paragraphWith(body, toolTableHeader)
+	if !ok {
+		return nil, false
+	}
+	return toolColumn(table), true
+}
+
+// toolTableHeader is the #112 table's header row. A markdown table is a
+// blank-line-delimited block, so paragraphWith slices exactly this one.
+const toolTableHeader = "| MCP tool | args | RPC | notes |"
+
 // toolColumn returns the backticked name in the first cell of every
-// markdown table row on the page. It is deliberately not anchored to one
-// heading: a second table would only ADD names, and the assertion is one
-// of coverage, so a looser read cannot produce a false pass.
+// markdown table row in body. Hand it ONE table: it cannot tell which
+// table a row came from, and every name it finds counts as covered, so a
+// whole-page read of the contract spec folds the TypedValue kinds table's
+// `string`, `int`, `bool`, `image` … into the coverage map, where a tool
+// that ever shares one of those names reads as documented with no row of
+// its own. Adding names to a coverage map is how it passes over an
+// absence, not why it cannot. Raised in review of #504.
 func toolColumn(body string) map[string]bool {
 	out := map[string]bool{}
 	for _, line := range strings.Split(body, "\n") {
