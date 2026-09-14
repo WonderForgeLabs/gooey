@@ -382,13 +382,20 @@ func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 }
 
 // countingPost wraps the dispatcher's Post and counts what the watcher
-// hands it. It is a CLOCK MADE OF THE WATCHER'S OWN CYCLES, and the
-// reason it exists is that wall-clock waiting is not one.
+// hands it. It is a CLOCK DRIVEN BY THE WATCHER ITSELF, and the reason
+// it exists is that wall-clock waiting is not.
 //
-// Each poll cycle posts the paths request; a cycle whose scan finds a
-// change posts the fire as well. So "the poll goroutine has been round
-// at least twice since I wrote the file" is a statement about this
-// counter, and it holds whatever the machine was doing in between.
+// IT COUNTS POSTS, WHICH ARE NOT CYCLES. Each poll cycle posts the paths
+// request; a cycle whose scan finds a change posts the fire as well. So n
+// posts is somewhere between n/2 and n cycles, and every caller has to
+// state its claim in the units it actually measures — this comment
+// illustrated the counter with "the poll goroutine has been round at
+// least twice", which is the conversion it had just said does not hold.
+// What the counter does guarantee is a LOWER bound: n posts cannot have
+// happened in fewer than n/2 cycles, and the poll goroutine is serial, so
+// a scan sits between any two of them. That is the property the callers
+// rest on, and it holds whatever the machine was doing in between. Raised
+// in review of #511.
 //
 // atomic because the posts come from the poll goroutine and the reads
 // from the test's.
@@ -426,16 +433,36 @@ func (c *countingPost) Post(f func()) {
 // computes the same way one line up is a place for them to differ.
 // Raised in review of #511.
 //
-// AND THE DEADLINE SCALES WITH n. waitFor's two seconds are for ONE
-// event; this waits for n round trips of a goroutine the test does not
-// schedule, and one caller wants forty of them. A fixed budget makes
-// "two seconds" mean something different at each call site, and the
-// tight one is the negative assertion whose floor this is. Fifty
-// milliseconds per post on top of the same two-second base is fifty
-// times a 1ms interval and still bounded, so a watcher that has
+// AND THE DEADLINE SCALES WITH n, BUT THE PER-POST SLACK DOES NOT — it
+// shrinks, and that is the shape rather than a bug in it. waitFor's two
+// seconds are for ONE event; this waits for n round trips of a goroutine
+// the test does not schedule, and one caller wants forty of them. The
+// two-second base is a FLOOR against a runner that gives the poll
+// goroutine no slot at all, not a per-post allowance, so it does not
+// divide: the budget is 2.15s at n=3 (717ms a post) and 4s at n=40
+// (100ms a post). The marginal 50ms is what scales, and at a 1ms
+// interval even the tighter figure is a hundred times what a post costs
+// when the machine is idle — bounded either way, so a watcher that has
 // genuinely stopped polling fails rather than hanging. (This said "two
-// orders of magnitude", which 50x is not — in a file this precise about
-// measured numbers. Raised in review of #511.)
+// orders of magnitude", which the 50x marginal rate is not, and then
+// read as though 50ms were the whole allowance per post, which it is
+// not either — in a file this precise about measured numbers. Raised in
+// review of #511, twice.)
+//
+// THE MUTATION THAT SHOWS THIS WORKS IS NOT THE OBVIOUS ONE, and #511's
+// own PR description got it wrong. Replacing BOTH waits in
+// TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay with a single
+// Drain passes 400 runs out of 400: with no cycles at all the watcher
+// never scans the edit, so there is nothing to replay and every
+// assertion passes VACUOUSLY. An all-pass mutation matrix was the
+// mutation's fault, not the guard's.
+//
+// The discriminating one removes only the FIRST wait. The baseline then
+// never advances past the edit made while disabled, the second wait
+// gives the re-enabled watcher a cycle to deliver it, and the test fails
+// with CI's own message — "re-enabling replayed 1 change(s) made while
+// disabled" — 200 runs out of 200, deterministically rather than as a
+// flake. Measured both ways. Raised in review of #511.
 //
 // It returns the delta it observed so a caller can say what actually
 // happened rather than restating the number it asked for.
@@ -705,8 +732,17 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// COUNTED FOR THE SAME REASON, and here it is the assertion's floor
 	// rather than its correctness: this is a NEGATIVE claim, so a window
 	// that bought no polls would pass it without the watcher having run
-	// at all. Forty posts is forty cycles over an unchanged file, which
-	// is what the message below says happened.
+	// at all. An unchanged file makes a cycle post exactly once, so forty
+	// posts is forty cycles here — the one call site where the counter's
+	// units and the claim's coincide.
+	//
+	// AND THE WINDOW IT REPLACES WAS ALREADY TOO SHORT ON AN IDLE
+	// MACHINE, which is worth recording because the rest of this PR
+	// argues from the loaded runner. Forty posts measure ~51ms here
+	// (50.8–51.3 over five runs), so the 40ms drainFor could not buy the
+	// forty polls its message named even with nothing else running. The
+	// CI story is why the fix is a counter; this is why the old number
+	// was wrong before CI ever saw it. Raised in review of #511.
 	posts := drainUntilPosts(t, d, c, 40)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
@@ -855,6 +891,12 @@ func TestAFileChangeSchedulesAFrameAndAnIdlePollDoesNot(t *testing.T) {
 	// repair is to the message: say what was waited, not what was
 	// assumed. The assertion itself is unchanged and still fails closed:
 	// zero polls cannot schedule a frame either. Raised in review of #511.
+	//
+	// THE SEAM IS THE MISSING PIECE, not the will: Composer.Start reads
+	// d.Post straight off the Dispatcher inside its loop, so a test that
+	// composes a tree has nowhere to interpose. #518 is that gap — this
+	// window and the idle-bytes one below are the two call sites waiting
+	// on it.
 	const idleWindow = 40 * time.Millisecond
 	drainFor(d, idleWindow)
 	if scheduled != 0 {
@@ -913,7 +955,15 @@ func TestAFileChangeReachesTheCellsAndCostsAWireUpdate(t *testing.T) {
 	comp.Start(d)
 	defer comp.Close()
 
-	// Idle: zero bytes on the wire, however many times it polls.
+	// A BARE drainFor, for the same reason idleWindow is one 60 lines up
+	// and labelled there: the watcher posts through Composer.Start, so
+	// there is no Post for countingPost to wrap (#518). Unnamed here because
+	// the duration is not quoted in any message — which is the whole of
+	// the difference between the two survivors, and the reason one
+	// carries a named constant and this one does not. Both are negative
+	// assertions where a window buying zero polls is vacuous rather than
+	// red; neither is an argument that the window is enough. Raised in
+	// review of #511.
 	drainFor(d, 30*time.Millisecond)
 	comp.Frame()
 	sink.Reset()
