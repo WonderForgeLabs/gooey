@@ -54,7 +54,9 @@ func solid(w, h int) image.Image {
 // terminal is not the one being looked at. It used to put an eighteen-byte
 // sixel of zero pixels on the wire and leave the cells beneath it unpainted:
 // a black rectangle, no error, nothing in `screen_text` to see, because
-// placements are not cells (composer.go:679) and never appear there for a
+// placements are not cells (Composer.Frame collects paintNode.places
+// into frame.placements, a field beside Cells and not in it) and never
+// appear there for a
 // WORKING sixel either.
 func TestPinnedSixelEmitsRealPixels(t *testing.T) {
 	root := &pixelLeaf{img: prop.NewSource(solid(8, 8))}
