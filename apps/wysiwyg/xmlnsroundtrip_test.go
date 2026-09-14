@@ -477,9 +477,10 @@ func TestAPastedDefaultNamespaceIsNotAConflict(t *testing.T) {
 	// A DIFFERENT default, and the same prefix binding the document
 	// already has — so the only thing that differs is the one key the
 	// exemption is about.
-	ed.pasteMarkup(`<Gooey xmlns="` + theirs + `" xmlns:t="` + prefixURI + `">` + "\n" +
+	paste := `<Gooey xmlns="` + theirs + `" xmlns:t="` + prefixURI + `">` + "\n" +
 		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}"/>` + "\n" +
-		`</Gooey>` + "\n")
+		`</Gooey>` + "\n"
+	ed.pasteMarkup(paste)
 
 	// NOT a "✓" test: a successful paste reports "pasted markup: <…>".
 	// The refusal is the one with a mark on it.
@@ -491,6 +492,29 @@ func TestAPastedDefaultNamespaceIsNotAConflict(t *testing.T) {
 	src := ed.source.Get()
 	if !strings.Contains(src, `Name="Pasted"`) {
 		t.Errorf("the paste reported success and the node is not in the document:\n%s", src)
+	}
+	if n := strings.Count(src, theirs); n != 1 {
+		t.Fatalf("the pasted default namespace appears %d times after one paste, "+
+			"want 1 — the count below is a comparison against this one", n)
+	}
+
+	// TWICE, FROM BYTE-IDENTICAL INPUT, which is the arm that was
+	// missing: the exemption sat INSIDE the inequality until review of
+	// #501, so the FIRST paste differs from the document's own default
+	// and takes the skip, while the second matches the declaration the
+	// first just left behind and falls through to the delete. Measured
+	// before the fix: the declaration appears once after both pastes,
+	// and this test passed because it asserted the first only. Two
+	// identical pastes have to produce two identical subtrees.
+	ed.pasteMarkup(paste)
+	if got := ed.status.Get(); strings.HasPrefix(got, "✗") {
+		t.Fatalf("pasting the same markup a second time reports %q", got)
+	}
+	if n := strings.Count(ed.source.Get(), theirs); n != 2 {
+		t.Errorf("the pasted default namespace appears %d times after the SAME "+
+			"markup was pasted twice, want 2. The second paste was stripped of a "+
+			"declaration the first was allowed to keep, so the two subtrees differ "+
+			"— from identical input:\n%s", n, ed.source.Get())
 	}
 
 	// AND THE NEIGHBOUR STILL REFUSES. A fix that exempted every
@@ -641,6 +665,16 @@ func TestARefusedPasteBurnsNoName(t *testing.T) {
 // the only honest check is to make markup refuse the same attribute and
 // require its message to CONTAIN what the designer said. Raised in
 // review of #501.
+//
+// AND THIS TEST DOES NOT RUN IN CI, which is the half it cannot fix for
+// itself: CI vets the app modules without running their suites (CLAUDE.md,
+// Verify), so markup — the upstream copy — could change its spelling
+// with every check green and only the loop somebody runs by hand would
+// notice. markup.TestNamespacedAttributesAreLoadErrors spells both arms
+// out in the module CI does run, and markup.namespacedAttrError's
+// comment names namespacedAttrName as what moves with it. This test is
+// the agreement; that one is the tripwire. Raised in review of #501 as
+// well.
 func TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes(t *testing.T) {
 	for _, tc := range []struct{ name, doc string }{
 		{"a declared prefix", `<Gooey xmlns:p="urn:gooey:test:501:attr">` +
@@ -691,4 +725,59 @@ func between(t *testing.T, s, after, before string) string {
 		t.Fatalf("%q holds nothing between %q and %q", s, after, before)
 	}
 	return rest[:j]
+}
+
+// TestCollectNamespacesReadsEveryWalkInOneOrder is the slot half of a
+// finding whose attribute half was fixed a round earlier, and the two
+// walks are the same claim: "last wins" is a statement about ORDER, and
+// ranging a map has none.
+//
+// collectNamespaces feeds doc[k], which is exactly what accept-vs-refuse
+// is decided against in reconcileNamespacesInto, so a prefix declared
+// twice in one document under different slots resolved to whichever of
+// Go's randomized iterations came second — the same document accepting a
+// paste on one run and refusing it on the next. Measured on this
+// fixture before the fix: four slots declaring xmlns:t to four URIs
+// produced all four over 500 runs.
+//
+// THE ANSWER IS NAMED, not merely required to be stable: a walk that
+// ranged a map and happened to agree with itself for 500 runs would pass
+// a stability check, and a walk that sorted DESCENDING would too. The
+// URI asserted is the one on the last slot name in sorted order, which
+// is what node.markup writes last when it serialises the same node
+// (main.go sorts slot names as well as attribute keys). Raised in
+// review of #501.
+func TestCollectNamespacesReadsEveryWalkInOneOrder(t *testing.T) {
+	const prefix = "xmlns:t"
+	slotted := func(uri string) *node {
+		return &node{Elem: "Text", Attrs: map[string]string{prefix: uri}}
+	}
+	n := &node{
+		Elem: "ItemsView",
+		Slots: map[string]*node{
+			"ItemsView.ItemTemplate":     slotted("urn:a"),
+			"ItemsView.EmptyTemplate":    slotted("urn:b"),
+			"ItemsView.HeaderTemplate":   slotted("urn:c"),
+			"ItemsView.SelectedTemplate": slotted("urn:d"),
+		},
+	}
+
+	seen := map[string]int{}
+	for i := 0; i < 500; i++ {
+		into := map[string]string{}
+		collectNamespaces(n, into)
+		seen[into[prefix]]++
+	}
+	if len(seen) != 1 {
+		t.Fatalf("collectNamespaces resolved %s to %d different URIs over 500 runs: "+
+			"%v. doc[k] is what a paste is accepted or refused against, so this is "+
+			"the same document answering differently run to run", prefix, len(seen), seen)
+	}
+	// Sorted: EmptyTemplate, HeaderTemplate, ItemTemplate, SelectedTemplate.
+	if _, ok := seen["urn:d"]; !ok {
+		t.Errorf("the surviving binding is %v, not urn:d — the last slot name in "+
+			"sorted order, which is the one node.markup writes last when it "+
+			"serialises this node. A stable answer in the wrong order is still a "+
+			"walk that disagrees with the file it produces", seen)
+	}
 }

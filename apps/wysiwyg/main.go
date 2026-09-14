@@ -770,22 +770,6 @@ func carryDeclarations(env, root *node) {
 // the browser prefixes the path, paste prefixes "pasted text is not
 // markup", and the palette prefixes "<Button>". Raised in review of
 // #501.
-// namespacedAttrName spells a namespaced attribute the way
-// markup.namespacedAttrError does, so the designer and the loader name
-// the same attribute the same way in their refusals.
-//
-// A SECOND COPY OF ONE RULE, deliberately: the markup package does not
-// export it, and apps/wysiwyg is a nested module that cannot reach into
-// it. TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes is what
-// keeps the two in step — it builds both refusals for the same
-// attribute and requires this spelling inside markup's message.
-func namespacedAttrName(n xml.Name) string {
-	if n.Space == "http://www.w3.org/XML/1998/namespace" {
-		return "xml:" + n.Local
-	}
-	return "{" + n.Space + "}" + n.Local
-}
-
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
@@ -930,6 +914,29 @@ func nodeOf(src string) (*node, error) {
 		return nil, fmt.Errorf("no root element")
 	}
 	return root, nil
+}
+
+// namespacedAttrName spells a namespaced attribute the way
+// markup.namespacedAttrError does, so the designer and the loader name
+// the same attribute the same way in their refusals.
+//
+// A SECOND COPY OF ONE RULE, deliberately: the markup package does not
+// export it, and apps/wysiwyg is a nested module that cannot reach into
+// it. TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes is what
+// keeps the two in step — it builds both refusals for the same
+// attribute and requires this spelling inside markup's message.
+//
+// AND THAT GUARD IS HERE, where CI vets without running, so it cannot
+// see the copy it watches drift first: markup is upstream, and it could
+// change its spelling with every check green. The half that runs in CI
+// is markup's own TestNamespacedAttributesAreLoadErrors, whose arms
+// spell out both forms, and markup.namespacedAttrError's comment names
+// this function as what moves with it. Raised in review of #501.
+func namespacedAttrName(n xml.Name) string {
+	if n.Space == "http://www.w3.org/XML/1998/namespace" {
+		return "xml:" + n.Local
+	}
+	return "{" + n.Space + "}" + n.Local
 }
 
 // ---- the editor ----

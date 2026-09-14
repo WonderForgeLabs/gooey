@@ -774,9 +774,35 @@ func (ed *editor) reconcileNamespaces(n *node) error {
 	return reconcileNamespacesInto(n, doc)
 }
 
+// SORTED for the same reason collectNamespaces is, and for a different
+// consequence: any conflict anywhere refuses, so accept-vs-refuse does
+// not depend on the order, but WHICH conflict the message names does —
+// and the suite matches on that text. Raised in review of #501.
 func reconcileNamespacesInto(n *node, doc map[string]string) error {
-	for k, v := range n.Attrs {
+	for _, k := range sortedKeys(n.Attrs) {
+		v := n.Attrs[k]
 		if !isNamespaceAttr(k) {
+			continue
+		}
+		// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and this
+		// skip is ABOVE the lookup because neither half of what follows
+		// applies to it: it is not compared, because markup.parse skips
+		// a plain xmlns outright — "the default namespace is decorative
+		// versioning" — so it never enters the flat prefix map and there
+		// is nothing for a later one to re-point; and it is not deleted,
+		// because XML scoping confines it to the subtree that declares
+		// it, which is where it stays.
+		//
+		// It sat INSIDE the inequality until review of #501, which left
+		// an EQUAL default declaration falling through to the delete
+		// below — so pasting <Button xmlns="theirs"/> into a document
+		// whose root says xmlns="ours" kept the declaration the first
+		// time and stripped it the second, from byte-identical input.
+		// The first version refused it outright, which blocked a paste
+		// between two documents on different version strings and built
+		// its message with TrimPrefix(k, "xmlns:"), asking the author to
+		// rename a prefix that does not exist.
+		if k == "xmlns" {
 			continue
 		}
 		bound, ok := doc[k]
@@ -784,23 +810,6 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 			continue
 		}
 		if bound != v {
-			// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and the
-			// hazard this function exists for cannot reach it.
-			// markup.parse skips a plain xmlns outright — "the default
-			// namespace is decorative versioning" — so it never enters the
-			// flat prefix map and there is nothing for a later one to
-			// re-point. XML scoping confines it to the subtree that
-			// declares it, which is where it stays.
-			//
-			// Refusing it was two faults at once: a paste out of one
-			// document's CODE tab into another on a different version
-			// string was blocked, and the message was built with
-			// TrimPrefix(k, "xmlns:") — which returns "xmlns" unchanged for
-			// this key, so it asked the author to rename a prefix that does
-			// not exist. Raised in review of #501.
-			if k == "xmlns" {
-				continue
-			}
 			// NO DIRECTION IS CLAIMED, because none holds. markup.parse
 			// merges every declaration into one flat map in document
 			// order, so the winner is whichever is parsed LAST — and
@@ -821,8 +830,8 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 		}
 		delete(n.Attrs, k)
 	}
-	for _, s := range n.Slots {
-		if err := reconcileNamespacesInto(s, doc); err != nil {
+	for _, name := range sortedKeys(n.Slots) {
+		if err := reconcileNamespacesInto(n.Slots[name], doc); err != nil {
 			return err
 		}
 	}
@@ -838,21 +847,24 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 // declared twice in one document is already last-wins to the loader, so
 // recording the last one here is agreeing with it rather than choosing.
 //
-// SORTED, the way node.markup sorts when it writes attributes back out.
-// "Last wins" is a claim about ORDER, and ranging a map has none: one
-// element declaring a prefix twice — which an editor that keeps
-// declarations where the author put them can produce — resolved to
-// whichever Go's randomized iteration reached second, so the same
-// document could accept a paste on one run and refuse it on the next.
-// Raised in review of #501.
+// SORTED ON BOTH WALKS, the way node.markup sorts when it writes
+// attributes AND slot names back out. "Last wins" is a claim about
+// ORDER, and ranging a map has none: one element declaring a prefix
+// twice — which an editor that keeps declarations where the author put
+// them can produce — resolved to whichever Go's randomized iteration
+// reached second, so the same document could accept a paste on one run
+// and refuse it on the next. The attribute half was fixed in review of
+// #501 and the slot half was not, which left the defect intact on the
+// other map walk: four slots declaring xmlns:t to four different URIs
+// resolved to all four over 500 runs.
 func collectNamespaces(n *node, into map[string]string) {
 	for _, k := range sortedKeys(n.Attrs) {
 		if isNamespaceAttr(k) {
 			into[k] = n.Attrs[k]
 		}
 	}
-	for _, s := range n.Slots {
-		collectNamespaces(s, into)
+	for _, name := range sortedKeys(n.Slots) {
+		collectNamespaces(n.Slots[name], into)
 	}
 	for _, k := range n.Kids {
 		collectNamespaces(k, into)
