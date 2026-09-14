@@ -269,17 +269,30 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	// there is no uniqueness to collide with. Skipped only when Name is
 	// the attribute under test. Raised in review of #470.
 	//
-	// AND NOT ON AN ELEMENT ITS PARENT PARSES. A ParsedBy element is
-	// read by the parent's builder, not by the generic attribute path,
-	// so the universal table does not apply to it: <MenuItem Name="probe">
-	// is refused outright with "no such attribute; this element takes
-	// Checked, Command, Gesture, Separator, Text". Every probe of every
-	// <Menu> and <MenuItem> attribute failed on the harness's own seed
-	// rather than on the rule — five in one arm, two in another — which
-	// is precisely what the UNVERIFIED bucket exists to surface, and it
-	// surfaced this. Found merging #460's sweep into #429, the branch
-	// that declares those two elements.
-	if attr != "Name" && def.ParsedBy == "" {
+	// AND NOT ON A PSEUDO-ELEMENT. It builds no component, so the
+	// universal table does not apply to it and Name is refused outright:
+	//
+	//	markup: <MenuItem Name="probe">: <MenuBar> reads <MenuItem> as
+	//	data, so it builds no component for Name to apply to
+	//
+	// Every probe of every <Menu> and <MenuItem> attribute failed on the
+	// harness's own seed rather than on the rule — five in one arm, two
+	// in another — which is precisely what the UNVERIFIED bucket exists
+	// to surface, and it surfaced this. Found merging #460's sweep into
+	// #429, the branch that declares those two elements.
+	//
+	// spec.Pseudo, NOT def.ParsedBy == "". They agree for the three
+	// elements in the tree today and they are not the same question:
+	// ParsedBy is a catalog-generator annotation that an opaque
+	// pseudo-element deliberately does not carry — <Tab> carries Opaque
+	// instead, for a reason readsAsData records — so an opaque one that
+	// ever declared an attribute would be seeded with a Name the loader
+	// now refuses, and the probe would fail on the seed again. Pseudo is
+	// the property refuseUniversal itself gates on. The quoted message
+	// above was the pre-#486 one and is corrected with it. Raised in
+	// review of #486.
+	spec, known := (&Context{}).spec(def.Name)
+	if attr != "Name" && !(known && spec.Pseudo) {
 		b.WriteString(` Name="probe"`)
 	}
 	for _, a := range def.Attrs {

@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -217,6 +218,27 @@ type wholeLoad struct {
 	// the question is which one gets reported, and a document with only
 	// the placement fault cannot ask it.
 	misplaced string
+	// onPseudo and onContent are the SAME document twice, with one %s
+	// hole for an attribute written `Name="value"`: once on the
+	// pseudo-element, once on the content the refusal tells the author to
+	// move it to. They exist because "is there a child that could hold a
+	// universal" is a STRUCTURAL question and the remedy is a
+	// BEHAVIOURAL claim — <Tab>'s content can hold Name and cannot hold
+	// Visibility, and no shape in the catalog says so. Raised in review
+	// of #486.
+	//
+	// Empty means the element's refusal never prescribes a destination,
+	// which TestTheContentRemedyIsAPlaceThatAccepts asserts rather than
+	// assumes.
+	onPseudo  string
+	onContent string
+	// propOn is the same document with one %s hole INSIDE the
+	// pseudo-element, for a property element written
+	// `<Elem.Attr>v</Elem.Attr>`. It is the other spelling of a
+	// universal, and it was accepted and dropped while the attribute
+	// spelling was refused — checkProps runs from build() alone, and a
+	// pseudo-element never reaches build(). Raised in review of #486.
+	propOn string
 }
 
 var wholeLoadCases = map[string]wholeLoad{
@@ -225,18 +247,23 @@ var wholeLoadCases = map[string]wholeLoad{
 		refused:   `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`,
 		attr:      "Name",
 		misplaced: `<Gooey><VStack><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></VStack></Gooey>`,
+		onPseudo:  `<Gooey><Tabs><Tab Header="a" %s><Text>x</Text></Tab></Tabs></Gooey>`,
+		onContent: `<Gooey><Tabs><Tab Header="a"><Text %s>x</Text></Tab></Tabs></Gooey>`,
+		propOn:    `<Gooey><Tabs><Tab Header="a">%s<Text>x</Text></Tab></Tabs></Gooey>`,
 	},
 	"Menu": {
 		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		refused:   `<Gooey><MenuBar><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		attr:      "Name",
 		misplaced: `<Gooey><VStack><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></VStack></Gooey>`,
+		propOn:    `<Gooey><MenuBar><Menu Title="F">%s<MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 	},
 	"MenuItem": {
 		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		refused:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open" Margin="2"/></Menu></MenuBar></Gooey>`,
 		attr:      "Margin",
 		misplaced: `<Gooey><VStack><MenuItem Text="Open" Margin="2"/></VStack></Gooey>`,
+		propOn:    `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open">%s</MenuItem></Menu></MenuBar></Gooey>`,
 	},
 }
 
@@ -526,7 +553,7 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 			t.Errorf("<%s %s=…> was not refused at all", sp.Name, tc.attr)
 			continue
 		}
-		if strings.Contains(err.Error(), "content inside") {
+		if strings.Contains(err.Error(), contentRemedy) {
 			t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
 				"refusal tells the author to put the attribute on the content "+
 				"inside — a remedy whose destination refuses it too:\n\t%v",
@@ -606,5 +633,178 @@ func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no pseudo-element in the catalog, so this test ranged over " +
 			"nothing")
+	}
+}
+
+// TestTheContentRemedyIsAPlaceThatAccepts asks the remedy's question
+// BEHAVIOURALLY, which is the half TestARefusalPrescribesOnlyAPlaceThatExists
+// cannot reach.
+//
+// That test asks whether the content COULD hold a universal, from
+// Children.Mode. <Tab>'s mode is unrestricted, so it answers yes and the
+// element is skipped — and the answer is right in general and wrong for
+// exactly one attribute. `<Tab Visibility="Hidden">` is refused with
+// "put it on the content inside instead", and doing that hits
+// buildTabs' own refusal:
+//
+//	markup: <Tab Header="a">: a tab page cannot bind its own
+//	Visibility — the Tabs owns it
+//
+// So the author is walked from one load error to another, by advice. A
+// structural question cannot see that, because nothing in the catalog
+// says a <Tabs> reserves its pages' Visibility; only running the remedy
+// does.
+//
+// EVERY UNIVERSAL, not the one the table happens to carry: the defect is
+// per-attribute, so ranging over `attr` alone would have missed it in
+// the same way. And the remedy is only asked of elements whose refusal
+// actually offers one — an element that prescribes nothing is correct
+// here and is counted, so an empty range is a Fatal rather than a pass.
+// Raised in review of #486.
+func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
+	var prescribed int
+	for _, sp := range pseudoSpecs(t) {
+		tc := wholeLoadCases[sp.Name]
+		if tc.onPseudo == "" {
+			// Asserted, not assumed: a row with no templates is a claim
+			// that this element never prescribes a destination.
+			for _, u := range universalAttrs {
+				_, err := Build([]byte(tc.refused), &Context{})
+				if err != nil && strings.Contains(err.Error(), contentRemedy) {
+					t.Errorf("<%s> prescribes the content remedy for %s and this table "+
+						"has no onPseudo/onContent pair for it, so nothing checks that "+
+						"the destination accepts it:\n\t%v", sp.Name, u.Name, err)
+					break
+				}
+			}
+			continue
+		}
+		for _, u := range universalAttrs {
+			// ASKED OF <Border>, not of the pseudo-element. Kind alone
+			// answers "x" for Margin, whose Kind is KindString and whose
+			// grammar is one, two or four whole numbers — so the generic
+			// value made the destination refuse for a reason that has
+			// nothing to do with the remedy. narrowerThanItsKind already
+			// records that fact under "Border.Margin"; borrowing it is
+			// cheaper and better guarded than a second table here, and a
+			// pseudo-element declares nothing for such a row to key on.
+			attr := fmt.Sprintf("%s=%q", u.Name, validLiteralFor(t, "Border", u))
+			_, err := Build([]byte(fmt.Sprintf(tc.onPseudo, attr)), &Context{})
+			if err == nil {
+				t.Errorf("<%s %s> loaded; a universal on a pseudo-element is a load error",
+					sp.Name, attr)
+				continue
+			}
+			if !strings.Contains(err.Error(), contentRemedy) {
+				continue // no destination prescribed, nothing to check
+			}
+			prescribed++
+			if _, err := Build([]byte(fmt.Sprintf(tc.onContent, attr)), &Context{}); err != nil {
+				t.Errorf("<%s %s> is refused with \"put it on the content inside instead\", "+
+					"and the content refuses it too:\n\t%v\nThe author is walked from one "+
+					"load error to another by the advice. Either the remedy has to withhold "+
+					"this attribute or the destination has to accept it.", sp.Name, attr, err)
+			}
+		}
+	}
+	if prescribed == 0 {
+		t.Fatal("no pseudo-element prescribed the content remedy for any universal, " +
+			"so this test ranged over nothing. It is not a pass — either " +
+			"pseudoRemedy stopped offering it or the templates are wrong")
+	}
+
+	// AND THE OTHER DIRECTION: a reservedOnContent row withholds a
+	// remedy, so a row whose destination would in fact have accepted the
+	// attribute is worse than no row — it denies the author working
+	// advice and reads like a considered exception. Without this, the
+	// whole table could be deleted from the map and replaced with "never
+	// prescribe anything" and nothing would notice.
+	for elem, attrs := range reservedOnContent {
+		tc, ok := wholeLoadCases[elem]
+		if !ok || tc.onContent == "" {
+			t.Errorf("reservedOnContent names <%s>, which this table cannot place "+
+				"on any content, so the row is unchecked", elem)
+			continue
+		}
+		for name := range attrs {
+			u, ok := universalByName(name)
+			if !ok {
+				t.Errorf("reservedOnContent[%q] names %q, which is not a universal "+
+					"attribute — the row cannot fire", elem, name)
+				continue
+			}
+			attr := fmt.Sprintf("%s=%q", name, validLiteralFor(t, "Border", u))
+			if _, err := Build([]byte(fmt.Sprintf(tc.onContent, attr)), &Context{}); err == nil {
+				t.Errorf("reservedOnContent says <%s>'s content cannot take %s, and "+
+					"<%s %s> on the content loads. The row withholds a remedy that "+
+					"works.", elem, name, elem, attr)
+			}
+		}
+	}
+}
+
+// universalByName is the AttrSpec for a universal, or false.
+func universalByName(name string) (AttrSpec, bool) {
+	for _, u := range universalAttrs {
+		if u.Name == name {
+			return u, true
+		}
+	}
+	return AttrSpec{}, false
+}
+
+// TestEveryPseudoElementRefusesAPropertyElement is the other spelling of
+// the rule this file is about, and it was the one nothing checked.
+//
+// `<Tab Name="Zonk">` was refused and `<Tab.Name>Zonk</Tab.Name>` was
+// accepted, silently dropped, and reported nothing — the exact defect
+// #461 is filed for, reached by the other syntax. The cause is a missing
+// CALL rather than a missing rule: checkProps runs from build(), and a
+// pseudo-element never reaches build() because its parent's builder
+// consumes it as data.
+//
+// IT ASSERTS THE SHARED SENTENCE, not merely a refusal. Two dialects of
+// the same rule is how the wording drifts, and refuseUniversal's comment
+// already calls "no such attribute" a lie for these elements — a
+// property-element refusal that said something else would reintroduce
+// exactly that.
+//
+// Behaviors and Resources are in the range DELIBERATELY, even though
+// checkProps exempts them everywhere else. That exemption is earned by
+// build(): buildChildren consumes <X.Behaviors> and pushResources
+// consumes <X.Resources>, both from the function a pseudo-element does
+// not go through. Had the fix simply called checkProps, those two would
+// have been the one pair left silent. Raised in review of #486.
+func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
+	for _, sp := range pseudoSpecs(t) {
+		tc := wholeLoadCases[sp.Name]
+		if tc.propOn == "" {
+			t.Errorf("the catalog reports <%s> as a pseudo-element and this table "+
+				"has no propOn document for it, so nothing checks that a "+
+				"<%s.Name> is refused rather than dropped", sp.Name, sp.Name)
+			continue
+		}
+		// Behaviors and Resources first, so a fix that called checkProps
+		// and inherited its exemptions fails on the first two names
+		// rather than somewhere in the middle of the list.
+		names := []string{"Behaviors", "Resources"}
+		for _, u := range universalAttrs {
+			names = append(names, u.Name)
+		}
+		for _, name := range names {
+			prop := fmt.Sprintf("<%s.%s>x</%s.%s>", sp.Name, name, sp.Name, name)
+			_, err := Build([]byte(fmt.Sprintf(tc.propOn, prop)), &Context{})
+			if err == nil {
+				t.Errorf("%s loaded: the property-element spelling is accepted and "+
+					"dropped while the attribute spelling is refused, which is the "+
+					"defect #461 is about reached by the other syntax", prop)
+				continue
+			}
+			if !strings.Contains(err.Error(), "builds no component") {
+				t.Errorf("%s is refused without the shared sentence, so the two "+
+					"spellings have drifted into two dialects of one rule:\n\t%v",
+					prop, err)
+			}
+		}
 	}
 }

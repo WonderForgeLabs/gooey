@@ -627,7 +627,7 @@ Members that do not fit are **collapsed**, not clipped, and an indicator (`›`)
 
 Children are `<Tab>` elements (plus non-visual attachments like `<KeyBinding>`); anything else is a load error. Each `<Tab>` takes a **required** `Header` (literal or bound) and **exactly one** content child.
 
-**A universal attribute on a `<Tab>` is now a load error, and this is a breaking change.** A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so there is nothing for `Name` to address and nothing for `Margin` to lay out. Every universal attribute is refused, `Name` included, where they were previously accepted and silently dropped. Landing this had to strip `Name` from seven fixtures in this repo, which is fair warning for a page written against an older gooey. Put them on the content inside:
+**A universal attribute on a `<Tab>` is now a load error, and this is a breaking change.** A `<Tab>` builds no component of its own — the `<Tabs>` reads it as data — so there is nothing for `Name` to address and nothing for `Margin` to lay out. Every universal attribute is refused, `Name` included, where they were previously accepted and silently dropped. Landing this had to strip `Name` from seven fixtures in this repo, which is fair warning for a page written against an older gooey. Put them on the content inside — **except `Visibility`**, which the `<Tabs>` owns on every page (see below): move that one and you hit the page-root refusal instead, so the loader withholds the advice for it and tells you to set `Selected` instead. The same goes for the property-element spelling: `<Tab.Name>` is refused exactly as `Name=` is, because a `<Tab>` has no builder for either to reach.
 
 ```xml
 <Tabs Selected="{{.Tab}}">

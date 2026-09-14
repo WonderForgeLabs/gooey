@@ -88,6 +88,15 @@ belong to* — and each was a way of answering it wrongly:
   unread and silently dropped, with the whole suite green and
   `<MenuItem Text="Open" Margin="3"/>` building with `err == nil`. The
   silent-drop defect again, one set of names over.
+
+  That document no longer reproduces it, and the reason is a different
+  fix: [#461](https://github.com/WonderForgeLabs/gooey/issues/461) made a
+  universal attribute on a pseudo-element a load error outright, so
+  `<MenuItem Margin="3"/>` is now refused with *"`<MenuBar>` reads
+  `<MenuItem>` as data, so it builds no component for Margin to apply
+  to"* whether or not the declaration exists. The reproduction above is
+  historical; the check this section describes is still the one that
+  stops the DECLARATION.
 - **The helper idiom is a read.** `scan` recognises `Bound(e, ctx, "Text")`
   and `optDuration(e, "Tick")`; the child walk saw only `x.Attrs["…"]`. That
   gap is loud in the wrong direction — the declaration is real and the read is

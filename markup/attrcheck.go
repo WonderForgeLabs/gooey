@@ -81,6 +81,16 @@ func checkAttrs(e Element, ctx *Context) error {
 		if err := refuseUniversal(e, spec, ctx); err != nil {
 			return err
 		}
+		// THE PROPERTY-ELEMENT SPELLING OF THE SAME THING, which was
+		// silently accepted while the attribute spelling was refused.
+		// checkProps runs from build() alone, and a pseudo-element never
+		// reaches build() — its parent's builder consumes it as data — so
+		// <Tab.Name>, <Tab.Margin>, <Menu.Name> and <MenuItem.Name> all
+		// loaded, were dropped and reported nothing. Measured through
+		// Build before the fix, all four. Raised in review of #486.
+		if err := refusePropElement(e, spec, ctx); err != nil {
+			return err
+		}
 	}
 
 	if !ok || !spec.AttrsKnown {
@@ -189,10 +199,46 @@ func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 			// to put it instead.
 			return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
 				e.Name, name, e.Attrs[name],
-				readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx))
+				readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
 		}
 	}
 	return nil
+}
+
+// refusePropElement rejects ANY property element on a pseudo-element,
+// and "any" is not an over-reach — it is the same sentence
+// refuseUniversal makes, read through the other spelling.
+//
+// A property element is consumed by the builder of the element that
+// carries it, and a pseudo-element HAS no builder: <Tabs> reads a
+// <Tab>'s Header and content itself, <MenuBar> reads <Menu> and
+// <MenuItem> as data. So there is nothing on this element for a
+// <Tab.Anything> to reach, whatever it is named.
+//
+// THAT INCLUDES Behaviors AND Resources, which checkProps exempts
+// universally and which would therefore have been the one pair left
+// silent if this had simply called checkProps. The exemption there is
+// earned — buildChildren consumes <X.Behaviors> and pushResources
+// consumes <X.Resources>, both from build() — and build() is exactly
+// what a pseudo-element does not go through. An exemption that is true
+// of every element that builds is not true of one that does not.
+//
+// It shares readsAsData and pseudoRemedy with refuseUniversal so the
+// author gets one sentence rather than two dialects of it, and
+// TestEveryPseudoElementRefusesAPropertyElement is what keeps them
+// sharing it.
+func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
+	if len(e.Props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(e.Props))
+	for name := range e.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	name := names[0]
+	return fmt.Errorf("markup: <%s.%s>: %sso it builds no component for %s to apply to%s",
+		e.Name, name, readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
 }
 
 // readsAsData is the reason clause of the message above: who consumes
@@ -247,13 +293,8 @@ func readsAsData(spec ElementSpec, ctx *Context) string {
 // scope and not about one whose name is already in hand.
 func namingParent(name string, ctx *Context) string {
 	for _, p := range ctx.Catalog() {
-		if p.Children.Mode != ModeRestricted {
-			continue
-		}
-		for _, n := range p.Children.Only {
-			if n == name {
-				return p.Name
-			}
+		if namesChild(p, name) {
+			return p.Name
 		}
 	}
 	return ""
@@ -280,8 +321,38 @@ func namingParent(name string, ctx *Context) string {
 // spelled per element, so a fourth pseudo-element is covered by the
 // rule instead of by somebody remembering it. Raised in review of #486
 // round 2.
-func pseudoRemedy(spec ElementSpec, ctx *Context) string {
-	const move = "; put it on the content inside instead"
+// reservedOnContent names the universals a pseudo-element's PARENT owns
+// ON THE CONTENT INSIDE, with the sentence to say instead of the move.
+//
+// The remedy below is a BEHAVIOURAL claim and Children.Mode is a
+// STRUCTURAL fact, and for one attribute they disagree. A <Tab>'s
+// content is an ordinary element that takes every universal — except
+// Visibility, which buildTabs refuses on a page root because the <Tabs>
+// binds it to "selected == me". So `<Tab Visibility="Hidden">` was
+// refused with "put it on the content inside instead" and doing that hit
+// a second load error: the author walked from one refusal to another, by
+// advice. Nothing in the catalog says a container reserves an attribute
+// on its children, so this cannot be derived — but it can be GUARDED,
+// and TestTheContentRemedyIsAPlaceThatAccepts runs every universal
+// through both positions and fails on a row that is stale as well as on
+// a reservation with no row. Raised in review of #486.
+// contentRemedy is the prescription itself, named so the guard over it
+// can recognise it rather than re-spelling it. A test grepping the
+// sentence would also match reservedOnContent's answer below, which says
+// the content CANNOT take the attribute and shares most of its words.
+const contentRemedy = "; put it on the content inside instead"
+
+var reservedOnContent = map[string]map[string]string{
+	"Tab": {
+		"Visibility": "; the <Tabs> binds every page's Visibility to the selection, " +
+			"so it cannot go on the content inside either — set Tabs' Selected to choose the page",
+	},
+}
+
+func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
+	if why, ok := reservedOnContent[spec.Name][name]; ok {
+		return why
+	}
 	switch spec.Children.Mode {
 	case ModeLeaf, ModeNone:
 		return ""
@@ -291,12 +362,12 @@ func pseudoRemedy(spec ElementSpec, ctx *Context) string {
 			// is advice, and withholding it on a catalog gap is the
 			// worse failure of the two.
 			if s, ok := ctx.spec(n); !ok || !s.Pseudo {
-				return move
+				return contentRemedy
 			}
 		}
 		return ""
 	}
-	return move
+	return contentRemedy
 }
 
 // acceptedByParent reports that this element sits in a container that
@@ -322,11 +393,37 @@ func pseudoRemedy(spec ElementSpec, ctx *Context) string {
 // it — not to assume it is set.
 func acceptedByParent(e Element, ctx *Context) bool {
 	parent, ok := ctx.spec(e.parent)
-	if !ok || parent.Children.Mode != ModeRestricted {
+	return ok && namesChild(parent, e.Name)
+}
+
+// namesChild is the relation every pseudo-element rule is phrased in
+// terms of: a ModeRestricted container listing name among the children
+// it accepts. A pseudo-element is reachable only where some container
+// names it, so this predicate is what "legal here" and "who reads this"
+// both reduce to.
+//
+// THREE CALLERS, NOT FIVE, and the difference is worth stating because a
+// review counted five copies of it. acceptedByParent asks it of ONE
+// named parent and namingParent asks it of the whole catalog — the same
+// predicate, two questions, which is why one reads ctx.spec and the
+// other reads Catalog(); that is not an inconsistent source.
+//
+// The other two are different relations wearing similar code.
+// markNested (catalog.go) inverts it — it collects every name any
+// container mentions, in one pass over the specs it is in the middle of
+// assembling, so it cannot ask Catalog() anything without recursing
+// into itself. acceptsAUniversal (pseudouniversal_test.go) asks whether
+// an element's OWN children are all pseudo-elements, which is a
+// question about the far side of the relation and gives a different
+// answer. legalParent, in the same test file, is namingParent restated
+// deliberately: its comment records that an independent derivation is
+// the point of it. Raised in review of #486.
+func namesChild(spec ElementSpec, name string) bool {
+	if spec.Children.Mode != ModeRestricted {
 		return false
 	}
-	for _, n := range parent.Children.Only {
-		if n == e.Name {
+	for _, n := range spec.Children.Only {
+		if n == name {
 			return true
 		}
 	}
