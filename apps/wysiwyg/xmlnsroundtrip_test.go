@@ -1,8 +1,12 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1254,5 +1258,141 @@ func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
 	if got := ed.openPath.Get(); got != "second.gooey" {
 		t.Errorf("undo moved openPath to %q; it names the file a save writes to "+
 			"and no undo should change it", got)
+	}
+}
+
+// TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
+// function directly, because the editor's own open path cannot reach it:
+// a document with an <x:Property> has two children of <Gooey> and
+// openWorkspaceFile refuses it as having two root elements (#517). So the
+// unit call IS the coverage, and it says so rather than dressing up as an
+// end-to-end test that would pass on the refusal.
+//
+// The rule: an ATTRIBUTE prefix may come down onto the content root,
+// because markup.parse resolves one through a flat document-wide table
+// and any element's declaration reaches any expression. An ELEMENT prefix
+// may not, because encoding/xml resolved it with real subtree scoping and
+// <x:Property> is a SIBLING of the content root, not a descendant — a
+// declaration moved onto the root is out of scope at the very element it
+// was for.
+func TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope(t *testing.T) {
+	env := &node{Elem: "Gooey", Attrs: map[string]string{
+		"xmlns:t": "urn:handlers",
+		"xmlns:x": markup.XNamespace,
+		"xmlns":   "wonderforge.io/gooey/2026",
+	}}
+	root := &node{Elem: "Canvas", Attrs: map[string]string{}}
+	carryDeclarations(env, root)
+
+	if got, ok := root.Attrs["xmlns:t"]; !ok || got != "urn:handlers" {
+		t.Errorf("the attribute prefix reads %q (present=%v) on the root, want it "+
+			"carried down: the envelope is dropped by the unwrap, so a declaration "+
+			"left only there is lost — which is #472", got, ok)
+	}
+	if got, ok := root.Attrs["xmlns:x"]; ok {
+		t.Errorf("the element prefix was carried down as %q. <x:Property> is a "+
+			"sibling of this root, not a descendant, so a declaration here is out "+
+			"of scope at the element it exists for and the saved document stops "+
+			"loading — the same scoping #501 corrected the docs about", got)
+	}
+	if _, ok := root.Attrs["xmlns"]; ok {
+		t.Errorf("the default declaration came down; it is decorative versioning " +
+			"that markup.parse skips, and the root has no use for it")
+	}
+}
+
+// assignedIn returns the names of the functions in this package's
+// non-test sources that ASSIGN the field the matcher picks out, sorted.
+// It reads the AST rather than grepping because a grep cannot tell an
+// assignment from a read, and every one of these fields is read in many
+// more places than it is written.
+func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parsing this package: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					as, ok := n.(*ast.AssignStmt)
+					if !ok {
+						return true
+					}
+					for _, lhs := range as.Lhs {
+						if writes(lhs) {
+							seen[fn.Name.Name] = true
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
+	se, ok := e.(*ast.SelectorExpr)
+	if !ok || se.Sel.Name != name {
+		return nil, false
+	}
+	return se, true
+}
+
+// TestEnvAttrsIsAssignedWhereTheDocumentIs turns an invariant three
+// comments assert into one the suite checks.
+//
+// "ed.envAttrs may only move with ed.root.Kids" is stated in
+// openWorkspaceFile, in setWorkspace (browser.go) and in closeWorkspace
+// (menus.go) — three places that tell a reader not to clear the field,
+// and nothing that notices when someone does. The defect it came from
+// was exactly that: a clear on a path that left the document on the
+// canvas, so the next rebuild wrote a bare <Gooey> for a file nobody had
+// edited. A prose invariant repeated three times is three copies of a
+// claim, not a guard, and the fourth site is the one that breaks it.
+//
+// The check is deliberately about ASSIGNMENT SITES rather than about any
+// particular wrong value: it is the separation of the two fields that is
+// the bug, whatever either is set to.
+func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
+	envAttrs := assignedIn(t, func(e ast.Expr) bool {
+		_, ok := selects(e, "envAttrs")
+		return ok
+	})
+	kids := assignedIn(t, func(e ast.Expr) bool {
+		se, ok := selects(e, "Kids")
+		if !ok {
+			return false
+		}
+		_, ok = selects(se.X, "root")
+		return ok
+	})
+
+	if len(kids) == 0 || len(envAttrs) == 0 {
+		t.Fatalf("the walk found envAttrs assigned in %v and ed.root.Kids in %v; "+
+			"an empty side means the matcher stopped matching and every assertion "+
+			"below would pass vacuously", envAttrs, kids)
+	}
+	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
+		t.Errorf("ed.envAttrs is assigned in %v and ed.root.Kids in %v. These must "+
+			"be the same set: the envelope belongs to the document on the canvas, "+
+			"so a site that replaces one and not the other leaves the editor "+
+			"describing a file it is no longer showing — which is the defect three "+
+			"comments in this package warn about and nothing measured", envAttrs, kids)
 	}
 }

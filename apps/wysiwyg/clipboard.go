@@ -869,15 +869,20 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 // recording the last one here is agreeing with it rather than choosing.
 //
 // SORTED ON BOTH WALKS, the way node.markup sorts when it writes
-// attributes AND slot names back out. "Last wins" is a claim about
-// ORDER, and ranging a map has none: one element declaring a prefix
-// twice — which an editor that keeps declarations where the author put
-// them can produce — resolved to whichever Go's randomized iteration
-// reached second, so the same document could accept a paste on one run
-// and refuse it on the next. The attribute half was fixed in review of
-// #501 and the slot half was not, which left the defect intact on the
-// other map walk: four slots declaring xmlns:t to four different URIs
-// resolved to all four over 500 runs.
+// attributes AND slot names back out — and only ONE of those two sorts
+// is load-bearing, which the round that added them got wrong in the
+// comment. "Last wins" is a claim about ORDER, and ranging a map has
+// none, so the SLOTS walk was a real defect: four slots declaring
+// xmlns:t to four different URIs resolved to all four over 500 runs,
+// and the same document accepted a paste on one run and refused it on
+// the next. The ATTRIBUTES walk cannot hold that bug at all. n.Attrs is
+// a map keyed by attribute name, so one element declaring a prefix
+// twice is not a state this model can represent — the second spelling
+// overwrote the first long before this walk — and sorting distinct keys
+// cannot change which URI a prefix ends up with. That sort is here for
+// agreement with node.markup, not for correctness, and saying otherwise
+// credited a guard with catching something it never could. Corrected in
+// review of #501.
 // PREFIXED DECLARATIONS ONLY, because that is what the decision reads.
 // This recorded the plain "xmlns" too and reconcileNamespacesInto skips
 // k == "xmlns" above the doc[k] lookup, so the entry was unreachable —

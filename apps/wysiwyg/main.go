@@ -681,22 +681,22 @@ func (n *node) markup(indent string) string {
 // carryDeclarations copies a <Gooey> envelope's namespace declarations
 // onto the document root about to be promoted in its place.
 //
-// The envelope is NOT a node — ed.rebuild re-emits it as a literal
-// (the two envelope literals in ed.rebuild) — so a declaration left on
-// it is discarded by the
-// unwrap, which is the half of #472 that survived nodeOf keeping them.
-// A hand-written document puts xmlns on the envelope, because that is
-// where markup's error tells the author to put it, and so does every
-// file saved before this change — so this is the spelling the editor
-// has to read. It is not the spelling the editor now WRITES: this
-// function is what moves the declaration down onto the root, and
-// ed.rebuild and saveOpenFile emit the envelope bare. Raised in review
-// of #501.
+// The envelope is NOT a node — gooeyOpen re-emits it from ed.envAttrs,
+// which holds what did NOT come down here — so a declaration left on it
+// and recorded nowhere is discarded by the unwrap, which is the half of
+// #472 that survived nodeOf keeping them. A hand-written document puts
+// xmlns on the envelope, because that is where markup's error tells the
+// author to put it, and so does every file saved before this change — so
+// this is the spelling the editor has to read. It is not the spelling the
+// editor now WRITES: this function moves an attribute prefix down onto
+// the root, envelopeAttrs computes the complement, and gooeyOpen writes
+// that complement back. Raised in review of #501.
 //
 // THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
 // subtree scoping — markup.parse keeps one flat, document-wide ns map
 // and takes the LAST declaration of a prefix in document order
-// (markup/markup.go:949). The envelope is parsed before its child, so
+// (the `a.Name.Space == "xmlns"` arm of markup.parse's attribute loop).
+// The envelope is parsed before its child, so
 // for openWorkspaceFile last-wins and child-wins give the same answer;
 // not overwriting is what keeps the editor agreeing with the loader
 // about which URI a prefix has.
@@ -729,6 +729,28 @@ func (n *node) markup(indent string) string {
 // docs/specs/). A citation into the file you are currently growing is
 // the one that rots first. Raised in review of #501.
 //
+// AN ELEMENT PREFIX DOES NOT COME DOWN, and XNamespace is the test
+// because the prefix spelling is the author's. `x:` prefixes an ELEMENT,
+// and the elements it prefixes — <x:Property> — are children of the
+// ENVELOPE, not of the content root: markup.parseDocument hands the whole
+// <Gooey> to splitDeclarations and only afterwards requires one visual
+// kid. encoding/xml resolved that prefix with real subtree scoping before
+// markup saw it, so moving the declaration onto the content root puts it
+// out of scope at its own sibling and the saved file stops loading. The
+// flat-table reasoning above is an ATTRIBUTE prefix's and does not reach
+// here.
+//
+// THIS ARM IS UNREACHABLE TODAY, and that is worth saying rather than
+// leaving for someone to discover as dead code: openWorkspaceFile counts
+// a declaration as a second root and refuses the document before this
+// runs (#517), so no such envelope gets here. The guard is written
+// anyway because #517's fix is to stop counting them, and that fix is
+// exactly what makes this path live — a correctness rule the fix depends
+// on should not be one the fix has to rediscover.
+// TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
+// function directly, which is the only way to reach it. Raised in review
+// of #501.
+//
 // ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
 // this inline and unwrapGooey (clipboard.go) had nothing, so #472
 // survived through paste: the CODE tab's own output, copied whole and
@@ -738,7 +760,7 @@ func (n *node) markup(indent string) string {
 // in review of #501.
 func carryDeclarations(env, root *node) {
 	for k, v := range env.Attrs {
-		if !isNamespaceAttr(k) {
+		if !isNamespaceAttr(k) || v == markup.XNamespace {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
@@ -872,7 +894,8 @@ func nodeOf(src string) (*node, error) {
 				// XML subtree scoping, which this comment used to
 				// claim: markup.parse keeps ONE FLAT, document-wide ns
 				// map and merges every declaration into it in document
-				// order (markup/markup.go:949), so a redeclared prefix
+				// order (the `a.Name.Space == "xmlns"` arm of
+				// markup.parse's attribute loop), so a redeclared prefix
 				// wins by being parsed later rather than by being
 				// inner, and two sibling subtrees cannot bind one
 				// prefix to two URIs. The outcomes coincide for every

@@ -362,7 +362,9 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// document's Graphics and default xmlns while the CODE tab went on
 	// showing them and the next save wrote a bare <Gooey>. The field
 	// moves with ed.root.Kids now, and no partial path can separate the
-	// two. Raised in review of #501.
+	// two — TestEnvAttrsIsAssignedWhereTheDocumentIs checks that from the
+	// AST rather than leaving it to three comments. Raised in review of
+	// #501.
 	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
@@ -453,8 +455,9 @@ func (ed *editor) setWorkspace(dir string) {
 	// same path, nil included — so clearing the field here separated the
 	// two, which is the invariant that fix established. The document
 	// stays on the canvas across a folder change, and the next rebuild
-	// wrote a bare <Gooey> for a document nobody had edited. Raised in
-	// review of #501.
+	// wrote a bare <Gooey> for a document nobody had edited.
+	// TestEnvAttrsIsAssignedWhereTheDocumentIs is the guard; this
+	// sentence is the reason. Raised in review of #501.
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)
