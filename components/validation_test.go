@@ -164,14 +164,10 @@ func TestValidationLoopDamage(t *testing.T) {
 // `m.pop == nil` could not see it, and neither can the cell plane or the
 // layer's count. The popup POINTER is the one observable that separates
 // the two states, so the check below is an identity comparison against
-// the popup taken before the anchor was hidden. Raised in review of
-// #498; the same seam is pinned from the freeze side in
+// the popup taken before the anchor was hidden. The same seam is pinned
+// from the freeze side in
 // TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden, which is the test
-// that hides an anchor INSIDE a frozen subtree. (This named
-// TestAValidationMarkerSurvivesAFreezeTurningOn, which was where that
-// phase lived until it moved, and a cross reference is exactly the kind
-// of claim a move leaves behind pointing at a test that no longer does
-// the thing.)
+// that hides an anchor INSIDE a frozen subtree.
 func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	_, tb, m, _, page := formPage(30)
 	c := gooey.NewComposer(page, 30, 4)
@@ -377,8 +373,9 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // <AdornmentLayer> still builds, still frames, and reports the marker
 // missing as though the freeze had dropped it. Raised in review of #498.
 //
-// The first frame is taken here, so a caller reads as its own claim and
-// nothing else.
+// The first frame is taken here, so what a caller asserts afterwards is
+// its own claim and nothing else.
+//
 // THE LAYER IS RETURNED, and that is the finding rather than a
 // convenience. Every "the marker did not place" message in this file
 // blames Frozen — that is what these tests are about — and a fixture
@@ -401,15 +398,20 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	root := &VStack{Children: []gooey.Component{frozen, layer}}
 	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
-	// THE PRECONDITION, ASSERTED HERE rather than excused later. Every
-	// caller freezes or hides something and then asks whether the marker
-	// survived; an empty layer at that point means it was dropped, and
-	// that reading is only available because this ran first. Raised in
-	// review of #498.
-	if len(layer.Adornments()) == 0 {
-		t.Fatal("the fixture placed no adornment at build time, before anything " +
-			"was frozen or hidden, so every assertion about surviving one is " +
-			"about a page that never had a marker")
+	// THE PRECONDITION, AND ONLY FOR A CALLER WHOSE FIRST FRAME IS
+	// UNFROZEN. A caller passing a handle starts with Active false, so an
+	// empty layer here really does mean the fixture is broken. A nil
+	// Active is a plain <Frozen> — AllowNone from this very frame — so
+	// placement-while-frozen is what the frame above MEASURES, and
+	// fataling on it reports the flagship test's own regression as a
+	// broken fixture: "nothing was frozen" and "a page that never had a
+	// marker" are both false there, and the fatal also puts
+	// assertMarkerShows' correctly-worded arm out of reach for the one
+	// test it was written for.
+	if active != nil && len(layer.Adornments()) == 0 {
+		t.Fatal("the fixture placed no adornment on its first, unfrozen frame, " +
+			"so every assertion about surviving a freeze is about a page that " +
+			"never had a marker")
 	}
 	return tb, m, layer, c
 }
@@ -433,18 +435,8 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 // later. Those two statements inside FocusManager.walk are the whole of
 // "Frozen gates input, not adornment placement".
 //
-// CITE SYMBOLS, NOT LINE NUMBERS. Nothing in the suite checks either
-// inside a Go comment — TestEveryCitedTestNameResolves reads Markdown
-// and resolves test NAMES — so a line number here points at whatever
-// moves into it and nothing reddens, while a name either greps or
-// visibly does not. That is also what makes a citation across a module
-// boundary safe to keep: the paragraph below names wysiwyg's
-// Pane.BindDesignMode, and a rename there leaves a failing grep rather
-// than a silent misdirection.
-//
 // TWO TESTS REDDEN when the second is gated the way the first is, not
-// one — this comment claimed "the only test in the tree" until review of
-// #498 measured it:
+// one, measured:
 //
 //	--- FAIL: TestAValidationMarkerPlacesItsAdornmentWhileFrozen  components
 //	--- FAIL: TestValidatorsStayLiveInsideAFrozenSubtree          markup
@@ -560,17 +552,13 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, layer *AdornmentLayer, m
 // one-line edit in evictFrozen that reddens this today. That is the
 // honest shape of the pin: it holds the door for the seam that would
 // have to be added, not against an edit available now. Neither mutation
-// this file measures elsewhere touches it either. Raised in review of
-// #498.
+// this file measures elsewhere touches it either.
 //
-// IT NO LONGER HIDES THE ANCHOR. That phase and the identity assertion
-// it needed moved to
-// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden, because two
-// causes behind one name is what this file has already been corrected
-// for once — and this comment went on describing the body that left,
-// which is the same defect one level up. What remains here is the FLIP
-// alone: the freeze turns on, evictFrozen runs, and the marker is still
-// placed and still painting. Raised in review of #498.
+// THE FLIP ALONE: the freeze turns on, evictFrozen runs, and the marker
+// is still placed and still painting. Hiding the anchor is
+// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden's, because two
+// causes behind one name is the shape this file has been corrected for
+// once already.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	active := prop.NewSource(false)
 	tb, m, layer, c := frozenMarkerPage(t, active)
@@ -595,11 +583,11 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 // on the frozen path, and it is its own test because it reddens for its
 // own reason.
 //
-// It was the last phase of the flip test above until review of #498:
-// that test is named for the FLIP, and a reader who saw it red had no
-// way to tell "the freeze dropped the marker" from "hiding the anchor
-// replaced the popup" without reading the body. Two causes behind one
-// name is the shape this file has already been corrected for once, in
+// The flip test above is named for the FLIP, and a reader who saw it red
+// with this phase inside it had no way to tell "the freeze dropped the
+// marker" from "hiding the anchor replaced the popup" without reading
+// the body. Two causes behind one name is the shape this file has
+// already been corrected for once, in
 // TestMarkerPersistsThroughHiddenAnchor, whose name outran its
 // assertions.
 //
@@ -614,9 +602,9 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 //
 // Measured on frozenMarkerPage with the anchor hidden, both arms. Row 1
 // is empty because a hidden anchor vacates the cells the message was
-// painting in; it read "####…" until review of #498, which is
-// formPage's filler — a value transplanted from the sibling test's page,
-// in a table that reads as measured.
+// painting in. (Not formPage's "####…" filler: that is the SIBLING
+// page's row, and transplanting it into a table that reads as measured
+// is how a table stops being one.)
 //
 // Every observable agrees; only the POINTER differs. Two arms agreeing
 // is a harness result, not a passing test.
@@ -635,16 +623,12 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 			"is not the frozen path and the unfrozen sibling already covers it")
 	}
 
-	// THE HELPER, not a second copy of two of its three arms. This
-	// re-implemented them by hand and inherited the wording the helper
-	// had already been corrected for: an empty layer HERE cannot be the
-	// page's fault, because frozenMarkerPage asserts a placement at build
-	// time and the freeze has been flipped on since — so an empty layer
-	// is the flip dropping the adornment, which is the regression this
-	// test exists to catch, reported to the reader as somebody else's
-	// broken fixture. Calling assertMarkerShows also restores the half
-	// the copy left out: pop != nil is not "the user can see it". Raised
-	// in review of #498.
+	// THE HELPER, not a hand copy of two of its three arms. An empty
+	// layer HERE cannot be the page's fault — frozenMarkerPage asserted a
+	// placement on the unfrozen frame and the freeze has been flipped on
+	// since — so the helper's wording is the one that reaches the reader
+	// with the right cause, and its third arm is the half a copy leaves
+	// out: pop != nil is not "the user can see it".
 	assertMarkerShows(t, c, layer, m, "while frozen, before the anchor was hidden")
 	kept := keepPopup(t, m)
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
@@ -654,12 +638,14 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	// regression that keeps the popup alive and arranges it at a full
 	// rect instead of a zero one leaves an error message floating over a
 	// field that is not on screen, and every pointer assertion passes
-	// over it. Its unfrozen sibling has asserted what row 1 BECOMES
-	// since it was written; this half had only the table above saying
-	// so. Raised in review of #498.
-	if got := row(c.Cells(), 1); strings.Contains(got, "required") {
-		t.Errorf("row 1 = %q while the frozen field is hidden: the message is "+
-			"still painting over cells its anchor has vacated", got)
+	// over it. Its unfrozen sibling has asserted what row 1 BECOMES since
+	// it was written; this half had only the table above saying so.
+	// EMPTY, not merely "does not say required": the table above measured
+	// "" in both arms, and Contains accepts a popup arranged at a partial
+	// rect painting `requir`, or painting the message one column over.
+	if got := row(c.Cells(), 1); got != "" {
+		t.Errorf("row 1 = %q while the frozen field is hidden, want it vacated: "+
+			"the message is still painting over cells its anchor has given up", got)
 	}
 	if m.pop != kept {
 		t.Error("hiding the frozen field's anchor REPLACED the marker's popup " +
