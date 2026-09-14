@@ -186,6 +186,15 @@ type Overlay interface{ OverlaysPage() }
 // int reads as dynamic in a way an empty marker never does. Return a
 // constant. Raised in review of #456.
 //
+// AND THE TWO PLANES NOW READ IT DIFFERENTLY, which is the sharper cost
+// and was not here. Paint SAMPLES the rank at re-sync; hitTest reads it
+// LIVE, through overlayOf, on every motion event (#465). So a
+// non-constant rank no longer merely restacks late — on the frame the
+// value changes, paint answers with the old rank and input with the new
+// one, and the planes disagree about which overlay is on top. That is
+// the exact divergence the ranking work exists to remove, reachable
+// only through this contract. Raised in review of #458.
+//
 // EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
 // they were declared rather than the order they were opened; the rank
 // orders KINDS, and #437's limit survives untouched within each one.

@@ -190,13 +190,12 @@ type PointerFollower interface{ FollowsPointer() bool }
 // takes no capture is now routed correctly instead of being documented
 // as an exception in four files.
 func (m *FocusManager) HitTest(x, y int) Component {
-	var best hitCandidate
-	order := 0
 	// aborted is the bound on TOTAL WORK, and giving up the early return
 	// on a hit is what made it necessary. See hitTest.
-	aborted := false
-	hitTest(m.root, x, y, 0, false, 0, &order, &best, &aborted)
-	if aborted {
+	var walk hitWalk
+	hitTest(m.root, x, y, 0, false, 0, &walk)
+	best := walk.best
+	if walk.aborted {
 		// NO ANSWER, rather than the answer from the prefix that was
 		// visited. best.w at this point is whatever out-ranked the
 		// candidates the walk happened to reach before it gave up, and
@@ -236,6 +235,24 @@ func (m *FocusManager) HitTest(x, y int) Component {
 // then the rank within it, and position separates only two components
 // that tie on both. Same numbering c.nodes carries, which is why this
 // walk can run forward where the old one had to run in reverse.
+// hitWalk is the state one HitTest threads through the whole walk: how
+// many nodes have been numbered, the best candidate so far, and whether
+// the depth cap has given up.
+//
+// ONE POINTER RATHER THAN THREE OUT-PARAMETERS, which is what hitTest's
+// signature was — nine parameters, three of them pointers written back
+// through. The three are one thing (the walk's own state) and were
+// threaded identically through every call, so the grouping is the
+// argument list saying what it is. It also gives `aborted`'s reasoning a
+// field to live on rather than a position. Free, and pinned free:
+// TestTheHitWalkAllocatesNothing is a zero this refactor could only lose
+// by escaping the struct. Raised in review of #458.
+type hitWalk struct {
+	order   int
+	best    hitCandidate
+	aborted bool
+}
+
 type hitCandidate struct {
 	w       Component
 	rank    int
@@ -325,7 +342,7 @@ func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
 // branching cycle; that is #375's seam, and the reason it is not fixed
 // here is that a budget belongs in one walk-the-children primitive
 // rather than in five copies. Raised in review of #458.
-func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, order *int, best *hitCandidate, aborted *bool) {
+func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, st *hitWalk) {
 	// ONE CHECK, HERE, and the sibling loop below deliberately has no
 	// second one. A `if *aborted { return }` after each recursive call
 	// looks like the belt to this braces and is a SILENT mutation:
@@ -334,12 +351,12 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	// would save is one no-op call per sibling on a walk that is
 	// unwinding anyway. Two mechanisms where removing either is silent is
 	// a state to resolve, not to ship.
-	if *aborted {
+	if st.aborted {
 		return
 	}
 	if depth > MaxLayoutDepth {
 		noteLayoutFaultAt("HitTest", w, depth)
-		*aborted = true
+		st.aborted = true
 		return
 	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
@@ -363,8 +380,8 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	// candidates are ever compared — so the two spellings differ in the
 	// values and agree on every ordering. The comment was the defect,
 	// not the placement.
-	mine := *order
-	*order++
+	mine := st.order
+	st.order++
 	overlay, rank := overlayOf(w, parentOverlay, parentRank)
 	if c, ok := w.(Container); ok {
 		// DELIBERATELY no Frozen check here, and it is not an oversight.
@@ -385,7 +402,7 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 		// the component the document put under the pointer, which is now
 		// the one that paints last there.
 		for _, kid := range c.ChildComponents() {
-			hitTest(kid, x, y, depth+1, overlay, rank, order, best, aborted)
+			hitTest(kid, x, y, depth+1, overlay, rank, st)
 		}
 	}
 	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {
@@ -468,8 +485,8 @@ func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, o
 	// a pointer one and is the same need a Collapsed element already
 	// has — Collapsed has never been hittable and the canvas has always
 	// lived with it. Raised in review of #458.
-	if best.beatenBy(overlay, rank, mine) {
-		*best = hitCandidate{w: w, rank: rank, overlay: overlay, order: mine}
+	if st.best.beatenBy(overlay, rank, mine) {
+		st.best = hitCandidate{w: w, rank: rank, overlay: overlay, order: mine}
 	}
 }
 

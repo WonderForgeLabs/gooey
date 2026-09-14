@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -1477,7 +1478,20 @@ func spanWindow(lines []string, first, last, before, after int) string {
 	for _, l := range lines[lo : hi+1] {
 		parts = append(parts, continuationRe.ReplaceAllString(l, ""))
 	}
-	return unemphasize(strings.Join(parts, " "))
+	// COLLAPSED WITH strings.Fields, the same normalisation joinWrapped
+	// does and for the same reason, which this helper did not have. A
+	// markdown list-item body continuation carries no marker, only
+	// indentation, so continuationRe strips nothing from it and the join
+	// produces "no   longer" where the unwrapped spelling reads "no
+	// longer". Measured: the identical sentence answered qualifiedNear
+	// false wrapped inside an indented list item and true flat — a guard
+	// firing on prose that has already been corrected, which is the noise
+	// this file argues gets a guard deleted. hitContractProblems takes
+	// its window from here too, so a required clause split across an
+	// indented wrap read as missing. Third instance of one class in this
+	// file, which is why it is fixed in the shared helper. Raised in
+	// review of #458.
+	return unemphasize(strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
 }
 
 // docFiles is every file in the tree that can teach somebody the rule:
@@ -1502,6 +1516,30 @@ func docFiles(t *testing.T) []string { return docFilesIn(t, ".") }
 // production path.
 func docFilesIn(t *testing.T, root string) []string {
 	t.Helper()
+
+	// TRACKED FILES ONLY, FOR THE REPO WALK. The prune covers the two
+	// untracked offenders CLAUDE.md names, and nothing else: a stray
+	// notes.md, a CLAUDE-old.md kept beside a conflict resolution, any
+	// scratch file in the root — each of them made these guards fail
+	// naming a file that is not part of the repository, in a suite whose
+	// subject IS the repository. Measured by a reviewer who hit it by
+	// accident with one scratch file.
+	//
+	// git, not .gitignore parsing: the question is exactly "is this file
+	// part of the repo", and git is the authority on it. A tree where
+	// the command cannot run is not one of these guards' business, so a
+	// failure to list falls back to walking everything rather than to
+	// reporting an empty repo — the floor below would then say so.
+	tracked := map[string]bool{}
+	if root == "." {
+		if out, err := exec.Command("git", "ls-files", "-z").Output(); err == nil {
+			for _, p := range strings.Split(string(out), "\x00") {
+				if p != "" {
+					tracked[filepath.ToSlash(p)] = true
+				}
+			}
+		}
+	}
 
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -1528,6 +1566,9 @@ func docFilesIn(t *testing.T, root string) []string {
 			// shape an exemption must not have. Raised in review of
 			// #458.
 			if filepath.ToSlash(p) == "zorderdocs_test.go" {
+				return nil
+			}
+			if len(tracked) > 0 && !tracked[filepath.ToSlash(p)] {
 				return nil
 			}
 			out = append(out, filepath.ToSlash(p))
@@ -2352,6 +2393,37 @@ func TestAWrappedQualifierStillExempts(t *testing.T) {
 	if !qualifiedNear(lines, 0) {
 		t.Error("a correction wrapped across two lines does not qualify the " +
 			"statement it corrects, so the guard fires on the sweep's own prose")
+	}
+
+	// INDENTED, WHICH IS THE ARM THE EXISTING WRAP FIXTURES COULD NOT
+	// REACH. A markdown list-item body continuation has no marker — only
+	// leading spaces — so continuationRe strips nothing, and the window
+	// this reaches qualifiedIn through joined to "no   longer" until
+	// spanWindow started collapsing with strings.Fields. Both wrap
+	// fixtures in this file were unindented, which is the same blind
+	// spot joinWrapped's own doc records about its predecessors: a
+	// fixture that cannot hold the shape cannot see the bug. Measured
+	// before the fix — this sentence answered false wrapped and true
+	// flat. Raised in review of #458.
+	//
+	// THE WRAPPED EPITAPH IS THE ONLY QUALIFIER IN IT. The first draft
+	// of this fixture ended "— the surface is a lifted overlay now",
+	// and `\blifted\b` is itself a correction pattern sitting unwrapped
+	// on its own line, so the arm passed against the defect. A fixture
+	// with a second way to be right cannot see the first one break.
+	indented := []string{
+		"- the MenuBar is declared last, and last is no",
+		"  longer what puts the dropdown above the content.",
+	}
+	if !statesTheRetiredRule(indented[0]) {
+		t.Fatal("the indented fixture no longer states the rule, so the " +
+			"exemption it checks is unreachable")
+	}
+	if !qualifiedNear(indented, 0) {
+		t.Error("a correction wrapped across an INDENTED list-item continuation " +
+			"does not qualify the statement it corrects: the window joins the " +
+			"indentation into the sentence, so \"no longer\" reads as \"no   " +
+			"longer\" and matches nothing")
 	}
 }
 
