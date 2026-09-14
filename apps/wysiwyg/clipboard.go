@@ -874,9 +874,15 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 // #501 and the slot half was not, which left the defect intact on the
 // other map walk: four slots declaring xmlns:t to four different URIs
 // resolved to all four over 500 runs.
+// PREFIXED DECLARATIONS ONLY, because that is what the decision reads.
+// This recorded the plain "xmlns" too and reconcileNamespacesInto skips
+// k == "xmlns" above the doc[k] lookup, so the entry was unreachable —
+// two functions disagreeing about what counts as a declaration, which is
+// how the default-namespace bug the skip above records got in. Raised in
+// review of #501.
 func collectNamespaces(n *node, into map[string]string) {
 	for _, k := range sortedKeys(n.Attrs) {
-		if isNamespaceAttr(k) {
+		if strings.HasPrefix(k, "xmlns:") {
 			into[k] = n.Attrs[k]
 		}
 	}
@@ -892,10 +898,14 @@ func collectNamespaces(n *node, into map[string]string) {
 // "xmlns:"+local — and nothing else; HasPrefix(k, "xmlns") would also
 // match a plain attribute spelled xmlnsFoo.
 //
-// carryDeclarations CALLS THIS rather than repeating it. It carried its
-// own copy and this comment claimed the two agreed, which is the
-// maintenance burden a shared function exists to remove — and only the
-// copy in main.go had a test. Raised in review of #501.
+// reconcileNamespacesInto is the ONLY caller, and the only one that can
+// be: this matches the plain "xmlns" as well, which is precisely the
+// declaration carryDeclarations and envelopeAttrs (main.go) must leave
+// on the envelope, and collectNamespaces must not record. Those three
+// spell strings.HasPrefix(k, "xmlns:") inline for that reason. This
+// comment said carryDeclarations called it, and named the sharing as the
+// reason the two could not drift — both false since the narrowing.
+// Raised in review of #501.
 func isNamespaceAttr(k string) bool {
 	return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
 }

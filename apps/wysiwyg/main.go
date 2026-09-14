@@ -623,16 +623,30 @@ func (ed *editor) grantOf(elem string) markup.Grant {
 	return e.Grants
 }
 
+// attrValue is an attribute value written as XML — quoted, and escaped
+// the way n.Body is escaped below.
+//
+// %q IS GO QUOTING, NOT XML, and the difference is a file the designer
+// cannot reopen. A value the loader accepts, `Content="Save &amp; Exit"`,
+// came back out of this emitter as `Content="Save & Exit"`: the canvas
+// refused its own rebuild with "markup: no root element" and a save
+// wrote a document whose reopen fails on "invalid character entity &".
+// A `"` in a value is the same class. gooeyOpen's comment argued the two
+// emitters "must agree about quoting", which is true and is why both are
+// fixed rather than a reason to keep the lossy one. Seeds are ASCII
+// markup this repo controls; since #472 this also writes files somebody
+// else wrote. Raised in review of #501.
+func attrValue(v string) string {
+	var esc strings.Builder
+	xml.EscapeText(&esc, []byte(v))
+	return `"` + esc.String() + `"`
+}
+
 func (n *node) markup(indent string) string {
 	var b strings.Builder
 	b.WriteString(indent + "<" + n.Elem)
-	keys := make([]string, 0, len(n.Attrs))
-	for k := range n.Attrs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, " %s=%q", k, n.Attrs[k])
+	for _, k := range sortedKeys(n.Attrs) {
+		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
 	}
 	// A body and children are mutually exclusive here: no element in the
 	// catalog takes both, and emitting both would make the body's meaning
@@ -652,12 +666,7 @@ func (n *node) markup(indent string) string {
 		return b.String()
 	}
 	b.WriteString(">\n")
-	slots := make([]string, 0, len(n.Slots))
-	for k := range n.Slots {
-		slots = append(slots, k)
-	}
-	sort.Strings(slots)
-	for _, s := range slots {
+	for _, s := range sortedKeys(n.Slots) {
 		fmt.Fprintf(&b, "%s  <%s.%s>\n", indent, n.Elem, s)
 		b.WriteString(n.Slots[s].markup(indent + "    "))
 		fmt.Fprintf(&b, "%s  </%s.%s>\n", indent, n.Elem, s)
@@ -738,16 +747,26 @@ func carryDeclarations(env, root *node) {
 	}
 }
 
-// envelopeAttrs is everything on a <Gooey> that does NOT move down with
-// carryDeclarations — kept so gooeyOpen can write it back.
+// envelopeAttrs is everything on a <Gooey> that did NOT move down with
+// carryDeclarations — kept so gooeyOpen can write it back. Call it AFTER
+// carryDeclarations and pass the same root: the question it answers is
+// what actually carried, not what was eligible to.
 //
-// The complement is exact rather than a second list: what carries is
-// what this drops, so an attribute cannot be written twice or lost by
-// the two disagreeing.
-func envelopeAttrs(env *node) map[string]string {
+// THE COMPLEMENT IS OBSERVED, NOT ASSUMED. This dropped every xmlns:
+// unconditionally while carryDeclarations skips a prefix the root
+// already declares, so a document declaring one prefix at BOTH levels
+// lost the envelope's copy outright — <Gooey xmlns:t="urn:A"> over
+// <Canvas xmlns:t="urn:B"> saved as <Gooey> and urn:A was gone from the
+// file. The resolved binding was unchanged, because the loader's flat
+// last-wins map had already picked urn:B, so this was fidelity rather
+// than meaning — but the comment here claimed immunity from exactly that
+// class, and the claim was the stated reason nobody need cross-check the
+// two predicates. Comparing against what the root now holds makes the
+// complement true instead of asserted. Raised in review of #501.
+func envelopeAttrs(env, root *node) map[string]string {
 	out := make(map[string]string, len(env.Attrs))
 	for k, v := range env.Attrs {
-		if strings.HasPrefix(k, "xmlns:") {
+		if strings.HasPrefix(k, "xmlns:") && root.Attrs[k] == v {
 			continue
 		}
 		out[k] = v
@@ -763,14 +782,15 @@ func envelopeAttrs(env *node) map[string]string {
 // crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
 // was added to close from the other end.
 //
-// %q like node.markup, not xml.EscapeText, because these attributes go
-// back out the way every other attribute in this document does and the
-// two must agree about quoting.
+// attrValue like node.markup, because these attributes go back out the
+// way every other attribute in this document does and the two must agree
+// about quoting. They agreed on %q until review of #501, which is how
+// they came to agree about being wrong.
 func gooeyOpen(attrs map[string]string) string {
 	var b strings.Builder
 	b.WriteString("<Gooey")
 	for _, k := range sortedKeys(attrs) {
-		fmt.Fprintf(&b, " %s=%q", k, attrs[k])
+		fmt.Fprintf(&b, " %s=%s", k, attrValue(attrs[k]))
 	}
 	b.WriteString(">\n")
 	return b.String()

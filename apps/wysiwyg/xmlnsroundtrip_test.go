@@ -396,18 +396,26 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 	}
 }
 
-// TestTheUnprefixedDeclarationIsCarriedToo covers the SECOND of the two
-// shapes nodeOf writes, which every other test in this file misses.
+// TestTheUnprefixedDeclarationStaysOnTheEnvelope covers the SECOND of
+// the two shapes nodeOf writes, which every other test in this file
+// misses.
 //
-// nodeOf's attribute loop and carryDeclarations both accept
-// exactly "xmlns" and "xmlns:"+local, and the decoy in
-// TestOnlyARealDeclarationComesDownFromTheEnvelope pins what is
-// REJECTED — leaving the plain form implemented twice and asserted
-// nowhere. It is not cosmetic: Go's decoder applies a default namespace
-// to ELEMENT names, so keeping one sets Element.Space for the whole
-// subtree, and markup compares that against XNamespace
-// (markup/markup.go:1073). Raised in review of #501.
-func TestTheUnprefixedDeclarationIsCarriedToo(t *testing.T) {
+// nodeOf's attribute loop accepts exactly "xmlns" and "xmlns:"+local,
+// and the decoy in TestOnlyARealDeclarationComesDownFromTheEnvelope pins
+// what is REJECTED — leaving the plain form implemented twice and
+// asserted nowhere. It is not cosmetic: Go's decoder applies a default
+// namespace to ELEMENT names, so keeping one sets Element.Space for the
+// whole subtree, and markup compares that against XNamespace
+// (markup/markup.go:1073).
+//
+// WHICH ELEMENT CARRIES IT is the assertion, not merely that the URI
+// appears. This was named "…IsCarriedToo" and checked only
+// Contains(src, `xmlns="urn:x"`) — which passes under either rule, so it
+// could not see the narrowing that made carryDeclarations prefixed-only
+// and left the plain declaration where the author wrote it. A test whose
+// name describes removed behaviour and whose assertion cannot tell the
+// two apart is two claims rotting at once. Raised in review of #501.
+func TestTheUnprefixedDeclarationStaysOnTheEnvelope(t *testing.T) {
 	root := workspaceFixture(t)
 	doc := `<Gooey xmlns="urn:x">` + "\n" +
 		`  <Canvas Name="Root">` + "\n" +
@@ -426,10 +434,181 @@ func TestTheUnprefixedDeclarationIsCarriedToo(t *testing.T) {
 	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
 		t.Fatalf("a document with a default namespace does not open: %q", got)
 	}
-	if src := ed.source.Get(); !strings.Contains(src, `xmlns="urn:x"`) {
+	src := ed.source.Get()
+	if !strings.Contains(src, `xmlns="urn:x"`) {
 		t.Errorf("the unprefixed declaration did not survive the round trip. It "+
 			"is the other half of the set nodeOf writes, and the reader must "+
 			"accept both:\n%s", src)
+	}
+	envelope, below, _ := strings.Cut(src, "\n")
+	if !strings.Contains(envelope, `xmlns="urn:x"`) {
+		t.Errorf("the default declaration is not on <Gooey>, where the author "+
+			"wrote it:\n%s", src)
+	}
+	if strings.Contains(below, `xmlns="urn:x"`) {
+		t.Errorf("the default declaration was carried down onto the user's root "+
+			"as well. Only prefixed declarations move; markup.parse skips a plain "+
+			"xmlns outright, so the copy buys nothing but a diff:\n%s", src)
+	}
+}
+
+// TestARefusedOpenLeavesTheOpenDocumentAlone is the second path to the
+// envelope-stripping fault TestTheEnvelopesOwnAttributesSurviveASave
+// closed on the first.
+//
+// That test drives open → save over ONE file, so it cannot see a field
+// cleared by an open that never completed. ed.envAttrs was set to nil at
+// the top of openWorkspaceFile and the two-root refusal returns without
+// replacing ed.root.Kids, ed.openPath or re-running ed.rebuild — so
+// clicking the wrong file in the browser stripped the Graphics off the
+// document that was still open and still displayed, and the next save
+// wrote a bare <Gooey>. The trigger is not an edit the user made.
+// Raised in review of #501.
+func TestARefusedOpenLeavesTheOpenDocumentAlone(t *testing.T) {
+	root := workspaceFixture(t)
+	good := `<Gooey xmlns="wonderforge.io/gooey/2026" Graphics="halfblock">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "gfx.gooey"), []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	twoRoots := `<Gooey>` + "\n" +
+		`  <Canvas Name="A"/>` + "\n" +
+		`  <Canvas Name="B"/>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "two.gooey"), []byte(twoRoots), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("gfx.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+
+	ed.openWorkspaceFile("two.gooey")
+	if got := ed.status.Get(); !strings.Contains(got, "exactly one root element") {
+		t.Fatalf("the two-root file reports %q, so this test is no longer "+
+			"exercising a refused open", got)
+	}
+	if got := ed.openPath.Get(); got != "gfx.gooey" {
+		t.Fatalf("a refused open moved openPath to %q; the rest of this test "+
+			"assumes the first document is still the open one", got)
+	}
+
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatalf("saving the still-open document: %v", err)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(root, "gfx.gooey"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved := string(onDisk); !strings.Contains(saved, `Graphics="halfblock"`) {
+		t.Errorf("a REFUSED open of another file stripped this document's "+
+			"envelope. The CODE tab still shows it:\n%s\nand the save wrote:\n%s",
+			ed.source.Get(), saved)
+	}
+}
+
+// TestAnAmpersandInAnAttributeSurvivesASave is the round trip through
+// the character the emitter was not escaping.
+//
+// Attribute values went out through %q, which is GO quoting: a value the
+// loader accepts came back as raw `&`, the canvas refused its own
+// rebuild with "markup: no root element", and the save wrote a file
+// whose reopen fails on "invalid character entity". `"` is the same
+// class. n.Body was already escaped through xml.EscapeText with a
+// comment explaining why; the attributes beside it were not. Raised in
+// review of #501.
+func TestAnAmpersandInAnAttributeSurvivesASave(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="wonderforge.io/gooey/2026">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="Save &amp; Exit &quot;now&quot;"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "amp.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("amp.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("a document with an escaped ampersand does not open: %q", got)
+	}
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatalf("saving the open document: %v", err)
+	}
+
+	// REOPENED FROM DISK, so what is pinned is the FILE and not the
+	// in-memory source. The open above already catches the emitter —
+	// ed.rebuild serialises the model and builds THAT, so an unescaped
+	// `&` reports "markup: no root element" before any save — and this
+	// arm is what says the bytes on disk are loadable by anything else.
+	ed.openWorkspaceFile("amp.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		onDisk, _ := os.ReadFile(filepath.Join(root, "amp.gooey"))
+		t.Fatalf("the designer cannot reopen what it just wrote: %q\nfile:\n%s",
+			got, onDisk)
+	}
+	if src := ed.source.Get(); !strings.Contains(src, `Save &amp; Exit &#34;now&#34;`) {
+		t.Errorf("the attribute value did not round trip as XML:\n%s", src)
+	}
+}
+
+// TestABothLevelsDeclarationKeepsTheEnvelopesCopy pins the complement
+// envelopeAttrs claims against carryDeclarations.
+//
+// carryDeclarations skips a prefix the root already declares;
+// envelopeAttrs dropped every xmlns: unconditionally. A file declaring
+// one prefix at both levels therefore lost the envelope's copy outright.
+// The resolved binding is unchanged under the loader's flat last-wins
+// map, so this is fidelity rather than meaning — and it is exactly the
+// class envelopeAttrs' comment claimed immunity from. Raised in review
+// of #501.
+func TestABothLevelsDeclarationKeepsTheEnvelopesCopy(t *testing.T) {
+	handlerNS(t, "urn:B")
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:t="urn:A">` + "\n" +
+		`  <Canvas Name="Root" xmlns:t="urn:B">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("both.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+
+	src := ed.source.Get()
+	envelope, below, _ := strings.Cut(src, "\n")
+	if !strings.Contains(envelope, `xmlns:t="urn:A"`) {
+		t.Errorf("the envelope's own declaration is gone from the file. "+
+			"carryDeclarations declined to move it because the root already "+
+			"declares the prefix, and envelopeAttrs dropped it anyway:\n%s", src)
+	}
+	if !strings.Contains(below, `xmlns:t="urn:B"`) {
+		t.Errorf("the root's own declaration did not survive:\n%s", src)
+	}
+
+	// AND IT IS STABLE, so keeping the envelope's copy is a fixed point
+	// rather than a second document that reopens differently again.
+	ed.openWorkspaceFile("both.gooey")
+	if second := ed.source.Get(); second != src {
+		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
+			src, second)
 	}
 }
 

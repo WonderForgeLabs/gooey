@@ -352,10 +352,18 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		ed.status.Set("✗ " + rel + ": " + err.Error())
 		return
 	}
-	// CLEARED FIRST, on every open: a file with no envelope must not
-	// inherit the last one's Graphics, and the assignment below is
-	// inside a branch that such a file does not take.
-	ed.envAttrs = nil
+	// COMPUTED HERE, ASSIGNED WHERE THE DOCUMENT IS REPLACED. A file
+	// with no envelope must not inherit the last one's Graphics, so the
+	// zero value has to reach ed.envAttrs — but clearing the field up
+	// here did it on the REFUSED path too. The len(n.Kids) != 1 return
+	// below leaves ed.root.Kids, ed.sel and ed.openPath pointing at the
+	// document that is still open, and does not re-run ed.rebuild, so
+	// clicking the wrong file in the browser stripped the open
+	// document's Graphics and default xmlns while the CODE tab went on
+	// showing them and the next save wrote a bare <Gooey>. The field
+	// moves with ed.root.Kids now, and no partial path can separate the
+	// two. Raised in review of #501.
+	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
 	// the surface Canvas holds one child and that child is the user's
@@ -376,10 +384,11 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// Graphics both belong where the author wrote them, and
 		// markup.parse skips a plain xmlns outright, so moving it bought
 		// nothing but a diff on the first save of every existing file.
-		ed.envAttrs = envelopeAttrs(n)
+		env = envelopeAttrs(n, n.Kids[0])
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}
+	ed.envAttrs = env
 	ed.sel = n
 	ed.openPath.Set(rel)
 	ed.rebuild()

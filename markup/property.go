@@ -325,7 +325,14 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 		case c.Name == "Property":
 			// The likely typo: the element is right, the namespace is
 			// missing, and without this it would be read as a component.
-			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to the root element", XNamespace)
+			//
+			// TO THE DOCUMENT, not to the root element — the THIRD of
+			// the three refusals carrying that wording, and the one a
+			// designer user is most likely to meet: <x:Property> is a
+			// direct child of <Gooey>, which is the element the editor
+			// has no node for and cannot write to. Raised in review of
+			// #501.
+			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to an element of this document", XNamespace)
 		default:
 			kids = append(kids, c)
 		}
