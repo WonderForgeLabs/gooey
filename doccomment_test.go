@@ -677,6 +677,28 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 		}
 		for j, sp := range g.Specs {
 			name, doc, ok := documentedSpec(sp)
+			// THE LAST SPEC IS SKIPPED, AND THAT IS THE BOUNDARY rather
+			// than an omission. Review of #503 read it as a gap — a doc
+			// on the last entry whose subject is declared directly below
+			// the CLOSING PAREN — so the reasoning goes here to stop the
+			// next reader re-deriving it.
+			//
+			// The signature this guard recognises is INSERTION: a
+			// declaration slid between a doc comment and the thing it
+			// documented. A comment inside the parentheses cannot have
+			// been separated that way from a declaration outside them,
+			// because the closing paren sits between the two and nothing
+			// gets inserted across it — moving the paren is not an
+			// insertion, it is a rewrite of the block. So a last spec's
+			// doc naming something after the block is a cross reference,
+			// which is prose, and flagging prose is the failure the
+			// neighbour arms' "directly below" fence exists to avoid.
+			//
+			// docsExamined applies the SAME `j+1 < len(g.Specs)` bound,
+			// so the population and the rule are in step and the floor
+			// is not undercounted — measured against the review's claim
+			// that it was. The two must move together if this ever
+			// changes.
 			if !ok || j+1 >= len(g.Specs) {
 				continue
 			}
