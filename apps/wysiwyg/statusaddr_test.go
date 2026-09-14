@@ -260,7 +260,11 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 //
 // render.RowText rather than a loop over .Rune, for the reason rowText
 // carries: a continuation cell rendered as its marker rune puts a
-// literal U+FFFF in the row, and every caller here is comparing text.
+// literal U+FFFD in the row, and every caller here is comparing text.
+// render.Continuation is rune(-1) and string(rune(-1)) is the
+// replacement character, which is what render/width.go writes in its own
+// comment; this said U+FFFF, a different code point that a grep over a
+// failure diff would never find. Raised in review of #502.
 func screenRow(f *gooey.Frame, y int) string {
 	return render.RowText(f.Cells, y)
 }

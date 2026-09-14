@@ -234,6 +234,16 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 		t.Errorf("the $EDITOR row carries %q in front of its label, want an unchecked "+
 			"\"[ ] \"; the row reads %q", got, row)
 	}
+	// AND A ROW WITH NO STATE TO SHOW. Without this the third answer
+	// boxBefore distinguishes — four blanks — is asserted nowhere: a
+	// boxBefore that got a boxless row wrong, or a menu that started
+	// drawing "[ ] " in front of plain commands, passed this whole file.
+	// The doc comment claimed the distinction was exercised; it named
+	// this row and nothing called it. Raised in review of #502.
+	if got, row := boxBefore(t, dropdown, "Next Pane"); got != "    " {
+		t.Errorf("the \"Next Pane\" row carries %q in front of its label, want four "+
+			"blanks; a command item has no state to check: %q", got, row)
+	}
 }
 
 // TestTheCheckBoxFollowsTheSelection is the other half, and what it adds
@@ -298,10 +308,14 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 //   - The diagnostics QUOTE the row, so an inherited $EDITOR makes a
 //     failure message differ per machine and a reader cannot compare it
 //     with anyone else's.
-//   - The label is expected to interpolate the program name — that is
-//     the direction #477 pushes this row in — and on the day it does,
-//     an unpinned environment turns these assertions env-dependent
-//     without anyone editing them.
+//   - The label ALREADY interpolates the resolved program:
+//     editorItemText renders `$EDITOR (env)` today. The assertions
+//     match only the constant `$EDITOR` prefix, so what an inherited
+//     value changes is what a failure prints — which is the first
+//     bullet, arrived at from the other side. This said "on the day it
+//     does", future tense about something shipped, and named #477 as
+//     pushing for a label change it does not ask for. Raised in review
+//     of #502.
 //
 // resolveEditor reads only EDITOR (no VISUAL fallback), so the one
 // variable pins the label. `/usr/bin/env -i` is the value the sibling
@@ -369,8 +383,11 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // distinct failure from "[x] ": one is a missing box, the other is the
 // wrong state, and a negative Contains reports both as the same thing
 // while also passing when the label has moved somewhere the search never
-// looked. The "Next Pane" row of this same menu returns exactly "    ",
-// so the three-way distinction is exercised rather than hypothetical.
+// looked. TestTheCheckBoxIsDrawn asks this of the "Next Pane" row, which
+// returns exactly "    ", so the three-way distinction is exercised
+// rather than hypothetical — it said that before any caller made the
+// call, which is the coverage-claiming-itself shape this branch exists
+// to remove. Raised in review of #502.
 //
 // THE ROW COMES BACK WITH THE BOX because the caller needs it for the
 // failure message, and finding it again there means a second

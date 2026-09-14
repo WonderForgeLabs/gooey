@@ -38,8 +38,6 @@ func term8x16(cols, rows int) term.Caps {
 	return term.Caps{Cols: cols, Rows: rows, CellW: 8, CellH: 16, Color: render.TrueColor}
 }
 
-// page puts a pane over a text line, so there is a neighbour whose repaint
-// can be provoked without touching the pane. enc nil is the cell tier.
 // rowText reads w CELLS of row y off a Composer's cell plane.
 //
 // Text(), NOT .Rune: a continuation cell — the second column of a wide
@@ -48,7 +46,17 @@ func term8x16(cols, rows int) term.Caps {
 // reason no fixture in six packages could hold a wide glyph and be
 // asserted on, and this package held two of them. w is a COLUMN count,
 // so a caller with a string wants render.StringWidth rather than its
-// length. Raised in review of #502.
+// length.
+//
+// UNTRIMMED, unlike the same-named helper in apps/wysiwyg (dock_test.go),
+// which returns strings.TrimRight(…, " "). Both are right for their
+// callers and the difference is load-bearing here:
+// TestPixelTierTitleIsOnTheCellPlane compares against " Files ", whose
+// trailing space a trim would eat, and the clip assertions read a
+// HasSuffix of the full span. The two doc comments are otherwise nearly
+// word for word, so a reader carrying the trimming assumption across
+// would meet it as a failure with no explanation. Raised in review of
+// #502.
 func rowText(c *gooey.Composer, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
@@ -57,6 +65,8 @@ func rowText(c *gooey.Composer, y, x, w int) string {
 	return sb.String()
 }
 
+// page puts a pane over a text line, so there is a neighbour whose repaint
+// can be provoked without touching the pane. enc nil is the cell tier.
 func page(enc graphics.Encoder) (*gooey.Composer, *Pane, *prop.Property[string]) {
 	below := prop.NewSource("footer")
 	p := &Pane{
@@ -266,7 +276,7 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 	c.Frame()
 
 	b := p.Bounds()
-	if len(title) <= b.W {
+	if render.StringWidth(title) <= b.W {
 		t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
 	}
 
@@ -286,7 +296,7 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 	// And the whole label really was truncated.
 	if strings.Contains(got, title) {
 		t.Errorf("top row is %q; it carries the full %d-column title inside a %d-column pane",
-			got, len(title), b.W)
+			got, render.StringWidth(title), b.W)
 	}
 }
 
