@@ -11,6 +11,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 func theMenuBar(t *testing.T, ed *editor) *components.MenuBar {
@@ -431,7 +432,13 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // in one narrow column. So an index into the row is a rune index and
 // equals a cell index only for a row of ONE RUNE PER CELL, which this
 // ASCII menu is; "narrow glyphs" was the fence and does not close the
-// cluster case. Raised in review of #502.
+// cluster case. ASSERTED BELOW, not merely stated: review of #502 noted
+// that the sibling hazard in dockcollapse_test.go is checked while this
+// one was described, and a documented assumption is the shape that goes
+// silently false. render.StringWidth counts COLUMNS and len([]rune)
+// counts runes; they agree only for one rune per narrow cell, which is
+// the precondition this helper's rune indexing needs. Raised in review
+// of #502.
 //
 // Byte slicing was what broke, and only the diagnostic: a box is ASCII
 // and an ASCII byte cannot be part of a multi-byte UTF-8 sequence, so a
@@ -455,6 +462,17 @@ func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 		t.Fatalf("%q appears at byte %d and again at %d of %q, so the box in front "+
 			"of the left copy is not the answer to which box precedes the label",
 			want, at, last, row)
+	}
+	// THE PRECONDITION, checked rather than assumed. A wide glyph or a
+	// grapheme cluster anywhere in the row breaks the rune-index ==
+	// cell-index equality the slice below depends on, and the failure is
+	// a box read from the wrong four cells — a wrong answer, not an
+	// error.
+	if cols, runes := render.StringWidth(row), len([]rune(row)); cols != runes {
+		t.Fatalf("row %q measures %d columns and %d runes, so a rune index into it "+
+			"is not a cell index and the four runes before the label are not the "+
+			"four cells before it. This helper slices by rune; give it an ASCII "+
+			"row, or teach it columns", row, cols, runes)
 	}
 	r := []rune(row)
 	i := len([]rune(row[:at]))

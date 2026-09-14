@@ -48,9 +48,14 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 // literal marker in the row. CLAUDE.md names this helper's shape as the
 // reason no fixture in six packages could hold a wide glyph and be
 // asserted on, so a second copy reading .Rune reopens exactly that.
-// There were four span readers in this package and they all come here
-// now; the whole-row case is render.RowText, which this is the span
-// form of.
+// The span readers in this package all come here now; the whole-row case
+// is render.RowText, which this is the span form of. HOW MANY THERE WERE
+// is deliberately not written: this said FOUR, and a count of readers is
+// a sample taken once — the merge base held more than four, depending on
+// whether a whole-plane reader and a helper that slices a row by index
+// count as span readers, which is exactly the argument a number in prose
+// invites and cannot settle. Derive the current set with a grep for
+// `Cells.At(` under apps/wysiwyg. Raised in review of #502.
 //
 // "THE ONLY ONE IN THIS PACKAGE" WAS WRONG WHEN IT WAS WRITTEN.
 // designmode_test.go's screen() was a whole-plane reader doing the
