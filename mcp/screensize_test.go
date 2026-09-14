@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -178,7 +179,10 @@ var islandCollapsedMarkup = strings.Replace(islandOffOriginMarkup,
 // is the island that is gone, "Mine" over the collapsed fixture is the
 // island that is merely degenerate, and those are the two answers
 // islandRect is careful to keep apart.
-func islandGuest(t *testing.T, src, island string) *client {
+// It returns the app as well as the client, because a caller that wants
+// to probe the terminal's cell size has to Post SetCaps onto the UI
+// goroutine and there is no other handle on it.
+func islandGuest(t *testing.T, src, island string) (*client, *testApp) {
 	t.Helper()
 	app := newTestApp(t, src, map[string]any{
 		"Mine": map[string]any{"Body": prop.NewSource("m0")},
@@ -192,7 +196,7 @@ func islandGuest(t *testing.T, src, island string) *client {
 	if err != nil {
 		t.Fatalf("New (guest): %v", err)
 	}
-	return newClient(t, gs)
+	return newClient(t, gs), app
 }
 
 // TestAGuestIsToldWhereItsIslandIs is the half that makes the size
@@ -206,7 +210,7 @@ func islandGuest(t *testing.T, src, island string) *client {
 // assertion below is the round trip: convert with x/y, and send_mouse
 // must accept every corner.
 func TestAGuestIsToldWhereItsIslandIs(t *testing.T) {
-	guest := islandGuest(t, islandOffOriginMarkup, "Mine")
+	guest, _ := islandGuest(t, islandOffOriginMarkup, "Mine")
 
 	sz := guest.json("screen_size", nil)
 	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
@@ -694,7 +698,7 @@ func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
 	// "Ghost" is a name the tree does not contain. The grant is
 	// well-formed; the element simply is not there, which is the state a
 	// swap or a patch can produce at runtime.
-	guest := islandGuest(t, islandOffOriginMarkup, "Ghost")
+	guest, _ := islandGuest(t, islandOffOriginMarkup, "Ghost")
 
 	// The message names the island, because a client that cannot see the
 	// tree has no other way to tell "you may not" from "it is gone".
@@ -721,13 +725,21 @@ func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
 // The same markup with the island visible reports a real size, so the
 // zero is attributable to the collapse and to nothing else.
 func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
-	live := islandGuest(t, islandOffOriginMarkup, "Mine").json("screen_size", nil)
+	const capW, capH = 7, 15
+	liveGuest, _ := islandGuest(t, islandOffOriginMarkup, "Mine")
+	live := liveGuest.json("screen_size", nil)
 	if int(live["cols"].(float64)) == 0 || int(live["rows"].(float64)) == 0 {
 		t.Fatalf("the uncollapsed fixture already reports a zero extent (%v), so this "+
 			"test cannot tell a collapsed island from one that never arranged", live)
 	}
 
-	guest := islandGuest(t, islandCollapsedMarkup, "Mine")
+	guest, app := islandGuest(t, islandCollapsedMarkup, "Mine")
+	done := make(chan struct{})
+	app.Post(func() {
+		app.comp.SetCaps(term.Caps{CellW: capW, CellH: capH})
+		close(done)
+	})
+	<-done
 
 	// Not fails(): the call must SUCCEED. An error here is the regression
 	// this exists to catch — islandRect learning to refuse a degenerate
@@ -740,8 +752,19 @@ func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
 	// The cell metrics are the terminal's and have nothing to do with the
 	// island, so they must NOT have been zeroed along with it — which is
 	// what a blanket "return an empty ScreenSize" would do.
-	if _, ok := sz["cellWidth"]; !ok {
-		t.Errorf("the collapsed answer dropped cellWidth: %v", sz)
+	//
+	// THE CAPS ARE PROBED FIRST, and the assertion reads their VALUES.
+	// Asking whether the keys are present could never fail: screenSize
+	// writes all six unconditionally, so the map has them whatever
+	// ScreenSize returned, and the fixture's caps are zero anyway — the
+	// arm agreed with a blanket zeroing and with the correct answer alike.
+	// Raised in review of #504.
+	probed := guest.json("screen_size", nil)
+	if int(probed["cellWidth"].(float64)) != capW || int(probed["cellHeight"].(float64)) != capH {
+		t.Errorf("a collapsed island reports cell metrics %vx%v, want the probed "+
+			"%dx%d: the terminal's cell size is not the island's, and zeroing it "+
+			"with the extent is what a blanket empty ScreenSize would do",
+			probed["cellWidth"], probed["cellHeight"], capW, capH)
 	}
 
 	if txt := guest.ok("screen_text", nil); txt != "" {
@@ -773,7 +796,7 @@ func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
 // conversion walks off the bottom and must be refused. Raised in review
 // of #504.
 func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
-	guest := islandGuest(t, islandOffOriginMarkup, "Mine")
+	guest, _ := islandGuest(t, islandOffOriginMarkup, "Mine")
 
 	sz := guest.json("screen_size", nil)
 	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
@@ -902,9 +925,38 @@ func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
 // directory. It separates "this module was consumed standalone" — the
 // one blameless reason a committed blob is unreadable — from a path
 // that is simply no longer there.
+// THE ROOT, NOT MERELY A REPOSITORY. `git -C .. rev-parse HEAD` succeeds
+// for ANY enclosing repository, so a gooey checkout nested inside a
+// larger one answered yes — and committedBlob's `show HEAD:<path>`
+// resolves paths from that outer repo's root, where `.claude/workflows/…`
+// does not exist. The guard then reported the workflows as renamed or
+// deleted in a tree where they are present and correct. Comparing the
+// toplevel against `..` itself is what asks the question the caller
+// means. Raised in review of #504.
 func inRepoCheckout(t *testing.T) bool {
 	t.Helper()
-	return exec.Command("git", "-C", "..", "rev-parse", "HEAD").Run() == nil
+	out, err := exec.Command("git", "-C", "..", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return false
+	}
+	top, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false
+	}
+	// Abs BEFORE EvalSymlinks. EvalSymlinks does not absolutise: handed
+	// ".." it returns ".." unchanged, which never equals a toplevel and
+	// silently skipped this guard everywhere — the first version of this
+	// fix did exactly that, and the test reported itself skipped in a
+	// checkout where it should have run.
+	abs, err := filepath.Abs("..")
+	if err != nil {
+		return false
+	}
+	parent, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return false
+	}
+	return top == parent
 }
 
 // committedBlob reads one repo-root-relative path out of HEAD. It returns
@@ -930,4 +982,66 @@ func toolsLine(src string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// TestTheScreenSizeSchemaAndItsResultNameTheSameKeys is the derived
+// guard the six wire names did not have.
+//
+// screenSizeSchema declares them twice — once as properties, once in the
+// required list — and Server.screenSize writes them a third time, as a
+// map literal in tools.go. Three hand-written copies of one vocabulary,
+// and nothing compared them: renaming "cellWidth" in the schema alone
+// leaves a published contract promising a key no result carries, and a
+// client that branches on its absence reads "the host never probed" for
+// every host. The schema is data and the result is data, so the
+// comparison needs no third list here. Raised in review of #504.
+func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
+	_, _, _, c := setup(t)
+	got := c.json("screen_size", nil)
+
+	schema := screenSizeSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok || len(props) == 0 {
+		t.Fatalf("screenSizeSchema declares no properties (%v), so this test "+
+			"would compare the result against an empty set", schema)
+	}
+	for name := range props {
+		if _, ok := got[name]; !ok {
+			t.Errorf("the schema publishes %q and screen_size's result does not "+
+				"carry it: a client reading the contract asks for a key that is "+
+				"never there", name)
+		}
+	}
+	for name := range got {
+		if _, ok := props[name]; !ok {
+			t.Errorf("screen_size returns %q and the schema does not publish it, "+
+				"so a client generated from the contract cannot see it", name)
+		}
+	}
+
+	// REQUIRED IS THE THIRD COPY, and it is the one a client's decoder
+	// actually enforces. A key published as a property but left out of
+	// required is optional to every generated client, which is exactly
+	// wrong for six fields that are always present.
+	req, ok := schema["required"].([]string)
+	if !ok {
+		if anys, isAny := schema["required"].([]any); isAny {
+			for _, v := range anys {
+				req = append(req, v.(string))
+			}
+		} else {
+			t.Fatalf("screenSizeSchema's required is %T, not a list of names", schema["required"])
+		}
+	}
+	if len(req) != len(props) {
+		t.Errorf("the schema publishes %d properties and requires %d of them; "+
+			"every field of this result is always present, so a key missing "+
+			"from required is optional to every generated client for no reason",
+			len(props), len(req))
+	}
+	for _, name := range req {
+		if _, ok := props[name]; !ok {
+			t.Errorf("required names %q, which is not a published property", name)
+		}
+	}
 }
