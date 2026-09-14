@@ -92,7 +92,7 @@ belong to* — and each was a way of answering it wrongly:
   That document no longer reproduces it, and the reason is a different
   fix: [#461](https://github.com/WonderForgeLabs/gooey/issues/461) made a
   universal attribute on a pseudo-element a load error outright, so
-  `<MenuItem Margin="3"/>` is now refused with *"`<MenuBar>` reads
+  `<MenuItem Margin="3"/>` is now refused with *"`<Menu>` reads
   `<MenuItem>` as data, so it builds no component for Margin to apply
   to"* whether or not the declaration exists. The reproduction above is
   historical; the check this section describes is still the one that

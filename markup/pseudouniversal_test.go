@@ -99,7 +99,7 @@ func TestTheAdvertisementCheckCanActuallyFire(t *testing.T) {
 			"advertises the refused attribute, so every use of it below is "+
 			"vacuous:\n\t%s", bad)
 	}
-	good := `markup: <MenuItem Name="Zork">: <MenuBar> reads <MenuItem> as ` +
+	good := `markup: <MenuItem Name="Zork">: <Menu> reads <MenuItem> as ` +
 		`data, so it builds no component for Name to apply to`
 	if advertises(good, "Name") {
 		t.Errorf("advertises() fires on a message that only NAMES the "+
@@ -1024,6 +1024,11 @@ func universalByName(name string) (AttrSpec, bool) {
 	return AttrSpec{}, false
 }
 
+// nonUniversalProp is a property-element name no element in the catalog
+// declares, which is what makes it the discriminating one: it is the
+// shape refusePropElement refuses and refuseUniversal never sees.
+const nonUniversalProp = "Frobnicate"
+
 // TestEveryPseudoElementRefusesAPropertyElement is the other spelling of
 // the rule this file is about, and it was the one nothing checked.
 //
@@ -1058,7 +1063,15 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 		// Behaviors and Resources first, so a fix that called checkProps
 		// and inherited its exemptions fails on the first two names
 		// rather than somewhere in the middle of the list.
-		names := []string{"Behaviors", "Resources"}
+		// AND ONE NAME THE CATALOG ANSWERS NOTHING ABOUT. The range was
+		// ["Behaviors", "Resources"] + universalAttrs, which is exactly
+		// the set where refusePropElement and refuseUniversal AGREE —
+		// so the one set the property-element rule refuses BEYOND the
+		// attribute rule was the one set nothing exercised, and the
+		// remedy walked an author from <Tab.Frobnicate> to a <Text
+		// Frobnicate="…"> that is itself a load error. Raised in review
+		// of #486.
+		names := []string{"Behaviors", "Resources", nonUniversalProp}
 		for _, u := range universalAttrs {
 			names = append(names, u.Name)
 		}
@@ -1075,6 +1088,18 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 				t.Errorf("%s is refused without the shared sentence, so the two "+
 					"spellings have drifted into two dialects of one rule:\n\t%v",
 					prop, err)
+			}
+			if name == nonUniversalProp {
+				// WITHHELD, and asserted rather than assumed: acceptance
+				// at the destination is only derivable for a universal,
+				// so a content remedy here is advice nothing checked.
+				if strings.Contains(err.Error(), contentRemedy) {
+					t.Errorf("%s prescribes the content move for a name outside "+
+						"universalAttrs, where nothing can say the destination "+
+						"accepts it — and <Text %s=\"…\"> is itself a load "+
+						"error:\n\t%v", prop, name, err)
+				}
+				continue
 			}
 			if !strings.Contains(err.Error(), contentRemedy) {
 				continue // no destination prescribed, nothing to follow

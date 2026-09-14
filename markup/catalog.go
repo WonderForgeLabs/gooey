@@ -863,7 +863,13 @@ func markNested(specs []ElementSpec) {
 // AND NOTHING ELSE — Builder is an opaque func — so its entry carries
 // AttrsKnown false, which a consumer must distinguish from an element
 // that genuinely takes no attributes.
-func (ctx *Context) Catalog() []ElementSpec {
+func (ctx *Context) Catalog() []ElementSpec { return ctx.catalog(true) }
+
+// catalog is Catalog with the Includes source made optional, for the one
+// caller that asks a question no include can answer — see namingParent.
+// Everything else about the assembly, the collision order included, is
+// identical, so the two cannot disagree about which element wins a name.
+func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
 	builtins := BuiltinElements()
 	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
 	seen := make(map[string]bool, len(builtins))
@@ -912,7 +918,9 @@ func (ctx *Context) Catalog() []ElementSpec {
 			Doc:        "Registered by the host app. Its attributes cannot be enumerated: a Builder is a func, not a schema.",
 		})
 	}
-	out = append(out, ctx.includeElements(seen)...)
+	if withIncludes {
+		out = append(out, ctx.includeElements(seen)...)
+	}
 	// After every source has contributed, so a host's restricted
 	// container marks its own pseudo-children too.
 	markNested(out)

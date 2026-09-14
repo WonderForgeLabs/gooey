@@ -272,7 +272,7 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	// AND NOT ON A PSEUDO-ELEMENT. It builds no component, so the
 	// universal table does not apply to it and Name is refused outright:
 	//
-	//	markup: <MenuItem Name="probe">: <MenuBar> reads <MenuItem> as
+	//	markup: <MenuItem Name="probe">: <Menu> reads <MenuItem> as
 	//	data, so it builds no component for Name to apply to
 	//
 	// Every probe of every <Menu> and <MenuItem> attribute failed on the

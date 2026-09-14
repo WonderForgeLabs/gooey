@@ -304,8 +304,15 @@ func readsAsData(spec ElementSpec, ctx *Context) string {
 // names it, so that container IS the reader. Over the CATALOG rather
 // than over ctx.spec, because the question is about every element in
 // scope and not about one whose name is already in hand.
+//
+// WITHOUT THE INCLUDES, which is the one source that cannot answer.
+// includeElements globs, reads and parses every *.gooey under
+// ctx.Includes and never sets Children.Mode, so an include spec can
+// never satisfy namesChild — this was spending file I/O on an error path
+// to build a string, over entries that structurally cannot match. Raised
+// in review of #486.
 func namingParent(name string, ctx *Context) string {
-	for _, p := range ctx.Catalog() {
+	for _, p := range ctx.catalog(false) {
 		if namesChild(p, name) {
 			return p.Name
 		}
@@ -413,6 +420,24 @@ var reservedOnContent = map[string]map[string]string{
 // checkProps' refusal instead, which is the same walked-from-one-error-
 // to-another this file's whole remedy discipline exists to stop.
 // Raised in review of #486.
+//
+// AND THE DESTINATION IS ONLY DERIVABLE FOR A UNIVERSAL.
+// refusePropElement refuses ANY property element on a pseudo-element —
+// deliberately, and wider than refuseUniversal — so this is reached for
+// names the catalog answers nothing about, and it prescribed the content
+// move for every one of them. Measured before the guard below:
+//
+//	<Tab.Frobnicate>       → …put it on the content inside instead…
+//	<Text Frobnicate="z">  → no such attribute; this element takes Bold, …
+//
+// <Tab.Header> was sharper still: Header is the one attribute a <Tab>
+// genuinely takes and it is REQUIRED, and the remedy sent it to the
+// content. Both are the walk-from-one-error-to-another this function
+// exists to stop, reintroduced by the scope difference between the two
+// refusals. A universal is accepted by every element with a Layout, so
+// for those the destination is known; for anything else nothing here can
+// say the move lands, and saying nothing is the honest answer. Raised in
+// review of #486.
 func propRemedy(spec ElementSpec, ctx *Context, name string) string {
 	r := pseudoRemedy(spec, ctx, name)
 	if r != contentRemedy || name == "Behaviors" || name == "Resources" {
@@ -421,9 +446,24 @@ func propRemedy(spec ElementSpec, ctx *Context, name string) string {
 		// element accepts — where the spelling carries over unchanged.
 		return r
 	}
+	if !isUniversalAttr(name) {
+		return ""
+	}
 	return r + ", written as an attribute: a property element names a property " +
 		"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
 		"form that moves"
+}
+
+// isUniversalAttr reports whether name is one of the attributes every
+// element with a Layout accepts, which is the only set whose acceptance
+// at a destination this package can derive without a schema.
+func isUniversalAttr(name string) bool {
+	for _, a := range universalAttrs {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // acceptedByParent reports that this element sits in a container that
