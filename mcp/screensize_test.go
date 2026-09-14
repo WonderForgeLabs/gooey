@@ -1114,16 +1114,32 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 // simply not where the guard says it is.
 //
 // The two are different answers and os.ReadFile gives them the same
-// error. inRepoCheckout is the question that separates them, and it is
-// asked first: outside the checkout `../docs` is legitimately absent,
-// inside it a missing page is a rename the guard has to follow. Raised
-// in review of #504, from the fix the workflow-blob loop already
-// carried.
+// error. THE PAGE'S OWN DIRECTORY is what separates them, and it is
+// checked first: consumed standalone the module is `mcp/` and nothing
+// above it, so the directory is absent and there is nothing to compare
+// against; with the directory present, a missing page is a rename the
+// guard has to follow.
+//
+// NOT inRepoCheckout, which asks a git question these three guards do
+// not have. It returns false when git is absent, when git refuses
+// ("detected dubious ownership"), or when `..` is not a repo root — so a
+// `git archive`, a Download ZIP, or a Docker build whose context omits
+// `.git` carries all three pages, readable, and skipped all three guards
+// green. That is the shape of the fs.ErrNotExist skip this branch
+// already removed for the same tests: a guard whose premise is that a
+// prose inventory goes stale silently cannot disable itself. The split
+// is between reading a file that is right there and reading a COMMIT —
+// TestTheAgentWorkflowsToolInventoriesAreComplete does the second and
+// keeps inRepoCheckout. Raised in review of #504.
 func pageOrSkip(t *testing.T, page string) []byte {
 	t.Helper()
-	if !inRepoCheckout(t) {
-		t.Skipf("%s is outside this module and this is not the repo checkout, so "+
-			"this guard cannot run here", page)
+	dir := filepath.Dir(page)
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s is outside this module and %s is not present, so the module "+
+			"is being consumed standalone and this guard cannot run here",
+			page, dir)
+	} else if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
 	}
 	body, err := os.ReadFile(page)
 	if errors.Is(err, fs.ErrNotExist) {
