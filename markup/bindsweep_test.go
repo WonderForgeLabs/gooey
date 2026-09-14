@@ -1114,7 +1114,7 @@ func TestNoSweepProbeDependsOnAnInstalledBinary(t *testing.T) {
 // Binds: Click="x" needs a registered handler, Allow="x" is not one of
 // the categories. Those are harness limits. The one failure that means
 // "the declaration is wrong" is Bound[T]'s — `%q is not a binding
-// expression` (usercontrol.go:372) — which fires exactly when the loader
+// expression`, from Context.BindingValue — which fires exactly when the loader
 // demanded a handle where the catalog promised a literal.
 //
 // NO PRE-FILTER. An earlier version built each element with the

@@ -87,8 +87,8 @@ func defaultsContext() *Context {
 		Styles:     map[string]render.Style{"probe": {Fg: render.RGB(200, 40, 40)}},
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
 		// vocabulary — eleven of them — was probed with "x", which
-		// Context.Command refuses with "no handler \"x\" registered"
-		// (usercontrol.go:402). That is the context being empty, not the
+		// Context.Command refuses with "no handler \"x\" registered".
+		// That is the context being empty, not the
 		// declaration being wrong, so all eleven landed in the sweep's
 		// unverified bucket and no arm ever saw whether they take a
 		// literal. Raised in review of #470.

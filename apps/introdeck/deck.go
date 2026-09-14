@@ -8,7 +8,7 @@ package main
 // markup composes them into what you read. There is no fmt.Sprintf in
 // the view layer and no markup assembled by concatenation anywhere,
 // because bindText already interpolates literals and paths into a single
-// computed with the right damage (markup/markup.go:1018), and doing it
+// computed with the right damage (markup.bindText), and doing it
 // in Go would only be a second, worse implementation of that.
 
 import (

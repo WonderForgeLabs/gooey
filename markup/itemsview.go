@@ -184,21 +184,17 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			//     save/restore exists precisely so a nested instantiation
 			//     cannot see the wrong declarations.
 			//   - Declared. This one was propagated in the previous round
-			//     and is TAKEN BACK, because page-wide visibility of a
-			//     row's declared surface cannot be bought this way:
-			//     usercontrol.go writes parent.Declared[w] for every
-			//     control with <x:Property> declarations, this factory
-			//     runs per row realization and never unregisters, and
-			//     nothing sweeps retired rows — control/markup.go's
-			//     delete is the PatchMarkup path and is keyed to one
-			//     named component. So a scrolling list over a declaring
-			//     template added one permanent entry per row ever shown,
-			//     keyed by the row's component, keeping every retired row
-			//     subtree reachable. That is the exact retention the
-			//     arms.sinks comment below reasons through and rejects,
-			//     and it was added above it without the same pass. With
-			//     the field absent, control() lazily gives each row its
-			//     own map, which is what happened before either round.
+			//     and is TAKEN BACK: a row realization is not a control
+			//     instantiation, and nothing retires a row, so sharing
+			//     the page registry retained one entry and one dead row
+			//     subtree per row ever shown. The full statement is on
+			//     Context.Declared in markup.go, and the gap it leaves —
+			//     a control in a template has no declared surface in the
+			//     MCP snapshot — is issue #512. It is the exact retention
+			//     the arms.sinks comment below reasons through and
+			//     rejects, and it was added above it without the same
+			//     pass. With the field absent, control() lazily gives
+			//     each row its own map, as it did before either round.
 			//
 			// Raised in review of #490, twice — the second time against
 			// the first time's answer.

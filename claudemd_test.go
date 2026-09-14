@@ -899,8 +899,72 @@ func accepts(t *testing.T, md string, read func(string) ([]string, error), why s
 //
 // markup-reference.md joined after review of #475 pointed out it had
 // just had a citation corrected by hand and was free to rot again the
-// same way. It measured clean when it was added.
-var citedDocs = []string{claudeMD, "docs/markup-reference.md"}
+// same way, and LEFT in review of #490, which converted its last one to
+// a symbol — `markup.textSource` cannot rot the way `markup.go:1976`
+// had by then already rotted, twice. A document with no citations
+// contributes nothing here, and the check below is what stops that
+// leaving a hole: a doc that gains one and is not listed here is an
+// error, so rejoining is not something anyone has to remember.
+var citedDocs = []string{claudeMD}
+
+// TestEveryCitingDocumentIsChecked closes the list above.
+//
+// citedDocs is hand-written, and the guard it feeds fails when a listed
+// document carries NO citation — the opposite direction, a document that
+// cites and is not listed, was unwatched. That is the state
+// docs/markup-reference.md would be in tomorrow if someone added a
+// `file:line` back to it, which is exactly how it got here: it was
+// unwatched, rotted, was corrected by hand, and only then was listed.
+//
+// docs/specs/ is out for the reason citedDocs gives: a dated record's
+// citation describes the tree on its own date. Raised in review of #490.
+func TestEveryCitingDocumentIsChecked(t *testing.T) {
+	listed := map[string]bool{}
+	for _, d := range citedDocs {
+		listed[filepath.ToSlash(d)] = true
+	}
+	var checked int
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		slash := filepath.ToSlash(path)
+		if d.IsDir() {
+			switch {
+			case path == ".":
+				return nil
+			case strings.HasPrefix(d.Name(), "."), d.Name() == "vendor",
+				slash == "docs/specs", slash == "presentations":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" || listed[slash] {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		checked++
+		if m := citationRe.FindString(string(b)); m != "" {
+			t.Errorf("%s carries the citation %s and is not in citedDocs, so nothing "+
+				"checks that the line still holds what it names. Add it to citedDocs "+
+				"and raise wantIdentChecked, or write the symbol instead of the line",
+				slash, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree: %v", err)
+	}
+	// The walk reaching nothing would make the check above vacuous, and
+	// it is a prune away from that: docs/ alone holds dozens.
+	if checked < 10 {
+		t.Errorf("the walk read %d unlisted markdown files, which is too few for "+
+			"this tree — a prune is eating the documents", checked)
+	}
+}
 
 func TestCLAUDEMDCitationsResolve(t *testing.T) {
 	// ONE FORM COVERAGE SET ACROSS ALL THE DOCUMENTS, not one per
@@ -998,7 +1062,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // two, and it is a VALUE rather than a floor for the reason the
 // assertion above gives: a >= would let a demotion hide behind an
 // addition in the same commit.
-const wantIdentChecked = 22
+const wantIdentChecked = 21
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.

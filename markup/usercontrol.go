@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -8,6 +9,51 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 )
+
+// attributedErr marks an error that already names the control it
+// happened in, so an ENCLOSING control does not name itself over the
+// top of it.
+//
+// The wrap this bounds was added in review of #490, and was right about
+// the problem: buildComponent's both-maps refusal is written for one
+// author holding both maps, and at the control seam there are two. It
+// was wrong about the scope. Wrapping on every unwind frame stacked the
+// package prefix once per level, and a self-include named one file four
+// times:
+//
+//	markup: control card.gooey: markup: control card.gooey includes
+//	itself: card.gooey → card.gooey — …
+//
+// The INNERMOST control is the one whose file the author opens, so it
+// is the one that attributes; every frame above passes the error
+// through untouched. An error that already names its own control — the
+// cycle refusal, whose message carries the whole loop, and the two
+// setup failures — says so by being wrapped in this, and is left alone.
+type attributedErr struct {
+	name string // "" when the wrapped error names its own control already
+	err  error
+}
+
+func (e attributedErr) Error() string {
+	if e.name == "" {
+		return e.err.Error()
+	}
+	// One "markup: " on the sentence, not one per frame: the inner error
+	// is a markup load error too, and its own prefix is the package's,
+	// not a second speaker's.
+	return "markup: control " + e.name + ": " + strings.TrimPrefix(e.err.Error(), "markup: ")
+}
+
+func (e attributedErr) Unwrap() error { return e.err }
+
+// attributeControl names the control an error happened inside, once.
+func attributeControl(name string, err error) error {
+	var a attributedErr
+	if errors.As(err, &a) {
+		return err
+	}
+	return attributedErr{name: name, err: err}
+}
 
 // UserControl wraps a markup file + code-behind setup as a Builder, so
 // a control registers like any custom component and instantiates as an
@@ -97,8 +143,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// skips Screen.Restore, so it costs the user their unsaved work and
 		// their terminal modes.
 		if i := indexOf(parent.controls, name); i >= 0 {
-			return nil, fmt.Errorf("markup: control %s includes itself: %s — a control cannot be its own ancestor, because instantiating it never terminates",
-				name, strings.Join(append(append([]string{}, parent.controls[i:]...), name), " → "))
+			// ALREADY ATTRIBUTED: this message names the control and the
+			// whole loop, so an enclosing one prefixing itself to it says
+			// nothing the sentence does not already say twice over.
+			return nil, attributedErr{err: fmt.Errorf("markup: control %s includes itself: %s — a control cannot be its own ancestor, because instantiating it never terminates",
+				name, strings.Join(append(append([]string{}, parent.controls[i:]...), name), " → "))}
 		}
 		// Variant-resolved like a page: a control specializes on the pixel
 		// protocol by shipping card.sixel.gooey beside card.gooey, and the
@@ -129,7 +178,7 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if setup != nil {
 			child, err = runSetup(setup, e, parent, declared)
 			if err != nil {
-				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+				return nil, attributedErr{err: fmt.Errorf("markup: control %s: %w", name, err)}
 			}
 		}
 		if child == nil {
@@ -142,7 +191,7 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// every attribute passes through, unchecked, as it always has.
 		if passThrough && !doc.decls.present {
 			if err := passAttrs(e, parent, child.Values); err != nil {
-				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+				return nil, attributedErr{err: fmt.Errorf("markup: control %s: %w", name, err)}
 			}
 		}
 		for _, d := range doc.decls.list {
@@ -321,9 +370,9 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 			// Components["X"], and neither author wrote a duplicate — so a
 			// bare "<X> is registered in both" reaches the one person who
 			// can act on it as a sentence about a page they may not own.
-			// Nesting reads as a trace rather than a repetition: each level
-			// names the file whose markup failed to build.
-			return nil, fmt.Errorf("markup: control %s: %w", name, err)
+			// ONCE, at the innermost control: see attributeControl for why
+			// every frame above it passes the error through untouched.
+			return nil, attributeControl(name, err)
 		}
 		if len(doc.decls.list) > 0 {
 			surface := DeclaredSurface{Control: name, Props: make([]DeclaredProp, 0, len(doc.decls.list))}

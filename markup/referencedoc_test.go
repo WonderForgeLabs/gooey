@@ -97,12 +97,27 @@ func TestTheReferencePartitionMatchesTheCode(t *testing.T) {
 	}
 	// THE PARAGRAPH, not the file, for the reason the test above gives:
 	// every one of these names appears throughout a 1600-line reference.
+	//
+	// A PARAGRAPH, NOT A LINE. The reference writes this one unwrapped
+	// today, and reading only the matching line was the same pin: a
+	// re-wrap at 80 columns — which every other prose file here is —
+	// would leave the tail of the sentence unread, so a field named in
+	// the wrong half after the first newline would go unseen. Markdown
+	// ends a paragraph at a blank line, so that is where this stops.
+	// Raised in review of #490.
 	para := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "Everything a page registers inherits") {
-			para = line
-			break
+	lines := strings.Split(string(b), "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "Everything a page registers inherits") {
+			continue
 		}
+		for _, l := range lines[i:] {
+			if strings.TrimSpace(l) == "" {
+				break
+			}
+			para += l + " "
+		}
+		break
 	}
 	if para == "" {
 		t.Fatal("the reference no longer carries a paragraph starting " +

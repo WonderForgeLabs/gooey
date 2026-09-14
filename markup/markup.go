@@ -160,7 +160,13 @@ type Context struct {
 	// the page registry, so control/snapshot.go finds no declared surface
 	// for it and the MCP tree snapshot reports none. Page-wide visibility
 	// of a row's declared surface is a goal worth having; it cannot be
-	// bought with unbounded retention. Raised in review of #490.
+	// bought with unbounded retention, and what it needs first is a
+	// retirement seam, which is issue #512. This is the one full
+	// statement of that gap: the two other sites that used to restate it
+	// (markup/itemsview.go's Declared bullet and the rowPartition row in
+	// markup/boundaryfields_test.go) now point here and cite the issue,
+	// so closing it retires the note rather than leaving three copies to
+	// find. Raised in review of #490.
 	//
 	// Created on demand at the first control instantiation; nil until
 	// then. Rebuilding a page should reset it the way Named is reset —

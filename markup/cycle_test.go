@@ -279,3 +279,62 @@ func TestAControlsAncestryIsNotAliasedByItsSiblings(t *testing.T) {
 		}
 	}
 }
+
+// The error names ONE control: the innermost one, whose file the author
+// opens. Attribution was added for the both-maps refusal (see
+// TestAControlCannotShadowAPageDeclaredElement) and, wrapped on every
+// unwind frame, it stacked — three controls deep gave three names and
+// three "markup: " prefixes, and a cycle named the loop twice, once in
+// the prefix and once in the trace it already carried.
+//
+// Counting is the assertion rather than a substring match, because a
+// stacked message CONTAINS the right one: `strings.Contains(err, "mid")`
+// passes for "control outer: control mid: …" just as happily.
+func TestANestedControlErrorNamesTheInnermostControlOnce(t *testing.T) {
+	err := loadCycle(t, map[string]string{
+		"app.gooey":   `<Gooey><Outer/></Gooey>`,
+		"outer.gooey": `<Gooey><Mid/></Gooey>`,
+		"mid.gooey":   `<Gooey><Nope/></Gooey>`,
+	})
+	if err == nil {
+		t.Fatal("an unknown element three controls deep loaded without error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "mid.gooey") {
+		t.Errorf("error does not name the control the author must open: %v", err)
+	}
+	if strings.Contains(msg, "outer.gooey") {
+		t.Errorf("error names an enclosing control the author cannot fix by editing: %v", err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+	if n := strings.Count(msg, "control "); n != 1 {
+		t.Errorf("error says %q %d times, not once: %v", "control ", n, err)
+	}
+}
+
+// The cycle refusal already names its control and traces the whole loop,
+// so it is the case attribution must leave alone. Its message is the one
+// that read worst when it did not: "markup: control card.gooey: markup:
+// control card.gooey includes itself: card.gooey → card.gooey" named one
+// file four times.
+func TestACycleRefusalIsNotAttributedTwice(t *testing.T) {
+	err := loadCycle(t, map[string]string{
+		"app.gooey":  `<Gooey><Card/></Gooey>`,
+		"card.gooey": `<Gooey><Card/></Gooey>`,
+	})
+	if err == nil {
+		t.Fatal("a self-including control loaded without error")
+	}
+	msg := err.Error()
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+	// Three: the attribution, and the two ends of the loop it traces.
+	// A second attribution makes it four.
+	if n := strings.Count(msg, "card.gooey"); n != 3 {
+		t.Errorf("error names card.gooey %d times, not 3 (the attribution plus "+
+			"both ends of the trace): %v", n, err)
+	}
+}

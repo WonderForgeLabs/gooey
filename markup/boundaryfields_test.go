@@ -155,13 +155,10 @@ var rowPartition = map[string]struct {
 		"instantiated, installed for the duration of one runSetup call. A row " +
 		"is not that call, and the save/restore exists so a nested " +
 		"instantiation cannot see the wrong declarations"},
-	"Declared": {false, "TAKEN BACK after one round of inheriting it. " +
-		"usercontrol.go writes parent.Declared[w] per declaring control, this " +
-		"factory runs per row realization and never unregisters, and nothing " +
-		"sweeps retired rows — so a scrolling list pinned one entry and one " +
-		"row subtree per row ever shown. Page-wide visibility of a row's " +
-		"declared surface is a real goal and cannot be bought with unbounded " +
-		"retention"},
+	"Declared": {false, "TAKEN BACK after one round of inheriting it: nothing " +
+		"retires a row, so sharing the page registry pinned one entry and one " +
+		"dead row subtree per row ever shown. The reasoning is on " +
+		"Context.Declared in markup.go and the gap is tracked as #512"},
 }
 
 // TestTheControlBoundaryPartitionsEveryContextField is the derived half:
@@ -650,7 +647,7 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 	// LIVE by a page-level probe that builds before the <ItemsView> does.
 	//
 	// Reading page.arms after Load cannot answer this: document.build
-	// restores the whole arm scope in its defer (markup.go:781), so
+	// restores the whole arm scope in its defer, so
 	// page.arms.sinks is nil by the time the switch runs, and the arm's
 	// old form — `len(page.arms.sinks) > 0 && sameSinks(...)` — was
 	// therefore false whatever itemsview.go did. Measured in review of
@@ -658,6 +655,19 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 	// says must not happen, left the test PASSING.
 	armsSentinel := prop.NewSource("")
 	var row *Context
+	// The four fields a page build SAVES AND RESTORES — ns and arms in
+	// document.build's own deferred closures, res through the pop
+	// pushDocumentResources hands back, and fsys in Load's. A read of
+	// any of them AFTER Load is a read of the value the build put back,
+	// not the value the build had, and that gap is what the arms arm
+	// below was burned by.
+	// Both sides of it are measured rather than described: scopes taken
+	// live here, compared against the same reads after Load.
+	type scopes struct{ ns, arms, fsys, res bool }
+	live := func(c *Context) scopes {
+		return scopes{c.ns != nil, c.arms.sinks != nil, c.fsys != nil, c.res.cur != nil}
+	}
+	var pageLive, rowLive scopes
 	page := &Context{
 		Dir:      "/tmp/anchor",
 		Variant:  "sixel",
@@ -677,7 +687,7 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		},
 		Components: map[string]Builder{
 			"Probe": func(e Element, c *Context) (gooey.Component, error) {
-				row = c
+				row, rowLive = c, live(c)
 				return &components.Text{}, nil
 			},
 			// Builds BEFORE the <ItemsView> — document order — so the
@@ -689,6 +699,7 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 					c.arms.sinks = map[*prop.Property[string]]string{}
 				}
 				c.arms.sinks[armsSentinel] = "page"
+				pageLive = live(c)
 				return &components.Text{}, nil
 			},
 		},
@@ -706,6 +717,54 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		t.Fatal("the probe builder never ran, so no row context was reached. " +
 			"ItemsView.Validate realizes one throwaway row during the build; " +
 			"if that stopped happening this test sees nothing")
+	}
+
+	// THE HAZARD, ASSERTED. The arms arm below reads a sentinel rather
+	// than comparing row.arms against page.arms, and the comment there
+	// says why; this is that reason in a form that can go red. If a
+	// restored field ever survives the build, an arm comparing it
+	// against the page becomes legitimate and this test should be the
+	// thing that says so — and if one stops surviving on the ROW, the
+	// switch's read-after-Load answer for it is no longer what the row
+	// had while it was live, and every arm reading it is lying.
+	for _, f := range []struct {
+		name        string
+		live, after bool
+	}{
+		{"ns", pageLive.ns, page.ns != nil},
+		{"arms", pageLive.arms, page.arms.sinks != nil},
+		{"fsys", pageLive.fsys, page.fsys != nil},
+		{"res", pageLive.res, page.res.cur != nil},
+	} {
+		if !f.live {
+			t.Errorf("the page had no %s DURING its own build, so this fixture "+
+				"cannot measure whether the build restores it — and the arm "+
+				"below that avoids comparing against page.%s rests on that",
+				f.name, f.name)
+			continue
+		}
+		if f.after {
+			t.Errorf("Context.%s survived the page's build. An arm may now compare "+
+				"row.%s against page.%s; while it did not, such an arm compared "+
+				"nil to nil and passed whatever itemsview.go did — which is how "+
+				"the arms arm came to be written as a sentinel", f.name, f.name, f.name)
+		}
+	}
+	for _, f := range []struct {
+		name        string
+		when, after bool
+	}{
+		{"ns", rowLive.ns, row.ns != nil},
+		{"arms", rowLive.arms, row.arms.sinks != nil},
+		{"fsys", rowLive.fsys, row.fsys != nil},
+		{"res", rowLive.res, row.res.cur != nil},
+	} {
+		if f.when != f.after {
+			t.Errorf("the row had Context.%s=%v while it was building and %v after "+
+				"Load returned, so the switch below reads the restored value, not "+
+				"the one the row was given. Capture it in the Probe builder instead",
+				f.name, f.when, f.after)
+		}
 	}
 
 	// EVERY FIELD, driven by contextFields — the same walk the control
