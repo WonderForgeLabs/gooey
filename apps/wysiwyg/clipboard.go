@@ -886,7 +886,7 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 // review of #501.
 func collectNamespaces(n *node, into map[string]string) {
 	for _, k := range sortedKeys(n.Attrs) {
-		if strings.HasPrefix(k, "xmlns:") {
+		if isNamespaceAttr(k) {
 			into[k] = n.Attrs[k]
 		}
 	}
@@ -903,17 +903,22 @@ func collectNamespaces(n *node, into map[string]string) {
 // spelled xmlnsFoo, and the plain "xmlns" is not one of these.
 //
 // IT MATCHED THE PLAIN FORM TOO, AND THE ARM WAS UNOBSERVABLE. Its only
-// caller, reconcileNamespacesInto, skipped `k == "xmlns"` two lines
+// caller then, reconcileNamespacesInto, skipped `k == "xmlns"` two lines
 // later, so returning false here produced the identical result at the
 // first continue — a predicate with no behaviour, which two functions
 // can then disagree about with nothing red. That is the same class as
 // the unreachable plain-xmlns entry already removed from
 // collectNamespaces, on the other side of the same pair. The
-// default-namespace reasoning moves onto the skip below, where it is
-// now the only thing deciding anything. Raised in review of #501, which
-// also corrected this comment's claim that carryDeclarations calls it —
-// carryDeclarations, envelopeAttrs and collectNamespaces all spell the
-// prefixed test inline because they must NOT move a plain xmlns.
+// default-namespace reasoning moved onto the skip in
+// reconcileNamespacesInto, where it is the only thing deciding anything.
+//
+// AND IT HAS FOUR CALLERS NOW, which is the other half of that round's
+// finding. While this matched the plain form it could not be shared —
+// carryDeclarations, envelopeAttrs and collectNamespaces must NOT move a
+// plain xmlns, so each spelled the prefixed test inline and the comment
+// here recorded that as the reason. The narrowing made the reason moot
+// and left four identical predicates with nothing explaining why they
+// were four; they call this now. Raised in review of #501.
 func isNamespaceAttr(k string) bool {
 	return strings.HasPrefix(k, "xmlns:")
 }

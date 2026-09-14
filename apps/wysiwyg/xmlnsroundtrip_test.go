@@ -997,8 +997,20 @@ func TestARefusedPasteBurnsNoName(t *testing.T) {
 
 	ed, _ := clipEditor(t)
 	spec := ed.specOrBare("Gauge")
+	// FATAL, NOT SKIPPED. Both of these were t.Skip, and a skip here
+	// disarms the only guard proving reconcileNamespaces runs BEFORE
+	// renameInto and rebindInto — silently, and in the one direction
+	// that matters: the palette and the seed are in this repository, so
+	// a <Gauge> that stops binding Value is a change somebody made here,
+	// not an environment this test has to tolerate. CLAUDE.md's skip
+	// doctrine is for a claim that dies with its issue; this is a
+	// FIXTURE PRECONDITION, and a precondition that stops holding means
+	// the test covers nothing rather than that it does not apply.
+	// Raised in review of #501.
 	if spec.Seed == "" {
-		t.Skip("no <Gauge> in this build's palette")
+		t.Fatalf("<Gauge> has no seed in this build's palette, so this test has no "+
+			"element whose seed binds a value and cannot exercise the ordering it "+
+			"is about. Pick another seeded element rather than skipping: %+v", spec)
 	}
 	src, values, err := markup.Seeded(spec, "G1")
 	if err != nil {
@@ -1013,7 +1025,12 @@ func TestARefusedPasteBurnsNoName(t *testing.T) {
 	}
 	n.Attrs["Name"] = "G1"
 	if n.Attrs["Value"] == "" {
-		t.Skip("<Gauge>'s seed does not bind Value in this build")
+		t.Fatalf("<Gauge>'s seed does not bind Value, so every attribute on this "+
+			"node is a literal — and rebindInto registers a handle only for a "+
+			"binding it RE-KEYS, which is the arm the first version of this test "+
+			"got wrong. Without a bound attribute the assertions below pass "+
+			"against the bug, so this is a broken fixture rather than an "+
+			"inapplicable test. Seed: %q", n.Attrs)
 	}
 	ed.doc().Kids = append(ed.doc().Kids, n)
 	ed.rebuild()
@@ -1177,5 +1194,65 @@ func TestCollectNamespacesReadsEveryWalkInOneOrder(t *testing.T) {
 			"sorted order, which is the one node.markup writes last when it "+
 			"serialises this node. A stable answer in the wrong order is still a "+
 			"walk that disagrees with the file it produces", seen)
+	}
+}
+
+// TestUndoDoesNotReachBackPastAnOpen is the fourth route to a document
+// wearing the wrong envelope, and the only one where the envelope is the
+// smaller half of the problem.
+//
+// Opening a file left the previous file's snapshots in the undo stack,
+// so ctrl+z put the FIRST document's tree back while ed.envAttrs and
+// ed.openPath still belonged to the SECOND. Measured before the fix:
+// open one carrying Graphics="halfblock", open a plain one, undo, and
+// the CODE tab reads a bare <Gooey> over Content="first". Nothing warns,
+// and a save at that point writes one document's content into the
+// other's path — which is why the fix is to end the history at the open
+// rather than to carry envAttrs through it. Carrying the envelope would
+// have made the screen self-consistent and the file mismatch total.
+// Raised in review of #501.
+func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
+	root := workspaceFixture(t)
+	write := func(name, envelope string) {
+		doc := `<Gooey xmlns="wonderforge.io/gooey/2026"` + envelope + `>` + "\n" +
+			`  <Canvas Name="Root"><Button Name="B" Content="` + name + `"/></Canvas>` + "\n" +
+			`</Gooey>` + "\n"
+		if err := os.WriteFile(filepath.Join(root, name+".gooey"), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("first", ` Graphics="halfblock"`)
+	write("second", "")
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("first.gooey")
+	ed.openWorkspaceFile("second.gooey")
+	// NON-VACUITY: the second file must actually be on screen, or the
+	// undo below has nothing to reach back past.
+	if src := ed.source.Get(); !strings.Contains(src, `Content="second"`) {
+		t.Fatalf("the second file is not the open document:\n%s", src)
+	}
+
+	ed.undo()
+	ed.rebuild()
+	src := ed.source.Get()
+	if strings.Contains(src, `Content="first"`) {
+		t.Errorf("undo restored the PREVIOUS file's tree into the open document. "+
+			"openPath still says %q, so this content would be saved over that "+
+			"file:\n%s", ed.openPath.Get(), src)
+	}
+	// AND THE ENVELOPE IS STILL THE SECOND FILE'S — the symptom that
+	// surfaced this, asserted separately because a fix that carried
+	// envAttrs through the undo would clear the arm above and leave a
+	// document whose envelope and openPath disagree.
+	if strings.Contains(src, `Graphics="halfblock"`) {
+		t.Errorf("undo brought the FIRST file's envelope onto the second "+
+			"document:\n%s", src)
+	}
+	if got := ed.openPath.Get(); got != "second.gooey" {
+		t.Errorf("undo moved openPath to %q; it names the file a save writes to "+
+			"and no undo should change it", got)
 	}
 }

@@ -391,6 +391,11 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	ed.envAttrs = env
 	ed.sel = n
 	ed.openPath.Set(rel)
+	// A NEW DOCUMENT STARTS WITH NO PAST. Without this the previous
+	// file's snapshots stay in the stack and ctrl+z restores ITS tree
+	// under THIS file's envelope, with openPath still naming this file —
+	// see history.reset for the measurement. Raised in review of #501.
+	ed.history().reset(ed.root)
 	ed.rebuild()
 }
 

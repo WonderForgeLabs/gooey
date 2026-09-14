@@ -738,7 +738,7 @@ func (n *node) markup(indent string) string {
 // in review of #501.
 func carryDeclarations(env, root *node) {
 	for k, v := range env.Attrs {
-		if !strings.HasPrefix(k, "xmlns:") {
+		if !isNamespaceAttr(k) {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
@@ -766,7 +766,7 @@ func carryDeclarations(env, root *node) {
 func envelopeAttrs(env, root *node) map[string]string {
 	out := make(map[string]string, len(env.Attrs))
 	for k, v := range env.Attrs {
-		if strings.HasPrefix(k, "xmlns:") && root.Attrs[k] == v {
+		if isNamespaceAttr(k) && root.Attrs[k] == v {
 			continue
 		}
 		out[k] = v

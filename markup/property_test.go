@@ -529,15 +529,34 @@ func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
 			"asymmetry documented here is gone and the message may widen", err)
 	}
 
-	// AND ON THE ROOT IT RESOLVES — so the arm above is about the
-	// PLACEMENT and not about the declaration being rejected outright.
-	const onRoot = `<Gooey xmlns:x="` + XNamespace + `">
+	// AND THE TWO PLACEMENTS THAT DO RESOLVE — so the arm above is about
+	// SCOPE and not about the declaration being rejected outright.
+	//
+	// THE SECOND OF THESE IS THE CORRECTION. This test had the root arm
+	// only, and the comment beside it read "the root is the only element
+	// whose declaration is in scope" — measured against the sibling case
+	// alone, which cannot tell "only the root" from "in scope at the
+	// element". XML scoping includes an element's OWN attributes, so
+	// <x:Property xmlns:x="…"/> resolves as well. The refusal's advice
+	// still names the root, because that is where every example puts it
+	// and where one declaration serves every declaration below — but the
+	// RULE is scope, and docs/markup-reference.md says so now. Raised in
+	// review of #501.
+	for _, tc := range []struct{ name, doc string }{
+		{"on the root", `<Gooey xmlns:x="` + XNamespace + `">
   <x:Property Name="Count" Type="int" Default="1"/>
   <Text>x</Text>
-</Gooey>`
-	if _, err := Build([]byte(onRoot), &Context{}); err != nil &&
-		strings.Contains(err.Error(), "dependency property declaration") {
-		t.Errorf("xmlns:x on <Gooey> is still refused as an unprefixed "+
-			"<Property>: %v", err)
+</Gooey>`},
+		{"on the x:Property itself", `<Gooey>
+  <x:Property xmlns:x="` + XNamespace + `" Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`},
+	} {
+		if _, err := Build([]byte(tc.doc), &Context{}); err != nil &&
+			strings.Contains(err.Error(), "dependency property declaration") {
+			t.Errorf("xmlns:x %s is still refused as an unprefixed <Property>: %v\n"+
+				"Both placements put the declaration in scope at the <x:Property>, "+
+				"which is what element-prefix resolution asks", tc.name, err)
+		}
 	}
 }

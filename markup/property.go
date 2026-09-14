@@ -339,10 +339,20 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 			// element may carry the declaration. `x:` prefixes an
 			// ELEMENT, and splitDeclarations reads c.Space, which
 			// encoding/xml resolved with real XML subtree scoping before
-			// this package saw it. <x:Property> must be a direct child of
-			// the root, so <Gooey> is the only element whose declaration
-			// is in scope for it. TestTheXPropertyRefusalNamesTheRoot
-			// pins the message, which nothing did.
+			// this package saw it. So the declaration must be IN SCOPE AT
+			// THE <x:Property>, which a sibling's copy never is.
+			//
+			// TWO PLACES SATISFY THAT, not one, and the round that wrote
+			// this comment measured only the sibling case and concluded
+			// "the root element" was the whole rule. XML scoping includes
+			// an element's own attributes, so
+			// <x:Property xmlns:x="…" …/> resolves too — measured, it
+			// loads. The message names the root because that is where
+			// every example puts it and where one declaration serves
+			// every declaration below it; it is advice, not an exhaustive
+			// statement of scope, and docs/markup-reference.md carries
+			// the rule itself. TestTheXPropertyRefusalNamesTheRoot pins
+			// all three placements. Corrected in review of #501.
 			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to the <Gooey> root element", XNamespace)
 		default:
 			kids = append(kids, c)
