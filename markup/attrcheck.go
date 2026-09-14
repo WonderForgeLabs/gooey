@@ -223,10 +223,12 @@ func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 // what a pseudo-element does not go through. An exemption that is true
 // of every element that builds is not true of one that does not.
 //
-// It shares readsAsData and pseudoRemedy with refuseUniversal so the
-// author gets one sentence rather than two dialects of it, and
+// It shares readsAsData with refuseUniversal so the author gets one
+// sentence rather than two dialects of it, and
 // TestEveryPseudoElementRefusesAPropertyElement is what keeps them
-// sharing it.
+// sharing it. The REMEDY is not shared verbatim: see propRemedy, which
+// is pseudoRemedy plus the one thing that differs between an attribute
+// and a property element, which is how you write it where it is going.
 func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 	if len(e.Props) == 0 {
 		return nil
@@ -238,7 +240,7 @@ func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 	sort.Strings(names)
 	name := names[0]
 	return fmt.Errorf("markup: <%s.%s>: %sso it builds no component for %s to apply to%s",
-		e.Name, name, readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
+		e.Name, name, readsAsData(spec, ctx), name, propRemedy(spec, ctx, name))
 }
 
 // readsAsData is the reason clause of the message above: who consumes
@@ -321,34 +323,12 @@ func namingParent(name string, ctx *Context) string {
 // spelled per element, so a fourth pseudo-element is covered by the
 // rule instead of by somebody remembering it. Raised in review of #486
 // round 2.
-// reservedOnContent names the universals a pseudo-element's PARENT owns
-// ON THE CONTENT INSIDE, with the sentence to say instead of the move.
 //
-// The remedy below is a BEHAVIOURAL claim and Children.Mode is a
-// STRUCTURAL fact, and for one attribute they disagree. A <Tab>'s
-// content is an ordinary element that takes every universal — except
-// Visibility, which buildTabs refuses on a page root because the <Tabs>
-// binds it to "selected == me". So `<Tab Visibility="Hidden">` was
-// refused with "put it on the content inside instead" and doing that hit
-// a second load error: the author walked from one refusal to another, by
-// advice. Nothing in the catalog says a container reserves an attribute
-// on its children, so this cannot be derived — but it can be GUARDED,
-// and TestTheContentRemedyIsAPlaceThatAccepts runs every universal
-// through both positions and fails on a row that is stale as well as on
-// a reservation with no row. Raised in review of #486.
-// contentRemedy is the prescription itself, named so the guard over it
-// can recognise it rather than re-spelling it. A test grepping the
-// sentence would also match reservedOnContent's answer below, which says
-// the content CANNOT take the attribute and shares most of its words.
-const contentRemedy = "; put it on the content inside instead"
-
-var reservedOnContent = map[string]map[string]string{
-	"Tab": {
-		"Visibility": "; the <Tabs> binds every page's Visibility to the selection, " +
-			"so it cannot go on the content inside either — set Tabs' Selected to choose the page",
-	},
-}
-
+// These three declarations each had their own paragraph and no blank
+// comment line between them, so godoc rendered one block on
+// contentRemedy and left this function and reservedOnContent
+// undocumented — the same thing that happened to splitPasteMarker's
+// neighbours in #445. Raised in review of #486.
 func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 	if why, ok := reservedOnContent[spec.Name][name]; ok {
 		return why
@@ -368,6 +348,60 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 		return ""
 	}
 	return contentRemedy
+}
+
+// contentRemedy is the prescription itself, named so the guard over it
+// can recognise it rather than re-spelling it. A test grepping the
+// sentence would also match reservedOnContent's answer, which says the
+// content CANNOT take the attribute and shares most of its words.
+const contentRemedy = "; put it on the content inside instead"
+
+// reservedOnContent names the universals a pseudo-element's PARENT owns
+// ON THE CONTENT INSIDE, with the sentence to say instead of the move.
+//
+// The remedy is a BEHAVIOURAL claim and Children.Mode is a STRUCTURAL
+// fact, and for one attribute they disagree. A <Tab>'s content is an
+// ordinary element that takes every universal — except Visibility,
+// which buildTabs refuses on a page root because the <Tabs> binds it to
+// "selected == me". So `<Tab Visibility="Hidden">` was refused with "put
+// it on the content inside instead" and doing that hit a second load
+// error: the author walked from one refusal to another, by advice.
+// Nothing in the catalog says a container reserves an attribute on its
+// children, so this cannot be derived — but it can be GUARDED, and
+// TestTheContentRemedyIsAPlaceThatAccepts runs every universal through
+// both positions and fails on a row that is stale as well as on a
+// reservation with no row. Raised in review of #486.
+var reservedOnContent = map[string]map[string]string{
+	"Tab": {
+		"Visibility": "; the <Tabs> binds every page's Visibility to the selection, " +
+			"so it cannot go on the content inside either — set Tabs' Selected to choose the page",
+	},
+}
+
+// propRemedy is pseudoRemedy's answer respelled for the PROPERTY-ELEMENT
+// case, and the respelling is the whole of it.
+//
+// pseudoRemedy answers for an attribute, where "put it on the content
+// inside" means writing `<Text Name="x">`. A property element is a
+// different syntax with a different rule: checkProps accepts <X.Foo>
+// only where propElements[X] lists Foo, and the two it accepts on
+// EVERYTHING are Behaviors and Resources. So for the other seven
+// universals the move is real and the spelling is not — an author who
+// copied <Tab.Name> onto the content and wrote <Text.Name> hit
+// checkProps' refusal instead, which is the same walked-from-one-error-
+// to-another this file's whole remedy discipline exists to stop.
+// Raised in review of #486.
+func propRemedy(spec ElementSpec, ctx *Context, name string) string {
+	r := pseudoRemedy(spec, ctx, name)
+	if r != contentRemedy || name == "Behaviors" || name == "Resources" {
+		// Either there is no destination, or a reservation has its own
+		// sentence, or this is one of the two property elements every
+		// element accepts — where the spelling carries over unchanged.
+		return r
+	}
+	return r + ", written as an attribute: a property element names a property " +
+		"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
+		"form that moves"
 }
 
 // acceptedByParent reports that this element sits in a container that

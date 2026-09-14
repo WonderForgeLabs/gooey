@@ -232,6 +232,14 @@ type wholeLoad struct {
 	// assumes.
 	onPseudo  string
 	onContent string
+	// propOnContent is onContent's other syntax: the same destination
+	// with the hole in CHILD position, so a remedy that sends a PROPERTY
+	// ELEMENT there can be followed in the spelling it names. Behaviors
+	// and Resources are the two every element accepts as <X.Foo>, so
+	// they are the only names that reach it; the other seven are told to
+	// change spelling and land on onContent instead. Raised in review of
+	// #486.
+	propOnContent string
 	// propOn is the same document with one %s hole INSIDE the
 	// pseudo-element, for a property element written
 	// `<Elem.Attr>v</Elem.Attr>`. It is the other spelling of a
@@ -243,27 +251,36 @@ type wholeLoad struct {
 
 var wholeLoadCases = map[string]wholeLoad{
 	"Tab": {
-		loads:     `<Gooey><Tabs><Tab Header="a"><Text>x</Text></Tab></Tabs></Gooey>`,
-		refused:   `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`,
-		attr:      "Name",
-		misplaced: `<Gooey><VStack><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></VStack></Gooey>`,
-		onPseudo:  `<Gooey><Tabs><Tab Header="a" %s><Text>x</Text></Tab></Tabs></Gooey>`,
-		onContent: `<Gooey><Tabs><Tab Header="a"><Text %s>x</Text></Tab></Tabs></Gooey>`,
-		propOn:    `<Gooey><Tabs><Tab Header="a">%s<Text>x</Text></Tab></Tabs></Gooey>`,
+		loads:         `<Gooey><Tabs><Tab Header="a"><Text>x</Text></Tab></Tabs></Gooey>`,
+		refused:       `<Gooey><Tabs><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></Tabs></Gooey>`,
+		attr:          "Name",
+		misplaced:     `<Gooey><VStack><Tab Header="a" Name="Zonk"><Text>x</Text></Tab></VStack></Gooey>`,
+		onPseudo:      `<Gooey><Tabs><Tab Header="a" %s><Text>x</Text></Tab></Tabs></Gooey>`,
+		onContent:     `<Gooey><Tabs><Tab Header="a"><Text %s>x</Text></Tab></Tabs></Gooey>`,
+		propOnContent: `<Gooey><Tabs><Tab Header="a"><Text>%s</Text></Tab></Tabs></Gooey>`,
+		propOn:        `<Gooey><Tabs><Tab Header="a">%s<Text>x</Text></Tab></Tabs></Gooey>`,
 	},
 	"Menu": {
 		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		refused:   `<Gooey><MenuBar><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		attr:      "Name",
 		misplaced: `<Gooey><VStack><Menu Title="F" Name="Zonk"><MenuItem Text="Open"/></Menu></VStack></Gooey>`,
-		propOn:    `<Gooey><MenuBar><Menu Title="F">%s<MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
+		// onPseudo WITHOUT onContent: a <Menu> holds only <MenuItem>,
+		// which refuses the same universals, so there is no destination
+		// and the refusal must prescribe none. That pairing is a claim in
+		// its own right and the loops below read it as one.
+		onPseudo: `<Gooey><MenuBar><Menu Title="F" %s><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
+		propOn:   `<Gooey><MenuBar><Menu Title="F">%s<MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 	},
 	"MenuItem": {
 		loads:     `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open"/></Menu></MenuBar></Gooey>`,
 		refused:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open" Margin="2"/></Menu></MenuBar></Gooey>`,
 		attr:      "Margin",
 		misplaced: `<Gooey><VStack><MenuItem Text="Open" Margin="2"/></VStack></Gooey>`,
-		propOn:    `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open">%s</MenuItem></Menu></MenuBar></Gooey>`,
+		// ModeLeaf: there is no content inside at all, so likewise no
+		// destination and no remedy.
+		onPseudo: `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open" %s/></Menu></MenuBar></Gooey>`,
+		propOn:   `<Gooey><MenuBar><Menu Title="F"><MenuItem Text="Open">%s</MenuItem></Menu></MenuBar></Gooey>`,
 	},
 }
 
@@ -546,18 +563,32 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 		if acceptsAUniversal(t, sp) {
 			continue
 		}
-		checked++
 		tc := wholeLoadCases[sp.Name]
-		_, err := Build([]byte(tc.refused), &Context{})
-		if err == nil {
-			t.Errorf("<%s %s=…> was not refused at all", sp.Name, tc.attr)
+		if tc.onPseudo == "" {
+			t.Errorf("<%s> has no onPseudo template, so this can only check the "+
+				"one attribute wholeLoadCases happens to spell in `refused` — "+
+				"and the remedy is decided PER ATTRIBUTE", sp.Name)
 			continue
 		}
-		if strings.Contains(err.Error(), contentRemedy) {
-			t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
-				"refusal tells the author to put the attribute on the content "+
-				"inside — a remedy whose destination refuses it too:\n\t%v",
-				sp.Name, sp.Children.Mode, tc.attr, err)
+		// EVERY UNIVERSAL, not the row's one spelling. The remedy is
+		// computed per attribute, so checking one of eight leaves seven
+		// unread — and reservedOnContent exists precisely because two
+		// attributes on one element can want different answers. Raised
+		// in review of #486.
+		for _, u := range universalAttrs {
+			checked++
+			attr := fmt.Sprintf("%s=%q", u.Name, validLiteralFor(t, "Border", u))
+			_, err := Build([]byte(fmt.Sprintf(tc.onPseudo, attr)), &Context{})
+			if err == nil {
+				t.Errorf("<%s %s> was not refused at all", sp.Name, attr)
+				continue
+			}
+			if strings.Contains(err.Error(), contentRemedy) {
+				t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
+					"refusal tells the author to put the attribute on the content "+
+					"inside — a remedy whose destination refuses it too:\n\t%v",
+					sp.Name, sp.Children.Mode, u.Name, err)
+			}
 		}
 	}
 	if checked == 0 {
@@ -666,17 +697,9 @@ func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
 	for _, sp := range pseudoSpecs(t) {
 		tc := wholeLoadCases[sp.Name]
 		if tc.onPseudo == "" {
-			// Asserted, not assumed: a row with no templates is a claim
-			// that this element never prescribes a destination.
-			for _, u := range universalAttrs {
-				_, err := Build([]byte(tc.refused), &Context{})
-				if err != nil && strings.Contains(err.Error(), contentRemedy) {
-					t.Errorf("<%s> prescribes the content remedy for %s and this table "+
-						"has no onPseudo/onContent pair for it, so nothing checks that "+
-						"the destination accepts it:\n\t%v", sp.Name, u.Name, err)
-					break
-				}
-			}
+			t.Errorf("<%s> has no onPseudo template, so the loop below would "+
+				"rebuild one fixed document eight times and read the loop "+
+				"variable only in its own failure message", sp.Name)
 			continue
 		}
 		for _, u := range universalAttrs {
@@ -699,6 +722,17 @@ func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
 				continue // no destination prescribed, nothing to check
 			}
 			prescribed++
+			if tc.onContent == "" {
+				// A ROW WITH NO DESTINATION TEMPLATE IS A CLAIM that
+				// this element never prescribes one. Prescribing anyway
+				// is the failure, and it used to be unreachable: the
+				// arm that checked it rebuilt `refused` per attribute
+				// and so could only ever see the one the row spells.
+				t.Errorf("<%s> prescribes the content remedy for %s and this table "+
+					"has no onContent template for it, so nothing checks that the "+
+					"destination accepts it:\n\t%v", sp.Name, u.Name, err)
+				continue
+			}
 			if _, err := Build([]byte(fmt.Sprintf(tc.onContent, attr)), &Context{}); err != nil {
 				t.Errorf("<%s %s> is refused with \"put it on the content inside instead\", "+
 					"and the content refuses it too:\n\t%v\nThe author is walked from one "+
@@ -804,6 +838,60 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 				t.Errorf("%s is refused without the shared sentence, so the two "+
 					"spellings have drifted into two dialects of one rule:\n\t%v",
 					prop, err)
+			}
+			if !strings.Contains(err.Error(), contentRemedy) {
+				continue // no destination prescribed, nothing to follow
+			}
+			// AND THE REMEDY, FOLLOWED — in the spelling it names. The
+			// property-element refusal borrowed the attribute remedy
+			// verbatim for its whole first round, so seven of these nine
+			// told an author to "put it on the content inside" and an
+			// author who moved <Tab.Name> to <Text.Name> hit checkProps'
+			// refusal instead: propElements lists Name for nothing, and
+			// the two property elements every element does accept are
+			// Behaviors and Resources. Raised in review of #486.
+			if name != "Behaviors" && name != "Resources" {
+				if !strings.Contains(err.Error(), "written as an attribute") {
+					t.Errorf("%s is refused with \"put it on the content inside\" and "+
+						"nothing about the spelling, so the author moves the property "+
+						"element and meets checkProps' refusal instead:\n\t%v", prop, err)
+					continue
+				}
+			}
+			if tc.onContent == "" {
+				t.Errorf("%s prescribes the content remedy and this table has no "+
+					"onContent template, so nothing checks that the destination "+
+					"accepts it:\n\t%v", prop, err)
+				continue
+			}
+			// THE DESTINATION IN THE SPELLING THE REMEDY NAMES. For
+			// Behaviors and Resources that is still a property element,
+			// so it goes in child position; for the other seven the
+			// remedy says "written as an attribute" and it goes in the
+			// attribute hole.
+			doc, dest := tc.onContent, prop
+			if name == "Behaviors" || name == "Resources" {
+				if tc.propOnContent == "" {
+					t.Errorf("%s prescribes the content remedy and this table has no "+
+						"propOnContent template, so the one spelling that carries over "+
+						"unchanged is unchecked:\n\t%v", prop, err)
+					continue
+				}
+				doc = tc.propOnContent
+				dest = fmt.Sprintf("<Text.%s/>", name)
+			} else {
+				u, ok := universalByName(name)
+				if !ok {
+					t.Errorf("%s prescribes the attribute spelling for %q, which is "+
+						"not a universal attribute — there is nothing for the author "+
+						"to write", prop, name)
+					continue
+				}
+				dest = fmt.Sprintf("%s=%q", name, validLiteralFor(t, "Border", u))
+			}
+			if _, err := Build([]byte(fmt.Sprintf(doc, dest)), &Context{}); err != nil {
+				t.Errorf("%s is refused with a remedy that lands on %q, and the "+
+					"content refuses that too:\n\t%v", prop, dest, err)
 			}
 		}
 	}
