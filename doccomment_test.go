@@ -235,6 +235,12 @@ func TestTheDocCommentGuardCatchesWhatItIsFor(t *testing.T) {
 		name string
 		src  string
 		want string // "" means no fault
+		// wantMsg is the message body, asserted where the WORDING is the
+		// finding rather than the identification. The name check below
+		// cannot see a remediation sentence that sends the reader to the
+		// wrong edit, which is how the block arm came to carry the
+		// neighbour arms' tail. Raised in review of #503.
+		wantMsg string
 	}{
 		{
 			name: "a function stolen from",
@@ -376,6 +382,31 @@ const (
 )
 `,
 			want: "fuzzyGap",
+			wantMsg: "the doc comment on fuzzyRun opens by naming fuzzyGap, which is " +
+				"a later entry of the very block it opens. That is a block doc that " +
+				"no longer opens on its own first entry — either fuzzyRun was " +
+				"inserted above fuzzyGap, or fuzzyGap was moved down past it, and " +
+				"either way fuzzyRun has inherited a comment written for fuzzyGap.",
+		},
+		{
+			// TWO INSERTIONS INSIDE ONE BLOCK, which the spec arm could
+			// not see while it tested exactly one neighbour — the hole
+			// the block-doc arm's comment argues must not exist at this
+			// level either. Silent before review of #503.
+			name: "a spec's doc names a sibling two entries down",
+			src: `const (
+	// KindAlpha is the alpha kind.
+	KindBeta  = "beta"
+	KindGamma = "gamma"
+	KindAlpha = "alpha"
+)
+`,
+			want: "KindAlpha",
+			wantMsg: "the doc comment on KindBeta opens by naming KindAlpha, which " +
+				"is a later entry of this block. That is a doc comment that was " +
+				"separated from what it documents — either KindAlpha was inserted " +
+				"between the two, or the blank line between two comment groups was " +
+				"lost, and either way KindBeta is now undocumented.",
 		},
 		{
 			// THE SHAPE FIVE OF THE SIX REAL FINDINGS HAD, which is not
@@ -455,6 +486,8 @@ func (p *pane) inset() int { return 1 }
 					len(got), tc.want, got)
 			case !strings.Contains(got[0], tc.want):
 				t.Errorf("reported %q, which does not name %s", got[0], tc.want)
+			case tc.wantMsg != "" && !strings.Contains(got[0], tc.wantMsg):
+				t.Errorf("reported\n\t%q\nwant it to carry\n\t%q", got[0], tc.wantMsg)
 			}
 			// AND THE POPULATION COUNT SEES THE SAME DOCUMENTS. A walk
 			// that reported correctly while counting nothing would leave
@@ -486,14 +519,33 @@ func (p *pane) inset() int { return 1 }
 // a block is ONE decl. Raised in review of #470.
 func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	var out []string
-	report := func(pos gotoken.Pos, name, first, locator string) {
+	report := func(pos gotoken.Pos, name, first, locator, remedy string) {
 		at := fset.Position(pos)
 		out = append(out, fmt.Sprintf("%s: the doc comment on %s opens by naming %s, "+
-			"which is %s. That is a doc comment that was separated from what it "+
+			"which is %s. %s%s",
+			at, name, first, locator, remedy, confirmHint(at.Filename, pkg, first)))
+	}
+	// TWO REMEDIES, because the two shapes are repaired by different
+	// edits and one sentence described only the first. The neighbour arms
+	// found a comment SEPARATED from its subject by something new between
+	// them. The block-doc arm found the opposite arrangement — the
+	// insertion is at the TOP of the block, above the comment's subject,
+	// and nothing is undocumented: the block's first entry has inherited
+	// a comment written for a sibling. Sending that reader looking for an
+	// insertion "between the two" is the class of defect
+	// declaresDirectlyBelow's own comment records fixing one arm over.
+	// Raised in review of #503.
+	separated := func(name, first string) string {
+		return fmt.Sprintf("That is a doc comment that was separated from what it "+
 			"documents — either %s was inserted between the two, or the blank line "+
 			"between two comment groups was lost, and either way %s is now "+
-			"undocumented.%s",
-			at, name, first, locator, first, name, confirmHint(at.Filename, pkg, first)))
+			"undocumented.", first, name)
+	}
+	inherited := func(name, first string) string {
+		return fmt.Sprintf("That is a block doc that no longer opens on its own "+
+			"first entry — either %s was inserted above %s, or %s was moved down "+
+			"past it, and either way %s has inherited a comment written for %s.",
+			name, first, first, name, first)
 	}
 	for i, d := range f.Decls {
 		g, block := d.(*ast.GenDecl)
@@ -502,7 +554,8 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 			if first := opensBy(doc); first != "" && first != name {
 				switch {
 				case i+1 < len(f.Decls) && declaresDirectlyBelow(f.Decls[i+1], first):
-					report(d.Pos(), name, first, "the declaration DIRECTLY BELOW it")
+					report(d.Pos(), name, first, "the declaration DIRECTLY BELOW it",
+						separated(name, first))
 				// A BLOCK'S DOC NAMING A LATER ENTRY OF ITS OWN BLOCK,
 				// which nothing reported until review of #503. documented
 				// answers for a block with its FIRST spec's name, and the
@@ -531,7 +584,8 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 				// re-open the hole for two insertions instead of one.
 				case block && declaresIn(g.Specs[1:], first):
 					report(d.Pos(), name, first,
-						"a later entry of the very block it opens")
+						"a later entry of the very block it opens",
+						inherited(name, first))
 				}
 			}
 		}
@@ -543,9 +597,27 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 			if !ok || j+1 >= len(g.Specs) {
 				continue
 			}
-			if first := opensBy(doc); first != "" && first != name && specDeclares(g.Specs[j+1], first) {
-				report(sp.Pos(), name, first, "the entry of this block DIRECTLY BELOW it")
+			// THE WHOLE TAIL, for the reason the block-doc arm above
+			// gives about distance inside a parenthesised block: a spec
+			// doc is inside that block too, so a doc opening with a
+			// sibling's name is describing a sibling it does not
+			// document however far down that sibling sits. The cross
+			// reference objection that makes DIRECTLY BELOW the right
+			// fence BETWEEN declarations does not reach here — a doc
+			// opening with its own name is already excluded by
+			// first != name, so what is left is the theft signature and
+			// not prose. Restricted to g.Specs[j+1] this arm was blind
+			// to two insertions where the arm eighteen lines up argued
+			// it must not be. Raised in review of #503.
+			first := opensBy(doc)
+			if first == "" || first == name || !declaresIn(g.Specs[j+1:], first) {
+				continue
 			}
+			locator := "a later entry of this block"
+			if specDeclares(g.Specs[j+1], first) {
+				locator = "the entry of this block DIRECTLY BELOW it"
+			}
+			report(sp.Pos(), name, first, locator, separated(name, first))
 		}
 	}
 	return out
