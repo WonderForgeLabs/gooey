@@ -494,7 +494,8 @@ func str(p *prop.Property[string]) string {
 // pixels.
 //
 // CELLS AND PIXELS BOTH, because the two callers are different and
-// neither can derive the other: coordinates for SendMouse are cells, and
+// neither can derive the other: coordinates for SendPointer are cells,
+// and
 // the graphics layer sizes a picture in pixels (term.Caps.CellW/CellH).
 // A client that had to ask twice would ask once and guess the rest.
 //
@@ -508,7 +509,12 @@ type ScreenSize struct {
 	// an unscoped session, the island's arranged rect for a scoped one.
 	Cols, Rows int
 	// X, Y is that surface's ABSOLUTE top-left on the host's page, which
-	// is the frame SendMouse and SendKeys take their coordinates in. It
+	// is the frame SendPointer takes its coordinates in — SendKeys takes
+	// none, and naming it here told a Go caller to convert for an API
+	// that has no coordinates to convert. Raised in review of #504,
+	// along with SendMouse, which is the MCP TOOL name: the Go method is
+	// SendPointer (control/input.go) and this type's own method doc had
+	// it right while the struct doc a `go doc` prints did not. It
 	// is (0, 0) for an unscoped session, and for a scoped one it is the
 	// island's own origin — so a guest that never asks lands every click
 	// Y rows too high.
@@ -558,7 +564,7 @@ type ScreenSize struct {
 // its island. Answering with the terminal would break it in the
 // direction that costs something — a guest told the screen is 60x14 when
 // it may only touch a 60x3 border computes coordinates for cells it
-// cannot reach, and SendMouse answers those with silence rather than an
+// cannot reach, and SendPointer answers those with silence rather than an
 // error.
 //
 // X and Y carry the island's ORIGIN, and they are what make that fiction

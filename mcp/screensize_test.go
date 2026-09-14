@@ -282,21 +282,23 @@ func TestAGuestIsToldItsIslandsSize(t *testing.T) {
 // is deliberately NOT asserted: the page is free to mention a name that
 // is not a tool.
 //
-// It SKIPS rather than fails when the page is absent, because `mcp` is
-// its own module: the zip a proxy serves contains mcp/ and nothing above
-// it, so `../docs` does not exist for anyone consuming the module
-// standalone. A guard that cannot run there must say so rather than
-// report the repo's docs as broken on someone else's machine.
+// It SKIPS rather than fails when the page is out of reach, because
+// `mcp` is its own module: the zip a proxy serves contains mcp/ and
+// nothing above it, so `../docs` does not exist for anyone consuming the
+// module standalone. A guard that cannot run there must say so rather
+// than report the repo's docs as broken on someone else's machine.
+//
+// THE QUESTION IS ASKED ONCE, UP FRONT, and not derived from the read —
+// see pageOrSkip. Skipping on fs.ErrNotExist covered "this module is
+// being consumed standalone" and "somebody renamed the page and nothing
+// follows it any more" with the same green, which is the defect
+// TestTheAgentWorkflowsToolInventoriesAreComplete had already fixed for
+// the workflow blobs. A guard whose whole premise is that a prose
+// inventory goes stale silently cannot disable itself on a rename.
+// Raised in review of #504.
 func TestTheTutorialsToolInventoryIsComplete(t *testing.T) {
 	const page = "../docs/learn/08-remote-control.md"
-	body, err := os.ReadFile(page)
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("%s is outside this module and absent, so this guard only runs "+
-			"inside the repo checkout", page)
-	}
-	if err != nil {
-		t.Fatalf("reading %s: %v", page, err)
-	}
+	body := pageOrSkip(t, page)
 	// THE INVENTORY PARAGRAPH, not the page. This handed over the whole
 	// tutorial until review of #504, which is the page-wide vacuous pass
 	// TestTheGRPCContractTableNamesEveryTool declines by name below: the
@@ -457,6 +459,19 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 			"stops at lowercase, so a camel-cased sibling reads as the name it " +
 			"merely starts with")
 	}
+
+	// AND THE TABLE READ HOLDS THE SAME NAME SHAPE. toolColumn is the
+	// fourth reader in this file and the only one with its own character
+	// class, which sat at [a-z_] while isIdentByte above was widened —
+	// so a row for screen_size2 was invisible to the guard and reported
+	// as a missing row. Raised in review of #504.
+	rows := toolColumn("| `alpha` | one |\n| `screen_size2` | two |\n| `sendKeys` | three |\n")
+	for _, name := range []string{"alpha", "screen_size2", "sendKeys"} {
+		if !rows[name] {
+			t.Errorf("toolColumn dropped the row for %s, so a table that names "+
+				"every tool would be reported as missing one: %v", name, rows)
+		}
+	}
 }
 
 // TestTheMCPSpecsToolInventoryIsComplete is the fourth surface, and the
@@ -478,14 +493,7 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 // TestTheTutorialsToolInventoryIsComplete gives.
 func TestTheMCPSpecsToolInventoryIsComplete(t *testing.T) {
 	const page = "../docs/specs/2026-08-10-mcp-server.md"
-	body, err := os.ReadFile(page)
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("%s is outside this module and absent, so this guard only runs "+
-			"inside the repo checkout", page)
-	}
-	if err != nil {
-		t.Fatalf("reading %s: %v", page, err)
-	}
+	body := pageOrSkip(t, page)
 	// AN ENTRY, not a mention — and a SECTION SLICE IS THE WRONG
 	// NARROWING HERE, which is a measurement and not a preference.
 	// "## Tools (v1)" is the ORIGINAL set and this record extends
@@ -532,14 +540,7 @@ func TestTheMCPSpecsToolInventoryIsComplete(t *testing.T) {
 // TestTheTutorialsToolInventoryIsComplete gives.
 func TestTheGRPCContractTableNamesEveryTool(t *testing.T) {
 	const page = "../docs/specs/2026-08-10-grpc-contract.md"
-	body, err := os.ReadFile(page)
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("%s is outside this module and absent, so this guard only runs "+
-			"inside the repo checkout", page)
-	}
-	if err != nil {
-		t.Fatalf("reading %s: %v", page, err)
-	}
+	body := pageOrSkip(t, page)
 	rows := toolColumn(string(body))
 	if len(rows) == 0 {
 		t.Fatalf("found no tool rows in %s, so this guard would pass vacuously — "+
@@ -570,7 +571,17 @@ func toolColumn(body string) map[string]bool {
 	return out
 }
 
-var tableToolRe = regexp.MustCompile("^\\|\\s*`([a-z_]+)`\\s*\\|")
+// THE SAME NAME SHAPE isIdentByte USES, which is the point rather than
+// a coincidence: this PR widened that one to uppercase and digits on the
+// ground that "a rule that is correct only for the names that happen to
+// exist is the kind that stops being correct silently", and left this
+// copy of the same rule at [a-z_]. A tool named screen_size2 would
+// capture screen_size, hit a digit where the closing backtick was
+// demanded, and be dropped from the column — so the guard would report a
+// missing row for a table that has one. It fails red rather than green,
+// which makes it a false alarm rather than a hole, and it is still the
+// class the PR just closed one function over. Raised in review of #504.
+var tableToolRe = regexp.MustCompile("^\\|\\s*`([A-Za-z0-9_]+)`\\s*\\|")
 
 // TestTheServerInstructionsNameEveryTool is the same guard one surface
 // closer to the client.
@@ -753,18 +764,23 @@ func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
 	// island, so they must NOT have been zeroed along with it — which is
 	// what a blanket "return an empty ScreenSize" would do.
 	//
-	// THE CAPS ARE PROBED FIRST, and the assertion reads their VALUES.
-	// Asking whether the keys are present could never fail: screenSize
-	// writes all six unconditionally, so the map has them whatever
-	// ScreenSize returned, and the fixture's caps are zero anyway — the
-	// arm agreed with a blanket zeroing and with the correct answer alike.
-	// Raised in review of #504.
-	probed := guest.json("screen_size", nil)
-	if int(probed["cellWidth"].(float64)) != capW || int(probed["cellHeight"].(float64)) != capH {
+	// THE CAPS WERE SET BEFORE THAT CALL, and the assertion reads their
+	// VALUES off it. Asking whether the keys are present could never
+	// fail: screenSize writes all six unconditionally, so the map has
+	// them whatever ScreenSize returned, and the fixture's caps were zero
+	// anyway — the arm agreed with a blanket zeroing and with the correct
+	// answer alike.
+	//
+	// ONE CALL, not two. This read the values off a SECOND
+	// guest.json("screen_size", nil) taken immediately after the first,
+	// with the caps already set above both and nothing changed in
+	// between — an extra round trip and one more thing for a later
+	// reader to reconcile. Raised in review of #504, both halves.
+	if int(sz["cellWidth"].(float64)) != capW || int(sz["cellHeight"].(float64)) != capH {
 		t.Errorf("a collapsed island reports cell metrics %vx%v, want the probed "+
 			"%dx%d: the terminal's cell size is not the island's, and zeroing it "+
 			"with the extent is what a blanket empty ScreenSize would do",
-			probed["cellWidth"], probed["cellHeight"], capW, capH)
+			sz["cellWidth"], sz["cellHeight"], capW, capH)
 	}
 
 	if txt := guest.ok("screen_text", nil); txt != "" {
@@ -1044,4 +1060,34 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 			t.Errorf("required names %q, which is not a published property", name)
 		}
 	}
+}
+
+// pageOrSkip reads a page that lives ABOVE this module, skipping when
+// the module is being consumed standalone and failing when the page is
+// simply not where the guard says it is.
+//
+// The two are different answers and os.ReadFile gives them the same
+// error. inRepoCheckout is the question that separates them, and it is
+// asked first: outside the checkout `../docs` is legitimately absent,
+// inside it a missing page is a rename the guard has to follow. Raised
+// in review of #504, from the fix the workflow-blob loop already
+// carried.
+func pageOrSkip(t *testing.T, page string) []byte {
+	t.Helper()
+	if !inRepoCheckout(t) {
+		t.Skipf("%s is outside this module and this is not the repo checkout, so "+
+			"this guard cannot run here", page)
+	}
+	body, err := os.ReadFile(page)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("%s is missing from the repo checkout — renamed, moved or "+
+			"deleted. This guard is the only thing keeping that page's tool "+
+			"inventory in step with the server, so it follows the page rather "+
+			"than skipping: point it at the new path, or delete it with the page",
+			page)
+	}
+	if err != nil {
+		t.Fatalf("reading %s: %v", page, err)
+	}
+	return body
 }
