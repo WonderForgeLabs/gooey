@@ -12,17 +12,31 @@ So a lifted overlay paints above the page **from wherever it is
 declared**. In a `Grid`, `Grid.Row` places it where it belongs and
 nothing about z-order argues with that.
 
-**Which surfaces are lifted, exactly.** `MenuBar`, `Popup`, `ToastHost`
-and `AdornmentLayer` **are** lifted. That is every overlay host the
-framework ships, so `cmd/toolkit` declaring its `MenuBar`, `ToastHost`
-and `AdornmentLayer` at the end of its Grid is house style and decides
-nothing.
+**Which surfaces are lifted, exactly.** `ToastHost`, `AdornmentLayer`
+and `Popup` **are** lifted — `Popup` through the surface it opens, which
+is the thing that carries the marker and is what a `MenuBar`'s
+**dropdown** is. Grep for `OverlaysPage()` and those three types are
+what you find.
 
-(That sentence used to say "all three" and then "the bar", and neither
-had an antecedent it could take — the nearest three were `Tooltip`,
-`ToastHost` and `AdornmentLayer`, and `cmd/toolkit` declares no `Tooltip`
-at the end of its Grid, its tips being inside the job and overlays tabs.
-Naming them makes it say what the file does.)
+**A `MenuBar` is not one of them, and the distinction is the useful
+half.** The bar is an ordinary component: `Grid.Row` places it, it
+occupies a row, and it paints in document order like anything else. What
+goes above the page is the dropdown it opens, and nothing places that —
+which is exactly why the bar's position in the Grid is a layout decision
+and the dropdown's is not a decision at all. This page said "`MenuBar` …
+**are** lifted" until review of #456, one sentence away from the README
+saying the opposite; the README had it right.
+
+So `cmd/toolkit` declaring its `MenuBar`, `ToastHost` and
+`AdornmentLayer` at the end of its Grid is house style and decides
+nothing — for the bar because its dropdown is lifted whatever the bar
+does, and for the other two because they carry the marker themselves.
+
+(The sentence before that one used to say "all three" and then "the
+bar", and neither had an antecedent it could take — the nearest three
+were `Tooltip`, `ToastHost` and `AdornmentLayer`, and `cmd/toolkit`
+declares no `Tooltip` at the end of its Grid, its tips being inside the
+job and overlays tabs. Naming them makes it say what the file does.)
 
 A `Tooltip` is **not** one of them, and it reads as if it should be: its
 tip is `tipPopup`, an ordinary leaf the `AdornmentLayer` hosts, so the

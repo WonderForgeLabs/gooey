@@ -624,6 +624,7 @@ func renderTree(w Component, f *Frame, depth int) {
 	//
 	// No reuse across calls here — Compose is one-shot by definition, so
 	// the buckets are a local that dies with the frame.
+	//
 	// A SEPARATE DESTINATION, not lifted[:0]. Writing the result back
 	// over its own input happens to be safe — every item is copied into
 	// a bucket before the append loop starts — but appendByRank has
