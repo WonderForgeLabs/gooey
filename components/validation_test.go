@@ -411,7 +411,7 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	// that reading is only available because this ran first. Raised in
 	// review of #498.
 	if len(layer.Adornments()) == 0 {
-		t.Fatalf("the fixture placed no adornment at build time, before anything " +
+		t.Fatal("the fixture placed no adornment at build time, before anything " +
 			"was frozen or hidden, so every assertion about surviving one is " +
 			"about a page that never had a marker")
 	}
@@ -443,6 +443,14 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 // Go comment, so a citation here points at whatever moves into that line
 // and nothing reddens. Name the function and the statement; the reader
 // greps.
+//
+// A SYMBOL IS NOT A LINE NUMBER, and the rule above is only about the
+// second. A name survives every edit above it, and a grep for one either
+// finds it or does not — which is why the paragraph below can cite
+// wysiwyg's Pane.BindDesignMode across a module boundary and keep it: a
+// rename there leaves a grep that fails visibly, not a citation quietly
+// pointing at whatever moved into the line. Read literally, the rule
+// above deletes a citation worth keeping. Raised in review of #498.
 //
 // TWO TESTS REDDEN when the second is gated the way the first is, not
 // one — this comment claimed "the only test in the tree" until review of
@@ -544,6 +552,20 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, layer *AdornmentLayer, m
 // FocusManager.evictFrozen, which clears hover, captor,
 // prev and lastClick. Nothing there drops adornments today.
 //
+// SO THIS IS A FORWARD GUARD, and what it is forward OF was measured
+// rather than asserted. The obvious eviction to write next — evictFrozen
+// walking a frozen host's attachments and handing each a nil manager —
+// leaves this test green: ValidationMarker.ensurePlaced returns early
+// while m.pop is non-nil, so a nil manager stops it placing a NEW popup
+// and does not unplace the one already there. Dropping a placed
+// adornment needs the layer's own orphaned(), which is unexported in
+// components and unreachable from the framework side, so there is no
+// one-line edit in evictFrozen that reddens this today. That is the
+// honest shape of the pin: it holds the door for the seam that would
+// have to be added, not against an edit available now. Neither mutation
+// this file measures elsewhere touches it either. Raised in review of
+// #498.
+//
 // IT NO LONGER HIDES THE ANCHOR. That phase and the identity assertion
 // it needed moved to
 // TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden, because two
@@ -590,8 +612,14 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 // frame's ensurePlaced builds a fresh popup — so on a hidden anchor:
 //
 //	                      pop != nil  IsShown  adornments  row 1
-//	AdornmentPersists()     true       true        1       "####…"
-//	          -> false      true       true        1       "####…"
+//	AdornmentPersists()     true       true        1       ""
+//	          -> false      true       true        1       ""
+//
+// Measured on frozenMarkerPage with the anchor hidden, both arms. Row 1
+// is empty because a hidden anchor vacates the cells the message was
+// painting in; it read "####…" until review of #498, which is
+// formPage's filler — a value transplanted from the sibling test's page,
+// in a table that reads as measured.
 //
 // Every observable agrees; only the POINTER differs. Two arms agreeing
 // is a harness result, not a passing test.
@@ -610,16 +638,18 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 			"is not the frozen path and the unfrozen sibling already covers it")
 	}
 
+	// THE HELPER, not a second copy of two of its three arms. This
+	// re-implemented them by hand and inherited the wording the helper
+	// had already been corrected for: an empty layer HERE cannot be the
+	// page's fault, because frozenMarkerPage asserts a placement at build
+	// time and the freeze has been flipped on since — so an empty layer
+	// is the flip dropping the adornment, which is the regression this
+	// test exists to catch, reported to the reader as somebody else's
+	// broken fixture. Calling assertMarkerShows also restores the half
+	// the copy left out: pop != nil is not "the user can see it". Raised
+	// in review of #498.
+	assertMarkerShows(t, c, layer, m, "while frozen, before the anchor was hidden")
 	kept := m.pop
-	// THE FIXTURE FIRST, the same separation assertMarkerShows makes: a
-	// layer that hosted nothing produces a nil popup from a cause that is
-	// not the freeze, and the message below would send the reader looking
-	// for a drop that never happened.
-	if kept == nil && len(layer.Adornments()) == 0 {
-		t.Fatal("no popup to hold onto AND the layer hosts no adornment, so " +
-			"the page never placed one: this is the fixture, not the freeze " +
-			"dropping anything")
-	}
 	if kept == nil {
 		t.Fatal("no popup to hold onto, so the identity check below would " +
 			"compare two nils and pass over the policy it is here for")
