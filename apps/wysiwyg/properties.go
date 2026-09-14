@@ -205,10 +205,13 @@ func newValueEditor(ed *editor, list *components.ItemsView, text *components.Tex
 	}
 	p.cp = &components.ColorPicker{Value: p.col}
 	p.pop = components.NewPopup(p, p.draw)
-	// Document order is z-order, and the list has to be underneath
-	// everything. The surface is LAST of the three overlays only because
-	// the three are never open at once; the ordering that matters is
-	// list first.
+	// The list has to be underneath everything, and it is because it is
+	// not an overlay: the three that are — cp, the popup surface, and
+	// whatever text opens — are lifted out of document order into the
+	// ranked layer, so their order here decides only their order among
+	// equal ranks, and they are never open at once anyway. This reasoned
+	// from "document order is z-order" until review of #456; the
+	// conclusion survived the rule being retired, the premise did not.
 	p.kids = []gooey.Component{list, text, p.cp, p.pop.Surface()}
 	ed.props = p
 	return p

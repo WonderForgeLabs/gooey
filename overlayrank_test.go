@@ -223,23 +223,33 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 
 	// Same tree, same frame, opposite answer. If this ever returns `over`
 	// the divergence closed — which would be good news, and would make
-	// the caveats in components/toast.go, docs/markup-reference.md,
-	// docs/architecture.md, mouse.go, docs/learn/concepts/overlays.md and
-	// docs/learn/07-app-chrome.md wrong rather than merely stale.
+	// the caveats in CLAUDE.md, components/toast.go,
+	// docs/markup-reference.md, docs/architecture.md, mouse.go,
+	// docs/learn/concepts/overlays.md and docs/learn/07-app-chrome.md
+	// wrong rather than merely stale.
 	//
 	// THE LEARN PAGES JOINED THE LIST IN REVIEW OF #456, and they are the
 	// half that matters most: they are where the freedom is GRANTED to
 	// somebody meeting overlays for the first time, and they were the two
 	// surfaces this enumeration did not name — so closing the gap would
 	// have left the one grant a learner reads with nobody sent to it.
+	//
+	// AND CLAUDE.md JOINED IT TOO, for the reason the list exists at all.
+	// It carries a full divergence paragraph AND a four-file copy of this
+	// enumeration, and appeared in neither — so #465 landing would have
+	// reddened this test, sent whoever cleared it to six files, and left
+	// the one document every agent here is told to trust asserting a
+	// divergence that no longer exists, with nothing red. Its copy of the
+	// list is gone now; it points here instead, so there is ONE place to
+	// maintain. Raised in review of #456.
 	m := NewFocusManager(root)
 	hit := m.HitTest(0, 0)
 	if hit == Component(over) {
 		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the cell it " +
-			"paints. Delete the divergence caveats in components/toast.go, " +
-			"docs/markup-reference.md, docs/architecture.md, mouse.go, " +
-			"docs/learn/concepts/overlays.md and docs/learn/07-app-chrome.md " +
-			"rather than this test")
+			"paints. Delete the divergence caveats in CLAUDE.md, " +
+			"components/toast.go, docs/markup-reference.md, " +
+			"docs/architecture.md, mouse.go, docs/learn/concepts/overlays.md " +
+			"and docs/learn/07-app-chrome.md rather than this test")
 	}
 	if hit != Component(under) {
 		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+

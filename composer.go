@@ -456,7 +456,12 @@ func clearToCap[T any](s []T) []T {
 //
 // It also takes sort.Slice's reflect.Swapper off the structural path.
 // Not a violation of "no reflection in core" by the letter — there is no
-// "reflect" import — but orderPaint runs on every structural re-sync,
+// reflect import, and this sentence deliberately does not spell one in
+// double quotes, because that is the exact string CLAUDE.md tells a
+// reader to `git grep` for to check the invariant, and a core file
+// answering it is a false positive that costs somebody a 40-line read.
+// Raised in review of #456 — but orderPaint runs on every structural
+// re-sync,
 // which for a Dynamic list is per frame while it scrolls, and the rule's
 // motivation is the ahead-of-time gooey gen path (#59).
 //

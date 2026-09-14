@@ -288,14 +288,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:1088`, in
+deliberately outside any evaluation context (`composer.go:1093`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:800`).
+separate observer for that (`Composer.armVisibility`, `composer.go:805`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:672`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:703`), so reading a property while painting *is* the damage
+(`composer.go:677`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:708`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -369,7 +369,7 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `appendByRank` (`composer.go:476`, a package-level
+between two — and `appendByRank` (`composer.go:481`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
@@ -415,9 +415,13 @@ rank, so the two planes can now disagree: a ranked host declared FIRST
 paints above a button and leaves the click to the button. Under the
 retired "declare it last" rule they agreed, which is why the divergence
 arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
-hit-testing ever becomes rank-aware, so the caveat in
-`components/toast.go`, `docs/markup-reference.md`, `docs/architecture.md`
-and `mouse.go` cannot outlive the behaviour it describes. `Popup` is
+hit-testing ever becomes rank-aware, and its failure message names every
+page carrying the caveat — **this paragraph included** — so none of them
+can outlive the behaviour it describes. The list lives THERE and not
+here: this sentence held a four-file copy of it, missing the two learn
+pages and missing this file, so closing the gap would have reddened the
+test, sent whoever cleared it to six files, and left the invariant record
+asserting a divergence that was gone. `Popup` is
 exempt because it holds pointer capture while open, which routes presses
 before the walk runs — that is Popup's mechanism, not the marker's.
 Closing the gap is
