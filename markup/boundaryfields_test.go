@@ -323,8 +323,13 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 		case "Dispatcher":
 			// A POINTER COMPARE, which is available here and is the
 			// whole claim: there is one UI goroutine, so a control
-			// posting to a different dispatcher is the defect.
-			crossed = child.Dispatcher == page.Dispatcher
+			// posting to a different dispatcher is the defect. The
+			// non-nil half is not redundant — this page happens to carry
+			// a dispatcher and the row test's did not, which is how the
+			// identical arm over there passed against a deleted
+			// propagation. Stating it here keeps the two arms from
+			// diverging again. Raised in review of #490.
+			crossed = child.Dispatcher != nil && child.Dispatcher == page.Dispatcher
 		case "arms":
 			// Non-nil IS the sentinel here, and for a reason worth
 			// stating: a child Context is constructed fresh at this
@@ -720,11 +725,17 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		Dir:      "/tmp/anchor",
 		Variant:  "sixel",
 		Includes: ctlFS,
-		Styles:   map[string]render.Style{"s": {}},
-		Handlers: map[string]gooey.Action{"H": gooey.Command(func() {})},
-		Named:    map[string]gooey.Component{"PageOnly": &components.Text{}},
-		Declared: map[gooey.Component]DeclaredSurface{declSentinel: {Control: "PageOnly"}},
-		Elements: map[string]*ElementDef{"Meter": meterDef()},
+		// SET, because nil == nil. The Dispatcher arm below is a pointer
+		// compare, and a page that carries no dispatcher makes it read
+		// true against a row that carries none either — so the arm passed
+		// with the propagation deleted from itemsview.go. Raised in
+		// review of #490, which measured exactly that.
+		Dispatcher: gooey.NewDispatcher(),
+		Styles:     map[string]render.Style{"s": {}},
+		Handlers:   map[string]gooey.Action{"H": gooey.Command(func() {})},
+		Named:      map[string]gooey.Component{"PageOnly": &components.Text{}},
+		Declared:   map[gooey.Component]DeclaredSurface{declSentinel: {Control: "PageOnly"}},
+		Elements:   map[string]*ElementDef{"Meter": meterDef()},
 		Rules: map[string]RuleFunc{
 			"Zonk": func(string) (validate.Rule[string], error) { return nil, nil },
 		},
@@ -808,7 +819,10 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 				crossed = err == nil
 			}
 		case "Dispatcher":
-			crossed = row.Dispatcher == page.Dispatcher
+			// NON-NIL AND IDENTICAL. The identity is the claim — one UI
+			// goroutine, one dispatcher — but identity alone is satisfied
+			// by two nils, which is the state the page was in.
+			crossed = row.Dispatcher != nil && row.Dispatcher == page.Dispatcher
 		case "Dir":
 			crossed = row.Dir == page.Dir
 		case "Variant":

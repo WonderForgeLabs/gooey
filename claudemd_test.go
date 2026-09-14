@@ -1,6 +1,7 @@
 package gooey
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	goparser "go/parser"
@@ -1751,6 +1752,7 @@ var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_
 // is for.
 func TestEveryCitedSymbolResolves(t *testing.T) {
 	declared := declaredByPackage(t)
+	foreign := vendoredByPackage(t, declared)
 	if len(declared["markup"]) == 0 || len(declared["render"]) == 0 {
 		t.Fatalf("the declaration index found %d markup symbols and %d render "+
 			"symbols, so the walk is looking somewhere else and every citation "+
@@ -1758,28 +1760,56 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 			len(declared["markup"]), len(declared["render"]))
 	}
 
-	checked := 0
+	checked, fromGo := 0, 0
 	docs := symbolDocs(t)
-	for _, doc := range docs {
+	for _, doc := range append(docs, goCommentSources(t)...) {
 		b, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("reading %s: %v", doc, err)
 		}
-		for _, m := range symbolCiteRe.FindAllStringSubmatch(string(b), -1) {
+		text := string(b)
+		if strings.HasSuffix(doc, ".go") {
+			text = goComments(t, doc, b)
+		}
+		for _, m := range symbolCiteRe.FindAllStringSubmatch(text, -1) {
 			pkg, name := m[1], m[2]
 			if fileSuffixes[name] {
 				continue // a path, not a citation — see fileSuffixes
+			}
+			if strings.HasPrefix(name, "Test") {
+				// TEST NAMES BELONG TO TestEveryCitedTestNameResolves,
+				// which knows where a test may live and that the root
+				// package answers to "gooey". Adjudicating them here
+				// reported this file's and specclaims_test.go's own
+				// EXAMPLES of the citation form — `markup.TestX`,
+				// `gooey.TestFoo` — as rot, which is a guard failing on
+				// the prose that explains it. Raised in review of #490.
+				continue
 			}
 			syms, ours := declared[pkg]
 			if !ours {
 				continue // a stdlib or third-party name; not ours to check
 			}
+			if !syms[name] && foreign[pkg][name] {
+				// NOT OURS AFTER ALL. Our package of this name does not
+				// declare it and a vendored package of the same name
+				// does, so the page is citing the dependency. See
+				// vendoredByPackage for why this is asked in that order
+				// and not the other.
+				continue
+			}
 			checked++
+			if strings.HasSuffix(doc, ".go") {
+				fromGo++
+			}
 			if !syms[name] {
 				t.Errorf("%s cites `%s.%s` and package %s declares no %s. A symbol "+
 					"citation does not rot the way a line number does, but it does "+
 					"go stale on a RENAME — which is the thing a line citation "+
-					"cannot do and this form can. (#490)", doc, pkg, name, pkg, name)
+					"cannot do and this form can. If this is a DEPENDENCY's %s and "+
+					"not ours, it is not vendored under that name either, so spell "+
+					"it with enough of its import path to say so. (#490)",
+					doc, pkg, name, pkg, name, pkg)
 			}
 		}
 	}
@@ -1793,6 +1823,20 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 			"%d documents, which is fewer than this tree carried when the walk was "+
 			"derived — either they stopped citing code by name, or the pattern no "+
 			"longer matches the spelling they use", checked, len(docs))
+	}
+	// AND THE GO-COMMENT HALF SEPARATELY, because the floor above is
+	// dominated by markdown and would not notice it going to zero. That
+	// half is the whole of #490's finding — the conversions this guard
+	// exists for landed in Go comments, where nothing read them — so a
+	// walk that stopped returning .go files, or a parse that started
+	// failing silently, has to be its own failure rather than a dent in
+	// a three-digit total. Raised in review of #490.
+	if fromGo == 0 {
+		t.Error("no symbol citation was resolved from a Go comment, so the half " +
+			"of this guard that #490 added covers nothing. Either goComments is " +
+			"returning empty (a parse failing quietly), goCommentSources is " +
+			"pruning the tree away, or the convention changed and Go comments no " +
+			"longer backtick a pkg.Name")
 	}
 }
 
@@ -1867,6 +1911,223 @@ func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	})
 	if err != nil {
 		t.Fatalf("walking the tree for declarations: %v", err)
+	}
+	return out
+}
+
+// goCommentSources are the .go files whose COMMENTS carry symbol
+// citations, and their absence was a real hole: this guard read markdown
+// only, so #490's own six file:line → symbol conversions — the change
+// that motivated the guard — landed in Go comments where nothing could
+// see them.
+//
+// BACKTICKED ONLY, which is the convention that makes this tractable.
+// Measured on this tree: matching a bare pkg.Name inside comments finds
+// 1448 candidates and calls 336 of them unresolved — proto package
+// paths like gooey.control, field selectors like panel.slot, plurals —
+// so a guard on that form is noise, not coverage. The backticked form
+// finds 18 and resolves all of them. So a citation in a Go comment is
+// spelled `pkg.Name` in backticks, the same as in markdown, and one
+// written bare is simply outside this guard rather than wrong.
+//
+// Which is also why the examples in this paragraph are NOT backticked:
+// a guard reads its own explanation, and an example of a spelling that
+// does not resolve is indistinguishable from a citation that stopped
+// resolving. Write illustrative spellings bare.
+//
+// WHAT IS STILL NOT COVERED, stated because a guard that implies more
+// than it checks is the defect this whole file is about: a SAME-PACKAGE
+// identifier in a comment — `bindText`, `elementDefs`, `probeElement` —
+// has no package qualifier, so symbolCiteRe cannot match it and nothing
+// here resolves it. Three of #490's six conversions are of that shape.
+func goCommentSources(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); p != "." && (strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(p, ".go") {
+			out = append(out, filepath.ToSlash(p))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking for Go sources: %v", err)
+	}
+	return out
+}
+
+// goComments is every comment in one file, concatenated — so the caller
+// runs the same pattern over Go comments that it runs over markdown, and
+// a `pkg.Name` in a string literal or an identifier is not mistaken for
+// prose about one.
+func goComments(t *testing.T, path string, src []byte) string {
+	t.Helper()
+	fset := gotoken.NewFileSet()
+	f, err := goparser.ParseFile(fset, path, src, goparser.ParseComments)
+	if err != nil {
+		return "" // the compiler owns this one
+	}
+	var b strings.Builder
+	for _, cg := range f.Comments {
+		b.WriteString(cg.Text())
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// TestAVendoredCollisionIsNotOurStaleCitation drives the three-way
+// decision TestEveryCitedSymbolResolves makes per citation, because that
+// test reads the tree's real documents — and no document exercises the
+// collision today, so it is green whichever way the branch goes.
+//
+// The three cases are the whole contract, and the middle one is the
+// finding: ours declares it (a citation of ours, checked), ours does not
+// but a vendored package of the same name does (a citation of theirs,
+// left alone), neither declares it (the rename this guard exists for).
+// Raised in review of #490.
+func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
+	declared := declaredByPackage(t)
+	foreign := vendoredByPackage(t, declared)
+
+	// NON-VACUITY FIRST. Every arm below is "and the other index says
+	// X"; an empty foreign index makes the middle arm unreachable and
+	// the whole test a restatement of the one above it.
+	if len(foreign) == 0 {
+		t.Fatal("no vendored package shares a short name with one of ours, so " +
+			"the collision this test is about cannot be reached. Either the " +
+			"vendor walk is looking somewhere else, or the tree genuinely " +
+			"changed — check `grpc`, `term` and `workflow` before deleting this")
+	}
+
+	for _, tc := range []struct {
+		name         string
+		pkg, sym     string
+		ours, theirs bool
+		wantSkipped  bool
+		wantContext  string
+	}{
+		{"ours declares it", "term", "DecoderTimeout", true, false, false,
+			"a citation of our own symbol must still be checked"},
+		{"only the dependency declares it", "term", "IsTerminal", false, true, true,
+			"x/term declares IsTerminal and our term does not, so the page is " +
+				"citing the dependency and rewording the page is the wrong remedy"},
+		{"neither declares it", "term", "NoSuchSymbolAnywhere", false, false, false,
+			"a name nothing declares is the rename this guard exists for"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := declared[tc.pkg][tc.sym]; got != tc.ours {
+				t.Fatalf("our %s declares %s = %v, want %v — the fixture no longer "+
+					"describes the tree, so the arm below measures nothing",
+					tc.pkg, tc.sym, got, tc.ours)
+			}
+			if got := foreign[tc.pkg][tc.sym]; got != tc.theirs {
+				t.Fatalf("the vendored %s declares %s = %v, want %v", tc.pkg, tc.sym,
+					got, tc.theirs)
+			}
+			// The decision exactly as the loop makes it.
+			skipped := !declared[tc.pkg][tc.sym] && foreign[tc.pkg][tc.sym]
+			if skipped != tc.wantSkipped {
+				t.Errorf("`%s.%s` skipped=%v, want %v: %s",
+					tc.pkg, tc.sym, skipped, tc.wantSkipped, tc.wantContext)
+			}
+		})
+	}
+}
+
+// vendoredByPackage indexes the EXPORTED declarations of vendored
+// packages whose short name collides with one of ours, which is the only
+// way a citation of `pkg.Name` can be read two ways.
+//
+// THE COLLISION IS REAL AND ALREADY HERE. Three of this repo's package
+// names are also the last segment of a vendored import path — grpc
+// (google.golang.org/grpc), term (golang.org/x/term) and workflow
+// (go.temporal.io/sdk/workflow) — so a page writing Temporal's
+// `workflow.Now` or x/term's `term.IsTerminal` was asking about a
+// package we also happen to have, and TestEveryCitedSymbolResolves
+// reported it as a stale citation of OURS. The remedy it offered was to
+// reword the documentation, which is the wrong end. Raised in review of
+// #490.
+//
+// THE TWO ABOVE ARE BACKTICKED ON PURPOSE, and this comment is a live
+// fixture because of it: the guard reads Go comments, so `workflow.Now`
+// and `term.IsTerminal` are citations it resolves on every run, and they
+// resolve only through the skip this function feeds. Remove the skip and
+// this paragraph reddens the guard it describes. Do not un-backtick them
+// to quieten that — the failure is the mechanism working.
+//
+// NARROW ON PURPOSE, and the narrowness is what keeps the coverage. This
+// is consulted ONLY when our own package does not declare the name, and
+// then only to ask whether the foreign package does. A term.Foo that
+// was renamed out of our term and exists nowhere else still errors,
+// which is the rot this guard is for; a `term.IsTerminal` that x/term
+// really declares is a citation of x/term and is left alone. Nothing is
+// skipped on the strength of the package name by itself.
+func vendoredByPackage(t *testing.T, collidesWith map[string]map[string]bool) map[string]map[string]bool {
+	t.Helper()
+	out := map[string]map[string]bool{}
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		return out // consumed standalone; nothing vendored to collide with
+	}
+	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		// The DIRECTORY name, not the package clause: the collision is
+		// with how prose spells the import, and prose spells it with the
+		// path's last segment.
+		if _, ours := collidesWith[filepath.Base(filepath.Dir(p))]; !ours {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, p, src, 0)
+		if err != nil {
+			return nil
+		}
+		pkg := filepath.Base(filepath.Dir(p))
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					out[pkg][d.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, sp := range d.Specs {
+					switch sp := sp.(type) {
+					case *ast.TypeSpec:
+						out[pkg][sp.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							out[pkg][n.Name] = true
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking vendor for colliding declarations: %v", err)
 	}
 	return out
 }

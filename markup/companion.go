@@ -166,9 +166,10 @@ func checkCompanionAttrs(e Element) error {
 // exec.LookPath so a binary that is not installed is a LOAD error naming
 // it, rather than a start failure behind a screen that is already up. A
 // pathful one is resolved against the PAGE's directory (Context.Dir,
-// which a control inherits — see its doc) and made absolute: exec.Cmd resolves a relative Path against Dir, so leaving it
-// relative would silently mean two different files depending on whether
-// Dir was also set.
+// which a control inherits — see its doc) and made absolute: exec.Cmd
+// resolves a relative Path against Dir, so leaving it relative would
+// silently mean two different files depending on whether Dir was also
+// set.
 func companionPath(e Element, ctx *Context, name string) (string, error) {
 	raw := strings.TrimSpace(e.Attrs["Path"])
 	if raw == "" {

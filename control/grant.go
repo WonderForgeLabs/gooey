@@ -224,7 +224,7 @@ func (s *Service) mayAddress(name string) error {
 // It costs nothing to be careful here: lookup runs against s.bind.Values,
 // which is the host's FULL surface. The prune to grantedValues happens
 // only inside scratchBuild, bracketed and restored around its
-// markup.Build call in control/markup.go,
+// `markup.Build` call in control/markup.go,
 // so this resolution sees every name and the grant alone decides.
 //
 // Register is deliberately NOT built on this. There the name must NOT
