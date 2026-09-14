@@ -231,7 +231,15 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			break
 		}
 	}
-	if silent > 0 {
+	// THE THRESHOLD THE LOOP BREAKS ON IS THE THRESHOLD THE MESSAGE
+	// CLAIMS ON. This arm read `silent > 0` while silentEnough was 5, so
+	// ONE silent attempt among nineteen late ones named the regression —
+	// and one silent attempt is exactly the benign reading the constant
+	// exists to rule out, a single split read before the close. The gap
+	// only opens on a loaded machine, which is the machine this repo's
+	// self-hosted runners are. Raised in review of #445.
+	switch {
+	case silent >= silentEnough:
 		t.Fatalf("%d attempts produced NO event after the tty closed (%d "+
 			"more arrived too late to attribute). That is what the regression "+
 			"under test looks like: a held prefix discarded instead of drained, "+
@@ -240,6 +248,18 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			"split read before the close — needs %d independent accidents, so "+
 			"read DecodeEvents' tty-close arm before blaming the runner",
 			silent, late, silent)
+	case silent > 0:
+		// NO CAUSE NAMED. Below the threshold the two readings are not
+		// separable: a discarded prefix and a split read look the same
+		// from here, and the counts are the only thing this attempt
+		// established.
+		t.Fatalf("%d of %d attempts produced no event after the tty closed and %d "+
+			"arrived too late to attribute, so none of them measured the grace "+
+			"window. Below %d silent attempts a lost prefix (a split read before "+
+			"the close) is as good an explanation as a discarded one, so this "+
+			"names neither: re-run, and read DecodeEvents' tty-close arm if the "+
+			"silent count climbs",
+			silent, attempts, late, silentEnough)
 	}
 	t.Fatalf("all %d attempts missed the grace window: the timer resolved the "+
 		"held prefix before the close every time. This machine is too loaded to "+
@@ -306,8 +326,21 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
 		t.Fatalf("got %#v, want the 'b' we typed", ev)
 	}
-	// The clock starts HERE: the decoder has just consumed that read, so
-	// this is when its escape timer is armed over the held prefix.
+	// The clock starts HERE, and `held` sits within a scheduling gap of
+	// the arm on EITHER SIDE of it. keys.go sends each decoded event and
+	// THEN re-arms (`drain(drainLive)` … `timer.Reset(EscTimeout)`) over
+	// a buffered channel, so this receive can run before the Reset
+	// executes (held EARLY) or well after it (held LATE), depending on
+	// which goroutine is descheduled. The comment here asserted the late
+	// direction alone and its sibling asserted the early one, which is
+	// the drift the spec already had right at "either side".
+	//
+	// THIS HELPER'S BUDGET DEPENDS ON THE LATE DIRECTION ONLY. It
+	// requires the event after the close to arrive inside EscTimeout of
+	// `held`, so an arm EARLIER than `held` only widens the real margin;
+	// an arm LATER is what could let a timer-delivered Esc measure as
+	// inside the budget, and that needs the test goroutine descheduled
+	// for most of a timeout. Raised in review of #445.
 	held := time.Now()
 
 	if err := master.Close(); err != nil {
@@ -451,12 +484,16 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// re-arms the timer (`drain(drainLive)` … `timer.Reset(EscTimeout)`),
 	// and `out` is this test's buffered channel — so the send does not
 	// block, and the receive below can be scheduled before the Reset
-	// executes. `held` can therefore land BEFORE the arm, by however long
-	// the decoder is descheduled in those few instructions. The sibling
-	// helper's comment had the ordering right and this one had it
-	// backwards; a guarantee asserted in two directions in one file is
-	// worth more than the slack it was defending. Raised in review of
-	// #445.
+	// executes. `held` can therefore land on EITHER SIDE of the arm:
+	// early if the decoder is descheduled in those few instructions, late
+	// if this goroutine is. The correction here first said the sibling
+	// helper "had the ordering right", which named the other single
+	// direction — closedTtyAttempt asserted late-only — and a guarantee a
+	// file states two ways is worth less than the slack it was
+	// defending. Both comments say either side now, and each names the
+	// direction its own budget rests on: this one needs both, because
+	// the write has to land inside a window measured from the arm at
+	// both ends. Raised in review of #445, twice.
 	//
 	// So the window is budgeted at BOTH ends rather than assumed at one.
 	// The arm sits somewhere within a scheduling gap of `held`, the window

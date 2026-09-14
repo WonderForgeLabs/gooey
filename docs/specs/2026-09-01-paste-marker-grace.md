@@ -29,10 +29,18 @@ the hold is **permanent**:
   while `len(pend) > 0`, so the decoder goroutine wakes every 40ms for the rest
   of the process's life.
 
-Under the pre-#425 absolute contract `drain(true)` always emptied `pend`, so the
-timer was never re-armed and this state could not exist. Found in the seventh
-review of #425 and left there because of the API question below; #425 has since
-merged, so it is live on main.
+That wakeup state is **older than #425**, and this paragraph used to say the
+opposite — "under the pre-#425 absolute contract `drain(true)` always emptied
+`pend`". It did not. `decodePaste` returned `(0, false)` for an unterminated
+paste whatever `idle` said, in the copy of `input/paste.go` that preceded #425,
+and the loop re-armed on any non-empty `pend`; the every-40ms wakeup was
+therefore already reachable by an OPEN PASTE, where the hold is deliberate and
+no keystroke is lost. What #425 added is a second buffer shape that reaches the
+same state — and this one is also three keys a person can type, which is what
+turns a designed wedge into deafness. Restating the absolute inside the record
+written to correct it is the failure this document is about; raised in review of
+#445. Found in the seventh review of #425 and left there because of the API
+question below; #425 has since merged, so it is live on main.
 
 **Nothing in the suite could observe it.** `decodeidle_test.go`'s exhaustive
 sweep is over 1- and 2-byte inputs, and `splitPasteMarker` has a **three-byte
