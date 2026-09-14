@@ -45,9 +45,19 @@ import (
 // would be that thing's comment.
 func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	var files, examined int
-	seen := map[string]bool{} // directories that contributed a parsed file
+	// TWO MAPS, because one cannot tell a module the walk never reached
+	// from a module whose every file the rule declines to judge. The
+	// floor below is about the FIRST — a prune or a module boundary
+	// silently ending the walk — and marking one map after the skips
+	// would have reported the second in its words, sending the reader to
+	// look for a prune that is not there. The reverse mistake is worse:
+	// marking before them makes a module of nothing but .pb.go read as
+	// covered. Raised in review of #503.
+	reached := map[string]bool{} // directories the walk yielded a .go file in
+	ruled := map[string]bool{}   // and then parsed one this rule applies to
 	paths, modules := treeWalk(t)
 	for _, path := range paths {
+		reached[filepath.Dir(path)] = true
 		fset := gotoken.NewFileSet()
 		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
 		if err != nil {
@@ -77,7 +87,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 			continue
 		}
 		files++
-		seen[filepath.Dir(path)] = true
+		ruled[filepath.Dir(path)] = true
 		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
 			t.Error(s)
 		}
@@ -104,10 +114,16 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// is the same discipline CLAUDE.md's verify loop uses against the
 	// same mistake.
 	for _, mod := range modules {
-		if !anyUnder(seen, mod) {
-			t.Errorf("the walk parsed no file under %q, which is a module of this tree: "+
-				"a guard that stops at a module boundary reports green for code it "+
-				"never read", mod)
+		switch {
+		case !anyUnder(reached, mod):
+			t.Errorf("the walk yielded no .go file under %q, which is a module of this "+
+				"tree: a guard that stops at a module boundary reports green for code "+
+				"it never read", mod)
+		case !anyUnder(ruled, mod):
+			t.Errorf("every .go file under %q was skipped — it did not parse, or it is "+
+				"generated — so this guard read the module and ruled on none of it. "+
+				"That is not the prune the case above is about, and it is not "+
+				"coverage either", mod)
 		}
 	}
 	t.Logf("examined %d doc comments across %d files", examined, files)
@@ -429,6 +445,19 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 				// nothing reported, and docsExamined counting it as ruled
 				// on — which inflated the non-vacuity floor with a case
 				// the rule could not judge.
+				// THE WHOLE BLOCK, where the two neighbour arms look at
+				// exactly one declaration — an asymmetry, and deliberate.
+				// "Directly below" is what makes the signature
+				// unambiguous between separate declarations: a comment
+				// naming something three functions down is a cross
+				// reference, and flagging it would be flagging prose. A
+				// parenthesised block has no such reading. Its doc
+				// belongs to the block, so a doc that opens by naming one
+				// of the block's OWN later entries is describing a
+				// sibling it does not document, whatever the distance —
+				// and the distance is exactly what an insertion at the
+				// top changes. Restricting this arm to g.Specs[1] would
+				// re-open the hole for two insertions instead of one.
 				case block && declaresIn(g.Specs[1:], first):
 					report(d.Pos(), name, first,
 						"a later entry of the very block it opens")
@@ -515,9 +544,27 @@ func docsExamined(f *ast.File) int {
 
 // opensBy is the first word of a doc comment, stripped of the
 // punctuation a sentence puts after a name.
+//
+// WORD, NOT "UP TO THE FIRST SPACE". Cutting on " " reads a first line
+// that holds no space as running into the second: the whole point of
+// this guard is the shape
+//
+//	// TestSomethingLongAndSpaceless.
+//	//
+//	// The paragraph about it.
+//
+// where the name is a line of its own, and opensBy answered
+// "TestSomethingLongAndSpaceless.\nThe" for it — a string no
+// declaration can match, so every arm below fell through and the theft
+// went unreported. It was live in markup/menuicon_test.go when this was
+// measured. strings.Fields splits on any whitespace, which is the rule
+// the sentence above always meant. Raised in review of #503.
 func opensBy(doc *ast.CommentGroup) string {
-	first, _, _ := strings.Cut(strings.TrimSpace(doc.Text()), " ")
-	return strings.TrimRight(first, ",.:")
+	fields := strings.Fields(doc.Text())
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimRight(fields[0], ",.:")
 }
 
 // documentedSpec answers for ONE entry of a parenthesised block: its own
