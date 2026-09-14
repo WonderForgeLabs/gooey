@@ -1734,6 +1734,31 @@ var fileSuffixes = map[string]bool{
 // symbol.
 var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_]*)`")
 
+// symbolForeignMarker opts ONE LINE out of the symbol check, for a
+// `pkg.Name` that is not Go at all.
+//
+// The collision this answers is not the vendored one — vendoredByPackage
+// handles a dependency written in Go, by asking whether the dependency
+// declares the name. There is nothing to ask when the language is
+// different. apps/dynamic-activities/README.md warns that a bare
+// directory named `grpc` shadows the Python package and tells the reader
+// to probe for a real attribute on it; `grpc` is also one of OUR package
+// names, so the guard read a Python attribute as a stale citation of
+// ours and the only remedy it offered — "spell it with enough of its
+// import path" — is advice a Python symbol cannot follow.
+//
+// EXPLICIT, not inferred, for the reason specclaims_test.go's
+// plannedMarker gives at greater length. The inference I measured first
+// was "an underscore is not a Go name"; the tree holds 73 declarations
+// that disprove it, every one generated protobuf under grpc/gen, so a
+// citation of `controlv1.ActResult_SendKeys` would have been silently
+// exempted by the rule meant to exempt Python.
+//
+// AND IT EXPIRES: a marked line whose name our package of that name
+// DOES declare is a stale marker hiding a live citation, and the loop
+// below fails on it rather than skipping. Raised in review of #490.
+const symbolForeignMarker = "<!-- symbols: not-go -->"
+
 // TestEveryCitedSymbolResolves is the half TestCLAUDEMDCitationsResolve
 // cannot see, and #490 is what made it necessary.
 //
@@ -1771,45 +1796,77 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 		if strings.HasSuffix(doc, ".go") {
 			text = goComments(t, doc, b)
 		}
-		for _, m := range symbolCiteRe.FindAllStringSubmatch(text, -1) {
-			pkg, name := m[1], m[2]
-			if fileSuffixes[name] {
-				continue // a path, not a citation — see fileSuffixes
-			}
-			if strings.HasPrefix(name, "Test") {
-				// TEST NAMES BELONG TO TestEveryCitedTestNameResolves,
-				// which knows where a test may live and that the root
-				// package answers to "gooey". Adjudicating them here
-				// reported this file's and specclaims_test.go's own
-				// EXAMPLES of the citation form — `markup.TestX`,
-				// `gooey.TestFoo` — as rot, which is a guard failing on
-				// the prose that explains it. Raised in review of #490.
-				continue
-			}
-			syms, ours := declared[pkg]
-			if !ours {
-				continue // a stdlib or third-party name; not ours to check
-			}
-			if !syms[name] && foreign[pkg][name] {
-				// NOT OURS AFTER ALL. Our package of this name does not
-				// declare it and a vendored package of the same name
-				// does, so the page is citing the dependency. See
-				// vendoredByPackage for why this is asked in that order
-				// and not the other.
-				continue
-			}
-			checked++
-			if strings.HasSuffix(doc, ".go") {
-				fromGo++
-			}
-			if !syms[name] {
-				t.Errorf("%s cites `%s.%s` and package %s declares no %s. A symbol "+
-					"citation does not rot the way a line number does, but it does "+
-					"go stale on a RENAME — which is the thing a line citation "+
-					"cannot do and this form can. If this is a DEPENDENCY's %s and "+
-					"not ours, it is not vendored under that name either, so spell "+
-					"it with enough of its import path to say so. (#490)",
-					doc, pkg, name, pkg, name, pkg)
+		// PER LINE, not per document, and the line is what the marker
+		// attaches to. A citation cannot straddle a newline — both
+		// backticks are on one line or the pattern does not match — so
+		// this reads exactly what the whole-text scan read, and the
+		// failures below can now say WHERE.
+		for ln, line := range strings.Split(text, "\n") {
+			exempt := strings.Contains(line, symbolForeignMarker)
+			for _, m := range symbolCiteRe.FindAllStringSubmatch(line, -1) {
+				pkg, name := m[1], m[2]
+				if fileSuffixes[name] {
+					continue // a path, not a citation — see fileSuffixes
+				}
+				if strings.HasPrefix(name, "Test") {
+					// TEST NAMES BELONG TO TestEveryCitedTestNameResolves,
+					// which knows where a test may live and that the root
+					// package answers to "gooey" — and which reads Go
+					// comments as well as Markdown, so this hands them to
+					// a guard that actually looks at this corpus.
+					// Delegating to one that read Markdown only left a
+					// name cited in a Go comment adjudicated by neither,
+					// which is what a delegation costs when nobody checks
+					// the delegate's corpus. Adjudicating them HERE
+					// instead reported this file's and
+					// specclaims_test.go's own EXAMPLES of the citation
+					// form — markup.TestX, gooey.TestFoo, spelled without
+					// backticks now for the reason specclaims_test.go
+					// gives: a name that is not a live reference is not
+					// written as one. Raised in review of #490, twice.
+					continue
+				}
+				syms, ours := declared[pkg]
+				if !ours {
+					continue // a stdlib or third-party name; not ours to check
+				}
+				if exempt {
+					// THE MARKER EXPIRES HERE. It says "this pkg.Name is
+					// not Go"; if our package of that name declares it,
+					// that has stopped being true and the marker is
+					// hiding a live citation from the check.
+					if syms[name] {
+						t.Errorf("%s:%d carries %s and cites `%s.%s`, which package "+
+							"%s now declares. The marker says the name is not Go, "+
+							"and it is: remove the marker so the citation is "+
+							"checked like any other. (#490)",
+							doc, ln+1, symbolForeignMarker, pkg, name, pkg)
+					}
+					continue
+				}
+				if !syms[name] && foreign[pkg][name] {
+					// NOT OURS AFTER ALL. Our package of this name does not
+					// declare it and a vendored package of the same name
+					// does, so the page is citing the dependency. See
+					// vendoredByPackage for why this is asked in that order
+					// and not the other.
+					continue
+				}
+				checked++
+				if strings.HasSuffix(doc, ".go") {
+					fromGo++
+				}
+				if !syms[name] {
+					t.Errorf("%s:%d cites `%s.%s` and package %s declares no %s. A "+
+						"symbol citation does not rot the way a line number does, "+
+						"but it does go stale on a RENAME — which is the thing a "+
+						"line citation cannot do and this form can. If this is a "+
+						"DEPENDENCY's %s and not ours, it is not vendored under "+
+						"that name either, so spell it with enough of its import "+
+						"path to say so — and if it is not Go at all, put %s on "+
+						"the line. (#490)",
+						doc, ln+1, pkg, name, pkg, name, pkg, symbolForeignMarker)
+				}
 			}
 		}
 	}
@@ -2070,6 +2127,30 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // which is the rot this guard is for; a `term.IsTerminal` that x/term
 // really declares is a citation of x/term and is left alone. Nothing is
 // skipped on the strength of the package name by itself.
+//
+// EXPORTED, AND TOP-LEVEL FUNCTIONS ONLY — both narrowings, and both in
+// the direction that keeps coverage rather than spends it. The sentence
+// at the top of this comment said EXPORTED while the code indexed every
+// top-level name, which is the wrong way round for a SKIP list: every
+// name in here is a citation this guard stops checking, so an unexported
+// vendored identifier — which no page can legitimately be citing, since
+// a consumer cannot name one — was silently widening the exemption.
+// ast.IsExported is the check the sentence already claimed. No page
+// cites an unexported vendored name today, so removing the check again
+// turns nothing red — which is the honest status of a tightening, and
+// the reason it is recorded here rather than claimed as a fix with a
+// test behind it.
+//
+// Methods are excluded (the d.Recv == nil arm), and that is the opposite
+// choice from declaredByPackage, which records them deliberately because
+// CLAUDE.md cites `prop.Set`. The asymmetry is the same principle read
+// twice: there, including methods lets a real citation RESOLVE, and the
+// cost is a citation resolving against the wrong type; here, including
+// them would let a citation be SKIPPED, and the cost is coverage. When
+// in doubt an index of ours widens and an index of theirs narrows. The
+// price is a page citing a vendored METHOD as `pkg.Name`, which would
+// still error and would have to be spelled with more of its import path
+// — and no page does today. Raised in review of #490.
 func vendoredByPackage(t *testing.T, collidesWith map[string]map[string]bool) map[string]map[string]bool {
 	t.Helper()
 	out := map[string]map[string]bool{}
@@ -2105,20 +2186,25 @@ func vendoredByPackage(t *testing.T, collidesWith map[string]map[string]bool) ma
 		if out[pkg] == nil {
 			out[pkg] = map[string]bool{}
 		}
+		keep := func(name string) {
+			if ast.IsExported(name) {
+				out[pkg][name] = true
+			}
+		}
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
 				if d.Recv == nil {
-					out[pkg][d.Name.Name] = true
+					keep(d.Name.Name)
 				}
 			case *ast.GenDecl:
 				for _, sp := range d.Specs {
 					switch sp := sp.(type) {
 					case *ast.TypeSpec:
-						out[pkg][sp.Name.Name] = true
+						keep(sp.Name.Name)
 					case *ast.ValueSpec:
 						for _, n := range sp.Names {
-							out[pkg][n.Name] = true
+							keep(n.Name)
 						}
 					}
 				}

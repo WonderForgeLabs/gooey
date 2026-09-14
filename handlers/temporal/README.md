@@ -255,8 +255,7 @@ Three things stay client-side and never come from the workflow:
 ## Determinism
 
 Nothing in `wizard.go` reads a clock, a random source, or the network.
-Temporal's `Now`, from the SDK's own `workflow` package, supplies the
-replay-safe time; every other fact on screen
+`workflow.Now` supplies the replay-safe time; every other fact on screen
 arrived as an activity result recorded in history. A replay reconstructs,
 byte for byte, the UI the user was looking at — which is also why the
 final screen survives the workflow's own completion: a closed workflow
