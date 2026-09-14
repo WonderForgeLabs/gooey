@@ -124,6 +124,11 @@ claims "later siblings paint on top" as its reason. Closing it properly means
 teaching the hit-test walk the same two layers — worth doing when a
 non-capturing overlay actually exists. Named in review of #437.
 
+`gooey.TestARankOrdersPaintAndNotHitTesting` holds the divergence open, and
+citing it here is what puts this page on the list that test's failure message
+prints — so whoever closes the gap is sent here rather than leaving this
+paragraph asserting a divergence that is gone. Added in review of #456.
+
 ## Damage
 
 **No damage count in the repo moved.** That is the result worth recording,

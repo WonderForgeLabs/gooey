@@ -132,6 +132,12 @@ type ChildSetter interface {
 // routing. Implementing this alone will paint you on top and leave the
 // clicks to whoever is underneath. Stated in review of #437; the same
 // gap is named in docs/specs/2026-08-30-overlay-layer.md.
+//
+// TestARankOrdersPaintAndNotHitTesting (root package) is what holds the
+// divergence open, and naming it here is what puts this comment on the
+// list its failure message prints — so closing the gap sends whoever
+// closes it to this paragraph too. Review of #456 found this page
+// carrying the caveat and absent from that list.
 type Overlay interface{ OverlaysPage() }
 
 // OverlayRanker is an Overlay that says where in the overlay layer it

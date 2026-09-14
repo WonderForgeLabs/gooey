@@ -26,8 +26,9 @@ import (
 //     layer and being last only orders it among overlays of equal rank;
 //     this said "LAST, because document order is z-order" until review
 //     of #456, which is the reason #430 disproved), whose pre-clear
-//     paints exactly the popup rectangle — the overlay contract. The primitive owns the surface so it can guarantee the
-//     subscription rule below; the owner supplies only the draw func.
+//     paints exactly the popup rectangle — the overlay contract. The
+//     primitive owns the surface so it can guarantee the subscription
+//     rule below; the owner supplies only the draw func.
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //

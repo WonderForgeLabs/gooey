@@ -329,7 +329,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:689-726`; the design record is the container-backgrounds and
+(`composer.go:711-748`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -380,7 +380,7 @@ test message) rather than listing them; derive the sites with a grep for
 `floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
 not to each node, so `overlayOf` (`component.go`) answers the parent's
-`inherited` BEFORE testing the marker — reverse those two `if`s and a
+`parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
 rank-2 container's rank-0 child lands in an earlier bucket, the parent
 paints after it, and a parent that covers its bounds erases the child it
 lifted. And `OverlayRank()` must return a
@@ -426,6 +426,20 @@ exempt because it holds pointer capture while open, which routes presses
 before the walk runs — that is Popup's mechanism, not the marker's.
 Closing the gap is
 [#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
+**"Every page" is a claim the test now DERIVES, and a convention comes
+with it.** That list was a seven-file literal inside the failure message
+until review of #456 grepped for the caveat and found FOUR more pages
+carrying it — `component.go`'s own `Overlay` doc among them — so an
+absolute claim was being made off a hand-maintained list, which is the
+same shape as every count this file refuses to write down. The message
+now walks the tree and prints every page that NAMES the test, so a page
+joins the list by citing it. Cite it when you write the caveat somewhere
+new; a caveat without the citation is invisible to the walk, and that is
+the one gap left. `TestTheDivergenceListIsNotEmpty` guards the derivation
+itself, because an empty list turns the failure message into "delete the
+caveat from these pages:" followed by nothing — advice that reads as
+"nothing to do" at the moment there is most to do.
 
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes

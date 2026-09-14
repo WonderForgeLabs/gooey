@@ -1,6 +1,10 @@
 package gooey
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -223,36 +227,134 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 
 	// Same tree, same frame, opposite answer. If this ever returns `over`
 	// the divergence closed — which would be good news, and would make
-	// the caveats in CLAUDE.md, components/toast.go,
-	// docs/markup-reference.md, docs/architecture.md, mouse.go,
-	// docs/learn/concepts/overlays.md and docs/learn/07-app-chrome.md
-	// wrong rather than merely stale.
+	// every page carrying the caveat wrong rather than merely stale.
 	//
-	// THE LEARN PAGES JOINED THE LIST IN REVIEW OF #456, and they are the
-	// half that matters most: they are where the freedom is GRANTED to
-	// somebody meeting overlays for the first time, and they were the two
-	// surfaces this enumeration did not name — so closing the gap would
-	// have left the one grant a learner reads with nobody sent to it.
+	// THE LIST IS DERIVED, NOT WRITTEN DOWN, and that is the whole of the
+	// difference. It was a seven-file literal in this message, kept in
+	// step by hand; review of #456 grepped for it and found FOUR more
+	// pages carrying the same caveat — component.go's own Overlay doc
+	// ("IT MOVES PAINT, NOT INPUT"), docs/specs/2026-09-05-overlay-ranks.md,
+	// docs/specs/2026-08-30-overlay-layer.md and
+	// docs/specs/2026-09-05-one-shot-overlay-order.md. A literal had
+	// already been wrong twice before that (the two learn pages, then
+	// this file's own CLAUDE.md entry), each time silently, each time
+	// caught only because somebody happened to look. Eleven is not a
+	// better number to maintain than seven; deriving it is the fix.
 	//
-	// AND CLAUDE.md JOINED IT TOO, for the reason the list exists at all.
-	// It carries a full divergence paragraph AND a four-file copy of this
-	// enumeration, and appeared in neither — so #465 landing would have
-	// reddened this test, sent whoever cleared it to six files, and left
-	// the one document every agent here is told to trust asserting a
-	// divergence that no longer exists, with nothing red. Its copy of the
-	// list is gone now; it points here instead, so there is ONE place to
-	// maintain. Raised in review of #456.
+	// citingPages is the derivation, and naming this test is what puts a
+	// page on the list. The four pages that carried the caveat without
+	// citing the test were edited to cite it, so the anchor covers them —
+	// a caveat added later without the citation is invisible here, which
+	// is the residual gap and the reason the convention is written into
+	// CLAUDE.md's paragraph rather than only here. Raised in review of
+	// #456.
 	m := NewFocusManager(root)
 	hit := m.HitTest(0, 0)
 	if hit == Component(over) {
-		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the cell it " +
-			"paints. Delete the divergence caveats in CLAUDE.md, " +
-			"components/toast.go, docs/markup-reference.md, " +
-			"docs/architecture.md, mouse.go, docs/learn/concepts/overlays.md " +
-			"and docs/learn/07-app-chrome.md rather than this test")
+		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the "+
+			"cell it paints. Delete the divergence caveat from these pages "+
+			"rather than this test:\n\t%s",
+			strings.Join(citingPages(t), "\n\t"))
 	}
 	if hit != Component(under) {
 		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+
 			"document order in reverse and knows nothing about ranks", hit)
+	}
+}
+
+// citingPages walks the tree for every page naming this test, which is
+// the convention that puts a page on the divergence list. It replaces a
+// literal enumeration in the failure message above; see the comment
+// there for why, and for the one gap it leaves.
+//
+// The walk excludes this file — it is the pin, not a page carrying the
+// caveat — and prunes dot-directories at EVERY depth, not just the top:
+// .claude/worktrees/ holds whole checkouts of this repo, so a walk
+// anchored only at the root reports the same page several times on a
+// developer machine and once in CI. vendor/ is pruned because it cannot
+// carry this caveat and is most of the tree.
+func citingPages(t *testing.T) []string {
+	t.Helper()
+	const self = "overlayrank_test.go"
+	var pages []string
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(p) {
+		case ".go", ".md":
+		default:
+			return nil
+		}
+		if d.Name() == self {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(b), "TestARankOrdersPaintAndNotHitTesting") {
+			pages = append(pages, filepath.ToSlash(p))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking for pages citing this test: %v", err)
+	}
+	sort.Strings(pages)
+	return pages
+}
+
+// TestTheDivergenceListIsNotEmpty is the non-vacuity guard on the
+// derivation above, and it is not ceremony. citingPages walks for a
+// literal string; a rename of this test, a walk rooted elsewhere, or a
+// prune that swallows its own target all produce an EMPTY list, and an
+// empty list makes the failure message above say "delete the caveat from
+// these pages:" followed by nothing — advice that reads as "there is
+// nothing to do" at the exact moment there is most to do. Failing here
+// instead says which half broke.
+//
+// The floor is a floor rather than a count, for the reason CLAUDE.md's
+// Verify section gives about numbers in prose: an exact figure is a
+// sample taken once, and this one was 7 until review of #456 measured
+// 11. What must hold is that the walk reaches the caveat's home pages at
+// all.
+func TestTheDivergenceListIsNotEmpty(t *testing.T) {
+	pages := citingPages(t)
+	if len(pages) < 8 {
+		t.Fatalf("the derived divergence list holds %d pages: %v\nA caveat this "+
+			"widely repeated cannot have shrunk to that, so suspect the "+
+			"derivation — a renamed test, a walk rooted elsewhere, or a prune "+
+			"that swallowed its own target — before believing the pages went "+
+			"away", len(pages), pages)
+	}
+	// THE THREE SURFACES THE CAVEAT MUST REACH, by kind rather than by
+	// name: the framework's own doc comments, the reference and spec
+	// prose, and the learn path where the freedom is GRANTED to a
+	// first-time reader. Losing one whole kind is the regression a total
+	// count hides, and the learn pages are exactly what an earlier
+	// literal list had missed.
+	kinds := map[string]bool{}
+	for _, p := range pages {
+		switch {
+		case strings.HasPrefix(p, "docs/learn/"):
+			kinds["learn"] = true
+		case strings.HasPrefix(p, "docs/"):
+			kinds["docs"] = true
+		case strings.HasSuffix(p, ".go"):
+			kinds["code"] = true
+		}
+	}
+	for _, want := range []string{"learn", "docs", "code"} {
+		if !kinds[want] {
+			t.Errorf("no %s page cites this test, so the divergence caveat there "+
+				"(if any) will outlive the behaviour: %v", want, pages)
+		}
 	}
 }
