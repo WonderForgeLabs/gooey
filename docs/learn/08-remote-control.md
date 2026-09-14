@@ -150,9 +150,16 @@ a real component (wrong click, no error) or outside the island (refused,
 with a message saying the point is outside an island whose own snapshot
 you computed it from).
 
-The cell metrics are `0` when the host never probed the terminal — the
-probe is opt-in, so this is the common case for a cell-plane app. Branch
-on the zero rather than dividing by it.
+**The cell metrics are `0` only when nobody has measured them, and the
+converse does not hold.** Branch on the zero rather than dividing by it —
+but do not read a non-zero pair as a measurement. Two places substitute
+`term.DefaultCellW/H` (10×20): the capability probe itself does it
+whenever it could not measure, whatever the app paints on, and the
+runtime does it for a pixel-plane app that never probed at all. So `0`
+means *certainly unmeasured*; non-zero means *usable*, not *measured*,
+and nothing in the payload tells the two apart. The ordinary `0` case is
+a cell-plane app with the probe off, which is the default — the probe is
+a round trip only graphics apps need.
 
 Before this tool the screen had to be read off `screen_text`, whose lines
 are trailing-trimmed (so the width it implies is the longest *painted*
