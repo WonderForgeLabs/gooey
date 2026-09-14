@@ -664,7 +664,7 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
   </Gooey.Resources>
   <VStack>
     <PageProbe/>
-    <ItemsView Items="{{.Items}}">
+    <ItemsView Name="List" Items="{{.Items}}">
       <ItemsView.ItemTemplate><Probe/></ItemsView.ItemTemplate>
     </ItemsView>
   </VStack>
@@ -684,7 +684,14 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 	// #490: giving the row the page's own map, exactly what this arm
 	// says must not happen, left the test PASSING.
 	armsSentinel := prop.NewSource("")
-	var row *Context
+	// items is held rather than inlined so the composer below can force
+	// rows the load never realized.
+	items := prop.NewSource([]string{"a"})
+	var row, lateRow *Context
+	// loaded flips when Load returns, which is what tells the Probe
+	// builder which phase it is running in.
+	var loaded bool
+	lateRead := map[string]bool{}
 	// The four fields a page build SAVES AND RESTORES — ns and arms in
 	// document.build's own deferred closures, res through the pop
 	// pushDocumentResources hands back, and fsys in Load's. A read of
@@ -723,15 +730,30 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		},
 		Values: map[string]any{
 			"PageOnly": prop.NewSource("page"),
-			"Items": components.Items(prop.NewSource([]string{"a"}),
+			"Items": components.Items(items,
 				func(s string) map[string]any { return map[string]any{"S": s, "N": 1} }),
 		},
 		Components: map[string]Builder{
 			"Probe": func(e Element, c *Context) (gooey.Component, error) {
-				row, rowLive = c, live(c)
+				into := liveRead
+				if loaded {
+					// A ROW NOBODY REALIZED AT LOAD TIME. Everything
+					// above this line is ItemsView.Validate's throwaway
+					// probe row, built while the page build is still
+					// running; a row the user scrolls to is built by the
+					// composer after Load's defers have put ns, arms,
+					// fsys and res back. Raised in review of #490, which
+					// measured the gap: reverting the docFS capture in
+					// itemsview.go left this test green and only
+					// TestAPageRelativeAssetPathWorksInsideARow red.
+					into = lateRead
+					lateRow = c
+				} else {
+					row, rowLive = c, live(c)
+				}
 				for _, name := range contextFields(t) {
 					if crossed, known := crossedIn(c, name); known {
-						liveRead[name] = crossed
+						into[name] = crossed
 					}
 				}
 				return &components.Text{}, nil
@@ -830,8 +852,37 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		return crossed, true
 	}
 
-	if _, err := Load(pageFS, "page.gooey", page); err != nil {
+	root, err := Load(pageFS, "page.gooey", page)
+	if err != nil {
 		t.Fatalf("the page did not load, so nothing below was observed: %v", err)
+	}
+	loaded = true
+	// THE SCROLL-TIME ROW. Without it every answer below is about a
+	// context built while the page build was still installed, and the
+	// two idioms the row literal mixes — fields CAPTURED when the
+	// factory is built and fields READ inside it — are indistinguishable
+	// here. A field added in the read-live idiom that Load later starts
+	// restoring is green at load time and nil at scroll time, which is
+	// exactly the defect this round fixed for fsys. Raised in review of
+	// #490.
+	list, _ := page.Named["List"].(*components.ItemsView)
+	if list == nil {
+		t.Fatal("the <ItemsView> is not in the page's Named map, so no row can " +
+			"be realized after Load and the comparison below checks nothing")
+	}
+	c := gooey.NewComposer(root, 40, 10)
+	t.Cleanup(c.Close)
+	c.Frame()
+	items.Set([]string{"a", "b", "c"})
+	c.Frame()
+	if err := list.Err(); err != nil {
+		t.Fatalf("a row realized after Load returned did not build: %v", err)
+	}
+	if lateRow == nil {
+		t.Fatal("the composer realized no template row after Load returned, so " +
+			"every answer below is about the load-time probe row alone — the " +
+			"one context whose fields are read while the page build is still " +
+			"installed")
 	}
 	if row == nil {
 		t.Fatal("the probe builder never ran, so no row context was reached. " +
@@ -917,6 +968,22 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 				"Load returned. Something restores it on the row, so an assertion "+
 				"taken afterwards is about the restore rather than about the row",
 				name, crossed, after)
+		}
+		// THE TWO ROWS MUST AGREE. The load-time probe row and a row the
+		// composer realized afterwards are built by the same factory and
+		// are the same claim; a field that crosses for one and not the
+		// other is the capture-versus-read-inside-the-factory defect,
+		// which no assertion about a single row can see.
+		if late, known := lateRead[name]; !known {
+			t.Errorf("Context.%s was not read on a row realized after Load, so "+
+				"the scroll-time half of the contract is unchecked", name)
+		} else if late != crossed {
+			t.Errorf("Context.%s reached the load-time probe row (%v) and the "+
+				"scroll-time row (%v) differently. itemsview.go must CAPTURE the "+
+				"page's value beside pagePending rather than read it inside the "+
+				"row factory: Load restores ns, arms, fsys and res in its defers, "+
+				"so a row built when the user scrolls sees whatever was put back",
+				name, crossed, late)
 		}
 		if crossed != rule.inherit {
 			verb := "did not reach an item-template row"

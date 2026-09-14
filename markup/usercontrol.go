@@ -49,12 +49,36 @@ func (e attributedErr) Error() string {
 
 func (e attributedErr) Unwrap() error { return e.err }
 
-// attributeControl names the control an error happened inside, once.
+// attributeControl names the control an error happened inside, once —
+// for THIS package's own recursion, where a control inside a control
+// would otherwise stack a name per frame and say nothing new.
 func attributeControl(name string, err error) error {
 	var a attributedErr
 	if errors.As(err, &a) {
 		return err
 	}
+	return attributedErr{name: name, err: err}
+}
+
+// attributeSetup names the control whose setup was running, ALWAYS, and
+// the difference from attributeControl is the difference between the two
+// call sites.
+//
+// doc.build is this package recursing into a control it found in the
+// markup: the inner name locates the fault and every frame above it is
+// structure the author can see for themselves. runSetup is arbitrary Go
+// choosing a document of its own — a preview pane loading whatever file
+// is selected, a control Loading a sibling — and there the two names are
+// different facts: which file has the bad element, and which control's
+// setup asked for it. Innermost-only answered the first and dropped the
+// second, so several controls previewing one sub-document all produced
+// the same message with no way back to the instantiation.
+//
+// The prefix does not double: attributedErr.Error trims the inner
+// "markup: ", so two frames read "markup: control outer.gooey: control
+// mid.gooey: unknown element <Nope>". Raised in review of #490, where
+// the absence of the outer name had become a contract by being asserted.
+func attributeSetup(name string, err error) error {
 	return attributedErr{name: name, err: err}
 }
 
@@ -181,15 +205,12 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if setup != nil {
 			child, err = runSetup(setup, e, parent, declared)
 			if err != nil {
-				// attributeControl, NOT a hand-built attributedErr: a
-				// setup is arbitrary Go and routinely calls markup.Load
-				// or markup.Build on a document of its own, whose error
-				// already names ITS control. Wrapping by hand skips the
-				// errors.As check and stacks a second prefix on exactly
-				// the case this machinery exists to stop. Raised in
-				// review of #490 — the first version of it made this
-				// mistake at two of its own three sites.
-				return nil, attributeControl(name, err)
+				// attributeSetup, which names this control even when the
+				// error already names one: a setup is arbitrary Go and
+				// routinely calls markup.Load or markup.Build on a
+				// document of ITS OWN choosing, so the inner name is a
+				// different fact from this one. See attributeSetup.
+				return nil, attributeSetup(name, err)
 			}
 		}
 		if child == nil {

@@ -341,14 +341,22 @@ func TestACycleRefusalIsNotAttributedTwice(t *testing.T) {
 
 // A SETUP IS ARBITRARY GO, and the commonest thing it does with a
 // document is load another one — a control whose code-behind builds a
-// sub-view, a designer that renders a preview. That inner Load returns
-// an error already attributed to ITS control, and wrapping it by hand at
-// the setup site would put a second name and a second "markup: " on it:
-// the exact stacking attributedErr exists to stop, at the one site where
-// the inner error is not this package's own recursion.
+// sub-view, a designer that renders a preview. That gives the reader TWO
+// facts worth having: which file holds the bad element, and which
+// control's setup asked for that file. They are different questions the
+// moment several controls preview the same sub-document, where the inner
+// name alone leads back to no instantiation at all.
 //
-// Measured against the first version of the fix, which built the
-// attributedErr inline at this site and at passAttrs':
+// So both names, each ONCE, and one "markup: " on the sentence:
+//
+//	markup: control outer.gooey: control mid.gooey: unknown element <Nope>
+//
+// This asserted the ABSENCE of outer.gooey until review of #490 pointed
+// out that the absence had thereby become a contract. What must not
+// happen is a name per FRAME of this package's own recursion — that is
+// doc.build's site, which stays innermost-only — and a second "markup: "
+// per frame, which is what the first version of the fix produced by
+// building the attributedErr inline:
 //
 //	markup: control outer.gooey: markup: control mid.gooey: unknown element <Nope>
 func TestASetupsOwnLoadErrorIsNotAttributedTwice(t *testing.T) {
@@ -381,10 +389,18 @@ func TestASetupsOwnLoadErrorIsNotAttributedTwice(t *testing.T) {
 	if !strings.Contains(msg, "mid.gooey") {
 		t.Errorf("the error does not name the control the inner load failed in: %v", err)
 	}
-	if strings.Contains(msg, "outer.gooey") {
-		t.Errorf("the error names the enclosing control as well as the one that "+
-			"actually failed, which is the stacking attributedErr exists to "+
-			"stop: %v", err)
+	if n := strings.Count(msg, "outer.gooey"); n != 1 {
+		t.Errorf("the error names outer.gooey %d times, want once: the setup that "+
+			"chose the failing document is the other half of where to look, and "+
+			"more than once is the frame-per-name stacking attributedErr exists "+
+			"to stop: %v", n, err)
+	}
+	if n := strings.Count(msg, "mid.gooey"); n != 1 {
+		t.Errorf("the error names mid.gooey %d times, want once: %v", n, err)
+	}
+	if i, j := strings.Index(msg, "outer.gooey"), strings.Index(msg, "mid.gooey"); i > j {
+		t.Errorf("the inner control is named before the setup that loaded it, so "+
+			"the sentence reads inside-out: %v", err)
 	}
 	if n := strings.Count(msg, "markup: "); n != 1 {
 		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)

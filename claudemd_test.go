@@ -2,6 +2,9 @@ package gooey
 
 import (
 	"fmt"
+	"go/ast"
+	goparser "go/parser"
+	gotoken "go/token"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1652,4 +1655,145 @@ func blockFree(lines []string) []string {
 // small and read once.
 func identRe(leaf string) *regexp.Regexp {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(leaf) + `\b`)
+}
+
+// symbolDocs are the pages whose SYMBOL citations are checked. CLAUDE.md
+// and the markup reference both cite code by name now, and the second
+// one carries no `file:line` citation at all since #490 converted its
+// last — so without this it has no automated citation check of any kind.
+var symbolDocs = []string{claudeMD, "docs/markup-reference.md"}
+
+// symbolCiteRe is a backticked, package-qualified Go name: one lowercase
+// package segment, a dot, one identifier.
+//
+// THE LOWERCASE HEAD IS THE WHOLE FILTER, and it is what keeps this off
+// the markup reference's own vocabulary. `Grid.Row`, `Canvas.Left` and
+// `ItemsView.ItemTemplate` are attached-property spellings, not Go
+// symbols, and their heads are element names — capitalised, every one.
+// A Go package in this repo is lowercase, every one. Matching on that
+// costs the `Context.BindingValue` form, which is a TYPE and a method:
+// resolving those needs the receiver's package, which the prose does not
+// give, and guessing it is how a guard starts reporting the wrong
+// symbol.
+var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_]*)`")
+
+// TestEveryCitedSymbolResolves is the half TestCLAUDEMDCitationsResolve
+// cannot see, and #490 is what made it necessary.
+//
+// That PR replaced line citations with symbols on the stated ground that
+// a symbol "cannot rot the way markup.go:1976 had" — and then removed
+// docs/markup-reference.md from citedDocs, because the pattern there
+// matches `path:line` only. Nothing checked the new form: rename
+// boundaryPartition and the reference page points at nothing while every
+// test still compiles and passes, since they use the identifier rather
+// than reading the doc's spelling of it. The net was FEWER checked
+// citations than main had, from a change whose argument was that the new
+// form is safer. Raised in review of #490.
+//
+// It resolves against declarations rather than against a grep: a name
+// that appears only inside a comment or a string is exactly the rot this
+// is for.
+func TestEveryCitedSymbolResolves(t *testing.T) {
+	declared := declaredByPackage(t)
+	if len(declared["markup"]) == 0 || len(declared["render"]) == 0 {
+		t.Fatalf("the declaration index found %d markup symbols and %d render "+
+			"symbols, so the walk is looking somewhere else and every citation "+
+			"below would resolve vacuously",
+			len(declared["markup"]), len(declared["render"]))
+	}
+
+	checked := 0
+	for _, doc := range symbolDocs {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("reading %s: %v", doc, err)
+		}
+		for _, m := range symbolCiteRe.FindAllStringSubmatch(string(b), -1) {
+			pkg, name := m[1], m[2]
+			syms, ours := declared[pkg]
+			if !ours {
+				continue // a stdlib or third-party name; not ours to check
+			}
+			checked++
+			if !syms[name] {
+				t.Errorf("%s cites `%s.%s` and package %s declares no %s. A symbol "+
+					"citation does not rot the way a line number does, but it does "+
+					"go stale on a RENAME — which is the thing a line citation "+
+					"cannot do and this form can. (#490)", doc, pkg, name, pkg, name)
+			}
+		}
+	}
+	// A FLOOR, not an exact count: this reads two whole documents rather
+	// than one section, and pinning the number would make every added
+	// sentence a test edit. Zero is the failure that matters — the
+	// pattern having drifted from how the documents spell a citation.
+	if checked < 10 {
+		t.Errorf("only %d package-qualified symbol citations were resolved across "+
+			"%v, which is fewer than these documents carried when this guard was "+
+			"written — either they stopped citing code by name, or the pattern no "+
+			"longer matches the spelling they use", checked, symbolDocs)
+	}
+}
+
+// declaredByPackage maps a package NAME to every top-level identifier it
+// declares, tests included: a doc may cite a guard's table, and
+// rowPartition lives in a _test.go file.
+//
+// BY NAME AND NOT BY DIRECTORY, because prose writes `markup.Load` and
+// never says which directory that is. Two directories with the same
+// package name union their symbols, which is the only imprecision here
+// and a safe one: it can accept a citation that resolves in the wrong
+// copy, never reject one that resolves in the right one.
+func declaredByPackage(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	out := map[string]map[string]bool{}
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); p != "." && (strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, p, src, 0)
+		if err != nil {
+			return nil // the compiler owns this one
+		}
+		pkg := f.Name.Name
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				out[pkg][d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, sp := range d.Specs {
+					switch sp := sp.(type) {
+					case *ast.TypeSpec:
+						out[pkg][sp.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							out[pkg][n.Name] = true
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree for declarations: %v", err)
+	}
+	return out
 }
