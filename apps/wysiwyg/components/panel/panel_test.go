@@ -40,6 +40,23 @@ func term8x16(cols, rows int) term.Caps {
 
 // page puts a pane over a text line, so there is a neighbour whose repaint
 // can be provoked without touching the pane. enc nil is the cell tier.
+// rowText reads w CELLS of row y off a Composer's cell plane.
+//
+// Text(), NOT .Rune: a continuation cell — the second column of a wide
+// glyph — carries render.Continuation, and writing that rune out puts a
+// literal marker in the row. CLAUDE.md names that helper shape as the
+// reason no fixture in six packages could hold a wide glyph and be
+// asserted on, and this package held two of them. w is a COLUMN count,
+// so a caller with a string wants render.StringWidth rather than its
+// length. Raised in review of #502.
+func rowText(c *gooey.Composer, y, x, w int) string {
+	var sb strings.Builder
+	for i := 0; i < w; i++ {
+		sb.WriteString(c.Cells().At(x+i, y).Text())
+	}
+	return sb.String()
+}
+
 func page(enc graphics.Encoder) (*gooey.Composer, *Pane, *prop.Property[string]) {
 	below := prop.NewSource("footer")
 	p := &Pane{
@@ -124,12 +141,8 @@ func TestPixelTierTitleIsOnTheCellPlane(t *testing.T) {
 	c, p, _ := page(graphics.Kitty{})
 	c.Frame()
 	b := p.Bounds()
-	var got strings.Builder
-	for x := b.X + 2; x < b.X+2+len(" Files "); x++ {
-		got.WriteRune(c.Cells().At(x, b.Y).Rune)
-	}
-	if got.String() != " Files " {
-		t.Errorf("the top edge reads %q, want the title on the cell plane", got.String())
+	if got := rowText(c, b.Y, b.X+2, render.StringWidth(" Files ")); got != " Files " {
+		t.Errorf("the top edge reads %q, want the title on the cell plane", got)
 	}
 }
 
@@ -257,11 +270,7 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 		t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
 	}
 
-	var row strings.Builder
-	for x := b.X; x < b.X+b.W; x++ {
-		row.WriteRune(c.Cells().At(x, b.Y).Rune)
-	}
-	got := row.String()
+	got := rowText(c, b.Y, b.X, b.W)
 
 	// Not dropped: the label is there, inset one border cell and one pad.
 	if !strings.HasPrefix(got, "╭─ Files") {

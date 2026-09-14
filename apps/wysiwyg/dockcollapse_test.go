@@ -1087,11 +1087,7 @@ func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
 		t.Fatalf("the header reaches column %d of a %d-column row, so there is "+
 			"nothing to its right to assert about", past, f.Cells.W)
 	}
-	var tail strings.Builder
-	for x := past; x < f.Cells.W; x++ {
-		tail.WriteString(f.Cells.At(x, got.Y).Text())
-	}
-	if rest := strings.TrimRight(tail.String(), " "); rest != "" {
+	if rest := rowText(f, got.Y, past, f.Cells.W-past); rest != "" {
 		t.Errorf("the strip row past the collapsed header at column %d reads %q, "+
 			"want blank. Those cells belong to no component now, so nothing "+
 			"repaints them — a leftover there is the pane's old body, still on "+

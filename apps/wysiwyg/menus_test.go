@@ -224,47 +224,42 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 func TestTheCheckBoxIsDrawn(t *testing.T) {
 	dropdown := viewMenuRows(t, codeBuiltin)
 
-	if got := boxBefore(t, dropdown, "Built in"); got != "[x] " {
+	if got, row := boxBefore(t, dropdown, "Built in"); got != "[x] " {
 		t.Errorf("the \"Built in\" row carries %q in front of its label, want a checked "+
-			"\"[x] \"; the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
+			"\"[x] \"; the row reads %q", got, row)
 	}
 	// The unchecked box must be a real box, not blank: "[ ]" and nothing
 	// at all read very differently to a user deciding which is selected.
-	if got := boxBefore(t, dropdown, "$EDITOR"); got != "[ ] " {
+	if got, row := boxBefore(t, dropdown, "$EDITOR"); got != "[ ] " {
 		t.Errorf("the $EDITOR row carries %q in front of its label, want an unchecked "+
-			"\"[ ] \"; the row reads %q", got, dropdownRow(t, dropdown, "$EDITOR"))
+			"\"[ ] \"; the row reads %q", got, row)
 	}
 }
 
-// TestTheCheckBoxFollowsTheSelection is the other half, and it is
-// STRONGER than this comment used to claim.
+// TestTheCheckBoxFollowsTheSelection is the other half, and what it adds
+// is narrower than a second selection looks.
 //
-// It said a single selection could not tell "drawn from the state" from
-// "a constant in the template". That is not so: a global constant is
-// already caught by the test above, which asserts "[x] " on one row and
-// "[ ] " on another IN THE SAME FRAME. Overstating what a test catches
-// is how the next reader comes to believe a case is covered when it is
-// not, so the real answer, measured by mutating Menu.checkBox to a
-// PER-ITEM constant that ignores it.Checked:
+// A GLOBAL constant in the template is already caught one test up, which
+// asserts "[x] " on one row and "[ ] " on another IN THE SAME FRAME.
+// What needs a second selection is the two mutations no single frame can
+// reach: a PER-ITEM constant that ignores it.Checked, and an item bound
+// to the WRONG *prop.Property[bool]. Measured on the first of those:
 //
 //	--- PASS: TestTheCheckBoxIsDrawn
 //	--- FAIL: TestTheCheckBoxFollowsTheSelection
 //
-// So what this buys is the two mutations one frame cannot reach: a
-// per-item constant, and an item bound to the WRONG
-// *prop.Property[bool]. Neither this test nor
-// TestTheCheckAndTheAcceleratorAreOneState covers those otherwise.
-// Raised in review of #502.
+// Neither this test nor TestTheCheckAndTheAcceleratorAreOneState covers
+// them otherwise.
 func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 	dropdown := viewMenuRows(t, codeExternal)
 
-	if got := boxBefore(t, dropdown, "$EDITOR"); got != "[x] " {
+	if got, row := boxBefore(t, dropdown, "$EDITOR"); got != "[x] " {
 		t.Errorf("with $EDITOR selected its row carries %q, want \"[x] \"; the row reads %q",
-			got, dropdownRow(t, dropdown, "$EDITOR"))
+			got, row)
 	}
-	if got := boxBefore(t, dropdown, "Built in"); got != "[ ] " {
+	if got, row := boxBefore(t, dropdown, "Built in"); got != "[ ] " {
 		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want \"[ ] \"; "+
-			"the row reads %q", got, dropdownRow(t, dropdown, "Built in"))
+			"the row reads %q", got, row)
 	}
 }
 
@@ -288,28 +283,30 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 // page's border out of the window, a row with no check box returns four
 // spaces instead of the border glyph plus one.
 //
-// THE ENVIRONMENT IS STATED, NOT INHERITED — but not for the reason
-// this comment used to give, and the correction is worth keeping because
-// the old reason was the same class of defect the negative arm below is
-// indicted for.
+// THE ENVIRONMENT IS STATED, NOT INHERITED, and it is worth being exact
+// about what that buys, because the obvious answer is wrong here.
 //
-// It said the old test was "green on their machine, red on the next
-// one". It was not, and a reviewer measured it: editorItemText renders
-// `$EDITOR (…)`, so the substring the old arm searched for is a CONSTANT
-// PREFIX and the resolved program only ever appears inside the
-// parentheses, which no old arm read. Replayed under six values of
-// $EDITOR — unset, vim, `/usr/bin/env -i`, an uninstalled name, a long
-// path and `emacsclient -nw -a ”` — all three pre-PR arms returned
-// identical booleans every time.
+// It does NOT make an env-dependent test deterministic. The assertions
+// below match on `$EDITOR`, which editorItemText renders as a constant
+// prefix of `$EDITOR (…)`; the resolved program only ever appears inside
+// the parentheses. Replayed under six values — unset, vim,
+// `/usr/bin/env -i`, an uninstalled name, a long path, and an
+// emacsclient invocation with a quoted alternate — every arm returned
+// the same booleans. Whoever removes this Setenv will find the tests
+// still passing, which is why the real reasons are written down:
 //
-// What the Setenv is actually for: the diagnostics below QUOTE the row,
-// so without it the failure message differs per machine, and the
-// assertion has to survive a future label that does interpolate the
-// program name — which is the direction #477 is pushing this row in.
-// resolveEditor reads only EDITOR (no VISUAL fallback), so setting the
-// one variable really does pin the label. `/usr/bin/env -i` is the value
-// the sibling test uses: it exists on any machine that can run this
-// suite, and it resolves to the basename "env". Raised in review of #502.
+//   - The diagnostics QUOTE the row, so an inherited $EDITOR makes a
+//     failure message differ per machine and a reader cannot compare it
+//     with anyone else's.
+//   - The label is expected to interpolate the program name — that is
+//     the direction #477 pushes this row in — and on the day it does,
+//     an unpinned environment turns these assertions env-dependent
+//     without anyone editing them.
+//
+// resolveEditor reads only EDITOR (no VISUAL fallback), so the one
+// variable pins the label. `/usr/bin/env -i` is the value the sibling
+// test uses: it exists on any machine that can run this suite, and
+// resolves to the basename "env".
 func viewMenuRows(t *testing.T, which int) []string {
 	t.Helper()
 	// BEFORE buildPage, which is where resolveEditor runs — and here
@@ -364,37 +361,44 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 	return hits[0]
 }
 
-// boxBefore returns the four cells immediately in front of want on its
-// row — the check box, if the menu drew one there.
+// boxBefore returns the four entries immediately in front of want on its
+// row — the check box, if the menu drew one there — and the row itself.
 //
 // Returned as TEXT so the caller compares it against the box it expects,
 // rather than testing for a box's absence. "    " is a real answer and a
 // distinct failure from "[x] ": one is a missing box, the other is the
 // wrong state, and a negative Contains reports both as the same thing
 // while also passing when the label has moved somewhere the search never
-// looked. It is a REACHABLE answer now — the "Next Pane" row of this
-// same menu returns exactly that — which it was not while the window
-// included the page's border, where an unboxed label's four preceding
-// bytes were the border glyph plus a space.
+// looked. The "Next Pane" row of this same menu returns exactly "    ",
+// so the three-way distinction is exercised rather than hypothetical.
 //
-// RUNES, NOT BYTES, and no false pass was ever possible: "[x] " and
-// "[ ] " are ASCII, and an ASCII byte cannot be part of a multi-byte
-// UTF-8 sequence, so a four-BYTE window equal to either really was four
-// ASCII cells. What byte slicing broke was the diagnostic, precisely
-// when the test finally fires — a label at an odd offset cut a box-
-// drawing rune in half and %q printed "\xe2\x94\x82 ". Raised in review
-// of #502.
-func boxBefore(t *testing.T, rows []string, want string) string {
+// THE ROW COMES BACK WITH THE BOX because the caller needs it for the
+// failure message, and finding it again there means a second
+// dropdownRow — which holds a t.Fatalf, evaluated inside a t.Errorf's
+// argument list. A Fatal from there ends the test while the Errorf that
+// asked for it never runs, so the diagnostic the caller was building is
+// lost at exactly the moment it is wanted.
+//
+// RUNES, AND THE DIFFERENCE FROM CELLS IS WORTH NAMING. rowText yields
+// one entry per cell, except that a wide glyph's continuation cell
+// contributes the empty string — so an index into the row is a rune
+// index, and equals a cell index only for a row of narrow glyphs, which
+// this menu is. Byte slicing was what broke, and only the diagnostic: a
+// box is ASCII and an ASCII byte cannot be part of a multi-byte UTF-8
+// sequence, so a four-byte window equal to "[x] " really was four ASCII
+// cells — but a label at an odd offset cut a box-drawing rune in half
+// and %q printed "\xe2\x94\x82 ".
+func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 	t.Helper()
-	row := dropdownRow(t, rows, want)
+	row = dropdownRow(t, rows, want)
 	r := []rune(row)
 	i := len([]rune(row[:strings.Index(row, want)]))
 	if i < 4 {
-		t.Fatalf("%q starts at cell %d of %q, with no room for a check box in front "+
+		t.Fatalf("%q starts at rune %d of %q, with no room for a check box in front "+
 			"of it — which is how a row with no box at all reads when the label sits "+
-			"within four cells of the start", want, i, row)
+			"within four of the start", want, i, row)
 	}
-	return string(r[i-4 : i])
+	return string(r[i-4 : i]), row
 }
 
 // TestEditorLabelResolvesTheProgram is the second thing that was

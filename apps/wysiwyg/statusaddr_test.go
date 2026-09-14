@@ -257,12 +257,12 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 }
 
 // screenRow reads one row of the cell plane back as a string.
+//
+// render.RowText rather than a loop over .Rune, for the reason rowText
+// carries: a continuation cell rendered as its marker rune puts a
+// literal U+FFFF in the row, and every caller here is comparing text.
 func screenRow(f *gooey.Frame, y int) string {
-	var b strings.Builder
-	for x := 0; x < f.Cells.W; x++ {
-		b.WriteRune(f.Cells.At(x, y).Rune)
-	}
-	return b.String()
+	return render.RowText(f.Cells, y)
 }
 
 // ---- 2. the copy tells the truth ----
@@ -641,11 +641,7 @@ func TestTheDotOccupiesOneCellAndTheAddressFollowsIt(t *testing.T) {
 	if got := f.Cells.At(b.X+1, b.Y).Rune; got != ' ' {
 		t.Errorf("cell %d,%d holds %q, want the separating space", b.X+1, b.Y, got)
 	}
-	var text strings.Builder
-	for x := b.X + 2; x < b.X+b.W; x++ {
-		text.WriteRune(f.Cells.At(x, b.Y).Rune)
-	}
-	if got := strings.TrimRight(text.String(), " "); got != testGrpc {
+	if got := rowText(f, b.Y, b.X+2, b.W-2); got != testGrpc {
 		t.Errorf("the chip reads %q from cell %d, want %q: the address must begin exactly "+
 			"one cell after the dot", got, b.X+2, testGrpc)
 	}
