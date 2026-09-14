@@ -53,7 +53,7 @@ import (
 // depended on WHICH module is required; it depends on the require being
 // read outside this workspace, which is true of a sibling exactly as it
 // is of core. Raised in review of #497.
-func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
+func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	const core = "github.com/WonderForgeLabs/gooey"
 
 	// A sibling is core's path plus a directory. Prefixing with the
@@ -73,6 +73,10 @@ func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 	// counted below so a walk that stops finding requires is visible rather
 	// than passing as "nothing to check".
 	checked := 0
+	// Every own-module require in the tree, so the skew check below can
+	// compare them against each other rather than against a constant.
+	type require struct{ dir, path, version string }
+	var seen []require
 	for _, dir := range mods {
 		// `go mod edit -json` is textual — it reports what the file says
 		// rather than what the workspace would resolve, which is the whole
@@ -100,6 +104,7 @@ func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 				continue
 			}
 			checked++
+			seen = append(seen, require{dir, r.Path, r.Version})
 			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
 			// on a module the workspace replaces writes the canonical
 			// spelling `v0.0.0-00010101000000-000000000000`, which is the
@@ -110,11 +115,15 @@ func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
 					"pseudo-version any proxy can serve: `go get` of this module "+
 					"fails with \"unknown revision\" for everybody outside this "+
-					"workspace. Point it at a published commit — "+
-					"`go mod edit -C %s -require=%s@$(git rev-parse --short origin/main)` "+
-					"resolves to a pseudo-version — and keep any `replace` line, "+
-					"which is what makes local development use the checkout.",
-					dir, r.Path, r.Version, dir, r.Path)
+					"workspace. Point it at a published commit, and note that "+
+					"`go mod edit -require` writes LITERALLY what you hand it: a "+
+					"bare short hash stays a bare short hash and fails this test "+
+					"again. Get a real pseudo-version with `go list -m -f "+
+					"'{{.Version}}' %s@$(git rev-parse origin/main)` (needs the "+
+					"network), or copy the one the rest of the tree already names. "+
+					"Keep any `replace` line, which is what makes local development "+
+					"use the checkout.",
+					dir, r.Path, r.Version, r.Path)
 				continue
 			}
 			// Not a resolution check (no network here), just the shape: a
@@ -129,5 +138,41 @@ func TestNestedModulesRequireAResolvableCoreVersion(t *testing.T) {
 		t.Fatalf("none of the %d nested modules were found to require %s or a "+
 			"module under it; either the requires moved or this test stopped "+
 			"reading them, and an empty check is not a passing one", len(mods), core)
+	}
+
+	// ONE REVISION ACROSS THE TREE, which the shape checks above cannot
+	// see and which is the failure they let through.
+	//
+	// Every one of these paths lives in THIS repository and is published
+	// by the same push, so two of them naming different commits is not a
+	// version choice, it is skew. And skew is not cosmetic here: core
+	// sat three weeks behind its own siblings while every sibling
+	// require was current, so `go install .../apps/introdeck@latest`
+	// resolved core to a commit predating render.StringWidth and did not
+	// build — outside the workspace, which is the only place these lines
+	// are read. Inside it, all 25 modules were green. Measured in review
+	// of #497, where the bump that introduced the skew passed the shape
+	// checks above with nothing to say.
+	byVersion := map[string][]string{}
+	for _, r := range seen {
+		byVersion[r.version] = append(byVersion[r.version], r.dir+" → "+r.path)
+	}
+	if len(byVersion) > 1 {
+		var most string
+		for v, at := range byVersion {
+			if most == "" || len(at) > len(byVersion[most]) {
+				most = v
+			}
+		}
+		for v, at := range byVersion {
+			if v == most {
+				continue
+			}
+			t.Errorf("%d requires name %s while %d name %s — one repository, one "+
+				"push, so two revisions is skew rather than a choice. The odd ones "+
+				"are:\n\t%s\nA module requiring an OLDER core than its siblings "+
+				"builds in this workspace and fails for anyone who `go get`s it.",
+				len(at), v, len(byVersion[most]), most, strings.Join(at, "\n\t"))
+		}
 	}
 }

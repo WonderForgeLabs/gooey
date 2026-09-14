@@ -26,9 +26,14 @@ Two consequences that are easy to trip over:
   here, but it means `go test` in a nested module is no longer testing that
   module against what it *requires*. That require is read for the first time
   OUTSIDE this repo, by somebody's `go get`, so
-  `TestNestedModulesRequireAResolvableCoreVersion` reads it in here instead: a
-  nested module must require core at a published commit, never the `v0.0.0`
-  placeholder, which no proxy can serve. The `replace … => ../..` beside it
+  `TestNestedModulesRequireResolvableGooeyVersions` reads it in here instead:
+  a nested module must require **every** module of this tree — core and its
+  siblings alike — at a published commit, never the `v0.0.0` placeholder or
+  its canonical `v0.0.0-00010101000000-…` spelling, neither of which a proxy
+  can serve. It must also require them all at the SAME commit: these paths
+  are published by one push, so two revisions is skew, and core sitting
+  behind its own siblings is a module that builds in here and fails every
+  `go install` outside. The `replace … => ../..` beside it
   does not save you — a replace in a *dependency's* go.mod is ignored by
   whoever depends on it, and applies only here, where the workspace has
   already made it redundant.
