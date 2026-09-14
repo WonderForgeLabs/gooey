@@ -180,11 +180,7 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 		t.Fatal("marker should be up")
 	}
 
-	kept := m.pop
-	if kept == nil {
-		t.Fatal("no popup to hold onto, so the identity check below would " +
-			"compare two nils and pass over the policy it is here for")
-	}
+	kept := keepPopup(t, m)
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
 	c.Frame()
 	if got := row(c.Cells(), 1); !strings.Contains(got, "####") {
@@ -437,20 +433,14 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 // later. Those two statements inside FocusManager.walk are the whole of
 // "Frozen gates input, not adornment placement".
 //
-// CITED BY SYMBOL, and this paragraph used to name two line numbers
-// while saying so — which is the failure it describes, committed inside
-// its own correction. Nothing in the suite checks a line number inside a
-// Go comment, so a citation here points at whatever moves into that line
-// and nothing reddens. Name the function and the statement; the reader
-// greps.
-//
-// A SYMBOL IS NOT A LINE NUMBER, and the rule above is only about the
-// second. A name survives every edit above it, and a grep for one either
-// finds it or does not — which is why the paragraph below can cite
-// wysiwyg's Pane.BindDesignMode across a module boundary and keep it: a
-// rename there leaves a grep that fails visibly, not a citation quietly
-// pointing at whatever moved into the line. Read literally, the rule
-// above deletes a citation worth keeping. Raised in review of #498.
+// CITE SYMBOLS, NOT LINE NUMBERS. Nothing in the suite checks either
+// inside a Go comment — TestEveryCitedTestNameResolves reads Markdown
+// and resolves test NAMES — so a line number here points at whatever
+// moves into it and nothing reddens, while a name either greps or
+// visibly does not. That is also what makes a citation across a module
+// boundary safe to keep: the paragraph below names wysiwyg's
+// Pane.BindDesignMode, and a rename there leaves a failing grep rather
+// than a silent misdirection.
 //
 // TWO TESTS REDDEN when the second is gated the way the first is, not
 // one — this comment claimed "the only test in the tree" until review of
@@ -459,22 +449,12 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 //	--- FAIL: TestAValidationMarkerPlacesItsAdornmentWhileFrozen  components
 //	--- FAIL: TestValidatorsStayLiveInsideAFrozenSubtree          markup
 //
-// The markup sibling — markup.TestValidatorsStayLiveInsideAFrozenSubtree
-// — was already on main and
-// holds the same line. What is unique here is WHAT is asserted: that one
-// counts the layer's adornments, this one reads the rendered message off
-// the cell plane and refuses focus first. A reader who deleted the
+// markup.TestValidatorsStayLiveInsideAFrozenSubtree was already on main
+// and holds the same line. What is unique here is WHAT is asserted: that
+// one counts the layer's adornments, this one reads the rendered message
+// off the cell plane and refuses focus first. A reader who deleted the
 // markup test on the strength of the word "only" would have lost a pin,
 // which is why the word is gone.
-//
-// It cited apps/wysiwyg/components/preview/overlay.go until review of
-// #498 pointed out that no such comment exists there — it lived in
-// #444's tree and was not salvaged with the test, and `git log -S Frozen`
-// on that path returns nothing. Nothing catches a dead file path inside
-// a Go comment: TestEveryCitedTestNameResolves reads Markdown and
-// resolves test NAMES. So a citation that leaves this package is a
-// citation nobody can tell has rotted, and the seam above needs no
-// second file.
 func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 	// A nil Active is a plain <Frozen>: AllowNone, the strongest freeze
 	// there is, and frozen from the first frame.
@@ -487,6 +467,23 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 			"this test proves nothing about Frozen")
 	}
 	assertMarkerShows(t, c, layer, m, "while frozen")
+}
+
+// keepPopup is the precondition every identity assertion in this file
+// needs: hold the popup, and refuse to proceed without one.
+//
+// A nil here makes the comparison below it two nils, which passes — so
+// the guard is the assertion's other half, and it was written out by
+// hand in both callers with a character-identical message. That is the
+// shape assertMarkerShows was extracted for one commit earlier; this is
+// the same duplication on the other assertion. Raised in review of #498.
+func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
+	t.Helper()
+	if m.pop == nil {
+		t.Fatal("no popup to hold onto, so the identity check below would " +
+			"compare two nils and pass over the policy it is here for")
+	}
+	return m.pop
 }
 
 // assertMarkerShows is both halves of "the user can see it", and the
@@ -649,13 +646,21 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	// the copy left out: pop != nil is not "the user can see it". Raised
 	// in review of #498.
 	assertMarkerShows(t, c, layer, m, "while frozen, before the anchor was hidden")
-	kept := m.pop
-	if kept == nil {
-		t.Fatal("no popup to hold onto, so the identity check below would " +
-			"compare two nils and pass over the policy it is here for")
-	}
+	kept := keepPopup(t, m)
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
 	c.Frame()
+	// THE CELLS TOO, not the pointer alone. Identity is what
+	// AdornmentPersists changes and it is why this test exists — but a
+	// regression that keeps the popup alive and arranges it at a full
+	// rect instead of a zero one leaves an error message floating over a
+	// field that is not on screen, and every pointer assertion passes
+	// over it. Its unfrozen sibling has asserted what row 1 BECOMES
+	// since it was written; this half had only the table above saying
+	// so. Raised in review of #498.
+	if got := row(c.Cells(), 1); strings.Contains(got, "required") {
+		t.Errorf("row 1 = %q while the frozen field is hidden: the message is "+
+			"still painting over cells its anchor has vacated", got)
+	}
 	if m.pop != kept {
 		t.Error("hiding the frozen field's anchor REPLACED the marker's popup " +
 			"instead of keeping it. markerPopup.AdornmentPersists opts out of " +
