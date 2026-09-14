@@ -355,11 +355,18 @@ func (m *FocusManager) Resync() {
 	for _, hw := range m.watchers {
 		wasOver[hw.w] = hw.over
 	}
-	m.order = m.order[:0]
+	// clearToCap, not [:0], for the reason composer.go gives at the
+	// function: these three are refilled by m.walk on every structural
+	// re-sync, which is the same event that drives orderPaint, and a
+	// tree that shrank leaves the departed components reachable past len
+	// until the slot is written again. A list that shrinks from ten
+	// thousand rows to ten never writes them again. Raised in review of
+	// #456, where the fix stopped at composer.go.
+	m.order = clearToCap(m.order)
 	m.parent = map[Component]Component{}
 	m.bindings = map[Component][]*KeyBinding{}
-	m.watchers = m.watchers[:0]
-	m.mnemonics = m.mnemonics[:0]
+	m.watchers = clearToCap(m.watchers)
+	m.mnemonics = clearToCap(m.mnemonics)
 	m.walk(m.root, nil, AllowAll)
 	for _, hw := range m.watchers {
 		hw.over = wasOver[hw.w]

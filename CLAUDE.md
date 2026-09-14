@@ -288,14 +288,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:1071`, in
+deliberately outside any evaluation context (`composer.go:1088`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:783`).
+separate observer for that (`Composer.armVisibility`, `composer.go:800`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:655`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:686`), so reading a property while painting *is* the damage
+(`composer.go:672`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:703`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -369,7 +369,7 @@ about layers and never needed to — none of them paints.
 `docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
 optional companion to the marker — `OverlayRankPopup` 0,
 `OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
-between two — and `appendByRank` (`composer.go:468`, a package-level
+between two — and `appendByRank` (`composer.go:476`, a package-level
 function, not a method) buckets by it, so equal ranks
 keep document order and nothing else does. An `Overlay` that does not
 implement it is rank 0, and `overlayRank` **clamps**: a negative rank
@@ -440,7 +440,7 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 interleaved on one wire and stay on one ordered stream — ONE channel,
 `evs` (`term/term.go:61`), fed by a single decoder — because two channels
 could reorder them. `FocusManager.Dispatch`
-(`input.go:757`) routes a key in phases, and it **tunnels before it
+(`input.go:764`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends
 dispatch. Then the bubble, focused → ancestors, **three steps per level**
@@ -450,7 +450,7 @@ middle step's position is load-bearing and silently breakable: swapping it
 past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
-arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
+arrow fall through to focus navigation (`FocusDir`, `input.go:892`).
 `DispatchMouse` (`mouse.go:223`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
@@ -534,7 +534,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:117`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:124`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 

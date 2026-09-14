@@ -1,6 +1,9 @@
 package gooey
 
 import (
+	"go/ast"
+	goparser "go/parser"
+	gotoken "go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -927,9 +930,19 @@ func TestNoDocTeachesTheRetiredContainerTest(t *testing.T) {
 //
 // The subject is `[:0]` on a COMPOSER slice, not on any slice anywhere:
 // `x = x[:0]` is ordinary Go and correct wherever retention does not
-// matter, so the names are the composer's own reused slices, read out of
-// the assertion that already enumerates them rather than written here
-// twice.
+// matter, so the names are the composer's own reused slices — READ OUT
+// OF composer.go, every left-hand side it passes to clearToCap.
+//
+// The comment here said they were read out of
+// TestTheComposerSlicesRetainNothingPastTheirOwnNodes and the code
+// wrote all seven inline. That assertion enumerates FOUR and
+// structurally cannot hold more: its table is typed []*paintNode, so
+// c.startable, n.places and c.frame.placements could never appear in
+// it. A maintainer adding an eighth reused slice would have read the
+// comment, concluded no list needed touching, and left a doc block
+// quoting its retired spelling unguarded — one PR after this file
+// argued that a greppable rule with one spelling unguarded is not
+// greppable. Raised in review of #456.
 //
 // Mechanism first, same as the sibling: if composer.go stops calling
 // clearToCap, the retirement is off and this guard says so rather than
@@ -946,12 +959,20 @@ func TestNoDocTeachesTheRetiredSliceReset(t *testing.T) {
 	}
 
 	// The composer's reused slices, spelled as the retired reset would
-	// appear in a quoted block.
+	// appear in a quoted block. Every name comes from composer.go
+	// itself: the left-hand side of each `x = clearToCap(x)`.
+	names := clearedInComposer(t, src)
+	// A FLOOR, because a derivation that finds nothing is a guard that
+	// checks nothing — and it would go quiet in exactly the case the
+	// skip above is written for, without the skip's explanation.
+	if len(names) < 4 {
+		t.Fatalf("composer.go yields %d clearToCap assignments (%v), which is fewer "+
+			"than it had when this guard was written — either the reuse was "+
+			"reworked, in which case re-derive this guard, or the scan has stopped "+
+			"matching the spelling", len(names), names)
+	}
 	var retired []string
-	for _, name := range []string{
-		"c.nodes", "c.startable", "c.paint", "c.lifted", "c.over",
-		"n.places", "c.frame.placements",
-	} {
+	for _, name := range names {
 		retired = append(retired, name+" = "+name+"[:0]")
 	}
 	for _, f := range proseFiles(t) {
@@ -991,4 +1012,44 @@ func recordsUnshippedCode(body string) bool {
 		return false
 	}
 	return strings.Contains(head, "deferred") || strings.Contains(head, "not implemented")
+}
+
+// clearedInComposer is every left-hand side composer.go resets through
+// clearToCap, in source order and deduplicated — the list of slices
+// whose old `x = x[:0]` spelling a doc must not present as current.
+//
+// Over the AST rather than the text, for the reason its sibling guard
+// gives: `s = s[:0]` appears inside clearToCap's own doc comment
+// describing the shape it replaces, and a regexp over the file reports
+// the documentation.
+func clearedInComposer(t *testing.T, src []byte) []string {
+	t.Helper()
+	fset := gotoken.NewFileSet()
+	file, err := goparser.ParseFile(fset, "composer.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing composer.go: %v", err)
+	}
+	seen := map[string]bool{}
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "clearToCap" {
+			return true
+		}
+		name := string(src[fset.Position(as.Lhs[0].Pos()).Offset:fset.Position(as.Lhs[0].End()).Offset])
+		if seen[name] {
+			return true
+		}
+		seen[name] = true
+		out = append(out, name)
+		return true
+	})
+	return out
 }

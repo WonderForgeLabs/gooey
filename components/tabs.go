@@ -89,6 +89,11 @@ func (t *Tabs) ensure() {
 		return
 	}
 	t.bound = true
+	// The tail holds components, so it is cleared rather than truncated
+	// — see clearToCap in the root package, which this reproduces with
+	// the builtin it wraps (it is unexported and this is another
+	// package). Raised in review of #456.
+	clear(t.kids[:cap(t.kids)])
 	t.kids = t.kids[:0]
 	for i := range t.Items {
 		i := i

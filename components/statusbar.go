@@ -39,6 +39,10 @@ func StatusText(content *prop.Property[string]) *Text {
 }
 
 func (s *StatusBar) ChildComponents() []gooey.Component {
+	// Cleared to cap, not truncated: a StatusBar that loses its Right
+	// keeps it reachable in the tail otherwise. See clearToCap in the
+	// root package. Raised in review of #456.
+	clear(s.kids[:cap(s.kids)])
 	s.kids = s.kids[:0]
 	for _, c := range []gooey.Component{s.Left, s.Center, s.Right} {
 		if c != nil {

@@ -317,6 +317,11 @@ func (v *ItemsView) sync(src ItemSource, top, count, sel int) {
 		return
 	}
 	v.rows = next
+	// THE WINDOWED LIST, which is the case clearToCap's own doc argues
+	// from: scrolling to a shorter row set left every previous row's
+	// component reachable past len. See clearToCap in the root package.
+	// Raised in review of #456.
+	clear(v.kids[:cap(v.kids)])
 	v.kids = v.kids[:0]
 	for _, r := range next {
 		v.kids = append(v.kids, r)

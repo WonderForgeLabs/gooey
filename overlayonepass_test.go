@@ -3,8 +3,11 @@ package gooey
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -841,4 +844,393 @@ func TestEveryReusedSliceInComposerClearsToCap(t *testing.T) {
 		t.Errorf("found no clearToCap assignment in composer.go at all — the four this " +
 			"PR converted should be here, so the scan above proved nothing")
 	}
+}
+
+// TestEveryReusedSliceThatHoldsAReferenceClearsToCap is the same rule as
+// TestEveryReusedSliceInComposerClearsToCap, asked of the whole tree —
+// which is where the argument clearToCap's own doc makes actually lives.
+//
+// That argument is about a Dynamic list shrinking from ten thousand rows
+// to ten and pinning ~9,990 components nobody can reach, and nothing in
+// it is about composer.go. Live resets outside that file hold exactly
+// what it describes: FocusManager's order, watchers and mnemonics,
+// refilled by m.walk on the same structural re-sync that drives
+// orderPaint; ItemsView's kids, which IS the windowed list;
+// AdornmentLayer's filter-in-place, where the tail is the dropped
+// tooltip or the finished drag ghost; ButtonBar's cut, whose element
+// holds the button it hid. A guard scoped to one file leaves a general
+// defect fixed in one place, which is the shape this PR argues against
+// elsewhere. Raised in review of #456.
+//
+// THE EXEMPTION IS DERIVED, NOT LISTED, because a list of "slices that
+// are fine" is the enumeration this repo keeps deleting. A reset is
+// exempt when its ELEMENT TYPE cannot hold a reference — resolved
+// through the tree's own type declarations, recursively — so []int,
+// []gooey.Size and []cutMember each answer for themselves and a new
+// value-typed slice needs no annotation at all. The classifier FAILS
+// CLOSED: a type it cannot resolve is treated as holding a reference, so
+// being wrong costs a comment rather than a silent hole.
+//
+// A string counts as a value here, deliberately. It does point at
+// backing bytes, but those are bounded by the string and are not a
+// component tree; counting them would flag every []string reset in the
+// repo for a few bytes each.
+func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
+	parsed := parseTree(t)
+	types := typeIndex(parsed)
+	fields := sliceFieldsByDir(parsed)
+
+	retaining, cleared, safe := 0, 0, 0
+	for _, p := range parsed {
+		here := declSite{dir: filepath.Dir(p.path), imports: importDirs(p.file)}
+		elems := fields[here.dir]
+		lines := strings.Split(string(p.src), "\n")
+		text := func(e ast.Expr) string {
+			return string(p.src[p.fset.Position(e.Pos()).Offset:p.fset.Position(e.End()).Offset])
+		}
+		// Every base a clear(…) or clearToCap(…) names anywhere in this
+		// file. Per FILE rather than per statement, because the
+		// adornment filter clears its tail after the loop that refilled
+		// it and the two are one reset.
+		clears := map[string]bool{}
+		ast.Inspect(p.file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 1 {
+				return true
+			}
+			id, ok := call.Fun.(*ast.Ident)
+			if !ok || (id.Name != "clear" && id.Name != "clearToCap") {
+				return true
+			}
+			arg := call.Args[0]
+			if sl, ok := arg.(*ast.SliceExpr); ok {
+				arg = sl.X
+			}
+			clears[text(arg)] = true
+			return true
+		})
+
+		ast.Inspect(p.file, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+				return true
+			}
+			sl, ok := as.Rhs[0].(*ast.SliceExpr)
+			if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
+				return true
+			}
+			hi, ok := sl.High.(*ast.BasicLit)
+			if !ok || hi.Value != "0" {
+				return true
+			}
+			base := text(sl.X)
+			// The element type is looked up by the LAST segment:
+			// c.gonePlacements is the gonePlacements field.
+			name := base
+			if i := strings.LastIndex(name, "."); i >= 0 {
+				name = name[i+1:]
+			}
+			elem, known := elems[name]
+			if known && elem != nil && !holdsAReference(elem, here, types, 0) {
+				safe++
+				return true
+			}
+			retaining++
+			if clears[base] || clears[text(as.Lhs[0])] {
+				cleared++
+				return true
+			}
+			pos := p.fset.Position(sl.Pos())
+			if retainsNothingAbove(lines, pos.Line) {
+				return true
+			}
+			t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
+				"reference (%s). That truncates len and leaves the backing array "+
+				"holding everything past it — for a list that shrinks and stays "+
+				"small, until nothing. Clear to cap (clearToCap here, "+
+				"clear(x[:cap(x)]) in another package), or say why the elements "+
+				"are safe to keep in a `retains nothing:` comment",
+				p.path, pos.Line, base, elemDesc(elem, known))
+			return true
+		})
+	}
+
+	// NON-VACUITY IN BOTH DIRECTIONS. A classifier answering "holds a
+	// reference" for everything reports a clean tree the moment every
+	// site is cleared; one answering "safe" for everything reports a
+	// clean tree forever.
+	if cleared == 0 {
+		t.Error("no reset in the tree was found cleared to cap, so this scan proved " +
+			"nothing — every site this PR converted should be counted here")
+	}
+	if safe == 0 {
+		t.Error("the classifier called no element type safe, so every exemption is " +
+			"coming from a comment rather than from the type — the value-typed " +
+			"resets in vstack.go, canvas.go and render/flush.go should be here")
+	}
+	t.Logf("resets examined: %d can hold a reference (%d cleared), %d cannot",
+		retaining, cleared, safe)
+}
+
+// goFile is one parsed file, kept with the bytes it was parsed from so a
+// report can quote the source rather than the AST.
+type goFile struct {
+	path string
+	src  []byte
+	fset *token.FileSet
+	file *ast.File
+}
+
+// parseTree is every non-test Go file this repo owns — nested modules
+// included, vendor excluded.
+//
+// DOT-DIRECTORIES ARE PRUNED AT EVERY DEPTH, for the reason CLAUDE.md's
+// verify loop gives: .claude/worktrees/ holds whole checkouts of this
+// repo and is untracked, so a top-anchored filter passes in CI and walks
+// into somebody else's tree on a developer's machine.
+func parseTree(t *testing.T) []goFile {
+	t.Helper()
+	var out []goFile
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == "." {
+				return nil
+			}
+			if n := d.Name(); strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+		if err != nil {
+			return nil // not this guard's business; the compiler owns it
+		}
+		out = append(out, goFile{path: path, src: src, fset: fset, file: f})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree: %v", err)
+	}
+	if len(out) < 200 {
+		t.Fatalf("the walk found %d Go files, far fewer than this tree holds — it is "+
+			"looking somewhere else and every check below is vacuous", len(out))
+	}
+	return out
+}
+
+// declSite is a type declaration and the context its own body resolves
+// in: the directory it was declared in, and the import names visible to
+// the file holding it.
+type declSite struct {
+	expr    ast.Expr
+	dir     string
+	imports map[string]string
+}
+
+// typeIndex maps (directory, type name) to what that type is underneath.
+//
+// KEYED BY DIRECTORY, not by bare name, and that is not fussiness: this
+// repo declares Color twice — render/cell.go and the generated
+// grpc/gen/…/types.pb.go — and a name-keyed index has to call the
+// collision unresolvable, which fails closed onto every render.Cell in
+// the tree. The package a selector names is resolved through the citing
+// file's own imports, so render.Cell means render's.
+func typeIndex(files []goFile) map[[2]string]declSite {
+	out := map[[2]string]declSite{}
+	for _, p := range files {
+		dir := filepath.Dir(p.path)
+		imports := importDirs(p.file)
+		for _, d := range p.file.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != token.TYPE {
+				continue
+			}
+			for _, sp := range g.Specs {
+				if ts, ok := sp.(*ast.TypeSpec); ok {
+					out[[2]string{dir, ts.Name.Name}] = declSite{
+						expr: ts.Type, dir: dir, imports: imports,
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// importDirs maps the name a file refers to each import by — its alias,
+// or the last segment of its path — to the directory that import lives
+// in, for this repo's own packages. Anything outside the repo maps
+// nowhere, and the classifier reads that as unresolvable.
+func importDirs(f *ast.File) map[string]string {
+	const mod = "github.com/WonderForgeLabs/gooey"
+	out := map[string]string{}
+	for _, im := range f.Imports {
+		path := strings.Trim(im.Path.Value, `"`)
+		name := path
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		if im.Name != nil {
+			name = im.Name.Name
+		}
+		switch {
+		case path == mod:
+			out[name] = "."
+		case strings.HasPrefix(path, mod+"/"):
+			out[name] = strings.TrimPrefix(path, mod+"/")
+		}
+	}
+	return out
+}
+
+// sliceFieldsByDir maps a directory to the slice ELEMENT type of every
+// name declared in it — struct fields and package-level vars alike.
+//
+// By directory rather than by file because a package is a directory:
+// c.gonePlacements is declared in composer.go and reset in
+// placements.go, and a per-file index would call it unresolvable. A name
+// declared twice with different element types maps to nil, which reads
+// as unresolvable.
+func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
+	out := map[string]map[string]ast.Expr{}
+	shape := map[string]string{}
+	for _, p := range files {
+		dir := filepath.Dir(p.path)
+		if out[dir] == nil {
+			out[dir] = map[string]ast.Expr{}
+		}
+		record := func(name string, typ ast.Expr) {
+			arr, ok := typ.(*ast.ArrayType)
+			if !ok || arr.Len != nil {
+				return
+			}
+			s := string(p.src[p.fset.Position(arr.Elt.Pos()).Offset:p.fset.Position(arr.Elt.End()).Offset])
+			key := dir + " " + name
+			if was, seen := shape[key]; seen && was != s {
+				out[dir][name] = nil
+				return
+			}
+			shape[key] = s
+			out[dir][name] = arr.Elt
+		}
+		ast.Inspect(p.file, func(n ast.Node) bool {
+			switch d := n.(type) {
+			case *ast.Field:
+				for _, nm := range d.Names {
+					record(nm.Name, d.Type)
+				}
+			case *ast.ValueSpec:
+				if d.Type == nil {
+					return true
+				}
+				for _, nm := range d.Names {
+					record(nm.Name, d.Type)
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// holdsAReference answers whether a value of type e can keep something
+// else alive: a pointer, an interface, a map, a slice, a channel, a
+// func, or a struct or array of any of those.
+//
+// Unresolvable answers true — a type outside this repo, or a name this
+// walk cannot place. The depth cap answers true too: a type cyclic
+// through a value field cannot exist in Go, so reaching the cap means
+// the resolution is wrong and the safe reading is the strict one.
+func holdsAReference(e ast.Expr, at declSite, types map[[2]string]declSite, depth int) bool {
+	if e == nil || depth > 12 {
+		return true
+	}
+	switch t := e.(type) {
+	case *ast.StarExpr, *ast.InterfaceType, *ast.MapType, *ast.ChanType,
+		*ast.FuncType, *ast.Ellipsis:
+		return true
+	case *ast.ArrayType:
+		if t.Len == nil {
+			return true // a slice header points at a backing array
+		}
+		return holdsAReference(t.Elt, at, types, depth+1)
+	case *ast.StructType:
+		for _, f := range t.Fields.List {
+			if holdsAReference(f.Type, at, types, depth+1) {
+				return true
+			}
+		}
+		return false
+	case *ast.ParenExpr:
+		return holdsAReference(t.X, at, types, depth+1)
+	case *ast.Ident:
+		switch t.Name {
+		case "bool", "string", "int", "int8", "int16", "int32", "int64",
+			"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+			"float32", "float64", "complex64", "complex128", "byte", "rune":
+			return false
+		case "any", "error":
+			return true
+		}
+		next, ok := types[[2]string{at.dir, t.Name}]
+		if !ok {
+			return true
+		}
+		return holdsAReference(next.expr, next, types, depth+1)
+	case *ast.SelectorExpr:
+		pkg, ok := t.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		dir, ok := at.imports[pkg.Name]
+		if !ok {
+			return true
+		}
+		next, ok := types[[2]string{dir, t.Sel.Name}]
+		if !ok {
+			return true
+		}
+		return holdsAReference(next.expr, next, types, depth+1)
+	}
+	return true
+}
+
+// elemDesc says what the classifier decided and why, so a report names
+// the type rather than only the line.
+func elemDesc(elem ast.Expr, known bool) string {
+	if !known || elem == nil {
+		return "its element type could not be resolved, and unresolvable reads as " +
+			"retaining here"
+	}
+	var b strings.Builder
+	if err := printer.Fprint(&b, token.NewFileSet(), elem); err != nil {
+		return "element type unprintable"
+	}
+	return "elements are " + b.String()
+}
+
+// retainsNothingAbove reports whether the reset at this line carries a
+// `retains nothing:` justification on it or in the comment block
+// directly above it.
+func retainsNothingAbove(lines []string, line int) bool {
+	for i := line - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "retains nothing:") {
+			return true
+		}
+		if i != line-1 && !strings.HasPrefix(strings.TrimSpace(lines[i]), "//") {
+			return false
+		}
+	}
+	return false
 }

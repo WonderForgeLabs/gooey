@@ -521,10 +521,16 @@ func TestEveryExportedOverlayHostIsNamed(t *testing.T) {
 // writing one of the pair is a plausible edit, and it is exactly the
 // edit this catches. Raised in review of #456.
 func TestEveryRankedTypeIsAlsoAnOverlay(t *testing.T) {
-	marked := overlayMarkedReceivers(t)
-	ranked := receiversDeclaring(t, overlayRankRe)
+	// THE WHOLE TREE, both halves of the pair. Scoping this to
+	// components/ made the guard's subject the package rather than the
+	// trap, and the trap is in the framework: a type declaring
+	// OverlayRank in the root package, in control/, or in an app module
+	// satisfies neither interface with nothing red anywhere. Raised in
+	// review of #456.
+	marked := receiversDeclaring(t, overlaysPageRe, "..")
+	ranked := receiversDeclaring(t, overlayRankRe, "..")
 	if len(ranked) == 0 {
-		t.Fatal("no type in this package declares OverlayRank, so this guard " +
+		t.Fatal("no type in the tree declares OverlayRank, so this guard " +
 			"would pass vacuously — either the method moved or the scan stopped " +
 			"recognizing it")
 	}
@@ -551,35 +557,59 @@ var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
 
 func overlayMarkedReceivers(t *testing.T) []string {
-	return receiversDeclaring(t, overlaysPageRe)
+	return receiversDeclaring(t, overlaysPageRe, ".")
 }
 
-// receiversDeclaring is the scan both guards run, differing only in the
-// method they look for. It was overlayMarkedReceivers' body until a
-// second caller needed it; copying it would have copied the test-file
-// exclusion and the sort-and-compact into a place where only one copy
-// would receive the next fix.
-func receiversDeclaring(t *testing.T, re *regexp.Regexp) []string {
+// receiversDeclaring is the scan both guards run, differing in the
+// method they look for and in HOW FAR THEY LOOK. It was
+// overlayMarkedReceivers' body until a second caller needed it; copying
+// it would have copied the test-file exclusion and the sort-and-compact
+// into a place where only one copy would receive the next fix.
+//
+// THE ROOT IS AN ARGUMENT because the two callers ask different
+// questions. TestEveryExportedOverlayHostIsNamed is about this
+// package's own map, so "." is its whole subject. The
+// OverlayRank-without-OverlaysPage trap is framework-wide — a host in
+// the root package, in control/, or in any app module hits it with
+// nothing red — so that guard passes "..", the way the prose guard in
+// this file already walks the tree rather than anchoring to a path.
+// Raised in review of #456.
+//
+// Dot-directories are pruned at EVERY depth and vendor with them, for
+// the reason CLAUDE.md's verify loop gives: .claude/worktrees/ holds
+// whole untracked checkouts of this repo, so a walk that only anchors
+// at the top reads someone else's tree on a developer's machine and
+// finds types that are not in this one.
+func receiversDeclaring(t *testing.T, re *regexp.Regexp, root string) []string {
 	t.Helper()
 	var out []string
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading the package directory: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
-			strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(e.Name())
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("reading %s: %v", e.Name(), err)
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); path != root &&
+				(strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
 		for _, line := range strings.Split(string(body), "\n") {
 			if m := re.FindStringSubmatch(line); m != nil {
 				out = append(out, m[1])
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
 	}
 	slices.Sort(out)
 	return slices.Compact(out)

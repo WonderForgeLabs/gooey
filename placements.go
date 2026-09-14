@@ -80,7 +80,7 @@ func (c *Composer) placementOps() (ops []placeOp, kept []shownPlacement) {
 			c.flusher.Damage(cellRect(s.p))
 		}
 	}
-	c.gonePlacements = c.gonePlacements[:0]
+	c.gonePlacements = clearToCap(c.gonePlacements)
 
 	// PAINT ORDER, not document order, and the two stopped being the same
 	// thing when Overlay arrived.

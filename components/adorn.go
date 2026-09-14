@@ -212,6 +212,11 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		// observer, not from here.
 		pointer, seen = l.mgr.Pointer()
 	}
+	// FILTER IN PLACE, so the tail below len holds whatever was dropped
+	// — an orphaned tooltip, a finished drag ghost — until the slot is
+	// written again. Transience is the whole point of an adornment, so
+	// the tail is cleared after the assignment below rather than left.
+	// See clearToCap in the root package. Raised in review of #456.
 	live := l.adorns[:0]
 	dropped := false
 	for _, a := range l.adorns {
@@ -251,6 +256,7 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		gooey.ArrangeChild(a, a.Place(ab, b))
 	}
 	l.adorns = live
+	clear(l.adorns[len(l.adorns):cap(l.adorns)])
 	if dropped && l.structure != nil {
 		l.structure()
 	}
