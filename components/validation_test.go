@@ -378,7 +378,15 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 //
 // The first frame is taken here, so a caller reads as its own claim and
 // nothing else.
-func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *ValidationMarker, *gooey.Composer) {
+// THE LAYER IS RETURNED, and that is the finding rather than a
+// convenience. Every "the marker did not place" message in this file
+// blames Frozen — that is what these tests are about — and a fixture
+// whose AdornmentLayer never hosted anything produces exactly the same
+// symptom from a cause that has nothing to do with freezing. Three
+// tests would have reported a broken fixture as a Frozen gating bug.
+// Handing the layer back lets assertMarkerShows separate them. Raised
+// in review of #498.
+func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *ValidationMarker, *AdornmentLayer, *gooey.Composer) {
 	t.Helper()
 	name := prop.NewSource("")
 	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required("required"))}
@@ -388,10 +396,11 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	if active != nil {
 		frozen.Active = active
 	}
-	root := &VStack{Children: []gooey.Component{frozen, &AdornmentLayer{}}}
+	layer := &AdornmentLayer{}
+	root := &VStack{Children: []gooey.Component{frozen, layer}}
 	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
-	return tb, m, c
+	return tb, m, layer, c
 }
 
 // TestAValidationMarkerPlacesItsAdornmentWhileFrozen holds the one claim
@@ -426,7 +435,8 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 //	--- FAIL: TestAValidationMarkerPlacesItsAdornmentWhileFrozen  components
 //	--- FAIL: TestValidatorsStayLiveInsideAFrozenSubtree          markup
 //
-// The markup sibling (frozen_input_test.go:544) was already on main and
+// The markup sibling — markup.TestValidatorsStayLiveInsideAFrozenSubtree
+// — was already on main and
 // holds the same line. What is unique here is WHAT is asserted: that one
 // counts the layer's adornments, this one reads the rendered message off
 // the cell plane and refuses focus first. A reader who deleted the
@@ -444,7 +454,7 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 	// A nil Active is a plain <Frozen>: AllowNone, the strongest freeze
 	// there is, and frozen from the first frame.
-	tb, m, c := frozenMarkerPage(t, nil)
+	tb, m, layer, c := frozenMarkerPage(t, nil)
 	// Discriminating half: without this the test passes just as well
 	// with no Frozen in the tree at all, and its name would be a claim
 	// about a wrapper that was doing nothing.
@@ -452,13 +462,13 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 		t.Fatal("the TextBox took focus, so the subtree is not frozen and " +
 			"this test proves nothing about Frozen")
 	}
-	assertMarkerShows(t, c, m, "while frozen")
+	assertMarkerShows(t, c, layer, m, "while frozen")
 }
 
 // assertMarkerShows is both halves of "the user can see it", and the
 // second half is the finding.
 //
-// IsShown() is `m.pop != nil && getStr(m.Error) != ""` (validation.go:98)
+// IsShown() is `m.pop != nil && getStr(m.Error) != ""`
 // — placed in a layer, plus a non-empty string. It is not a cell. A
 // regression that placed the popup inside a frozen subtree and then
 // arranged or painted it to nothing keeps that green while the form
@@ -466,9 +476,18 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 // the claim is worth salvaging. Both siblings in this file pair the two
 // already (TestValidationLoopDamage, TestMarkerAdoptsHostError). Raised
 // in review of #498.
-func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, when string) {
+func assertMarkerShows(t *testing.T, c *gooey.Composer, layer *AdornmentLayer, m *ValidationMarker, when string) {
 	t.Helper()
 	if !m.IsShown() {
+		// THE FIXTURE FIRST. An empty layer produces this symptom from a
+		// cause that is not Frozen at all — nothing was ever hosted — and
+		// the sentence below would send the reader into FocusManager.walk
+		// for a broken page.
+		if len(layer.Adornments()) == 0 {
+			t.Fatalf("the marker did not place %s AND the layer hosts no adornment "+
+				"at all, so this is the fixture rather than the freeze: the page "+
+				"never placed one to gate", when)
+		}
 		t.Fatalf("the marker did not place %s — if Frozen has grown a gate on "+
 			"the input-tree walk that is a real change, and FocusManager.walk's "+
 			"unconditional SetFocusManager call on attachments can take the "+
@@ -490,34 +509,23 @@ func assertMarkerShows(t *testing.T, c *gooey.Composer, m *ValidationMarker, whe
 // FocusManager.evictFrozen, which clears hover, captor,
 // prev and lastClick. Nothing there drops adornments today.
 //
-// AND THE LAST PHASE IS ABOUT IDENTITY, because that is the only thing
-// markerPopup.AdornmentPersists (validation.go:129) changes. This
-// comment cited it as a held seam until review of #498 measured the
-// mutation and found it reddened NOTHING in the root module — not this
-// test, and not TestMarkerPersistsThroughHiddenAnchor below, whose name
-// claims exactly that seam. The reason is that the drop is self-healing
-// within one frame: the layer calls orphaned(), which nils m.pop, and
-// the same frame's ensurePlaced builds a fresh popup. A/B on a hidden
-// anchor:
-//
-//	                      pop != nil  IsShown  adornments  row 1
-//	AdornmentPersists()     true       true        1       "####…"
-//	          -> false      true       true        1       "####…"
-//
-// Every observable agrees; only the POINTER differs — persisting keeps
-// the same *markerPopup, dropping replaces it. So this test hides the
-// anchor while frozen and compares identity, and the mutation reddens it
-// by name. Two arms agreeing is a harness result, not a passing test.
-// Raised in review of #498.
+// IT NO LONGER HIDES THE ANCHOR. That phase and the identity assertion
+// it needed moved to
+// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden, because two
+// causes behind one name is what this file has already been corrected
+// for once — and this comment went on describing the body that left,
+// which is the same defect one level up. What remains here is the FLIP
+// alone: the freeze turns on, evictFrozen runs, and the marker is still
+// placed and still painting. Raised in review of #498.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, m, c := frozenMarkerPage(t, active)
+	tb, m, layer, c := frozenMarkerPage(t, active)
 	if !c.Focus().SetFocus(tb) {
 		t.Fatal("the TextBox refused focus while Active is false, so the " +
 			"freeze is already on and the flip below is not the thing " +
 			"being measured")
 	}
-	assertMarkerShows(t, c, m, "before the freeze turned on")
+	assertMarkerShows(t, c, layer, m, "before the freeze turned on")
 
 	active.Set(true)
 	c.Frame()
@@ -526,7 +534,7 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 			"so the freeze did not take effect and the assertion below is " +
 			"about an unfrozen tree")
 	}
-	assertMarkerShows(t, c, m, "after the freeze turned on")
+	assertMarkerShows(t, c, layer, m, "after the freeze turned on")
 }
 
 // TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden is the drop policy
@@ -559,7 +567,7 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 // and then goes invisible under a collapsing pane.
 func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, m, c := frozenMarkerPage(t, active)
+	tb, m, layer, c := frozenMarkerPage(t, active)
 	active.Set(true)
 	c.Frame()
 	if c.Focus().SetFocus(tb) {
@@ -568,6 +576,15 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	}
 
 	kept := m.pop
+	// THE FIXTURE FIRST, the same separation assertMarkerShows makes: a
+	// layer that hosted nothing produces a nil popup from a cause that is
+	// not the freeze, and the message below would send the reader looking
+	// for a drop that never happened.
+	if kept == nil && len(layer.Adornments()) == 0 {
+		t.Fatal("no popup to hold onto AND the layer hosts no adornment, so " +
+			"the page never placed one: this is the fixture, not the freeze " +
+			"dropping anything")
+	}
 	if kept == nil {
 		t.Fatal("no popup to hold onto, so the identity check below would " +
 			"compare two nils and pass over the policy it is here for")
