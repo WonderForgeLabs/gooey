@@ -79,6 +79,30 @@ func TestTheHostsThisPageCallsLiftedActuallyAre(t *testing.T) {
 			"lifted by the AdornmentLayer that hosts it rather than on its own " +
 			"account; correct that paragraph and this arm together")
 	}
+
+	// AND SO IS A MENUBAR, for the same reason and a different mistake.
+	// The page listed the BAR among the lifted surfaces for two rounds,
+	// one file away from the README saying the bar is not one and its
+	// dropdown is — and the arm above could not see it, because
+	// liftedSurfaceByName resolves "MenuBar" THROUGH popupSurface and so
+	// answers the question the page is not asking. The distinction is
+	// the useful half: Grid.Row places the bar and nothing places the
+	// dropdown. Raised in review of #456.
+	var bar any = &MenuBar{}
+	if _, isOverlay := bar.(gooey.Overlay); isOverlay {
+		t.Error("MenuBar now implements gooey.Overlay itself. The page says the bar " +
+			"is an ordinary component placed by Grid.Row and that what is lifted " +
+			"is the dropdown it opens; correct that paragraph and this arm together")
+	}
+	for _, name := range names {
+		if name == "MenuBar" {
+			t.Error("the overlays concept page calls MenuBar lifted. It is not — " +
+				"popupSurface is, which is what its dropdown is built from — and " +
+				"the arm above passes anyway because liftedSurfaceByName resolves " +
+				"the name through that surface. The bar's own position is a layout " +
+				"decision and the page has to say so")
+		}
+	}
 }
 
 // TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs is the guard whose

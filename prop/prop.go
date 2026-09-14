@@ -87,6 +87,13 @@ func (p *Property[T]) Get() T {
 		for _, d := range p.n.deps {
 			delete(d.dependents, &p.n)
 		}
+		// The tail is cleared, not just the length: these are the
+		// nodes this computed used to depend on, and a computed whose
+		// dependency set shrinks would hold the old ones past len until
+		// the slot is written again. prop has no clearToCap of its own
+		// — the builtin is what that function wraps. Raised in review of
+		// #456.
+		clear(p.n.deps[:cap(p.n.deps)])
 		p.n.deps = p.n.deps[:0]
 		evalStack = append(evalStack, &p.n)
 		p.value = p.compute()

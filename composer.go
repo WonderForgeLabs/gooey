@@ -124,6 +124,14 @@ type Composer struct {
 	// miss five. TestEveryReusedSliceInComposerClearsToCap reads this file
 	// and fails on the next `x = x[:0]` added anywhere in it. Raised in
 	// review of #456.
+	//
+	// AND THE ARGUMENT ABOVE IS NOT ABOUT THIS FILE. A shrinking list
+	// pins components wherever the slice holding them is reused, which
+	// is FocusManager's order, ItemsView's kids, AdornmentLayer's
+	// filter and more. TestEveryReusedSliceThatHoldsAReferenceClearsToCap
+	// asks the same question of the whole tree, deriving the exemption
+	// from the element type rather than from a list. Raised in review of
+	// #456, the round after.
 	buckets []rankBucket[*paintNode]
 
 	// The wire. flusher owns the previous cell buffer; the placement
@@ -466,6 +474,11 @@ func clearToCap[T any](s []T) []T {
 // exactly the second copy #438 set out to retire. Raised in review of
 // #457.
 func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBucket[T]) []T {
+	// retains nothing: the buckets past len(bs) — the ones this call did
+	// not reach — are cleared whole at the end of this function, which
+	// is where that has to happen: the reuse below is the point of the
+	// header, so clearing it here would throw away the arrays the pass
+	// exists to keep.
 	bs := (*buckets)[:0]
 	for _, n := range lifted {
 		r := rankOf(n)
@@ -498,6 +511,10 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 				// comment there is where that is argued.
 				bs = append(bs, rankBucket[T]{})
 			}
+			// retains nothing: every live bucket's tail is cleared at
+			// the end of this function. Clearing here instead would
+			// zero the array this reset is taking precisely because it
+			// is spare.
 			spare := bs[len(bs)-1].items[:0]
 			copy(bs[i+1:], bs[i:])
 			bs[i] = rankBucket[T]{rank: r, items: spare}

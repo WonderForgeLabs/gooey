@@ -526,6 +526,10 @@ func (s *addrStrip) popup() *components.Popup {
 
 func (s *addrStrip) ChildComponents() []gooey.Component {
 	p := s.popup()
+	// Cleared to cap, not truncated: the tail holds components from the
+	// last call. See clearToCap in the gooey package. Raised in review
+	// of #456.
+	clear(s.kids[:cap(s.kids)])
 	s.kids = s.kids[:0]
 	// The notice first, which is document order and therefore the order
 	// the row reads: clipboard feedback at the far end, then the
