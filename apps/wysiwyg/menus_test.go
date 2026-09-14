@@ -251,15 +251,24 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 //
 // A GLOBAL constant in the template is already caught one test up, which
 // asserts "[x] " on one row and "[ ] " on another IN THE SAME FRAME.
-// What needs a second selection is the two mutations no single frame can
-// reach: a PER-ITEM constant that ignores it.Checked, and an item bound
-// to the WRONG *prop.Property[bool]. Measured on the first of those:
+// What needs a second selection is ONE mutation no single frame can
+// reach: a PER-ITEM constant that ignores it.Checked. Measured:
 //
 //	--- PASS: TestTheCheckBoxIsDrawn
 //	--- FAIL: TestTheCheckBoxFollowsTheSelection
 //
+// THIS CLAIMED A SECOND ONE — an item bound to the wrong
+// *prop.Property[bool] — and that is not unique to this test. Swapping
+// BuiltinChecked and EditorChecked in menus.go fails BOTH, because the
+// test above reads two rows of one frame and a swap inverts both of
+// them; so does binding the pair to a single property, which renders
+// "[x] [x]" or "[ ] [ ]". One measured mutation is enough to justify a
+// test, and a coverage claim with nothing behind it, inside a comment
+// block whose point is that it measured rather than claimed, is not.
+// Raised in review of #502.
+//
 // Neither this test nor TestTheCheckAndTheAcceleratorAreOneState covers
-// them otherwise.
+// the per-item constant otherwise.
 func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 	dropdown := viewMenuRows(t, codeExternal)
 
@@ -357,9 +366,18 @@ func viewMenuRows(t *testing.T, which int) []string {
 // real defects a Contains over the joined rows reports as a pass — an
 // item drawn twice, or a label that has migrated to a neighbouring row,
 // or a search string loose enough to also match the chrome around the
-// menu. "$EDITOR" and "EDITOR" are that last case in this very file: the
-// pane title on the right of the same screen reads "EDITOR", so the
-// dollar is what makes the row unique and dropping it would match two.
+// menu.
+//
+// THE WINDOW IS WHAT BUYS UNIQUENESS, not the search string, and this
+// said the opposite until the same PR made it untrue. rows used to be
+// the whole 60x19 page, where the pane title on the right reads
+// "EDITOR" and a search without the dollar matched two; viewMenuRows
+// now clips to MenuBar.DropdownBounds, so nothing outside the dropdown
+// interior is in rows at all. Measured on the twelve rows it returns:
+// "EDITOR" without the dollar hits exactly 1. The dollar is kept
+// because it is the label a user reads, not because anything depends on
+// it — which is the comment-asserts-what-is-no-longer-there shape this
+// branch exists to remove. Raised in review of #502.
 func dropdownRow(t *testing.T, rows []string, want string) string {
 	t.Helper()
 	var hits []string
@@ -397,19 +415,37 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // lost at exactly the moment it is wanted.
 //
 // RUNES, AND THE DIFFERENCE FROM CELLS IS WORTH NAMING. rowText yields
-// one entry per cell, except that a wide glyph's continuation cell
-// contributes the empty string — so an index into the row is a rune
-// index, and equals a cell index only for a row of narrow glyphs, which
-// this menu is. Byte slicing was what broke, and only the diagnostic: a
+// one entry per cell, and a cell contributes any number of runes: a
+// continuation contributes none, and a cell carrying a grapheme cluster
+// (render.Cell.Text returns Cluster when one is set) contributes as
+// many as the cluster holds — a base plus a combining mark is two runes
+// in one narrow column. So an index into the row is a rune index and
+// equals a cell index only for a row of ONE RUNE PER CELL, which this
+// ASCII menu is; "narrow glyphs" was the fence and does not close the
+// cluster case. Raised in review of #502. Byte slicing was what broke, and only the diagnostic: a
 // box is ASCII and an ASCII byte cannot be part of a multi-byte UTF-8
 // sequence, so a four-byte window equal to "[x] " really was four ASCII
 // cells — but a label at an odd offset cut a box-drawing rune in half
 // and %q printed "\xe2\x94\x82 ".
+// AND THE WITHIN-ROW HALF OF dropdownRow's GUARANTEE. That helper buys
+// "exactly one ROW contains want" and argues for why it matters;
+// strings.Index gives the same guarantee back inside the row, taking
+// the leftmost of two copies and reporting the box in front of it as
+// the answer — a label echoed into the accelerator column would read
+// clean. Asserted rather than documented as out of scope, because the
+// uniqueness argument one helper up is the reason the omission is
+// conspicuous. Raised in review of #502.
 func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 	t.Helper()
 	row = dropdownRow(t, rows, want)
+	at := strings.Index(row, want)
+	if last := strings.LastIndex(row, want); last != at {
+		t.Fatalf("%q appears at byte %d and again at %d of %q, so the box in front "+
+			"of the left copy is not the answer to which box precedes the label",
+			want, at, last, row)
+	}
 	r := []rune(row)
-	i := len([]rune(row[:strings.Index(row, want)]))
+	i := len([]rune(row[:at]))
 	if i < 4 {
 		t.Fatalf("%q starts at rune %d of %q, with no room for a check box in front "+
 			"of it — which is how a row with no box at all reads when the label sits "+

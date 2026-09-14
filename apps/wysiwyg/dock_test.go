@@ -41,15 +41,23 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 }
 
 // rowText reads w CELLS of row y — the assertion primitive for "is
-// anything drawn here", and the only one in this package.
+// anything drawn here", and the only SPAN reader in this package.
 //
 // Text(), NOT .Rune: a continuation cell — the second column of a wide
 // glyph — carries render.Continuation, and writing that rune out puts a
 // literal marker in the row. CLAUDE.md names this helper's shape as the
 // reason no fixture in six packages could hold a wide glyph and be
 // asserted on, so a second copy reading .Rune reopens exactly that.
-// There were four in this package and they all come here now; the
-// whole-row case is render.RowText, which this is the span form of.
+// There were four span readers in this package and they all come here
+// now; the whole-row case is render.RowText, which this is the span
+// form of.
+//
+// "THE ONLY ONE IN THIS PACKAGE" WAS WRONG WHEN IT WAS WRITTEN.
+// designmode_test.go's screen() was a whole-plane reader doing the
+// .Rune-with-an-r==0-guard that this paragraph warns about, in the same
+// package, and the claim here read as having swept it up. It goes
+// through render.RowText now, which is why the sentence above can be
+// narrowed to spans instead of deleted. Raised in review of #502.
 //
 // W IS A COLUMN COUNT. A caller with a string in hand wants
 // render.StringWidth of it, not len([]rune(…)) — those differ by one

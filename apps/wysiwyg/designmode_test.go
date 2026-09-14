@@ -8,6 +8,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // DESIGN ↔ LIVE, asserted against the SHIPPED page.
@@ -236,18 +237,29 @@ func TestTheTwoModeLabelsAreTheSameWidth(t *testing.T) {
 }
 
 // screen is the retained cell plane as text — what a user would see.
+//
+// render.RowText PER ROW, not a cell-by-cell read of .Rune. This built
+// the string from the rune with an `r == 0` guard, and
+// render.Continuation is rune(-1), not 0 — so the guard missed it and
+// WriteRune(-1) wrote U+FFFD into the middle of the row. That is the
+// helper shape CLAUDE.md names as the reason no fixture in six packages
+// could hold a wide glyph and be asserted on, and this was one of the
+// six: both callers are strings.Contains assertions over what it
+// returns. Raised in review of #502, where the sibling helper in
+// dock_test.go claimed to be the only reader of its kind in this
+// package while this one sat beside it.
+//
+// THE UNSET CELL STILL READS AS A SPACE, which is the one thing RowText
+// does not do for us: a never-painted cell holds rune 0, and Cell.Text
+// renders that as a NUL rather than a blank. The callers join whole
+// rows and search them, so a NUL run where the screen is empty would
+// make a label that ends at the edge of a painted region unfindable.
 func screen(c *gooey.Composer) string {
 	var b strings.Builder
 	cells := c.Cells()
-	cols, rows := c.Size()
+	_, rows := c.Size()
 	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
-			r := cells.At(x, y).Rune
-			if r == 0 {
-				r = ' '
-			}
-			b.WriteRune(r)
-		}
+		b.WriteString(strings.ReplaceAll(render.RowText(cells, y), "\x00", " "))
 		b.WriteByte('\n')
 	}
 	return b.String()
