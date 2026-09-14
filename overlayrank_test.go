@@ -248,3 +248,69 @@ func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 			"paint put on top", hit)
 	}
 }
+
+// TestANonConstantRankPartsThePlanes is the cost of OverlayRanker's
+// contract, measured rather than asserted in prose.
+//
+// component.go says "Return a constant" and now says WHY in the sharper
+// form this branch introduced: paint SAMPLES the rank at structural
+// re-sync (Composer.orderPaint writes it), while hitTest reads it LIVE
+// through overlayOf on every motion event. Nothing refuses a varying
+// rank — OverlayRank() is a plain method on an exported interface — so
+// the sentence was the whole enforcement, and the failure it warns about
+// is now a PLANE DISAGREEMENT rather than a late restack. That is the
+// exact divergence #465 removed, reachable only through this contract,
+// and this file's own standard is that the planes "cannot part again"
+// (TestARankOrdersHitTestingAsWellAsPaint).
+//
+// So the assertion is the disagreement itself, stated exactly. It is not
+// a bug report against the framework: sampling is deliberate, and making
+// paint live would cost a per-frame walk. It is a pin on the DOCUMENTED
+// answer, and it goes red in both directions — if the two planes ever
+// agree here, either paint started reading live or hitTest started
+// reading a sample, and component.go's paragraph has to change with
+// whichever it was. Raised in review of #458.
+func TestANonConstantRankPartsThePlanes(t *testing.T) {
+	// The same two-overlays-differing-only-in-rank fixture the agreement
+	// test uses, for the same reason: a plain leaf as the loser would
+	// make this about the lift rather than the rank.
+	over := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
+	under := &overlayStripe{stripe{ch: 'U'}}
+	root := &twoKids{kids: []Component{over, under}}
+
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	f, _ := c.Frame()
+	m := NewFocusManager(root)
+	// THE PRECONDITION, because the whole test is a CHANGE in the
+	// answer: if the planes did not agree before the flip there is
+	// nothing for the flip to part.
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "O") {
+		t.Fatalf("before the flip the higher-ranked overlay does not own the cells: row %q", got)
+	}
+	if m.HitTest(0, 0) != Component(over) {
+		t.Fatalf("before the flip the planes already disagree, so this test measures nothing")
+	}
+
+	// A VARYING RANK, with no structural change to force a re-sync —
+	// which is what a real one would look like: a component returning a
+	// value that depends on its own state, read on a frame nobody
+	// rebuilt.
+	over.rank = -1
+	f, _ = c.Frame()
+
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "O") {
+		t.Errorf("PAINT followed the new rank (row %q). component.go says paint "+
+			"samples the rank at re-sync, so it must still show the overlay that "+
+			"was ranked highest when the tree was last synced. If orderPaint now "+
+			"runs per frame, the OverlayRanker paragraph naming this divergence "+
+			"is out of date", got)
+	}
+	if hit := m.HitTest(0, 0); hit != Component(under) {
+		t.Errorf("HIT returned %T; component.go says hitTest reads the rank live "+
+			"through overlayOf, so after the flip it must answer with the other "+
+			"overlay — the planes parting is the documented cost of a "+
+			"non-constant rank. If the hit walk now reads a sample too, the two "+
+			"planes agree again and that paragraph should say so", hit)
+	}
+}

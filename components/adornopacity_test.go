@@ -10,6 +10,36 @@ import (
 	"testing"
 )
 
+// receiverName is the TYPE a method hangs off, through every spelling a
+// receiver can have: T, *T, and — the one this missed — the generic
+// forms T[P] and T[P, Q], which parse as ast.IndexExpr and
+// ast.IndexListExpr and reach the Ident only through .X.
+//
+// It returns "" for a shape it does not know, and the caller treats that
+// as an error rather than a skip: see there.
+//
+// NOT HYPOTHETICAL. This package already declares generic receivers —
+// itemsview.go's Len and At — so before the two Index arms the extractor
+// was returning "" on real methods every run and dropping their types
+// out of the scan without a word. Measured by removing the arms: the
+// error names them. Raised in review of #458.
+func receiverName(e ast.Expr) string {
+	for {
+		switch x := e.(type) {
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.IndexListExpr:
+			e = x.X
+		case *ast.Ident:
+			return x.Name
+		default:
+			return ""
+		}
+	}
+}
+
 // TestEveryAdornmentIsHitTestTransparent replaces a grep with a check.
 //
 // adorn.go states the failure mode exactly: Add is exported, Adornment
@@ -59,17 +89,26 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 			if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
 				continue
 			}
-			var buf strings.Builder
-			switch x := fn.Recv.List[0].Type.(type) {
-			case *ast.StarExpr:
-				if id, ok := x.X.(*ast.Ident); ok {
-					buf.WriteString(id.Name)
-				}
-			case *ast.Ident:
-				buf.WriteString(x.Name)
+			name := receiverName(fn.Recv.List[0].Type)
+			if name == "" {
+				// AN ERROR, NOT A continue. A receiver shape this
+				// extractor cannot name drops the type out of `methods`
+				// entirely, so it never reaches `adornments` and the
+				// loop below never asks whether it is transparent — a
+				// new adornment goes unchecked and nothing says so. The
+				// len(adornments) floor cannot see it either: that
+				// catches the scan collapsing to nothing, not a fourth
+				// adornment going missing. An exemption that grows by
+				// itself is the one shape an exemption must not have,
+				// which is the argument docFilesIn makes in this same
+				// suite. Raised in review of #458.
+				t.Errorf("%s: the receiver of %s is a shape this scan cannot name, "+
+					"so its type is invisible to the transparency check below. "+
+					"Teach receiverName the shape rather than letting it fall "+
+					"through", f, fn.Name.Name)
+				continue
 			}
-			name := buf.String()
-			if !recvRe.MatchString(name) || name == "" {
+			if !recvRe.MatchString(name) {
 				continue
 			}
 			if methods[name] == nil {

@@ -262,8 +262,7 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 		// per-pattern fire tests cannot see it, because they hand the
 		// patterns single lines and never run the prefilter. Raised in
 		// review of #458.
-		low := strings.Join(strings.Fields(strings.ToLower(string(body))), " ")
-		if !containsAny(low, prefilter) {
+		if !containsAny(prefilterText(string(body)), prefilter) {
 			return nil, nil
 		}
 		lines := strings.Split(string(body), "\n")
@@ -381,6 +380,29 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 var prefilterWords = []string{"order", "last", "bottom", "end of"}
 
 func containsAnyPrefilterWord(low string) bool { return containsAny(low, prefilterWords) }
+
+// prefilterText is the ONE normalisation the prefilter sees, and it is a
+// function so that the scan and the loops that pin the scan's contract
+// cannot apply different ones.
+//
+// They did. retiredRuleProblems folded whitespace so the multi-word
+// entry "end of" survives a 72-column wrap, and the two contract loops —
+// the ones asserting that every sample the patterns catch also survives
+// the prefilter — ran the raw lowered line. Today every sample is a
+// single line with single spaces, so the two agree and the drift is
+// invisible; a sample carrying "end  of" or a wrapped phrase would pass
+// the contract check and still be skipped by the production scan, which
+// is the exact failure that loop exists to prevent.
+//
+// unemphasize for the reason the hit-contract prefilter gives at greater
+// length: `**end** of` contains neither "end of" nor, after folding,
+// anything the entry matches, so a file that emphasises the phrase is
+// skipped whole and the vacuity floor does not notice. A single-word
+// entry survives emphasis; only a multi-word one is exposed, and this
+// list has one. Raised in review of #458.
+func prefilterText(s string) string {
+	return strings.Join(strings.Fields(unemphasize(strings.ToLower(s))), " ")
+}
 
 func containsAny(low string, words []string) bool {
 	for _, w := range words {
@@ -1223,6 +1245,15 @@ func TestAWrappedPrefilterWordStillReachesTheLoop(t *testing.T) {
 		{"on one line",
 			guardPad +
 				"A MenuBar belongs at the end of its container so the dropdown paints on top.\n"},
+		// EMPHASISED, which is the same hole one layer over and the one
+		// the hit-contract prefilter fixed for itself in this PR while
+		// this one did not. `**end** of` contains neither "end of" nor
+		// anything folding recovers, so the file was skipped WHOLE — a
+		// silent skip, not a loud one, and the vacuity floor cannot see
+		// a file that never entered the walk. Raised in review of #458.
+		{"emphasised across the entry",
+			guardPad +
+				"A MenuBar belongs at the **end** of its container so the dropdown paints on top.\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// The ONLY prefilter word in the body is the wrapped one —
@@ -1232,7 +1263,7 @@ func TestAWrappedPrefilterWordStillReachesTheLoop(t *testing.T) {
 				if w == "end of" {
 					continue
 				}
-				if strings.Contains(strings.ToLower(tc.body), w) {
+				if strings.Contains(prefilterText(tc.body), w) {
 					t.Fatalf("the fixture carries the prefilter word %q, so the gate "+
 						"opens whatever happens to %q and this arm proves nothing", w, "end of")
 				}
@@ -1717,7 +1748,7 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 	// docFiles, and by the time they were read the list was four words
 	// living in the test body. Corrected in review of #458.
 	for _, line := range samples {
-		if !containsAnyPrefilterWord(strings.ToLower(line)) {
+		if !containsAnyPrefilterWord(prefilterText(line)) {
 			t.Errorf("the prefilter would skip a file containing this line, so the "+
 				"pattern that catches it can never run:\n\t%s\n"+
 				"Either add a word to prefilterWords or keep the pattern inside it.", line)
@@ -2205,7 +2236,7 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 	}
 
 	for _, line := range samples {
-		if !containsAny(strings.ToLower(line), inputPrefilterWords) {
+		if !containsAny(prefilterText(line), inputPrefilterWords) {
 			t.Errorf("the prefilter would skip a file containing this line, so the "+
 				"pattern that catches it can never run:\n\t%s\n"+
 				"Either add a word to inputPrefilterWords or keep the pattern "+

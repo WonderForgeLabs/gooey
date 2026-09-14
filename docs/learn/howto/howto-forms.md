@@ -140,8 +140,16 @@ the screen edge:
   <ValidationMarker/>
 </TextBox>
 …
-<AdornmentLayer/>   <!-- anywhere in the root; it ranks itself on top -->
+<AdornmentLayer/>   <!-- AFTER the content it adorns; see below -->
 ```
+
+The layer ranks itself on top for **paint**, but it re-anchors during its
+own `Arrange` by reading each anchor's current bounds — and layout walks
+children in document order, which the overlay lift does not change. A
+layer declared before the fields it marks reads their bounds as absent,
+which it cannot tell apart from an anchor that is gone, so the marker is
+dropped permanently rather than misplaced for a frame
+([#514](https://github.com/WonderForgeLabs/gooey/issues/514)).
 
 The marker adopts its host's `Error` handle (bind `Error="…"` on the
 marker to override), never intercepts the pointer, and a page without a
