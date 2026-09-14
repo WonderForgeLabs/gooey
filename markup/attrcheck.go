@@ -182,6 +182,45 @@ func checkAttrs(e Element, ctx *Context) error {
 // <Tab> in $EDITOR was accepted, dropped, and had no surface anywhere
 // that would reveal it — strictly less discoverable than the state
 // #454 improved.
+//
+// UNIVERSALS WERE NEVER THE WHOLE SET, and stopping there left the high
+// half of the same defect open. The argument above is that a
+// pseudo-element builds no component, so an attribute meant for a
+// component cannot apply — and that is true of far more than
+// universalAttrs. Measured on this branch before the widening:
+//
+//	<Tab Name="Zonk">     → refused
+//	<Tab Grid.Row="1">    → LOADED, dropped, silent
+//	<Tab Frobnicate="1">  → LOADED, dropped, silent
+//
+// So the gate asks two questions, in the order of what it can know.
+//
+// AN ATTACHED PROPERTY IS REFUSED WHATEVER THE CATALOG KNOWS. Grid.Row
+// is an instruction to the element's CONTAINER about a component, and a
+// pseudo-element has none to instruct — that holds without knowing the
+// element's own surface, which is the whole reason it can be asked of
+// <Tab>, whose AttrsKnown is false and whose Attrs are empty.
+//
+// AND NOTHING ELSE, which was measured rather than assumed. The obvious
+// widening — "on a spec with AttrsKnown, refuse anything outside
+// spec.Attrs" — changes no ACCEPTANCE: <Menu Frobnicate="1"> and
+// <MenuItem Grid.Row="1"> are both already refused by the ordinary
+// unknown-attribute gate, which can fire precisely because those
+// surfaces are declared. All it would do is replace "no such attribute;
+// this element takes Title" with this function's sentence, and for a
+// name that exists nowhere the first is the better answer — "no such
+// attribute" is only a lie for an attribute that exists elsewhere, which
+// is the case this function is for.
+//
+// So the hole is the OPAQUE pseudo-element alone. <Tab> carries Opaque,
+// its AttrsKnown is false and its Attrs are empty because buildTabs
+// reads "Header" off its children without declaring it, so the ordinary
+// gate cannot fire and an unknown name cannot be told from the one the
+// builder really reads. <Tab Frobnicate="1"> therefore stays accepted
+// and that is stated rather than papered over; #461 is where making the
+// surface enumerable is tracked. An attached property is the part that
+// needs no surface to adjudicate, which is why it is the whole of this
+// change. Raised in review of #486.
 func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 	names := make([]string, 0, len(e.Attrs))
 	for name := range e.Attrs {
@@ -189,20 +228,33 @@ func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		for _, u := range universalAttrs {
-			if u.Name != name {
-				continue
-			}
-			// The message names the MECHANISM, not just the fault. "no
-			// such attribute" would be a lie — the attribute exists
-			// everywhere else — and the author's real question is where
-			// to put it instead.
-			return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
-				e.Name, name, e.Attrs[name],
-				readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
+		if !cannotApplyTo(name) {
+			continue
 		}
+		// The message names the MECHANISM, not just the fault. "no
+		// such attribute" would be a lie — the attribute exists
+		// everywhere else — and the author's real question is where
+		// to put it instead.
+		return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
+			e.Name, name, e.Attrs[name],
+			readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
 	}
 	return nil
+}
+
+// cannotApplyTo reports that this attribute names something only a
+// COMPONENT could have, on an element that builds none. See
+// refuseUniversal for the three cases and why they are ordered so.
+// A DOT AND NOTHING ELSE. The first spelling of this excluded an xmlns
+// prefix as "the other dotted name an element carries", which is simply
+// wrong — a prefixed declaration is xmlns:h, with a COLON — so the
+// exclusion could never fire and was guarding against nothing. Measured:
+// removing it changes no result anywhere in the package. The arm in
+// TestAPseudoElementRefusesAnAttachedProperty stays, because "a
+// namespace declaration may sit on any element" is a real rule worth a
+// regression pin even though this predicate is not what upholds it.
+func cannotApplyTo(name string) bool {
+	return isUniversalAttr(name) || strings.Contains(name, ".")
 }
 
 // refusePropElement rejects ANY property element on a pseudo-element,
@@ -440,18 +492,55 @@ var reservedOnContent = map[string]map[string]string{
 // review of #486.
 func propRemedy(spec ElementSpec, ctx *Context, name string) string {
 	r := pseudoRemedy(spec, ctx, name)
-	if r != contentRemedy || name == "Behaviors" || name == "Resources" {
-		// Either there is no destination, or a reservation has its own
-		// sentence, or this is one of the two property elements every
-		// element accepts — where the spelling carries over unchanged.
+	switch {
+	case name == "Behaviors" || name == "Resources":
+		// The two property elements every element accepts: the spelling
+		// carries over to the destination unchanged.
 		return r
+	case r == contentRemedy:
+		// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL, where
+		// acceptance at the destination is derivable without a schema.
+		// For anything else it is advice nothing checked — and
+		// <Text Frobnicate="…"> is itself a load error — so the
+		// attribute form, which asserts no destination, stands in.
+		if isUniversalAttr(name) {
+			return r + ", written as an attribute: a property element names a property " +
+				"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
+				"form that moves"
+		}
+		return attributeHere(spec, name)
+	case r != "":
+		return r // a reservation has its own sentence
 	}
-	if !isUniversalAttr(name) {
-		return ""
-	}
-	return r + ", written as an attribute: a property element names a property " +
-		"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
-		"form that moves"
+	return attributeHere(spec, name)
+}
+
+// attributeHere is what can be said when no DESTINATION can be named:
+// write it as an attribute on this same element.
+//
+// SILENCE WAS THE ALTERNATIVE, and <Tab.Header> is why that was wrong
+// twice over. Header is the one attribute a <Tab> genuinely takes and it
+// is REQUIRED, and the property-element spelling of it was refused with
+// "<Tabs> reads <Tab> as data, so it builds no component for Header to
+// apply to" and no advice at all — a sentence that reads as "there is
+// nowhere for this to go" about the one name with an obvious home. The
+// same silence covered <Menu.Frobnicate> and <MenuItem.Frobnicate>,
+// where pseudoRemedy names no content because a <Menu> holds only
+// pseudo-elements. Raised in review of #486.
+//
+// IT PROMISES NOTHING ABOUT ACCEPTANCE, which is what makes it sayable
+// where the content move is not. The content remedy asserts a
+// destination takes the attribute, and outside universalAttrs nothing
+// here can derive that. This asserts only that the attribute spelling on
+// THIS element is the only form that could work — and if the element
+// does not take the name, the attribute gate answers with its own list,
+// which is a better error than this one rather than a second blank
+// refusal to walk to.
+func attributeHere(spec ElementSpec, name string) string {
+	return "; write it as an attribute on this element instead, <" +
+		spec.Name + " " + name + "=\"…\">, if <" + spec.Name +
+		"> takes one — a property element names a property of the " +
+		"element carrying it, and this element builds none"
 }
 
 // isUniversalAttr reports whether name is one of the attributes every

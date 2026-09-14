@@ -11,20 +11,23 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 )
 
-// isUniversal answers from universalAttrs rather than from a list here,
-// so a ninth universal joins every assertion below on the commit that
-// declares it. Every test in this file derives its cases the same way,
-// for the reason CLAUDE.md's Verify section gives about written-down
-// sets: a list in a test is stale the first time someone adds a row, and
-// the failure is silent — the loop still runs, just over less.
-func isUniversal(name string) bool {
-	for _, a := range universalAttrs {
-		if a.Name == name {
-			return true
-		}
-	}
-	return false
-}
+// isUniversal is attrcheck.go's isUniversalAttr, called rather than
+// copied.
+//
+// It was a third identical loop over universalAttrs — one in
+// refuseUniversal, one exported as isUniversalAttr, one here — and a
+// test that restates a predicate instead of calling it cannot see the
+// predicate change, which is the trap this branch already hit once.
+// Kept as a name because every assertion below reads better for it, and
+// because the alias is one line rather than a body that can drift.
+// Raised in review of #486.
+//
+// The derivation is still the point: a ninth universal joins every
+// assertion below on the commit that declares it, for the reason
+// CLAUDE.md's Verify section gives about written-down sets — a list in a
+// test is stale the first time someone adds a row, and the failure is
+// silent, because the loop still runs, just over less.
+func isUniversal(name string) bool { return isUniversalAttr(name) }
 
 // pseudoSpecs is every pseudo-element the builtin vocabulary declares.
 // <Tab>, <Menu> and <MenuItem> today; the point of asking the catalog is
@@ -1090,14 +1093,31 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 					prop, err)
 			}
 			if name == nonUniversalProp {
-				// WITHHELD, and asserted rather than assumed: acceptance
-				// at the destination is only derivable for a universal,
-				// so a content remedy here is advice nothing checked.
+				// THE CONTENT REMEDY IS WITHHELD, and asserted rather
+				// than assumed: acceptance at the destination is only
+				// derivable for a universal, so prescribing the move
+				// here is advice nothing checked.
 				if strings.Contains(err.Error(), contentRemedy) {
 					t.Errorf("%s prescribes the content move for a name outside "+
 						"universalAttrs, where nothing can say the destination "+
 						"accepts it — and <Text %s=\"…\"> is itself a load "+
 						"error:\n\t%v", prop, name, err)
+				}
+				// AND SOMETHING IS SAID ANYWAY. Withholding the content
+				// move left SILENCE, which is how <Tab.Header> came to
+				// be refused with "builds no component for Header to
+				// apply to" and no advice — about the one attribute a
+				// <Tab> genuinely takes, and a required one. The
+				// attribute-on-this-element form promises nothing about
+				// acceptance, so it is sayable where the content move is
+				// not: if the element does not take the name, the
+				// attribute gate answers with its own list rather than a
+				// second blank refusal. Raised in review of #486.
+				if !strings.Contains(err.Error(), "write it as an attribute on this element") {
+					t.Errorf("%s is refused with no remedy at all. The content move "+
+						"is rightly withheld here, but the attribute spelling on "+
+						"this same element asserts nothing about a destination and "+
+						"is the only form that could work:\n\t%v", prop, err)
 				}
 				continue
 			}
@@ -1156,5 +1176,208 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 					"content refuses that too:\n\t%v", prop, dest, err)
 			}
 		}
+	}
+}
+
+// TestAPseudoElementRefusesAnAttachedProperty is the HIGH half of the
+// same defect the universals arm closes, and the reason it was missed is
+// that universalAttrs looked like the whole set.
+//
+// The argument this file rests on is that a pseudo-element builds no
+// component, so an attribute meant for a component cannot apply. Grid.Row
+// is an instruction to the CONTAINER about a component, and there is
+// none — so it is refusable for exactly the stated reason, and it was
+// loading, being dropped, and reporting nothing. Measured on the branch
+// before the widening: <Tab Name="Zonk"> refused, <Tab Grid.Row="1">
+// accepted. Raised in review of #486.
+//
+// DERIVED FROM THE ATTACHED VOCABULARY, not from a written pair. An
+// attached name is Owner.Property, and the catalog is what says which
+// owners exist — so a container declaring a new attached property joins
+// this loop on the commit that declares it, which is the property every
+// derived test in this file is built on.
+func TestAPseudoElementRefusesAnAttachedProperty(t *testing.T) {
+	attached := attachedNames(t)
+	if len(attached) == 0 {
+		t.Fatal("the catalog declares no attached property at all, so this test " +
+			"ranges over nothing — suspect the derivation before believing the " +
+			"vocabulary lost Grid.Row")
+	}
+	for _, sp := range pseudoSpecs(t) {
+		tc := wholeLoadCases[sp.Name]
+		if tc.onPseudo == "" {
+			t.Errorf("<%s> has no onPseudo document, so nothing puts an attached "+
+				"property on it", sp.Name)
+			continue
+		}
+		for _, name := range attached {
+			doc := fmt.Sprintf(tc.onPseudo, fmt.Sprintf("%s=%q", name, "1"))
+			_, err := Build([]byte(doc), &Context{})
+			if err == nil {
+				t.Errorf("<%s %s=\"1\"> loaded: an attached property is an "+
+					"instruction to the container about a component, and <%s> "+
+					"builds none — so it is dropped in silence, which is #461 "+
+					"reached by the attached spelling", sp.Name, name, sp.Name)
+				continue
+			}
+			// THE SHARED SENTENCE, for the reason the property-element
+			// test gives: two dialects of one rule is how the wording
+			// drifts apart, and this arm is the newest dialect.
+			if !strings.Contains(err.Error(), "builds no component") {
+				t.Errorf("<%s %s=\"1\"> is refused without the shared sentence:\n\t%v",
+					sp.Name, name, err)
+			}
+		}
+
+		// AND A NAMESPACE DECLARATION STAYS LEGAL, which is a claim
+		// about the RULE and not about the predicate. cannotApplyTo asks
+		// for a dot and xmlns:h carries a colon, so nothing here is what
+		// keeps this loading — the first version of the guard carried an
+		// xmlns exclusion on the theory that it was, and a mutation
+		// showed removing it changed nothing at all. The pin is worth
+		// having anyway: docs/markup-reference.md says a prefixed
+		// declaration may sit on any element, and a future guard that
+		// reached for the colon would break that silently. Raised in
+		// review of #486.
+		ns := fmt.Sprintf(tc.onPseudo, `xmlns:h="wonderforge.io/handlers/test"`)
+		if _, err := Build([]byte(ns), &Context{}); err != nil {
+			t.Errorf("<%s xmlns:h=…> is refused:\n\t%v\nA namespace declaration is "+
+				"document structure rather than a property of anything, and "+
+				"docs/markup-reference.md says one may sit on any element", sp.Name, err)
+		}
+	}
+}
+
+// attachedNames is every Owner.Property the vocabulary declares.
+//
+// AttachedParents/AttachedAttrs, not the catalog's per-element Attrs:
+// the attached tables belong to NO element, which is the one-table blind
+// spot bindsweep_test.go's sweepTargets was written for — a walk over
+// spec.Attrs finds nothing with a dot in it and the loop above would
+// range over an empty set, green. Reading the tables means an attached
+// property added tomorrow joins on the commit that declares it.
+func attachedNames(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, parent := range AttachedParents() {
+		for _, a := range AttachedAttrs(parent) {
+			out = append(out, a.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne
+// records the asymmetry the attached-property fix deliberately did not
+// close, so that it is a measured state rather than an oversight.
+//
+// A pseudo-element declaring its attributes is covered by the ORDINARY
+// unknown-attribute gate — <Menu Frobnicate="1"> is refused with "no
+// such attribute; this element takes Title", and has been all along.
+// That is why refuseUniversal does not widen to spec.Attrs: doing so
+// would change no acceptance and would replace a better message with a
+// worse one, since "no such attribute" is only a lie for an attribute
+// that exists elsewhere.
+//
+// An OPAQUE one is not covered and cannot be. <Tab>'s AttrsKnown is
+// false and its Attrs are empty because buildTabs reads "Header" off its
+// children without declaring it, so nothing can tell Frobnicate from
+// Header. #461 is where making that surface enumerable is tracked, and
+// the day it lands this test's opaque arm is what goes red.
+//
+// The split is read from AttrsKnown rather than written down, so a <Tab>
+// that gains a declared surface moves arms by itself. Raised in review
+// of #486.
+func TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne(t *testing.T) {
+	var known, opaque int
+	for _, sp := range pseudoSpecs(t) {
+		tc := wholeLoadCases[sp.Name]
+		if tc.onPseudo == "" {
+			continue
+		}
+		doc := fmt.Sprintf(tc.onPseudo, fmt.Sprintf("%s=%q", nonUniversalProp, "1"))
+		_, err := Build([]byte(doc), &Context{})
+		if sp.AttrsKnown {
+			known++
+			if err == nil {
+				t.Errorf("<%s> declares its attributes and %s is not among them, "+
+					"yet it loaded — so the ordinary unknown-attribute gate is not "+
+					"reaching a pseudo-element after all, and the attached-property "+
+					"rule is covering less than this test assumes", sp.Name,
+					nonUniversalProp)
+			} else if !strings.Contains(err.Error(), "no such attribute") {
+				t.Errorf("<%s %s=\"1\"> is refused by something other than the "+
+					"unknown-attribute gate:\n\t%v\nIf refuseUniversal widened to "+
+					"spec.Attrs, note that it changes no acceptance here and costs "+
+					"the better message", sp.Name, nonUniversalProp, err)
+			}
+			continue
+		}
+		opaque++
+		if err != nil {
+			t.Errorf("<%s> is opaque — its surface is not enumerable, so %s cannot "+
+				"be told from the attribute its parent's Build really reads — yet "+
+				"it was refused:\n\t%v\nIf <%s> gained a declared surface (#461), "+
+				"delete this arm rather than relaxing it", sp.Name, nonUniversalProp,
+				err, sp.Name)
+		}
+	}
+	// BOTH ARMS REACHED. One pseudo-element of each kind is what makes
+	// this a discrimination rather than a restatement; with either at
+	// zero the other arm is passing vacuously.
+	if known == 0 || opaque == 0 {
+		t.Errorf("the vocabulary holds %d pseudo-elements with a declared surface "+
+			"and %d opaque ones; with either at zero this test asserts one rule "+
+			"and reports the other as covered", known, opaque)
+	}
+}
+
+// TestTheParsedByFallbackNamesAHostRegisteredReader is the arm that
+// makes readsAsData's second branch live, and it is here because review
+// of #486 read it as dead code.
+//
+// It is not dead — it is unreachable from the BUILTIN vocabulary, which
+// is a different thing and is exactly why nothing covered it. Every
+// builtin pseudo-element is named by some ModeRestricted container, so
+// namingParent answers first and the ParsedBy clause never runs; a
+// reader checking the branch against the builtins alone finds no input
+// that reaches it and concludes the field has no live consumer.
+//
+// A HOST REGISTRATION IS THE INPUT. ctx.Elements takes an ElementDef
+// carrying ParsedBy, elementdef.go derives Pseudo from it (Proto == nil
+// && ParsedBy != ""), and nothing requires the named reader to declare
+// the element as a child — buildMenuBar walks both levels of the builtin
+// pair without any Children.Only saying so, which is the shape ParsedBy
+// models. So the fallback answers for precisely the registration the
+// catalog cannot describe from the other side, and deleting it would
+// send such a host's users the generic "its parent reads it as data"
+// instead of the name they registered. Raised in review of #486.
+func TestTheParsedByFallbackNamesAHostRegisteredReader(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{
+		"Widget": {Name: "Widget", ParsedBy: "Host", Known: true},
+		"Host":   {Name: "Host", Known: true},
+	}}
+	sp, ok := ctx.spec("Widget")
+	if !ok {
+		t.Fatal("the host's <Widget> does not resolve, so this test measures nothing")
+	}
+	// NON-VACUITY BOTH WAYS. The branch runs only for a pseudo-element
+	// no container names; if either half stopped holding, the assertion
+	// below would be about namingParent's answer instead.
+	if !sp.Pseudo {
+		t.Fatalf("<Widget> is not a pseudo-element (ParsedBy=%q, Proto nil), so the "+
+			"refusal path this fallback serves is never entered", sp.ParsedBy)
+	}
+	if p := namingParent("Widget", ctx); p != "" {
+		t.Fatalf("a container (<%s>) names <Widget>, so namingParent answers first "+
+			"and the ParsedBy clause is not what produced the string below", p)
+	}
+	got := readsAsData(sp, ctx)
+	if !strings.Contains(got, "<Host>") {
+		t.Errorf("readsAsData says %q for a host-registered pseudo-element whose "+
+			"ParsedBy is \"Host\". Without this branch it falls to the generic "+
+			"\"its parent reads it as data\", and the host's users lose the one "+
+			"name that says WHO consumed their element", got)
 	}
 }
