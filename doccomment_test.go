@@ -254,6 +254,67 @@ func gamma() {}
 `,
 		},
 		{
+			// DECORATION AROUND THE NAME. Backticks and the possessive
+			// are what prose does to an identifier, and each of them
+			// answered a string no declaration can match, so the theft
+			// went unreported exactly the way a spaceless first line
+			// did. `any` and ItemsView's are the two the tree actually
+			// holds. Raised in review of #503.
+			name: "a backticked first word is still a first word",
+			src:  "// `alpha` does the alpha thing.\nfunc beta() {}\n\nfunc alpha() {}\n",
+			want: "alpha",
+		},
+		{
+			name: "a possessive first word is still a first word",
+			src: `// alpha's rows are measured before anything is placed.
+func beta() {}
+
+func alpha() {}
+`,
+			want: "alpha",
+		},
+		{
+			// THE POSSESSIVE IS A SUFFIX, NOT A CUTSET, and this is the
+			// arm that says so: trimming "s" as a character would turn
+			// specs into spec and report a theft of a name the file does
+			// declare, one line down.
+			name: "a plural first word is not a possessive",
+			src: `// specs are read in order.
+func specs() {}
+
+func spec() {}
+`,
+		},
+		{
+			// ADJACENCY IS THE SIGNATURE, and a block below is adjacent
+			// only at its FIRST entry. Both arms are here because the
+			// rule used to scan the whole block and announce whatever it
+			// found as "the declaration DIRECTLY BELOW it" — five
+			// entries from where the name was. Raised in review of #503.
+			name: "the first entry of the block directly below is theft",
+			src: `// alpha is the alpha table.
+func beta() {}
+
+var (
+	alpha = map[string]int{}
+	gamma = map[string]int{}
+)
+`,
+			want: "alpha",
+		},
+		{
+			name: "a later entry of the block below it is a cross reference",
+			src: `// alpha is the alpha table.
+func beta() {}
+
+var (
+	gamma = map[string]int{}
+	delta = map[string]int{}
+	alpha = map[string]int{}
+)
+`,
+		},
+		{
 			// THE BLOCK CASE. Nothing about this is different in kind and
 			// the walk could not see it: f.Decls has ONE entry for the
 			// whole const block.
@@ -430,7 +491,7 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 		if name, doc, ok := documented(d); ok {
 			if first := opensBy(doc); first != "" && first != name {
 				switch {
-				case i+1 < len(f.Decls) && declares(f.Decls[i+1], first):
+				case i+1 < len(f.Decls) && declaresDirectlyBelow(f.Decls[i+1], first):
 					report(d.Pos(), name, first, "the declaration DIRECTLY BELOW it")
 				// A BLOCK'S DOC NAMING A LATER ENTRY OF ITS OWN BLOCK,
 				// which nothing reported until review of #503. documented
@@ -559,12 +620,35 @@ func docsExamined(f *ast.File) int {
 // went unreported. It was live in markup/menuicon_test.go when this was
 // measured. strings.Fields splits on any whitespace, which is the rule
 // the sentence above always meant. Raised in review of #503.
+//
+// THE DECORATION IS PART OF THE SAME MISS, and trailing punctuation was
+// only the half that got written down. `any` in backticks and
+// ItemsView's in the possessive are both a doc comment opening by
+// naming something, and both answered a string no declaration can
+// match, so both fell through every arm exactly the way the spaceless
+// first line did. Raised in review of #503 as well. What is stripped is
+// only ever DECORATION around a Go identifier — backticks, the quotes
+// and brackets prose puts round a name, sentence punctuation, and the
+// possessive — so widening it cannot invent a match: the result either
+// spells an identifier some declaration below actually introduces, or
+// no arm fires.
 func opensBy(doc *ast.CommentGroup) string {
 	fields := strings.Fields(doc.Text())
 	if len(fields) == 0 {
 		return ""
 	}
-	return strings.TrimRight(fields[0], ",.:")
+	const decoration = "`\"'“”‘’()[]*_,.:;!?"
+	w := strings.Trim(fields[0], decoration)
+	// The possessive is a SUFFIX, not a cutset: trimming "s" as a
+	// character would turn Specs into Spec and report a theft of a name
+	// nothing declares — or worse, of one something does.
+	for _, poss := range []string{"'s", "’s", "'S", "’S"} {
+		if t := strings.TrimSuffix(w, poss); t != w {
+			w = t
+			break
+		}
+	}
+	return strings.Trim(w, decoration)
 }
 
 // documentedSpec answers for ONE entry of a parenthesised block: its own
@@ -653,18 +737,28 @@ func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
 	return "", nil, false
 }
 
-// declares reports whether d introduces the name want — a method's own
-// name included, for the reason documented gives above.
-func declares(d ast.Decl, want string) bool {
+// declaresDirectlyBelow reports whether the name want is what the
+// declaration d puts DIRECTLY below the comment above it — d's own name
+// for a func, and for a parenthesised block its FIRST entry, which is
+// the only one the comment is adjacent to.
+//
+// It used to scan every spec of the block, which made the report's own
+// words false: a doc naming the fifth const of the var block below it
+// was announced as "the declaration DIRECTLY BELOW it", five entries
+// from where the name actually is. Worse than the wording, it is the
+// reading this file rules out one arm down — a comment naming something
+// three declarations away is a CROSS REFERENCE, and flagging it is
+// flagging prose. Distance is only irrelevant for a block's own doc,
+// where the comment belongs to the block however long it runs; from
+// outside, adjacency is the whole signature. Raised in review of #503.
+//
+// A method's own name counts, for the reason documented gives above.
+func declaresDirectlyBelow(d ast.Decl, want string) bool {
 	switch d := d.(type) {
 	case *ast.FuncDecl:
 		return d.Name.Name == want
 	case *ast.GenDecl:
-		for _, sp := range d.Specs {
-			if specDeclares(sp, want) {
-				return true
-			}
-		}
+		return len(d.Specs) > 0 && specDeclares(d.Specs[0], want)
 	}
 	return false
 }
