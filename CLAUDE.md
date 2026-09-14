@@ -43,8 +43,9 @@ Two consequences that are easy to trip over:
   carries `replace` directives, and refuses **before** resolving a single
   require — so every `apps/*` module stays un-installable while it keeps
   the replace lines that make in-tree development work, whatever version
-  it names. This sentence said `go install` until review of
-  [#497](https://github.com/WonderForgeLabs/gooey/pull/497) measured it.
+  it names. This bullet claimed the pin made `apps/*` installable until
+  review of [#497](https://github.com/WonderForgeLabs/gooey/pull/497)
+  measured it.
   The requires this guard is about are read by `go get` of the LIBRARY
   modules — `imagefmt/svg`, `paint`, `mcp`, `grpc`, `handlers/*` — where
   a replace in a dependency's go.mod is ignored rather than fatal.

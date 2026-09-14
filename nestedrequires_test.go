@@ -124,7 +124,6 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			if !own(r.Path) {
 				continue
 			}
-			seen = append(seen, ownRequire{dir, r.Path, r.Version})
 			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
 			// on a module the workspace replaces writes the canonical
 			// spelling `v0.0.0-00010101000000-000000000000`, which is the
@@ -143,7 +142,11 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 					"network; GOWORK=off is load-bearing — inside the workspace the "+
 					"committed vendor/ forces -mod=vendor and the query is refused, "+
 					"and -mod=mod is not allowed in workspace mode), or copy the "+
-					"one the rest of the tree already names. "+
+					"one the rest of the tree already names, or derive it with no "+
+					"network at all: `TZ=UTC git -c core.abbrev=12 log -1 "+
+					"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
+					"origin/main` (TZ=UTC is load-bearing, and the form is exact "+
+					"only while the module is untagged). "+
 					"Keep any `replace` line, which is what makes local development "+
 					"use the checkout.",
 					dir, r.Path, r.Version, r.Path)
@@ -153,7 +156,17 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			// version the proxy could be asked for at all.
 			if !strings.HasPrefix(r.Version, "v") {
 				t.Errorf("%s requires %s %q, which is not a version", dir, r.Path, r.Version)
+				continue
 			}
+			// APPENDED AFTER THE SHAPE CHECKS, not before. A sentinel
+			// went into the skew population and was then rejected, so
+			// one bad require produced two failures with two different
+			// remedies — the sentinel error, and a skew group naming the
+			// same line and telling the fixer to match a revision. The
+			// len(seen) == 0 fatal below still fires correctly: a tree of
+			// nothing but sentinels fails loudly on the sentinels.
+			// Raised in review of #497.
+			seen = append(seen, ownRequire{dir, r.Path, r.Version})
 		}
 	}
 
@@ -176,7 +189,18 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// are read. Inside it, all 25 modules were green. Measured in review
 	// of #497, where the bump that introduced the skew passed the shape
 	// checks above with nothing to say.
-	newest, behind := skewFrom(seen)
+	newest, behind, tagged := skewFrom(seen)
+	// REPORTED, NOT CHECKED. A require naming a plain tag is legitimate
+	// and is also the one shape this guard cannot compare without
+	// resolving it, so the count of what it skipped is the honest
+	// output — a silent skip is how a check comes to cover less than its
+	// name. Raised in review of #497.
+	if len(tagged) > 0 {
+		t.Logf("%d own-module require(s) name a plain tag, which this check "+
+			"cannot compare against a commit without the network, so they are "+
+			"outside the skew report:\n\t%s",
+			len(tagged), strings.Join(tagged, "\n\t"))
+	}
 	for _, g := range behind {
 		t.Errorf("%d requires name %s while the newest in the tree is %s — one "+
 			"repository, one push, so two revisions is skew rather than a choice. "+
@@ -219,11 +243,15 @@ type skewGroup struct {
 // named a different culprit run to run. A pseudo-version embeds its
 // timestamp, so the newest is both correct and deterministic. Raised in
 // review of #497.
-func skewFrom(seen []ownRequire) (newest string, behind []skewGroup) {
+func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []string) {
 	byRev := map[string][]string{}
 	version := map[string]string{}
 	for _, r := range seen {
-		rev := revisionOf(r.version)
+		rev, ok := revisionOf(r.version)
+		if !ok {
+			tagged = append(tagged, r.dir+" → "+r.path+" "+r.version)
+			continue
+		}
 		byRev[rev] = append(byRev[rev], r.dir+" → "+r.path)
 		// The representative string for a revision. Ties are broken the
 		// same way the reference is, so the report is stable whichever
@@ -233,7 +261,7 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup) {
 		}
 	}
 	if len(byRev) < 2 {
-		return "", nil
+		return "", nil, tagged
 	}
 	var newestRev string
 	for rev := range byRev {
@@ -252,17 +280,29 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup) {
 	for _, rev := range revs {
 		behind = append(behind, skewGroup{version: version[rev], at: byRev[rev]})
 	}
-	return newest, behind
+	sort.Strings(tagged)
+	return newest, behind, tagged
 }
 
-// revisionOf is the commit a version names: the trailing 12-character
-// revision of a pseudo-version, or the whole string for a real tag,
-// which names a commit by being one.
-func revisionOf(v string) string {
+// revisionOf is the commit a version names — the trailing 12-character
+// revision of a pseudo-version — and ok is false for a plain tag, which
+// names one only to something that can resolve it.
+//
+// A TAG IS NOT A REVISION HERE, and treating it as one was wrong in both
+// directions. `paint v0.1.0` keyed its own bucket beside the 12-char
+// hash of the very commit it points at, so the day the first
+// per-subdirectory tag is cut at the tree's head the guard reds on a
+// tree nobody has broken and tells 39 requires to move to a version
+// core has never had. The converse is the silent half: two modules
+// tagged v0.1.0 at DIFFERENT commits collapse into one bucket and real
+// skew goes unreported. Resolving a tag needs the network, which this
+// suite deliberately does not have — so it says it cannot compare them
+// rather than pretending. Raised in review of #497.
+func revisionOf(v string) (string, bool) {
 	if i := strings.LastIndex(v, "-"); i >= 0 && len(v)-i == 13 {
-		return v[i+1:]
+		return v[i+1:], true
 	}
-	return v
+	return "", false
 }
 
 // laterThan orders two versions of THIS repository by the timestamp a
@@ -278,12 +318,27 @@ func laterThan(a, b string) bool {
 
 // stampOf is the 14-digit UTC timestamp inside a pseudo-version, or ""
 // for a plain tag.
+//
+// THREE SPELLINGS, NOT ONE, and this read only the first — which is the
+// form the tag-awareness above was written for. Go writes
+// `vX.0.0-<stamp>-<rev>` off no tag, `vX.Y.Z-0.<stamp>-<rev>` off a
+// release tag, and `vX.Y.Z-pre.0.<stamp>-<rev>` off a prerelease. The
+// penultimate dash-part is `20260913132232` in the first and
+// `0.20260913132232` in the second, so the length test rejected exactly
+// the tagged form: measured, stampOf("v0.1.1-0.20260913132232-…") was
+// "". laterThan then fell through to a string compare and named the
+// OLDER commit as the reference, which is the round-6 defect back
+// again. Taking the tail after the last dot covers all three. Raised in
+// review of #497.
 func stampOf(v string) string {
 	parts := strings.Split(v, "-")
 	if len(parts) < 2 {
 		return ""
 	}
 	stamp := parts[len(parts)-2]
+	if i := strings.LastIndex(stamp, "."); i >= 0 {
+		stamp = stamp[i+1:]
+	}
 	if len(stamp) != 14 {
 		return ""
 	}
@@ -316,7 +371,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 
 	// ONE COMMIT, TWO STRINGS: no skew. A string-keyed check reported
 	// two groups here, on a tree nobody had broken.
-	if newest, behind := skewFrom([]ownRequire{
+	if newest, behind, _ := skewFrom([]ownRequire{
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey", new},
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey/paint", tagged},
 	}); len(behind) != 0 {
@@ -327,7 +382,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	}
 
 	// ONE AHEAD, MANY BEHIND: the one that moved is the reference.
-	newest, behind := skewFrom([]ownRequire{
+	newest, behind, _ := skewFrom([]ownRequire{
 		{"mcp", "github.com/WonderForgeLabs/gooey", new},
 		{"grpc", "github.com/WonderForgeLabs/gooey", old},
 		{"paint", "github.com/WonderForgeLabs/gooey", old},
@@ -344,5 +399,51 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	}
 	if behind[0].version != old {
 		t.Errorf("the group behind names %s, want %s", behind[0].version, old)
+	}
+
+	// THE TAGGED SPELLING AT THE OLDER COMMIT, which is the arm that
+	// discriminates. With no stamp laterThan falls back to a string
+	// compare, and "v0.1.1-0.…" sorts ABOVE "v0.0.0-…" whatever the
+	// dates say — so the tagged module would be named the reference and
+	// the whole tree told to move backwards. Putting the tag on the
+	// NEWER commit proves nothing: both rules agree there.
+	const taggedOld = "v0.1.1-0.20260822101500-aaaaaaaaaaaa"
+	if newest, behind, _ := skewFrom([]ownRequire{
+		{"paint", "github.com/WonderForgeLabs/gooey/paint", taggedOld},
+		{"mcp", "github.com/WonderForgeLabs/gooey", new},
+	}); newest != new || len(behind) != 1 {
+		t.Errorf("with a TAGGED module at the OLDER commit the reference is %s "+
+			"(behind %v); want %s, the newer commit. A pseudo-version off a tag "+
+			"spells its stamp as 0.<stamp>, and a reader that cannot see it "+
+			"compares strings, where the tag's major-minor wins regardless of "+
+			"date", newest, behind, new)
+	}
+
+	// A PLAIN TAG IS REPORTED, NOT GROUPED. It names a commit only to
+	// something that can resolve it, which this suite cannot.
+	if newest, behind, skipped := skewFrom([]ownRequire{
+		{"apps/introdeck", "github.com/WonderForgeLabs/gooey", new},
+		{"apps/introdeck", "github.com/WonderForgeLabs/gooey/paint", "v0.1.0"},
+	}); len(behind) != 0 || len(skipped) != 1 {
+		t.Errorf("a require naming the plain tag v0.1.0 alongside a "+
+			"pseudo-version reports newest=%s behind=%v skipped=%v; want no "+
+			"skew and one skipped. Keying a tag string as a revision reds on a "+
+			"tree with no skew the day the first per-subdirectory tag is cut, "+
+			"and hides real skew between two modules tagged alike at different "+
+			"commits", newest, behind, skipped)
+	}
+
+	// AND stampOf ITSELF, on the three spellings Go writes. The two
+	// arms above exercise it through skewFrom, where an ordering can be
+	// right for the wrong reason on two inputs.
+	for _, tc := range []struct{ v, want string }{
+		{"v0.0.0-20260913132232-e5cdb56ececd", "20260913132232"},
+		{"v0.1.1-0.20260913132232-e5cdb56ececd", "20260913132232"},
+		{"v0.2.0-rc.1.0.20260913132232-e5cdb56ececd", "20260913132232"},
+		{"v0.1.0", ""},
+	} {
+		if got := stampOf(tc.v); got != tc.want {
+			t.Errorf("stampOf(%q) = %q, want %q", tc.v, got, tc.want)
+		}
 	}
 }
