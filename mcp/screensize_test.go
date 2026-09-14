@@ -96,12 +96,19 @@ func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
 // TestTheCellMetricsSayWhenNobodyMeasured pins BOTH arms, because the
 // interesting one is the zero.
 //
-// The probe that fills these is opt-in (gooey.WithCapabilityProbe), and
-// App's backfill to term.DefaultCellW/H fires only for a pixel-plane app,
-// so an ordinary cell-plane host reports 0 — and a client doing
+// The probe that fills these is opt-in (gooey.WithCapabilityProbe), so
+// an UNPROBED host reports 0 — and a client doing
 // `pixels = cols * cellWidth` gets 0 while one doing `cols / cellWidth`
 // divides by zero. The schema says 0 means "never probed"; this is what
 // makes that a checked claim rather than a sentence.
+//
+// NOT "a cell-plane app reports 0", which is what this said and is
+// false the moment the probe runs. term.Screen.Detect substitutes
+// DefaultCellW/H on `caps.CellW == 0` with no plane test at all, so a
+// probed cell-plane app reports a cell size it never measured; App's
+// pixel-plane backfill is a SECOND substitution site that only fires
+// where Detect did not. The unprobed arm below is therefore about the
+// probe, not about the plane. Corrected in review of #504.
 //
 // The earlier version of this assertion was `got["cellWidth"] == nil`,
 // which a JSON 0 satisfies — so it was green over exactly the case it
@@ -980,8 +987,63 @@ func TestTheAgentWorkflowsToolInventoriesAreComplete(t *testing.T) {
 		// this test deliberately does not read that file — so a
 		// developer with the fix already applied was told their own
 		// open editor was missing a tool. Raised in review of #504.
-		assertNamesEveryTool(t, line, "HEAD:"+page+"'s \"The tools:\" line")
+		//
+		// AND WHEN HEAD IS BEHIND THE WORKTREE, SAY SO. Reading the
+		// committed blob is right — see the head of this comment — but
+		// it has a cost the failure message has to carry: a developer
+		// who has ALREADY written the missing tool into the file and
+		// not committed it gets a red suite describing a repository
+		// they have fixed, with no way to tell that from a real gap.
+		// Asking the worktree only in the failure path keeps HEAD the
+		// subject and turns "you are missing a tool" into "commit what
+		// you have". Raised in review of #504.
+		if missing := toolsMissingFrom(t, line); len(missing) > 0 {
+			what := "HEAD:" + page + "'s \"The tools:\" line"
+			if wt, err := os.ReadFile(filepath.Join("..", page)); err == nil {
+				// THE SAME UNESCAPE committedBlob does, and forgetting
+				// it made this branch unreachable: the inventory lives
+				// inside a JavaScript template literal, so the file
+				// holds \` where the agent reads a backtick, and
+				// namesTool matches on backticks. Measured — without
+				// this the worktree copy reads as missing every tool and
+				// the fallback never fires, which is the same kind of
+				// silent pass the guard above declines by name.
+				wtSrc := strings.ReplaceAll(string(wt), "\\`", "`")
+				if wtLine, ok := toolsLine(wtSrc); ok &&
+					len(toolsMissingFrom(t, wtLine)) == 0 {
+					t.Errorf("%s never names %s in backticks — but your WORKING TREE "+
+						"copy of %s names them all. Nothing is wrong with the file "+
+						"in front of you; this guard reads the committed blob, "+
+						"because a checkout where tooling has restored these pages "+
+						"to origin/main's content is not evidence about the "+
+						"repository. Commit the change", what,
+						strings.Join(missing, ", "), page)
+					continue
+				}
+			}
+			assertNamesEveryTool(t, line, what)
+		}
 	}
+}
+
+// toolsMissingFrom is assertNamesEveryTool's question without the
+// assertion: which registered tools this body does not name. The two
+// share namesTool, so a change to what "names" means cannot make them
+// disagree.
+func toolsMissingFrom(t *testing.T, body string) []string {
+	t.Helper()
+	s := &Server{}
+	tools := s.v1Tools()
+	if len(tools) == 0 {
+		t.Fatal("v1Tools is empty, so this guard would pass vacuously")
+	}
+	var missing []string
+	for _, tl := range tools {
+		if !namesTool(body, tl.Name) {
+			missing = append(missing, tl.Name)
+		}
+	}
+	return missing
 }
 
 // inRepoCheckout reports whether git can read HEAD from the parent

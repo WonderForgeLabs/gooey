@@ -88,7 +88,8 @@ func (s *Server) v1Tools() []*Tool {
 				"homed at (0,0). Bounds from tree_snapshot are already absolute — converting those " +
 				"twice is the same error one source over. That fixes the coordinate space, not the " +
 				"outcome. " +
-				"Cell metrics are 0 when the host never probed the terminal.",
+				"Cell metrics are 0 when the host never probed the terminal; non-zero means " +
+				"usable, not necessarily measured — it may be the host's substituted default.",
 			OutputSchema: screenSizeSchema(),
 			Run:          s.screenSize,
 		},

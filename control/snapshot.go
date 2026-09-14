@@ -592,11 +592,22 @@ type ScreenSize struct {
 // substituted term.DefaultCellW/H, which it fills in for a pixel-plane
 // app. So 0 means "certainly unmeasured"; non-zero means "usable", not
 // "measured". Reporting which would need a provenance bit the caps
-// struct does not carry. The probe that fills them is opt-in
-// (gooey.WithCapabilityProbe — "a round trip that only graphics apps
-// need"), and App's own backfill to term.DefaultCellW/H fires only for a
-// pixel-plane app (app.go, `c.CellW <= 0 && a.pixelPlane(c)`), so an
-// ordinary cell-plane app reports 0/0. Substituting the defaults here
+// struct does not carry.
+//
+// THERE ARE TWO SUBSTITUTION SITES, NOT ONE, and this named only the
+// second — so it concluded that "an ordinary cell-plane app reports
+// 0/0", which is false whenever the probe runs. term.Screen.Detect
+// substitutes DefaultCellW/H itself, on `caps.CellW == 0` alone with no
+// plane test (term/term.go), so a PROBED app reports non-zero however it
+// paints. App's own backfill (app.go, `c.CellW <= 0 &&
+// a.pixelPlane(c)`) is the second site and can only fire where the first
+// did not: capabilities pinned with WithCaps, or no probe at all.
+//
+// So 0/0 means the probe never ran AND no pixel-plane backfill applied
+// — which is the ordinary cell-plane default, since the probe is opt-in
+// (gooey.WithCapabilityProbe, "a round trip that only graphics apps
+// need"). Turning the probe on is what makes a cell-plane app report a
+// cell size it never measured. Corrected in review of #504. Substituting the defaults here
 // would answer a question nobody asked the terminal — the same
 // make-it-up-so-the-field-is-populated move this tool exists to replace,
 // since inventing 10x20 is not better than the root-bounds inference.
