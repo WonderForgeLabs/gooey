@@ -729,13 +729,51 @@ func (n *node) markup(indent string) string {
 // in review of #501.
 func carryDeclarations(env, root *node) {
 	for k, v := range env.Attrs {
-		if !isNamespaceAttr(k) {
+		if !strings.HasPrefix(k, "xmlns:") {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
 			root.Attrs[k] = v
 		}
 	}
+}
+
+// envelopeAttrs is everything on a <Gooey> that does NOT move down with
+// carryDeclarations — kept so gooeyOpen can write it back.
+//
+// The complement is exact rather than a second list: what carries is
+// what this drops, so an attribute cannot be written twice or lost by
+// the two disagreeing.
+func envelopeAttrs(env *node) map[string]string {
+	out := make(map[string]string, len(env.Attrs))
+	for k, v := range env.Attrs {
+		if strings.HasPrefix(k, "xmlns:") {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// gooeyOpen is the envelope's opening tag, carrying whatever the opened
+// file wrote on it.
+//
+// ONE FUNCTION FOR THREE LITERALS. `"<Gooey>\n"` was spelled
+// independently in ed.rebuild (twice) and in saveOpenFile, and nothing
+// crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
+// was added to close from the other end.
+//
+// %q like node.markup, not xml.EscapeText, because these attributes go
+// back out the way every other attribute in this document does and the
+// two must agree about quoting.
+func gooeyOpen(attrs map[string]string) string {
+	var b strings.Builder
+	b.WriteString("<Gooey")
+	for _, k := range sortedKeys(attrs) {
+		fmt.Fprintf(&b, " %s=%q", k, attrs[k])
+	}
+	b.WriteString(">\n")
+	return b.String()
 }
 
 // nodeOf parses markup into the editor's document model — a palette
@@ -834,9 +872,16 @@ func nodeOf(src string) (*node, error) {
 					continue
 				}
 				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
-				// answer markup's own parser gives — namespacedAttrError
-				// (markup/markup.go:956, defined at :993). Neither side
-				// drops it and neither keys by Local.
+				// answer markup's own parser gives —
+				// markup.namespacedAttrError. Neither side drops it and
+				// neither keys by Local.
+				//
+				// BY SYMBOL, and the "defined at :993" half this
+				// replaces is why the paragraph below insists on it:
+				// that number was the first line of the doc block the
+				// same commit added above the function, so the citation
+				// was stale in the commit that wrote it. Raised in
+				// review of #501.
 				//
 				// This comment said "the namespace is dropped by the
 				// same key-by-Local rule markup's own parser uses" until
@@ -1237,6 +1282,20 @@ type editor struct {
 	wsRev    *prop.Property[int]
 	wsFiles  *prop.Property[components.ItemSource]
 	openPath *prop.Property[string]
+
+	// envAttrs is what the opened file's <Gooey> carried, minus the
+	// prefixed namespace declarations carryDeclarations moves down onto
+	// the document root.
+	//
+	// THE ENVELOPE IS NOT A NODE — gooeyOpen re-emits it as a literal
+	// around ed.doc() — so anything written on it in the user's file
+	// has nowhere in the document model to live and was simply dropped
+	// on the first save. Graphics is the one that matters: it forces the
+	// image protocol (markup.Graphics), apps/dynamic-activities/zoom.gooey
+	// carries Graphics="halfblock", and opening that file in the designer
+	// and saving it silently took the demo's graphics mode away under a
+	// "✓ saved". Measured before the fix. Raised in review of #501.
+	envAttrs map[string]string
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -2421,8 +2480,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := "<Gooey>\n" + ed.doc().markup("  ") + "</Gooey>\n"
-	full := "<Gooey>\n" + ed.root.markup("  ") + "</Gooey>\n"
+	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := gooeyOpen(ed.envAttrs) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below

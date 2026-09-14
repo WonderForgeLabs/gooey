@@ -289,6 +289,7 @@ func (ed *editor) openSelectedFile() {
 func (ed *editor) closeWorkspace() {
 	ed.ws = nil
 	ed.wsLabel.Set("")
+	ed.envAttrs = nil
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)

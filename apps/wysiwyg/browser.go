@@ -352,6 +352,10 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		ed.status.Set("✗ " + rel + ": " + err.Error())
 		return
 	}
+	// CLEARED FIRST, on every open: a file with no envelope must not
+	// inherit the last one's Graphics, and the assignment below is
+	// inside a branch that such a file does not take.
+	ed.envAttrs = nil
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
 	// the surface Canvas holds one child and that child is the user's
@@ -367,6 +371,12 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// than a loop here: paste unwraps an envelope too, and this was
 		// the only one of the two that carried anything.
 		carryDeclarations(n, n.Kids[0])
+		// AND EVERYTHING ELSE ON THE ENVELOPE STAYS ON THE ENVELOPE.
+		// Only the prefixed declarations move down; a plain xmlns and a
+		// Graphics both belong where the author wrote them, and
+		// markup.parse skips a plain xmlns outright, so moving it bought
+		// nothing but a diff on the first save of every existing file.
+		ed.envAttrs = envelopeAttrs(n)
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}
@@ -394,7 +404,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := "<Gooey>\n" + ed.doc().markup("  ") + "</Gooey>\n"
+	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())
@@ -424,6 +434,7 @@ func (ed *editor) setWorkspace(dir string) {
 		ed.status.Set("✓ " + ws.label + " (" + strconv.Itoa(len(ws.files)) + " files)")
 	}
 	ed.wsLabel.Set(ws.label)
+	ed.envAttrs = nil
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)

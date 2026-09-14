@@ -40,6 +40,8 @@ Every file has exactly one `<Gooey>` root with exactly one child:
 
 Both rules are enforced at build time. The default `xmlns` attribute is decorative versioning — the parser ignores its value. **Prefixed** namespaces are not decorative: they declare handler namespaces and gooey's language-services namespace, and are captured per document into a prefix → URI table (see [handler namespaces](#handler-namespaces) and [declared properties](#declared-properties-xproperty)).
 
+A prefixed declaration may sit on **any** element, not only on `<Gooey>`. Every `xmlns:` attribute in the file is merged into one flat, document-wide table in document order, and the last declaration of a prefix wins. This is deliberately **not** XML's subtree scoping: a prefix declared on a button three levels down is usable by a sibling above it, and redeclaring a prefix lower in the file changes it for the whole document rather than for that subtree. Putting every declaration on `<Gooey>` is the convention and what every example here does; the rule matters because the designer cannot — the `<Gooey>` envelope is not part of the document model it edits, so it writes prefixed declarations onto the user's root element and the files it saves depend on those being document-wide.
+
 The "exactly one child" rule counts *visual* children. `<x:Property>` declarations are also direct children of the root, and are not content.
 
 ### `<Gooey>` attributes

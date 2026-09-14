@@ -145,6 +145,144 @@ func TestReopeningTheRebuiltSourceIsStable(t *testing.T) {
 	}
 }
 
+// TestAnUndeclaredPrefixIsNotReportedAsAParentingFault is the message
+// half of the namespace work, and the case it covers is the ordinary
+// one: copying a single element out of a document leaves its
+// declaration behind on the root.
+//
+// reconcileNamespaces has nothing to compare — the pasted node declares
+// nothing — so the paste reaches insertSubtree's rebuild backstop,
+// which prefixed every refusal with a parenting claim it cannot have
+// established: canHold refuses parenting faults before the append, so
+// everything reaching that line failed for some other reason. Measured
+// before the fix:
+//
+//	✗ <Button> does not go inside <Canvas>: markup: <Button
+//	  Click="{{t:Fire}}">: markup: undeclared namespace prefix "t"
+//
+// BOTH DIRECTIONS, because dropping the clause entirely would also pass
+// an assertion that only forbids the wrong noun: the real cause has to
+// survive into the message, and the two elements have to still be named
+// so the author knows which paste failed. Raised in review of #501.
+func TestAnUndeclaredPrefixIsNotReportedAsAParentingFault(t *testing.T) {
+	const uri = "urn:gooey:test:501:undeclared"
+	handlerNS(t, uri)
+
+	root := workspaceFixture(t)
+	doc := `<Gooey>` + "\n" +
+		`  <Canvas Name="Root"/>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "bare.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("bare.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+
+	// NO DECLARATION, which is what a copy of one element out of a
+	// document looks like.
+	ed.pasteMarkup(`<Button Name="Pasted" Content="go" Click="{{t:Fire}}"/>`)
+
+	got := ed.status.Get()
+	if !strings.HasPrefix(got, "✗") {
+		t.Fatalf("a paste using an undeclared prefix reported %q; it cannot "+
+			"build, so this test is not looking at the refusal it is about", got)
+	}
+	if strings.Contains(got, "does not go inside") {
+		t.Errorf("a namespace failure is reported as a parenting failure. "+
+			"<Button> goes inside <Canvas> perfectly well, and canHold has "+
+			"already said so before this backstop runs: %s", got)
+	}
+	if !strings.Contains(got, `"t"`) {
+		t.Errorf("the refusal does not name the prefix that is missing, which "+
+			"is the only thing the author can act on: %s", got)
+	}
+	if !strings.Contains(got, "<Button>") || !strings.Contains(got, "<Canvas>") {
+		t.Errorf("the refusal names neither the pasted element nor where it "+
+			"was going, so an author with several panes open cannot tell "+
+			"which paste failed: %s", got)
+	}
+}
+
+// TestTheEnvelopesOwnAttributesSurviveASave is the leg the round trip
+// above does not cover, and the one that was losing user data.
+//
+// Only namespace declarations came off the <Gooey> envelope; everything
+// else on it went with it, because the envelope is not a node and the
+// three places that re-emit it wrote a bare "<Gooey>" literal. Graphics
+// is not decorative — it forces the image protocol (markup.Graphics) —
+// and apps/dynamic-activities/zoom.gooey carries Graphics="halfblock"
+// with that app's own README calling the declaration load-bearing. So
+// opening that file in the designer, changing one attribute and saving
+// took the graphics mode away under a "✓ saved". Measured before the
+// fix:
+//
+//	input:  <Gooey xmlns="wonderforge.io/gooey/2026" Graphics="sixel">
+//	saved:  <Gooey>
+//	          <Canvas Name="Root" xmlns="wonderforge.io/gooey/2026">
+//
+// BOTH HALVES, because either alone passes against the defect. Graphics
+// must survive, AND the default xmlns must stay on the envelope rather
+// than being relocated onto the user's root — a rewrite no documented
+// example shows and that markup.parse ignores anyway, since it skips a
+// plain xmlns without recording it. Raised in review of #501.
+func TestTheEnvelopesOwnAttributesSurviveASave(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="wonderforge.io/gooey/2026" Graphics="halfblock">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "gfx.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("gfx.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatalf("saving the open document: %v", err)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(root, "gfx.gooey"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := string(onDisk)
+	if !strings.Contains(saved, `Graphics="halfblock"`) {
+		t.Errorf("a save dropped the envelope's Graphics attribute, which forces "+
+			"the image protocol — the file now renders in whatever the terminal "+
+			"defaults to:\n%s", saved)
+	}
+	envelope, below, _ := strings.Cut(saved, "\n")
+	if !strings.Contains(envelope, `xmlns="wonderforge.io/gooey/2026"`) {
+		t.Errorf("the default declaration is no longer on <Gooey>, where every "+
+			"documented example and every .gooey in this tree puts it:\n%s", saved)
+	}
+	if strings.Contains(below, `xmlns="`) {
+		t.Errorf("the default declaration was relocated onto the user's root. "+
+			"markup.parse skips a plain xmlns outright, so the move has no "+
+			"effect on load and produces a diff nobody asked for:\n%s", saved)
+	}
+
+	// AND IT IS STABLE, which is what makes the first save's output the
+	// file rather than one step of an oscillation.
+	first := ed.source.Get()
+	ed.openWorkspaceFile("gfx.gooey")
+	if second := ed.source.Get(); second != first {
+		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
+			first, second)
+	}
+}
+
 // TestARebuildCarriesAHandlerNamespaceAndPinsTheDispatcher replaces
 // TestARebuildCannotCarryAHandlerNamespaceYet, which was written as a
 // latch precisely so that closing #472 would turn it red and hand its
@@ -236,11 +374,25 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 		t.Fatalf("the declaration did not come down, so nothing here is "+
 			"measuring which keys do:\n%s", src)
 	}
-	if src := ed.source.Get(); strings.Contains(src, "xmlnsFoo") {
+	// ON THE ENVELOPE, WHERE THE AUTHOR WROTE IT, and nowhere else. The
+	// envelope's own attributes are preserved since review of #501's
+	// round 7, so the claim is no longer "xmlnsFoo appears nowhere" —
+	// that would now be a demand to delete somebody's attribute. It is
+	// that the carry-down did not treat it as a declaration: moved onto
+	// the user's root, the canvas reports it as an unknown attribute of
+	// the CHILD rather than as the envelope-level mistake it is.
+	src := ed.source.Get()
+	_, below, _ := strings.Cut(src, "\n")
+	if strings.Contains(below, "xmlnsFoo") {
 		t.Errorf("an ordinary attribute spelled xmlnsFoo was carried onto the "+
-			"user's root as if it were a declaration. openWorkspaceFile must "+
-			"accept the two shapes nodeOf writes, \"xmlns\" and \"xmlns:\"+local, "+
-			"and nothing else:\n%s", src)
+			"user's root as if it were a declaration. carryDeclarations must "+
+			"accept the one shape that moves, \"xmlns:\"+local, and nothing "+
+			"else:\n%s", src)
+	}
+	if !strings.Contains(src, "xmlnsFoo") {
+		t.Errorf("xmlnsFoo was dropped from the document entirely; an attribute "+
+			"the author wrote on the envelope belongs on the envelope, right "+
+			"or wrong:\n%s", src)
 	}
 }
 
@@ -477,8 +629,16 @@ func TestAPastedDefaultNamespaceIsNotAConflict(t *testing.T) {
 	// A DIFFERENT default, and the same prefix binding the document
 	// already has — so the only thing that differs is the one key the
 	// exemption is about.
-	paste := `<Gooey xmlns="` + theirs + `" xmlns:t="` + prefixURI + `">` + "\n" +
-		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}"/>` + "\n" +
+	// ON THE PASTED ELEMENT, NOT ON ITS ENVELOPE, and that moved in
+	// review of #501's round 7. A pasted envelope is thrown away and
+	// only xmlns:-prefixed declarations come down from it now — the
+	// default one is the target document's business, not the fragment's
+	// — so an envelope-level default would simply vanish and this
+	// fixture would stop reaching the exemption it exists to exercise.
+	// Written where a copy out of the CODE tab puts it when the element
+	// itself carried the declaration.
+	paste := `<Gooey xmlns:t="` + prefixURI + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go" Click="{{t:Pasted}}" xmlns="` + theirs + `"/>` + "\n" +
 		`</Gooey>` + "\n"
 	ed.pasteMarkup(paste)
 

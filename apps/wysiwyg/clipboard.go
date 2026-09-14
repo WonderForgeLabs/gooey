@@ -352,7 +352,24 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		// revert exists to prevent (#454 review).
 		ed.abortHistory()
 		ed.rebuild()
-		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + into.Elem +
+		// IT DOES NOT SAY WHY, and that is the point. This read
+		// "<X> does not go inside <Y>: …", which is a cause this
+		// backstop has not established and by its own comment above
+		// cannot be: canHold already refused every parenting fault
+		// before the append, so everything reaching here failed for
+		// some OTHER reason. The namespace work made one of those
+		// common — paste a subtree that USES a prefix without its
+		// declaration, the ordinary result of copying one element out
+		// of a document, and the editor answered:
+		//
+		//	✗ <Button> does not go inside <Canvas>: markup: …
+		//	  undeclared namespace prefix "t"
+		//
+		// <Button> goes inside <Canvas> perfectly well. The real cause
+		// was after the colon all along; the clause in front of it was
+		// the wrong noun, which is the same defect nodeOf's five
+		// reworded refusals were for. Raised in review of #501.
+		ed.status.Set("✗ <" + n.Elem + "> was not pasted into <" + into.Elem +
 			">: " + refused)
 		return
 	}
