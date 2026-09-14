@@ -567,7 +567,15 @@ var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
 
 func overlayMarkedReceivers(t *testing.T) []string {
-	return receiversDeclaring(t, overlaysPageRe, ".")
+	// UNQUALIFIED, because the subject is one package's own map and
+	// every name the walk can reach is in it. receiversDeclaring keys by
+	// directory for the caller that walks the tree; here that prefix is
+	// a constant.
+	out := receiversDeclaring(t, overlaysPageRe, ".")
+	for i, q := range out {
+		out[i] = q[strings.LastIndex(q, ":")+1:]
+	}
+	return out
 }
 
 // receiversDeclaring is the scan both guards run, differing in the
@@ -590,6 +598,15 @@ func overlayMarkedReceivers(t *testing.T) []string {
 // whole untracked checkouts of this repo, so a walk that only anchors
 // at the top reads someone else's tree on a developer's machine and
 // finds types that are not in this one.
+//
+// NAMES ARE QUALIFIED BY DIRECTORY, "dir:Type", and without that the
+// widening above was undone by the flattening below it. Bare names
+// compared across packages make a collision an exemption: a Toast in
+// apps/foo declaring OverlayRank and not OverlaysPage passes because
+// components.Toast already appears in the marked set — and a NEW host
+// in a DIFFERENT package is precisely where both the trap and the
+// collision risk live, so the failure hides in the case the walk was
+// widened for. Raised in review of #456.
 func receiversDeclaring(t *testing.T, re *regexp.Regexp, root string) []string {
 	t.Helper()
 	var out []string
@@ -611,9 +628,10 @@ func receiversDeclaring(t *testing.T, re *regexp.Regexp, root string) []string {
 		if err != nil {
 			return err
 		}
+		dir := filepath.ToSlash(filepath.Dir(path))
 		for _, line := range strings.Split(string(body), "\n") {
 			if m := re.FindStringSubmatch(line); m != nil {
-				out = append(out, m[1])
+				out = append(out, dir+":"+m[1])
 			}
 		}
 		return nil
