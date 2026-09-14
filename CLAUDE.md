@@ -436,7 +436,7 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:185`) now returns the component that
+`FocusManager.HitTest` (`mouse.go:192`) now returns the component that
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
@@ -454,11 +454,10 @@ way — the same question the paint path asks, which is what keeps the two
 from drifting — and it skips the NODE, not the subtree, because a hidden
 container still has its children painted over its own erasure.
 
-The
-ancestor half is not a detail: the walk prunes on bounds at every node,
-so a surface arranged outside its parent's rect paints and can never be
-hit. That is the point: not a second ordering, the same
-one. `TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
+The ancestor half is not a detail: the walk prunes on bounds at every
+node, so a surface arranged outside its parent's rect paints and can
+never be hit. That is the point: not a second ordering, the same one.
+`TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
 Four caveats came out with the fix (`components/toast.go`,
 `docs/markup-reference.md`, `docs/architecture.md`, `mouse.go`), and so
 did `zorderdocs_test.go`'s hit-test exemption, whose whole premise was
@@ -466,10 +465,14 @@ that this walk still answered by position.
 
 What the walk gave up is the early exit on a hit — an earlier sibling
 can out-rank a later one, so every subtree whose bounds contain the
-point is visited. It still allocates nothing and still prunes on bounds
-at every node. `Popup` never depended on any of it: it holds pointer
-capture while open, which routes presses before the walk runs — that is
-Popup's mechanism, not the marker's.
+point is visited. It still prunes on bounds at every node, and still
+allocates nothing **of its own** — but it allocates whatever
+`ChildComponents` does, and `ToastHost` and `AdornmentLayer` each build
+a fresh slice per call, so a live toast costs one allocation per motion
+event ([#513](https://github.com/WonderForgeLabs/gooey/issues/513)).
+`Popup` never depended on any of it: it holds pointer capture while
+open, which routes presses before the walk runs — that is Popup's
+mechanism, not the marker's.
 
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
@@ -499,7 +502,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:523`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:530`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

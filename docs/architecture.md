@@ -503,8 +503,7 @@ and the four walks outside the root package that remain unbounded are
 (`Thickness`, in cells), explicit size, `HAlign`/`VAlign`, and
 `Visibility` (`Visible`, `Hidden` = occupies space, renders no content
 and is not hit-tested, `Collapsed` = occupies nothing, subtree skipped
-entirely). In Go
-composition it applies via `gooey.L`:
+entirely). In Go composition it applies via `gooey.L`:
 
 ```go
 gooey.L(&Text{...}, gooey.Layout{Margin: gooey.M(1), HAlign: gooey.AlignCenter})
@@ -675,8 +674,8 @@ contradiction a reader resolves by believing whichever they read first.
 Raised in review of #458.
 
 The paint loop forces a repaint of every node above a rect somebody
-below just painted — the
-forcing is a `Set` between evaluations, never inside one, so the
+below just painted — the forcing is a `Set` between evaluations, never
+inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
 `Canvas` children and runtime-hidden containers correct, and two
 exemptions keep the counts tight: a chrome-only container never forces
@@ -1071,9 +1070,8 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns **the component that paints last** among
 those whose arranged `Bounds()` — and every ancestor's `Bounds()` —
-contain the cell; `Collapsed` subtrees, `Hidden` components,
-zero-size components, and `HitTestTransparent` components are not
-hit.
+contain the cell; `Collapsed` subtrees, `Hidden` components, zero-size
+components, and `HitTestTransparent` components are not hit.
 
 The ancestor clause is the one place the two planes still differ, and it
 is deliberate rather than an oversight: the hit walk prunes on bounds at
@@ -1081,9 +1079,9 @@ every node, while paint clips each node to *its own* rect. A surface
 arranged outside its owner's rectangle therefore paints and cannot be
 hit. Nothing shipped is in that position without also holding pointer
 capture; `FocusManager.HitTest` carries the measurement and the
-alternative resolution, and
-[#482](https://github.com/WonderForgeLabs/gooey/issues/482) carries what
-each of the two candidate resolutions would cost.
+alternative resolution, and what each of the two candidate resolutions
+would cost is in
+[#482](https://github.com/WonderForgeLabs/gooey/issues/482).
 
 **That is one sentence on purpose, and for a while it was two.**
 "Deepest component, children before ancestors and later siblings before
@@ -1126,15 +1124,17 @@ and requires paint and the hit walk to return the same one. It is the
 inversion of the guard that pinned the divergence and named the four
 files whose caveats came out with it —
 TestARankOrdersPaintAndNotHitTesting, spelled here without backticks
-because #465 deleted it along
-with the divergence, and a live citation to a dead test reads as a check
-while checking nothing.
+because #465 deleted it along with the divergence, and a live citation
+to a dead test reads as a check while checking nothing.
 
-The walk still allocates nothing, because it runs on every motion
-report. What it gave up is the early exit on a hit: an earlier sibling
-can out-rank a later one, so every subtree whose bounds contain the
-point is visited. Bounds still prune at every node, which is where the
-work was.
+The walk still allocates nothing of its own, because it runs on every
+motion report. It allocates whatever `ChildComponents` allocates, and
+`ToastHost` and `AdornmentLayer` both build a fresh slice per call, so
+the zero is the walk's and not the frame's while either holds anything
+([#513](https://github.com/WonderForgeLabs/gooey/issues/513)). What the
+walk gave up is the early exit on a hit: an earlier sibling can out-rank
+a later one, so every subtree whose bounds contain the point is visited.
+Bounds still prune at every node, which is where the work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:

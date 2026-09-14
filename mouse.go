@@ -107,8 +107,15 @@ type PointerFollower interface{ FollowsPointer() bool }
 // HitTest returns the component the pointer is over: THE ONE THAT PAINTS
 // LAST among those whose arranged bounds — AND EVERY ANCESTOR'S BOUNDS —
 // contain the cell. Collapsed subtrees, HIDDEN components, zero-size
-// components, and HitTestTransparent components are not hit. The walk allocates nothing
-// — it runs on every motion event.
+// components, and HitTestTransparent components are not hit.
+//
+// The walk allocates nothing OF ITS OWN, which is the constraint the
+// design was built under — it runs on every motion event, and ?1003h
+// sends one per cell crossed. It still allocates whatever
+// ChildComponents allocates, and two shipped hosts build a fresh slice
+// per call, so a live toast or adornment costs one allocation per
+// motion event for as long as it is up
+// (https://github.com/WonderForgeLabs/gooey/issues/513).
 //
 // THE ANCESTOR CLAUSE IS THE ONE PLACE THE TWO PLANES STILL DIVERGE, and
 // it is stated rather than fixed. This walk prunes on bounds at every

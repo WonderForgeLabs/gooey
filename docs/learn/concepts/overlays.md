@@ -114,6 +114,15 @@ interactive adorner somebody else writes is where it would have bitten,
 and since #465 it does not: that adorner receives the presses its
 painted position implies.
 
+Which is the same sentence read the other way, and the other way is the
+one that costs something. An adorner that omits `HitTestTransparent` is
+opaque at the top rank, and it now takes the press **and the hover**
+over whatever it is pinned beside — for as long as it is up, which for a
+`PersistentAdornment` is as long as its anchor stays invalid. Nothing
+refuses it at load and no vet sees it; `components/adorn.go` carries the
+argument and `docs/markup-reference.md` the same caveat beside
+`<AdornmentLayer/>`.
+
 The paragraph above used to say the gap was live, ending on the words
 "hit-testing still does". Since #465 the hit walk asks `overlayOf`, so
 it does not; corrected in review of #478, eight lines below a heading

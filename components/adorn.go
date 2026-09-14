@@ -303,9 +303,9 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // package that simply omits the method is opaque, and nothing says so at
 // the point of writing it — no load error, no vet, no test. It would
 // take the press and the hover over the field it is pinned beside, at
-// the top rank, silently. That residue is the reason the remedy below is the right
-// one; a guard over this package's own types is the half that can be
-// enforced here.
+// the top rank, silently. That residue is the reason the remedy below
+// is the right one; a guard over this package's own types is the half
+// that can be enforced here.
 //
 // And the duration is the half that is worse here than for a toast.
 // toast.go weighs its swallowing as "three seconds of that button being

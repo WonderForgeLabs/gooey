@@ -530,6 +530,59 @@ func TestTheHitWalkAllocatesNothing(t *testing.T) {
 			"report — ?1003h sends one per cell crossed — so per-event garbage here is "+
 			"paid on every pointer move across the screen", n)
 	}
+
+	// THE ZERO ABOVE IS THE WALK'S, NOT THE FRAME'S, and measuring it
+	// against twoKids alone could not tell the two apart: twoKids
+	// returns a stored slice, so a walk through it allocates nothing
+	// whatever the walk costs its containers. Two shipped hosts build a
+	// fresh slice per call (ToastHost, AdornmentLayer — #513), and under
+	// either of them the number a user pays is 1 per motion event, not
+	// 0. Raised in review of #458, where the sentence had been restated
+	// in three normative places with no arm that could falsify it.
+	//
+	// ONE PER ALLOCATING CONTAINER ON THE PATH is the assertion, not "1":
+	// the walk adds nothing of its own, so two nested cost exactly two.
+	deep := &freshKids{kids: []Component{&stripe{ch: 'D'}}}
+	shallow := &freshKids{kids: []Component{deep}}
+	c2 := NewComposer(shallow, 12, 3)
+	t.Cleanup(c2.Close)
+	c2.Frame()
+	m2 := NewFocusManager(shallow)
+	if hit := m2.HitTest(0, 0); hit != Component(deep.kids[0]) {
+		t.Fatalf("the allocating fixture hits %T, so the count below is not the walk "+
+			"descending through both containers", hit)
+	}
+	if n := testing.AllocsPerRun(100, func() { m2.HitTest(0, 0) }); n != 2 {
+		t.Errorf("a walk through two containers that each build a fresh child slice "+
+			"allocated %v times per call, want exactly 2 — one per container. More "+
+			"than that is the walk's own garbage, which the zero above says there is "+
+			"none of; fewer means ChildComponents stopped allocating, and mouse.go, "+
+			"docs/architecture.md and CLAUDE.md all say it does", n)
+	}
+}
+
+// freshKids is twoKids with the shipped hosts' ChildComponents —
+// ToastHost (components/toast.go) and AdornmentLayer
+// (components/adorn.go) both build a fresh slice per call. It exists so
+// the root package can measure what that costs the hit walk without
+// importing components, which imports this package.
+type freshKids struct {
+	Base
+	kids []Component
+}
+
+func (f *freshKids) ChildComponents() []Component {
+	kids := make([]Component, len(f.kids))
+	copy(kids, f.kids)
+	return kids
+}
+func (f *freshKids) Render(*Frame)       {}
+func (f *freshKids) Measure(a Size) Size { return a }
+func (f *freshKids) Arrange(b Rect) {
+	f.Base.Arrange(b)
+	for _, k := range f.kids {
+		ArrangeChild(k, b)
+	}
 }
 
 // countingBox reports how many times something asked it for its
