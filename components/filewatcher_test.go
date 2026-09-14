@@ -431,9 +431,11 @@ func (c *countingPost) Post(f func()) {
 // schedule, and one caller wants forty of them. A fixed budget makes
 // "two seconds" mean something different at each call site, and the
 // tight one is the negative assertion whose floor this is. Fifty
-// milliseconds per post on top of the same two-second base is two orders
-// of magnitude over a 1ms interval and still bounded, so a watcher that
-// has genuinely stopped polling fails rather than hanging.
+// milliseconds per post on top of the same two-second base is fifty
+// times a 1ms interval and still bounded, so a watcher that has
+// genuinely stopped polling fails rather than hanging. (This said "two
+// orders of magnitude", which 50x is not — in a file this precise about
+// measured numbers. Raised in review of #511.)
 //
 // It returns the delta it observed so a caller can say what actually
 // happened rather than restating the number it asked for.
@@ -602,14 +604,22 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	defer stop()
 
 	write(t, dir, "a.txt", "two", t2)
-	// THREE POSTS IS THREE CYCLES HERE, and "here" is doing work: the
-	// watcher is disabled, so no cycle can post a fire and each one posts
-	// the paths request alone. The general rule is one post per cycle
-	// plus one more for a cycle that fires, under which three posts can be
-	// two cycles — paths, fire, paths — so this count does not carry over
-	// to a firing watcher. Either way the scan that sees this write has
-	// certainly run, and the baseline it advanced is what makes the change
-	// dropped rather than merely late. Raised in review of #511.
+	// THREE POSTS MAY BE TWO CYCLES, and three is still the right number.
+	//
+	// A DISABLED WATCHER STILL POSTS THE FIRE. The poll loop posts it
+	// unconditionally once a scan reports a hit (FileWatcher.Start), and
+	// it is fire() — on the UI goroutine — that reads Enabled and returns.
+	// That is what this test's own header means by "Enabled gates the HIT,
+	// not the poll", so the sequence here can be paths, fire, paths: two
+	// cycles. This comment said the opposite, and quarantined the general
+	// rule as not applying "here" when here is exactly where it applies.
+	// Measured with a println beside the post. Raised in review of #511.
+	//
+	// What makes three enough either way is that the poll goroutine is
+	// SERIAL and a scan sits between a paths post and the next post: by
+	// the time the counter has moved three times, at least one scan that
+	// began after the write has finished, and the baseline it advanced is
+	// what makes the change dropped rather than merely late.
 	drainUntilPosts(t, d, c, 3)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
@@ -836,9 +846,20 @@ func TestAFileChangeSchedulesAFrameAndAnIdlePollDoesNot(t *testing.T) {
 	// untouched. prop.Set does not compare, so a watcher that Set
 	// anything per poll would repaint the page several times a second
 	// forever and nothing else in this file would notice.
-	drainFor(d, 40*time.Millisecond)
+	// THE WINDOW, NOT A POLL COUNT, and that is the same overclaim this
+	// PR removes 150 lines up. A 40ms drain buys ~40 polls at a 1ms
+	// interval on an idle machine and can buy zero on the runner this
+	// branch exists because of, so a message naming forty is asserting
+	// something the test cannot observe. countingPost cannot wrap this
+	// one — the watcher posts through Composer.Start — so the honest
+	// repair is to the message: say what was waited, not what was
+	// assumed. The assertion itself is unchanged and still fails closed:
+	// zero polls cannot schedule a frame either. Raised in review of #511.
+	const idleWindow = 40 * time.Millisecond
+	drainFor(d, idleWindow)
 	if scheduled != 0 {
-		t.Fatalf("an idle watcher asked for %d frames over ~40 polls; it must cost nothing", scheduled)
+		t.Fatalf("an idle watcher asked for %d frames over %s of draining; it must cost nothing",
+			scheduled, idleWindow)
 	}
 
 	write(t, dir, "a.txt", "two", t2)
