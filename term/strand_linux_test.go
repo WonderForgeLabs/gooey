@@ -319,6 +319,7 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// than impossible — and the receive below is non-fatal for exactly
 	// that residue, because a lost prefix is an attempt that could not be
 	// made, not a decoder that dropped an Esc. Raised in review of #445.
+	wrote := time.Now()
 	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
@@ -339,9 +340,28 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// requires the event after the close to arrive inside EscTimeout of
 	// `held`, so an arm EARLIER than `held` only widens the real margin;
 	// an arm LATER is what could let a timer-delivered Esc measure as
-	// inside the budget, and that needs the test goroutine descheduled
-	// for most of a timeout. Raised in review of #445.
+	// inside the budget. That needs a drift of 2*EscTimeout, not "most of
+	// a timeout" as this said: while `held < arm + 2*EscTimeout` the
+	// close still wins the race and the Esc genuinely comes from the
+	// close path, so the verdict is right whatever the elapsed reads.
+	// Raised in review of #445.
 	held := time.Now()
+	// AND THE DRIFT IS MEASURED, the way splitMarkerAttempt measures it
+	// below. Sampling `held` after a receive on a BUFFERED channel is
+	// what makes the paragraph above a hazard rather than an observation:
+	// at a drift of 2*EscTimeout the stall path has already escalated and
+	// pushed Esc, [, 2 into the channel before master.Close() runs, so
+	// nextOrNone returns an ALREADY-QUEUED Esc with time.Since(held) ≈ 0,
+	// every assertion below passes, and the attempt reports
+	// attemptMeasured having measured the TIMER path — the tty-close arm
+	// this helper exists for going untested, green, which is the outcome
+	// the doc above calls worse than red. `arm >= wrote`, because the
+	// decoder cannot arm for bytes it has not read, so held-minus-wrote
+	// bounds held-minus-arm from above and is the discriminator the
+	// elapsed check below cannot be. Raised in review of #445.
+	if held.Sub(wrote) > EscTimeout/4 {
+		return attemptLate // held may be a quarter-timeout past the arm; attribute nothing
+	}
 
 	if err := master.Close(); err != nil {
 		t.Fatalf("close master: %v", err)

@@ -237,11 +237,22 @@ neither and says so. Corrected in review of #445, twice: the message once
 claimed the regression on a threshold the loop did not break on.
 
 How strong that is differs between the two, and saying "neither can report
-success on an attempt it did not make" overstated it for the split-marker
-test. `closedTtyAttempt` measures a real discriminator — an Esc arriving
+success on an attempt it did not make" overstated it for BOTH, in opposite
+places. `closedTtyAttempt` measures a real discriminator — an Esc arriving
 inside one `EscTimeout` of the handshake cannot have come from the stall
 path, which needs `PasteMarkerGrace` full timeouts — so its verdict is a
-measurement. `splitMarkerAttempt` has no observable for the first idle
+measurement, but only once the clock it measures from is itself bounded.
+`held` is sampled after a receive on a buffered channel and the decoder
+sends before it re-arms, so a deschedule of `2*EscTimeout` between the two
+lets the stall path escalate and queue the Esc BEFORE the close runs: the
+elapsed check then reads ~0, every assertion passes, and the attempt
+reports a measurement of the timer path. The guard is the same one the
+split-marker helper carries — `wrote` sampled before the handshake write,
+and an attempt discarded when `held` is more than a quarter-timeout past
+it, which bounds the drift because the decoder cannot arm for bytes it has
+not read. Review of #445 gave the split-marker helper that guard one round
+before this paragraph gave the stronger guarantee to the helper without
+it. `splitMarkerAttempt` has no observable for the first idle
 timeout: at `stalls = 1` the decoder holds the prefix and emits nothing, so
 nothing on the wire says the timeout fired. What it can do is bound the
 window at both ends, and that is what it does — the arm sits within a
@@ -254,7 +265,7 @@ conditional is the pin: lowering `PasteMarkerGrace` to 1 turns this test red,
 re-measured three runs out of three after the window was rebalanced.
 Corrected in review of #445.
 
-Getting the measurement itself right took six corrections, all from review:
+Getting the measurement itself right took seven corrections, all from review:
 
 - **A handshake, not a sleep.** Closing the pty master discards bytes the
   slave has not read, so "write the prefix, then close" loses it on most runs.
@@ -270,6 +281,16 @@ Getting the measurement itself right took six corrections, all from review:
   end for both; its comment asserted the ordering in the opposite direction to
   its sibling's until review of #445, and a guarantee a file states two ways
   is worth less than the slack it was defending.
+- **The drift bounded by a clock that cannot drift with it.** Both helpers
+  checked the drift with `time.Since(held)` — measured from `held`, which IS
+  the drifting clock, so it could not see the drift and bounded only the tail
+  write's latency. Each now samples `wrote` immediately before the handshake
+  write and discards an attempt where `held` is more than a quarter-timeout
+  past it: the decoder cannot arm a timer for bytes it has not read, so
+  `arm >= wrote`, and `held - wrote` bounds `held - arm` from above.
+  `splitMarkerAttempt` got this one round before `closedTtyAttempt` did,
+  which left the record asserting the stronger guarantee for the weaker of
+  the two.
 - **An absolute budget, never one scaled by the constant under test.**
   `splitMarkerAttempt` first scaled its window by `PasteMarkerGrace`, so under
   the mutation it exists to catch the budget collapsed with the constant,
