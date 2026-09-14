@@ -200,7 +200,8 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// mcp's HEAD compiles against. Round 6's skew was visible only
 	// because the siblings happened to be current. Closing that needs a
 	// scheduled bump or a distance-from-main check, neither of which is
-	// this guard. Raised in review of #497.
+	// this guard — so it is #515 rather than a caveat with no owner.
+	// Raised in review of #497.
 	newest, behind, tagged := skewFrom(seen)
 	// REPORTED, NOT CHECKED. A require naming a plain tag is legitimate
 	// and is also the one shape this guard cannot compare without
@@ -223,13 +224,22 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// comment is written for the day per-subdirectory tags are cut, and
 	// one `go get -u` per module after that is enough to reach it.
 	// Raised in review of #497.
-	if len(tagged) > 0 && len(byRevisions(seen)) < 2 {
-		t.Errorf("%d own-module require(s) name a plain tag and %d name a "+
-			"commit, so this check compared nothing and passed. Tags cannot be "+
-			"ordered without resolving them, which needs the network; pin the "+
-			"requires to pseudo-versions, or give this guard a way to resolve a "+
-			"tag before it can claim to cover them:\n\t%s",
-			len(tagged), len(seen)-len(tagged), strings.Join(tagged, "\n\t"))
+	//
+	// NOTHING RESOLVED, not "fewer than two revisions". This asked for two
+	// DISTINCT commits until review of #497, which is the state a correct
+	// tree is in: one revision across every pin is the invariant, so the
+	// moment a single tag appeared beside it the guard reported a healthy
+	// tree as having compared nothing. What the check is actually about is
+	// whether any pin reached the comparison at all — a tree whose
+	// requires ALL name tags, which skewFrom returns empty-handed for,
+	// indistinguishably from a tree with no skew.
+	if comparedNothing(seen, tagged) {
+		t.Errorf("all %d own-module require(s) name a plain tag, so this check "+
+			"compared nothing and passed. Tags cannot be ordered without "+
+			"resolving them, which needs the network; pin the requires to "+
+			"pseudo-versions, or give this guard a way to resolve a tag before "+
+			"it can claim to cover them:\n\t%s",
+			len(tagged), strings.Join(tagged, "\n\t"))
 	}
 	for _, g := range behind {
 		t.Errorf("%d requires name %s while the newest in the tree is %s — one "+
@@ -239,6 +249,21 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			"`go get`s it.",
 			len(g.at), g.version, newest, strings.Join(g.at, "\n\t"), newest)
 	}
+}
+
+// comparedNothing reports whether the skew check above reached no
+// comparison at all: every own-module require names a plain tag, which
+// skewFrom cannot order without the network.
+//
+// A PREDICATE RATHER THAN AN INLINE CONDITION, because the test below
+// has to pin the caller's actual rule. The version this replaces asked
+// for fewer than two DISTINCT COMMITS, which is what a correct tree has
+// — so a single tag beside a healthy set of pins reported the tree as
+// having compared nothing, and the arm that was meant to catch that
+// restated the condition in its own words instead of calling it. Raised
+// in review of #497.
+func comparedNothing(seen []ownRequire, tagged []string) bool {
+	return len(tagged) > 0 && len(seen)-len(tagged) == 0
 }
 
 // ownRequire is one require of a module in this repository, by the module
@@ -273,20 +298,6 @@ type skewGroup struct {
 // named a different culprit run to run. A pseudo-version embeds its
 // timestamp, so the newest is both correct and deterministic. Raised in
 // review of #497.
-// byRevisions is the set of distinct commits the requires name, which is
-// what skewFrom can actually compare. Named separately so the caller can
-// ask "did this compare anything" without re-deriving the answer from a
-// return value that is empty for two different reasons.
-func byRevisions(seen []ownRequire) map[string]bool {
-	out := map[string]bool{}
-	for _, r := range seen {
-		if rev, ok := revisionOf(r.version); ok {
-			out[rev] = true
-		}
-	}
-	return out
-}
-
 func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []string) {
 	byRev := map[string][]string{}
 	version := map[string]string{}
@@ -350,13 +361,25 @@ func revisionOf(v string) (string, bool) {
 	// AND HEX, because length alone is not the shape. v1.2.3-abcdefghijkl
 	// is a legitimate prerelease tag whose last dash-part is twelve
 	// characters, and it keyed its own bucket as though it were a
-	// revision — then stampOf returned "" for it and laterThan fell
-	// through to the string compare that stampOf's comment below calls
-	// the round-6 defect. Raised in review of #497.
+	// revision. Raised in review of #497.
 	for _, c := range v[i+1:] {
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return "", false
 		}
+	}
+	// AND HEX IS NOT ENOUGH EITHER, which is the same finding one round
+	// on: v1.2.3-abcdef123456 is every bit as legitimate a prerelease tag
+	// and IS hex, so shape alone cannot separate the two — measured, it
+	// keyed its own bucket, stampOf returned "" for it, and laterThan
+	// fell through to the string compare that stampOf's comment below
+	// calls the round-6 defect and that laterThan's own comment claims
+	// nothing here reaches. What separates them is not the tail: a
+	// pseudo-version ALWAYS carries a 14-digit stamp and a tag never
+	// does, so asking stampOf is the whole test — and it is what makes
+	// laterThan's backstop the unreachable-by-construction statement it
+	// is documented as. Raised in review of #497.
+	if stampOf(v) == "" {
+		return "", false
 	}
 	return v[i+1:], true
 }
@@ -514,36 +537,86 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		t.Errorf("a tree of plain tags reports behind=%v skipped=%v; want no "+
 			"skew and both skipped", behind, skipped)
 	}
-	if n := len(byRevisions(allTags)); n != 0 {
-		t.Errorf("byRevisions counts %d revisions among two plain tags, so the "+
-			"compared-nothing guard in the caller cannot fire and a tree that "+
-			"tagged every module would pass having checked nothing", n)
+	if _, _, skipped := skewFrom(allTags); !comparedNothing(allTags, skipped) {
+		t.Error("the compared-nothing guard does not fire on a tree whose every " +
+			"require names a plain tag, so that tree passes having checked nothing")
 	}
-	if n := len(byRevisions([]ownRequire{allTags[0], {"paint", "github.com/WonderForgeLabs/gooey", newer}})); n != 1 {
-		t.Errorf("byRevisions counts %d revisions with one tag and one "+
-			"pseudo-version, want 1 — it has to count COMMITS, or the guard "+
-			"fires on a tree that is merely partly tagged", n)
+
+	// AND IT MUST NOT FIRE ON A TREE THAT IS MERELY PARTLY TAGGED — the
+	// half that went the wrong way. The guard asked for two DISTINCT
+	// COMMITS, and one commit across every pin is precisely the invariant
+	// this file checks for, so the first per-subdirectory tag would have
+	// reddened a tree in exactly the state it is supposed to be in. This
+	// arm existed before that round and asserted the same thing about
+	// byRevisions rather than about the caller's rule, which is why it
+	// was green while the caller was wrong: it restated the condition
+	// instead of calling it. Raised in review of #497.
+	partly := []ownRequire{allTags[0], {"paint", "github.com/WonderForgeLabs/gooey", newer}}
+	if _, _, skipped := skewFrom(partly); comparedNothing(partly, skipped) {
+		t.Errorf("the compared-nothing guard fires on a tree with one tag and one "+
+			"pseudo-version (skipped=%v). One revision across every pin IS the "+
+			"invariant here, so this reds a healthy tree the day the first "+
+			"per-subdirectory tag is cut", skipped)
 	}
 
 	// A PRERELEASE TAG WHOSE TAIL IS TWELVE CHARACTERS IS NOT A
 	// REVISION. v1.2.3-abcdefghijkl passed a length-only test, keyed its
 	// own bucket, then had no stamp — which dropped laterThan into the
-	// string compare the tagged arm above exists to close. Raised in
-	// review of #497.
+	// string compare the tagged arm above exists to close.
+	//
+	// AND HEX DOES NOT SETTLE IT, which is the arm that was missing.
+	// v1.2.3-abcdef123456 is as legitimate a prerelease tag as its
+	// all-letter sibling and satisfies the hex test exactly, so the round
+	// that added hex closed the case it could see and left the case that
+	// matters — measured, it still keyed its own bucket and still reached
+	// laterThan's string compare, the one laterThan's own comment says
+	// nothing here can reach. The tail cannot decide this. A
+	// pseudo-version carries a 14-digit stamp and a tag does not, so the
+	// last two arms are the discriminating pair: identical in shape,
+	// opposite in answer, separated only by the stamp. Raised in review
+	// of #497.
 	for _, tc := range []struct {
 		v    string
 		want bool
 	}{
 		{"v0.0.0-20260913132232-e5cdb56ececd", true},
 		{"v0.1.1-0.20260913132232-e5cdb56ececd", true},
+		{"v0.1.1-pre.0.20260913132232-e5cdb56ececd", true},
 		{"v1.2.3-abcdefghijkl", false},
 		{"v1.2.3-abcdefABCDEF", false},
+		{"v1.2.3-abcdef123456", false},
 		{"v0.1.0", false},
 	} {
 		if _, got := revisionOf(tc.v); got != tc.want {
-			t.Errorf("revisionOf(%q) reports %v, want %v — a twelve-character "+
-				"tail is a revision only if it is hex", tc.v, got, tc.want)
+			t.Errorf("revisionOf(%q) reports %v, want %v — a twelve-character hex "+
+				"tail is a revision only when the version also carries a stamp, "+
+				"because a prerelease tag can have one too", tc.v, got, tc.want)
 		}
+	}
+
+	// AND THE CONSEQUENCE, stated where it bites rather than only as a
+	// property of revisionOf: laterThan's string fallback is documented
+	// as unreachable by construction, and a hex-tailed tag reaching
+	// revisionOf is exactly what made that false. skewFrom now files it
+	// under `tagged`, so `version` holds nothing without a stamp.
+	hexTag := []ownRequire{
+		{"mcp", "github.com/WonderForgeLabs/gooey", "v1.2.3-abcdef123456"},
+		{"paint", "github.com/WonderForgeLabs/gooey", newer},
+	}
+	// One revision and one unorderable tag, so there is no skew to report
+	// and skewFrom's early return leaves `newest` empty — that empty
+	// string is the "nothing to compare" answer, not a reference. Under
+	// the defect the tag keys a SECOND bucket, which is two revisions,
+	// which is skew: `behind` fills and the tag is not skipped. Both
+	// observables move, and in opposite directions.
+	if got, behind, skipped := skewFrom(hexTag); got != "" || len(behind) != 0 ||
+		len(skipped) != 1 {
+		t.Errorf("skewFrom with a hex-tailed prerelease tag beside a "+
+			"pseudo-version reports newest=%q behind=%v skipped=%v; want no skew "+
+			"and the tag skipped. Bucketed as a revision the tag is skew against "+
+			"a tree nobody has broken, and it carries no stamp — so laterThan "+
+			"compares the two as strings and can name the TAG as the reference "+
+			"every other module is told to move to", got, behind, skipped)
 	}
 
 	// AND stampOf ITSELF, on the three spellings Go writes. The two
