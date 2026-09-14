@@ -21,12 +21,14 @@ import (
 //     owner keeps everything domain-shaped: what the popup shows, where
 //     it goes, which gestures mean what.
 //   - The SURFACE is the visible box: a leaf child the owner returns
-//     from ChildComponents, whose pre-clear paints exactly the popup
-//     rectangle — the overlay contract. It is a gooey.Overlay, so it is
-//     lifted out of document order into the overlay layer and paints
-//     above the page wherever the owner sits (#437). The primitive owns
-//     the surface so it can guarantee the subscription rule below; the
-//     owner supplies only the draw func.
+//     from ChildComponents (last by convention — it implements
+//     gooey.Overlay, so Composer.orderPaint lifts it into the ranked
+//     layer and being last only orders it among overlays of equal rank;
+//     this said "LAST, because document order is z-order" until review
+//     of #456, which is the reason #430 disproved), whose pre-clear
+//     paints exactly the popup rectangle — the overlay contract. The
+//     primitive owns the surface so it can guarantee the subscription
+//     rule below; the owner supplies only the draw func.
 //   - The Popup itself is the lifecycle: an open property, focus
 //     save/restore, pointer capture, and the dismissal grammar.
 //
@@ -87,26 +89,8 @@ func NewPopup(owner gooey.Component, draw func(*gooey.Frame, gooey.Rect)) *Popup
 }
 
 // Surface is the visible leaf. The owner returns it from
-// ChildComponents and places it with ArrangeSurface from its own
-// Arrange. WHERE among the owner's children decides NOTHING: the surface
-// is a gooey.Overlay, so it is lifted into the overlay layer for paint
-// (#437) and, since #465, hit-testing asks the same rule and finds it in
-// the same place. Returning it last is convention now and nothing more.
-//
-// ONE CAVEAT, and this type is the shape it is about: the hit walk
-// prunes on every ANCESTOR's bounds, where paint clips each node to its
-// own. ArrangeSurface routinely places the surface outside the owner's
-// rect — that is its whole job — so a surface there paints and cannot be
-// hit. An open Popup holds pointer capture, so no press reaches the walk
-// and nothing shipped depends on this; a future Overlay that places
-// itself outside its parent AND wants clicks would. Tracked as #482.
-// See gooey.FocusManager.HitTest. Raised in review of #478.
-//
-// This paragraph said position was what an overlay's INPUT order rode
-// on, which was true until the two walks were made to ask one function.
-// For a Popup it was belt-and-braces even then: an open popup holds the
-// pointer capture, so every press routes to the owner before the walk
-// runs at all.
+// ChildComponents — as the LAST child, so it paints above what it
+// covers — and places it with ArrangeSurface from its own Arrange.
 func (p *Popup) Surface() gooey.Component { return p.surf }
 
 // SurfaceBounds is where the surface currently sits — the rectangle the
@@ -186,15 +170,6 @@ func (p *Popup) MouseOpenRestore() gooey.Component {
 // show is the owner's decision, not just IsOpen — a menu that is "open"
 // over zero items shows nothing. Reads here happen in layout, outside
 // any evaluation, so they record no dependencies.
-//
-// PASSING show EVERY FRAME IS LOAD-BEARING, and since #465 forgetting it
-// costs more than it used to. The surface is a gooey.Overlay and is not
-// HitTestTransparent, so whoever owns the cells owns the clicks: the hit
-// walk now prefers it over anything beneath its rect. A closed surface
-// collapses to {X, Y, 0, 0} and can win nothing — but an owner that
-// leaves a stale rect here does not merely paint something invisible any
-// more, it swallows every press inside that rect. Raised in review of
-// #458.
 func (p *Popup) ArrangeSurface(show bool, r gooey.Rect) {
 	if !show {
 		gooey.ArrangeChild(p.surf, gooey.Rect{X: r.X, Y: r.Y})

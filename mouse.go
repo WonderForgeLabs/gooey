@@ -336,15 +336,20 @@ func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
 // this walk's answer and TestABranchingTreeUnderTheCapIsFullyVisited is
 // what stops that answer from being truncation.
 //
-// So the scope of this change is "hitTest gained a node budget", not
-// "hitTest caught up with six walks that were already safe". The other
+// So the scope of this change is "hitTest gained a whole-walk abort on
+// the depth cap", not "hitTest caught up with six walks that were
+// already safe". NOT a node budget, which is what this said until review
+// of #458: nothing here counts visits, and reading it as a budget is
+// exactly the claim TestABranchingTreeUnderTheCapIsFullyVisited exists
+// to forbid — a tree that branches under the cap is walked in full,
+// however many nodes that is. The other
 // four depth-bounded walks are unchanged and still explode on a
 // branching cycle; that is #375's seam, and the reason it is not fixed
 // here is that a budget belongs in one walk-the-children primitive
 // rather than in five copies. Raised in review of #458.
 func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, st *hitWalk) {
 	// ONE CHECK, HERE, and the sibling loop below deliberately has no
-	// second one. A `if *aborted { return }` after each recursive call
+	// second one. A `if st.aborted { return }` after each recursive call
 	// looks like the belt to this braces and is a SILENT mutation:
 	// measured, removing it fails nothing, because this line already
 	// turns every remaining sibling into an immediate return. What it
@@ -568,6 +573,7 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// hit is what ROUTES, hov is what HOVERS, and they are equal for every
 	// host that answers the bool — AllowNone withholds both, so both walks
 	// stop at the same ancestor.
+	//
 	// `under`, not `deepest`. #465 made HitTest answer by overlay layer
 	// first, then rank, then document order, and this PR took the word
 	// out of every comment in the tree and added deepestClaim to hunt it
@@ -575,6 +581,7 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// result after the contract that had just been retired. No guard
 	// reaches it: they all scan prose, and an identifier is not prose.
 	// Raised in review of #478.
+	//
 	// NO WALK WHEN NOTHING READS IT. A captured MouseMove is a drag, and
 	// a drag routes to the captor: target() returns m.captor whatever the
 	// hit is, and the hover update below is skipped while captured. So

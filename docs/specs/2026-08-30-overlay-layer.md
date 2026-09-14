@@ -174,6 +174,15 @@ paragraph said FIVE WEEKS, which is a number nobody measured: the two
 merge dates are eight days apart, and the sentence was making the gap
 sound like negligence it was not. Corrected in review of #478.
 
+The list that caveat belonged to is gone with the caveat. #456 made the
+divergence test's failure message derive its list by walking for pages that
+cite it, so that closing the gap would reach every one
+of them; #465 then closed it, and `gooey.TestARankOrdersHitTestingAsWellAsPaint`
+is the inversion that stands in its place. This paragraph is kept as a dated
+record of the gap rather than as a live caveat — the merge of #456 brought the
+citation forward, which would have pointed this page at a test that no longer
+exists.
+
 ## Damage
 
 **No damage count in the repo moved.** That is the result worth recording,

@@ -348,7 +348,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:689-726`; the design record is the container-backgrounds and
+(`composer.go:711-748`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -399,7 +399,7 @@ test message) rather than listing them; derive the sites with a grep for
 `floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
 not to each node, so `overlayOf` (`component.go`) answers the parent's
-`inherited` BEFORE testing the marker — reverse those two `if`s and a
+`parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
 rank-2 container's rank-0 child lands in an earlier bucket, the parent
 paints after it, and a parent that covers its bounds erases the child it
 lifted. And `OverlayRank()` must return a
@@ -474,6 +474,16 @@ event ([#513](https://github.com/WonderForgeLabs/gooey/issues/513)).
 open, which routes presses before the walk runs — that is Popup's
 mechanism, not the marker's.
 
+**The list that needed deriving is gone, and the reason it is worth
+remembering is the shape.** #456 found that the divergence caveat's
+"every page carrying it" was a seven-file literal missing four pages —
+`component.go`'s own `Overlay` doc among them — and replaced the literal
+with a walk for pages that cite the test. #465 then closed the divergence
+and deleted the caveat everywhere, so there is no list left to maintain.
+What survives is the rule: an absolute claim made off a hand-maintained
+list is the same defect as a count written into prose, and this file
+refuses both.
+
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
 *become* the child context, with them they are type-checked against the
@@ -502,7 +512,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:892`).
-`DispatchMouse` (`mouse.go:547`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:552`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
