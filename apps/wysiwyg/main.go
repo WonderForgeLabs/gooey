@@ -770,6 +770,22 @@ func carryDeclarations(env, root *node) {
 // the browser prefixes the path, paste prefixes "pasted text is not
 // markup", and the palette prefixes "<Button>". Raised in review of
 // #501.
+// namespacedAttrName spells a namespaced attribute the way
+// markup.namespacedAttrError does, so the designer and the loader name
+// the same attribute the same way in their refusals.
+//
+// A SECOND COPY OF ONE RULE, deliberately: the markup package does not
+// export it, and apps/wysiwyg is a nested module that cannot reach into
+// it. TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes is what
+// keeps the two in step — it builds both refusals for the same
+// attribute and requires this spelling inside markup's message.
+func namespacedAttrName(n xml.Name) string {
+	if n.Space == "http://www.w3.org/XML/1998/namespace" {
+		return "xml:" + n.Local
+	}
+	return "{" + n.Space + "}" + n.Local
+}
+
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
@@ -848,15 +864,24 @@ func nodeOf(src string) (*node, error) {
 				// appearing is worth failing on rather than accepting
 				// into a model that cannot write it back out.
 				if a.Name.Space != "" {
-					// NAMED THE WAY markup NAMES IT. This formatted
-					// a.Name.Local alone, so an author opening their own
-					// file was told `attribute "Thing" is namespaced`
-					// with no way to tell WHICH prefix — and the comment
-					// above claims this is the same answer markup's own
-					// parser gives, which formats {uri}local precisely
-					// so the attribute can be found. Raised in review of
-					// #501.
-					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", "{"+a.Name.Space+"}"+a.Name.Local)
+					// NAMED THE WAY markup NAMES IT, which is two
+					// spellings and not one. markup.namespacedAttrError
+					// writes {uri}local for an ordinary prefix and
+					// `xml:local` for the XML namespace, because that
+					// one is bound by the spec rather than declared and
+					// an author who wrote `xml:space` would not
+					// recognise it back as
+					// {http://www.w3.org/XML/1998/namespace}space.
+					//
+					// The claim above — that this is the same answer
+					// markup's parser gives — is what makes the
+					// difference a defect rather than a variation: it
+					// formatted a.Name.Local alone until review of #501,
+					// telling the author `attribute "Thing" is
+					// namespaced` with no way to tell WHICH prefix, and
+					// then formatted {uri}local for every case, which is
+					// the wrong half of markup's rule for xml:*.
+					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", namespacedAttrName(a.Name))
 				}
 				n.Attrs[a.Name.Local] = a.Value
 			}

@@ -266,15 +266,26 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		return
 	}
 	into := plan.into
-	renamed := ed.renameInto(n)
-	if err := ed.rebindInto(n, renamed); err != nil {
+	// NAMESPACES FIRST, BEFORE THE TWO RENAMES, and the order is the
+	// fix rather than a tidy-up.
+	//
+	// rebindInto writes ed.ctx.Values[key], and nothing ever
+	// unregisters one — deliberately, so an undone paste can be redone
+	// onto the values the user had set. renameInto counts a name owning
+	// live handles as taken. So a paste refused AFTER them has already
+	// burned the names it would have used: the user fixes the prefix
+	// clash the message asked them to fix, pastes again, and gets T3
+	// where they would have got T2, with T2's handles registered to
+	// nothing. A corrigible error must not cost anything.
+	//
+	// Nothing here depends on the renames: this reads xmlns attributes
+	// and the renames read Name and bindings. Raised in review of #501.
+	if err := ed.reconcileNamespaces(n); err != nil {
 		ed.status.Set("✗ " + err.Error())
 		return
 	}
-	// NAMESPACES ARE RECONCILED HERE, beside the two reconciliations
-	// above and BEFORE the mutation below, because a carried declaration
-	// is not the subtree's private business — see reconcileNamespaces.
-	if err := ed.reconcileNamespaces(n); err != nil {
+	renamed := ed.renameInto(n)
+	if err := ed.rebindInto(n, renamed); err != nil {
 		ed.status.Set("✗ " + err.Error())
 		return
 	}
@@ -790,11 +801,21 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 			if k == "xmlns" {
 				continue
 			}
+			// NO DIRECTION IS CLAIMED, because none holds. markup.parse
+			// merges every declaration into one flat map in document
+			// order, so the winner is whichever is parsed LAST — and
+			// where the paste lands decides that. Pasted after the
+			// document's own declaration it re-points every existing
+			// expression; pasted before one, the document's wins and the
+			// PASTED expressions silently mean something else. The old
+			// message asserted the first case as the outcome, which is
+			// wrong half the time and reads as a promise about which
+			// meaning survives. Raised in review of #501.
 			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
 				"already declares it as %q. One flat prefix map covers the whole "+
-				"document and the later declaration wins, so accepting this would "+
-				"re-point every %s expression already in the document at the "+
-				"pasted namespace — rename the prefix in what you are pasting, or "+
+				"document and the last declaration parsed wins, so one of the two "+
+				"meanings of %s would silently become the other — which one depends "+
+				"on where this lands. Rename the prefix in what you are pasting, or "+
 				"change the document's own declaration deliberately", k, v, bound,
 				strings.TrimPrefix(k, "xmlns:"))
 		}
@@ -816,10 +837,18 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 // collectNamespaces records every declaration in a subtree. A prefix
 // declared twice in one document is already last-wins to the loader, so
 // recording the last one here is agreeing with it rather than choosing.
+//
+// SORTED, the way node.markup sorts when it writes attributes back out.
+// "Last wins" is a claim about ORDER, and ranging a map has none: one
+// element declaring a prefix twice — which an editor that keeps
+// declarations where the author put them can produce — resolved to
+// whichever Go's randomized iteration reached second, so the same
+// document could accept a paste on one run and refuse it on the next.
+// Raised in review of #501.
 func collectNamespaces(n *node, into map[string]string) {
-	for k, v := range n.Attrs {
+	for _, k := range sortedKeys(n.Attrs) {
 		if isNamespaceAttr(k) {
-			into[k] = v
+			into[k] = n.Attrs[k]
 		}
 	}
 	for _, s := range n.Slots {

@@ -546,3 +546,149 @@ func TestARedundantPastedDeclarationIsDropped(t *testing.T) {
 			"a file the author writes:\n%s", got, ed.source.Get())
 	}
 }
+
+// TestARefusedPasteBurnsNoName is the cost side of a corrigible error.
+//
+// A namespace conflict is something the author fixes and retries: the
+// message names the prefix and asks them to rename it. That only holds
+// if retrying lands where the first attempt would have. It did not.
+// renameInto and rebindInto ran FIRST, and rebindInto writes
+// ed.ctx.Values[key] for every binding it re-keys — registrations
+// nothing ever removes, deliberately, so an undone paste can be redone
+// onto the values the user had set. renameInto then counts a name that
+// owns live handles as taken. So the refused attempt consumed G2 and
+// the retry produced G3, with G2's handles registered to nothing.
+//
+// A SEEDED BINDING IS WHAT MAKES THE BURN REACHABLE, and this is the
+// arm the first version of this test got wrong: rebindInto registers a
+// handle only for a binding it RE-KEYS, so a node whose attributes are
+// all literals costs nothing whatever the order is, and the test passed
+// against the bug. <Gauge> is the element the clipboard tests already
+// use for this, because its seed binds Value per instance.
+//
+// THE NAME IS THE OBSERVABLE, not the registry, because the name is what
+// the user sees and what their bindings are written against. Raised in
+// review of #501.
+func TestARefusedPasteBurnsNoName(t *testing.T) {
+	const uri = "urn:gooey:test:472:burn"
+	handlerNS(t, uri+":other")
+
+	ed, _ := clipEditor(t)
+	spec := ed.specOrBare("Gauge")
+	if spec.Seed == "" {
+		t.Skip("no <Gauge> in this build's palette")
+	}
+	src, values, err := markup.Seeded(spec, "G1")
+	if err != nil {
+		t.Fatalf("seed <Gauge>: %v", err)
+	}
+	for k, v := range values {
+		ed.ctx.Values[k] = v
+	}
+	n, err := nodeOf(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Attrs["Name"] = "G1"
+	if n.Attrs["Value"] == "" {
+		t.Skip("<Gauge>'s seed does not bind Value in this build")
+	}
+	ed.doc().Kids = append(ed.doc().Kids, n)
+	ed.rebuild()
+	// The document declares the prefix, so a paste carrying the same
+	// prefix bound elsewhere is the conflict this refuses.
+	ed.doc().Attrs["xmlns:t"] = uri
+
+	clashing := n.markup("  ")
+
+	// REFUSED: the same prefix, a different URI.
+	ed.pasteMarkup(`<Gooey xmlns:t="` + uri + `:other">` + "\n" + clashing + "\n" + `</Gooey>` + "\n")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "\u2717") {
+		t.Fatalf("the clashing paste reports %q; this test measures what a REFUSAL "+
+			"costs and nothing was refused", got)
+	}
+
+	// ACCEPTED: the author did what the message asked and dropped the
+	// declaration. The name they get must be the one they would have got
+	// had the first attempt never happened.
+	ed.pasteMarkup(`<Gooey>` + "\n" + clashing + "\n" + `</Gooey>` + "\n")
+	if got := ed.status.Get(); strings.HasPrefix(got, "\u2717") {
+		t.Fatalf("the corrected paste reports %q", got)
+	}
+	if got := ed.sel.Attrs["Name"]; got != "G2" {
+		t.Errorf("after a refused paste and a corrected one the pasted node is named "+
+			"%q, want \"G2\" — the refusal consumed the name, so the author fixed "+
+			"what the message asked them to fix and got a different answer than if "+
+			"they had written it correctly the first time", got)
+	}
+}
+
+// TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes holds the two
+// refusals to one spelling.
+//
+// nodeOf's comment claims its answer is "the same answer markup's own
+// parser gives", and a claim like that is the reason the two can drift
+// without anyone noticing: both refuse, both say something sensible, and
+// only a user comparing them finds one naming an attribute the other
+// does not. markup.namespacedAttrError writes {uri}local for an ordinary
+// prefix and `xml:local` for the XML namespace — that one is bound by
+// the spec rather than declared, so an author who wrote xml:space would
+// not recognise it back as {http://www.w3.org/XML/1998/namespace}space.
+// nodeOf wrote {uri}local for both.
+//
+// ASKED OF markup ITSELF rather than of a copy of its rule here: the
+// package does not export the formatter and this is a nested module, so
+// the only honest check is to make markup refuse the same attribute and
+// require its message to CONTAIN what the designer said. Raised in
+// review of #501.
+func TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes(t *testing.T) {
+	for _, tc := range []struct{ name, doc string }{
+		{"a declared prefix", `<Gooey xmlns:p="urn:gooey:test:501:attr">` +
+			`<Text p:Thing="x">hi</Text></Gooey>`},
+		{"the xml namespace", `<Gooey><Text xml:space="preserve">hi</Text></Gooey>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, designer := nodeOf(tc.doc)
+			if designer == nil {
+				t.Fatal("the designer accepted a namespaced attribute; its model holds " +
+					"only plain ones, so this would be dropped on the next write")
+			}
+			_, loader := markup.Build([]byte(tc.doc), &markup.Context{})
+			if loader == nil {
+				t.Fatal("markup accepted a namespaced attribute, so there is no second " +
+					"spelling to agree with and this guard is checking nothing")
+			}
+			// The attribute's NAME as each side spells it. The messages
+			// differ in every other word, deliberately — one is a user
+			// opening a file and the other is a load error — and the
+			// name is the part a user carries from one to the other.
+			name := between(t, designer.Error(), `attribute "`, `"`)
+			if !strings.Contains(loader.Error(), name) {
+				t.Errorf("the designer calls the attribute %q and markup's own refusal "+
+					"does not contain that:\n\tdesigner: %v\n\tmarkup:   %v",
+					name, designer, loader)
+			}
+		})
+	}
+}
+
+// between returns the text of s between the first after and the next
+// before it, failing if either is missing — so a reworded message fails
+// loudly here instead of comparing an empty string, which every message
+// contains.
+func between(t *testing.T, s, after, before string) string {
+	t.Helper()
+	i := strings.Index(s, after)
+	if i < 0 {
+		t.Fatalf("%q does not contain %q, so nothing can be extracted from it", s, after)
+	}
+	rest := s[i+len(after):]
+	j := strings.Index(rest, before)
+	if j < 0 {
+		t.Fatalf("%q has no closing %q after %q", s, before, after)
+	}
+	if j == 0 {
+		t.Fatalf("%q holds nothing between %q and %q", s, after, before)
+	}
+	return rest[:j]
+}
