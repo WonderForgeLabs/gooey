@@ -514,6 +514,65 @@ func TestARefusedOpenLeavesTheOpenDocumentAlone(t *testing.T) {
 	}
 }
 
+// TestAFolderChangeLeavesTheOpenDocumentsEnvelopeAlone is the third
+// route to the same envelope loss, and the one the A1 fix's own stated
+// invariant forbade.
+//
+// That fix says the field moves with ed.root.Kids now, and no partial
+// path can separate the two. setWorkspace and closeWorkspace each zeroed
+// ed.envAttrs and touched neither ed.root.Kids nor the canvas, so the
+// document stayed on screen with its envelope gone: open a file with
+// Graphics="halfblock", change or close the folder, make any edit, and
+// the CODE tab shows a bare <Gooey> for a document nobody changed.
+// Nothing reaches disk wrong, because a folder change clears openPath
+// and canSave gates on it — which is the only reason this was a display
+// fault rather than a data one. Raised in review of #501.
+//
+// BOTH arms are needed and neither substitutes for the other: the two
+// clears were separate lines in separate files, so a test that only
+// closed the folder passed with setWorkspace's copy still in place.
+func TestAFolderChangeLeavesTheOpenDocumentsEnvelopeAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(ed *editor, elsewhere string)
+	}{
+		{"close", func(ed *editor, _ string) { ed.closeWorkspace() }},
+		{"switch", func(ed *editor, elsewhere string) { ed.setWorkspace(elsewhere) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			doc := `<Gooey xmlns="wonderforge.io/gooey/2026" Graphics="halfblock">` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "gfx.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("gfx.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
+			}
+
+			tc.change(ed, workspaceFixture(t))
+			// THE REBUILD IS THE OBSERVABLE. The source property only
+			// moves when something rebuilds, so a test that read it
+			// straight after the folder change would pass against the
+			// defect on a stale string.
+			ed.rebuild()
+			if src := ed.source.Get(); !strings.Contains(src, `Graphics="halfblock"`) {
+				t.Errorf("the folder change stripped the still-open document's "+
+					"envelope; the next rebuild writes a bare <Gooey> for a "+
+					"document nobody edited:\n%s", src)
+			}
+		})
+	}
+}
+
 // TestAnAmpersandInAnAttributeSurvivesASave is the round trip through
 // the character the emitter was not escaping.
 //

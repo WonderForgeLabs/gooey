@@ -479,3 +479,65 @@ func TestDeclaredRegistryRecordsInstances(t *testing.T) {
 		t.Error("the nested Badge instance did not reach the page-wide registry")
 	}
 }
+
+// TestTheXPropertyRefusalNamesTheRoot is the pin nothing carried.
+//
+// `grep -rn "dependency property declaration"` answered only the Errorf
+// itself, so neither the message nor a change to it was under test —
+// unlike its two siblings, which values_test.go and handlers_test.go
+// both reach. Review of #501 reworded all three to "an element of this
+// document" and this one regressed, silently.
+//
+// AN ELEMENT PREFIX IS NOT AN ATTRIBUTE PREFIX, which is why the three
+// do not share a wording. handlers.go and values.go resolve an
+// ATTRIBUTE prefix through ctx.ns — flat and document-wide, so any
+// element may carry the declaration, which is what
+// TestAPrefixDeclaredBelowTheRootIsDocumentWide measures. `x:` prefixes
+// an ELEMENT, resolved by encoding/xml with real subtree scoping before
+// this package sees it, and <x:Property> must be a direct child of the
+// root — so <Gooey> is the only element whose declaration is in scope.
+// The second arm here is the advice, followed: it must not come back
+// with the same refusal.
+func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
+	const unprefixed = `<Gooey>
+  <Property Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`
+	_, err := Build([]byte(unprefixed), &Context{})
+	if err == nil {
+		t.Fatal("an unprefixed <Property> loaded, so the refusal this test is " +
+			"about never fired")
+	}
+	const want = `add xmlns:x="` + XNamespace + `" to the <Gooey> root element`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal reads\n\t%v\nwant it to carry\n\t%s\n"+
+			"Naming any other element is advice that does not work: see the "+
+			"arm below", err, want)
+	}
+
+	// THE ADVICE, FOLLOWED LITERALLY, on the element the reworded
+	// message would have sent the author to.
+	const below = `<Gooey>
+  <x:Property Name="Count" Type="int" Default="1"/>
+  <Text xmlns:x="` + XNamespace + `">x</Text>
+</Gooey>`
+	if _, err := Build([]byte(below), &Context{}); err == nil ||
+		!strings.Contains(err.Error(), "dependency property declaration") {
+		t.Errorf("declaring xmlns:x below the root gave %v; want the SAME "+
+			"refusal, because an element prefix is subtree-scoped and the "+
+			"<x:Property> above it is still unresolved. If this ever loads, the "+
+			"asymmetry documented here is gone and the message may widen", err)
+	}
+
+	// AND ON THE ROOT IT RESOLVES — so the arm above is about the
+	// PLACEMENT and not about the declaration being rejected outright.
+	const onRoot = `<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`
+	if _, err := Build([]byte(onRoot), &Context{}); err != nil &&
+		strings.Contains(err.Error(), "dependency property declaration") {
+		t.Errorf("xmlns:x on <Gooey> is still refused as an unprefixed "+
+			"<Property>: %v", err)
+	}
+}

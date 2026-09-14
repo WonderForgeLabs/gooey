@@ -798,28 +798,32 @@ func (ed *editor) reconcileNamespaces(n *node) error {
 func reconcileNamespacesInto(n *node, doc map[string]string) error {
 	for _, k := range sortedKeys(n.Attrs) {
 		v := n.Attrs[k]
-		if !isNamespaceAttr(k) {
-			continue
-		}
-		// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and this
-		// skip is ABOVE the lookup because neither half of what follows
-		// applies to it: it is not compared, because markup.parse skips
-		// a plain xmlns outright — "the default namespace is decorative
-		// versioning" — so it never enters the flat prefix map and there
-		// is nothing for a later one to re-point; and it is not deleted,
-		// because XML scoping confines it to the subtree that declares
-		// it, which is where it stays.
+		// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and this is
+		// the skip that says so: isNamespaceAttr matches `xmlns:`+local
+		// only, so a plain xmlns leaves here. Neither half of what
+		// follows applies to it — it is not compared, because
+		// markup.parse skips a plain xmlns outright ("the default
+		// namespace is decorative versioning"), so it never enters the
+		// flat prefix map and there is nothing for a later one to
+		// re-point; and it is not deleted, because XML scoping confines
+		// it to the subtree that declares it, which is where it stays.
 		//
-		// It sat INSIDE the inequality until review of #501, which left
-		// an EQUAL default declaration falling through to the delete
-		// below — so pasting <Button xmlns="theirs"/> into a document
-		// whose root says xmlns="ours" kept the declaration the first
-		// time and stripped it the second, from byte-identical input.
-		// The first version refused it outright, which blocked a paste
-		// between two documents on different version strings and built
-		// its message with TrimPrefix(k, "xmlns:"), asking the author to
-		// rename a prefix that does not exist.
-		if k == "xmlns" {
+		// This was a SECOND skip below, `if k == "xmlns"`, with
+		// isNamespaceAttr matching the plain form so that it could be
+		// reached — an arm whose two paths converged on the same
+		// continue, so neither predicate could be observed to disagree
+		// with the other. Raised in review of #501.
+		//
+		// Before that it sat INSIDE the inequality, which left an EQUAL
+		// default declaration falling through to the delete below — so
+		// pasting <Button xmlns="theirs"/> into a document whose root
+		// says xmlns="ours" kept the declaration the first time and
+		// stripped it the second, from byte-identical input. The first
+		// version refused it outright, which blocked a paste between two
+		// documents on different version strings and built its message
+		// with TrimPrefix(k, "xmlns:"), asking the author to rename a
+		// prefix that does not exist.
+		if !isNamespaceAttr(k) {
 			continue
 		}
 		bound, ok := doc[k]
@@ -894,20 +898,24 @@ func collectNamespaces(n *node, into map[string]string) {
 	}
 }
 
-// isNamespaceAttr matches the TWO SHAPES nodeOf writes — "xmlns" and
-// "xmlns:"+local — and nothing else; HasPrefix(k, "xmlns") would also
-// match a plain attribute spelled xmlnsFoo.
+// isNamespaceAttr matches a PREFIXED declaration — "xmlns:"+local — and
+// nothing else; HasPrefix(k, "xmlns") would also match a plain attribute
+// spelled xmlnsFoo, and the plain "xmlns" is not one of these.
 //
-// reconcileNamespacesInto is the ONLY caller, and the only one that can
-// be: this matches the plain "xmlns" as well, which is precisely the
-// declaration carryDeclarations and envelopeAttrs (main.go) must leave
-// on the envelope, and collectNamespaces must not record. Those three
-// spell strings.HasPrefix(k, "xmlns:") inline for that reason. This
-// comment said carryDeclarations called it, and named the sharing as the
-// reason the two could not drift — both false since the narrowing.
-// Raised in review of #501.
+// IT MATCHED THE PLAIN FORM TOO, AND THE ARM WAS UNOBSERVABLE. Its only
+// caller, reconcileNamespacesInto, skipped `k == "xmlns"` two lines
+// later, so returning false here produced the identical result at the
+// first continue — a predicate with no behaviour, which two functions
+// can then disagree about with nothing red. That is the same class as
+// the unreachable plain-xmlns entry already removed from
+// collectNamespaces, on the other side of the same pair. The
+// default-namespace reasoning moves onto the skip below, where it is
+// now the only thing deciding anything. Raised in review of #501, which
+// also corrected this comment's claim that carryDeclarations calls it —
+// carryDeclarations, envelopeAttrs and collectNamespaces all spell the
+// prefixed test inline because they must NOT move a plain xmlns.
 func isNamespaceAttr(k string) bool {
-	return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
+	return strings.HasPrefix(k, "xmlns:")
 }
 
 // ---- shared ----

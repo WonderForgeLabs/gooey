@@ -289,7 +289,8 @@ func (ed *editor) openSelectedFile() {
 func (ed *editor) closeWorkspace() {
 	ed.ws = nil
 	ed.wsLabel.Set("")
-	ed.envAttrs = nil
+	// No envAttrs clear — see setWorkspace (browser.go) for why the
+	// field may only move with ed.root.Kids.
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)

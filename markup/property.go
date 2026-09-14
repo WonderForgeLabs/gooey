@@ -326,13 +326,24 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 			// The likely typo: the element is right, the namespace is
 			// missing, and without this it would be read as a component.
 			//
-			// TO THE DOCUMENT, not to the root element — the THIRD of
-			// the three refusals carrying that wording, and the one a
-			// designer user is most likely to meet: <x:Property> is a
-			// direct child of <Gooey>, which is the element the editor
-			// has no node for and cannot write to. Raised in review of
-			// #501.
-			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to an element of this document", XNamespace)
+			// TO THE ROOT ELEMENT, and this one stays that way — the
+			// reword that made its two siblings say "an element of this
+			// document" is wrong HERE, and review of #501 measured it by
+			// following the advice: a <Gooey> whose xmlns:x sits on a
+			// <Text> is refused with this very message again, so the
+			// author lands where they started.
+			//
+			// AN ELEMENT PREFIX IS NOT AN ATTRIBUTE PREFIX. handlers.go
+			// and values.go resolve an ATTRIBUTE prefix through ctx.ns,
+			// which parse builds flat and document-wide — there, any
+			// element may carry the declaration. `x:` prefixes an
+			// ELEMENT, and splitDeclarations reads c.Space, which
+			// encoding/xml resolved with real XML subtree scoping before
+			// this package saw it. <x:Property> must be a direct child of
+			// the root, so <Gooey> is the only element whose declaration
+			// is in scope for it. TestTheXPropertyRefusalNamesTheRoot
+			// pins the message, which nothing did.
+			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to the <Gooey> root element", XNamespace)
 		default:
 			kids = append(kids, c)
 		}

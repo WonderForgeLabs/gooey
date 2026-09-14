@@ -443,7 +443,13 @@ func (ed *editor) setWorkspace(dir string) {
 		ed.status.Set("✓ " + ws.label + " (" + strconv.Itoa(len(ws.files)) + " files)")
 	}
 	ed.wsLabel.Set(ws.label)
-	ed.envAttrs = nil
+	// NO envAttrs CLEAR HERE. openWorkspaceFile is the only site that
+	// assigns ed.root.Kids and it assigns ed.envAttrs beside it on the
+	// same path, nil included — so clearing the field here separated the
+	// two, which is the invariant that fix established. The document
+	// stays on the canvas across a folder change, and the next rebuild
+	// wrote a bare <Gooey> for a document nobody had edited. Raised in
+	// review of #501.
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)
