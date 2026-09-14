@@ -210,7 +210,7 @@ tty-close test red as well, since with the grace never withdrawn that route
 cannot resolve a held prefix either. A table whose whole value is that it can
 be re-run has to be re-run. Corrected in review of #445.
 
-### The two pty tests refuse to pass vacuously, and that took three goes
+### The two pty tests refuse to pass vacuously, and that took six goes
 
 Both `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` and
 `TestASplitPasteMarkerStillPastes` need a window: the first needs the tty to
@@ -218,7 +218,23 @@ close while the prefix is still held, the second needs the marker's tail to
 land after one timeout but inside the grace. A stalled runner misses either,
 and a test that merely passes when it does is green and blind — worse than
 red. So each measures whether it hit the window, treats a miss as
-**inconclusive** and retries, and fails when the retries run out.
+**inconclusive** and retries.
+
+What happens when the retries run out is not the same on both, and the
+difference is the point of `closedTtyAttempt`'s three outcomes.
+`splitMarkerAttempt` has one kind of miss and the loop simply exhausts.
+`closedTtyAttempt` distinguishes **late** — an Esc arrived, too late to
+attribute to the close rather than to the timer — from **silent**, and silence
+after the close *is the regression's own symptom*: a held prefix discarded
+instead of drained, so nothing will ever arrive. One silent attempt is not
+evidence, because a write split across two slave reads looks identical from
+here. Five is a judgement, and it is written down as one: `silentEnough = 5`
+is the number of independent split reads the benign explanation needs before
+it stops being the better one. At five the loop breaks early — silence is also
+the slow outcome, costing a full wait each time — and the failure names
+`DecodeEvents`' tty-close arm rather than the runner. Below five it names
+neither and says so. Corrected in review of #445, twice: the message once
+claimed the regression on a threshold the loop did not break on.
 
 How strong that is differs between the two, and saying "neither can report
 success on an attempt it did not make" overstated it for the split-marker
@@ -238,7 +254,7 @@ conditional is the pin: lowering `PasteMarkerGrace` to 1 turns this test red,
 re-measured three runs out of three after the window was rebalanced.
 Corrected in review of #445.
 
-Getting the measurement itself right took three corrections, all from review:
+Getting the measurement itself right took six corrections, all from review:
 
 - **A handshake, not a sleep.** Closing the pty master discards bytes the
   slave has not read, so "write the prefix, then close" loses it on most runs.
@@ -264,6 +280,26 @@ Getting the measurement itself right took three corrections, all from review:
   that safe to hardcode. (This line said `EscTimeout/2` for one round after
   the window was rebalanced in the code — a spec restating a constant is a
   second copy of it, and this is what the second copy does.)
+- **A pty released per attempt.** Both helpers leaked one pty and one parked
+  decoder goroutine per attempt, over twenty and forty attempts, because the
+  `s.Restore()` and `master.Close()` were written as though each helper ran
+  once. A test that exhausts its retries was also exhausting file descriptors.
+- **Silence as its own outcome, not another inconclusive retry.** See the
+  paragraph above: `closedTtyAttempt` returned one kind of miss, so the
+  regression's own symptom was retried nineteen more times and then reported
+  as a loaded runner.
+- **A drift guard measured against a clock that cannot drift with it.**
+  `splitMarkerAttempt` bounded its window with `time.Since(held)` and its
+  comment said that covered `held` landing late against the arm. It cannot:
+  `held` is the drifting clock. What that budget actually bounds is the
+  latency of the tail write. The drift is now bounded from `wrote`, sampled
+  immediately before the handshake write — the arm is necessarily at or after
+  it, so `held - wrote` bounds `held - arm` from above. Without it a
+  deschedule of more than three quarters of a timeout between the decoder's
+  buffered send and the sample made the helper **hard-fail with the #419
+  message**, which the retry loop cannot absorb. Measured both ways, by
+  injecting the deschedule: with the guard the attempt goes inconclusive and
+  retries; without it the #419 message fires on a healthy decoder.
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement. The

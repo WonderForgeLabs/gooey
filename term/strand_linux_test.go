@@ -467,6 +467,7 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// The handshake byte again: reading `b` back proves the decoder consumed
 	// that read, so ESC [ 2 is in pend and the clock below starts when its
 	// escape timer is armed rather than whenever the write happened to land.
+	wrote := time.Now()
 	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
@@ -475,6 +476,27 @@ func splitMarkerAttempt(t *testing.T) bool {
 		t.Fatalf("got %#v, want the 'b' we typed", ev)
 	}
 	held := time.Now()
+	// THE DRIFT IS MEASURED AGAINST `wrote`, BECAUSE IT CANNOT BE
+	// MEASURED AGAINST `held`. The budget below this used to be the only
+	// guard, and it is `time.Since(held)` — measured from the drifting
+	// clock itself, so it cannot observe that clock's drift. What it
+	// actually bounds is the latency of the tail write, which is a
+	// different quantity and a small one.
+	//
+	// The arm is necessarily at or after this write — the decoder cannot
+	// arm a timer for bytes it has not read — so `held - wrote` bounds
+	// `held - arm` from above, and a quarter of a timeout is the gap the
+	// comment above says it reserves. Without it, a test goroutine
+	// descheduled by more than EscTimeout*3/4 between the decoder's
+	// buffered send of the `b` event and the time.Now() here makes the
+	// tail land after the grace has already expired: next() then returns
+	// the resolved Esc and this helper HARD-FAILS with the #419 message,
+	// which the retry loop cannot absorb. A scheduling stall wearing the
+	// costume of a regression, in the one direction the record did not
+	// acknowledge. Raised in review of #445 round nine.
+	if held.Sub(wrote) > EscTimeout/4 {
+		return false // held may be a quarter-timeout past the arm; attribute nothing
+	}
 
 	// Past ONE timeout — so the grace is genuinely exercised rather than the
 	// marker simply arriving whole in one read — and comfortably inside two.
@@ -519,12 +541,16 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// TestPasteMarkerGraceHasAFloor is what makes 2*EscTimeout safe to write
 	// literally here.
 	//
-	// And the SLACK is the other end of the gap the sleep above reserves
-	// for: `held` can land either side of the arm, so with zero slack an
-	// attempt whose grace had already expired reads as conclusive and
-	// hard-fails with the #419 message — a scheduling stall wearing the
-	// costume of a regression, which is precisely what the sleep-vs-wait
-	// fix in the sibling test removed. Both raised in review of #445.
+	// AND WHAT THE SLACK BOUNDS IS THE TAIL WRITE, not the drift. This
+	// said it covered "the other end of the gap the sleep above reserves
+	// for", and it cannot: `time.Since(held)` is measured from `held`,
+	// the very clock whose drift against the arm is the hazard. The
+	// sleep is EscTimeout+EscTimeout/4 and the threshold is
+	// 2*EscTimeout-EscTimeout/4, so this arm trips only when the four
+	// byte master.Write above takes more than EscTimeout/2 — worth
+	// keeping, and not the thing it claimed. The drift guard is the
+	// held-minus-wrote check beside the handshake. Corrected in review
+	// of #445 round nine.
 	if elapsed := time.Since(held); elapsed >= 2*EscTimeout-EscTimeout/4 {
 		return false // the grace may already have expired; attribute nothing
 	}
