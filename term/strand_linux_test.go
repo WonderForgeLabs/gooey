@@ -538,13 +538,18 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// both ends. Raised in review of #445, twice.
 	//
 	// So the window is budgeted at BOTH ends rather than assumed at one.
-	// The arm sits somewhere within a scheduling gap of `held`, the window
-	// the write must land in is (arm+EscTimeout, arm+2*EscTimeout), and a
-	// quarter of a timeout at each end is what the sleep and the budget
-	// below now reserve for that gap — 10ms apiece at EscTimeout=40ms,
-	// against the 5ms the old asymmetric pair left at the bottom. The
-	// overshoot allowance grows with it, from EscTimeout*3/8 to
-	// EscTimeout/2, which is the thing a loaded runner actually spends.
+	// The arm sits somewhere within a scheduling gap of `held`, and the
+	// window the write must land in is (arm+EscTimeout, arm+2*EscTimeout).
+	// This sleep reserves a quarter of a timeout at the BOTTOM — 10ms at
+	// EscTimeout=40ms, against the 5ms the old asymmetric pair left there.
+	// The top is not a second reservation of its own: the budget below is
+	// ONE allowance measured from `wrote`, spending the same window the
+	// drift does, because two independent ones summed to all 80ms of it.
+	// What that leaves for a sleep that overruns and a write that is slow
+	// is 2*EscTimeout-EscTimeout/4 minus this sleep minus `held-wrote`, so
+	// EscTimeout/2 on an idle machine and less exactly when the machine is
+	// the reason it is needed — which is the trade, and the retry loop is
+	// what absorbs it.
 	time.Sleep(EscTimeout + EscTimeout/4)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -561,17 +566,33 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// TestPasteMarkerGraceHasAFloor is what makes 2*EscTimeout safe to write
 	// literally here.
 	//
-	// AND WHAT THE SLACK BOUNDS IS THE TAIL WRITE, not the drift. This
-	// said it covered "the other end of the gap the sleep above reserves
-	// for", and it cannot: `time.Since(held)` is measured from `held`,
-	// the very clock whose drift against the arm is the hazard. The
-	// sleep is EscTimeout+EscTimeout/4 and the threshold is
-	// 2*EscTimeout-EscTimeout/4, so this arm trips only when the four
-	// byte master.Write above takes more than EscTimeout/2 — worth
-	// keeping, and not the thing it claimed. The drift guard is the
-	// held-minus-wrote check beside the handshake. Corrected in review
-	// of #445 round nine.
-	if elapsed := time.Since(held); elapsed >= 2*EscTimeout-EscTimeout/4 {
+	// AND IT IS MEASURED FROM `wrote`, WHICH IS WHAT STOPS THE TWO
+	// ALLOWANCES STACKING. This was `time.Since(held)`, and that made the
+	// two guards independent budgets drawn on one window: the drift guard
+	// admits `held` up to EscTimeout/4 past the arm, this one admitted a
+	// further 2*EscTimeout-EscTimeout/4, and 10ms + 70ms is EXACTLY the
+	// 80ms the grace lasts. Both comparisons stayed strict, so the write
+	// still landed before `arm+2*EscTimeout` — by an arbitrarily small
+	// margin, which is the part that does not survive contact: this
+	// budget bounds when `master.Write` RETURNS, and returning only
+	// queues the bytes on the pty. Nothing was left for the decoder to
+	// read them in, so the compound worst case — a drift at the guard's
+	// limit AND a sleep or write that overruns to the budget's — left the
+	// #419 hard-fail REACHABLE on a healthy decoder. That corner is
+	// derived from the two thresholds, not measured: it needs both to sit
+	// at their limits on the same attempt, which is exactly the shape a
+	// mutation cannot arrange and a loaded runner can. Raised in review of
+	// #445 round ten.
+	//
+	// `wrote` is the one clock provably not after the arm — the same
+	// `arm >= wrote` the drift guard rests on — so ONE budget measured
+	// from it covers the drift, the sleep and the write together and
+	// leaves the remaining EscTimeout/4 of the window for that read.
+	// The drift guard above keeps its place as the early bail it also
+	// is: an attempt already a quarter-timeout behind at the handshake
+	// has spent this budget's overshoot before it sleeps, and returning
+	// there saves it the EscTimeout+EscTimeout/4 the sleep would cost.
+	if elapsed := time.Since(wrote); elapsed >= 2*EscTimeout-EscTimeout/4 {
 		return false // the grace may already have expired; attribute nothing
 	}
 

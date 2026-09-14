@@ -257,15 +257,22 @@ timeout: at `stalls = 1` the decoder holds the prefix and emits nothing, so
 nothing on the wire says the timeout fired. What it can do is bound the
 window at both ends, and that is what it does — the arm sits within a
 scheduling gap of `held` (the decoder sends each event *before* it re-arms,
-into a buffered channel, so `held` may land either side of it), and a quarter
-of a timeout at each end is reserved for that gap. A sufficiently pathological
-deschedule of the decoder between the send and the `Reset` could still let an
-attempt land early and pass without exercising the grace. What is not
+into a buffered channel, so `held` may land either side of it). The sleep
+reserves a quarter of a timeout at the bottom; the top is not a second
+reservation but the same one, because the tail budget is measured from
+`wrote` and so spends the window the drift guard already draws on. A
+sufficiently pathological deschedule of the decoder between the send and the
+`Reset` could still let an attempt land early and pass without exercising the
+grace. What is not
 conditional is the pin: lowering `PasteMarkerGrace` to 1 turns this test red,
 re-measured three runs out of three after the window was rebalanced.
 Corrected in review of #445.
 
-Getting the measurement itself right took seven corrections, all from review:
+Getting the measurement itself right took the run of corrections below, all
+from review. There is no count in that sentence on purpose: it said *seven*
+while two of these bullets were the same correction written twice, and a
+number in prose cannot notice that it has stopped matching the list under
+it. Count them if you want the figure.
 
 - **A handshake, not a sleep.** Closing the pty master discards bytes the
   slave has not read, so "write the prefix, then close" loses it on most runs.
@@ -277,20 +284,26 @@ Getting the measurement itself right took seven corrections, all from review:
   descheduled, early if the decoder is. `closedTtyAttempt` budgets **one
   `EscTimeout`** rather than the full stall latency for the late case — the
   wider budget let a timer-delivered Esc measure just under it and be credited
-  to the close. `splitMarkerAttempt` reserves a quarter of a timeout at each
-  end for both; its comment asserted the ordering in the opposite direction to
-  its sibling's until review of #445, and a guarantee a file states two ways
-  is worth less than the slack it was defending.
+  to the close. `splitMarkerAttempt` reserves a quarter of a timeout at the
+  bottom and takes the top out of one shared budget; its comment asserted the
+  ordering in the opposite direction to its sibling's until review of #445,
+  and a guarantee a file states two ways is worth less than the slack it was
+  defending.
 - **The drift bounded by a clock that cannot drift with it.** Both helpers
   checked the drift with `time.Since(held)` — measured from `held`, which IS
   the drifting clock, so it could not see the drift and bounded only the tail
   write's latency. Each now samples `wrote` immediately before the handshake
   write and discards an attempt where `held` is more than a quarter-timeout
   past it: the decoder cannot arm a timer for bytes it has not read, so
-  `arm >= wrote`, and `held - wrote` bounds `held - arm` from above.
-  `splitMarkerAttempt` got this one round before `closedTtyAttempt` did,
-  which left the record asserting the stronger guarantee for the weaker of
-  the two.
+  `arm >= wrote`, and `held - wrote` bounds `held - arm` from above. Without
+  it a deschedule of more than three quarters of a timeout between the
+  decoder's buffered send and the sample made `splitMarkerAttempt`
+  **hard-fail with the #419 message**, which the retry loop cannot absorb —
+  measured both ways by injecting the deschedule: with the guard the attempt
+  goes inconclusive and retries, without it the #419 message fires on a
+  healthy decoder. `splitMarkerAttempt` got this one round before
+  `closedTtyAttempt` did, which left the record asserting the stronger
+  guarantee for the weaker of the two.
 - **An absolute budget, never one scaled by the constant under test.**
   `splitMarkerAttempt` first scaled its window by `PasteMarkerGrace`, so under
   the mutation it exists to catch the budget collapsed with the constant,
@@ -309,18 +322,17 @@ Getting the measurement itself right took seven corrections, all from review:
   paragraph above: `closedTtyAttempt` returned one kind of miss, so the
   regression's own symptom was retried nineteen more times and then reported
   as a loaded runner.
-- **A drift guard measured against a clock that cannot drift with it.**
-  `splitMarkerAttempt` bounded its window with `time.Since(held)` and its
-  comment said that covered `held` landing late against the arm. It cannot:
-  `held` is the drifting clock. What that budget actually bounds is the
-  latency of the tail write. The drift is now bounded from `wrote`, sampled
-  immediately before the handshake write — the arm is necessarily at or after
-  it, so `held - wrote` bounds `held - arm` from above. Without it a
-  deschedule of more than three quarters of a timeout between the decoder's
-  buffered send and the sample made the helper **hard-fail with the #419
-  message**, which the retry loop cannot absorb. Measured both ways, by
-  injecting the deschedule: with the guard the attempt goes inconclusive and
-  retries; without it the #419 message fires on a healthy decoder.
+- **Two allowances drawn on one window, which is not two windows.** The drift
+  guard admits `held` up to `EscTimeout/4` past the arm and the tail budget
+  admitted a further `2*EscTimeout - EscTimeout/4`, each measured from its own
+  clock. 10ms + 70ms is EXACTLY the 80ms the grace lasts. Both comparisons are
+  strict, so the write still *returned* before `arm + 2*EscTimeout` — by an
+  arbitrarily small margin, and a returned `master.Write` has only queued the
+  bytes, leaving nothing for the decoder to read them in. The budget is
+  measured from `wrote` now, the one clock provably not after the arm, so it
+  covers the drift, the sleep and the write together and the remaining
+  `EscTimeout/4` of the window belongs to that read. A budget per hazard reads
+  as caution and spends as a sum.
 
 The mutation harness itself has to be watched, and this one caught it out. The
 targets must carry their leading TABS so they can only match a statement. The
