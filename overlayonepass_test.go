@@ -812,32 +812,44 @@ func TestEveryReusedSliceInComposerClearsToCap(t *testing.T) {
 	cleared := 0
 	ast.Inspect(file, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
-		if !ok || as.Tok != token.ASSIGN || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+		// PAIRWISE, because `a, b = a[:0], -1` is a reset too. This
+		// bailed on len(Lhs) != 1, which made components/typeahead.go's
+		// `t.buf, t.last = t.buf[:0], -1` unexaminable — and t.buf is
+		// []rune, so the exemption was ACCIDENTAL rather than derived,
+		// which is the distinction the tree-wide guard below argues for
+		// in its own doc. The same reset written over a
+		// []gooey.Component would have been a silent hole in a guard
+		// whose stated subject is every reset there is. Unequal lengths
+		// are `a, b = f()`, where no Rhs is a slice expression anyway.
+		// Raised in review of #456.
+		if !ok || as.Tok != token.ASSIGN || len(as.Lhs) != len(as.Rhs) {
 			return true
 		}
-		lhs := text(as.Lhs[0])
-		if call, ok := as.Rhs[0].(*ast.CallExpr); ok {
-			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "clearToCap" {
-				cleared++
+		for i, rhs := range as.Rhs {
+			lhs := text(as.Lhs[i])
+			if call, ok := rhs.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "clearToCap" {
+					cleared++
+				}
+				continue
 			}
-			return true
+			sl, ok := rhs.(*ast.SliceExpr)
+			if !ok || sl.Low != nil || sl.Max != nil {
+				continue
+			}
+			hi, ok := sl.High.(*ast.BasicLit)
+			if !ok || hi.Value != "0" || text(sl.X) != lhs {
+				continue
+			}
+			pos := fset.Position(as.Pos())
+			if justified(pos.Line) {
+				continue
+			}
+			t.Errorf("composer.go:%d resets %s with %s[:0], which truncates len and leaves "+
+				"the backing array holding every element past it. Use clearToCap(%s), or "+
+				"say why the elements are safe to keep in a `retains nothing:` comment",
+				pos.Line, lhs, lhs, lhs)
 		}
-		sl, ok := as.Rhs[0].(*ast.SliceExpr)
-		if !ok || sl.Low != nil || sl.Max != nil {
-			return true
-		}
-		hi, ok := sl.High.(*ast.BasicLit)
-		if !ok || hi.Value != "0" || text(sl.X) != lhs {
-			return true
-		}
-		pos := fset.Position(as.Pos())
-		if justified(pos.Line) {
-			return true
-		}
-		t.Errorf("composer.go:%d resets %s with %s[:0], which truncates len and leaves "+
-			"the backing array holding every element past it. Use clearToCap(%s), or "+
-			"say why the elements are safe to keep in a `retains nothing:` comment",
-			pos.Line, lhs, lhs, lhs)
 		return true
 	})
 	if cleared == 0 {
@@ -892,6 +904,17 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 		// file. Per FILE rather than per statement, because the
 		// adornment filter clears its tail after the loop that refilled
 		// it and the two are one reset.
+		//
+		// AND THE COST IS AN EXEMPTION THAT TRAVELS: one clear(x…)
+		// anywhere in a file exempts EVERY `x = x[:0]` in it, including
+		// one on a code path that never reaches the clear. The scope is
+		// keyed on source TEXT too, so `c.kids` in two methods of two
+		// types in one file is one key. It is the price of matching a
+		// reset to a clear that is not adjacent to it, and it is
+		// written down here because this comment is what a maintainer
+		// reads before adding the next reset: if your new one is not
+		// covered by the clear already in the file, this guard will not
+		// tell you. Raised in review of #456.
 		clears := map[string]bool{}
 		ast.Inspect(p.file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -912,45 +935,49 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 
 		ast.Inspect(p.file, func(n ast.Node) bool {
 			as, ok := n.(*ast.AssignStmt)
-			if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			// PAIRWISE — see the composer-only guard above, which had
+			// the same bail and the same blind spot.
+			if !ok || len(as.Lhs) != len(as.Rhs) {
 				return true
 			}
-			sl, ok := as.Rhs[0].(*ast.SliceExpr)
-			if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
-				return true
+			for i, rhs := range as.Rhs {
+				sl, ok := rhs.(*ast.SliceExpr)
+				if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
+					continue
+				}
+				hi, ok := sl.High.(*ast.BasicLit)
+				if !ok || hi.Value != "0" {
+					continue
+				}
+				base := text(sl.X)
+				// The element type is looked up by the LAST segment:
+				// c.gonePlacements is the gonePlacements field.
+				name := base
+				if i := strings.LastIndex(name, "."); i >= 0 {
+					name = name[i+1:]
+				}
+				elem, known := elems[name]
+				if known && elem != nil && !holdsAReference(elem, here, types, 0) {
+					safe++
+					continue
+				}
+				retaining++
+				if clears[base] || clears[text(as.Lhs[i])] {
+					cleared++
+					continue
+				}
+				pos := p.fset.Position(sl.Pos())
+				if retainsNothingAbove(lines, pos.Line) {
+					continue
+				}
+				t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
+					"reference (%s). That truncates len and leaves the backing array "+
+					"holding everything past it — for a list that shrinks and stays "+
+					"small, until nothing. Clear to cap (clearToCap here, "+
+					"clear(x[:cap(x)]) in another package), or say why the elements "+
+					"are safe to keep in a `retains nothing:` comment",
+					p.path, pos.Line, base, elemDesc(elem, known))
 			}
-			hi, ok := sl.High.(*ast.BasicLit)
-			if !ok || hi.Value != "0" {
-				return true
-			}
-			base := text(sl.X)
-			// The element type is looked up by the LAST segment:
-			// c.gonePlacements is the gonePlacements field.
-			name := base
-			if i := strings.LastIndex(name, "."); i >= 0 {
-				name = name[i+1:]
-			}
-			elem, known := elems[name]
-			if known && elem != nil && !holdsAReference(elem, here, types, 0) {
-				safe++
-				return true
-			}
-			retaining++
-			if clears[base] || clears[text(as.Lhs[0])] {
-				cleared++
-				return true
-			}
-			pos := p.fset.Position(sl.Pos())
-			if retainsNothingAbove(lines, pos.Line) {
-				return true
-			}
-			t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
-				"reference (%s). That truncates len and leaves the backing array "+
-				"holding everything past it — for a list that shrinks and stays "+
-				"small, until nothing. Clear to cap (clearToCap here, "+
-				"clear(x[:cap(x)]) in another package), or say why the elements "+
-				"are safe to keep in a `retains nothing:` comment",
-				p.path, pos.Line, base, elemDesc(elem, known))
 			return true
 		})
 	}
