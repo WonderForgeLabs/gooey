@@ -623,16 +623,30 @@ func (ed *editor) grantOf(elem string) markup.Grant {
 	return e.Grants
 }
 
+// attrValue is an attribute value written as XML — quoted, and escaped
+// the way n.Body is escaped below.
+//
+// %q IS GO QUOTING, NOT XML, and the difference is a file the designer
+// cannot reopen. A value the loader accepts, `Content="Save &amp; Exit"`,
+// came back out of this emitter as `Content="Save & Exit"`: the canvas
+// refused its own rebuild with "markup: no root element" and a save
+// wrote a document whose reopen fails on "invalid character entity &".
+// A `"` in a value is the same class. gooeyOpen's comment argued the two
+// emitters "must agree about quoting", which is true and is why both are
+// fixed rather than a reason to keep the lossy one. Seeds are ASCII
+// markup this repo controls; since #472 this also writes files somebody
+// else wrote. Raised in review of #501.
+func attrValue(v string) string {
+	var esc strings.Builder
+	xml.EscapeText(&esc, []byte(v))
+	return `"` + esc.String() + `"`
+}
+
 func (n *node) markup(indent string) string {
 	var b strings.Builder
 	b.WriteString(indent + "<" + n.Elem)
-	keys := make([]string, 0, len(n.Attrs))
-	for k := range n.Attrs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, " %s=%q", k, n.Attrs[k])
+	for _, k := range sortedKeys(n.Attrs) {
+		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
 	}
 	// A body and children are mutually exclusive here: no element in the
 	// catalog takes both, and emitting both would make the body's meaning
@@ -652,12 +666,7 @@ func (n *node) markup(indent string) string {
 		return b.String()
 	}
 	b.WriteString(">\n")
-	slots := make([]string, 0, len(n.Slots))
-	for k := range n.Slots {
-		slots = append(slots, k)
-	}
-	sort.Strings(slots)
-	for _, s := range slots {
+	for _, s := range sortedKeys(n.Slots) {
 		fmt.Fprintf(&b, "%s  <%s.%s>\n", indent, n.Elem, s)
 		b.WriteString(n.Slots[s].markup(indent + "    "))
 		fmt.Fprintf(&b, "%s  </%s.%s>\n", indent, n.Elem, s)
@@ -669,7 +678,157 @@ func (n *node) markup(indent string) string {
 	return b.String()
 }
 
-// nodeOf parses a seed's markup into the editor's document model.
+// carryDeclarations copies a <Gooey> envelope's namespace declarations
+// onto the document root about to be promoted in its place.
+//
+// The envelope is NOT a node — gooeyOpen re-emits it from ed.envAttrs,
+// which holds what did NOT come down here — so a declaration left on it
+// and recorded nowhere is discarded by the unwrap, which is the half of
+// #472 that survived nodeOf keeping them. A hand-written document puts
+// xmlns on the envelope, because that is where markup's error tells the
+// author to put it, and so does every file saved before this change — so
+// this is the spelling the editor has to read. It is not the spelling the
+// editor now WRITES: this function moves an attribute prefix down onto
+// the root, envelopeAttrs computes the complement, and gooeyOpen writes
+// that complement back. Raised in review of #501.
+//
+// THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
+// subtree scoping — markup.parse keeps one flat, document-wide ns map
+// and takes the LAST declaration of a prefix in document order
+// (the `a.Name.Space == "xmlns"` arm of markup.parse's attribute loop).
+// The envelope is parsed before its child, so
+// for openWorkspaceFile last-wins and child-wins give the same answer;
+// not overwriting is what keeps the editor agreeing with the loader
+// about which URI a prefix has.
+//
+// THAT REASONING IS THE OPEN PATH'S AND DOES NOT CROSS TO PASTE, which
+// is the half this comment claimed for both call sites and had no right
+// to. unwrapGooey lands the declaration on a node INSIDE the open
+// document, later in document order than the root's own, so a pasted
+// prefix bound to a different URI wins for the whole document — every
+// expression already using it included. reconcileNamespaces
+// (clipboard.go) is where that is settled, before the subtree is
+// attached; this function's job is only to keep the envelope's
+// declaration from being lost with the envelope. Raised in review of
+// #501.
+//
+// THE TWO SHAPES nodeOf WRITES, not a prefix test: it emits "xmlns" and
+// "xmlns:"+local (the two `continue` arms in nodeOf's attribute loop)
+// and nothing else, while
+// HasPrefix(k, "xmlns") also matches a plain attribute spelled
+// xmlnsFoo — which would be copied onto the user's root and turn an
+// envelope-level mistake into an unknown-attribute error reported
+// against the child.
+//
+// CITED BY SYMBOL, NOT BY LINE, and that is a measurement about this
+// file rather than a style: every self-referencing line number added in
+// the round before this one was stale by the next commit, because the
+// commit that added this function shifted main.go by 51 lines and
+// nothing in the suite checks a citation inside a Go comment
+// (claudemd_test.go and specclaims_test.go cover CLAUDE.md and
+// docs/specs/). A citation into the file you are currently growing is
+// the one that rots first. Raised in review of #501.
+//
+// AN ELEMENT PREFIX DOES NOT COME DOWN, and XNamespace is the test
+// because the prefix spelling is the author's. `x:` prefixes an ELEMENT,
+// and the elements it prefixes — <x:Property> — are children of the
+// ENVELOPE, not of the content root: markup.parseDocument hands the whole
+// <Gooey> to splitDeclarations and only afterwards requires one visual
+// kid. encoding/xml resolved that prefix with real subtree scoping before
+// markup saw it, so moving the declaration onto the content root puts it
+// out of scope at its own sibling and the saved file stops loading. The
+// flat-table reasoning above is an ATTRIBUTE prefix's and does not reach
+// here.
+//
+// THIS ARM IS UNREACHABLE TODAY, and that is worth saying rather than
+// leaving for someone to discover as dead code: openWorkspaceFile counts
+// a declaration as a second root and refuses the document before this
+// runs (#517), so no such envelope gets here. The guard is written
+// anyway because #517's fix is to stop counting them, and that fix is
+// exactly what makes this path live — a correctness rule the fix depends
+// on should not be one the fix has to rediscover.
+// TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
+// function directly, which is the only way to reach it. Raised in review
+// of #501.
+//
+// ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
+// this inline and unwrapGooey (clipboard.go) had nothing, so #472
+// survived through paste: the CODE tab's own output, copied whole and
+// pasted back, lost its prefixes and the canvas refused the handler
+// expression it had just rendered. A fix applied at one of two
+// identical seams is the shape that leaves the other one open. Raised
+// in review of #501.
+func carryDeclarations(env, root *node) {
+	for k, v := range env.Attrs {
+		if !isNamespaceAttr(k) || v == markup.XNamespace {
+			continue
+		}
+		if _, ok := root.Attrs[k]; !ok {
+			root.Attrs[k] = v
+		}
+	}
+}
+
+// envelopeAttrs is everything on a <Gooey> that did NOT move down with
+// carryDeclarations — kept so gooeyOpen can write it back. Call it AFTER
+// carryDeclarations and pass the same root: the question it answers is
+// what actually carried, not what was eligible to.
+//
+// THE COMPLEMENT IS OBSERVED, NOT ASSUMED. This dropped every xmlns:
+// unconditionally while carryDeclarations skips a prefix the root
+// already declares, so a document declaring one prefix at BOTH levels
+// lost the envelope's copy outright — <Gooey xmlns:t="urn:A"> over
+// <Canvas xmlns:t="urn:B"> saved as <Gooey> and urn:A was gone from the
+// file. The resolved binding was unchanged, because the loader's flat
+// last-wins map had already picked urn:B, so this was fidelity rather
+// than meaning — but the comment here claimed immunity from exactly that
+// class, and the claim was the stated reason nobody need cross-check the
+// two predicates. Comparing against what the root now holds makes the
+// complement true instead of asserted. Raised in review of #501.
+func envelopeAttrs(env, root *node) map[string]string {
+	out := make(map[string]string, len(env.Attrs))
+	for k, v := range env.Attrs {
+		if isNamespaceAttr(k) && root.Attrs[k] == v {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// gooeyOpen is the envelope's opening tag, carrying whatever the opened
+// file wrote on it.
+//
+// ONE FUNCTION FOR THREE LITERALS. `"<Gooey>\n"` was spelled
+// independently in ed.rebuild (twice) and in saveOpenFile, and nothing
+// crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
+// was added to close from the other end.
+//
+// attrValue like node.markup, because these attributes go back out the
+// way every other attribute in this document does and the two must agree
+// about quoting. They agreed on %q until review of #501, which is how
+// they came to agree about being wrong.
+func gooeyOpen(attrs map[string]string) string {
+	var b strings.Builder
+	b.WriteString("<Gooey")
+	for _, k := range sortedKeys(attrs) {
+		fmt.Fprintf(&b, " %s=%s", k, attrValue(attrs[k]))
+	}
+	b.WriteString(">\n")
+	return b.String()
+}
+
+// nodeOf parses markup into the editor's document model — a palette
+// seed's, and since #472 a USER'S DOCUMENT too.
+//
+// It reads for openWorkspaceFile (browser.go) and for pasteMarkup
+// (clipboard.go), which is why its strictness and its error wording
+// are a user-facing surface rather than an internal check on this
+// repo's own seeds: it is now the load-bearing reader for namespace
+// declarations in files somebody else wrote. The doc below described
+// only the seed half until review of #501, and the namespaced-attribute
+// error said "seeds are plain markup" to a user who had just opened a
+// file.
 //
 // markup.Seeded answers "what should a NEW <X> be" in MARKUP, because
 // the answer has to cover more than attributes — an empty <VStack>
@@ -682,7 +841,15 @@ func (n *node) markup(indent string) string {
 // anything surprising in one is a bug in the seed and must surface as
 // an error the palette can show — not as a node tree that quietly
 // dropped half of it, which is the failure mode the whole catalog
-// effort exists to delete.
+// effort exists to delete. The strictness is right for a user's file
+// too; only the WORDING had to change. Five of the six refusals below
+// began "seed …", which is this repo's word for its own palette markup
+// and means nothing to someone who just opened a document — "seed does
+// not parse" for a file the user wrote. They now name the thing that is
+// wrong and leave the noun to the caller, which already supplies one:
+// the browser prefixes the path, paste prefixes "pasted text is not
+// markup", and the palette prefixes "<Button>". Raised in review of
+// #501.
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
@@ -693,21 +860,100 @@ func nodeOf(src string) (*node, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("seed does not parse: %w", err)
+			return nil, fmt.Errorf("markup does not parse: %w", err)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
 			n := &node{Elem: t.Name.Local, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
-				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
+				// ATTRIBUTE, and that spelling is the whole fix for
+				// #472 rather than an implementation detail.
+				//
+				// node.markup already writes every entry in Attrs back
+				// out verbatim, so a declaration that survives the read
+				// survives the write, the save, and an edit made
+				// through the properties pane. What the pane cannot do
+				// is ADD one: valueEditor.Write only ever writes
+				// p.name (properties.go:798) and p.name comes from the
+				// element's DECLARED attributes, so there is nowhere to
+				// type a free-form attribute name — that is #500. This
+				// comment claimed the opposite until review of #501,
+				// contradicting both the PR body and
+				// doccontext_test.go's own note, in a repo that treats
+				// a comment as a claim under test.
+				//
+				// Dropping it here was the only end that leaked: a
+				// document opened through the file browser lost its
+				// prefixes before it became a node tree, and the canvas
+				// then refused the handler expression it had just read
+				// with "undeclared namespace prefix".
+				//
+				// KEPT ON THE ELEMENT THAT DECLARED IT rather than
+				// hoisted to a document-wide list. The reason is NOT
+				// XML subtree scoping, which this comment used to
+				// claim: markup.parse keeps ONE FLAT, document-wide ns
+				// map and merges every declaration into it in document
+				// order (the `a.Name.Space == "xmlns"` arm of
+				// markup.parse's attribute loop), so a redeclared prefix
+				// wins by being parsed later rather than by being
+				// inner, and two sibling subtrees cannot bind one
+				// prefix to two URIs. The outcomes coincide for every
+				// shape this editor writes — the envelope is always
+				// parsed before its child, so "child wins" and "last
+				// wins" agree — and keeping the declaration where the
+				// author put it is what makes the editor round-trip the
+				// document rather than rewrite it. The envelope is the
+				// one place that is not a node, and openWorkspaceFile
+				// carries its declarations down.
+				if a.Name.Space == "xmlns" {
+					n.Attrs["xmlns:"+a.Name.Local] = a.Value
 					continue
 				}
-				// The namespace is dropped by the same key-by-Local
-				// rule markup's own parser uses; a seed has no
-				// prefixed attributes, and one appearing would be the
-				// bug worth failing on.
+				if a.Name.Local == "xmlns" && a.Name.Space == "" {
+					n.Attrs["xmlns"] = a.Value
+					continue
+				}
+				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
+				// answer markup's own parser gives —
+				// markup.namespacedAttrError. Neither side drops it and
+				// neither keys by Local.
+				//
+				// BY SYMBOL, and the "defined at :993" half this
+				// replaces is why the paragraph below insists on it:
+				// that number was the first line of the doc block the
+				// same commit added above the function, so the citation
+				// was stale in the commit that wrote it. Raised in
+				// review of #501.
+				//
+				// This comment said "the namespace is dropped by the
+				// same key-by-Local rule markup's own parser uses" until
+				// review of #501, and both halves of that were false,
+				// inside the very loop the commit above it rewrote for
+				// claiming things the code does not do.
+				//
+				// Nothing authored here has a prefixed attribute, so one
+				// appearing is worth failing on rather than accepting
+				// into a model that cannot write it back out.
 				if a.Name.Space != "" {
-					return nil, fmt.Errorf("seed attribute %q is namespaced; seeds are plain markup", a.Name.Local)
+					// NAMED THE WAY markup NAMES IT, which is two
+					// spellings and not one. markup.namespacedAttrError
+					// writes {uri}local for an ordinary prefix and
+					// `xml:local` for the XML namespace, because that
+					// one is bound by the spec rather than declared and
+					// an author who wrote `xml:space` would not
+					// recognise it back as
+					// {http://www.w3.org/XML/1998/namespace}space.
+					//
+					// The claim above — that this is the same answer
+					// markup's parser gives — is what makes the
+					// difference a defect rather than a variation: it
+					// formatted a.Name.Local alone until review of #501,
+					// telling the author `attribute "Thing" is
+					// namespaced` with no way to tell WHICH prefix, and
+					// then formatted {uri}local for every case, which is
+					// the wrong half of markup's rule for xml:*.
+					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", namespacedAttrName(a.Name))
 				}
 				n.Attrs[a.Name.Local] = a.Value
 			}
@@ -718,7 +964,7 @@ func nodeOf(src string) (*node, error) {
 			}
 		case xml.EndElement:
 			if len(stack) == 0 {
-				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
+				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
@@ -738,13 +984,13 @@ func nodeOf(src string) (*node, error) {
 			// — which is a structured attribute, not a child.
 			if owner, slot, ok := strings.Cut(n.Elem, "."); ok {
 				if owner != p.Elem {
-					return nil, fmt.Errorf("seed has <%s> inside <%s>", n.Elem, p.Elem)
+					return nil, fmt.Errorf("<%s> is inside <%s>, and a property element belongs to the element it names", n.Elem, p.Elem)
 				}
 				if p.Slots == nil {
 					p.Slots = map[string]*node{}
 				}
 				if len(n.Kids) != 1 {
-					return nil, fmt.Errorf("seed slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
+					return nil, fmt.Errorf("slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
 				}
 				p.Slots[slot] = n.Kids[0]
 				continue
@@ -753,9 +999,32 @@ func nodeOf(src string) (*node, error) {
 		}
 	}
 	if root == nil {
-		return nil, fmt.Errorf("seed has no root element")
+		return nil, fmt.Errorf("no root element")
 	}
 	return root, nil
+}
+
+// namespacedAttrName spells a namespaced attribute the way
+// markup.namespacedAttrError does, so the designer and the loader name
+// the same attribute the same way in their refusals.
+//
+// A SECOND COPY OF ONE RULE, deliberately: the markup package does not
+// export it, and apps/wysiwyg is a nested module that cannot reach into
+// it. TestTheDesignerNamesANamespacedAttributeLikeMarkupDoes is what
+// keeps the two in step — it builds both refusals for the same
+// attribute and requires this spelling inside markup's message.
+//
+// AND THAT GUARD IS HERE, where CI vets without running, so it cannot
+// see the copy it watches drift first: markup is upstream, and it could
+// change its spelling with every check green. The half that runs in CI
+// is markup's own TestNamespacedAttributesAreLoadErrors, whose arms
+// spell out both forms, and markup.namespacedAttrError's comment names
+// this function as what moves with it. Raised in review of #501.
+func namespacedAttrName(n xml.Name) string {
+	if n.Space == "http://www.w3.org/XML/1998/namespace" {
+		return "xml:" + n.Local
+	}
+	return "{" + n.Space + "}" + n.Local
 }
 
 // ---- the editor ----
@@ -1056,6 +1325,20 @@ type editor struct {
 	wsRev    *prop.Property[int]
 	wsFiles  *prop.Property[components.ItemSource]
 	openPath *prop.Property[string]
+
+	// envAttrs is what the opened file's <Gooey> carried, minus the
+	// prefixed namespace declarations carryDeclarations moves down onto
+	// the document root.
+	//
+	// THE ENVELOPE IS NOT A NODE — gooeyOpen re-emits it as a literal
+	// around ed.doc() — so anything written on it in the user's file
+	// has nowhere in the document model to live and was simply dropped
+	// on the first save. Graphics is the one that matters: it forces the
+	// image protocol (markup.Graphics), apps/dynamic-activities/zoom.gooey
+	// carries Graphics="halfblock", and opening that file in the designer
+	// and saving it silently took the demo's graphics mode away under a
+	// "✓ saved". Measured before the fix. Raised in review of #501.
+	envAttrs map[string]string
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -2240,8 +2523,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := "<Gooey>\n" + ed.doc().markup("  ") + "</Gooey>\n"
-	full := "<Gooey>\n" + ed.root.markup("  ") + "</Gooey>\n"
+	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := gooeyOpen(ed.envAttrs) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below

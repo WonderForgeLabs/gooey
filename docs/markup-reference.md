@@ -40,6 +40,10 @@ Every file has exactly one `<Gooey>` root with exactly one child:
 
 Both rules are enforced at build time. The default `xmlns` attribute is decorative versioning — the parser ignores its value. **Prefixed** namespaces are not decorative: they declare handler namespaces and gooey's language-services namespace, and are captured per document into a prefix → URI table (see [handler namespaces](#handler-namespaces) and [declared properties](#declared-properties-xproperty)).
 
+This next rule is about prefixes used inside **expressions** — handler namespaces and value namespaces, the ones that appear in an attribute's `{{…}}`. It does **not** cover `xmlns:x`: `x:` prefixes an *element* (`<x:Property>`), and element prefixes are resolved by Go's XML decoder with real subtree scoping before gooey sees them. So the declaration has to be **in scope at the `<x:Property>`**, which XML scoping makes two places: on `<Gooey>`, where one declaration serves every `<x:Property>` below it, or on the `<x:Property>` element itself. A declaration on a *sibling* — a `<Text>` elsewhere in the document — is never in scope for it, and the document is refused. That is the case the flat, document-wide rule above would have let you expect to work.
+
+For an expression prefix, a declaration may sit on **any** element, not only on `<Gooey>`. Every such `xmlns:` attribute in the file is merged into one flat, document-wide table in document order, and the last declaration of a prefix wins. This is deliberately **not** XML's subtree scoping: a prefix declared on a button three levels down is usable by a sibling above it, and redeclaring a prefix lower in the file changes it for the whole document rather than for that subtree. Putting every declaration on `<Gooey>` is the convention and what every example here does; the rule matters because the designer cannot — the `<Gooey>` envelope is not part of the document model it edits, so it writes prefixed declarations onto the user's root element and the files it saves depend on those being document-wide.
+
 The "exactly one child" rule counts *visual* children. `<x:Property>` declarations are also direct children of the root, and are not content.
 
 ### `<Gooey>` attributes
@@ -1202,7 +1206,7 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1952`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1966`) is:
 
 | Handle | Plain value | Rendered as |
 |---|---|---|

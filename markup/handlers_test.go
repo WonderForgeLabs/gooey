@@ -365,3 +365,136 @@ func TestRegisteredHandlersListsGrants(t *testing.T) {
 		t.Fatalf("RegisteredHandlers()=%v, missing %q", RegisteredHandlers(), testURI)
 	}
 }
+
+// TestAPrefixDeclaredBelowTheRootIsDocumentWide pins the shape the
+// designer's whole namespace story rests on, in the package that owns
+// the rule.
+//
+// markup.parse keeps ONE FLAT ns map for a document and merges every
+// declaration into it in document order — it is not XML subtree scoping,
+// where a declaration reaches only the element that made it and its
+// descendants. apps/wysiwyg depends on exactly that: it keeps a
+// declaration on the element the author put it on, and a handler
+// expression written on a SIBLING of that element still resolves.
+//
+// HERE, not only in apps/wysiwyg, because CI VETS the apps and does not
+// run them (CLAUDE.md's Verify section). The property was covered by
+// wysiwyg tests alone, which is a guard nothing in CI ever executes —
+// and this is the package whose change would break it. Raised in review
+// of #501.
+//
+// The declaration sits on the SECOND child so that both directions are
+// exercised at once: the expression on the first child is parsed BEFORE
+// the declaration it uses, and the one on the third after it. A subtree
+// rule fails this on both, and an order-dependent one on the first.
+func TestAPrefixDeclaredBelowTheRootIsDocumentWide(t *testing.T) {
+	before, after := prop.NewSource(""), prop.NewSource("")
+	r := &recorder{}
+	RegisterHandlers(testURI, r)
+	defer RegisterHandlers(testURI, nil)
+
+	fsys := fstest.MapFS{
+		"page.gooey": {Data: []byte(`<Gooey>
+	  <VStack>
+	    <Button Content="before" Click="{{t:Run ` + "`before`" + ` | into .Before}}"/>
+	    <Text xmlns:t="gooey.dev/handlers/test">middle</Text>
+	    <Button Content="after" Click="{{t:Run ` + "`after`" + ` | into .After}}"/>
+	  </VStack>
+	</Gooey>`)},
+	}
+	ctx := &Context{
+		Values:     map[string]any{"Before": before, "After": after},
+		Includes:   fsys,
+		Dispatcher: gooey.NewDispatcher(),
+	}
+	w, err := Load(fsys, "page.gooey", ctx)
+	if err != nil {
+		t.Fatalf("a prefix declared below the root did not reach its siblings: %v", err)
+	}
+
+	// LOADING IS NOT THE WHOLE CLAIM. An undeclared prefix is a load
+	// error, so a load that succeeds says the prefix resolved — but not
+	// that it resolved to the right handler set, which is what a second
+	// declaration of the same prefix would change. Run both.
+	c := gooey.NewComposer(w, 24, 5)
+	c.Frame()
+	c.HandleKey(input.Named(input.KeyEnter))
+	ctx.Dispatcher.Drain()
+	c.HandleKey(input.Named(input.KeyTab))
+	c.HandleKey(input.Named(input.KeyEnter))
+	ctx.Dispatcher.Drain()
+
+	if got := before.Get(); got != "Run:before" {
+		t.Errorf("the button ABOVE the declaration got %q, want Run:before — a "+
+			"declaration below the root reaches the whole document, not the "+
+			"subtree that made it", got)
+	}
+	if got := after.Get(); got != "Run:after" {
+		t.Errorf("the button BELOW the declaration got %q, want Run:after", got)
+	}
+}
+
+// TestTheUndeclaredPrefixAdviceIsTheRemedyThatWorks runs the message's own
+// advice instead of asserting its shape.
+//
+// The remedy is a BEHAVIOURAL claim — "add xmlns:t to an element of this
+// document" says any element will do — and the message was reworded to say
+// that in review of #501, because the old wording named the root and an
+// author who had put the declaration elsewhere was sent back where they
+// started. Nothing asserted the new wording, so the next reword could
+// narrow the advice again and stay green:
+// TestAPrefixDeclaredBelowTheRootIsDocumentWide pins the BEHAVIOUR, and
+// a message is free to describe a behaviour wrongly.
+//
+// THE SIBLING PLACEMENT IS THE DISCRIMINATING ONE, and it is where this
+// rule and <x:Property>'s part company. An ATTRIBUTE prefix resolves
+// through the flat, document-wide table parse builds, so a declaration on
+// a sibling of the expression's element reaches it. An ELEMENT prefix
+// resolves through encoding/xml's real subtree scoping, so the same
+// placement is refused — TestTheXPropertyRefusalNamesTheRoot (property_test.go)
+// is the other half. Two rules that sound alike and are not.
+func TestTheUndeclaredPrefixAdviceIsTheRemedyThatWorks(t *testing.T) {
+	r := &recorder{}
+	RegisterHandlers(testURI, r)
+	defer RegisterHandlers(testURI, nil)
+	ctx := func() *Context {
+		return &Context{Values: map[string]any{}, Dispatcher: gooey.NewDispatcher()}
+	}
+	const click = "Click=\"{{t:Run `x`}}\""
+
+	_, err := Build([]byte(`<Gooey><VStack><Button Content="x" `+click+`/></VStack></Gooey>`), ctx())
+	if err == nil {
+		t.Fatal("an undeclared prefix loaded, so there is no advice to follow")
+	}
+	const advice = `add xmlns:t="…" to an element of this document`
+	if !strings.Contains(err.Error(), advice) {
+		t.Fatalf("the refusal reads %q; it must offer %q, which is the remedy the "+
+			"arms below actually carry out", err, advice)
+	}
+
+	for _, tc := range []struct{ name, src string }{
+		{"on the element itself", `<Gooey><VStack><Button xmlns:t="` + testURI + `" Content="x" ` + click + `/></VStack></Gooey>`},
+		{"on a sibling", `<Gooey><VStack><Text xmlns:t="` + testURI + `">anchor</Text><Button Content="x" ` + click + `/></VStack></Gooey>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Build([]byte(tc.src), ctx()); err != nil {
+				t.Fatalf("the advice says %q and this is such an element, but the "+
+					"load still failed: %v", advice, err)
+			}
+		})
+	}
+
+	// BOTH COPIES OF THE SENTENCE. values.go carries the same remedy
+	// verbatim for a value expression, and a duplicated string needs a
+	// duplicated pin or one of the two drifts unnoticed — the arms above
+	// only ever reach handlers.go's.
+	withValues(t, &echoProvider{})
+	_, verr := loadValue(t, "<Text>{{zz:Echo `x`}}</Text>", map[string]any{})
+	if verr == nil {
+		t.Fatal("an undeclared prefix loaded in a value position")
+	}
+	if want := `add xmlns:zz="…" to an element of this document`; !strings.Contains(verr.Error(), want) {
+		t.Errorf("the value-position refusal reads %q; it must offer %q, the same "+
+			"remedy the handler position gives", verr, want)
+	}
+}

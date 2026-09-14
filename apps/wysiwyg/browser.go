@@ -352,6 +352,20 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		ed.status.Set("✗ " + rel + ": " + err.Error())
 		return
 	}
+	// COMPUTED HERE, ASSIGNED WHERE THE DOCUMENT IS REPLACED. A file
+	// with no envelope must not inherit the last one's Graphics, so the
+	// zero value has to reach ed.envAttrs — but clearing the field up
+	// here did it on the REFUSED path too. The len(n.Kids) != 1 return
+	// below leaves ed.root.Kids, ed.sel and ed.openPath pointing at the
+	// document that is still open, and does not re-run ed.rebuild, so
+	// clicking the wrong file in the browser stripped the open
+	// document's Graphics and default xmlns while the CODE tab went on
+	// showing them and the next save wrote a bare <Gooey>. The field
+	// moves with ed.root.Kids now, and no partial path can separate the
+	// two — TestEnvAttrsIsAssignedWhereTheDocumentIs checks that from the
+	// AST rather than leaving it to three comments. Raised in review of
+	// #501.
+	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
 	// the surface Canvas holds one child and that child is the user's
@@ -362,11 +376,28 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
 			return
 		}
+		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT, and
+		// the rule for doing that is carryDeclarations (main.go) rather
+		// than a loop here: paste unwraps an envelope too, and this was
+		// the only one of the two that carried anything.
+		carryDeclarations(n, n.Kids[0])
+		// AND EVERYTHING ELSE ON THE ENVELOPE STAYS ON THE ENVELOPE.
+		// Only the prefixed declarations move down; a plain xmlns and a
+		// Graphics both belong where the author wrote them, and
+		// markup.parse skips a plain xmlns outright, so moving it bought
+		// nothing but a diff on the first save of every existing file.
+		env = envelopeAttrs(n, n.Kids[0])
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}
+	ed.envAttrs = env
 	ed.sel = n
 	ed.openPath.Set(rel)
+	// A NEW DOCUMENT STARTS WITH NO PAST. Without this the previous
+	// file's snapshots stay in the stack and ctrl+z restores ITS tree
+	// under THIS file's envelope, with openPath still naming this file —
+	// see history.reset for the measurement. Raised in review of #501.
+	ed.history().reset(ed.root)
 	ed.rebuild()
 }
 
@@ -389,7 +420,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := "<Gooey>\n" + ed.doc().markup("  ") + "</Gooey>\n"
+	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())
@@ -419,6 +450,14 @@ func (ed *editor) setWorkspace(dir string) {
 		ed.status.Set("✓ " + ws.label + " (" + strconv.Itoa(len(ws.files)) + " files)")
 	}
 	ed.wsLabel.Set(ws.label)
+	// NO envAttrs CLEAR HERE. openWorkspaceFile is the only site that
+	// assigns ed.root.Kids and it assigns ed.envAttrs beside it on the
+	// same path, nil included — so clearing the field here separated the
+	// two, which is the invariant that fix established. The document
+	// stays on the canvas across a folder change, and the next rebuild
+	// wrote a bare <Gooey> for a document nobody had edited.
+	// TestEnvAttrsIsAssignedWhereTheDocumentIs is the guard; this
+	// sentence is the reason. Raised in review of #501.
 	ed.openPath.Set("")
 	ed.wsQuery.Set("")
 	ed.wsRev.Set(ed.wsRev.Get() + 1)
