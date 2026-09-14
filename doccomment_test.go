@@ -53,11 +53,11 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// look for a prune that is not there. The reverse mistake is worse:
 	// marking before them makes a module of nothing but .pb.go read as
 	// covered. Raised in review of #503.
-	reached := map[string]bool{} // directories the walk yielded a .go file in
+	reached := map[string]bool{} // modules the walk yielded a .go file in
 	ruled := map[string]bool{}   // and then parsed one this rule applies to
 	paths, modules := treeWalk(t)
 	for _, path := range paths {
-		reached[filepath.Dir(path)] = true
+		reached[owningModule(filepath.Dir(path), modules)] = true
 		fset := gotoken.NewFileSet()
 		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
 		if err != nil {
@@ -87,7 +87,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 			continue
 		}
 		files++
-		ruled[filepath.Dir(path)] = true
+		ruled[owningModule(filepath.Dir(path), modules)] = true
 		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
 			t.Error(s)
 		}
@@ -115,11 +115,11 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// same mistake.
 	for _, mod := range modules {
 		switch {
-		case !anyUnder(reached, mod):
+		case !reached[mod]:
 			t.Errorf("the walk yielded no .go file under %q, which is a module of this "+
 				"tree: a guard that stops at a module boundary reports green for code "+
 				"it never read", mod)
-		case !anyUnder(ruled, mod):
+		case !ruled[mod]:
 			t.Errorf("every .go file under %q was skipped — it did not parse, or it is "+
 				"generated — so this guard read the module and ruled on none of it. "+
 				"That is not the prune the case above is about, and it is not "+
@@ -183,30 +183,40 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 	return files, moduleDirs
 }
 
-// anyUnder reports whether any parsed file's directory is dir or beneath
-// it. A module whose own directory holds no .go file — only packages
-// below it — is still covered.
+// owningModule is the module a parsed file belongs to: the longest
+// directory holding a go.mod that contains dir. A module whose own
+// directory holds no .go file — only packages below it — is still
+// covered, because every one of those packages attributes back to it.
 //
-// THE ROOT MODULE IS ITS OWN CASE, and without this arm the sentence
-// above was false for exactly one module — the one the guard lives in.
-// filepath.WalkDir(".") yields paths with no "./" prefix, so
-// filepath.Dir("input/paste.go") is "input", and for dir == "." the
-// prefix test asked for "./…", which nothing the walk produces can
-// match. Measured: anyUnder({"input": true}, ".") answered false. It
-// fails CLOSED, so it was a latent spurious failure rather than a silent
-// pass — but a derived floor quietly meaning something narrower than its
-// own comment, inside the test whose thesis is that derived floors beat
-// written-down ones, is the finding. Raised in review of #503.
-func anyUnder(seen map[string]bool, dir string) bool {
-	if dir == "." {
-		return len(seen) > 0
-	}
-	for d := range seen {
-		if d == dir || strings.HasPrefix(d, dir+string(filepath.Separator)) {
-			return true
+// NEAREST ENCLOSING, not "anywhere under", and the difference is the
+// whole floor. The first version asked "did the walk yield a file
+// somewhere beneath this module's directory", which every nested module
+// answers for the root module too: `mcp/server.go` sits under ".", so
+// the root module's entry was satisfied by code the root module does not
+// contain, and the arm collapsed into a restatement of the files == 0
+// check above. The same prefix logic would let a module nested inside
+// another module's directory satisfy its PARENT's entry — latent today
+// (no go.mod directory in this tree is a strict prefix of another except
+// ".") and live the day somebody adds one. Attributing to the longest
+// prefix closes both at once. Raised in review of #503.
+//
+// The root module is the fallback rather than a special case: "." is a
+// prefix of everything, and is the shortest, so it wins only where no
+// nested module claims the file. filepath.WalkDir(".") yields paths with
+// no "./" prefix, which is why the containment test cannot be a plain
+// strings.HasPrefix against dir + separator for "." — it would ask for
+// "./…", and nothing the walk produces matches that.
+func owningModule(dir string, moduleDirs []string) string {
+	owner := ""
+	for _, m := range moduleDirs {
+		if m != "." && dir != m && !strings.HasPrefix(dir, m+string(filepath.Separator)) {
+			continue
+		}
+		if len(m) > len(owner) {
+			owner = m
 		}
 	}
-	return false
+	return owner
 }
 
 // TestTheDocCommentGuardCatchesWhatItIsFor is the arm that makes the
@@ -826,26 +836,40 @@ func (x ValueKind) Enum() *ValueKind { return &x }
 // a string nobody asserts. Raised in review of #503.
 func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	// THE ROOT MODULE. Its directory is ".", and the walk never emits a
-	// "./" prefix, so the prefix arm alone answered false for a tree
-	// whose every file is in a subdirectory — which is every tree except
-	// this one, where a .go file happens to sit in the repo root.
-	if !anyUnder(map[string]bool{"input": true}, ".") {
-		t.Error("a file parsed under input/ does not count as covering the root " +
-			"module, so the floor means \"a .go file sits in the repo root\" rather " +
-			"than what anyUnder's comment says")
+	// "./" prefix, so a plain prefix test answers false for a tree whose
+	// every file is in a subdirectory — which is every tree except this
+	// one, where a .go file happens to sit in the repo root.
+	mods := []string{".", "apps/gitui", "mcp"}
+	if got := owningModule("input", mods); got != "." {
+		t.Errorf("a file parsed under input/ is attributed to %q, not the root "+
+			"module, so the floor means \"a .go file sits in the repo root\" rather "+
+			"than what owningModule's comment says", got)
 	}
-	if anyUnder(map[string]bool{}, ".") {
-		t.Error("an empty walk covers the root module, which would make the floor " +
-			"pass over a walk that parsed nothing")
+	// AND IT IS NOT SATISFIED BY SOMEBODY ELSE'S CODE. This is the arm
+	// the first version could not have: under "anywhere beneath", every
+	// nested module's files covered "." as well, so the root module —
+	// the one this guard lives in — had no independent entry at all.
+	if got := owningModule("apps/gitui", mods); got == "." {
+		t.Error("a file in the apps/gitui module is attributed to the root module, " +
+			"so the root module's floor entry is satisfied by code it does not contain")
 	}
-	if !anyUnder(map[string]bool{"mcp/cmd/server": true}, "mcp") {
-		t.Error("a file parsed under mcp/cmd/server does not count as covering the " +
-			"mcp module, so a module whose own directory holds no .go file is not " +
-			"covered after all")
+	if got := owningModule("mcp/cmd/server", mods); got != "mcp" {
+		t.Errorf("a file parsed under mcp/cmd/server is attributed to %q rather than "+
+			"the mcp module, so a module whose own directory holds no .go file is "+
+			"not covered after all", got)
 	}
-	if anyUnder(map[string]bool{"mcpx": true}, "mcp") {
+	if got := owningModule("mcpx", mods); got == "mcp" {
 		t.Error("a sibling directory whose name merely starts with the module's " +
 			"counts as covering it")
+	}
+	// NESTED MODULES, which this tree does not have today. The floor's
+	// stated virtue is that a module added tomorrow is covered without
+	// anyone editing this test, and a module added tomorrow INSIDE an
+	// existing one is the case the prefix version got wrong.
+	nested := []string{".", "apps/gitui", "apps/gitui/plugin"}
+	if got := owningModule("apps/gitui/plugin/cmd", nested); got != "apps/gitui/plugin" {
+		t.Errorf("a file in a module nested inside another is attributed to %q, so "+
+			"the parent's floor entry is satisfied by its child's files", got)
 	}
 
 	// THE HINT. `go doc` cannot answer for a _test.go file, and much of
