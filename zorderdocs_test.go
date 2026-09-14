@@ -140,9 +140,11 @@ func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []stri
 // signature as a testing.TB.
 //
 // PARALLEL OVER THE FILES, because between them these two guards are
-// the most expensive thing in the root package — 11.9s of 26s for the
-// paint one alone, measured — and the work is embarrassingly parallel:
-// read a file, match it, produce findings. Nothing shared is written.
+// the most expensive thing in the root package, and the work is
+// embarrassingly parallel: read a file, match it, produce findings.
+// Nothing shared is written. What the numbers were when that was
+// decided is in retiredRuleProblems, with the warning that comes with
+// them.
 // The per-file findings land in a slice INDEXED BY FILE and are
 // concatenated after the join, so a failing run names its files in tree
 // order rather than in scheduler order — a test whose output reshuffles
@@ -194,26 +196,43 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 		// .go/.md/.gooey file in the tree. Raised in review of #458,
 		// with a claim that this drops the cost "to near-nothing".
 		//
-		// IT DOES NOT, AND THE MEASURED NUMBERS ARE HERE so the next
-		// person does not repeat the two attempts. Walk plus read plus
-		// this filter is 113ms of it; the rest is the regex loop.
-		// Substring filtering took the pair of tests from ~4.5s to
-		// ~3.6s — real, but far from nothing, because 512 of 788 files
-		// contain "order" in a repo whose docs are largely about
-		// ordering.
+		// IT DOES NOT, and the ORDER of the three attempts is what is
+		// worth keeping, so the next person does not repeat them:
 		//
-		// Prefiltering with retiredRule ITSELF — which is the version
-		// that cannot drift out of step with the pattern list — was
-		// tried and is WORSE, 5.6s: it scans all 7MB with every pattern
-		// and then the per-line loop scans the matches again. The cheap
-		// inexact filter beats the exact one here.
+		//   - Substring prefiltering helped, but modestly: the loop is
+		//     the cost, and this tree's own vocabulary defeats the
+		//     filter. Most files pass it.
+		//   - Prefiltering with retiredRule ITSELF — the version that
+		//     cannot drift out of step with the pattern list — was
+		//     WORSE than the inexact filter, scanning the whole tree
+		//     with every pattern and then scanning the matches again.
+		//   - What actually moved the number was running the files in
+		//     PARALLEL, not filtering harder. The filter is still worth
+		//     keeping, because it is what makes each worker cheap.
 		//
-		// WHAT ACTUALLY MOVED THE NUMBER was running the files in
-		// parallel, not filtering harder: 11.9s to 1.4s. The filter is
-		// still worth keeping — it is what makes each worker cheap —
-		// but the numbers above are the reason to stop tuning it. Both
-		// measurements stay because the second is only interesting
-		// against the first.
+		// NO SECONDS ARE WRITTEN HERE ANY MORE, and that is the fix
+		// rather than an omission. This comment carried four timings and
+		// two file counts taken on one machine in one week; by review of
+		// #458's third round every one of them was wrong — the pair of
+		// tests had roughly doubled against a package that had also
+		// grown, and "512 of 788 files contain order" had become 437 of
+		// 813, which moves the percentage the wrong way while the
+		// sentence reads unchanged. A reader cannot tell a stale sample
+		// from a regression, which is the one thing a performance note
+		// is for. Re-measure instead, in one command:
+		//
+		//	go test . -run 'TestNoFileTeachesTheRetired(Overlay|Input)Rule' -v
+		//
+		// THE INPUT PLANE'S FILTER IS MUCH LOOSER THAN THE PAINT ONE'S,
+		// which is a property of the words and not of the tree, so it
+		// does belong here. inputPrefilterWords holds "hit" and "press",
+		// and this is a substring match: "architecture" contains "hit"
+		// and "expression" contains "press". Roughly seven files in ten
+		// reach the loop on that plane against roughly five in ten on
+		// the paint one. Anchoring the words would cut that, and would
+		// also silently drop the compound spellings the loop is there to
+		// read — so the filter stays inexact and the parallelism, not
+		// the filter, is what pays for it. Raised in review of #458.
 		//
 		// So this stays — and the words it gates on are now a named list
 		// that a test CHECKS against every sample retiredRule is pinned

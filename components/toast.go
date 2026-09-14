@@ -175,6 +175,14 @@ func (h *ToastHost) PassesCellsThrough() {}
 // declared last; it is true from everywhere now. A three-second toast
 // over a button is three seconds of that button being unclickable.
 //
+// AND UNHOVERABLE, which this paragraph said nothing about until review
+// of #458. DispatchMouse walks the tree ONCE and derives both answers
+// from it — `hit` for AllowPointer, `hov` for AllowHover, off the same
+// `under` — so a component that takes the press takes the hover with
+// it. The covered button does not light up, its tooltip never shows, and
+// unlike the swallowed click there is no gesture for a user to repeat
+// and notice. Press is the loud half of one fact, not the whole of it.
+//
 // This is deliberate and consistent with paint — a component that owns
 // the cells owns the clicks in them, which is the rule everywhere else
 // in the framework — so the transparency is not being widened here.

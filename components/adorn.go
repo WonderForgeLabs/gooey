@@ -278,9 +278,13 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // THE LAYER'S TRANSPARENCY DOES NOT REACH ITS CHILDREN, and this is the
 // cost paragraph ToastHost carries, read at the rank above it. Since
 // #465 FocusManager.HitTest answers by overlay layer first, then rank,
-// then document order — so an adornment takes the press from anything
-// it covers no matter where either was declared, and OverlayRankAdornment
-// is the TOP rank (component.go), above popups and above toasts. The
+// then document order — so an adornment takes the press, AND THE HOVER
+// WITH IT, from anything it covers no matter where either was declared.
+// One walk answers both: DispatchMouse derives `hit` and `hov` from the
+// same `under`, so an opaque adornment also costs the covered field its
+// tooltip and its hover highlight, which is the half of this nobody
+// sees happen. OverlayRankAdornment is the TOP rank (component.go),
+// above popups and above toasts. The
 // layer being transparent only means the layer's own empty cells are;
 // each adornment decides for itself.
 //
@@ -298,8 +302,8 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // exported and Adornment is an interface, so one written outside this
 // package that simply omits the method is opaque, and nothing says so at
 // the point of writing it — no load error, no vet, no test. It would
-// take the press over the field it is pinned beside, at the top rank,
-// silently. That residue is the reason the remedy below is the right
+// take the press and the hover over the field it is pinned beside, at
+// the top rank, silently. That residue is the reason the remedy below is the right
 // one; a guard over this package's own types is the half that can be
 // enforced here.
 //
