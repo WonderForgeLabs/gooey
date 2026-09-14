@@ -256,31 +256,42 @@ func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 // a page, and coupled the error's wording to prose with nothing pinning
 // it as error copy.
 //
-// ParsedBy is the half worth keeping, because it names the reader:
-// "<MenuBar> reads <Menu> as data" tells an author where the attribute
-// went. It reaches here because ElementSpec now carries the field —
-// before #486 the type did not have it, so this function could only
-// ever return the generic clause however the def was declared.
+// THE CONTAINER, NOT THE PARSER, and the two are not always the same
+// element. This asked ParsedBy first, which is the field that names the
+// BUILDER — "<MenuBar> reads <Menu> as data" — and for <MenuItem> that
+// made one element name two different containers across the two load
+// errors an author can hit on it:
 //
-// AND THE CATALOG KNOWS BY A SECOND ROUTE, which is what <Tab> needs —
-// the element this branch exists for, which was getting the vaguer
-// clause. defTab carries Opaque rather than ParsedBy, so the lookup
-// above misses it; the element whose Children.Only names <Tab> is
-// <Tabs>, and that is the same answer.
+//	<MenuBar><Menu><MenuItem Margin="2"/>  → <MenuBar> reads <MenuItem> as data…
+//	<VStack><MenuItem Margin="2"/>         → <MenuItem> is only valid directly inside <Menu>
 //
-// ParsedBy is not simply added to defTab, and this is the trap: it
-// would make catalogen red. checkPseudoPool pools d.declared across a
-// host's parsed elements, <Tab> declares nothing (Known: false), and
-// buildTabs reads "Header" off its children — so the pool check would
-// report <Tabs> reading an attribute no <Tabs>-parsed element declares.
-// Opaque is <Tab>'s annotation precisely because its surface is not
-// enumerable. Raised in review of #486 round 2.
+// Both sentences are true and they answer different questions, which is
+// exactly why they may not disagree: an author who hits the first and
+// moves the element to a <MenuBar> hits the second. The placement error
+// has no choice about which container it names — <Menu> is the only true
+// answer to "where does this go" — so this clause is the half that
+// moves. Raised in review of #486.
+//
+// ParsedBy stays what it is and is not edited to agree: it names the
+// element whose Build consumes this one, catalogen resolves the
+// attribute-drift check through it, and buildMenuBar genuinely walks
+// both levels. It is the fallback here for a pseudo-element no container
+// names, which is a declaration nothing can reach today (markNested) and
+// a shape a host may still register.
+//
+// namingParent answers for <Tab>, the element this branch exists for and
+// the one ParsedBy cannot carry: defTab declares nothing (Known: false)
+// and buildTabs reads "Header" off its children, so a ParsedBy on it
+// would make catalogen's checkPseudoPool report <Tabs> reading an
+// attribute no <Tabs>-parsed element declares. Opaque is <Tab>'s
+// annotation precisely because its surface is not enumerable. Raised in
+// review of #486 round 2.
 func readsAsData(spec ElementSpec, ctx *Context) string {
-	if spec.ParsedBy != "" {
-		return fmt.Sprintf("<%s> reads <%s> as data, ", spec.ParsedBy, spec.Name)
-	}
 	if p := namingParent(spec.Name, ctx); p != "" {
 		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
+	}
+	if spec.ParsedBy != "" {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", spec.ParsedBy, spec.Name)
 	}
 	return fmt.Sprintf("<%s>'s parent reads it as data, ", spec.Name)
 }
@@ -323,6 +334,17 @@ func namingParent(name string, ctx *Context) string {
 // spelled per element, so a fourth pseudo-element is covered by the
 // rule instead of by somebody remembering it. Raised in review of #486
 // round 2.
+//
+// THE DEFAULT ARM IS <Tab>'S LIVE PATH, and it was the one arm with no
+// sentence on it. ModeUnknown accompanies an opaque element, and <Tab>
+// is the only one in the catalog: its content is arbitrary markup that
+// <Tabs> builds as a page, so "put it on the content inside" is a real
+// destination and the remedy is right. It reads as a fallthrough and is
+// a decision — an opaque element's content is unknown, not absent, and
+// withholding advice on "unknown" would leave the one pseudo-element
+// with a genuine destination the only one not told about it. ModeOne,
+// ModeMany and ModeAttachments land here too and want the same answer
+// for the same reason; no pseudo-element carries one today.
 //
 // These three declarations each had their own paragraph and no blank
 // comment line between them, so godoc rendered one block on

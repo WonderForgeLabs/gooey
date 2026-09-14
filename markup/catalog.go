@@ -585,6 +585,19 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // AttrsFor is the package-level AttrsFor with the parent already
 // resolved — the same join, reached without a registry lookup. See
 // AttachedAttrs above for why a Context consumer needs this form.
+//
+// THE AGREEMENT WITH THE LOADER IS ONE-DIRECTIONAL, and the sentence
+// below about the two gates having to agree states the half that holds.
+// Nothing this offers fails to load: the TakesLayout gate here and
+// Context.vocabulary's are the same predicate on the same spec. The
+// converse is not guarded and cannot be from here — TakesLayout reads
+// HasLayout, which ElementDef.axes derives from the PROTO, so a HOST's
+// def with a real Build and no Proto answers false while build() runs
+// applyLayout on the component that Build returns. With AttrsKnown
+// false, checkAttrs stands down and <Host Margin="2"> loads with the
+// margin honoured, and this offers no row for it. Measured both ways in
+// TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne, which is
+// also what will go red if somebody closes it. Raised in review of #486.
 func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {

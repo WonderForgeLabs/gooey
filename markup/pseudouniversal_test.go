@@ -2,6 +2,8 @@ package markup
 
 import (
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -488,6 +490,114 @@ func TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals(t *testing.T) {
 	}
 }
 
+// TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne is the OTHER
+// side of the shape above, and it is the direction Grant.AttrsFor's
+// comment did not have.
+//
+// That comment says the grid's gate and the loader's "must agree or the
+// grid offers a row that fails to load", and one direction is guarded:
+// AttrsFor withholds on !TakesLayout and Context.vocabulary refuses on
+// the same predicate, so nothing offered is refused. The converse is not
+// guarded and cannot be from here. TakesLayout reads HasLayout, which
+// ElementDef.axes derives from the PROTO — so a host def with a real
+// Build and no Proto answers false, while build() runs applyLayout on
+// whatever its Build returns and the component really does satisfy
+// gooey.HasLayout. Measured, both arms:
+//
+//	Known: true   → <Host Margin="2"> is a load error, and no Margin row.
+//	Known: false  → it LOADS with Margin={2 2 2 2}, and still no Margin row.
+//
+// The second is an attribute the loader honours that the designer cannot
+// show — the same class of invisibility #461 was, one gate over, and
+// not closable at the catalog layer: without a Proto there is nothing to
+// ask, which is what AttrsKnown already says about the element's own
+// attributes. So it is stated and pinned rather than fixed, and the pin
+// is what keeps the comment honest. Raised in review of #486.
+func TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne(t *testing.T) {
+	hostDef := func(known bool) map[string]*ElementDef {
+		return map[string]*ElementDef{"LogPane": {
+			Name:  "LogPane",
+			Known: known,
+			Doc:   "A host element with a real Build and no Proto.",
+			Attrs: []AttrSpec{{Name: "Title", Kind: KindString, Origin: OriginBuiltin}},
+			Build: func(e Element, ctx *Context) (gooey.Component, error) {
+				return &components.Text{}, nil
+			},
+		}}
+	}
+	offers := func(spec ElementSpec, name string) bool {
+		for _, a := range spec.Grants.AttrsFor(spec) {
+			if a.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	// THE GUARDED DIRECTION. An enumerable host def refuses the row at
+	// load exactly where the grid withholds it, which is the agreement
+	// the comment claims.
+	ctx := &Context{Elements: hostDef(true)}
+	spec, ok := ctx.spec("LogPane")
+	if !ok {
+		t.Fatal("the fixture did not resolve")
+	}
+	if offers(spec, "Margin") {
+		t.Error("the grid offers a Margin row for an element whose declared " +
+			"surface takes no layout")
+	}
+	if _, err := Build([]byte(`<Gooey><LogPane Title="t" Margin="2"/></Gooey>`), ctx); err == nil {
+		t.Error("an enumerable host def accepted Margin while the grid " +
+			"withheld the row, so the two gates no longer agree in the " +
+			"direction that IS guarded")
+	}
+
+	// AND THE UNGUARDED ONE. Drop AttrsKnown and checkAttrs stands down —
+	// the element's own vocabulary is genuinely unknown — but the
+	// universal set is not the element's, and applyLayout honours it off
+	// the built component's type.
+	ctx = &Context{Elements: hostDef(false)}
+	spec, ok = ctx.spec("LogPane")
+	if !ok {
+		t.Fatal("the fixture did not resolve")
+	}
+	if TakesLayout(spec) {
+		t.Fatal("the fixture is not the discriminating shape: a def with no " +
+			"Proto reports TakesLayout, so both gates would agree about it")
+	}
+	root, err := Build([]byte(`<Gooey><LogPane Title="t" Margin="2"/></Gooey>`), ctx)
+	if err != nil {
+		t.Fatalf("the unenumerable host def now refuses Margin, which would "+
+			"close this gap — update the comment on Grant.AttrsFor with it: %v", err)
+	}
+	var pane gooey.Component
+	var walk func(c gooey.Component)
+	walk = func(c gooey.Component) {
+		if _, isText := c.(*components.Text); isText {
+			pane = c
+		}
+		if cc, isC := c.(gooey.Container); isC {
+			for _, k := range cc.ChildComponents() {
+				walk(k)
+			}
+		}
+	}
+	walk(root)
+	if pane == nil {
+		t.Fatal("the host element built nothing findable, so the layout it " +
+			"was given cannot be read back")
+	}
+	if m := pane.(gooey.HasLayout).LayoutProps().Margin; m.L != 2 {
+		t.Errorf("Margin reached no layout (%+v), so the loader does not in "+
+			"fact honour what the grid withholds", m)
+	}
+	if offers(spec, "Margin") {
+		t.Error("the grid now offers the Margin row the loader honours, which " +
+			"closes the gap — delete the second half of Grant.AttrsFor's " +
+			"comment about only one direction being guarded")
+	}
+}
+
 // TestAMisplacedPseudoElementReportsItsPlacement is finding 1 of #486's
 // round 1, and the defect it pins is a RIGHT ANSWER TO THE WRONG
 // QUESTION.
@@ -557,12 +667,21 @@ func TestAMisplacedPseudoElementReportsItsPlacement(t *testing.T) {
 // The PROPERTY is asserted rather than the wording. Pinning the sentence
 // is what made TestAPseudoElementRefusesName go red for an improvement,
 // and this file should not repeat it one function over.
+//
+// BOTH DIRECTIONS, and the second one is why <Tab> is no longer skipped.
+// This began as "an element with no destination must prescribe none" and
+// `continue`d on everything else — so the element that takes
+// acceptsAUniversal's default arm, the only ModeUnknown one in the
+// catalog, was the one element the test named for the property never
+// looked at. The converse is the same claim read the other way: an
+// element whose content WOULD accept the attribute and whose refusal
+// prescribes nothing withholds working advice, which is the failure
+// reservedOnContent exists to make deliberate rather than accidental.
+// Raised in review of #486.
 func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
-	var checked int
+	var withheld, prescribed int
 	for _, sp := range pseudoSpecs(t) {
-		if acceptsAUniversal(t, sp) {
-			continue
-		}
+		accepts := acceptsAUniversal(t, sp)
 		tc := wholeLoadCases[sp.Name]
 		if tc.onPseudo == "" {
 			t.Errorf("<%s> has no onPseudo template, so this can only check the "+
@@ -576,25 +695,51 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 		// attributes on one element can want different answers. Raised
 		// in review of #486.
 		for _, u := range universalAttrs {
-			checked++
 			attr := fmt.Sprintf("%s=%q", u.Name, validLiteralFor(t, "Border", u))
 			_, err := Build([]byte(fmt.Sprintf(tc.onPseudo, attr)), &Context{})
 			if err == nil {
 				t.Errorf("<%s %s> was not refused at all", sp.Name, attr)
 				continue
 			}
-			if strings.Contains(err.Error(), contentRemedy) {
-				t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
-					"refusal tells the author to put the attribute on the content "+
-					"inside — a remedy whose destination refuses it too:\n\t%v",
+			offered := strings.Contains(err.Error(), contentRemedy)
+			if !accepts {
+				withheld++
+				if offered {
+					t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
+						"refusal tells the author to put the attribute on the content "+
+						"inside — a remedy whose destination refuses it too:\n\t%v",
+						sp.Name, sp.Children.Mode, u.Name, err)
+				}
+				continue
+			}
+			if _, reserved := reservedOnContent[sp.Name][u.Name]; reserved {
+				// A CONSIDERED EXCEPTION, which carries its own sentence
+				// instead of the remedy. The other direction of that
+				// table — a reservation whose destination would in fact
+				// have accepted the attribute — is asserted in
+				// TestTheContentRemedyIsAPlaceThatAccepts.
+				continue
+			}
+			prescribed++
+			if !offered {
+				t.Errorf("<%s>'s content (%s) would accept %s, and its refusal "+
+					"prescribes nowhere to put it — the author is told the "+
+					"attribute went nowhere and left to guess the destination "+
+					"the catalog already knows:\n\t%v",
 					sp.Name, sp.Children.Mode, u.Name, err)
 			}
 		}
 	}
-	if checked == 0 {
+	if withheld == 0 {
 		t.Fatal("every pseudo-element in the catalog can host a universal " +
-			"somewhere inside, so this test ranged over nothing. It is not a " +
-			"pass — either the modes moved or the filter is wrong")
+			"somewhere inside, so the withholding direction ranged over " +
+			"nothing. It is not a pass — either the modes moved or the " +
+			"predicate is wrong")
+	}
+	if prescribed == 0 {
+		t.Fatal("no pseudo-element in the catalog can host a universal inside " +
+			"it, so the prescribing direction ranged over nothing — which is " +
+			"how <Tab> came to be skipped by the test named for this property")
 	}
 }
 
@@ -607,6 +752,15 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 // something addressable. ModeRestricted holds a named set — and if every
 // name in it is a pseudo-element, the content inside refuses the
 // attribute for exactly the reason the outer element did.
+//
+// THE DEFAULT ARM IS ModeUnknown AND IT IS <Tab>'S, which is the arm
+// this helper was written with no sentence on — mirroring pseudoRemedy's
+// own undocumented default. An opaque element's content is UNKNOWN, not
+// absent: <Tabs> builds a <Tab>'s children as a page, so they are
+// ordinary components and a universal lands on them. Answering "true"
+// here is therefore a claim, not a fallthrough, and the caller now
+// asserts BOTH directions of it rather than skipping the element that
+// takes this arm. Raised in review of #486.
 func acceptsAUniversal(t *testing.T, sp ElementSpec) bool {
 	t.Helper()
 	switch sp.Children.Mode {
@@ -635,17 +789,24 @@ func acceptsAUniversal(t *testing.T, sp ElementSpec) bool {
 // skipped, and it was getting the generic "its parent reads it as data"
 // clause. Raised in review of #486 round 2.
 //
-// legalParent is the second route, and it is the SAME derivation
-// readsAsData falls back to: the ModeRestricted element whose
-// Children.Only names this one. Using the test's own helper rather than
-// calling namingParent keeps this an independent statement of the
-// answer instead of an echo of the implementation.
+// legalParent is the derivation, and the order matters: this read
+// sp.ParsedBy FIRST, which is the very field the message splices in, so
+// for every element carrying one the assertion was `the message contains
+// the string the message was built from` and could not see a wrong
+// value. <MenuItem>'s was wrong — "MenuBar", where the element's own
+// placement error says <Menu> — and this test was green over it.
+// Containment is the independent answer: the ModeRestricted element
+// whose Children.Only names this one, read from the catalog rather than
+// by calling namingParent, so it states the answer instead of echoing
+// the implementation. ParsedBy is the fallback for a pseudo-element no
+// container names, which is the same order readsAsData now uses.
+// Raised in review of #486.
 func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 	var checked int
 	for _, sp := range pseudoSpecs(t) {
-		want := sp.ParsedBy
+		want := legalParent(t, sp)
 		if want == "" {
-			want = legalParent(t, sp)
+			want = sp.ParsedBy
 		}
 		checked++
 		tc := wholeLoadCases[sp.Name]
@@ -664,6 +825,82 @@ func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no pseudo-element in the catalog, so this test ranged over " +
 			"nothing")
+	}
+}
+
+// elementTagRe matches an element name as a load error spells it, which
+// is an opening angle bracket and a capitalised identifier. Attribute
+// values are quoted and never reach it.
+var elementTagRe = regexp.MustCompile(`<([A-Z][A-Za-z0-9]*)`)
+
+// elementsNamed is every <Element> a message mentions except the subject
+// itself — the containers it points the author at.
+//
+// Over the MESSAGE rather than over the catalog, because the claim below
+// is about what two sentences say and not about what either was built
+// from. A derivation from ParsedBy or from Children.Only would agree
+// with whichever of the two it was derived from and see nothing.
+func elementsNamed(msg, except string) []string {
+	seen := map[string]bool{}
+	for _, m := range elementTagRe.FindAllStringSubmatch(msg, -1) {
+		if m[1] != except {
+			seen[m[1]] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestAPseudoElementNamesOneContainerInBothOfItsLoadErrors is the cross
+// check neither message could make about itself.
+//
+// A pseudo-element has two refusals an author can hit, and they are
+// reached from opposite mistakes: carry a universal in the RIGHT
+// container and the attribute is refused with a reason clause naming who
+// reads the element; put the element in the WRONG container and its own
+// Build refuses the placement, naming where it belongs. Both were
+// derived from a different field — the reason clause from ParsedBy, the
+// placement from a literal in the def — so nothing compared them, and
+// <MenuItem> named <MenuBar> in one and <Menu> in the other. An author
+// who followed the first landed on the second. Measured before the fix,
+// both messages, and it is the only instrument that can see it: every
+// guard over either sentence alone reads the field that sentence was
+// built from. Raised in review of #486.
+func TestAPseudoElementNamesOneContainerInBothOfItsLoadErrors(t *testing.T) {
+	var checked int
+	for _, sp := range pseudoSpecs(t) {
+		tc := wholeLoadCases[sp.Name]
+		_, refused := Build([]byte(tc.refused), &Context{})
+		_, misplaced := Build([]byte(tc.misplaced), &Context{})
+		if refused == nil || misplaced == nil {
+			t.Errorf("<%s>: one of its two documents loaded, so there is no pair "+
+				"to compare (refused=%v misplaced=%v)", sp.Name, refused, misplaced)
+			continue
+		}
+		checked++
+		inRefusal := elementsNamed(refused.Error(), sp.Name)
+		inPlacement := elementsNamed(misplaced.Error(), sp.Name)
+		if len(inRefusal) == 0 || len(inPlacement) == 0 {
+			t.Errorf("<%s>: one of its two refusals names no container at all, so "+
+				"the author is told something went wrong and not where to look:\n"+
+				"\tattribute: %v\n\tplacement: %v", sp.Name, refused, misplaced)
+			continue
+		}
+		if strings.Join(inRefusal, ",") != strings.Join(inPlacement, ",") {
+			t.Errorf("<%s> names %v when its attribute is refused and %v when its "+
+				"placement is, so the two errors send the author to different "+
+				"containers — and following the first is how the second is "+
+				"reached:\n\tattribute: %v\n\tplacement: %v",
+				sp.Name, inRefusal, inPlacement, refused, misplaced)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no pseudo-element produced both refusals, so this test ranged " +
+			"over nothing")
 	}
 }
 
