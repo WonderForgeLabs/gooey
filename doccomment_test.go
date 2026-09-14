@@ -250,17 +250,41 @@ func TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery(t *testing.T) {
 // no "./" prefix, which is why the containment test cannot be a plain
 // strings.HasPrefix against dir + separator for "." — it would ask for
 // "./…", and nothing the walk produces matches that.
+//
+// "SHORTEST" IS prefixLen's ANSWER, NOT len's. This compared len(m)
+// until review of #503, and len(".") is 1 — so the root module TIED with
+// any single-character top-level module directory and, being first in
+// the sorted list, won. `z/foo.go` would have attributed to the root
+// module, satisfying the root's floor entry with code it does not
+// contain: the exact defect the paragraph above says the longest-prefix
+// rule closes, reintroduced by the one directory name that is spelled
+// with a character and matches none.
 func owningModule(dir string, moduleDirs []string) string {
-	owner := ""
+	owner, found := "", false
 	for _, m := range moduleDirs {
 		if m != "." && dir != m && !strings.HasPrefix(dir, m+string(filepath.Separator)) {
 			continue
 		}
-		if len(m) > len(owner) {
-			owner = m
+		// `found` rather than comparing against owner's zero value: the
+		// root module's prefix length IS zero, so `prefixLen(m) >
+		// prefixLen(owner)` alone would never select it and every file
+		// outside a nested module would attribute to "".
+		if !found || prefixLen(m) > prefixLen(owner) {
+			owner, found = m, true
 		}
 	}
 	return owner
+}
+
+// prefixLen is how much of a path a module directory actually claims.
+// For every module but the root that is its length; for "." it is zero,
+// because the root module's directory is spelled with a character and
+// matches none of them.
+func prefixLen(m string) int {
+	if m == "." {
+		return 0
+	}
+	return len(m)
 }
 
 // TestTheDocCommentGuardCatchesWhatItIsFor is the arm that makes the
@@ -1011,6 +1035,30 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	if got := owningModule("mcpx", mods); got == "mcp" {
 		t.Error("a sibling directory whose name merely starts with the module's " +
 			"counts as covering it")
+	}
+	// A ONE-CHARACTER MODULE DIRECTORY, which is where "shortest" stops
+	// being a figure of speech. "." is spelled with one character and
+	// claims none of the path, so measuring it with len made it TIE with
+	// a top-level module named `z` — and the root, sorting first, took
+	// the file. This tree has no such module, which is why the tie could
+	// sit here unnoticed; the fixture supplies one. Raised in review of
+	// #503.
+	short := []string{".", "z"}
+	if got := owningModule("z", short); got != "z" {
+		t.Errorf("a file in the single-character module z/ is attributed to %q; "+
+			"the root module's directory is one character long too, so a length "+
+			"comparison cannot tell the shortest prefix from the shortest name", got)
+	}
+	if got := owningModule("z/cmd/tool", short); got != "z" {
+		t.Errorf("a file under z/cmd/tool is attributed to %q rather than the z "+
+			"module", got)
+	}
+	// AND THE ROOT STILL WINS WHEN NOTHING ELSE CLAIMS THE FILE — the
+	// half a prefixLen that simply returns 0 would break, since owner's
+	// zero value measures 0 as well.
+	if got := owningModule("input", short); got != "." {
+		t.Errorf("a file under input/ is attributed to %q rather than the root "+
+			"module, so the fallback stopped being reachable", got)
 	}
 	// NESTED MODULES, which this tree does not have today. The floor's
 	// stated virtue is that a module added tomorrow is covered without
