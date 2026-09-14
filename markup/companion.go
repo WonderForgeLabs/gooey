@@ -165,8 +165,8 @@ func checkCompanionAttrs(e Element) error {
 // companionPath resolves the executable. A bare name goes through
 // exec.LookPath so a binary that is not installed is a LOAD error naming
 // it, rather than a start failure behind a screen that is already up. A
-// pathful one is resolved against the document's directory and made
-// absolute: exec.Cmd resolves a relative Path against Dir, so leaving it
+// pathful one is resolved against the PAGE's directory (Context.Dir,
+// which a control inherits — see its doc) and made absolute: exec.Cmd resolves a relative Path against Dir, so leaving it
 // relative would silently mean two different files depending on whether
 // Dir was also set.
 func companionPath(e Element, ctx *Context, name string) (string, error) {
@@ -215,10 +215,15 @@ func absPath(p, name, raw string) (string, error) {
 	return abs, nil
 }
 
-// companionDir resolves the working directory against the document's own
-// directory — see Context.Dir. A path in a configuration file that means
-// something different depending on where the binary was launched from is
-// a bug generator.
+// companionDir resolves the working directory against the PAGE's
+// directory — Context.Dir, which a control inherits rather than
+// replacing, so a <Companion> inside a UserControl loaded from another
+// FS still runs where the app runs. This said "the document's own
+// directory" while pointing at the field that says otherwise, which is
+// the answer that stops being obvious exactly where a control's markup
+// and its host paths come from different places. Raised in review of
+// #490. A path in a configuration file that means something different
+// depending on where the binary was launched from is a bug generator.
 func companionDir(e Element, ctx *Context, name string) (string, error) {
 	raw := strings.TrimSpace(e.Attrs["Dir"])
 	if raw == "" {
@@ -235,7 +240,7 @@ func companionDir(e Element, ctx *Context, name string) (string, error) {
 	return p, nil
 }
 
-// companionLog resolves the output file, document-relative like Dir. The
+// companionLog resolves the output file, page-relative like Dir. The
 // file itself is opened (and truncated) when the child starts, not here:
 // a document that fails to load must not have destroyed a log on its way
 // out. Its DIRECTORY is checked now, because "no such directory" is the
@@ -267,10 +272,11 @@ func companionLog(e Element, ctx *Context, name string) (string, error) {
 	return p, nil
 }
 
-// hostPath resolves one host-side path against the document's directory.
+// hostPath resolves one host-side path against the PAGE's directory.
 // An absolute path is left alone; everything else is joined onto
-// Context.Dir, which is empty (the process's working directory) for a
-// document built from bytes.
+// Context.Dir — the page's at every depth, not the enclosing document's —
+// which is empty (the process's working directory) for a document built
+// from bytes.
 func (ctx *Context) hostPath(p string) string {
 	if filepath.IsAbs(p) || ctx.Dir == "" {
 		return filepath.Clean(p)

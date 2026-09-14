@@ -1266,8 +1266,18 @@ func TestEveryPrereqRowIsReached(t *testing.T) {
 		// the bind-only arm probes with, and it is the arm the table was
 		// added for; a row added for a different arm would need its own
 		// case here rather than a wider net.
+		// NOT A SKIP, because literalFor cannot return "" — every path
+		// falls through to "x", including KindEnum with an empty Enum.
+		// This was a `continue`, which reads as a coverage limit and is
+		// really a dead branch: the day literalFor gains an empty return,
+		// the row would drop out of this guard with nothing said, which
+		// is the silent skip everything else in this file routes through
+		// offHarness to prevent. Raised in review of #490.
 		value := literalFor(tg.attr)
 		if value == "" {
+			t.Errorf("literalFor has no literal for %s, so row %q cannot be "+
+				"probed and is unreached — give it one rather than letting the "+
+				"row leave the guard quietly", tg.attr.Kind, tg.attr.Name)
 			continue
 		}
 		checked++

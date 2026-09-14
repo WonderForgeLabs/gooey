@@ -1154,6 +1154,7 @@ func TestAPageRelativeAssetPathWorksInsideARow(t *testing.T) {
 			"below cannot be asked whether they built")
 	}
 	c := gooey.NewComposer(root, 40, 10)
+	t.Cleanup(c.Close)
 	c.Frame()
 	src.Set([]string{"a", "b", "c"})
 	c.Frame()

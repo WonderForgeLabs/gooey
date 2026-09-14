@@ -1657,11 +1657,67 @@ func identRe(leaf string) *regexp.Regexp {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(leaf) + `\b`)
 }
 
-// symbolDocs are the pages whose SYMBOL citations are checked. CLAUDE.md
-// and the markup reference both cite code by name now, and the second
-// one carries no `file:line` citation at all since #490 converted its
-// last — so without this it has no automated citation check of any kind.
-var symbolDocs = []string{claudeMD, "docs/markup-reference.md"}
+// symbolDocs are the pages whose SYMBOL citations are checked, and it is
+// DERIVED rather than written: every markdown file in the tree outside
+// the pruned directories, so a page that starts citing code by name is
+// covered the moment it does.
+//
+// It was a two-element list — CLAUDE.md and the markup reference — and a
+// hand-written list is the exact hole TestEveryCitingDocumentIsChecked
+// exists to close for the `file:line` form one function up. The symbol
+// form had no such reciprocal, so docs/architecture.md carried dozens of
+// package-qualified names that nothing resolved, and adding a document
+// to the tree added nothing to the coverage. Deriving is what CLAUDE.md's
+// Verify section prescribes for the same reason: a written list is stale
+// the first time someone adds one, silently. Raised in review of #490.
+func symbolDocs(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		slash := filepath.ToSlash(path)
+		if d.IsDir() {
+			switch {
+			case path == ".":
+				return nil
+			case strings.HasPrefix(d.Name(), "."), d.Name() == "vendor",
+				slash == "docs/specs", slash == "presentations":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".md" {
+			out = append(out, slash)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking for documents: %v", err)
+	}
+	// THE SAME PRUNE AS TestEveryCitingDocumentIsChecked, and the same
+	// floor: specs are dated records that describe the tree on their own
+	// date, and a prune eating the walk would make every citation check
+	// below vacuous at once.
+	if len(out) < 40 {
+		t.Fatalf("the walk found %d markdown files, which is too few for this "+
+			"tree — a prune is eating the documents", len(out))
+	}
+	return out
+}
+
+// fileSuffixes are the tails that make a `pkg.name` span a FILENAME
+// rather than a package-qualified symbol. `main.go`, `wizard.go` and
+// `control.py` all match symbolCiteRe — `main`, `control` and half the
+// tree's directories are real package names — and every one of them is
+// somebody writing a path, not a citation. Skipping them is what lets
+// the walk above cover the whole tree instead of a list of two.
+var fileSuffixes = map[string]bool{
+	"go": true, "py": true, "md": true, "sh": true, "yml": true,
+	"yaml": true, "json": true, "toml": true, "txt": true, "gooey": true,
+	"mod": true, "sum": true, "png": true, "gif": true, "svg": true,
+}
 
 // symbolCiteRe is a backticked, package-qualified Go name: one lowercase
 // package segment, a dot, one identifier.
@@ -1703,13 +1759,17 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	}
 
 	checked := 0
-	for _, doc := range symbolDocs {
+	docs := symbolDocs(t)
+	for _, doc := range docs {
 		b, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("reading %s: %v", doc, err)
 		}
 		for _, m := range symbolCiteRe.FindAllStringSubmatch(string(b), -1) {
 			pkg, name := m[1], m[2]
+			if fileSuffixes[name] {
+				continue // a path, not a citation — see fileSuffixes
+			}
 			syms, ours := declared[pkg]
 			if !ours {
 				continue // a stdlib or third-party name; not ours to check
@@ -1723,21 +1783,34 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 			}
 		}
 	}
-	// A FLOOR, not an exact count: this reads two whole documents rather
-	// than one section, and pinning the number would make every added
-	// sentence a test edit. Zero is the failure that matters — the
-	// pattern having drifted from how the documents spell a citation.
-	if checked < 10 {
+	// A FLOOR, not an exact count: this reads whole documents rather than
+	// one section, and pinning the number would make every added sentence
+	// a test edit. Zero is the failure that matters — the pattern having
+	// drifted from how the documents spell a citation. The floor rose
+	// with the derived set, which reads the whole tree.
+	if checked < 100 {
 		t.Errorf("only %d package-qualified symbol citations were resolved across "+
-			"%v, which is fewer than these documents carried when this guard was "+
-			"written — either they stopped citing code by name, or the pattern no "+
-			"longer matches the spelling they use", checked, symbolDocs)
+			"%d documents, which is fewer than this tree carried when the walk was "+
+			"derived — either they stopped citing code by name, or the pattern no "+
+			"longer matches the spelling they use", checked, len(docs))
 	}
 }
 
-// declaredByPackage maps a package NAME to every top-level identifier it
-// declares, tests included: a doc may cite a guard's table, and
-// rowPartition lives in a _test.go file.
+// declaredByPackage maps a package NAME to every identifier declared at
+// the top level of one of its files, tests included: a doc may cite a
+// guard's table, and rowPartition lives in a _test.go file.
+//
+// METHOD NAMES ARE IN IT, and that is deliberate rather than an
+// oversight in the sentence above: the FuncDecl arm records d.Name.Name
+// without looking at the receiver, so `func (p *Property[T]) Set` puts
+// Set into package prop. CLAUDE.md cites `prop.Set`, which is a method,
+// and it resolves only because of that. The cost is real and worth
+// stating: a package-qualified citation can resolve against a method on
+// an unrelated type in the same package, so renaming a top-level
+// markup.textSource would still pass if any type in markup declared a
+// textSource method. Narrowing it would need the receiver's package,
+// which is the same thing symbolCiteRe refuses to guess for the
+// Context.BindingValue form. Raised in review of #490.
 //
 // BY NAME AND NOT BY DIRECTORY, because prose writes `markup.Load` and
 // never says which directory that is. Two directories with the same

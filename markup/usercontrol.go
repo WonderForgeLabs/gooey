@@ -52,6 +52,27 @@ func (e attributedErr) Unwrap() error { return e.err }
 // attributeControl names the control an error happened inside, once —
 // for THIS package's own recursion, where a control inside a control
 // would otherwise stack a name per frame and say nothing new.
+//
+// THE BUILDER PATH IS KNOWINGLY LEFT INNERMOST-ONLY, and it is the one
+// case where "this package's own recursion" is not the whole truth about
+// this call site: doc.build can also return an error produced by a
+// REGISTERED Builder or ElementDef.Build, which is third-party Go on the
+// same footing as a setup. A <PreviewPane Source="x.gooey"/> whose
+// builder Loads that file returns an error already attributed to
+// whatever failed inside it, errors.As finds the inner attributedErr
+// here, and the control hosting the preview is never named — the same
+// several-previews-one-message failure attributeSetup exists to end.
+//
+// It stays that way because the two paths are not symmetrical in what
+// the caller can see. A setup is reached through runSetup, a seam this
+// package owns and can wrap exactly once; a builder is reached through
+// the element table, where the error could as easily be a bad attribute
+// on the element itself — and naming the enclosing control for THAT
+// would add a frame to every ordinary element error in the tree.
+// Distinguishing "this builder loaded another document" from "this
+// builder rejected its own attribute" needs a signal the Builder
+// contract does not carry, which is a change to that contract and not a
+// wording fix. Raised in review of #490.
 func attributeControl(name string, err error) error {
 	var a attributedErr
 	if errors.As(err, &a) {
