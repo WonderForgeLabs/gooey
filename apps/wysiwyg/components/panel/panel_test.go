@@ -48,15 +48,15 @@ func term8x16(cols, rows int) term.Caps {
 // so a caller with a string wants render.StringWidth rather than its
 // length.
 //
-// UNTRIMMED, unlike the same-named helper in apps/wysiwyg (dock_test.go),
-// which returns strings.TrimRight(…, " "). Both are right for their
-// callers and the difference is load-bearing here:
-// TestPixelTierTitleIsOnTheCellPlane compares against " Files ", whose
-// trailing space a trim would eat, and the clip assertions read a
-// HasSuffix of the full span. The two doc comments are otherwise nearly
-// word for word, so a reader carrying the trimming assumption across
-// would meet it as a failure with no explanation. Raised in review of
-// #502.
+// UNTRIMMED, and so is the same-named helper in apps/wysiwyg
+// (dock_test.go): a span reader returns the span. This package is where
+// that matters most — TestPixelTierTitleIsOnTheCellPlane compares against
+// " Files ", whose trailing space a trim would eat, and the clip
+// assertions read a HasSuffix of the full span — but the two are not
+// allowed to differ for it, because the doc comments are otherwise nearly
+// word for word and a reader carrying an assumption across would meet the
+// difference as a failure with no explanation. A caller that wants blanks
+// gone says strings.TrimRight at the site. Raised in review of #502.
 func rowText(c *gooey.Composer, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {

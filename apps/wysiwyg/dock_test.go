@@ -42,50 +42,56 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 
 // rowText reads w CELLS of row y — the assertion primitive for "is
 // anything drawn here", and the only SPAN reader in this package.
+// designmode_test.go's screen() reads a whole plane and goes through
+// render.RowText, which is the whole-row form of the same read.
 //
 // Text(), NOT .Rune: a continuation cell — the second column of a wide
 // glyph — carries render.Continuation, and writing that rune out puts a
-// literal marker in the row. CLAUDE.md names this helper's shape as the
+// literal marker in the row. CLAUDE.md names that helper shape as the
 // reason no fixture in six packages could hold a wide glyph and be
 // asserted on, so a second copy reading .Rune reopens exactly that.
-// The span readers in this package all come here now; the whole-row case
-// is render.RowText, which this is the span form of. HOW MANY THERE WERE
-// is deliberately not written: this said FOUR, and a count of readers is
-// a sample taken once — the merge base held more than four, depending on
-// whether a whole-plane reader and a helper that slices a row by index
-// count as span readers, which is exactly the argument a number in prose
-// invites and cannot settle. Derive the current set with a grep for
-// `Cells.At(` under apps/wysiwyg. Raised in review of #502.
-//
-// "THE ONLY ONE IN THIS PACKAGE" WAS WRONG WHEN IT WAS WRITTEN.
-// designmode_test.go's screen() was a whole-plane reader doing the
-// .Rune-with-an-r==0-guard that this paragraph warns about, in the same
-// package, and the claim here read as having swept it up. It goes
-// through render.RowText now, which is why the sentence above can be
-// narrowed to spans instead of deleted. Raised in review of #502.
+// This package and apps/wysiwyg/components/panel are converted; twelve
+// others are not, and the fixtures they cannot hold are #516.
+// HOW MANY READERS THERE ARE is deliberately not written: a count in
+// prose is a sample taken once, and this one cannot even be taken
+// cleanly, because whether a whole-plane reader and a helper that slices
+// a row by index count as span readers is an argument a number invites
+// and cannot settle. Derive the current set with a grep for `Cells.At(`
+// under apps/wysiwyg.
 //
 // W IS A COLUMN COUNT. A caller with a string in hand wants
 // render.StringWidth of it, not len([]rune(…)) — those differ by one
 // per wide glyph, and the rune count reads short, dropping the end of
 // the very label being checked.
 //
-// AND IT TRIMS TRAILING BLANKS, which is what a caller inherits by
-// coming here and is worth stating rather than discovering. Every
-// equality assertion through this helper reads "the span equals X,
-// modulo trailing blanks" — tracks_test.go's two gutter checks, which
-// this branch moved off an UNTRIMMED reader, among them. Harmless today
-// because no track spec ends in a space, and a real weakening of what
-// those two assertions say. The sibling in
-// apps/wysiwyg/components/panel/panel_test.go explains why ITS copy is
-// untrimmed and warns against carrying the assumption across, which
-// points the wrong way: readers travel from the package helper outward.
-// Raised in review of #502.
+// IT RETURNS THE SPAN, TRAILING BLANKS AND ALL, and so does the
+// same-named reader in apps/wysiwyg/components/panel. A helper that
+// trimmed would decide part of every equality assertion made through it
+// — tracks_test.go's two gutter checks compare a rendered track spec
+// against that spec exactly — so the trim belongs at the call site that
+// wants it, where it is one visible call. Raised in review of #502.
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
 		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
-	return strings.TrimRight(sb.String(), " ")
+	return sb.String()
+}
+
+// TestRowTextReturnsTheWholeSpan is the contract above, pinned. Every
+// other caller reads a span it expects to be full, so none of them can
+// tell a reader that returns the blanks from one that eats them — the
+// difference only shows where the span is WIDER than what was drawn into
+// it, which is why this fixture is eight cells holding two.
+func TestRowTextReturnsTheWholeSpan(t *testing.T) {
+	c := gooey.NewComposer(&components.Text{Content: components.Str("hi")}, 8, 1)
+	f, _ := c.Frame()
+	if got, want := rowText(f, 0, 0, 8), "hi      "; got != want {
+		t.Errorf("rowText read %q across eight cells holding %q, want %q. A span "+
+			"reader returns the span: trimming here decides part of every equality "+
+			"assertion made through it, at the one site that cannot see the decision",
+			got, "hi", want)
+	}
 }
 
 // TestHideIsNotCollapse is the central discrimination test, and it is

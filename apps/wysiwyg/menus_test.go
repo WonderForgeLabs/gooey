@@ -322,10 +322,9 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 //     editorItemText renders `$EDITOR (env)` today. The assertions
 //     match only the constant `$EDITOR` prefix, so what an inherited
 //     value changes is what a failure prints — which is the first
-//     bullet, arrived at from the other side. This said "on the day it
-//     does", future tense about something shipped, and named #477 as
-//     pushing for a label change it does not ask for. Raised in review
-//     of #502.
+//     bullet, arrived at from the other side. Present tense on purpose:
+//     the interpolation ships today, and #477 does not ask for a label
+//     change. Raised in review of #502.
 //
 // resolveEditor reads only EDITOR (no VISUAL fallback), so the one
 // variable pins the label. `/usr/bin/env -i` is the value the sibling
@@ -463,25 +462,54 @@ func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 			"of the left copy is not the answer to which box precedes the label",
 			want, at, last, row)
 	}
-	// THE PRECONDITION, checked rather than assumed. A wide glyph or a
-	// grapheme cluster anywhere in the row breaks the rune-index ==
-	// cell-index equality the slice below depends on, and the failure is
-	// a box read from the wrong four cells — a wrong answer, not an
-	// error.
-	if cols, runes := render.StringWidth(row), len([]rune(row)); cols != runes {
-		t.Fatalf("row %q measures %d columns and %d runes, so a rune index into it "+
-			"is not a cell index and the four runes before the label are not the "+
-			"four cells before it. This helper slices by rune; give it an ASCII "+
-			"row, or teach it columns", row, cols, runes)
+	// THE PRECONDITION, checked rather than assumed — and checked on THE
+	// PREFIX, not the row. A wide glyph or a grapheme cluster breaks the
+	// rune-index == cell-index equality the slice below depends on, and
+	// the failure is a box read from the wrong four cells: a wrong
+	// answer, not an error. But the only cells this helper indexes are
+	// the ones in FRONT of the label, so a wide glyph after the label
+	// cannot move them. Measuring the whole row made a CJK menu label —
+	// the thing wysiwyg exists to lay out — fail this helper with a
+	// message about a slice that would have been correct. Narrowed in
+	// review of #502.
+	prefix := row[:at]
+	if cols, runes := render.StringWidth(prefix), len([]rune(prefix)); cols != runes {
+		t.Fatalf("the %q in front of %q in row %q measures %d columns and %d runes, "+
+			"so a rune index into it is not a cell index and the four runes before "+
+			"the label are not the four cells before it. This helper slices by rune; "+
+			"give it an ASCII prefix, or teach it columns", prefix, want, row, cols, runes)
 	}
 	r := []rune(row)
-	i := len([]rune(row[:at]))
+	i := len([]rune(prefix))
 	if i < 4 {
 		t.Fatalf("%q starts at rune %d of %q, with no room for a check box in front "+
 			"of it — which is how a row with no box at all reads when the label sits "+
 			"within four of the start", want, i, row)
 	}
 	return string(r[i-4 : i]), row
+}
+
+// TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel pins the SCOPE of that
+// precondition, which is the half a passing suite cannot show on its own:
+// every fixture the real menus produce is ASCII, and CLAUDE.md's rule is
+// that an ASCII fixture agrees with itself under either the rune rule or
+// the column rule. So the row here is synthetic and deliberately fails
+// that agreement — same column width, different rune count — with the
+// wide glyph BEHIND the label, where it cannot move any of the four cells
+// this helper indexes. Measured over the whole row the precondition
+// refuses this row instead of answering it, and a CJK menu label is not
+// hypothetical in an editor that lays out whatever markup it is handed.
+func TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel(t *testing.T) {
+	rows := []string{"  [x] Wrap 世界", "  ( ) Other"}
+	box, row := boxBefore(t, rows, "Wrap")
+	if cols, runes := render.StringWidth(row), len([]rune(row)); cols == runes {
+		t.Fatalf("the fixture row %q measures %d columns and %d runes — equal, so it "+
+			"cannot tell a whole-row precondition from a prefix one and this test "+
+			"guards nothing", row, cols, runes)
+	}
+	if want := "[x] "; box != want {
+		t.Errorf("boxBefore read %q in front of %q on %q, want %q", box, "Wrap", row, want)
+	}
 }
 
 // TestEditorLabelResolvesTheProgram is the second thing that was

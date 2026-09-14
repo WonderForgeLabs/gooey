@@ -158,12 +158,10 @@ func TestACollapsedHeaderStillReadsItsTitle(t *testing.T) {
 	f, _ := c.Frame()
 
 	// render.RowText, not this package's rowText, because this reads a
-	// WHOLE ROW and rowText reads a span. Not because of the continuation
-	// marker: rowText writes Cell.Text(), which returns "" for a
-	// continuation, so both readers are safe for a wide glyph. This said
-	// otherwise until review of #502, describing a defect the same branch
-	// had already removed — advice that would send the next reader to
-	// avoid the correct helper.
+	// WHOLE ROW and rowText reads a span. The continuation marker is not
+	// the reason: rowText writes Cell.Text(), which returns "" for a
+	// continuation, so either reader is safe for a wide glyph. Only the
+	// width decides between them. Raised in review of #502.
 	//
 	// The WHOLE row is read and the assertion is containment of the
 	// chevron AND the title together, because everything else in the
@@ -945,9 +943,8 @@ func TestARenameNeedsMoreThanATouch(t *testing.T) {
 			// render.RowText because the whole row is wanted; rowText
 			// is the span form and is equally safe for a wide glyph
 			// (it writes Cell.Text(), which is "" for a continuation).
-			// "the package's rune-per-cell helper" was this branch's own
-			// earlier description of rowText and stopped being true in
-			// it. Raised in review of #502.
+			// Neither is the reason this reads the whole row — the
+			// width is. Raised in review of #502.
 			row := render.RowText(f.Cells, first.Bounds().Y)
 			if got := strings.Contains(row, "RENAMED"); got != tc.renamed {
 				t.Errorf("row %d reads %q; contains the new title = %v, want %v.\n"+
@@ -1033,11 +1030,10 @@ func sumOf(ns []int) int {
 // nothing would go red if it stopped.
 //
 // It reads through render.RowText because it wants the whole row;
-// rowText is the span form of the same read and is equally safe here.
-// This named rowText as a rune-per-cell helper that "cannot hold a wide
-// glyph", which was true of it before this branch and is the hazard
-// CLAUDE.md describes — but rowText writes Cell.Text() now, so the
-// sentence was warning about the fixed thing. Raised in review of #502.
+// rowText is the span form of the same read and is equally safe here,
+// because both write Cell.Text() and a continuation cell's Text() is "".
+// The hazard CLAUDE.md describes is a reader that writes .Rune, and
+// neither of these is one. Raised in review of #502.
 func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
 	ed, c := dockFixture(t)
 	panel := pane(t, ed, "panel")
@@ -1097,7 +1093,7 @@ func TestTheStripRowPastACollapsedHeaderIsBlank(t *testing.T) {
 		t.Fatalf("the header reaches column %d of a %d-column row, so there is "+
 			"nothing to its right to assert about", past, f.Cells.W)
 	}
-	if rest := rowText(f, got.Y, past, f.Cells.W-past); rest != "" {
+	if rest := strings.TrimRight(rowText(f, got.Y, past, f.Cells.W-past), " "); rest != "" {
 		t.Errorf("the strip row past the collapsed header at column %d reads %q, "+
 			"want blank. Those cells belong to no component now, so nothing "+
 			"repaints them — a leftover there is the pane's old body, still on "+

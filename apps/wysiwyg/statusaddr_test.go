@@ -262,9 +262,10 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 // carries: a continuation cell rendered as its marker rune puts a
 // literal U+FFFD in the row, and every caller here is comparing text.
 // render.Continuation is rune(-1) and string(rune(-1)) is the
-// replacement character, which is what render/width.go writes in its own
-// comment; this said U+FFFF, a different code point that a grep over a
-// failure diff would never find. Raised in review of #502.
+// replacement character U+FFFD, which is what render/width.go writes in
+// its own comment — spell it exactly, because a neighbouring code point
+// in this sentence is one a grep over a failure diff would never find.
+// Raised in review of #502.
 func screenRow(f *gooey.Frame, y int) string {
 	return render.RowText(f.Cells, y)
 }
@@ -645,7 +646,8 @@ func TestTheDotOccupiesOneCellAndTheAddressFollowsIt(t *testing.T) {
 	if got := f.Cells.At(b.X+1, b.Y).Rune; got != ' ' {
 		t.Errorf("cell %d,%d holds %q, want the separating space", b.X+1, b.Y, got)
 	}
-	if got := rowText(f, b.Y, b.X+2, b.W-2); got != testGrpc {
+	// The chip's span is its bounds; the address does not fill it.
+	if got := strings.TrimRight(rowText(f, b.Y, b.X+2, b.W-2), " "); got != testGrpc {
 		t.Errorf("the chip reads %q from cell %d, want %q: the address must begin exactly "+
 			"one cell after the dot", got, b.X+2, testGrpc)
 	}
