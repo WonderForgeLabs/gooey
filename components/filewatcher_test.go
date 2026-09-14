@@ -397,9 +397,14 @@ type countingPost struct {
 	post func(func())
 }
 
+// Post counts AFTER enqueuing, and the order is the whole contract.
+// Incrementing first makes the counter say "n posts have happened" while
+// the nth closure is not yet on the dispatcher's queue — so a waiter
+// released by that count can Drain an empty queue and proceed as though
+// the watcher had been round. Raised in review of #511.
 func (c *countingPost) Post(f func()) {
-	c.n.Add(1)
 	c.post(f)
+	c.n.Add(1)
 }
 
 // drainUntilPosts pumps the dispatcher until the watcher has posted n
@@ -416,22 +421,39 @@ func (c *countingPost) Post(f func()) {
 // "re-enabling replayed 1 change(s) made while disabled", green on the
 // same commit locally at -count=20.
 //
-// Bounded by the same two seconds waitFor uses, so a watcher that has
-// genuinely stopped polling still fails rather than hanging.
-func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, base, n int64) {
+// THE BASELINE IS SAMPLED HERE, not passed in. Both callers took it at
+// the call and nothing else used it; a parameter that every caller
+// computes the same way one line up is a place for them to differ.
+// Raised in review of #511.
+//
+// AND THE DEADLINE SCALES WITH n. waitFor's two seconds are for ONE
+// event; this waits for n round trips of a goroutine the test does not
+// schedule, and one caller wants forty of them. A fixed budget makes
+// "two seconds" mean something different at each call site, and the
+// tight one is the negative assertion whose floor this is. Fifty
+// milliseconds per post on top of the same two-second base is two orders
+// of magnitude over a 1ms interval and still bounded, so a watcher that
+// has genuinely stopped polling fails rather than hanging.
+//
+// It returns the delta it observed so a caller can say what actually
+// happened rather than restating the number it asked for.
+func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64) int64 {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	base := c.n.Load()
+	budget := 2*time.Second + time.Duration(n)*50*time.Millisecond
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		disp.Drain()
-		if c.n.Load() >= base+n {
+		if got := c.n.Load() - base; got >= n {
 			disp.Drain()
-			return
+			return c.n.Load() - base
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("the watcher posted %d times in two seconds, want %d more than the "+
-		"%d it had — the poll goroutine is not running, so nothing below is "+
-		"measuring what it claims to", c.n.Load(), n, base)
+	t.Fatalf("the watcher posted %d times in %s, want %d — the poll goroutine is "+
+		"not running, so nothing below is measuring what it claims to",
+		c.n.Load()-base, budget, n)
+	return 0
 }
 
 // THE BARRIER PIN. close(done) alone lets a poll that already won its
@@ -580,12 +602,15 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	defer stop()
 
 	write(t, dir, "a.txt", "two", t2)
-	// Three posts is at least two complete cycles — a cycle is one post
-	// without a hit and two with one — so the scan that sees this write
-	// has certainly run, and the baseline it advanced is what makes the
-	// change dropped rather than merely late.
-	base := c.n.Load()
-	drainUntilPosts(t, d, c, base, 3)
+	// THREE POSTS IS THREE CYCLES HERE, and "here" is doing work: the
+	// watcher is disabled, so no cycle can post a fire and each one posts
+	// the paths request alone. The general rule is one post per cycle
+	// plus one more for a cycle that fires, under which three posts can be
+	// two cycles — paths, fire, paths — so this count does not carry over
+	// to a firing watcher. Either way the scan that sees this write has
+	// certainly run, and the baseline it advanced is what makes the change
+	// dropped rather than merely late. Raised in review of #511.
+	drainUntilPosts(t, d, c, 3)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
 	}
@@ -598,7 +623,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// Re-enabling resumes with nothing torn down, and does NOT replay
 	// the edit that happened while it was off.
 	enabled.Set(true)
-	drainUntilPosts(t, d, c, c.n.Load(), 3)
+	drainUntilPosts(t, d, c, 3)
 	if hits != 0 {
 		t.Fatalf("re-enabling replayed %d change(s) made while disabled", hits)
 	}
@@ -672,10 +697,16 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// that bought no polls would pass it without the watcher having run
 	// at all. Forty posts is forty cycles over an unchanged file, which
 	// is what the message below says happened.
-	drainUntilPosts(t, d, c, c.n.Load(), 40)
+	posts := drainUntilPosts(t, d, c, 40)
 	if hits != 0 {
-		t.Fatalf("a watcher fired %d times over %d polls of an unchanged file",
-			hits, 40)
+		// POSTS, NOT POLLS, and the returned count rather than the
+		// constant. With no hit a cycle posts once, so the two numbers
+		// coincide — but the last post's closure need not have run when
+		// the count reached 40, so "40 polls" claims one scan more than
+		// is guaranteed, and printing the constant would say 40 however
+		// many actually happened. Raised in review of #511.
+		t.Fatalf("a watcher fired %d times over %d poll posts of an unchanged file",
+			hits, posts)
 	}
 }
 
