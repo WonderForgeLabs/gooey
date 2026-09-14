@@ -210,8 +210,25 @@ close while the prefix is still held, the second needs the marker's tail to
 land after one timeout but inside the grace. A stalled runner misses either,
 and a test that merely passes when it does is green and blind — worse than
 red. So each measures whether it hit the window, treats a miss as
-**inconclusive** and retries, and fails when the retries run out. Neither can
-report success on an attempt it did not make.
+**inconclusive** and retries, and fails when the retries run out.
+
+How strong that is differs between the two, and saying "neither can report
+success on an attempt it did not make" overstated it for the split-marker
+test. `closedTtyAttempt` measures a real discriminator — an Esc arriving
+inside one `EscTimeout` of the handshake cannot have come from the stall
+path, which needs `PasteMarkerGrace` full timeouts — so its verdict is a
+measurement. `splitMarkerAttempt` has no observable for the first idle
+timeout: at `stalls = 1` the decoder holds the prefix and emits nothing, so
+nothing on the wire says the timeout fired. What it can do is bound the
+window at both ends, and that is what it does — the arm sits within a
+scheduling gap of `held` (the decoder sends each event *before* it re-arms,
+into a buffered channel, so `held` may land either side of it), and a quarter
+of a timeout at each end is reserved for that gap. A sufficiently pathological
+deschedule of the decoder between the send and the `Reset` could still let an
+attempt land early and pass without exercising the grace. What is not
+conditional is the pin: lowering `PasteMarkerGrace` to 1 turns this test red,
+re-measured three runs out of three after the window was rebalanced.
+Corrected in review of #445.
 
 Getting the measurement itself right took three corrections, all from review:
 
@@ -219,12 +236,16 @@ Getting the measurement itself right took three corrections, all from review:
   slave has not read, so "write the prefix, then close" loses it on most runs.
   Writing `b` and the prefix in ONE write and reading the `b` back proves the
   decoder consumed that read.
-- **Slack in the direction the clock drifts.** `held` is sampled after a
-  buffered-channel receive, and the decoder arms its timer after that send, so
-  under load `held` lands late and the measured elapsed understates the real
-  one. `closedTtyAttempt` budgets **one `EscTimeout`** rather than the full
-  stall latency for exactly that reason: the wider budget let a
-  timer-delivered Esc measure just under it and be credited to the close.
+- **Slack in BOTH directions the clock can drift.** `held` is sampled after a
+  buffered-channel receive and the decoder re-arms its timer after that send,
+  so `held` can land on either side of the arm: late if the test goroutine is
+  descheduled, early if the decoder is. `closedTtyAttempt` budgets **one
+  `EscTimeout`** rather than the full stall latency for the late case — the
+  wider budget let a timer-delivered Esc measure just under it and be credited
+  to the close. `splitMarkerAttempt` reserves a quarter of a timeout at each
+  end for both; its comment asserted the ordering in the opposite direction to
+  its sibling's until review of #445, and a guarantee a file states two ways
+  is worth less than the slack it was defending.
 - **An absolute budget, never one scaled by the constant under test.**
   `splitMarkerAttempt` first scaled its window by `PasteMarkerGrace`, so under
   the mutation it exists to catch the budget collapsed with the constant,

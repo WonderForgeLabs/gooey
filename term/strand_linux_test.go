@@ -216,6 +216,19 @@ func closedTtyAttempt(t *testing.T) bool {
 	if err := s.Raw(); err != nil {
 		t.Fatalf("raw: %v", err)
 	}
+	// PER ATTEMPT, NOT PER TEST. openPTY registers its close on the
+	// PARENT t, which is right for a test that opens one pty and wrong
+	// for a retry loop: twenty inconclusive attempts held twenty pty
+	// pairs open and left twenty decoder goroutines parked on a read
+	// that would never return, all until the test ended. Restore is what
+	// joins the decoder — it closes the tty and waits, bounded by
+	// DecoderTimeout — so releasing the fd alone would not have been
+	// enough. openPTY's own cleanup still runs later and closes an
+	// already-closed file, which is a no-op. Raised in review of #445.
+	defer func() {
+		s.Restore()
+		master.Close()
+	}()
 	evs := s.Events(16)
 
 	// ONE write carrying a handshake byte and then the held prefix, and
@@ -354,6 +367,12 @@ func splitMarkerAttempt(t *testing.T) bool {
 	if err := s.Raw(); err != nil {
 		t.Fatalf("raw: %v", err)
 	}
+	// The same per-attempt release closedTtyAttempt takes, and this loop
+	// runs forty attempts rather than twenty.
+	defer func() {
+		s.Restore()
+		master.Close()
+	}()
 	evs := s.Events(16)
 
 	// The handshake byte again: reading `b` back proves the decoder consumed
@@ -371,17 +390,27 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// Past ONE timeout — so the grace is genuinely exercised rather than the
 	// marker simply arriving whole in one read — and comfortably inside two.
 	//
-	// EscTimeout/8 OF HEADROOM, NOT EscTimeout/4, and the halving is free
-	// rather than a risk. `held` is sampled AFTER the decoder armed its
-	// timer, so the real elapsed since the arm is always at least the
-	// measured one — any sleep over a full EscTimeout is past one timeout
-	// whatever the scheduler did. The quarter was buying nothing at this
-	// end and was being paid for at the other: with the budget below it
-	// left ~EscTimeout/4 for sleep overshoot plus the Write, and a
-	// consistently loaded runner overshoots a 40ms sleep by that much,
-	// which makes every attempt inconclusive and ends the loop in a hard
-	// failure about the machine. Raised in review of #445.
-	time.Sleep(EscTimeout + EscTimeout/8)
+	// `held` IS NOT KNOWN TO BE AFTER THE ARM, and the comment here used
+	// to say it was. keys.go's loop sends each decoded event and THEN
+	// re-arms the timer (`drain(drainLive)` … `timer.Reset(EscTimeout)`),
+	// and `out` is this test's buffered channel — so the send does not
+	// block, and the receive below can be scheduled before the Reset
+	// executes. `held` can therefore land BEFORE the arm, by however long
+	// the decoder is descheduled in those few instructions. The sibling
+	// helper's comment had the ordering right and this one had it
+	// backwards; a guarantee asserted in two directions in one file is
+	// worth more than the slack it was defending. Raised in review of
+	// #445.
+	//
+	// So the window is budgeted at BOTH ends rather than assumed at one.
+	// The arm sits somewhere within a scheduling gap of `held`, the window
+	// the write must land in is (arm+EscTimeout, arm+2*EscTimeout), and a
+	// quarter of a timeout at each end is what the sleep and the budget
+	// below now reserve for that gap — 10ms apiece at EscTimeout=40ms,
+	// against the 5ms the old asymmetric pair left at the bottom. The
+	// overshoot allowance grows with it, from EscTimeout*3/8 to
+	// EscTimeout/2, which is the thing a loaded runner actually spends.
+	time.Sleep(EscTimeout + EscTimeout/4)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
 	}
@@ -397,15 +426,13 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// TestPasteMarkerGraceHasAFloor is what makes 2*EscTimeout safe to write
 	// literally here.
 	//
-	// And the SLACK is the same drift closedTtyAttempt was tightened for:
-	// `held` is sampled after a buffered-channel receive and the decoder arms
-	// its timer after that send, so `held` can land late and the measured
-	// elapsed understates the real one. With zero slack an attempt whose
-	// grace had already expired reads as conclusive and hard-fails with the
-	// #419 message — a scheduling stall wearing the costume of a regression,
-	// which is precisely what the sleep-vs-wait fix in the sibling test
-	// removed. Both raised in review of #445.
-	if elapsed := time.Since(held); elapsed >= 2*EscTimeout-EscTimeout/2 {
+	// And the SLACK is the other end of the gap the sleep above reserves
+	// for: `held` can land either side of the arm, so with zero slack an
+	// attempt whose grace had already expired reads as conclusive and
+	// hard-fails with the #419 message — a scheduling stall wearing the
+	// costume of a regression, which is precisely what the sleep-vs-wait
+	// fix in the sibling test removed. Both raised in review of #445.
+	if elapsed := time.Since(held); elapsed >= 2*EscTimeout-EscTimeout/4 {
 		return false // the grace may already have expired; attribute nothing
 	}
 
