@@ -166,7 +166,12 @@ func TestValidationLoopDamage(t *testing.T) {
 // the two states, so the check below is an identity comparison against
 // the popup taken before the anchor was hidden. Raised in review of
 // #498; the same seam is pinned from the freeze side in
-// TestAValidationMarkerSurvivesAFreezeTurningOn.
+// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden, which is the test
+// that hides an anchor INSIDE a frozen subtree. (This named
+// TestAValidationMarkerSurvivesAFreezeTurningOn, which was where that
+// phase lived until it moved, and a cross reference is exactly the kind
+// of claim a move leaves behind pointing at a test that no longer does
+// the thing.)
 func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	_, tb, m, _, page := formPage(30)
 	c := gooey.NewComposer(page, 30, 4)
@@ -400,6 +405,16 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	root := &VStack{Children: []gooey.Component{frozen, layer}}
 	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
+	// THE PRECONDITION, ASSERTED HERE rather than excused later. Every
+	// caller freezes or hides something and then asks whether the marker
+	// survived; an empty layer at that point means it was dropped, and
+	// that reading is only available because this ran first. Raised in
+	// review of #498.
+	if len(layer.Adornments()) == 0 {
+		t.Fatalf("the fixture placed no adornment at build time, before anything " +
+			"was frozen or hidden, so every assertion about surviving one is " +
+			"about a page that never had a marker")
+	}
 	return tb, m, layer, c
 }
 
@@ -422,11 +437,12 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 // later. Those two statements inside FocusManager.walk are the whole of
 // "Frozen gates input, not adornment placement".
 //
-// CITED BY SYMBOL. This named input.go:493 and input.go:541-542 until
-// review of #498: nothing in the suite checks a line number inside a Go
-// comment, so both would have gone on pointing at whatever moved into
-// those lines. The same reason the file path one paragraph down was
-// removed.
+// CITED BY SYMBOL, and this paragraph used to name two line numbers
+// while saying so — which is the failure it describes, committed inside
+// its own correction. Nothing in the suite checks a line number inside a
+// Go comment, so a citation here points at whatever moves into that line
+// and nothing reddens. Name the function and the statement; the reader
+// greps.
 //
 // TWO TESTS REDDEN when the second is gated the way the first is, not
 // one — this comment claimed "the only test in the tree" until review of
@@ -479,19 +495,38 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 func assertMarkerShows(t *testing.T, c *gooey.Composer, layer *AdornmentLayer, m *ValidationMarker, when string) {
 	t.Helper()
 	if !m.IsShown() {
-		// THE FIXTURE FIRST. An empty layer produces this symptom from a
-		// cause that is not Frozen at all — nothing was ever hosted — and
-		// the sentence below would send the reader into FocusManager.walk
-		// for a broken page.
-		if len(layer.Adornments()) == 0 {
-			t.Fatalf("the marker did not place %s AND the layer hosts no adornment "+
-				"at all, so this is the fixture rather than the freeze: the page "+
-				"never placed one to gate", when)
+		// IsShown() is a CONJUNCTION — a popup in a layer AND a non-empty
+		// error string — so "not shown" is two states, and blaming one of
+		// them sends the reader to the wrong file. Say which.
+		switch {
+		case m.pop == nil && len(layer.Adornments()) == 0:
+			// AN EMPTY LAYER IS NOT PROOF OF A BROKEN FIXTURE, which is
+			// what this arm used to say. frozenMarkerPage asserts a
+			// placement at build time, so by the time any caller reaches
+			// here one was placed and is gone — the very regression the
+			// arm below describes, reported as somebody else's problem.
+			// Both readings are named, and the discriminator is which
+			// assertion failed first.
+			t.Fatalf("the marker did not place %s and the layer hosts NO adornment. "+
+				"frozenMarkerPage asserts a placement at build time, so if that "+
+				"assertion passed, one was placed and something dropped it — "+
+				"FocusManager.walk's unconditional SetFocusManager call on "+
+				"attachments is where a new `allow` gate would do this. If the "+
+				"build-time assertion is what failed, the page is wrong and this "+
+				"is not about the freeze at all", when)
+		case m.pop == nil:
+			t.Fatalf("the marker did not place %s: the layer hosts %d adornment(s) "+
+				"and this marker's popup is nil, so it is THIS marker that was not "+
+				"placed rather than the layer being empty",
+				when, len(layer.Adornments()))
+		default:
+			// The other conjunct. A placed popup with an empty error is a
+			// validation result, not a placement problem, and reading the
+			// walk for it wastes the reader's time.
+			t.Fatalf("the marker placed a popup %s and reports nothing to say: its "+
+				"Error is empty, so the rule stopped failing rather than the "+
+				"adornment being dropped", when)
 		}
-		t.Fatalf("the marker did not place %s — if Frozen has grown a gate on "+
-			"the input-tree walk that is a real change, and FocusManager.walk's "+
-			"unconditional SetFocusManager call on attachments can take the "+
-			"`allow` check that guards m.order", when)
 	}
 	if got := row(c.Cells(), 1); !strings.Contains(got, "required") {
 		t.Fatalf("the marker reports itself shown %s but row 1 of the cell "+
