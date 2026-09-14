@@ -342,6 +342,15 @@ func viewMenuRows(t *testing.T, which int) []string {
 
 	bar := theMenuBar(t, ed)
 	i, _ := menuNamed(t, bar, "View")
+	// THE PROPERTY, NOT setCodeView, and this is the one place in this
+	// file that does not go in through a shipped verb. setCodeView
+	// (menus.go) calls launchEditor for codeExternal — App.Suspend plus
+	// exec.Command on whatever $EDITOR names — and
+	// TestTheCheckBoxFollowsTheSelection passes codeExternal while the
+	// Setenv above points EDITOR at a program that really exists, so
+	// driving the shipped verb would spawn a subprocess under go test.
+	// The property is what the menu template reads, which is the whole
+	// input these assertions need. Raised in review of #502.
 	ed.codeView.Set(which)
 	bar.Open(i, nil)
 	settle(t, c)
@@ -422,11 +431,14 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // in one narrow column. So an index into the row is a rune index and
 // equals a cell index only for a row of ONE RUNE PER CELL, which this
 // ASCII menu is; "narrow glyphs" was the fence and does not close the
-// cluster case. Raised in review of #502. Byte slicing was what broke, and only the diagnostic: a
-// box is ASCII and an ASCII byte cannot be part of a multi-byte UTF-8
-// sequence, so a four-byte window equal to "[x] " really was four ASCII
-// cells — but a label at an odd offset cut a box-drawing rune in half
-// and %q printed "\xe2\x94\x82 ".
+// cluster case. Raised in review of #502.
+//
+// Byte slicing was what broke, and only the diagnostic: a box is ASCII
+// and an ASCII byte cannot be part of a multi-byte UTF-8 sequence, so a
+// four-byte window equal to "[x] " really was four ASCII cells — but a
+// label at an odd offset cut a box-drawing rune in half and %q printed
+// "\xe2\x94\x82 ".
+//
 // AND THE WITHIN-ROW HALF OF dropdownRow's GUARANTEE. That helper buys
 // "exactly one ROW contains want" and argues for why it matters;
 // strings.Index gives the same guarantee back inside the row, taking

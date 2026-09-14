@@ -63,6 +63,18 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 // render.StringWidth of it, not len([]rune(…)) — those differ by one
 // per wide glyph, and the rune count reads short, dropping the end of
 // the very label being checked.
+//
+// AND IT TRIMS TRAILING BLANKS, which is what a caller inherits by
+// coming here and is worth stating rather than discovering. Every
+// equality assertion through this helper reads "the span equals X,
+// modulo trailing blanks" — tracks_test.go's two gutter checks, which
+// this branch moved off an UNTRIMMED reader, among them. Harmless today
+// because no track spec ends in a space, and a real weakening of what
+// those two assertions say. The sibling in
+// apps/wysiwyg/components/panel/panel_test.go explains why ITS copy is
+// untrimmed and warns against carrying the assumption across, which
+// points the wrong way: readers travel from the package helper outward.
+// Raised in review of #502.
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {

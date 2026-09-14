@@ -249,17 +249,26 @@ func TestTheTwoModeLabelsAreTheSameWidth(t *testing.T) {
 // dock_test.go claimed to be the only reader of its kind in this
 // package while this one sat beside it.
 //
-// THE UNSET CELL STILL READS AS A SPACE, which is the one thing RowText
-// does not do for us: a never-painted cell holds rune 0, and Cell.Text
-// renders that as a NUL rather than a blank. The callers join whole
-// rows and search them, so a NUL run where the screen is empty would
-// make a label that ends at the edge of a painted region unfindable.
+// NO NUL HANDLING, and the guard that used to sit here was the same
+// dead shape this helper replaced. It carried a ReplaceAll and a
+// paragraph asserting that "a never-painted cell holds rune 0" —
+// render.NewBuffer calls Clear, which writes Cell{Rune: ' '} into every
+// cell, and Buffer.At answers a space out of bounds, so an unpainted
+// cell already reads as a blank. Measured: a settled 150x44 buildPage
+// holds ZERO cells with rune 0, and a fresh render.NewBuffer(10, 2)
+// reports rune 32. docs_test.go's onScreen is the same whole-row read
+// with no NUL handling at all and its callers work.
+//
+// Buffer.Set does accept rune 0 — it refuses only Continuation — so a
+// COMPONENT could write one, which is a much narrower claim than the one
+// that was here and not a thing anything in this tree does. Raised in
+// review of #502.
 func screen(c *gooey.Composer) string {
 	var b strings.Builder
 	cells := c.Cells()
 	_, rows := c.Size()
 	for y := 0; y < rows; y++ {
-		b.WriteString(strings.ReplaceAll(render.RowText(cells, y), "\x00", " "))
+		b.WriteString(render.RowText(cells, y))
 		b.WriteByte('\n')
 	}
 	return b.String()
