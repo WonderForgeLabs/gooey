@@ -26,9 +26,12 @@ import (
 //
 // The INNERMOST control is the one whose file the author opens, so it
 // is the one that attributes; every frame above passes the error
-// through untouched. An error that already names its own control — the
-// cycle refusal, whose message carries the whole loop, and the two
-// setup failures — says so by being wrapped in this, and is left alone.
+// through untouched. An error that already names its own control says so
+// by carrying an empty name here, and is left alone: the cycle refusal
+// below is the one site that does, because its message traces the whole
+// loop. Everything else goes through attributeControl, which asks
+// errors.As first — a setup is arbitrary Go and may itself have called
+// markup.Load, whose error already names the control it failed in.
 type attributedErr struct {
 	name string // "" when the wrapped error names its own control already
 	err  error
@@ -178,7 +181,15 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if setup != nil {
 			child, err = runSetup(setup, e, parent, declared)
 			if err != nil {
-				return nil, attributedErr{err: fmt.Errorf("markup: control %s: %w", name, err)}
+				// attributeControl, NOT a hand-built attributedErr: a
+				// setup is arbitrary Go and routinely calls markup.Load
+				// or markup.Build on a document of its own, whose error
+				// already names ITS control. Wrapping by hand skips the
+				// errors.As check and stacks a second prefix on exactly
+				// the case this machinery exists to stop. Raised in
+				// review of #490 — the first version of it made this
+				// mistake at two of its own three sites.
+				return nil, attributeControl(name, err)
 			}
 		}
 		if child == nil {
@@ -191,7 +202,7 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// every attribute passes through, unchecked, as it always has.
 		if passThrough && !doc.decls.present {
 			if err := passAttrs(e, parent, child.Values); err != nil {
-				return nil, attributedErr{err: fmt.Errorf("markup: control %s: %w", name, err)}
+				return nil, attributeControl(name, err)
 			}
 		}
 		for _, d := range doc.decls.list {

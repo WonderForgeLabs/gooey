@@ -592,7 +592,14 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 	}
 
 	if observed == 0 {
-		t.Skipf("no entry in silentlyBindable (%v) paints differently with "+
+		// FATAL, NOT SKIPPED, and the message above always said why: a
+		// fixture that can measure nothing is not a case this build
+		// cannot run, it is this test having stopped working. A skip is
+		// for an absent dependency, reads as "not applicable" in the
+		// output, and CLAUDE.md asks any that survives to carry an open
+		// issue number so it dies with the fix. The sibling arm fatals
+		// on the identical condition. Raised in review of #490.
+		t.Fatalf("no entry in silentlyBindable (%v) paints differently with "+
 			"one value than with another, so the drop is not observable on "+
 			"the cell plane for any of them. That is a gap in the FIXTURE, "+
 			"not a pass: the claim is unmeasured", silentlyBindable)

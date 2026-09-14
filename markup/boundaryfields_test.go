@@ -525,12 +525,42 @@ func contextFields(t *testing.T) []string {
 // EMBEDDED field has none, and is skipped: Context declares none today,
 // and one added later would need its own decision here rather than a
 // name invented from its type.
+// fieldNames is the names a struct field declares — and for an EMBEDDED
+// field, the type's own name, which is the name Go gives it.
+//
+// f.Names is empty for an embedded field, so returning it alone dropped
+// one silently: a Context growing `armScope` or a `*Dispatcher` inline
+// would be in neither partition table and neither guard would say so,
+// which is the exact failure both of them exist to prevent one level up.
+// Raised in review of #490.
 func fieldNames(f *ast.Field) []string {
+	if len(f.Names) == 0 {
+		if n := embeddedName(f.Type); n != "" {
+			return []string{n}
+		}
+		return nil
+	}
 	out := make([]string, 0, len(f.Names))
 	for _, nm := range f.Names {
 		out = append(out, nm.Name)
 	}
 	return out
+}
+
+// embeddedName is the field name Go gives an embedded type: the type's
+// own name, with any pointer and package qualifier stripped.
+func embeddedName(t ast.Expr) string {
+	switch x := t.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return embeddedName(x.X)
+	case *ast.SelectorExpr:
+		return x.Sel.Name
+	case *ast.IndexExpr: // an embedded generic instantiation
+		return embeddedName(x.X)
+	}
+	return ""
 }
 
 // TestVariantResolutionSurvivesNesting is #314's fourth defect on its
@@ -668,6 +698,17 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		return scopes{c.ns != nil, c.arms.sinks != nil, c.fsys != nil, c.res.cur != nil}
 	}
 	var pageLive, rowLive scopes
+	// EVERY FIELD, READ WHILE THE ROW IS LIVE. The four scope fields
+	// above are the ones a build is known to restore, but "known" is the
+	// weak word in that sentence: the row's OTHER thirteen fields were
+	// read after Load too, so a future field restored on the row would
+	// be measured after the restore and this guard would report the
+	// value the build put back. crossedIn is the whole switch, called
+	// once inside the Probe builder and once afterwards; the LIVE answer
+	// is the one the partition is checked against, and a disagreement
+	// between the two is reported on its own. Raised in review of #490.
+	var crossedIn func(row *Context, name string) (crossed, known bool)
+	liveRead := map[string]bool{}
 	page := &Context{
 		Dir:      "/tmp/anchor",
 		Variant:  "sixel",
@@ -688,6 +729,11 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		Components: map[string]Builder{
 			"Probe": func(e Element, c *Context) (gooey.Component, error) {
 				row, rowLive = c, live(c)
+				for _, name := range contextFields(t) {
+					if crossed, known := crossedIn(c, name); known {
+						liveRead[name] = crossed
+					}
+				}
 				return &components.Text{}, nil
 			},
 			// Builds BEFORE the <ItemsView> — document order — so the
@@ -709,6 +755,80 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 	// here, so it is set directly — the question is whether the ROW
 	// keeps it, not how it got onto the page.
 	page.controls = []string{"page.gooey"}
+
+	// crossedIn is that switch, so it can be asked the same question
+	// twice — once while the row is building and once after Load — and
+	// the two answers compared. known is false for a field it does not
+	// read, which the caller reports as the contract's other half being
+	// unchecked.
+	crossedIn = func(row *Context, name string) (crossed bool, known bool) {
+		switch name {
+		case "Styles":
+			_, crossed = row.Styles["s"]
+		case "Components":
+			_, crossed = row.Components["Probe"]
+		case "Elements":
+			_, crossed = row.Elements["Meter"]
+		case "Handlers":
+			_, crossed = row.Handlers["H"]
+		case "Rules":
+			_, crossed = row.Rules["Zonk"]
+		case "Declared":
+			_, crossed = row.Declared[declSentinel]
+		case "Includes":
+			// THE FS ITSELF, asked a question only the page's answers.
+			// `!= nil` says "there is an FS here", not "it is the
+			// page's" — the weak form this file's control switch spent
+			// eight arms replacing, kept in the row switch by oversight.
+			// Raised in review of #490.
+			if row.Includes != nil {
+				_, err := fs.ReadFile(row.Includes, "card.gooey")
+				crossed = err == nil
+			}
+		case "Dispatcher":
+			crossed = row.Dispatcher == page.Dispatcher
+		case "Dir":
+			crossed = row.Dir == page.Dir
+		case "Variant":
+			crossed = row.Variant == page.Variant
+		case "controls":
+			crossed = len(row.controls) > 0 &&
+				row.controls[len(row.controls)-1] == "page.gooey"
+		case "res":
+			crossed = row.res.cur != nil
+		case "fsys":
+			// The DOCUMENT's FS, asked a question only it answers —
+			// behind a nil check, because dropping the propagation leaves
+			// a nil interface and fs.ReadFile PANICS on one, taking the
+			// package's run with it instead of reporting. Same trap the
+			// Includes arm above carries.
+			if row.fsys != nil {
+				_, err := fs.ReadFile(row.fsys, "page.gooey")
+				crossed = err == nil
+			}
+		case "Values":
+			// The row's Values are the ITEM, so the page's own key must
+			// not be visible through them.
+			_, crossed = row.Values["PageOnly"]
+		case "Named":
+			_, crossed = row.Named["PageOnly"]
+		case "arms":
+			// Not "is it set" — the row builds its own — but whether the
+			// page's map IS the row's. The sentinel is the whole answer:
+			// it was written into the page's live sink map by PageProbe,
+			// so a row sharing that map sees it and a row with its own
+			// does not. Two empty maps cannot fake agreement here, which
+			// is what the old membership comparison allowed.
+			_, crossed = row.arms.sinks[armsSentinel]
+		case "ns":
+			_, crossed = row.ns["probe"]
+		case "declared":
+			_, crossed = row.declared["PageDecl"]
+		default:
+			return false, false
+		}
+		return crossed, true
+	}
 
 	if _, err := Load(pageFS, "page.gooey", page); err != nil {
 		t.Fatalf("the page did not load, so nothing below was observed: %v", err)
@@ -781,73 +901,22 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 				"no reason written anywhere", name)
 			continue
 		}
-		var crossed bool
-		switch name {
-		case "Styles":
-			_, crossed = row.Styles["s"]
-		case "Components":
-			_, crossed = row.Components["Probe"]
-		case "Elements":
-			_, crossed = row.Elements["Meter"]
-		case "Handlers":
-			_, crossed = row.Handlers["H"]
-		case "Rules":
-			_, crossed = row.Rules["Zonk"]
-		case "Declared":
-			_, crossed = row.Declared[declSentinel]
-		case "Includes":
-			// THE FS ITSELF, asked a question only the page's answers.
-			// `!= nil` says "there is an FS here", not "it is the
-			// page's" — the weak form this file's control switch spent
-			// eight arms replacing, kept in the row switch by oversight.
-			// Raised in review of #490.
-			if row.Includes != nil {
-				_, err := fs.ReadFile(row.Includes, "card.gooey")
-				crossed = err == nil
-			}
-		case "Dispatcher":
-			crossed = row.Dispatcher == page.Dispatcher
-		case "Dir":
-			crossed = row.Dir == page.Dir
-		case "Variant":
-			crossed = row.Variant == page.Variant
-		case "controls":
-			crossed = len(row.controls) > 0 &&
-				row.controls[len(row.controls)-1] == "page.gooey"
-		case "res":
-			crossed = row.res.cur != nil
-		case "fsys":
-			// The DOCUMENT's FS, asked a question only it answers —
-			// behind a nil check, because dropping the propagation leaves
-			// a nil interface and fs.ReadFile PANICS on one, taking the
-			// package's run with it instead of reporting. Same trap the
-			// Includes arm above carries.
-			if row.fsys != nil {
-				_, err := fs.ReadFile(row.fsys, "page.gooey")
-				crossed = err == nil
-			}
-		case "Values":
-			// The row's Values are the ITEM, so the page's own key must
-			// not be visible through them.
-			_, crossed = row.Values["PageOnly"]
-		case "Named":
-			_, crossed = row.Named["PageOnly"]
-		case "arms":
-			// Not "is it set" — the row builds its own — but whether the
-			// page's map IS the row's. The sentinel is the whole answer:
-			// it was written into the page's live sink map by PageProbe,
-			// so a row sharing that map sees it and a row with its own
-			// does not. Two empty maps cannot fake agreement here, which
-			// is what the old membership comparison allowed.
-			_, crossed = row.arms.sinks[armsSentinel]
-		case "ns":
-			_, crossed = row.ns["probe"]
-		case "declared":
-			_, crossed = row.declared["PageDecl"]
-		default:
-			t.Errorf("Context.%s is partitioned for a row but this switch does "+
+		crossed, known := liveRead[name]
+		if !known {
+			t.Errorf("Context.%s is partitioned for a row but crossedIn does "+
 				"not read it, so its half of the contract is unchecked", name)
 			continue
+		}
+		// THE LIVE ANSWER IS THE ONE CHECKED, and a disagreement with
+		// the after-Load read is reported rather than silently resolved:
+		// it means this field is restored on the row the way ns, arms,
+		// fsys and res are on the page, and every assertion taken
+		// afterwards is about the restore rather than about the row.
+		if after, _ := crossedIn(row, name); after != crossed {
+			t.Errorf("Context.%s read %v while the row was building and %v after "+
+				"Load returned. Something restores it on the row, so an assertion "+
+				"taken afterwards is about the restore rather than about the row",
+				name, crossed, after)
 		}
 		if crossed != rule.inherit {
 			verb := "did not reach an item-template row"

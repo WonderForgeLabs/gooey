@@ -338,3 +338,55 @@ func TestACycleRefusalIsNotAttributedTwice(t *testing.T) {
 			"both ends of the trace): %v", n, err)
 	}
 }
+
+// A SETUP IS ARBITRARY GO, and the commonest thing it does with a
+// document is load another one — a control whose code-behind builds a
+// sub-view, a designer that renders a preview. That inner Load returns
+// an error already attributed to ITS control, and wrapping it by hand at
+// the setup site would put a second name and a second "markup: " on it:
+// the exact stacking attributedErr exists to stop, at the one site where
+// the inner error is not this package's own recursion.
+//
+// Measured against the first version of the fix, which built the
+// attributedErr inline at this site and at passAttrs':
+//
+//	markup: control outer.gooey: markup: control mid.gooey: unknown element <Nope>
+func TestASetupsOwnLoadErrorIsNotAttributedTwice(t *testing.T) {
+	// The inner document instantiates a CONTROL that fails, so the error
+	// the setup gets back is already attributed to mid.gooey. A setup
+	// whose own Load fails at the top level is a different case and is
+	// correctly named after the control whose setup it is.
+	inner := fstest.MapFS{
+		"inner.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Mid/></Gooey>`)},
+		"mid.gooey":   &fstest.MapFile{Data: []byte(`<Gooey><Nope/></Gooey>`)},
+	}
+	fsys := fstest.MapFS{
+		"app.gooey":   &fstest.MapFile{Data: []byte(`<Gooey><Outer/></Gooey>`)},
+		"outer.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Text>x</Text></Gooey>`)},
+	}
+	ctx := &Context{
+		Includes: fsys,
+		Components: map[string]Builder{
+			"Outer": UserControl(fsys, "outer.gooey", func(e Element, parent *Context) (*Context, error) {
+				_, err := Load(inner, "inner.gooey", &Context{Includes: inner})
+				return nil, err
+			}),
+		},
+	}
+	_, err := Load(fsys, "app.gooey", ctx)
+	if err == nil {
+		t.Fatal("the setup returned an error and the load succeeded")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "mid.gooey") {
+		t.Errorf("the error does not name the control the inner load failed in: %v", err)
+	}
+	if strings.Contains(msg, "outer.gooey") {
+		t.Errorf("the error names the enclosing control as well as the one that "+
+			"actually failed, which is the stacking attributedErr exists to "+
+			"stop: %v", err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+}
