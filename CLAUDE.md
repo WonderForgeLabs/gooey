@@ -33,10 +33,21 @@ Two consequences that are easy to trip over:
   can serve. It must also require them all at the SAME commit: these paths
   are published by one push, so two revisions is skew, and core sitting
   behind its own siblings is a module that builds in here and fails every
-  `go install` outside. The `replace … => ../..` beside it
+  `go get` outside. The `replace … => ../..` beside it
   does not save you — a replace in a *dependency's* go.mod is ignored by
   whoever depends on it, and applies only here, where the workspace has
   already made it redundant.
+
+  **`apps/*` are a different case, and the pin buys them nothing.**
+  `go install pkg@version` refuses any target module whose own go.mod
+  carries `replace` directives, and refuses **before** resolving a single
+  require — so every `apps/*` module stays un-installable while it keeps
+  the replace lines that make in-tree development work, whatever version
+  it names. This sentence said `go install` until review of
+  [#497](https://github.com/WonderForgeLabs/gooey/pull/497) measured it.
+  The requires this guard is about are read by `go get` of the LIBRARY
+  modules — `imagefmt/svg`, `paint`, `mcp`, `grpc`, `handlers/*` — where
+  a replace in a dependency's go.mod is ignored rather than fatal.
 - **`GOPROXY=off` does not prove vendoring works.** It blocks downloads
   while the local module cache still satisfies everything, so a tree that
   would fail on a clean machine passes for you. The discriminating checks
