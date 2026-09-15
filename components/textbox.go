@@ -190,59 +190,80 @@ func (t *TextBox) Render(f *gooey.Frame) {
 			textSty.Underline = true
 		}
 	}
-	// ONE RUNE, ITS OWN COLUMNS. `x++` was the whole of #519: a wide
-	// glyph occupies two columns and SetCell places both, so advancing
-	// one put the next rune on the continuation cell the previous glyph
-	// had just claimed — healSeam then blanked the orphaned lead and the
-	// character vanished. "世界" rendered as " 界", and with the caret
-	// at the end as "  █": a TextBox silently deleted every wide glyph
-	// in its own value. The stop is on the glyph's FULL width too, for
-	// the same reason SetCell answers a half-glyph at the clip edge with
-	// a space — a lead written without room for its tail displaces the
-	// rest of the row.
+	// ONE GRAPHEME CLUSTER, ITS OWN COLUMNS. `x++` was the whole of
+	// #519: a wide glyph occupies two columns and SetCell places both,
+	// so advancing one put the next rune on the continuation cell the
+	// previous glyph had just claimed — healSeam then blanked the
+	// orphaned lead and the character vanished. "世界" rendered as
+	// " 界", and with the caret at the end as "  █": a TextBox silently
+	// deleted every wide glyph in its own value. The stop is on the
+	// glyph's FULL width too, for the same reason SetCell answers a
+	// half-glyph at the clip edge with a space — a lead written without
+	// room for its tail displaces the rest of the row.
 	//
-	// AND A ZERO-WIDTH RUNE JOINS THE CELL IN FRONT OF IT rather than
-	// taking one of its own. `x += w` with w == 0 left the next rune to
-	// overwrite the cell the mark had just been written into, so
-	// decomposed "éx" painted as "ex" — #519's defect one Unicode
-	// category over, and reported against this branch. The cell plane
-	// already has the answer: Cell.Cluster is the WHOLE grapheme
-	// cluster, and Cell.Width() measures the cluster, so appending the
-	// mark to the lead's cluster puts the accent back on screen in the
-	// column it belongs to. Found in the review of #521.
-	lead := -1 // the column of the last glyph written, for a mark to join
-	for i := t.scroll; i < len(runes); i++ {
-		w := render.RuneWidth(runes[i])
+	// AND THE UNIT IS THE CLUSTER, NOT THE RUNE, which the first fix for
+	// #519 got wrong in a way that was worse than the bug. It walked
+	// runes and folded the zero-width ones into the cell in front
+	// afterwards — but a cluster's width is NOT the sum of its runes'
+	// widths, so folding could WIDEN the lead: StringWidth("⚠️") is 2
+	// where StringWidth("⚠") is 1. x had already advanced by 1, the
+	// fold's SetCell wrote a Continuation into the column the next rune
+	// was about to take, healSeam blanked the orphan, and "⚠️x" painted
+	// as " x" — #519's own symptom, reintroduced by its fix, for every
+	// VS16 emoji a user can type. The same arithmetic put a ZWJ family
+	// in seven columns here and three in a Text, on the same frame,
+	// which render.Displaced cannot see because each cell is
+	// individually consistent.
+	//
+	// render.EachCluster hands over the cluster AND its width from one
+	// segmentation, which is what SetString, ClipCols and StringWidth
+	// all use and what makes this loop agree with them. It is walked
+	// from t.scroll rather than from 0 so the cost stays proportional to
+	// the FIELD, not to the value: a window that starts in the middle of
+	// a ZWJ family re-segments from there and splits it, which is
+	// cosmetic and bounded, where an O(len(value)) walk on the paint
+	// path is neither. Found in the review of #521.
+	idx := t.scroll
+	render.EachCluster(string(runes[t.scroll:]), func(cluster string, _, _, w int) bool {
+		i := idx
+		n := len([]rune(cluster))
+		idx += n
 		if w == 0 {
-			if lead >= 0 {
-				c := f.Cells.At(lead, b.Y)
-				c.Cluster = c.Text() + string(runes[i])
-				// A caret ON the mark highlights the cluster it joined,
-				// since the mark itself owns no column to reverse. Skipping
-				// the write below skips the style switch with it, so this
-				// arm has to carry the caret or the caret disappears for
-				// one arrow-key press per combining mark in the value.
-				if !selected && t.IsFocused() && i == caret {
-					c.Style.Reverse = true
-				}
-				f.Cells.SetCell(lead, b.Y, c)
-			}
-			continue
+			// A zero-width cluster owns no column. It can only be a mark
+			// with nothing in front of it to decorate — scrollFor snaps
+			// the window back over those, so reaching one here means the
+			// value itself opens with one. Skipping it is right, and the
+			// caret cannot be lost with it: the caret arm below fires on
+			// the cluster CONTAINING it, and a caret inside this one has
+			// no cell to reverse either way.
+			return true
 		}
 		if x+w > b.X+b.W {
-			break
+			return false
 		}
 		st := textSty
 		switch {
 		case selected && i >= lo && i < hi:
 			st.Reverse = true
-		case !selected && t.IsFocused() && i == caret:
-			st.Reverse = true // the caret sits ON the character it precedes
+		case !selected && t.IsFocused() && caret >= i && caret < i+n:
+			// THE WHOLE CLUSTER, and caret >= i rather than caret == i.
+			// The caret sits ON the character it precedes, and a caret
+			// that has been moved into the middle of a cluster — an
+			// arrow key steps by rune — still belongs to the one glyph
+			// on screen. Reversing the cluster is the only answer a
+			// single cell can give; testing caret == i left the caret
+			// invisible for one keypress per combining mark in the
+			// value. Found in the review of #521.
+			st.Reverse = true
 		}
-		f.Cells.Set(x, b.Y, runes[i], st)
-		lead = x
+		c := render.Cell{Rune: []rune(cluster)[0], Style: st}
+		if n > 1 {
+			c.Cluster = cluster
+		}
+		f.Cells.SetCell(x, b.Y, c)
 		x += w
-	}
+		return true
+	})
 	if t.IsFocused() && !selected && caret >= len(runes) && x < b.X+b.W {
 		f.Cells.Set(x, b.Y, '█', accent)
 	}
@@ -292,7 +313,30 @@ func scrollFor(runes []rune, cur, caret, avail int) int {
 	if tail := windowFloor(runes, len(runes), 1, avail); cur > tail {
 		cur = tail
 	}
-	return cur
+	return clusterStart(runes, cur)
+}
+
+// clusterStart walks back off a zero-width rune to the glyph it
+// decorates, so a window never opens in the middle of one.
+//
+// A window that started on a combining mark had no lead for it to join,
+// so Render skipped it — and skipped the caret arm with it, leaving a
+// focused field with no caret anywhere on screen. The mark is not a
+// position the window can show: it has no column of its own, and its
+// lead is the thing the user sees. Found in the review of #521.
+//
+// IT IS BOUNDED BY THE CLUSTER, not by the value, which is what keeps
+// scrollFor O(avail). That also bounds what it can KNOW: a rune width
+// cannot see a ZWJ join, so a window can still open inside an emoji
+// family, where Render re-segments from the new start and splits the
+// family. Cosmetic, bounded, and the alternative is an O(len(value))
+// cluster walk on the paint path — which is the cost #521's review
+// measured at 1.4 s and this function exists to have removed.
+func clusterStart(runes []rune, i int) int {
+	for i > 0 && i < len(runes) && render.RuneWidth(runes[i]) == 0 {
+		i--
+	}
+	return i
 }
 
 // caretCols is how many columns the caret needs at index i.
@@ -660,12 +704,35 @@ func (t *TextBox) indexAt(x int) int {
 	// text it belongs to — the same rune-vs-column confusion clipCols
 	// was renamed for, one line further on.
 	promptW := render.StringWidth(clipCols(getStr(t.Prompt), t.Bounds().W))
-	// AND COLUMNS FOR THE TEXT TOO, since #519. `scroll + col` is the
-	// rune at that offset only while every rune is one column wide; over
-	// a wide glyph it lands one character right per glyph passed, so a
-	// click in the middle of a CJK field put the caret somewhere else.
-	// Walking the widths is the same arithmetic the renderer does, in
-	// the same order.
+	runes := t.value()
+	// CLAMPED, because t.scroll is derived state from the LAST paint and
+	// a click can arrive before the next one. A bound value that shrank
+	// — a viewmodel reset, a hot reload, the scenario Caret()'s own doc
+	// names and clamps on read for — left t.scroll past the end, and the
+	// walk that indexed runes with it panicked out of the UI goroutine
+	// and killed the process.
+	//
+	// The walk below no longer indexes with it — it runs from the start
+	// of the value and uses `start` only to pick which cluster the
+	// window opens on — so the fault is gone whether this clamps or not
+	// (measured: removing the clamp leaves
+	// TestAClickAfterTheValueShrankDoesNotPanic green, where the walk
+	// this replaced faulted). It stays because a stale scroll must not
+	// be able to choose a cluster outside the value either, and because
+	// the next person to reintroduce an index here should not have to
+	// rediscover it. Found in the review of #521.
+	start := clamp(t.scroll, 0, len(runes))
+
+	// COLUMNS, AND BY CLUSTER, since #519 and its review. `scroll + col`
+	// is the rune at that offset only while every rune is one column
+	// wide; over a wide glyph it lands one character right per glyph
+	// passed, so a click in the middle of a CJK field put the caret
+	// somewhere else. Walking rune widths fixed that and left a second
+	// disagreement: Render paints a grapheme CLUSTER into one cell, so a
+	// walk that stops between a rune and its accent answers with a caret
+	// position the screen does not have. Typing there put the typed rune
+	// between "e" and its accent; backspace left an orphan mark. Every
+	// index this returns is a cluster boundary.
 	//
 	// A COLUMN LEFT OF THE TEXT WALKS LEFT, and this is the half that has
 	// to keep working rather than be clamped away. Dragging past the
@@ -680,22 +747,63 @@ func (t *TextBox) indexAt(x int) int {
 	// could not mouse-select anything that had scrolled off (measured:
 	// six drags to column -2 over a 6-column field left the selection at
 	// [21,24) where walking gives [9,24)). Found in the review of #521.
-	runes := t.value()
-	col := x - t.Bounds().X - promptW
-	i := t.scroll
-	for col < 0 && i > 0 {
-		i--
-		col += render.RuneWidth(runes[i])
-	}
-	for col > 0 && i < len(runes) {
-		w := render.RuneWidth(runes[i])
-		if col < w {
-			break
+	//
+	// The walk is from the START OF THE VALUE rather than from the
+	// window, because a cluster boundary is a property of the text in
+	// front of it and because a click costs one pass either way — this
+	// is not the paint path.
+	var (
+		starts  []int // rune index of each cluster
+		cols    []int // the column each cluster opens at
+		total   int
+		startAt = -1
+	)
+	eachRuneCluster(runes, func(i, _ int, _ string, w int) bool {
+		if i <= start {
+			startAt = len(starts)
 		}
-		col -= w
-		i++
+		starts = append(starts, i)
+		cols = append(cols, total)
+		total += w
+		return true
+	})
+	if startAt < 0 {
+		return 0
 	}
-	return clamp(i, 0, len(runes))
+	target := cols[startAt] + (x - t.Bounds().X - promptW)
+	if target < 0 {
+		return 0
+	}
+	if target >= total {
+		return len(runes)
+	}
+	k := startAt
+	for k+1 < len(starts) && cols[k+1] <= target {
+		k++
+	}
+	for k > 0 && cols[k] > target {
+		k--
+	}
+	return clamp(starts[k], 0, len(runes))
+}
+
+// eachRuneCluster walks the grapheme clusters of runes, reporting each
+// one's RUNE index, its rune length, its text and its COLUMN width.
+//
+// render.EachCluster is the segmentation every writer in render uses and
+// it reports byte offsets, which is the right unit for a string and the
+// wrong one for a TextBox: the caret, the scroll position and both ends
+// of a selection are rune indices, and they are the API. This converts
+// once, in one place, rather than at each of the four call sites that
+// would otherwise do it differently. Found in the review of #521.
+func eachRuneCluster(runes []rune, fn func(i, n int, cluster string, w int) bool) {
+	i := 0
+	render.EachCluster(string(runes), func(cluster string, _, _, w int) bool {
+		n := len([]rune(cluster))
+		ok := fn(i, n, cluster, w)
+		i += n
+		return ok
+	})
 }
 
 // selectWord selects the run of like characters around the caret: a
